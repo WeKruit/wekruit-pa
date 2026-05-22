@@ -112,6 +112,7 @@ type ResumeGateState =
     }
   | { status: "error"; message: string }
 type ResumeGateResult = Extract<ResumeGateState, { status: "ready" }>["gate"]
+type CopyTarget = "number" | "message"
 const LOGO_BG_POOL = ["#2A1812", "#0F1B2D", "#5E6AD2", "#635BFF", "#0D0D0D", "#1A1A1A", "#374151", "#7C2D12"]
 const TONE_POOL: Array<"warm" | "moss" | "slate"> = ["warm", "slate", "moss"]
 
@@ -538,6 +539,8 @@ export default function PublicJob() {
       jobTitle={jobTitle}
       company={company}
       smsHref={smsHref}
+      sendNumber={sendNumber}
+      smsBody={smsBody}
       smsClicked={smsClicked}
       onSmsClick={() => setSmsClicked(true)}
       onRefresh={() => void refreshResumeGate()}
@@ -559,7 +562,7 @@ export default function PublicJob() {
     <>
       <Icon name="lock" size={13} stroke={1.6} />
       By interviewing, you agree to our <Link className="wk-link" to="/legal">privacy &amp; terms</Link>.
-      {sendNumber ? ` You will send the role code to ${sendNumber}; Claire will reply there.` : ""}
+      {sendNumber ? ` You will text Claire at ${sendNumber}; Claire will reply there.` : ""}
     </>
   )
 
@@ -646,6 +649,8 @@ function PrescreenStartGate({
   jobTitle,
   company,
   smsHref,
+  sendNumber,
+  smsBody,
   smsClicked,
   onSmsClick,
   onRefresh,
@@ -654,10 +659,26 @@ function PrescreenStartGate({
   jobTitle: string
   company: string
   smsHref: string | null
+  sendNumber: string | null
+  smsBody: string
   smsClicked: boolean
   onSmsClick: () => void
   onRefresh: () => void
 }) {
+  const [copiedTarget, setCopiedTarget] = useState<CopyTarget | null>(null)
+
+  async function copyHandoffText(target: CopyTarget, value: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopiedTarget(target)
+      window.setTimeout(() => {
+        setCopiedTarget((current) => (current === target ? null : current))
+      }, 1800)
+    } catch {
+      setCopiedTarget(null)
+    }
+  }
+
   if (gateState.status === "loading" || gateState.status === "idle") {
     return (
       <>
@@ -710,23 +731,69 @@ function PrescreenStartGate({
   return (
     <>
       <p className="wk-pj-card__copy">
-        Your resume is ready. Open iMessage and send the pre-filled code for {jobTitle} at {company}.
-        That code links your phone to this role; wait for Claire to reply with the first interview question.
+        Your resume is ready. Tap the button below to open Messages to Claire for {jobTitle} at {company}.
+        Send the filled-in first message once; Claire will reply with the first interview question.
       </p>
       {smsHref ? (
         <a className="wk-btn wk-btn--primary wk-btn--block" href={smsHref} onClick={onSmsClick}>
-          Send code in iMessage <Icon name="arrow-right" size={16} stroke={2} />
+          Open Messages with first message <Icon name="arrow-right" size={16} stroke={2} />
         </a>
       ) : (
         <div className="wk-pj-disabled">Assigning your Claire line…</div>
       )}
+      {sendNumber ? (
+        <div className="wk-pj-sms-manual" aria-label="Manual Claire start">
+          <p className="wk-pj-card__note">If Messages does not open, start it manually:</p>
+          <CopyableHandoffRow
+            label="To"
+            value={sendNumber}
+            copied={copiedTarget === "number"}
+            onCopy={() => void copyHandoffText("number", sendNumber)}
+          />
+          <CopyableHandoffRow
+            label="First message"
+            value={smsBody}
+            copied={copiedTarget === "message"}
+            onCopy={() => void copyHandoffText("message", smsBody)}
+          />
+        </div>
+      ) : null}
       {smsClicked ? (
-        <p className="wk-success">Send the pre-filled code, then wait for Claire's reply in this thread.</p>
+        <p className="wk-success">After it sends, stay in that thread. Claire's first question will arrive there.</p>
       ) : null}
       {!smsHref ? (
         <p className="wk-error">WeKruit messaging is temporarily unavailable. Try checking your profile again.</p>
       ) : null}
     </>
+  )
+}
+
+function CopyableHandoffRow({
+  label,
+  value,
+  copied,
+  onCopy,
+}: {
+  label: string
+  value: string
+  copied: boolean
+  onCopy: () => void
+}) {
+  return (
+    <div className="wk-pj-sms-row">
+      <span>{label}</span>
+      <div className="wk-pj-sms-row__value">
+        <code>{value}</code>
+        <button
+          type="button"
+          className="wk-pj-copy-btn"
+          onClick={onCopy}
+          aria-label={`Copy ${label.toLowerCase()}`}
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -1476,6 +1543,62 @@ export const PUBLIC_JOB_STYLES = `
 .wk-pj-card__slot { display: grid; gap: 10px; }
 .wk-pj-card__copy { color: var(--wk-ink-2); font-size: 14.5px; line-height: 1.5; margin: 0; }
 .wk-pj-card__note { color: var(--wk-ink-3); font-size: 13px; margin: 0; }
+.wk-pj-sms-manual {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  background: rgba(255, 252, 247, 0.62);
+  border: 1px solid var(--wk-border);
+  border-radius: 14px;
+  min-width: 0;
+}
+.wk-pj-sms-row {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.wk-pj-sms-row span {
+  color: var(--wk-ink-3);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.wk-pj-sms-row__value {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.wk-pj-sms-row code {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid rgba(45, 26, 10, 0.1);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.54);
+  color: var(--wk-ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.wk-pj-copy-btn {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid rgba(45, 26, 10, 0.16);
+  border-radius: 999px;
+  background: var(--wk-cream-3);
+  color: var(--wk-ink);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.wk-pj-copy-btn:hover {
+  border-color: rgba(45, 26, 10, 0.28);
+  background: #fffaf2;
+}
 .wk-pj-fine {
   display: inline-flex; align-items: center; gap: 6px;
   color: var(--wk-ink-3); font-size: 12.5px;

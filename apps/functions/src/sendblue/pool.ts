@@ -171,8 +171,7 @@ export function pickFromNumber(
   userId: string,
   options: PickFromNumberOptions = {}
 ): string | null {
-  if (!pool || !Array.isArray(pool.numbers)) return null
-  const active = pool.numbers.filter((n) => isSelectablePoolNumber(n, options))
+  const active = normalizedPoolNumbers(pool).filter((n) => isSelectablePoolNumber(n, options))
   if (active.length === 0) return null
   const idx = hashStringToUint(userId) % active.length
   return active[idx].number
@@ -223,6 +222,13 @@ function normalizedPoolNumbers(pool: SendbluePoolConfig | null): SendbluePoolNum
   })
   const legacy = Array.isArray(pool.numbers) ? pool.numbers : []
   return [...grouped, ...legacy]
+}
+
+export function findSendbluePoolNumber(
+  pool: SendbluePoolConfig | null,
+  senderNumber: string
+): SendbluePoolNumber | null {
+  return normalizedPoolNumbers(pool).find((n) => n.number === senderNumber) ?? null
 }
 
 export type NormalizedSendbluePoolGroup = {

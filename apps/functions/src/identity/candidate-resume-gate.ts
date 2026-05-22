@@ -2,12 +2,8 @@ import { onCall, HttpsError } from "firebase-functions/v2/https"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { claimCandidateProfile as defaultClaimCandidateProfile } from "@pa/pa-persistence"
-import {
-  loadSendbluePool,
-  pickFromNumber,
-  sendblueGroupId,
-  type SendbluePoolConfig,
-} from "../sendblue/pool.js"
+import type { SendbluePoolConfig } from "../sendblue/pool.js"
+import { assignCandidateSenderNumber as defaultAssignSenderNumber } from "./candidate-sender-number.js"
 
 type CallableAuth = {
   uid?: string
@@ -200,43 +196,6 @@ function isUsableArtifact(artifact: ResumeArtifactGateView): boolean {
   return artifact.status !== "failed" && artifact.status !== "archived"
 }
 
-function groupIdForNumber(pool: SendbluePoolConfig | null, senderNumber: string): string {
-  const match = Array.isArray(pool?.numbers)
-    ? pool.numbers.find((n) => n.number === senderNumber)
-    : undefined
-  return sendblueGroupId(match ?? { number: senderNumber, status: "active" })
-}
-
-async function defaultAssignSenderNumber(
-  db: Firestore,
-  candidateId: string,
-  user: Record<string, unknown> | null,
-  poolLoader: (db: Firestore) => Promise<SendbluePoolConfig | null>
-): Promise<{ senderNumber?: string; senderGroupId?: string }> {
-  const existingNumber = cleanString(user?.senderNumber, 32)
-  const existingGroupId = cleanString(user?.senderGroupId, 160)
-  if (existingNumber) {
-    return {
-      senderNumber: existingNumber,
-      ...(existingGroupId ? { senderGroupId: existingGroupId } : {}),
-    }
-  }
-
-  const pool = await poolLoader(db)
-  const senderNumber = pickFromNumber(pool, candidateId, { requireNewUserCapacity: true })
-  if (!senderNumber) return {}
-  const senderGroupId = groupIdForNumber(pool, senderNumber)
-  const nowIso = new Date().toISOString()
-  await db.collection(PA_COLLECTIONS.users).doc(candidateId).set({
-    senderNumber,
-    senderGroupId,
-    senderAssignedAt: nowIso,
-    senderAssignedSource: "candidate_resume_gate",
-    updatedAt: nowIso,
-  }, { merge: true })
-  return { senderNumber, senderGroupId }
-}
-
 export async function runCandidateResumeGateStatus(
   data: unknown,
   auth: CallableAuth | undefined,
@@ -285,7 +244,7 @@ export async function runCandidateResumeGateStatus(
       db,
       id,
       userData,
-      deps.loadSendbluePool ?? loadSendbluePool
+      deps.loadSendbluePool
     )
   ))(deps.db, candidateId, user)
 

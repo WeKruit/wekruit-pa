@@ -24,7 +24,7 @@ import { logger } from "firebase-functions/v2"
 import { getFirestore, FieldValue, type Firestore, type Query } from "firebase-admin/firestore"
 import { getApps, initializeApp } from "firebase-admin/app"
 
-import { loadSendbluePool, pickFromNumber, sendblueGroupId, hashStringToUint } from "./sendblue/pool.js"
+import { findSendbluePoolNumber, loadSendbluePool, pickFromNumber, sendblueGroupId, hashStringToUint } from "./sendblue/pool.js"
 import { normalizePeer } from "./sendblue/peer.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { hashCandidateHandle, linkCandidateHandle } from "@pa/pa-persistence"
@@ -299,7 +299,9 @@ export async function runRegisterLayoffCandidate(
   // Sticky from-number — deterministic hash by candidateId.
   const pool = await (deps.loadSendbluePool ?? loadSendbluePool)(deps.db)
   const fromNumber = pickFromNumber(pool, candidateId, { requireNewUserCapacity: !isReregistration }) ?? ""
-  const groupId = fromNumber ? sendblueGroupId({ number: fromNumber, status: "active" }) : "unassigned"
+  const groupId = fromNumber
+    ? sendblueGroupId(findSendbluePoolNumber(pool, fromNumber) ?? { number: fromNumber, status: "active" })
+    : "unassigned"
 
   // Single source of truth — pa-users.
   //   reuse   → refresh timestamp + source tag (no field overwrite)

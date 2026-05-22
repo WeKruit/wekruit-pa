@@ -126,6 +126,66 @@ test("runCandidateMagicLinkVerify claims profile for verified email", async () =
   })
 })
 
+test("runCandidateMagicLinkVerify returns sticky sender number for the canonical candidate", async () => {
+  const calls: Array<{ candidateId: string; userData: Record<string, unknown> | null }> = []
+  const db = fakeDb()
+  ;(db as unknown as FakeFirestore).seed(PA_COLLECTIONS.users, "cand-1", {
+    intakeCompletedAt: "2026-05-21T00:00:00.000Z",
+  })
+  const { result, status } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-1" },
+    undefined,
+    {
+      db,
+      verifyIdToken: async () => ({
+        uid: "firebase-1",
+        email: "person@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-1",
+        authMapping: {
+          firebaseUid: "firebase-1",
+          candidateId: "cand-1",
+          createdAt: "2026-05-21T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-1",
+          kind: "email" as const,
+          handleHash: "hashhashhashhash",
+          source: "candidate" as const,
+          createdAt: "2026-05-21T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: true,
+        selfProfile: {
+          candidateId: "cand-1",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-21T00:00:00.000Z",
+        },
+      }),
+      assignSenderNumber: async (_db, candidateId, userData) => {
+        calls.push({ candidateId, userData })
+        return { senderNumber: "+17174919939", senderGroupId: "public" }
+      },
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+    }
+  )
+
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.candidateId, "cand-1")
+  assert.equal(calls[0]?.userData?.intakeCompletedAt, "2026-05-21T00:00:00.000Z")
+  if (result.ok) {
+    assert.equal(result.senderNumber, "+17174919939")
+    assert.equal(result.senderGroupId, "public")
+  }
+})
+
 test("runCandidateMagicLinkVerify links LinkedIn OAuth identity for li_* uid", async () => {
   const linkCalls: Array<Record<string, unknown>> = []
   const db = fakeDb()

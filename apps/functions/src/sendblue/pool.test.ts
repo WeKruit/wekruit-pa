@@ -111,6 +111,19 @@ describe("pickFromNumber", () => {
     }
     assert.equal(pickFromNumber(pool, "new-user", { requireNewUserCapacity: true }), "+15550002222")
   })
+  it("selects from grouped public pool config", () => {
+    const pool = {
+      groups: [
+        {
+          groupId: "public-a",
+          status: "active" as const,
+          audience: "public" as const,
+          numbers: ["+17174919939"],
+        },
+      ],
+    }
+    assert.equal(pickFromNumber(pool, "new-user", { requireNewUserCapacity: true }), "+17174919939")
+  })
   it("distributes across multiple users", () => {
     const pool = {
       numbers: [

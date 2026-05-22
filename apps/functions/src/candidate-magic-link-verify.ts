@@ -7,6 +7,7 @@ import {
   candidateClaireConversationStarted,
   candidateHasResumeOnFile,
 } from "./candidate-claire-conversation.js"
+import { assignCandidateSenderNumber } from "./identity/candidate-sender-number.js"
 
 export interface CandidateMagicLinkVerifyInput {
   firebaseIdToken?: string
@@ -30,6 +31,8 @@ export interface CandidateMagicLinkVerifySuccess {
   hasResumeOnFile: boolean
   /** True when candidate has inbound Claire iMessage — required for /me portal. */
   portalReady: boolean
+  senderNumber?: string | null
+  senderGroupId?: string | null
   linkedinUrl?: string | null
   linkedinLinkedViaOauth?: boolean
 }
@@ -92,6 +95,11 @@ export interface CandidateMagicLinkVerifyDeps {
     candidateId: string,
     userData: Record<string, unknown>,
   ) => Promise<boolean>
+  assignSenderNumber?: (
+    db: Firestore,
+    candidateId: string,
+    userData: Record<string, unknown> | null,
+  ) => Promise<{ senderNumber?: string; senderGroupId?: string }>
 }
 
 export async function runCandidateMagicLinkVerify(
@@ -236,6 +244,11 @@ export async function runCandidateMagicLinkVerify(
       claim.candidateId,
       userData,
     )
+    const sender = await (deps.assignSenderNumber ?? assignCandidateSenderNumber)(
+      deps.db,
+      claim.candidateId,
+      userData,
+    )
 
     return {
       result: {
@@ -246,6 +259,8 @@ export async function runCandidateMagicLinkVerify(
         claireConversationStarted: claireStarted,
         hasResumeOnFile: resumeOnFile,
         portalReady: claireStarted && resumeOnFile,
+        senderNumber: sender.senderNumber ?? null,
+        senderGroupId: sender.senderGroupId ?? null,
         linkedinUrl: storedLinkedin,
         linkedinLinkedViaOauth: storedOauthLinked,
       },
