@@ -196,12 +196,14 @@ export function Users() {
             }
           })
         )
-      } catch (e: unknown) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
+      } catch (e) {
+        console.warn("[Users] phone lookup failed", e)
+        if (!cancelled) setLookupRows([])
       } finally {
         if (!cancelled) setLookupLoading(false)
       }
     })()
+
     return () => {
       cancelled = true
     }
@@ -210,7 +212,13 @@ export function Users() {
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase()
     const normalizedPhone = normalizePhoneLookup(search)
-    const merged = [...lookupRows, ...rows].filter((row, index, all) => all.findIndex((r) => r.id === row.id) === index)
+    const merged = [
+      ...lookupRows.map((lookup) => {
+        const existing = rows.find((r) => r.id === lookup.id)
+        return existing ? { ...existing, ...lookup, latestMessage: existing.latestMessage, latestAt: existing.latestAt } : lookup
+      }),
+      ...rows.filter((r) => !lookupRows.some((lookup) => lookup.id === r.id)),
+    ]
     return merged.filter((r) => {
       // Hide test users by default (toggle to show)
       if (!showTest && r.testMode === true) return false
@@ -320,7 +328,7 @@ export function Users() {
               header: "User info",
               render: (r) => (
                 <Link
-                  to={`/admin/candidates/${r.id}/profile`}
+                  to={`/admin/candidates/${encodeURIComponent(r.id)}/profile`}
                   style={{
                     display: "inline-block",
                     padding: "2px 10px",

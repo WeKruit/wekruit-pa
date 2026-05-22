@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   buildSharedOnboardingOpeningPrompt,
+  buildSharedOnboardingPostPrescreenOpeningPrompt,
   buildHelloWekruitOpenerBody,
   parseHelloWekruitOpener,
   SHARED_ONBOARDING_QUESTIONS,
@@ -129,7 +130,38 @@ test("shared onboarding opening prompt carries Claire persona guidance without c
   assert.doesNotMatch(opener, /I am Claire|How may I assist|software_and_saas|job_title|tech_swe|timeline|dealbreaker/i)
 })
 
+test("post-prescreen opening prompt thanks for the role screen and avoids first-time resume copy", () => {
+  const promptContext = buildSharedOnboardingPromptContext({
+    user: {
+      displayName: "Sunny Li",
+      candidateContext: { location: "Chicago" },
+    },
+    parsedResume: {
+      experiences: [
+        { company: "YouTube", title: "Digital Content Creator", location: "Chicago" },
+      ],
+    },
+  })
+
+  const opener = buildSharedOnboardingPostPrescreenOpeningPrompt(promptContext, {
+    jobTitle: "Member of Technical Staff, macOS DevOps",
+    company: "Photon",
+  })
+
+  assert.match(opener, /completing the role screen/i)
+  assert.match(opener, /Member of Technical Staff, macOS DevOps/i)
+  assert.match(opener, /Photon/i)
+  assert.match(opener, /career growth, compensation, stability, mission, learning/i)
+  assert.doesNotMatch(opener, /Saw your resume come through/i)
+})
+
 test("free-form answers produce memory evidence and confident tag patches", () => {
+  const mainGoalRole = projectSharedOnboardingAnswer(
+    "main_goal",
+    "Growth and operations",
+  )
+  assert.deepEqual(mainGoalRole.tags.targetRoleFunction, ["marketing"])
+
   const industry = projectSharedOnboardingAnswer(
     "industry_interest",
     "Fintech, AI infrastructure, and maybe crypto infra are the sectors I keep coming back to.",
@@ -139,6 +171,15 @@ test("free-form answers produce memory evidence and confident tag patches", () =
     "artificial_intelligence_and_machine_learning",
     "financial_technology",
     "crypto_web3_blockchain",
+  ])
+
+  const roleLikeIndustry = projectSharedOnboardingAnswer(
+    "industry_interest",
+    "I would say marketing and product management.",
+  )
+  assert.deepEqual(roleLikeIndustry.tags.targetRoleFunction, [
+    "product_management",
+    "marketing",
   ])
 
   const location = projectSharedOnboardingAnswer(
@@ -151,6 +192,17 @@ test("free-form answers produce memory evidence and confident tag patches", () =
     "seattle_metro",
   ])
   assert.equal(location.evidence.relocationOpen, true)
+
+  const misplacedIndustry = projectSharedOnboardingAnswer(
+    "location_relocation",
+    "I’m especially drawn to fashion/lifestyle, entertainment, gaming, media, and consumer brands.",
+  )
+  assert.deepEqual(misplacedIndustry.tags.industrySector, [
+    "gaming_and_esports",
+    "media_and_entertainment",
+    "fashion_and_apparel",
+    "consumer_goods",
+  ])
 })
 
 test("recommendations become eligible only after Q5 is collected", () => {

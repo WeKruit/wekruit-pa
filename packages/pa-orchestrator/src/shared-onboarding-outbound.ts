@@ -12,9 +12,11 @@ import {
 } from "./run-connector-with-narration.js"
 import {
   buildSharedOnboardingOpeningPrompt,
+  buildSharedOnboardingPostPrescreenOpeningPrompt,
   buildSharedOnboardingPrompt,
   buildSharedOnboardingReask,
   isSharedOnboardingGreetingOrKickoff,
+  type SharedOnboardingPostPrescreenContext,
   type SharedOnboardingPromptContext,
   type SharedOnboardingQuestionId,
 } from "./shared-onboarding.js"
@@ -108,9 +110,13 @@ export async function resolveAgentAllowedConnectors(
   allowedConnectors: string[] | undefined
 ): Promise<string[]> {
   const base = allowedConnectors ?? []
+  if (base.length === 0) return []
+  const withRuntimeRequired = base.includes("set-daily-job-recommendation-subscription")
+    ? base
+    : [...base, "set-daily-job-recommendation-subscription"]
   const collabOn = await isCollabMatchToolEnabled(db, userId)
-  if (collabOn) return [...base]
-  return base.filter((name) => name !== "match-against-collab-jobs")
+  if (collabOn) return [...withRuntimeRequired]
+  return withRuntimeRequired.filter((name) => name !== "match-against-collab-jobs")
 }
 
 export async function isBehaviorChoreographerEnabled(
@@ -222,6 +228,7 @@ export async function persistSharedOnboardingSlangPicks(input: {
 /** Router-resolved compose contract — single chain from index handlers → agentic surface. */
 export type SharedOnboardingInboundKind =
   | "greeting_kickoff"
+  | "post_prescreen_kickoff"
   | "user_answer"
   | "runtime_event"
 
@@ -241,6 +248,7 @@ export type SharedOnboardingComposeContext = {
   mode: OnboardingSurfaceMode
   /** Router-resolved; compose must not re-infer lang from raw greeting on kickoff. */
   lang: "en" | "zh"
+  postPrescreenContext?: SharedOnboardingPostPrescreenContext | null
 }
 
 export function buildSharedOnboardingComposeContext(input: {
@@ -250,9 +258,10 @@ export function buildSharedOnboardingComposeContext(input: {
   mode: OnboardingSurfaceMode
   /** Used for lang when inboundKind is user_answer; ignored on kickoff/runtime. */
   userMessage?: string
+  postPrescreenContext?: SharedOnboardingPostPrescreenContext | null
 }): SharedOnboardingComposeContext {
   const lang =
-    input.inboundKind === "greeting_kickoff" || input.inboundKind === "runtime_event"
+    input.inboundKind === "greeting_kickoff" || input.inboundKind === "post_prescreen_kickoff" || input.inboundKind === "runtime_event"
       ? "en"
       : detectLang(input.userMessage ?? "") === "zh"
         ? "zh"
@@ -263,6 +272,7 @@ export function buildSharedOnboardingComposeContext(input: {
     slot: input.slot,
     mode: input.mode,
     lang,
+    postPrescreenContext: input.postPrescreenContext ?? null,
   }
 }
 
@@ -304,7 +314,7 @@ export type ComposedSharedOnboardingReply = {
 }
 
 function isKickoffComposeKind(kind: SharedOnboardingInboundKind): boolean {
-  return kind === "greeting_kickoff" || kind === "runtime_event"
+  return kind === "greeting_kickoff" || kind === "post_prescreen_kickoff" || kind === "runtime_event"
 }
 
 /** Greeting/kickoff must not become the agent user turn — bootstrap should ask canonical Q1. */
@@ -329,6 +339,15 @@ function buildSyntheticOnboardingUserInstruction(slot: SharedOnboardingQuestionI
 
 function buildSyntheticOpeningUserInstruction(slot: SharedOnboardingQuestionId): string {
   return `[ONBOARDING] Compose the opening welcome and ${sharedOnboardingSlotCopyLabel(slot)} onboarding question in warm SMS tone. The candidate already sent the required opener with their user id. Do not extract tags; only compose the SMS.`
+}
+
+function buildSyntheticPostPrescreenOpeningUserInstruction(
+  slot: SharedOnboardingQuestionId,
+  context?: SharedOnboardingPostPrescreenContext | null,
+): string {
+  const jobTitle = context?.jobTitle ? ` Role: ${context.jobTitle}.` : ""
+  const company = context?.company ? ` Company: ${context.company}.` : ""
+  return `[ONBOARDING] Compose the post-prescreen opening and ${sharedOnboardingSlotCopyLabel(slot)} onboarding question in warm SMS tone. The candidate just completed the role-fit screen.${jobTitle}${company} Do not extract tags; only compose the SMS. Do not use first-time resume-ingest copy.`
 }
 
 function sharedOnboardingSlotCopyLabel(slot: SharedOnboardingQuestionId): string {
@@ -410,9 +429,12 @@ export async function composeSharedOnboardingReply(
     input.mode === "ask" &&
     input.slot === "main_goal" &&
     isKickoffComposeKind(input.composeContext.inboundKind)
+  const postPrescreenOpening = opening && input.composeContext.inboundKind === "post_prescreen_kickoff"
   const template =
     opening
-      ? buildSharedOnboardingOpeningPrompt(input.promptContext)
+      ? postPrescreenOpening
+        ? buildSharedOnboardingPostPrescreenOpeningPrompt(input.promptContext, input.composeContext.postPrescreenContext)
+        : buildSharedOnboardingOpeningPrompt(input.promptContext)
       : input.mode === "reask"
       ? buildSharedOnboardingReask(input.slot, input.promptContext, {
           accept: false,
@@ -504,6 +526,7 @@ export async function composeSharedOnboardingReply(
       lang,
       tangentDetected: tangent.isTangent,
       opening,
+      postPrescreenContext: input.composeContext.postPrescreenContext,
     })
 
     // Adam 2026-05-19 voice polish §4 — when the outbound delivery planner
@@ -552,7 +575,9 @@ export async function composeSharedOnboardingReply(
     const syntheticUser =
       composeUserMessage ||
       (opening
-        ? buildSyntheticOpeningUserInstruction(input.slot)
+        ? postPrescreenOpening
+          ? buildSyntheticPostPrescreenOpeningUserInstruction(input.slot, input.composeContext.postPrescreenContext)
+          : buildSyntheticOpeningUserInstruction(input.slot)
         : buildSyntheticOnboardingUserInstruction(input.slot))
 
     const session =
@@ -628,6 +653,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
   turnId: string
   agent: AgentDef
   userMessage: string
+  suppressPrescreenOffer?: boolean
 }): Promise<{ recCount: number; reply: string }> {
   const lang =
     detectLang(`${input.userMessage}\n${input.event.body}`) === "zh" ? "zh" : "en"
@@ -652,7 +678,14 @@ export async function deliverSharedOnboardingJobRecs(input: {
       const { result } = await runConnectorWithNarration({
         db: input.db,
         connectorName,
-        args: { lang, requestedCount: 2, source: "shared_onboarding_complete" },
+        args: {
+          lang,
+          requestedCount: 2,
+          source: "shared_onboarding_complete",
+          roleFocus: null,
+          hardConstraintsActive: false,
+          allowBroadFallback: false,
+        },
         lang,
         source: "shared_onboarding_complete",
         ctx: {
@@ -699,6 +732,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
         sessionId: input.event.sessionId,
         toE164: input.event.from,
         lang,
+        suppressPrescreenOffer: input.suppressPrescreenOffer,
         enqueueOutbound: input.store.enqueueOutbound,
       })
       return { recCount: jobCount, reply: finalizeSharedOnboardingSmsText(text) }
@@ -710,7 +744,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
     }
   }
 
-  const recs = await gen(input.event.userId, lang, { force: true, requestedCount: 2 })
+  const recs = await gen(input.event.userId, lang, { force: true, requestedCount: 2, allowBroadFallback: false })
   const recCount = recs?.recCount ?? 0
   const reply =
     recs && recCount > 0
@@ -731,6 +765,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
     sessionId: input.event.sessionId,
     toE164: input.event.from,
     lang,
+    suppressPrescreenOffer: input.suppressPrescreenOffer,
     enqueueOutbound: input.store.enqueueOutbound,
   })
   return { recCount, reply: finalizeSharedOnboardingSmsText(text) }

@@ -116,6 +116,10 @@ export function resolveRuntimeJobRecRoleFocus(explicitFocus: unknown, userTags: 
   const explicit = normalizeRuntimeRoleFocus(explicitFocus)
   if (explicit.length > 0) return explicit
   if (!userTags || typeof userTags !== "object") return []
+  const targetRoleFunction = (userTags as { targetRoleFunction?: unknown }).targetRoleFunction
+  if (Array.isArray(targetRoleFunction)) {
+    return targetRoleFunction.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+  }
   return normalizeRuntimeRoleFocus((userTags as { targetRole?: unknown }).targetRole)
 }
 
@@ -148,6 +152,7 @@ function makeGenerateJobRecs(): NonNullable<
       requestedCount?: number
       roleFocus?: string[]
       collabPrescreenOnly?: boolean
+      allowBroadFallback?: boolean
     },
   ) => {
     if (!getApps().length) initializeApp()
@@ -204,7 +209,7 @@ function makeGenerateJobRecs(): NonNullable<
           userId,
           limit: opts?.collabPrescreenOnly ? 5 : roleFocus.length ? 20 : 10,
           lang: outputLang,
-          allowBroadFallback: true,
+          allowBroadFallback: opts?.allowBroadFallback !== false,
           ...(opts?.collabPrescreenOnly ? { collabPrescreenOnly: true } : {}),
           ...(roleFocus.length ? { presentationRoleFocus: roleFocus } : {}),
         },
@@ -216,6 +221,17 @@ function makeGenerateJobRecs(): NonNullable<
       )
       if (out.noUserTags) {
         logger.info("[job-recs] no pa-users.tags — fallback", { userId })
+        return null
+      }
+      if (
+        opts?.allowBroadFallback === false &&
+        out.needsOnboarding === true &&
+        out.missingAxes?.includes("targetRoleFunction")
+      ) {
+        logger.info("[job-recs] target role missing — skip broad candidate-visible recs", {
+          userId,
+          missingAxes: out.missingAxes,
+        })
         return null
       }
       const jobs = out.jobs ?? []

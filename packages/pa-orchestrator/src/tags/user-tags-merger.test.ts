@@ -218,6 +218,23 @@ test("mergeUserTags: experiences[0] used when workHistory absent (legacy v1 CV)"
   assert.equal(out.recentCompany, "Legacy Corp")
 })
 
+test("mergeUserTags: derives growth-ops targetRoleFunction from CV title before tech skills", () => {
+  const out = mergeUserTags({
+    cv: {
+      candidateProfile: { skills: ["Python", "SQL", "React"] },
+      workHistory: [
+        {
+          title: "Growth Operations & Retention Analyst",
+          company: "Luzo",
+          skills: ["Python", "SQL", "React"],
+        },
+      ],
+    },
+  })
+
+  assert.deepEqual(out.targetRoleFunction, ["marketing"])
+})
+
 test("mergeUserTags: workHistory entry with `role` (alt key) honored when title absent", () => {
   const out = mergeUserTags({
     cv: { workHistory: [{ role: "Lead Eng", company: "Acme" }] },

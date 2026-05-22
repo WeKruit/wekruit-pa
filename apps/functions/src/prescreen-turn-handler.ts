@@ -19,6 +19,7 @@ import {
   KeywordSetJudge,
   PreScreenPipeline,
   hardFilterClarifyText,
+  terminalText,
   type KeywordSetLlmCaller,
   type KeywordSetLlmOutput,
   type KeywordSpec,
@@ -621,7 +622,14 @@ function hasIncompleteOnboardingQuestion(user: Record<string, unknown> | undefin
     ? user.pipelineState as Record<string, unknown>
     : null
   if (pipeline?.completed === true) return false
-  return typeof pipeline?.currentQId === "string" || /^q_[a-z0-9_]+_asked$/.test(String(user.onboardingState ?? ""))
+  const onboardingState = String(user.onboardingState ?? "")
+  const onboardingStatus = String(user.onboardingStatus ?? "")
+  return (
+    typeof pipeline?.currentQId === "string" ||
+    /^q_[a-z0-9_]+_asked$/.test(onboardingState) ||
+    ["pending", "invited", "started", "in_progress"].includes(onboardingState) ||
+    ["pending", "invited", "started", "in_progress"].includes(onboardingStatus)
+  )
 }
 
 function isLikelyPrescreenContinuationReply(reply: string): boolean {
@@ -682,6 +690,11 @@ function isShortTerminalAck(reply: string): boolean {
   return /^(ok|okay|yes|yeah|yep|sure|alright|all right|go ahead|proceed|got it|thanks|thank you|sounds good|明白|收到|好的|谢谢|行|可以)[.!。！\s]*$/i.test(normalized)
 }
 
+function isPostPrescreenProceedReply(reply: string): boolean {
+  const normalized = reply.trim().toLowerCase()
+  return /^(yes|yeah|yep|sure|go ahead|proceed|continue|let'?s do it|start|可以|继续|好|好的|行)[.!。！\s]*$/i.test(normalized)
+}
+
 function isPostTerminalConstraintUpdate(reply: string): boolean {
   const normalized = reply.trim().toLowerCase()
   if (!normalized) return false
@@ -720,9 +733,21 @@ async function shouldHandleRecentTerminalSession(args: {
       error: err instanceof Error ? err.message : String(err),
     })
   }
-  if (args.terminal === "PASS" && !isExplicitNewIntentAfterTerminal(args.replyText)) return true
+  const onboardingIncomplete = hasIncompleteOnboardingQuestion(user)
+  if (args.terminal === "PASS") {
+    if (isPostPrescreenProceedReply(args.replyText) && onboardingIncomplete) {
+      args.log("prescreen.turn.recent_terminal_guard_yielded_to_onboarding", {
+        userId: args.userId,
+        onboardingState: user?.onboardingState ?? null,
+        currentQId: (user?.pipelineState as Record<string, unknown> | undefined)?.currentQId ?? null,
+        reason: "post_prescreen_proceed",
+      })
+      return false
+    }
+    if (!isExplicitNewIntentAfterTerminal(args.replyText)) return true
+  }
   if (isRecentTerminalFollowupReply(args.replyText)) return true
-  if (!hasIncompleteOnboardingQuestion(user)) {
+  if (!onboardingIncomplete) {
     args.log("prescreen.turn.recent_terminal_guard_yielded_to_runtime", {
       userId: args.userId,
       reason: "not_prescreen_followup",
@@ -1081,9 +1106,7 @@ function userExitSessionText(lang: "zh" | "en"): string {
 
 function recentTerminalSessionText(lang: "zh" | "en", terminal?: string | null): string {
   if (terminal === "PASS") {
-    return lang === "zh"
-      ? "这次岗位 screen 已经完成。我们会把你的回答发给 hiring manager；如果他们想继续推进，我们会再联系你。"
-      : "You're done for this role screen. We'll send your answers to the hiring manager and reach out if they want to move forward."
+    return terminalText("PASS", "recent_terminal_followup", lang)
   }
   return lang === "zh"
     ? "收到。这个岗位 screen 已经暂停了；我不会把这条新消息混进旧 screen。"
