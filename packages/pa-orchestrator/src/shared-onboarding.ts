@@ -893,6 +893,13 @@ function companyGoalTags(text: string): string[] {
   return tags
 }
 
+function mainGoalRoleFunction(text: string): ReturnType<typeof mapAnswerToRoleFunction> {
+  if (!/\b(growth\s+(and\s+)?(ops|operations|marketing|role|roles)|growth\s+marketing|gtm|go[-\s]?to[-\s]?market)\b/i.test(text)) {
+    return []
+  }
+  return mapAnswerToRoleFunction(text)
+}
+
 export function projectSharedOnboardingAnswer(
   questionId: SharedOnboardingQuestionId,
   answer: string,
@@ -911,8 +918,13 @@ export function projectSharedOnboardingAnswer(
 
   if (questionId === "main_goal") {
     const targetCompanyTags = companyGoalTags(trimmed)
+    const targetRoleFunction = mainGoalRoleFunction(trimmed)
     if (targetCompanyTags.length > 0) tags.targetCompanyTags = targetCompanyTags
     if (targetCompanyTags.length > 0) statedPreferences.nextCompanyGoals = targetCompanyTags
+    if (targetRoleFunction.length > 0) {
+      tags.targetRoleFunction = targetRoleFunction
+      statedPreferences.targetRoleFunction = targetRoleFunction
+    }
     if (opportunisticLocations.length > 0) {
       tags.targetLocations = opportunisticLocations
       statedPreferences.targetLocations = opportunisticLocations

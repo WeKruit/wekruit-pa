@@ -156,6 +156,12 @@ test("post-prescreen opening prompt thanks for the role screen and avoids first-
 })
 
 test("free-form answers produce memory evidence and confident tag patches", () => {
+  const mainGoalRole = projectSharedOnboardingAnswer(
+    "main_goal",
+    "Growth and operations",
+  )
+  assert.deepEqual(mainGoalRole.tags.targetRoleFunction, ["marketing"])
+
   const industry = projectSharedOnboardingAnswer(
     "industry_interest",
     "Fintech, AI infrastructure, and maybe crypto infra are the sectors I keep coming back to.",
