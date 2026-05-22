@@ -19,7 +19,7 @@
 // directly without writing audit events server-side.
 
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { collection, getDocs, limit, orderBy, query } from "firebase/firestore"
+import { collection, getDocs, limit, orderBy, query, where } from "firebase/firestore"
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { db } from "../lib/firebase.js"
@@ -37,6 +37,10 @@ import {
 import {
   classifyCandidateProfile,
   deriveCandidateSource,
+  isValidE164Phone,
+  matchesPhoneSearch,
+  normalizeCandidatePhoneLookup,
+  phoneSearchDigits,
   type CandidateClass,
   type ExternalSource,
   type SourceKind,
@@ -54,6 +58,8 @@ type LifecycleState =
   | "retained"
   | "opted_out"
   | "deleted"
+
+type IdentityFilter = "registered" | "phone_ready" | "phone_bound" | "sendblue_eligible"
 
 const LIFECYCLE_TONE: Record<LifecycleState, Tone> = {
   prospect: "neutral",
@@ -119,6 +125,13 @@ const SOURCE_ORDER: SourceKind[] = [
   "unknown",
 ]
 
+const IDENTITY_FILTERS: { key: IdentityFilter; label: string; tone: Tone }[] = [
+  { key: "registered", label: "Registered", tone: "live" },
+  { key: "phone_ready", label: "Phone ready", tone: "live" },
+  { key: "phone_bound", label: "Phone-bound", tone: "info" },
+  { key: "sendblue_eligible", label: "Sendblue eligible", tone: "hitl" },
+]
+
 type UserDoc = {
   id: string
   phoneE164?: string
@@ -137,6 +150,8 @@ type UserDoc = {
   latestResumeArtifactId?: string
   mem0UserId?: string
   testMode?: boolean
+  isDemo?: boolean
+  demoSourcePool?: string
   signupSource?: string
   source?: string
   createdAt?: string
@@ -148,6 +163,11 @@ type UserDoc = {
 type SourceLink = {
   candidateId?: string
   source?: ExternalSource
+}
+
+type IdentityIndex = {
+  registeredIds: Set<string>
+  phoneBoundIds: Set<string>
 }
 
 type Row = {
@@ -164,6 +184,14 @@ type Row = {
   emailMasked?: string
   phoneMasked?: string
   linkedinHandle?: string
+  registered: boolean
+  phoneReady: boolean
+  phoneBound: boolean
+  sendblueEligible: boolean
+}
+
+function emptyIdentityIndex(): IdentityIndex {
+  return { registeredIds: new Set(), phoneBoundIds: new Set() }
 }
 
 function maskEmail(email?: string): string | undefined {
@@ -284,17 +312,74 @@ async function loadSourceLinks(): Promise<Map<string, ExternalSource>> {
   return out
 }
 
+function addCandidateId(set: Set<string>, value: unknown) {
+  if (typeof value === "string" && value.trim()) set.add(value.trim())
+}
+
+async function loadIdentityIndex(): Promise<IdentityIndex> {
+  const out = emptyIdentityIndex()
+  const authSnap = await getDocs(query(collection(db(), PA_COLLECTIONS.candidateAuth), limit(2000)))
+  for (const d of authSnap.docs) {
+    const data = d.data() as { candidateId?: unknown; userId?: unknown; uid?: unknown }
+    addCandidateId(out.registeredIds, data.candidateId)
+    addCandidateId(out.registeredIds, data.userId)
+    addCandidateId(out.registeredIds, data.uid)
+  }
+
+  const handleSnap = await getDocs(
+    query(collection(db(), PA_COLLECTIONS.candidateHandles), where("kind", "==", "phone"), limit(2000))
+  )
+  for (const d of handleSnap.docs) {
+    const data = d.data() as { candidateId?: unknown; userId?: unknown; uid?: unknown }
+    addCandidateId(out.phoneBoundIds, data.candidateId)
+    addCandidateId(out.phoneBoundIds, data.userId)
+    addCandidateId(out.phoneBoundIds, data.uid)
+  }
+  return out
+}
+
 function candidateClassLabel(candidateClass: CandidateClass): string {
   if (candidateClass === "external_supply_prospect") return "External prospect"
   if (candidateClass === "legacy_sms_profile") return "Legacy SMS"
+  if (candidateClass === "demo_preview_profile") return "Demo / preview"
   if (candidateClass === "synthetic_test_profile") return "Synthetic test"
+  if (candidateClass === "internal_operator_profile") return "Internal"
   if (candidateClass === "incomplete_identity_artifact") return "Incomplete identity"
   return "Candidate account"
 }
 
-function buildRow(doc: UserDoc, sourceMap: Map<string, ExternalSource>): Row {
+function identitySummary(row: Row): string {
+  const parts: string[] = []
+  if (row.registered) parts.push("registered")
+  if (row.phoneReady) parts.push("phone ready")
+  if (row.phoneBound) parts.push("phone-bound")
+  return parts.join(" · ")
+}
+
+function isDemoTestOrInternal(candidateClass: CandidateClass): boolean {
+  return candidateClass === "demo_preview_profile" ||
+    candidateClass === "synthetic_test_profile" ||
+    candidateClass === "internal_operator_profile"
+}
+
+function matchesIdentityFilter(row: Row, filter: IdentityFilter): boolean {
+  if (filter === "registered") return row.registered
+  if (filter === "phone_ready") return row.phoneReady
+  if (filter === "phone_bound") return row.phoneBound
+  return row.sendblueEligible
+}
+
+function buildRow(
+  doc: UserDoc,
+  sourceMap: Map<string, ExternalSource>,
+  identityIndex: IdentityIndex
+): Row {
   const { handle, kind } = buildHandle(doc)
   const source = deriveCandidateSource(doc, sourceMap.get(doc.id))
+  const candidateClass = classifyCandidateProfile(source, doc)
+  const phoneReady = isValidE164Phone(doc.phoneE164)
+  const registered = identityIndex.registeredIds.has(doc.id)
+  const phoneBound = identityIndex.phoneBoundIds.has(doc.id)
   return {
     id: doc.id,
     doc,
@@ -302,13 +387,17 @@ function buildRow(doc: UserDoc, sourceMap: Map<string, ExternalSource>): Row {
     handleKind: kind,
     lifecycle: deriveLifecycle(doc),
     source,
-    candidateClass: classifyCandidateProfile(source, doc),
+    candidateClass,
     profilePct: computeProfilePct(doc),
     skills: skillsFromTags(doc.globalTags),
     lastActiveIso: doc.lifecycleUpdatedAt || doc.updatedAt || doc.createdAt,
     emailMasked: maskEmail(doc.email),
     phoneMasked: maskPhone(doc.phoneE164),
     linkedinHandle: linkedinHandleFrom(doc.linkedinUrl),
+    registered,
+    phoneReady,
+    phoneBound,
+    sendblueEligible: candidateClass === "candidate_account" && registered && phoneReady,
   }
 }
 
@@ -330,21 +419,33 @@ function handleIcon(kind: Row["handleKind"]): string {
 export function Candidates() {
   const navigate = useNavigate()
   const [rows, setRows] = useState<Row[]>([])
+  const [lookupRows, setLookupRows] = useState<Row[]>([])
+  const [sourceMap, setSourceMap] = useState<Map<string, ExternalSource>>(new Map())
+  const [identityIndex, setIdentityIndex] = useState<IdentityIndex>(emptyIdentityIndex)
   const [loading, setLoading] = useState(true)
+  const [lookupLoading, setLookupLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [stateFilter, setStateFilter] = useState<Set<LifecycleState>>(new Set())
   const [sourceFilter, setSourceFilter] = useState<Set<SourceKind>>(new Set())
+  const [identityFilter, setIdentityFilter] = useState<Set<IdentityFilter>>(new Set())
   const [hasReachable, setHasReachable] = useState(false)
   const [accountOnly, setAccountOnly] = useState(true)
+  const [includeDemoTestInternal, setIncludeDemoTestInternal] = useState(false)
   const [drawer, setDrawer] = useState<Row | null>(null)
 
   async function refresh() {
     setLoading(true)
     setErr(null)
     try {
-      const [docs, sourceMap] = await Promise.all([loadUserDocs(), loadSourceLinks()])
-      setRows(docs.map((d) => buildRow(d, sourceMap)))
+      const [docs, nextSourceMap, nextIdentityIndex] = await Promise.all([
+        loadUserDocs(),
+        loadSourceLinks(),
+        loadIdentityIndex(),
+      ])
+      setSourceMap(nextSourceMap)
+      setIdentityIndex(nextIdentityIndex)
+      setRows(docs.map((d) => buildRow(d, nextSourceMap, nextIdentityIndex)))
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
@@ -356,46 +457,129 @@ export function Candidates() {
     void refresh()
   }, [])
 
+  useEffect(() => {
+    const phone = normalizeCandidatePhoneLookup(search)
+    if (!phone) {
+      setLookupRows([])
+      setLookupLoading(false)
+      return
+    }
+    if (rows.some((r) => r.doc.phoneE164 === phone)) {
+      setLookupRows([])
+      setLookupLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setLookupLoading(true)
+    ;(async () => {
+      try {
+        const snap = await getDocs(
+          query(collection(db(), PA_COLLECTIONS.users), where("phoneE164", "==", phone), limit(10))
+        )
+        if (cancelled) return
+        setLookupRows(
+          snap.docs.map((d) =>
+            buildRow({ id: d.id, ...(d.data() as Omit<UserDoc, "id">) }, sourceMap, identityIndex)
+          )
+        )
+      } catch (e: unknown) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
+      } finally {
+        if (!cancelled) setLookupLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [identityIndex, rows, search, sourceMap])
+
   const counts = useMemo(() => {
     const byState = new Map<LifecycleState, number>()
     const bySource = new Map<SourceKind, number>()
-    let withProfile = 0
-    let withReachable = 0
+    const byIdentity = new Map<IdentityFilter, number>()
     let accountCandidates = 0
     let externalProspects = 0
     let legacySmsProfiles = 0
+    let demoPreviewProfiles = 0
     let syntheticTests = 0
+    let internalProfiles = 0
     let identityArtifacts = 0
-    for (const r of rows) {
+    let registered = 0
+    let phoneReady = 0
+    let phoneBound = 0
+    let sendblueEligible = 0
+
+    const countRows = includeDemoTestInternal
+      ? rows
+      : rows.filter((r) => !isDemoTestOrInternal(r.candidateClass))
+
+    for (const r of countRows) {
       byState.set(r.lifecycle, (byState.get(r.lifecycle) ?? 0) + 1)
       bySource.set(r.source, (bySource.get(r.source) ?? 0) + 1)
-      if (r.profilePct >= 50) withProfile++
-      if (r.doc.email || r.doc.phoneE164 || r.doc.linkedinUrl) withReachable++
+      if (r.registered) byIdentity.set("registered", (byIdentity.get("registered") ?? 0) + 1)
+      if (r.phoneReady) byIdentity.set("phone_ready", (byIdentity.get("phone_ready") ?? 0) + 1)
+      if (r.phoneBound) byIdentity.set("phone_bound", (byIdentity.get("phone_bound") ?? 0) + 1)
+      if (r.sendblueEligible) {
+        byIdentity.set("sendblue_eligible", (byIdentity.get("sendblue_eligible") ?? 0) + 1)
+      }
+    }
+    for (const r of rows) {
       if (r.candidateClass === "candidate_account") accountCandidates++
       else if (r.candidateClass === "external_supply_prospect") externalProspects++
       else if (r.candidateClass === "legacy_sms_profile") legacySmsProfiles++
+      else if (r.candidateClass === "demo_preview_profile") demoPreviewProfiles++
       else if (r.candidateClass === "synthetic_test_profile") syntheticTests++
+      else if (r.candidateClass === "internal_operator_profile") internalProfiles++
       else identityArtifacts++
+      if (!isDemoTestOrInternal(r.candidateClass)) {
+        if (r.registered) registered++
+        if (r.phoneReady) phoneReady++
+        if (r.phoneBound) phoneBound++
+        if (r.sendblueEligible) sendblueEligible++
+      }
     }
     return {
       byState,
       bySource,
-      withProfile,
-      withReachable,
+      byIdentity,
+      realRows: countRows.length,
       accountCandidates,
       externalProspects,
       legacySmsProfiles,
+      demoPreviewProfiles,
       syntheticTests,
+      internalProfiles,
       identityArtifacts,
+      registered,
+      phoneReady,
+      phoneBound,
+      sendblueEligible,
     }
-  }, [rows])
+  }, [includeDemoTestInternal, rows])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    return rows.filter((r) => {
+    const normalizedPhone = normalizeCandidatePhoneLookup(search)
+    const phoneDigits = phoneSearchDigits(search)
+    const merged = [...lookupRows, ...rows].filter(
+      (row, index, all) => all.findIndex((r) => r.id === row.id) === index
+    )
+    return merged.filter((r) => {
+      const phoneMatch =
+        (normalizedPhone !== null && r.doc.phoneE164 === normalizedPhone) ||
+        (phoneDigits !== null && matchesPhoneSearch(r.doc.phoneE164, search))
+      if (phoneMatch) return true
+      if (!includeDemoTestInternal && isDemoTestOrInternal(r.candidateClass)) return false
       if (accountOnly && r.candidateClass !== "candidate_account") return false
       if (stateFilter.size > 0 && !stateFilter.has(r.lifecycle)) return false
       if (sourceFilter.size > 0 && !sourceFilter.has(r.source)) return false
+      if (
+        identityFilter.size > 0 &&
+        !Array.from(identityFilter).some((filter) => matchesIdentityFilter(r, filter))
+      ) {
+        return false
+      }
       if (hasReachable && !(r.doc.email || r.doc.phoneE164 || r.doc.linkedinUrl)) return false
       if (!q) return true
       const hay = [
@@ -412,7 +596,17 @@ export function Candidates() {
         .toLowerCase()
       return hay.includes(q)
     })
-  }, [rows, search, stateFilter, sourceFilter, hasReachable, accountOnly])
+  }, [
+    accountOnly,
+    hasReachable,
+    identityFilter,
+    includeDemoTestInternal,
+    lookupRows,
+    rows,
+    search,
+    sourceFilter,
+    stateFilter,
+  ])
 
   const toggleState = (s: LifecycleState) => {
     const next = new Set(stateFilter)
@@ -426,13 +620,23 @@ export function Candidates() {
     else next.add(s)
     setSourceFilter(next)
   }
+  const toggleIdentity = (s: IdentityFilter) => {
+    const next = new Set(identityFilter)
+    if (next.has(s)) next.delete(s)
+    else next.add(s)
+    setIdentityFilter(next)
+  }
   const clearFilters = () => {
     setStateFilter(new Set())
     setSourceFilter(new Set())
+    setIdentityFilter(new Set())
     setHasReachable(false)
-    setAccountOnly(false)
+    setAccountOnly(true)
+    setIncludeDemoTestInternal(false)
     setSearch("")
   }
+
+  const phoneLookupActive = phoneSearchDigits(search) !== null
 
   return (
     <>
@@ -465,12 +669,42 @@ export function Candidates() {
 
       <MetricStrip
         items={[
-          { label: "Total", value: rows.length, tone: "info", sub: "in last 500 by createdAt" },
+          { label: "Loaded rows", value: rows.length, tone: "info", sub: "last 500 pa-users by createdAt" },
           {
-            label: "Accounts",
+            label: "Real users",
+            value: counts.realRows,
+            tone: counts.realRows > 0 ? "live" : "neutral",
+            sub: includeDemoTestInternal ? "including selected hidden rows" : "default visible pool",
+          },
+          {
+            label: "Candidate accounts",
             value: counts.accountCandidates,
             tone: counts.accountCandidates > 0 ? "live" : "neutral",
-            sub: "auth / SMS / candidate intake",
+            sub: "real candidate users",
+          },
+          {
+            label: "Registered",
+            value: counts.registered,
+            tone: counts.registered > 0 ? "live" : "neutral",
+            sub: "has pa-candidate-auth mapping",
+          },
+          {
+            label: "Phone ready",
+            value: counts.phoneReady,
+            tone: counts.phoneReady > 0 ? "live" : "neutral",
+            sub: "valid pa-users.phoneE164",
+          },
+          {
+            label: "Phone-bound",
+            value: counts.phoneBound,
+            tone: counts.phoneBound > 0 ? "live" : "neutral",
+            sub: "has phone handle index",
+          },
+          {
+            label: "Sendblue eligible",
+            value: counts.sendblueEligible,
+            tone: counts.sendblueEligible > 0 ? "live" : "neutral",
+            sub: "registered + phone ready",
           },
           {
             label: "External prospects",
@@ -485,28 +719,16 @@ export function Candidates() {
             sub: "old phone-only rows",
           },
           {
-            label: "Synthetic tests",
-            value: counts.syntheticTests,
-            tone: counts.syntheticTests > 0 ? "neutral" : "neutral",
-            sub: "excluded from account view",
+            label: "Demo / preview",
+            value: counts.demoPreviewProfiles,
+            tone: counts.demoPreviewProfiles > 0 ? "neutral" : "neutral",
+            sub: "hidden by default",
           },
           {
-            label: "Identity artifacts",
-            value: counts.identityArtifacts,
-            tone: counts.identityArtifacts > 0 ? "neutral" : "neutral",
-            sub: "no reachable handle yet",
-          },
-          {
-            label: "Reachable",
-            value: counts.withReachable,
-            tone: counts.withReachable > 0 ? "live" : "neutral",
-            sub: "has email / phone / linkedin",
-          },
-          {
-            label: "Profile ≥ 50%",
-            value: counts.withProfile,
-            tone: counts.withProfile > 0 ? "live" : "neutral",
-            sub: "completeness threshold",
+            label: "Test / internal",
+            value: counts.syntheticTests + counts.internalProfiles,
+            tone: counts.syntheticTests + counts.internalProfiles > 0 ? "neutral" : "neutral",
+            sub: "hidden unless included",
           },
           {
             label: "Opted out",
@@ -566,6 +788,18 @@ export function Candidates() {
               )
             })}
           </FilterRow>
+          <FilterRow label="Identity">
+            {IDENTITY_FILTERS.map(({ key, label, tone }) => {
+              const n = counts.byIdentity.get(key) ?? 0
+              if (n === 0) return null
+              const active = identityFilter.has(key)
+              return (
+                <Chip key={key} active={active} tone={tone} onClick={() => toggleIdentity(key)}>
+                  {label} <span style={{ opacity: 0.6 }}>· {n}</span>
+                </Chip>
+              )
+            })}
+          </FilterRow>
           <FilterRow label="Modifiers">
             <Chip
               active={accountOnly}
@@ -581,7 +815,14 @@ export function Candidates() {
             >
               Has reachable handle
             </Chip>
-            {(stateFilter.size + sourceFilter.size > 0 || hasReachable || accountOnly || search) && (
+            <Chip
+              active={includeDemoTestInternal}
+              tone="hitl"
+              onClick={() => setIncludeDemoTestInternal((v) => !v)}
+            >
+              Include demo/test/internal
+            </Chip>
+            {(stateFilter.size + sourceFilter.size + identityFilter.size > 0 || hasReachable || !accountOnly || includeDemoTestInternal || search) && (
               <button
                 type="button"
                 className="btn btn--ghost btn--sm"
@@ -593,6 +834,21 @@ export function Candidates() {
               </button>
             )}
           </FilterRow>
+          {phoneLookupActive && (
+            <div
+              style={{
+                marginLeft: 78,
+                color: "var(--ink-3)",
+                fontSize: 12,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Icon name="phone" size={12} />
+              Phone lookup overrides candidate, source, state, demo/test/internal filters.
+            </div>
+          )}
         </div>
       </Card>
 
@@ -601,7 +857,9 @@ export function Candidates() {
         count={filtered.length}
         actions={
           <span className="caption" style={{ color: "var(--ink-3)" }}>
-            {rows.length === filtered.length
+            {lookupLoading
+              ? "looking up phone…"
+              : rows.length === filtered.length
               ? `${rows.length} shown`
               : `${filtered.length} of ${rows.length} shown`}
           </span>
@@ -626,17 +884,32 @@ export function Candidates() {
               render: (r) => (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                   <Icon name={handleIcon((r as Row).handleKind)} size={13} style={{ color: "var(--ink-3)" }} />
-                  <span
-                    style={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      fontWeight: 500,
-                    }}
-                    title={(r as Row).id}
-                  >
-                    {(r as Row).handle}
-                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontWeight: 500,
+                      }}
+                      title={(r as Row).id}
+                    >
+                      {(r as Row).handle}
+                    </div>
+                    <div
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontFamily: "var(--font-mono)",
+                        fontSize: 10,
+                        color: "var(--ink-4)",
+                        marginTop: 2,
+                      }}
+                    >
+                      {(r as Row).doc.phoneE164 || (r as Row).emailMasked || shortUid((r as Row).id)}
+                    </div>
+                  </div>
                 </div>
               ),
             },
@@ -652,16 +925,21 @@ export function Candidates() {
             {
               key: "source",
               label: "Source",
-              render: (r) => (
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span style={{ fontSize: 12, color: "var(--ink-2)" }}>
-                    {SOURCE_LABEL[(r as Row).source]}
-                  </span>
-                  <span style={{ fontSize: 10, color: "var(--ink-4)" }}>
-                    {candidateClassLabel((r as Row).candidateClass)}
-                  </span>
-                </div>
-              ),
+              render: (r) => {
+                const row = r as Row
+                const identity = identitySummary(row)
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 12, color: "var(--ink-2)" }}>
+                      {SOURCE_LABEL[row.source]}
+                    </span>
+                    <span style={{ fontSize: 10, color: "var(--ink-4)" }}>
+                      {candidateClassLabel(row.candidateClass)}
+                      {identity ? ` · ${identity}` : ""}
+                    </span>
+                  </div>
+                )
+              },
             },
             {
               key: "profile",
@@ -880,12 +1158,16 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
           {doc.piiConsentAt && <StatusPill tone="live">PII consent</StatusPill>}
           {doc.latestResumeArtifactId && <StatusPill tone="info">Resume on file</StatusPill>}
           {doc.mem0UserId && <StatusPill tone="info">mem0</StatusPill>}
+          {row.registered && <StatusPill tone="live">Registered</StatusPill>}
+          {row.phoneReady && <StatusPill tone="live">Phone ready</StatusPill>}
+          {row.phoneBound && <StatusPill tone="info">Phone-bound</StatusPill>}
+          {row.sendblueEligible && <StatusPill tone="hitl">Sendblue eligible</StatusPill>}
         </div>
 
         <Card title="Reachable handles">
           <DrawerKV k="Display name" v={doc.displayName || "—"} />
-          <DrawerKV k="Email" v={row.emailMasked || "—"} mono={!!row.emailMasked} />
-          <DrawerKV k="Phone" v={row.phoneMasked || "—"} mono={!!row.phoneMasked} />
+          <DrawerKV k="Email" v={doc.email || "—"} mono={!!doc.email} />
+          <DrawerKV k="Phone" v={doc.phoneE164 || "—"} mono={!!doc.phoneE164} />
           <DrawerKV
             k="LinkedIn"
             v={

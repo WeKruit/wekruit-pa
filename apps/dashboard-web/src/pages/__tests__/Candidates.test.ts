@@ -4,7 +4,10 @@ import test from "node:test"
 import {
   classifyCandidateProfile,
   deriveCandidateSource,
+  isDemoPreviewProfile,
   isSyntheticTestProfile,
+  matchesPhoneSearch,
+  normalizeCandidatePhoneLookup,
 } from "../Candidates.helpers.js"
 
 test("Candidates classifies explicit testMode users as synthetic", () => {
@@ -84,7 +87,21 @@ test("Candidates keeps Wekruit operator docs out of candidate account counts", (
   }
   const source = deriveCandidateSource(doc)
   assert.equal(source, "bulk_resume")
-  assert.equal(classifyCandidateProfile(source, doc), "incomplete_identity_artifact")
+  assert.equal(classifyCandidateProfile(source, doc), "internal_operator_profile")
+})
+
+test("Candidates classifies demo layoff preview rows outside candidate accounts", () => {
+  const doc = {
+    id: "demo_layoff_025",
+    phoneE164: "+1555000025",
+    source: "WeKruit_Laid_Off",
+    isDemo: true,
+    demoSourcePool: "TALENT_POOL_v2",
+  }
+  const source = deriveCandidateSource(doc)
+  assert.equal(isDemoPreviewProfile(doc), true)
+  assert.equal(source, "layoff")
+  assert.equal(classifyCandidateProfile(source, doc), "demo_preview_profile")
 })
 
 test("Candidates keeps external supply prospects out of account counts", () => {
@@ -107,4 +124,17 @@ test("Candidates treats empty identity-created shells as incomplete artifacts", 
   const source = deriveCandidateSource(doc)
   assert.equal(source, "unknown")
   assert.equal(classifyCandidateProfile(source, doc), "incomplete_identity_artifact")
+})
+
+test("Candidates phone search matches partial and formatted phone inputs", () => {
+  const phone = "+14243201960"
+  assert.equal(normalizeCandidatePhoneLookup("14243201960"), "+14243201960")
+  assert.equal(normalizeCandidatePhoneLookup("(424) 320-1960"), "+14243201960")
+  assert.equal(normalizeCandidatePhoneLookup("+14243201960"), "+14243201960")
+  assert.equal(normalizeCandidatePhoneLookup("424"), null)
+  assert.equal(matchesPhoneSearch(phone, "424"), true)
+  assert.equal(matchesPhoneSearch(phone, "14243201960"), true)
+  assert.equal(matchesPhoneSearch(phone, "(424) 320-1960"), true)
+  assert.equal(matchesPhoneSearch(phone, "+14243201960"), true)
+  assert.equal(matchesPhoneSearch(phone, "999"), false)
 })
