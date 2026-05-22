@@ -47,6 +47,7 @@ import {
 import { roleToIndustryBuckets, type IndustryEnumBucket } from "../voice/role-to-industry.js"
 import type { CanonicalRole } from "../onboarding.js"
 import type { StatedPreferences } from "@pa/core-types"
+import { mapAnswerToRoleFunction } from "./onboarding-mappers.js"
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -788,6 +789,12 @@ function buildWorkHistorySummary(cv: UserTagsCvInput | undefined): string | unde
   return out
 }
 
+function deriveTargetRoleFunctionFromCvTitle(title: string | undefined): UserTags["targetRoleFunction"] {
+  if (!title) return undefined
+  const mapped = mapAnswerToRoleFunction(title)
+  return mapped.length > 0 ? mapped : undefined
+}
+
 /** Map StatedPreferences.visaStatus → tag-schema visa token. */
 function mapVisaStatus(v: StatedPreferences["visaStatus"]): TagsVisaStatus | undefined {
   if (v == null) return undefined
@@ -865,6 +872,10 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   const targetRole = Array.isArray(statedPreferences?.targetRole)
     ? [...statedPreferences.targetRole]
     : undefined
+  const targetRoleFunction =
+    targetRole && targetRole.length > 0
+      ? undefined
+      : deriveTargetRoleFunctionFromCvTitle(recentRoleTitle)
   const yoeRange =
     Array.isArray(statedPreferences?.yoeRange) && statedPreferences.yoeRange.length === 2
       ? ([statedPreferences.yoeRange[0], statedPreferences.yoeRange[1]] as [number, number])
@@ -941,6 +952,7 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   if (embeddingModel) out.embeddingModel = embeddingModel
   if (embeddingComputedAt) out.embeddingComputedAt = embeddingComputedAt
   if (targetRole) out.targetRole = targetRole
+  if (targetRoleFunction) out.targetRoleFunction = targetRoleFunction
   if (yoeRange) out.yoeRange = yoeRange
   if (visaStatus) out.visaStatus = visaStatus
   if (prefersStartup) out.prefersStartup = prefersStartup
