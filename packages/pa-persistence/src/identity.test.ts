@@ -221,6 +221,36 @@ test("claimCandidateProfile succeeds without phoneE164 on self profile write", a
   assert.equal("phoneMasked" in stored, false)
 })
 
+test("claimCandidateProfile normalizes bare LinkedIn URL before self profile validation", async () => {
+  const { db, store } = makeFakeFirestore()
+  const resolved = await resolveCandidateIdentity(db, {
+    extractedEmail: "sreya@example.com",
+    source: "resume",
+    now,
+  })
+  assert.equal(resolved.outcome, "created")
+  if (resolved.outcome !== "created") return
+  await db.collection(PA_COLLECTIONS.users).doc(resolved.candidateId).set(
+    {
+      linkedinUrl: "www.linkedin.com/in/sreya-gopaladasu-b77540211",
+    },
+    { merge: true },
+  )
+
+  const claimed = await claimCandidateProfile(db, {
+    firebaseUid: "firebase-linkedin-bare",
+    email: "sreya@example.com",
+    browserUid: "browser-linkedin-bare",
+    now,
+  })
+
+  assert.equal(claimed.candidateId, resolved.candidateId)
+  assert.equal(
+    store.get(PA_COLLECTIONS.candidateSelfProfiles)!.get(resolved.candidateId)!.linkedinUrl,
+    "https://www.linkedin.com/in/sreya-gopaladasu-b77540211",
+  )
+})
+
 test("claimCandidateProfile adopts a prelinked layoff candidate instead of creating a second profile", async () => {
   const { db, store } = makeFakeFirestore()
   store.get(PA_COLLECTIONS.users)!.set("layoff-cand-1", {

@@ -228,6 +228,38 @@ test("runCandidateListMatches maps employer visible state to candidate passed", 
   assert.doesNotMatch(JSON.stringify(result), /employerVisibleProfileId|evp-cand-1-job-pass/)
 })
 
+test("runCandidateListMatches maps terminal PASS session to candidate passed before employer review commit", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
+    firebaseUid: "firebase-1",
+    candidateId: "cand-1",
+  })
+  await mfs.collection("pa-candidate-job-states").doc("cand-1__job-pass").set({
+    id: "cand-1__job-pass",
+    candidateId: "cand-1",
+    jobId: "job-pass",
+    state: "prescreen_started",
+    prescreenSessionId: "ps-pass",
+  })
+  await mfs.collection("pa-prescreen-sessions").doc("ps-pass").set({
+    sessionId: "ps-pass",
+    userId: "cand-1",
+    jobId: "job-pass",
+    terminal: "PASS",
+    terminalActionPendingReview: true,
+  })
+  await mfs.collection("pa-jobs").doc("job-pass").set({
+    publicVisible: true,
+    prescreenConfig: { jobTitle: "GTM & Growth Marketing Manager", company: "Paradigm" },
+  })
+
+  const result = await runCandidateListMatches({}, { uid: "firebase-1" }, { db: asFirestore(mfs) })
+
+  assert.equal(result.matches.length, 1)
+  assert.equal(result.matches[0]!.status, "passed")
+  assert.doesNotMatch(JSON.stringify(result), /terminalActionPendingReview|ps-pass/)
+})
+
 test("runCandidateListMatches suppresses non-public jobs", async () => {
   const mfs = new MockFirestore()
   await mfs.collection("pa-candidate-auth").doc("firebase-1").set({

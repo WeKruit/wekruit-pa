@@ -471,8 +471,8 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(result.sessionId, "ps_done")
     assert.equal(result.terminal, "HARD_STOP")
     assert.equal(sent.length, 1)
-    assert.match(sent[0] ?? "", /better-fit roles/i)
-    assert.match(sent[0] ?? "", /Want me to do that/i)
+    assert.match(sent[0] ?? "", /help find jobs/i)
+    assert.match(sent[0] ?? "", /Do you want to proceed/i)
     const session = docs.get("pa-prescreen-sessions/ps_done")?.data
     assert.equal(typeof session?.postTerminalFollowupAckAt, "string")
     const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
@@ -499,11 +499,11 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
 
     assert.equal(second.handled, true)
     assert.equal(sent.length, 2, "second post-terminal follow-up should stay in retention instead of normal onboarding")
-    assert.match(sent[1] ?? "", /better-fit roles/i)
-    assert.match(sent[1] ?? "", /Want me to do that/i)
+    assert.match(sent[1] ?? "", /help find jobs/i)
+    assert.match(sent[1] ?? "", /Do you want to proceed/i)
   })
 
-  it("turns a post-interview daily-match yes into daily opt-in plus shared onboarding Q1", async () => {
+  it("turns a post-interview proceed yes into shared onboarding Q1 without daily subscription consent", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({
       "pa-users/u1": {
@@ -521,7 +521,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
         createdAt: now,
         updatedAt: now,
         postPrescreenRetention: {
-          stage: "await_daily_opt_in",
+          stage: "await_basic_onboarding",
           terminal: "PASS",
           startedAt: now,
           updatedAt: now,
@@ -551,16 +551,17 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
 
     assert.equal(result.handled, true)
     assert.equal(sent.length, 1)
-    assert.match(sent[0] ?? "", /good matches each day/i)
+    assert.match(sent[0] ?? "", /thanks for completing the role screen/i)
     assert.match(sent[0] ?? "", /what matters most/i)
 
     const user = docs.get("pa-users/u1")?.data
-    assert.equal((user?.dailyJobRecSubscribe as { optedIn?: boolean } | undefined)?.optedIn, true)
+    assert.equal(user?.dailyJobRecSubscribe, undefined)
     assert.equal((user?.sharedOnboarding as { status?: string } | undefined)?.status, "active")
     assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.kind, "shared_onboarding")
     assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.status, "active")
     const session = docs.get("pa-prescreen-sessions/ps_done")?.data
     assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "onboarding_started")
+    assert.equal((session?.postPrescreenRetention as { basicOnboardingOptIn?: boolean } | undefined)?.basicOnboardingOptIn, true)
   })
 
   it("runs safety before a recent terminal prescreen follow-up can claim private-data requests", async () => {
@@ -964,8 +965,9 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(result.handled, true)
     assert.equal(result.sessionId, "ps_latest")
     assert.equal(sent.length, 1)
-    assert.match(sent[0] ?? "", /better-fit roles/i)
-    assert.match(sent[0] ?? "", /Want me to do that/i)
+    assert.match(sent[0] ?? "", /help find jobs/i)
+    assert.match(sent[0] ?? "", /Do you want to proceed/i)
+    assert.doesNotMatch(sent[0] ?? "", /daily/i)
     const latest = docs.get("pa-prescreen-sessions/ps_latest")?.data
     assert.equal(typeof latest?.postTerminalFollowupAckAt, "string")
   })
@@ -1230,7 +1232,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     const session = docs.get("pa-prescreen-sessions/ps_active")?.data
     assert.equal(session?.terminalActionPendingReview, true)
     assert.equal(typeof session?.evaluationAttemptId, "string")
-    assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "await_daily_opt_in")
+    assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "await_basic_onboarding")
     const user = docs.get("pa-users/u1")?.data
     assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.kind, "job_prescreen")
     assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.status, "ended")

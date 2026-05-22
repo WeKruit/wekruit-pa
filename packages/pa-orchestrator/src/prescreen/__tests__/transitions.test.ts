@@ -252,17 +252,19 @@ test("Phase 76: setTerminal clears currentQId and stamps reason", () => {
 
 test("PASS terminal text does not duplicate employer follow-up timing", () => {
   const text = terminalText("PASS", "passed", "en")
-  assert.match(text, /role screen/i)
-  assert.match(text, /job matches daily/i)
-  assert.match(text, /Want me to do that/i)
+  assert.match(text, /role-fit screen is complete/i)
+  assert.match(text, /hiring manager/i)
+  assert.match(text, /Do you want to proceed/i)
+  assert.doesNotMatch(text, /daily/i)
   assert.doesNotMatch(text, /business days/i)
   assert.doesNotMatch(text, /employer will follow/i)
 })
 
 test("HARD_STOP terminal text is a soft pause, not an abrupt rejection", () => {
   const text = terminalText("HARD_STOP", "must-have failed", "en")
-  assert.match(text, /don’t want to force-fit/i)
-  assert.match(text, /better-fit roles/i)
-  assert.match(text, /Want me to do that/i)
+  assert.match(text, /do not want to force-fit/i)
+  assert.match(text, /help find jobs/i)
+  assert.match(text, /Do you want to proceed/i)
+  assert.doesNotMatch(text, /daily/i)
   assert.doesNotMatch(text, /didn't align/i)
 })

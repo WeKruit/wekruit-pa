@@ -109,6 +109,15 @@ export const ResumeArtifactStatusSchema = z.enum([
 ])
 export type ResumeArtifactStatus = z.infer<typeof ResumeArtifactStatusSchema>
 
+export const OptionalHttpUrlSchema = z.preprocess((value) => {
+  if (typeof value !== "string") return value
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`
+}, z.string().url().optional())
+
 export const CandidateGlobalTagsSchema = z.object({
   roleFunction: z.array(RoleFunctionSchema).default([]),
   skills: SkillsListSchema.default([]),
@@ -148,7 +157,7 @@ export const CandidateProfileMarketplaceFieldsSchema = z.object({
   level1CollectedAt: TimestampSchema.optional(),
   mem0UserId: z.string().min(1).optional(),
   latestResumeArtifactId: z.string().min(1).optional(),
-  linkedinUrl: z.string().url().optional(),
+  linkedinUrl: OptionalHttpUrlSchema,
   outreach: z
     .object({
       status: z.enum(["allowed", "cooldown", "paused", "opted_out"]).default("allowed"),
@@ -214,7 +223,7 @@ export const CandidateSelfProfileSchema = z.object({
   resumeStatus: ResumeArtifactStatusSchema.optional(),
   profileSummary: z.string().max(4_000).optional(),
   globalTags: CandidateGlobalTagsSchema.optional(),
-  linkedinUrl: z.string().url().optional(),
+  linkedinUrl: OptionalHttpUrlSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema.optional(),
 })

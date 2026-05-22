@@ -645,49 +645,15 @@ function detectSimpleYesNo(body: string): "yes" | "no" | "ambiguous" {
   return "ambiguous"
 }
 
-function postPrescreenDailyPrompt(lang: "zh" | "en", terminal?: string | null): string {
+function postPrescreenOnboardingPrompt(lang: "zh" | "en", terminal?: string | null): string {
   if (lang === "zh") {
     return terminal === "PASS"
-      ? "这次岗位初筛信息已经收齐，我会把回答交给 hiring manager。之后我也可以每天帮你留意更匹配的新岗位并发给你。要我这样做吗？"
-      : "这次 screen 先到这里。之后我也可以每天帮你留意更匹配的新岗位并发给你。要我这样做吗？"
+      ? "感谢回答，这次岗位初筛已经完成。下一步如果匹配合适，我会直接帮你安排和 hiring manager 沟通。同时我也可以继续帮你找更符合期待的岗位，不过需要先更了解你一点。要继续吗？"
+      : "这次 screen 先到这里。我可以继续帮你找更符合期待的岗位，不过需要先更了解你一点。要继续吗？"
   }
   return terminal === "PASS"
-    ? "Thanks, I have enough for this role screen and I’ll send it to the hiring manager. I can also keep an eye out and text you good job matches daily. Want me to do that?"
-    : "Thanks for taking the time. I can keep an eye out for better-fit roles and text you daily when something looks strong. Want me to do that?"
-}
-
-async function persistDailySubscribeOptIn(args: {
-  db: Firestore
-  userId: string
-  optedIn: boolean
-  nowIso: string
-}): Promise<void> {
-  await args.db.collection(PA_COLLECTIONS.users).doc(args.userId).set(
-    {
-      dailyJobRecSubscribe: args.optedIn
-        ? {
-            optedIn: true,
-            optedInAt: args.nowIso,
-            source: "post_prescreen_retention",
-          }
-        : {
-            optedIn: false,
-            optedOutAt: args.nowIso,
-            source: "post_prescreen_retention",
-          },
-      updatedAt: args.nowIso,
-    },
-    { merge: true },
-  )
-  await args.db.collection("pa-job-profiles").doc(args.userId).set(
-    {
-      userId: args.userId,
-      status: args.optedIn ? "active" : "paused",
-      updatedAt: args.nowIso,
-      source: "post_prescreen_retention",
-    },
-    { merge: true },
-  )
+    ? "Thanks for your answers — the role-fit screen is complete. For the next step, I’ll schedule you directly with the hiring manager once there’s a match. Meanwhile, I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
+    : "Thanks for taking the time. I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
 }
 
 async function markUserPrescreenWorkSessionEnded(args: {
@@ -728,14 +694,14 @@ async function startSharedOnboardingAfterPrescreen(args: {
   const userSnap = await userRef.get()
   const user = (userSnap.data() ?? {}) as Record<string, unknown>
   if (user.onboardingState === "complete" || user.onboardingStatus === "complete") {
-    const doneText = "Great — I’ll keep an eye out and text you good matches each day. I already have enough context for now; if your target changes, just tell me here."
+    const doneText = "Great — I already have your basic profile context, so there’s nothing else you need to answer right now. I’ll reach out when there’s a strong next match."
     await args.sendSms({
       to: args.toE164,
       content: doneText,
       userId: args.userId,
       db: args.db,
       runtimeSource: "pa_prescreen_retention_onboarding",
-      idempotencyKey: `prescreen_retention_daily_only:${args.sessionId}`,
+      idempotencyKey: `prescreen_retention_onboarding_complete:${args.sessionId}`,
     })
     return doneText
   }
@@ -768,7 +734,7 @@ async function startSharedOnboardingAfterPrescreen(args: {
     { merge: true },
   )
   const q1 = buildSharedOnboardingPrompt("main_goal", promptContext)
-  const text = `Great — I’ll keep an eye out and text you good matches each day. I’ll use what you shared in this screen too. ${q1}`
+  const text = `Great — thanks for completing the role screen. I’ll use what you shared there, and I just need a bit more context for future matches. ${q1}`
   await args.sendSms({
     to: args.toE164,
     content: text,
@@ -948,7 +914,7 @@ export async function runPrescreenTurnIfActive(
       qId: "terminal",
       reply: args.replyText,
       action: {
-        kind: retentionStage === "await_daily_opt_in" || !alreadyAcked
+        kind: retentionStage === "await_basic_onboarding" || retentionStage === "await_daily_opt_in" || !alreadyAcked
           ? "post_prescreen_retention"
           : "post_terminal_followup",
         terminal: lookup.terminal,
@@ -958,10 +924,10 @@ export async function runPrescreenTurnIfActive(
     })
 
     let text: string | undefined
-    if (retentionStage === "await_daily_opt_in" || !alreadyAcked) {
+    if (retentionStage === "await_basic_onboarding" || retentionStage === "await_daily_opt_in" || !alreadyAcked) {
       const yn = detectSimpleYesNo(args.replyText)
       if (yn === "ambiguous") {
-        text = postPrescreenDailyPrompt(args.lang ?? "en", lookup.terminal)
+        text = postPrescreenOnboardingPrompt(args.lang ?? "en", lookup.terminal)
         try {
           await sendSms({
             to: args.toE164,
@@ -976,7 +942,7 @@ export async function runPrescreenTurnIfActive(
               postTerminalFollowupAckAt: nowIso,
               updatedAt: nowIso,
               postPrescreenRetention: {
-                stage: "await_daily_opt_in",
+                stage: "await_basic_onboarding",
                 terminal: lookup.terminal,
                 startedAt: typeof retention?.startedAt === "string" ? retention.startedAt : nowIso,
                 updatedAt: nowIso,
@@ -991,12 +957,6 @@ export async function runPrescreenTurnIfActive(
           })
         }
       } else {
-        await persistDailySubscribeOptIn({
-          db: args.db,
-          userId: args.userId,
-          optedIn: yn === "yes",
-          nowIso,
-        })
         if (yn === "yes") {
           try {
             text = await startSharedOnboardingAfterPrescreen({
@@ -1009,7 +969,7 @@ export async function runPrescreenTurnIfActive(
               sessionId: lookup.sessionId,
             })
           } catch (err) {
-            text = "Great — I’ll keep an eye out and text you good matches each day. What kind of next role would actually be worth your time?"
+            text = "Great — thanks for completing the role screen. What kind of next role would actually be worth your time?"
             log("prescreen.turn.post_prescreen_onboarding_start_failed", {
               sessionId: lookup.sessionId,
               error: err instanceof Error ? err.message : String(err),
@@ -1024,7 +984,7 @@ export async function runPrescreenTurnIfActive(
             })
           }
         } else {
-          text = "No problem. I won’t send daily roles. If you want help later, just tell me what you’re looking for here."
+          text = "No problem. We’ll keep this role screen complete. If you want help with broader matches later, just tell me what you’re looking for here."
           try {
             await sendSms({
               to: args.toE164,
@@ -1046,9 +1006,9 @@ export async function runPrescreenTurnIfActive(
             postTerminalFollowupAckAt: nowIso,
             updatedAt: nowIso,
             postPrescreenRetention: {
-              stage: yn === "yes" ? "onboarding_started" : "daily_declined",
+              stage: yn === "yes" ? "onboarding_started" : "onboarding_declined",
               terminal: lookup.terminal,
-              dailyOptIn: yn === "yes",
+              basicOnboardingOptIn: yn === "yes",
               startedAt: typeof retention?.startedAt === "string" ? retention.startedAt : nowIso,
               updatedAt: nowIso,
             },
@@ -1335,7 +1295,7 @@ export async function runPrescreenTurnIfActive(
       await args.db.collection("pa-prescreen-sessions").doc(sessionId).set(
         {
           postPrescreenRetention: {
-            stage: "await_daily_opt_in",
+            stage: "await_basic_onboarding",
             terminal: result.action.terminal,
             startedAt: terminalAt,
             updatedAt: terminalAt,
@@ -1368,5 +1328,5 @@ function userExitSessionText(lang: "zh" | "en"): string {
 }
 
 function recentTerminalSessionText(lang: "zh" | "en", terminal?: string | null): string {
-  return postPrescreenDailyPrompt(lang, terminal)
+  return postPrescreenOnboardingPrompt(lang, terminal)
 }

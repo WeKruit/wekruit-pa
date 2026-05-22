@@ -139,8 +139,8 @@ export function userExitSessionText(lang: Lang): string {
 
 export function recentTerminalSessionText(lang: Lang): string {
   return lang === "zh"
-    ? "收到。这次 screen 先到这里；之后我也可以每天帮你留意更匹配的新岗位并发给你。要我这样做吗？"
-    : "Got it. This role screen is done for now. I can also keep an eye out for better-fit roles and text you daily when something looks strong. Want me to do that?"
+    ? "收到。这次 screen 已经到这里。我也可以继续帮你找更符合期待的岗位，不过需要先更了解你一点。要继续吗？"
+    : "Got it. This role screen is done for now. I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */

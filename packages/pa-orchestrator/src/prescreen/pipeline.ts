@@ -846,12 +846,12 @@ export function terminalText(
   switch (terminal) {
     case "PASS":
       return lang === "zh"
-        ? "感谢回答，这次岗位初筛的信息已经收齐。我会把你的回答交给 hiring manager。之后我也可以每天帮你留意更匹配的新岗位并发给你。要我这样做吗？"
-        : "Thanks, I have enough for this role screen and I’ll send it to the hiring manager. I can also keep an eye out and text you good job matches daily. Want me to do that?"
+        ? "感谢回答，这次岗位初筛已经完成。下一步如果匹配合适，我会直接帮你安排和 hiring manager 沟通。同时我也可以继续帮你找更符合期待的岗位，不过需要先更了解你一点。要继续吗？"
+        : "Thanks for your answers — the role-fit screen is complete. For the next step, I’ll schedule you directly with the hiring manager once there’s a match. Meanwhile, I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
     case "FAIL":
       return lang === "zh"
-        ? "感谢花时间。这次可能不是最合适的岗位，但我可以继续帮你留意更匹配的机会，看到合适的每天发给你。要我这样做吗？"
-        : "Thanks for taking the time. This one may not be the right fit, but I can keep an eye out for better roles and text you daily when something looks strong. Want me to do that?"
+        ? "感谢花时间。这次可能不是最合适的岗位，但我可以继续帮你找更符合期待的机会，不过需要先更了解你一点。要继续吗？"
+        : "Thanks for taking the time. This one may not be the right fit, but I can help find jobs that meet your expectations. I need to understand you a bit better first. Do you want to proceed?"
     case "HARD_STOP":
       return terminalHardStopText(lang)
     case "PAUSE":
@@ -970,8 +970,8 @@ function clampClarifyText(text: string): string {
 
 function terminalHardStopText(lang: Lang): string {
   return lang === "zh"
-    ? "谢谢，这些信息有帮助。我不想硬把你往这个岗位上套；这个 screen 先停在这里。之后我可以每天帮你留意更匹配的新岗位。要我这样做吗？"
-    : "Thanks, that helps. I don’t want to force-fit you into this exact role, so I’ll stop this screen here. I can keep an eye out for better-fit roles and text you daily. Want me to do that?"
+    ? "谢谢，这些信息有帮助。我不想硬把你往这个岗位上套；这个 screen 先停在这里。我可以继续帮你找更符合期待的岗位，不过需要先更了解你一点。要继续吗？"
+    : "Thanks, that helps. I do not want to force-fit you into this exact role, so I’ll stop this screen here. I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
 }
 
 function terminalPauseText(lang: Lang): string {
