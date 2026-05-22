@@ -75,6 +75,22 @@ function maskPhone(phone: string): string {
   return phone.length <= 5 ? "***" : `${phone.slice(0, 3)}***${phone.slice(-2)}`
 }
 
+function normalizeOptionalUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`
+  try {
+    const parsed = new URL(withProtocol)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined
+    return parsed.toString()
+  } catch {
+    return undefined
+  }
+}
+
 async function writeAppendOnlyDoc<T>(
   db: Firestore,
   collectionName: string,
@@ -468,7 +484,7 @@ export async function writeCandidateSelfProfile(
     latestResumeArtifactId: input.marketplaceFields?.latestResumeArtifactId,
     profileSummary: input.profileSummary || undefined,
     globalTags: input.marketplaceFields?.globalTags,
-    linkedinUrl: input.marketplaceFields?.linkedinUrl,
+    linkedinUrl: normalizeOptionalUrl(input.marketplaceFields?.linkedinUrl),
     createdAt: ts,
     updatedAt: ts,
   })

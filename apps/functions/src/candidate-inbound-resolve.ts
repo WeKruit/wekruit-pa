@@ -14,6 +14,13 @@ import { isE164 } from "./sendblue/handle-format.js"
  * `identity_conflict:`.
  */
 export const DEV_BYPASS_PHONE = "+14243201960"
+const PRESCREEN_TOKEN_RE = /WeKruit_([A-Za-z0-9-]+)_([A-Za-z0-9_-]+)_Job/i
+
+function parsePrescreenCandidateId(text: string): string | null {
+  const match = text.match(PRESCREEN_TOKEN_RE)
+  const candidateId = match?.[2]?.trim()
+  return candidateId || null
+}
 
 async function lookupUserByPhoneE164(db: Firestore, phoneE164: string): Promise<string | null> {
   // Identity hardening 2026-05-20 — defense in depth against email-based
@@ -53,8 +60,11 @@ async function bindPhoneToCandidate(
   // phone written even when linkCandidateHandle threw):
   //
   //   (a) Same-candidate mismatch — `pa-users/{candidateId}.phoneE164`
-  //       differs from the opener phone → reject. Same person can't
-  //       silently switch their phone via a fresh opener.
+  //       differs from the opener phone → reject when the existing value is
+  //       itself a valid E.164 phone. Same person can't silently switch a
+  //       deliverable phone via a fresh opener. Malformed legacy/profile input
+  //       (for example "+081...") is not a real phone identity and must not
+  //       block a Sendblue-confirmed inbound number.
   //
   //   (b) Cross-candidate handle reuse — the hashed phone handle
   //       already points at a DIFFERENT candidateId → reject. One
@@ -70,7 +80,7 @@ async function bindPhoneToCandidate(
       userSnap.exists && typeof userSnap.data()?.phoneE164 === "string"
         ? (userSnap.data()!.phoneE164 as string)
         : null
-    if (existingPhone && existingPhone !== phoneE164) {
+    if (existingPhone && existingPhone !== phoneE164 && isE164(existingPhone)) {
       throw new Error(
         `identity_conflict:pa_users_phone_mismatch:${candidateId}:existing_${existingPhone}_attempted_${phoneE164}`,
       )
@@ -228,16 +238,17 @@ export async function resolveInboundUserId(
 
   const trimmedText = typeof inboundText === "string" ? inboundText.trim() : ""
   const parsed = trimmedText ? parseHelloWekruitOpener(trimmedText) : null
-  if (parsed?.candidateId) {
-    const userRef = db.collection(PA_COLLECTIONS.users).doc(parsed.candidateId)
+  const tokenCandidateId = parsed?.candidateId ?? (trimmedText ? parsePrescreenCandidateId(trimmedText) : null)
+  if (tokenCandidateId) {
+    const userRef = db.collection(PA_COLLECTIONS.users).doc(tokenCandidateId)
     const userSnap = await userRef.get()
     if (!userSnap.exists) return null
 
     const isDevBypass = phoneE164 === DEV_BYPASS_PHONE
-    await bindPhoneToCandidate(db, parsed.candidateId, phoneE164, isDevBypass
+    await bindPhoneToCandidate(db, tokenCandidateId, phoneE164, isDevBypass
       ? { releaseCompetingUsers: true, reassignConflictingHandle: true }
       : {})
-    return parsed.candidateId
+    return tokenCandidateId
   }
 
   const byPhone = await lookupUserByPhoneE164(db, phoneE164)

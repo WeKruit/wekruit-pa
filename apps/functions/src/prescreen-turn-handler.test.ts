@@ -215,7 +215,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     const text = terminalText("PASS", "score_pass", "en")
     assert.match(text, /role-fit screen is complete/i)
     assert.match(text, /hiring manager/i)
-    assert.match(text, /once there's a match/i)
+    assert.match(text, /once (?:there's|there’s) a match/i)
     assert.match(text, /Do you want to proceed\?/)
     assert.doesNotMatch(text, /Sending the next step now/i)
   })
@@ -479,14 +479,14 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(result.handled, true)
     assert.equal(result.sessionId, "ps_done")
     assert.equal(result.terminal, "HARD_STOP")
-    assert.deepEqual(sent, [
-      "Got it. This role screen is already paused, so I will not mix this new message into the old screen.",
-    ])
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /help find jobs/i)
+    assert.match(sent[0] ?? "", /Do you want to proceed/i)
     const session = docs.get("pa-prescreen-sessions/ps_done")?.data
     assert.equal(typeof session?.postTerminalFollowupAckAt, "string")
     const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
     assert.equal(turnEntries.length, 1)
-    assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "post_terminal_followup")
+    assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "post_prescreen_retention")
 
     const second = await runPrescreenTurnIfActive({
       db,
@@ -507,7 +507,55 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     })
 
     assert.equal(second.handled, true)
-    assert.equal(sent.length, 1, "second post-terminal follow-up should be handled silently")
+    assert.equal(sent.length, 2, "second post-terminal follow-up should stay in retention instead of normal onboarding")
+    assert.match(sent[1] ?? "", /help find jobs/i)
+    assert.match(sent[1] ?? "", /Do you want to proceed/i)
+  })
+
+  it("yields post-interview proceed yes to shared onboarding without daily subscription consent", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        id: "u1",
+        phoneE164: "+13054507715",
+        onboardingStatus: "invited",
+        onboardingState: "pending",
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        postPrescreenRetention: {
+          stage: "await_basic_onboarding",
+          terminal: "PASS",
+          startedAt: now,
+          updatedAt: now,
+        },
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "yes",
+      sendSms: async () => {
+        throw new Error("prescreen should yield so shared onboarding can start")
+      },
+    })
+
+    assert.equal(result.handled, false)
+
+    const user = docs.get("pa-users/u1")?.data
+    assert.equal(user?.dailyJobRecSubscribe, undefined)
+    const session = docs.get("pa-prescreen-sessions/ps_done")?.data
+    assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "await_basic_onboarding")
+    assert.equal((session?.postPrescreenRetention as { basicOnboardingOptIn?: boolean } | undefined)?.basicOnboardingOptIn, undefined)
   })
 
   it("runs safety before a recent terminal prescreen follow-up can claim private-data requests", async () => {
@@ -1025,9 +1073,10 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
 
     assert.equal(result.handled, true)
     assert.equal(result.sessionId, "ps_latest")
-    assert.deepEqual(sent, [
-      "Got it. This role screen is already paused, so I will not mix this new message into the old screen.",
-    ])
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /help find jobs/i)
+    assert.match(sent[0] ?? "", /Do you want to proceed/i)
+    assert.doesNotMatch(sent[0] ?? "", /daily/i)
     const latest = docs.get("pa-prescreen-sessions/ps_latest")?.data
     assert.equal(typeof latest?.postTerminalFollowupAckAt, "string")
   })
@@ -1292,6 +1341,10 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     const session = docs.get("pa-prescreen-sessions/ps_active")?.data
     assert.equal(session?.terminalActionPendingReview, true)
     assert.equal(typeof session?.evaluationAttemptId, "string")
+    assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "await_basic_onboarding")
+    const user = docs.get("pa-users/u1")?.data
+    assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.kind, "job_prescreen")
+    assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.status, "ended")
     const attempts = [...docs.entries()].filter(([path]) => path.startsWith("pa-evaluation-attempts/"))
     assert.equal(attempts.length, 1)
     assert.equal(attempts[0][1].data.source, "prescreen")

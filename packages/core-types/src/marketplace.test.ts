@@ -1086,6 +1086,23 @@ test("candidate handle ids are built from hashes, not raw PII", () => {
   assert.equal(candidateHandleHashMaterial("email", rawEmail), "email:alice@example.com")
 })
 
+test("candidate profile URL fields normalize bare LinkedIn URLs", () => {
+  assert.equal(
+    CandidateProfileMarketplaceFieldsSchema.parse({
+      linkedinUrl: "www.linkedin.com/in/sreya-gopaladasu-b77540211",
+    }).linkedinUrl,
+    "https://www.linkedin.com/in/sreya-gopaladasu-b77540211",
+  )
+  assert.equal(
+    CandidateSelfProfileSchema.parse({
+      candidateId: "cand-1",
+      linkedinUrl: "linkedin.com/in/sreya-gopaladasu-b77540211",
+      createdAt: now,
+    }).linkedinUrl,
+    "https://linkedin.com/in/sreya-gopaladasu-b77540211",
+  )
+})
+
 test("bulk resume schemas parse S3 batch and item contracts", () => {
   assert.equal(PA_COLLECTIONS.bulkUploadBatches, "pa-bulk-upload-batches")
 

@@ -117,6 +117,27 @@ describe("bindPhoneToCandidate ordering (identity hardening 2026-05-21)", () => 
     )
   })
 
+  it("malformed stored phone is replaceable by a Sendblue-confirmed opener phone", async () => {
+    const { db, store } = makeFakeDb({
+      users: {
+        "cand-aaaa01": { id: "cand-aaaa01", email: "a@example.com", phoneE164: "+08149313759" },
+      },
+    })
+
+    const result = await resolveInboundUserId(
+      db,
+      "+12693203158",
+      "WeKruit_hs-11005308-paradigm-gtm-growth_cand-aaaa01_Job",
+    )
+
+    assert.equal(result, "cand-aaaa01")
+    const userDoc = store.get("pa-users")!.get("cand-aaaa01")!
+    assert.equal(userDoc.phoneE164, "+12693203158")
+    const phoneHandles = [...store.get("pa-candidate-handles")!.values()].filter((h) => h.kind === "phone")
+    assert.equal(phoneHandles.length, 1)
+    assert.equal(phoneHandles[0]!.candidateId, "cand-aaaa01")
+  })
+
   it("guard G3: opener token candidate ALREADY has the SAME phone (re-text) → no error, no-op", async () => {
     const { db, store } = makeFakeDb({
       users: {

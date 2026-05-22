@@ -121,6 +121,27 @@ test("resolveInboundUserId binds phone from job interview opener token", async (
   assert.equal(userSnap.data()?.phoneE164, "+14155550183")
 })
 
+test("resolveInboundUserId replaces malformed stored phone with Sendblue-confirmed job token phone", async () => {
+  const fakeDb = new FakeFirestore()
+  const candidateId = "cand_job_malformed_phone_01"
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, {
+    id: candidateId,
+    source: "candidate",
+    phoneE164: "+08149313759",
+  })
+  const db = fakeDb as unknown as Firestore
+
+  const resolved = await resolveInboundUserId(
+    db,
+    "+12693203158",
+    `WeKruit_hs-11005308-paradigm-gtm-growth_${candidateId}_Job`,
+  )
+  assert.equal(resolved, candidateId)
+
+  const userSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+  assert.equal(userSnap.data()?.phoneE164, "+12693203158")
+})
+
 test("DEV_BYPASS_PHONE (+14243201960): Hello, WeKruit! opener replaces stale phone ownership", async () => {
   // Adam directive 2026-05-21 — the dev/test phone (+14243201960) is the
   // ONLY phone for which the opener may release a prior owner and reassign

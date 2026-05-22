@@ -850,8 +850,8 @@ export function terminalText(
         : "Thanks for your answers — the role-fit screen is complete. For the next step, I'll schedule you directly with the hiring manager once there's a match. Meanwhile, I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
     case "FAIL":
       return lang === "zh"
-        ? "感谢花时间。本次初筛暂未匹配，我们会留意更合适的机会推给你。"
-        : "Thanks for your time. This role isn't a match right now, but I'll keep an eye out for better fits."
+        ? "感谢花时间。这次可能不是最合适的岗位，但我可以继续帮你找更符合期待的机会，不过需要先更了解你一点。要继续吗？"
+        : "Thanks for taking the time. This one may not be the right fit, but I can help find jobs that meet your expectations. I need to understand you a bit better first. Do you want to proceed?"
     case "HARD_STOP":
       return terminalHardStopText(lang)
     case "PAUSE":
@@ -970,8 +970,8 @@ function clampClarifyText(text: string): string {
 
 function terminalHardStopText(lang: Lang): string {
   return lang === "zh"
-    ? "谢谢，这些信息有帮助。我不想硬把你往这个岗位上套；这个 screen 先停在这里，我会用你刚补充的经历继续匹配更合适的机会。"
-    : "Thanks, that helps. I do not want to force-fit you into this exact role, so I will pause this screen here and use what you shared to look for better-aligned roles."
+    ? "谢谢，这些信息有帮助。我不想硬把你往这个岗位上套；这个 screen 先停在这里。我可以继续帮你找更符合期待的岗位，不过需要先更了解你一点。要继续吗？"
+    : "Thanks, that helps. I do not want to force-fit you into this exact role, so I’ll stop this screen here. I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
 }
 
 function terminalPauseText(lang: Lang): string {

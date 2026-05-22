@@ -7,6 +7,7 @@ const COLLECTIONS = {
   candidateJobStates: "pa-candidate-job-states",
   jobs: "pa-jobs",
   outboundInvites: ["pa", "outbound-invites"].join("-"),
+  prescreenSessions: "pa-prescreen-sessions",
   users: "pa-users",
 } as const
 
@@ -116,7 +117,14 @@ async function getCandidateIdForAuth(db: Firestore, firebaseUid: string): Promis
   return candidateId
 }
 
-function projectStatus(stateValue: string | undefined, hasInvite: boolean): CandidateMatchCard["status"] {
+function projectStatus(
+  stateValue: string | undefined,
+  hasInvite: boolean,
+  prescreenTerminal?: string
+): CandidateMatchCard["status"] {
+  if (prescreenTerminal === "PASS") return "passed"
+  if (prescreenTerminal === "FAIL" || prescreenTerminal === "HARD_STOP") return "not_passed"
+  if (prescreenTerminal === "PAUSE") return "paused"
   if (stateValue === "candidate_matched") return "recommended"
   if (stateValue === "outbound_queued") return "invited"
   if (stateValue === "outbound_sent") return "invited"
@@ -136,6 +144,7 @@ function projectMatchCard(args: {
   job: Record<string, unknown>
   state?: Record<string, unknown>
   invite?: Record<string, unknown>
+  prescreenTerminal?: string
 }): CandidateMatchCard {
   const match = args.match
   const state = cleanString(args.state?.state, 80)
@@ -146,7 +155,7 @@ function projectMatchCard(args: {
     matchId: args.matchId,
     jobId: args.jobId,
     bucket,
-    status: projectStatus(state, hasInvite),
+    status: projectStatus(state, hasInvite, args.prescreenTerminal),
     job: projectJobDisplay(args.jobId, args.job),
     whyMatched: whyMatched.length > 0 ? whyMatched : ["This role matches your saved profile."],
     ...(typeof match?.finalRank === "number" && Number.isInteger(match.finalRank) ? { rank: match.finalRank } : {}),
@@ -376,6 +385,18 @@ export async function runCandidateListMatches(
       const job = jobSnap.data() as Record<string, unknown>
       if (job.publicVisible !== true) return null
       const state = row.state ?? (fallbackStateSnap?.exists ? (fallbackStateSnap.data() as Record<string, unknown>) : undefined)
+      const prescreenSessionId = cleanString(state?.prescreenSessionId, 240)
+      const prescreenTerminal = prescreenSessionId
+        ? cleanString(
+            (
+              (await deps.db
+                .collection(COLLECTIONS.prescreenSessions)
+                .doc(prescreenSessionId)
+                .get()).data() ?? {}
+            ).terminal,
+            80,
+          )
+        : undefined
       return projectMatchCard({
         jobId,
         matchId: row.matchId ?? createCandidateJobStateId(candidateId, jobId),
@@ -383,6 +404,7 @@ export async function runCandidateListMatches(
         invite: row.invite,
         job,
         state,
+        prescreenTerminal,
       })
     })
   )
