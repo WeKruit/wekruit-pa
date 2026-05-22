@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   buildSharedOnboardingOpeningPrompt,
+  buildSharedOnboardingPostPrescreenOpeningPrompt,
   buildHelloWekruitOpenerBody,
   parseHelloWekruitOpener,
   SHARED_ONBOARDING_QUESTIONS,
@@ -127,6 +128,31 @@ test("shared onboarding opening prompt carries Claire persona guidance without c
   assert.match(opener, /just tell me here/i)
   assert.match(opener, /career growth, compensation, stability, mission, learning/i)
   assert.doesNotMatch(opener, /I am Claire|How may I assist|software_and_saas|job_title|tech_swe|timeline|dealbreaker/i)
+})
+
+test("post-prescreen opening prompt thanks for the role screen and avoids first-time resume copy", () => {
+  const promptContext = buildSharedOnboardingPromptContext({
+    user: {
+      displayName: "Sunny Li",
+      candidateContext: { location: "Chicago" },
+    },
+    parsedResume: {
+      experiences: [
+        { company: "YouTube", title: "Digital Content Creator", location: "Chicago" },
+      ],
+    },
+  })
+
+  const opener = buildSharedOnboardingPostPrescreenOpeningPrompt(promptContext, {
+    jobTitle: "Member of Technical Staff, macOS DevOps",
+    company: "Photon",
+  })
+
+  assert.match(opener, /completing the role screen/i)
+  assert.match(opener, /Member of Technical Staff, macOS DevOps/i)
+  assert.match(opener, /Photon/i)
+  assert.match(opener, /career growth, compensation, stability, mission, learning/i)
+  assert.doesNotMatch(opener, /Saw your resume come through/i)
 })
 
 test("free-form answers produce memory evidence and confident tag patches", () => {

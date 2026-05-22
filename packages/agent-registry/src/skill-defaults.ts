@@ -54,7 +54,7 @@ export const EXISTING_6_METADATA: Record<SkillKey, SkillMetadataV2 | null> = {
     ],
     conflictsWith: ["vent_support"],
     priority: 40,
-    allowedTools: [],
+    allowedTools: ["set-matching-preferences", "find-match"],
     llmInvokable: true,
   },
   vent_support: {

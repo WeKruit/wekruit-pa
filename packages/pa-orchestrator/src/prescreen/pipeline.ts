@@ -846,8 +846,8 @@ export function terminalText(
   switch (terminal) {
     case "PASS":
       return lang === "zh"
-        ? "感谢回答，这次岗位初筛的信息已经收齐。我们会把你的回答发给 hiring manager；如果他们想继续推进，我们会再联系你。"
-        : "Thanks for your answers — I have enough for the role-fit screen. We'll send this to the hiring manager and reach out if they want to move forward."
+        ? "感谢回答，这次岗位初筛已经完成。下一步，如果有匹配，我会直接帮你安排和 hiring manager 沟通。同时我也可以继续帮你找符合期待的机会，但需要先多了解你一点。你想继续吗？"
+        : "Thanks for your answers — the role-fit screen is complete. For the next step, I'll schedule you directly with the hiring manager once there's a match. Meanwhile, I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
     case "FAIL":
       return lang === "zh"
         ? "感谢花时间。本次初筛暂未匹配，我们会留意更合适的机会推给你。"

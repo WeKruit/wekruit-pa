@@ -25,6 +25,7 @@ import {
   FIND_MATCH_CONNECTOR,
   MATCH_COLLAB_CONNECTOR,
   FIND_MATCH_NARRATION,
+  SET_MATCHING_PREFERENCES_CONNECTOR,
 } from "./match-connectors.js"
 
 export { FIND_MATCH_NARRATION, MATCH_COLLAB_NARRATION } from "./match-connectors.js"
@@ -501,6 +502,7 @@ export const connectorRegistry = {
       }
     },
   } satisfies ConnectorDef<SaveJobProfileConnectorInput, SaveJobProfileConnectorOutput>,
+  "set-matching-preferences": SET_MATCHING_PREFERENCES_CONNECTOR,
   "find-match": FIND_MATCH_CONNECTOR,
   "match-against-collab-jobs": MATCH_COLLAB_CONNECTOR,
 }

@@ -602,6 +602,34 @@ export function buildSharedOnboardingOpeningPrompt(
   ].join(" ")
 }
 
+export type SharedOnboardingPostPrescreenContext = {
+  jobTitle?: string | null
+  company?: string | null
+}
+
+export function buildSharedOnboardingPostPrescreenOpeningPrompt(
+  context: SharedOnboardingPromptContext | null | undefined,
+  postPrescreen: SharedOnboardingPostPrescreenContext | null | undefined,
+): string {
+  const ctx = cleanSharedOnboardingPromptContext(context)
+  const greeting = ctx.firstName ? `Hey ${ctx.firstName}!` : "Hey!"
+  const jobTitle = typeof postPrescreen?.jobTitle === "string" ? postPrescreen.jobTitle.trim() : ""
+  const company = typeof postPrescreen?.company === "string" ? postPrescreen.company.trim() : ""
+  const roleText =
+    jobTitle && company
+      ? ` for ${jobTitle} at ${company}`
+      : jobTitle
+        ? ` for ${jobTitle}`
+        : company
+          ? ` at ${company}`
+          : ""
+  return [
+    `${greeting} Thanks for completing the role screen${roleText}.`,
+    "By the way, I can keep looking for jobs that meet your expectations, but I need one bit of broader context first.",
+    getSharedOnboardingQuestion("main_goal").prompt,
+  ].join(" ")
+}
+
 /**
  * Pulls a one-line "resume anchor" the LLM can quote when opening a question.
  * Used by `buildOnboardingSurfaceIntent` to make Q1 (main_goal) and Q2

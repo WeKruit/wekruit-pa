@@ -149,4 +149,29 @@ describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
     assert.match(intent, /what matters most in your next company/i)
     assert.doesNotMatch(intent, /what kind of role/i)
   })
+
+  it("marks post-prescreen kickoff as a contextual opening, not a first-time resume opener", () => {
+    const intent = buildOnboardingSurfaceIntent({
+      slot: "main_goal",
+      mode: "ask",
+      voiceProfile: profile(),
+      promptContext: {
+        firstName: "Sunny",
+        recentTitles: ["Digital Content Creator"],
+        recentCompanies: ["YouTube"],
+      },
+      lang: "en",
+      opening: true,
+      postPrescreenContext: {
+        jobTitle: "Member of Technical Staff, macOS DevOps",
+        company: "Photon",
+      },
+    })
+
+    assert.match(intent, /candidate just completed a role-fit screen/i)
+    assert.match(intent, /Member of Technical Staff, macOS DevOps/i)
+    assert.match(intent, /Photon/i)
+    assert.match(intent, /Do not use "Saw your resume come through"/i)
+    assert.doesNotMatch(intent, /first SMS after the candidate opened with Hello, WeKruit/i)
+  })
 })

@@ -7,7 +7,7 @@ import {
   prescreenTurnRecordQId,
   runPrescreenTurnIfActive,
 } from "./prescreen-turn-handler.js"
-import type { KeywordSetLlmCaller, PreScreenClarifyComposer } from "@pa/pa-orchestrator"
+import { terminalText, type KeywordSetLlmCaller, type PreScreenClarifyComposer } from "@pa/pa-orchestrator"
 import { SAFETY_CANNED_REPLIES } from "@pa/pa-safety"
 
 type FakeDoc = { exists: boolean; data: Record<string, unknown> }
@@ -209,6 +209,15 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
       "role_fit",
     )
     assert.equal(prescreenTurnRecordQId({ kind: "error", reason: "session_not_found" }, null), "terminal")
+  })
+
+  it("PASS terminal copy offers broader matching onboarding instead of implying an automatic next step", () => {
+    const text = terminalText("PASS", "score_pass", "en")
+    assert.match(text, /role-fit screen is complete/i)
+    assert.match(text, /hiring manager/i)
+    assert.match(text, /once there's a match/i)
+    assert.match(text, /Do you want to proceed\?/)
+    assert.doesNotMatch(text, /Sending the next step now/i)
   })
 
   it("expires idle prescreen sessions instead of routing a late reply into the old job", async () => {
@@ -590,6 +599,87 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_active/turns/"))
     assert.equal(turnEntries.length, 1)
     assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "safety_block")
+  })
+
+  it("yields PASS + yes to onboarding only when onboarding is incomplete", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        onboardingState: "pending",
+        onboardingStatus: "invited",
+        pipelineState: { completed: false, currentQId: "main_goal" },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "photon-macos-devops",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "Yes",
+      sendSms: async () => {
+        throw new Error("prescreen should yield so shared onboarding can start")
+      },
+    })
+
+    assert.equal(result.handled, false)
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
+    assert.equal(turnEntries.length, 0)
+  })
+
+  it("handles PASS + what next with the one-time broader matching offer", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        onboardingState: "complete",
+        onboardingStatus: "active",
+        pipelineState: { completed: true },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "photon-macos-devops",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "What are the next steps?",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(sent.length, 1)
+    assert.match(sent[0]!, /role-fit screen is complete/i)
+    assert.match(sent[0]!, /Do you want to proceed\?/)
+    assert.equal(typeof docs.get("pa-prescreen-sessions/ps_done")?.data.postTerminalFollowupAckAt, "string")
   })
 
   it("yields a recent terminal prescreen when a completed candidate asks for new job matches", async () => {

@@ -236,7 +236,7 @@ function mkJob(over: Partial<MatchingJob>): MatchingJob {
   }
 }
 
-test("applyV16HardFilters: visa gate drops sponsor_needed × sponsorship=false", () => {
+test("applyV16HardFilters: visa gate requires explicit sponsorship=true for sponsor_needed", () => {
   const jobs: MatchingJob[] = [
     mkJob({ id: "y", sponsorship: true }),
     mkJob({ id: "n", sponsorship: false }),
@@ -244,12 +244,8 @@ test("applyV16HardFilters: visa gate drops sponsor_needed × sponsorship=false",
   ]
   const tags = { skills: [], industryEnum: [], schemaVersion: 1, visaStatus: "sponsor_needed" } as never
   const r = applyV16HardFilters(jobs, tags, NOW)
-  assert.equal(r.kept.length, 2)
-  assert.deepEqual(
-    r.kept.map((j) => j.id).sort(),
-    ["u", "y"].sort()
-  )
-  assert.equal(r.counters.visa, 1)
+  assert.deepEqual(r.kept.map((j) => j.id), ["y"])
+  assert.equal(r.counters.visa, 2)
 })
 
 test("applyV16HardFilters: visa gate is no-op when user is citizen", () => {
@@ -1094,7 +1090,7 @@ test("queryMatchingJobsV16: S4 enriched approved job survives V16 filters and ou
     jobType: "full_time",
     locationBuckets: ["new_york_city"],
     seniorityLevel: "junior",
-    sponsorship: null,
+    sponsorship: true,
     companyName: "S4Co",
     jobTitle: "Backend Engineer",
   })

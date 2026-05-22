@@ -443,9 +443,9 @@ export function applyV16HardFilters(
 
   const kept: MatchingJob[] = []
   for (const job of jobs) {
-    // 1. visa intersect — only drop when user explicitly needs sponsorship
-    //    AND job carries an explicit `sponsorship: false` signal.
-    if (sponsorshipNeeded && job.sponsorship === false) {
+    // 1. visa intersect — candidate-visible sponsor-needed recommendations
+    // require explicit sponsorship=true. Unknown is not safe for H1B/OPT users.
+    if (sponsorshipNeeded && job.sponsorship !== true) {
       counters.visa++
       continue
     }

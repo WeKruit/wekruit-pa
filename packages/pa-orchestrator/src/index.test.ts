@@ -202,11 +202,12 @@ test("processInboundEvent runs agent for non-memory messages", async () => {
   assert.equal(outbound, "assistant reply")
 })
 
-test("completed user explicit job-search request sends generated matches without LLM", async () => {
+test("completed user explicit job-search request routes through matching tools instead of direct generateJobRecs", async () => {
   let llmCalls = 0
-  let outbound = ""
-  let force: boolean | undefined
-  let roleFocus: string[] | undefined
+  let directRecCalls = 0
+  const toolCalls: string[] = []
+  const outbound: string[] = []
+  const turnUpdates: Array<Record<string, unknown>> = []
   const store = makeStore({
     getOnboardingUser: async () => ({
       id: "u1",
@@ -214,29 +215,161 @@ test("completed user explicit job-search request sends generated matches without
       onboardingState: "complete",
     }),
     generateJobRecs: async (_userId, _lang, opts) => {
-      force = opts?.force
-      roleFocus = opts?.roleFocus
-      return {
-        recCount: 2,
-        message: "two roles that line up for you:\n• Software Engineer @ Rain",
-      }
+      directRecCalls++
+      return { recCount: 0, message: `should not directly call generateJobRecs ${Boolean(opts?.force)}` }
     },
-    runAgentTurn: async () => {
+    buildTurnTools: async (agentForTurn) => {
+      assert.deepEqual(agentForTurn.allowedConnectors, ["set-matching-preferences", "find-match"])
+      return [
+        {
+          name: "set-matching-preferences",
+          description: "persist prefs",
+          parameters: {} as never,
+          execute: async () => {
+            toolCalls.push("set-matching-preferences")
+            return JSON.stringify({ ok: true, hardConstraint: false })
+          },
+        },
+        {
+          name: "find-match",
+          description: "find matches",
+          parameters: {} as never,
+          execute: async (args) => {
+            toolCalls.push("find-match")
+            const parsed = args as Record<string, unknown>
+            assert.deepEqual(parsed.roleFocus, ["fullstack"])
+            assert.equal(parsed.allowBroadFallback, true)
+            assert.equal(parsed.hardConstraintsActive, false)
+            return JSON.stringify({
+              ok: true,
+              source: "find-match",
+              jobCount: 2,
+              message: "two roles that line up for you:\n• Software Engineer @ Rain",
+            })
+          },
+        },
+      ]
+    },
+    runAgentTurn: async (input) => {
       llmCalls++
-      return { text: "assistant reply" }
+      const findTool = input.tools?.find((tool) => tool.name === "find-match")
+      assert.ok(findTool, "find-match tool exposed")
+      await findTool.execute({
+        lang: "en",
+        requestedCount: 2,
+        source: "agentic_find_match_router",
+        roleFocus: ["fullstack"],
+        hardConstraintsActive: false,
+        allowBroadFallback: true,
+      })
+      return { text: "two roles that line up for you:\n• Software Engineer @ Rain" }
     },
     enqueueOutbound: async (_userId, _to, body) => {
-      outbound = body
+      outbound.push(body)
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch as Record<string, unknown>)
     },
   })
   await processInboundEvent({
     ...baseEvent,
     body: "Please pull fresh fullstack software engineer roles that fit me.",
   }, store)
-  assert.equal(llmCalls, 0)
-  assert.equal(force, true)
-  assert.deepEqual(roleFocus, ["fullstack"])
-  assert.match(outbound, /Software Engineer @ Rain/)
+  assert.equal(llmCalls, 1)
+  assert.equal(directRecCalls, 0)
+  assert.deepEqual(toolCalls, ["find-match"])
+  assert.match(outbound.join("\n"), /Software Engineer @ Rain/)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), false)
+  assert.equal(turnUpdates.some((patch) => patch.agenticToolRouter === "matching"), true)
+})
+
+test("completed user constraint update plus more-jobs request calls preference tool before find-match", async () => {
+  let directRecCalls = 0
+  const toolCalls: string[] = []
+  const outbound: string[] = []
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+    }),
+    generateJobRecs: async () => {
+      directRecCalls++
+      return { recCount: 0, message: "should not direct rec" }
+    },
+    buildTurnTools: async () => [
+      {
+        name: "set-matching-preferences",
+        description: "persist prefs",
+        parameters: {} as never,
+        execute: async (args) => {
+          toolCalls.push("set-matching-preferences")
+          const parsed = args as Record<string, unknown>
+          assert.equal(parsed.visaStatus, "sponsor_needed")
+          assert.equal(parsed.constraintStrength, "hard")
+          return JSON.stringify({ ok: true, hardConstraint: true })
+        },
+      },
+      {
+        name: "find-match",
+        description: "find matches",
+        parameters: {} as never,
+        execute: async (args) => {
+          toolCalls.push("find-match")
+          const parsed = args as Record<string, unknown>
+          assert.equal(parsed.hardConstraintsActive, true)
+          assert.equal(parsed.allowBroadFallback, false)
+          return JSON.stringify({
+            ok: false,
+            source: "find-match",
+            reason: "no_matches",
+            jobCount: 0,
+            message: null,
+          })
+        },
+      },
+    ],
+    runAgentTurn: async (input) => {
+      const setPrefs = input.tools?.find((tool) => tool.name === "set-matching-preferences")
+      const findMatch = input.tools?.find((tool) => tool.name === "find-match")
+      assert.ok(setPrefs, "set-matching-preferences tool exposed")
+      assert.ok(findMatch, "find-match tool exposed")
+      await setPrefs.execute({
+        visaStatus: "sponsor_needed",
+        targetLocations: null,
+        roleFocus: null,
+        companyStage: null,
+        jobType: null,
+        negativeCompanies: null,
+        constraintStrength: "hard",
+        evidenceText: "Yes I need H1B support, do you have more?",
+        source: "agentic_find_match_router",
+      })
+      await findMatch.execute({
+        lang: "en",
+        requestedCount: 2,
+        source: "agentic_find_match_router",
+        roleFocus: null,
+        hardConstraintsActive: true,
+        allowBroadFallback: false,
+      })
+      return {
+        text: "Got it — I saved H1B support as a hard requirement. I don't have a clean batch yet, so I'll keep looking instead of sending weak roles.",
+      }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound.push(body)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Yes I need H1B support, do you have more?",
+  }, store)
+
+  assert.equal(directRecCalls, 0)
+  assert.deepEqual(toolCalls, ["set-matching-preferences", "find-match"])
+  assert.match(outbound.join("\n"), /H1B support as a hard requirement/)
 })
 
 test("processInboundEvent passes a Session and systemInputs into the default agent turn", async () => {
@@ -1037,10 +1170,58 @@ test("processInboundEvent layoff: inbound before shared_onboarding active bootst
   )
 })
 
+test("processInboundEvent post-prescreen yes bootstraps onboarding with role-screen context", async () => {
+  let outbound = ""
+  const turnUpdates: Array<Record<string, unknown>> = []
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "pending",
+      displayName: "Sunny Li",
+      latestResumeArtifactId: "resume_1",
+      workSession: {
+        kind: "job_prescreen",
+        status: "ended",
+        sessionId: "ps_photon",
+        jobId: "wekruit-37429d02-photon-macos-devops",
+        jobTitle: "Member of Technical Staff, macOS DevOps",
+        company: "Photon",
+        terminal: "PASS",
+        boundary: "terminal",
+        endedAt: "2026-05-22T04:00:00.000Z",
+      },
+    } as never),
+    runAgentTurn: async () => {
+      throw new Error("template fallback should compose post-prescreen opener in this unit")
+    },
+    enqueueOutbound: async (_u, _t, text) => {
+      outbound = text
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch as Record<string, unknown>)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Yes",
+  }, store)
+
+  assert.match(outbound, /completing the role screen/i)
+  assert.match(outbound, /Member of Technical Staff, macOS DevOps/i)
+  assert.match(outbound, /Photon/i)
+  assert.match(outbound, /career growth, compensation, stability, mission, learning/i)
+  assert.doesNotMatch(outbound, /Saw your resume come through/i)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "shared_onboarding"), true)
+  assert.equal(turnUpdates.some((patch) => patch.sharedOnboardingStartSource === "post_prescreen_pass"), true)
+})
+
 test("processInboundEvent lifecycle: explicit job request is not swallowed as profile update", async () => {
   let llmCalls = 0
-  let recCalls = 0
+  let directRecCalls = 0
   let lifecycleWrites = 0
+  const toolCalls: string[] = []
   const outboundMessages: string[] = []
   const store = makeStore({
     getOnboardingUser: async () => ({
@@ -1056,23 +1237,61 @@ test("processInboundEvent lifecycle: explicit job request is not swallowed as pr
     recordLifecycleReply: async () => {
       lifecycleWrites++
     },
-    generateJobRecs: async (_userId, _lang, opts) => {
-      recCalls++
-      assert.equal(opts?.force, true)
-      assert.equal(opts?.requestedCount, 3)
-      assert.deepEqual(opts?.roleFocus, ["fullstack", "frontend"])
+    generateJobRecs: async () => {
+      directRecCalls++
+      return { recCount: 0, message: "should not direct rec" }
+    },
+    buildTurnTools: async () => [
+      {
+        name: "set-matching-preferences",
+        description: "persist prefs",
+        parameters: {} as never,
+        execute: async () => {
+          toolCalls.push("set-matching-preferences")
+          return JSON.stringify({ ok: true, hardConstraint: false })
+        },
+      },
+      {
+        name: "find-match",
+        description: "find matches",
+        parameters: {} as never,
+        execute: async (args) => {
+          toolCalls.push("find-match")
+          const parsed = args as Record<string, unknown>
+          assert.equal(parsed.requestedCount, 3)
+          assert.deepEqual(parsed.roleFocus, ["fullstack", "frontend"])
+          return JSON.stringify({
+            ok: true,
+            source: "find-match",
+            jobCount: 3,
+            message:
+              "Three roles that line up:\n" +
+              "- Frontend Engineer @ Rain - NYC/remote and React-heavy.\n" +
+              "- Fullstack Engineer @ Constant Contact - JS plus backend workflow fit.\n" +
+              "- Product Engineer @ Invoko - early-stage product tooling fit.",
+          })
+        },
+      },
+    ],
+    runAgentTurn: async (input) => {
+      llmCalls++
+      const findTool = input.tools?.find((tool) => tool.name === "find-match")
+      assert.ok(findTool, "find-match tool exposed")
+      await findTool.execute({
+        lang: "en",
+        requestedCount: 3,
+        source: "agentic_find_match_router",
+        roleFocus: ["fullstack", "frontend"],
+        hardConstraintsActive: false,
+        allowBroadFallback: true,
+      })
       return {
-        recCount: 3,
-        message:
+        text:
           "Three roles that line up:\n" +
           "- Frontend Engineer @ Rain - NYC/remote and React-heavy.\n" +
           "- Fullstack Engineer @ Constant Contact - JS plus backend workflow fit.\n" +
           "- Product Engineer @ Invoko - early-stage product tooling fit.",
       }
-    },
-    runAgentTurn: async () => {
-      llmCalls++
-      return { text: "should-not-be-called" }
     },
     enqueueOutbound: async (_u, _t, body) => {
       outboundMessages.push(body)
@@ -1085,8 +1304,9 @@ test("processInboundEvent lifecycle: explicit job request is not swallowed as pr
   }, store)
 
   assert.equal(lifecycleWrites, 0)
-  assert.equal(llmCalls, 0)
-  assert.equal(recCalls, 1)
+  assert.equal(llmCalls, 1)
+  assert.equal(directRecCalls, 0)
+  assert.deepEqual(toolCalls, ["find-match"])
   assert.equal(outboundMessages.length, 2)
   assert.match(outboundMessages[0]!, /sec|pull|dig|look|hunt|scan/i)
   assert.match(outboundMessages[1]!, /Three roles/)

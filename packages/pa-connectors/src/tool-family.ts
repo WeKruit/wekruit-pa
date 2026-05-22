@@ -28,6 +28,7 @@ export function resolveToolFamily(connectorName: string): PaToolFamily {
     case "match-against-collab-jobs":
       return "match_collab"
     case "save-job-profile":
+    case "set-matching-preferences":
       return "job_profile"
     case "wekruit-matching":
       return "legacy_matching"

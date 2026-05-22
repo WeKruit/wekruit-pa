@@ -208,6 +208,53 @@ t6test("remember-fact via runConnector writes audit pa_tool_calls with allow + c
   assert.equal(auditCount, 2)
 })
 
+t6test("set-matching-preferences via runConnector persists H1B hard constraint with tool audit", async () => {
+  const { db, store } = fakeFirestoreT6()
+  const agent: AgentDef = {
+    ...t6Agent,
+    allowedConnectors: ["set-matching-preferences"],
+  }
+
+  const out = await runConnector(
+    "set-matching-preferences" as never,
+    {
+      visaStatus: "sponsor_needed",
+      targetLocations: ["San Francisco", "remote_us"],
+      roleFocus: ["software_engineering"],
+      companyStage: null,
+      jobType: ["full_time"],
+      negativeCompanies: ["OpenAI"],
+      constraintStrength: "hard",
+      evidenceText: "Yes I need H1B support, do you have more?",
+      source: "agentic_find_match_router",
+    },
+    { db, agent, turnId: "turn-pref", userId: "u1", sessionId: "s1", usedThisTurn: 0 },
+  ) as { ok?: boolean; hardConstraint?: boolean }
+
+  assert.equal(out.ok, true)
+  assert.equal(out.hardConstraint, true)
+
+  const user = store.get("pa-users/u1") as Record<string, unknown> | undefined
+  assert.ok(user, "pa-users row written")
+  const tags = user.tags as Record<string, unknown>
+  assert.equal(tags.visaStatus, "sponsor_needed")
+  assert.deepEqual(tags.targetLocations, ["San Francisco", "remote_us"])
+  assert.deepEqual(tags.companyNegativeList, ["OpenAI"])
+  const prefs = user.conversationDerivedPreferences as Record<string, unknown>
+  const matchingProfile = prefs.matchingProfile as Record<string, unknown>
+  const last = matchingProfile.last as Record<string, unknown>
+  assert.equal(last.visaStatus, "sponsor_needed")
+  assert.equal(last.constraintStrength, "hard")
+
+  const toolCallEntries = [...store.entries()].filter(([k]) =>
+    k.startsWith(`${PA_COLLECTIONS.toolCalls}/`)
+  )
+  assert.equal(toolCallEntries.length, 1)
+  const row = toolCallEntries[0]![1] as Record<string, unknown>
+  assert.equal(row.connectorName, "set-matching-preferences")
+  assert.equal(row.status, "completed")
+})
+
 // -------- Phase 13 T13.1: wekruit-matching connector tests --------
 //
 // Exhaustive coverage of:

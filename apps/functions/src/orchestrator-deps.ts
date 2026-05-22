@@ -204,7 +204,7 @@ function makeGenerateJobRecs(): NonNullable<
           userId,
           limit: opts?.collabPrescreenOnly ? 5 : roleFocus.length ? 20 : 10,
           lang: outputLang,
-          allowBroadFallback: true,
+          allowBroadFallback: opts?.allowBroadFallback !== false,
           ...(opts?.collabPrescreenOnly ? { collabPrescreenOnly: true } : {}),
           ...(roleFocus.length ? { presentationRoleFocus: roleFocus } : {}),
         },
