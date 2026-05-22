@@ -283,6 +283,139 @@ test("handlePostMatchRetentionReply persists structured constraints from dislike
   assert.match(sent[0] ?? "", /daily texts|每天/)
 })
 
+test("handlePostMatchRetentionReply persists structured constraints from initial negative feedback", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-feature-flags/paPostMatchRetentionEnabled",
+      { key: "paPostMatchRetentionEnabled", value: true, type: "bool", scope: "global" },
+    ],
+    [
+      "pa-users/u_initial_feedback",
+      {
+        postMatchRetention: {
+          stage: "await_liked",
+          startedAt: "2026-05-21T16:00:00.000Z",
+          updatedAt: "2026-05-21T16:00:00.000Z",
+          recCount: 2,
+          jobIds: ["j1", "j2"],
+        },
+      },
+    ],
+  ])
+  const db = {
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => {
+          const data = docs.get(`${name}/${id}`)
+          return { exists: data !== undefined, data: () => data }
+        },
+        set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+          const key = `${name}/${id}`
+          docs.set(key, opts?.merge ? { ...(docs.get(key) ?? {}), ...data } : data)
+        },
+      }),
+    }),
+  } as never
+  const sent: string[] = []
+  const handled = await handlePostMatchRetentionReply(
+    {
+      id: "e1",
+      userId: "u_initial_feedback",
+      sessionId: "s1",
+      from: "+14243201960",
+      body: "I do not want India and the second one was senior level",
+      channel: "imessage",
+    } as never,
+    {
+      db,
+      nowIso: () => "2026-05-21T16:01:00.000Z",
+      log: () => {},
+      getOnboardingUser: async () => ({ onboardingState: "complete" }),
+      enqueueOutbound: async (_userId, _to, body) => {
+        sent.push(body)
+      },
+      updateTurn: async () => {},
+      markEventSucceeded: async () => {},
+    },
+    "t1"
+  )
+
+  assert.equal(handled, true)
+  const user = docs.get("pa-users/u_initial_feedback") as { tags?: Record<string, unknown>; postMatchRetention?: { stage?: string } } | undefined
+  assert.deepEqual(user?.tags?.targetCountry, ["usa"])
+  assert.equal(user?.tags?.careerStage, "junior")
+  assert.equal(user?.postMatchRetention?.stage, "await_subscribe")
+  const toolCalls = [...docs.values()].filter((row) => row.connectorName === "set-matching-preferences")
+  assert.equal(toolCalls.length, 1)
+  assert.match(sent[0] ?? "", /daily texts|每天/)
+})
+
+test("handlePostMatchRetentionReply persists negative role function from dislike reason", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-feature-flags/paPostMatchRetentionEnabled",
+      { key: "paPostMatchRetentionEnabled", value: true, type: "bool", scope: "global" },
+    ],
+    [
+      "pa-users/u_role_feedback",
+      {
+        postMatchRetention: {
+          stage: "await_dislike_reason",
+          startedAt: "2026-05-21T16:00:00.000Z",
+          updatedAt: "2026-05-21T16:00:00.000Z",
+          recCount: 2,
+          jobIds: ["j1"],
+        },
+      },
+    ],
+  ])
+  const db = {
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => {
+          const data = docs.get(`${name}/${id}`)
+          return { exists: data !== undefined, data: () => data }
+        },
+        set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+          const key = `${name}/${id}`
+          docs.set(key, opts?.merge ? { ...(docs.get(key) ?? {}), ...data } : data)
+        },
+      }),
+    }),
+  } as never
+  const sent: string[] = []
+  const handled = await handlePostMatchRetentionReply(
+    {
+      id: "e1",
+      userId: "u_role_feedback",
+      sessionId: "s1",
+      from: "+14243201960",
+      body: "customer service role does not align with my interests",
+      channel: "imessage",
+    } as never,
+    {
+      db,
+      nowIso: () => "2026-05-21T16:01:00.000Z",
+      log: () => {},
+      getOnboardingUser: async () => ({ onboardingState: "complete" }),
+      enqueueOutbound: async (_userId, _to, body) => {
+        sent.push(body)
+      },
+      updateTurn: async () => {},
+      markEventSucceeded: async () => {},
+    },
+    "t1"
+  )
+
+  assert.equal(handled, true)
+  const user = docs.get("pa-users/u_role_feedback") as { tags?: Record<string, unknown>; postMatchRetention?: { stage?: string } } | undefined
+  assert.deepEqual(user?.tags?.roleFunctionNegativeList, ["customer_service_and_support"])
+  assert.equal(user?.postMatchRetention?.stage, "await_subscribe")
+  const toolCalls = [...docs.values()].filter((row) => row.connectorName === "set-matching-preferences")
+  assert.equal(toolCalls.length, 1)
+  assert.match(sent[0] ?? "", /daily texts|每天/)
+})
+
 test("handlePostMatchRetentionReply saves role rejection instead of repeating prescreen CTA", async () => {
   const docs = new Map<string, Record<string, unknown>>([
     [

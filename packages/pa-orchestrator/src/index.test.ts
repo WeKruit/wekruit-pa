@@ -202,7 +202,12 @@ test("processInboundEvent runs agent for non-memory messages", async () => {
   assert.equal(outbound, "assistant reply")
 })
 
-test("completed user explicit job-search request routes through matching tools instead of direct generateJobRecs", async () => {
+// Matching agent tests in this file are harness contract tests, not semantic
+// LLM evals. The mocked runAgentTurn owns only the boundary where the agent has
+// already chosen tools; these assertions prove the orchestrator exposes the
+// right tool surface, consumes tool outputs correctly, and does not bypass the
+// audited connector path. Live intent quality belongs in an opt-in agent eval.
+test("matching router exposes only matching tools and consumes an agent-requested find-match call", async () => {
   let llmCalls = 0
   let directRecCalls = 0
   const toolCalls: string[] = []
@@ -283,7 +288,7 @@ test("completed user explicit job-search request routes through matching tools i
   assert.equal(turnUpdates.some((patch) => patch.agenticToolRouter === "matching"), true)
 })
 
-test("completed user constraint update plus more-jobs request calls preference tool before find-match", async () => {
+test("matching router preserves agent tool-call order: save hard preference before find-match", async () => {
   let directRecCalls = 0
   const toolCalls: string[] = []
   const outbound: string[] = []
@@ -342,7 +347,7 @@ test("completed user constraint update plus more-jobs request calls preference t
         jobType: null,
         negativeCompanies: null,
         constraintStrength: "hard",
-        evidenceText: "Yes I need H1B support, do you have more?",
+        evidenceText: "I need H1B support, do you have more?",
         source: "agentic_find_match_router",
       })
       await findMatch.execute({
@@ -364,12 +369,140 @@ test("completed user constraint update plus more-jobs request calls preference t
 
   await processInboundEvent({
     ...baseEvent,
-    body: "Yes I need H1B support, do you have more?",
+    body: "I need H1B support, do you have more?",
   }, store)
 
   assert.equal(directRecCalls, 0)
   assert.deepEqual(toolCalls, ["set-matching-preferences", "find-match"])
   assert.match(outbound.join("\n"), /H1B support as a hard requirement/)
+})
+
+test("matching router handles an agent preference-only tool call without falling through to generic Claire", async () => {
+  let directRecCalls = 0
+  const agentCalls: string[] = []
+  const toolCalls: string[] = []
+  const outbound: string[] = []
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+    }),
+    generateJobRecs: async () => {
+      directRecCalls++
+      return { recCount: 0, message: "should not direct rec" }
+    },
+    buildTurnTools: async () => [
+      {
+        name: "set-matching-preferences",
+        description: "persist prefs",
+        parameters: {} as never,
+        execute: async (args) => {
+          toolCalls.push("set-matching-preferences")
+          const parsed = args as Record<string, unknown>
+          assert.deepEqual(parsed.targetLocations, ["remote_us"])
+          assert.deepEqual(parsed.negativeRoleFunctions, ["customer_service_and_support"])
+          assert.equal(parsed.evidenceText, "Please keep me remote only and avoid customer support roles.")
+          assert.equal(parsed.source, "agentic_find_match_router")
+          return JSON.stringify({
+            ok: true,
+            source: "set-matching-preferences",
+            hardConstraint: true,
+            updatedTags: ["targetLocations", "roleFunctionNegativeList"],
+          })
+        },
+      },
+      {
+        name: "find-match",
+        description: "find matches",
+        parameters: {} as never,
+        execute: async () => {
+          toolCalls.push("find-match")
+          return JSON.stringify({ ok: true, source: "find-match", jobCount: 1, message: "should not find" })
+        },
+      },
+    ],
+    runAgentTurn: async (input) => {
+      if (input.agent.id.endsWith(":matching-tool-router")) {
+        agentCalls.push("router")
+        const setPrefs = input.tools?.find((tool) => tool.name === "set-matching-preferences")
+        assert.ok(setPrefs, "set-matching-preferences tool exposed")
+        await setPrefs.execute({
+          targetLocations: ["remote_us"],
+          negativeRoleFunctions: ["customer_service_and_support"],
+          constraintStrength: "hard",
+          evidenceText: "Please keep me remote only and avoid customer support roles.",
+          source: "agentic_find_match_router",
+        })
+        return { text: "__NO_ACTION__" }
+      }
+      agentCalls.push("default")
+      return { text: "default Claire reply" }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound.push(body)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Please keep me remote only and avoid customer support roles.",
+  }, store)
+
+  assert.equal(directRecCalls, 0)
+  assert.deepEqual(agentCalls, ["router"])
+  assert.deepEqual(toolCalls, ["set-matching-preferences"])
+  assert.equal(outbound.length, 1)
+  assert.match(outbound[0]!, /saved.*matching/i)
+})
+
+test("completed user matching router falls through without stealing unrelated chat", async () => {
+  const agentCalls: string[] = []
+  const outbound: string[] = []
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+    }),
+    buildTurnTools: async () => [
+      {
+        name: "set-matching-preferences",
+        description: "persist prefs",
+        parameters: {} as never,
+        execute: async () => {
+          throw new Error("set-matching-preferences should not run")
+        },
+      },
+      {
+        name: "find-match",
+        description: "find matches",
+        parameters: {} as never,
+        execute: async () => {
+          throw new Error("find-match should not run")
+        },
+      },
+    ],
+    runAgentTurn: async (input) => {
+      if (input.agent.id.endsWith(":matching-tool-router")) {
+        agentCalls.push("router")
+        return { text: "__NO_ACTION__" }
+      }
+      agentCalls.push("default")
+      return { text: "normal Claire reply" }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound.push(body)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Random question: how should I think about this interview answer?",
+  }, store)
+
+  assert.deepEqual(agentCalls, ["router", "default"])
+  assert.deepEqual(outbound, ["normal Claire reply"])
 })
 
 test("processInboundEvent passes a Session and systemInputs into the default agent turn", async () => {

@@ -304,6 +304,72 @@ t6test("set-daily-job-recommendation-subscription via runConnector persists opt-
   assert.equal(row.status, "completed")
 })
 
+t6test("find-match via runConnector calls matching hook and writes completed tool audit", async () => {
+  const { db, store } = fakeFirestoreT6()
+  const agent: AgentDef = {
+    ...t6Agent,
+    allowedConnectors: ["find-match"],
+  }
+  let hookCalls = 0
+
+  const out = await runConnector(
+    "find-match" as never,
+    {
+      lang: "en",
+      requestedCount: 2,
+      source: "agentic_find_match_router",
+      roleFocus: ["software_engineering"],
+      hardConstraintsActive: true,
+      allowBroadFallback: false,
+    },
+    {
+      db,
+      agent,
+      turnId: "turn-find",
+      userId: "u1",
+      sessionId: "s1",
+      usedThisTurn: 0,
+      hooks: {
+        findMatch: async (input) => {
+          hookCalls += 1
+          assert.deepEqual(input, {
+            lang: "en",
+            requestedCount: 2,
+            source: "agentic_find_match_router",
+            roleFocus: ["software_engineering"],
+            hardConstraintsActive: true,
+            allowBroadFallback: false,
+          })
+          return {
+            ok: true,
+            source: "find-match",
+            reason: null,
+            jobCount: 2,
+            summary: "Found 2 jobs.",
+            message: "Two roles fit.",
+          }
+        },
+      },
+    },
+  ) as { ok?: boolean; source?: string; jobCount?: number; message?: string | null }
+
+  assert.equal(hookCalls, 1)
+  assert.equal(out.ok, true)
+  assert.equal(out.source, "find-match")
+  assert.equal(out.jobCount, 2)
+  assert.equal(out.message, "Two roles fit.")
+
+  const toolCallEntries = [...store.entries()].filter(([k]) =>
+    k.startsWith(`${PA_COLLECTIONS.toolCalls}/`)
+  )
+  assert.equal(toolCallEntries.length, 1)
+  const row = toolCallEntries[0]![1] as Record<string, unknown>
+  assert.equal(row.connectorName, "find-match")
+  assert.equal(row.policyDecision, "allow")
+  assert.equal(row.status, "completed")
+  assert.match(String(row.resultSummary), /"source":"find-match"/)
+})
+
 // -------- Phase 13 T13.1: wekruit-matching connector tests --------
 //
 // Exhaustive coverage of:

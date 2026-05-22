@@ -2646,7 +2646,7 @@ async function handleCompletedUserMatchingToolRouter(
   }
 
   const trimmed = (text ?? "").trim()
-  if ((!preferenceCalled && !findMatchCalled) || trimmed === "__NO_ACTION__") return false
+  if (!preferenceCalled && !findMatchCalled) return false
 
   const parsedFindMatchResult = findMatchResult as Record<string, unknown> | null
   const recCount = typeof parsedFindMatchResult?.jobCount === "number" ? parsedFindMatchResult.jobCount : 0
