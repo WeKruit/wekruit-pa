@@ -29,6 +29,7 @@ test("default seed agent matches Phase 10.5 production target (provider/model/to
     "wekruit-matching",
     "save-job-profile",
     "set-matching-preferences",
+    "set-daily-job-recommendation-subscription",
     "find-match",
     "match-against-collab-jobs",
   ])

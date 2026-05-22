@@ -679,7 +679,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
           source: "shared_onboarding_complete",
           roleFocus: null,
           hardConstraintsActive: false,
-          allowBroadFallback: true,
+          allowBroadFallback: false,
         },
         lang,
         source: "shared_onboarding_complete",
@@ -738,7 +738,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
     }
   }
 
-  const recs = await gen(input.event.userId, lang, { force: true, requestedCount: 2, allowBroadFallback: true })
+  const recs = await gen(input.event.userId, lang, { force: true, requestedCount: 2, allowBroadFallback: false })
   const recCount = recs?.recCount ?? 0
   const reply =
     recs && recCount > 0

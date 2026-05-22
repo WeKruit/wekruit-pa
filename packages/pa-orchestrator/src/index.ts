@@ -2494,7 +2494,7 @@ const MATCHING_TOOL_ROUTER_PROMPT = [
   "You are Claire's matching tool router. You do not chat unless you used a matching tool.",
   "Return exactly __NO_ACTION__ when the latest user message is not about job matching, fresh roles, companies, openings, constraints, or preferences.",
   "If the user asks for more jobs, more companies, tighter matches, fresh roles, or what fits them, call find-match.",
-  "If the user states a matching constraint or preference, call set-matching-preferences before replying. This includes H1B, OPT, visa sponsorship, remote/location, role focus, job type, company stage, and companies to avoid.",
+  "If the user states a matching constraint or preference, call set-matching-preferences before replying. This includes H1B, OPT, visa sponsorship, country/remote/location, role focus, role level/seniority, job type, company stage, and companies to avoid.",
   "If the user both updates preferences and asks for jobs, call set-matching-preferences first, then find-match.",
   "For H1B, OPT, or employer sponsorship needs, set visaStatus=sponsor_needed and constraintStrength=hard.",
   "When explicit hard constraints are present, call find-match with hardConstraintsActive=true and allowBroadFallback=false.",
@@ -2556,7 +2556,9 @@ async function handleCompletedUserMatchingToolRouter(
         const raw = await tool.execute({
           visaStatus: payload.visaStatus ?? null,
           targetLocations: payload.targetLocations ?? null,
+          targetCountry: payload.targetCountry ?? null,
           roleFocus: payload.roleFocus ?? null,
+          careerStage: payload.careerStage ?? null,
           companyStage: payload.companyStage ?? null,
           jobType: payload.jobType ?? null,
           negativeCompanies: payload.negativeCompanies ?? null,

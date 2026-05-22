@@ -1,5 +1,5 @@
 import type { PartialUserTags } from "./tags/user-tags-writer.js"
-import { mapAnswerToLocations } from "./tags/onboarding-mappers.js"
+import { mapAnswerToLocations, mapAnswerToRoleFunction } from "./tags/onboarding-mappers.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import type { IndustrySector } from "@wekruit/shared-tags"
 import type { JudgeResult, Lang } from "./onboarding/question.js"
@@ -836,6 +836,10 @@ function industryTags(text: string): IndustrySector[] {
     { token: "healthcare_and_life_sciences", pattern: /\b(healthcare|health\s+tech|life\s+sciences?)\b/i },
     { token: "education_technology", pattern: /\b(edtech|education\s+technology)\b/i },
     { token: "gaming_and_esports", pattern: /\b(gaming|esports?)\b/i },
+    { token: "media_and_entertainment", pattern: /\b(media|entertainment|film|movie|youtube|creator|streaming)\b/i },
+    { token: "fashion_and_apparel", pattern: /\b(fashion|apparel|clothing|lifestyle)\b/i },
+    { token: "consumer_goods", pattern: /\bconsumer\s+(brand|brands|goods|products?)\b/i },
+    { token: "advertising_and_marketing", pattern: /\b(advertising|marketing|brand)\b/i },
     { token: "clean_energy_and_climate_tech", pattern: /\b(climate|clean\s+energy|energy)\b/i },
   ]
   return rules.filter((rule) => rule.pattern.test(text)).map((rule) => rule.token)
@@ -903,11 +907,16 @@ export function projectSharedOnboardingAnswer(
   const tags: PartialUserTags = {}
   const statedPreferences: Record<string, unknown> = {}
   const evidence: Record<string, unknown> = { questionId, answer: trimmed }
+  const opportunisticLocations = orderedLocations(trimmed)
 
   if (questionId === "main_goal") {
     const targetCompanyTags = companyGoalTags(trimmed)
     if (targetCompanyTags.length > 0) tags.targetCompanyTags = targetCompanyTags
     if (targetCompanyTags.length > 0) statedPreferences.nextCompanyGoals = targetCompanyTags
+    if (opportunisticLocations.length > 0) {
+      tags.targetLocations = opportunisticLocations
+      statedPreferences.targetLocations = opportunisticLocations
+    }
   }
 
   if (questionId === "culture_stage") {
@@ -926,15 +935,25 @@ export function projectSharedOnboardingAnswer(
 
   if (questionId === "industry_interest") {
     const industries = industryTags(trimmed)
+    const targetRoleFunction = mapAnswerToRoleFunction(trimmed)
     if (industries.length > 0) tags.industrySector = industries
     if (industries.length > 0) statedPreferences.industrySector = industries
+    if (targetRoleFunction.length > 0) {
+      tags.targetRoleFunction = targetRoleFunction
+      statedPreferences.targetRoleFunction = targetRoleFunction
+    }
   }
 
   if (questionId === "location_relocation") {
     const targetLocations = orderedLocations(trimmed)
+    const industries = industryTags(trimmed)
     const relocate = relocationOpen(trimmed)
     if (targetLocations.length > 0) tags.targetLocations = targetLocations
     if (targetLocations.length > 0) statedPreferences.targetLocations = targetLocations
+    if (industries.length > 0) {
+      tags.industrySector = industries
+      statedPreferences.industrySector = industries
+    }
     if (relocate !== undefined) {
       statedPreferences.relocationOpen = relocate
       evidence.relocationOpen = relocate
@@ -942,11 +961,25 @@ export function projectSharedOnboardingAnswer(
   }
 
   if (questionId === "special_context") {
+    const targetRoleFunction = mapAnswerToRoleFunction(trimmed)
+    const industries = industryTags(trimmed)
     const specialTags = []
     if (/\b(visa|sponsor|h[-\s]?1b|opt|cpt)\b/i.test(trimmed)) specialTags.push("visa_context")
     if (/\b(laid\s*off|layoff|severance|urgent|asap)\b/i.test(trimmed)) specialTags.push("urgent_search_context")
     if (/\b(parent|caregiver|health|family)\b/i.test(trimmed)) specialTags.push("personal_constraint")
     if (specialTags.length > 0) tags.targetCompanyTags = specialTags
+    if (targetRoleFunction.length > 0) {
+      tags.targetRoleFunction = targetRoleFunction
+      statedPreferences.targetRoleFunction = targetRoleFunction
+    }
+    if (industries.length > 0) {
+      tags.industrySector = industries
+      statedPreferences.industrySector = industries
+    }
+    if (opportunisticLocations.length > 0) {
+      tags.targetLocations = opportunisticLocations
+      statedPreferences.targetLocations = opportunisticLocations
+    }
     statedPreferences.specialContext = trimmed
   }
 

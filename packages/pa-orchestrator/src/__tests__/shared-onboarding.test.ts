@@ -167,6 +167,15 @@ test("free-form answers produce memory evidence and confident tag patches", () =
     "crypto_web3_blockchain",
   ])
 
+  const roleLikeIndustry = projectSharedOnboardingAnswer(
+    "industry_interest",
+    "I would say marketing and product management.",
+  )
+  assert.deepEqual(roleLikeIndustry.tags.targetRoleFunction, [
+    "product_management",
+    "marketing",
+  ])
+
   const location = projectSharedOnboardingAnswer(
     "location_relocation",
     "NYC or remote would be best, but I can relocate to Seattle for the right team.",
@@ -177,6 +186,17 @@ test("free-form answers produce memory evidence and confident tag patches", () =
     "seattle_metro",
   ])
   assert.equal(location.evidence.relocationOpen, true)
+
+  const misplacedIndustry = projectSharedOnboardingAnswer(
+    "location_relocation",
+    "I’m especially drawn to fashion/lifestyle, entertainment, gaming, media, and consumer brands.",
+  )
+  assert.deepEqual(misplacedIndustry.tags.industrySector, [
+    "gaming_and_esports",
+    "media_and_entertainment",
+    "fashion_and_apparel",
+    "consumer_goods",
+  ])
 })
 
 test("recommendations become eligible only after Q5 is collected", () => {

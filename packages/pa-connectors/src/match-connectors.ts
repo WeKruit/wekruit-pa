@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { PA_COLLECTIONS } from "@pa/core-types"
 import type { ConnectorContext, ConnectorDef, ConnectorNarrationTemplates } from "./connector-types.js"
 
 export type { MatchConnectorHooks } from "./connector-types.js"
@@ -41,7 +42,9 @@ const nullableStringArray = z.array(z.string().min(1)).nullable()
 const SetMatchingPreferencesInputSchema = z.object({
   visaStatus: z.enum(["sponsor_needed", "authorized", "citizen", "green_card", "opt", "unknown"]).nullable().optional(),
   targetLocations: nullableStringArray.optional(),
+  targetCountry: nullableStringArray.optional(),
   roleFocus: nullableStringArray.optional(),
+  careerStage: z.enum(["student", "intern", "entry_level", "junior", "mid_level", "senior", "staff", "principal", "manager", "director", "vp", "c_level", "founder"]).nullable().optional(),
   companyStage: nullableStringArray.optional(),
   jobType: nullableStringArray.optional(),
   negativeCompanies: nullableStringArray.optional(),
@@ -56,6 +59,22 @@ const SetMatchingPreferencesOutputSchema = z.object({
   reason: z.string().nullable(),
   hardConstraint: z.boolean(),
   updatedTags: z.array(z.string()),
+  summary: z.string(),
+})
+
+const SetDailyJobRecommendationSubscriptionInputSchema = z.object({
+  optedIn: z.boolean(),
+  consentText: z.string().min(1).max(1000).nullable().optional(),
+  source: z.string().min(1).max(120).nullable().optional(),
+  lang: z.enum(["en", "zh"]).nullable().optional(),
+})
+
+const SetDailyJobRecommendationSubscriptionOutputSchema = z.object({
+  ok: z.boolean(),
+  source: z.literal("set-daily-job-recommendation-subscription"),
+  optedIn: z.boolean(),
+  jobProfileStatus: z.enum(["active", "paused"]),
+  reason: z.string().nullable(),
   summary: z.string(),
 })
 
@@ -162,10 +181,19 @@ export const SET_MATCHING_PREFERENCES_CONNECTOR: ConnectorDef<
       tagsPatch.targetLocations = targetLocations
       updatedTags.push("targetLocations")
     }
+    const targetCountry = normalizeStringArray(input.targetCountry)
+    if (targetCountry.length > 0) {
+      tagsPatch.targetCountry = targetCountry
+      updatedTags.push("targetCountry")
+    }
     const roleFocus = normalizeStringArray(input.roleFocus)
     if (roleFocus.length > 0) {
       tagsPatch.targetRoleFunction = roleFocus
       updatedTags.push("targetRoleFunction")
+    }
+    if (input.careerStage) {
+      tagsPatch.careerStage = input.careerStage
+      updatedTags.push("careerStage")
     }
     const companyStage = normalizeStringArray(input.companyStage)
     if (companyStage.length > 0) {
@@ -197,12 +225,16 @@ export const SET_MATCHING_PREFERENCES_CONNECTOR: ConnectorDef<
     const hardConstraint =
       input.constraintStrength === "hard" ||
       input.visaStatus === "sponsor_needed" ||
+      targetCountry.length > 0 ||
+      Boolean(input.careerStage) ||
       negativeCompanies.length > 0
     const now = new Date().toISOString()
     const matchingProfilePatch = {
       visaStatus: input.visaStatus ?? null,
       targetLocations: targetLocations.length > 0 ? targetLocations : null,
+      targetCountry: targetCountry.length > 0 ? targetCountry : null,
       roleFocus: roleFocus.length > 0 ? roleFocus : null,
+      careerStage: input.careerStage ?? null,
       companyStage: companyStage.length > 0 ? companyStage : null,
       jobType: jobType.length > 0 ? jobType : null,
       negativeCompanies: negativeCompanies.length > 0 ? negativeCompanies : null,
@@ -238,6 +270,64 @@ export const SET_MATCHING_PREFERENCES_CONNECTOR: ConnectorDef<
       summary: hardConstraint
         ? "Saved hard matching constraints."
         : "Saved matching preferences.",
+    }
+  },
+}
+
+export const SET_DAILY_JOB_RECOMMENDATION_SUBSCRIPTION_CONNECTOR: ConnectorDef<
+  z.infer<typeof SetDailyJobRecommendationSubscriptionInputSchema>,
+  z.infer<typeof SetDailyJobRecommendationSubscriptionOutputSchema>
+> = {
+  name: "set-daily-job-recommendation-subscription",
+  version: "1",
+  description:
+    "Persist the user's opt-in or opt-out for daily job recommendation texts. " +
+    "Use only when the user explicitly accepts or declines recurring fresh/daily job texts. " +
+    "Call this before confirming that daily recommendations are saved.",
+  inputSchema: SetDailyJobRecommendationSubscriptionInputSchema,
+  outputSchema: SetDailyJobRecommendationSubscriptionOutputSchema,
+  expectedLatencyMs: 600,
+  execute: async (input, ctx) => {
+    const now = new Date().toISOString()
+    const status = input.optedIn ? "active" : "paused"
+    const source = input.source ?? "claire_tool"
+    const subscription = input.optedIn
+      ? {
+          optedIn: true,
+          optedInAt: now,
+          source,
+          ...(input.consentText ? { consentText: input.consentText } : {}),
+        }
+      : {
+          optedIn: false,
+          optedOutAt: now,
+          source,
+          ...(input.consentText ? { consentText: input.consentText } : {}),
+        }
+    await ctx.db.collection(PA_COLLECTIONS.users).doc(ctx.userId).set(
+      {
+        dailyJobRecSubscribe: subscription,
+        updatedAt: now,
+      },
+      { merge: true },
+    )
+    await ctx.db.collection("pa-job-profiles").doc(ctx.userId).set(
+      {
+        userId: ctx.userId,
+        status,
+        updatedAt: now,
+      },
+      { merge: true },
+    )
+    return {
+      ok: true,
+      source: "set-daily-job-recommendation-subscription",
+      optedIn: input.optedIn,
+      jobProfileStatus: status,
+      reason: null,
+      summary: input.optedIn
+        ? "Daily job recommendation texts are active."
+        : "Daily job recommendation texts are paused.",
     }
   },
 }

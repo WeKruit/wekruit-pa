@@ -220,7 +220,9 @@ t6test("set-matching-preferences via runConnector persists H1B hard constraint w
     {
       visaStatus: "sponsor_needed",
       targetLocations: ["San Francisco", "remote_us"],
+      targetCountry: ["usa"],
       roleFocus: ["software_engineering"],
+      careerStage: "junior",
       companyStage: null,
       jobType: ["full_time"],
       negativeCompanies: ["OpenAI"],
@@ -239,11 +241,15 @@ t6test("set-matching-preferences via runConnector persists H1B hard constraint w
   const tags = user.tags as Record<string, unknown>
   assert.equal(tags.visaStatus, "sponsor_needed")
   assert.deepEqual(tags.targetLocations, ["San Francisco", "remote_us"])
+  assert.deepEqual(tags.targetCountry, ["usa"])
+  assert.equal(tags.careerStage, "junior")
   assert.deepEqual(tags.companyNegativeList, ["OpenAI"])
   const prefs = user.conversationDerivedPreferences as Record<string, unknown>
   const matchingProfile = prefs.matchingProfile as Record<string, unknown>
   const last = matchingProfile.last as Record<string, unknown>
   assert.equal(last.visaStatus, "sponsor_needed")
+  assert.deepEqual(last.targetCountry, ["usa"])
+  assert.equal(last.careerStage, "junior")
   assert.equal(last.constraintStrength, "hard")
 
   const toolCallEntries = [...store.entries()].filter(([k]) =>
@@ -252,6 +258,46 @@ t6test("set-matching-preferences via runConnector persists H1B hard constraint w
   assert.equal(toolCallEntries.length, 1)
   const row = toolCallEntries[0]![1] as Record<string, unknown>
   assert.equal(row.connectorName, "set-matching-preferences")
+  assert.equal(row.status, "completed")
+})
+
+t6test("set-daily-job-recommendation-subscription via runConnector persists opt-in state with tool audit", async () => {
+  const { db, store } = fakeFirestoreT6()
+  const agent: AgentDef = {
+    ...t6Agent,
+    allowedConnectors: ["set-daily-job-recommendation-subscription"],
+  }
+
+  const out = await runConnector(
+    "set-daily-job-recommendation-subscription" as never,
+    {
+      optedIn: true,
+      consentText: "yes please",
+      source: "post_match_retention",
+      lang: "en",
+    },
+    { db, agent, turnId: "turn-sub", userId: "u1", sessionId: "s1", usedThisTurn: 0 },
+  ) as { ok?: boolean; optedIn?: boolean; jobProfileStatus?: string }
+
+  assert.equal(out.ok, true)
+  assert.equal(out.optedIn, true)
+  assert.equal(out.jobProfileStatus, "active")
+
+  const user = store.get("pa-users/u1") as Record<string, unknown> | undefined
+  assert.ok(user, "pa-users row written")
+  assert.deepEqual(
+    (user.dailyJobRecSubscribe as Record<string, unknown> | undefined)?.optedIn,
+    true,
+  )
+  const profile = store.get("pa-job-profiles/u1") as Record<string, unknown> | undefined
+  assert.equal(profile?.status, "active")
+
+  const toolCallEntries = [...store.entries()].filter(([k]) =>
+    k.startsWith(`${PA_COLLECTIONS.toolCalls}/`)
+  )
+  assert.equal(toolCallEntries.length, 1)
+  const row = toolCallEntries[0]![1] as Record<string, unknown>
+  assert.equal(row.connectorName, "set-daily-job-recommendation-subscription")
   assert.equal(row.status, "completed")
 })
 

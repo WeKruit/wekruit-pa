@@ -5,12 +5,27 @@
  * Flow: like? → (if no) why? → daily subscribe? → collab prescreen offer?
  */
 import type { Firestore } from "firebase-admin/firestore"
-import type { InboundEvent } from "@pa/core-types"
+import type { AgentDef, InboundEvent } from "@pa/core-types"
 import { PA_COLLECTIONS } from "@pa/core-types"
+import { runConnector } from "@pa/pa-connectors"
 import { getFlag, writeFeedbackEvent } from "@pa/pa-persistence"
 import { detectLang } from "./voice/imperfection-injector/index.js"
 import { sendCollabPrescreenOfferFromCandidateOptIn } from "./collab-match-invite.js"
 import type { GenerateJobRecsFn } from "./match-connector-hooks.js"
+
+const POST_MATCH_RETENTION_TOOL_AGENT: AgentDef = {
+  id: "post-match-retention",
+  name: "Post-match retention",
+  version: "1",
+  systemPrompt: "Deterministic post-match retention flow.",
+  provider: "other",
+  model: "deterministic",
+  temperature: 0,
+  toolPolicy: "allowlist",
+  allowedConnectors: ["set-matching-preferences", "set-daily-job-recommendation-subscription"],
+  toolBudgetPerTurn: 2,
+  memoryMode: "firestore_only",
+}
 
 export type PostMatchRetentionStage =
   | "await_liked"
@@ -216,37 +231,71 @@ async function writeBatchFeedback(input: {
   }
 }
 
+function deriveDislikePreferencePatch(reasonText: string): Record<string, unknown> | null {
+  const normalized = reasonText.trim().toLowerCase()
+  if (!normalized) return null
+  const patch: Record<string, unknown> = {
+    evidenceText: reasonText.slice(0, 1000),
+    source: "post_match_retention_feedback",
+    constraintStrength: "hard",
+  }
+  let changed = false
+  if (/\b(india|outside\s+(?:the\s+)?u\.?s\.?|outside\s+(?:the\s+)?united\s+states|non[-\s]?us|overseas)\b/i.test(reasonText)) {
+    patch.targetCountry = ["usa"]
+    changed = true
+  }
+  if (/\b(senior|staff|principal|director|too\s+senior|role\s+level|level)\b/i.test(reasonText)) {
+    patch.careerStage = "junior"
+    changed = true
+  }
+  return changed ? patch : null
+}
+
+async function persistDislikePreferencePatch(input: {
+  db: Firestore
+  event: InboundEvent
+  turnId: string
+  patch: Record<string, unknown>
+}): Promise<void> {
+  await runConnector(
+    "set-matching-preferences",
+    input.patch,
+    {
+      db: input.db,
+      agent: POST_MATCH_RETENTION_TOOL_AGENT,
+      turnId: input.turnId,
+      userId: input.event.userId,
+      sessionId: input.event.sessionId,
+      usedThisTurn: 0,
+    },
+  )
+}
+
 async function persistDailySubscribeOptIn(
   db: Firestore,
+  event: InboundEvent,
+  turnId: string,
   userId: string,
   optedIn: boolean,
-  nowIso: string
 ): Promise<void> {
-  await db
-    .collection(PA_COLLECTIONS.users)
-    .doc(userId)
-    .set(
-      {
-        dailyJobRecSubscribe: {
-          optedIn,
-          optedInAt: nowIso,
-          source: "post_match_retention",
-        },
-        updatedAt: nowIso,
-      },
-      { merge: true }
-    )
-  await db
-    .collection("pa-job-profiles")
-    .doc(userId)
-    .set(
-      {
-        userId,
-        status: optedIn ? "active" : "paused",
-        updatedAt: nowIso,
-      },
-      { merge: true }
-    )
+  const result = await runConnector(
+    "set-daily-job-recommendation-subscription",
+    {
+      optedIn,
+      consentText: event.body,
+      source: "post_match_retention",
+      lang: detectLang(event.body) === "zh" ? "zh" : "en",
+    },
+    {
+      db,
+      agent: POST_MATCH_RETENTION_TOOL_AGENT,
+      turnId,
+      userId,
+      sessionId: event.sessionId,
+      usedThisTurn: 0,
+    },
+  ) as { ok?: boolean }
+  if (result.ok !== true) throw new Error("daily_subscription_tool_failed")
 }
 
 async function sendImmediateSubscribeMatchBatch(input: {
@@ -415,6 +464,18 @@ export async function handlePostMatchRetentionReply(
         reasonText: event.body,
         nowIso: at,
       })
+      const preferencePatch = deriveDislikePreferencePatch(event.body)
+      if (preferencePatch) {
+        try {
+          await persistDislikePreferencePatch({ db, event, turnId, patch: preferencePatch })
+        } catch (err) {
+          store.log("pa.post_match_retention.feedback_preference_tool.failed", {
+            userId: event.userId,
+            turnId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
       next.stage = "await_subscribe"
       reply =
         lang === "zh"
@@ -432,7 +493,20 @@ export async function handlePostMatchRetentionReply(
         break
       }
       next.subscribeOptIn = yn === "yes"
-      await persistDailySubscribeOptIn(db, event.userId, yn === "yes", at)
+      try {
+        await persistDailySubscribeOptIn(db, event, turnId, event.userId, yn === "yes")
+      } catch (err) {
+        store.log("pa.post_match_retention.subscribe_tool.failed", {
+          userId: event.userId,
+          turnId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        reply =
+          lang === "zh"
+            ? "我这边保存订阅状态卡了一下。你再回一次「要」或「不用」，我重试。"
+            : "I hit a save issue on the daily-text setting. Reply yes or no once more and I'll retry."
+        break
+      }
       if (yn === "yes") {
         await sendImmediateSubscribeMatchBatch({ store, event, turnId, lang })
       }

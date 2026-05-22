@@ -144,3 +144,71 @@ test("handlePostMatchRetentionReply sends an immediate match batch after daily o
   assert.match(sent[1]?.body ?? "", /partner|合作/)
   assert.equal((docs.get("pa-job-profiles/u_subscribe") as { status?: string } | undefined)?.status, "active")
 })
+
+test("handlePostMatchRetentionReply persists structured constraints from dislike feedback", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-feature-flags/paPostMatchRetentionEnabled",
+      { key: "paPostMatchRetentionEnabled", value: true, type: "bool", scope: "global" },
+    ],
+    [
+      "pa-users/u_feedback",
+      {
+        postMatchRetention: {
+          stage: "await_dislike_reason",
+          startedAt: "2026-05-21T16:00:00.000Z",
+          updatedAt: "2026-05-21T16:00:00.000Z",
+          recCount: 2,
+          jobIds: ["j1", "j2"],
+        },
+      },
+    ],
+  ])
+  const db = {
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => {
+          const data = docs.get(`${name}/${id}`)
+          return { exists: data !== undefined, data: () => data }
+        },
+        set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+          const key = `${name}/${id}`
+          docs.set(key, opts?.merge ? { ...(docs.get(key) ?? {}), ...data } : data)
+        },
+      }),
+    }),
+  } as never
+  const sent: string[] = []
+  const handled = await handlePostMatchRetentionReply(
+    {
+      id: "e1",
+      userId: "u_feedback",
+      sessionId: "s1",
+      from: "+14243201960",
+      body: "I don't want to work in India and the second one was a senior level job",
+      channel: "imessage",
+    } as never,
+    {
+      db,
+      nowIso: () => "2026-05-21T16:01:00.000Z",
+      log: () => {},
+      getOnboardingUser: async () => ({ onboardingState: "complete" }),
+      enqueueOutbound: async (_userId, _to, body) => {
+        sent.push(body)
+      },
+      updateTurn: async () => {},
+      markEventSucceeded: async () => {},
+    },
+    "t1"
+  )
+
+  assert.equal(handled, true)
+  const user = docs.get("pa-users/u_feedback") as { tags?: Record<string, unknown> } | undefined
+  assert.deepEqual(user?.tags?.targetCountry, ["usa"])
+  assert.equal(user?.tags?.careerStage, "junior")
+  const toolCalls = [...docs.values()].filter((row) => row.connectorName === "set-matching-preferences")
+  assert.equal(toolCalls.length, 1)
+  const feedbackEvents = [...docs.keys()].filter((key) => key.startsWith("pa-feedback-events/post-match-u_feedback-"))
+  assert.equal(feedbackEvents.length, 2)
+  assert.match(sent[0] ?? "", /daily texts|每天/)
+})

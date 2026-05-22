@@ -304,6 +304,16 @@ describe("generateJobRecs role focus", () => {
     )
   })
 
+  it("falls back to canonical targetRoleFunction before legacy targetRole", () => {
+    assert.deepEqual(
+      resolveRuntimeJobRecRoleFocus(undefined, {
+        targetRoleFunction: ["product_management", "marketing"],
+        targetRole: ["full-stack"],
+      }),
+      ["product_management", "marketing"],
+    )
+  })
+
   it("ignores non-presentation targetRole values", () => {
     assert.deepEqual(
       resolveRuntimeJobRecRoleFocus(undefined, { targetRole: ["product-ops tooling", "founder"] }),
