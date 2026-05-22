@@ -69,6 +69,7 @@ import {
 } from "@pa/memory"
 import { appendAuditEvent, enqueueOutbound as enqueueBrokerOutbound } from "@pa/pa-broker"
 import { getFlag, writePrivacyRequest } from "@pa/pa-persistence"
+import { ROLE_FUNCTION_VOCAB } from "@wekruit/shared-tags/canonical"
 import {
   checkPromptInjection,
   checkPromptInjectionAndRecord,
@@ -2520,6 +2521,26 @@ function safeParseToolJson(raw: string | null | undefined): Record<string, unkno
   }
 }
 
+function normalizeRoleFunctionToolValues(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null
+  const out: string[] = []
+  const seen = new Set<string>()
+  const canonical = new Set<string>(ROLE_FUNCTION_VOCAB)
+  for (const raw of value) {
+    if (typeof raw !== "string") continue
+    const direct = raw.trim()
+    const mapped = canonical.has(direct)
+      ? [direct]
+      : mapAnswerToRoleFunction(direct)
+    for (const token of mapped) {
+      if (seen.has(token)) continue
+      seen.add(token)
+      out.push(token)
+    }
+  }
+  return out.length > 0 ? out : null
+}
+
 async function handleCompletedUserMatchingToolRouter(
   event: InboundEvent,
   store: OrchestratorStore,
@@ -2565,12 +2586,12 @@ async function handleCompletedUserMatchingToolRouter(
           visaStatus: payload.visaStatus ?? null,
           targetLocations: payload.targetLocations ?? null,
           targetCountry: payload.targetCountry ?? null,
-          roleFocus: payload.roleFocus ?? null,
+          roleFocus: normalizeRoleFunctionToolValues(payload.roleFocus),
           careerStage: payload.careerStage ?? null,
           companyStage: payload.companyStage ?? null,
           jobType: payload.jobType ?? null,
           negativeCompanies: payload.negativeCompanies ?? null,
-          negativeRoleFunctions: payload.negativeRoleFunctions ?? null,
+          negativeRoleFunctions: normalizeRoleFunctionToolValues(payload.negativeRoleFunctions),
           constraintStrength: payload.constraintStrength ?? null,
           evidenceText: typeof payload.evidenceText === "string" ? payload.evidenceText : event.body,
           source: typeof payload.source === "string" ? payload.source : "agentic_find_match_router",
