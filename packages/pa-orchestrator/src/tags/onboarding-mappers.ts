@@ -58,7 +58,7 @@ const ROLE_FUNCTION_KEYWORDS: ReadonlyArray<{
   // Data analysis: data scientist/analyst/engineer, ML, AI engineer
   {
     pattern:
-      /(data\s+(scientist|analyst|engineer|science)|ml\s+engineer|machine\s+learning|deep\s+learning|算法|ai\s+engineer|llm|数据(科学|分析|工程))/i,
+      /(data\s+(scientist|analyst|analytics|engineer|science)|analytics?\b|insights?\b|ml\s+engineer|machine\s+learning|deep\s+learning|算法|ai\s+engineer|llm|数据(科学|分析|工程))/i,
     token: "data_analysis",
   },
   // Product management
@@ -68,7 +68,7 @@ const ROLE_FUNCTION_KEYWORDS: ReadonlyArray<{
   },
   // Business analyst
   {
-    pattern: /(business\s+analyst|商业分析|\bba\b)/i,
+    pattern: /(business\s+(analyst|analysis)|商业分析|\bba\b)/i,
     token: "business_analyst",
   },
   // Designer / creative

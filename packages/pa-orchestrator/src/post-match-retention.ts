@@ -5,12 +5,27 @@
  * Flow: like? → (if no) why? → daily subscribe? → collab prescreen offer?
  */
 import type { Firestore } from "firebase-admin/firestore"
-import type { InboundEvent } from "@pa/core-types"
+import type { AgentDef, InboundEvent } from "@pa/core-types"
 import { PA_COLLECTIONS } from "@pa/core-types"
+import { runConnector } from "@pa/pa-connectors"
 import { getFlag, writeFeedbackEvent } from "@pa/pa-persistence"
 import { detectLang } from "./voice/imperfection-injector/index.js"
 import { sendCollabPrescreenOfferFromCandidateOptIn } from "./collab-match-invite.js"
 import type { GenerateJobRecsFn } from "./match-connector-hooks.js"
+
+const POST_MATCH_RETENTION_TOOL_AGENT: AgentDef = {
+  id: "post-match-retention",
+  name: "Post-match retention",
+  version: "1",
+  systemPrompt: "Deterministic post-match retention flow.",
+  provider: "other",
+  model: "deterministic",
+  temperature: 0,
+  toolPolicy: "allowlist",
+  allowedConnectors: ["set-matching-preferences", "set-daily-job-recommendation-subscription"],
+  toolBudgetPerTurn: 2,
+  memoryMode: "firestore_only",
+}
 
 export type PostMatchRetentionStage =
   | "await_liked"
@@ -28,6 +43,7 @@ export type PostMatchRetentionState = {
   sentiment?: "positive" | "negative"
   subscribeOptIn?: boolean
   prescreenOptIn?: boolean
+  suppressPrescreenOffer?: boolean
 }
 
 export type PostMatchRetentionStore = {
@@ -92,7 +108,7 @@ export function detectRecBatchSentiment(body: string): "positive" | "negative" |
   const t = normalizeBody(body)
   if (!t) return "ambiguous"
   if (
-    /\b(don'?t like|didn'?t like|not good|not useful|useless|terrible|awful|hate|meh|trash|off\b|wrong|bad|nah|nope|no)\b/i.test(
+    /\b(don'?t like|didn'?t like|not good|not useful|not relevant|not interested|not aligned|doesn'?t align|does not align|not fit|doesn'?t fit|useless|terrible|awful|hate|meh|trash|off\b|wrong|bad|nah|nope|no)\b/i.test(
       t
     ) ||
     /(不喜欢|不太行|没用|不行|不好|不对|离谱|垃圾|算了|不太合适|差点意思|不太对)/.test(t)
@@ -216,37 +232,75 @@ async function writeBatchFeedback(input: {
   }
 }
 
+function deriveDislikePreferencePatch(reasonText: string): Record<string, unknown> | null {
+  const normalized = reasonText.trim().toLowerCase()
+  if (!normalized) return null
+  const patch: Record<string, unknown> = {
+    evidenceText: reasonText.slice(0, 1000),
+    source: "post_match_retention_feedback",
+    constraintStrength: "hard",
+  }
+  let changed = false
+  if (/\b(india|outside\s+(?:the\s+)?u\.?s\.?|outside\s+(?:the\s+)?united\s+states|non[-\s]?us|overseas)\b/i.test(reasonText)) {
+    patch.targetCountry = ["usa"]
+    changed = true
+  }
+  if (/\b(senior|staff|principal|director|lead|manager|vp|too\s+senior)\b/i.test(reasonText)) {
+    patch.careerStage = "junior"
+    changed = true
+  }
+  if (/\b(customer\s+service|customer\s+support|support\s+role|call\s*center|customer\s+success)\b/i.test(reasonText)) {
+    patch.negativeRoleFunctions = ["customer_service_and_support"]
+    changed = true
+  }
+  return changed ? patch : null
+}
+
+async function persistDislikePreferencePatch(input: {
+  db: Firestore
+  event: InboundEvent
+  turnId: string
+  patch: Record<string, unknown>
+}): Promise<void> {
+  await runConnector(
+    "set-matching-preferences",
+    input.patch,
+    {
+      db: input.db,
+      agent: POST_MATCH_RETENTION_TOOL_AGENT,
+      turnId: input.turnId,
+      userId: input.event.userId,
+      sessionId: input.event.sessionId,
+      usedThisTurn: 0,
+    },
+  )
+}
+
 async function persistDailySubscribeOptIn(
   db: Firestore,
+  event: InboundEvent,
+  turnId: string,
   userId: string,
   optedIn: boolean,
-  nowIso: string
 ): Promise<void> {
-  await db
-    .collection(PA_COLLECTIONS.users)
-    .doc(userId)
-    .set(
-      {
-        dailyJobRecSubscribe: {
-          optedIn,
-          optedInAt: nowIso,
-          source: "post_match_retention",
-        },
-        updatedAt: nowIso,
-      },
-      { merge: true }
-    )
-  await db
-    .collection("pa-job-profiles")
-    .doc(userId)
-    .set(
-      {
-        userId,
-        status: optedIn ? "active" : "paused",
-        updatedAt: nowIso,
-      },
-      { merge: true }
-    )
+  const result = await runConnector(
+    "set-daily-job-recommendation-subscription",
+    {
+      optedIn,
+      consentText: event.body,
+      source: "post_match_retention",
+      lang: detectLang(event.body) === "zh" ? "zh" : "en",
+    },
+    {
+      db,
+      agent: POST_MATCH_RETENTION_TOOL_AGENT,
+      turnId,
+      userId,
+      sessionId: event.sessionId,
+      usedThisTurn: 0,
+    },
+  ) as { ok?: boolean }
+  if (result.ok !== true) throw new Error("daily_subscription_tool_failed")
 }
 
 async function sendImmediateSubscribeMatchBatch(input: {
@@ -302,6 +356,7 @@ export async function startPostMatchRetentionAfterJobRecs(input: {
   toE164?: string
   lang?: "zh" | "en"
   jobIds?: string[]
+  suppressPrescreenOffer?: boolean
   enqueueOutbound?: PostMatchRetentionStore["enqueueOutbound"]
 }): Promise<void> {
   const enabled = await isPostMatchRetentionEnabled(input.db, input.userId)
@@ -316,6 +371,7 @@ export async function startPostMatchRetentionAfterJobRecs(input: {
     updatedAt: at,
     recCount: input.recCount,
     ...(input.jobIds?.length ? { jobIds: input.jobIds } : {}),
+    ...(input.suppressPrescreenOffer ? { suppressPrescreenOffer: true } : {}),
   })
 
   if (input.enqueueOutbound && input.toE164) {
@@ -415,6 +471,23 @@ export async function handlePostMatchRetentionReply(
         reasonText: event.body,
         nowIso: at,
       })
+      const preferencePatch = deriveDislikePreferencePatch(event.body)
+      if (preferencePatch) {
+        try {
+          await persistDislikePreferencePatch({ db, event, turnId, patch: preferencePatch })
+        } catch (err) {
+          store.log("pa.post_match_retention.feedback_preference_tool.failed", {
+            userId: event.userId,
+            turnId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          reply =
+            lang === "zh"
+              ? "我这边保存这个偏好卡了一下，先不假装记下了。你再发一次哪里不对，我重试。"
+              : "I hit a save issue on that preference, so I will not pretend it is saved. Send what was off once more and I will retry."
+          break
+        }
+      }
       next.stage = "await_subscribe"
       reply =
         lang === "zh"
@@ -432,7 +505,20 @@ export async function handlePostMatchRetentionReply(
         break
       }
       next.subscribeOptIn = yn === "yes"
-      await persistDailySubscribeOptIn(db, event.userId, yn === "yes", at)
+      try {
+        await persistDailySubscribeOptIn(db, event, turnId, event.userId, yn === "yes")
+      } catch (err) {
+        store.log("pa.post_match_retention.subscribe_tool.failed", {
+          userId: event.userId,
+          turnId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        reply =
+          lang === "zh"
+            ? "我这边保存订阅状态卡了一下。你再回一次「要」或「不用」，我重试。"
+            : "I hit a save issue on the daily-text setting. Reply yes or no once more and I'll retry."
+        break
+      }
       if (yn === "yes") {
         await sendImmediateSubscribeMatchBatch({ store, event, turnId, lang })
       }
@@ -445,11 +531,55 @@ export async function handlePostMatchRetentionReply(
         reasonText: event.body,
         nowIso: at,
       })
-      next.stage = "await_prescreen"
-      reply = copyForStage("await_prescreen", lang)
+      if (state.suppressPrescreenOffer) {
+        next.stage = "complete"
+        reply =
+          lang === "zh"
+            ? "收到。我会继续看更贴的岗，有干净匹配再发你。"
+            : "Got it — I'll keep looking and text you when something tighter shows up."
+      } else {
+        next.stage = "await_prescreen"
+        reply = copyForStage("await_prescreen", lang)
+      }
       break
     }
     case "await_prescreen": {
+      const sentiment = detectRecBatchSentiment(event.body)
+      const preferencePatch = deriveDislikePreferencePatch(event.body)
+      if (sentiment === "negative" || preferencePatch) {
+        await writeBatchFeedback({
+          db,
+          userId: event.userId,
+          jobIds,
+          kind: "candidate_decline",
+          outcome: "partner_prescreen_offer_not_relevant",
+          reasonText: event.body,
+          nowIso: at,
+        })
+        if (preferencePatch) {
+          try {
+            await persistDislikePreferencePatch({ db, event, turnId, patch: preferencePatch })
+          } catch (err) {
+            store.log("pa.post_match_retention.prescreen_feedback_preference_tool.failed", {
+              userId: event.userId,
+              turnId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+            reply =
+              lang === "zh"
+                ? "我这边保存这个偏好卡了一下，先不假装记下了。你再发一次哪里不对，我重试。"
+                : "I hit a save issue on that preference, so I will not pretend it is saved. Send what was off once more and I will retry."
+            break
+          }
+        }
+        next.stage = "complete"
+        next.sentiment = "negative"
+        reply =
+          lang === "zh"
+            ? "收到，我会避开这类方向，继续帮你找更贴的匹配。"
+            : "Got it — I'll avoid that direction and keep looking for tighter matches."
+        break
+      }
       const yn = detectYesNoIntent(event.body)
       if (yn === "ambiguous") {
         reply =

@@ -50,9 +50,18 @@ test("mapAnswerToRoleFunction: PM keywords → product_management", () => {
   assert.deepEqual(mapAnswerToRoleFunction("产品经理"), ["product_management"])
 })
 
+test("mapAnswerToRoleFunction: business analysis → business_analyst", () => {
+  assert.deepEqual(mapAnswerToRoleFunction("business analysis"), [
+    "business_analyst",
+  ])
+})
+
 test("mapAnswerToRoleFunction: data role → data_analysis", () => {
   assert.deepEqual(mapAnswerToRoleFunction("data scientist"), ["data_analysis"])
   assert.deepEqual(mapAnswerToRoleFunction("ML engineer"), ["data_analysis"])
+  assert.deepEqual(mapAnswerToRoleFunction("data analytics & insights extern"), [
+    "data_analysis",
+  ])
   assert.deepEqual(mapAnswerToRoleFunction("数据分析师"), ["data_analysis"])
 })
 

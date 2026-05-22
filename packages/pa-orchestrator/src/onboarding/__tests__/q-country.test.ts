@@ -27,6 +27,11 @@ const COUNTRY_BLOOM = [
 function parseCountry(raw: unknown): CountryAnswer | null {
   if (typeof raw === "string") {
     const t = raw.trim().toLowerCase()
+    if (/^(usa|us|america|美国)$/.test(t)) return ["usa"]
+    if (/^(china|prc|中国|中華|中華人民共和国)$/.test(t)) return ["china"]
+    if (/^(canada|加拿大)$/.test(t)) return ["canada"]
+    if (/^(europe|欧洲)$/.test(t)) return ["europe"]
+    if (/^(anywhere|都行|无所谓|哪都行|都可以)$/.test(t)) return ["anywhere"]
     return t ? [t] : null
   }
   if (Array.isArray(raw)) {

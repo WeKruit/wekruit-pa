@@ -703,7 +703,8 @@ function parseStartupPrefValue(raw: unknown): StartupPrefAnswer | null {
   if (
     t.includes("either") ||
     t.includes("both") ||
-    t.includes("any") ||
+    /\bany\b/.test(t) ||
+    t.includes("anything") ||
     t.includes("flexible") ||
     t.includes("open to either") ||
     (t.includes("startup") && (t.includes("bigtech") || t.includes("big tech") || t.includes("big-co"))) ||

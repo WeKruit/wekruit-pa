@@ -1,7 +1,9 @@
 import {
   buildSharedOnboardingOpeningPrompt,
+  buildSharedOnboardingPostPrescreenOpeningPrompt,
   buildSharedOnboardingPrompt,
   buildSharedOnboardingResumeAnchor,
+  type SharedOnboardingPostPrescreenContext,
   type SharedOnboardingPromptContext,
   type SharedOnboardingQuestionId,
 } from "./shared-onboarding.js"
@@ -46,6 +48,8 @@ export function buildOnboardingSurfaceIntent(input: {
   tangentDetected?: boolean
   /** True only for the first SMS after `Hello, WeKruit! {userId}` / runtime kickoff. */
   opening?: boolean
+  /** Present when onboarding starts right after a completed role-fit prescreen. */
+  postPrescreenContext?: SharedOnboardingPostPrescreenContext | null
 }): string {
   const slotLabel = onboardingSlotLabel(input.slot)
   const base =
@@ -79,7 +83,16 @@ export function buildOnboardingSurfaceIntent(input: {
     invariants.push(buildTangentSurfaceDirective(lang))
   }
   if (input.opening) {
-    invariants.push(
+    if (input.postPrescreenContext) {
+      invariants.push(
+        "Candidate just completed a role-fit screen; thank them for that and naturally bridge into broader matching onboarding.",
+        input.postPrescreenContext.jobTitle ? `Completed role: ${input.postPrescreenContext.jobTitle}` : "",
+        input.postPrescreenContext.company ? `Completed company: ${input.postPrescreenContext.company}` : "",
+        "Do not use \"Saw your resume come through\" or first-time resume-ingest wording.",
+        "Mention the role/company context once when available, then ask the main-goal question.",
+      )
+    } else {
+      invariants.push(
       "Claire is a personal job-hunting assistant, not a recruiter, bot, corporate tool, or email writer.",
       "One question at a time. Do not pile up questions.",
       "No headers, bullets, markdown, or lists.",
@@ -97,7 +110,8 @@ export function buildOnboardingSurfaceIntent(input: {
       "Mention https://candidate.wekruit.com/me/profile and that they can just tell Claire here instead.",
       "Do not copy a fixed template; vary the wording while preserving those ingredients.",
       "If profile context is missing, stay natural and do not invent details.",
-    )
+      )
+    }
   }
   if (input.voiceProfile.invariants.noInterviewPromise) {
     invariants.push("Never promise an interview or pass outcome.")
@@ -121,7 +135,9 @@ export function buildOnboardingSurfaceIntent(input: {
   // Pulling from the same builder the template path uses keeps the question
   // payload aligned across agentic + template fallbacks.
   const canonical = input.opening
-    ? buildSharedOnboardingOpeningPrompt(input.promptContext)
+    ? input.postPrescreenContext
+      ? buildSharedOnboardingPostPrescreenOpeningPrompt(input.promptContext, input.postPrescreenContext)
+      : buildSharedOnboardingOpeningPrompt(input.promptContext)
     : buildSharedOnboardingPrompt(input.slot, input.promptContext)
   const canonicalLine = canonical
     ? `Canonical question (must preserve this topic exactly; friend rephrase OK): ${canonical}`

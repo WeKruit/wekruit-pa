@@ -627,7 +627,14 @@ function hasIncompleteOnboardingQuestion(user: Record<string, unknown> | undefin
     ? user.pipelineState as Record<string, unknown>
     : null
   if (pipeline?.completed === true) return false
-  return typeof pipeline?.currentQId === "string" || /^q_[a-z0-9_]+_asked$/.test(String(user.onboardingState ?? ""))
+  const onboardingState = String(user.onboardingState ?? "")
+  const onboardingStatus = String(user.onboardingStatus ?? "")
+  return (
+    typeof pipeline?.currentQId === "string" ||
+    /^q_[a-z0-9_]+_asked$/.test(onboardingState) ||
+    ["pending", "invited", "started", "in_progress"].includes(onboardingState) ||
+    ["pending", "invited", "started", "in_progress"].includes(onboardingStatus)
+  )
 }
 
 function detectSimpleYesNo(body: string): "yes" | "no" | "ambiguous" {
@@ -652,7 +659,7 @@ function postPrescreenOnboardingPrompt(lang: "zh" | "en", terminal?: string | nu
       : "这次 screen 先到这里。我可以继续帮你找更符合期待的岗位，不过需要先更了解你一点。要继续吗？"
   }
   return terminal === "PASS"
-    ? "Thanks for your answers — the role-fit screen is complete. For the next step, I’ll schedule you directly with the hiring manager once there’s a match. Meanwhile, I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
+    ? "Thanks for your answers — the role-fit screen is complete. For the next step, I'll schedule you directly with the hiring manager once there's a match. Meanwhile, I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
     : "Thanks for taking the time. I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
 }
 
@@ -804,6 +811,11 @@ function isShortTerminalAck(reply: string): boolean {
   return /^(ok|okay|yes|yeah|yep|sure|alright|all right|go ahead|proceed|got it|thanks|thank you|sounds good|明白|收到|好的|谢谢|行|可以)[.!。！\s]*$/i.test(normalized)
 }
 
+function isPostPrescreenProceedReply(reply: string): boolean {
+  const normalized = reply.trim().toLowerCase()
+  return /^(yes|yeah|yep|sure|go ahead|proceed|continue|let'?s do it|start|可以|继续|好|好的|行)[.!。！\s]*$/i.test(normalized)
+}
+
 function isPostTerminalConstraintUpdate(reply: string): boolean {
   const normalized = reply.trim().toLowerCase()
   if (!normalized) return false
@@ -842,9 +854,21 @@ async function shouldHandleRecentTerminalSession(args: {
       error: err instanceof Error ? err.message : String(err),
     })
   }
-  if (args.terminal === "PASS" && !isExplicitNewIntentAfterTerminal(args.replyText)) return true
+  const onboardingIncomplete = hasIncompleteOnboardingQuestion(user)
+  if (args.terminal === "PASS") {
+    if (isPostPrescreenProceedReply(args.replyText) && onboardingIncomplete) {
+      args.log("prescreen.turn.recent_terminal_guard_yielded_to_onboarding", {
+        userId: args.userId,
+        onboardingState: user?.onboardingState ?? null,
+        currentQId: (user?.pipelineState as Record<string, unknown> | undefined)?.currentQId ?? null,
+        reason: "post_prescreen_proceed",
+      })
+      return false
+    }
+    if (!isExplicitNewIntentAfterTerminal(args.replyText)) return true
+  }
   if (isRecentTerminalFollowupReply(args.replyText)) return true
-  if (!hasIncompleteOnboardingQuestion(user)) {
+  if (!onboardingIncomplete) {
     args.log("prescreen.turn.recent_terminal_guard_yielded_to_runtime", {
       userId: args.userId,
       reason: "not_prescreen_followup",

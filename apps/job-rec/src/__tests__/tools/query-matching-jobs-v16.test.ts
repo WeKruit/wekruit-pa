@@ -236,7 +236,7 @@ function mkJob(over: Partial<MatchingJob>): MatchingJob {
   }
 }
 
-test("applyV16HardFilters: visa gate drops sponsor_needed × sponsorship=false", () => {
+test("applyV16HardFilters: visa gate requires explicit sponsorship=true for sponsor_needed", () => {
   const jobs: MatchingJob[] = [
     mkJob({ id: "y", sponsorship: true }),
     mkJob({ id: "n", sponsorship: false }),
@@ -244,12 +244,8 @@ test("applyV16HardFilters: visa gate drops sponsor_needed × sponsorship=false",
   ]
   const tags = { skills: [], industryEnum: [], schemaVersion: 1, visaStatus: "sponsor_needed" } as never
   const r = applyV16HardFilters(jobs, tags, NOW)
-  assert.equal(r.kept.length, 2)
-  assert.deepEqual(
-    r.kept.map((j) => j.id).sort(),
-    ["u", "y"].sort()
-  )
-  assert.equal(r.counters.visa, 1)
+  assert.deepEqual(r.kept.map((j) => j.id), ["y"])
+  assert.equal(r.counters.visa, 2)
 })
 
 test("applyV16HardFilters: visa gate is no-op when user is citizen", () => {
@@ -322,6 +318,18 @@ test("applyV16HardFilters: careerStage window enforces (entry → entry/junior, 
   const r = applyV16HardFilters(jobs, tags, NOW)
   // entry_level adjacency: intern, entry_level, junior — keep e/j; drop s/m
   assert.deepEqual(r.kept.map((j) => j.id).sort(), ["e", "j"])
+  assert.equal(r.counters.careerStage, 2)
+})
+
+test("applyV16HardFilters: careerStage infers seniority from title when structured field is missing", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "associate", jobTitle: "Business Operations Associate", seniorityLevel: undefined }),
+    mkJob({ id: "lead", jobTitle: "Content Marketing Lead, Bridge", seniorityLevel: undefined }),
+    mkJob({ id: "director", jobTitle: "Director of Product Marketing", seniorityLevel: undefined }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "junior" } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["associate"])
   assert.equal(r.counters.careerStage, 2)
 })
 
@@ -1094,7 +1102,7 @@ test("queryMatchingJobsV16: S4 enriched approved job survives V16 filters and ou
     jobType: "full_time",
     locationBuckets: ["new_york_city"],
     seniorityLevel: "junior",
-    sponsorship: null,
+    sponsorship: true,
     companyName: "S4Co",
     jobTitle: "Backend Engineer",
   })
@@ -1360,6 +1368,23 @@ test("B4 hard filter: companyNegativeList drops matching company", () => {
   assert.equal(r.counters.negativeListDrop, 2)
   assert.equal(r.kept.length, 1)
   assert.equal(r.kept[0]!.id, "ok")
+})
+
+test("B4 hard filter: roleFunctionNegativeList drops rejected role functions", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "hr", jobTitle: "HR Coordinator", roleFunction: ["human_resources"] }),
+    mkJob({ id: "support", jobTitle: "Customer Service Rep", roleFunction: ["customer_service_and_support"] }),
+    mkJob({ id: "mixed", jobTitle: "Support Operations", roleFunction: ["customer_service_and_support", "operations"] }),
+  ]
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    roleFunctionNegativeList: ["customer_service_and_support"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["hr"])
+  assert.equal(r.counters.negativeListDrop, 2)
 })
 
 test("B4 soft: targetCompanyTags ∩ companyInfo.tags adds tagOverlap*0.15", () => {

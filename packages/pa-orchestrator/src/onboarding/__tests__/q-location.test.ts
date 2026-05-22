@@ -54,6 +54,8 @@ const LOCATION_BLOOM = [
 function parseLocation(raw: unknown): LocationAnswer | null {
   if (typeof raw === "string") {
     const t = raw.trim().toLowerCase()
+    if (/^(remote|远程|远端)$/.test(t)) return ["remote"]
+    if (/^(anywhere|都行|无所谓|哪都行|都可以)$/.test(t)) return ["anywhere"]
     return t ? [t] : null
   }
   if (Array.isArray(raw)) {

@@ -69,6 +69,7 @@ import {
 } from "@pa/memory"
 import { appendAuditEvent, enqueueOutbound as enqueueBrokerOutbound } from "@pa/pa-broker"
 import { getFlag, writePrivacyRequest } from "@pa/pa-persistence"
+import { ROLE_FUNCTION_VOCAB } from "@wekruit/shared-tags/canonical"
 import {
   checkPromptInjection,
   checkPromptInjectionAndRecord,
@@ -121,6 +122,7 @@ export {
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
   sharedOnboardingSignupSource,
+  type SharedOnboardingPostPrescreenContext,
   type SharedOnboardingQuestionId,
   type SharedOnboardingPromptContext,
 } from "./shared-onboarding.js"
@@ -142,6 +144,7 @@ import {
   loadSharedOnboardingParsedResumeForPrompt,
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
+  type SharedOnboardingPostPrescreenContext,
   type SharedOnboardingQuestionId,
   type SharedOnboardingPromptContext,
 } from "./shared-onboarding.js"
@@ -730,6 +733,7 @@ export type OrchestratorStore = {
       force?: boolean
       requestedCount?: number
       roleFocus?: string[]
+      allowBroadFallback?: boolean
       collabPrescreenOnly?: boolean
     }
   ): Promise<{
@@ -2208,6 +2212,13 @@ async function handleSharedOnboardingUserReply(
 
   const agent = await requireAgentForUser(store, event.userId)
   const db = store.db
+  const sharedState =
+    onboardingUser && typeof onboardingUser === "object"
+      ? (onboardingUser as { sharedOnboarding?: Record<string, unknown> | null }).sharedOnboarding
+      : null
+  const suppressPrescreenOffer =
+    sharedState?.startSource === "post_prescreen_pass" ||
+    Boolean(sharedState?.postPrescreenContext)
   const delivered =
     db != null
       ? await deliverSharedOnboardingJobRecs({
@@ -2217,6 +2228,7 @@ async function handleSharedOnboardingUserReply(
           turnId,
           agent,
           userMessage: event.body,
+          suppressPrescreenOffer,
         })
       : {
           recCount: 0,
@@ -2257,6 +2269,48 @@ async function handleSharedOnboardingUserReply(
 
 function isSmsLikeChannel(event: InboundEvent): boolean {
   return event.channel === "imessage" || event.channel === "sms"
+}
+
+async function resolvePostPrescreenHandoffContext(
+  store: OrchestratorStore,
+  event: InboundEvent,
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+): Promise<SharedOnboardingPostPrescreenContext | null> {
+  const user = onboardingUser as unknown as Record<string, unknown> | null
+  const workSession = user?.workSession && typeof user.workSession === "object"
+    ? user.workSession as Record<string, unknown>
+    : null
+  if (
+    workSession?.kind !== "job_prescreen" ||
+    workSession.status !== "ended" ||
+    workSession.terminal !== "PASS"
+  ) {
+    return null
+  }
+  const context: SharedOnboardingPostPrescreenContext = {
+    jobTitle: typeof workSession.jobTitle === "string" ? workSession.jobTitle : null,
+    company: typeof workSession.company === "string" ? workSession.company : null,
+  }
+  const sessionId = typeof workSession.sessionId === "string" ? workSession.sessionId : null
+  if (!store.db || !sessionId) return context
+  try {
+    const snap = await store.db.collection("pa-prescreen-sessions").doc(sessionId).get()
+    const data = snap.data() as Record<string, unknown> | undefined
+    const cfg = data?.cfgSnapshot && typeof data.cfgSnapshot === "object"
+      ? data.cfgSnapshot as Record<string, unknown>
+      : null
+    return {
+      jobTitle: context.jobTitle ?? (typeof cfg?.jobTitle === "string" ? cfg.jobTitle : null),
+      company: context.company ?? (typeof cfg?.company === "string" ? cfg.company : null),
+    }
+  } catch (err) {
+    store.log("pa.shared_onboarding.post_prescreen_context_lookup_failed", {
+      userId: event.userId,
+      sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return context
+  }
 }
 
 async function handleSharedOnboardingBootstrap(
@@ -2317,6 +2371,8 @@ async function handleSharedOnboardingBootstrap(
     parsedResume,
   })
   const q1: SharedOnboardingQuestionId = "main_goal"
+  const postPrescreenContext = await resolvePostPrescreenHandoffContext(store, event, onboardingUser)
+  const startSource = postPrescreenContext ? "post_prescreen_pass" : "sms_bootstrap"
 
   if (store.db) {
     try {
@@ -2327,19 +2383,23 @@ async function handleSharedOnboardingBootstrap(
           updatedAt: now,
           sharedOnboarding: {
             status: "active",
+            startSource,
             startedAt: now,
             updatedAt: now,
             currentQuestionId: q1,
             completed: false,
             answers: {},
+            ...(postPrescreenContext ? { postPrescreenContext } : {}),
             ...(Object.keys(promptContext).length > 0 ? { promptContext } : {}),
           },
           workSession: {
             kind: SHARED_ONBOARDING_WORK_SESSION_KIND,
             status: "active",
+            startSource,
             startedAt: now,
             boundary: SHARED_ONBOARDING_BOUNDARY,
             currentQuestionId: q1,
+            ...(postPrescreenContext ? { postPrescreenContext } : {}),
           },
         },
         { merge: true },
@@ -2370,10 +2430,11 @@ async function handleSharedOnboardingBootstrap(
     promptContext,
     userMessage: event.body,
     composeContext: buildSharedOnboardingComposeContext({
-      inboundKind: "greeting_kickoff",
+      inboundKind: postPrescreenContext ? "post_prescreen_kickoff" : "greeting_kickoff",
       routerResult: "bootstrapped_q1_inline",
       slot: q1,
       mode: "ask",
+      postPrescreenContext,
     }),
     agent,
     inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
@@ -2396,6 +2457,7 @@ async function handleSharedOnboardingBootstrap(
     directIntent: "shared_onboarding",
     directIntentResult: "bootstrapped_q1_inline",
     sharedOnboardingQuestionId: q1,
+    sharedOnboardingStartSource: startSource,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -2437,57 +2499,175 @@ async function sendFindMatchPreCallBubble(
   })
 }
 
-async function handleCompletedUserJobSearchRequest(
+const MATCHING_TOOL_ROUTER_PROMPT = [
+  "You are Claire's matching tool router. You do not chat unless you used a matching tool.",
+  "Return exactly __NO_ACTION__ when the latest user message is not about job matching, fresh roles, companies, openings, constraints, or preferences.",
+  "If the user asks for more jobs, more companies, tighter matches, fresh roles, or what fits them, call find-match.",
+  "If the user states a matching constraint or preference, call set-matching-preferences before replying. This includes H1B, OPT, visa sponsorship, country/remote/location, role focus, role functions to avoid, role level/seniority, job type, company stage, and companies to avoid.",
+  "If the user both updates preferences and asks for jobs, call set-matching-preferences first, then find-match.",
+  "For H1B, OPT, or employer sponsorship needs, set visaStatus=sponsor_needed and constraintStrength=hard.",
+  "When explicit hard constraints are present, call find-match with hardConstraintsActive=true and allowBroadFallback=false.",
+  "When no hard constraints are present, call find-match with hardConstraintsActive=false and allowBroadFallback=true.",
+  "If find-match returns zero jobs after a hard constraint, say the constraint is saved and that you will keep looking instead of sending weak roles.",
+].join("\n")
+
+function safeParseToolJson(raw: string | null | undefined): Record<string, unknown> | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null
+  } catch {
+    return null
+  }
+}
+
+function normalizeRoleFunctionToolValues(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null
+  const out: string[] = []
+  const seen = new Set<string>()
+  const canonical = new Set<string>(ROLE_FUNCTION_VOCAB)
+  for (const raw of value) {
+    if (typeof raw !== "string") continue
+    const direct = raw.trim()
+    const mapped = canonical.has(direct)
+      ? [direct]
+      : mapAnswerToRoleFunction(direct)
+    for (const token of mapped) {
+      if (seen.has(token)) continue
+      seen.add(token)
+      out.push(token)
+    }
+  }
+  return out.length > 0 ? out : null
+}
+
+async function handleCompletedUserMatchingToolRouter(
   event: InboundEvent,
   store: OrchestratorStore,
   turnId: string,
   onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
 ): Promise<boolean> {
   if (onboardingUser?.onboardingState !== "complete") return false
-  if (!store.generateJobRecs) return false
   if (isJobRecommendationExplanationRequest(event.body)) return false
-  const explicitJobSearch = isExplicitJobSearchRequest(event.body)
-  const moreFollowup = isMoreJobSearchFollowupRequest(event.body)
-  const profileUpdate = extractLifecycleProfileUpdate(event.body)
-  const recentRecommendationContext = !explicitJobSearch
-    ? await hasRecentJobRecommendationContext(store, event.userId)
-    : false
-  if (!explicitJobSearch && !(recentRecommendationContext && (moreFollowup || profileUpdate))) return false
 
   const lang: "en" | "zh" = detectLang([event.body]) === "zh" ? "zh" : "en"
-  const requestedCount = requestedJobRecCount(event.body)
-  const roleFocus = detectLifecycleRoleFocus(event.body)
-  const profileUpdated = await persistJobSearchProfileUpdate(event, store, turnId, profileUpdate)
-  store.log("pa.runtime.job_search.direct_request", {
-    userId: event.userId,
+  const baseAgent = await requireAgentForUser(store, event.userId)
+  const routerAgent: AgentDef = {
+    ...baseAgent,
+    id: `${baseAgent.id}:matching-tool-router`,
+    name: "Matching tool router",
+    systemPrompt: MATCHING_TOOL_ROUTER_PROMPT,
+    temperature: 0,
+    maxTokens: Math.min(baseAgent.maxTokens ?? 1024, 700),
+    toolPolicy: "allowlist",
+    allowedConnectors: ["set-matching-preferences", "find-match"],
+    toolBudgetPerTurn: 2,
+  }
+
+  let tools = await store.buildTurnTools(routerAgent, {
     turnId,
-    lang,
-    roleFocus,
-    explicitJobSearch,
-    moreFollowup,
-    profileUpdated,
+    userId: event.userId,
+    sessionId: event.sessionId,
   })
-  await sendFindMatchPreCallBubble(store, event, turnId, lang)
-  const recs = await store.generateJobRecs(event.userId, lang, {
-    force: true,
-    ...(requestedCount ? { requestedCount } : {}),
-    ...(roleFocus.length > 0 ? { roleFocus } : {}),
-  })
-  const recCount = recs?.recCount ?? 0
-  const body =
-    recCount > 0
-      ? recs!.message
-      : lang === "zh"
-        ? "这次没捞到特别合适的，我记下了，晚点再帮你扫一轮。"
-        : "I could not pull fresh roles right now. I saved the request and will try again shortly."
-  const frame = frameConnectorResult("find-match", lang, recCount)
-  const reply = frame ? [frame, body].filter(Boolean).join("\n") : body
+  tools = tools.filter((tool) => tool.name === "set-matching-preferences" || tool.name === "find-match")
+  if (!tools.some((tool) => tool.name === "find-match")) return false
+
+  let preferenceCalled = false
+  let findMatchCalled = false
+  let hardConstraintsActive = false
+  let findMatchResult: Record<string, unknown> | null = null
+  const wrappedTools = tools.map((tool) => ({
+    ...tool,
+    execute: async (args: unknown) => {
+      const payload = args && typeof args === "object" ? args as Record<string, unknown> : {}
+      if (tool.name === "set-matching-preferences") {
+        preferenceCalled = true
+        const raw = await tool.execute({
+          visaStatus: payload.visaStatus ?? null,
+          targetLocations: payload.targetLocations ?? null,
+          targetCountry: payload.targetCountry ?? null,
+          roleFocus: normalizeRoleFunctionToolValues(payload.roleFocus),
+          careerStage: payload.careerStage ?? null,
+          companyStage: payload.companyStage ?? null,
+          jobType: payload.jobType ?? null,
+          negativeCompanies: payload.negativeCompanies ?? null,
+          negativeRoleFunctions: normalizeRoleFunctionToolValues(payload.negativeRoleFunctions),
+          constraintStrength: payload.constraintStrength ?? null,
+          evidenceText: typeof payload.evidenceText === "string" ? payload.evidenceText : event.body,
+          source: typeof payload.source === "string" ? payload.source : "agentic_find_match_router",
+        })
+        const parsed = safeParseToolJson(raw)
+        if (parsed?.hardConstraint === true) hardConstraintsActive = true
+        return raw
+      }
+      findMatchCalled = true
+      const explicitHard =
+        typeof payload.hardConstraintsActive === "boolean"
+          ? payload.hardConstraintsActive
+          : hardConstraintsActive
+      const enriched = {
+        lang: payload.lang === "zh" ? "zh" : lang,
+        requestedCount: typeof payload.requestedCount === "number" ? payload.requestedCount : requestedJobRecCount(event.body) ?? 2,
+        source: typeof payload.source === "string" ? payload.source : "agentic_find_match_router",
+        roleFocus: Array.isArray(payload.roleFocus) ? payload.roleFocus : null,
+        hardConstraintsActive: explicitHard,
+        allowBroadFallback:
+          typeof payload.allowBroadFallback === "boolean"
+            ? payload.allowBroadFallback
+            : !explicitHard,
+      }
+      await sendFindMatchPreCallBubble(store, event, turnId, enriched.lang)
+      const raw = await tool.execute(enriched)
+      findMatchResult = safeParseToolJson(raw)
+      return raw
+    },
+  }))
+
+  const history = await store.loadHistory(event.sessionId, 8)
+  let text: string | null | undefined
+  try {
+    const result = await store.runAgentTurn({
+      agent: routerAgent,
+      systemPrompt: MATCHING_TOOL_ROUTER_PROMPT,
+      userMessage: event.body,
+      history,
+      memoryBlock: "",
+      systemInputs: [MATCHING_TOOL_ROUTER_PROMPT],
+      tools: wrappedTools,
+    })
+    text = result.text
+  } catch (err) {
+    store.log("pa.runtime.matching_tool_router.failed", {
+      userId: event.userId,
+      turnId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return false
+  }
+
+  const trimmed = (text ?? "").trim()
+  if ((!preferenceCalled && !findMatchCalled) || trimmed === "__NO_ACTION__") return false
+
+  const parsedFindMatchResult = findMatchResult as Record<string, unknown> | null
+  const recCount = typeof parsedFindMatchResult?.jobCount === "number" ? parsedFindMatchResult.jobCount : 0
+  const toolMessage = typeof parsedFindMatchResult?.message === "string" ? parsedFindMatchResult.message : null
+  const fallback =
+    findMatchCalled && recCount > 0 && toolMessage
+      ? [frameConnectorResult("find-match", lang, recCount), toolMessage].filter(Boolean).join("\n")
+      : findMatchCalled && recCount === 0
+        ? lang === "zh"
+          ? "我记下这个要求了。这轮没有特别干净的匹配，我先不硬发弱匹配，继续帮你看。"
+          : "I saved that requirement. I do not have a clean batch yet, so I will keep looking instead of sending weak roles."
+        : lang === "zh"
+          ? "收到，我把这个偏好记到匹配里了。"
+          : "Got it — I saved that for matching."
+  const reply = trimmed && trimmed !== "__NO_ACTION__" ? trimmed : fallback
   await sendMemoryReply(store, event, turnId, reply)
-  if (recs && recs.recCount > 0 && store.db) {
+  if (findMatchCalled && recCount > 0 && store.db) {
     await startPostMatchRetentionAfterJobRecs({
       db: store.db,
       userId: event.userId,
-      recCount: recs.recCount,
+      recCount,
       sessionId: event.sessionId,
       toE164: event.from,
       lang,
@@ -2498,11 +2678,13 @@ async function handleCompletedUserJobSearchRequest(
     status: "succeeded",
     stage: "succeeded",
     completedAt: store.nowIso(),
-    directIntent: "job_search",
-    directIntentResult: recs && recs.recCount > 0 ? "sent_recs" : "no_recs",
-    directIntentRecCount: recs?.recCount ?? 0,
-    directIntentProfileUpdated: profileUpdated,
-    directIntentFollowup: !explicitJobSearch,
+    agenticToolRouter: "matching",
+    agenticToolCalls: {
+      "set-matching-preferences": preferenceCalled,
+      "find-match": findMatchCalled,
+    },
+    agenticFindMatchRecCount: recCount,
+    agenticHardConstraintsActive: hardConstraintsActive,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -2750,7 +2932,8 @@ export function buildTurnTools(
             usedThisTurn: snapshot,
             hooks,
           })
-          return JSON.stringify(result).slice(0, 1024)
+          const maxToolOutputChars = name === "find-match" ? 4096 : 1024
+          return JSON.stringify(result).slice(0, maxToolOutputChars)
         } catch (e) {
           // Surface to the SDK so the LLM can apologize. Do NOT swallow.
           throw e
@@ -3109,7 +3292,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       })
     }
 
-    if (userAuthoredEvent && await handleCompletedUserJobSearchRequest(event, store, turnId, onboardingUser)) {
+    if (userAuthoredEvent && await handleCompletedUserMatchingToolRouter(event, store, turnId, onboardingUser)) {
       return
     }
 

@@ -25,6 +25,8 @@ import {
   FIND_MATCH_CONNECTOR,
   MATCH_COLLAB_CONNECTOR,
   FIND_MATCH_NARRATION,
+  SET_DAILY_JOB_RECOMMENDATION_SUBSCRIPTION_CONNECTOR,
+  SET_MATCHING_PREFERENCES_CONNECTOR,
 } from "./match-connectors.js"
 
 export { FIND_MATCH_NARRATION, MATCH_COLLAB_NARRATION } from "./match-connectors.js"
@@ -501,6 +503,8 @@ export const connectorRegistry = {
       }
     },
   } satisfies ConnectorDef<SaveJobProfileConnectorInput, SaveJobProfileConnectorOutput>,
+  "set-matching-preferences": SET_MATCHING_PREFERENCES_CONNECTOR,
+  "set-daily-job-recommendation-subscription": SET_DAILY_JOB_RECOMMENDATION_SUBSCRIPTION_CONNECTOR,
   "find-match": FIND_MATCH_CONNECTOR,
   "match-against-collab-jobs": MATCH_COLLAB_CONNECTOR,
 }

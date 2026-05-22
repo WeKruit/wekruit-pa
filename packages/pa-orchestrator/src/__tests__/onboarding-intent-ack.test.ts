@@ -627,7 +627,7 @@ test("shared onboarding answer writes memory/tags and waits until Q5 before job 
 
   assert.equal(recCalls.length, 1)
   assert.equal(recCalls[0].userId, "u-onb")
-  assert.deepEqual(recCalls[0].opts, { force: true, requestedCount: 2 })
+  assert.deepEqual(recCalls[0].opts, { force: true, requestedCount: 2, allowBroadFallback: false })
   assert.match(captures.outboundBodies[1] ?? "", /Role A @ Example/)
   assert.match(captures.outboundBodies[1] ?? "", /requirements:/)
 })

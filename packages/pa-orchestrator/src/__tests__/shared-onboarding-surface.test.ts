@@ -20,6 +20,7 @@ import { strict as assert } from "node:assert"
 import { describe, it } from "node:test"
 
 import { buildOnboardingSurfaceIntent } from "../shared-onboarding-surface.js"
+import { resolveAgentAllowedConnectors } from "../shared-onboarding-outbound.js"
 import { getVoiceProfile, type ResolvedVoiceProfile } from "../voice/voice-profiles/index.js"
 
 function profile(): ResolvedVoiceProfile {
@@ -100,6 +101,13 @@ describe("buildOnboardingSurfaceIntent — language lock", () => {
   })
 })
 
+describe("resolveAgentAllowedConnectors — runtime required tools", () => {
+  it("adds the daily subscription connector even when the persisted default agent seed is stale", async () => {
+    const out = await resolveAgentAllowedConnectors(undefined, "u1", ["current-info", "remember-fact"])
+    assert.deepEqual(out, ["current-info", "remember-fact", "set-daily-job-recommendation-subscription"])
+  })
+})
+
 describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
   it("keeps non-opening onboarding turns on the existing canonical slot contract", () => {
     const intent = buildOnboardingSurfaceIntent({
@@ -148,5 +156,30 @@ describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
     assert.match(intent, /do not copy a fixed template/i)
     assert.match(intent, /what matters most in your next company/i)
     assert.doesNotMatch(intent, /what kind of role/i)
+  })
+
+  it("marks post-prescreen kickoff as a contextual opening, not a first-time resume opener", () => {
+    const intent = buildOnboardingSurfaceIntent({
+      slot: "main_goal",
+      mode: "ask",
+      voiceProfile: profile(),
+      promptContext: {
+        firstName: "Sunny",
+        recentTitles: ["Digital Content Creator"],
+        recentCompanies: ["YouTube"],
+      },
+      lang: "en",
+      opening: true,
+      postPrescreenContext: {
+        jobTitle: "Member of Technical Staff, macOS DevOps",
+        company: "Photon",
+      },
+    })
+
+    assert.match(intent, /candidate just completed a role-fit screen/i)
+    assert.match(intent, /Member of Technical Staff, macOS DevOps/i)
+    assert.match(intent, /Photon/i)
+    assert.match(intent, /Do not use "Saw your resume come through"/i)
+    assert.doesNotMatch(intent, /first SMS after the candidate opened with Hello, WeKruit/i)
   })
 })

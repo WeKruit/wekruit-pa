@@ -117,6 +117,23 @@ export const getMatchingJobTitle = (
   return b
 }
 
+function inferCareerStageFromTitle(title: string): CareerStage | null {
+  const t = title.trim().toLowerCase()
+  if (!t) return null
+  if (/\b(c[-\s]?level|chief|cto|ceo|cfo|coo|cmo)\b/.test(t)) return "c_level"
+  if (/\bvp|vice\s+president\b/.test(t)) return "vp"
+  if (/\bdirector\b/.test(t)) return "director"
+  if (/\bprincipal\b/.test(t)) return "principal"
+  if (/\bstaff\b/.test(t)) return "staff"
+  if (/\b(senior|sr\.?|lead|head\s+of)\b/.test(t)) return "senior"
+  if (/\bmanager\b/.test(t)) return "manager"
+  if (/\b(mid[-\s]?level|midlevel)\b/.test(t)) return "mid_level"
+  if (/\b(junior|jr\.?)\b/.test(t)) return "junior"
+  if (/\b(entry[-\s]?level|new\s+grad|graduate)\b/.test(t)) return "entry_level"
+  if (/\bintern(ship)?\b/.test(t)) return "intern"
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // loadUserTags — single-source read (MATCH-01 / D8)
 // ---------------------------------------------------------------------------
@@ -388,6 +405,13 @@ export function applyV16HardFilters(
       ? userTags.companyNegativeList.filter((s): s is string => typeof s === "string")
       : []
   )
+  const negativeRoleFunctionSet = new Set<string>(
+    Array.isArray(userTags.roleFunctionNegativeList)
+      ? userTags.roleFunctionNegativeList
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+      : []
+  )
   const careerStage = userTags.careerStage
   const careerStageValid =
     typeof careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(careerStage)
@@ -443,9 +467,9 @@ export function applyV16HardFilters(
 
   const kept: MatchingJob[] = []
   for (const job of jobs) {
-    // 1. visa intersect — only drop when user explicitly needs sponsorship
-    //    AND job carries an explicit `sponsorship: false` signal.
-    if (sponsorshipNeeded && job.sponsorship === false) {
+    // 1. visa intersect — candidate-visible sponsor-needed recommendations
+    // require explicit sponsorship=true. Unknown is not safe for H1B/OPT users.
+    if (sponsorshipNeeded && job.sponsorship !== true) {
       counters.visa++
       continue
     }
@@ -504,9 +528,15 @@ export function applyV16HardFilters(
       }
     }
 
-    // 3. careerStage window — enforce only when both sides present.
-    if (acceptableStages && job.seniorityLevel) {
-      if (!acceptableStages.has(job.seniorityLevel as CareerStage)) {
+    // 3. careerStage window — prefer enriched seniority, infer from title when
+    // the scraper missed the structured field so senior/lead/director jobs do
+    // not leak to junior users.
+    if (acceptableStages) {
+      const jobStage =
+        typeof job.seniorityLevel === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(job.seniorityLevel)
+          ? job.seniorityLevel as CareerStage
+          : inferCareerStageFromTitle(getMatchingJobTitle(job))
+      if (jobStage && !acceptableStages.has(jobStage)) {
         counters.careerStage++
         continue
       }
@@ -542,12 +572,22 @@ export function applyV16HardFilters(
       continue
     }
 
-    // 8. Phase B4 — companyNegativeList hard-drop. Last in the chain so we
-    //    don't waste score-time on jobs that pass other gates but are
-    //    user-rejected. `normalizeCompanyName` matches `pa-companies` doc ids.
+    // 8. Candidate rejection hard-drops. Last in the chain so we don't waste
+    //    score-time on jobs that pass other gates but are user-rejected.
     if (negativeSet.size > 0) {
       const norm = normalizeCompanyName(job.companyName ?? "")
       if (norm.length > 0 && negativeSet.has(norm)) {
+        counters.negativeListDrop++
+        continue
+      }
+    }
+    if (negativeRoleFunctionSet.size > 0) {
+      const roleFunctions = Array.isArray(job.roleFunction) ? job.roleFunction : []
+      if (
+        roleFunctions.some((role) =>
+          typeof role === "string" && negativeRoleFunctionSet.has(role.trim().toLowerCase())
+        )
+      ) {
         counters.negativeListDrop++
         continue
       }
