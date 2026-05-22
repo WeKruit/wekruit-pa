@@ -48,6 +48,7 @@ const SetMatchingPreferencesInputSchema = z.object({
   companyStage: nullableStringArray.optional(),
   jobType: nullableStringArray.optional(),
   negativeCompanies: nullableStringArray.optional(),
+  negativeRoleFunctions: nullableStringArray.optional(),
   constraintStrength: z.enum(["hard", "soft", "unknown"]).nullable().optional(),
   evidenceText: z.string().min(1).max(1000).nullable().optional(),
   source: z.string().min(1).max(120).nullable().optional(),
@@ -163,7 +164,7 @@ export const SET_MATCHING_PREFERENCES_CONNECTOR: ConnectorDef<
   version: "1",
   description:
     "Persist durable matching preferences and hard constraints before recommending jobs. " +
-    "Use when the user states visa/H1B sponsorship needs, location or remote constraints, role focus, company stage, job type, or companies to avoid. " +
+    "Use when the user states visa/H1B sponsorship needs, location or remote constraints, role focus, role functions to avoid, company stage, job type, or companies to avoid. " +
     "If the user needs H1B/OPT employer sponsorship, set visaStatus to sponsor_needed and constraintStrength to hard.",
   inputSchema: SetMatchingPreferencesInputSchema,
   outputSchema: SetMatchingPreferencesOutputSchema,
@@ -210,6 +211,11 @@ export const SET_MATCHING_PREFERENCES_CONNECTOR: ConnectorDef<
       tagsPatch.companyNegativeList = negativeCompanies
       updatedTags.push("companyNegativeList")
     }
+    const negativeRoleFunctions = normalizeStringArray(input.negativeRoleFunctions)
+    if (negativeRoleFunctions.length > 0) {
+      tagsPatch.roleFunctionNegativeList = negativeRoleFunctions
+      updatedTags.push("roleFunctionNegativeList")
+    }
 
     if (updatedTags.length === 0) {
       return {
@@ -227,7 +233,8 @@ export const SET_MATCHING_PREFERENCES_CONNECTOR: ConnectorDef<
       input.visaStatus === "sponsor_needed" ||
       targetCountry.length > 0 ||
       Boolean(input.careerStage) ||
-      negativeCompanies.length > 0
+      negativeCompanies.length > 0 ||
+      negativeRoleFunctions.length > 0
     const now = new Date().toISOString()
     const matchingProfilePatch = {
       visaStatus: input.visaStatus ?? null,
@@ -238,6 +245,7 @@ export const SET_MATCHING_PREFERENCES_CONNECTOR: ConnectorDef<
       companyStage: companyStage.length > 0 ? companyStage : null,
       jobType: jobType.length > 0 ? jobType : null,
       negativeCompanies: negativeCompanies.length > 0 ? negativeCompanies : null,
+      negativeRoleFunctions: negativeRoleFunctions.length > 0 ? negativeRoleFunctions : null,
       constraintStrength: hardConstraint ? "hard" : input.constraintStrength ?? "unknown",
       evidenceText: input.evidenceText ?? null,
       source: input.source ?? "claire_tool",

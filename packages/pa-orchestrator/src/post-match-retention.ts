@@ -43,6 +43,7 @@ export type PostMatchRetentionState = {
   sentiment?: "positive" | "negative"
   subscribeOptIn?: boolean
   prescreenOptIn?: boolean
+  suppressPrescreenOffer?: boolean
 }
 
 export type PostMatchRetentionStore = {
@@ -107,7 +108,7 @@ export function detectRecBatchSentiment(body: string): "positive" | "negative" |
   const t = normalizeBody(body)
   if (!t) return "ambiguous"
   if (
-    /\b(don'?t like|didn'?t like|not good|not useful|useless|terrible|awful|hate|meh|trash|off\b|wrong|bad|nah|nope|no)\b/i.test(
+    /\b(don'?t like|didn'?t like|not good|not useful|not relevant|not interested|not aligned|doesn'?t align|does not align|not fit|doesn'?t fit|useless|terrible|awful|hate|meh|trash|off\b|wrong|bad|nah|nope|no)\b/i.test(
       t
     ) ||
     /(不喜欢|不太行|没用|不行|不好|不对|离谱|垃圾|算了|不太合适|差点意思|不太对)/.test(t)
@@ -248,6 +249,10 @@ function deriveDislikePreferencePatch(reasonText: string): Record<string, unknow
     patch.careerStage = "junior"
     changed = true
   }
+  if (/\b(customer\s+service|customer\s+support|support\s+role|call\s*center|customer\s+success)\b/i.test(reasonText)) {
+    patch.negativeRoleFunctions = ["customer_service_and_support"]
+    changed = true
+  }
   return changed ? patch : null
 }
 
@@ -351,6 +356,7 @@ export async function startPostMatchRetentionAfterJobRecs(input: {
   toE164?: string
   lang?: "zh" | "en"
   jobIds?: string[]
+  suppressPrescreenOffer?: boolean
   enqueueOutbound?: PostMatchRetentionStore["enqueueOutbound"]
 }): Promise<void> {
   const enabled = await isPostMatchRetentionEnabled(input.db, input.userId)
@@ -365,6 +371,7 @@ export async function startPostMatchRetentionAfterJobRecs(input: {
     updatedAt: at,
     recCount: input.recCount,
     ...(input.jobIds?.length ? { jobIds: input.jobIds } : {}),
+    ...(input.suppressPrescreenOffer ? { suppressPrescreenOffer: true } : {}),
   })
 
   if (input.enqueueOutbound && input.toE164) {
@@ -524,11 +531,55 @@ export async function handlePostMatchRetentionReply(
         reasonText: event.body,
         nowIso: at,
       })
-      next.stage = "await_prescreen"
-      reply = copyForStage("await_prescreen", lang)
+      if (state.suppressPrescreenOffer) {
+        next.stage = "complete"
+        reply =
+          lang === "zh"
+            ? "收到。我会继续看更贴的岗，有干净匹配再发你。"
+            : "Got it — I'll keep looking and text you when something tighter shows up."
+      } else {
+        next.stage = "await_prescreen"
+        reply = copyForStage("await_prescreen", lang)
+      }
       break
     }
     case "await_prescreen": {
+      const sentiment = detectRecBatchSentiment(event.body)
+      const preferencePatch = deriveDislikePreferencePatch(event.body)
+      if (sentiment === "negative" || preferencePatch) {
+        await writeBatchFeedback({
+          db,
+          userId: event.userId,
+          jobIds,
+          kind: "candidate_decline",
+          outcome: "partner_prescreen_offer_not_relevant",
+          reasonText: event.body,
+          nowIso: at,
+        })
+        if (preferencePatch) {
+          try {
+            await persistDislikePreferencePatch({ db, event, turnId, patch: preferencePatch })
+          } catch (err) {
+            store.log("pa.post_match_retention.prescreen_feedback_preference_tool.failed", {
+              userId: event.userId,
+              turnId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+            reply =
+              lang === "zh"
+                ? "我这边保存这个偏好卡了一下，先不假装记下了。你再发一次哪里不对，我重试。"
+                : "I hit a save issue on that preference, so I will not pretend it is saved. Send what was off once more and I will retry."
+            break
+          }
+        }
+        next.stage = "complete"
+        next.sentiment = "negative"
+        reply =
+          lang === "zh"
+            ? "收到，我会避开这类方向，继续帮你找更贴的匹配。"
+            : "Got it — I'll avoid that direction and keep looking for tighter matches."
+        break
+      }
       const yn = detectYesNoIntent(event.body)
       if (yn === "ambiguous") {
         reply =

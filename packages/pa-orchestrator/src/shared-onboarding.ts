@@ -242,31 +242,34 @@ function sharedJudgeExamples(questionId: SharedOnboardingQuestionId): Array<{ re
 }
 
 function sharedJudgeBloom(questionId: SharedOnboardingQuestionId): Array<{ pattern: RegExp; value: string }> {
+  // Shared onboarding blooms are accept signals; preserve the candidate's raw
+  // answer instead of storing an internal label.
+  const preserveRawAnswer = ""
   if (questionId === "main_goal") {
     return [
-      { pattern: /\b(career\s+growth|growth|learning|mentor|compensation|salary|pay|equity|stability|stable|mission|impact|ownership|work[-\s]?life)\b/i, value: "clear main-goal answer" },
+      { pattern: /\b(career\s+growth|growth|learning|mentor|compensation|salary|pay|equity|stability|stable|mission|impact|ownership|work[-\s]?life)\b/i, value: preserveRawAnswer },
     ]
   }
   if (questionId === "culture_stage") {
     return [
-      { pattern: /\b(startup|early[-\s]?stage|seed|founding|scale[-\s]?up|larger|large\s+company|big\s*tech|enterprise|ownership|autonomy|calm|collaborative|open|no\s+preference)\b/i, value: "clear culture-stage answer" },
+      { pattern: /\b(startup|early[-\s]?stage|seed|founding|scale[-\s]?up|larger|large\s+company|big\s*tech|enterprise|ownership|autonomy|calm|collaborative|open|no\s+preference)\b/i, value: preserveRawAnswer },
     ]
   }
   if (questionId === "industry_interest") {
     return [
-      { pattern: /\b(fintech|finance|ai|machine\s+learning|ml|crypto|web3|blockchain|saas|software|developer\s+tools?|security|healthcare|edtech|gaming|climate|open|anything)\b/i, value: "clear industry-interest answer" },
+      { pattern: /\b(fintech|finance|ai|machine\s+learning|ml|crypto|web3|blockchain|saas|software|developer\s+tools?|security|healthcare|edtech|gaming|climate|open|anything)\b/i, value: preserveRawAnswer },
     ]
   }
   if (questionId === "location_relocation") {
     return [
-      { pattern: /\b(remote|onsite|hybrid|relocat|move|nyc|new\s+york|sf|san\s+francisco|bay\s+area|seattle|los\s+angeles|la|austin|boston|chicago|miami|canada|united\s+states|u\.?s\.?)\b/i, value: "clear location-relocation answer" },
+      { pattern: /\b(remote|onsite|hybrid|relocat|move|nyc|new\s+york|sf|san\s+francisco|bay\s+area|seattle|los\s+angeles|la|austin|boston|chicago|miami|canada|united\s+states|u\.?s\.?)\b/i, value: preserveRawAnswer },
     ]
   }
   return [
     {
       pattern:
         /\b(none|nothing|nope|no\s+special|visa|sponsor|h[-\s]?1b|opt|cpt|urgent|asap|timing|dealbreaker|constraint|strength|backend|frontend|full[-\s]?stack|systems?|real[-\s]?time|communication|webrtc|infrastructure|distributed|worthy|experience|built|handl\w*)\b/i,
-      value: "clear special-context answer",
+      value: preserveRawAnswer,
     },
   ]
 }

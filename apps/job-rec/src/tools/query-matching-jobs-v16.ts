@@ -405,6 +405,13 @@ export function applyV16HardFilters(
       ? userTags.companyNegativeList.filter((s): s is string => typeof s === "string")
       : []
   )
+  const negativeRoleFunctionSet = new Set<string>(
+    Array.isArray(userTags.roleFunctionNegativeList)
+      ? userTags.roleFunctionNegativeList
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+      : []
+  )
   const careerStage = userTags.careerStage
   const careerStageValid =
     typeof careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(careerStage)
@@ -565,12 +572,22 @@ export function applyV16HardFilters(
       continue
     }
 
-    // 8. Phase B4 — companyNegativeList hard-drop. Last in the chain so we
-    //    don't waste score-time on jobs that pass other gates but are
-    //    user-rejected. `normalizeCompanyName` matches `pa-companies` doc ids.
+    // 8. Candidate rejection hard-drops. Last in the chain so we don't waste
+    //    score-time on jobs that pass other gates but are user-rejected.
     if (negativeSet.size > 0) {
       const norm = normalizeCompanyName(job.companyName ?? "")
       if (norm.length > 0 && negativeSet.has(norm)) {
+        counters.negativeListDrop++
+        continue
+      }
+    }
+    if (negativeRoleFunctionSet.size > 0) {
+      const roleFunctions = Array.isArray(job.roleFunction) ? job.roleFunction : []
+      if (
+        roleFunctions.some((role) =>
+          typeof role === "string" && negativeRoleFunctionSet.has(role.trim().toLowerCase())
+        )
+      ) {
         counters.negativeListDrop++
         continue
       }

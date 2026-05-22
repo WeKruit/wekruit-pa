@@ -258,6 +258,11 @@ export const UserTagsSchema = z.object({
    */
   companyNegativeList: z.array(z.string()).max(30).optional(),
   /**
+   * Candidate-rejected role-function tokens. V16 hard-drops jobs whose
+   * `matching-jobs.roleFunction` intersects this list.
+   */
+  roleFunctionNegativeList: z.array(z.enum(ROLE_FUNCTION_VOCAB)).max(30).optional(),
+  /**
    * Phase B1 — soft-boost positive list. Lowercased normalized company
    * names. Cap 30; +0.15 soft score when V16 scores a matching job.
    */

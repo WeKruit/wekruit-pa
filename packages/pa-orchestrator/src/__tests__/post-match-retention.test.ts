@@ -26,6 +26,10 @@ test("startPostMatchRetentionAfterJobRecs is no-op when flag off", async () => {
 
 test("detectRecBatchSentiment classifies dislike", () => {
   assert.equal(detectRecBatchSentiment("I don't like this"), "negative")
+  assert.equal(
+    detectRecBatchSentiment("customer service is something that does not align with my interests"),
+    "negative",
+  )
   assert.equal(detectRecBatchSentiment("不太行"), "negative")
   assert.equal(detectRecBatchSentiment("useful thanks"), "positive")
 })
@@ -145,6 +149,72 @@ test("handlePostMatchRetentionReply sends an immediate match batch after daily o
   assert.equal((docs.get("pa-job-profiles/u_subscribe") as { status?: string } | undefined)?.status, "active")
 })
 
+test("handlePostMatchRetentionReply does not offer another prescreen after post-prescreen onboarding opt-in", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-feature-flags/paPostMatchRetentionEnabled",
+      { key: "paPostMatchRetentionEnabled", value: true, type: "bool", scope: "global" },
+    ],
+    [
+      "pa-users/u_post_prescreen",
+      {
+        postMatchRetention: {
+          stage: "await_subscribe",
+          startedAt: "2026-05-21T16:00:00.000Z",
+          updatedAt: "2026-05-21T16:00:00.000Z",
+          recCount: 2,
+          jobIds: ["j1"],
+          suppressPrescreenOffer: true,
+        },
+      },
+    ],
+  ])
+  const db = {
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => {
+          const data = docs.get(`${name}/${id}`)
+          return { exists: data !== undefined, data: () => data }
+        },
+        set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+          const key = `${name}/${id}`
+          docs.set(key, opts?.merge ? { ...(docs.get(key) ?? {}), ...data } : data)
+        },
+      }),
+    }),
+  } as never
+  const sent: Array<{ body: string; extra?: Record<string, unknown> }> = []
+  const handled = await handlePostMatchRetentionReply(
+    {
+      id: "e1",
+      userId: "u_post_prescreen",
+      sessionId: "s1",
+      from: "+14243201960",
+      body: "yes",
+      channel: "imessage",
+    } as never,
+    {
+      db,
+      nowIso: () => "2026-05-21T16:01:00.000Z",
+      log: () => {},
+      getOnboardingUser: async () => ({ onboardingState: "complete" }),
+      generateJobRecs: async () => ({ message: "two fresh HR roles", recCount: 2 }),
+      enqueueOutbound: async (_userId, _to, body, extra) => {
+        sent.push({ body, extra })
+      },
+      updateTurn: async () => {},
+      markEventSucceeded: async () => {},
+    },
+    "t1"
+  )
+
+  assert.equal(handled, true)
+  assert.equal(sent[0]?.body, "two fresh HR roles")
+  assert.doesNotMatch(sent.map((m) => m.body).join("\n"), /partner|prescreen|screen|合作|初筛/i)
+  const user = docs.get("pa-users/u_post_prescreen") as { postMatchRetention?: { stage?: string } } | undefined
+  assert.equal(user?.postMatchRetention?.stage, "complete")
+})
+
 test("handlePostMatchRetentionReply persists structured constraints from dislike feedback", async () => {
   const docs = new Map<string, Record<string, unknown>>([
     [
@@ -211,6 +281,73 @@ test("handlePostMatchRetentionReply persists structured constraints from dislike
   const feedbackEvents = [...docs.keys()].filter((key) => key.startsWith("pa-feedback-events/post-match-u_feedback-"))
   assert.equal(feedbackEvents.length, 2)
   assert.match(sent[0] ?? "", /daily texts|每天/)
+})
+
+test("handlePostMatchRetentionReply saves role rejection instead of repeating prescreen CTA", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-feature-flags/paPostMatchRetentionEnabled",
+      { key: "paPostMatchRetentionEnabled", value: true, type: "bool", scope: "global" },
+    ],
+    [
+      "pa-users/u_prescreen_feedback",
+      {
+        postMatchRetention: {
+          stage: "await_prescreen",
+          startedAt: "2026-05-21T16:00:00.000Z",
+          updatedAt: "2026-05-21T16:00:00.000Z",
+          recCount: 2,
+          jobIds: ["dominos", "arist"],
+        },
+      },
+    ],
+  ])
+  const db = {
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => {
+          const data = docs.get(`${name}/${id}`)
+          return { exists: data !== undefined, data: () => data }
+        },
+        set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+          const key = `${name}/${id}`
+          docs.set(key, opts?.merge ? { ...(docs.get(key) ?? {}), ...data } : data)
+        },
+      }),
+    }),
+  } as never
+  const sent: string[] = []
+  const handled = await handlePostMatchRetentionReply(
+    {
+      id: "e1",
+      userId: "u_prescreen_feedback",
+      sessionId: "s1",
+      from: "+14243201960",
+      body: "I thought I have stated that a customer service role does not align with my interests",
+      channel: "imessage",
+    } as never,
+    {
+      db,
+      nowIso: () => "2026-05-21T16:01:00.000Z",
+      log: () => {},
+      getOnboardingUser: async () => ({ onboardingState: "complete" }),
+      enqueueOutbound: async (_userId, _to, body) => {
+        sent.push(body)
+      },
+      updateTurn: async () => {},
+      markEventSucceeded: async () => {},
+    },
+    "t1"
+  )
+
+  assert.equal(handled, true)
+  const user = docs.get("pa-users/u_prescreen_feedback") as { tags?: Record<string, unknown>; postMatchRetention?: { stage?: string } } | undefined
+  assert.deepEqual(user?.tags?.roleFunctionNegativeList, ["customer_service_and_support"])
+  assert.equal(user?.postMatchRetention?.stage, "complete")
+  assert.match(sent[0] ?? "", /avoid|避开/i)
+  assert.doesNotMatch(sent[0] ?? "", /partner prescreen|Reply yeah|合作公司的快速初筛/i)
+  const toolCalls = [...docs.values()].filter((row) => row.connectorName === "set-matching-preferences")
+  assert.equal(toolCalls.length, 1)
 })
 
 test("handlePostMatchRetentionReply does not claim dislike preferences were saved when the tool fails", async () => {

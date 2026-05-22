@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { DataTable, EmptyState, ErrorState, PageHeader, StatusBadge } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
+import { normalizePhoneLookup } from "./Users.helpers.js"
 
 type RiskLevel = "low" | "medium" | "high"
 type ConversationStatus = "active" | "idle" | "blocked" | "failed" | "provisional" | "unknown"
@@ -38,25 +39,6 @@ type Row = {
 }
 
 type AnyRow = Record<string, unknown> & { id: string }
-
-function maskPhone(value: string | undefined, fallback: string): string {
-  if (!value) return fallback
-  // Mask middle digits — preserve country prefix + last 4 for operator recognition.
-  if (value.length < 8) return value
-  const head = value.slice(0, 4)
-  const tail = value.slice(-4)
-  return `${head}…${tail}`
-}
-
-function normalizePhoneLookup(value: string): string | null {
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  const digits = trimmed.replace(/\D/g, "")
-  if (digits.length === 10) return `+1${digits}`
-  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`
-  if (trimmed.startsWith("+") && digits.length >= 8) return `+${digits}`
-  return null
-}
 
 function relativeTime(iso: string | undefined): string {
   if (!iso) return "—"
@@ -96,13 +78,13 @@ function RiskBadge({ level }: { level: RiskLevel }) {
 
 export function Users() {
   const [rows, setRows] = useState<Row[]>([])
+  const [lookupRows, setLookupRows] = useState<Row[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [lookupLoading, setLookupLoading] = useState(false)
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState("all")
   const [showTest, setShowTest] = useState(false)
-  const [lookupRows, setLookupRows] = useState<Row[]>([])
-  const [lookupLoading, setLookupLoading] = useState(false)
 
   useEffect(() => {
     ;(async () => {
@@ -188,27 +170,32 @@ export function Users() {
       setLookupLoading(false)
       return
     }
-
+    if (rows.some((r) => r.phoneE164 === phone)) {
+      setLookupRows([])
+      setLookupLoading(false)
+      return
+    }
     let cancelled = false
     setLookupLoading(true)
     ;(async () => {
       try {
         const snap = await getDocs(query(collection(db(), PA_COLLECTIONS.users), where("phoneE164", "==", phone), limit(10)))
         if (cancelled) return
-        const found = snap.docs.map((d) => {
-          const raw = { id: d.id, ...d.data() } as Omit<Row, "status" | "risk" | "needsAction">
-          const partial = {
-            ...raw,
-            latestAt: raw.createdAt,
-          }
-          return {
-            ...partial,
-            status: deriveStatus(partial),
-            risk: "low" as RiskLevel,
-            needsAction: null,
-          }
-        })
-        setLookupRows(found)
+        setLookupRows(
+          snap.docs.map((d) => {
+            const raw = { id: d.id, ...d.data() } as Omit<Row, "status" | "risk" | "needsAction">
+            const partial = {
+              ...raw,
+              latestAt: raw.createdAt,
+            }
+            return {
+              ...partial,
+              status: deriveStatus(partial),
+              risk: "low" as RiskLevel,
+              needsAction: null,
+            }
+          })
+        )
       } catch (e) {
         console.warn("[Users] phone lookup failed", e)
         if (!cancelled) setLookupRows([])
@@ -220,10 +207,11 @@ export function Users() {
     return () => {
       cancelled = true
     }
-  }, [search])
+  }, [rows, search])
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase()
+    const normalizedPhone = normalizePhoneLookup(search)
     const merged = [
       ...lookupRows.map((lookup) => {
         const existing = rows.find((r) => r.id === lookup.id)
@@ -235,7 +223,7 @@ export function Users() {
       // Hide test users by default (toggle to show)
       if (!showTest && r.testMode === true) return false
       const haystack = `${r.id} ${r.phoneE164 ?? ""} ${r.displayName ?? ""} ${r.email ?? ""} ${r.activeAgentId ?? ""} ${r.latestMessage ?? ""}`.toLowerCase()
-      const matchesSearch = !q || haystack.includes(q)
+      const matchesSearch = !q || haystack.includes(q) || (normalizedPhone !== null && r.phoneE164 === normalizedPhone)
       const matchesFilter =
         filter === "all" ||
         (filter === "needs_action" && r.needsAction) ||
@@ -278,7 +266,7 @@ export function Users() {
         </label>
       </div>
       {loading ? <div className="panel">Loading conversations...</div> : null}
-      {lookupLoading ? <div className="panel">Looking up phone number...</div> : null}
+      {!loading && lookupLoading ? <div className="panel">Looking up phone number...</div> : null}
       {!loading ? (
         <DataTable
           rows={visible}
@@ -293,20 +281,18 @@ export function Users() {
               key: "handle",
               header: "Handle",
               render: (r) => {
-                const display = r.phoneE164 ?? maskPhone(r.phoneE164, r.id)
+                const display = r.phoneE164 || r.id
                 const tooltip = r.latestMessage
                   ? `Latest: ${r.latestMessage.slice(0, 200)}${r.latestMessage.length > 200 ? "…" : ""}`
                   : "No messages yet"
                 return (
-                  <div style={{ display: "grid", gap: 2 }}>
+                  <div>
                     <Link to={`/users/${r.id}`} title={tooltip}>
                       {display}
                     </Link>
-                    {r.displayName || r.email ? (
-                      <span style={{ color: "#64748b", fontSize: "0.8em" }}>
-                        {[r.displayName, r.email].filter(Boolean).join(" · ")}
-                      </span>
-                    ) : null}
+                    <div style={{ fontSize: "0.78em", color: "#64748b", marginTop: 2 }}>
+                      {r.displayName || r.email || r.id}
+                    </div>
                   </div>
                 )
               },
@@ -339,8 +325,23 @@ export function Users() {
             },
             {
               key: "profile",
-              header: "Profile",
-              render: (r) => <Link to={`/admin/candidates/${encodeURIComponent(r.id)}/profile`}>Open</Link>,
+              header: "User info",
+              render: (r) => (
+                <Link
+                  to={`/admin/candidates/${encodeURIComponent(r.id)}/profile`}
+                  style={{
+                    display: "inline-block",
+                    padding: "2px 10px",
+                    border: "1px solid #cbd5e1",
+                    borderRadius: 999,
+                    fontSize: "0.8em",
+                    textDecoration: "none",
+                    color: "#334155",
+                  }}
+                >
+                  Profile
+                </Link>
+              ),
             },
             {
               key: "needsAction",

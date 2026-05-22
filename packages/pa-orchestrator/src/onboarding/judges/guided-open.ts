@@ -55,10 +55,9 @@ export interface GuidedOpenExample<TAnswer> {
 }
 
 /**
- * Optional bloom-filter pattern. When `pattern.test(reply)` is true AND
- * `parseValue(value)` is non-null, the judge short-circuits without a
- * network call. **Never blocks**: if the pattern misses, the judge always
- * falls through to the LLM.
+ * Optional bloom-filter pattern. When `pattern.test(reply)` is true, the
+ * judge prefers `parseValue(value)` and falls back to `parseValue(reply)`;
+ * if both are null it falls through to the LLM. **Never blocks**.
  */
 export interface GuidedOpenBloom<TAnswer> {
   pattern: RegExp
@@ -369,7 +368,7 @@ export class GuidedOpenJudge<TAnswer> implements Judge<TAnswer> {
     if (this.spec.bloomRegex && this.spec.bloomRegex.length > 0) {
       for (const bloom of this.spec.bloomRegex) {
         if (bloom.pattern.test(reply)) {
-          const parsed = this.spec.parseValue(reply) ?? this.spec.parseValue(bloom.value)
+          const parsed = this.spec.parseValue(bloom.value) ?? this.spec.parseValue(reply)
           if (parsed !== null) {
             ctx.log?.("pa.onboarding.judge.guided_open.bloom_hit", {
               userId: ctx.userId,

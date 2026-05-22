@@ -226,6 +226,7 @@ t6test("set-matching-preferences via runConnector persists H1B hard constraint w
       companyStage: null,
       jobType: ["full_time"],
       negativeCompanies: ["OpenAI"],
+      negativeRoleFunctions: ["customer_service_and_support"],
       constraintStrength: "hard",
       evidenceText: "Yes I need H1B support, do you have more?",
       source: "agentic_find_match_router",
@@ -244,12 +245,14 @@ t6test("set-matching-preferences via runConnector persists H1B hard constraint w
   assert.deepEqual(tags.targetCountry, ["usa"])
   assert.equal(tags.careerStage, "junior")
   assert.deepEqual(tags.companyNegativeList, ["OpenAI"])
+  assert.deepEqual(tags.roleFunctionNegativeList, ["customer_service_and_support"])
   const prefs = user.conversationDerivedPreferences as Record<string, unknown>
   const matchingProfile = prefs.matchingProfile as Record<string, unknown>
   const last = matchingProfile.last as Record<string, unknown>
   assert.equal(last.visaStatus, "sponsor_needed")
   assert.deepEqual(last.targetCountry, ["usa"])
   assert.equal(last.careerStage, "junior")
+  assert.deepEqual(last.negativeRoleFunctions, ["customer_service_and_support"])
   assert.equal(last.constraintStrength, "hard")
 
   const toolCallEntries = [...store.entries()].filter(([k]) =>

@@ -1370,6 +1370,23 @@ test("B4 hard filter: companyNegativeList drops matching company", () => {
   assert.equal(r.kept[0]!.id, "ok")
 })
 
+test("B4 hard filter: roleFunctionNegativeList drops rejected role functions", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "hr", jobTitle: "HR Coordinator", roleFunction: ["human_resources"] }),
+    mkJob({ id: "support", jobTitle: "Customer Service Rep", roleFunction: ["customer_service_and_support"] }),
+    mkJob({ id: "mixed", jobTitle: "Support Operations", roleFunction: ["customer_service_and_support", "operations"] }),
+  ]
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    roleFunctionNegativeList: ["customer_service_and_support"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["hr"])
+  assert.equal(r.counters.negativeListDrop, 2)
+})
+
 test("B4 soft: targetCompanyTags ∩ companyInfo.tags adds tagOverlap*0.15", () => {
   const tags = {
     skills: [],

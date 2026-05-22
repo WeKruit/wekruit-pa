@@ -653,6 +653,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
   turnId: string
   agent: AgentDef
   userMessage: string
+  suppressPrescreenOffer?: boolean
 }): Promise<{ recCount: number; reply: string }> {
   const lang =
     detectLang(`${input.userMessage}\n${input.event.body}`) === "zh" ? "zh" : "en"
@@ -731,6 +732,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
         sessionId: input.event.sessionId,
         toE164: input.event.from,
         lang,
+        suppressPrescreenOffer: input.suppressPrescreenOffer,
         enqueueOutbound: input.store.enqueueOutbound,
       })
       return { recCount: jobCount, reply: finalizeSharedOnboardingSmsText(text) }
@@ -763,6 +765,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
     sessionId: input.event.sessionId,
     toE164: input.event.from,
     lang,
+    suppressPrescreenOffer: input.suppressPrescreenOffer,
     enqueueOutbound: input.store.enqueueOutbound,
   })
   return { recCount, reply: finalizeSharedOnboardingSmsText(text) }
