@@ -152,6 +152,7 @@ function makeGenerateJobRecs(): NonNullable<
       requestedCount?: number
       roleFocus?: string[]
       collabPrescreenOnly?: boolean
+      allowBroadFallback?: boolean
     },
   ) => {
     if (!getApps().length) initializeApp()

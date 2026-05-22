@@ -20,6 +20,7 @@ import { strict as assert } from "node:assert"
 import { describe, it } from "node:test"
 
 import { buildOnboardingSurfaceIntent } from "../shared-onboarding-surface.js"
+import { resolveAgentAllowedConnectors } from "../shared-onboarding-outbound.js"
 import { getVoiceProfile, type ResolvedVoiceProfile } from "../voice/voice-profiles/index.js"
 
 function profile(): ResolvedVoiceProfile {
@@ -97,6 +98,13 @@ describe("buildOnboardingSurfaceIntent — language lock", () => {
       lang: "en",
     })
     assert.match(intent, /Write the SMS in English only\./)
+  })
+})
+
+describe("resolveAgentAllowedConnectors — runtime required tools", () => {
+  it("adds the daily subscription connector even when the persisted default agent seed is stale", async () => {
+    const out = await resolveAgentAllowedConnectors(undefined, "u1", ["current-info", "remember-fact"])
+    assert.deepEqual(out, ["current-info", "remember-fact", "set-daily-job-recommendation-subscription"])
   })
 })
 

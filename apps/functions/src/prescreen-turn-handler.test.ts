@@ -636,6 +636,40 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(turnEntries.length, 0)
   })
 
+  it("yields PASS + yes for a fresh pending user without legacy pipeline state", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        onboardingState: "pending",
+        onboardingStatus: "invited",
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "photon-macos-devops",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "Sure",
+      sendSms: async () => {
+        throw new Error("prescreen should yield so shared onboarding can start")
+      },
+    })
+
+    assert.equal(result.handled, false)
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
+    assert.equal(turnEntries.length, 0)
+  })
+
   it("handles PASS + what next with the one-time broader matching offer", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({

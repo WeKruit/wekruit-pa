@@ -110,9 +110,13 @@ export async function resolveAgentAllowedConnectors(
   allowedConnectors: string[] | undefined
 ): Promise<string[]> {
   const base = allowedConnectors ?? []
+  if (base.length === 0) return []
+  const withRuntimeRequired = base.includes("set-daily-job-recommendation-subscription")
+    ? base
+    : [...base, "set-daily-job-recommendation-subscription"]
   const collabOn = await isCollabMatchToolEnabled(db, userId)
-  if (collabOn) return [...base]
-  return base.filter((name) => name !== "match-against-collab-jobs")
+  if (collabOn) return [...withRuntimeRequired]
+  return withRuntimeRequired.filter((name) => name !== "match-against-collab-jobs")
 }
 
 export async function isBehaviorChoreographerEnabled(

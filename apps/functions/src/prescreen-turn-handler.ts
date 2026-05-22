@@ -622,7 +622,14 @@ function hasIncompleteOnboardingQuestion(user: Record<string, unknown> | undefin
     ? user.pipelineState as Record<string, unknown>
     : null
   if (pipeline?.completed === true) return false
-  return typeof pipeline?.currentQId === "string" || /^q_[a-z0-9_]+_asked$/.test(String(user.onboardingState ?? ""))
+  const onboardingState = String(user.onboardingState ?? "")
+  const onboardingStatus = String(user.onboardingStatus ?? "")
+  return (
+    typeof pipeline?.currentQId === "string" ||
+    /^q_[a-z0-9_]+_asked$/.test(onboardingState) ||
+    ["pending", "invited", "started", "in_progress"].includes(onboardingState) ||
+    ["pending", "invited", "started", "in_progress"].includes(onboardingStatus)
+  )
 }
 
 function isLikelyPrescreenContinuationReply(reply: string): boolean {

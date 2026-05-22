@@ -212,3 +212,69 @@ test("handlePostMatchRetentionReply persists structured constraints from dislike
   assert.equal(feedbackEvents.length, 2)
   assert.match(sent[0] ?? "", /daily texts|每天/)
 })
+
+test("handlePostMatchRetentionReply does not claim dislike preferences were saved when the tool fails", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-feature-flags/paPostMatchRetentionEnabled",
+      { key: "paPostMatchRetentionEnabled", value: true, type: "bool", scope: "global" },
+    ],
+    [
+      "pa-users/u_feedback_fail",
+      {
+        postMatchRetention: {
+          stage: "await_dislike_reason",
+          startedAt: "2026-05-21T16:00:00.000Z",
+          updatedAt: "2026-05-21T16:00:00.000Z",
+          recCount: 2,
+          jobIds: ["j1"],
+        },
+      },
+    ],
+  ])
+  const db = {
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => {
+          const data = docs.get(`${name}/${id}`)
+          return { exists: data !== undefined, data: () => data }
+        },
+        set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+          if (name === "pa-tool-calls") throw new Error("tool audit write failed")
+          const key = `${name}/${id}`
+          docs.set(key, opts?.merge ? { ...(docs.get(key) ?? {}), ...data } : data)
+        },
+      }),
+    }),
+  } as never
+  const sent: string[] = []
+  const handled = await handlePostMatchRetentionReply(
+    {
+      id: "e1",
+      userId: "u_feedback_fail",
+      sessionId: "s1",
+      from: "+14243201960",
+      body: "I don't want India roles or senior jobs",
+      channel: "imessage",
+    } as never,
+    {
+      db,
+      nowIso: () => "2026-05-21T16:01:00.000Z",
+      log: () => {},
+      getOnboardingUser: async () => ({ onboardingState: "complete" }),
+      enqueueOutbound: async (_userId, _to, body) => {
+        sent.push(body)
+      },
+      updateTurn: async () => {},
+      markEventSucceeded: async () => {},
+    },
+    "t1"
+  )
+
+  assert.equal(handled, true)
+  const user = docs.get("pa-users/u_feedback_fail") as { postMatchRetention?: { stage?: string }; tags?: Record<string, unknown> } | undefined
+  assert.equal(user?.postMatchRetention?.stage, "await_dislike_reason")
+  assert.equal(user?.tags?.targetCountry, undefined)
+  assert.match(sent[0] ?? "", /save issue/)
+  assert.doesNotMatch(sent[0] ?? "", /avoid that vibe/)
+})

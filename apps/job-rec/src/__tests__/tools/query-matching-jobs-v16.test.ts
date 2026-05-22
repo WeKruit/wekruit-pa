@@ -321,6 +321,18 @@ test("applyV16HardFilters: careerStage window enforces (entry → entry/junior, 
   assert.equal(r.counters.careerStage, 2)
 })
 
+test("applyV16HardFilters: careerStage infers seniority from title when structured field is missing", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "associate", jobTitle: "Business Operations Associate", seniorityLevel: undefined }),
+    mkJob({ id: "lead", jobTitle: "Content Marketing Lead, Bridge", seniorityLevel: undefined }),
+    mkJob({ id: "director", jobTitle: "Director of Product Marketing", seniorityLevel: undefined }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "junior" } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["associate"])
+  assert.equal(r.counters.careerStage, 2)
+})
+
 test("applyV16HardFilters: jobType exact intersect", () => {
   const jobs: MatchingJob[] = [
     mkJob({ id: "ft", jobType: "full_time" }),

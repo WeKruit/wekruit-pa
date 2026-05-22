@@ -117,6 +117,23 @@ export const getMatchingJobTitle = (
   return b
 }
 
+function inferCareerStageFromTitle(title: string): CareerStage | null {
+  const t = title.trim().toLowerCase()
+  if (!t) return null
+  if (/\b(c[-\s]?level|chief|cto|ceo|cfo|coo|cmo)\b/.test(t)) return "c_level"
+  if (/\bvp|vice\s+president\b/.test(t)) return "vp"
+  if (/\bdirector\b/.test(t)) return "director"
+  if (/\bprincipal\b/.test(t)) return "principal"
+  if (/\bstaff\b/.test(t)) return "staff"
+  if (/\b(senior|sr\.?|lead|head\s+of)\b/.test(t)) return "senior"
+  if (/\bmanager\b/.test(t)) return "manager"
+  if (/\b(mid[-\s]?level|midlevel)\b/.test(t)) return "mid_level"
+  if (/\b(junior|jr\.?)\b/.test(t)) return "junior"
+  if (/\b(entry[-\s]?level|new\s+grad|graduate)\b/.test(t)) return "entry_level"
+  if (/\bintern(ship)?\b/.test(t)) return "intern"
+  return null
+}
+
 // ---------------------------------------------------------------------------
 // loadUserTags — single-source read (MATCH-01 / D8)
 // ---------------------------------------------------------------------------
@@ -504,9 +521,15 @@ export function applyV16HardFilters(
       }
     }
 
-    // 3. careerStage window — enforce only when both sides present.
-    if (acceptableStages && job.seniorityLevel) {
-      if (!acceptableStages.has(job.seniorityLevel as CareerStage)) {
+    // 3. careerStage window — prefer enriched seniority, infer from title when
+    // the scraper missed the structured field so senior/lead/director jobs do
+    // not leak to junior users.
+    if (acceptableStages) {
+      const jobStage =
+        typeof job.seniorityLevel === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(job.seniorityLevel)
+          ? job.seniorityLevel as CareerStage
+          : inferCareerStageFromTitle(getMatchingJobTitle(job))
+      if (jobStage && !acceptableStages.has(jobStage)) {
         counters.careerStage++
         continue
       }

@@ -244,7 +244,7 @@ function deriveDislikePreferencePatch(reasonText: string): Record<string, unknow
     patch.targetCountry = ["usa"]
     changed = true
   }
-  if (/\b(senior|staff|principal|director|too\s+senior|role\s+level|level)\b/i.test(reasonText)) {
+  if (/\b(senior|staff|principal|director|lead|manager|vp|too\s+senior)\b/i.test(reasonText)) {
     patch.careerStage = "junior"
     changed = true
   }
@@ -474,6 +474,11 @@ export async function handlePostMatchRetentionReply(
             turnId,
             error: err instanceof Error ? err.message : String(err),
           })
+          reply =
+            lang === "zh"
+              ? "我这边保存这个偏好卡了一下，先不假装记下了。你再发一次哪里不对，我重试。"
+              : "I hit a save issue on that preference, so I will not pretend it is saved. Send what was off once more and I will retry."
+          break
         }
       }
       next.stage = "await_subscribe"
