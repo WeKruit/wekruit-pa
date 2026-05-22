@@ -139,8 +139,8 @@ export function userExitSessionText(lang: Lang): string {
 
 export function recentTerminalSessionText(lang: Lang): string {
   return lang === "zh"
-    ? "收到。这个岗位 screen 已经暂停了；我会把这个约束记到你的 profile 里，后面只看更匹配的机会。"
-    : "Got it. This role screen is already paused; I will keep that constraint on your profile and use it for better-matched roles."
+    ? "收到。这次 screen 先到这里；之后我也可以每天帮你留意更匹配的新岗位并发给你。要我这样做吗？"
+    : "Got it. This role screen is done for now. I can also keep an eye out for better-fit roles and text you daily when something looks strong. Want me to do that?"
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */

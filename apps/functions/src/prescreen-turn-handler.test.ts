@@ -470,14 +470,14 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(result.handled, true)
     assert.equal(result.sessionId, "ps_done")
     assert.equal(result.terminal, "HARD_STOP")
-    assert.deepEqual(sent, [
-      "Got it. This role screen is already paused, so I will not mix this new message into the old screen.",
-    ])
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /better-fit roles/i)
+    assert.match(sent[0] ?? "", /Want me to do that/i)
     const session = docs.get("pa-prescreen-sessions/ps_done")?.data
     assert.equal(typeof session?.postTerminalFollowupAckAt, "string")
     const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
     assert.equal(turnEntries.length, 1)
-    assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "post_terminal_followup")
+    assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "post_prescreen_retention")
 
     const second = await runPrescreenTurnIfActive({
       db,
@@ -498,7 +498,69 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     })
 
     assert.equal(second.handled, true)
-    assert.equal(sent.length, 1, "second post-terminal follow-up should be handled silently")
+    assert.equal(sent.length, 2, "second post-terminal follow-up should stay in retention instead of normal onboarding")
+    assert.match(sent[1] ?? "", /better-fit roles/i)
+    assert.match(sent[1] ?? "", /Want me to do that/i)
+  })
+
+  it("turns a post-interview daily-match yes into daily opt-in plus shared onboarding Q1", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        id: "u1",
+        phoneE164: "+13054507715",
+        onboardingStatus: "invited",
+        onboardingState: "pending",
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        postPrescreenRetention: {
+          stage: "await_daily_opt_in",
+          terminal: "PASS",
+          startedAt: now,
+          updatedAt: now,
+        },
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "yes",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /good matches each day/i)
+    assert.match(sent[0] ?? "", /what matters most/i)
+
+    const user = docs.get("pa-users/u1")?.data
+    assert.equal((user?.dailyJobRecSubscribe as { optedIn?: boolean } | undefined)?.optedIn, true)
+    assert.equal((user?.sharedOnboarding as { status?: string } | undefined)?.status, "active")
+    assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.kind, "shared_onboarding")
+    assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.status, "active")
+    const session = docs.get("pa-prescreen-sessions/ps_done")?.data
+    assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "onboarding_started")
   })
 
   it("runs safety before a recent terminal prescreen follow-up can claim private-data requests", async () => {
@@ -901,9 +963,9 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
 
     assert.equal(result.handled, true)
     assert.equal(result.sessionId, "ps_latest")
-    assert.deepEqual(sent, [
-      "Got it. This role screen is already paused, so I will not mix this new message into the old screen.",
-    ])
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /better-fit roles/i)
+    assert.match(sent[0] ?? "", /Want me to do that/i)
     const latest = docs.get("pa-prescreen-sessions/ps_latest")?.data
     assert.equal(typeof latest?.postTerminalFollowupAckAt, "string")
   })
@@ -1168,6 +1230,10 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     const session = docs.get("pa-prescreen-sessions/ps_active")?.data
     assert.equal(session?.terminalActionPendingReview, true)
     assert.equal(typeof session?.evaluationAttemptId, "string")
+    assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "await_daily_opt_in")
+    const user = docs.get("pa-users/u1")?.data
+    assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.kind, "job_prescreen")
+    assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.status, "ended")
     const attempts = [...docs.entries()].filter(([path]) => path.startsWith("pa-evaluation-attempts/"))
     assert.equal(attempts.length, 1)
     assert.equal(attempts[0][1].data.source, "prescreen")

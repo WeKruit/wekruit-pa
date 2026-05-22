@@ -18,7 +18,12 @@ import type { Firestore } from "firebase-admin/firestore"
 import {
   KeywordSetJudge,
   PreScreenPipeline,
+  WEKRUIT_CANDIDATE_SOURCE,
+  buildSharedOnboardingPrompt,
+  buildSharedOnboardingPromptContext,
+  buildSharedOnboardingStartedState,
   hardFilterClarifyText,
+  loadSharedOnboardingParsedResumeForPrompt,
   type KeywordSetLlmCaller,
   type KeywordSetLlmOutput,
   type KeywordSpec,
@@ -28,6 +33,7 @@ import {
   type PreScreenStateProvider,
   prescreenSessionToEvaluationAttempt,
 } from "@pa/pa-orchestrator"
+import { PA_COLLECTIONS } from "@pa/core-types"
 import { saveEvaluationAttempt } from "@pa/pa-persistence"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
@@ -624,6 +630,156 @@ function hasIncompleteOnboardingQuestion(user: Record<string, unknown> | undefin
   return typeof pipeline?.currentQId === "string" || /^q_[a-z0-9_]+_asked$/.test(String(user.onboardingState ?? ""))
 }
 
+function detectSimpleYesNo(body: string): "yes" | "no" | "ambiguous" {
+  const normalized = body.trim().toLowerCase()
+  if (!normalized) return "ambiguous"
+  if (
+    /^(no|nope|nah|pass|skip|later|not now|don'?t|do not|no thanks|no thank you)\b/i.test(normalized) ||
+    /\b(not right now|i'?m good|i am good|good for now|i'?ll pass|i will pass|don'?t want|do not want)\b/i.test(normalized)
+  ) {
+    return "no"
+  }
+  if (/^(yes|yeah|yep|yup|sure|ok|okay|alright|all right|sounds good|please|go ahead|let'?s|down)\b/i.test(normalized)) {
+    return "yes"
+  }
+  return "ambiguous"
+}
+
+function postPrescreenDailyPrompt(lang: "zh" | "en", terminal?: string | null): string {
+  if (lang === "zh") {
+    return terminal === "PASS"
+      ? "这次岗位初筛信息已经收齐，我会把回答交给 hiring manager。之后我也可以每天帮你留意更匹配的新岗位并发给你。要我这样做吗？"
+      : "这次 screen 先到这里。之后我也可以每天帮你留意更匹配的新岗位并发给你。要我这样做吗？"
+  }
+  return terminal === "PASS"
+    ? "Thanks, I have enough for this role screen and I’ll send it to the hiring manager. I can also keep an eye out and text you good job matches daily. Want me to do that?"
+    : "Thanks for taking the time. I can keep an eye out for better-fit roles and text you daily when something looks strong. Want me to do that?"
+}
+
+async function persistDailySubscribeOptIn(args: {
+  db: Firestore
+  userId: string
+  optedIn: boolean
+  nowIso: string
+}): Promise<void> {
+  await args.db.collection(PA_COLLECTIONS.users).doc(args.userId).set(
+    {
+      dailyJobRecSubscribe: args.optedIn
+        ? {
+            optedIn: true,
+            optedInAt: args.nowIso,
+            source: "post_prescreen_retention",
+          }
+        : {
+            optedIn: false,
+            optedOutAt: args.nowIso,
+            source: "post_prescreen_retention",
+          },
+      updatedAt: args.nowIso,
+    },
+    { merge: true },
+  )
+  await args.db.collection("pa-job-profiles").doc(args.userId).set(
+    {
+      userId: args.userId,
+      status: args.optedIn ? "active" : "paused",
+      updatedAt: args.nowIso,
+      source: "post_prescreen_retention",
+    },
+    { merge: true },
+  )
+}
+
+async function markUserPrescreenWorkSessionEnded(args: {
+  db: Firestore
+  userId: string
+  sessionId: string
+  jobId: string
+  terminal: string
+  nowIso: string
+}): Promise<void> {
+  await args.db.collection(PA_COLLECTIONS.users).doc(args.userId).set(
+    {
+      workSession: {
+        kind: "job_prescreen",
+        status: "ended",
+        boundary: "terminal",
+        endedAt: args.nowIso,
+        sessionId: args.sessionId,
+        jobId: args.jobId,
+        terminal: args.terminal,
+      },
+      updatedAt: args.nowIso,
+    },
+    { merge: true },
+  )
+}
+
+async function startSharedOnboardingAfterPrescreen(args: {
+  db: Firestore
+  userId: string
+  toE164: string
+  nowIso: string
+  sendSms: RuntimeSmsSender
+  log: (event: string, payload: Record<string, unknown>) => void
+  sessionId: string
+}): Promise<string> {
+  const userRef = args.db.collection(PA_COLLECTIONS.users).doc(args.userId)
+  const userSnap = await userRef.get()
+  const user = (userSnap.data() ?? {}) as Record<string, unknown>
+  if (user.onboardingState === "complete" || user.onboardingStatus === "complete") {
+    const doneText = "Great — I’ll keep an eye out and text you good matches each day. I already have enough context for now; if your target changes, just tell me here."
+    await args.sendSms({
+      to: args.toE164,
+      content: doneText,
+      userId: args.userId,
+      db: args.db,
+      runtimeSource: "pa_prescreen_retention_onboarding",
+      idempotencyKey: `prescreen_retention_daily_only:${args.sessionId}`,
+    })
+    return doneText
+  }
+
+  const parsedResume = await loadSharedOnboardingParsedResumeForPrompt(
+    args.db,
+    args.userId,
+    user,
+    (event, payload) => args.log(`shared_onboarding.${event}`, payload ?? {}),
+  )
+  const promptContext = buildSharedOnboardingPromptContext({ user, parsedResume })
+  const startedFields = buildSharedOnboardingStartedState(
+    args.nowIso,
+    WEKRUIT_CANDIDATE_SOURCE,
+    promptContext,
+  )
+  await userRef.set(
+    {
+      ...startedFields,
+      candidateContext: {
+        sms: {
+          phoneE164: args.toE164,
+          smsTriggeredAt: args.nowIso,
+        },
+      },
+      smsState: "shared-onboarding-started-after-prescreen",
+      smsThreadId: `iMessage;-;${args.toE164}`,
+      updatedAt: args.nowIso,
+    },
+    { merge: true },
+  )
+  const q1 = buildSharedOnboardingPrompt("main_goal", promptContext)
+  const text = `Great — I’ll keep an eye out and text you good matches each day. I’ll use what you shared in this screen too. ${q1}`
+  await args.sendSms({
+    to: args.toE164,
+    content: text,
+    userId: args.userId,
+    db: args.db,
+    runtimeSource: "pa_prescreen_retention_onboarding",
+    idempotencyKey: `prescreen_retention_onboarding:${args.sessionId}`,
+  })
+  return text
+}
+
 function isLikelyPrescreenContinuationReply(reply: string): boolean {
   const normalized = reply.trim().toLowerCase()
   if (!normalized) return false
@@ -783,12 +939,18 @@ export async function runPrescreenTurnIfActive(
     const sessData = (sessSnap.data() ?? {}) as Record<string, unknown>
     const alreadyAcked = typeof sessData.postTerminalFollowupAckAt === "string"
     const nowIso = new Date().toISOString()
+    const retention = sessData.postPrescreenRetention && typeof sessData.postPrescreenRetention === "object"
+      ? sessData.postPrescreenRetention as Record<string, unknown>
+      : null
+    const retentionStage = typeof retention?.stage === "string" ? retention.stage : null
 
     await sessionRef.collection("turns").add({
       qId: "terminal",
       reply: args.replyText,
       action: {
-        kind: "post_terminal_followup",
+        kind: retentionStage === "await_daily_opt_in" || !alreadyAcked
+          ? "post_prescreen_retention"
+          : "post_terminal_followup",
         terminal: lookup.terminal,
         reason: "recent_ended_prescreen_session",
       },
@@ -796,7 +958,105 @@ export async function runPrescreenTurnIfActive(
     })
 
     let text: string | undefined
-    if (!alreadyAcked) {
+    if (retentionStage === "await_daily_opt_in" || !alreadyAcked) {
+      const yn = detectSimpleYesNo(args.replyText)
+      if (yn === "ambiguous") {
+        text = postPrescreenDailyPrompt(args.lang ?? "en", lookup.terminal)
+        try {
+          await sendSms({
+            to: args.toE164,
+            content: text,
+            userId: args.userId,
+            db: args.db,
+            runtimeSource: "pa_prescreen_runtime",
+            idempotencyKey: `prescreen_retention_prompt:${lookup.sessionId}`,
+          })
+          await sessionRef.set(
+            {
+              postTerminalFollowupAckAt: nowIso,
+              updatedAt: nowIso,
+              postPrescreenRetention: {
+                stage: "await_daily_opt_in",
+                terminal: lookup.terminal,
+                startedAt: typeof retention?.startedAt === "string" ? retention.startedAt : nowIso,
+                updatedAt: nowIso,
+              },
+            },
+            { merge: true },
+          )
+        } catch (err) {
+          log("prescreen.turn.post_prescreen_retention_prompt_failed", {
+            sessionId: lookup.sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      } else {
+        await persistDailySubscribeOptIn({
+          db: args.db,
+          userId: args.userId,
+          optedIn: yn === "yes",
+          nowIso,
+        })
+        if (yn === "yes") {
+          try {
+            text = await startSharedOnboardingAfterPrescreen({
+              db: args.db,
+              userId: args.userId,
+              toE164: args.toE164,
+              nowIso,
+              sendSms,
+              log,
+              sessionId: lookup.sessionId,
+            })
+          } catch (err) {
+            text = "Great — I’ll keep an eye out and text you good matches each day. What kind of next role would actually be worth your time?"
+            log("prescreen.turn.post_prescreen_onboarding_start_failed", {
+              sessionId: lookup.sessionId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+            await sendSms({
+              to: args.toE164,
+              content: text,
+              userId: args.userId,
+              db: args.db,
+              runtimeSource: "pa_prescreen_runtime",
+              idempotencyKey: `prescreen_retention_yes_fallback:${lookup.sessionId}`,
+            })
+          }
+        } else {
+          text = "No problem. I won’t send daily roles. If you want help later, just tell me what you’re looking for here."
+          try {
+            await sendSms({
+              to: args.toE164,
+              content: text,
+              userId: args.userId,
+              db: args.db,
+              runtimeSource: "pa_prescreen_runtime",
+              idempotencyKey: `prescreen_retention_no:${lookup.sessionId}`,
+            })
+          } catch (err) {
+            log("prescreen.turn.post_prescreen_retention_no_send_failed", {
+              sessionId: lookup.sessionId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+        }
+        await sessionRef.set(
+          {
+            postTerminalFollowupAckAt: nowIso,
+            updatedAt: nowIso,
+            postPrescreenRetention: {
+              stage: yn === "yes" ? "onboarding_started" : "daily_declined",
+              terminal: lookup.terminal,
+              dailyOptIn: yn === "yes",
+              startedAt: typeof retention?.startedAt === "string" ? retention.startedAt : nowIso,
+              updatedAt: nowIso,
+            },
+          },
+          { merge: true },
+        )
+      }
+    } else if (!alreadyAcked) {
       text = recentTerminalSessionText(args.lang ?? "en", lookup.terminal)
       try {
         await sendSms({
@@ -1041,13 +1301,14 @@ export async function runPrescreenTurnIfActive(
       result.action.terminal === "HARD_STOP" ||
       result.action.terminal === "PAUSE")
   ) {
+    const terminalAt = result.state.updatedAt ?? new Date().toISOString()
     await writePrescreenMemoryUpdate({
       db: args.db,
       sessionId,
       userId: args.userId,
       jobId: result.state.jobId,
       terminal: result.action.terminal,
-      occurredAt: result.state.updatedAt ?? new Date().toISOString(),
+      occurredAt: terminalAt,
       log,
     })
     await writePrescreenEvaluationAttempt({
@@ -1057,6 +1318,33 @@ export async function runPrescreenTurnIfActive(
       terminal: result.action.terminal,
       log,
     })
+    await markUserPrescreenWorkSessionEnded({
+      db: args.db,
+      userId: args.userId,
+      sessionId,
+      jobId: result.state.jobId,
+      terminal: result.action.terminal,
+      nowIso: terminalAt,
+    }).catch((err) => {
+      log("prescreen.turn.user_work_session_end_failed", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    })
+    if (result.action.terminal !== "PAUSE") {
+      await args.db.collection("pa-prescreen-sessions").doc(sessionId).set(
+        {
+          postPrescreenRetention: {
+            stage: "await_daily_opt_in",
+            terminal: result.action.terminal,
+            startedAt: terminalAt,
+            updatedAt: terminalAt,
+          },
+          updatedAt: terminalAt,
+        },
+        { merge: true },
+      )
+    }
   }
 
   return {
@@ -1080,12 +1368,5 @@ function userExitSessionText(lang: "zh" | "en"): string {
 }
 
 function recentTerminalSessionText(lang: "zh" | "en", terminal?: string | null): string {
-  if (terminal === "PASS") {
-    return lang === "zh"
-      ? "这次岗位 screen 已经完成。我们会把你的回答发给 hiring manager；如果他们想继续推进，我们会再联系你。"
-      : "You're done for this role screen. We'll send your answers to the hiring manager and reach out if they want to move forward."
-  }
-  return lang === "zh"
-    ? "收到。这个岗位 screen 已经暂停了；我不会把这条新消息混进旧 screen。"
-    : "Got it. This role screen is already paused, so I will not mix this new message into the old screen."
+  return postPrescreenDailyPrompt(lang, terminal)
 }
