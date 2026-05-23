@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 import { FieldValue, type Firestore } from "firebase-admin/firestore"
+import { z } from "zod"
 import {
   getAgentById,
   getDefaultAgent,
@@ -2501,14 +2502,15 @@ async function sendFindMatchPreCallBubble(
 
 const MATCHING_TOOL_ROUTER_PROMPT = [
   "You are Claire's matching tool router. You do not chat unless you used a matching tool.",
-  "Return exactly __NO_ACTION__ when the latest user message is not about job matching, fresh roles, companies, openings, constraints, or preferences.",
-  "If the user asks for more jobs, more companies, tighter matches, fresh roles, or what fits them, call find-match.",
-  "If the user states a matching constraint or preference, call set-matching-preferences before replying. This includes H1B, OPT, visa sponsorship, country/remote/location, role focus, role functions to avoid, role level/seniority, job type, company stage, and companies to avoid.",
-  "If the user both updates preferences and asks for jobs, call set-matching-preferences first, then find-match.",
+  "You must make a tool decision on every turn. Do not answer directly before a tool call.",
+  "Call no_action exactly once when the latest user message is not about job matching, fresh roles, companies, openings, constraints, or preferences.",
+  "If the user asks for more jobs, more companies, tighter matches, fresh roles, or what fits them, call find_match.",
+  "If the user states a matching constraint or preference, call set_matching_preferences before replying. This includes H1B, OPT, visa sponsorship, country/remote/location, role focus, role functions to avoid, role level/seniority, job type, company stage, and companies to avoid.",
+  "If the user both updates preferences and asks for jobs, call set_matching_preferences first, then find_match.",
   "For H1B, OPT, or employer sponsorship needs, set visaStatus=sponsor_needed and constraintStrength=hard.",
-  "When explicit hard constraints are present, call find-match with hardConstraintsActive=true and allowBroadFallback=false.",
-  "When no hard constraints are present, call find-match with hardConstraintsActive=false and allowBroadFallback=true.",
-  "If find-match returns zero jobs after a hard constraint, say the constraint is saved and that you will keep looking instead of sending weak roles.",
+  "When explicit hard constraints are present, call find_match with hardConstraintsActive=true and allowBroadFallback=false.",
+  "When no hard constraints are present, call find_match with hardConstraintsActive=false and allowBroadFallback=true.",
+  "If find_match returns zero jobs after a hard constraint, say the constraint is saved and that you will keep looking instead of sending weak roles.",
 ].join("\n")
 
 function safeParseToolJson(raw: string | null | undefined): Record<string, unknown> | null {
@@ -2570,58 +2572,80 @@ async function handleCompletedUserMatchingToolRouter(
     sessionId: event.sessionId,
   })
   tools = tools.filter((tool) => tool.name === "set-matching-preferences" || tool.name === "find-match")
-  if (!tools.some((tool) => tool.name === "find-match")) return false
+  const setPreferencesTool = tools.find((tool) => tool.name === "set-matching-preferences")
+  const findMatchTool = tools.find((tool) => tool.name === "find-match")
+  if (!findMatchTool) return false
 
   let preferenceCalled = false
   let findMatchCalled = false
   let hardConstraintsActive = false
   let findMatchResult: Record<string, unknown> | null = null
-  const wrappedTools = tools.map((tool) => ({
-    ...tool,
-    execute: async (args: unknown) => {
-      const payload = args && typeof args === "object" ? args as Record<string, unknown> : {}
-      if (tool.name === "set-matching-preferences") {
-        preferenceCalled = true
-        const raw = await tool.execute({
-          visaStatus: payload.visaStatus ?? null,
-          targetLocations: payload.targetLocations ?? null,
-          targetCountry: payload.targetCountry ?? null,
-          roleFocus: normalizeRoleFunctionToolValues(payload.roleFocus),
-          careerStage: payload.careerStage ?? null,
-          companyStage: payload.companyStage ?? null,
-          jobType: payload.jobType ?? null,
-          negativeCompanies: payload.negativeCompanies ?? null,
-          negativeRoleFunctions: normalizeRoleFunctionToolValues(payload.negativeRoleFunctions),
-          constraintStrength: payload.constraintStrength ?? null,
-          evidenceText: typeof payload.evidenceText === "string" ? payload.evidenceText : event.body,
+  const wrappedTools: AgentTurnTool[] = [
+    ...(setPreferencesTool
+      ? [
+          {
+            ...setPreferencesTool,
+            name: "set_matching_preferences",
+            execute: async (args: unknown) => {
+              const payload = args && typeof args === "object" ? args as Record<string, unknown> : {}
+              preferenceCalled = true
+              const raw = await setPreferencesTool.execute({
+                visaStatus: payload.visaStatus ?? null,
+                targetLocations: payload.targetLocations ?? null,
+                targetCountry: payload.targetCountry ?? null,
+                roleFocus: normalizeRoleFunctionToolValues(payload.roleFocus),
+                careerStage: payload.careerStage ?? null,
+                companyStage: payload.companyStage ?? null,
+                jobType: payload.jobType ?? null,
+                negativeCompanies: payload.negativeCompanies ?? null,
+                negativeRoleFunctions: normalizeRoleFunctionToolValues(payload.negativeRoleFunctions),
+                constraintStrength: payload.constraintStrength ?? null,
+                evidenceText: typeof payload.evidenceText === "string" ? payload.evidenceText : event.body,
+                source: typeof payload.source === "string" ? payload.source : "agentic_find_match_router",
+              })
+              const parsed = safeParseToolJson(raw)
+              if (parsed?.hardConstraint === true) hardConstraintsActive = true
+              return raw
+            },
+          },
+        ]
+      : []),
+    {
+      ...findMatchTool,
+      name: "find_match",
+      execute: async (args: unknown) => {
+        const payload = args && typeof args === "object" ? args as Record<string, unknown> : {}
+        findMatchCalled = true
+        const explicitHard =
+          typeof payload.hardConstraintsActive === "boolean"
+            ? payload.hardConstraintsActive
+            : hardConstraintsActive
+        const enriched = {
+          lang: payload.lang === "zh" ? "zh" : lang,
+          requestedCount: typeof payload.requestedCount === "number" ? payload.requestedCount : requestedJobRecCount(event.body) ?? 2,
           source: typeof payload.source === "string" ? payload.source : "agentic_find_match_router",
-        })
-        const parsed = safeParseToolJson(raw)
-        if (parsed?.hardConstraint === true) hardConstraintsActive = true
+          roleFocus: Array.isArray(payload.roleFocus) ? payload.roleFocus : null,
+          hardConstraintsActive: explicitHard,
+          allowBroadFallback:
+            typeof payload.allowBroadFallback === "boolean"
+              ? payload.allowBroadFallback
+              : !explicitHard,
+        }
+        await sendFindMatchPreCallBubble(store, event, turnId, enriched.lang)
+        const raw = await findMatchTool.execute(enriched)
+        findMatchResult = safeParseToolJson(raw)
         return raw
-      }
-      findMatchCalled = true
-      const explicitHard =
-        typeof payload.hardConstraintsActive === "boolean"
-          ? payload.hardConstraintsActive
-          : hardConstraintsActive
-      const enriched = {
-        lang: payload.lang === "zh" ? "zh" : lang,
-        requestedCount: typeof payload.requestedCount === "number" ? payload.requestedCount : requestedJobRecCount(event.body) ?? 2,
-        source: typeof payload.source === "string" ? payload.source : "agentic_find_match_router",
-        roleFocus: Array.isArray(payload.roleFocus) ? payload.roleFocus : null,
-        hardConstraintsActive: explicitHard,
-        allowBroadFallback:
-          typeof payload.allowBroadFallback === "boolean"
-            ? payload.allowBroadFallback
-            : !explicitHard,
-      }
-      await sendFindMatchPreCallBubble(store, event, turnId, enriched.lang)
-      const raw = await tool.execute(enriched)
-      findMatchResult = safeParseToolJson(raw)
-      return raw
+      },
     },
-  }))
+    {
+      name: "no_action",
+      description: "Choose this when the user message is not about job matching, job recommendations, companies, openings, or matching preferences.",
+      parameters: z.object({
+        reason: z.string().nullable(),
+      }) as unknown as AgentTurnTool["parameters"],
+      execute: async () => JSON.stringify({ ok: true, source: "no_action" }),
+    },
+  ]
 
   const history = await store.loadHistory(event.sessionId, 8)
   let text: string | null | undefined
@@ -2634,6 +2658,8 @@ async function handleCompletedUserMatchingToolRouter(
       memoryBlock: "",
       systemInputs: [MATCHING_TOOL_ROUTER_PROMPT],
       tools: wrappedTools,
+      toolChoice: "required",
+      parallelToolCalls: false,
     })
     text = result.text
   } catch (err) {

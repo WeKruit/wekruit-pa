@@ -207,12 +207,13 @@ test("processInboundEvent runs agent for non-memory messages", async () => {
 // already chosen tools; these assertions prove the orchestrator exposes the
 // right tool surface, consumes tool outputs correctly, and does not bypass the
 // audited connector path. Live intent quality belongs in an opt-in agent eval.
-test("matching router exposes only matching tools and consumes an agent-requested find-match call", async () => {
+test("matching router exposes SDK-safe required tools and consumes an agent-requested find-match call", async () => {
   let llmCalls = 0
   let directRecCalls = 0
   const toolCalls: string[] = []
   const outbound: string[] = []
   const turnUpdates: Array<Record<string, unknown>> = []
+  const exposedToolNames: string[][] = []
   const store = makeStore({
     getOnboardingUser: async () => ({
       id: "u1",
@@ -257,7 +258,10 @@ test("matching router exposes only matching tools and consumes an agent-requeste
     },
     runAgentTurn: async (input) => {
       llmCalls++
-      const findTool = input.tools?.find((tool) => tool.name === "find-match")
+      assert.equal((input as unknown as Record<string, unknown>).toolChoice, "required")
+      assert.equal((input as unknown as Record<string, unknown>).parallelToolCalls, false)
+      exposedToolNames.push((input.tools ?? []).map((tool) => tool.name))
+      const findTool = input.tools?.find((tool) => tool.name === "find_match")
       assert.ok(findTool, "find-match tool exposed")
       await findTool.execute({
         lang: "en",
@@ -281,6 +285,7 @@ test("matching router exposes only matching tools and consumes an agent-requeste
     body: "Please pull fresh fullstack software engineer roles that fit me.",
   }, store)
   assert.equal(llmCalls, 1)
+  assert.deepEqual(exposedToolNames, [["set_matching_preferences", "find_match", "no_action"]])
   assert.equal(directRecCalls, 0)
   assert.deepEqual(toolCalls, ["find-match"])
   assert.match(outbound.join("\n"), /Software Engineer @ Rain/)
@@ -335,8 +340,15 @@ test("matching router preserves agent tool-call order: save hard preference befo
       },
     ],
     runAgentTurn: async (input) => {
-      const setPrefs = input.tools?.find((tool) => tool.name === "set-matching-preferences")
-      const findMatch = input.tools?.find((tool) => tool.name === "find-match")
+      assert.equal((input as unknown as Record<string, unknown>).toolChoice, "required")
+      assert.equal((input as unknown as Record<string, unknown>).parallelToolCalls, false)
+      assert.deepEqual((input.tools ?? []).map((tool) => tool.name), [
+        "set_matching_preferences",
+        "find_match",
+        "no_action",
+      ])
+      const setPrefs = input.tools?.find((tool) => tool.name === "set_matching_preferences")
+      const findMatch = input.tools?.find((tool) => tool.name === "find_match")
       assert.ok(setPrefs, "set-matching-preferences tool exposed")
       assert.ok(findMatch, "find-match tool exposed")
       await setPrefs.execute({
@@ -425,7 +437,14 @@ test("matching router handles an agent preference-only tool call without falling
     runAgentTurn: async (input) => {
       if (input.agent.id.endsWith(":matching-tool-router")) {
         agentCalls.push("router")
-        const setPrefs = input.tools?.find((tool) => tool.name === "set-matching-preferences")
+        assert.equal((input as unknown as Record<string, unknown>).toolChoice, "required")
+        assert.equal((input as unknown as Record<string, unknown>).parallelToolCalls, false)
+        assert.deepEqual((input.tools ?? []).map((tool) => tool.name), [
+          "set_matching_preferences",
+          "find_match",
+          "no_action",
+        ])
+        const setPrefs = input.tools?.find((tool) => tool.name === "set_matching_preferences")
         assert.ok(setPrefs, "set-matching-preferences tool exposed")
         await setPrefs.execute({
           targetLocations: ["remote_us"],
@@ -458,6 +477,7 @@ test("matching router handles an agent preference-only tool call without falling
 
 test("completed user matching router falls through without stealing unrelated chat", async () => {
   const agentCalls: string[] = []
+  const toolCalls: string[] = []
   const outbound: string[] = []
   const store = makeStore({
     getOnboardingUser: async () => ({
@@ -486,6 +506,17 @@ test("completed user matching router falls through without stealing unrelated ch
     runAgentTurn: async (input) => {
       if (input.agent.id.endsWith(":matching-tool-router")) {
         agentCalls.push("router")
+        assert.equal((input as unknown as Record<string, unknown>).toolChoice, "required")
+        assert.equal((input as unknown as Record<string, unknown>).parallelToolCalls, false)
+        assert.deepEqual((input.tools ?? []).map((tool) => tool.name), [
+          "set_matching_preferences",
+          "find_match",
+          "no_action",
+        ])
+        const noAction = input.tools?.find((tool) => tool.name === "no_action")
+        assert.ok(noAction, "no_action tool exposed")
+        await noAction.execute({ reason: "not_matching_related" })
+        toolCalls.push("no_action")
         return { text: "__NO_ACTION__" }
       }
       agentCalls.push("default")
@@ -502,6 +533,7 @@ test("completed user matching router falls through without stealing unrelated ch
   }, store)
 
   assert.deepEqual(agentCalls, ["router", "default"])
+  assert.deepEqual(toolCalls, ["no_action"])
   assert.deepEqual(outbound, ["normal Claire reply"])
 })
 
@@ -1408,8 +1440,15 @@ test("processInboundEvent lifecycle: explicit job request is not swallowed as pr
     ],
     runAgentTurn: async (input) => {
       llmCalls++
-      const findTool = input.tools?.find((tool) => tool.name === "find-match")
-      assert.ok(findTool, "find-match tool exposed")
+      assert.equal((input as unknown as Record<string, unknown>).toolChoice, "required")
+      assert.equal((input as unknown as Record<string, unknown>).parallelToolCalls, false)
+      assert.deepEqual((input.tools ?? []).map((tool) => tool.name), [
+        "set_matching_preferences",
+        "find_match",
+        "no_action",
+      ])
+      const findTool = input.tools?.find((tool) => tool.name === "find_match")
+      assert.ok(findTool, "find_match tool exposed")
       await findTool.execute({
         lang: "en",
         requestedCount: 3,
