@@ -139,6 +139,9 @@ importers:
       '@pa/pa-broker':
         specifier: 0.0.1
         version: link:../../packages/pa-broker
+      '@pa/pa-experience-extractor':
+        specifier: 0.0.1
+        version: link:../../packages/pa-experience-extractor
       '@pa/pa-orchestrator':
         specifier: 0.0.1
         version: link:../../packages/pa-orchestrator
