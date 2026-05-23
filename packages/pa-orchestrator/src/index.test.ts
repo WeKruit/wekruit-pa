@@ -253,6 +253,44 @@ test("processInboundEvent records admin alert and sends no candidate fallback wh
   assert.deepEqual(writes[0]!.opts, { merge: true })
 })
 
+test("processInboundEvent answers candidate status requests without hitting the agent runtime", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  const turnUpdates: Array<Record<string, unknown>> = []
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+    }),
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "agent should not answer status" }
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch as Record<string, unknown>)
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+  })
+
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      body: "Give me updates for the jobs I’ve applied for already",
+    },
+    store,
+  )
+
+  assert.equal(llmCalls, 0)
+  assert.match(outbound, /actively helping/i)
+  assert.match(outbound, /hiring team/i)
+  assert.match(outbound, /reach out/i)
+  assert.doesNotMatch(outbound, /sorry|something went wrong|try again/i)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "candidate_status_request"), true)
+})
+
 test("createFirestoreOrchestratorStore suppresses internal-error outbound copy and alerts admin", async () => {
   let outboundCreates = 0
   const writes: Array<{

@@ -54,6 +54,12 @@ test("mapAnswerToRoleFunction: business analysis → business_analyst", () => {
   assert.deepEqual(mapAnswerToRoleFunction("business analysis"), [
     "business_analyst",
   ])
+  assert.deepEqual(mapAnswerToRoleFunction("Executive Assistant"), [
+    "business_analyst",
+  ])
+  assert.deepEqual(mapAnswerToRoleFunction("program operations coordinator"), [
+    "business_analyst",
+  ])
 })
 
 test("mapAnswerToRoleFunction: data role → data_analysis", () => {
@@ -75,6 +81,15 @@ test("mapAnswerToRoleFunction: empty / null / non-string → []", () => {
 test("mapAnswerToRoleFunction: unrecognized → []", () => {
   assert.deepEqual(mapAnswerToRoleFunction("librarian"), [])
   assert.deepEqual(mapAnswerToRoleFunction("retail clerk"), [])
+})
+
+test("mapAnswerToRoleFunction: teaching assistant → education_and_training", () => {
+  assert.deepEqual(mapAnswerToRoleFunction("teaching assistant"), [
+    "education_and_training",
+  ])
+  assert.deepEqual(mapAnswerToRoleFunction("math tutor"), [
+    "education_and_training",
+  ])
 })
 
 test("mapAnswerToRoleFunction: multi-pick when multiple keywords", () => {

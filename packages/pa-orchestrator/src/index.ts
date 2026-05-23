@@ -1225,6 +1225,53 @@ async function handleLifecycleProfileReply(
   return true
 }
 
+function isCandidateStatusRequest(text: string | undefined | null): boolean {
+  const body = (text ?? "").trim()
+  if (!body) return false
+  const lower = body.toLowerCase()
+
+  if (/\b(?:visa|h[-\s]?1b|opt|cpt|work\s+auth(?:orization)?|immigration)\b[^.!?]{0,40}\bstatus\b/i.test(lower)) {
+    return false
+  }
+
+  if (/(?:申请|投递|岗位|职位|面试|招聘方|招聘团队).{0,16}(?:进展|状态|消息|更新)|(?:进展|状态|消息|更新).{0,16}(?:申请|投递|岗位|职位|面试|招聘方|招聘团队)/.test(body)) {
+    return true
+  }
+
+  return (
+    /\b(?:application|interview|job|role|position|opening|company|hiring\s+team)\s+status\b/i.test(lower) ||
+    /\bstatus\s+(?:update|updates|for\s+(?:my\s+)?(?:application|interview|job|role|position|opening)s?)\b/i.test(lower) ||
+    /\b(?:any|give\s+me|send\s+me|share|got|have)\s+updates?\b[^.!?]{0,90}\b(?:applied|application|interview|job|role|position|opening|company|hiring\s+team)s?\b/i.test(lower) ||
+    /\b(?:jobs?|roles?|positions?|openings?)\s+(?:i['’]?ve|i\s+have)\s+applied\b/i.test(lower) ||
+    /\b(?:have\s+you\s+heard\s+back|heard\s+anything\s+back|where\s+am\s+i\s+in\s+the\s+process|what(?:'s| is)\s+the\s+update)\b/i.test(lower)
+  )
+}
+
+function candidateStatusReply(lang: "en" | "zh"): string {
+  if (lang === "zh") {
+    return "我们还在积极帮你推进和招聘团队的面试机会。如果你适合下一步，我们会直接联系你；这里不展开更多状态细节。"
+  }
+  return "We're actively helping move your profile toward interviews with the hiring team. If you're a good fit for a next step, we'll reach out directly. I can't share more status detail here."
+}
+
+async function handleCandidateStatusRequest(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string
+): Promise<boolean> {
+  if (!isCandidateStatusRequest(event.body)) return false
+  const lang: "en" | "zh" = detectLang([event.body]) === "zh" ? "zh" : "en"
+  await sendMemoryReply(store, event, turnId, candidateStatusReply(lang))
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    directIntent: "candidate_status_request",
+    completedAt: store.nowIso(),
+  })
+  await store.markEventSucceeded(event.id)
+  return true
+}
+
 function detectOnboardingProcessQuestion(body: string): boolean {
   const t = body.toLowerCase()
   return /\b(legit|real|scam|who are you|what is this|how does this work|what happens next|why do you need|hiring manager|pre[-\s]?screen|prescreen)\b/.test(t)
@@ -3334,6 +3381,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     if (userAuthoredEvent && !onboardingIncomplete && await handleLifecycleProfileReply(event, store, turnId)) {
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
+      return
+    }
+
+    if (userAuthoredEvent && await handleCandidateStatusRequest(event, store, turnId)) {
       return
     }
 
