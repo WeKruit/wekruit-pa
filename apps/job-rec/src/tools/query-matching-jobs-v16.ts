@@ -121,6 +121,7 @@ export const getMatchingJobTitle = (
 function inferCareerStageFromTitle(title: string): CareerStage | null {
   const t = title.trim().toLowerCase()
   if (!t) return null
+  if (/\bfounder\b/.test(t)) return "founder"
   if (/\b(c[-\s]?level|chief|cto|ceo|cfo|coo|cmo)\b/.test(t)) return "c_level"
   if (/\bvp|vice\s+president\b/.test(t)) return "vp"
   if (/\bdirector\b/.test(t)) return "director"
@@ -132,7 +133,106 @@ function inferCareerStageFromTitle(title: string): CareerStage | null {
   if (/\b(junior|jr\.?)\b/.test(t)) return "junior"
   if (/\b(entry[-\s]?level|new\s+grad|graduate)\b/.test(t)) return "entry_level"
   if (/\bintern(ship)?\b/.test(t)) return "intern"
+  if (/\bstudent\b/.test(t)) return "student"
   return null
+}
+
+function firstWorkHistoryTitle(summary: unknown): string | undefined {
+  if (typeof summary !== "string") return undefined
+  const first = summary.split(";")[0]?.trim()
+  return first && first.length > 0 ? first : undefined
+}
+
+function derivedSeniorityToCareerStage(value: unknown): CareerStage | undefined {
+  switch (value) {
+    case "intern":
+      return "intern"
+    case "new_grad":
+    case "entry_level":
+      return "entry_level"
+    case "mid":
+      return "mid_level"
+    case "senior":
+      return "senior"
+    case "staff":
+      return "staff"
+    case "manager":
+      return "manager"
+    case "director":
+      return "director"
+    case "executive":
+      return "c_level"
+    default:
+      return undefined
+  }
+}
+
+function inferCareerStageFromYears(value: unknown): CareerStage | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined
+  if (value <= 0.5) return "student"
+  if (value <= 1.5) return "entry_level"
+  if (value <= 3) return "junior"
+  if (value <= 6) return "mid_level"
+  return "senior"
+}
+
+function inferCandidateCareerStage(
+  tags: UserTags,
+  userDoc: Record<string, unknown> | undefined
+): CareerStage | undefined {
+  const titleSignals = [
+    typeof tags.recentRoleTitle === "string" ? tags.recentRoleTitle : undefined,
+    firstWorkHistoryTitle(tags.workHistorySummary),
+  ].filter((title): title is string => Boolean(title))
+  for (const title of titleSignals) {
+    const stage = inferCareerStageFromTitle(title)
+    if (stage) return stage
+  }
+
+  const derivedExperience =
+    userDoc?.derivedExperience && typeof userDoc.derivedExperience === "object"
+      ? (userDoc.derivedExperience as Record<string, unknown>)
+      : undefined
+  const derivedStage = derivedSeniorityToCareerStage(derivedExperience?.seniorityCurrent)
+  if (derivedStage) return derivedStage
+  return inferCareerStageFromYears(derivedExperience?.yearsTotal ?? userDoc?.totalYearsExperience)
+}
+
+function inferTargetJobTypeFromProfile(tags: UserTags, careerStage: CareerStage | undefined): UserTags["targetJobType"] {
+  const title = [
+    typeof tags.recentRoleTitle === "string" ? tags.recentRoleTitle : undefined,
+    firstWorkHistoryTitle(tags.workHistorySummary),
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(" ")
+    .toLowerCase()
+  if (/\bintern(ship)?\b/.test(title) || careerStage === "intern" || careerStage === "student") {
+    return ["internship"]
+  }
+  if (/\b(new\s+grad|graduate)\b/.test(title)) return ["new_graduate"]
+  if (careerStage === "entry_level") return ["full_time", "new_graduate"]
+  return undefined
+}
+
+function inferMissingMatchingAxes(
+  tags: UserTags,
+  userDoc: Record<string, unknown> | undefined,
+  log?: (event: string, payload?: Record<string, unknown>) => void,
+  userId?: string,
+): UserTags {
+  const patch: Partial<UserTags> = {}
+  const careerStage =
+    typeof tags.careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(tags.careerStage)
+      ? tags.careerStage
+      : inferCandidateCareerStage(tags, userDoc)
+  if (!tags.careerStage && careerStage) patch.careerStage = careerStage
+  if (!tags.targetJobType?.length) {
+    const targetJobType = inferTargetJobTypeFromProfile(tags, careerStage)
+    if (targetJobType?.length) patch.targetJobType = targetJobType
+  }
+  if (Object.keys(patch).length === 0) return tags
+  log?.("pa.match.user_tags_inferred_missing_axes", { userId, inferred: patch })
+  return { ...tags, ...patch }
 }
 
 function targetRoleFunctionSet(userTags: UserTags): Set<string> {
@@ -217,7 +317,7 @@ export async function loadUserTags(
       log?.("pa.match.user_no_tags", { userId, reason: "tags_empty" })
       return null
     }
-    return tags as UserTags
+    return inferMissingMatchingAxes(tags as UserTags, data, log, userId)
   } catch (err) {
     log?.("pa.match.user_tags_read_error", {
       userId,

@@ -907,6 +907,38 @@ function deriveCareerStageFromYoeRange(yoeRange: [number, number] | undefined): 
   return "mid_level"
 }
 
+function deriveCareerStageFromTitle(title: string | undefined): CareerStage | undefined {
+  const t = title?.trim().toLowerCase()
+  if (!t) return undefined
+  if (/\bfounder\b/.test(t)) return "founder"
+  if (/\b(c[-\s]?level|chief|cto|ceo|cfo|coo|cmo)\b/.test(t)) return "c_level"
+  if (/\bvp|vice\s+president\b/.test(t)) return "vp"
+  if (/\bdirector\b/.test(t)) return "director"
+  if (/\bprincipal\b/.test(t)) return "principal"
+  if (/\bstaff\b/.test(t)) return "staff"
+  if (/\b(lead|manager|head of)\b/.test(t)) return "manager"
+  if (/\bsenior|sr\.?\b/.test(t)) return "senior"
+  if (/\b(mid[-\s]?level|sde\s*ii|software engineer ii)\b/.test(t)) return "mid_level"
+  if (/\b(junior|jr\.?)\b/.test(t)) return "junior"
+  if (/\b(entry[-\s]?level|new\s+grad|graduate)\b/.test(t)) return "entry_level"
+  if (/\bintern(ship)?\b/.test(t)) return "intern"
+  if (/\bstudent\b/.test(t)) return "student"
+  return undefined
+}
+
+function deriveTargetJobTypeFromProfile(
+  title: string | undefined,
+  careerStage: CareerStage | undefined,
+): UserTags["targetJobType"] {
+  const t = title?.trim().toLowerCase() ?? ""
+  if (/\bintern(ship)?\b/.test(t) || careerStage === "intern" || careerStage === "student") {
+    return ["internship"]
+  }
+  if (/\b(new\s+grad|graduate)\b/.test(t)) return ["new_graduate"]
+  if (careerStage === "entry_level") return ["full_time", "new_graduate"]
+  return undefined
+}
+
 function mapCompanySizePreference(value: unknown): UserTags["companySize"] {
   if (
     value === "seed" ||
@@ -1017,7 +1049,7 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
     | undefined
   const careerStage = isCareerStage(statedPreferencesExt?.careerStage)
     ? statedPreferencesExt.careerStage
-    : deriveCareerStageFromYoeRange(yoeRange)
+    : deriveCareerStageFromTitle(recentRoleTitle) ?? deriveCareerStageFromYoeRange(yoeRange)
   const visaStatus = mapVisaStatus(statedPreferences?.visaStatus)
   const prefersStartup = mapPrefersStartup(statedPreferences?.prefersStartup)
   const targetLocations = Array.isArray(statedPreferences?.targetLocations)
@@ -1039,7 +1071,7 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   const targetJobType = deriveTargetJobTypeFromStatedPreferences(
     statedPreferencesExt?.targetJobType,
     statedPreferencesExt?.targetJobTypes
-  )
+  ) ?? deriveTargetJobTypeFromProfile(recentRoleTitle, careerStage)
 
   // ---- Phase B2 — company preference pass-through ---------------------
   // targetCompanyTags: dedupe + lowercase, cap at 30 to mirror UserTagsSchema.

@@ -1577,6 +1577,57 @@ test("queryMatchingJobsV16: early-startup company size rejects late-stage and pu
   assert.deepEqual(r.jobs.map((job) => job.id), ["series-a-fit"])
 })
 
+test("queryMatchingJobsV16: resume-derived SWE intern profile rejects senior full-time jobs", async () => {
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u_resume_intern")
+    .set({
+      tags: {
+        skills: ["python", "typescript", "react"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+        targetLocations: ["remote_anywhere"],
+        visaStatus: "citizen",
+        recentRoleTitle: "Software Engineer Intern",
+        workHistorySummary: "Software Engineer Intern @ Tesla; Founder, Software Engineer @ AI Study",
+      },
+    })
+  await seedJob(mfs, "intern-fit", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python", "typescript"],
+    companyName: "InternCo",
+    jobTitle: "Software Engineer Intern",
+    seniorityLevel: "intern",
+    jobType: "internship",
+  })
+  await seedJob(mfs, "senior-drop", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python", "typescript", "react"],
+    companyName: "SeniorCo",
+    jobTitle: "Senior Software Engineer",
+    seniorityLevel: "senior",
+    jobType: "full_time",
+  })
+  await seedJob(mfs, "staff-drop", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python", "typescript", "react"],
+    companyName: "StaffCo",
+    jobTitle: "Staff Software Engineer",
+    seniorityLevel: "staff",
+    jobType: "full_time",
+  })
+
+  const r = await queryMatchingJobsV16({ userId: "u_resume_intern", nowMs: NOW }, { db: asFirestore(mfs) })
+
+  assert.deepEqual(r.jobs.map((job) => job.id), ["intern-fit"])
+  assert.equal(r.userTags?.careerStage, "intern")
+  assert.deepEqual(r.userTags?.targetJobType, ["internship"])
+  assert.ok(!r.missingAxes?.includes("careerStage"))
+  assert.ok(!r.missingAxes?.includes("targetJobType"))
+})
+
 test("B4 soft: companyPositiveList hit adds +0.15 positiveHit", () => {
   const tags = {
     skills: [],

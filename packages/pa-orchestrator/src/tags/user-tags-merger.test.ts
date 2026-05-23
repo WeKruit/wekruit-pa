@@ -242,6 +242,36 @@ test("mergeUserTags: workHistory entry with `role` (alt key) honored when title 
   assert.equal(out.recentRoleTitle, "Lead Eng")
 })
 
+test("mergeUserTags: resume-only intern title infers intern career stage and internship target job type", () => {
+  const out = mergeUserTags({
+    cv: {
+      candidateProfile: { skills: ["Python", "TypeScript", "React"] },
+      workHistory: [
+        { title: "Software Engineer Intern", company: "Tesla", skills: ["Python"] },
+        { title: "Founder, Software Engineer", company: "AI Study", skills: ["React"] },
+      ],
+    },
+  })
+
+  assert.equal(out.recentRoleTitle, "Software Engineer Intern")
+  assert.equal(out.careerStage, "intern")
+  assert.deepEqual(out.targetJobType, ["internship"])
+  assert.deepEqual(out.targetRoleFunction, ["software_engineering"])
+})
+
+test("mergeUserTags: explicit stated target job type wins over resume-title inference", () => {
+  const out = mergeUserTags({
+    cv: { workHistory: [{ title: "Software Engineer Intern", company: "Tesla" }] },
+    statedPreferences: {
+      targetRole: ["swe"],
+      targetJobType: ["full_time"],
+    } as StatedPreferences & { targetJobType: string[] },
+  })
+
+  assert.equal(out.careerStage, "intern")
+  assert.deepEqual(out.targetJobType, ["full_time"])
+})
+
 test("mergeUserTags: workHistorySummary joins first 3 roles with '; '", () => {
   const out = mergeUserTags({
     cv: {

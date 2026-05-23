@@ -253,6 +253,52 @@ test("processInboundEvent records admin alert and sends no candidate fallback wh
   assert.deepEqual(writes[0]!.opts, { merge: true })
 })
 
+test("createFirestoreOrchestratorStore suppresses internal-error outbound copy and alerts admin", async () => {
+  let outboundCreates = 0
+  const writes: Array<{
+    collection: string
+    id: string
+    data: Record<string, unknown>
+    opts: Record<string, unknown>
+  }> = []
+  const db = {
+    collection(name: string) {
+      return {
+        doc(id: string) {
+          return {
+            async create(data: Record<string, unknown>) {
+              outboundCreates++
+              writes.push({ collection: name, id, data, opts: {} })
+            },
+            async set(data: Record<string, unknown>, opts: Record<string, unknown>) {
+              writes.push({ collection: name, id, data, opts })
+            },
+          }
+        },
+      }
+    },
+  } as unknown as FirebaseFirestore.Firestore
+  const store = createFirestoreOrchestratorStore(db)
+
+  await store.enqueueOutbound(
+    "u1",
+    "+14243201960",
+    "Sorry — something went wrong. Try again shortly.",
+    { idempotencyKey: "internal-error-copy-test" }
+  )
+
+  assert.equal(outboundCreates, 0)
+  assert.equal(writes.length, 1)
+  assert.equal(writes[0]!.collection, "pa-admin-alerts")
+  assert.match(writes[0]!.id, /^candidate_internal_error_outbound_suppressed_/)
+  assert.equal(writes[0]!.data.type, "candidate_internal_error_outbound_suppressed")
+  assert.equal(writes[0]!.data.userId, "u1")
+  assert.equal(writes[0]!.data.toE164Redacted, "[redacted:1960]")
+  assert.equal(writes[0]!.data.idempotencyKey, "internal-error-copy-test")
+  assert.match(String(writes[0]!.data.bodyPreview), /something went wrong/)
+  assert.deepEqual(writes[0]!.opts, { merge: true })
+})
+
 // Matching agent tests in this file are harness contract tests, not semantic
 // LLM evals. The mocked runAgentTurn owns only the boundary where the agent has
 // already chosen tools; these assertions prove the orchestrator exposes the
