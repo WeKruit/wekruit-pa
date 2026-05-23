@@ -291,6 +291,20 @@ function buildHostedToolsForDefault(
   return [webSearchTool({ searchContextSize: "low" })]
 }
 
+function buildModelSettings(ctx: AgentTurnContext, hasTools: boolean) {
+  return {
+    temperature: ctx.agent.temperature,
+    maxTokens: ctx.agent.maxTokens,
+    // Default agent's toolPolicy still drives whether tools are wired here.
+    // When no tools are passed in, force the model away from tool-choice.
+    // Constrained routers can override to "required" per turn.
+    toolChoice: hasTools ? ctx.toolChoice ?? "auto" : "none",
+    ...(ctx.parallelToolCalls !== undefined
+      ? { parallelToolCalls: ctx.parallelToolCalls }
+      : {}),
+  }
+}
+
 async function runDefaultAgent(
   ctx: AgentTurnContext,
   provider: "openai" | "siliconflow"
@@ -306,15 +320,7 @@ async function runDefaultAgent(
     name: ctx.agent.name || ctx.agent.id,
     instructions: ctx.systemPrompt,
     model,
-    modelSettings: {
-      temperature: ctx.agent.temperature,
-      maxTokens: ctx.agent.maxTokens,
-      // Default agent's toolPolicy still drives whether tools are wired
-      // here. When no tools are passed in (toolPolicy === "none"), force
-      // the model away from tool-choice. When tools are present, let the
-      // model decide ("auto" is the SDK default).
-      toolChoice: hasTools ? "auto" : "none",
-    },
+    modelSettings: buildModelSettings(ctx, hasTools),
     tools: sdkTools,
   })
   const sdkResult = ctx.session
@@ -356,4 +362,5 @@ export const __forTesting = {
   withSiliconFlowFallback,
   extractUsage,
   buildHostedToolsForDefault,
+  buildModelSettings,
 }

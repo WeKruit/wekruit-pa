@@ -688,6 +688,40 @@ async function markUserPrescreenWorkSessionEnded(args: {
   )
 }
 
+async function resolvePostPrescreenSharedOnboardingMetadata(args: {
+  db: Firestore
+  sessionId: string
+}): Promise<{
+  startSource?: "post_prescreen_pass"
+  postPrescreenContext?: Record<string, string>
+}> {
+  const snap = await args.db.collection("pa-prescreen-sessions").doc(args.sessionId).get()
+  const data = (snap.data() ?? {}) as Record<string, unknown>
+  if (data.terminal !== "PASS") return {}
+  const cfg = data.cfgSnapshot && typeof data.cfgSnapshot === "object"
+    ? data.cfgSnapshot as Record<string, unknown>
+    : {}
+  const context: Record<string, string> = { sessionId: args.sessionId }
+  const jobId = typeof data.jobId === "string" ? data.jobId : null
+  const jobTitle = typeof cfg.jobTitle === "string"
+    ? cfg.jobTitle
+    : typeof data.jobTitle === "string"
+      ? data.jobTitle
+      : null
+  const company = typeof cfg.company === "string"
+    ? cfg.company
+    : typeof data.company === "string"
+      ? data.company
+      : null
+  if (jobId) context.jobId = jobId
+  if (jobTitle) context.jobTitle = jobTitle
+  if (company) context.company = company
+  return {
+    startSource: "post_prescreen_pass",
+    postPrescreenContext: context,
+  }
+}
+
 async function startSharedOnboardingAfterPrescreen(args: {
   db: Firestore
   userId: string
@@ -725,9 +759,25 @@ async function startSharedOnboardingAfterPrescreen(args: {
     WEKRUIT_CANDIDATE_SOURCE,
     promptContext,
   )
+  const postPrescreen = await resolvePostPrescreenSharedOnboardingMetadata({
+    db: args.db,
+    sessionId: args.sessionId,
+  })
+  const sharedOnboarding = {
+    ...(startedFields.sharedOnboarding as Record<string, unknown>),
+    ...(postPrescreen.startSource ? { startSource: postPrescreen.startSource } : {}),
+    ...(postPrescreen.postPrescreenContext ? { postPrescreenContext: postPrescreen.postPrescreenContext } : {}),
+  }
+  const workSession = {
+    ...(startedFields.workSession as Record<string, unknown>),
+    ...(postPrescreen.startSource ? { startSource: postPrescreen.startSource } : {}),
+    ...(postPrescreen.postPrescreenContext ? { postPrescreenContext: postPrescreen.postPrescreenContext } : {}),
+  }
   await userRef.set(
     {
       ...startedFields,
+      sharedOnboarding,
+      workSession,
       candidateContext: {
         sms: {
           phoneE164: args.toE164,

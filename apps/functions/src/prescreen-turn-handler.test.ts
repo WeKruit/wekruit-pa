@@ -558,6 +558,62 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal((session?.postPrescreenRetention as { basicOnboardingOptIn?: boolean } | undefined)?.basicOnboardingOptIn, undefined)
   })
 
+  it("marks shared onboarding started from a passed prescreen for downstream prescreen suppression", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        id: "u1",
+        phoneE164: "+13054507715",
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        cfgSnapshot: {
+          jobTitle: "Fullstack Software Engineer",
+          company: "Rain",
+        },
+        postPrescreenRetention: {
+          stage: "await_basic_onboarding",
+          terminal: "PASS",
+          startedAt: now,
+          updatedAt: now,
+        },
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+    const sent: string[] = []
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "yes",
+      sendSms: async (args) => {
+        sent.push(args.content)
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(sent.length, 1)
+    const user = docs.get("pa-users/u1")?.data
+    const sharedOnboarding = user?.sharedOnboarding as {
+      startSource?: string
+      postPrescreenContext?: Record<string, unknown>
+    } | undefined
+    assert.equal(sharedOnboarding?.startSource, "post_prescreen_pass")
+    assert.deepEqual(sharedOnboarding?.postPrescreenContext, {
+      sessionId: "ps_done",
+      jobId: "rain-software-engineer-fullstack-8849f6ef",
+      jobTitle: "Fullstack Software Engineer",
+      company: "Rain",
+    })
+  })
+
   it("runs safety before a recent terminal prescreen follow-up can claim private-data requests", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({

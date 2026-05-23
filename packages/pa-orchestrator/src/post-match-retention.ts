@@ -262,7 +262,7 @@ async function persistDislikePreferencePatch(input: {
   turnId: string
   patch: Record<string, unknown>
 }): Promise<void> {
-  await runConnector(
+  const result = await runConnector(
     "set-matching-preferences",
     input.patch,
     {
@@ -273,7 +273,8 @@ async function persistDislikePreferencePatch(input: {
       sessionId: input.event.sessionId,
       usedThisTurn: 0,
     },
-  )
+  ) as { ok?: boolean; reason?: string }
+  if (result.ok !== true) throw new Error(result.reason ?? "matching_preferences_tool_failed")
 }
 
 async function persistDailySubscribeOptIn(
@@ -443,7 +444,10 @@ export async function handlePostMatchRetentionReply(
 
   switch (state.stage) {
     case "await_liked": {
-      const sentiment = detectRecBatchSentiment(event.body)
+      const preferencePatch = deriveDislikePreferencePatch(event.body)
+      const detectedSentiment = detectRecBatchSentiment(event.body)
+      const sentiment =
+        detectedSentiment === "ambiguous" && preferencePatch ? "negative" : detectedSentiment
       if (sentiment === "ambiguous") {
         reply =
           lang === "zh"
@@ -453,8 +457,39 @@ export async function handlePostMatchRetentionReply(
       }
       next.sentiment = sentiment
       if (sentiment === "negative") {
-        next.stage = "await_dislike_reason"
-        reply = copyForStage("await_dislike_reason", lang)
+        if (preferencePatch) {
+          await writeBatchFeedback({
+            db,
+            userId: event.userId,
+            jobIds,
+            kind: "candidate_decline",
+            outcome: "batch_not_relevant",
+            reasonText: event.body,
+            nowIso: at,
+          })
+          try {
+            await persistDislikePreferencePatch({ db, event, turnId, patch: preferencePatch })
+          } catch (err) {
+            store.log("pa.post_match_retention.feedback_preference_tool.failed", {
+              userId: event.userId,
+              turnId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+            reply =
+              lang === "zh"
+                ? "我这边保存这个偏好卡了一下，先不假装记下了。你再发一次哪里不对，我重试。"
+                : "I hit a save issue on that preference, so I will not pretend it is saved. Send what was off once more and I will retry."
+            break
+          }
+          next.stage = "await_subscribe"
+          reply =
+            lang === "zh"
+              ? "记下了，我下次会避开这类。要不要我每天给你推更贴的新岗？想停随时说。"
+              : "Noted — I'll avoid that next time. Want daily texts when something tighter shows up?"
+        } else {
+          next.stage = "await_dislike_reason"
+          reply = copyForStage("await_dislike_reason", lang)
+        }
       } else {
         next.stage = "await_subscribe"
         reply = copyForStage("await_subscribe", lang)
