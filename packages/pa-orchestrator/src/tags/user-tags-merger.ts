@@ -39,6 +39,8 @@ import {
   SkillSchema,
   type Skill,
   type SkillBucket,
+  type RoleFunction,
+  type CareerStage,
   ROLE_FUNCTION_VOCAB,
   CAREER_STAGE_VOCAB,
   JOB_TYPE_VOCAB,
@@ -800,6 +802,125 @@ function deriveTargetRoleFunctionFromCvTitle(title: string | undefined): UserTag
   return mapped.length > 0 ? mapped : undefined
 }
 
+function dedupeRoleFunctions(values: ReadonlyArray<string | undefined | null>): UserTags["targetRoleFunction"] {
+  const seen = new Set<RoleFunction>()
+  const out: RoleFunction[] = []
+  for (const value of values) {
+    if (typeof value !== "string") continue
+    const token = value.trim().toLowerCase()
+    if (!(ROLE_FUNCTION_VOCAB as readonly string[]).includes(token)) continue
+    const role = token as RoleFunction
+    if (seen.has(role)) continue
+    seen.add(role)
+    out.push(role)
+  }
+  return out.length > 0 ? out : undefined
+}
+
+function stringsFromUnknown(value: unknown): string[] {
+  if (typeof value === "string") return [value]
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === "string")
+}
+
+function deriveTargetRoleFunctionFromStatedPreferences(
+  statedPreferences: StatedPreferences | undefined
+): UserTags["targetRoleFunction"] {
+  if (!statedPreferences) return undefined
+  const ext = statedPreferences as StatedPreferences & { targetRoleFunction?: unknown }
+  const direct = dedupeRoleFunctions(stringsFromUnknown(ext.targetRoleFunction))
+  if (direct) return direct
+  const mapped: string[] = []
+  for (const role of stringsFromUnknown(statedPreferences.targetRole)) {
+    mapped.push(...mapAnswerToRoleFunction(role))
+  }
+  return dedupeRoleFunctions(mapped)
+}
+
+function normalizeJobTypeToken(value: string): string {
+  const token = value.trim().toLowerCase().replace(/[\s-]+/g, "_")
+  if (token === "fulltime") return "full_time"
+  if (token === "parttime") return "part_time"
+  if (token === "new_grad" || token === "newgraduate") return "new_graduate"
+  if (token === "intern") return "internship"
+  if (token === "coop" || token === "co_op") return "co_op_rotation"
+  return token
+}
+
+function deriveTargetJobTypeFromStatedPreferences(
+  targetJobType: unknown,
+  legacyTargetJobTypes: unknown
+): UserTags["targetJobType"] {
+  const values = stringsFromUnknown(targetJobType)
+  if (values.length === 0) values.push(...stringsFromUnknown(legacyTargetJobTypes))
+  const seen = new Set<(typeof JOB_TYPE_VOCAB)[number]>()
+  const out: Array<(typeof JOB_TYPE_VOCAB)[number]> = []
+  for (const value of values) {
+    const token = normalizeJobTypeToken(value)
+    if (!(JOB_TYPE_VOCAB as readonly string[]).includes(token)) continue
+    const jobType = token as (typeof JOB_TYPE_VOCAB)[number]
+    if (seen.has(jobType)) continue
+    seen.add(jobType)
+    out.push(jobType)
+  }
+  return out.length > 0 ? out : undefined
+}
+
+function deriveTargetRoleFunctionFromSkills(skills: ReadonlyArray<Skill>): UserTags["targetRoleFunction"] {
+  if (!Array.isArray(skills) || skills.length === 0) return undefined
+  const bucketCounts = new Map<SkillBucket, number>()
+  for (const skill of skills) {
+    const bucket = skill.bucket
+    bucketCounts.set(bucket, (bucketCounts.get(bucket) ?? 0) + 1)
+  }
+  const count = (bucket: SkillBucket): number => bucketCounts.get(bucket) ?? 0
+  const engineeringBuckets: SkillBucket[] = [
+    "programming_languages",
+    "frameworks_and_libraries",
+    "devops_and_tooling",
+    "cloud_and_infrastructure",
+    "databases",
+  ]
+  const engineeringVariety = engineeringBuckets.filter((bucket) => count(bucket) > 0).length
+  const out: RoleFunction[] = []
+  if (engineeringVariety >= 3) out.push("software_engineering")
+  if (count("data_and_ml") >= 2) out.push("data_analysis")
+  if (count("design_and_ux") >= 2) out.push("creatives_and_design")
+  if (count("product_and_business") >= 2) out.push("product_management")
+  return dedupeRoleFunctions(out)
+}
+
+function isCareerStage(value: unknown): value is CareerStage {
+  return typeof value === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(value)
+}
+
+function deriveCareerStageFromYoeRange(yoeRange: [number, number] | undefined): CareerStage | undefined {
+  if (!yoeRange) return undefined
+  const [minYears, maxYears] = yoeRange
+  if (!Number.isFinite(minYears) || !Number.isFinite(maxYears)) return undefined
+  const high = Math.max(minYears, maxYears)
+  const low = Math.min(minYears, maxYears)
+  if (high <= 1) return "entry_level"
+  if (high <= 3) return "junior"
+  if (high <= 6) return "mid_level"
+  if (low >= 7) return "senior"
+  return "mid_level"
+}
+
+function mapCompanySizePreference(value: unknown): UserTags["companySize"] {
+  if (
+    value === "seed" ||
+    value === "early_startup" ||
+    value === "scale_up" ||
+    value === "mid_market" ||
+    value === "enterprise" ||
+    value === "open"
+  ) {
+    return value
+  }
+  return undefined
+}
+
 /** Map StatedPreferences.visaStatus → tag-schema visa token. */
 function mapVisaStatus(v: StatedPreferences["visaStatus"]): TagsVisaStatus | undefined {
   if (v == null) return undefined
@@ -874,17 +995,29 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   }
 
   // ---- chat side ------------------------------------------------------
-  const targetRole = Array.isArray(statedPreferences?.targetRole)
-    ? [...statedPreferences.targetRole]
-    : undefined
+  const targetRoleValues = stringsFromUnknown(statedPreferences?.targetRole)
+  const targetRole = targetRoleValues.length > 0 ? [...targetRoleValues] : undefined
   const targetRoleFunction =
-    targetRole && targetRole.length > 0
-      ? undefined
-      : deriveTargetRoleFunctionFromCvTitle(recentRoleTitle)
+    deriveTargetRoleFunctionFromStatedPreferences(statedPreferences) ??
+    deriveTargetRoleFunctionFromCvTitle(recentRoleTitle) ??
+    deriveTargetRoleFunctionFromSkills(skills)
   const yoeRange =
     Array.isArray(statedPreferences?.yoeRange) && statedPreferences.yoeRange.length === 2
       ? ([statedPreferences.yoeRange[0], statedPreferences.yoeRange[1]] as [number, number])
       : undefined
+  const statedPreferencesExt = statedPreferences as
+    | (StatedPreferences & {
+        careerStage?: unknown
+        companySize?: unknown
+        minSalary?: unknown
+        minSalaryUsd?: unknown
+        targetJobType?: unknown
+        targetJobTypes?: unknown
+      })
+    | undefined
+  const careerStage = isCareerStage(statedPreferencesExt?.careerStage)
+    ? statedPreferencesExt.careerStage
+    : deriveCareerStageFromYoeRange(yoeRange)
   const visaStatus = mapVisaStatus(statedPreferences?.visaStatus)
   const prefersStartup = mapPrefersStartup(statedPreferences?.prefersStartup)
   const targetLocations = Array.isArray(statedPreferences?.targetLocations)
@@ -894,6 +1027,19 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
     ? [...statedPreferences.targetCountry]
     : undefined
   const preferredLang = mapPreferredLang(input.preferredLang, statedPreferences?.preferredLang)
+  const minSalary =
+    typeof statedPreferencesExt?.minSalary === "number" && Number.isFinite(statedPreferencesExt.minSalary)
+      ? Math.max(0, Math.floor(statedPreferencesExt.minSalary))
+      : typeof statedPreferencesExt?.minSalaryUsd === "number" && Number.isFinite(statedPreferencesExt.minSalaryUsd)
+        ? Math.max(0, Math.floor(statedPreferencesExt.minSalaryUsd))
+        : typeof statedPreferences?.salaryFloor === "number" && Number.isFinite(statedPreferences.salaryFloor)
+          ? Math.max(0, Math.floor(statedPreferences.salaryFloor))
+          : undefined
+  const companySize = mapCompanySizePreference(statedPreferencesExt?.companySize)
+  const targetJobType = deriveTargetJobTypeFromStatedPreferences(
+    statedPreferencesExt?.targetJobType,
+    statedPreferencesExt?.targetJobTypes
+  )
 
   // ---- Phase B2 — company preference pass-through ---------------------
   // targetCompanyTags: dedupe + lowercase, cap at 30 to mirror UserTagsSchema.
@@ -959,11 +1105,15 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   if (targetRole) out.targetRole = targetRole
   if (targetRoleFunction) out.targetRoleFunction = targetRoleFunction
   if (yoeRange) out.yoeRange = yoeRange
+  if (careerStage) out.careerStage = careerStage
   if (visaStatus) out.visaStatus = visaStatus
   if (prefersStartup) out.prefersStartup = prefersStartup
   if (targetLocations) out.targetLocations = targetLocations
   if (targetCountry) out.targetCountry = targetCountry
   if (preferredLang) out.preferredLang = preferredLang
+  if (minSalary !== undefined) out.minSalary = minSalary
+  if (companySize) out.companySize = companySize
+  if (targetJobType) out.targetJobType = targetJobType
   if (industrySector && industrySector.length > 0) out.industrySector = industrySector
   if (relevantIndustry) out.relevantIndustry = relevantIndustry
   if (relevantSpecialization) out.relevantSpecialization = relevantSpecialization

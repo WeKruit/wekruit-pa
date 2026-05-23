@@ -34,9 +34,9 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
+import { createRequire } from "node:module"
 import type { UserTags } from "@pa/pa-orchestrator"
 import { acceptableCareerStages, type CareerStage, CAREER_STAGE_VOCAB } from "@wekruit/shared-tags"
-import { tool } from "@openai/agents"
 import { z } from "zod"
 import {
   MatchingJobSchema,
@@ -91,6 +91,7 @@ const LLM_RERANK_CACHE_STALE_MS = 36 * 3600 * 1000
 
 const RERANK_CACHE_COLLECTION = "pa-user-rerank-cache"
 const SKILL_JDREL_CACHE_COLLECTION = "pa-user-skill-jdrel-cache"
+const require = createRequire(import.meta.url)
 
 // ---------------------------------------------------------------------------
 // Helpers — title fallback (2026-05-19 hotfix)
@@ -132,6 +133,49 @@ function inferCareerStageFromTitle(title: string): CareerStage | null {
   if (/\b(entry[-\s]?level|new\s+grad|graduate)\b/.test(t)) return "entry_level"
   if (/\bintern(ship)?\b/.test(t)) return "intern"
   return null
+}
+
+function targetRoleFunctionSet(userTags: UserTags): Set<string> {
+  return new Set(
+    (Array.isArray(userTags.targetRoleFunction) ? userTags.targetRoleFunction : [])
+      .map((role) => (typeof role === "string" ? role.trim().toLowerCase() : ""))
+      .filter(Boolean)
+  )
+}
+
+function titleLooksEngineering(title: string): boolean {
+  const t = title.trim().toLowerCase()
+  if (!t) return false
+  return (
+    /\b(swe|sde|software\s+engineer|software\s+developer|full[\s-]?stack|frontend|front[\s-]?end|backend|back[\s-]?end)\b/.test(t) ||
+    /\b(engineer|engineers|engineering|developer|developers|devops|sre|site\s+reliability|platform\s+engineer|infrastructure\s+engineer)\b/.test(t)
+  )
+}
+
+function titleAllowedByExplicitNonSoftwareTarget(title: string, targetRoles: Set<string>): boolean {
+  const t = title.trim().toLowerCase()
+  if (
+    targetRoles.has("data_analysis") &&
+    /\b(data\s+engineer|data\s+engineering|ml\s+engineer|machine\s+learning\s+engineer)\b/.test(t)
+  ) {
+    return true
+  }
+  if (targetRoles.has("sales") && /\b(sales|solutions?|solution)\s+engineer(s)?\b/.test(t)) {
+    return true
+  }
+  if (targetRoles.has("customer_service_and_support") && /\b(success|support)\s+engineer(s)?\b/.test(t)) {
+    return true
+  }
+  return false
+}
+
+function isRoleTitleMismatch(userTags: UserTags, job: MatchingJob): boolean {
+  const targetRoles = targetRoleFunctionSet(userTags)
+  if (targetRoles.size === 0) return false
+  if (targetRoles.has("software_engineering") || targetRoles.has("engineering_and_development")) return false
+  const title = getMatchingJobTitle(job)
+  if (!titleLooksEngineering(title)) return false
+  return !titleAllowedByExplicitNonSoftwareTarget(title, targetRoles)
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +423,7 @@ export function applyV16HardFilters(
     atsApplyUrl: 0,
     dead: 0,
     negativeListDrop: 0,
+    roleTitleMismatch: 0,
   }
   if (!Array.isArray(jobs) || jobs.length === 0) {
     return { kept: [], counters }
@@ -549,6 +594,14 @@ export function applyV16HardFilters(
         counters.jobType++
         continue
       }
+    }
+
+    // 4b. Role-title sanity gate — job corpus tags can be noisy. If a user
+    // explicitly targets non-engineering functions, drop clear engineering
+    // titles unless that target function has a known technical-title exception.
+    if (isRoleTitleMismatch(userTags, job)) {
+      counters.roleTitleMismatch++
+      continue
     }
 
     // 5. firstSeenAt < freshness window (D10 default 20d, adaptive relaxation
@@ -1185,6 +1238,81 @@ function previousRecommendationPenalty(state: UserJobRecommendationState | undef
   )
 }
 
+type StrictCompanyPreference =
+  | "startup"
+  | "bigtech"
+  | "seed"
+  | "early_startup"
+  | "scale_up"
+  | "mid_market"
+  | "enterprise"
+
+function strictCompanyPreference(userTags: UserTags): StrictCompanyPreference | null {
+  if (userTags.companySize === "open") return null
+  if (
+    userTags.companySize === "seed" ||
+    userTags.companySize === "early_startup" ||
+    userTags.companySize === "scale_up" ||
+    userTags.companySize === "mid_market" ||
+    userTags.companySize === "enterprise"
+  ) {
+    return userTags.companySize
+  }
+  if (userTags.prefersStartup === "startup") return "startup"
+  if (userTags.prefersStartup === "bigtech") return "bigtech"
+  return null
+}
+
+function hasCompanyTag(info: LoadedCompanyInfo, tags: readonly string[]): boolean {
+  const companyTags = new Set((info.tags ?? []).map((tag) => tag.trim().toLowerCase()).filter(Boolean))
+  return tags.some((tag) => companyTags.has(tag))
+}
+
+function companyMatchesStrictPreference(
+  preference: StrictCompanyPreference,
+  info: LoadedCompanyInfo | undefined
+): boolean {
+  if (!info) return false
+  const stage = info.stage
+  switch (preference) {
+    case "seed":
+      return stage === "pre_seed" || stage === "seed" || (stage === "unknown" && hasCompanyTag(info, ["yc_active"]))
+    case "startup":
+      return (
+        stage === "pre_seed" ||
+        stage === "seed" ||
+        stage === "series_a" ||
+        stage === "series_b" ||
+        (stage === "unknown" && hasCompanyTag(info, ["yc_active"]))
+      )
+    case "early_startup":
+      return (
+        stage === "pre_seed" ||
+        stage === "seed" ||
+        stage === "series_a" ||
+        (stage === "unknown" && hasCompanyTag(info, ["yc_active"]))
+      )
+    case "scale_up":
+      return (
+        stage === "series_b" ||
+        stage === "series_c" ||
+        stage === "series_d_plus" ||
+        (stage === "unknown" && hasCompanyTag(info, ["unicorn"]))
+      )
+    case "bigtech":
+    case "enterprise":
+      return (
+        stage === "ipo_public" ||
+        stage === "private_mature" ||
+        hasCompanyTag(info, ["big_tech", "mag_7"])
+      )
+    case "mid_market":
+      return stage === "private_mature" || stage === "bootstrapped"
+    default:
+      return false
+  }
+}
+
 /**
  * Internal: build the Firestore query from user tags + run it. Handles the
  * `targetRoleFunction`-empty case (admin / test users) by skipping the
@@ -1363,7 +1491,7 @@ export async function queryMatchingJobsV16(
       jobs: [],
       total: 0,
       dropped: 0,
-      hardFilter: { visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0 },
+      hardFilter: { visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0, roleTitleMismatch: 0 },
       noUserTags: true,
     }
   }
@@ -1383,14 +1511,14 @@ export async function queryMatchingJobsV16(
   ]
   let filteredJobs: MatchingJob[] = []
   let counters: V16HardFilterCounters = {
-    visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0,
+    visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0, roleTitleMismatch: 0,
   }
   let appliedFreshnessMs = FRESHNESS_RELAX_LADDER[0]!
   let relaxedHardFilters: string[] = []
   const runFreshnessLadder = (options: { relaxSpecificLocation?: boolean } = {}) => {
     let kept: MatchingJob[] = []
     let lastCounters: V16HardFilterCounters = {
-      visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0,
+      visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0, roleTitleMismatch: 0,
     }
     let applied = FRESHNESS_RELAX_LADDER[0]!
     for (const win of FRESHNESS_RELAX_LADDER) {
@@ -1451,6 +1579,34 @@ export async function queryMatchingJobsV16(
       dropped: before - filteredJobs.length,
     })
   }
+
+  // Phase B4 — one-shot pa-companies lookup for the surviving candidate set.
+  // Missing/un-enriched companies are omitted from the Map; scoreV16Job
+  // handles absent entries with neutral (0) tagOverlap.
+  const loadCompaniesImpl = deps.loadCompaniesByNameImpl ?? loadCompaniesByName
+  let companyInfoMap = new Map<string, LoadedCompanyInfo>()
+  try {
+    const names = filteredJobs.map((j) => j.companyName ?? "").filter((s) => s.length > 0)
+    if (names.length > 0) companyInfoMap = await loadCompaniesImpl(deps.db, names)
+  } catch (err) {
+    log("pa.match.load_companies_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  const companyPreference = strictCompanyPreference(userTags)
+  if (companyPreference && filteredJobs.length > 0) {
+    const before = filteredJobs.length
+    filteredJobs = filteredJobs.filter((job) => {
+      const companyInfo = companyInfoMap.get(normalizeCompanyName(job.companyName ?? ""))
+      return companyMatchesStrictPreference(companyPreference, companyInfo)
+    })
+    log("pa.match.company_preference_filter_applied", {
+      preference: companyPreference,
+      before,
+      after: filteredJobs.length,
+      dropped: before - filteredJobs.length,
+    })
+  }
   const dropped = rawJobs.length - filteredJobs.length
   log("pa.match.hard_filter_applied", {
     input: rawJobs.length,
@@ -1466,20 +1622,6 @@ export async function queryMatchingJobsV16(
     loadLlmRerankCache(deps.db, args.userId, log),
     loadRecommendedJobStates(deps.db, args.userId, filteredJobs.map((job) => job.id), log),
   ])
-
-  // Phase B4 — one-shot pa-companies lookup for the surviving candidate set.
-  // Missing/un-enriched companies are omitted from the Map; scoreV16Job
-  // handles absent entries with neutral (0) tagOverlap.
-  const loadCompaniesImpl = deps.loadCompaniesByNameImpl ?? loadCompaniesByName
-  let companyInfoMap = new Map<string, LoadedCompanyInfo>()
-  try {
-    const names = filteredJobs.map((j) => j.companyName ?? "").filter((s) => s.length > 0)
-    if (names.length > 0) companyInfoMap = await loadCompaniesImpl(deps.db, names)
-  } catch (err) {
-    log("pa.match.load_companies_failed", {
-      error: err instanceof Error ? err.message : String(err),
-    })
-  }
 
   // 4. Soft score (Phase 70 weightOverrides + Phase B4 companyInfo/nowMs).
   let scored = filteredJobs.map((job) => {
@@ -1650,6 +1792,7 @@ export type QueryMatchingJobsV16ToolDeps = {
  * as `{ ok: false, reason }` so the LLM can surface a graceful fallback.
  */
 export function createQueryMatchingJobsV16Tool(deps: QueryMatchingJobsV16ToolDeps) {
+  const { tool } = require("@openai/agents") as typeof import("@openai/agents")
   return tool({
     name: "queryMatchingJobs",
     description:

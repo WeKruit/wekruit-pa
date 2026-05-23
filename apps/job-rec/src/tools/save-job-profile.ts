@@ -20,7 +20,7 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
-import { tool } from "@openai/agents"
+import { createRequire } from "node:module"
 import {
   JobProfileSchema,
   JOB_PROFILES_COLLECTION,
@@ -29,6 +29,8 @@ import {
   type JobProfileDoc,
   type SaveJobProfileOutput,
 } from "../types.js"
+
+const require = createRequire(import.meta.url)
 
 export type SaveJobProfileDeps = {
   db: Firestore
@@ -92,6 +94,7 @@ export async function saveJobProfile(
 }
 
 export function createSaveJobProfileTool(deps: SaveJobProfileDeps) {
+  const { tool } = require("@openai/agents") as typeof import("@openai/agents")
   return tool({
     name: "saveJobProfile",
     description:

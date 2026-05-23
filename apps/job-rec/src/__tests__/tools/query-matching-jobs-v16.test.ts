@@ -350,6 +350,30 @@ test("applyV16HardFilters: jobType exact intersect", () => {
   assert.equal(r.counters.jobType, 1)
 })
 
+test("applyV16HardFilters: non-engineering profile drops clear engineering-titled jobs", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({
+      id: "pm",
+      jobTitle: "Senior Product Manager",
+      roleFunction: ["product_management"],
+    }),
+    mkJob({
+      id: "eng",
+      jobTitle: "Full Stack Software Engineer, Growth",
+      roleFunction: ["product_management", "software_engineering"],
+    }),
+  ]
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetRoleFunction: ["product_management"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["pm"])
+  assert.equal(r.counters.roleTitleMismatch, 1)
+})
+
 test("applyV16HardFilters: firstSeenAt > 20d drops, < 20d keeps (MATCH-08, lastSeenAt unused)", () => {
   const jobs: MatchingJob[] = [
     mkJob({ id: "fresh", firstSeenAt: FRESH_TS, lastSeenAt: STALE_TS }), // lastSeenAt stale should NOT matter
@@ -1412,6 +1436,145 @@ test("B4 soft: targetCompanyTags ∩ companyInfo.tags adds tagOverlap*0.15", () 
     delta >= 0.075 - 1e-9,
     `delta=${delta} should be at least 0.075 (tagOverlap only; B5.1 freshness scaling adds more)`,
   )
+})
+
+test("queryMatchingJobsV16: startup preference strictly keeps only startup-stage companies", async () => {
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u_startup_only")
+    .set({
+      tags: {
+        skills: ["python"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+        prefersStartup: "startup",
+      },
+    })
+  await seedJob(mfs, "startup-fit", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "SeedCo",
+    jobTitle: "Backend Engineer",
+  })
+  await seedJob(mfs, "enterprise-drop", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "BigCo",
+    jobTitle: "Backend Engineer",
+  })
+  await seedJob(mfs, "unknown-drop", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "UnknownCo",
+    jobTitle: "Backend Engineer",
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_startup_only", nowMs: NOW },
+    {
+      db: asFirestore(mfs),
+      loadCompaniesByNameImpl: async () =>
+        new Map([
+          ["seedco", { stage: "seed", tags: ["yc_active"] }],
+          ["bigco", { stage: "ipo_public", tags: ["big_tech"] }],
+        ]),
+    },
+  )
+
+  assert.deepEqual(r.jobs.map((job) => job.id), ["startup-fit"])
+})
+
+test("queryMatchingJobsV16: open company preference does not stage-filter jobs", async () => {
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u_open_company")
+    .set({
+      tags: {
+        skills: ["python"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+        prefersStartup: "either",
+      },
+    })
+  await seedJob(mfs, "startup-fit", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "SeedCo",
+    jobTitle: "Backend Engineer 1",
+  })
+  await seedJob(mfs, "enterprise-fit", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "BigCo",
+    jobTitle: "Backend Engineer 2",
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_open_company", nowMs: NOW },
+    {
+      db: asFirestore(mfs),
+      loadCompaniesByNameImpl: async () =>
+        new Map([
+          ["seedco", { stage: "seed", tags: ["yc_active"] }],
+          ["bigco", { stage: "ipo_public", tags: ["big_tech"] }],
+        ]),
+    },
+  )
+
+  assert.deepEqual(new Set(r.jobs.map((job) => job.id)), new Set(["startup-fit", "enterprise-fit"]))
+})
+
+test("queryMatchingJobsV16: early-startup company size rejects late-stage and public ai-native companies", async () => {
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u_early_only")
+    .set({
+      tags: {
+        skills: ["python"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+        companySize: "early_startup",
+      },
+    })
+  await seedJob(mfs, "series-a-fit", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "EarlyAI",
+    jobTitle: "Backend Engineer",
+  })
+  await seedJob(mfs, "series-d-drop", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "LateAI",
+    jobTitle: "Backend Engineer",
+  })
+  await seedJob(mfs, "public-drop", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "PublicAI",
+    jobTitle: "Backend Engineer",
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_early_only", nowMs: NOW },
+    {
+      db: asFirestore(mfs),
+      loadCompaniesByNameImpl: async () =>
+        new Map([
+          ["earlyai", { stage: "series_a", tags: ["ai_native"] }],
+          ["lateai", { stage: "series_d_plus", tags: ["ai_native", "unicorn"] }],
+          ["publicai", { stage: "ipo_public", tags: ["ai_native", "unicorn"] }],
+        ]),
+    },
+  )
+
+  assert.deepEqual(r.jobs.map((job) => job.id), ["series-a-fit"])
 })
 
 test("B4 soft: companyPositiveList hit adds +0.15 positiveHit", () => {

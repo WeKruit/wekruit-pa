@@ -24,7 +24,7 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
-import { tool } from "@openai/agents"
+import { createRequire } from "node:module"
 import { getFlag } from "@pa/pa-persistence"
 import {
   MatchingJobSchema,
@@ -38,6 +38,7 @@ import {
 const MATCHING_JOBS_COLLECTION = "matching-jobs"
 const ACTIVE_STATUS = "active"
 const QUERY_FETCH_CAP = 50 // pre-rank window
+const require = createRequire(import.meta.url)
 
 // ---------------------------------------------------------------------------
 // Stream H6 — industryTag → industryKey mapping
@@ -1903,6 +1904,7 @@ export async function queryMatchingJobs(
  * longer wires this wrapper.
  */
 export function createQueryMatchingJobsTool(deps: QueryMatchingJobsDeps) {
+  const { tool } = require("@openai/agents") as typeof import("@openai/agents")
   return tool({
     name: "queryMatchingJobs",
     description:

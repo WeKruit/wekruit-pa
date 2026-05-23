@@ -25,12 +25,14 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
-import { tool } from "@openai/agents"
+import { createRequire } from "node:module"
 import {
   ParseResumeInputSchema,
   type ParseResumeOutput,
   type ResumeProfile,
 } from "../types.js"
+
+const require = createRequire(import.meta.url)
 
 /** Injected dependency surface — production wires real impls; tests inject mocks. */
 export type ParseResumeDeps = {
@@ -228,6 +230,7 @@ export async function parseResume(
  * generic ToolInputParametersStrict happy).
  */
 export function createParseResumeTool(deps: ParseResumeDeps, resumeBucket?: string) {
+  const { tool } = require("@openai/agents") as typeof import("@openai/agents")
   return tool({
     name: "parseResume",
     description:

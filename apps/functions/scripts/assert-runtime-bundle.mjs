@@ -1,3 +1,4 @@
+import { createRequire } from "node:module"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -6,6 +7,7 @@ import { dirname } from "node:path"
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const bundlePath = resolve(__dirname, "../lib/index.js")
 const bundle = readFileSync(bundlePath, "utf8")
+const bundleRequire = createRequire(bundlePath)
 
 // Each entry is a substring that MUST appear in the bundled `lib/index.js`.
 // The assertion is a coarse "did the runtime guard survive bundling?" check;
@@ -38,6 +40,14 @@ if (missing.length > 0) {
   console.error("[functions] runtime bundle is missing required runtime/onboarding guards:")
   for (const needle of missing) console.error(`- ${needle}`)
   console.error(`[functions] bundle checked: ${bundlePath}`)
+  process.exit(1)
+}
+
+try {
+  bundleRequire("@openai/agents")
+} catch (err) {
+  console.error("[functions] runtime bundle cannot resolve @openai/agents from apps/functions/lib")
+  console.error(err instanceof Error ? err.stack ?? err.message : String(err))
   process.exit(1)
 }
 

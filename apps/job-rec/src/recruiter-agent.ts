@@ -19,7 +19,8 @@
  * existing iMessage session id).
  */
 
-import { Agent, run, type Session, type AgentInputItem } from "@openai/agents"
+import { createRequire } from "node:module"
+import type { Agent, Session, AgentInputItem } from "@openai/agents"
 import type { Firestore } from "firebase-admin/firestore"
 import {
   loadHandbookV2,
@@ -37,6 +38,8 @@ import {
 } from "./tools/query-matching-jobs-v16.js"
 import { createSaveJobProfileTool, type SaveJobProfileDeps } from "./tools/save-job-profile.js"
 import { createSendImessageTool, type SendImessageDeps } from "./tools/send-imessage.js"
+
+const require = createRequire(import.meta.url)
 
 /**
  * Onboarding-mode addendum appended to the Claire handbook prompt.
@@ -135,6 +138,7 @@ export async function buildRecruiterAgent(
   deps: RecruiterAgentDeps,
   userId?: string
 ): Promise<Agent> {
+  const { Agent } = require("@openai/agents") as typeof import("@openai/agents")
   const log = deps.log ?? defaultLog
   const slug = deps.handbookSlug ?? DEFAULT_HANDBOOK_SLUG
   const systemPrompt = await buildRecruiterSystemPrompt(deps.db, slug)
@@ -201,6 +205,7 @@ export async function runRecruiterTurn(
   deps: RecruiterAgentDeps,
   args: RunRecruiterTurnArgs
 ): Promise<RunRecruiterTurnResult> {
+  const { run } = require("@openai/agents") as typeof import("@openai/agents")
   // Phase 68 — thread userId into the agent build so the V16 queryMatchingJobs
   // tool can read pa-users.tags for this specific candidate.
   const agent = await buildRecruiterAgent(deps, args.userId)

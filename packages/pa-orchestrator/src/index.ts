@@ -1418,6 +1418,49 @@ async function sendMemoryReply(
   })
 }
 
+async function recordTurnFailureForAdmin(
+  store: OrchestratorStore,
+  event: InboundEvent,
+  turnId: string,
+  errorCode: string,
+  error: string,
+): Promise<void> {
+  const alert = {
+    type: "orchestrator_turn_failed",
+    severity: "error",
+    status: "open",
+    userId: event.userId,
+    sessionId: event.sessionId,
+    eventId: event.id,
+    turnId,
+    errorCode,
+    error,
+    source: "pa_orchestrator",
+    createdAt: store.nowIso(),
+    updatedAt: store.nowIso(),
+    refs: {
+      inboundEvent: `${PA_COLLECTIONS.inboundEvents}/${event.id}`,
+      turn: `${PA_COLLECTIONS.turns}/${turnId}`,
+      user: `${PA_COLLECTIONS.users}/${event.userId}`,
+    },
+  }
+  store.log("pa.orchestrator.admin_alert.turn_failed", alert)
+  if (!store.db) return
+  try {
+    await store.db
+      .collection("pa-admin-alerts")
+      .doc(`orchestrator_turn_failed_${event.id}`)
+      .set(alert, { merge: true })
+  } catch (alertErr) {
+    store.log("pa.orchestrator.admin_alert.write_failed", {
+      userId: event.userId,
+      turnId,
+      eventId: event.id,
+      error: alertErr instanceof Error ? alertErr.message : String(alertErr),
+    })
+  }
+}
+
 /**
  * Adam 2026-05-19 voice polish §3 — execute an outbound delivery plan.
  *
@@ -4666,7 +4709,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       completedAt: store.nowIso(),
     })
     await store.markEventFailed(event.id, errorCode, error)
-    await sendMemoryReply(store, event, turnId, "Sorry — something went wrong. Try again shortly.")
+    await recordTurnFailureForAdmin(store, event, turnId, errorCode, error)
   }
 }
 
