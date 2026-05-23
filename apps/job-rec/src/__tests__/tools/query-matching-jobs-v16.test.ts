@@ -333,6 +333,23 @@ test("applyV16HardFilters: careerStage infers seniority from title when structur
   assert.equal(r.counters.careerStage, 2)
 })
 
+test("applyV16HardFilters: founder careerStage is senior-plus for job search, not executive-only", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "junior", seniorityLevel: "junior" }),
+    mkJob({ id: "mid", seniorityLevel: "mid_level" }),
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "staff", seniorityLevel: "staff" }),
+    mkJob({ id: "manager", seniorityLevel: "manager" }),
+    mkJob({ id: "director", seniorityLevel: "director" }),
+    mkJob({ id: "vp", seniorityLevel: "vp" }),
+    mkJob({ id: "c", seniorityLevel: "c_level" }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "founder" } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["senior", "staff", "manager", "director", "vp", "c"])
+  assert.equal(r.counters.careerStage, 2)
+})
+
 test("applyV16HardFilters: jobType exact intersect", () => {
   const jobs: MatchingJob[] = [
     mkJob({ id: "ft", jobType: "full_time" }),
@@ -372,6 +389,51 @@ test("applyV16HardFilters: non-engineering profile drops clear engineering-title
   const r = applyV16HardFilters(jobs, tags, NOW)
   assert.deepEqual(r.kept.map((j) => j.id), ["pm"])
   assert.equal(r.counters.roleTitleMismatch, 1)
+})
+
+test("applyV16HardFilters: title sanity drops legal and clinical titles for unrelated targets", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({
+      id: "ops",
+      jobTitle: "Business Operations Associate",
+      roleFunction: ["business_analyst"],
+    }),
+    mkJob({
+      id: "counsel",
+      jobTitle: "Commercial Counsel - EMEA",
+      roleFunction: ["legal_and_compliance", "business_analyst"],
+    }),
+    mkJob({
+      id: "medical",
+      jobTitle: "Medical Fellow - Human Frontier Collective",
+      roleFunction: ["data_analysis", "consultant"],
+    }),
+  ]
+  const businessTags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetRoleFunction: ["business_analyst", "data_analysis"],
+  } as never
+  const r = applyV16HardFilters(jobs, businessTags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["ops"])
+  assert.equal(r.counters.roleTitleMismatch, 2)
+
+  const legalTags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetRoleFunction: ["legal_and_compliance"],
+  } as never
+  assert.deepEqual(applyV16HardFilters([jobs[1]!], legalTags, NOW).kept.map((j) => j.id), ["counsel"])
+
+  const healthcareTags = {
+    skills: [],
+    industryEnum: ["healthcare"],
+    schemaVersion: 1,
+    targetRoleFunction: ["data_analysis"],
+  } as never
+  assert.deepEqual(applyV16HardFilters([jobs[2]!], healthcareTags, NOW).kept.map((j) => j.id), ["medical"])
 })
 
 test("applyV16HardFilters: firstSeenAt > 20d drops, < 20d keeps (MATCH-08, lastSeenAt unused)", () => {
@@ -750,6 +812,55 @@ test("queryMatchingJobsV16: infers missing targetRoleFunction from resume title 
   assert.ok(!r.missingAxes?.includes("targetRoleFunction"))
   assert.equal(r.jobs.length, 1)
   assert.equal(r.jobs[0]!.id, "business-ops")
+})
+
+test("queryMatchingJobsV16: growth operations analyst repairs marketing-only axis with business_analyst", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_growth_ops").set({
+    tags: {
+      skills: ["sql", "retention analysis"],
+      schemaVersion: 1,
+      recentRoleTitle: "growth operations & retention analyst",
+      workHistorySummary: "Growth Operations & Retention Analyst @ Acme",
+      targetRoleFunction: ["marketing"],
+      targetLocations: ["remote_anywhere"],
+      visaStatus: "citizen",
+      careerStage: "entry_level",
+    },
+  })
+  await seedJob(mfs, "ops", {
+    roleFunction: ["business_analyst"],
+    requiredSkills: ["sql"],
+    companyName: "OpsCo",
+    roleTitle: "Strategy & Operations Associate",
+    jobTitle: "Strategy & Operations Associate",
+    seniorityLevel: "entry_level",
+  })
+  await seedJob(mfs, "data", {
+    roleFunction: ["data_analysis"],
+    requiredSkills: ["retention analysis", "sql"],
+    companyName: "DataCo",
+    roleTitle: "Retention Analyst",
+    jobTitle: "Retention Analyst",
+    seniorityLevel: "entry_level",
+  })
+  await seedJob(mfs, "sdr", {
+    roleFunction: ["sales", "marketing"],
+    requiredSkills: ["cold calling"],
+    companyName: "SalesCo",
+    jobTitle: "Sales Development Representative",
+    seniorityLevel: "entry_level",
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_growth_ops", nowMs: NOW },
+    { db: asFirestore(mfs) },
+  )
+
+  const targetRoles = (r.userTags as Record<string, unknown>).targetRoleFunction as string[]
+  assert.ok(targetRoles.includes("business_analyst"))
+  assert.ok(targetRoles.includes("data_analysis"))
+  assert.deepEqual(r.jobs.map((job) => job.id).sort(), ["data", "ops"])
 })
 
 test("queryMatchingJobsV16: repairs stale non-engineering role axis from high-confidence title", async () => {
@@ -1806,6 +1917,55 @@ test("queryMatchingJobsV16: resume-derived SWE intern profile rejects senior ful
   assert.deepEqual(r.userTags?.targetJobType, ["internship"])
   assert.ok(!r.missingAxes?.includes("careerStage"))
   assert.ok(!r.missingAxes?.includes("targetJobType"))
+})
+
+test("queryMatchingJobsV16: founder resume profile can match senior product and software roles", async () => {
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u_founder")
+    .set({
+      tags: {
+        skills: ["python", "strategy", "product_management"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["product_management", "software_engineering"],
+        targetLocations: ["remote_anywhere"],
+        visaStatus: "citizen",
+        recentRoleTitle: "Founder - Product Manager & Software Engineer",
+        workHistorySummary: "Founder - Product Manager & Software Engineer @ AI Study",
+      },
+    })
+  await seedJob(mfs, "senior-pm", {
+    roleFunction: ["product_management"],
+    requiredSkills: ["strategy", "product_management"],
+    companyName: "ProductCo",
+    jobTitle: "Senior Product Manager",
+    seniorityLevel: "senior",
+    jobType: "full_time",
+  })
+  await seedJob(mfs, "senior-swe", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "SoftwareCo",
+    jobTitle: "Senior Software Engineer",
+    seniorityLevel: "senior",
+    jobType: "full_time",
+  })
+  await seedJob(mfs, "junior-drop", {
+    roleFunction: ["product_management"],
+    requiredSkills: ["strategy"],
+    companyName: "JuniorCo",
+    jobTitle: "Junior Product Manager",
+    seniorityLevel: "junior",
+    jobType: "full_time",
+  })
+
+  const r = await queryMatchingJobsV16({ userId: "u_founder", nowMs: NOW }, { db: asFirestore(mfs) })
+
+  assert.equal(r.userTags?.careerStage, "founder")
+  assert.deepEqual(r.jobs.map((job) => job.id).sort(), ["senior-pm", "senior-swe"])
+  assert.equal(r.hardFilter.careerStage, 1)
 })
 
 test("B4 soft: companyPositiveList hit adds +0.15 positiveHit", () => {

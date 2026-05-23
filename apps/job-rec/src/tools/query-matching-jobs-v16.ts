@@ -148,6 +148,11 @@ function firstWorkHistoryTitle(summary: unknown): string | undefined {
   return first && first.length > 0 ? first : undefined
 }
 
+function matchingCareerStageWindow(stage: CareerStage): CareerStage[] {
+  if (stage !== "founder") return acceptableCareerStages(stage)
+  return ["senior", "staff", "principal", "manager", "director", "vp", "c_level", "founder"]
+}
+
 function workHistoryTitleSignals(summary: unknown): string[] {
   if (typeof summary !== "string") return []
   return summary
@@ -194,9 +199,9 @@ function dedupeRoleFunctions(values: ReadonlyArray<string>): RoleFunction[] {
 }
 
 const PROFILE_ROLE_KEYWORDS: ReadonlyArray<{ pattern: RegExp; role: RoleFunction }> = [
-  { pattern: /(data\s+(scientist|analyst|analytics|engineer|science)|analytics?\b|insights?\b|ml\s+engineer|machine\s+learning|ai\s+engineer|llm)/i, role: "data_analysis" },
+  { pattern: /(data\s+(scientist|analyst|analytics|engineer|science)|analytics?\b|insights?\b|retention\s+analyst|funnel\s+analysis|cohort\s+analysis|ml\s+engineer|machine\s+learning|ai\s+engineer|llm)/i, role: "data_analysis" },
   { pattern: /(\bpm\b|product\s+manager|product\s+management|tpm\b)/i, role: "product_management" },
-  { pattern: /(business\s+(analyst|analysis)|\bba\b|executive\s+assistant|administrative\s+assistant|admin\s+assistant|office\s+manager|operations?\s+(coordinator|assistant|analyst)|program\s+(coordinator|operations))/i, role: "business_analyst" },
+  { pattern: /(business\s+(analyst|analysis)|\bba\b|executive\s+assistant|administrative\s+assistant|admin\s+assistant|office\s+manager|operations?\s+(coordinator|assistant|analyst)|operations?[\w\s&/-]{0,40}\banalyst\b|program\s+(coordinator|operations))/i, role: "business_analyst" },
   { pattern: /(designer|design\b|\bux\b|\bui\b|product\s+designer|creative|illustrator)/i, role: "creatives_and_design" },
   { pattern: /(marketing|growth|brand|content\s+marketing|seo)/i, role: "marketing" },
   { pattern: /(human\s+resources|\bhr\b|recruiter|recruiting|talent\b)/i, role: "human_resources" },
@@ -223,6 +228,17 @@ function inferTargetRoleFunctionsFromProfile(tags: UserTags): RoleFunction[] {
   return dedupeRoleFunctions(mapped)
 }
 
+function profileTitleText(tags: UserTags): string {
+  return [
+    typeof tags.recentRoleTitle === "string" ? tags.recentRoleTitle : undefined,
+    ...workHistoryTitleSignals(tags.workHistorySummary),
+  ].filter((part): part is string => Boolean(part)).join(" ")
+}
+
+function profileLooksOperationsAnalyst(tags: UserTags): boolean {
+  return /\b(operations?[\w\s&/-]{0,50}\banalyst\b|growth\s+operations|retention\s+analyst)\b/i.test(profileTitleText(tags))
+}
+
 const TITLE_AUTHORITATIVE_ROLE_REPAIRS = new Set<RoleFunction>([
   "human_resources",
   "education_and_training",
@@ -237,7 +253,15 @@ function repairMisalignedTargetRoleFunctions(
   if (inferred.length === 0) return undefined
   const existing = dedupeRoleFunctions(Array.isArray(tags.targetRoleFunction) ? tags.targetRoleFunction : [])
   if (existing.length === 0) return inferred
-  if (inferred.some((role) => existing.includes(role))) return undefined
+  if (inferred.some((role) => existing.includes(role))) {
+    if (profileLooksOperationsAnalyst(tags)) {
+      const missingOperationalRoles = inferred.filter((role) =>
+        (role === "business_analyst" || role === "data_analysis") && !existing.includes(role)
+      )
+      if (missingOperationalRoles.length > 0) return dedupeRoleFunctions([...existing, ...missingOperationalRoles])
+    }
+    return undefined
+  }
 
   // Preserve explicit career-change intent into engineering. A PM/HR/designer
   // resume can still target SWE when the conversation says so; only repair
@@ -344,8 +368,9 @@ function inferMissingMatchingAxes(
 }
 
 function targetRoleFunctionSet(userTags: UserTags): Set<string> {
+  const roles: unknown[] = Array.isArray(userTags.targetRoleFunction) ? userTags.targetRoleFunction : []
   return new Set(
-    (Array.isArray(userTags.targetRoleFunction) ? userTags.targetRoleFunction : [])
+    roles
       .map((role) => (typeof role === "string" ? role.trim().toLowerCase() : ""))
       .filter(Boolean)
   )
@@ -377,12 +402,38 @@ function titleAllowedByExplicitNonSoftwareTarget(title: string, targetRoles: Set
   return false
 }
 
+function titleLooksLegal(title: string): boolean {
+  const t = title.trim().toLowerCase()
+  return /\b(counsel|attorney|lawyer|paralegal)\b/.test(t)
+}
+
+function titleLooksClinical(title: string): boolean {
+  const t = title.trim().toLowerCase()
+  return /\b(medical\s+fellow|clinical\s+fellow|physician|doctor|nurse|surgeon|medical\s+director)\b/.test(t)
+}
+
+function userHasHealthcareSignal(userTags: UserTags): boolean {
+  const values = [
+    userTags.industryEnum,
+    userTags.relevantIndustry,
+    userTags.relevantSpecialization,
+    userTags.recentRoleTitle,
+    userTags.workHistorySummary,
+  ]
+  return values.some((value) => {
+    const list = Array.isArray(value) ? value : typeof value === "string" ? [value] : []
+    return list.some((item) => /health|medical|clinical|biotech|pharma|life\s*sciences/i.test(String(item)))
+  })
+}
+
 function isRoleTitleMismatch(userTags: UserTags, job: MatchingJob): boolean {
   const targetRoles = targetRoleFunctionSet(userTags)
   if (targetRoles.size === 0) return false
-  if (targetRoles.has("software_engineering") || targetRoles.has("engineering_and_development")) return false
   const title = getMatchingJobTitle(job)
+  if (titleLooksLegal(title) && !targetRoles.has("legal_and_compliance")) return true
+  if (titleLooksClinical(title) && !userHasHealthcareSignal(userTags)) return true
   if (!titleLooksEngineering(title)) return false
+  if (targetRoles.has("software_engineering") || targetRoles.has("engineering_and_development")) return false
   return !titleAllowedByExplicitNonSoftwareTarget(title, targetRoles)
 }
 
@@ -639,7 +690,9 @@ export function applyV16HardFilters(
 
   // Pre-compute user-side once.
   const sponsorshipNeeded = isSponsorshipNeeded(userTags.visaStatus)
-  const targetLocations = Array.isArray(userTags.targetLocations) ? userTags.targetLocations : []
+  const targetLocations = Array.isArray(userTags.targetLocations)
+    ? userTags.targetLocations.filter((l): l is string => typeof l === "string")
+    : []
   const isAnywhere = targetLocations.some((l) =>
     ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase())
   )
@@ -661,17 +714,22 @@ export function applyV16HardFilters(
   const negativeRoleFunctionSet = new Set<string>(
     Array.isArray(userTags.roleFunctionNegativeList)
       ? userTags.roleFunctionNegativeList
-          .map((s) => s.trim().toLowerCase())
+          .map((s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
           .filter(Boolean)
       : []
   )
   const careerStage = userTags.careerStage
   const careerStageValid =
     typeof careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(careerStage)
-  const acceptableStages = careerStageValid ? new Set(acceptableCareerStages(careerStage as CareerStage)) : null
+  const acceptableStages = careerStageValid ? new Set(matchingCareerStageWindow(careerStage as CareerStage)) : null
   const targetJobType = userTags.targetJobType
   const legacyTargetJobTypes = (userTags as unknown as { targetJobTypes?: string[] }).targetJobTypes
-  const targetJobTypes = targetJobType ?? legacyTargetJobTypes ?? []
+  const targetJobTypesRaw = Array.isArray(targetJobType)
+    ? targetJobType
+    : Array.isArray(legacyTargetJobTypes)
+      ? legacyTargetJobTypes
+      : []
+  const targetJobTypes = targetJobTypesRaw.filter((t): t is string => typeof t === "string")
   const targetJobTypeSet = new Set(
     targetJobTypes.map((t) => (typeof t === "string" ? t.trim().toLowerCase() : ""))
   )
@@ -704,7 +762,7 @@ export function applyV16HardFilters(
   const userWantsUsOnly =
     sponsorshipNeeded ||
     (Array.isArray(userTags.targetCountry) &&
-      userTags.targetCountry.some((c) => {
+      userTags.targetCountry.some((c: unknown) => {
         const k = typeof c === "string" ? c.trim().toLowerCase() : ""
         return k === "usa" || k === "us" || k === "united_states"
       })) ||
