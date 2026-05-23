@@ -1,12 +1,4 @@
-import {
-  Agent,
-  run,
-  setDefaultOpenAIClient,
-  setDefaultOpenAIKey,
-  setOpenAIAPI,
-  tool,
-  webSearchTool,
-} from "@openai/agents"
+import { createRequire } from "node:module"
 import type { AgentInputItem } from "@openai/agents"
 import OpenAI from "openai"
 import type { ChatMessage } from "@pa/core-types"
@@ -17,6 +9,15 @@ import type {
   RunAgentTurnResult,
   RunAgentTurnUsage,
 } from "./types.js"
+
+type AgentsSdk = typeof import("@openai/agents")
+type AgentsTool = ReturnType<AgentsSdk["tool"]>
+type HostedTool = ReturnType<AgentsSdk["webSearchTool"]>
+const require = createRequire(import.meta.url)
+
+function loadAgentsSdk(): AgentsSdk {
+  return require("@openai/agents") as AgentsSdk
+}
 
 /**
  * Phase 10.5 T1 — Default runtime: OpenAI Responses API + gpt-5.4-nano.
@@ -34,6 +35,7 @@ import type {
  * callers should use `runOpenAIAgentsTurn`.
  */
 function configureDefaultOpenAIClient(): void {
+  const { setDefaultOpenAIClient, setDefaultOpenAIKey, setOpenAIAPI } = loadAgentsSdk()
   const apiKey =
     process.env.PA_OPENAI_AGENT_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim() || ""
   const baseURL =
@@ -73,6 +75,7 @@ function configureDefaultOpenAIClient(): void {
  * carry-over #2 ("accepted; SF fallback is degraded by design").
  */
 async function withSiliconFlowFallback<T>(ctx: AgentTurnContext, fn: () => Promise<T>): Promise<T> {
+  const { setDefaultOpenAIKey, setOpenAIAPI } = loadAgentsSdk()
   const config = resolveOpenAICompatConfig({ ...ctx.agent, provider: "siliconflow" })
   const prevBaseURL = process.env.OPENAI_BASE_URL
   try {
@@ -151,7 +154,8 @@ export function buildAgentsInputItems(ctx: AgentTurnContext): AgentInputItem[] {
  * with a forced-string return shape so the LLM gets a stable JSON-stringified
  * payload back.
  */
-function buildSdkTools(ctx: AgentTurnContext): ReturnType<typeof tool>[] {
+function buildSdkTools(ctx: AgentTurnContext): AgentsTool[] {
+  const { tool } = loadAgentsSdk()
   const turnTools = ctx.tools ?? []
   return turnTools.map((t: AgentTurnTool) =>
     tool({
@@ -279,7 +283,8 @@ function extractUsage(
 function buildHostedToolsForDefault(
   ctx: AgentTurnContext,
   provider: "openai" | "siliconflow"
-): ReturnType<typeof webSearchTool>[] {
+): HostedTool[] {
+  const { webSearchTool } = loadAgentsSdk()
   if (provider !== "openai") return []
   if (ctx.agent.toolPolicy !== "allowlist") return []
   const connectors = ctx.agent.allowedConnectors ?? []
@@ -309,6 +314,7 @@ async function runDefaultAgent(
   ctx: AgentTurnContext,
   provider: "openai" | "siliconflow"
 ): Promise<RunAgentTurnResult> {
+  const { Agent, run } = loadAgentsSdk()
   const hostedTools = buildHostedToolsForDefault(ctx, provider)
   const customSdkTools = buildSdkTools(ctx)
   // Hosted tools (e.g. webSearchTool) come first — the SDK accepts the

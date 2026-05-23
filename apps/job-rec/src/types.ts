@@ -451,6 +451,8 @@ export type V16HardFilterCounters = {
   dead: number
   /** Phase B4 — dropped because job.companyName ∈ user.companyNegativeList. */
   negativeListDrop: number
+  /** Dropped because job title is clearly outside the user's target role function. */
+  roleTitleMismatch: number
 }
 
 /**

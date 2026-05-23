@@ -804,6 +804,72 @@ export type OrchestratorStore = {
 
 const HISTORY_LIMIT = Number(process.env.PA_MESSAGE_HISTORY || "40")
 
+const CANDIDATE_UNSAFE_INTERNAL_ERROR_PATTERNS: readonly RegExp[] = [
+  /\bsorry\s*[—-]\s*something went wrong\.?\s*try again shortly\.?\b/i,
+  /\bsomething went wrong\.?\s*try again shortly\b/i,
+  /\binternal (server )?error\b/i,
+  /\bmodule_not_found\b/i,
+  /\bcannot find module\b/i,
+  /\bstack trace\b/i,
+]
+
+function isCandidateUnsafeInternalErrorCopy(body: string): boolean {
+  const normalized = body.replace(/\s+/g, " ").trim()
+  if (!normalized) return false
+  return CANDIDATE_UNSAFE_INTERNAL_ERROR_PATTERNS.some((pattern) => pattern.test(normalized))
+}
+
+function redactE164ForAlert(toE164: string): string {
+  const digits = toE164.replace(/\D/g, "")
+  if (digits.length <= 4) return "[redacted]"
+  return `[redacted:${digits.slice(-4)}]`
+}
+
+async function recordSuppressedInternalErrorOutbound(
+  db: Firestore,
+  input: {
+    userId: string
+    toE164: string
+    body: string
+    idempotencyKey: string
+    nowIso: () => string
+    log: (...args: unknown[]) => void
+  },
+): Promise<void> {
+  const bodyPreview = input.body.replace(/\s+/g, " ").trim().slice(0, 240)
+  const bodyHash = createHash("sha256").update(input.body, "utf8").digest("hex")
+  const alertId = `candidate_internal_error_outbound_suppressed_${createHash("sha256")
+    .update(`${input.userId}|${input.idempotencyKey}|${bodyHash}`, "utf8")
+    .digest("hex")
+    .slice(0, 32)}`
+  const now = input.nowIso()
+  const alert = {
+    type: "candidate_internal_error_outbound_suppressed",
+    severity: "error",
+    status: "open",
+    userId: input.userId,
+    toE164Redacted: redactE164ForAlert(input.toE164),
+    bodyPreview,
+    bodyHash,
+    idempotencyKey: input.idempotencyKey,
+    source: "pa_orchestrator",
+    createdAt: now,
+    updatedAt: now,
+    refs: {
+      user: `${PA_COLLECTIONS.users}/${input.userId}`,
+    },
+  }
+  input.log("pa.orchestrator.admin_alert.internal_error_outbound_suppressed", alert)
+  try {
+    await db.collection("pa-admin-alerts").doc(alertId).set(alert, { merge: true })
+  } catch (err) {
+    input.log("pa.orchestrator.admin_alert.internal_error_outbound_write_failed", {
+      userId: input.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
 export function isInboundLeaseExpired(leaseUntil: string | undefined, now = new Date()): boolean {
   if (!leaseUntil) return true
   const t = Date.parse(leaseUntil)
@@ -1416,6 +1482,49 @@ async function sendMemoryReply(
     role: "assistant",
     idempotencyKey: `outbound-${event.id}`,
   })
+}
+
+async function recordTurnFailureForAdmin(
+  store: OrchestratorStore,
+  event: InboundEvent,
+  turnId: string,
+  errorCode: string,
+  error: string,
+): Promise<void> {
+  const alert = {
+    type: "orchestrator_turn_failed",
+    severity: "error",
+    status: "open",
+    userId: event.userId,
+    sessionId: event.sessionId,
+    eventId: event.id,
+    turnId,
+    errorCode,
+    error,
+    source: "pa_orchestrator",
+    createdAt: store.nowIso(),
+    updatedAt: store.nowIso(),
+    refs: {
+      inboundEvent: `${PA_COLLECTIONS.inboundEvents}/${event.id}`,
+      turn: `${PA_COLLECTIONS.turns}/${turnId}`,
+      user: `${PA_COLLECTIONS.users}/${event.userId}`,
+    },
+  }
+  store.log("pa.orchestrator.admin_alert.turn_failed", alert)
+  if (!store.db) return
+  try {
+    await store.db
+      .collection("pa-admin-alerts")
+      .doc(`orchestrator_turn_failed_${event.id}`)
+      .set(alert, { merge: true })
+  } catch (alertErr) {
+    store.log("pa.orchestrator.admin_alert.write_failed", {
+      userId: event.userId,
+      turnId,
+      eventId: event.id,
+      error: alertErr instanceof Error ? alertErr.message : String(alertErr),
+    })
+  }
 }
 
 /**
@@ -4666,7 +4775,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       completedAt: store.nowIso(),
     })
     await store.markEventFailed(event.id, errorCode, error)
-    await sendMemoryReply(store, event, turnId, "Sorry — something went wrong. Try again shortly.")
+    await recordTurnFailureForAdmin(store, event, turnId, errorCode, error)
   }
 }
 
@@ -4848,6 +4957,17 @@ export function createFirestoreOrchestratorStore(
         typeof requestedIdempotencyKey === "string" && requestedIdempotencyKey.trim()
           ? requestedIdempotencyKey.trim()
           : `pa_orchestrator:${userId}:${createHash("sha256").update(`${toE164}|${body}`).digest("hex").slice(0, 32)}`
+      if (isCandidateUnsafeInternalErrorCopy(body)) {
+        await recordSuppressedInternalErrorOutbound(db, {
+          userId,
+          toE164,
+          body,
+          idempotencyKey,
+          nowIso,
+          log: (...args) => console.log(new Date().toISOString(), ...args),
+        })
+        return
+      }
       const result = await enqueueBrokerOutbound(db, {
         userId,
         toE164,

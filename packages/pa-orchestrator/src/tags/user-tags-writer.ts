@@ -146,6 +146,18 @@ export async function applyPartialUserTags(
     if (v !== undefined) cleaned[k] = v
   }
 
+  // Conversation extractor emits `minSalaryUsd`; V16 reads `tags.minSalary`.
+  // Normalize at the sole-writer boundary so no caller can persist the wrong
+  // field name into `pa-users.tags`.
+  if (
+    cleaned.minSalary === undefined &&
+    typeof cleaned.minSalaryUsd === "number" &&
+    Number.isFinite(cleaned.minSalaryUsd)
+  ) {
+    cleaned.minSalary = Math.max(0, Math.floor(cleaned.minSalaryUsd))
+  }
+  delete cleaned.minSalaryUsd
+
   // Phase 61 — canonicalize `skills` if the caller passed raw strings or a
   // mixed array. The Phase 56 V16 score reads `skills[].baseWeight`; if we
   // wrote raw strings the multiplier is undefined → score=0 for everyone.

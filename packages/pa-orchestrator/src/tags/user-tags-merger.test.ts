@@ -242,6 +242,36 @@ test("mergeUserTags: workHistory entry with `role` (alt key) honored when title 
   assert.equal(out.recentRoleTitle, "Lead Eng")
 })
 
+test("mergeUserTags: resume-only intern title infers intern career stage and internship target job type", () => {
+  const out = mergeUserTags({
+    cv: {
+      candidateProfile: { skills: ["Python", "TypeScript", "React"] },
+      workHistory: [
+        { title: "Software Engineer Intern", company: "Tesla", skills: ["Python"] },
+        { title: "Founder, Software Engineer", company: "AI Study", skills: ["React"] },
+      ],
+    },
+  })
+
+  assert.equal(out.recentRoleTitle, "Software Engineer Intern")
+  assert.equal(out.careerStage, "intern")
+  assert.deepEqual(out.targetJobType, ["internship"])
+  assert.deepEqual(out.targetRoleFunction, ["software_engineering"])
+})
+
+test("mergeUserTags: explicit stated target job type wins over resume-title inference", () => {
+  const out = mergeUserTags({
+    cv: { workHistory: [{ title: "Software Engineer Intern", company: "Tesla" }] },
+    statedPreferences: {
+      targetRole: ["swe"],
+      targetJobType: ["full_time"],
+    } as StatedPreferences & { targetJobType: string[] },
+  })
+
+  assert.equal(out.careerStage, "intern")
+  assert.deepEqual(out.targetJobType, ["full_time"])
+})
+
 test("mergeUserTags: workHistorySummary joins first 3 roles with '; '", () => {
   const out = mergeUserTags({
     cv: {
@@ -337,6 +367,96 @@ test("mergeUserTags: prefersStartup boolean → enum mapping", () => {
       `prefersStartup: ${String(input)} → expected ${String(expected)}, got ${String(out.prefersStartup)}`
     )
   }
+})
+
+test("mergeUserTags: explicit chat targetRole wins over resume-title inference", () => {
+  const out = mergeUserTags({
+    cv: {
+      candidateProfile: { skills: ["HubSpot", "SQL", "Python"] },
+      workHistory: [{ title: "Growth Marketing Manager", company: "Acme" }],
+    },
+    statedPreferences: { targetRole: ["swe"] },
+  })
+  assert.deepEqual(out.targetRoleFunction, ["software_engineering"])
+})
+
+test("mergeUserTags: explicit chat targetRole string wins over resume-title inference", () => {
+  const out = mergeUserTags({
+    cv: {
+      candidateProfile: { skills: ["Roadmaps", "SQL", "Python"] },
+      workHistory: [{ title: "Senior Product Manager", company: "Acme" }],
+    },
+    statedPreferences: { targetRole: "software engineer" } as unknown as StatedPreferences,
+  })
+  assert.deepEqual(out.targetRoleFunction, ["software_engineering"])
+})
+
+test("mergeUserTags: direct targetRoleFunction string from conversation is preserved", () => {
+  const out = mergeUserTags({
+    cv: {
+      candidateProfile: { skills: ["Python", "SQL", "React"] },
+      workHistory: [{ title: "Growth Marketing Manager", company: "Acme" }],
+    },
+    statedPreferences: {
+      targetRoleFunction: "product_management",
+    } as unknown as StatedPreferences,
+  })
+  assert.deepEqual(out.targetRoleFunction, ["product_management"])
+})
+
+test("mergeUserTags: resume-only product profile does not infer software engineering from technical skills", () => {
+  const out = mergeUserTags({
+    cv: {
+      candidateProfile: { skills: ["Python", "SQL", "React", "A/B Testing"] },
+      workHistory: [{ title: "Senior Product Manager", company: "Acme" }],
+    },
+  })
+  assert.deepEqual(out.targetRoleFunction, ["product_management"])
+  assert.ok(!out.targetRoleFunction.includes("software_engineering"))
+})
+
+test("mergeUserTags: resume-only engineering profile infers software engineering", () => {
+  const out = mergeUserTags({
+    cv: {
+      candidateProfile: { skills: ["Python", "TypeScript", "React", "AWS"] },
+      workHistory: [{ title: "Backend Software Engineer", company: "Acme" }],
+    },
+  })
+  assert.deepEqual(out.targetRoleFunction, ["software_engineering"])
+})
+
+test("mergeUserTags: resume-only skills infer role function when title has no signal", () => {
+  const out = mergeUserTags({
+    cv: {
+      candidateProfile: { skills: ["Python", "TypeScript", "React", "AWS"] },
+      workHistory: [{ title: "Student", company: "Acme" }],
+    },
+  })
+  assert.deepEqual(out.targetRoleFunction, ["software_engineering"])
+})
+
+test("mergeUserTags: preserves conversation-only matching fields that V16 reads", () => {
+  const out = mergeUserTags({
+    statedPreferences: {
+      salaryFloor: 175000,
+      companySize: "early_startup",
+      targetRoleFunction: ["product_management"],
+      targetJobType: "full-time",
+    } as StatedPreferences,
+  })
+  assert.equal(out.minSalary, 175000)
+  assert.equal(out.companySize, "early_startup")
+  assert.deepEqual(out.targetRoleFunction, ["product_management"])
+  assert.deepEqual(out.targetJobType, ["full_time"])
+})
+
+test("mergeUserTags: legacy plural targetJobTypes array from conversation is normalized", () => {
+  const out = mergeUserTags({
+    statedPreferences: {
+      targetJobTypes: ["Internship", "part time", "invalid"],
+    } as unknown as StatedPreferences,
+  })
+  assert.deepEqual(out.targetJobType, ["internship", "part_time"])
 })
 
 test("mergeUserTags: visaStatus 'sponsorship_needed' → 'sponsor_needed' rename", () => {

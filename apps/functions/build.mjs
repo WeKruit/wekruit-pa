@@ -20,11 +20,65 @@ const localPaOrchestratorEntry = resolve(
   "packages/pa-orchestrator/dist/index.js",
 )
 
+const mem0OptionalPeerModules = new Set([
+  "@azure/search-documents",
+  "@google/genai",
+  "@langchain/core/documents",
+  "@langchain/core/messages",
+  "@mistralai/mistralai",
+  "@qdrant/js-client-rest",
+  "@supabase/supabase-js",
+  "better-sqlite3",
+  "cloudflare",
+  "groq-sdk",
+  "ollama",
+  "redis",
+])
+
+const mem0OptionalPeerStub = `
+class MissingOptionalMem0Peer {
+  constructor() {
+    throw new Error("mem0 optional peer provider is not bundled in pa-functions-runtime")
+  }
+}
+export default MissingOptionalMem0Peer
+export const Ollama = MissingOptionalMem0Peer
+export const Groq = MissingOptionalMem0Peer
+export const Mistral = MissingOptionalMem0Peer
+export const QdrantClient = MissingOptionalMem0Peer
+export const Cloudflare = MissingOptionalMem0Peer
+export const GoogleGenAI = MissingOptionalMem0Peer
+export const AIMessage = MissingOptionalMem0Peer
+export const HumanMessage = MissingOptionalMem0Peer
+export const SystemMessage = MissingOptionalMem0Peer
+export const Document = MissingOptionalMem0Peer
+export const SearchClient = MissingOptionalMem0Peer
+export const SearchIndexClient = MissingOptionalMem0Peer
+export const AzureKeyCredential = MissingOptionalMem0Peer
+export function createClient() {
+  throw new Error("mem0 optional peer provider is not bundled in pa-functions-runtime")
+}
+`
+
 const forceLocalWorkspacePackages = {
   name: "force-local-workspace-packages",
   setup(build) {
     build.onResolve({ filter: /^@pa\/pa-orchestrator$/ }, () => ({
       path: localPaOrchestratorEntry,
+    }))
+  },
+}
+
+const stubUnusedMem0OptionalPeers = {
+  name: "stub-unused-mem0-optional-peers",
+  setup(build) {
+    build.onResolve({ filter: /.*/ }, (args) => {
+      if (!mem0OptionalPeerModules.has(args.path)) return null
+      return { path: args.path, namespace: "mem0-optional-peer-stub" }
+    })
+    build.onLoad({ filter: /.*/, namespace: "mem0-optional-peer-stub" }, () => ({
+      contents: mem0OptionalPeerStub,
+      loader: "js",
     }))
   },
 }
@@ -78,7 +132,7 @@ await build({
   ],
   legalComments: "none",
   logLevel: "info",
-  plugins: [forceLocalWorkspacePackages],
+  plugins: [forceLocalWorkspacePackages, stubUnusedMem0OptionalPeers],
 })
 
 // Emit a minimal package.json next to the bundle so firebase-tools knows the
@@ -101,7 +155,11 @@ const runtimePackage = {
     // openai 4.x lazy-loads zod from _vendor/zod-to-json-schema even though
     // it's listed as an OPTIONAL peer; Cloud Run instance failed to start
     // 2026-04-30 with ERR_MODULE_NOT_FOUND 'zod'. Pin it explicitly here.
-    "zod": "^3.25.0",
+    "zod": "^4.3.6",
+    // @pa/agent-runtime uses createRequire("@openai/agents") at turn-time.
+    // esbuild cannot inline that dynamic require, so Cloud Run must install
+    // the SDK in the deploy bundle's production node_modules.
+    "@openai/agents": "^0.8.5",
     // v1.5 Stream-D — Cloud Tasks SDK (externalized for bundle size).
     "@google-cloud/tasks": "^5.5.0",
   },
@@ -110,6 +168,7 @@ writeFileSync(
   resolve(outDir, "package.json"),
   JSON.stringify(runtimePackage, null, 2) + "\n",
 )
+writeFileSync(resolve(outDir, ".npmrc"), "legacy-peer-deps=true\n")
 
 // Copy the agent-registry seed.json alongside the bundle so that
 // `loadSeedAgents()` (which resolves it via `dirname(import.meta.url)`) finds

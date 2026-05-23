@@ -167,6 +167,21 @@ test("applyPartialUserTags: undefined values stripped", async () => {
   assert.deepEqual(written.tags.targetRoleFunction, ["software_engineering"])
 })
 
+test("applyPartialUserTags: normalizes extractor minSalaryUsd to V16 minSalary", async () => {
+  const ctx = makeDb()
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { minSalaryUsd: 180000 } as Record<string, unknown>,
+    { source: "chat", nowIso: "2026-05-06T02:30:00.000Z" }
+  )
+  assert.equal(res.ok, true)
+  assert.deepEqual(res.mergedKeys, ["minSalary"])
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  assert.equal(written.tags.minSalary, 180000)
+  assert.equal("minSalaryUsd" in written.tags, false)
+})
+
 test("applyPartialUserTags: no userId → ok:false skip", async () => {
   const ctx = makeDb()
   const res = await applyPartialUserTags(ctx.db, "", { skills: ["x"] } as Record<string, unknown>)
