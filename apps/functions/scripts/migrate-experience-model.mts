@@ -35,6 +35,7 @@ import { initializeApp, cert, getApps } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
 import type { Firestore } from "firebase-admin/firestore"
 import { readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
 
 import {
   computeEntryId,
@@ -94,9 +95,14 @@ function initFirestore(): Firestore {
   return getFirestore()
 }
 
-// ─── pa-users shape (subset we need) ──────────────────────────────────────
+// ─── shapes (subset we need) ──────────────────────────────────────────────
+//
+// workHistory does NOT live on pa-users — cv-ingest writes the parsed
+// resume to `parsedCandidateResumes/{resumeId}` with `userId` as the
+// foreign key. We walk parsedCandidateResumes (the source of truth)
+// and write the aggregate back to `pa-users/{uid}`.
 
-interface PaUserWorkHistoryEntry {
+interface ParsedResumeWorkEntry {
   title?: unknown
   company?: unknown
   startDate?: unknown
@@ -107,10 +113,12 @@ interface PaUserWorkHistoryEntry {
   achievements?: unknown
 }
 
-interface PaUserDoc {
+interface ParsedResumeDoc {
+  userId?: unknown
   skills?: unknown
   workHistory?: unknown
-  derivedExperienceVersion?: unknown
+  archived?: unknown
+  createdAt?: unknown
 }
 
 function asStringOrNull(v: unknown): string | null {
@@ -122,9 +130,32 @@ function asStringArray(v: unknown): string[] {
   if (!Array.isArray(v)) return []
   return v.filter((x): x is string => typeof x === "string" && x.trim().length > 0)
 }
-function asWorkHistory(v: unknown): PaUserWorkHistoryEntry[] {
+function asWorkHistory(v: unknown): ParsedResumeWorkEntry[] {
   if (!Array.isArray(v)) return []
-  return v.filter((x): x is PaUserWorkHistoryEntry => !!x && typeof x === "object")
+  return v.filter((x): x is ParsedResumeWorkEntry => !!x && typeof x === "object")
+}
+
+/**
+ * Content hash for short-circuiting the PR-C trigger on subsequent
+ * resume writes. Mirrors `computeWorkHistoryHash` in
+ * experience-extractor-trigger.ts. Keep in sync — divergence makes
+ * the trigger refire unnecessarily but is not a correctness bug.
+ */
+function computeWorkHistoryContentHash(
+  workHistory: ReadonlyArray<ParsedResumeWorkEntry>
+): string {
+  const h = createHash("sha256")
+  for (const wh of workHistory) {
+    h.update(asStringOrNull(wh.title) ?? "")
+    h.update("\x00")
+    h.update(asStringOrNull(wh.company) ?? "")
+    h.update("\x00")
+    h.update(asStringOrNull(wh.startDate) ?? "")
+    h.update("\x00")
+    h.update(asStringOrNull(wh.endDate) ?? "")
+    h.update("\x01")
+  }
+  return h.digest("hex").slice(0, 32)
 }
 
 // ─── Per-user pipeline ────────────────────────────────────────────────────
@@ -142,22 +173,26 @@ interface MigrateStats {
 async function migrateOneUser(
   db: Firestore,
   uid: string,
-  user: PaUserDoc,
+  resume: ParsedResumeDoc,
   stats: MigrateStats,
   openaiApiKey: string | undefined
 ): Promise<void> {
-  if (!FORCE_RERUN && user.derivedExperienceVersion === "v1") {
-    stats.skippedAlreadyV1++
-    if (VERBOSE) log("skip_already_v1", { uid })
-    return
+  if (!FORCE_RERUN) {
+    const userSnap = await db.collection("pa-users").doc(uid).get()
+    const existing = userSnap.exists ? (userSnap.data() ?? {}) : {}
+    if (existing["derivedExperienceVersion"] === "v1") {
+      stats.skippedAlreadyV1++
+      if (VERBOSE) log("skip_already_v1", { uid })
+      return
+    }
   }
-  const workHistory = asWorkHistory(user.workHistory)
+  const workHistory = asWorkHistory(resume.workHistory)
   if (workHistory.length === 0) {
     stats.skippedNoWorkHistory++
     if (VERBOSE) log("skip_no_work_history", { uid })
     return
   }
-  const claimedSkills = asStringArray(user.skills)
+  const claimedSkills = asStringArray(resume.skills)
   const cache = firestoreExtractionCache(db)
 
   const deriveInputs: DeriveEntryInput[] = []
@@ -223,10 +258,15 @@ async function migrateOneUser(
       seniorityCurrent: derived.seniorityCurrent,
     })
   } else {
+    // Compute the same content hash the PR-C trigger uses so a
+    // post-migration resume rewrite short-circuits without burning
+    // LLM calls in the trigger.
+    const contentHash = computeWorkHistoryContentHash(workHistory)
     await db.collection("pa-users").doc(uid).set(
       {
         derivedExperience: derived,
         derivedExperienceVersion: "v1",
+        derivedExperienceContentHash: contentHash,
       },
       { merge: true }
     )
@@ -240,19 +280,75 @@ async function migrateOneUser(
 }
 
 // ─── Walker ───────────────────────────────────────────────────────────────
+//
+// Walk `parsedCandidateResumes` ordered by createdAt desc and dedupe by
+// userId so we always migrate from the most recent non-archived resume
+// per user. (Mirrors the cv-ingest convention; older resumes are
+// effectively superseded.)
 
 async function* paginate(
   db: Firestore,
   fromCursor: string | null
-): AsyncGenerator<{ id: string; data: PaUserDoc }> {
+): AsyncGenerator<{ uid: string; resume: ParsedResumeDoc }> {
+  const seenUids = new Set<string>()
   let cursor: string | null = fromCursor
   for (;;) {
-    let q = db.collection("pa-users").orderBy("__name__").limit(PAGE_SIZE)
+    let q = db
+      .collection("parsedCandidateResumes")
+      .orderBy("createdAt", "desc")
+      .limit(PAGE_SIZE)
+    if (cursor) q = q.startAfter(cursor)
+    let snap
+    try {
+      snap = await q.get()
+    } catch (err) {
+      // Composite index missing — fall back to a __name__ scan. Slower
+      // but still walks every doc.
+      log("createdAt_index_missing_fallback", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      yield* paginateByName(db, cursor, seenUids)
+      return
+    }
+    if (snap.empty) return
+    for (const d of snap.docs) {
+      const data = d.data() as ParsedResumeDoc
+      if (data.archived === true) continue
+      const uid = asStringOrNull(data.userId)
+      if (!uid) continue
+      if (seenUids.has(uid)) continue
+      seenUids.add(uid)
+      yield { uid, resume: data }
+    }
+    const lastDoc = snap.docs[snap.docs.length - 1]
+    if (!lastDoc) return
+    const lastCreatedAt = (lastDoc.data() as ParsedResumeDoc).createdAt
+    cursor = typeof lastCreatedAt === "string" ? lastCreatedAt : lastDoc.id
+    if (snap.docs.length < PAGE_SIZE) return
+  }
+}
+
+async function* paginateByName(
+  db: Firestore,
+  fromCursor: string | null,
+  seenUids: Set<string>
+): AsyncGenerator<{ uid: string; resume: ParsedResumeDoc }> {
+  let cursor: string | null = fromCursor
+  for (;;) {
+    let q = db
+      .collection("parsedCandidateResumes")
+      .orderBy("__name__")
+      .limit(PAGE_SIZE)
     if (cursor) q = q.startAfter(cursor)
     const snap = await q.get()
     if (snap.empty) return
     for (const d of snap.docs) {
-      yield { id: d.id, data: d.data() as PaUserDoc }
+      const data = d.data() as ParsedResumeDoc
+      if (data.archived === true) continue
+      const uid = asStringOrNull(data.userId)
+      if (!uid || seenUids.has(uid)) continue
+      seenUids.add(uid)
+      yield { uid, resume: data }
     }
     cursor = snap.docs[snap.docs.length - 1]!.id
     if (snap.docs.length < PAGE_SIZE) return
@@ -286,15 +382,15 @@ async function main(): Promise<number> {
     llmCalls: 0,
   }
 
-  for await (const userDoc of paginate(db, RESUME_FROM)) {
+  for await (const entry of paginate(db, RESUME_FROM)) {
     if (LIMIT > 0 && stats.scanned >= LIMIT) break
     stats.scanned++
     try {
-      await migrateOneUser(db, userDoc.id, userDoc.data, stats, openaiApiKey)
+      await migrateOneUser(db, entry.uid, entry.resume, stats, openaiApiKey)
     } catch (err) {
       stats.failed++
       log("user_failed", {
-        uid: userDoc.id,
+        uid: entry.uid,
         error: err instanceof Error ? err.message : String(err),
       })
     }
