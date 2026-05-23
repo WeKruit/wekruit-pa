@@ -526,6 +526,28 @@ importers:
         specifier: ^5.3.0
         version: 5.9.3
 
+  packages/pa-experience-extractor:
+    dependencies:
+      '@pa/pa-resume-parser':
+        specifier: 0.0.1
+        version: link:../pa-resume-parser
+      firebase-admin:
+        specifier: ^13.0.0
+        version: 13.8.0
+      zod:
+        specifier: ^3.24.0
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^20.19.0
+        version: 20.19.39
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.3.0
+        version: 5.9.3
+
   packages/pa-job-tag-enricher:
     dependencies:
       '@anthropic-ai/sdk':

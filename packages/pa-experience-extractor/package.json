@@ -1,0 +1,37 @@
+{
+  "name": "@pa/pa-experience-extractor",
+  "version": "0.0.1",
+  "private": true,
+  "description": "EX1 PR-A — derive per-skill experience model from pa-users workHistory via gpt-5.4-nano. See AGENT_PLAN-experience-extractor.md.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "prebuild": "npm run ensure:node && npm run build --workspace=@pa/pa-resume-parser",
+    "build": "tsc",
+    "pretypecheck": "npm run ensure:node && npm run build --workspace=@pa/pa-resume-parser",
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run ensure:node && npm run build --workspace=@pa/pa-resume-parser",
+    "test": "node --import tsx --test src/__tests__/derive.test.ts src/__tests__/extract.test.ts src/__tests__/cache.test.ts src/__tests__/schema.test.ts",
+    "ensure:node": "node ../../scripts/ensure-node24.mjs"
+  },
+  "dependencies": {
+    "@pa/pa-resume-parser": "0.0.1",
+    "firebase-admin": "^13.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": "24"
+  }
+}
