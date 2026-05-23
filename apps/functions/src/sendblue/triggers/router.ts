@@ -29,6 +29,8 @@ export interface TriggerContext {
   text: string
   /** Phone number that sent the message. */
   fromNumber: string
+  /** Sendblue line that received the message. Used for same-thread replies. */
+  toNumber?: string
   /** Sendblue message handle (correlation id). */
   messageHandle: string
   /** ISO timestamp the message was received. */

@@ -822,6 +822,61 @@ describe("handleSendblueWebhook", () => {
     assert.ok(prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_u_real_candidate_1_msg-entry-public-1"))
   })
 
+  it("Test 17b (entrypoints): prescreen token from a conflicting phone gets a notice instead of silence", async () => {
+    const { db, inbound, audit, prescreenIdempotency } = makeFakeDb()
+    const notices: Array<{
+      targetUserId: string
+      jobId: string
+      toE164: string
+      fromNumber?: string
+      messageHandle: string
+      content: string
+      conflictCode: string
+    }> = []
+    const prescreenCalls: Array<{ jobId: string; userId: string; toE164: string }> = []
+    const body = JSON.stringify(basePayload({
+      content: "WeKruit_hs-11005308-paradigm-gtm-growth_mGuQxsTGkisKtptNjg4b_Job",
+      from_number: "+17167509332",
+      to_number: "+17174919939",
+      message_handle: "msg-entry-phone-conflict",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => {
+        throw new Error("identity_conflict:pa_users_phone_mismatch:mGuQxsTGkisKtptNjg4b:existing_+17163039362_attempted_+17167509332")
+      },
+      sendIdentityConflictNotice: async (input) => {
+        notices.push(input)
+      },
+      runPreScreenForUser: async (args) => {
+        prescreenCalls.push(args)
+        return { ok: true, sessionId: "should_not_start" }
+      },
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_identity_conflict_notified" })
+    assert.equal(inbound.size, 0, "conflicting token must not fall through to normal Claire runtime")
+    assert.equal(prescreenCalls.length, 0, "conflicting token must not start the interview")
+    assert.equal(prescreenIdempotency.size, 0, "conflicting token must not stamp prescreen idempotency")
+    assert.equal(notices.length, 1)
+    assert.equal(notices[0]!.targetUserId, "mGuQxsTGkisKtptNjg4b")
+    assert.equal(notices[0]!.jobId, "hs-11005308-paradigm-gtm-growth")
+    assert.equal(notices[0]!.toE164, "+17167509332")
+    assert.equal(notices[0]!.fromNumber, "+17174919939")
+    assert.match(notices[0]!.content, /already tied to a different phone\/account/)
+    assert.equal(notices[0]!.conflictCode, "pa_users_phone_mismatch")
+    assert.equal(audit.some((row) =>
+      row.type === "trigger_unauthorized" &&
+      row.reason === "identity_conflict" &&
+      row.fromNumber === "+17167509332"
+    ), true)
+  })
+
   it("Test 18 (entrypoints): WeKruit_LAID_OFF no longer starts manual layoff onboarding", async () => {
     const { db, inbound, audit, layoffIdempotency } = makeFakeDb()
     const layoffCalls: Array<{ userId: string; toE164: string }> = []

@@ -358,6 +358,8 @@ export const OutboundMessageSchema = z.object({
   id: z.string().optional(),
   userId: z.string(),
   toE164: z.string(),
+  /** Optional explicit Sendblue sender line for thread-continuity replies. */
+  fromNumber: z.string().optional(),
   /** Optional iMessage chat id for transport routing. */
   imessageChatId: z.string().optional(),
   body: z.string(),

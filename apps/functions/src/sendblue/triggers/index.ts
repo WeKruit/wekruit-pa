@@ -17,6 +17,7 @@ export {
   extractInitialPrescreenReply,
   PrescreenTrigger,
   PRESCREEN_IDEMPOTENCY_WINDOW_MS,
+  PRESCREEN_IDENTITY_CONFLICT_NOTICE,
   type PrescreenTriggerDeps,
 } from "./prescreen.js"
 

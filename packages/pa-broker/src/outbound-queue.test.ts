@@ -51,6 +51,25 @@ test("enqueueOutbound uses deterministic doc id and treats duplicate idempotency
   assert.equal(docs.get(expectedId)?.runtimeApproved, true)
 })
 
+test("enqueueOutbound permits identity notices and preserves explicit sender line", async () => {
+  const { db, docs } = fakeFirestore()
+  const input = {
+    userId: "u_1",
+    toE164: "+15555550123",
+    fromNumber: "+15555550999",
+    body: "This interview link is already tied to a different phone/account.",
+    idempotencyKey: "out-sendblue-prescreen-identity-conflict-h1",
+    runtimeApproved: true as const,
+    runtimeSource: "pa_identity_notice",
+  }
+
+  const result = await enqueueOutbound(db, input)
+  const doc = docs.get(result.id)
+  assert.equal(result.created, true)
+  assert.equal(doc?.runtimeSource, "pa_identity_notice")
+  assert.equal(doc?.fromNumber, "+15555550999")
+})
+
 test("enqueueOutbound blocks legacy callers without runtime approval", async () => {
   const { db } = fakeFirestore()
   await assert.rejects(
