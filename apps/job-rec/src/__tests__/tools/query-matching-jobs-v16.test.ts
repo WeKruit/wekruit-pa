@@ -944,6 +944,94 @@ test("queryMatchingJobsV16: keeps explicit SWE target over non-engineering resum
   assert.equal(r.jobs[0]!.id, "swe")
 })
 
+test("queryMatchingJobsV16: prunes stale SWE axis from multi-axis non-engineering profile", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_pm_growth").set({
+    tags: {
+      skills: ["product management", "growth analytics", "python"],
+      schemaVersion: 1,
+      recentRoleTitle: "Product Manager",
+      workHistorySummary: "Product Manager @ SaaSCo",
+      targetRoleFunction: ["data_analysis", "product_management", "marketing", "software_engineering"],
+      targetRole: "GTM, growth, or product roles",
+      targetLocations: ["remote_anywhere"],
+      visaStatus: "citizen",
+      careerStage: "mid_level",
+      targetJobType: ["full_time"],
+    },
+  })
+  await seedJob(mfs, "pm", {
+    roleFunction: ["product_management"],
+    requiredSkills: ["product management"],
+    companyName: "PMCo",
+    jobTitle: "Associate Product Manager",
+    seniorityLevel: "mid_level",
+    jobType: "full_time",
+  })
+  await seedJob(mfs, "growth", {
+    roleFunction: ["marketing", "data_analysis"],
+    requiredSkills: ["growth analytics"],
+    companyName: "GrowthCo",
+    jobTitle: "Growth Analyst",
+    seniorityLevel: "mid_level",
+    jobType: "full_time",
+  })
+  await seedJob(mfs, "swe", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "SWECo",
+    jobTitle: "Software Engineer",
+    seniorityLevel: "mid_level",
+    jobType: "full_time",
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_pm_growth", nowMs: NOW },
+    { db: asFirestore(mfs) },
+  )
+
+  const targetRoles = (r.userTags as Record<string, unknown>).targetRoleFunction as string[]
+  assert.deepEqual(targetRoles, ["data_analysis", "product_management", "marketing"])
+})
+
+test("queryMatchingJobsV16: preserves explicit multi-axis engineering intent", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_pm_explicit_swe").set({
+    tags: {
+      skills: ["python", "product management"],
+      schemaVersion: 1,
+      recentRoleTitle: "Product Manager",
+      workHistorySummary: "Product Manager @ Acme",
+      targetRoleFunction: ["product_management", "software_engineering"],
+      targetRole: "Software Engineer or Product Engineer",
+      targetLocations: ["remote_anywhere"],
+      visaStatus: "citizen",
+      careerStage: "mid_level",
+    },
+  })
+  await seedJob(mfs, "swe", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "SWECo",
+    jobTitle: "Software Engineer",
+  })
+  await seedJob(mfs, "pm", {
+    roleFunction: ["product_management"],
+    requiredSkills: ["product management"],
+    companyName: "PMCo",
+    jobTitle: "Product Manager",
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_pm_explicit_swe", nowMs: NOW },
+    { db: asFirestore(mfs) },
+  )
+
+  const targetRoles = (r.userTags as Record<string, unknown>).targetRoleFunction as string[]
+  assert.ok(targetRoles.includes("software_engineering"))
+  assert.ok(r.jobs.some((job) => job.id === "swe"))
+})
+
 test("queryMatchingJobsV16: complete tags → needsOnboarding undefined", async () => {
   const mfs = new MockFirestore()
   await mfs

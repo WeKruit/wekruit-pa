@@ -239,6 +239,26 @@ function profileLooksOperationsAnalyst(tags: UserTags): boolean {
   return /\b(operations?[\w\s&/-]{0,50}\banalyst\b|growth\s+operations|retention\s+analyst)\b/i.test(profileTitleText(tags))
 }
 
+function explicitEngineeringIntentText(tags: UserTags): string {
+  const targetRole = (tags as unknown as { targetRole?: unknown }).targetRole
+  const parts = Array.isArray(targetRole) ? targetRole : [targetRole]
+  return parts.map((part) => (typeof part === "string" ? part : "")).join(" ")
+}
+
+function shouldPruneStaleEngineeringAxis(
+  tags: UserTags,
+  existing: RoleFunction[],
+  inferred: RoleFunction[],
+): boolean {
+  const hasEngineeringAxis =
+    existing.includes("software_engineering") || existing.includes("engineering_and_development")
+  if (!hasEngineeringAxis || existing.length <= 1) return false
+  if (inferred.every((role) => role === "software_engineering" || role === "engineering_and_development")) return false
+  if (titleLooksEngineering(profileTitleText(tags))) return false
+  if (titleLooksEngineering(explicitEngineeringIntentText(tags))) return false
+  return true
+}
+
 const TITLE_AUTHORITATIVE_ROLE_REPAIRS = new Set<RoleFunction>([
   "human_resources",
   "education_and_training",
@@ -254,6 +274,9 @@ function repairMisalignedTargetRoleFunctions(
   const existing = dedupeRoleFunctions(Array.isArray(tags.targetRoleFunction) ? tags.targetRoleFunction : [])
   if (existing.length === 0) return inferred
   if (inferred.some((role) => existing.includes(role))) {
+    if (shouldPruneStaleEngineeringAxis(tags, existing, inferred)) {
+      return existing.filter((role) => role !== "software_engineering" && role !== "engineering_and_development")
+    }
     if (profileLooksOperationsAnalyst(tags)) {
       const missingOperationalRoles = inferred.filter((role) =>
         (role === "business_analyst" || role === "data_analysis") && !existing.includes(role)
