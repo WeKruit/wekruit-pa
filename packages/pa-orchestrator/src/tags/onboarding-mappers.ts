@@ -68,7 +68,8 @@ const ROLE_FUNCTION_KEYWORDS: ReadonlyArray<{
   },
   // Business analyst
   {
-    pattern: /(business\s+(analyst|analysis)|商业分析|\bba\b)/i,
+    pattern:
+      /(business\s+(analyst|analysis)|商业分析|\bba\b|executive\s+assistant|administrative\s+assistant|admin\s+assistant|office\s+manager|operations?\s+(coordinator|assistant|analyst)|program\s+(coordinator|operations))/i,
     token: "business_analyst",
   },
   // Designer / creative
@@ -121,7 +122,7 @@ const ROLE_FUNCTION_KEYWORDS: ReadonlyArray<{
   },
   // Education/training
   {
-    pattern: /(teacher|professor|educator|教师|教授|教育|trainer\b)/i,
+    pattern: /(teacher|teaching\s+assistant|professor|educator|tutor|tutoring|教师|教授|教育|trainer\b)/i,
     token: "education_and_training",
   },
   // Public sector

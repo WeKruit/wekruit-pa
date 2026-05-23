@@ -36,7 +36,12 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { createRequire } from "node:module"
 import type { UserTags } from "@pa/pa-orchestrator"
-import { acceptableCareerStages, type CareerStage, CAREER_STAGE_VOCAB } from "@wekruit/shared-tags"
+import {
+  acceptableCareerStages,
+  type CareerStage,
+  CAREER_STAGE_VOCAB,
+  type RoleFunction,
+} from "@wekruit/shared-tags"
 import { z } from "zod"
 import {
   MatchingJobSchema,
@@ -143,6 +148,107 @@ function firstWorkHistoryTitle(summary: unknown): string | undefined {
   return first && first.length > 0 ? first : undefined
 }
 
+function workHistoryTitleSignals(summary: unknown): string[] {
+  if (typeof summary !== "string") return []
+  return summary
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => item.split("@")[0]?.trim() ?? "")
+    .filter((item) => item.length > 0)
+}
+
+function dedupeRoleFunctions(values: ReadonlyArray<string>): RoleFunction[] {
+  const seen = new Set<RoleFunction>()
+  const out: RoleFunction[] = []
+  for (const value of values) {
+    if (typeof value !== "string") continue
+    const token = value.trim().toLowerCase()
+    if (
+      token === "software_engineering" ||
+      token === "engineering_and_development" ||
+      token === "data_analysis" ||
+      token === "product_management" ||
+      token === "business_analyst" ||
+      token === "creatives_and_design" ||
+      token === "consultant" ||
+      token === "accounting_and_finance" ||
+      token === "marketing" ||
+      token === "management_and_executive" ||
+      token === "sales" ||
+      token === "human_resources" ||
+      token === "legal_and_compliance" ||
+      token === "arts_and_entertainment" ||
+      token === "education_and_training" ||
+      token === "public_sector_and_government" ||
+      token === "customer_service_and_support"
+    ) {
+      const role = token as RoleFunction
+      if (!seen.has(role)) {
+        seen.add(role)
+        out.push(role)
+      }
+    }
+  }
+  return out
+}
+
+const PROFILE_ROLE_KEYWORDS: ReadonlyArray<{ pattern: RegExp; role: RoleFunction }> = [
+  { pattern: /(data\s+(scientist|analyst|analytics|engineer|science)|analytics?\b|insights?\b|ml\s+engineer|machine\s+learning|ai\s+engineer|llm)/i, role: "data_analysis" },
+  { pattern: /(\bpm\b|product\s+manager|product\s+management|tpm\b)/i, role: "product_management" },
+  { pattern: /(business\s+(analyst|analysis)|\bba\b|executive\s+assistant|administrative\s+assistant|admin\s+assistant|office\s+manager|operations?\s+(coordinator|assistant|analyst)|program\s+(coordinator|operations))/i, role: "business_analyst" },
+  { pattern: /(designer|design\b|\bux\b|\bui\b|product\s+designer|creative|illustrator)/i, role: "creatives_and_design" },
+  { pattern: /(marketing|growth|brand|content\s+marketing|seo)/i, role: "marketing" },
+  { pattern: /(human\s+resources|\bhr\b|recruiter|recruiting|talent\b)/i, role: "human_resources" },
+  { pattern: /(teacher|teaching\s+assistant|professor|educator|tutor|tutoring|trainer\b)/i, role: "education_and_training" },
+  { pattern: /(customer\s+(service|support|success)|support\s+engineer|it\s+support)/i, role: "customer_service_and_support" },
+  { pattern: /(sales|account\s+exec|\bae\b|\bbd\b|business\s+development)/i, role: "sales" },
+  { pattern: /(swe|software\s+engineer|software\s+dev|software\s+development|frontend|backend|fullstack|developer|web\s+developer|mobile\s+developer)/i, role: "software_engineering" },
+]
+
+function mapProfileTextToRoleFunctions(text: string): RoleFunction[] {
+  const out: RoleFunction[] = []
+  for (const { pattern, role } of PROFILE_ROLE_KEYWORDS) {
+    if (pattern.test(text) && !out.includes(role)) out.push(role)
+  }
+  return out
+}
+
+function inferTargetRoleFunctionsFromProfile(tags: UserTags): RoleFunction[] {
+  const titleSignals = [
+    typeof tags.recentRoleTitle === "string" ? tags.recentRoleTitle : undefined,
+    ...workHistoryTitleSignals(tags.workHistorySummary),
+  ].filter((title): title is string => Boolean(title))
+  const mapped = titleSignals.flatMap((title) => mapProfileTextToRoleFunctions(title))
+  return dedupeRoleFunctions(mapped)
+}
+
+const TITLE_AUTHORITATIVE_ROLE_REPAIRS = new Set<RoleFunction>([
+  "human_resources",
+  "education_and_training",
+  "creatives_and_design",
+  "customer_service_and_support",
+])
+
+function repairMisalignedTargetRoleFunctions(
+  tags: UserTags,
+): UserTags["targetRoleFunction"] | undefined {
+  const inferred = inferTargetRoleFunctionsFromProfile(tags)
+  if (inferred.length === 0) return undefined
+  const existing = dedupeRoleFunctions(Array.isArray(tags.targetRoleFunction) ? tags.targetRoleFunction : [])
+  if (existing.length === 0) return inferred
+  if (inferred.some((role) => existing.includes(role))) return undefined
+
+  // Preserve explicit career-change intent into engineering. A PM/HR/designer
+  // resume can still target SWE when the conversation says so; only repair
+  // stale non-engineering role axes that conflict with a high-confidence title.
+  if (existing.includes("software_engineering") || existing.includes("engineering_and_development")) {
+    return undefined
+  }
+  const authoritative = inferred.filter((role) => TITLE_AUTHORITATIVE_ROLE_REPAIRS.has(role))
+  return authoritative.length > 0 ? authoritative : undefined
+}
+
 function derivedSeniorityToCareerStage(value: unknown): CareerStage | undefined {
   switch (value) {
     case "intern":
@@ -221,6 +327,8 @@ function inferMissingMatchingAxes(
   userId?: string,
 ): UserTags {
   const patch: Partial<UserTags> = {}
+  const targetRoleFunction = repairMisalignedTargetRoleFunctions(tags)
+  if (targetRoleFunction?.length) patch.targetRoleFunction = targetRoleFunction
   const careerStage =
     typeof tags.careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(tags.careerStage)
       ? tags.careerStage
@@ -1349,6 +1457,9 @@ type StrictCompanyPreference =
 
 function strictCompanyPreference(userTags: UserTags): StrictCompanyPreference | null {
   if (userTags.companySize === "open") return null
+  if (userTags.companySize === "early_startup" && userTags.prefersStartup === "startup") {
+    return "startup"
+  }
   if (
     userTags.companySize === "seed" ||
     userTags.companySize === "early_startup" ||
@@ -1383,6 +1494,8 @@ function companyMatchesStrictPreference(
         stage === "seed" ||
         stage === "series_a" ||
         stage === "series_b" ||
+        stage === "series_c" ||
+        stage === "series_d_plus" ||
         (stage === "unknown" && hasCompanyTag(info, ["yc_active"]))
       )
     case "early_startup":
