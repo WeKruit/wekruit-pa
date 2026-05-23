@@ -1538,9 +1538,6 @@ type StrictCompanyPreference =
 
 function strictCompanyPreference(userTags: UserTags): StrictCompanyPreference | null {
   if (userTags.companySize === "open") return null
-  if (userTags.companySize === "early_startup" && userTags.prefersStartup === "startup") {
-    return "startup"
-  }
   if (
     userTags.companySize === "seed" ||
     userTags.companySize === "early_startup" ||
@@ -1575,8 +1572,6 @@ function companyMatchesStrictPreference(
         stage === "seed" ||
         stage === "series_a" ||
         stage === "series_b" ||
-        stage === "series_c" ||
-        stage === "series_d_plus" ||
         (stage === "unknown" && hasCompanyTag(info, ["yc_active"]))
       )
     case "early_startup":

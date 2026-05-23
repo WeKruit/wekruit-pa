@@ -1786,6 +1786,18 @@ test("queryMatchingJobsV16: startup preference strictly keeps only startup-stage
     companyName: "BigCo",
     jobTitle: "Backend Engineer",
   })
+  await seedJob(mfs, "series-b-fit", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "SeriesBCo",
+    jobTitle: "Backend Engineer 2",
+  })
+  await seedJob(mfs, "series-c-drop", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "SeriesCCo",
+    jobTitle: "Backend Engineer 3",
+  })
   await seedJob(mfs, "unknown-drop", {
     roleFunction: ["software_engineering"],
     requiredSkills: ["python"],
@@ -1801,11 +1813,13 @@ test("queryMatchingJobsV16: startup preference strictly keeps only startup-stage
         new Map([
           ["seedco", { stage: "seed", tags: ["yc_active"] }],
           ["bigco", { stage: "ipo_public", tags: ["big_tech"] }],
+          ["seriesbco", { stage: "series_b", tags: ["ai_native"] }],
+          ["seriescco", { stage: "series_c", tags: ["ai_native"] }],
         ]),
     },
   )
 
-  assert.deepEqual(r.jobs.map((job) => job.id), ["startup-fit"])
+  assert.deepEqual(new Set(r.jobs.map((job) => job.id)), new Set(["startup-fit", "series-b-fit"]))
 })
 
 test("queryMatchingJobsV16: open company preference does not stage-filter jobs", async () => {
@@ -1850,7 +1864,7 @@ test("queryMatchingJobsV16: open company preference does not stage-filter jobs",
   assert.deepEqual(new Set(r.jobs.map((job) => job.id)), new Set(["startup-fit", "enterprise-fit"]))
 })
 
-test("queryMatchingJobsV16: generic startup preference is not overconstrained by early_startup tag", async () => {
+test("queryMatchingJobsV16: explicit early-startup company size wins over generic startup preference", async () => {
   const mfs = new MockFirestore()
   await mfs
     .collection("pa-users")
@@ -1871,23 +1885,29 @@ test("queryMatchingJobsV16: generic startup preference is not overconstrained by
     companyName: "SeedCo",
     jobTitle: "Backend Engineer 1",
   })
-  await seedJob(mfs, "series-b-fit", {
+  await seedJob(mfs, "series-a-fit", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "SeriesACo",
+    jobTitle: "Backend Engineer 2",
+  })
+  await seedJob(mfs, "series-b-drop", {
     roleFunction: ["software_engineering"],
     requiredSkills: ["python"],
     companyName: "SeriesBCo",
-    jobTitle: "Backend Engineer 2",
+    jobTitle: "Backend Engineer 3",
   })
-  await seedJob(mfs, "series-c-fit", {
+  await seedJob(mfs, "series-c-drop", {
     roleFunction: ["software_engineering"],
     requiredSkills: ["python"],
     companyName: "SeriesCCo",
-    jobTitle: "Backend Engineer 3",
+    jobTitle: "Backend Engineer 4",
   })
   await seedJob(mfs, "enterprise-drop", {
     roleFunction: ["software_engineering"],
     requiredSkills: ["python"],
     companyName: "BigCo",
-    jobTitle: "Backend Engineer 4",
+    jobTitle: "Backend Engineer 5",
   })
 
   const r = await queryMatchingJobsV16(
@@ -1897,6 +1917,7 @@ test("queryMatchingJobsV16: generic startup preference is not overconstrained by
       loadCompaniesByNameImpl: async () =>
         new Map([
           ["seedco", { stage: "seed", tags: ["yc_active"] }],
+          ["seriesaco", { stage: "series_a", tags: ["ai_native"] }],
           ["seriesbco", { stage: "series_b", tags: ["ai_native"] }],
           ["seriescco", { stage: "series_c", tags: ["ai_native"] }],
           ["bigco", { stage: "ipo_public", tags: ["big_tech"] }],
@@ -1904,7 +1925,7 @@ test("queryMatchingJobsV16: generic startup preference is not overconstrained by
     },
   )
 
-  assert.deepEqual(new Set(r.jobs.map((job) => job.id)), new Set(["seed-fit", "series-b-fit", "series-c-fit"]))
+  assert.deepEqual(new Set(r.jobs.map((job) => job.id)), new Set(["seed-fit", "series-a-fit"]))
 })
 
 test("queryMatchingJobsV16: early-startup company size rejects late-stage and public ai-native companies", async () => {
