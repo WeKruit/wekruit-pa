@@ -142,6 +142,33 @@ function inferCareerStageFromTitle(title: string): CareerStage | null {
   return null
 }
 
+function normalizeCareerStageToken(value: unknown): CareerStage | undefined {
+  if (typeof value !== "string") return undefined
+  const t = value.trim().toLowerCase().replace(/[\s-]+/g, "_")
+  if ((CAREER_STAGE_VOCAB as readonly string[]).includes(t)) return t as CareerStage
+  switch (t) {
+    case "entry":
+    case "entrylevel":
+    case "entry_level":
+    case "newgrad":
+    case "new_grad":
+      return "entry_level"
+    case "mid":
+    case "midlevel":
+    case "mid_level":
+      return "mid_level"
+    case "senior_level":
+    case "sr":
+      return "senior"
+    case "c_level":
+    case "clevel":
+    case "executive":
+      return "c_level"
+    default:
+      return undefined
+  }
+}
+
 function firstWorkHistoryTitle(summary: unknown): string | undefined {
   if (typeof summary !== "string") return undefined
   const first = summary.split(";")[0]?.trim()
@@ -199,15 +226,16 @@ function dedupeRoleFunctions(values: ReadonlyArray<string>): RoleFunction[] {
 }
 
 const PROFILE_ROLE_KEYWORDS: ReadonlyArray<{ pattern: RegExp; role: RoleFunction }> = [
-  { pattern: /(data\s+(scientist|analyst|analytics|engineer|science)|analytics?\b|insights?\b|retention\s+analyst|funnel\s+analysis|cohort\s+analysis|ml\s+engineer|machine\s+learning|ai\s+engineer|llm)/i, role: "data_analysis" },
+  { pattern: /(data\s+(scientist|analyst|analytics|engineer|science)|analytics?\b|insights?\b|retention\s+analyst|funnel\s+analysis|cohort\s+analysis|research\s+(assistant|analyst|associate)|graduate\s+research|ml\s+engineer|machine\s+learning|ai\s+engineer|llm)/i, role: "data_analysis" },
   { pattern: /(\bpm\b|product\s+manager|product\s+management|tpm\b)/i, role: "product_management" },
-  { pattern: /(business\s+(analyst|analysis)|\bba\b|executive\s+assistant|administrative\s+assistant|admin\s+assistant|office\s+manager|operations?\s+(coordinator|assistant|analyst)|operations?[\w\s&/-]{0,40}\banalyst\b|program\s+(coordinator|operations))/i, role: "business_analyst" },
+  { pattern: /(business\s+(analyst|analysis)|\bba\b|executive\s+assistant|administrative\s+assistant|admin\s+assistant|office\s+manager|project\s+coordinator|operations?\s+(coordinator|assistant|analyst)|operations?[\w\s&/-]{0,40}\banalyst\b|program\s+(coordinator|operations))/i, role: "business_analyst" },
   { pattern: /(designer|design\b|\bux\b|\bui\b|product\s+designer|creative|illustrator)/i, role: "creatives_and_design" },
   { pattern: /(marketing|growth|brand|content\s+marketing|seo)/i, role: "marketing" },
   { pattern: /(human\s+resources|\bhr\b|recruiter|recruiting|talent\b)/i, role: "human_resources" },
   { pattern: /(teacher|teaching\s+assistant|professor|educator|tutor|tutoring|trainer\b)/i, role: "education_and_training" },
-  { pattern: /(customer\s+(service|support|success)|support\s+engineer|it\s+support)/i, role: "customer_service_and_support" },
-  { pattern: /(sales|account\s+exec|\bae\b|\bbd\b|business\s+development)/i, role: "sales" },
+  { pattern: /(customer\s+(service|support|success)|support\s+engineer|it\s+support|retail|store\s+manager|restaurant|food\s+beverage|server\b|bakery)/i, role: "customer_service_and_support" },
+  { pattern: /(sales|account\s+(manager|exec|executive)|client\s+account|retail|store\s+manager|\bae\b|\bbd\b|business\s+development)/i, role: "sales" },
+  { pattern: /(store\s+manager|assistant\s+store\s+manager|team\s+lead|general\s+manager)/i, role: "management_and_executive" },
   { pattern: /(swe|software\s+engineer|software\s+dev|software\s+development|frontend|backend|fullstack|developer|web\s+developer|mobile\s+developer)/i, role: "software_engineering" },
 ]
 
@@ -408,18 +436,23 @@ function titleLooksEngineering(title: string): boolean {
   )
 }
 
-function titleAllowedByExplicitNonSoftwareTarget(title: string, targetRoles: Set<string>): boolean {
+function profileRoleIntentText(userTags: UserTags): string {
+  return `${profileTitleText(userTags)} ${explicitEngineeringIntentText(userTags)}`.toLowerCase()
+}
+
+function titleAllowedByExplicitNonSoftwareTarget(title: string, targetRoles: Set<string>, userTags: UserTags): boolean {
   const t = title.trim().toLowerCase()
-  if (
-    targetRoles.has("data_analysis") &&
-    /\b(data\s+engineer|data\s+engineering|ml\s+engineer|machine\s+learning\s+engineer)\b/.test(t)
-  ) {
-    return true
+  const intent = profileRoleIntentText(userTags)
+  if (targetRoles.has("data_analysis") && /\b(data|analytics?|ml|machine\s+learning|ai)\s+engineer(s)?\b/.test(t)) {
+    return /\b(data|analytics?|ml|machine\s+learning|ai)\s+engineer\b/.test(intent)
   }
-  if (targetRoles.has("sales") && /\b(sales|solutions?|solution)\s+engineer(s)?\b/.test(t)) {
-    return true
+  if (targetRoles.has("sales") && /\b(sales|solutions?|solution|pre[-\s]?sales)\s+engineer(s)?\b/.test(t)) {
+    return /\b(sales|solutions?|solution|pre[-\s]?sales)\s+engineer\b/.test(intent)
   }
   if (targetRoles.has("customer_service_and_support") && /\b(success|support)\s+engineer(s)?\b/.test(t)) {
+    return /\b(it\s+support|technical\s+support|support\s+(engineer|consultant|specialist|analyst))\b/.test(intent)
+  }
+  if (targetRoles.has("customer_service_and_support") && /\bit\s+systems?\s+administrator\b/.test(t)) {
     return true
   }
   return false
@@ -457,7 +490,17 @@ function isRoleTitleMismatch(userTags: UserTags, job: MatchingJob): boolean {
   if (titleLooksClinical(title) && !userHasHealthcareSignal(userTags)) return true
   if (!titleLooksEngineering(title)) return false
   if (targetRoles.has("software_engineering") || targetRoles.has("engineering_and_development")) return false
-  return !titleAllowedByExplicitNonSoftwareTarget(title, targetRoles)
+  return !titleAllowedByExplicitNonSoftwareTarget(title, targetRoles, userTags)
+}
+
+function buildMissingAxes(userTags: UserTags): V16QueryResult["missingAxes"] {
+  const missingAxes: V16QueryResult["missingAxes"] = []
+  if (!userTags.targetRoleFunction?.length) missingAxes!.push("targetRoleFunction")
+  if (!userTags.targetLocations?.length) missingAxes!.push("targetLocations")
+  if (!userTags.visaStatus) missingAxes!.push("visaStatus")
+  if (!userTags.careerStage) missingAxes!.push("careerStage")
+  if (!userTags.targetJobType?.length) missingAxes!.push("targetJobType")
+  return missingAxes
 }
 
 // ---------------------------------------------------------------------------
@@ -866,10 +909,7 @@ export function applyV16HardFilters(
     // the scraper missed the structured field so senior/lead/director jobs do
     // not leak to junior users.
     if (acceptableStages) {
-      const jobStage =
-        typeof job.seniorityLevel === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(job.seniorityLevel)
-          ? job.seniorityLevel as CareerStage
-          : inferCareerStageFromTitle(getMatchingJobTitle(job))
+      const jobStage = normalizeCareerStageToken(job.seniorityLevel) ?? inferCareerStageFromTitle(getMatchingJobTitle(job))
       if (jobStage && !acceptableStages.has(jobStage)) {
         counters.careerStage++
         continue
@@ -1665,7 +1705,10 @@ async function runV16Query(
       const locationBuckets = Array.isArray(raw.locationBuckets)
         ? (raw.locationBuckets.filter((s): s is string => typeof s === "string"))
         : undefined
-      const seniorityLevel = typeof raw.seniorityLevel === "string" ? raw.seniorityLevel : undefined
+      const seniorityLevel =
+        typeof raw.seniorityLevel === "string"
+          ? (normalizeCareerStageToken(raw.seniorityLevel) ?? raw.seniorityLevel)
+          : undefined
       const merged: MatchingJob & { embedding?: number[] | null } = {
         ...m,
         ...(roleFunction && roleFunction.length > 0 ? { roleFunction } : {}),
@@ -1785,6 +1828,19 @@ export async function queryMatchingJobsV16(
     }
   }
   const userTags = args.lang ? { ...loadedUserTags, preferredLang: args.lang } : loadedUserTags
+  const initialMissingAxes = buildMissingAxes(userTags)
+  if (!userTags.targetRoleFunction?.length) {
+    log("pa.match.role_function_missing_return_empty", { userId: args.userId, missingAxes: initialMissingAxes })
+    return {
+      jobs: [],
+      total: 0,
+      dropped: 0,
+      hardFilter: { visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0, roleTitleMismatch: 0 },
+      needsOnboarding: true,
+      missingAxes: initialMissingAxes,
+      userTags: userTags as unknown as Record<string, unknown>,
+    }
+  }
 
   // 2. Run query (push role to query layer).
   const { jobs: rawJobs } = await runV16Query(deps.db, userTags, log)
@@ -2022,12 +2078,7 @@ export async function queryMatchingJobsV16(
   // though V16 degrades gracefully without them. Switching to registry-driven
   // REQUIRED_AXES would narrow this to 3 axes and is deferred to a follow-up
   // PR alongside the matching `V16QueryResult["missingAxes"]` enum change.
-  const missingAxes: V16QueryResult["missingAxes"] = []
-  if (!userTags.targetRoleFunction?.length) missingAxes!.push("targetRoleFunction")
-  if (!userTags.targetLocations?.length) missingAxes!.push("targetLocations")
-  if (!userTags.visaStatus) missingAxes!.push("visaStatus")
-  if (!userTags.careerStage) missingAxes!.push("careerStage")
-  if (!userTags.targetJobType?.length) missingAxes!.push("targetJobType")
+  const missingAxes = initialMissingAxes
 
   return {
     jobs: top,
