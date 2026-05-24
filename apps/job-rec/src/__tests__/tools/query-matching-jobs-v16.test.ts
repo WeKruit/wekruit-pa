@@ -910,6 +910,50 @@ test("queryMatchingJobsV16: infers account manager as sales and drops sales-engi
   assert.equal(r.hardFilter.roleTitleMismatch, 1)
 })
 
+test("queryMatchingJobsV16: sales manager profile does not infer data role from weak historical insights title", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_sales_manager").set({
+    tags: {
+      skills: ["sales forecasting", "pipeline management", "consumer behavior analysis"],
+      schemaVersion: 1,
+      recentRoleTitle: "Sales manager",
+      workHistorySummary:
+        "Sales manager @ Kyosk Digital Services Limited; Brand Analyst @ Kyosk Digital Services Limited; Graduate assistant, School of Business User experience & behavioral insights lab @ Quinnipiac University",
+      targetRoleFunction: [],
+      targetLocations: ["remote_anywhere"],
+      visaStatus: "citizen",
+      careerStage: "manager",
+    },
+  })
+  await seedJob(mfs, "sales", {
+    roleFunction: ["sales", "management_and_executive"],
+    requiredSkills: ["sales forecasting", "pipeline management"],
+    companyName: "SalesCo",
+    roleTitle: "Sales Lead",
+    jobTitle: "Sales Lead",
+    seniorityLevel: "manager",
+  })
+  await seedJob(mfs, "research", {
+    roleFunction: ["data_analysis", "engineering_and_development"],
+    requiredSkills: ["consumer behavior analysis"],
+    companyName: "ResearchCo",
+    roleTitle: "Researcher, Safety Oversight",
+    jobTitle: "Researcher, Safety Oversight",
+    seniorityLevel: "manager",
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_sales_manager", nowMs: NOW },
+    { db: asFirestore(mfs) },
+  )
+
+  const targetRoles = (r.userTags as Record<string, unknown>).targetRoleFunction as string[]
+  assert.ok(targetRoles.includes("sales"))
+  assert.ok(targetRoles.includes("marketing"))
+  assert.ok(!targetRoles.includes("data_analysis"))
+  assert.deepEqual(r.jobs.map((job) => job.id), ["sales"])
+})
+
 test("queryMatchingJobsV16: infers research assistant as data analysis and drops software-engineer titles", async () => {
   const mfs = new MockFirestore()
   await mfs.collection("pa-users").doc("u_research_assistant").set({
