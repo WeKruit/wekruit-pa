@@ -247,12 +247,30 @@ function mapProfileTextToRoleFunctions(text: string): RoleFunction[] {
   return out
 }
 
+const STRONG_DATA_ROLE_TITLE_RE =
+  /\b(data\s+(scientist|analyst|analytics|engineer|science)|analytics?\s+(analyst|engineer|manager)|retention\s+analyst|funnel\s+analysis|cohort\s+analysis|research\s+(assistant|analyst|associate)|graduate\s+research|ml\s+engineer|machine\s+learning|ai\s+engineer|llm)\b/i
+
+function currentTitleNarrowsHistoricalDataInference(currentRoles: RoleFunction[]): boolean {
+  const narrowCurrentRole =
+    currentRoles.includes("sales") ||
+    currentRoles.includes("customer_service_and_support") ||
+    currentRoles.includes("management_and_executive")
+  return narrowCurrentRole && !currentRoles.includes("data_analysis") && !currentRoles.includes("business_analyst")
+}
+
 function inferTargetRoleFunctionsFromProfile(tags: UserTags): RoleFunction[] {
-  const titleSignals = [
-    typeof tags.recentRoleTitle === "string" ? tags.recentRoleTitle : undefined,
-    ...workHistoryTitleSignals(tags.workHistorySummary),
-  ].filter((title): title is string => Boolean(title))
-  const mapped = titleSignals.flatMap((title) => mapProfileTextToRoleFunctions(title))
+  const currentTitle = typeof tags.recentRoleTitle === "string" ? tags.recentRoleTitle : undefined
+  const currentRoles = currentTitle ? mapProfileTextToRoleFunctions(currentTitle) : []
+  const historicalTitles = workHistoryTitleSignals(tags.workHistorySummary)
+    .filter((title) => title !== currentTitle)
+  const historicalRoles = historicalTitles.flatMap((title) => mapProfileTextToRoleFunctions(title))
+  const mapped = [...currentRoles, ...historicalRoles]
+  if (
+    currentTitleNarrowsHistoricalDataInference(currentRoles) &&
+    !historicalTitles.some((title) => STRONG_DATA_ROLE_TITLE_RE.test(title))
+  ) {
+    return dedupeRoleFunctions(mapped.filter((role) => role !== "data_analysis"))
+  }
   return dedupeRoleFunctions(mapped)
 }
 
