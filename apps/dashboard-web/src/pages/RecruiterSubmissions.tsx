@@ -4,7 +4,7 @@
  * Lists every recruiter submission newest-first, with score summary +
  * drill-down. Auth-gated to @wekruit.com (AppShell).
  */
-import { useEffect, useState } from "react"
+import { Fragment, useEffect, useState } from "react"
 import { collection, getDocs, limit, orderBy, query } from "firebase/firestore"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
@@ -155,7 +155,7 @@ export default function RecruiterSubmissions() {
               {filtered.map((r) => {
                 const expanded = expandedId === r.id
                 return (
-                  <>
+                  <Fragment key={r.id}>
                     <tr
                       key={r.id}
                       style={{ borderBottom: "1px solid #f0f0ec", cursor: "pointer" }}
@@ -207,7 +207,7 @@ export default function RecruiterSubmissions() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 )
               })}
             </tbody>

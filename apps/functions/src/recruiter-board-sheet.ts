@@ -9,8 +9,8 @@
  * (wekruit-5f89b@appspot.gserviceaccount.com). Adam must share the master
  * spreadsheet with that SA as Editor before sync will work.
  *
- * Configuration: defineSecret("RECRUITER_BOARD_SHEET_ID"). If unset, sync is
- * skipped (graceful degradation — submission still lands in Firestore).
+ * Configuration: optional RECRUITER_BOARD_SHEET_ID environment variable. If
+ * unset, sync is skipped and the submission still lands in Firestore.
  */
 import { google, type sheets_v4 } from "googleapis"
 import { logger } from "firebase-functions/v2"
