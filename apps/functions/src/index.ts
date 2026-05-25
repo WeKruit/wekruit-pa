@@ -265,6 +265,8 @@ export {
 // Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
 export { paPublicCvIngest } from "./public-cv-ingest.js"
+// Recruiter board (candidate.wekruit.com/recruiters): public list + submission.
+export { paCollabJobsList, paRecruiterSubmission } from "./recruiter-board.js"
 export { paCandidateMagicLinkVerify } from "./candidate-magic-link-verify.js"
 // WeKruit Open — public job board at layoff.wekruit.com/open. Reads from
 // matching-jobs (scraped/non-collab) with hard filters mirroring v16's
