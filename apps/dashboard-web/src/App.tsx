@@ -69,6 +69,8 @@ import OutreachOps from "./pages/OutreachOps.js"
 import PassedCandidates from "./pages/PassedCandidates.js"
 // v1.9 Phase 89 — pre-screen feedback aggregate.
 import PrescreenFeedback from "./pages/PrescreenFeedback.js"
+// Recruiter board (candidate.wekruit.com/recruiters) — admin review surface.
+import RecruiterSubmissions from "./pages/RecruiterSubmissions.js"
 // v2.0 External Supply V1 — Wave D admin surfaces (Landing, BatchNew,
 // BatchDetail, Review, Evaluations, EvaluationDetail, Research, Outreach,
 // Sync, Audit). All routes live under /admin/external-supply/**.
@@ -214,6 +216,8 @@ export default function App() {
           <Route path="/admin/sendblue-pool" element={<SendbluePool />} />
           {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}
           <Route path="/admin/prescreen-feedback" element={<PrescreenFeedback />} />
+          {/* Recruiter board submissions review surface. */}
+          <Route path="/admin/recruiter-submissions" element={<RecruiterSubmissions />} />
           {/* v2.0 External Supply V1 — Wave D admin surfaces. */}
           <Route path="/admin/external-supply" element={<ExternalSupplyLanding />} />
           <Route path="/admin/external-supply/jobs" element={<ExternalSupplyJobs />} />

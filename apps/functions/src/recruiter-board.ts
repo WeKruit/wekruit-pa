@@ -10,9 +10,16 @@
  *   .planning/INITIATIVE-recruiter-board.md
  */
 import { onRequest } from "firebase-functions/v2/https"
+import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, FieldValue, type Firestore } from "firebase-admin/firestore"
 import { createHash, randomUUID } from "node:crypto"
+import { appendSubmissionToSheet } from "./recruiter-board-sheet.js"
+
+// Optional. When set + the SA has Editor access on the sheet, each submission
+// is appended to a per-jobId tab. If unset, sync is silently skipped — the
+// Firestore write still happens.
+const RECRUITER_BOARD_SHEET_ID = defineSecret("RECRUITER_BOARD_SHEET_ID")
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types — recruiterBoard payload (mirrored loosely; see INITIATIVE doc)
@@ -241,7 +248,7 @@ export function computeSubmissionScore(
 }
 
 export const paRecruiterSubmission = onRequest(
-  { cors: false, region: "us-central1" },
+  { cors: false, region: "us-central1", secrets: [RECRUITER_BOARD_SHEET_ID] },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
@@ -315,6 +322,41 @@ export const paRecruiterSubmission = onRequest(
       submitterEmail: payload.submitter.email,
       hardScore: `${score.hardChecked}/${score.hardTotal}`,
     })
+
+    // Best-effort Sheet sync. Failure does not block the 200 — the Firestore
+    // write is the source of truth and the doc keeps an error breadcrumb so
+    // a retry job can pick it up later.
+    const sheetId = RECRUITER_BOARD_SHEET_ID.value()
+    if (sheetId) {
+      const sheetResult = await appendSubmissionToSheet(sheetId, {
+        submissionId,
+        jobId: payload.jobId,
+        companyLabel: rb.label.company,
+        submitter: payload.submitter,
+        candidate: payload.candidate,
+        checklist: payload.checklist,
+        score,
+        jobChecklistGroups: rb.checklist.groups,
+        jobTitle: String(jobData.title ?? ""),
+      })
+      try {
+        if (sheetResult.ok) {
+          await db.collection("pa-recruiter-submissions").doc(submissionId).update({
+            sheetSyncedAt: FieldValue.serverTimestamp(),
+            sheetRowId: sheetResult.rowId,
+          })
+        } else {
+          await db.collection("pa-recruiter-submissions").doc(submissionId).update({
+            sheetSyncError: sheetResult.reason.slice(0, 500),
+          })
+        }
+      } catch (err) {
+        logger.error("paRecruiterSubmission_sheet_update_failed", {
+          error: String(err),
+          submissionId,
+        })
+      }
+    }
 
     res.status(200).json({
       ok: true,
