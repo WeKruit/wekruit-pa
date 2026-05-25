@@ -7,6 +7,11 @@ test("resolveToolFamily maps match connectors", () => {
   assert.equal(resolveToolFamily("match-against-collab-jobs"), "match_collab")
 })
 
+test("resolveToolFamily maps durable job-profile mutation connectors", () => {
+  assert.equal(resolveToolFamily("set-matching-preferences"), "job_profile")
+  assert.equal(resolveToolFamily("set-daily-job-recommendation-subscription"), "job_profile")
+})
+
 test("resolveToolFamily maps hosted web search aliases", () => {
   assert.equal(resolveToolFamily("current-info"), "web_search")
   assert.equal(resolveToolFamily("web_search"), "web_search")

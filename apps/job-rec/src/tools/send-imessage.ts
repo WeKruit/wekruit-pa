@@ -14,9 +14,11 @@
 
 import { createHash } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
-import { tool } from "@openai/agents"
+import { createRequire } from "node:module"
 import { PA_COLLECTIONS, type Channel, type InboundEvent, type User } from "@pa/core-types"
 import { SendImessageInputSchema, type SendImessageOutput } from "../types.js"
+
+const require = createRequire(import.meta.url)
 
 export type SendImessageDeps = {
   db: Firestore
@@ -197,6 +199,7 @@ export async function sendImessage(
 }
 
 export function createSendImessageTool(deps: SendImessageDeps) {
+  const { tool } = require("@openai/agents") as typeof import("@openai/agents")
   return tool({
     name: "sendImessage",
     description:

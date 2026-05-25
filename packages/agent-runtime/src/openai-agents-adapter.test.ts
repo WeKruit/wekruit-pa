@@ -442,3 +442,23 @@ test("buildSdkTools(13.3): bridges wekruit-matching descriptor through the SDK t
   // through tool() without errors and the parameters/name surface is
   // intact. The bridge in buildSdkTools follows the same pattern.
 })
+
+test("buildModelSettings applies router-enforced tool choice and sequential tool execution", async () => {
+  const { __forTesting } = await import("./openai-agents-adapter.js")
+  const settings = (__forTesting as unknown as {
+    buildModelSettings: (ctx: {
+      agent: { temperature?: number; maxTokens?: number }
+      toolChoice?: "auto" | "required" | "none"
+      parallelToolCalls?: boolean
+    }, hasTools: boolean) => Record<string, unknown>
+  }).buildModelSettings(
+    {
+      agent: { temperature: 0, maxTokens: 700 },
+      toolChoice: "required",
+      parallelToolCalls: false,
+    },
+    true
+  )
+  assert.equal(settings.toolChoice, "required")
+  assert.equal(settings.parallelToolCalls, false)
+})

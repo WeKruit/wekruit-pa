@@ -986,6 +986,166 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
     void state
   })
 
+  it("parser v2 resume signals fill missing matching tag axes on pa-users.tags", async () => {
+    const { db, state } = makeFakeDb({
+      users: {
+        user_v2_tags: {
+          phoneE164: "+1555",
+          tags: {
+            targetLocations: ["new_york"],
+          },
+        },
+      },
+    })
+    const { log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    delete deps.llmExtract
+    deps.followupDeliveryMode = "none"
+    deps.computeEmbedding = async () => null
+    deps.isParserV2Enabled = async () => true
+    deps.parserV2Extract = async () => ({
+      parsed: {
+        fullName: "Riley Candidate",
+        email: "riley@example.com",
+        phone: null,
+        location: "San Francisco, CA",
+        summary: null,
+        skills: [
+          "TypeScript",
+          "React",
+          "Node.js",
+          "PostgreSQL",
+          "AWS",
+          "Developer Tools",
+          "Distributed Systems",
+        ],
+        workHistory: [
+          {
+            title: "Senior Full Stack Software Engineer",
+            company: "Acme",
+            location: "San Francisco, CA",
+            startDate: "2019",
+            endDate: null,
+            currentRole: true,
+            description: "Built developer tools and distributed systems.",
+            bullets: [],
+            achievements: [],
+          },
+        ],
+        education: [],
+        projects: [],
+        certifications: [],
+        languages: [],
+        interests: [],
+        awards: [],
+        volunteerWork: [],
+        websites: [],
+        totalYearsExperience: 7,
+        workAuthorization: "H1B",
+        parseConfidence: 0.95,
+        inferredAnswers: [],
+        relevantIndustry: [],
+        relevantSpecialization: [],
+        proposedTags: [],
+      },
+      usedTier: "primary",
+      usedModel: "gpt-5.4-nano",
+      usage: { input_tokens: 100, output_tokens: 50 },
+    })
+
+    const res = await ingestCv(
+      { userId: "user_v2_tags", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+
+    assert.equal(res.ok, true)
+    const tagSet = state.userSets.find((op) => "tags" in op.data)
+    assert.ok(tagSet, "expected pa-users.tags write")
+    const tags = tagSet!.data.tags as Record<string, unknown>
+    assert.deepEqual(tags.targetRoleFunction, ["software_engineering"])
+    assert.equal(tags.careerStage, "senior")
+    assert.equal(tags.visaStatus, "sponsor_needed")
+    assert.deepEqual(tags.relevantTags, ["developer_tools", "distributed_systems"])
+    assert.equal(tags.targetLocations, undefined, "resume location must not become a target location")
+  })
+
+  it("parser v2 resume tag projection does not replace existing matching tag axes", async () => {
+    const { db, state } = makeFakeDb({
+      users: {
+        user_v2_explicit_tags: {
+          phoneE164: "+1555",
+          tags: {
+            targetRoleFunction: ["data_analysis"],
+            careerStage: "manager",
+            visaStatus: "citizen",
+            relevantTags: ["quantitative_research"],
+          },
+        },
+      },
+    })
+    const { log } = captureLog()
+    const { deps } = makeStubbedDeps({ db, log })
+    delete deps.llmExtract
+    deps.followupDeliveryMode = "none"
+    deps.computeEmbedding = async () => null
+    deps.isParserV2Enabled = async () => true
+    deps.parserV2Extract = async () => ({
+      parsed: {
+        fullName: "Riley Candidate",
+        email: "riley@example.com",
+        phone: null,
+        location: "San Francisco, CA",
+        summary: null,
+        skills: ["TypeScript", "React", "Developer Tools"],
+        workHistory: [
+          {
+            title: "Senior Full Stack Software Engineer",
+            company: "Acme",
+            location: "San Francisco, CA",
+            startDate: "2019",
+            endDate: null,
+            currentRole: true,
+            description: "Built developer tools.",
+            bullets: [],
+            achievements: [],
+          },
+        ],
+        education: [],
+        projects: [],
+        certifications: [],
+        languages: [],
+        interests: [],
+        awards: [],
+        volunteerWork: [],
+        websites: [],
+        totalYearsExperience: 7,
+        workAuthorization: "H1B",
+        parseConfidence: 0.95,
+        inferredAnswers: [],
+        relevantIndustry: [],
+        relevantSpecialization: [],
+        proposedTags: [],
+      },
+      usedTier: "primary",
+      usedModel: "gpt-5.4-nano",
+      usage: { input_tokens: 100, output_tokens: 50 },
+    })
+
+    const res = await ingestCv(
+      { userId: "user_v2_explicit_tags", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+
+    assert.equal(res.ok, true)
+    const tagSet = state.userSets.find((op) => "tags" in op.data)
+    assert.ok(tagSet, "expected pa-users.tags write")
+    const tags = tagSet!.data.tags as Record<string, unknown>
+    assert.equal(tags.targetRoleFunction, undefined)
+    assert.equal(tags.careerStage, undefined)
+    assert.equal(tags.visaStatus, undefined)
+    assert.equal(tags.relevantTags, undefined)
+  })
+
   it("missing pa-users doc → still writes tags from CV-only signals (statedPreferences omitted)", async () => {
     const { db, state } = makeFakeDb() // no users seeded
     const { log } = captureLog()

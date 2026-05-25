@@ -34,9 +34,14 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
+import { createRequire } from "node:module"
 import type { UserTags } from "@pa/pa-orchestrator"
-import { acceptableCareerStages, type CareerStage, CAREER_STAGE_VOCAB } from "@wekruit/shared-tags"
-import { tool } from "@openai/agents"
+import {
+  acceptableCareerStages,
+  type CareerStage,
+  CAREER_STAGE_VOCAB,
+  type RoleFunction,
+} from "@wekruit/shared-tags"
 import { z } from "zod"
 import {
   MatchingJobSchema,
@@ -91,6 +96,7 @@ const LLM_RERANK_CACHE_STALE_MS = 36 * 3600 * 1000
 
 const RERANK_CACHE_COLLECTION = "pa-user-rerank-cache"
 const SKILL_JDREL_CACHE_COLLECTION = "pa-user-skill-jdrel-cache"
+const require = createRequire(import.meta.url)
 
 // ---------------------------------------------------------------------------
 // Helpers — title fallback (2026-05-19 hotfix)
@@ -115,6 +121,404 @@ export const getMatchingJobTitle = (
   if (a.length > 0) return a
   const b = typeof j.roleTitle === "string" ? j.roleTitle.trim() : ""
   return b
+}
+
+function inferCareerStageFromTitle(title: string): CareerStage | null {
+  const t = title.trim().toLowerCase()
+  if (!t) return null
+  if (/\bfounder\b/.test(t)) return "founder"
+  if (/\b(c[-\s]?level|chief|cto|ceo|cfo|coo|cmo)\b/.test(t)) return "c_level"
+  if (/\bvp|vice\s+president\b/.test(t)) return "vp"
+  if (/\bdirector\b/.test(t)) return "director"
+  if (/\bprincipal\b/.test(t)) return "principal"
+  if (/\bstaff\b/.test(t)) return "staff"
+  if (/\b(senior|sr\.?|lead|head\s+of)\b/.test(t)) return "senior"
+  if (/\bmanager\b/.test(t)) return "manager"
+  if (/\b(mid[-\s]?level|midlevel)\b/.test(t)) return "mid_level"
+  if (/\b(junior|jr\.?)\b/.test(t)) return "junior"
+  if (/\b(entry[-\s]?level|new\s+grad|graduate)\b/.test(t)) return "entry_level"
+  if (/\bintern(ship)?\b/.test(t)) return "intern"
+  if (/\bstudent\b/.test(t)) return "student"
+  return null
+}
+
+function normalizeCareerStageToken(value: unknown): CareerStage | undefined {
+  if (typeof value !== "string") return undefined
+  const t = value.trim().toLowerCase().replace(/[\s-]+/g, "_")
+  if ((CAREER_STAGE_VOCAB as readonly string[]).includes(t)) return t as CareerStage
+  switch (t) {
+    case "entry":
+    case "entrylevel":
+    case "entry_level":
+    case "newgrad":
+    case "new_grad":
+      return "entry_level"
+    case "mid":
+    case "midlevel":
+    case "mid_level":
+      return "mid_level"
+    case "senior_level":
+    case "sr":
+      return "senior"
+    case "c_level":
+    case "clevel":
+    case "executive":
+      return "c_level"
+    default:
+      return undefined
+  }
+}
+
+function firstWorkHistoryTitle(summary: unknown): string | undefined {
+  if (typeof summary !== "string") return undefined
+  const first = summary.split(";")[0]?.trim()
+  return first && first.length > 0 ? first : undefined
+}
+
+function matchingCareerStageWindow(stage: CareerStage): CareerStage[] {
+  if (stage !== "founder") return acceptableCareerStages(stage)
+  return ["senior", "staff", "principal", "manager", "director", "vp", "c_level", "founder"]
+}
+
+function workHistoryTitleSignals(summary: unknown): string[] {
+  if (typeof summary !== "string") return []
+  return summary
+    .split(";")
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .map((item) => item.split("@")[0]?.trim() ?? "")
+    .filter((item) => item.length > 0)
+}
+
+function dedupeRoleFunctions(values: ReadonlyArray<string>): RoleFunction[] {
+  const seen = new Set<RoleFunction>()
+  const out: RoleFunction[] = []
+  for (const value of values) {
+    if (typeof value !== "string") continue
+    const token = value.trim().toLowerCase()
+    if (
+      token === "software_engineering" ||
+      token === "engineering_and_development" ||
+      token === "data_analysis" ||
+      token === "product_management" ||
+      token === "business_analyst" ||
+      token === "creatives_and_design" ||
+      token === "consultant" ||
+      token === "accounting_and_finance" ||
+      token === "marketing" ||
+      token === "management_and_executive" ||
+      token === "sales" ||
+      token === "human_resources" ||
+      token === "legal_and_compliance" ||
+      token === "arts_and_entertainment" ||
+      token === "education_and_training" ||
+      token === "public_sector_and_government" ||
+      token === "customer_service_and_support"
+    ) {
+      const role = token as RoleFunction
+      if (!seen.has(role)) {
+        seen.add(role)
+        out.push(role)
+      }
+    }
+  }
+  return out
+}
+
+const PROFILE_ROLE_KEYWORDS: ReadonlyArray<{ pattern: RegExp; role: RoleFunction }> = [
+  { pattern: /(data\s+(scientist|analyst|analytics|engineer|science)|analytics?\b|insights?\b|retention\s+analyst|funnel\s+analysis|cohort\s+analysis|research\s+(assistant|analyst|associate)|graduate\s+research|ml\s+engineer|machine\s+learning|ai\s+engineer|llm)/i, role: "data_analysis" },
+  { pattern: /(\bpm\b|product\s+manager|product\s+management|tpm\b)/i, role: "product_management" },
+  { pattern: /(business\s+(analyst|analysis)|\bba\b|executive\s+assistant|administrative\s+assistant|admin\s+assistant|office\s+manager|project\s+coordinator|operations?\s+(coordinator|assistant|analyst)|operations?[\w\s&/-]{0,40}\banalyst\b|program\s+(coordinator|operations))/i, role: "business_analyst" },
+  { pattern: /(designer|design\b|\bux\b|\bui\b|product\s+designer|creative|illustrator)/i, role: "creatives_and_design" },
+  { pattern: /(marketing|growth|brand|content\s+marketing|seo)/i, role: "marketing" },
+  { pattern: /(human\s+resources|\bhr\b|recruiter|recruiting|talent\b)/i, role: "human_resources" },
+  { pattern: /(teacher|teaching\s+assistant|professor|educator|tutor|tutoring|trainer\b)/i, role: "education_and_training" },
+  { pattern: /(customer\s+(service|support|success)|support\s+engineer|it\s+support|retail|store\s+manager|restaurant|food\s+beverage|server\b|bakery)/i, role: "customer_service_and_support" },
+  { pattern: /(sales|account\s+(manager|exec|executive)|client\s+account|retail|store\s+manager|\bae\b|\bbd\b|business\s+development)/i, role: "sales" },
+  { pattern: /(store\s+manager|assistant\s+store\s+manager|team\s+lead|general\s+manager)/i, role: "management_and_executive" },
+  { pattern: /(swe|software\s+engineer|software\s+dev|software\s+development|frontend|backend|fullstack|developer|web\s+developer|mobile\s+developer)/i, role: "software_engineering" },
+]
+
+function mapProfileTextToRoleFunctions(text: string): RoleFunction[] {
+  const out: RoleFunction[] = []
+  for (const { pattern, role } of PROFILE_ROLE_KEYWORDS) {
+    if (pattern.test(text) && !out.includes(role)) out.push(role)
+  }
+  return out
+}
+
+const STRONG_DATA_ROLE_TITLE_RE =
+  /\b(data\s+(scientist|analyst|analytics|engineer|science)|analytics?\s+(analyst|engineer|manager)|retention\s+analyst|funnel\s+analysis|cohort\s+analysis|research\s+(assistant|analyst|associate)|graduate\s+research|ml\s+engineer|machine\s+learning|ai\s+engineer|llm)\b/i
+
+function currentTitleNarrowsHistoricalDataInference(currentRoles: RoleFunction[]): boolean {
+  const narrowCurrentRole =
+    currentRoles.includes("sales") ||
+    currentRoles.includes("customer_service_and_support") ||
+    currentRoles.includes("management_and_executive")
+  return narrowCurrentRole && !currentRoles.includes("data_analysis") && !currentRoles.includes("business_analyst")
+}
+
+function inferTargetRoleFunctionsFromProfile(tags: UserTags): RoleFunction[] {
+  const currentTitle = typeof tags.recentRoleTitle === "string" ? tags.recentRoleTitle : undefined
+  const currentRoles = currentTitle ? mapProfileTextToRoleFunctions(currentTitle) : []
+  const historicalTitles = workHistoryTitleSignals(tags.workHistorySummary)
+    .filter((title) => title !== currentTitle)
+  const historicalRoles = historicalTitles.flatMap((title) => mapProfileTextToRoleFunctions(title))
+  const mapped = [...currentRoles, ...historicalRoles]
+  if (
+    currentTitleNarrowsHistoricalDataInference(currentRoles) &&
+    !historicalTitles.some((title) => STRONG_DATA_ROLE_TITLE_RE.test(title))
+  ) {
+    return dedupeRoleFunctions(mapped.filter((role) => role !== "data_analysis"))
+  }
+  return dedupeRoleFunctions(mapped)
+}
+
+function profileTitleText(tags: UserTags): string {
+  return [
+    typeof tags.recentRoleTitle === "string" ? tags.recentRoleTitle : undefined,
+    ...workHistoryTitleSignals(tags.workHistorySummary),
+  ].filter((part): part is string => Boolean(part)).join(" ")
+}
+
+function profileLooksOperationsAnalyst(tags: UserTags): boolean {
+  return /\b(operations?[\w\s&/-]{0,50}\banalyst\b|growth\s+operations|retention\s+analyst)\b/i.test(profileTitleText(tags))
+}
+
+function explicitEngineeringIntentText(tags: UserTags): string {
+  const targetRole = (tags as unknown as { targetRole?: unknown }).targetRole
+  const parts = Array.isArray(targetRole) ? targetRole : [targetRole]
+  return parts.map((part) => (typeof part === "string" ? part : "")).join(" ")
+}
+
+function shouldPruneStaleEngineeringAxis(
+  tags: UserTags,
+  existing: RoleFunction[],
+  inferred: RoleFunction[],
+): boolean {
+  const hasEngineeringAxis =
+    existing.includes("software_engineering") || existing.includes("engineering_and_development")
+  if (!hasEngineeringAxis || existing.length <= 1) return false
+  if (inferred.every((role) => role === "software_engineering" || role === "engineering_and_development")) return false
+  if (titleLooksEngineering(profileTitleText(tags))) return false
+  if (titleLooksEngineering(explicitEngineeringIntentText(tags))) return false
+  return true
+}
+
+const TITLE_AUTHORITATIVE_ROLE_REPAIRS = new Set<RoleFunction>([
+  "human_resources",
+  "education_and_training",
+  "creatives_and_design",
+  "customer_service_and_support",
+])
+
+function repairMisalignedTargetRoleFunctions(
+  tags: UserTags,
+): UserTags["targetRoleFunction"] | undefined {
+  const inferred = inferTargetRoleFunctionsFromProfile(tags)
+  if (inferred.length === 0) return undefined
+  const existing = dedupeRoleFunctions(Array.isArray(tags.targetRoleFunction) ? tags.targetRoleFunction : [])
+  if (existing.length === 0) return inferred
+  if (inferred.some((role) => existing.includes(role))) {
+    if (shouldPruneStaleEngineeringAxis(tags, existing, inferred)) {
+      return existing.filter((role) => role !== "software_engineering" && role !== "engineering_and_development")
+    }
+    if (profileLooksOperationsAnalyst(tags)) {
+      const missingOperationalRoles = inferred.filter((role) =>
+        (role === "business_analyst" || role === "data_analysis") && !existing.includes(role)
+      )
+      if (missingOperationalRoles.length > 0) return dedupeRoleFunctions([...existing, ...missingOperationalRoles])
+    }
+    return undefined
+  }
+
+  // Preserve explicit career-change intent into engineering. A PM/HR/designer
+  // resume can still target SWE when the conversation says so; only repair
+  // stale non-engineering role axes that conflict with a high-confidence title.
+  if (existing.includes("software_engineering") || existing.includes("engineering_and_development")) {
+    return undefined
+  }
+  const authoritative = inferred.filter((role) => TITLE_AUTHORITATIVE_ROLE_REPAIRS.has(role))
+  return authoritative.length > 0 ? authoritative : undefined
+}
+
+function derivedSeniorityToCareerStage(value: unknown): CareerStage | undefined {
+  switch (value) {
+    case "intern":
+      return "intern"
+    case "new_grad":
+    case "entry_level":
+      return "entry_level"
+    case "mid":
+      return "mid_level"
+    case "senior":
+      return "senior"
+    case "staff":
+      return "staff"
+    case "manager":
+      return "manager"
+    case "director":
+      return "director"
+    case "executive":
+      return "c_level"
+    default:
+      return undefined
+  }
+}
+
+function inferCareerStageFromYears(value: unknown): CareerStage | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined
+  if (value <= 0.5) return "student"
+  if (value <= 1.5) return "entry_level"
+  if (value <= 3) return "junior"
+  if (value <= 6) return "mid_level"
+  return "senior"
+}
+
+function inferCandidateCareerStage(
+  tags: UserTags,
+  userDoc: Record<string, unknown> | undefined
+): CareerStage | undefined {
+  const titleSignals = [
+    typeof tags.recentRoleTitle === "string" ? tags.recentRoleTitle : undefined,
+    firstWorkHistoryTitle(tags.workHistorySummary),
+  ].filter((title): title is string => Boolean(title))
+  for (const title of titleSignals) {
+    const stage = inferCareerStageFromTitle(title)
+    if (stage) return stage
+  }
+
+  const derivedExperience =
+    userDoc?.derivedExperience && typeof userDoc.derivedExperience === "object"
+      ? (userDoc.derivedExperience as Record<string, unknown>)
+      : undefined
+  const derivedStage = derivedSeniorityToCareerStage(derivedExperience?.seniorityCurrent)
+  if (derivedStage) return derivedStage
+  return inferCareerStageFromYears(derivedExperience?.yearsTotal ?? userDoc?.totalYearsExperience)
+}
+
+function inferTargetJobTypeFromProfile(tags: UserTags, careerStage: CareerStage | undefined): UserTags["targetJobType"] {
+  const title = [
+    typeof tags.recentRoleTitle === "string" ? tags.recentRoleTitle : undefined,
+    firstWorkHistoryTitle(tags.workHistorySummary),
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(" ")
+    .toLowerCase()
+  if (/\bintern(ship)?\b/.test(title) || careerStage === "intern" || careerStage === "student") {
+    return ["internship"]
+  }
+  if (/\b(new\s+grad|graduate)\b/.test(title)) return ["new_graduate"]
+  if (careerStage === "entry_level") return ["full_time", "new_graduate"]
+  return undefined
+}
+
+function inferMissingMatchingAxes(
+  tags: UserTags,
+  userDoc: Record<string, unknown> | undefined,
+  log?: (event: string, payload?: Record<string, unknown>) => void,
+  userId?: string,
+): UserTags {
+  const patch: Partial<UserTags> = {}
+  const targetRoleFunction = repairMisalignedTargetRoleFunctions(tags)
+  if (targetRoleFunction?.length) patch.targetRoleFunction = targetRoleFunction
+  const careerStage =
+    typeof tags.careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(tags.careerStage)
+      ? tags.careerStage
+      : inferCandidateCareerStage(tags, userDoc)
+  if (!tags.careerStage && careerStage) patch.careerStage = careerStage
+  if (!tags.targetJobType?.length) {
+    const targetJobType = inferTargetJobTypeFromProfile(tags, careerStage)
+    if (targetJobType?.length) patch.targetJobType = targetJobType
+  }
+  if (Object.keys(patch).length === 0) return tags
+  log?.("pa.match.user_tags_inferred_missing_axes", { userId, inferred: patch })
+  return { ...tags, ...patch }
+}
+
+function targetRoleFunctionSet(userTags: UserTags): Set<string> {
+  const roles: unknown[] = Array.isArray(userTags.targetRoleFunction) ? userTags.targetRoleFunction : []
+  return new Set(
+    roles
+      .map((role) => (typeof role === "string" ? role.trim().toLowerCase() : ""))
+      .filter(Boolean)
+  )
+}
+
+function titleLooksEngineering(title: string): boolean {
+  const t = title.trim().toLowerCase()
+  if (!t) return false
+  return (
+    /\b(swe|sde|software\s+engineer|software\s+developer|full[\s-]?stack|frontend|front[\s-]?end|backend|back[\s-]?end)\b/.test(t) ||
+    /\b(engineer|engineers|engineering|developer|developers|devops|sre|site\s+reliability|platform\s+engineer|infrastructure\s+engineer)\b/.test(t)
+  )
+}
+
+function profileRoleIntentText(userTags: UserTags): string {
+  return `${profileTitleText(userTags)} ${explicitEngineeringIntentText(userTags)}`.toLowerCase()
+}
+
+function titleAllowedByExplicitNonSoftwareTarget(title: string, targetRoles: Set<string>, userTags: UserTags): boolean {
+  const t = title.trim().toLowerCase()
+  const intent = profileRoleIntentText(userTags)
+  if (targetRoles.has("data_analysis") && /\b(data|analytics?|ml|machine\s+learning|ai)\s+engineer(s)?\b/.test(t)) {
+    return /\b(data|analytics?|ml|machine\s+learning|ai)\s+engineer\b/.test(intent)
+  }
+  if (targetRoles.has("sales") && /\b(sales|solutions?|solution|pre[-\s]?sales)\s+engineer(s)?\b/.test(t)) {
+    return /\b(sales|solutions?|solution|pre[-\s]?sales)\s+engineer\b/.test(intent)
+  }
+  if (targetRoles.has("customer_service_and_support") && /\b(success|support)\s+engineer(s)?\b/.test(t)) {
+    return /\b(it\s+support|technical\s+support|support\s+(engineer|consultant|specialist|analyst))\b/.test(intent)
+  }
+  if (targetRoles.has("customer_service_and_support") && /\bit\s+systems?\s+administrator\b/.test(t)) {
+    return true
+  }
+  return false
+}
+
+function titleLooksLegal(title: string): boolean {
+  const t = title.trim().toLowerCase()
+  return /\b(counsel|attorney|lawyer|paralegal)\b/.test(t)
+}
+
+function titleLooksClinical(title: string): boolean {
+  const t = title.trim().toLowerCase()
+  return /\b(medical\s+fellow|clinical\s+fellow|physician|doctor|nurse|surgeon|medical\s+director)\b/.test(t)
+}
+
+function userHasHealthcareSignal(userTags: UserTags): boolean {
+  const values = [
+    userTags.industryEnum,
+    userTags.relevantIndustry,
+    userTags.relevantSpecialization,
+    userTags.recentRoleTitle,
+    userTags.workHistorySummary,
+  ]
+  return values.some((value) => {
+    const list = Array.isArray(value) ? value : typeof value === "string" ? [value] : []
+    return list.some((item) => /health|medical|clinical|biotech|pharma|life\s*sciences/i.test(String(item)))
+  })
+}
+
+function isRoleTitleMismatch(userTags: UserTags, job: MatchingJob): boolean {
+  const targetRoles = targetRoleFunctionSet(userTags)
+  if (targetRoles.size === 0) return false
+  const title = getMatchingJobTitle(job)
+  if (titleLooksLegal(title) && !targetRoles.has("legal_and_compliance")) return true
+  if (titleLooksClinical(title) && !userHasHealthcareSignal(userTags)) return true
+  if (!titleLooksEngineering(title)) return false
+  if (targetRoles.has("software_engineering") || targetRoles.has("engineering_and_development")) return false
+  return !titleAllowedByExplicitNonSoftwareTarget(title, targetRoles, userTags)
+}
+
+function buildMissingAxes(userTags: UserTags): V16QueryResult["missingAxes"] {
+  const missingAxes: V16QueryResult["missingAxes"] = []
+  if (!userTags.targetRoleFunction?.length) missingAxes!.push("targetRoleFunction")
+  if (!userTags.targetLocations?.length) missingAxes!.push("targetLocations")
+  if (!userTags.visaStatus) missingAxes!.push("visaStatus")
+  if (!userTags.careerStage) missingAxes!.push("careerStage")
+  if (!userTags.targetJobType?.length) missingAxes!.push("targetJobType")
+  return missingAxes
 }
 
 // ---------------------------------------------------------------------------
@@ -156,7 +560,7 @@ export async function loadUserTags(
       log?.("pa.match.user_no_tags", { userId, reason: "tags_empty" })
       return null
     }
-    return tags as UserTags
+    return inferMissingMatchingAxes(tags as UserTags, data, log, userId)
   } catch (err) {
     log?.("pa.match.user_tags_read_error", {
       userId,
@@ -362,6 +766,7 @@ export function applyV16HardFilters(
     atsApplyUrl: 0,
     dead: 0,
     negativeListDrop: 0,
+    roleTitleMismatch: 0,
   }
   if (!Array.isArray(jobs) || jobs.length === 0) {
     return { kept: [], counters }
@@ -369,7 +774,9 @@ export function applyV16HardFilters(
 
   // Pre-compute user-side once.
   const sponsorshipNeeded = isSponsorshipNeeded(userTags.visaStatus)
-  const targetLocations = Array.isArray(userTags.targetLocations) ? userTags.targetLocations : []
+  const targetLocations = Array.isArray(userTags.targetLocations)
+    ? userTags.targetLocations.filter((l): l is string => typeof l === "string")
+    : []
   const isAnywhere = targetLocations.some((l) =>
     ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase())
   )
@@ -388,13 +795,25 @@ export function applyV16HardFilters(
       ? userTags.companyNegativeList.filter((s): s is string => typeof s === "string")
       : []
   )
+  const negativeRoleFunctionSet = new Set<string>(
+    Array.isArray(userTags.roleFunctionNegativeList)
+      ? userTags.roleFunctionNegativeList
+          .map((s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
+          .filter(Boolean)
+      : []
+  )
   const careerStage = userTags.careerStage
   const careerStageValid =
     typeof careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(careerStage)
-  const acceptableStages = careerStageValid ? new Set(acceptableCareerStages(careerStage as CareerStage)) : null
+  const acceptableStages = careerStageValid ? new Set(matchingCareerStageWindow(careerStage as CareerStage)) : null
   const targetJobType = userTags.targetJobType
   const legacyTargetJobTypes = (userTags as unknown as { targetJobTypes?: string[] }).targetJobTypes
-  const targetJobTypes = targetJobType ?? legacyTargetJobTypes ?? []
+  const targetJobTypesRaw = Array.isArray(targetJobType)
+    ? targetJobType
+    : Array.isArray(legacyTargetJobTypes)
+      ? legacyTargetJobTypes
+      : []
+  const targetJobTypes = targetJobTypesRaw.filter((t): t is string => typeof t === "string")
   const targetJobTypeSet = new Set(
     targetJobTypes.map((t) => (typeof t === "string" ? t.trim().toLowerCase() : ""))
   )
@@ -427,7 +846,7 @@ export function applyV16HardFilters(
   const userWantsUsOnly =
     sponsorshipNeeded ||
     (Array.isArray(userTags.targetCountry) &&
-      userTags.targetCountry.some((c) => {
+      userTags.targetCountry.some((c: unknown) => {
         const k = typeof c === "string" ? c.trim().toLowerCase() : ""
         return k === "usa" || k === "us" || k === "united_states"
       })) ||
@@ -443,9 +862,9 @@ export function applyV16HardFilters(
 
   const kept: MatchingJob[] = []
   for (const job of jobs) {
-    // 1. visa intersect — only drop when user explicitly needs sponsorship
-    //    AND job carries an explicit `sponsorship: false` signal.
-    if (sponsorshipNeeded && job.sponsorship === false) {
+    // 1. visa intersect — candidate-visible sponsor-needed recommendations
+    // require explicit sponsorship=true. Unknown is not safe for H1B/OPT users.
+    if (sponsorshipNeeded && job.sponsorship !== true) {
       counters.visa++
       continue
     }
@@ -504,29 +923,32 @@ export function applyV16HardFilters(
       }
     }
 
-    const jobType = typeof job.jobType === "string" ? job.jobType.trim().toLowerCase() : ""
-    const isInternshipTarget = targetJobTypeSet.has("internship")
-    const isInternshipJob =
-      job.seniorityLevel === "intern" ||
-      jobType === "internship" ||
-      /\b(?:intern|internship|co[-\s]?op)\b/i.test(job.jobTitle ?? "")
-
-    // 3. careerStage window — enforce only when both sides present. If the
-    // candidate explicitly targets internships, the job-type signal is more
-    // specific than broad careerStage and must not zero out intern postings.
-    if (acceptableStages && job.seniorityLevel) {
-      if (!(isInternshipTarget && isInternshipJob) && !acceptableStages.has(job.seniorityLevel as CareerStage)) {
+    // 3. careerStage window — prefer enriched seniority, infer from title when
+    // the scraper missed the structured field so senior/lead/director jobs do
+    // not leak to junior users.
+    if (acceptableStages) {
+      const jobStage = normalizeCareerStageToken(job.seniorityLevel) ?? inferCareerStageFromTitle(getMatchingJobTitle(job))
+      if (jobStage && !acceptableStages.has(jobStage)) {
         counters.careerStage++
         continue
       }
     }
 
     // 4. jobType exact intersect — when user has targets AND job has type.
-    if (targetJobTypeSet.size > 0 && jobType) {
-      if (!targetJobTypeSet.has(jobType)) {
+    if (targetJobTypeSet.size > 0 && job.jobType) {
+      const jt = job.jobType.trim().toLowerCase()
+      if (!targetJobTypeSet.has(jt)) {
         counters.jobType++
         continue
       }
+    }
+
+    // 4b. Role-title sanity gate — job corpus tags can be noisy. If a user
+    // explicitly targets non-engineering functions, drop clear engineering
+    // titles unless that target function has a known technical-title exception.
+    if (isRoleTitleMismatch(userTags, job)) {
+      counters.roleTitleMismatch++
+      continue
     }
 
     // 5. firstSeenAt < freshness window (D10 default 20d, adaptive relaxation
@@ -550,12 +972,22 @@ export function applyV16HardFilters(
       continue
     }
 
-    // 8. Phase B4 — companyNegativeList hard-drop. Last in the chain so we
-    //    don't waste score-time on jobs that pass other gates but are
-    //    user-rejected. `normalizeCompanyName` matches `pa-companies` doc ids.
+    // 8. Candidate rejection hard-drops. Last in the chain so we don't waste
+    //    score-time on jobs that pass other gates but are user-rejected.
     if (negativeSet.size > 0) {
       const norm = normalizeCompanyName(job.companyName ?? "")
       if (norm.length > 0 && negativeSet.has(norm)) {
+        counters.negativeListDrop++
+        continue
+      }
+    }
+    if (negativeRoleFunctionSet.size > 0) {
+      const roleFunctions = Array.isArray(job.roleFunction) ? job.roleFunction : []
+      if (
+        roleFunctions.some((role) =>
+          typeof role === "string" && negativeRoleFunctionSet.has(role.trim().toLowerCase())
+        )
+      ) {
         counters.negativeListDrop++
         continue
       }
@@ -1066,12 +1498,6 @@ export type QueryMatchingJobsV16Args = {
    */
   presentationRoleFocus?: string[]
   /**
-   * Explicit candidate request only: when the user asks for entry-level /
-   * 0-3 YoE roles but does not ask for internships, remove internships and
-   * academic intern postings from the visible recommendation set.
-   */
-  excludeInternships?: boolean
-  /**
    * Collab funnel: keep only jobs where pa-jobs has
    * wekruitCollaborationStatus=collaborated and a non-empty prescreenConfig.
    */
@@ -1150,15 +1576,6 @@ function matchesPresentationRoleFocus(job: MatchingJob, focus: Array<"frontend" 
   return false
 }
 
-function isInternshipOrAcademicInternPosting(job: MatchingJob): boolean {
-  const seniority = typeof job.seniorityLevel === "string" ? job.seniorityLevel.trim().toLowerCase() : ""
-  const jobType = typeof job.jobType === "string" ? job.jobType.trim().toLowerCase() : ""
-  const title = getMatchingJobTitle(job).toLowerCase()
-  return seniority === "intern" ||
-    jobType === "internship" ||
-    /\b(?:intern|internship|co[-\s]?op|phd|doctoral)\b/i.test(title)
-}
-
 function previousRecommendationPenalty(state: UserJobRecommendationState | undefined): number {
   if (!state || state.recommendationCount <= 0) return 0
   return Math.min(
@@ -1166,6 +1583,81 @@ function previousRecommendationPenalty(state: UserJobRecommendationState | undef
     PREVIOUS_RECOMMENDATION_BASE_PENALTY +
       Math.max(0, state.recommendationCount - 1) * PREVIOUS_RECOMMENDATION_REPEAT_PENALTY,
   )
+}
+
+type StrictCompanyPreference =
+  | "startup"
+  | "bigtech"
+  | "seed"
+  | "early_startup"
+  | "scale_up"
+  | "mid_market"
+  | "enterprise"
+
+function strictCompanyPreference(userTags: UserTags): StrictCompanyPreference | null {
+  if (userTags.companySize === "open") return null
+  if (
+    userTags.companySize === "seed" ||
+    userTags.companySize === "early_startup" ||
+    userTags.companySize === "scale_up" ||
+    userTags.companySize === "mid_market" ||
+    userTags.companySize === "enterprise"
+  ) {
+    return userTags.companySize
+  }
+  if (userTags.prefersStartup === "startup") return "startup"
+  if (userTags.prefersStartup === "bigtech") return "bigtech"
+  return null
+}
+
+function hasCompanyTag(info: LoadedCompanyInfo, tags: readonly string[]): boolean {
+  const companyTags = new Set((info.tags ?? []).map((tag) => tag.trim().toLowerCase()).filter(Boolean))
+  return tags.some((tag) => companyTags.has(tag))
+}
+
+function companyMatchesStrictPreference(
+  preference: StrictCompanyPreference,
+  info: LoadedCompanyInfo | undefined
+): boolean {
+  if (!info) return false
+  const stage = info.stage
+  switch (preference) {
+    case "seed":
+      return stage === "pre_seed" || stage === "seed" || (stage === "unknown" && hasCompanyTag(info, ["yc_active"]))
+    case "startup":
+      return (
+        stage === "pre_seed" ||
+        stage === "seed" ||
+        stage === "series_a" ||
+        stage === "series_b" ||
+        (stage === "unknown" && hasCompanyTag(info, ["yc_active"]))
+      )
+    case "early_startup":
+      return (
+        stage === "pre_seed" ||
+        stage === "seed" ||
+        stage === "series_a" ||
+        (stage === "unknown" && hasCompanyTag(info, ["yc_active"]))
+      )
+    case "scale_up":
+      return (
+        stage === "series_b" ||
+        stage === "series_c" ||
+        stage === "series_d_plus" ||
+        (stage === "unknown" && hasCompanyTag(info, ["unicorn"]))
+      )
+    case "bigtech":
+    case "enterprise":
+      return (
+        stage === "ipo_public" ||
+        stage === "private_mature" ||
+        hasCompanyTag(info, ["big_tech", "mag_7"])
+      )
+    case "mid_market":
+      return stage === "private_mature" || stage === "bootstrapped"
+    default:
+      return false
+  }
 }
 
 /**
@@ -1231,7 +1723,10 @@ async function runV16Query(
       const locationBuckets = Array.isArray(raw.locationBuckets)
         ? (raw.locationBuckets.filter((s): s is string => typeof s === "string"))
         : undefined
-      const seniorityLevel = typeof raw.seniorityLevel === "string" ? raw.seniorityLevel : undefined
+      const seniorityLevel =
+        typeof raw.seniorityLevel === "string"
+          ? (normalizeCareerStageToken(raw.seniorityLevel) ?? raw.seniorityLevel)
+          : undefined
       const merged: MatchingJob & { embedding?: number[] | null } = {
         ...m,
         ...(roleFunction && roleFunction.length > 0 ? { roleFunction } : {}),
@@ -1346,11 +1841,24 @@ export async function queryMatchingJobsV16(
       jobs: [],
       total: 0,
       dropped: 0,
-      hardFilter: { visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0 },
+      hardFilter: { visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0, roleTitleMismatch: 0 },
       noUserTags: true,
     }
   }
   const userTags = args.lang ? { ...loadedUserTags, preferredLang: args.lang } : loadedUserTags
+  const initialMissingAxes = buildMissingAxes(userTags)
+  if (!userTags.targetRoleFunction?.length) {
+    log("pa.match.role_function_missing_return_empty", { userId: args.userId, missingAxes: initialMissingAxes })
+    return {
+      jobs: [],
+      total: 0,
+      dropped: 0,
+      hardFilter: { visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0, roleTitleMismatch: 0 },
+      needsOnboarding: true,
+      missingAxes: initialMissingAxes,
+      userTags: userTags as unknown as Record<string, unknown>,
+    }
+  }
 
   // 2. Run query (push role to query layer).
   const { jobs: rawJobs } = await runV16Query(deps.db, userTags, log)
@@ -1366,14 +1874,14 @@ export async function queryMatchingJobsV16(
   ]
   let filteredJobs: MatchingJob[] = []
   let counters: V16HardFilterCounters = {
-    visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0,
+    visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0, roleTitleMismatch: 0,
   }
   let appliedFreshnessMs = FRESHNESS_RELAX_LADDER[0]!
   let relaxedHardFilters: string[] = []
   const runFreshnessLadder = (options: { relaxSpecificLocation?: boolean } = {}) => {
     let kept: MatchingJob[] = []
     let lastCounters: V16HardFilterCounters = {
-      visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0,
+      visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0, roleTitleMismatch: 0,
     }
     let applied = FRESHNESS_RELAX_LADDER[0]!
     for (const win of FRESHNESS_RELAX_LADDER) {
@@ -1434,10 +1942,29 @@ export async function queryMatchingJobsV16(
       dropped: before - filteredJobs.length,
     })
   }
-  if (args.excludeInternships === true && filteredJobs.length > 0) {
+
+  // Phase B4 — one-shot pa-companies lookup for the surviving candidate set.
+  // Missing/un-enriched companies are omitted from the Map; scoreV16Job
+  // handles absent entries with neutral (0) tagOverlap.
+  const loadCompaniesImpl = deps.loadCompaniesByNameImpl ?? loadCompaniesByName
+  let companyInfoMap = new Map<string, LoadedCompanyInfo>()
+  try {
+    const names = filteredJobs.map((j) => j.companyName ?? "").filter((s) => s.length > 0)
+    if (names.length > 0) companyInfoMap = await loadCompaniesImpl(deps.db, names)
+  } catch (err) {
+    log("pa.match.load_companies_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  const companyPreference = strictCompanyPreference(userTags)
+  if (companyPreference && filteredJobs.length > 0) {
     const before = filteredJobs.length
-    filteredJobs = filteredJobs.filter((job) => !isInternshipOrAcademicInternPosting(job))
-    log("pa.match.exclude_internships_applied", {
+    filteredJobs = filteredJobs.filter((job) => {
+      const companyInfo = companyInfoMap.get(normalizeCompanyName(job.companyName ?? ""))
+      return companyMatchesStrictPreference(companyPreference, companyInfo)
+    })
+    log("pa.match.company_preference_filter_applied", {
+      preference: companyPreference,
       before,
       after: filteredJobs.length,
       dropped: before - filteredJobs.length,
@@ -1458,20 +1985,6 @@ export async function queryMatchingJobsV16(
     loadLlmRerankCache(deps.db, args.userId, log),
     loadRecommendedJobStates(deps.db, args.userId, filteredJobs.map((job) => job.id), log),
   ])
-
-  // Phase B4 — one-shot pa-companies lookup for the surviving candidate set.
-  // Missing/un-enriched companies are omitted from the Map; scoreV16Job
-  // handles absent entries with neutral (0) tagOverlap.
-  const loadCompaniesImpl = deps.loadCompaniesByNameImpl ?? loadCompaniesByName
-  let companyInfoMap = new Map<string, LoadedCompanyInfo>()
-  try {
-    const names = filteredJobs.map((j) => j.companyName ?? "").filter((s) => s.length > 0)
-    if (names.length > 0) companyInfoMap = await loadCompaniesImpl(deps.db, names)
-  } catch (err) {
-    log("pa.match.load_companies_failed", {
-      error: err instanceof Error ? err.message : String(err),
-    })
-  }
 
   // 4. Soft score (Phase 70 weightOverrides + Phase B4 companyInfo/nowMs).
   let scored = filteredJobs.map((job) => {
@@ -1583,12 +2096,7 @@ export async function queryMatchingJobsV16(
   // though V16 degrades gracefully without them. Switching to registry-driven
   // REQUIRED_AXES would narrow this to 3 axes and is deferred to a follow-up
   // PR alongside the matching `V16QueryResult["missingAxes"]` enum change.
-  const missingAxes: V16QueryResult["missingAxes"] = []
-  if (!userTags.targetRoleFunction?.length) missingAxes!.push("targetRoleFunction")
-  if (!userTags.targetLocations?.length) missingAxes!.push("targetLocations")
-  if (!userTags.visaStatus) missingAxes!.push("visaStatus")
-  if (!userTags.careerStage) missingAxes!.push("careerStage")
-  if (!userTags.targetJobType?.length) missingAxes!.push("targetJobType")
+  const missingAxes = initialMissingAxes
 
   return {
     jobs: top,
@@ -1642,6 +2150,7 @@ export type QueryMatchingJobsV16ToolDeps = {
  * as `{ ok: false, reason }` so the LLM can surface a graceful fallback.
  */
 export function createQueryMatchingJobsV16Tool(deps: QueryMatchingJobsV16ToolDeps) {
+  const { tool } = require("@openai/agents") as typeof import("@openai/agents")
   return tool({
     name: "queryMatchingJobs",
     description:

@@ -17,6 +17,8 @@
       "remember-fact",
       "wekruit-matching",
       "save-job-profile",
+      "set-matching-preferences",
+      "set-daily-job-recommendation-subscription",
       "find-match",
       "match-against-collab-jobs"
     ],

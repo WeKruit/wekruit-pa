@@ -28,6 +28,7 @@ export type PostMatchRetentionState = {
   sentiment?: "positive" | "negative"
   subscribeOptIn?: boolean
   prescreenOptIn?: boolean
+  suppressPrescreenOffer?: boolean
 }
 
 export type PostMatchRetentionStore = {
@@ -351,6 +352,7 @@ export async function startPostMatchRetentionAfterJobRecs(input: {
   lang?: "zh" | "en"
   jobIds?: string[]
   enqueueOutbound?: PostMatchRetentionStore["enqueueOutbound"]
+  suppressPrescreenOffer?: boolean
 }): Promise<void> {
   const enabled = await isPostMatchRetentionEnabled(input.db, input.userId)
   if (!enabled || input.recCount <= 0) return
@@ -364,6 +366,7 @@ export async function startPostMatchRetentionAfterJobRecs(input: {
     updatedAt: at,
     recCount: input.recCount,
     ...(input.jobIds?.length ? { jobIds: input.jobIds } : {}),
+    ...(input.suppressPrescreenOffer ? { suppressPrescreenOffer: true } : {}),
   })
 
   if (input.enqueueOutbound && input.toE164) {
@@ -443,9 +446,11 @@ export async function handlePostMatchRetentionReply(
   const at = store.nowIso()
   const jobIds = await resolveJobIds(db, event.userId, state)
   const prescreenBlocked =
-    state.stage === "await_subscribe" || state.stage === "await_prescreen"
-      ? await hasBlockingPrescreenSession(db, event.userId, at)
-      : false
+    state.suppressPrescreenOffer === true
+      ? true
+      : state.stage === "await_subscribe" || state.stage === "await_prescreen"
+        ? await hasBlockingPrescreenSession(db, event.userId, at)
+        : false
   let next: PostMatchRetentionState = { ...state, updatedAt: at }
   let reply = ""
 

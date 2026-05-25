@@ -19,6 +19,7 @@ export type GenerateJobRecsFn = (
     force?: boolean
     requestedCount?: number
     roleFocus?: string[]
+    allowBroadFallback?: boolean
     collabPrescreenOnly?: boolean
     excludeInternships?: boolean
   }
@@ -47,6 +48,8 @@ export function buildMatchConnectorHooks(deps: MatchConnectorHooksDeps): MatchCo
       const recs = await gen(ctx.userId, lang, {
         force: true,
         requestedCount: input.requestedCount ?? 2,
+        ...(input.roleFocus && input.roleFocus.length > 0 ? { roleFocus: input.roleFocus } : {}),
+        ...(typeof input.allowBroadFallback === "boolean" ? { allowBroadFallback: input.allowBroadFallback } : {}),
       })
       const jobCount = recs?.recCount ?? 0
       return {

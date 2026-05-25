@@ -54,6 +54,18 @@ export type AgentTurnContext = {
   systemInputs?: string[]
   /** Phase 10.5 T7 — custom (non-hosted) tools bridged from runConnector. */
   tools?: AgentTurnTool[]
+  /**
+   * Optional per-turn tool choice override for constrained routers. Default
+   * agent turns leave this unset; specialized routers can force a tool
+   * decision without changing the persisted AgentDef schema.
+   */
+  toolChoice?: "auto" | "required" | "none"
+  /**
+   * Optional per-turn SDK parallel tool execution override. Matching routers
+   * set this false so preference mutation can complete before a dependent
+   * find-match call.
+   */
+  parallelToolCalls?: boolean
 }
 
 /**

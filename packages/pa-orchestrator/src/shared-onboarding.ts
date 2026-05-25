@@ -1,5 +1,5 @@
 import type { PartialUserTags } from "./tags/user-tags-writer.js"
-import { mapAnswerToLocations } from "./tags/onboarding-mappers.js"
+import { mapAnswerToLocations, mapAnswerToRoleFunction } from "./tags/onboarding-mappers.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import type { IndustrySector } from "@wekruit/shared-tags"
 import type { JudgeResult, Lang } from "./onboarding/question.js"
@@ -242,31 +242,34 @@ function sharedJudgeExamples(questionId: SharedOnboardingQuestionId): Array<{ re
 }
 
 function sharedJudgeBloom(questionId: SharedOnboardingQuestionId): Array<{ pattern: RegExp; value: string }> {
+  // Shared onboarding blooms are accept signals; preserve the candidate's raw
+  // answer instead of storing an internal label.
+  const preserveRawAnswer = ""
   if (questionId === "main_goal") {
     return [
-      { pattern: /\b(career\s+growth|growth|learning|mentor|compensation|salary|pay|equity|stability|stable|mission|impact|ownership|work[-\s]?life)\b/i, value: "clear main-goal answer" },
+      { pattern: /\b(career\s+growth|growth|learning|mentor|compensation|salary|pay|equity|stability|stable|mission|impact|ownership|work[-\s]?life)\b/i, value: preserveRawAnswer },
     ]
   }
   if (questionId === "culture_stage") {
     return [
-      { pattern: /\b(startup|early[-\s]?stage|seed|founding|scale[-\s]?up|larger|large\s+company|big\s*tech|enterprise|ownership|autonomy|calm|collaborative|open|no\s+preference)\b/i, value: "clear culture-stage answer" },
+      { pattern: /\b(startup|early[-\s]?stage|seed|founding|scale[-\s]?up|larger|large\s+company|big\s*tech|enterprise|ownership|autonomy|calm|collaborative|open|no\s+preference)\b/i, value: preserveRawAnswer },
     ]
   }
   if (questionId === "industry_interest") {
     return [
-      { pattern: /\b(fintech|finance|ai|machine\s+learning|ml|crypto|web3|blockchain|saas|software|developer\s+tools?|security|healthcare|edtech|gaming|climate|open|anything)\b/i, value: "clear industry-interest answer" },
+      { pattern: /\b(fintech|finance|ai|machine\s+learning|ml|crypto|web3|blockchain|saas|software|developer\s+tools?|security|healthcare|edtech|gaming|climate|open|anything)\b/i, value: preserveRawAnswer },
     ]
   }
   if (questionId === "location_relocation") {
     return [
-      { pattern: /\b(remote|onsite|hybrid|relocat|move|nyc|new\s+york|sf|san\s+francisco|bay\s+area|seattle|los\s+angeles|la|austin|boston|chicago|miami|canada|united\s+states|u\.?s\.?)\b/i, value: "clear location-relocation answer" },
+      { pattern: /\b(remote|onsite|hybrid|relocat|move|nyc|new\s+york|sf|san\s+francisco|bay\s+area|seattle|los\s+angeles|la|austin|boston|chicago|miami|canada|united\s+states|u\.?s\.?)\b/i, value: preserveRawAnswer },
     ]
   }
   return [
     {
       pattern:
         /\b(none|nothing|nope|no\s+special|visa|sponsor|h[-\s]?1b|opt|cpt|urgent|asap|timing|dealbreaker|constraint|strength|backend|frontend|full[-\s]?stack|systems?|real[-\s]?time|communication|webrtc|infrastructure|distributed|worthy|experience|built|handl\w*)\b/i,
-      value: "clear special-context answer",
+      value: preserveRawAnswer,
     },
   ]
 }
@@ -606,6 +609,34 @@ export function buildSharedOnboardingOpeningPrompt(
   ].join(" ")
 }
 
+export type SharedOnboardingPostPrescreenContext = {
+  jobTitle?: string | null
+  company?: string | null
+}
+
+export function buildSharedOnboardingPostPrescreenOpeningPrompt(
+  context: SharedOnboardingPromptContext | null | undefined,
+  postPrescreen: SharedOnboardingPostPrescreenContext | null | undefined,
+): string {
+  const ctx = cleanSharedOnboardingPromptContext(context)
+  const greeting = ctx.firstName ? `Hey ${ctx.firstName}!` : "Hey!"
+  const jobTitle = typeof postPrescreen?.jobTitle === "string" ? postPrescreen.jobTitle.trim() : ""
+  const company = typeof postPrescreen?.company === "string" ? postPrescreen.company.trim() : ""
+  const roleText =
+    jobTitle && company
+      ? ` for ${jobTitle} at ${company}`
+      : jobTitle
+        ? ` for ${jobTitle}`
+        : company
+          ? ` at ${company}`
+          : ""
+  return [
+    `${greeting} Thanks for completing the role screen${roleText}.`,
+    "By the way, I can keep looking for jobs that meet your expectations, but I need one bit of broader context first.",
+    getSharedOnboardingQuestion("main_goal").prompt,
+  ].join(" ")
+}
+
 /**
  * Pulls a one-line "resume anchor" the LLM can quote when opening a question.
  * Used by `buildOnboardingSurfaceIntent` to make Q1 (main_goal) and Q2
@@ -812,6 +843,10 @@ function industryTags(text: string): IndustrySector[] {
     { token: "healthcare_and_life_sciences", pattern: /\b(healthcare|health\s+tech|life\s+sciences?)\b/i },
     { token: "education_technology", pattern: /\b(edtech|education\s+technology)\b/i },
     { token: "gaming_and_esports", pattern: /\b(gaming|esports?)\b/i },
+    { token: "media_and_entertainment", pattern: /\b(media|entertainment|film|movie|youtube|creator|streaming)\b/i },
+    { token: "fashion_and_apparel", pattern: /\b(fashion|apparel|clothing|lifestyle)\b/i },
+    { token: "consumer_goods", pattern: /\bconsumer\s+(brand|brands|goods|products?)\b/i },
+    { token: "advertising_and_marketing", pattern: /\b(advertising|marketing|brand)\b/i },
     { token: "clean_energy_and_climate_tech", pattern: /\b(climate|clean\s+energy|energy)\b/i },
   ]
   return rules.filter((rule) => rule.pattern.test(text)).map((rule) => rule.token)
@@ -865,6 +900,13 @@ function companyGoalTags(text: string): string[] {
   return tags
 }
 
+function mainGoalRoleFunction(text: string): ReturnType<typeof mapAnswerToRoleFunction> {
+  if (!/\b(growth\s+(and\s+)?(ops|operations|marketing|role|roles)|growth\s+marketing|gtm|go[-\s]?to[-\s]?market)\b/i.test(text)) {
+    return []
+  }
+  return mapAnswerToRoleFunction(text)
+}
+
 export function projectSharedOnboardingAnswer(
   questionId: SharedOnboardingQuestionId,
   answer: string,
@@ -879,11 +921,21 @@ export function projectSharedOnboardingAnswer(
   const tags: PartialUserTags = {}
   const statedPreferences: Record<string, unknown> = {}
   const evidence: Record<string, unknown> = { questionId, answer: trimmed }
+  const opportunisticLocations = orderedLocations(trimmed)
 
   if (questionId === "main_goal") {
     const targetCompanyTags = companyGoalTags(trimmed)
+    const targetRoleFunction = mainGoalRoleFunction(trimmed)
     if (targetCompanyTags.length > 0) tags.targetCompanyTags = targetCompanyTags
     if (targetCompanyTags.length > 0) statedPreferences.nextCompanyGoals = targetCompanyTags
+    if (targetRoleFunction.length > 0) {
+      tags.targetRoleFunction = targetRoleFunction
+      statedPreferences.targetRoleFunction = targetRoleFunction
+    }
+    if (opportunisticLocations.length > 0) {
+      tags.targetLocations = opportunisticLocations
+      statedPreferences.targetLocations = opportunisticLocations
+    }
   }
 
   if (questionId === "culture_stage") {
@@ -902,15 +954,25 @@ export function projectSharedOnboardingAnswer(
 
   if (questionId === "industry_interest") {
     const industries = industryTags(trimmed)
+    const targetRoleFunction = mapAnswerToRoleFunction(trimmed)
     if (industries.length > 0) tags.industrySector = industries
     if (industries.length > 0) statedPreferences.industrySector = industries
+    if (targetRoleFunction.length > 0) {
+      tags.targetRoleFunction = targetRoleFunction
+      statedPreferences.targetRoleFunction = targetRoleFunction
+    }
   }
 
   if (questionId === "location_relocation") {
     const targetLocations = orderedLocations(trimmed)
+    const industries = industryTags(trimmed)
     const relocate = relocationOpen(trimmed)
     if (targetLocations.length > 0) tags.targetLocations = targetLocations
     if (targetLocations.length > 0) statedPreferences.targetLocations = targetLocations
+    if (industries.length > 0) {
+      tags.industrySector = industries
+      statedPreferences.industrySector = industries
+    }
     if (relocate !== undefined) {
       statedPreferences.relocationOpen = relocate
       evidence.relocationOpen = relocate
@@ -918,11 +980,25 @@ export function projectSharedOnboardingAnswer(
   }
 
   if (questionId === "special_context") {
+    const targetRoleFunction = mapAnswerToRoleFunction(trimmed)
+    const industries = industryTags(trimmed)
     const specialTags = []
     if (/\b(visa|sponsor|h[-\s]?1b|opt|cpt)\b/i.test(trimmed)) specialTags.push("visa_context")
     if (/\b(laid\s*off|layoff|severance|urgent|asap)\b/i.test(trimmed)) specialTags.push("urgent_search_context")
     if (/\b(parent|caregiver|health|family)\b/i.test(trimmed)) specialTags.push("personal_constraint")
     if (specialTags.length > 0) tags.targetCompanyTags = specialTags
+    if (targetRoleFunction.length > 0) {
+      tags.targetRoleFunction = targetRoleFunction
+      statedPreferences.targetRoleFunction = targetRoleFunction
+    }
+    if (industries.length > 0) {
+      tags.industrySector = industries
+      statedPreferences.industrySector = industries
+    }
+    if (opportunisticLocations.length > 0) {
+      tags.targetLocations = opportunisticLocations
+      statedPreferences.targetLocations = opportunisticLocations
+    }
     statedPreferences.specialContext = trimmed
   }
 

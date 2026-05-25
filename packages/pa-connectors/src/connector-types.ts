@@ -11,6 +11,9 @@ export type FindMatchHookInput = {
   lang?: "en" | "zh"
   requestedCount?: number
   source?: string
+  roleFocus?: string[]
+  hardConstraintsActive?: boolean
+  allowBroadFallback?: boolean
 }
 
 export type FindMatchHookOutput = {

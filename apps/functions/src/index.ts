@@ -231,6 +231,12 @@ export { paEnrichJobTags } from "./enrich-job-tags-http.js"
 // Loop-safe via enricherVersion + enricherContentHash idempotency check.
 export { paMatchingJobsAutoEnrich } from "./auto-enrich-matching-jobs.js"
 
+// EX1 PR-C — derive yearsPerSkill/skillRecency/titleTrajectory/seniorityCurrent
+// per pa-user every time parsedCandidateResumes is written. Fan-out is
+// feature-flagged via env `PA_EXPERIENCE_EXTRACTOR_LIVE=true`; until that
+// flips on the trigger logs but writes nothing. Fail-open by design.
+export { paExperienceExtractorOnParsedResume } from "./experience-extractor-trigger.js"
+
 // v1.9 Phase 86 — Generic ATS inbound adapter webhook.
 // Handshake fully implemented; GH/Lever/LinkedIn return 501 stubs.
 export { paAtsInboundWebhook } from "./ats-inbound-webhook.js"

@@ -61,6 +61,10 @@ import {
   resolveCandidateIdentity as defaultResolveCandidateIdentity,
   type ResolveCandidateIdentityInput,
 } from "@pa/pa-persistence"
+import {
+  capRelevantTags,
+  validateRelevantTag,
+} from "@wekruit/shared-tags"
 import type {
   CandidateHandleSource,
   CandidateIdentityResolution,
@@ -73,6 +77,11 @@ import type {
 import { mergeUserTags, type UserTagsInput } from "@pa/pa-orchestrator"
 import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
 import { computeResumeBaselineTagPatch } from "../lib/resume-baseline-tags.js"
+import {
+  autoDeriveCareerStage,
+  autoDeriveTargetRoleFunction,
+  type DeriveSkill,
+} from "../lib/auto-derive-tags.js"
 
 export type IngestCvInput = {
   userId: string
@@ -793,6 +802,133 @@ async function defaultWriteUserTags(
   await db.collection(PA_USERS_COLLECTION).doc(userId).set({ tags }, { merge: true })
 }
 
+type ResumeMatchingTagSignals = {
+  skills?: readonly string[]
+  workHistory?: ReadonlyArray<{ title?: string | null }>
+  totalYearsExperience?: number | null
+  workAuthorization?: string | null
+  relevantSpecialization?: readonly string[]
+  proposedTags?: readonly string[]
+}
+
+function objectRecord(raw: unknown): Record<string, unknown> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined
+  return raw as Record<string, unknown>
+}
+
+function hasFilledTagAxis(tags: Record<string, unknown> | undefined, key: string): boolean {
+  if (!tags) return false
+  const value = tags[key]
+  if (Array.isArray(value)) return value.length > 0
+  if (typeof value === "string") return value.trim().length > 0
+  return value !== undefined && value !== null
+}
+
+function normalizeRelevantTagCandidate(raw: unknown): string | null {
+  if (typeof raw !== "string") return null
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .replace(/_+/g, "_")
+  if (!normalized) return null
+  return validateRelevantTag(normalized).ok ? normalized : null
+}
+
+function deriveRelevantTagsFromResumeSignals(
+  signals: ResumeMatchingTagSignals | undefined
+): string[] {
+  if (!signals) return []
+  const out: string[] = []
+  const seen = new Set<string>()
+  const add = (raw: unknown): void => {
+    const tag = normalizeRelevantTagCandidate(raw)
+    if (!tag || seen.has(tag)) return
+    seen.add(tag)
+    out.push(tag)
+  }
+
+  for (const raw of signals.relevantSpecialization ?? []) add(raw)
+  for (const raw of signals.proposedTags ?? []) add(raw)
+  if (out.length === 0) {
+    for (const raw of signals.skills ?? []) {
+      // Single-token language/framework/database names already live in
+      // `tags.skills`; only promote phrase-like resume skills into the
+      // open-vocab relevantTags axis.
+      if (!/[\s_-]/.test(raw)) continue
+      add(raw)
+    }
+  }
+  return capRelevantTags(out)
+}
+
+function mapWorkAuthorizationToVisaStatus(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const v = raw.toLowerCase().trim()
+  if (!v) return null
+  if (/\b(u\.?s\.?|us|american)\s+citizen(ship)?\b|\bcitizen(ship)?\b/.test(v)) {
+    return "citizen"
+  }
+  if (/\b(green\s*card|permanent\s+resident|lawful\s+permanent|gc)\b/.test(v)) {
+    return "gc"
+  }
+  if (/\b(h-?1b|opt|cpt|stem\s+opt|sponsor(ship)?|visa\s+sponsor)/.test(v)) {
+    return "sponsor_needed"
+  }
+  return null
+}
+
+function applyResumeMatchingTagProjection(args: {
+  merged: Record<string, unknown>
+  existingTags: Record<string, unknown> | undefined
+  signals: ResumeMatchingTagSignals | undefined
+}): Record<string, unknown> {
+  const out = { ...args.merged }
+  const keys = ["targetRoleFunction", "careerStage", "visaStatus", "relevantTags"] as const
+  for (const key of keys) {
+    if (hasFilledTagAxis(args.existingTags, key)) {
+      delete out[key]
+    }
+  }
+  const isFilled = (key: (typeof keys)[number]): boolean =>
+    hasFilledTagAxis(args.existingTags, key) || hasFilledTagAxis(out, key)
+
+  if (!isFilled("targetRoleFunction")) {
+    const derived = autoDeriveTargetRoleFunction({
+      skills: Array.isArray(out.skills) ? (out.skills as DeriveSkill[]) : [],
+      workHistory: args.signals?.workHistory,
+      yoeRange: args.signals?.totalYearsExperience,
+    })
+    if (derived.targetRoleFunction.length > 0) {
+      out.targetRoleFunction = derived.targetRoleFunction
+    }
+  }
+
+  if (!isFilled("careerStage")) {
+    const fromResume = autoDeriveCareerStage(args.signals?.totalYearsExperience)
+    const fromMergedYoe =
+      fromResume ??
+      (Array.isArray(out.yoeRange)
+        ? autoDeriveCareerStage(out.yoeRange as [number, number])
+        : null)
+    if (fromMergedYoe) out.careerStage = fromMergedYoe
+  }
+
+  if (!isFilled("visaStatus")) {
+    const visaStatus = mapWorkAuthorizationToVisaStatus(args.signals?.workAuthorization)
+    if (visaStatus) out.visaStatus = visaStatus
+  }
+
+  if (!isFilled("relevantTags")) {
+    const relevantTags = deriveRelevantTagsFromResumeSignals(args.signals)
+    if (relevantTags.length > 0) out.relevantTags = relevantTags
+  }
+
+  return out
+}
+
 /**
  * Runner for the unified user-tag merge + write.
  *
@@ -816,6 +952,7 @@ async function runUserTagsMerge(args: {
   relevantIndustry?: string[]
   relevantSpecialization?: string[]
   proposedTags?: string[]
+  resumeMatchingTagSignals?: ResumeMatchingTagSignals
   mergeUserTagsFn: (input: UserTagsInput) => Record<string, unknown>
   writeUserTags: (
     db: Firestore,
@@ -915,7 +1052,7 @@ async function runUserTagsMerge(args: {
         proposedTags: args.proposedTags,
       } as Record<string, unknown>,
     })
-    merged = { ...existingTags, ...merged, ...baseline.proposed }
+    merged = { ...merged, ...baseline.proposed }
   } catch (err) {
     args.log("pa.cv_user_tags.merge_error", {
       userId: args.userId,
@@ -923,6 +1060,11 @@ async function runUserTagsMerge(args: {
     })
     return
   }
+  merged = applyResumeMatchingTagProjection({
+    merged,
+    existingTags: objectRecord(userData?.tags),
+    signals: args.resumeMatchingTagSignals,
+  })
 
   // 3. Write `pa-users/{userId}.tags`. Merge:true preserves any tag
   //    fields the chat-answers worker may have populated (we own the
@@ -2143,6 +2285,16 @@ export async function ingestCv(
       relevantIndustry: v2Output?.parsed.relevantIndustry,
       relevantSpecialization: v2Output?.parsed.relevantSpecialization,
       proposedTags: v2Output?.parsed.proposedTags,
+      resumeMatchingTagSignals: v2Output
+        ? {
+            skills: v2Output.parsed.skills,
+            workHistory: v2Output.parsed.workHistory,
+            totalYearsExperience: v2Output.parsed.totalYearsExperience,
+            workAuthorization: v2Output.parsed.workAuthorization,
+            relevantSpecialization: v2Output.parsed.relevantSpecialization,
+            proposedTags: v2Output.parsed.proposedTags,
+          }
+        : undefined,
       mergeUserTagsFn,
       writeUserTags,
       nowIso,

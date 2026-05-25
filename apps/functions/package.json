@@ -35,6 +35,7 @@
     "@pa/pa-experience-extractor": "0.0.1",
     "@pa/pa-orchestrator": "0.0.1",
     "@pa/pa-persistence": "0.0.1",
+    "@pa/pa-experience-extractor": "0.0.1",
     "@pa/pa-resume-parser": "0.0.1",
     "@pa/pa-safety": "0.0.1",
     "@wekruit/shared-tags": "0.1.1",
