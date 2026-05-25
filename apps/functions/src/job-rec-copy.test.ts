@@ -159,6 +159,49 @@ describe("job recommendation visible-message contract", () => {
     assert.match(body, /may have shared this before/)
   })
 
+  it("keeps internal match-source labels out of candidate-visible recommendation copy", () => {
+    const items = collectJobRecommendationMessageItems(
+      [
+        {
+          jobTitle: "Media Ops & Analytics Intern",
+          companyName: "Stride",
+          atsApplyUrl: "https://stride.example/jobs/1?ref=Simplify",
+          requiredSkills: ["media_operations", "data_analysis"],
+          reason: "reason: same lane as your brain_performance_technologies stint",
+          matchSourceLabel: "general match",
+        },
+      ],
+      "en",
+      { limit: 1 },
+    )
+
+    const body = composeJobRecommendationMessage(items, "en")
+    assert.doesNotMatch(body, /matchSourceLabel/i)
+    assert.doesNotMatch(body, /general match/i)
+    assert.doesNotMatch(body, /brain_performance_technologies/i)
+    assert.match(body, /brain performance technologies/)
+  })
+
+  it("does not instruct runtime LLMs to expose matchSourceLabel", () => {
+    const items = collectJobRecommendationMessageItems(
+      [
+        {
+          jobTitle: "Frontend Engineer",
+          companyName: "Acme",
+          atsApplyUrl: "https://jobs.ashbyhq.com/acme/frontend",
+          requiredSkills: ["React"],
+          matchSourceLabel: "general match",
+        },
+      ],
+      "en",
+      { limit: 1 },
+    )
+
+    const context = buildJobRecommendationRuntimeContext(items)
+    assert.doesNotMatch(JSON.stringify(context), /matchSourceLabel/)
+    assert.equal(context.trustedOutboundBody, composeJobRecommendationMessage(items, "en"))
+  })
+
   it("live collection skips and reports candidate-visible dead URLs before composing", async () => {
     const deadJobs: Array<{ id: string; reason: string; url: string }> = []
     const items = await collectLiveJobRecommendationMessageItems(

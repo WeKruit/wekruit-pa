@@ -72,6 +72,7 @@ import type {
 // merger, so the merger sees the corrected tags.
 import { mergeUserTags, type UserTagsInput } from "@pa/pa-orchestrator"
 import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
+import { computeResumeBaselineTagPatch } from "../lib/resume-baseline-tags.js"
 
 export type IngestCvInput = {
   userId: string
@@ -897,6 +898,24 @@ async function runUserTagsMerge(args: {
       preferredLang,
       cvUpdatedAt,
     }) as Record<string, unknown>
+    const existingTags =
+      userData?.tags && typeof userData.tags === "object" && !Array.isArray(userData.tags)
+        ? (userData.tags as Record<string, unknown>)
+        : {}
+    const baseline = computeResumeBaselineTagPatch({
+      existingTags,
+      mergedTags: merged,
+      statedPreferences: statedPrefs as Record<string, unknown> | undefined,
+      parsedResume: {
+        ...args.parsed,
+        workHistory: Array.isArray(args.workHistory) ? args.workHistory : undefined,
+        industrySector: args.industrySector,
+        relevantIndustry: args.relevantIndustry,
+        relevantSpecialization: args.relevantSpecialization,
+        proposedTags: args.proposedTags,
+      } as Record<string, unknown>,
+    })
+    merged = { ...existingTags, ...merged, ...baseline.proposed }
   } catch (err) {
     args.log("pa.cv_user_tags.merge_error", {
       userId: args.userId,

@@ -6,7 +6,13 @@
  * Drift > 5% → Slack alert + audit row to pa-prescreen-drift-runs.
  */
 import type { Firestore } from "firebase-admin/firestore"
-import { KeywordSetJudge, type KeywordSetLlmCaller, type KeywordSetLlmOutput, type KeywordSpec } from "@pa/pa-orchestrator"
+import {
+  KeywordSetJudge,
+  buildKeywordSetPrompt,
+  type KeywordSetLlmCaller,
+  type KeywordSetLlmOutput,
+  type KeywordSpec,
+} from "@pa/pa-orchestrator"
 
 interface Fixture {
   id: string
@@ -22,10 +28,7 @@ function makeLlmCaller(): KeywordSetLlmCaller {
     async score({ reply, lang, keywords, questionPrompt }) {
       const apiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY
       if (!apiKey) throw new Error("missing PA_OPENAI_AGENT_API_KEY")
-      const kwList = keywords.map((k, i) => `${i + 1}. "${k.keyword}" (weight ${(k.weight ?? 1).toFixed(2)})`).join("\n")
-      const system =
-        "You are a recruiting screener. For EACH keyword emit {keyword, match 0-1, confidence 0-1, evidence ≤60ch, reasoning ≤80ch}. Output STRICT JSON: {perKeyword:[], summary, answered}."
-      const user = `${questionPrompt ? `Question (${lang}): ${questionPrompt}\n` : ""}Reply (${lang}): """${reply}"""\nKeywords:\n${kwList}`
+      const { system, user } = buildKeywordSetPrompt({ reply, lang, keywords, questionPrompt })
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },

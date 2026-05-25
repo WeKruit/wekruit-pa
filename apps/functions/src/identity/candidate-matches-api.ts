@@ -27,7 +27,7 @@ export type CandidateMatchCard = {
   matchId: string
   jobId: string
   bucket: "recommended" | "invited"
-  status: "recommended" | "invited" | "interview_started" | "passed" | "not_passed" | "paused"
+  status: "recommended" | "invited" | "interview_started" | "review_pending" | "passed" | "not_passed" | "paused"
   job: CandidateMatchJobDisplay
   whyMatched: string[]
   rank?: number
@@ -120,8 +120,10 @@ async function getCandidateIdForAuth(db: Firestore, firebaseUid: string): Promis
 function projectStatus(
   stateValue: string | undefined,
   hasInvite: boolean,
-  prescreenTerminal?: string
+  prescreenTerminal?: string,
+  prescreenReviewPending?: boolean,
 ): CandidateMatchCard["status"] {
+  if (stateValue === "prescreen_review_pending" || prescreenReviewPending) return "review_pending"
   if (prescreenTerminal === "PASS") return "passed"
   if (prescreenTerminal === "FAIL" || prescreenTerminal === "HARD_STOP") return "not_passed"
   if (prescreenTerminal === "PAUSE") return "paused"
@@ -130,6 +132,7 @@ function projectStatus(
   if (stateValue === "outbound_sent") return "invited"
   if (stateValue === "candidate_interested") return "invited"
   if (stateValue === "prescreen_started") return "interview_started"
+  if (stateValue === "prescreen_review_pending") return "review_pending"
   if (stateValue === "passed") return "passed"
   if (stateValue === "employer_visible") return "passed"
   if (stateValue === "not_passed") return "not_passed"
@@ -145,6 +148,7 @@ function projectMatchCard(args: {
   state?: Record<string, unknown>
   invite?: Record<string, unknown>
   prescreenTerminal?: string
+  prescreenReviewPending?: boolean
 }): CandidateMatchCard {
   const match = args.match
   const state = cleanString(args.state?.state, 80)
@@ -155,7 +159,7 @@ function projectMatchCard(args: {
     matchId: args.matchId,
     jobId: args.jobId,
     bucket,
-    status: projectStatus(state, hasInvite, args.prescreenTerminal),
+    status: projectStatus(state, hasInvite, args.prescreenTerminal, args.prescreenReviewPending),
     job: projectJobDisplay(args.jobId, args.job),
     whyMatched: whyMatched.length > 0 ? whyMatched : ["This role matches your saved profile."],
     ...(typeof match?.finalRank === "number" && Number.isInteger(match.finalRank) ? { rank: match.finalRank } : {}),
@@ -386,17 +390,14 @@ export async function runCandidateListMatches(
       if (job.publicVisible !== true) return null
       const state = row.state ?? (fallbackStateSnap?.exists ? (fallbackStateSnap.data() as Record<string, unknown>) : undefined)
       const prescreenSessionId = cleanString(state?.prescreenSessionId, 240)
-      const prescreenTerminal = prescreenSessionId
-        ? cleanString(
-            (
-              (await deps.db
-                .collection(COLLECTIONS.prescreenSessions)
-                .doc(prescreenSessionId)
-                .get()).data() ?? {}
-            ).terminal,
-            80,
-          )
-        : undefined
+      const prescreenSession = prescreenSessionId
+        ? ((await deps.db
+            .collection(COLLECTIONS.prescreenSessions)
+            .doc(prescreenSessionId)
+            .get()).data() ?? {})
+        : {}
+      const prescreenTerminal = cleanString(prescreenSession.terminal, 80)
+      const prescreenReviewPending = prescreenSession.terminalActionPendingReview === true
       return projectMatchCard({
         jobId,
         matchId: row.matchId ?? createCandidateJobStateId(candidateId, jobId),
@@ -405,6 +406,7 @@ export async function runCandidateListMatches(
         job,
         state,
         prescreenTerminal,
+        prescreenReviewPending,
       })
     })
   )

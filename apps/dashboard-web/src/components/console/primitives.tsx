@@ -274,6 +274,7 @@ export function DataTable<R extends { id?: string }>({
   onRowClick,
   search,
   onSearch,
+  searchPlaceholder = "Search…",
   filters,
   count,
   toolbar = true,
@@ -284,6 +285,7 @@ export function DataTable<R extends { id?: string }>({
   onRowClick?: (row: R) => void
   search?: string
   onSearch?: (v: string) => void
+  searchPlaceholder?: string
   filters?: { label: ReactNode; value?: ReactNode; onClick?: () => void }[]
   count?: number
   toolbar?: boolean
@@ -299,7 +301,7 @@ export function DataTable<R extends { id?: string }>({
               <input
                 value={search || ""}
                 onChange={(e) => onSearch(e.target.value)}
-                placeholder="Search…"
+                placeholder={searchPlaceholder}
               />
             </div>
           )}

@@ -19,6 +19,7 @@ import {
   KeywordSetJudge,
   PreScreenPipeline,
   WEKRUIT_CANDIDATE_SOURCE,
+  buildKeywordSetPrompt,
   buildSharedOnboardingPrompt,
   buildSharedOnboardingPromptContext,
   buildSharedOnboardingStartedState,
@@ -31,14 +32,17 @@ import {
   type PreScreenQuestion,
   type PreScreenState,
   type PreScreenStateProvider,
-  prescreenSessionToEvaluationAttempt,
 } from "@pa/pa-orchestrator"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { saveEvaluationAttempt } from "@pa/pa-persistence"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
 import { runPrescreenTerminalAction, writePrescreenMemoryUpdate } from "./prescreen-terminal-action.js"
 import { isLayoffIntakeActiveForUser } from "./layoff-sms-start.js"
+import {
+  finalizePrescreenForHumanReview,
+  type PrescreenHumanReviewTerminal,
+} from "./prescreen-review-finalization.js"
+import type { MarkPrescreenReviewPendingArgs } from "./prescreen-outcome-service.js"
 
 const ACTIVE_PRESCREEN_TIMEOUT_MS = 60 * 60 * 1000
 const RECENT_TERMINAL_PRESCREEN_GUARD_MS = 60 * 60 * 1000
@@ -54,50 +58,6 @@ type RuntimeSmsSender = (args: {
 
 function stablePrescreenSendKey(...parts: string[]): string {
   return createHash("sha256").update(parts.join("|"), "utf8").digest("hex").slice(0, 32)
-}
-
-async function writePrescreenEvaluationAttempt(args: {
-  db: Firestore
-  state: PreScreenState
-  cfgSnapshot?: { questions?: unknown[]; threshold?: number; confidenceThreshold?: number }
-  terminal: "PASS" | "FAIL" | "HARD_STOP" | "PAUSE"
-  log: (event: string, payload: Record<string, unknown>) => void
-}): Promise<string | null> {
-  try {
-    const attempt = prescreenSessionToEvaluationAttempt({
-      state: args.state,
-      cfgSnapshot: args.cfgSnapshot as Parameters<typeof prescreenSessionToEvaluationAttempt>[0]["cfgSnapshot"],
-      terminal: args.terminal,
-      nowIso: new Date().toISOString(),
-      evaluator: { kind: "hybrid", promptVersion: "prescreen-keyword-set-v1" },
-    })
-    await saveEvaluationAttempt(args.db, attempt)
-    await args.db
-      .collection("pa-prescreen-sessions")
-      .doc(args.state.sessionId)
-      .set(
-        {
-          evaluationAttemptId: attempt.attemptId,
-          terminalActionPendingReview: true,
-          updatedAt: attempt.updatedAt,
-        },
-        { merge: true },
-      )
-    args.log("prescreen.evaluation_attempt.created", {
-      sessionId: args.state.sessionId,
-      attemptId: attempt.attemptId,
-      proposedOutcome: attempt.proposedOutcome.kind,
-      terminal: args.terminal,
-    })
-    return attempt.attemptId
-  } catch (err) {
-    args.log("prescreen.evaluation_attempt.create_failed", {
-      sessionId: args.state.sessionId,
-      terminal: args.terminal,
-      error: err instanceof Error ? err.message : String(err),
-    })
-    return null
-  }
 }
 
 /** Firestore-backed PreScreenStateProvider. */
@@ -146,30 +106,7 @@ function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
     async score({ reply, lang, keywords, questionPrompt }) {
       const apiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY
       if (!apiKey) throw new Error("missing OpenAI API key")
-      const keywordList = keywords
-        .map((k, i) => `${i + 1}. "${k.keyword}" (weight ${(k.weight ?? 1).toFixed(2)})${k.hint ? ` hint: ${k.hint}` : ""}`)
-        .join("\n")
-      const system = [
-        "You are a recruiting screener evaluating candidate replies against a JD keyword set.",
-        "For EACH configured keyword, emit one cell:",
-        "  - keyword (verbatim)",
-        "  - match 0..1 (how well the reply demonstrates this keyword)",
-        "  - confidence 0..1 (how sure you are)",
-        "  - evidence ≤60 char excerpt from reply",
-        "  - reasoning ≤80 char explanation",
-        "Also emit: summary ≤120 char, answered bool, abortHint?{kind:low_confidence|off_topic|decline|ambiguous, reason}",
-        "When the reply contains multiple prior answers, score the strongest concrete relevant evidence across the whole merged reply.",
-        "Do not let an early 'not exact' admission dominate if later details show relevant shipped work, systems, tools, or impact.",
-        "Output STRICT JSON. No prose. Do NOT invent keywords. Temperature 0.",
-      ].join("\n")
-      const userMsg = [
-        questionPrompt ? `Question (${lang}): ${questionPrompt}` : "",
-        `Candidate reply (${lang}): """${reply}"""`,
-        `Keyword set:\n${keywordList}`,
-        'Schema: { "perKeyword": [...], "summary": "...", "answered": bool, "abortHint"?: {...} }',
-      ]
-        .filter(Boolean)
-        .join("\n\n")
+      const { system, user } = buildKeywordSetPrompt({ reply, lang, keywords, questionPrompt })
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
@@ -177,7 +114,7 @@ function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
           model: "gpt-5.4-nano",
           messages: [
             { role: "system", content: system },
-            { role: "user", content: userMsg },
+            { role: "user", content: user },
           ],
           temperature: 0,
           response_format: { type: "json_object" },
@@ -501,6 +438,7 @@ export interface RunPrescreenTurnArgs {
   lang?: "zh" | "en"
   sendSms?: RuntimeSmsSender
   runTerminalAction?: typeof runPrescreenTerminalAction
+  markReviewPending?: (args: MarkPrescreenReviewPendingArgs) => Promise<unknown>
   keywordSetCaller?: KeywordSetLlmCaller
   clarifyComposer?: PreScreenClarifyComposer
   log?: (event: string, payload: Record<string, unknown>) => void
@@ -538,6 +476,10 @@ function prescreenTurnRecordScored(state: PreScreenState, qId: string) {
     aggregate: scored.aggregate,
     ...(scored.abortHint ? { abortHint: scored.abortHint } : {}),
   }
+}
+
+function prescreenHumanReviewTerminal(value: string): PrescreenHumanReviewTerminal | null {
+  return value === "PASS" || value === "FAIL" || value === "HARD_STOP" ? value : null
 }
 
 async function maybeHandlePrescreenSafetyBlock(args: {
@@ -825,6 +767,13 @@ function isRecentTerminalFollowupReply(reply: string): boolean {
   )
 }
 
+function hasActiveUserPostMatchRetention(user: Record<string, unknown> | undefined): boolean {
+  const raw = user?.postMatchRetention
+  if (!raw || typeof raw !== "object") return false
+  const stage = (raw as { stage?: unknown }).stage
+  return typeof stage === "string" && stage !== "complete"
+}
+
 async function shouldHandleRecentTerminalSession(args: {
   db: Firestore
   userId: string
@@ -841,6 +790,13 @@ async function shouldHandleRecentTerminalSession(args: {
       userId: args.userId,
       error: err instanceof Error ? err.message : String(err),
     })
+  }
+  if (hasActiveUserPostMatchRetention(user)) {
+    args.log("prescreen.turn.recent_terminal_guard_yielded_to_post_match_retention", {
+      userId: args.userId,
+      stage: (user?.postMatchRetention as { stage?: unknown } | undefined)?.stage ?? null,
+    })
+    return false
   }
   if (args.terminal === "PASS" && !isExplicitNewIntentAfterTerminal(args.replyText)) return true
   if (isRecentTerminalFollowupReply(args.replyText)) return true
@@ -905,6 +861,29 @@ export async function runPrescreenTurnIfActive(
     const sessData = (sessSnap.data() ?? {}) as Record<string, unknown>
     const alreadyAcked = typeof sessData.postTerminalFollowupAckAt === "string"
     const nowIso = new Date().toISOString()
+    if (sessData.terminalActionPendingReview === true) {
+      await sessionRef.collection("turns").add({
+        qId: "terminal",
+        reply: args.replyText,
+        action: {
+          kind: "post_terminal_followup",
+          terminal: lookup.terminal,
+          reason: "pending_human_review",
+        },
+        ts: nowIso,
+      })
+      await sessionRef.set({ reviewPendingFollowupAt: nowIso, updatedAt: nowIso }, { merge: true })
+      log("prescreen.turn.recent_terminal_pending_review_held", {
+        sessionId: lookup.sessionId,
+        userId: args.userId,
+        terminal: lookup.terminal,
+      })
+      return {
+        handled: true,
+        sessionId: lookup.sessionId,
+        terminal: lookup.terminal,
+      }
+    }
     const retention = sessData.postPrescreenRetention && typeof sessData.postPrescreenRetention === "object"
       ? sessData.postPrescreenRetention as Record<string, unknown>
       : null
@@ -1028,6 +1007,24 @@ export async function runPrescreenTurnIfActive(
           idempotencyKey: `prescreen_recent_terminal:${lookup.sessionId}`,
         })
         await sessionRef.set({ postTerminalFollowupAckAt: nowIso, updatedAt: nowIso }, { merge: true })
+      } catch (err) {
+        log("prescreen.turn.recent_terminal_ack_send_failed", {
+          sessionId: lookup.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    if (!text) {
+      text = recentTerminalCourtesyAckText(args.lang ?? "en")
+      try {
+        await sendSms({
+          to: args.toE164,
+          content: text,
+          userId: args.userId,
+          db: args.db,
+          runtimeSource: "pa_prescreen_runtime",
+          idempotencyKey: `prescreen_recent_terminal_ack:${lookup.sessionId}:${stablePrescreenSendKey(args.replyText, text)}`,
+        })
       } catch (err) {
         log("prescreen.turn.recent_terminal_ack_send_failed", {
           sessionId: lookup.sessionId,
@@ -1227,7 +1224,11 @@ export async function runPrescreenTurnIfActive(
       ts: new Date().toISOString(),
     })
 
-  if (result.text) {
+  const reviewTerminal =
+    result.action.kind === "terminal" ? prescreenHumanReviewTerminal(result.action.terminal) : null
+  let textSent = result.text
+
+  if (result.text && !reviewTerminal) {
     try {
       await sendSms({
         to: args.toE164,
@@ -1251,9 +1252,9 @@ export async function runPrescreenTurnIfActive(
     terminal: result.state.terminal,
   })
 
-  // Screening eval invariant: terminal scoring creates a review artifact only.
-  // Employment-impacting downstream actions (Level 1 reveal, PII/recs, employer
-  // visibility) are now behind operator commit via paReviewEvaluationAttempt.
+  // Screening eval invariant: terminal scoring creates a review artifact and a
+  // neutral pending-review acknowledgement only. Employment-impacting downstream
+  // actions are behind operator commit via paReviewEvaluationAttempt.
   if (
     result.action.kind === "terminal" &&
     (result.action.terminal === "PASS" ||
@@ -1262,22 +1263,30 @@ export async function runPrescreenTurnIfActive(
       result.action.terminal === "PAUSE")
   ) {
     const terminalAt = result.state.updatedAt ?? new Date().toISOString()
-    await writePrescreenMemoryUpdate({
-      db: args.db,
-      sessionId,
-      userId: args.userId,
-      jobId: result.state.jobId,
-      terminal: result.action.terminal,
-      occurredAt: terminalAt,
-      log,
-    })
-    await writePrescreenEvaluationAttempt({
-      db: args.db,
-      state: result.state,
-      cfgSnapshot,
-      terminal: result.action.terminal,
-      log,
-    })
+    if (reviewTerminal) {
+      const finalized = await finalizePrescreenForHumanReview({
+        db: args.db,
+        state: result.state,
+        cfgSnapshot,
+        terminal: reviewTerminal,
+        toE164: args.toE164,
+        lang: args.lang ?? "en",
+        sendSms,
+        markReviewPending: args.markReviewPending,
+        log,
+      })
+      textSent = finalized.pendingAckText
+    } else {
+      await writePrescreenMemoryUpdate({
+        db: args.db,
+        sessionId,
+        userId: args.userId,
+        jobId: result.state.jobId,
+        terminal: result.action.terminal,
+        occurredAt: terminalAt,
+        log,
+      })
+    }
     await markUserPrescreenWorkSessionEnded({
       db: args.db,
       userId: args.userId,
@@ -1291,27 +1300,13 @@ export async function runPrescreenTurnIfActive(
         error: err instanceof Error ? err.message : String(err),
       })
     })
-    if (result.action.terminal !== "PAUSE") {
-      await args.db.collection("pa-prescreen-sessions").doc(sessionId).set(
-        {
-          postPrescreenRetention: {
-            stage: "await_basic_onboarding",
-            terminal: result.action.terminal,
-            startedAt: terminalAt,
-            updatedAt: terminalAt,
-          },
-          updatedAt: terminalAt,
-        },
-        { merge: true },
-      )
-    }
   }
 
   return {
     handled: true,
     sessionId,
     terminal: result.state.terminal,
-    textSent: result.text,
+    textSent,
   }
 }
 
@@ -1329,4 +1324,10 @@ function userExitSessionText(lang: "zh" | "en"): string {
 
 function recentTerminalSessionText(lang: "zh" | "en", terminal?: string | null): string {
   return postPrescreenOnboardingPrompt(lang, terminal)
+}
+
+function recentTerminalCourtesyAckText(lang: "zh" | "en"): string {
+  return lang === "zh"
+    ? "不客气 — 这个岗位 screen 我先保持结束状态。之后需要什么，直接在这里发我就行。"
+    : "You're welcome — I’ll keep this role screen closed. If you need anything later, message me here."
 }

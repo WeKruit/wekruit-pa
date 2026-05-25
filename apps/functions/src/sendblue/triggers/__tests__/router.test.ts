@@ -21,6 +21,7 @@ import {
   extractInitialPrescreenReply,
   PrescreenTrigger,
   PRESCREEN_IDEMPOTENCY_WINDOW_MS,
+  PRESCREEN_IDENTITY_CONFLICT_NOTICE,
   TriggerRouter,
   type CompactTriggerDeps,
   type PrescreenTriggerDeps,
@@ -36,6 +37,7 @@ function makeCtx(text: string, opts: Partial<TriggerContext> = {}): TriggerConte
   return {
     text,
     fromNumber: opts.fromNumber ?? "+15551234",
+    toNumber: opts.toNumber,
     messageHandle: opts.messageHandle ?? "h1",
     receivedAtIso: opts.receivedAtIso ?? "2026-05-12T00:00:00Z",
     log: opts.log ?? (() => {}),
@@ -135,15 +137,34 @@ function makePrescreenDeps(opts: {
 } = {}): PrescreenTriggerDeps & {
   runs: Array<{ jobId: string; userId: string; toE164: string; initialReplyText?: string }>
   audits: Record<string, unknown>[]
+  identityNotices: Array<{
+    targetUserId: string
+    jobId: string
+    toE164: string
+    fromNumber?: string
+    messageHandle: string
+    content: string
+    conflictCode: string
+  }>
   setLastCalls: Array<{ jobId: string; userId: string; messageHandle: string; ms: number }>
 } {
   const runs: Array<{ jobId: string; userId: string; toE164: string; initialReplyText?: string }> = []
   const audits: Record<string, unknown>[] = []
+  const identityNotices: Array<{
+    targetUserId: string
+    jobId: string
+    toE164: string
+    fromNumber?: string
+    messageHandle: string
+    content: string
+    conflictCode: string
+  }> = []
   const setLastCalls: Array<{ jobId: string; userId: string; messageHandle: string; ms: number }> = []
   const lastFired: Record<string, number> = { ...(opts.lastFired ?? {}) }
   return {
     runs,
     audits,
+    identityNotices,
     setLastCalls,
     async lookupUserByPhone(phone) {
       return (opts.phoneToUser ?? {})[phone] ?? null
@@ -160,6 +181,9 @@ function makePrescreenDeps(opts: {
     },
     async runPreScreen(args) {
       runs.push(args)
+    },
+    async sendIdentityConflictNotice(args) {
+      identityNotices.push(args)
     },
     async audit(e) {
       audits.push(e)
@@ -208,6 +232,34 @@ test("Phase 77: PrescreenTrigger unauthorized when sender is neither self nor ad
   const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job"))
   assert.equal(r.kind, "unauthorized")
   if (r.kind === "unauthorized") assert.equal(r.reason, "not_self_or_admin")
+})
+
+test("Phase 77: PrescreenTrigger queues a clear notice when token phone binding conflicts", async () => {
+  const deps = makePrescreenDeps()
+  deps.lookupUserByPhone = async () => {
+    throw new Error("identity_conflict:pa_users_phone_mismatch:user123:existing_+15550000000_attempted_+15551234")
+  }
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job", {
+    fromNumber: "+15551234",
+    toNumber: "+15557654321",
+    messageHandle: "msg-conflict-1",
+  }))
+
+  assert.equal(r.kind, "handled")
+  if (r.kind === "handled") assert.equal(r.action, "prescreen_identity_conflict_notified")
+  assert.equal(deps.runs.length, 0)
+  assert.equal(deps.audits[0].type, "trigger_unauthorized")
+  assert.equal(deps.audits[0].reason, "identity_conflict")
+  assert.deepEqual(deps.identityNotices[0], {
+    targetUserId: "user123",
+    jobId: "j1",
+    toE164: "+15551234",
+    fromNumber: "+15557654321",
+    messageHandle: "msg-conflict-1",
+    content: PRESCREEN_IDENTITY_CONFLICT_NOTICE,
+    conflictCode: "pa_users_phone_mismatch",
+  })
 })
 
 test("Phase 77: PrescreenTrigger fires for self (sender matches target userId)", async () => {

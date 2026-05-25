@@ -553,6 +553,7 @@ type StageDef = { id: CandidateJobStatus | "all"; label: string; dot: string }
 const STAGES: StageDef[] = [
   { id: "invited", label: "Invited", dot: "var(--wk-live-pulse)" },
   { id: "interview_started", label: "Screening", dot: "#1f6feb" },
+  { id: "review_pending", label: "Reviewing", dot: "#c08800" },
   { id: "passed", label: "Passed", dot: "#1f6feb" },
   { id: "not_passed", label: "Not passed", dot: "var(--wk-ink-4)" },
   { id: "paused", label: "Paused", dot: "var(--wk-ink-4)" },
@@ -684,6 +685,12 @@ function StageChip({ status }: { status: CandidateJobStatus }) {
     return (
       <span className="wkv2-chip wkv2-chip--blue">
         <PulseDot size={6} color="#1f6feb" /> Screening
+      </span>
+    )
+  if (status === "review_pending")
+    return (
+      <span className="wkv2-chip wkv2-chip--warm">
+        <Icon name="clock" size={11} stroke={2.4} /> Reviewing
       </span>
     )
   if (status === "passed")

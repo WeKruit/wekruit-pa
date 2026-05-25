@@ -93,6 +93,7 @@ import {
   shouldRunOnboardingProbe,
   parseUserAnswerForStep,
   parseTosAnswer,
+  WEKRUIT_LAYOFF_SOURCE,
   type OnboardingStep,
 } from "./onboarding.js"
 export {
@@ -548,6 +549,18 @@ export type OrchestratorStore = {
    * Returns the count of jobs cancelled.
    */
   cancelAllPendingProactiveJobs(userId: string): Promise<number>
+  pauseJobRecommendationSubscription?(userId: string, input: {
+    inboundEventId: string
+    sessionId: string
+    reason: "candidate_cancel"
+    occurredAt: string
+  }): Promise<{ paused: boolean }>
+  resumeJobRecommendationSubscription?(userId: string, input: {
+    inboundEventId: string
+    sessionId: string
+    reason: "candidate_restart"
+    occurredAt: string
+  }): Promise<{ resumed: boolean }>
   /**
    * Phase 22 — write proactive_cancel audit event (D-09).
    */
@@ -731,6 +744,7 @@ export type OrchestratorStore = {
       requestedCount?: number
       roleFocus?: string[]
       collabPrescreenOnly?: boolean
+      excludeInternships?: boolean
     }
   ): Promise<{
     message: string
@@ -901,6 +915,8 @@ type LifecycleProfileUpdate = {
     searchStatus?: LifecycleSearchStatus
     roleFocus?: string[]
     targetRoleFunction?: string[]
+    yoeRange?: [number, number]
+    careerStage?: "student" | "intern" | "entry_level" | "junior" | "mid_level" | "senior"
     targetLocations?: string[]
     locationLabels?: string[]
     visaStatus?: string
@@ -945,6 +961,79 @@ function detectLifecycleRoleFocus(text: string): string[] {
   if (/\b(back[-\s]?end|backend|api|server[-\s]?side)\b/i.test(text)) out.push("backend")
   if (/\b(product\s+ops|ops\s+tooling|dashboard|dashboards)\b/i.test(text)) out.push("product-ops tooling")
   return uniqStrings(out)
+}
+
+const ROLE_FUNCTION_LABELS_FOR_LIFECYCLE: Record<string, string> = {
+  software_engineering: "software engineering",
+  engineering_and_development: "engineering",
+  data_analysis: "data analysis",
+  product_management: "product management",
+  business_analyst: "business analyst",
+  creatives_and_design: "design",
+  consultant: "consulting",
+  accounting_and_finance: "accounting/finance",
+  marketing: "marketing",
+  management_and_executive: "management/executive",
+  sales: "sales",
+  human_resources: "human resources",
+  legal_and_compliance: "legal/compliance",
+  arts_and_entertainment: "arts/entertainment",
+  education_and_training: "education/training",
+  public_sector_and_government: "public sector/government",
+  customer_service_and_support: "customer support",
+}
+
+function labelLifecycleRoleFunction(token: string): string {
+  return ROLE_FUNCTION_LABELS_FOR_LIFECYCLE[token] ?? token.replace(/_/g, " ")
+}
+
+function lifecycleRoleLabels(targetRoleFunction: string[], roleFocus: string[]): string[] {
+  return uniqStrings([
+    ...roleFocus.filter((r) => r !== "product-ops tooling"),
+    ...targetRoleFunction
+      .filter((token) => !(token === "software_engineering" && roleFocus.length > 0))
+      .map(labelLifecycleRoleFunction),
+  ])
+}
+
+function detectRequestedYoeRange(text: string): {
+  range: [number, number]
+  careerStage: "student" | "intern" | "entry_level" | "junior" | "mid_level" | "senior"
+  label: string
+} | undefined {
+  const body = text.trim()
+  if (!body) return undefined
+  const lower = body.toLowerCase()
+  const hasExperienceContext =
+    /\b(?:years?\s+of\s+experience|years?|yrs?|yoe|exp|experience|entry[-\s]?level|junior|new\s+grad|fresh\s+grad)\b/i.test(body) ||
+    /(?:年经验|工作年限|经验|初级|应届)/.test(body)
+  const ranges = [...lower.matchAll(/\b(\d{1,2})\s*[-–]\s*(\d{1,2})\b/g)]
+    .map((match) => [Number(match[1]), Number(match[2])] as [number, number])
+    .filter(([min, max]) => Number.isFinite(min) && Number.isFinite(max) && min >= 0 && max >= min && max <= 50)
+  if (ranges.length === 0 && !hasExperienceContext) return undefined
+
+  if (ranges.length > 0 && (hasExperienceContext || /\b(?:roles?|jobs?|positions?|opportunities|openings|listings|matches)\b/i.test(body))) {
+    const min = Math.min(...ranges.map(([start]) => start))
+    const max = Math.max(...ranges.map(([, end]) => end))
+    const careerStage =
+      max <= 1 ? "entry_level" :
+      max <= 3 ? "entry_level" :
+      max <= 5 ? "junior" :
+      max <= 8 ? "mid_level" :
+      "senior"
+    return { range: [min, max], careerStage, label: `${min}-${max} years experience` }
+  }
+
+  if (/\b(?:new\s+grad|fresh\s+grad|entry[-\s]?level|junior)\b/i.test(body) || /(?:应届|初级)/.test(body)) {
+    return { range: [0, 3], careerStage: "entry_level", label: "0-3 years experience" }
+  }
+  return undefined
+}
+
+function shouldExcludeInternshipsForExplicitJobSearch(text: string): boolean {
+  const yoe = detectRequestedYoeRange(text)
+  if (!yoe || yoe.range[1] > 3) return false
+  return !/\b(?:intern|internship|internships|co[-\s]?op|phd|doctoral)\b/i.test(text)
 }
 
 function detectStartupPreferenceForLifecycle(text: string): "startup" | "bigtech" | "either" | undefined {
@@ -1020,6 +1109,7 @@ function extractLifecycleProfileUpdate(text: string): LifecycleProfileUpdate | n
   if (!trimmed) return null
   const targetRoleFunction = mapAnswerToRoleFunction(trimmed)
   const roleFocus = detectLifecycleRoleFocus(trimmed)
+  const yoe = detectRequestedYoeRange(trimmed)
   const targetLocations = orderLocationTokensByMention(trimmed, mapAnswerToLocations(trimmed))
   const locationLabels = targetLocations.map(labelLocationToken)
   const visa = visaTagForLifecycle(trimmed)
@@ -1030,6 +1120,8 @@ function extractLifecycleProfileUpdate(text: string): LifecycleProfileUpdate | n
     searchStatus ? `search_status:${searchStatus}` : null,
     ...roleFocus.map((r) => `role_focus:${r}`),
     ...targetRoleFunction.map((r) => `role_function:${r}`),
+    yoe ? `yoe_range:${yoe.range[0]}-${yoe.range[1]}` : null,
+    yoe ? `career_stage:${yoe.careerStage}` : null,
     ...targetLocations.map((l) => `location:${l}`),
     visa.tag ? `visa:${visa.tag}` : null,
     startupPreference ? `company_stage:${startupPreference}` : null,
@@ -1037,16 +1129,14 @@ function extractLifecycleProfileUpdate(text: string): LifecycleProfileUpdate | n
 
   if (rawSignals.length === 0) return null
 
-  const roleLabels = uniqStrings([
-    ...roleFocus.filter((r) => r !== "product-ops tooling"),
-    targetRoleFunction.includes("software_engineering") && roleFocus.length === 0 ? "software engineering" : null,
-  ])
+  const roleLabels = lifecycleRoleLabels(targetRoleFunction, roleFocus)
   const summaryParts: string[] = []
   if (searchStatus === "still_looking") summaryParts.push("still looking")
   if (searchStatus === "interviewing") summaryParts.push("currently interviewing")
   if (searchStatus === "paused") summaryParts.push("search paused")
   if (searchStatus === "not_looking") summaryParts.push("not actively looking")
   if (roleLabels.length > 0) summaryParts.push(`targeting ${roleLabels.join("/")} roles`)
+  if (yoe) summaryParts.push(`targets ${yoe.label} roles`)
   if (locationLabels.length > 0) summaryParts.push(`prefers ${locationLabels.join(" or ")}`)
   if (startupPreference === "startup") summaryParts.push("prefers early-stage startups")
   if (startupPreference === "bigtech") summaryParts.push("prefers larger companies")
@@ -1056,6 +1146,7 @@ function extractLifecycleProfileUpdate(text: string): LifecycleProfileUpdate | n
 
   const ackFocus: string[] = []
   if (roleLabels.length > 0) ackFocus.push(`${roleLabels.join("/")} roles`)
+  if (yoe) ackFocus.push(`${yoe.label} roles`)
   if (locationLabels.length > 0) ackFocus.push(locationLabels.join(" or "))
   if (startupPreference === "startup") ackFocus.push("early-stage startups")
   if (startupPreference === "bigtech") ackFocus.push("larger-company roles")
@@ -1066,6 +1157,10 @@ function extractLifecycleProfileUpdate(text: string): LifecycleProfileUpdate | n
 
   const tags: LifecyclePartialTags = {}
   if (targetRoleFunction.length > 0) tags.targetRoleFunction = targetRoleFunction
+  if (yoe) {
+    tags.yoeRange = yoe.range
+    tags.careerStage = yoe.careerStage
+  }
   if (targetLocations.length > 0) tags.targetLocations = targetLocations
   if (visa.tag) tags.visaStatus = visa.tag
   if (startupPreference) tags.prefersStartup = startupPreference
@@ -1073,6 +1168,7 @@ function extractLifecycleProfileUpdate(text: string): LifecycleProfileUpdate | n
 
   const statedPreferences: Record<string, unknown> = {}
   if (roleLabels.length > 0) statedPreferences.targetRole = roleLabels
+  if (yoe) statedPreferences.yoeRange = yoe.range
   if (locationLabels.length > 0) statedPreferences.targetLocations = locationLabels
   if (visa.stated) statedPreferences.visaStatus = visa.stated
   if (startupPreference) statedPreferences.prefersStartup = startupPreference === "startup" ? true : startupPreference === "bigtech" ? false : null
@@ -1088,6 +1184,8 @@ function extractLifecycleProfileUpdate(text: string): LifecycleProfileUpdate | n
       searchStatus,
       roleFocus,
       targetRoleFunction,
+      yoeRange: yoe?.range,
+      careerStage: yoe?.careerStage,
       targetLocations,
       locationLabels,
       visaStatus: visa.tag,
@@ -1413,6 +1511,42 @@ async function sendMemoryReply(
   })
 }
 
+async function recordRuntimeFailureAlert(args: {
+  store: OrchestratorStore
+  event: InboundEvent
+  turnId: string
+  errorCode: string
+  error: string
+}): Promise<void> {
+  if (!args.store.db) return
+  try {
+    await args.store.db.collection("pa-runtime-alerts").doc(`turn_failed_${args.event.id}`).set(
+      {
+        kind: "orchestrator_turn_failed",
+        severity: "ERROR",
+        userId: args.event.userId,
+        sessionId: args.event.sessionId,
+        inboundEventId: args.event.id,
+        turnId: args.turnId,
+        errorCode: args.errorCode,
+        error: args.error,
+        candidateVisibleFallbackSent: false,
+        status: "open",
+        createdAt: args.store.nowIso(),
+        updatedAt: args.store.nowIso(),
+      },
+      { merge: true },
+    )
+  } catch (alertErr) {
+    args.store.log("pa.runtime_alert.write_failed", {
+      userId: args.event.userId,
+      turnId: args.turnId,
+      eventId: args.event.id,
+      error: alertErr instanceof Error ? alertErr.message : String(alertErr),
+    })
+  }
+}
+
 /**
  * Adam 2026-05-19 voice polish §3 — execute an outbound delivery plan.
  *
@@ -1567,6 +1701,9 @@ function isExplicitJobSearchRequest(text: string | undefined | null): boolean {
   }
   const normalized = body.toLowerCase()
   if (/(?:找|推荐|匹配|看看|发)(?:一些|几个|点)?\s*(?:工作|岗位|机会|职位|内推)/.test(normalized)) {
+    return true
+  }
+  if (/\b(?:need|want|looking\s+for|look\s+for|prefer)\b[^.!?]{0,90}\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches)\b/i.test(normalized)) {
     return true
   }
   return /\b(?:find|get|show|send|pull|recommend|match|search|look\s+for|help\s+me\s+find)\b[^.!?]{0,90}\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches|swe|software\s+engineering|software\s+engineer)\b/i.test(normalized)
@@ -1938,6 +2075,30 @@ function runtimeContext(rawMeta: unknown): Record<string, unknown> {
   if (!rawMeta || typeof rawMeta !== "object") return {}
   const context = (rawMeta as Record<string, unknown>).context
   return context && typeof context === "object" ? context as Record<string, unknown> : {}
+}
+
+function trustedRuntimeOutboundBody(rawMeta: unknown): string | null {
+  const context = runtimeContext(rawMeta)
+  const raw = context.trustedOutboundBody
+  if (typeof raw !== "string") return null
+  const body = raw.trim()
+  if (!body || body === "__NO_SEND__") return null
+  return body.slice(0, 4_000)
+}
+
+function detectJobRecommendationSubscriptionCancel(text: string): boolean {
+  const normalized = text.trim().toLowerCase()
+  if (!normalized) return false
+  if (/^(stop|unsubscribe|unsub|cancel|pause)\s*[.!?。！]*$/.test(normalized)) return true
+  return /\b(?:stop|unsubscribe|unsub|cancel|pause|turn off|no more)\b[^.!?]{0,80}\b(?:job|jobs|role|roles|match|matches|matching|recommendation|recommendations|recs|daily|texts|outreach)\b/i.test(normalized) ||
+    /\b(?:job|jobs|role|roles|match|matches|matching|recommendation|recommendations|recs|daily|texts|outreach)\b[^.!?]{0,80}\b(?:stop|unsubscribe|unsub|cancel|pause|turn off|no more)\b/i.test(normalized)
+}
+
+function detectJobRecommendationSubscriptionResume(text: string): boolean {
+  const normalized = text.trim().toLowerCase()
+  if (!normalized) return false
+  return /\b(?:restart|resume|start|subscribe|resubscribe|unpause|turn on|turn back on)\b[^.!?]{0,80}\b(?:job|jobs|role|roles|match|matches|matching|recommendation|recommendations|recs|daily|texts|outreach)\b/i.test(normalized) ||
+    /\b(?:job|jobs|role|roles|match|matches|matching|recommendation|recommendations|recs|daily|texts|outreach)\b[^.!?]{0,80}\b(?:restart|resume|start|subscribe|resubscribe|unpause|turn on|turn back on)\b/i.test(normalized)
 }
 
 function parseSharedQuestionId(value: unknown): SharedOnboardingQuestionId {
@@ -2443,13 +2604,14 @@ async function handleCompletedUserJobSearchRequest(
   turnId: string,
   onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
 ): Promise<boolean> {
-  if (onboardingUser?.onboardingState !== "complete") return false
   if (!store.generateJobRecs) return false
   if (isJobRecommendationExplanationRequest(event.body)) return false
   const explicitJobSearch = isExplicitJobSearchRequest(event.body)
   const moreFollowup = isMoreJobSearchFollowupRequest(event.body)
   const profileUpdate = extractLifecycleProfileUpdate(event.body)
-  const recentRecommendationContext = !explicitJobSearch
+  const onboardingComplete = onboardingUser?.onboardingState === "complete"
+  if (!onboardingComplete && onboardingUser?.source === WEKRUIT_LAYOFF_SOURCE) return false
+  const recentRecommendationContext = onboardingComplete && !explicitJobSearch
     ? await hasRecentJobRecommendationContext(store, event.userId)
     : false
   if (!explicitJobSearch && !(recentRecommendationContext && (moreFollowup || profileUpdate))) return false
@@ -2457,12 +2619,14 @@ async function handleCompletedUserJobSearchRequest(
   const lang: "en" | "zh" = detectLang([event.body]) === "zh" ? "zh" : "en"
   const requestedCount = requestedJobRecCount(event.body)
   const roleFocus = detectLifecycleRoleFocus(event.body)
+  const excludeInternships = shouldExcludeInternshipsForExplicitJobSearch(event.body)
   const profileUpdated = await persistJobSearchProfileUpdate(event, store, turnId, profileUpdate)
   store.log("pa.runtime.job_search.direct_request", {
     userId: event.userId,
     turnId,
     lang,
     roleFocus,
+    excludeInternships,
     explicitJobSearch,
     moreFollowup,
     profileUpdated,
@@ -2472,6 +2636,7 @@ async function handleCompletedUserJobSearchRequest(
     force: true,
     ...(requestedCount ? { requestedCount } : {}),
     ...(roleFocus.length > 0 ? { roleFocus } : {}),
+    ...(excludeInternships ? { excludeInternships: true } : {}),
   })
   const recCount = recs?.recCount ?? 0
   const body =
@@ -2842,6 +3007,21 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       }
     }
 
+    const trustedRuntimeBody = runtimeEvent ? trustedRuntimeOutboundBody(event.rawMeta) : null
+    if (trustedRuntimeBody) {
+      await sendMemoryReply(store, event, turnId, trustedRuntimeBody)
+      await store.updateTurn(turnId, {
+        status: "succeeded",
+        stage: "succeeded",
+        runtimeTrustedOutbound: true,
+        runtimeEventSource: event.rawMeta?.runtimeEventSource ?? null,
+        runtimeEventKind: event.rawMeta?.runtimeEventKind ?? null,
+        completedAt: store.nowIso(),
+      })
+      await store.markEventSucceeded(event.id)
+      return
+    }
+
     // Test-admin magic string. Must run BEFORE parseMemoryCommand so it
     // doesn't get swallowed by an unrelated memory grammar rule.
     if (userAuthoredEvent) {
@@ -2944,6 +3124,60 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       }
     }
 
+    if (userAuthoredEvent && detectJobRecommendationSubscriptionResume(event.body)) {
+      const resumeResult = await store.resumeJobRecommendationSubscription?.(event.userId, {
+        inboundEventId: event.id,
+        sessionId: event.sessionId,
+        reason: "candidate_restart",
+        occurredAt: store.nowIso(),
+      }) ?? { resumed: false }
+      const reply = resumeResult.resumed
+        ? "Got it — job recommendations are back on."
+        : "Got it — I can send job recommendations when you ask."
+      await sendMemoryReply(store, event, turnId, reply)
+      await store.updateTurn(turnId, {
+        status: "succeeded",
+        stage: "succeeded",
+        directIntent: "job_rec_subscription_resume",
+        directIntentResult: resumeResult.resumed ? "resumed" : "no_subscription_record",
+        completedAt: store.nowIso(),
+      })
+      await store.markEventSucceeded(event.id)
+      return
+    }
+
+    if (userAuthoredEvent && detectJobRecommendationSubscriptionCancel(event.body)) {
+      const pauseResult = await store.pauseJobRecommendationSubscription?.(event.userId, {
+        inboundEventId: event.id,
+        sessionId: event.sessionId,
+        reason: "candidate_cancel",
+        occurredAt: store.nowIso(),
+      }) ?? { paused: false }
+      const cancelledCount = await store.cancelAllPendingProactiveJobs(event.userId)
+      if (cancelledCount > 0) {
+        await store.writeProactiveCancelAudit({
+          userId: event.userId,
+          sessionId: event.sessionId,
+          inboundEventId: event.id,
+          cancelledCount,
+        })
+      }
+      const reply = pauseResult.paused || cancelledCount > 0
+        ? "Got it — I paused job recommendations. You can ask me to restart anytime."
+        : "Got it — I won't send job recommendations unless you ask me to restart."
+      await sendMemoryReply(store, event, turnId, reply)
+      await store.updateTurn(turnId, {
+        status: "succeeded",
+        stage: "succeeded",
+        directIntent: "job_rec_subscription_cancel",
+        directIntentResult: pauseResult.paused ? "paused" : "no_active_subscription",
+        proactiveCancelledCount: cancelledCount,
+        completedAt: store.nowIso(),
+      })
+      await store.markEventSucceeded(event.id)
+      return
+    }
+
     // Phase 22 — proactive cancellation NLU pre-LLM hook (D-07, PROACTIVE-06).
     // Must run before memory commands so "停止提醒" short-circuits cleanly.
     if (userAuthoredEvent && detectProactiveCancellation(event.body)) {
@@ -2986,6 +3220,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
 
     const onboardingUser = await store.getOnboardingUser(event.userId)
     if (await handleSharedOnboardingRuntimeEvent(event, store, turnId, onboardingUser)) {
+      return
+    }
+
+    if (userAuthoredEvent && await handleCompletedUserJobSearchRequest(event, store, turnId, onboardingUser)) {
       return
     }
 
@@ -3107,10 +3345,6 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         },
         runtime: "openai-agents-sdk",
       })
-    }
-
-    if (userAuthoredEvent && await handleCompletedUserJobSearchRequest(event, store, turnId, onboardingUser)) {
-      return
     }
 
     await store.updateTurn(turnId, {
@@ -4457,7 +4691,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       completedAt: store.nowIso(),
     })
     await store.markEventFailed(event.id, errorCode, error)
-    await sendMemoryReply(store, event, turnId, "Sorry — something went wrong. Try again shortly.")
+    await recordRuntimeFailureAlert({ store, event, turnId, errorCode, error })
   }
 }
 
@@ -5143,6 +5377,66 @@ export function createFirestoreOrchestratorStore(
         }
       )
     },
+    async pauseJobRecommendationSubscription(userId, input) {
+      const now = input.occurredAt
+      await Promise.all([
+        db.collection("pa-job-profiles").doc(userId).set(
+          {
+            userId,
+            status: "paused",
+            pausedAt: now,
+            pausedReason: input.reason,
+            pausedByInboundEventId: input.inboundEventId,
+            updatedAt: now,
+          },
+          { merge: true },
+        ),
+        db.collection(PA_COLLECTIONS.users).doc(userId).set(
+          {
+            jobRecommendationSubscription: {
+              status: "paused",
+              pausedAt: now,
+              pausedReason: input.reason,
+              pausedByInboundEventId: input.inboundEventId,
+              updatedAt: now,
+            },
+            updatedAt: now,
+          },
+          { merge: true },
+        ),
+      ])
+      return { paused: true }
+    },
+    async resumeJobRecommendationSubscription(userId, input) {
+      const now = input.occurredAt
+      await Promise.all([
+        db.collection("pa-job-profiles").doc(userId).set(
+          {
+            userId,
+            status: "active",
+            resumedAt: now,
+            resumedReason: input.reason,
+            resumedByInboundEventId: input.inboundEventId,
+            updatedAt: now,
+          },
+          { merge: true },
+        ),
+        db.collection(PA_COLLECTIONS.users).doc(userId).set(
+          {
+            jobRecommendationSubscription: {
+              status: "active",
+              resumedAt: now,
+              resumedReason: input.reason,
+              resumedByInboundEventId: input.inboundEventId,
+              updatedAt: now,
+            },
+            updatedAt: now,
+          },
+          { merge: true },
+        ),
+      ])
+      return { resumed: true }
+    },
     // iter31 — HITL runtime mode + ToS version helpers.
     async getRuntimeMode(userId) {
       const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
@@ -5329,7 +5623,7 @@ export {
   type PreScreenStateProvider,
   type PreScreenTerminal,
 } from "./prescreen/state.js"
-export { PreScreenPipeline, hardFilterClarifyText, terminalText } from "./prescreen/pipeline.js"
+export { PreScreenPipeline, hardFilterClarifyText, prescreenReviewPendingAckText, terminalText } from "./prescreen/pipeline.js"
 export type {
   ComposeClarifyInput,
   PreScreenClarifyComposer,

@@ -83,6 +83,40 @@ export async function writePostMatchRetention(
     )
 }
 
+function readIsoMillis(value: unknown): number | null {
+  if (typeof value !== "string" || !value.trim()) return null
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? ms : null
+}
+
+export async function hasBlockingPrescreenSession(
+  db: Firestore,
+  userId: string,
+  nowIso: string
+): Promise<boolean> {
+  const recentCutoffMs = Date.parse(nowIso) - 14 * 24 * 60 * 60 * 1000
+  try {
+    const snap = await db
+      .collection("pa-prescreen-sessions")
+      .where("userId", "==", userId)
+      .limit(20)
+      .get()
+    for (const doc of snap.docs) {
+      const data = doc.data() as Record<string, unknown>
+      if (data.terminalActionPendingReview === true) return true
+      const terminal = typeof data.terminal === "string" ? data.terminal : null
+      if (!terminal) return true
+      if (terminal === "PASS" || terminal === "FAIL" || terminal === "HARD_STOP") {
+        const updatedMs = readIsoMillis(data.updatedAt) ?? readIsoMillis(data.createdAt)
+        if (updatedMs == null || updatedMs >= recentCutoffMs) return true
+      }
+    }
+  } catch {
+    return false
+  }
+  return false
+}
+
 function normalizeBody(body: string): string {
   return body.trim().toLowerCase()
 }
@@ -126,6 +160,20 @@ export function detectYesNoIntent(body: string): "yes" | "no" | "ambiguous" {
     return "yes"
   }
   return "ambiguous"
+}
+
+function isActionableJobPreferenceFeedback(body: string): boolean {
+  const t = normalizeBody(body)
+  if (!t) return false
+  const hasJobNoun =
+    /\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches)\b/i.test(t) ||
+    /(?:工作|岗位|职位|机会|内推)/.test(t)
+  if (!hasJobNoun) return false
+  return (
+    /\b(?:need|want|looking\s+for|look\s+for|prefer|require|requires|should\s+require|only|instead|too\s+senior|too\s+junior|more\s+junior|entry[-\s]?level|junior|new\s+grad|fresh\s+grad|years?\s+of\s+experience|yoe|exp|remote|onsite|hybrid|salary|visa|sponsor)\b/i.test(t) ||
+    /\b\d{1,2}\s*[-–]\s*\d{1,2}\b/.test(t) ||
+    /(?:经验|年限|初级|应届|远程|薪资|签证)/.test(t)
+  )
 }
 
 function copyForStage(stage: PostMatchRetentionStage, lang: "zh" | "en"): string {
@@ -379,9 +427,25 @@ export async function handlePostMatchRetentionReply(
   const state = await loadPostMatchRetention(db, event.userId)
   if (!state) return false
 
+  if (
+    (state.stage === "await_liked" || state.stage === "await_dislike_reason") &&
+    isActionableJobPreferenceFeedback(event.body)
+  ) {
+    store.log("pa.post_match_retention.yielded_to_job_search", {
+      userId: event.userId,
+      turnId,
+      stage: state.stage,
+    })
+    return false
+  }
+
   const lang = detectLang(event.body) === "zh" ? "zh" : "en"
   const at = store.nowIso()
   const jobIds = await resolveJobIds(db, event.userId, state)
+  const prescreenBlocked =
+    state.stage === "await_subscribe" || state.stage === "await_prescreen"
+      ? await hasBlockingPrescreenSession(db, event.userId, at)
+      : false
   let next: PostMatchRetentionState = { ...state, updatedAt: at }
   let reply = ""
 
@@ -445,11 +509,27 @@ export async function handlePostMatchRetentionReply(
         reasonText: event.body,
         nowIso: at,
       })
-      next.stage = "await_prescreen"
-      reply = copyForStage("await_prescreen", lang)
+      if (prescreenBlocked) {
+        next.stage = "complete"
+        reply =
+          lang === "zh"
+            ? "收到。我这边已有你的初筛记录，WeKruit 会在这里发你下一步。"
+            : "Got it. I already have your screen on file, and WeKruit will text the next step here."
+      } else {
+        next.stage = "await_prescreen"
+        reply = copyForStage("await_prescreen", lang)
+      }
       break
     }
     case "await_prescreen": {
+      if (prescreenBlocked) {
+        next.stage = "complete"
+        reply =
+          lang === "zh"
+            ? "你已经在初筛流程里了。WeKruit 正在看结果，下一步会直接发在这里。"
+            : "You're already in the screen flow. WeKruit is reviewing it, and the next step will come here."
+        break
+      }
       const yn = detectYesNoIntent(event.body)
       if (yn === "ambiguous") {
         reply =

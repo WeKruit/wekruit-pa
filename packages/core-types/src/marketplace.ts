@@ -37,6 +37,7 @@ export const CandidateJobStateSchema = z.enum([
   "outbound_sent",
   "candidate_interested",
   "prescreen_started",
+  "prescreen_review_pending",
   "passed",
   "not_passed",
   "paused",
@@ -1336,6 +1337,10 @@ export const CandidateJobEventSchema = z.discriminatedUnion("type", [
     prescreenSessionId: IdSchema,
   }),
   CandidateJobEventBaseSchema.extend({
+    type: z.literal("prescreen_review_pending"),
+    prescreenSessionId: IdSchema,
+  }),
+  CandidateJobEventBaseSchema.extend({
     type: z.literal("prescreen_passed"),
     prescreenSessionId: IdSchema,
   }),
@@ -1606,13 +1611,24 @@ export function reduceCandidateJobState(
         return reduction(current, "prescreen_started", event.type, event.occurredAt, "first_interview_started")
       }
       return reduction(current, current, event.type, event.occurredAt, "invalid_prescreen_start_transition")
+    case "prescreen_review_pending":
+      if (current === "prescreen_started") {
+        return reduction(current, "prescreen_review_pending", event.type, event.occurredAt, "prescreen_waiting_for_human_review")
+      }
+      return reduction(current, current, event.type, event.occurredAt, "invalid_prescreen_review_pending_transition")
     case "prescreen_passed":
       if (current === "prescreen_started") {
+        return reduction(current, current, event.type, event.occurredAt, "prescreen_final_requires_human_review")
+      }
+      if (current === "prescreen_review_pending") {
         return reduction(current, "passed", event.type, event.occurredAt, "prescreen_pass")
       }
       return reduction(current, current, event.type, event.occurredAt, "invalid_pass_transition")
     case "prescreen_not_passed":
       if (current === "prescreen_started") {
+        return reduction(current, current, event.type, event.occurredAt, "prescreen_final_requires_human_review")
+      }
+      if (current === "prescreen_review_pending") {
         return reduction(current, "not_passed", event.type, event.occurredAt, "candidate_retained_for_other_jobs")
       }
       return reduction(current, current, event.type, event.occurredAt, "invalid_not_passed_transition")

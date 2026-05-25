@@ -504,18 +504,26 @@ export function applyV16HardFilters(
       }
     }
 
-    // 3. careerStage window — enforce only when both sides present.
+    const jobType = typeof job.jobType === "string" ? job.jobType.trim().toLowerCase() : ""
+    const isInternshipTarget = targetJobTypeSet.has("internship")
+    const isInternshipJob =
+      job.seniorityLevel === "intern" ||
+      jobType === "internship" ||
+      /\b(?:intern|internship|co[-\s]?op)\b/i.test(job.jobTitle ?? "")
+
+    // 3. careerStage window — enforce only when both sides present. If the
+    // candidate explicitly targets internships, the job-type signal is more
+    // specific than broad careerStage and must not zero out intern postings.
     if (acceptableStages && job.seniorityLevel) {
-      if (!acceptableStages.has(job.seniorityLevel as CareerStage)) {
+      if (!(isInternshipTarget && isInternshipJob) && !acceptableStages.has(job.seniorityLevel as CareerStage)) {
         counters.careerStage++
         continue
       }
     }
 
     // 4. jobType exact intersect — when user has targets AND job has type.
-    if (targetJobTypeSet.size > 0 && job.jobType) {
-      const jt = job.jobType.trim().toLowerCase()
-      if (!targetJobTypeSet.has(jt)) {
+    if (targetJobTypeSet.size > 0 && jobType) {
+      if (!targetJobTypeSet.has(jobType)) {
         counters.jobType++
         continue
       }
@@ -1058,6 +1066,12 @@ export type QueryMatchingJobsV16Args = {
    */
   presentationRoleFocus?: string[]
   /**
+   * Explicit candidate request only: when the user asks for entry-level /
+   * 0-3 YoE roles but does not ask for internships, remove internships and
+   * academic intern postings from the visible recommendation set.
+   */
+  excludeInternships?: boolean
+  /**
    * Collab funnel: keep only jobs where pa-jobs has
    * wekruitCollaborationStatus=collaborated and a non-empty prescreenConfig.
    */
@@ -1134,6 +1148,15 @@ function matchesPresentationRoleFocus(job: MatchingJob, focus: Array<"frontend" 
     }
   }
   return false
+}
+
+function isInternshipOrAcademicInternPosting(job: MatchingJob): boolean {
+  const seniority = typeof job.seniorityLevel === "string" ? job.seniorityLevel.trim().toLowerCase() : ""
+  const jobType = typeof job.jobType === "string" ? job.jobType.trim().toLowerCase() : ""
+  const title = getMatchingJobTitle(job).toLowerCase()
+  return seniority === "intern" ||
+    jobType === "internship" ||
+    /\b(?:intern|internship|co[-\s]?op|phd|doctoral)\b/i.test(title)
 }
 
 function previousRecommendationPenalty(state: UserJobRecommendationState | undefined): number {
@@ -1406,6 +1429,15 @@ export async function queryMatchingJobsV16(
     filteredJobs = filteredJobs.filter((job) => matchesPresentationRoleFocus(job, presentationRoleFocus))
     log("pa.match.presentation_role_focus_applied", {
       focus: presentationRoleFocus,
+      before,
+      after: filteredJobs.length,
+      dropped: before - filteredJobs.length,
+    })
+  }
+  if (args.excludeInternships === true && filteredJobs.length > 0) {
+    const before = filteredJobs.length
+    filteredJobs = filteredJobs.filter((job) => !isInternshipOrAcademicInternPosting(job))
+    log("pa.match.exclude_internships_applied", {
       before,
       after: filteredJobs.length,
       dropped: before - filteredJobs.length,

@@ -15,6 +15,8 @@ import { Link, useParams } from "react-router-dom"
 import { collection, doc, getDoc, getDocs, orderBy, query } from "firebase/firestore"
 import { ErrorState, LoadingState, PageHeader, Panel, Badge } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
+import { reviewEvaluationAttempt } from "../lib/external-supply-client.js"
+import type { EvaluationAttempt } from "@pa/core-types"
 
 type PerKeyword = {
   keyword: string
@@ -52,6 +54,18 @@ type SessionDoc = {
   threshold: number
   terminal: string | null
   terminalReason?: string
+  evaluationAttemptId?: string
+  terminalActionPendingReview?: boolean
+  review?: {
+    status?: string
+    evaluationAttemptId?: string
+    proposedTerminal?: string
+    finalTerminal?: string
+    pendingAckOutboundId?: string
+    decisionOutboundId?: string
+    pendingAt?: string
+    reviewedAt?: string
+  }
   qOrder: string[]
   questions: Record<
     string,
@@ -75,13 +89,30 @@ function terminalTone(t: string | null): "ok" | "warn" | "info" {
   return "warn"
 }
 
+type ReviewTerminal = "PASS" | "FAIL" | "HARD_STOP"
+
+function cleanReviewTerminal(value: unknown): ReviewTerminal | null {
+  return value === "PASS" || value === "FAIL" || value === "HARD_STOP" ? value : null
+}
+
+function finalOutcomeKind(terminal: ReviewTerminal): "pass" | "reject" {
+  return terminal === "PASS" ? "pass" : "reject"
+}
+
 export default function PrescreenSession() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [session, setSession] = useState<SessionDoc | null>(null)
+  const [attempt, setAttempt] = useState<EvaluationAttempt | null>(null)
   const [turns, setTurns] = useState<PrescreenTurn[]>([])
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [selectedTerminal, setSelectedTerminal] = useState<ReviewTerminal>("PASS")
+  const [candidateMessageBody, setCandidateMessageBody] = useState("")
+  const [reviewBusy, setReviewBusy] = useState(false)
+  const [reviewError, setReviewError] = useState<string | null>(null)
+  const [reviewSaved, setReviewSaved] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -99,7 +130,24 @@ export default function PrescreenSession() {
           setErr(`session ${sessionId} not found`)
           return
         }
-        setSession({ ...(sessSnap.data() as SessionDoc), sessionId })
+        const sessionData = { ...(sessSnap.data() as SessionDoc), sessionId }
+        setSession(sessionData)
+        const attemptId = sessionData.evaluationAttemptId ?? sessionData.review?.evaluationAttemptId
+        if (attemptId) {
+          const attemptSnap = await getDoc(doc(db(), "pa-evaluation-attempts", attemptId))
+          if (cancelled) return
+          if (attemptSnap.exists()) {
+            const attemptData = attemptSnap.data() as EvaluationAttempt
+            setAttempt(attemptData)
+            const proposedTerminal = cleanReviewTerminal(attemptData.proposedOutcome?.prescreenTerminal)
+            setSelectedTerminal(proposedTerminal ?? cleanReviewTerminal(sessionData.terminal) ?? "PASS")
+          } else {
+            setAttempt(null)
+          }
+        } else {
+          setAttempt(null)
+          setSelectedTerminal(cleanReviewTerminal(sessionData.terminal) ?? "PASS")
+        }
         const turnsSnap = await getDocs(
           query(
             collection(db(), "pa-prescreen-sessions", sessionId, "turns"),
@@ -117,13 +165,52 @@ export default function PrescreenSession() {
     return () => {
       cancelled = true
     }
-  }, [sessionId])
+  }, [sessionId, reloadKey])
 
   if (loading) return <LoadingState label="Loading session..." />
   if (err) return <ErrorState message={err} />
   if (!session) return <ErrorState message="no session" />
 
   const ratio = session.scoreMax === 0 ? 0 : session.score / session.scoreMax
+  const pendingReview = session.terminalActionPendingReview === true
+  const attemptTerminal = cleanReviewTerminal(attempt?.proposedOutcome?.prescreenTerminal)
+  const canApproveReview = Boolean(
+    pendingReview &&
+      attempt?.attemptId &&
+      selectedTerminal &&
+      candidateMessageBody.trim().length > 0
+  )
+
+  async function approveReview() {
+    if (!attempt?.attemptId || !pendingReview) return
+    const body = candidateMessageBody.trim()
+    if (!body) {
+      setReviewError("Final candidate message is required.")
+      return
+    }
+    setReviewBusy(true)
+    setReviewError(null)
+    setReviewSaved(null)
+    try {
+      const status = attemptTerminal === selectedTerminal ? "approved" : "overridden"
+      const result = await reviewEvaluationAttempt({
+        attemptId: attempt.attemptId,
+        status,
+        finalOutcome: {
+          kind: finalOutcomeKind(selectedTerminal),
+          prescreenTerminal: selectedTerminal,
+        },
+        candidateMessageBody: body,
+        ...(status === "overridden" ? { correctionReason: "operator_changed_prescreen_terminal" } : {}),
+      })
+      setReviewSaved(result.candidateOutboundId ? `Queued outbound ${result.candidateOutboundId}` : "Review approved.")
+      setReloadKey((key) => key + 1)
+    } catch (e) {
+      setReviewError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setReviewBusy(false)
+    }
+  }
 
   return (
     <div>
@@ -137,6 +224,8 @@ export default function PrescreenSession() {
           <Badge tone={terminalTone(session.terminal)}>
             {session.terminal ?? "IN_PROGRESS"}
           </Badge>
+          {pendingReview && <Badge tone="warn">Review pending</Badge>}
+          {session.review?.status && !pendingReview && <Badge tone="info">Review {session.review.status}</Badge>}
           <Badge tone="info">
             score = {session.score.toFixed(2)} / {session.scoreMax.toFixed(2)} (ratio {(ratio * 100).toFixed(1)}%)
           </Badge>
@@ -158,6 +247,106 @@ export default function PrescreenSession() {
             <strong>Terminal reason (server-only, NOT shown to candidate):</strong>
             <br />
             {session.terminalReason}
+          </div>
+        )}
+      </Panel>
+
+      <Panel title="Human Review">
+        {!session.evaluationAttemptId && !session.review?.evaluationAttemptId ? (
+          <div style={{ color: "#64748b", fontSize: "0.9em" }}>No evaluation attempt is linked to this session.</div>
+        ) : (
+          <div style={{ display: "grid", gap: "0.75rem" }}>
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+              <Badge tone={pendingReview ? "warn" : "info"}>
+                {pendingReview ? "Review pending" : `Review ${session.review?.status ?? "recorded"}`}
+              </Badge>
+              {attempt?.attemptId && <Badge tone="info">{attempt.attemptId}</Badge>}
+              {attemptTerminal && <Badge tone={terminalTone(attemptTerminal)}>Proposed {attemptTerminal}</Badge>}
+            </div>
+            {attempt?.explanation && (
+              <div style={{ color: "#334155", fontSize: "0.9em", overflowWrap: "anywhere" }}>
+                {attempt.explanation}
+              </div>
+            )}
+            <div style={{ display: "grid", gap: "0.25rem", fontSize: "0.85em", color: "#334155" }}>
+              {session.review?.pendingAckOutboundId ? (
+                <div>
+                  Pending acknowledgement outbound: <code>{session.review.pendingAckOutboundId}</code>
+                </div>
+              ) : pendingReview ? (
+                <div style={{ color: "#92400e" }}>Pending acknowledgement outbound has not been recorded.</div>
+              ) : null}
+              {session.review?.decisionOutboundId ? (
+                <div>
+                  Final approved outbound: <code>{session.review.decisionOutboundId}</code>
+                </div>
+              ) : session.review?.status && !pendingReview ? (
+                <div style={{ color: "#64748b" }}>No final outbound id recorded on this session.</div>
+              ) : null}
+            </div>
+            {attempt?.dimensions?.length ? (
+              <table style={{ width: "100%", fontSize: "0.82em", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left" }}>dimension</th>
+                    <th>score</th>
+                    <th>conf</th>
+                    <th style={{ textAlign: "left" }}>rationale</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attempt.dimensions.map((d) => (
+                    <tr key={d.dimensionId}>
+                      <td style={{ padding: "0.25rem" }}>{d.dimensionId}</td>
+                      <td style={{ padding: "0.25rem", textAlign: "center" }}>{d.score}</td>
+                      <td style={{ padding: "0.25rem", textAlign: "center" }}>{d.confidence.toFixed(2)}</td>
+                      <td style={{ padding: "0.25rem" }}>{d.rationale}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : null}
+            {pendingReview && attempt?.attemptId ? (
+              <div style={{ display: "grid", gap: "0.5rem" }}>
+                <label style={{ display: "grid", gap: "0.25rem", fontSize: "0.9em" }}>
+                  Final outcome
+                  <select
+                    value={selectedTerminal}
+                    onChange={(e) => setSelectedTerminal(cleanReviewTerminal(e.target.value) ?? "FAIL")}
+                    style={{ maxWidth: 240, padding: "0.4rem" }}
+                  >
+                    <option value="PASS">PASS</option>
+                    <option value="FAIL">FAIL</option>
+                    <option value="HARD_STOP">HARD_STOP</option>
+                  </select>
+                </label>
+                <label style={{ display: "grid", gap: "0.25rem", fontSize: "0.9em" }}>
+                  Final candidate message
+                  <textarea
+                    value={candidateMessageBody}
+                    onChange={(e) => setCandidateMessageBody(e.target.value)}
+                    rows={5}
+                    placeholder="Write the exact iMessage WeKruit should send after approval."
+                    style={{ width: "100%", padding: "0.5rem", fontFamily: "inherit" }}
+                  />
+                </label>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    disabled={!canApproveReview || reviewBusy}
+                    onClick={() => void approveReview()}
+                  >
+                    {reviewBusy ? "Approving..." : "Approve and queue outbound"}
+                  </button>
+                  {reviewError && <span style={{ color: "#b91c1c", fontSize: "0.85em" }}>{reviewError}</span>}
+                  {reviewSaved && <span style={{ color: "#166534", fontSize: "0.85em" }}>{reviewSaved}</span>}
+                </div>
+              </div>
+            ) : session.review?.decisionOutboundId ? (
+              <div style={{ fontSize: "0.9em", color: "#334155" }}>
+                Approved outbound: <code>{session.review.decisionOutboundId}</code>
+              </div>
+            ) : null}
           </div>
         )}
       </Panel>

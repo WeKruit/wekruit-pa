@@ -369,7 +369,7 @@ export class GuidedOpenJudge<TAnswer> implements Judge<TAnswer> {
     if (this.spec.bloomRegex && this.spec.bloomRegex.length > 0) {
       for (const bloom of this.spec.bloomRegex) {
         if (bloom.pattern.test(reply)) {
-          const parsed = this.spec.parseValue(reply) ?? this.spec.parseValue(bloom.value)
+          const parsed = this.spec.parseValue(bloom.value) ?? this.spec.parseValue(reply)
           if (parsed !== null) {
             ctx.log?.("pa.onboarding.judge.guided_open.bloom_hit", {
               userId: ctx.userId,

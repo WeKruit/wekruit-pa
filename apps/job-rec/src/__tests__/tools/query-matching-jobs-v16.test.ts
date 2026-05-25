@@ -342,6 +342,24 @@ test("applyV16HardFilters: jobType exact intersect", () => {
   assert.equal(r.counters.jobType, 1)
 })
 
+test("applyV16HardFilters: explicit internship target keeps intern jobs even when careerStage is broader", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "intern", seniorityLevel: "intern", jobType: "internship", jobTitle: "Software Engineer Intern" }),
+    mkJob({ id: "senior", seniorityLevel: "senior", jobType: "full_time", jobTitle: "Senior Software Engineer" }),
+  ]
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    careerStage: "junior",
+    targetJobType: ["internship"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["intern"])
+  assert.equal(r.counters.careerStage, 1)
+  assert.equal(r.counters.jobType, 0)
+})
+
 test("applyV16HardFilters: firstSeenAt > 20d drops, < 20d keeps (MATCH-08, lastSeenAt unused)", () => {
   const jobs: MatchingJob[] = [
     mkJob({ id: "fresh", firstSeenAt: FRESH_TS, lastSeenAt: STALE_TS }), // lastSeenAt stale should NOT matter
@@ -758,6 +776,52 @@ test("queryMatchingJobsV16: with role-fn filter returns matching jobs", async ()
     (r.userTags as Record<string, unknown>).targetRoleFunction,
     ["software_engineering"],
   )
+})
+
+test("queryMatchingJobsV16: explicit entry-level requests can exclude internships", async () => {
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u_entry_data")
+    .set({
+      tags: {
+        skills: ["python", "sql", "analytics"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["data_analysis"],
+        targetLocations: ["remote_united_states"],
+        visaStatus: "citizen",
+        careerStage: "entry_level",
+      },
+    })
+  await seedJob(mfs, "phd-intern", {
+    roleFunction: ["data_analysis"],
+    requiredSkills: ["python", "sql", "machine_learning", "statistics"],
+    companyName: "Instacart",
+    jobTitle: "Machine Learning PhD Intern, Economics",
+    seniorityLevel: "intern",
+    jobType: "internship",
+    locationRaw: "Remote, United States",
+    locationBuckets: ["remote_united_states"],
+  })
+  await seedJob(mfs, "entry-analyst", {
+    roleFunction: ["data_analysis"],
+    requiredSkills: ["sql", "analytics"],
+    companyName: "Rain",
+    jobTitle: "Data Analyst",
+    seniorityLevel: "entry_level",
+    jobType: "full_time",
+    locationRaw: "Remote, United States",
+    locationBuckets: ["remote_united_states"],
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_entry_data", nowMs: NOW, excludeInternships: true },
+    { db: asFirestore(mfs) }
+  )
+
+  assert.equal(r.jobs.length, 1)
+  assert.equal(r.jobs[0]!.id, "entry-analyst")
 })
 
 // ---------------------------------------------------------------------------

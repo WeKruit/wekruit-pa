@@ -25,7 +25,7 @@
  */
 
 import type { Firestore } from "firebase-admin/firestore"
-import { createInboundEvent } from "@pa/pa-broker"
+import { createInboundEvent, enqueueOutbound } from "@pa/pa-broker"
 
 import { getFlag, checkAndIncrementRateLimit } from "@pa/pa-persistence"
 import { PA_COLLECTIONS } from "@pa/core-types"
@@ -125,6 +125,16 @@ export type WebhookDeps = {
   runLayoffSmsStart?: typeof defaultRunLayoffSmsStart
   /** Job prescreen trigger handler. Inject for live-equivalent Sendblue entrypoint tests. */
   runPreScreenForUser?: typeof defaultRunPreScreenForUser
+  /** Candidate-safe notice for valid prescreen tokens sent from the wrong phone/account. */
+  sendIdentityConflictNotice?: (input: {
+    targetUserId: string
+    jobId: string
+    toE164: string
+    fromNumber?: string
+    messageHandle: string
+    content: string
+    conflictCode: string
+  }) => Promise<void>
   /** Routes an initial public-job-page prescreen answer after the trigger creates the session. */
   runPrescreenTurnIfActive?: typeof defaultRunPrescreenTurnIfActive
   /** Apply trigger PII-confirm handler. Inject for live-equivalent Sendblue entrypoint tests. */
@@ -843,6 +853,19 @@ export async function handleSendblueWebhook(
           audit: async (evt) => {
             await safeAudit(deps, evt as AuditEventInput, log)
           },
+          sendIdentityConflictNotice: deps.sendIdentityConflictNotice
+            ? async (input) => deps.sendIdentityConflictNotice!(input)
+            : async (input) => {
+              await enqueueOutbound(deps.db, {
+                userId: input.targetUserId,
+                toE164: input.toE164,
+                ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}),
+                body: input.content,
+                idempotencyKey: `out-sendblue-prescreen-identity-conflict-${input.messageHandle}`,
+                runtimeApproved: true,
+                runtimeSource: "pa_identity_notice",
+              })
+            },
           // v1.9 hotfix 2026-05-13 — pending-invite binding for public-page flow.
           getPendingInvite: async (requestedUserId) => {
             try {
@@ -958,6 +981,7 @@ export async function handleSendblueWebhook(
     const routerResult = await router.dispatch({
       text: normalized.text,
       fromNumber: normalized.fromNumber,
+      toNumber: normalized.toNumber,
       messageHandle: normalized.messageHandle,
       receivedAtIso: new Date().toISOString(),
       log: (event, payload) => log(`pa.trigger.${event}`, payload),

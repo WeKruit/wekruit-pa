@@ -5,7 +5,10 @@ import {
   PA_COLLECTIONS,
   type EvaluationAttempt,
 } from "@pa/core-types"
-import { runReviewEvaluationAttempt } from "../evaluation-attempts.js"
+import {
+  runDraftPrescreenReviewMessages,
+  runReviewEvaluationAttempt,
+} from "../evaluation-attempts.js"
 
 const NOW = "2026-05-20T00:00:00.000Z"
 const ADMIN_AUTH = {
@@ -61,6 +64,10 @@ function makeDb(seed: Record<string, Record<string, unknown>>): { db: Firestore;
             const prev = (col.get(id) ?? {}) as Record<string, unknown>
             col.set(id, opts?.merge ? { ...prev, ...(value as Record<string, unknown>) } : value)
           },
+          async update(value: unknown) {
+            const prev = (col.get(id) ?? {}) as Record<string, unknown>
+            col.set(id, { ...prev, ...(value as Record<string, unknown>) })
+          },
         }
       },
     }
@@ -68,32 +75,147 @@ function makeDb(seed: Record<string, Record<string, unknown>>): { db: Firestore;
   return { db: { collection } as unknown as Firestore, store }
 }
 
-test("operator approval commits prescreen terminal action after review", async () => {
-  const { db, store } = makeDb({
+test("operator approval requires a candidate message for prescreen review", async () => {
+  const { db } = makeDb({
     [PA_COLLECTIONS.evaluationAttempts]: { "attempt-1": attempt() },
     "pa-prescreen-sessions": { "ps-1": { e164: "+15555550100" } },
     [PA_COLLECTIONS.correctionEvents]: {},
   })
-  const terminalCalls: Array<Record<string, unknown>> = []
+
+  await assert.rejects(
+    () =>
+      runReviewEvaluationAttempt(
+        { attemptId: "attempt-1", status: "approved" },
+        ADMIN_AUTH,
+        { db, now: () => NOW },
+      ),
+    /candidateMessageBody/i,
+  )
+})
+
+test("operator approval commits prescreen state and queues exactly the approved candidate message", async () => {
+  const { db, store } = makeDb({
+    [PA_COLLECTIONS.evaluationAttempts]: { "attempt-1": attempt() },
+    "pa-prescreen-sessions": { "ps-1": { sessionId: "ps-1", e164: "+15555550100", terminalActionPendingReview: true } },
+    [PA_COLLECTIONS.correctionEvents]: {},
+  })
+  const outcomeCalls: Array<Record<string, unknown>> = []
+  const sent: Array<Record<string, unknown>> = []
+  const approvedBody = "Thanks for the detail here. WeKruit reviewed your first screen and wants to move you forward for the next step."
 
   const result = await runReviewEvaluationAttempt(
-    { attemptId: "attempt-1", status: "approved" },
+    { attemptId: "attempt-1", status: "approved", candidateMessageBody: approvedBody },
     ADMIN_AUTH,
     {
       db,
       now: () => NOW,
-      runTerminalAction: async (args) => {
-        terminalCalls.push(args as unknown as Record<string, unknown>)
-        return { alreadyFired: false, level1Sent: true, jobRecsFired: false }
+      markPrescreenOutcome: async (args) => {
+        outcomeCalls.push(args as unknown as Record<string, unknown>)
+        return { changed: true } as never
+      },
+      sendSms: async (args) => {
+        sent.push(args as unknown as Record<string, unknown>)
+        return { outboundId: "out-approved-message", created: true }
       },
     },
   )
 
-  assert.equal(result.prescreenTerminalActionFired, true)
-  assert.equal(terminalCalls.length, 1)
-  assert.equal(terminalCalls[0]?.terminal, "PASS")
+  assert.equal(result.prescreenOutcomeCommitted, true)
+  assert.equal(result.candidateOutboundId, "out-approved-message")
+  assert.equal(outcomeCalls.length, 1)
+  assert.equal(outcomeCalls[0]?.terminal, "PASS")
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0]?.content, approvedBody)
+  assert.equal(sent[0]?.runtimeSource, "pa_operator_review")
   const saved = store.get(PA_COLLECTIONS.evaluationAttempts)!.get("attempt-1") as EvaluationAttempt
   assert.equal(saved.humanReview.status, "approved")
+  const session = store.get("pa-prescreen-sessions")!.get("ps-1") as Record<string, unknown>
+  assert.equal(session.terminalActionPendingReview, false)
+  assert.equal((session.review as { status?: string; decisionOutboundId?: string } | undefined)?.status, "approved")
+  assert.equal((session.review as { status?: string; decisionOutboundId?: string } | undefined)?.decisionOutboundId, "out-approved-message")
+})
+
+test("operator approval accepts terminal-only prescreen outcome and derives canonical outcome kind", async () => {
+  const { db } = makeDb({
+    [PA_COLLECTIONS.evaluationAttempts]: { "attempt-1": attempt() },
+    "pa-prescreen-sessions": { "ps-1": { sessionId: "ps-1", e164: "+15555550100", terminalActionPendingReview: true } },
+    [PA_COLLECTIONS.correctionEvents]: {},
+  })
+
+  const result = await runReviewEvaluationAttempt(
+    {
+      attemptId: "attempt-1",
+      status: "overridden",
+      finalOutcome: { prescreenTerminal: "FAIL" },
+      candidateMessageBody: "WeKruit reviewed the screen. This specific role is not the right fit, but we will keep you in mind for better matches.",
+    },
+    ADMIN_AUTH,
+    {
+      db,
+      now: () => NOW,
+      markPrescreenOutcome: async () => ({ changed: true }) as never,
+      sendSms: async () => ({ outboundId: "out-terminal-only", created: true }),
+    },
+  )
+
+  assert.equal(result.finalOutcome?.kind, "reject")
+  assert.equal(result.finalOutcome?.prescreenTerminal, "FAIL")
+  assert.equal(result.candidateOutboundId, "out-terminal-only")
+})
+
+test("operator can draft prescreen review messages without committing state or sending outbound", async () => {
+  const { db, store } = makeDb({
+    [PA_COLLECTIONS.evaluationAttempts]: { "attempt-1": attempt() },
+    "pa-prescreen-sessions": {
+      "ps-1": {
+        sessionId: "ps-1",
+        userId: "cand-1",
+        jobId: "job-1",
+        terminal: "PASS",
+        terminalActionPendingReview: true,
+        evaluationAttemptId: "attempt-1",
+        score: 2.7,
+        scoreMax: 3,
+        threshold: 0.8,
+      },
+    },
+    [PA_COLLECTIONS.correctionEvents]: {},
+  })
+  const contexts: Array<Record<string, unknown>> = []
+
+  const result = await runDraftPrescreenReviewMessages(
+    { sessionIds: ["ps-1"], terminal: "FAIL" },
+    ADMIN_AUTH,
+    {
+      db,
+      loadTurns: async () => [
+        {
+          qId: "gtm_growth",
+          reply: "I mostly worked on lifecycle campaigns, not enterprise GTM.",
+          scored: { aggregate: { s: 0.35, c: 0.8, summary: "Partial GTM overlap only." } },
+        },
+      ],
+      composeDraft: async (context) => {
+        contexts.push(context as unknown as Record<string, unknown>)
+        return {
+          candidateMessageBody:
+            "Thanks for completing the screen. We reviewed it, and this role does not look like the right next step because the GTM-growth evidence was still partial.",
+          evidenceSummary: "Partial GTM overlap only.",
+        }
+      },
+    },
+  )
+
+  assert.equal(result.ok, true)
+  assert.equal(result.drafts.length, 1)
+  assert.equal(result.drafts[0]?.sessionId, "ps-1")
+  assert.equal(result.drafts[0]?.attemptId, "attempt-1")
+  assert.equal(result.drafts[0]?.finalTerminal, "FAIL")
+  assert.match(result.drafts[0]?.candidateMessageBody ?? "", /GTM-growth evidence/)
+  assert.equal(contexts[0]?.finalTerminal, "FAIL")
+  const session = store.get("pa-prescreen-sessions")!.get("ps-1") as Record<string, unknown>
+  assert.equal(session.terminalActionPendingReview, true)
+  assert.equal(store.get(PA_COLLECTIONS.correctionEvents)!.size, 0)
 })
 
 test("operator override writes correction event and updates external-supply projection", async () => {

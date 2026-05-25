@@ -899,6 +899,48 @@ describe("ingestCv writes pa-users.tags via mergeUserTags (iter34 H.3b)", () => 
     )
   })
 
+  it("CV-only ingest writes resume baseline matching axes before onboarding refinement", async () => {
+    const { db, state } = makeFakeDb()
+    const { log } = captureLog()
+    const parsed: StructuredCv = {
+      candidateProfile: {
+        name: "Data Candidate",
+        email: null,
+        phone: null,
+        linkedIn: null,
+        location: "",
+        skills: ["SQL", "Python", "Tableau"],
+      },
+      experiences: [
+        {
+          company: "EnergyCo",
+          title: "Associate Data Analyst",
+          startDate: "2024",
+          endDate: "2026",
+          location: "Pittsburgh",
+          description: "Built SQL dashboards and forecasting analysis.",
+        },
+      ],
+      education: [],
+      industryTags: ["tech_software"],
+    }
+    const { deps } = makeStubbedDeps({ db, log, parsed })
+
+    const res = await ingestCv(
+      { userId: "user_baseline", mediaUrl: "https://example.com/cv.pdf" },
+      deps
+    )
+
+    assert.equal(res.ok, true)
+    const tagSet = state.userSets.find((op) => "tags" in op.data)
+    assert.ok(tagSet, "expected tags write")
+    const tags = tagSet.data.tags as Record<string, unknown>
+    assert.deepEqual(tags.targetRoleFunction, ["data_analysis"])
+    assert.equal(tags.careerStage, "entry_level")
+    assert.deepEqual(tags.targetJobType, ["full_time"])
+    assert.deepEqual(tags.yoeRange, [1, 3])
+  })
+
   it("statedPreferences (chat-side) is read from pa-users + passed to mergeUserTags", async () => {
     const { db, state } = makeFakeDb({
       users: {

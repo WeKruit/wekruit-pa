@@ -9,6 +9,7 @@ import {
 import {
   buildPrescreenStartedEvent,
   markFirstInterviewStarted,
+  markPrescreenReviewPending,
   markPrescreenTerminalOutcome,
 } from "./prescreen-outcome-service.js"
 
@@ -140,6 +141,29 @@ test("markFirstInterviewStarted records outbound candidate prescreen_started", a
   assert.equal(state.prescreenSessionId, "ps-outbound")
 })
 
+test("markPrescreenReviewPending records completed prescreen awaiting operator review", async () => {
+  const { db, store } = makeFakeFirestore()
+  await markFirstInterviewStarted({
+    db,
+    sessionId: "ps-review",
+    userId: "cand-1",
+    jobId: "job-1",
+    occurredAt: now,
+  })
+  await markPrescreenReviewPending({
+    db,
+    sessionId: "ps-review",
+    userId: "cand-1",
+    jobId: "job-1",
+    terminal: "PASS",
+    occurredAt: now,
+  })
+
+  const state = store.get(PA_COLLECTIONS.candidateJobStates)!.get(createCandidateJobStateId("cand-1", "job-1"))!
+  assert.equal(state.state, "prescreen_review_pending")
+  assert.equal(state.prescreenSessionId, "ps-review")
+})
+
 test("markPrescreenTerminalOutcome creates snapshot only for PASS", async () => {
   const passed = makeFakeFirestore()
   await markFirstInterviewStarted({
@@ -147,6 +171,14 @@ test("markPrescreenTerminalOutcome creates snapshot only for PASS", async () => 
     sessionId: "ps-pass",
     userId: "cand-1",
     jobId: "job-1",
+    occurredAt: now,
+  })
+  await markPrescreenReviewPending({
+    db: passed.db,
+    sessionId: "ps-pass",
+    userId: "cand-1",
+    jobId: "job-1",
+    terminal: "PASS",
     occurredAt: now,
   })
   passed.store.get("pa-prescreen-sessions")!.set("ps-pass", {
@@ -178,6 +210,14 @@ test("markPrescreenTerminalOutcome creates snapshot only for PASS", async () => 
     sessionId: "ps-fail",
     userId: "cand-1",
     jobId: "job-1",
+    occurredAt: now,
+  })
+  await markPrescreenReviewPending({
+    db: failed.db,
+    sessionId: "ps-fail",
+    userId: "cand-1",
+    jobId: "job-1",
+    terminal: "HARD_STOP",
     occurredAt: now,
   })
   await markPrescreenTerminalOutcome({

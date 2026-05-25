@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { ChannelSchema, type Channel } from "./channel.js"
+export * from "./candidate-profile-classifier.js"
 
 export type { Channel }
 export { ChannelSchema }
@@ -358,6 +359,8 @@ export const OutboundMessageSchema = z.object({
   id: z.string().optional(),
   userId: z.string(),
   toE164: z.string(),
+  /** Optional explicit Sendblue sender line for thread-continuity replies. */
+  fromNumber: z.string().optional(),
   /** Optional iMessage chat id for transport routing. */
   imessageChatId: z.string().optional(),
   body: z.string(),

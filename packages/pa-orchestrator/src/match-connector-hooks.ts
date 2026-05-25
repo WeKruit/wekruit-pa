@@ -20,6 +20,7 @@ export type GenerateJobRecsFn = (
     requestedCount?: number
     roleFocus?: string[]
     collabPrescreenOnly?: boolean
+    excludeInternships?: boolean
   }
 ) => Promise<GenerateJobRecsResult | null>
 

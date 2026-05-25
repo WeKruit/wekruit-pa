@@ -2,6 +2,7 @@ export type CandidateJobStatus =
   | "recommended"
   | "invited"
   | "interview_started"
+  | "review_pending"
   | "passed"
   | "not_passed"
   | "paused"
@@ -41,6 +42,13 @@ export function getCandidateJobStatusDisplay(
         nextStep: "Continue in iMessage when you are ready to finish the first interview.",
         tone: "active",
         ctaLabel: "Continue interview",
+      }
+    case "review_pending":
+      return {
+        label: "Reviewing",
+        nextStep: "WeKruit is reviewing your first screen. We’ll text you the next step here.",
+        tone: "active",
+        ctaLabel: "View role",
       }
     case "passed":
       return {

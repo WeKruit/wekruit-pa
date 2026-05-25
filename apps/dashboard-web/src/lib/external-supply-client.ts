@@ -156,6 +156,7 @@ export interface ReviewEvaluationAttemptInput {
   attemptId: string
   status: "approved" | "overridden" | "rejected" | "needs_more_info"
   finalOutcome?: EvaluationOutcome
+  candidateMessageBody?: string
   note?: string
   correctionReason?: string
 }
@@ -167,7 +168,30 @@ export interface ReviewEvaluationAttemptResult {
   finalOutcome?: EvaluationOutcome
   correctionEventId?: string
   prescreenTerminalActionFired?: boolean
+  prescreenOutcomeCommitted?: boolean
+  candidateOutboundId?: string
   externalEvaluationUpdated?: boolean
+}
+
+export interface DraftPrescreenReviewMessagesInput {
+  sessionIds: string[]
+  terminal: "PASS" | "FAIL" | "HARD_STOP"
+}
+
+export interface DraftPrescreenReviewMessage {
+  sessionId: string
+  attemptId: string
+  candidateId: string
+  jobId: string
+  proposedTerminal?: string
+  finalTerminal: "PASS" | "FAIL" | "HARD_STOP"
+  candidateMessageBody: string
+  evidenceSummary: string
+}
+
+export interface DraftPrescreenReviewMessagesResult {
+  ok: true
+  drafts: DraftPrescreenReviewMessage[]
 }
 
 export interface GenerateAgentResearchPromptInput {
@@ -856,6 +880,11 @@ export const reviewEvaluationAttempt = callable<
   ReviewEvaluationAttemptInput,
   ReviewEvaluationAttemptResult
 >("paReviewEvaluationAttempt")
+
+export const draftPrescreenReviewMessages = callable<
+  DraftPrescreenReviewMessagesInput,
+  DraftPrescreenReviewMessagesResult
+>("paDraftPrescreenReviewMessages")
 
 export const generateAgentResearchPrompt = callable<
   GenerateAgentResearchPromptInput,

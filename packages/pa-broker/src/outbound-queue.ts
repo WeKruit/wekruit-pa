@@ -7,6 +7,7 @@ const OUT = PA_COLLECTIONS.outbound
 export type EnqueueOutboundInput = {
   userId: string
   toE164: string
+  fromNumber?: string
   imessageChatId?: string
   body: string
   idempotencyKey: string
@@ -18,6 +19,8 @@ const APPROVED_RUNTIME_SOURCES = new Set([
   "pa_orchestrator",
   "pa_prescreen_runtime",
   "pa_pii_runtime",
+  "pa_identity_notice",
+  "pa_operator_review",
   "test_runtime",
 ])
 
@@ -50,6 +53,7 @@ export async function enqueueOutbound(
     id,
     userId: input.userId,
     toE164: input.toE164,
+    ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}),
     ...(input.imessageChatId ? { imessageChatId: input.imessageChatId } : {}),
     body: input.body,
     status: "pending",

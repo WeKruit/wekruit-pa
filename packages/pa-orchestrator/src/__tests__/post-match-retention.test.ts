@@ -144,3 +144,88 @@ test("handlePostMatchRetentionReply sends an immediate match batch after daily o
   assert.match(sent[1]?.body ?? "", /partner|合作/)
   assert.equal((docs.get("pa-job-profiles/u_subscribe") as { status?: string } | undefined)?.status, "active")
 })
+
+test("handlePostMatchRetentionReply does not offer another prescreen when review is pending", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-feature-flags/paPostMatchRetentionEnabled",
+      { key: "paPostMatchRetentionEnabled", value: true, type: "bool", scope: "global" },
+    ],
+    [
+      "pa-users/u_pending",
+      {
+        postMatchRetention: {
+          stage: "await_prescreen",
+          startedAt: "2026-05-21T16:00:00.000Z",
+          updatedAt: "2026-05-21T16:00:00.000Z",
+          recCount: 2,
+        },
+      },
+    ],
+  ])
+  const prescreenSessions = [
+    {
+      id: "ps_pending",
+      data: () => ({
+        userId: "u_pending",
+        terminal: "PASS",
+        terminalActionPendingReview: true,
+        updatedAt: "2026-05-21T16:00:00.000Z",
+      }),
+    },
+  ]
+  const db = {
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => {
+          const data = docs.get(`${name}/${id}`)
+          return { exists: data !== undefined, data: () => data }
+        },
+        set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+          const key = `${name}/${id}`
+          docs.set(key, opts?.merge ? { ...(docs.get(key) ?? {}), ...data } : data)
+        },
+      }),
+      where: () => ({
+        limit: () => ({
+          get: async () => ({ empty: false, docs: prescreenSessions }),
+        }),
+      }),
+    }),
+  } as never
+  const sent: Array<{ body: string; extra?: Record<string, unknown> }> = []
+  let offerCalled = false
+  const handled = await handlePostMatchRetentionReply(
+    {
+      id: "e-prescreen",
+      userId: "u_pending",
+      sessionId: "s1",
+      from: "+14243201960",
+      body: "yes",
+      channel: "imessage",
+    } as never,
+    {
+      db,
+      nowIso: () => "2026-05-21T16:01:00.000Z",
+      log: () => {},
+      getOnboardingUser: async () => ({ onboardingState: "complete" }),
+      generateJobRecs: async () => {
+        offerCalled = true
+        return { message: "should not send partner offer", recCount: 1 }
+      },
+      enqueueOutbound: async (_userId, _to, body, extra) => {
+        sent.push({ body, extra })
+      },
+      updateTurn: async () => {},
+      markEventSucceeded: async () => {},
+    },
+    "t-prescreen"
+  )
+
+  assert.equal(handled, true)
+  assert.equal(offerCalled, false)
+  assert.equal(sent.length, 1)
+  assert.match(sent[0]?.body ?? "", /already|review/i)
+  assert.doesNotMatch(sent[0]?.body ?? "", /partner role|quick screen|top match/i)
+  assert.equal((docs.get("pa-users/u_pending")?.postMatchRetention as { stage?: string } | null)?.stage, "complete")
+})

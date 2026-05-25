@@ -279,11 +279,15 @@ export async function judgeSharedOnboardingAnswer(
     return { accept: false, reason: "irrelevant" }
   }
   const question = getSharedOnboardingQuestion(args.questionId)
+  const bloomRegex = sharedJudgeBloom(args.questionId)
+  if (bloomRegex.some((bloom) => bloom.pattern.test(answer))) {
+    return { accept: true, value: answer, confidence: 1.0 }
+  }
   const judge = new GuidedOpenJudge<string>({
     questionLabel: question.label,
     hints: sharedJudgeHints(args.questionId),
     examples: sharedJudgeExamples(args.questionId),
-    bloomRegex: sharedJudgeBloom(args.questionId),
+    bloomRegex,
     parseValue: parseSharedJudgeValue,
     confidenceThreshold: 0.62,
     minMeaningfulChars: 2,

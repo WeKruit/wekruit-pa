@@ -40,7 +40,9 @@ export const FIND_MATCH_NARRATION: ConnectorNarrationTemplates = {
   },
   frameResult: {
     en: ({ count }) =>
-      count > 0 ? `ok so I found ${count} that look like a fit —` : "hmm didn't find much yet —",
+      count > 0
+        ? `ok so I found ${count} role${count === 1 ? "" : "s"} that ${count === 1 ? "looks" : "look"} like a fit —`
+        : "hmm didn't find much yet —",
     zh: ({ count }) => (count > 0 ? `我这边看到 ${count} 个还挺合适的 —` : "暂时没捞到特别合适的 —"),
   },
 }

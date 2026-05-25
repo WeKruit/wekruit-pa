@@ -27,6 +27,9 @@ import type { Trigger, TriggerContext, TriggerOutcome } from "./router.js"
 
 const PRESCREEN_RE = /WeKruit_([A-Za-z0-9-]+)_([A-Za-z0-9_-]+)_Job/i
 
+export const PRESCREEN_IDENTITY_CONFLICT_NOTICE =
+  "This interview link is already tied to a different phone/account. If this is you, continue from that message thread, or reopen the job page and use the phone you want Claire to text."
+
 /** Per-pair idempotency window. */
 export const PRESCREEN_IDEMPOTENCY_WINDOW_MS = 60 * 60 * 1000 // 60 minutes
 
@@ -60,6 +63,16 @@ export interface PrescreenTriggerDeps {
      * phone-resolved real userId.
      */
      sourceRequestedUserId?: string
+  }): Promise<void>
+  /** Queue a short candidate-safe notice when the token is valid but the sender phone cannot own it. */
+  sendIdentityConflictNotice?(args: {
+    targetUserId: string
+    jobId: string
+    toE164: string
+    fromNumber?: string
+    messageHandle: string
+    content: string
+    conflictCode: string
   }): Promise<void>
   /** Audit emitter (logged for both deny + accept). */
   audit(event: Record<string, unknown>): Promise<void>
@@ -101,6 +114,12 @@ export function extractInitialPrescreenReply(text: string, triggerText: string, 
   return after.slice(0, 4_000)
 }
 
+function identityConflictCode(err: unknown): string | null {
+  if (!(err instanceof Error)) return null
+  if (!err.message.startsWith("identity_conflict:")) return null
+  return err.message.split(":")[1]?.trim() || "unknown"
+}
+
 export class PrescreenTrigger implements Trigger {
   readonly name = "prescreen"
 
@@ -125,7 +144,40 @@ export class PrescreenTrigger implements Trigger {
     const now = (this.deps.now ?? Date.now)()
 
     // Authorization
-    const resolvedUserId = await this.deps.lookupUserByPhone(ctx.fromNumber)
+    let resolvedUserId: string | null
+    try {
+      resolvedUserId = await this.deps.lookupUserByPhone(ctx.fromNumber)
+    } catch (err) {
+      const conflictCode = identityConflictCode(err)
+      if (!conflictCode) throw err
+      await this.deps.audit({
+        type: "trigger_unauthorized",
+        trigger: "prescreen",
+        reason: "identity_conflict",
+        fromNumber: ctx.fromNumber,
+        correlationId: ctx.messageHandle,
+        payload: { jobId, targetUserId: userId, conflictCode },
+      })
+      try {
+        await this.deps.sendIdentityConflictNotice?.({
+          targetUserId: userId,
+          jobId,
+          toE164: ctx.fromNumber,
+          ...(ctx.toNumber ? { fromNumber: ctx.toNumber } : {}),
+          messageHandle: ctx.messageHandle,
+          content: PRESCREEN_IDENTITY_CONFLICT_NOTICE,
+          conflictCode,
+        })
+      } catch (noticeErr) {
+        ctx.log("trigger.prescreen.identity_conflict_notice_failed", {
+          jobId,
+          targetUserId: userId,
+          conflictCode,
+          error: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
+        })
+      }
+      return { kind: "handled", action: "prescreen_identity_conflict_notified" }
+    }
     if (!resolvedUserId) {
       await this.deps.audit({
         type: "trigger_unauthorized",

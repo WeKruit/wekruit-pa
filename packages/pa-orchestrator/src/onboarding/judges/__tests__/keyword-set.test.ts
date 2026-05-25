@@ -347,11 +347,28 @@ test("Phase 75: buildKeywordSetPrompt includes keywords + weights", () => {
     keywords: [{ keyword: "react", weight: 2 }, { keyword: "vue", weight: 1, hint: "synonyms: vue.js" }],
     questionPrompt: "tell me about your react experience",
   })
-  assert.ok(system.includes("recruiting screener"))
+  assert.ok(system.includes("top-5% hiring-calibration evaluator"))
   assert.ok(system.includes("Temperature is fixed at 0"))
   assert.ok(user.includes("react"))
   assert.ok(user.includes("vue"))
   assert.ok(user.includes("synonyms: vue.js"))
   assert.ok(user.includes("tell me about your react"))
   assert.ok(user.includes('"""I love react"""'))
+})
+
+test("Phase 75: buildKeywordSetPrompt uses strict prescreen calibration anchors", () => {
+  const { system } = buildKeywordSetPrompt({
+    reply: "I helped the team with marketing and learned a lot",
+    lang: "en",
+    keywords: [{ keyword: "growth_or_marketing_campaign", weight: 1 }],
+    questionPrompt: "Tell me about a growth campaign you owned",
+  })
+
+  assert.match(system, /top-5% hiring-calibration evaluator/i)
+  assert.match(system, /top-5/i)
+  assert.match(system, /0\.95/)
+  assert.match(system, /direct ownership/i)
+  assert.match(system, /cap .*team-only/i)
+  assert.match(system, /cap .*adjacent/i)
+  assert.match(system, /cap .*no measurable/i)
 })
