@@ -30,6 +30,10 @@ export type MarkPrescreenTerminalOutcomeArgs = MarkFirstInterviewStartedArgs & {
   terminal: PrescreenOutcomeTerminal
 }
 
+export type MarkPrescreenReviewPendingArgs = MarkFirstInterviewStartedArgs & {
+  terminal: Exclude<PrescreenOutcomeTerminal, "PAUSE">
+}
+
 function cleanString(value: unknown, max: number): string | undefined {
   if (typeof value !== "string") return undefined
   const trimmed = value.trim()
@@ -119,8 +123,31 @@ export function buildPrescreenTerminalEvent(args: MarkPrescreenTerminalOutcomeAr
   } as CandidateJobEvent
 }
 
+export function buildPrescreenReviewPendingEvent(args: MarkPrescreenReviewPendingArgs): CandidateJobEvent {
+  return {
+    eventId: `prescreen-review-pending-${args.sessionId}`,
+    type: "prescreen_review_pending",
+    candidateId: args.userId,
+    jobId: args.jobId,
+    actor: "orchestrator",
+    occurredAt: args.occurredAt,
+    evidence: [
+      {
+        source: "prescreen",
+        summary: `First interview completed with ${args.terminal}; waiting for WeKruit review`,
+        refId: args.sessionId,
+      },
+    ],
+    prescreenSessionId: args.sessionId,
+  }
+}
+
 export async function markFirstInterviewStarted(args: MarkFirstInterviewStartedArgs) {
   return applyCandidateJobEvent(args.db, buildPrescreenStartedEvent(args))
+}
+
+export async function markPrescreenReviewPending(args: MarkPrescreenReviewPendingArgs) {
+  return applyCandidateJobEvent(args.db, buildPrescreenReviewPendingEvent(args))
 }
 
 async function buildEmployerVisibleSnapshot(

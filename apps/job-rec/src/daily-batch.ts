@@ -614,10 +614,6 @@ function jobUrl(job: MatchingJob): string {
   return job.atsApplyUrl ?? job.primaryUrl
 }
 
-function jobMatchSourceLabel(job: MatchingJob): "WeKruit collaborated" | "general match" {
-  return job.matchSourceLabel === "WeKruit collaborated" ? "WeKruit collaborated" : "general match"
-}
-
 function buildDailyRuntimeContext(
   jobs: MatchingJob[],
   ctx: DailyPushContext,
@@ -625,6 +621,7 @@ function buildDailyRuntimeContext(
 ): Record<string, unknown> {
   const englishCtx: DailyPushContext = { ...ctx, language: "en" }
   const visibleJobs = jobs.filter(hasConcreteJobRequirements)
+  const trustedOutboundBody = composeDailyRecommendationMessage(visibleJobs, englishCtx)
   return {
     eventKind: "daily_job_recommendations",
     source: "job_rec_daily_batch",
@@ -646,19 +643,59 @@ function buildDailyRuntimeContext(
       url: jobUrl(job),
       requirements: jobRequirementsLine(job),
       reason: ctx.reasons?.get(job.id) || buildJobReason(job, englishCtx),
-      matchSourceLabel: jobMatchSourceLabel(job),
       previouslyRecommended: job.previouslyRecommended === true,
       recommendationCount: job.recommendationCount ?? 0,
       lastRecommendedAt: job.lastRecommendedAt ?? null,
     })),
+    trustedOutboundBody,
     instructions: [
       "Write candidate-visible copy in English only.",
       "Use exactly the number of roles requested unless the user asked for a different count.",
-      "For every role include title, company, URL, requirements, reason, and matchSourceLabel.",
+      "For every role include title, company, URL, requirements, and reason.",
+      "Do not expose internal labels, field names, ids, or scoring metadata.",
       "If a role has previouslyRecommended=true, say briefly that it may be a repeat and why it is still worth another look.",
       "If timing is awkward or the request should not send, respond __NO_SEND__.",
     ],
   }
+}
+
+function sanitizeDailyVisibleText(value: string): string {
+  return value
+    .replace(/\bmatchSourceLabel\s*:\s*(?:general match|WeKruit collaborated)\b\.?/gi, "")
+    .replace(/\b(general match|WeKruit collaborated)\b\.?/gi, "")
+    .replace(/\b([A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*[A-Za-z0-9])\b/g, (token) =>
+      token.replace(/_/g, " "),
+    )
+    .replace(/[ \t]{2,}/g, " ")
+    .trim()
+}
+
+function composeDailyRecommendationMessage(jobs: MatchingJob[], ctx: DailyPushContext): string {
+  const role = ctx.statedPreferences && typeof ctx.statedPreferences === "object"
+    ? ((ctx.statedPreferences as { targetRole?: unknown }).targetRole)
+    : undefined
+  const roleLabel = Array.isArray(role) && typeof role[0] === "string"
+    ? role[0].replace(/_/g, " ")
+    : undefined
+  const intro = ctx.candidateName
+    ? `Hey ${ctx.candidateName}, I found ${jobs.length === 1 ? "one role" : `${jobs.length} roles`} that line up${roleLabel ? ` with your ${roleLabel} lane` : ""}:`
+    : `I found ${jobs.length === 1 ? "one role" : `${jobs.length} roles`} that line up${roleLabel ? ` with your ${roleLabel} lane` : ""}:`
+  const parts = jobs.map((job) => {
+    const title = job.jobTitle || "Open role"
+    const company = job.companyName || "Company"
+    const url = jobUrl(job)
+    const requirements = jobRequirementsLine(job)
+    const reason = sanitizeDailyVisibleText(ctx.reasons?.get(job.id) || buildJobReason(job, ctx))
+    const repeat = job.previouslyRecommended === true
+      ? "\nI may have shared this before, but it is worth another look because it still lines up."
+      : ""
+    return `• ${title} @ ${company}${repeat}\n${url}\n${requirements}${reason ? `\nwhy: ${reason.replace(/^why\s*:\s*/i, "")}` : ""}`
+  })
+  return [
+    intro,
+    ...parts,
+    "see if these fit — if not lmk, i'll keep digging; daily fresh batch from here",
+  ].join("\n\n")
 }
 
 /**

@@ -845,18 +845,18 @@ export function terminalText(
 ): string {
   switch (terminal) {
     case "PASS":
-      return lang === "zh"
-        ? "感谢回答，这次岗位初筛已经完成。下一步，如果有匹配，我会直接帮你安排和 hiring manager 沟通。同时我也可以继续帮你找符合期待的机会，但需要先多了解你一点。你想继续吗？"
-        : "Thanks for your answers — the role-fit screen is complete. For the next step, I'll schedule you directly with the hiring manager once there's a match. Meanwhile, I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
     case "FAIL":
-      return lang === "zh"
-        ? "感谢花时间。这次可能不是最合适的岗位，但我可以继续帮你找更符合期待的机会，不过需要先更了解你一点。要继续吗？"
-        : "Thanks for taking the time. This one may not be the right fit, but I can help find jobs that meet your expectations. I need to understand you a bit better first. Do you want to proceed?"
     case "HARD_STOP":
-      return terminalHardStopText(lang)
+      return prescreenReviewPendingAckText(lang)
     case "PAUSE":
       return terminalPauseText(lang)
   }
+}
+
+export function prescreenReviewPendingAckText(lang: Lang): string {
+  return lang === "zh"
+    ? "已收到，你这次岗位 screen 已完成。WeKruit 正在审核结果；审核完后我们会在这里发你下一步。"
+    : "Received — your role screen is complete. WeKruit is reviewing the result now, and we’ll text you the next step here."
 }
 
 function clarifyText(
@@ -966,12 +966,6 @@ function clampClarifyText(text: string): string {
   const normalized = text.replace(/\s+/g, " ").trim()
   if (normalized.length <= 320) return normalized
   return `${normalized.slice(0, 317).trimEnd()}...`
-}
-
-function terminalHardStopText(lang: Lang): string {
-  return lang === "zh"
-    ? "谢谢，这些信息有帮助。我不想硬把你往这个岗位上套；这个 screen 先停在这里。我可以继续帮你找更符合期待的岗位，不过需要先更了解你一点。要继续吗？"
-    : "Thanks, that helps. I do not want to force-fit you into this exact role, so I’ll stop this screen here. I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
 }
 
 function terminalPauseText(lang: Lang): string {

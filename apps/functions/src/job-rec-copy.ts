@@ -105,8 +105,17 @@ function cleanPositiveInt(value: unknown): number | undefined {
 function cleanReason(value: unknown, lang: JobRecLang): string | undefined {
   const reason = cleanDisplayString(value)
   if (!reason) return undefined
-  if (lang === "en") return reason.replace(/^why\s+match\s*:/i, "why:")
-  return reason
+  let cleaned = reason
+    .replace(/\bmatchSourceLabel\s*:\s*(?:general match|WeKruit collaborated)\b\.?/gi, "")
+    .replace(/\b(general match|WeKruit collaborated)\b\.?/gi, "")
+    .replace(/\b([A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*[A-Za-z0-9])\b/g, (token) =>
+      token.replace(/_/g, " "),
+    )
+    .replace(/[ \t]{2,}/g, " ")
+    .trim()
+  if (!cleaned) return undefined
+  if (lang === "en") cleaned = cleaned.replace(/^why\s+match\s*:/i, "why:")
+  return cleaned
 }
 
 export function toJobRecommendationMessageItem(
@@ -296,7 +305,7 @@ export function composeJobRecommendationMessage(
       item.previouslyRecommended
         ? "\nI may have shared this before, but it is worth another look because it still lines up."
         : ""
-    lines.push(`• ${item.title}${tag}\n${item.matchSourceLabel}${repeat}\n${item.url}\n${item.requirementsLine}${reason}`)
+    lines.push(`• ${item.title}${tag}${repeat}\n${item.url}\n${item.requirementsLine}${reason}`)
   }
   if (options?.footer) lines.push(options.footer)
   return lines.join("\n\n")
@@ -305,14 +314,18 @@ export function composeJobRecommendationMessage(
 export function buildJobRecommendationRuntimeContext(
   items: JobRecommendationMessageItem[],
   context?: JobRecIntroContext,
-  options?: { requestedCount?: number; source?: string; eventKind?: string },
+  options?: { requestedCount?: number; source?: string; eventKind?: string; footer?: string },
 ): Record<string, unknown> {
+  const trustedOutboundBody = composeJobRecommendationMessage(items, "en", context, {
+    ...(options?.footer ? { footer: options.footer } : {}),
+  })
   return {
     eventKind: options?.eventKind ?? "job_recommendations_requested",
     source: options?.source ?? "job_rec",
     preferredLanguage: "en",
     requestedCount: options?.requestedCount ?? items.length,
     candidateContext: context ?? null,
+    trustedOutboundBody,
     jobs: items.map((item) => ({
       id: cleanDisplayString(item.sourceJob.id),
       title: item.title,
@@ -320,7 +333,6 @@ export function buildJobRecommendationRuntimeContext(
       url: item.url,
       requirements: item.requirementsLine,
       reason: item.reason ?? null,
-      matchSourceLabel: item.matchSourceLabel,
       previouslyRecommended: item.previouslyRecommended,
       recommendationCount: item.recommendationCount ?? 0,
       lastRecommendedAt: item.lastRecommendedAt ?? null,
@@ -328,7 +340,8 @@ export function buildJobRecommendationRuntimeContext(
     instructions: [
       "Write candidate-visible copy in English only.",
       "Use exactly the number of roles requested unless the user asked for a different count.",
-      "For every role include title, company, URL, requirements, reason, and matchSourceLabel.",
+      "For every role include title, company, URL, requirements, and reason.",
+      "Do not expose internal labels, field names, ids, or scoring metadata.",
       "If a role has previouslyRecommended=true, say briefly that it may be a repeat and why it is still worth another look.",
       "If timing is awkward or the request should not send, respond __NO_SEND__.",
     ],

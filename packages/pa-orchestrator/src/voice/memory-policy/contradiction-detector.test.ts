@@ -304,9 +304,11 @@ test("language contradiction: en user + zh majority reply → flagged", async ()
 // Latency budget
 // ---------------------------------------------------------------------------
 
-test("detectContradiction: < 5ms p95 over 50 invocations (rule-based, mem0 mocked)", async () => {
+test("detectContradiction: < 5ms p95 over 50 invocations (rule-based, facts preloaded)", async () => {
   const deps: AdviceTrackerDeps = {
-    mem0Search: async () => ["I'm vegetarian", "I have a cat"],
+    mem0Search: async () => {
+      throw new Error("factsCache should skip mem0 latency in this rule-based budget test")
+    },
   }
   const samples: number[] = []
   for (let i = 0; i < 50; i++) {
@@ -316,6 +318,7 @@ test("detectContradiction: < 5ms p95 over 50 invocations (rule-based, mem0 mocke
         userId: "u",
         turnId: `t${i}`,
         claireReply: "try the salad bowl",
+        factsCache: ["I'm vegetarian", "I have a cat"],
       },
       deps
     )

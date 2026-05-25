@@ -228,7 +228,7 @@ test("runCandidateListMatches maps employer visible state to candidate passed", 
   assert.doesNotMatch(JSON.stringify(result), /employerVisibleProfileId|evp-cand-1-job-pass/)
 })
 
-test("runCandidateListMatches maps terminal PASS session to candidate passed before employer review commit", async () => {
+test("runCandidateListMatches maps pending terminal review to candidate reviewing", async () => {
   const mfs = new MockFirestore()
   await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
     firebaseUid: "firebase-1",
@@ -238,7 +238,7 @@ test("runCandidateListMatches maps terminal PASS session to candidate passed bef
     id: "cand-1__job-pass",
     candidateId: "cand-1",
     jobId: "job-pass",
-    state: "prescreen_started",
+    state: "prescreen_review_pending",
     prescreenSessionId: "ps-pass",
   })
   await mfs.collection("pa-prescreen-sessions").doc("ps-pass").set({
@@ -256,7 +256,7 @@ test("runCandidateListMatches maps terminal PASS session to candidate passed bef
   const result = await runCandidateListMatches({}, { uid: "firebase-1" }, { db: asFirestore(mfs) })
 
   assert.equal(result.matches.length, 1)
-  assert.equal(result.matches[0]!.status, "passed")
+  assert.equal(result.matches[0]!.status, "review_pending")
   assert.doesNotMatch(JSON.stringify(result), /terminalActionPendingReview|ps-pass/)
 })
 

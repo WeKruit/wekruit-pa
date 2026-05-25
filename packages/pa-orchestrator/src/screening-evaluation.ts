@@ -131,7 +131,7 @@ export function prescreenSessionToEvaluationAttempt(input: PrescreenEvaluationIn
     prescreenSessionId: state.sessionId,
     rubricVersion: "prescreen-config-v1",
     algorithmVersion: SCREENING_EVALUATION_ALGORITHM_VERSION,
-    evaluator: input.evaluator ?? { kind: "hybrid", promptVersion: "prescreen-keyword-set-v1" },
+    evaluator: input.evaluator ?? { kind: "hybrid", promptVersion: "prescreen-keyword-set-v2-strict" },
     dimensions,
     gates,
     weightedFitScore,

@@ -19,6 +19,8 @@
 import { z } from "zod"
 import type { QuestionType } from "../onboarding/question.js"
 
+export const PRESCREEN_REVIEW_PASS_THRESHOLD = 0.95
+
 // ────────────────────────────────────────────────────────────────────────────
 // Zod schemas
 // ────────────────────────────────────────────────────────────────────────────
@@ -60,8 +62,9 @@ export const PrescreenQuestionConfigSchema = z.object({
    *   PROBING   → 0.7
    *   GOOD_TO_HAVE → 0 (never blocks)
    *
-   * Real-LLM scoring (gpt-5.4-nano) rarely hits 1.0 even on strong answers.
-   * Recommended override for production MUST_HAVE Qs: 0.85.
+   * Human-review mode is intentionally top-heavy: Claire can propose PASS,
+   * but production approval should reserve PASS for roughly top-5 evidence.
+   * Recommended override for production MUST_HAVE Qs: 0.95.
    */
   matchThreshold: z.number().min(0).max(1).optional(),
   prompt: BilingualTextSchema,
@@ -85,7 +88,7 @@ export const PrescreenConfigSchema = z
     /** Optional company name, also shown to candidate. */
     company: z.string().max(120).optional(),
     /** Pass threshold T ∈ [0,1]. */
-    threshold: z.number().min(0.3).max(1.0).default(0.65),
+    threshold: z.number().min(0.3).max(1.0).default(PRESCREEN_REVIEW_PASS_THRESHOLD),
     /** Confidence threshold τ_c ∈ [0,1]. */
     confidenceThreshold: z.number().min(0.3).max(1.0).default(0.7),
     /** Max clarification rounds per Q (PS6 default 2). */
@@ -116,6 +119,10 @@ export const PrescreenConfigSchema = z
     lastEditedBy: z.string().max(120).optional(),
     lastEditedAt: z.string().datetime().optional(),
   })
+  .transform((cfg) => ({
+    ...cfg,
+    threshold: Math.max(cfg.threshold, PRESCREEN_REVIEW_PASS_THRESHOLD),
+  }))
   .superRefine((cfg, ctx) => {
     // Uniqueness check for qIds.
     const seen = new Set<string>()
@@ -196,7 +203,7 @@ export function configToStateQuestions(
 
 /**
  * Compute the max achievable score (S_max) for a config. Used by the
- * dashboard preview ("This config requires ≥65% of 7 weighted points") +
+ * dashboard preview ("This config requires ≥95% of 7 weighted points") +
  * by the pipeline at session init.
  */
 export function configMaxScore(cfg: PrescreenConfig): number {

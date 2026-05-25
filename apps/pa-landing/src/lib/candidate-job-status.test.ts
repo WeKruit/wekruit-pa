@@ -28,6 +28,15 @@ test("getCandidateJobStatusDisplay keeps pass copy consent-safe", () => {
   assert.doesNotMatch(display.nextStep, /employer|shared|sent|visible/i)
 })
 
+test("getCandidateJobStatusDisplay renders review-pending as WeKruit-side review", () => {
+  const display = getCandidateJobStatusDisplay("review_pending", "Frontend Engineer")
+
+  assert.equal(display.label, "Reviewing")
+  assert.equal(display.tone, "active")
+  assert.match(display.nextStep, /WeKruit is reviewing/i)
+  assert.doesNotMatch(display.nextStep, /passed|not a fit|employer|shared|sent|visible/i)
+})
+
 test("getCandidateJobStatusDisplay keeps not-pass role-specific and global-pool safe", () => {
   const display = getCandidateJobStatusDisplay("not_passed", "Product Designer")
 

@@ -102,6 +102,8 @@ function makeStore(overrides: Partial<OrchestratorStore> = {}): OrchestratorStor
     checkInboundSafety: async () => ({ allow: true }),
     // Phase 22 — proactive cancellation stubs (non-cancellation tests never trigger these)
     cancelAllPendingProactiveJobs: async () => 0,
+    pauseJobRecommendationSubscription: async () => ({ paused: false }),
+    resumeJobRecommendationSubscription: async () => ({ resumed: false }),
     writeProactiveCancelAudit: async () => undefined,
     createPrivacyRequest: async (_input) => ({
       requestId: "privacy_request_delete__test",
@@ -202,73 +204,13 @@ test("processInboundEvent runs agent for non-memory messages", async () => {
   assert.equal(outbound, "assistant reply")
 })
 
-test("processInboundEvent records admin alert and sends no candidate fallback when turn fails", async () => {
-  let outboundCalls = 0
-  const writes: Array<{
-    collection: string
-    id: string
-    data: Record<string, unknown>
-    opts: Record<string, unknown>
-  }> = []
-  const db = {
-    collection(name: string) {
-      return {
-        doc(id: string) {
-          return {
-            async get() {
-              return {
-                exists: false,
-                data: () => ({}),
-              }
-            },
-            async set(data: Record<string, unknown>, opts: Record<string, unknown>) {
-              writes.push({ collection: name, id, data, opts })
-            },
-          }
-        },
-      }
-    },
-  } as unknown as FirebaseFirestore.Firestore
-  const store = makeStore({
-    db,
-    runAgentTurn: async () => {
-      const err = new Error("Cannot find module '@openai/agents'")
-      ;(err as Error & { code?: string }).code = "MODULE_NOT_FOUND"
-      throw err
-    },
-    enqueueOutbound: async () => {
-      outboundCalls++
-    },
-  })
-
-  await processInboundEvent(baseEvent, store)
-
-  assert.equal(outboundCalls, 0)
-  assert.equal(writes.length, 1)
-  assert.equal(writes[0]!.collection, "pa-admin-alerts")
-  assert.equal(writes[0]!.id, "orchestrator_turn_failed_evt1")
-  assert.ok(["MODULE_NOT_FOUND", "TURN_FAILED"].includes(String(writes[0]!.data.errorCode)))
-  assert.match(String(writes[0]!.data.error), /@openai\/agents/)
-  assert.equal(writes[0]!.data.userId, "u1")
-  assert.deepEqual(writes[0]!.opts, { merge: true })
-})
-
-test("processInboundEvent answers candidate status requests without hitting the agent runtime", async () => {
+test("processInboundEvent runtime job-rec handoff sends trusted deterministic body without LLM", async () => {
   let llmCalls = 0
   let outbound = ""
-  const turnUpdates: Array<Record<string, unknown>> = []
   const store = makeStore({
-    getOnboardingUser: async () => ({
-      id: "u1",
-      phoneE164: "+13125550123",
-      onboardingState: "complete",
-    }),
     runAgentTurn: async () => {
       llmCalls++
-      return { text: "agent should not answer status" }
-    },
-    updateTurn: async (_turnId, patch) => {
-      turnUpdates.push(patch as Record<string, unknown>)
+      return { text: "LLM should not write job rec copy" }
     },
     enqueueOutbound: async (_userId, _to, body) => {
       outbound = body
@@ -278,77 +220,106 @@ test("processInboundEvent answers candidate status requests without hitting the 
   await processInboundEvent(
     {
       ...baseEvent,
-      body: "Give me updates for the jobs I’ve applied for already",
+      id: "runtime-job-rec-1",
+      body: "[system-event:job_rec:send_imessage]",
+      rawMeta: {
+        runtimeEvent: true,
+        runtimeEventSource: "job_rec_daily_batch",
+        runtimeEventKind: "daily_job_recommendations",
+        context: {
+          trustedOutboundBody:
+            "I found two roles that line up:\n\n· Data Analyst @ Acme\nhttps://jobs.example/acme\nrequirements: SQL, Python\nwhy: your analytics work maps well.",
+        },
+      },
     },
     store,
   )
 
   assert.equal(llmCalls, 0)
-  assert.match(outbound, /actively helping/i)
-  assert.match(outbound, /hiring team/i)
-  assert.match(outbound, /reach out/i)
-  assert.doesNotMatch(outbound, /sorry|something went wrong|try again/i)
-  assert.equal(turnUpdates.some((patch) => patch.directIntent === "candidate_status_request"), true)
+  assert.match(outbound, /Data Analyst @ Acme/)
+  assert.doesNotMatch(outbound, /LLM should not write/)
 })
 
-test("createFirestoreOrchestratorStore suppresses internal-error outbound copy and alerts admin", async () => {
-  let outboundCreates = 0
-  const writes: Array<{
-    collection: string
-    id: string
-    data: Record<string, unknown>
-    opts: Record<string, unknown>
-  }> = []
-  const db = {
-    collection(name: string) {
-      return {
-        doc(id: string) {
-          return {
-            async create(data: Record<string, unknown>) {
-              outboundCreates++
-              writes.push({ collection: name, id, data, opts: {} })
-            },
-            async set(data: Record<string, unknown>, opts: Record<string, unknown>) {
-              writes.push({ collection: name, id, data, opts })
-            },
-          }
-        },
-      }
+test("processInboundEvent turn failure does not send generic candidate-visible error copy", async () => {
+  let outboundCount = 0
+  let failed = false
+  const logs: unknown[][] = []
+  const store = makeStore({
+    runAgentTurn: async () => {
+      throw new Error("model exploded")
     },
-  } as unknown as FirebaseFirestore.Firestore
-  const store = createFirestoreOrchestratorStore(db)
+    enqueueOutbound: async () => {
+      outboundCount++
+    },
+    markEventFailed: async () => {
+      failed = true
+    },
+    log: (...args: unknown[]) => {
+      logs.push(args)
+    },
+  })
 
-  await store.enqueueOutbound(
-    "u1",
-    "+14243201960",
-    "Sorry — something went wrong. Try again shortly.",
-    { idempotencyKey: "internal-error-copy-test" }
-  )
+  await processInboundEvent(baseEvent, store)
 
-  assert.equal(outboundCreates, 0)
-  assert.equal(writes.length, 1)
-  assert.equal(writes[0]!.collection, "pa-admin-alerts")
-  assert.match(writes[0]!.id, /^candidate_internal_error_outbound_suppressed_/)
-  assert.equal(writes[0]!.data.type, "candidate_internal_error_outbound_suppressed")
-  assert.equal(writes[0]!.data.userId, "u1")
-  assert.equal(writes[0]!.data.toE164Redacted, "[redacted:1960]")
-  assert.equal(writes[0]!.data.idempotencyKey, "internal-error-copy-test")
-  assert.match(String(writes[0]!.data.bodyPreview), /something went wrong/)
-  assert.deepEqual(writes[0]!.opts, { merge: true })
+  assert.equal(failed, true)
+  assert.equal(outboundCount, 0)
+  assert.ok(logs.some((entry) => String(entry[0]).includes("turn failed")))
 })
 
-// Matching agent tests in this file are harness contract tests, not semantic
-// LLM evals. The mocked runAgentTurn owns only the boundary where the agent has
-// already chosen tools; these assertions prove the orchestrator exposes the
-// right tool surface, consumes tool outputs correctly, and does not bypass the
-// audited connector path. Live intent quality belongs in an opt-in agent eval.
-test("matching router exposes SDK-safe required tools and consumes an agent-requested find-match call", async () => {
+test("processInboundEvent stop request pauses job recommendation subscription", async () => {
+  let paused = false
+  let outbound = ""
+  const store = makeStore({
+    pauseJobRecommendationSubscription: async (userId, input) => {
+      assert.equal(userId, "u1")
+      assert.equal(input.inboundEventId, "evt1")
+      paused = true
+      return { paused: true }
+    },
+    cancelAllPendingProactiveJobs: async () => 0,
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+    runAgentTurn: async () => {
+      throw new Error("LLM should not handle unsubscribe")
+    },
+  })
+
+  await processInboundEvent({ ...baseEvent, body: "stop job recommendations" }, store)
+
+  assert.equal(paused, true)
+  assert.match(outbound, /paused job recommendations/i)
+})
+
+test("processInboundEvent restart request resumes job recommendation subscription", async () => {
+  let resumed = false
+  let outbound = ""
+  const store = makeStore({
+    resumeJobRecommendationSubscription: async (userId, input) => {
+      assert.equal(userId, "u1")
+      assert.equal(input.inboundEventId, "evt1")
+      resumed = true
+      return { resumed: true }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+    runAgentTurn: async () => {
+      throw new Error("LLM should not handle subscription restart")
+    },
+  })
+
+  await processInboundEvent({ ...baseEvent, body: "restart job recommendations" }, store)
+
+  assert.equal(resumed, true)
+  assert.match(outbound, /back on/i)
+})
+
+test("completed user explicit job-search request sends generated matches without LLM", async () => {
   let llmCalls = 0
-  let directRecCalls = 0
-  const toolCalls: string[] = []
-  const outbound: string[] = []
-  const turnUpdates: Array<Record<string, unknown>> = []
-  const exposedToolNames: string[][] = []
+  let outbound = ""
+  let force: boolean | undefined
+  let roleFocus: string[] | undefined
   const store = makeStore({
     getOnboardingUser: async () => ({
       id: "u1",
@@ -356,320 +327,297 @@ test("matching router exposes SDK-safe required tools and consumes an agent-requ
       onboardingState: "complete",
     }),
     generateJobRecs: async (_userId, _lang, opts) => {
-      directRecCalls++
-      return { recCount: 0, message: `should not directly call generateJobRecs ${Boolean(opts?.force)}` }
+      force = opts?.force
+      roleFocus = opts?.roleFocus
+      return {
+        recCount: 2,
+        message: "two roles that line up for you:\n• Software Engineer @ Rain",
+      }
     },
-    buildTurnTools: async (agentForTurn) => {
-      assert.deepEqual(agentForTurn.allowedConnectors, ["set-matching-preferences", "find-match"])
-      return [
-        {
-          name: "set-matching-preferences",
-          description: "persist prefs",
-          parameters: {} as never,
-          execute: async () => {
-            toolCalls.push("set-matching-preferences")
-            return JSON.stringify({ ok: true, hardConstraint: false })
-          },
-        },
-        {
-          name: "find-match",
-          description: "find matches",
-          parameters: {} as never,
-          execute: async (args) => {
-            toolCalls.push("find-match")
-            const parsed = args as Record<string, unknown>
-            assert.deepEqual(parsed.roleFocus, ["fullstack"])
-            assert.equal(parsed.allowBroadFallback, true)
-            assert.equal(parsed.hardConstraintsActive, false)
-            return JSON.stringify({
-              ok: true,
-              source: "find-match",
-              jobCount: 2,
-              message: "two roles that line up for you:\n• Software Engineer @ Rain",
-            })
-          },
-        },
-      ]
-    },
-    runAgentTurn: async (input) => {
+    runAgentTurn: async () => {
       llmCalls++
-      assert.equal((input as unknown as Record<string, unknown>).toolChoice, "required")
-      assert.equal((input as unknown as Record<string, unknown>).parallelToolCalls, false)
-      exposedToolNames.push((input.tools ?? []).map((tool) => tool.name))
-      const findTool = input.tools?.find((tool) => tool.name === "find_match")
-      assert.ok(findTool, "find-match tool exposed")
-      await findTool.execute({
-        lang: "en",
-        requestedCount: 2,
-        source: "agentic_find_match_router",
-        roleFocus: ["fullstack"],
-        hardConstraintsActive: false,
-        allowBroadFallback: true,
-      })
-      return { text: "two roles that line up for you:\n• Software Engineer @ Rain" }
+      return { text: "assistant reply" }
     },
     enqueueOutbound: async (_userId, _to, body) => {
-      outbound.push(body)
-    },
-    updateTurn: async (_turnId, patch) => {
-      turnUpdates.push(patch as Record<string, unknown>)
+      outbound = body
     },
   })
   await processInboundEvent({
     ...baseEvent,
     body: "Please pull fresh fullstack software engineer roles that fit me.",
   }, store)
-  assert.equal(llmCalls, 1)
-  assert.deepEqual(exposedToolNames, [["set_matching_preferences", "find_match", "no_action"]])
-  assert.equal(directRecCalls, 0)
-  assert.deepEqual(toolCalls, ["find-match"])
-  assert.match(outbound.join("\n"), /Software Engineer @ Rain/)
-  assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), false)
-  assert.equal(turnUpdates.some((patch) => patch.agenticToolRouter === "matching"), true)
+  assert.equal(llmCalls, 0)
+  assert.equal(force, true)
+  assert.deepEqual(roleFocus, ["fullstack"])
+  assert.match(outbound, /Software Engineer @ Rain/)
 })
 
-test("matching router preserves agent tool-call order: save hard preference before find-match", async () => {
-  let directRecCalls = 0
-  const toolCalls: string[] = []
-  const outbound: string[] = []
+test("completed user explicit entry-level request excludes internships from matching call", async () => {
+  let excludeInternships: boolean | undefined
   const store = makeStore({
     getOnboardingUser: async () => ({
       id: "u1",
       phoneE164: "+13125550123",
       onboardingState: "complete",
     }),
-    generateJobRecs: async () => {
-      directRecCalls++
-      return { recCount: 0, message: "should not direct rec" }
-    },
-    buildTurnTools: async () => [
-      {
-        name: "set-matching-preferences",
-        description: "persist prefs",
-        parameters: {} as never,
-        execute: async (args) => {
-          toolCalls.push("set-matching-preferences")
-          const parsed = args as Record<string, unknown>
-          assert.equal(parsed.visaStatus, "sponsor_needed")
-          assert.equal(parsed.constraintStrength, "hard")
-          return JSON.stringify({ ok: true, hardConstraint: true })
-        },
-      },
-      {
-        name: "find-match",
-        description: "find matches",
-        parameters: {} as never,
-        execute: async (args) => {
-          toolCalls.push("find-match")
-          const parsed = args as Record<string, unknown>
-          assert.equal(parsed.hardConstraintsActive, true)
-          assert.equal(parsed.allowBroadFallback, false)
-          return JSON.stringify({
-            ok: false,
-            source: "find-match",
-            reason: "no_matches",
-            jobCount: 0,
-            message: null,
-          })
-        },
-      },
-    ],
-    runAgentTurn: async (input) => {
-      assert.equal((input as unknown as Record<string, unknown>).toolChoice, "required")
-      assert.equal((input as unknown as Record<string, unknown>).parallelToolCalls, false)
-      assert.deepEqual((input.tools ?? []).map((tool) => tool.name), [
-        "set_matching_preferences",
-        "find_match",
-        "no_action",
-      ])
-      const setPrefs = input.tools?.find((tool) => tool.name === "set_matching_preferences")
-      const findMatch = input.tools?.find((tool) => tool.name === "find_match")
-      assert.ok(setPrefs, "set-matching-preferences tool exposed")
-      assert.ok(findMatch, "find-match tool exposed")
-      await setPrefs.execute({
-        visaStatus: "sponsor_needed",
-        targetLocations: null,
-        roleFocus: null,
-        companyStage: null,
-        jobType: null,
-        negativeCompanies: null,
-        constraintStrength: "hard",
-        evidenceText: "I need H1B support, do you have more?",
-        source: "agentic_find_match_router",
-      })
-      await findMatch.execute({
-        lang: "en",
-        requestedCount: 2,
-        source: "agentic_find_match_router",
-        roleFocus: null,
-        hardConstraintsActive: true,
-        allowBroadFallback: false,
-      })
+    generateJobRecs: async (_userId, _lang, opts) => {
+      excludeInternships = opts?.excludeInternships
       return {
-        text: "Got it — I saved H1B support as a hard requirement. I don't have a clean batch yet, so I'll keep looking instead of sending weak roles.",
+        recCount: 1,
+        message: "one entry-level role:\n• Data Analyst @ Rain",
       }
     },
-    enqueueOutbound: async (_userId, _to, body) => {
-      outbound.push(body)
+    runAgentTurn: async () => {
+      throw new Error("LLM should not handle explicit entry-level job search")
     },
   })
 
   await processInboundEvent({
     ...baseEvent,
-    body: "I need H1B support, do you have more?",
+    body: "I need roles which require 1-2 or 1-3 0-3 years of experience",
   }, store)
 
-  assert.equal(directRecCalls, 0)
-  assert.deepEqual(toolCalls, ["set-matching-preferences", "find-match"])
-  assert.match(outbound.join("\n"), /H1B support as a hard requirement/)
+  assert.equal(excludeInternships, true)
 })
 
-test("matching router handles an agent preference-only tool call without falling through to generic Claire", async () => {
-  let directRecCalls = 0
-  const agentCalls: string[] = []
-  const toolCalls: string[] = []
-  const outbound: string[] = []
+test("profiled incomplete user explicit job-search request calls matching before onboarding", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  let recCalls = 0
+  const turnUpdates: Record<string, unknown>[] = []
   const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "pending",
+      tags: { schemaVersion: 1, skills: [], industryEnum: ["tech_software"] },
+    }),
+    generateJobRecs: async (_userId, _lang, opts) => {
+      recCalls++
+      assert.equal(opts?.force, true)
+      assert.equal(opts?.requestedCount, 2)
+      return {
+        recCount: 2,
+        message: "Fresh junior software roles:\n• Software Engineer Intern @ Sparksoft",
+      }
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "assistant reply" }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Find me 2 junior software engineering roles",
+  }, store)
+
+  assert.equal(llmCalls, 0)
+  assert.equal(recCalls, 1)
+  assert.match(outbound, /Software Engineer Intern @ Sparksoft/)
+  assert.doesNotMatch(outbound, /what matters most in your next company/i)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), true)
+})
+
+test("completed user post-rec seniority feedback updates profile and pulls fresh matches", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-users/u1",
+      {
+        tags: { schemaVersion: 1, skills: [], industryEnum: ["other"] },
+        postMatchRetention: {
+          stage: "await_liked",
+          startedAt: "2026-04-25T11:59:00.000Z",
+          updatedAt: "2026-04-25T11:59:00.000Z",
+          recCount: 2,
+        },
+      },
+    ],
+    [
+      "pa-user-job-recommendations/u1/jobs/recent-role",
+      { lastRecommendedAt: "2026-04-25T11:58:00.000Z" },
+    ],
+  ])
+  const db = {
+    collection(name: string) {
+      return {
+        doc(id: string) {
+          const docPath = `${name}/${id}`
+          return {
+            async get() {
+              const data = docs.get(docPath)
+              return { exists: data !== undefined, data: () => data }
+            },
+            async set(data: Record<string, unknown>, opts?: { merge?: boolean }) {
+              docs.set(docPath, opts?.merge ? { ...(docs.get(docPath) ?? {}), ...data } : data)
+            },
+            collection(sub: string) {
+              const prefix = `${docPath}/${sub}/`
+              return {
+                limit() {
+                  return this
+                },
+                async get() {
+                  const rows = [...docs.entries()]
+                    .filter(([key]) => key.startsWith(prefix))
+                    .map(([key, data]) => ({ id: key.slice(prefix.length), data: () => data }))
+                  return { empty: rows.length === 0, docs: rows }
+                },
+              }
+            },
+          }
+        },
+      }
+    },
+  } as never
+  let llmCalls = 0
+  let recCalls = 0
+  const outboundMessages: string[] = []
+  const turnUpdates: Record<string, unknown>[] = []
+  const prevFlag = process.env.paPostMatchRetentionEnabled
+  process.env.paPostMatchRetentionEnabled = "1"
+  try {
+    const store = makeStore({
+      db,
+      getOnboardingUser: async () => ({
+        id: "u1",
+        phoneE164: "+13125550123",
+        onboardingState: "complete",
+      }),
+      generateJobRecs: async (_userId, _lang, opts) => {
+        recCalls++
+        assert.equal(opts?.force, true)
+        return {
+          recCount: 2,
+          message: "Re-pulled with junior/entry-level roles:\n• Data Analyst @ Example",
+        }
+      },
+      runAgentTurn: async () => {
+        llmCalls++
+        return { text: "should-not-call-llm" }
+      },
+      enqueueOutbound: async (_userId, _to, body) => {
+        outboundMessages.push(body)
+      },
+      updateTurn: async (_turnId, patch) => {
+        turnUpdates.push(patch)
+      },
+    })
+
+    await processInboundEvent({
+      ...baseEvent,
+      body: "I need roles which require 1-2 or 1-3 0-3 years of experience",
+    }, store)
+  } finally {
+    if (prevFlag === undefined) delete process.env.paPostMatchRetentionEnabled
+    else process.env.paPostMatchRetentionEnabled = prevFlag
+  }
+
+  assert.equal(llmCalls, 0)
+  assert.equal(recCalls, 1)
+  assert.equal(outboundMessages.some((body) => /I mean those roles/i.test(body)), false)
+  assert.equal(outboundMessages.some((body) => /Data Analyst @ Example/.test(body)), true)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), true)
+  assert.equal(turnUpdates.some((patch) => patch.directIntentProfileUpdated === true), true)
+  const user = docs.get("pa-users/u1") as { tags?: { yoeRange?: [number, number]; careerStage?: string }; statedPreferences?: { yoeRange?: [number, number] } }
+  assert.deepEqual(user.tags?.yoeRange, [0, 3])
+  assert.equal(user.tags?.careerStage, "entry_level")
+  assert.deepEqual(user.statedPreferences?.yoeRange, [0, 3])
+})
+
+test("completed user explicit data-role job request keeps stated target role aligned with canonical tag", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-users/u1",
+      {
+        tags: { schemaVersion: 1, skills: [], industryEnum: ["other"], targetRoleFunction: ["software_engineering"] },
+        statedPreferences: { targetRole: ["software engineering"] },
+      },
+    ],
+  ])
+  const db = {
+    collection(name: string) {
+      return {
+        doc(id: string) {
+          const docPath = `${name}/${id}`
+          return {
+            async get() {
+              const data = docs.get(docPath)
+              return { exists: data !== undefined, data: () => data }
+            },
+            async set(data: Record<string, unknown>, opts?: { merge?: boolean }) {
+              docs.set(docPath, opts?.merge ? { ...(docs.get(docPath) ?? {}), ...data } : data)
+            },
+            collection(sub: string) {
+              const prefix = `${docPath}/${sub}/`
+              return {
+                limit() {
+                  return this
+                },
+                async get() {
+                  const rows = [...docs.entries()]
+                    .filter(([key]) => key.startsWith(prefix))
+                    .map(([key, data]) => ({ id: key.slice(prefix.length), data: () => data }))
+                  return { empty: rows.length === 0, docs: rows }
+                },
+              }
+            },
+          }
+        },
+      }
+    },
+  } as never
+  let recCalls = 0
+  const turnUpdates: Record<string, unknown>[] = []
+  const store = makeStore({
+    db,
     getOnboardingUser: async () => ({
       id: "u1",
       phoneE164: "+13125550123",
       onboardingState: "complete",
     }),
-    generateJobRecs: async () => {
-      directRecCalls++
-      return { recCount: 0, message: "should not direct rec" }
-    },
-    buildTurnTools: async () => [
-      {
-        name: "set-matching-preferences",
-        description: "persist prefs",
-        parameters: {} as never,
-        execute: async (args) => {
-          toolCalls.push("set-matching-preferences")
-          const parsed = args as Record<string, unknown>
-          assert.deepEqual(parsed.targetLocations, ["remote_us"])
-          assert.deepEqual(parsed.negativeRoleFunctions, ["customer_service_and_support"])
-          assert.equal(parsed.evidenceText, "Please keep me remote only and avoid customer support roles.")
-          assert.equal(parsed.source, "agentic_find_match_router")
-          return JSON.stringify({
-            ok: true,
-            source: "set-matching-preferences",
-            hardConstraint: true,
-            updatedTags: ["targetLocations", "roleFunctionNegativeList"],
-          })
-        },
-      },
-      {
-        name: "find-match",
-        description: "find matches",
-        parameters: {} as never,
-        execute: async () => {
-          toolCalls.push("find-match")
-          return JSON.stringify({ ok: true, source: "find-match", jobCount: 1, message: "should not find" })
-        },
-      },
-    ],
-    runAgentTurn: async (input) => {
-      if (input.agent.id.endsWith(":matching-tool-router")) {
-        agentCalls.push("router")
-        assert.equal((input as unknown as Record<string, unknown>).toolChoice, "required")
-        assert.equal((input as unknown as Record<string, unknown>).parallelToolCalls, false)
-        assert.deepEqual((input.tools ?? []).map((tool) => tool.name), [
-          "set_matching_preferences",
-          "find_match",
-          "no_action",
-        ])
-        const setPrefs = input.tools?.find((tool) => tool.name === "set_matching_preferences")
-        assert.ok(setPrefs, "set-matching-preferences tool exposed")
-        await setPrefs.execute({
-          targetLocations: ["remote_us"],
-          negativeRoleFunctions: ["customer_service_and_support"],
-          constraintStrength: "hard",
-          evidenceText: "Please keep me remote only and avoid customer support roles.",
-          source: "agentic_find_match_router",
-        })
-        return { text: "__NO_ACTION__" }
+    generateJobRecs: async (_userId, _lang, opts) => {
+      recCalls++
+      assert.equal(opts?.force, true)
+      assert.equal(opts?.requestedCount, 2)
+      return {
+        recCount: 2,
+        message: "Two roles:\n• Junior Data Analyst @ Example",
       }
-      agentCalls.push("default")
-      return { text: "default Claire reply" }
     },
-    enqueueOutbound: async (_userId, _to, body) => {
-      outbound.push(body)
+    runAgentTurn: async () => {
+      throw new Error("should-not-call-llm")
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch)
     },
   })
 
   await processInboundEvent({
     ...baseEvent,
-    body: "Please keep me remote only and avoid customer support roles.",
+    body: "Need 2 entry level data analyst roles, 0-2 years, remote or NYC",
   }, store)
 
-  assert.equal(directRecCalls, 0)
-  assert.deepEqual(agentCalls, ["router"])
-  assert.deepEqual(toolCalls, ["set-matching-preferences"])
-  assert.equal(outbound.length, 1)
-  assert.match(outbound[0]!, /saved.*matching/i)
-})
-
-test("completed user matching router falls through without stealing unrelated chat", async () => {
-  const agentCalls: string[] = []
-  const toolCalls: string[] = []
-  const outbound: string[] = []
-  const store = makeStore({
-    getOnboardingUser: async () => ({
-      id: "u1",
-      phoneE164: "+13125550123",
-      onboardingState: "complete",
-    }),
-    buildTurnTools: async () => [
-      {
-        name: "set-matching-preferences",
-        description: "persist prefs",
-        parameters: {} as never,
-        execute: async () => {
-          throw new Error("set-matching-preferences should not run")
-        },
-      },
-      {
-        name: "find-match",
-        description: "find matches",
-        parameters: {} as never,
-        execute: async () => {
-          throw new Error("find-match should not run")
-        },
-      },
-    ],
-    runAgentTurn: async (input) => {
-      if (input.agent.id.endsWith(":matching-tool-router")) {
-        agentCalls.push("router")
-        assert.equal((input as unknown as Record<string, unknown>).toolChoice, "required")
-        assert.equal((input as unknown as Record<string, unknown>).parallelToolCalls, false)
-        assert.deepEqual((input.tools ?? []).map((tool) => tool.name), [
-          "set_matching_preferences",
-          "find_match",
-          "no_action",
-        ])
-        const noAction = input.tools?.find((tool) => tool.name === "no_action")
-        assert.ok(noAction, "no_action tool exposed")
-        await noAction.execute({ reason: "not_matching_related" })
-        toolCalls.push("no_action")
-        return { text: "__NO_ACTION__" }
-      }
-      agentCalls.push("default")
-      return { text: "normal Claire reply" }
-    },
-    enqueueOutbound: async (_userId, _to, body) => {
-      outbound.push(body)
-    },
-  })
-
-  await processInboundEvent({
-    ...baseEvent,
-    body: "Random question: how should I think about this interview answer?",
-  }, store)
-
-  assert.deepEqual(agentCalls, ["router", "default"])
-  assert.deepEqual(toolCalls, ["no_action"])
-  assert.deepEqual(outbound, ["normal Claire reply"])
+  assert.equal(recCalls, 1)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), true)
+  const user = docs.get("pa-users/u1") as {
+    tags?: { targetRoleFunction?: string[]; yoeRange?: [number, number]; targetLocations?: string[] }
+    statedPreferences?: { targetRole?: string[]; yoeRange?: [number, number]; targetLocations?: string[] }
+    conversationDerivedPreferences?: { jobSearchProfileUpdates?: { last?: { summary?: string } } }
+  }
+  assert.deepEqual(user.tags?.targetRoleFunction, ["data_analysis"])
+  assert.deepEqual(user.tags?.yoeRange, [0, 2])
+  assert.deepEqual(user.tags?.targetLocations, ["remote_united_states", "new_york_metro"])
+  assert.deepEqual(user.statedPreferences?.targetRole, ["data analysis"])
+  assert.deepEqual(user.statedPreferences?.yoeRange, [0, 2])
+  assert.deepEqual(user.statedPreferences?.targetLocations, ["remote", "NYC"])
+  assert.match(user.conversationDerivedPreferences?.jobSearchProfileUpdates?.last?.summary ?? "", /data analysis/)
 })
 
 test("processInboundEvent passes a Session and systemInputs into the default agent turn", async () => {
@@ -1470,58 +1418,10 @@ test("processInboundEvent layoff: inbound before shared_onboarding active bootst
   )
 })
 
-test("processInboundEvent post-prescreen yes bootstraps onboarding with role-screen context", async () => {
-  let outbound = ""
-  const turnUpdates: Array<Record<string, unknown>> = []
-  const store = makeStore({
-    getOnboardingUser: async () => ({
-      id: "u1",
-      phoneE164: "+13125550123",
-      onboardingState: "pending",
-      displayName: "Sunny Li",
-      latestResumeArtifactId: "resume_1",
-      workSession: {
-        kind: "job_prescreen",
-        status: "ended",
-        sessionId: "ps_photon",
-        jobId: "wekruit-37429d02-photon-macos-devops",
-        jobTitle: "Member of Technical Staff, macOS DevOps",
-        company: "Photon",
-        terminal: "PASS",
-        boundary: "terminal",
-        endedAt: "2026-05-22T04:00:00.000Z",
-      },
-    } as never),
-    runAgentTurn: async () => {
-      throw new Error("template fallback should compose post-prescreen opener in this unit")
-    },
-    enqueueOutbound: async (_u, _t, text) => {
-      outbound = text
-    },
-    updateTurn: async (_turnId, patch) => {
-      turnUpdates.push(patch as Record<string, unknown>)
-    },
-  })
-
-  await processInboundEvent({
-    ...baseEvent,
-    body: "Yes",
-  }, store)
-
-  assert.match(outbound, /completing the role screen/i)
-  assert.match(outbound, /Member of Technical Staff, macOS DevOps/i)
-  assert.match(outbound, /Photon/i)
-  assert.match(outbound, /career growth, compensation, stability, mission, learning/i)
-  assert.doesNotMatch(outbound, /Saw your resume come through/i)
-  assert.equal(turnUpdates.some((patch) => patch.directIntent === "shared_onboarding"), true)
-  assert.equal(turnUpdates.some((patch) => patch.sharedOnboardingStartSource === "post_prescreen_pass"), true)
-})
-
 test("processInboundEvent lifecycle: explicit job request is not swallowed as profile update", async () => {
   let llmCalls = 0
-  let directRecCalls = 0
+  let recCalls = 0
   let lifecycleWrites = 0
-  const toolCalls: string[] = []
   const outboundMessages: string[] = []
   const store = makeStore({
     getOnboardingUser: async () => ({
@@ -1537,68 +1437,23 @@ test("processInboundEvent lifecycle: explicit job request is not swallowed as pr
     recordLifecycleReply: async () => {
       lifecycleWrites++
     },
-    generateJobRecs: async () => {
-      directRecCalls++
-      return { recCount: 0, message: "should not direct rec" }
-    },
-    buildTurnTools: async () => [
-      {
-        name: "set-matching-preferences",
-        description: "persist prefs",
-        parameters: {} as never,
-        execute: async () => {
-          toolCalls.push("set-matching-preferences")
-          return JSON.stringify({ ok: true, hardConstraint: false })
-        },
-      },
-      {
-        name: "find-match",
-        description: "find matches",
-        parameters: {} as never,
-        execute: async (args) => {
-          toolCalls.push("find-match")
-          const parsed = args as Record<string, unknown>
-          assert.equal(parsed.requestedCount, 3)
-          assert.deepEqual(parsed.roleFocus, ["fullstack", "frontend"])
-          return JSON.stringify({
-            ok: true,
-            source: "find-match",
-            jobCount: 3,
-            message:
-              "Three roles that line up:\n" +
-              "- Frontend Engineer @ Rain - NYC/remote and React-heavy.\n" +
-              "- Fullstack Engineer @ Constant Contact - JS plus backend workflow fit.\n" +
-              "- Product Engineer @ Invoko - early-stage product tooling fit.",
-          })
-        },
-      },
-    ],
-    runAgentTurn: async (input) => {
-      llmCalls++
-      assert.equal((input as unknown as Record<string, unknown>).toolChoice, "required")
-      assert.equal((input as unknown as Record<string, unknown>).parallelToolCalls, false)
-      assert.deepEqual((input.tools ?? []).map((tool) => tool.name), [
-        "set_matching_preferences",
-        "find_match",
-        "no_action",
-      ])
-      const findTool = input.tools?.find((tool) => tool.name === "find_match")
-      assert.ok(findTool, "find_match tool exposed")
-      await findTool.execute({
-        lang: "en",
-        requestedCount: 3,
-        source: "agentic_find_match_router",
-        roleFocus: ["fullstack", "frontend"],
-        hardConstraintsActive: false,
-        allowBroadFallback: true,
-      })
+    generateJobRecs: async (_userId, _lang, opts) => {
+      recCalls++
+      assert.equal(opts?.force, true)
+      assert.equal(opts?.requestedCount, 3)
+      assert.deepEqual(opts?.roleFocus, ["fullstack", "frontend"])
       return {
-        text:
+        recCount: 3,
+        message:
           "Three roles that line up:\n" +
           "- Frontend Engineer @ Rain - NYC/remote and React-heavy.\n" +
           "- Fullstack Engineer @ Constant Contact - JS plus backend workflow fit.\n" +
           "- Product Engineer @ Invoko - early-stage product tooling fit.",
       }
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
     },
     enqueueOutbound: async (_u, _t, body) => {
       outboundMessages.push(body)
@@ -1611,9 +1466,8 @@ test("processInboundEvent lifecycle: explicit job request is not swallowed as pr
   }, store)
 
   assert.equal(lifecycleWrites, 0)
-  assert.equal(llmCalls, 1)
-  assert.equal(directRecCalls, 0)
-  assert.deepEqual(toolCalls, ["find-match"])
+  assert.equal(llmCalls, 0)
+  assert.equal(recCalls, 1)
   assert.equal(outboundMessages.length, 2)
   assert.match(outboundMessages[0]!, /sec|pull|dig|look|hunt|scan/i)
   assert.match(outboundMessages[1]!, /Three roles/)

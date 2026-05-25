@@ -46,6 +46,11 @@ function firstJobRecSourceNotes(mfs: MockFirestore): string {
   return JSON.stringify(ctx ?? {})
 }
 
+function firstJobRecContext(mfs: MockFirestore): Record<string, unknown> {
+  const row = jobRecRuntimeWrites(mfs)[0]?.data
+  return ((row?.rawMeta as Record<string, unknown> | undefined)?.context as Record<string, unknown> | undefined) ?? {}
+}
+
 test("formatJobLine: bare URL on its own line (Bible v7.5.2)", () => {
   const j: MatchingJob = {
     id: "j1",
@@ -822,11 +827,13 @@ test("Stream H12: dedupe by (jobTitle|companyName) drops near-identical JDs", as
   // Both unique title-company pairs should appear, but only ONCE each
   assert.match(body, /Tax Consultant/)
   assert.match(body, /Software Engineer/)
+  const jobs = firstJobRecContext(mfs).jobs as Array<Record<string, unknown>>
+  const companyNames = jobs.map((job) => String(job.companyName ?? ""))
   // Mastercard appears exactly once (not twice)
-  const mastercardCount = (body.match(/Mastercard/g) || []).length
+  const mastercardCount = companyNames.filter((name) => name === "Mastercard").length
   assert.equal(mastercardCount, 1, `Mastercard should appear once, got ${mastercardCount}`)
   // Stripe appears exactly once
-  const stripeCount = (body.match(/Stripe/g) || []).length
+  const stripeCount = companyNames.filter((name) => name === "Stripe").length
   assert.equal(stripeCount, 1, `Stripe should appear once, got ${stripeCount}`)
 })
 

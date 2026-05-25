@@ -186,6 +186,7 @@ function lifecycle(type: CandidateLifecycleEvent["type"], over: Partial<Candidat
 function job(type: CandidateJobEvent["type"], over: Partial<CandidateJobEvent> = {}): CandidateJobEvent {
   const prescreenFields = [
     "prescreen_started",
+    "prescreen_review_pending",
     "prescreen_passed",
     "prescreen_not_passed",
     "manual_pause",
@@ -290,7 +291,14 @@ test("applyCandidateLifecycleEvent writes pa-users marketplace fields plus one a
 test("applyCandidateJobEvent keeps NOT_PASS job-specific and does not mutate pa-users", async () => {
   const { db, store } = makeFakeFirestore()
   await applyCandidateJobEvent(db, job("prescreen_started"))
-  const result = await applyCandidateJobEvent(db, job("prescreen_not_passed"))
+
+  const directFinal = await applyCandidateJobEvent(db, job("prescreen_not_passed", { eventId: "job-direct-not-pass" }))
+  assert.equal(directFinal.state, "prescreen_started")
+  assert.equal(directFinal.changed, false)
+  assert.equal(directFinal.reason, "prescreen_final_requires_human_review")
+
+  await applyCandidateJobEvent(db, job("prescreen_review_pending"))
+  const result = await applyCandidateJobEvent(db, job("prescreen_not_passed", { eventId: "job-reviewed-not-pass" }))
   assert.equal(result.state, "not_passed")
   assert.equal(store.get(PA_COLLECTIONS.users)!.size, 0)
 
@@ -312,6 +320,7 @@ test("applyCandidateJobEvent records prescreen session and employer snapshot lin
   let stateDoc = store.get(PA_COLLECTIONS.candidateJobStates)!.get(started.stateDocId)!
   assert.equal(stateDoc.prescreenSessionId, "ps-job-1-cand-1")
 
+  await applyCandidateJobEvent(db, job("prescreen_review_pending"))
   await applyCandidateJobEvent(db, job("prescreen_passed"))
   const visible = await applyCandidateJobEvent(db, job("employer_snapshot_created"))
   assert.equal(visible.state, "employer_visible")
@@ -864,6 +873,7 @@ test("employer-visible snapshot requires passed candidate-job state", async () =
 test("applyPassedCandidateSnapshot creates one snapshot and advances state to employer-visible", async () => {
   const { db, store } = makeFakeFirestore()
   await applyCandidateJobEvent(db, job("prescreen_started"))
+  await applyCandidateJobEvent(db, job("prescreen_review_pending"))
   const stateId = createCandidateJobStateId("cand-1", "job-1")
   const snapshot: EmployerVisibleProfile = {
     snapshotId: createEmployerVisibleProfileId("job-1", "cand-1"),
@@ -932,6 +942,7 @@ test("applyPassedCandidateSnapshot refreshes employer-visible snapshot for a fre
   const snapshotId = createEmployerVisibleProfileId("job-1", "cand-1")
 
   await applyCandidateJobEvent(db, job("prescreen_started", { eventId: "start-old", prescreenSessionId: "ps-old" }))
+  await applyCandidateJobEvent(db, job("prescreen_review_pending", { eventId: "review-old", prescreenSessionId: "ps-old" }))
   const oldSnapshot: EmployerVisibleProfile = {
     snapshotId,
     candidateId: "cand-1",
@@ -989,6 +1000,7 @@ test("applyCandidateJobEvent does not replace passed session link on invalid pre
   const stateId = createCandidateJobStateId("cand-1", "job-1")
 
   await applyCandidateJobEvent(db, job("prescreen_started", { eventId: "start-old", prescreenSessionId: "ps-old" }))
+  await applyCandidateJobEvent(db, job("prescreen_review_pending", { eventId: "review-old", prescreenSessionId: "ps-old" }))
   await applyPassedCandidateSnapshot(db, {
     eventId: "pass-old",
     candidateId: "cand-1",
@@ -1028,6 +1040,7 @@ test("applyCandidateJobEvent does not replace passed session link on invalid pre
 test("NOT_PASS and PAUSE create no employer-visible snapshots", async () => {
   const notPass = makeFakeFirestore()
   await applyCandidateJobEvent(notPass.db, job("prescreen_started"))
+  await applyCandidateJobEvent(notPass.db, job("prescreen_review_pending"))
   await applyCandidateJobEvent(notPass.db, job("prescreen_not_passed"))
   assert.equal(notPass.store.get(PA_COLLECTIONS.candidateJobStates)!.get(createCandidateJobStateId("cand-1", "job-1"))!.state, "not_passed")
   assert.equal(notPass.store.get(PA_COLLECTIONS.employerVisibleProfiles)!.size, 0)

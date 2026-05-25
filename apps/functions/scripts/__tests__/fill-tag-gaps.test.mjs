@@ -26,6 +26,7 @@ import {
   isAxisMissing,
   computeTagGapFill,
   processUser,
+  isEligibleTagGapBackfillUser,
 } from "../fill-tag-gaps.mjs"
 
 // ─── isAxisMissing ───────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ describe("computeTagGapFill", () => {
     const out = computeTagGapFill(tags, null)
     assert.deepEqual(out.proposed.targetRoleFunction, ["software_engineering"])
     assert.equal(out.sources.targetRoleFunction, "auto-derive-skill-bucket")
-    assert.match(out.reasoning.targetRoleFunction, /seScore=4/)
+    assert.match(out.reasoning.targetRoleFunction, /roles inferred/)
   })
 
   it("DOES NOT overwrite admin-set targetRoleFunction (ONLY-MISSING-AXES)", () => {
@@ -93,8 +94,8 @@ describe("computeTagGapFill", () => {
   it("fills careerStage from yoeRange tuple", () => {
     const tags = { yoeRange: [3, 5] }
     const out = computeTagGapFill(tags, null)
-    assert.equal(out.proposed.careerStage, "senior")
-    assert.equal(out.sources.careerStage, "auto-derive-yoe-threshold")
+    assert.equal(out.proposed.careerStage, "mid_level")
+    assert.equal(out.sources.careerStage, "resume_baseline")
   })
 
   it("DOES NOT overwrite admin-set careerStage", () => {
@@ -108,6 +109,35 @@ describe("computeTagGapFill", () => {
     assert.deepEqual(out.proposed, {})
   })
 
+  it("fills targetJobType conservatively from resume evidence", () => {
+    const out = computeTagGapFill(
+      {},
+      {
+        workHistory: [{ title: "Associate Data Analyst", startDate: "2024", endDate: "2026" }],
+        candidateProfile: { skills: ["SQL", "Python", "Tableau"] },
+      },
+      null,
+      { nowYear: 2026 }
+    )
+    assert.deepEqual(out.proposed.targetJobType, ["full_time"])
+    assert.equal(out.proposed.careerStage, "entry_level")
+  })
+
+  it("detects internship job type from explicit resume signals", () => {
+    const out = computeTagGapFill(
+      {},
+      {
+        workHistory: [{ title: "Product Manager Intern", startDate: "2025", endDate: "Present" }],
+        education: [{ field: "Business", endDate: "2027" }],
+      },
+      null,
+      { nowYear: 2026 }
+    )
+    assert.deepEqual(out.proposed.targetRoleFunction, ["product_management"])
+    assert.equal(out.proposed.careerStage, "intern")
+    assert.deepEqual(out.proposed.targetJobType, ["internship"])
+  })
+
   it("recovers role from resumeDoc workHistory[0].title", () => {
     const tags = { skills: [] }
     const resume = {
@@ -115,7 +145,7 @@ describe("computeTagGapFill", () => {
     }
     const out = computeTagGapFill(tags, resume)
     assert.deepEqual(out.proposed.targetRoleFunction, ["software_engineering"])
-    assert.equal(out.sources.targetRoleFunction, "auto-derive-title-regex")
+    assert.equal(out.sources.targetRoleFunction, "resume_baseline")
   })
 
   it("falls back to parsedCandidateResumes.candidateProfile.skills when tags.skills empty (auto-bucket)", () => {
@@ -131,7 +161,7 @@ describe("computeTagGapFill", () => {
     const out = computeTagGapFill(tags, resume)
     assert.deepEqual(out.proposed.targetRoleFunction, ["software_engineering"])
     assert.equal(out.sources.targetRoleFunction, "auto-derive-skill-bucket")
-    assert.match(out.reasoning.targetRoleFunction, /skillsSource=parsedCandidateResumes/)
+    assert.match(out.reasoning.targetRoleFunction, /roles inferred/)
   })
 
   it("falls back to statedPreferences.targetRole when no CV signals at all (chat-only user)", () => {
@@ -142,7 +172,7 @@ describe("computeTagGapFill", () => {
     const out = computeTagGapFill(tags, resume, stated)
     assert.deepEqual(out.proposed.targetRoleFunction, ["software_engineering"])
     assert.equal(out.sources.targetRoleFunction, "auto-derive-stated-preferences")
-    assert.equal(out.proposed.careerStage, "senior")
+    assert.equal(out.proposed.careerStage, "mid_level")
   })
 
   it("statedPreferences DOES NOT override skill-bucket vote (precedence)", () => {
@@ -219,6 +249,27 @@ function makeStubDb({ resumeDoc = null, throwOnSet = false } = {}) {
 // ─── processUser ─────────────────────────────────────────────────────────────
 
 describe("processUser", () => {
+  it("excludes demo/static/internal/external and incomplete users from backfill scope", () => {
+    assert.equal(
+      isEligibleTagGapBackfillUser({
+        id: "demo_layoff_001",
+        phoneE164: "+1555000001",
+        isDemo: true,
+      }),
+      false
+    )
+    assert.equal(
+      isEligibleTagGapBackfillUser({
+        id: "candidate-1",
+        phoneE164: "+14243201960",
+        signupSource: "identity:candidate",
+        candidateLifecycleState: "claimed",
+        latestResumeArtifactId: "resume-1",
+      }),
+      true
+    )
+  })
+
   it("dry-run writes audit only, NO pa-users mutation", async () => {
     const ctx = makeStubDb({
       resumeDoc: {
@@ -241,13 +292,37 @@ describe("processUser", () => {
     })
     assert.equal(res.mode, "dry-run")
     assert.equal(res.hasChanges, true)
-    assert.deepEqual(res.proposedKeys, ["targetRoleFunction"])
+    assert.deepEqual(res.proposedKeys, ["targetRoleFunction", "targetJobType"])
     assert.equal(ctx.writes.length, 0, "must not write to pa-users in dry-run")
     assert.ok(ctx.auditWrites.length > 0, "must write audit row")
     const auditUserRow = ctx.auditWrites.find((a) => a.userId === "U1")
     assert.ok(auditUserRow)
     assert.equal(auditUserRow.data.mode, "dry-run")
     assert.deepEqual(auditUserRow.data.proposed.targetRoleFunction, ["software_engineering"])
+  })
+
+  it("dry-run without writeAudit writes no audit rows and no pa-users mutation", async () => {
+    const ctx = makeStubDb({
+      resumeDoc: {
+        workHistory: [{ title: "Software Engineer", company: "X" }],
+      },
+    })
+    const userData = {
+      phoneE164: "+14243201960",
+      signupSource: "identity:candidate",
+      candidateLifecycleState: "claimed",
+      latestResumeArtifactId: "resume-1",
+      tags: {},
+    }
+    const res = await processUser(ctx.db, "U_no_audit", userData, {
+      dryRun: true,
+      writeAudit: false,
+      runId: "test-run-no-audit",
+    })
+    assert.equal(res.mode, "dry-run")
+    assert.equal(res.hasChanges, true)
+    assert.equal(ctx.writes.length, 0)
+    assert.equal(ctx.auditWrites.length, 0)
   })
 
   it("apply mode mutates pa-users.tags + writes audit", async () => {
@@ -275,7 +350,7 @@ describe("processUser", () => {
     const userWrite = ctx.writes.find((w) => w.collection === "pa-users" && w.id === "U2")
     assert.ok(userWrite)
     assert.deepEqual(userWrite.data.tags.targetRoleFunction, ["software_engineering"])
-    assert.equal(userWrite.data.tags.careerStage, "senior")
+    assert.equal(userWrite.data.tags.careerStage, "mid_level")
     assert.ok(userWrite.data.tags.lastUpdatedFromMigration)
   })
 
@@ -287,6 +362,7 @@ describe("processUser", () => {
       tags: {
         targetRoleFunction: ["software_engineering"], // already filled
         careerStage: "senior", // already filled
+        targetJobType: ["full_time"], // already filled
         skills: [
           { name: "python", bucket: "programming_languages" },
           { name: "typescript", bucket: "programming_languages" },

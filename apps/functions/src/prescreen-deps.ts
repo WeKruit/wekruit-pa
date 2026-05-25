@@ -8,6 +8,7 @@
  */
 import type { Firestore } from "firebase-admin/firestore"
 import {
+  buildKeywordSetPrompt,
   hardFilterClarifyText,
   type KeywordSetLlmCaller,
   type KeywordSetLlmOutput,
@@ -62,33 +63,7 @@ export function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
     async score({ reply, lang, keywords, questionPrompt }) {
       const apiKey = process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY
       if (!apiKey) throw new Error("missing OpenAI API key")
-      const keywordList = keywords
-        .map(
-          (k, i) =>
-            `${i + 1}. "${k.keyword}" (weight ${(k.weight ?? 1).toFixed(2)})${k.hint ? ` hint: ${k.hint}` : ""}`,
-        )
-        .join("\n")
-      const system = [
-        "You are a recruiting screener evaluating candidate replies against a JD keyword set.",
-        "For EACH configured keyword, emit one cell:",
-        "  - keyword (verbatim)",
-        "  - match 0..1 (how well the reply demonstrates this keyword)",
-        "  - confidence 0..1 (how sure you are)",
-        "  - evidence ≤60 char excerpt from reply",
-        "  - reasoning ≤80 char explanation",
-        "Also emit: summary ≤120 char, answered bool, abortHint?{kind:low_confidence|off_topic|decline|ambiguous, reason}",
-        "When the reply contains multiple prior answers, score the strongest concrete relevant evidence across the whole merged reply.",
-        "Do not let an early 'not exact' admission dominate if later details show relevant shipped work, systems, tools, or impact.",
-        "Output STRICT JSON. No prose. Do NOT invent keywords. Temperature 0.",
-      ].join("\n")
-      const userMsg = [
-        questionPrompt ? `Question (${lang}): ${questionPrompt}` : "",
-        `Candidate reply (${lang}): """${reply}"""`,
-        `Keyword set:\n${keywordList}`,
-        'Schema: { "perKeyword": [...], "summary": "...", "answered": bool, "abortHint"?: {...} }',
-      ]
-        .filter(Boolean)
-        .join("\n\n")
+      const { system, user } = buildKeywordSetPrompt({ reply, lang, keywords, questionPrompt })
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
@@ -96,7 +71,7 @@ export function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
           model: "gpt-5.4-nano",
           messages: [
             { role: "system", content: system },
-            { role: "user", content: userMsg },
+            { role: "user", content: user },
           ],
           temperature: 0,
           response_format: { type: "json_object" },

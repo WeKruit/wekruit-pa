@@ -86,6 +86,7 @@ function lifecycle(type: CandidateLifecycleEvent["type"], over: Partial<Candidat
 function job(type: CandidateJobEvent["type"], over: Partial<CandidateJobEvent> = {}): CandidateJobEvent {
   const prescreenFields = [
     "prescreen_started",
+    "prescreen_review_pending",
     "prescreen_passed",
     "prescreen_not_passed",
     "manual_pause",
@@ -820,6 +821,9 @@ test("candidate-job reducer preserves first-interview and lets a fresh screen re
   let state = reduceCandidateJobState("candidate_matched", job("prescreen_started", { matchScore: 0.01 })).state
   assert.equal(state, "prescreen_started", "match score must not block first interview")
 
+  state = reduceCandidateJobState(state, job("prescreen_review_pending")).state
+  assert.equal(state, "prescreen_review_pending")
+
   state = reduceCandidateJobState(state, job("prescreen_not_passed")).state
   assert.equal(state, "not_passed")
 
@@ -845,6 +849,10 @@ test("candidate-job prescreen events carry session evidence", () => {
     /prescreenSessionId/
   )
   assert.equal(
+    CandidateJobEventSchema.parse(job("prescreen_review_pending")).prescreenSessionId,
+    "ps-job-1-cand-1"
+  )
+  assert.equal(
     CandidateJobEventSchema.parse(job("prescreen_passed")).prescreenSessionId,
     "ps-job-1-cand-1"
   )
@@ -861,6 +869,31 @@ test("candidate-job prescreen events carry session evidence", () => {
       }),
     /employerVisibleProfileId/
   )
+})
+
+test("candidate-job reducer requires review-pending before final prescreen outcome", () => {
+  const started = reduceCandidateJobState("candidate_matched", job("prescreen_started", { matchScore: 0.01 }))
+  assert.equal(started.state, "prescreen_started")
+
+  const directPass = reduceCandidateJobState(started.state, job("prescreen_passed"))
+  assert.equal(directPass.state, "prescreen_started")
+  assert.equal(directPass.changed, false)
+  assert.equal(directPass.reason, "prescreen_final_requires_human_review")
+
+  const directNotPass = reduceCandidateJobState(started.state, job("prescreen_not_passed"))
+  assert.equal(directNotPass.state, "prescreen_started")
+  assert.equal(directNotPass.changed, false)
+  assert.equal(directNotPass.reason, "prescreen_final_requires_human_review")
+
+  const pending = reduceCandidateJobState(started.state, job("prescreen_review_pending"))
+  assert.equal(pending.state, "prescreen_review_pending")
+  assert.equal(pending.reason, "prescreen_waiting_for_human_review")
+
+  const reviewedPass = reduceCandidateJobState(pending.state, job("prescreen_passed"))
+  assert.equal(reviewedPass.state, "passed")
+
+  const reviewedNotPass = reduceCandidateJobState(pending.state, job("prescreen_not_passed"))
+  assert.equal(reviewedNotPass.state, "not_passed")
 })
 
 test("candidate-job outbound events require invite and delivery evidence", () => {
@@ -931,7 +964,8 @@ test("candidate-job reducer requires passed state before employer visibility", (
   assert.equal(blocked.changed, false)
   assert.equal(blocked.reason, "employer_visible_requires_passed_state")
 
-  const passed = reduceCandidateJobState("prescreen_started", job("prescreen_passed")).state
+  const pending = reduceCandidateJobState("prescreen_started", job("prescreen_review_pending")).state
+  const passed = reduceCandidateJobState(pending, job("prescreen_passed")).state
   const visible = reduceCandidateJobState(passed, job("employer_snapshot_created"))
   assert.equal(visible.state, "employer_visible")
 })

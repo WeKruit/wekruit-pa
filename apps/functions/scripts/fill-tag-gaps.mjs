@@ -11,7 +11,7 @@
  * `applyPartialUserTags` (USER-TAG-05 sole-writer invariant).
  *
  * Crucially:
- *   - DRY-RUN by default (writes audit doc only)
+ *   - DRY-RUN by default (writes nothing)
  *   - --apply is required to actually mutate pa-users
  *   - ONLY fills missing axes — never overwrites admin-set values (tests
  *     `targetRoleFunction == null OR targetRoleFunction.length === 0`)
@@ -21,7 +21,9 @@
  *   pa-users-tag-gaps-audit/{runId}/users/{userId}  — per-user diff
  *
  * Modes:
- *   --apply               actually call applyPartialUserTags (default: dry-run)
+ *   --apply               actually write pa-users.tags (default: report only)
+ *   --write-audit         write audit docs in report mode (apply always audits)
+ *   --include-demo        include demo/test/internal/external rows (debug only)
  *   --user <uid>          single-user testing
  *   --limit <N>           stop after N users
  *   --project <id>        Firebase project (default: wekruit-5f89b)
@@ -41,15 +43,17 @@ import { readFileSync } from "node:fs"
 // when invoked as `node --import tsx scripts/fill-tag-gaps.mjs`; falls back
 // to compiled `lib/` when run after build).
 import {
-  autoDeriveTargetRoleFunction,
-  autoDeriveCareerStage,
-} from "../src/lib/auto-derive-tags.js"
-import { inferSkillBucket } from "@pa/pa-orchestrator"
+  classifyCandidateProfile,
+  deriveCandidateSource,
+} from "@pa/core-types"
+import { computeResumeBaselineTagPatch } from "../src/lib/resume-baseline-tags.js"
 
 // ─── CLI flags ────────────────────────────────────────────────────────────────
 
 const argv = process.argv.slice(2)
 const DRY_RUN = !argv.includes("--apply")
+const WRITE_AUDIT = argv.includes("--write-audit") || !DRY_RUN
+const INCLUDE_DEMO = argv.includes("--include-demo")
 const PROJECT = (() => {
   const idx = argv.indexOf("--project")
   return idx >= 0 ? argv[idx + 1] : "wekruit-5f89b"
@@ -105,10 +109,6 @@ export function isAxisMissing(tags, axis) {
   return false
 }
 
-/**
- * statedPreferences.targetRole tokens → ROLE_FUNCTION_VOCAB.
- * Mirrors `ROLE_TO_FUNCTION` in migrate-pa-users-tags.mjs.
- */
 const STATED_ROLE_TO_FUNCTION = {
   swe: "software_engineering",
   ml: "data_analysis",
@@ -139,31 +139,30 @@ function statedRolesToFunctions(targetRole) {
   return out
 }
 
-/**
- * Bucket raw CV-skill strings (e.g. "Python", "TypeScript") into Phase 52
- * SkillEntry-shaped objects with `bucket` populated via the workspace
- * `inferSkillBucket` heuristic. This is the fallback path when
- * `tags.skills` is empty (most pa-users) — we still want a skill-bucket
- * vote for `autoDeriveTargetRoleFunction`.
- */
-function bucketRawSkills(rawSkills) {
-  if (!Array.isArray(rawSkills)) return []
-  const seen = new Set()
+function skillNamesFromTags(skills) {
+  if (!Array.isArray(skills)) return []
   const out = []
-  for (const raw of rawSkills) {
-    if (typeof raw !== "string") continue
-    const name = raw.toLowerCase().trim()
-    if (!name || seen.has(name)) continue
-    seen.add(name)
-    let bucket
-    try {
-      bucket = inferSkillBucket(name)
-    } catch {
-      bucket = "domain_specific"
-    }
-    out.push({ name, bucket })
+  const seen = new Set()
+  for (const raw of skills) {
+    const name =
+      typeof raw === "string"
+        ? raw.trim()
+        : raw && typeof raw === "object" && typeof raw.name === "string"
+          ? raw.name.trim()
+          : ""
+    const key = name.toLowerCase()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    out.push(name)
   }
   return out
+}
+
+export function isEligibleTagGapBackfillUser(userDoc, linkedSource) {
+  if (!userDoc || typeof userDoc !== "object") return false
+  const doc = { ...userDoc, id: String(userDoc.id ?? "") }
+  const source = deriveCandidateSource(doc, linkedSource)
+  return classifyCandidateProfile(source, doc) === "candidate_account"
 }
 
 /**
@@ -180,69 +179,47 @@ function bucketRawSkills(rawSkills) {
  *
  * Output: { proposed: PartialUserTags, sources: { axis: source }, reasoning }
  */
-export function computeTagGapFill(tags, resumeDoc, statedPreferences) {
+export function computeTagGapFill(tags, resumeDoc, statedPreferences, opts = {}) {
   const proposed = {}
   const sources = {}
   const reasoning = {}
 
-  // Skill source resolution: prefer pre-bucketed `tags.skills`. When empty
-  // (Phase 71 majority case — only ~5/529 users have it populated), fall
-  // back to raw `parsedCandidateResumes.candidateProfile.skills` and bucket
-  // them via inferSkillBucket on the fly.
-  let skills = Array.isArray(tags?.skills) ? tags.skills : []
-  let skillsSource = "tags.skills"
-  if (skills.length === 0) {
-    const cvSkills = Array.isArray(resumeDoc?.candidateProfile?.skills)
-      ? resumeDoc.candidateProfile.skills
-      : Array.isArray(resumeDoc?.skills)
-        ? resumeDoc.skills
-        : []
-    if (cvSkills.length > 0) {
-      skills = bucketRawSkills(cvSkills)
-      skillsSource = "parsedCandidateResumes.candidateProfile.skills (auto-bucketed)"
-    }
+  const tagSkillNames = skillNamesFromTags(tags?.skills)
+  const parsedResume =
+    resumeDoc ??
+    (tagSkillNames.length > 0 || tags?.yoeRange || statedPreferences?.yoeRange
+      ? { candidateProfile: { skills: tagSkillNames } }
+      : null)
+  const baseline = computeResumeBaselineTagPatch({
+    existingTags: tags,
+    mergedTags: {},
+    statedPreferences,
+    parsedResume,
+    nowYear: opts.nowYear,
+  })
+  Object.assign(proposed, baseline.proposed)
+  Object.assign(sources, baseline.sources)
+  Object.assign(reasoning, baseline.reasoning)
+  if (!resumeDoc) {
+    delete proposed.targetJobType
+    delete sources.targetJobType
+    delete reasoning.targetJobType
   }
-  const industrySector = Array.isArray(tags?.industrySector) ? tags.industrySector : []
-  const workHistory = Array.isArray(resumeDoc?.workHistory)
-    ? resumeDoc.workHistory
-    : Array.isArray(resumeDoc?.experiences)
-      ? resumeDoc.experiences
+  const resumeSkillNames = Array.isArray(resumeDoc?.candidateProfile?.skills)
+    ? resumeDoc.candidateProfile.skills
+    : Array.isArray(resumeDoc?.skills)
+      ? resumeDoc.skills
       : []
-  const yoeRange = tags?.yoeRange ?? null
-
-  // 1. targetRoleFunction — only fill if missing. Prefer skill-bucket vote
-  // (most precise), fall back to title regex, then statedPreferences.targetRole
-  // map (chat-only users with no CV).
-  if (isAxisMissing(tags, "targetRoleFunction")) {
-    const derived = autoDeriveTargetRoleFunction({
-      skills,
-      industrySector,
-      workHistory,
-      yoeRange,
-    })
-    if (derived.targetRoleFunction.length > 0) {
-      proposed.targetRoleFunction = derived.targetRoleFunction
-      sources.targetRoleFunction = derived.source
-      reasoning.targetRoleFunction = `${derived.reasoning} (skillsSource=${skillsSource})`
-    } else if (statedPreferences && Array.isArray(statedPreferences.targetRole)) {
-      const fromStated = statedRolesToFunctions(statedPreferences.targetRole)
-      if (fromStated.length > 0) {
-        proposed.targetRoleFunction = fromStated
-        sources.targetRoleFunction = "auto-derive-stated-preferences"
-        reasoning.targetRoleFunction = `statedRoles=${JSON.stringify(statedPreferences.targetRole)} → ${JSON.stringify(fromStated)}`
-      }
-    }
+  if (proposed.targetRoleFunction && (tagSkillNames.length > 0 || resumeSkillNames.length > 0)) {
+    sources.targetRoleFunction = "auto-derive-skill-bucket"
   }
 
-  // 2. careerStage — only fill if missing. Prefer tags.yoeRange; fall back
-  // to statedPreferences.yoeRange.
-  if (isAxisMissing(tags, "careerStage")) {
-    const yoeForStage = yoeRange ?? statedPreferences?.yoeRange ?? null
-    const stage = autoDeriveCareerStage(yoeForStage)
-    if (stage) {
-      proposed.careerStage = stage
-      sources.careerStage = "auto-derive-yoe-threshold"
-      reasoning.careerStage = `yoeRange=${JSON.stringify(yoeForStage)}`
+  if (isAxisMissing(tags, "targetRoleFunction") && !proposed.targetRoleFunction && statedPreferences && Array.isArray(statedPreferences.targetRole)) {
+    const fromStated = statedRolesToFunctions(statedPreferences.targetRole)
+    if (fromStated.length > 0) {
+      proposed.targetRoleFunction = fromStated
+      sources.targetRoleFunction = "auto-derive-stated-preferences"
+      reasoning.targetRoleFunction = `statedRoles=${JSON.stringify(statedPreferences.targetRole)} → ${JSON.stringify(fromStated)}`
     }
   }
 
@@ -293,7 +270,24 @@ async function writeFillToPaUsers(db, userId, partial, nowIso) {
  * produces `proposed = {}` (`isAxisMissing` returns false).
  */
 export async function processUser(db, userId, userData, opts = {}) {
-  const { dryRun = true, runId, log = () => {}, nowIso = new Date().toISOString() } = opts
+  const {
+    dryRun = true,
+    runId,
+    log = () => {},
+    nowIso = new Date().toISOString(),
+    writeAudit = true,
+    filterRealCandidates = false,
+    includeDemo = false,
+  } = opts
+  if (filterRealCandidates && !includeDemo && !isEligibleTagGapBackfillUser({ ...userData, id: userId })) {
+    return {
+      mode: "skipped",
+      userId,
+      hasChanges: false,
+      skippedReason: "not_candidate_account",
+      proposedKeys: [],
+    }
+  }
   const tags = userData?.tags ?? {}
   const statedPreferences = userData?.statedPreferences ?? null
   const resumeDoc = await getLatestParsedResume(db, userId)
@@ -301,7 +295,7 @@ export async function processUser(db, userId, userData, opts = {}) {
   const hasChanges = Object.keys(proposed).length > 0
 
   // Audit per-user (always written, even in --apply, for traceability).
-  if (runId) {
+  if (runId && writeAudit) {
     try {
       await db
         .collection("pa-users-tag-gaps-audit")
@@ -317,6 +311,7 @@ export async function processUser(db, userId, userData, opts = {}) {
             targetRoleFunction: tags?.targetRoleFunction ?? null,
             careerStage: tags?.careerStage ?? null,
             yoeRange: tags?.yoeRange ?? null,
+            targetJobType: tags?.targetJobType ?? null,
             skillsCount: Array.isArray(tags?.skills) ? tags.skills.length : 0,
           },
           sources,
@@ -359,26 +354,28 @@ async function main() {
   const startedAt = new Date().toISOString()
 
   console.log(
-    `Phase 71 fill-tag-gaps (project=${PROJECT}, mode=${DRY_RUN ? "DRY-RUN" : "APPLY"}, user=${SINGLE_USER ?? "all"}, limit=${LIMIT || "none"}, runId=${runId})`
+    `Phase 71 fill-tag-gaps (project=${PROJECT}, mode=${DRY_RUN ? "REPORT" : "APPLY"}, user=${SINGLE_USER ?? "all"}, limit=${LIMIT || "none"}, writeAudit=${WRITE_AUDIT}, includeDemo=${INCLUDE_DEMO}, runId=${runId})`
   )
   initFirebase()
   const db = getFirestore()
 
-  // Run-summary stub written upfront for traceability.
-  try {
-    await db
-      .collection("pa-users-tag-gaps-audit")
-      .doc(runId)
-      .set({
-        runId,
-        startedAt,
-        mode: DRY_RUN ? "dry-run" : "apply",
-        project: PROJECT,
-        limit: LIMIT || null,
-        status: "in-progress",
-      })
-  } catch {
-    // non-fatal
+  if (WRITE_AUDIT) {
+    try {
+      await db
+        .collection("pa-users-tag-gaps-audit")
+        .doc(runId)
+        .set({
+          runId,
+          startedAt,
+          mode: DRY_RUN ? "report" : "apply",
+          project: PROJECT,
+          limit: LIMIT || null,
+          includeDemo: INCLUDE_DEMO,
+          status: "in-progress",
+        })
+    } catch {
+      // non-fatal
+    }
   }
 
   const log = (...args) => console.log(...args)
@@ -397,6 +394,9 @@ async function main() {
       dryRun: DRY_RUN,
       runId,
       log,
+      writeAudit: WRITE_AUDIT,
+      filterRealCandidates: true,
+      includeDemo: INCLUDE_DEMO,
     })
     console.log(JSON.stringify(res, null, 2))
     return
@@ -419,6 +419,9 @@ async function main() {
           dryRun: DRY_RUN,
           runId,
           log,
+          writeAudit: WRITE_AUDIT,
+          filterRealCandidates: true,
+          includeDemo: INCLUDE_DEMO,
         })
         processed++
         if (res.hasChanges) withChanges++
@@ -449,26 +452,24 @@ async function main() {
     errors: errors.slice(0, 20),
   }
 
-  try {
-    await db
-      .collection("pa-users-tag-gaps-audit")
-      .doc(runId)
-      .set({
-        ...summary,
-        status: "complete",
-      })
-  } catch {
-    // non-fatal
+  if (WRITE_AUDIT) {
+    try {
+      await db
+        .collection("pa-users-tag-gaps-audit")
+        .doc(runId)
+        .set({
+          ...summary,
+          status: "complete",
+        })
+    } catch {
+      // non-fatal
+    }
   }
 
   console.log("SUMMARY:", JSON.stringify(summary, null, 2))
   if (DRY_RUN) {
-    console.log(
-      `\nDry-run complete. Audit collection: pa-users-tag-gaps-audit/${runId}`
-    )
-    console.log(
-      `Adam-action: review audit collection, then re-run with --apply to write to pa-users.tags.`
-    )
+    if (WRITE_AUDIT) console.log(`\nReport complete. Audit collection: pa-users-tag-gaps-audit/${runId}`)
+    console.log(`Report complete. Re-run with --apply to write only eligible real candidate pa-users.tags.`)
   }
 }
 

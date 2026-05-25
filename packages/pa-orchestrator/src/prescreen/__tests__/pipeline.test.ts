@@ -1017,7 +1017,8 @@ test("Phase 76: confirmed hard-filter mismatch stops after one direct clarify", 
   assert.equal(second.state.currentQId, null)
   assert.equal(second.state.questions.location_alignment.finalS, 0.25)
   assert.equal(second.state.questions.location_alignment.finalC, 0.85)
-  assert.match(second.text, /do not want to force-fit/i)
+  assert.match(second.text, /WeKruit is reviewing/i)
+  assert.doesNotMatch(second.text, /force-fit|help find jobs|proceed/i)
 })
 
 test("Phase 76: repeated clarify on the same question asks a new targeted probe", async () => {

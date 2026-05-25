@@ -192,7 +192,6 @@ test("runPrescreenTurn → recent_terminal_guard not-acked emits text + ack writ
   assert.equal(res.lifecycle.kind, "recent_terminal_guard")
   assert.ok(res.text)
   assert.match(res.text!, /role screen is done/i)
-  assert.match(res.text!, /Do you want to proceed\?/i)
   assert.equal(recorder.getAck("s_passed"), "t")
   const recs = recorder.getRecords("s_passed")
   assert.equal(recs.length, 1)

@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { ChannelSchema, type Channel } from "./channel.js"
+export * from "./candidate-profile-classifier.js"
 
 export type { Channel }
 export { ChannelSchema }

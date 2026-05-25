@@ -152,6 +152,7 @@ function makeGenerateJobRecs(): NonNullable<
       requestedCount?: number
       roleFocus?: string[]
       collabPrescreenOnly?: boolean
+      excludeInternships?: boolean
       allowBroadFallback?: boolean
     },
   ) => {
@@ -212,6 +213,7 @@ function makeGenerateJobRecs(): NonNullable<
           allowBroadFallback: opts?.allowBroadFallback !== false,
           ...(opts?.collabPrescreenOnly ? { collabPrescreenOnly: true } : {}),
           ...(roleFocus.length ? { presentationRoleFocus: roleFocus } : {}),
+          ...(opts?.excludeInternships ? { excludeInternships: true } : {}),
         },
         {
           db,

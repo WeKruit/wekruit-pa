@@ -7,7 +7,7 @@ import {
   prescreenTurnRecordQId,
   runPrescreenTurnIfActive,
 } from "./prescreen-turn-handler.js"
-import { terminalText, type KeywordSetLlmCaller, type PreScreenClarifyComposer } from "@pa/pa-orchestrator"
+import type { KeywordSetLlmCaller, PreScreenClarifyComposer } from "@pa/pa-orchestrator"
 import { SAFETY_CANNED_REPLIES } from "@pa/pa-safety"
 
 type FakeDoc = { exists: boolean; data: Record<string, unknown> }
@@ -211,15 +211,6 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(prescreenTurnRecordQId({ kind: "error", reason: "session_not_found" }, null), "terminal")
   })
 
-  it("PASS terminal copy offers broader matching onboarding instead of implying an automatic next step", () => {
-    const text = terminalText("PASS", "score_pass", "en")
-    assert.match(text, /role-fit screen is complete/i)
-    assert.match(text, /hiring manager/i)
-    assert.match(text, /once (?:there's|there’s) a match/i)
-    assert.match(text, /Do you want to proceed\?/)
-    assert.doesNotMatch(text, /Sending the next step now/i)
-  })
-
   it("expires idle prescreen sessions instead of routing a late reply into the old job", async () => {
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
     const { db, docs } = makeFakeDb({
@@ -339,6 +330,13 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
               keywords: [],
             },
           ],
+        },
+      },
+      "pa-users/u1": {
+        postMatchRetention: {
+          stage: "await_prescreen",
+          startedAt: now,
+          updatedAt: now,
         },
       },
     })
@@ -512,7 +510,55 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.match(sent[1] ?? "", /Do you want to proceed/i)
   })
 
-  it("yields post-interview proceed yes to shared onboarding without daily subscription consent", async () => {
+  it("holds a recent terminal prescreen pending human review without sending retention outbound", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-prescreen-sessions/ps_pending_review": {
+        sessionId: "ps_pending_review",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        terminalActionPendingReview: true,
+        createdAt: now,
+        updatedAt: now,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "Thanks",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.sessionId, "ps_pending_review")
+    assert.equal(result.terminal, "PASS")
+    assert.equal(result.textSent, undefined)
+    assert.deepEqual(sent, [])
+    const session = docs.get("pa-prescreen-sessions/ps_pending_review")?.data
+    assert.equal(session?.postPrescreenRetention, undefined)
+    assert.equal(typeof session?.reviewPendingFollowupAt, "string")
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_pending_review/turns/"))
+    assert.equal(turnEntries.length, 1)
+    assert.equal((turnEntries[0][1].data.action as { reason?: string }).reason, "pending_human_review")
+  })
+
+  it("turns a post-interview proceed yes into shared onboarding Q1 without daily subscription consent", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({
       "pa-users/u1": {
@@ -539,55 +585,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
       },
     })
 
-    const result = await runPrescreenTurnIfActive({
-      db,
-      userId: "u1",
-      toE164: "+13054507715",
-      replyText: "yes",
-      sendSms: async () => {
-        throw new Error("prescreen should yield so shared onboarding can start")
-      },
-    })
-
-    assert.equal(result.handled, false)
-
-    const user = docs.get("pa-users/u1")?.data
-    assert.equal(user?.dailyJobRecSubscribe, undefined)
-    const session = docs.get("pa-prescreen-sessions/ps_done")?.data
-    assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "await_basic_onboarding")
-    assert.equal((session?.postPrescreenRetention as { basicOnboardingOptIn?: boolean } | undefined)?.basicOnboardingOptIn, undefined)
-  })
-
-  it("marks shared onboarding started from a passed prescreen for downstream prescreen suppression", async () => {
-    const now = new Date().toISOString()
-    const { db, docs } = makeFakeDb({
-      "pa-users/u1": {
-        id: "u1",
-        phoneE164: "+13054507715",
-      },
-      "pa-prescreen-sessions/ps_done": {
-        sessionId: "ps_done",
-        userId: "u1",
-        jobId: "rain-software-engineer-fullstack-8849f6ef",
-        terminal: "PASS",
-        currentQId: null,
-        createdAt: now,
-        updatedAt: now,
-        cfgSnapshot: {
-          jobTitle: "Fullstack Software Engineer",
-          company: "Rain",
-        },
-        postPrescreenRetention: {
-          stage: "await_basic_onboarding",
-          terminal: "PASS",
-          startedAt: now,
-          updatedAt: now,
-        },
-        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
-      },
-    })
     const sent: string[] = []
-
     const result = await runPrescreenTurnIfActive({
       db,
       userId: "u1",
@@ -595,23 +593,131 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
       replyText: "yes",
       sendSms: async (args) => {
         sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
       },
     })
 
     assert.equal(result.handled, true)
     assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /thanks for completing the role screen/i)
+    assert.match(sent[0] ?? "", /what matters most/i)
+
     const user = docs.get("pa-users/u1")?.data
-    const sharedOnboarding = user?.sharedOnboarding as {
-      startSource?: string
-      postPrescreenContext?: Record<string, unknown>
-    } | undefined
-    assert.equal(sharedOnboarding?.startSource, "post_prescreen_pass")
-    assert.deepEqual(sharedOnboarding?.postPrescreenContext, {
-      sessionId: "ps_done",
-      jobId: "rain-software-engineer-fullstack-8849f6ef",
-      jobTitle: "Fullstack Software Engineer",
-      company: "Rain",
+    assert.equal(user?.dailyJobRecSubscribe, undefined)
+    assert.equal((user?.sharedOnboarding as { status?: string } | undefined)?.status, "active")
+    assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.kind, "shared_onboarding")
+    assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.status, "active")
+    const session = docs.get("pa-prescreen-sessions/ps_done")?.data
+    assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "onboarding_started")
+    assert.equal((session?.postPrescreenRetention as { basicOnboardingOptIn?: boolean } | undefined)?.basicOnboardingOptIn, true)
+  })
+
+  it("yields a recent terminal prescreen when user-level post-match retention is active", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        onboardingState: "complete",
+        onboardingStatus: "active",
+        pipelineState: { completed: true },
+        postMatchRetention: {
+          stage: "await_liked",
+          startedAt: now,
+          updatedAt: now,
+          recCount: 2,
+        },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "hs-11005308-paradigm-gtm-growth",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        postTerminalFollowupAckAt: now,
+        postPrescreenRetention: {
+          stage: "onboarding_started",
+          terminal: "PASS",
+          basicOnboardingOptIn: true,
+          startedAt: now,
+          updatedAt: now,
+        },
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
     })
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+12036716555",
+      replyText: "These roles feel useful and I will look into them",
+      sendSms: async () => {
+        throw new Error("post-match retention should own this reply")
+      },
+    })
+
+    assert.equal(result.handled, false)
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
+    assert.equal(turnEntries.length, 0)
+  })
+
+  it("does not silently complete a recent terminal courtesy reply after retention is closed", async () => {
+    const now = new Date().toISOString()
+    const { db } = makeFakeDb({
+      "pa-users/u1": {
+        onboardingState: "complete",
+        onboardingStatus: "active",
+        pipelineState: { completed: true },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "hs-11005308-paradigm-gtm-growth",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        postTerminalFollowupAckAt: now,
+        postPrescreenRetention: {
+          stage: "onboarding_declined",
+          terminal: "PASS",
+          basicOnboardingOptIn: false,
+          startedAt: now,
+          updatedAt: now,
+        },
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+19406296706",
+      replyText: "Sure thank you",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /welcome|got it/i)
   })
 
   it("runs safety before a recent terminal prescreen follow-up can claim private-data requests", async () => {
@@ -703,121 +809,6 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_active/turns/"))
     assert.equal(turnEntries.length, 1)
     assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "safety_block")
-  })
-
-  it("yields PASS + yes to onboarding only when onboarding is incomplete", async () => {
-    const now = new Date().toISOString()
-    const { db, docs } = makeFakeDb({
-      "pa-users/u1": {
-        onboardingState: "pending",
-        onboardingStatus: "invited",
-        pipelineState: { completed: false, currentQId: "main_goal" },
-      },
-      "pa-prescreen-sessions/ps_done": {
-        sessionId: "ps_done",
-        userId: "u1",
-        jobId: "photon-macos-devops",
-        terminal: "PASS",
-        currentQId: null,
-        createdAt: now,
-        updatedAt: now,
-        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
-      },
-    })
-
-    const result = await runPrescreenTurnIfActive({
-      db,
-      userId: "u1",
-      toE164: "+13054507715",
-      replyText: "Yes",
-      sendSms: async () => {
-        throw new Error("prescreen should yield so shared onboarding can start")
-      },
-    })
-
-    assert.equal(result.handled, false)
-    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
-    assert.equal(turnEntries.length, 0)
-  })
-
-  it("yields PASS + yes for a fresh pending user without legacy pipeline state", async () => {
-    const now = new Date().toISOString()
-    const { db, docs } = makeFakeDb({
-      "pa-users/u1": {
-        onboardingState: "pending",
-        onboardingStatus: "invited",
-      },
-      "pa-prescreen-sessions/ps_done": {
-        sessionId: "ps_done",
-        userId: "u1",
-        jobId: "photon-macos-devops",
-        terminal: "PASS",
-        currentQId: null,
-        createdAt: now,
-        updatedAt: now,
-        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
-      },
-    })
-
-    const result = await runPrescreenTurnIfActive({
-      db,
-      userId: "u1",
-      toE164: "+13054507715",
-      replyText: "Sure",
-      sendSms: async () => {
-        throw new Error("prescreen should yield so shared onboarding can start")
-      },
-    })
-
-    assert.equal(result.handled, false)
-    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
-    assert.equal(turnEntries.length, 0)
-  })
-
-  it("handles PASS + what next with the one-time broader matching offer", async () => {
-    const now = new Date().toISOString()
-    const { db, docs } = makeFakeDb({
-      "pa-users/u1": {
-        onboardingState: "complete",
-        onboardingStatus: "active",
-        pipelineState: { completed: true },
-      },
-      "pa-prescreen-sessions/ps_done": {
-        sessionId: "ps_done",
-        userId: "u1",
-        jobId: "photon-macos-devops",
-        terminal: "PASS",
-        currentQId: null,
-        createdAt: now,
-        updatedAt: now,
-        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
-      },
-    })
-
-    const sent: string[] = []
-    const result = await runPrescreenTurnIfActive({
-      db,
-      userId: "u1",
-      toE164: "+13054507715",
-      replyText: "What are the next steps?",
-      sendSms: async (args) => {
-        sent.push(args.content)
-        return {
-          status: "queued",
-          from_number: null,
-          number: args.to,
-          content: args.content,
-          service: "iMessage",
-          is_outbound: true,
-        }
-      },
-    })
-
-    assert.equal(result.handled, true)
-    assert.equal(sent.length, 1)
-    assert.match(sent[0]!, /role-fit screen is complete/i)
-    assert.match(sent[0]!, /Do you want to proceed\?/)
-    assert.equal(typeof docs.get("pa-prescreen-sessions/ps_done")?.data.postTerminalFollowupAckAt, "string")
   })
 
   it("yields a recent terminal prescreen when a completed candidate asks for new job matches", async () => {
@@ -1370,6 +1361,8 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
       },
     }
     const terminalCalls: Array<Record<string, unknown>> = []
+    const reviewPendingCalls: Array<Record<string, unknown>> = []
+    const sent: string[] = []
 
     const result = await runPrescreenTurnIfActive({
       db,
@@ -1381,26 +1374,57 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
         terminalCalls.push(args as unknown as Record<string, unknown>)
         return { alreadyFired: false, level1Sent: false, jobRecsFired: false }
       },
-      sendSms: async (args) => ({
-        status: "queued",
-        from_number: null,
-        number: args.to,
-        content: args.content,
-        service: "iMessage",
-        is_outbound: true,
-      }),
+      markReviewPending: async (args) => {
+        reviewPendingCalls.push(args as unknown as Record<string, unknown>)
+        docs.set(`pa-candidate-job-states/${args.userId}__${args.jobId}`, {
+          exists: true,
+          data: {
+            id: `${args.userId}__${args.jobId}`,
+            candidateId: args.userId,
+            jobId: args.jobId,
+            state: "prescreen_review_pending",
+            prescreenSessionId: args.sessionId,
+            stateUpdatedAt: args.occurredAt,
+          },
+        })
+        return { changed: true }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          id: "out-review-pending",
+          created: true,
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
     })
 
     assert.equal(result.handled, true)
     assert.equal(result.terminal, "PASS")
     assert.deepEqual(terminalCalls, [])
+    assert.equal(reviewPendingCalls.length, 1)
+    assert.equal(reviewPendingCalls[0]?.terminal, "PASS")
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /received/i)
+    assert.match(sent[0] ?? "", /reviewing/i)
+    assert.doesNotMatch(sent[0] ?? "", /pass|not a fit|recommend|salary|proceed/i)
     const session = docs.get("pa-prescreen-sessions/ps_active")?.data
     assert.equal(session?.terminalActionPendingReview, true)
     assert.equal(typeof session?.evaluationAttemptId, "string")
-    assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "await_basic_onboarding")
+    assert.equal((session?.review as { status?: string; pendingAckOutboundId?: string } | undefined)?.status, "pending")
+    assert.equal((session?.review as { status?: string; pendingAckOutboundId?: string } | undefined)?.pendingAckOutboundId, "out-review-pending")
+    assert.equal(session?.postPrescreenRetention, undefined)
+    const jobState = docs.get("pa-candidate-job-states/u1__rain-software-engineer-fullstack-8849f6ef")?.data
+    assert.equal(jobState?.state, "prescreen_review_pending")
     const user = docs.get("pa-users/u1")?.data
     assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.kind, "job_prescreen")
     assert.equal((user?.workSession as { kind?: string; status?: string } | undefined)?.status, "ended")
+    assert.equal(user?.postMatchRetention, null)
     const attempts = [...docs.entries()].filter(([path]) => path.startsWith("pa-evaluation-attempts/"))
     assert.equal(attempts.length, 1)
     assert.equal(attempts[0][1].data.source, "prescreen")

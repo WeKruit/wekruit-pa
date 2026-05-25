@@ -21,6 +21,7 @@ export type GenerateJobRecsFn = (
     roleFocus?: string[]
     allowBroadFallback?: boolean
     collabPrescreenOnly?: boolean
+    excludeInternships?: boolean
   }
 ) => Promise<GenerateJobRecsResult | null>
 

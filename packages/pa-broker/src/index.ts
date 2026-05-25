@@ -18,7 +18,7 @@ export {
   newCorrelationId,
 } from "./turns.js"
 export { appendAuditEvent, logToolAudit } from "./audit.js"
-export { enqueueOutbound, isApprovedRuntimeSource, type EnqueueOutboundInput } from "./outbound-queue.js"
+export { enqueueOutbound, isApprovedRuntimeSource, outboundMessageDocId, type EnqueueOutboundInput } from "./outbound-queue.js"
 export {
   completeScheduledJob,
   enqueueScheduledJob,
