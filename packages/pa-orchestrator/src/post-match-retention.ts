@@ -11,6 +11,7 @@ import { getFlag, writeFeedbackEvent } from "@pa/pa-persistence"
 import { detectLang } from "./voice/imperfection-injector/index.js"
 import { sendCollabPrescreenOfferFromCandidateOptIn } from "./collab-match-invite.js"
 import type { GenerateJobRecsFn } from "./match-connector-hooks.js"
+import { hasBlockingPrescreenSession } from "./prescreen-session-guards.js"
 
 export type PostMatchRetentionStage =
   | "await_liked"
@@ -82,40 +83,6 @@ export async function writePostMatchRetention(
       state ? { postMatchRetention: state } : { postMatchRetention: null },
       { merge: true }
     )
-}
-
-function readIsoMillis(value: unknown): number | null {
-  if (typeof value !== "string" || !value.trim()) return null
-  const ms = Date.parse(value)
-  return Number.isFinite(ms) ? ms : null
-}
-
-export async function hasBlockingPrescreenSession(
-  db: Firestore,
-  userId: string,
-  nowIso: string
-): Promise<boolean> {
-  const recentCutoffMs = Date.parse(nowIso) - 14 * 24 * 60 * 60 * 1000
-  try {
-    const snap = await db
-      .collection("pa-prescreen-sessions")
-      .where("userId", "==", userId)
-      .limit(20)
-      .get()
-    for (const doc of snap.docs) {
-      const data = doc.data() as Record<string, unknown>
-      if (data.terminalActionPendingReview === true) return true
-      const terminal = typeof data.terminal === "string" ? data.terminal : null
-      if (!terminal) return true
-      if (terminal === "PASS" || terminal === "FAIL" || terminal === "HARD_STOP") {
-        const updatedMs = readIsoMillis(data.updatedAt) ?? readIsoMillis(data.createdAt)
-        if (updatedMs == null || updatedMs >= recentCutoffMs) return true
-      }
-    }
-  } catch {
-    return false
-  }
-  return false
 }
 
 function normalizeBody(body: string): string {
@@ -449,7 +416,7 @@ export async function handlePostMatchRetentionReply(
     state.suppressPrescreenOffer === true
       ? true
       : state.stage === "await_subscribe" || state.stage === "await_prescreen"
-        ? await hasBlockingPrescreenSession(db, event.userId, at)
+        ? await hasBlockingPrescreenSession(db, event.userId, at, { jobIds })
         : false
   let next: PostMatchRetentionState = { ...state, updatedAt: at }
   let reply = ""
@@ -560,6 +527,16 @@ export async function handlePostMatchRetentionReply(
             lang === "zh"
               ? "好，我发你一个最匹配的合作岗邀请～看下上一条，感兴趣回「好」就开初筛。"
               : "bet — check my last message for the partner role. reply yeah when you want the quick screen."
+        } else if (offer.reason === "active_prescreen_in_progress") {
+          reply =
+            lang === "zh"
+              ? "你现在还有一个初筛在进行中。先把这轮走完，我再给你开下一个合作岗。"
+              : "you've got an active screen open right now. finish that one first, then I'll line up the next partner role."
+        } else if (offer.reason === "prescreen_already_exists_for_job") {
+          reply =
+            lang === "zh"
+              ? "这个合作岗的初筛我这边已经有记录了。WeKruit 会在这里发你下一步。"
+              : "I already have a screen for that partner role on file. WeKruit will text the next step here."
         } else {
           reply =
             lang === "zh"
