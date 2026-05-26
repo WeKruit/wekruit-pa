@@ -15,6 +15,7 @@ export type JobRecommendationSource = {
   atsApplyUrl?: unknown
   primaryUrl?: unknown
   requiredSkills?: unknown
+  seniorityLevel?: unknown
   reason?: unknown
   matchSourceLabel?: unknown
   previouslyRecommended?: unknown
@@ -115,7 +116,53 @@ function cleanReason(value: unknown, lang: JobRecLang): string | undefined {
     .trim()
   if (!cleaned) return undefined
   if (lang === "en") cleaned = cleaned.replace(/^why\s+match\s*:/i, "why:")
+  if (isWeakCandidateVisibleReason(cleaned)) return undefined
   return cleaned
+}
+
+function isWeakCandidateVisibleReason(reason: string): boolean {
+  const lower = reason.toLowerCase()
+  return [
+    /\bsame lane as your\b/,
+    /\blines up directly\b/,
+    /\bindustry\s*(?:\+|and)\s*experience align\b/,
+    /\boverall fit\b/,
+    /\baligns? with your (?:resume|background|experience)\b/,
+    /\bmatches your experience\b/,
+    /\bgood fit for your background\b/,
+  ].some((re) => re.test(lower))
+}
+
+function normalizeYoeRange(value: unknown): [number, number] | undefined {
+  if (!Array.isArray(value) || value.length < 2) return undefined
+  const min = Number(value[0])
+  const max = Number(value[1])
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return undefined
+  return [min, max]
+}
+
+function candidateWantsEarlyCareer(candidateTags: unknown): boolean {
+  if (!candidateTags || typeof candidateTags !== "object") return false
+  const tags = candidateTags as { careerStage?: unknown; yoeRange?: unknown }
+  const stage = typeof tags.careerStage === "string" ? tags.careerStage.toLowerCase().trim() : ""
+  if (["student", "intern", "entry_level", "entry", "junior", "new_grad"].includes(stage)) return true
+  const yoe = normalizeYoeRange(tags.yoeRange)
+  return !!yoe && yoe[1] <= 3
+}
+
+function isSeniorOrManagementJob(job: JobRecommendationSource): boolean {
+  const title = cleanDisplayString(job.jobTitle) ?? cleanDisplayString(job.title) ?? ""
+  const seniority = cleanDisplayString(job.seniorityLevel) ?? ""
+  const haystack = `${title} ${seniority}`.toLowerCase()
+  return /\b(?:senior|sr\.?|staff|principal|lead|manager|director|head|vp|vice\s+president|c[-\s]?level|chief)\b/.test(haystack)
+}
+
+export function passesCandidateVisibleSeniorityGate(
+  job: JobRecommendationSource,
+  candidateTags: unknown,
+): boolean {
+  if (!candidateWantsEarlyCareer(candidateTags)) return true
+  return !isSeniorOrManagementJob(job)
 }
 
 export function toJobRecommendationMessageItem(
@@ -150,12 +197,13 @@ export function toJobRecommendationMessageItem(
 export function collectJobRecommendationMessageItems(
   jobs: JobRecommendationSource[] | undefined,
   lang: JobRecLang,
-  options?: { limit?: number; reasons?: Array<string | null | undefined> },
+  options?: { limit?: number; reasons?: Array<string | null | undefined>; candidateTags?: unknown },
 ): JobRecommendationMessageItem[] {
   const limit = resolveJobRecVisibleCount(options?.limit)
   const items: JobRecommendationMessageItem[] = []
   for (let i = 0; i < (jobs?.length ?? 0); i++) {
     const job = jobs![i]!
+    if (!passesCandidateVisibleSeniorityGate(job, options?.candidateTags)) continue
     const item = toJobRecommendationMessageItem(job, lang, { reason: options?.reasons?.[i] ?? undefined })
     if (!item) continue
     items.push(item)
@@ -203,6 +251,7 @@ export async function collectLiveJobRecommendationMessageItems(
   options?: {
     limit?: number
     reasons?: Array<string | null | undefined>
+    candidateTags?: unknown
     maxCandidates?: number
     fetchImpl?: JobRecUrlFetch
     timeoutMs?: number
@@ -219,6 +268,7 @@ export async function collectLiveJobRecommendationMessageItems(
   const candidates: JobRecommendationMessageItem[] = []
   for (let i = 0; i < (jobs?.length ?? 0) && candidates.length < maxCandidates; i++) {
     const job = jobs![i]!
+    if (!passesCandidateVisibleSeniorityGate(job, options?.candidateTags)) continue
     const item = toJobRecommendationMessageItem(job, lang, { reason: options?.reasons?.[i] ?? undefined })
     if (item) candidates.push(item)
   }
@@ -277,6 +327,7 @@ export async function collectLiveFirestoreJobRecommendationMessageItems(
   options?: {
     limit?: number
     reasons?: Array<string | null | undefined>
+    candidateTags?: unknown
     maxCandidates?: number
     fetchImpl?: JobRecUrlFetch
     timeoutMs?: number

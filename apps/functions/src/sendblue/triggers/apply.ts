@@ -22,6 +22,8 @@ const APPLY_RE = /WeKruit_([A-Za-z0-9_-]+)_([A-Za-z0-9_-]+)_Apply/
 export const APPLY_IDEMPOTENCY_WINDOW_MS = 60 * 60 * 1000
 export const PASS_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000
 
+type PrescreenRunResult = { ok: boolean; reason?: string }
+
 export interface ApplyTriggerDeps {
   /** Phone → userId resolver. Null = unknown sender. */
   lookupUserByPhone(phone: string): Promise<string | null>
@@ -31,18 +33,19 @@ export interface ApplyTriggerDeps {
     userId: string
     sinceMs: number
   }): Promise<{ sessionId: string; terminalAtMs: number } | null>
-  /** Run PII-confirm flow for verified-PASS candidate. Fire-and-forget. */
+  /** Run PII-confirm flow for verified-PASS candidate before acknowledging the trigger. */
   runPiiConfirm(args: {
     jobId: string
     userId: string
     toE164: string
     sourceSessionId: string
   }): Promise<void>
-  /** Fall-back to prescreen flow when no prior PASS found. Fire-and-forget. */
-  runPreScreen(args: { jobId: string; userId: string; toE164: string }): Promise<void>
+  /** Fall back to prescreen flow when no prior PASS found before acknowledging the trigger. */
+  runPreScreen(args: { jobId: string; userId: string; toE164: string }): Promise<void | PrescreenRunResult>
   /** Idempotency read/write keyed by (jobId, userId). */
   getLastFiredMs(jobId: string, userId: string): Promise<number | null>
   setLastFiredMs(jobId: string, userId: string, ms: number): Promise<void>
+  clearLastFiredMs?(jobId: string, userId: string): Promise<void>
   /** Audit emitter. */
   audit(event: Record<string, unknown>): Promise<void>
   /** Optional clock seam for tests. */
@@ -109,45 +112,76 @@ export class ApplyTrigger implements Trigger {
         userId,
         sessionId: recentPass.sessionId,
       })
+      try {
+        await this.deps.runPiiConfirm({
+          jobId,
+          userId,
+          toE164: ctx.fromNumber,
+          sourceSessionId: recentPass.sessionId,
+        })
+      } catch (err) {
+        ctx.log("trigger.apply.pii_threw", {
+          jobId,
+          userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        try {
+          await this.deps.clearLastFiredMs?.(jobId, userId)
+        } catch (clearErr) {
+          ctx.log("trigger.apply.idempotency_clear_failed", {
+            jobId,
+            userId,
+            error: clearErr instanceof Error ? clearErr.message : String(clearErr),
+          })
+        }
+        throw err
+      }
       await this.deps.audit({
         kind: "trigger.apply.verified_pass",
         jobId,
         userId,
         sessionId: recentPass.sessionId,
       })
-      void this.deps
-        .runPiiConfirm({
-          jobId,
-          userId,
-          toE164: ctx.fromNumber,
-          sourceSessionId: recentPass.sessionId,
-        })
-        .catch((err) =>
-          ctx.log("trigger.apply.pii_threw", {
-            jobId,
-            userId,
-            error: err instanceof Error ? err.message : String(err),
-          })
-        )
       return { kind: "handled", action: "pii_confirm" }
     }
 
     // No prior PASS — fall back to prescreen flow.
     ctx.log("trigger.apply.no_pass_fallback_prescreen", { jobId, userId })
+    try {
+      const runResult = await this.deps.runPreScreen({ jobId, userId, toE164: ctx.fromNumber })
+      if (runResult && runResult.ok === false) {
+        if (runResult.reason === "config_missing") {
+          await this.deps.audit({
+            kind: "trigger.apply.prescreen_config_missing",
+            jobId,
+            userId,
+          })
+          return { kind: "handled", action: "prescreen_config_missing" }
+        }
+        throw new Error(`prescreen_start_${runResult.reason ?? "failed"}`)
+      }
+    } catch (err) {
+      ctx.log("trigger.apply.prescreen_threw", {
+        jobId,
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      try {
+        await this.deps.clearLastFiredMs?.(jobId, userId)
+      } catch (clearErr) {
+        ctx.log("trigger.apply.idempotency_clear_failed", {
+          jobId,
+          userId,
+          error: clearErr instanceof Error ? clearErr.message : String(clearErr),
+        })
+      }
+      throw err
+    }
     await this.deps.audit({
       kind: "trigger.apply.fallback_prescreen",
       jobId,
       userId,
     })
-    void this.deps
-      .runPreScreen({ jobId, userId, toE164: ctx.fromNumber })
-      .catch((err) =>
-        ctx.log("trigger.apply.prescreen_threw", {
-          jobId,
-          userId,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      )
     return { kind: "handled", action: "prescreen_fallback" }
   }
 }

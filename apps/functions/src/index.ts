@@ -1521,17 +1521,23 @@ function buildSendblueWebhookDeps() {
       if (!result.jobs || result.jobs.length === 0) {
         return { ok: false, jobCount: 0, reason: "no_matches" }
       }
-      const visibleCount = resolveJobRecVisibleCount(undefined)
-      const items = await collectLiveFirestoreJobRecommendationMessageItems(db, result.jobs, "en", { limit: visibleCount })
-      if (items.length === 0) {
-        return { ok: false, jobCount: 0, reason: "no_linkable_matches" }
-      }
+      let userTagsForJobRec: unknown
       let introContext: ReturnType<typeof compactJobRecContext> | undefined
       try {
         const userDoc = await db.collection("pa-users").doc(args.userId).get()
-        introContext = compactJobRecContext(userDoc.exists ? userDoc.data()?.tags : undefined)
+        userTagsForJobRec = userDoc.exists ? userDoc.data()?.tags : undefined
+        introContext = compactJobRecContext(userTagsForJobRec)
       } catch {
+        userTagsForJobRec = undefined
         introContext = undefined
+      }
+      const visibleCount = resolveJobRecVisibleCount(undefined)
+      const items = await collectLiveFirestoreJobRecommendationMessageItems(db, result.jobs, "en", {
+        limit: visibleCount,
+        candidateTags: userTagsForJobRec,
+      })
+      if (items.length === 0) {
+        return { ok: false, jobCount: 0, reason: "no_linkable_matches" }
       }
       const runtime = await enqueueRuntimeEventHandoff(db, {
         userId: args.userId,
@@ -1562,6 +1568,14 @@ function buildSendblueWebhookDeps() {
           },
           (event, payload) =>
             logger.info(`[sendblue][webhook][find-match] ${event}`, payload ?? {}),
+        )
+        const lastJobBatchSentAt = new Date().toISOString()
+        await db.collection("pa-job-profiles").doc(args.userId).set(
+          {
+            lastJobBatchSentAt,
+            updatedAt: lastJobBatchSentAt,
+          },
+          { merge: true },
         )
       }
       return {

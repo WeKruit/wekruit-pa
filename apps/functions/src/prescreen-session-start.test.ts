@@ -289,6 +289,25 @@ describe("runPreScreenForUser session boundaries", () => {
     assert.equal(userWorkSession.jobId, "job-new")
   })
 
+  it("reports send_failed when the missing-config notice cannot be sent", async () => {
+    const { db } = makeFakeDb({
+      "pa-jobs/job-new": { title: "Product Engineer" },
+    })
+
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-new",
+      userId: "u1",
+      toE164: "+13054507715",
+      sendSms: async () => {
+        throw new Error("OPTED_OUT")
+      },
+    })
+
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "send_failed")
+  })
+
   it("can start an active session without re-sending Q1 when the initial SMS already contains the first answer", async () => {
     const { db, docs } = makeFakeDb({
       "pa-jobs/job-new": { prescreenConfig },

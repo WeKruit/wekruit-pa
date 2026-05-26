@@ -18,9 +18,9 @@
  *     parsed userId (the candidate themselves) OR is in admin allowlist.
  *   - Anonymous / unrecognized sender → unauthorized + audit row.
  *
- * Fires `runPreScreenForUser({jobId, userId, toE164})` fire-and-forget so
- * the HTTP reply stays fast. Heavy work (session creation + first Q
- * emission) happens in the background.
+ * Runs `runPreScreenForUser({jobId, userId, toE164})` before the HTTP reply.
+ * The reply is not a valid delivery guarantee until the session row and
+ * first outbound handoff have been committed.
  */
 
 import type { Trigger, TriggerContext, TriggerOutcome } from "./router.js"
@@ -33,6 +33,8 @@ export const PRESCREEN_IDENTITY_CONFLICT_NOTICE =
 /** Per-pair idempotency window. */
 export const PRESCREEN_IDEMPOTENCY_WINDOW_MS = 60 * 60 * 1000 // 60 minutes
 
+type PrescreenRunResult = { ok: boolean; reason?: string }
+
 /** Deps the trigger needs at construct time. */
 export interface PrescreenTriggerDeps {
   /** Phone → userId resolver. Returns null when unknown. */
@@ -43,7 +45,9 @@ export interface PrescreenTriggerDeps {
   getLastFiredMs(jobId: string, userId: string, messageHandle: string): Promise<number | null>
   /** Write idempotency timestamp. */
   setLastFiredMs(jobId: string, userId: string, messageHandle: string, ms: number): Promise<void>
-  /** Fire the actual pre-screening session bootstrap. Fire-and-forget. */
+  /** Remove idempotency timestamp when the durable handoff did not happen. */
+  clearLastFiredMs?(jobId: string, userId: string, messageHandle: string): Promise<void>
+  /** Run the actual pre-screening session bootstrap before the webhook replies. */
   runPreScreen(args: {
     jobId: string
     userId: string
@@ -63,7 +67,7 @@ export interface PrescreenTriggerDeps {
      * phone-resolved real userId.
      */
      sourceRequestedUserId?: string
-  }): Promise<void>
+  }): Promise<void | PrescreenRunResult>
   /** Queue a short candidate-safe notice when the token is valid but the sender phone cannot own it. */
   sendIdentityConflictNotice?(args: {
     targetUserId: string
@@ -279,24 +283,46 @@ export class PrescreenTrigger implements Trigger {
     // same-job work session.
     await this.deps.setLastFiredMs(jobId, sessionUserId, messageHandle, now)
 
-    // Fire-and-forget. Errors here would otherwise reject the HTTP reply.
-    void Promise.resolve()
-      .then(() =>
-        this.deps.runPreScreen({
-          jobId,
-          userId: sessionUserId,
-          toE164: ctx.fromNumber,
-          ...(initialReplyText ? { initialReplyText } : {}),
-          ...(pendingMatch ? { sourceRequestedUserId: userId } : {}),
-        })
-      )
-      .catch((err) => {
-        ctx.log("trigger.prescreen.run_threw", {
-          jobId,
-          userId: sessionUserId,
-          error: err instanceof Error ? err.message : String(err),
-        })
+    try {
+      const runResult = await this.deps.runPreScreen({
+        jobId,
+        userId: sessionUserId,
+        toE164: ctx.fromNumber,
+        ...(initialReplyText ? { initialReplyText } : {}),
+        ...(pendingMatch ? { sourceRequestedUserId: userId } : {}),
       })
+      if (runResult && runResult.ok === false) {
+        if (runResult.reason === "config_missing") {
+          await this.deps.audit({
+            type: "trigger_notice",
+            trigger: "prescreen",
+            reason: "config_missing",
+            jobId,
+            userId: sessionUserId,
+            correlationId: ctx.messageHandle,
+          })
+          return { kind: "handled", action: "prescreen_config_missing" }
+        }
+        throw new Error(`prescreen_start_${runResult.reason ?? "failed"}`)
+      }
+    } catch (err) {
+      ctx.log("trigger.prescreen.run_threw", {
+        jobId,
+        userId: sessionUserId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      try {
+        await this.deps.clearLastFiredMs?.(jobId, sessionUserId, messageHandle)
+      } catch (clearErr) {
+        ctx.log("trigger.prescreen.idempotency_clear_failed", {
+          jobId,
+          userId: sessionUserId,
+          messageHandle,
+          error: clearErr instanceof Error ? clearErr.message : String(clearErr),
+        })
+      }
+      throw err
+    }
 
     // Consume pending-invite AFTER successful dispatch so a retry can re-
     // bind. Fail-open — delete failure does not roll back the trigger.

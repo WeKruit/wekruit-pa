@@ -33,6 +33,7 @@ function makeDeps(over: Partial<ConstructorParameters<typeof ApplyTrigger>[0]> =
         (async (j, u, ms) => {
           idem.set(`${j}|${u}`, ms)
         }),
+      clearLastFiredMs: over.clearLastFiredMs,
       audit: async (e: Record<string, unknown>) => {
         audit.push(e)
       },
@@ -59,37 +60,77 @@ describe("ApplyTrigger.match", () => {
 })
 
 describe("ApplyTrigger.handle — verified PASS branch", () => {
-  it("fires PII confirm when recent PASS found", async () => {
+  it("waits for PII confirm when recent PASS found", async () => {
     let piiCalled = false
     const { deps } = makeDeps({
       findRecentPass: async () => ({ sessionId: "ps_jobA_user42_20260510", terminalAtMs: 1_699_000_000_000 }),
       runPiiConfirm: async () => {
+        await new Promise((r) => setImmediate(r))
         piiCalled = true
       },
     })
     const t = new ApplyTrigger(deps)
     const r = await t.handle(makeCtx())
     assert.deepEqual(r, { kind: "handled", action: "pii_confirm" })
-    // Wait microtask for fire-and-forget chain
-    await new Promise((r) => setImmediate(r))
     assert.equal(piiCalled, true)
+  })
+
+  it("propagates PII confirm failures instead of acknowledging handled", async () => {
+    const { deps, idem } = makeDeps({
+      findRecentPass: async () => ({ sessionId: "ps_jobA_user42_20260510", terminalAtMs: 1_699_000_000_000 }),
+      runPiiConfirm: async () => {
+        throw new Error("pii unavailable")
+      },
+      clearLastFiredMs: async (j, u) => {
+        idem.delete(`${j}|${u}`)
+      },
+    })
+    const t = new ApplyTrigger(deps)
+    await assert.rejects(() => t.handle(makeCtx()), /pii unavailable/)
+    assert.equal(idem.has("jobA|user42"), false)
   })
 })
 
 describe("ApplyTrigger.handle — fallback branch", () => {
-  it("falls back to prescreen when no PASS within 30d", async () => {
+  it("waits for prescreen fallback when no PASS within 30d", async () => {
     let preCalled = false
     const { deps } = makeDeps({
       findRecentPass: async () => null,
       runPreScreen: async () => {
+        await new Promise((r) => setImmediate(r))
         preCalled = true
       },
     })
     const t = new ApplyTrigger(deps)
     const r = await t.handle(makeCtx())
     assert.deepEqual(r, { kind: "handled", action: "prescreen_fallback" })
-    await new Promise((r) => setImmediate(r))
     assert.equal(preCalled, true)
+  })
+
+  it("propagates prescreen fallback failures instead of acknowledging handled", async () => {
+    const { deps, idem } = makeDeps({
+      findRecentPass: async () => null,
+      runPreScreen: async () => {
+        throw new Error("prescreen unavailable")
+      },
+      clearLastFiredMs: async (j, u) => {
+        idem.delete(`${j}|${u}`)
+      },
+    })
+    const t = new ApplyTrigger(deps)
+    await assert.rejects(() => t.handle(makeCtx()), /prescreen unavailable/)
+    assert.equal(idem.has("jobA|user42"), false)
+  })
+
+  it("reports config-missing prescreen fallback without claiming the fallback started", async () => {
+    const { deps, audit } = makeDeps({
+      findRecentPass: async () => null,
+      runPreScreen: async () => ({ ok: false, reason: "config_missing" }),
+    })
+    const t = new ApplyTrigger(deps)
+    const r = await t.handle(makeCtx())
+    assert.deepEqual(r, { kind: "handled", action: "prescreen_config_missing" })
+    assert.equal(audit.some((a) => a.kind === "trigger.apply.prescreen_config_missing"), true)
   })
 })
 
