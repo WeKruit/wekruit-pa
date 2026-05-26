@@ -25,9 +25,10 @@ import { appendSubmissionToSheet } from "./recruiter-board-sheet.js"
 // Memory floor for these endpoints. They serve small JSON payloads (11 docs
 // today, ~80 docs ceiling). Pinned to a fixed value rather than the platform
 // default to make cost behavior predictable; the new dedicated codebase has
-// no shared bundle weight, so 128MiB is comfortable. See firebase.json
+// no shared bundle weight. 128MiB tested OOM (firebase-admin+googleapis
+// runtime alone ~140MB), bumped to 256MiB. See firebase.json
 // `recruiter-board` codebase entry for deploy isolation.
-const RECRUITER_BOARD_MEMORY = "128MiB"
+const RECRUITER_BOARD_MEMORY = "256MiB"
 
 // Optional environment variable. When set and the runtime SA has Editor access
 // on the sheet, each submission is appended to a per-jobId tab. If unset, the
@@ -537,7 +538,7 @@ const COLLAB_JOBS_LIST_SCHEMA = Object.freeze({
 })
 
 export const paCollabJobsListSchema = onRequest(
-  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, invoker: "public" },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
