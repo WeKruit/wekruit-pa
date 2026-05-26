@@ -12,6 +12,7 @@
 import { onRequest } from "firebase-functions/v2/https"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, FieldValue, type Firestore } from "firebase-admin/firestore"
+import { getAuth } from "firebase-admin/auth"
 import { createHash, randomUUID } from "node:crypto"
 import { appendSubmissionToSheet } from "./recruiter-board-sheet.js"
 
@@ -19,6 +20,77 @@ import { appendSubmissionToSheet } from "./recruiter-board-sheet.js"
 // on the sheet, each submission is appended to a per-jobId tab. If unset, the
 // Firestore write still happens and sheet sync is skipped.
 const RECRUITER_BOARD_SHEET_ID_ENV = "RECRUITER_BOARD_SHEET_ID"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hiring-board admin gating
+//
+// Anonymous visitors of https://wekruit.github.io/hiring-board/ must NEVER
+// see the real company name on a collab job. Authenticated `@wekruit.com`
+// staff get the full payload (real company, real Firestore doc id) so they
+// can perform admin operations from the same surface.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HIRING_BOARD_ADMIN_EMAIL_DOMAIN = "@wekruit.com"
+
+/**
+ * Verifies a Bearer Firebase ID token and returns true when the caller's
+ * email ends with `@wekruit.com`. Any missing/malformed/expired/invalid
+ * token returns false (we never throw — anonymous viewing is allowed, just
+ * with the anonymized payload).
+ *
+ * `verifyIdToken` is dependency-injected so unit tests can run without
+ * Firebase Auth wired up.
+ */
+export async function isHiringBoardAdmin(
+  req: { headers: { authorization?: string } },
+  verifyIdToken?: (token: string) => Promise<{ email?: string }>,
+): Promise<boolean> {
+  const auth = req.headers.authorization
+  if (!auth || !auth.startsWith("Bearer ")) return false
+  const token = auth.slice("Bearer ".length).trim()
+  if (!token) return false
+  const verify =
+    verifyIdToken ??
+    (async (t: string) => {
+      const decoded = await getAuth().verifyIdToken(t)
+      return { email: decoded.email }
+    })
+  try {
+    const decoded = await verify(token)
+    return (decoded.email ?? "").toLowerCase().endsWith(HIRING_BOARD_ADMIN_EMAIL_DOMAIN)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Maps a hiring-board public-facing `jobId` (which is the opaque
+ * `publicId` for anonymous viewers) back to the real Firestore doc id.
+ *
+ * Accepts both:
+ *   - A real Firestore doc id (admin path, or legacy bookmark) — returned
+ *     as-is when the doc exists.
+ *   - A `publicId` UUID — resolved via `where("publicId", "==", X)`.
+ *
+ * Returns null when neither resolves to a collab job.
+ */
+export async function resolvePublicIdToDocId(
+  db: Firestore,
+  jobId: string,
+): Promise<string | null> {
+  // Try direct doc id first — cheap, common admin path.
+  const directSnap = await db.collection("pa-jobs").doc(jobId).get()
+  if (directSnap.exists) return directSnap.id
+
+  // Fall back to publicId lookup for anonymized URLs.
+  const query = await db
+    .collection("pa-jobs")
+    .where("publicId", "==", jobId)
+    .limit(1)
+    .get()
+  if (query.empty) return null
+  return query.docs[0]!.id
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types — recruiterBoard payload (mirrored loosely; see INITIATIVE doc)
@@ -66,7 +138,10 @@ export interface JdBlock {
   kind?: "list" | "prose"
 }
 
-// What the public list endpoint returns. Stripped of real company identity.
+// What the public list endpoint returns. For non-admins the `jobId` is the
+// opaque `publicId` and `recruiterBoard.label.company` is anonymized (e.g.
+// `"Co. A · early-stage AI infra startup"`). Admins see the real doc id and
+// full payload.
 export interface PublicCollabJob {
   jobId: string
   title: string
@@ -78,15 +153,40 @@ export interface PublicCollabJob {
 function setCors(res: { set: (k: string, v: string) => unknown }): void {
   res.set("Access-Control-Allow-Origin", "*")
   res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-  res.set("Access-Control-Allow-Headers", "Content-Type")
+  res.set("Access-Control-Allow-Headers", "Content-Type,Authorization")
   res.set("Access-Control-Max-Age", "3600")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// paCollabJobsList — public GET
+// paCollabJobsList — public GET (+ admin-elevated view via Bearer token)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function fetchCollabJobs(db: Firestore): Promise<PublicCollabJob[]> {
+/**
+ * Strips the real company name from a recruiter-board label when the
+ * caller is not a hiring-board admin. The anonymized form is expected to
+ * be of the shape `"Co. X · <description>"`; if upstream content already
+ * contains a real name we fall back to `"Co. <companyCode>"` so we never
+ * leak identity even on a malformed doc.
+ */
+function anonymizeCompanyLabel(
+  label: RecruiterBoardLabel,
+): RecruiterBoardLabel {
+  const raw = label.company ?? ""
+  // Already in the expected `"Co. A · ..."` shape — pass through.
+  if (/^Co\.\s/.test(raw)) {
+    return label
+  }
+  const code = (label.companyCode ?? "X").trim() || "X"
+  return {
+    ...label,
+    company: `Co. ${code}`,
+  }
+}
+
+export async function fetchCollabJobs(
+  db: Firestore,
+  options: { isAdmin: boolean } = { isAdmin: false },
+): Promise<PublicCollabJob[]> {
   const snap = await db
     .collection("pa-jobs")
     .where("wekruitCollaborationStatus", "==", "collaborated")
@@ -96,12 +196,26 @@ export async function fetchCollabJobs(db: Firestore): Promise<PublicCollabJob[]>
     const d = doc.data() as Record<string, unknown>
     const rb = d.recruiterBoard as RecruiterBoardPayload | undefined
     if (!rb || rb.active !== true) continue
+
+    const publicId = typeof d.publicId === "string" ? d.publicId : undefined
+    // Admin path: keep real Firestore doc id so admin operations resolve
+    // against the same id used elsewhere in the dashboard. Non-admin: use
+    // the opaque publicId; fall back to doc id only if the migration
+    // hasn't run yet on this doc.
+    const jobIdForCaller = options.isAdmin
+      ? doc.id
+      : (publicId ?? doc.id)
+
+    const recruiterBoardForCaller: RecruiterBoardPayload = options.isAdmin
+      ? rb
+      : { ...rb, label: anonymizeCompanyLabel(rb.label) }
+
     jobs.push({
-      jobId: doc.id,
+      jobId: jobIdForCaller,
       title: String(d.title ?? ""),
       compSummary: typeof d.compSummary === "string" ? d.compSummary : undefined,
       jdBlocks: Array.isArray(d.jdBlocks) ? (d.jdBlocks as JdBlock[]) : [],
-      recruiterBoard: rb,
+      recruiterBoard: recruiterBoardForCaller,
     })
   }
   jobs.sort((a, b) => a.recruiterBoard.sortOrder - b.recruiterBoard.sortOrder)
@@ -121,8 +235,15 @@ export const paCollabJobsList = onRequest(
       return
     }
     try {
-      const jobs = await fetchCollabJobs(getFirestore())
-      res.set("Cache-Control", "public, max-age=60, s-maxage=60")
+      const isAdmin = await isHiringBoardAdmin(req)
+      const jobs = await fetchCollabJobs(getFirestore(), { isAdmin })
+      // Admin payloads contain real company identity — never cache on a
+      // shared/CDN layer. Anonymous payloads are safe to cache (60s).
+      if (isAdmin) {
+        res.set("Cache-Control", "private, max-age=0, no-store")
+      } else {
+        res.set("Cache-Control", "public, max-age=60, s-maxage=60")
+      }
       res.status(200).json({ ok: true, jobs })
     } catch (err) {
       logger.error("paCollabJobsList_failed", { error: String(err) })
@@ -267,7 +388,15 @@ export const paRecruiterSubmission = onRequest(
     const payload = validated.value
 
     const db = getFirestore()
-    const jobRef = db.collection("pa-jobs").doc(payload.jobId)
+    // Frontend may send either the real Firestore doc id (admin path) or
+    // an opaque `publicId` UUID (anonymous hiring-board path). Resolve to
+    // the real doc id so every downstream reference is consistent.
+    const realJobId = await resolvePublicIdToDocId(db, payload.jobId)
+    if (!realJobId) {
+      res.status(404).json({ ok: false, reason: "job_not_found" })
+      return
+    }
+    const jobRef = db.collection("pa-jobs").doc(realJobId)
     const jobSnap = await jobRef.get()
     if (!jobSnap.exists) {
       res.status(404).json({ ok: false, reason: "job_not_found" })
@@ -290,7 +419,11 @@ export const paRecruiterSubmission = onRequest(
     const ip = req.get("x-forwarded-for")?.split(",")[0]?.trim() || ""
     const submissionDoc = {
       submissionId,
-      jobId: payload.jobId,
+      // Canonical Firestore doc id (what admin tooling expects). When the
+      // caller used the public/anonymized id, `inboundJobId` preserves the
+      // original lineage for audit.
+      jobId: realJobId,
+      inboundJobId: payload.jobId,
       jobTitleSnapshot: String(jobData.title ?? ""),
       companyLabelSnapshot: rb.label.company,
       submitter: payload.submitter,
@@ -317,7 +450,7 @@ export const paRecruiterSubmission = onRequest(
 
     logger.info("paRecruiterSubmission_received", {
       submissionId,
-      jobId: payload.jobId,
+      jobId: realJobId,
       submitterEmail: payload.submitter.email,
       hardScore: `${score.hardChecked}/${score.hardTotal}`,
     })
@@ -329,7 +462,7 @@ export const paRecruiterSubmission = onRequest(
     if (sheetId) {
       const sheetResult = await appendSubmissionToSheet(sheetId, {
         submissionId,
-        jobId: payload.jobId,
+        jobId: realJobId,
         companyLabel: rb.label.company,
         submitter: payload.submitter,
         candidate: payload.candidate,
