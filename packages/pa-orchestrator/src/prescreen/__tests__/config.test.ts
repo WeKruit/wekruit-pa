@@ -76,6 +76,33 @@ test("Phase 78: parsePrescreenConfig normalizes legacy lenient thresholds to str
   assert.equal(cfg.threshold, 0.95)
 })
 
+test("Phase 78: parsePrescreenConfig treats blank optional Level 1 fields as absent", () => {
+  const cfg = parsePrescreenConfig({
+    ...validConfig,
+    level1Reveal: {
+      applyUrl: " ",
+      salaryRange: "",
+      nextStepEta: " within 5 business days ",
+    },
+  })
+  assert.deepEqual(cfg.level1Reveal, {
+    applyUrl: undefined,
+    salaryRange: undefined,
+    nextStepEta: "within 5 business days",
+  })
+})
+
+test("Phase 78: parsePrescreenConfig still rejects non-empty invalid Level 1 URLs", () => {
+  assert.throws(() =>
+    parsePrescreenConfig({
+      ...validConfig,
+      level1Reveal: {
+        applyUrl: "not-a-url",
+      },
+    })
+  )
+})
+
 test("Phase 78: parsePrescreenConfig rejects invalid qId charset", () => {
   assert.throws(() =>
     parsePrescreenConfig({
