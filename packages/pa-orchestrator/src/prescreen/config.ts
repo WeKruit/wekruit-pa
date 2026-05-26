@@ -72,6 +72,22 @@ export const PrescreenQuestionConfigSchema = z.object({
   keywords: z.array(KeywordSpecSchema).min(1).max(20),
 })
 
+function optionalNonEmptyString(max: number) {
+  return z.preprocess((value) => {
+    if (typeof value !== "string") return value
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : undefined
+  }, z.string().max(max).optional())
+}
+
+function optionalNonEmptyUrl(max: number) {
+  return z.preprocess((value) => {
+    if (typeof value !== "string") return value
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : undefined
+  }, z.string().url().max(max).optional())
+}
+
 /**
  * Full prescreenConfig as stored in Firestore at
  * `pa-jobs/{jobId}.prescreenConfig`.
@@ -110,9 +126,9 @@ export const PrescreenConfigSchema = z
      */
     level1Reveal: z
       .object({
-        applyUrl: z.string().url().max(2000).optional(),
-        salaryRange: z.string().max(80).optional(),
-        nextStepEta: z.string().max(80).optional(),
+        applyUrl: optionalNonEmptyUrl(2000),
+        salaryRange: optionalNonEmptyString(80),
+        nextStepEta: optionalNonEmptyString(80),
       })
       .optional(),
     /** Optional last-edited metadata stamped at save time. */
