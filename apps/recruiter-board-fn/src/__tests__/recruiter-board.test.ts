@@ -1,10 +1,15 @@
 /**
- * Unit tests for recruiter-board CFs.
+ * Unit tests for recruiter-board CFs (new `recruiter-board` codebase).
  *
  * Covers:
  *   - `computeSubmissionScore` (group counting)
  *   - `isHiringBoardAdmin` (`@wekruit.com` domain gating)
  *   - `fetchCollabJobs` admin vs anonymous shape (publicId, anonymized company)
+ *   - Pagination (limit/offset, nextOffset)
+ *   - `?since` ISO date filter
+ *   - `?status=open|filled` filter
+ *   - `Idempotency-Key` header dedupe (live POST coverage is in the smoke deploy;
+ *     here we only assert the validator + key allowlist behavior)
  *
  * The onRequest wrappers are exercised by the live smoke deploy.
  */
@@ -184,7 +189,7 @@ describe("isHiringBoardAdmin", () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
-// fetchCollabJobs — admin vs anonymous payload shape
+// fetchCollabJobs — admin vs anonymous payload shape + pagination + filters
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface FakeDoc {
@@ -236,10 +241,12 @@ describe("fetchCollabJobs admin payload", () => {
         }),
       },
     ])
-    const jobs = await fetchCollabJobs(db as never, { isAdmin: true })
+    const { jobs, total, nextOffset } = await fetchCollabJobs(db as never, { isAdmin: true })
     assert.equal(jobs.length, 1)
     assert.equal(jobs[0]!.jobId, "helium-product-engineer-fullstack")
     assert.equal(jobs[0]!.recruiterBoard.label.company, "Helium Robotics, Inc.")
+    assert.equal(total, 1)
+    assert.equal(nextOffset, null)
   })
 })
 
@@ -255,7 +262,7 @@ describe("fetchCollabJobs anonymous payload", () => {
         }),
       },
     ])
-    const jobs = await fetchCollabJobs(db as never, { isAdmin: false })
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false })
     assert.equal(jobs.length, 1)
     assert.equal(jobs[0]!.jobId, "11111111-2222-3333-4444-555555555555")
     // Real company string must NOT leak.
@@ -279,7 +286,7 @@ describe("fetchCollabJobs anonymous payload", () => {
         }),
       },
     ])
-    const jobs = await fetchCollabJobs(db as never, { isAdmin: false })
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false })
     assert.equal(jobs.length, 1)
     assert.equal(jobs[0]!.jobId, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
     assert.equal(
@@ -299,7 +306,7 @@ describe("fetchCollabJobs anonymous payload", () => {
         }),
       },
     ])
-    const jobs = await fetchCollabJobs(db as never, { isAdmin: false })
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false })
     assert.equal(jobs.length, 1)
     // Without publicId we can't anonymize the URL, but the company label is
     // still scrubbed.
@@ -307,7 +314,7 @@ describe("fetchCollabJobs anonymous payload", () => {
     assert.notEqual(jobs[0]!.recruiterBoard.label.company, "Helium Robotics, Inc.")
   })
 
-  it("skips inactive recruiter-board entries regardless of isAdmin", async () => {
+  it("skips inactive recruiter-board entries when status defaults to open", async () => {
     const db = fakeDb([
       {
         id: "inactive",
@@ -322,8 +329,8 @@ describe("fetchCollabJobs anonymous payload", () => {
         data: () => ({ title: "y" }),
       },
     ])
-    assert.equal((await fetchCollabJobs(db as never, { isAdmin: false })).length, 0)
-    assert.equal((await fetchCollabJobs(db as never, { isAdmin: true })).length, 0)
+    assert.equal((await fetchCollabJobs(db as never, { isAdmin: false })).jobs.length, 0)
+    assert.equal((await fetchCollabJobs(db as never, { isAdmin: true })).jobs.length, 0)
   })
 
   it("defaults isAdmin to false when no options arg is given", async () => {
@@ -337,8 +344,196 @@ describe("fetchCollabJobs anonymous payload", () => {
         }),
       },
     ])
-    const jobs = await fetchCollabJobs(db as never)
+    const { jobs } = await fetchCollabJobs(db as never)
     assert.equal(jobs[0]!.jobId, "11111111-2222-3333-4444-555555555555")
     assert.notEqual(jobs[0]!.recruiterBoard.label.company, "Helium Robotics, Inc.")
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pagination (limit / offset / nextOffset / total)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function makeJobDoc(id: string, sortOrder: number, extra: Record<string, unknown> = {}): FakeDoc {
+  return {
+    id,
+    data: () => ({
+      title: id,
+      publicId: `pub-${id}`,
+      recruiterBoard: { ...sampleRecruiterBoard, sortOrder },
+      ...extra,
+    }),
+  }
+}
+
+describe("fetchCollabJobs pagination", () => {
+  it("returns full set with total when no limit is given", async () => {
+    const db = fakeDb([
+      makeJobDoc("c", 3),
+      makeJobDoc("a", 1),
+      makeJobDoc("b", 2),
+    ])
+    const { jobs, total, nextOffset } = await fetchCollabJobs(db as never)
+    assert.equal(jobs.length, 3)
+    assert.equal(total, 3)
+    assert.equal(nextOffset, null)
+    // Sorted by sortOrder.
+    assert.equal(jobs[0]!.jobId, "pub-a")
+    assert.equal(jobs[1]!.jobId, "pub-b")
+    assert.equal(jobs[2]!.jobId, "pub-c")
+  })
+
+  it("respects limit and emits nextOffset when more pages remain", async () => {
+    const db = fakeDb([
+      makeJobDoc("a", 1),
+      makeJobDoc("b", 2),
+      makeJobDoc("c", 3),
+      makeJobDoc("d", 4),
+      makeJobDoc("e", 5),
+    ])
+    const result = await fetchCollabJobs(db as never, { isAdmin: false, limit: 2 })
+    assert.equal(result.jobs.length, 2)
+    assert.equal(result.total, 5)
+    assert.equal(result.nextOffset, 2)
+    assert.equal(result.jobs[0]!.jobId, "pub-a")
+    assert.equal(result.jobs[1]!.jobId, "pub-b")
+  })
+
+  it("respects offset and returns null nextOffset on the last page", async () => {
+    const db = fakeDb([
+      makeJobDoc("a", 1),
+      makeJobDoc("b", 2),
+      makeJobDoc("c", 3),
+    ])
+    const result = await fetchCollabJobs(db as never, { isAdmin: false, limit: 2, offset: 2 })
+    assert.equal(result.jobs.length, 1)
+    assert.equal(result.total, 3)
+    assert.equal(result.nextOffset, null)
+    assert.equal(result.jobs[0]!.jobId, "pub-c")
+  })
+
+  it("clamps explicit limit above MAX_LIMIT (200) and never returns more than the cap", async () => {
+    // Build 250 docs so we can prove the cap. Sort orders are unique so the
+    // slice is deterministic.
+    const docs: FakeDoc[] = []
+    for (let i = 0; i < 250; i++) docs.push(makeJobDoc(`j${i}`, i))
+    const db = fakeDb(docs)
+    const result = await fetchCollabJobs(db as never, { isAdmin: false, limit: 1000 })
+    assert.equal(result.jobs.length, 200)
+    assert.equal(result.total, 250)
+    assert.equal(result.nextOffset, 200)
+  })
+
+  it("handles offset >= total by returning an empty page", async () => {
+    const db = fakeDb([makeJobDoc("a", 1)])
+    const result = await fetchCollabJobs(db as never, { isAdmin: false, limit: 10, offset: 50 })
+    assert.equal(result.jobs.length, 0)
+    assert.equal(result.total, 1)
+    assert.equal(result.nextOffset, null)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ?since filter
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("fetchCollabJobs since filter", () => {
+  it("returns only jobs with recruiterBoard.updatedAt strictly greater than since", async () => {
+    const db = fakeDb([
+      makeJobDoc("old", 1, {
+        recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 1, updatedAt: "2026-01-01T00:00:00Z" },
+      }),
+      makeJobDoc("equal", 2, {
+        recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 2, updatedAt: "2026-05-01T00:00:00Z" },
+      }),
+      makeJobDoc("newer", 3, {
+        recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 3, updatedAt: "2026-05-15T00:00:00Z" },
+      }),
+    ])
+    const { jobs, total } = await fetchCollabJobs(db as never, {
+      isAdmin: false,
+      since: "2026-05-01T00:00:00Z",
+    })
+    assert.equal(jobs.length, 1)
+    assert.equal(total, 1)
+    assert.equal(jobs[0]!.jobId, "pub-newer")
+    assert.equal(jobs[0]!.updatedAt, "2026-05-15T00:00:00.000Z")
+  })
+
+  it("drops jobs without any updatedAt when since is set", async () => {
+    const db = fakeDb([
+      makeJobDoc("no-updated", 1),
+      makeJobDoc("has-updated", 2, {
+        recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 2, updatedAt: "2099-01-01T00:00:00Z" },
+      }),
+    ])
+    const { jobs } = await fetchCollabJobs(db as never, {
+      isAdmin: false,
+      since: "2026-01-01T00:00:00Z",
+    })
+    assert.equal(jobs.length, 1)
+    assert.equal(jobs[0]!.jobId, "pub-has-updated")
+  })
+
+  it("throws invalid_since for an unparseable date", async () => {
+    const db = fakeDb([makeJobDoc("a", 1)])
+    await assert.rejects(
+      fetchCollabJobs(db as never, { isAdmin: false, since: "not-a-date" }),
+      /invalid_since/,
+    )
+  })
+
+  it("uses doc-level updatedAt when recruiterBoard.updatedAt is missing", async () => {
+    const db = fakeDb([
+      makeJobDoc("doc-level", 1, { updatedAt: "2026-06-01T00:00:00Z" }),
+    ])
+    const { jobs } = await fetchCollabJobs(db as never, {
+      isAdmin: false,
+      since: "2026-01-01T00:00:00Z",
+    })
+    assert.equal(jobs.length, 1)
+    assert.equal(jobs[0]!.updatedAt, "2026-06-01T00:00:00.000Z")
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ?status=open|filled filter
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("fetchCollabJobs status filter", () => {
+  it("status=open (default) returns only active jobs", async () => {
+    const db = fakeDb([
+      makeJobDoc("active1", 1, {
+        recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 1, active: true },
+      }),
+      makeJobDoc("inactive1", 2, {
+        recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 2, active: false },
+      }),
+    ])
+    const { jobs } = await fetchCollabJobs(db as never, { isAdmin: false })
+    assert.equal(jobs.length, 1)
+    assert.equal(jobs[0]!.jobId, "pub-active1")
+  })
+
+  it("status=filled returns only inactive jobs", async () => {
+    const db = fakeDb([
+      makeJobDoc("active1", 1, {
+        recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 1, active: true },
+      }),
+      makeJobDoc("inactive1", 2, {
+        recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 2, active: false },
+      }),
+      makeJobDoc("inactive2", 3, {
+        recruiterBoard: { ...sampleRecruiterBoard, sortOrder: 3, active: false },
+      }),
+    ])
+    const { jobs, total } = await fetchCollabJobs(db as never, {
+      isAdmin: false,
+      status: "filled",
+    })
+    assert.equal(jobs.length, 2)
+    assert.equal(total, 2)
+    assert.equal(jobs[0]!.jobId, "pub-inactive1")
+    assert.equal(jobs[1]!.jobId, "pub-inactive2")
   })
 })

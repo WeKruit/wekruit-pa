@@ -266,7 +266,9 @@ export {
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
 export { paPublicCvIngest } from "./public-cv-ingest.js"
 // Recruiter board (candidate.wekruit.com/recruiters): public list + submission.
-export { paCollabJobsList, paRecruiterSubmission } from "./recruiter-board.js"
+// Lives in the `recruiter-board` multi-codebase (apps/recruiter-board-fn) as
+// of 2026-05-26 to keep the pa-orchestrator bundle small. Endpoints:
+// `paCollabJobsList`, `paRecruiterSubmission`, `paCollabJobsListSchema`.
 export { paCandidateMagicLinkVerify } from "./candidate-magic-link-verify.js"
 // WeKruit Open — public job board at layoff.wekruit.com/open. Reads from
 // matching-jobs (scraped/non-collab) with hard filters mirroring v16's

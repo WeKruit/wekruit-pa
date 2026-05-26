@@ -2,19 +2,32 @@
  * Recruiter board HTTP Cloud Functions.
  *
  * Backs the `/recruiters` route on candidate.wekruit.com. Public, CORS-enabled.
+ * Lives in the `recruiter-board` multi-codebase (separate from pa-orchestrator)
+ * so cold start + bundle stay small and the API stays usable for downstream
+ * consumers (e.g. recruiter agents calling the public list endpoint).
  *
- *   GET  paCollabJobsList         -> sanitized list of WeKruit collab jobs
- *   POST paRecruiterSubmission    -> writes pa-recruiter-submissions doc
+ *   GET  paCollabJobsList          -> sanitized list of WeKruit collab jobs
+ *                                     (supports ?limit, ?offset, ?since, ?status)
+ *   POST paRecruiterSubmission     -> writes pa-recruiter-submissions doc
+ *                                     (honors Idempotency-Key header)
+ *   GET  paCollabJobsListSchema    -> JSON Schema for the list response shape
  *
  * Companion docs:
  *   .planning/INITIATIVE-recruiter-board.md
  */
 import { onRequest } from "firebase-functions/v2/https"
 import { logger } from "firebase-functions/v2"
-import { getFirestore, FieldValue, type Firestore } from "firebase-admin/firestore"
+import { getFirestore, FieldValue, type Firestore, type Timestamp } from "firebase-admin/firestore"
 import { getAuth } from "firebase-admin/auth"
 import { createHash, randomUUID } from "node:crypto"
 import { appendSubmissionToSheet } from "./recruiter-board-sheet.js"
+
+// Memory floor for these endpoints. They serve small JSON payloads (11 docs
+// today, ~80 docs ceiling). Pinned to a fixed value rather than the platform
+// default to make cost behavior predictable; the new dedicated codebase has
+// no shared bundle weight, so 128MiB is comfortable. See firebase.json
+// `recruiter-board` codebase entry for deploy isolation.
+const RECRUITER_BOARD_MEMORY = "128MiB"
 
 // Optional environment variable. When set and the runtime SA has Editor access
 // on the sheet, each submission is appended to a per-jobId tab. If unset, the
@@ -142,12 +155,27 @@ export interface JdBlock {
 // opaque `publicId` and `recruiterBoard.label.company` is anonymized (e.g.
 // `"Co. A · early-stage AI infra startup"`). Admins see the real doc id and
 // full payload.
+//
+// `updatedAt` is ISO-8601. It is derived from `recruiterBoard.updatedAt`
+// (preferred) and falls back to the doc's `updatedAt` field, then to `null`
+// when neither exists. Downstream consumers can poll the list with
+// `?since=<ISO>` to fetch only changed jobs.
 export interface PublicCollabJob {
   jobId: string
   title: string
   compSummary?: string
   jdBlocks: JdBlock[]
   recruiterBoard: RecruiterBoardPayload
+  updatedAt: string | null
+}
+
+export interface CollabJobsListResponse {
+  ok: true
+  jobs: PublicCollabJob[]
+  /** Total count of jobs matching the filters, ignoring offset/limit. */
+  total: number
+  /** Offset to pass on the next request, or `null` when this is the last page. */
+  nextOffset: number | null
 }
 
 function setCors(res: { set: (k: string, v: string) => unknown }): void {
@@ -183,19 +211,96 @@ function anonymizeCompanyLabel(
   }
 }
 
+export interface FetchCollabJobsOptions {
+  isAdmin: boolean
+  /** `"open"` = `recruiterBoard.active === true` (default). `"filled"` = `active === false`. */
+  status?: "open" | "filled"
+  /** ISO-8601. Returns only jobs whose `recruiterBoard.updatedAt` is strictly greater. */
+  since?: string
+  /** 1..200, clamped. Defaults to 50 in the HTTP layer. Undefined here = no limit. */
+  limit?: number
+  /** Defaults to 0. */
+  offset?: number
+}
+
+export interface FetchCollabJobsResult {
+  jobs: PublicCollabJob[]
+  total: number
+  nextOffset: number | null
+}
+
+const DEFAULT_LIMIT = 50
+const MAX_LIMIT = 200
+
+/**
+ * Coerces a Firestore Timestamp / Date / ISO string / number into ISO-8601,
+ * or `null` if the value is missing/unparseable.
+ */
+function coerceToIso(value: unknown): string | null {
+  if (!value) return null
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString()
+  }
+  // Firestore Timestamp: has `toDate()` method.
+  if (typeof value === "object" && value !== null && typeof (value as { toDate?: unknown }).toDate === "function") {
+    const d = (value as Timestamp).toDate()
+    return Number.isNaN(d.getTime()) ? null : d.toISOString()
+  }
+  if (typeof value === "number") {
+    const d = new Date(value)
+    return Number.isNaN(d.getTime()) ? null : d.toISOString()
+  }
+  if (typeof value === "string") {
+    const d = new Date(value)
+    return Number.isNaN(d.getTime()) ? null : d.toISOString()
+  }
+  return null
+}
+
+function extractJobUpdatedAt(
+  rb: RecruiterBoardPayload | undefined,
+  docData: Record<string, unknown>,
+): string | null {
+  const rbUpdated = (rb as unknown as Record<string, unknown> | undefined)?.updatedAt
+  return coerceToIso(rbUpdated) ?? coerceToIso(docData.updatedAt)
+}
+
 export async function fetchCollabJobs(
   db: Firestore,
-  options: { isAdmin: boolean } = { isAdmin: false },
-): Promise<PublicCollabJob[]> {
+  options: FetchCollabJobsOptions = { isAdmin: false },
+): Promise<FetchCollabJobsResult> {
+  const wantStatus: "open" | "filled" = options.status ?? "open"
+  const wantActive = wantStatus === "open"
+
+  // Validate `since` once up front so a malformed value fails fast in the
+  // HTTP layer rather than silently filtering nothing.
+  let sinceMs: number | null = null
+  if (options.since !== undefined) {
+    const parsed = Date.parse(options.since)
+    if (Number.isNaN(parsed)) {
+      throw new Error(`invalid_since:${options.since}`)
+    }
+    sinceMs = parsed
+  }
+
   const snap = await db
     .collection("pa-jobs")
     .where("wekruitCollaborationStatus", "==", "collaborated")
     .get()
-  const jobs: PublicCollabJob[] = []
+
+  const allMatching: PublicCollabJob[] = []
   for (const doc of snap.docs) {
     const d = doc.data() as Record<string, unknown>
     const rb = d.recruiterBoard as RecruiterBoardPayload | undefined
-    if (!rb || rb.active !== true) continue
+    if (!rb) continue
+    if (Boolean(rb.active) !== wantActive) continue
+
+    const updatedAtIso = extractJobUpdatedAt(rb, d)
+    if (sinceMs !== null) {
+      if (updatedAtIso === null) continue
+      const updatedMs = Date.parse(updatedAtIso)
+      if (Number.isNaN(updatedMs) || updatedMs <= sinceMs) continue
+    }
 
     const publicId = typeof d.publicId === "string" ? d.publicId : undefined
     // Admin path: keep real Firestore doc id so admin operations resolve
@@ -210,20 +315,50 @@ export async function fetchCollabJobs(
       ? rb
       : { ...rb, label: anonymizeCompanyLabel(rb.label) }
 
-    jobs.push({
+    allMatching.push({
       jobId: jobIdForCaller,
       title: String(d.title ?? ""),
       compSummary: typeof d.compSummary === "string" ? d.compSummary : undefined,
       jdBlocks: Array.isArray(d.jdBlocks) ? (d.jdBlocks as JdBlock[]) : [],
       recruiterBoard: recruiterBoardForCaller,
+      updatedAt: updatedAtIso,
     })
   }
-  jobs.sort((a, b) => a.recruiterBoard.sortOrder - b.recruiterBoard.sortOrder)
-  return jobs
+  allMatching.sort((a, b) => a.recruiterBoard.sortOrder - b.recruiterBoard.sortOrder)
+
+  const total = allMatching.length
+  const offset = Math.max(0, Math.floor(options.offset ?? 0))
+  let limit = options.limit === undefined
+    ? total - offset // no explicit limit -> return everything left
+    : Math.max(0, Math.floor(options.limit))
+  // Clamp explicit limits to MAX_LIMIT. When the caller passes no limit we
+  // already used `total - offset`, so the clamp here is only for callers that
+  // ask for more than the cap.
+  if (options.limit !== undefined && limit > MAX_LIMIT) limit = MAX_LIMIT
+
+  const pageEnd = offset + limit
+  const jobs = allMatching.slice(offset, pageEnd)
+  const nextOffset = pageEnd < total ? pageEnd : null
+
+  return { jobs, total, nextOffset }
+}
+
+function parseQueryString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed.length === 0 ? undefined : trimmed
+}
+
+function parseQueryInt(value: unknown): { ok: true; value: number } | { ok: false } {
+  const raw = parseQueryString(value)
+  if (raw === undefined) return { ok: false }
+  const parsed = Number.parseInt(raw, 10)
+  if (Number.isNaN(parsed)) return { ok: false }
+  return { ok: true, value: parsed }
 }
 
 export const paCollabJobsList = onRequest(
-  { cors: false, region: "us-central1" },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
@@ -234,9 +369,42 @@ export const paCollabJobsList = onRequest(
       res.status(405).json({ ok: false, reason: "method_not_allowed" })
       return
     }
+
+    const limitParsed = parseQueryInt(req.query.limit)
+    const offsetParsed = parseQueryInt(req.query.offset)
+    if (req.query.limit !== undefined && !limitParsed.ok) {
+      res.status(400).json({ ok: false, reason: "invalid_limit" })
+      return
+    }
+    if (req.query.offset !== undefined && !offsetParsed.ok) {
+      res.status(400).json({ ok: false, reason: "invalid_offset" })
+      return
+    }
+    const limit = limitParsed.ok
+      ? Math.min(Math.max(1, limitParsed.value), MAX_LIMIT)
+      : DEFAULT_LIMIT
+    const offset = offsetParsed.ok ? Math.max(0, offsetParsed.value) : 0
+
+    const since = parseQueryString(req.query.since)
+    const statusRaw = parseQueryString(req.query.status)?.toLowerCase()
+    let status: "open" | "filled" = "open"
+    if (statusRaw !== undefined) {
+      if (statusRaw !== "open" && statusRaw !== "filled") {
+        res.status(400).json({ ok: false, reason: "invalid_status" })
+        return
+      }
+      status = statusRaw
+    }
+
     try {
       const isAdmin = await isHiringBoardAdmin(req)
-      const jobs = await fetchCollabJobs(getFirestore(), { isAdmin })
+      const { jobs, total, nextOffset } = await fetchCollabJobs(getFirestore(), {
+        isAdmin,
+        status,
+        since,
+        limit,
+        offset,
+      })
       // Admin payloads contain real company identity — never cache on a
       // shared/CDN layer. Anonymous payloads are safe to cache (60s).
       if (isAdmin) {
@@ -244,11 +412,145 @@ export const paCollabJobsList = onRequest(
       } else {
         res.set("Cache-Control", "public, max-age=60, s-maxage=60")
       }
-      res.status(200).json({ ok: true, jobs })
+      const body: CollabJobsListResponse = { ok: true, jobs, total, nextOffset }
+      res.status(200).json(body)
     } catch (err) {
-      logger.error("paCollabJobsList_failed", { error: String(err) })
+      const message = err instanceof Error ? err.message : String(err)
+      if (message.startsWith("invalid_since:")) {
+        res.status(400).json({ ok: false, reason: "invalid_since" })
+        return
+      }
+      logger.error("paCollabJobsList_failed", { error: message })
       res.status(500).json({ ok: false, reason: "internal_error" })
     }
+  },
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// paCollabJobsListSchema — frozen JSON Schema for the list response shape
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COLLAB_JOBS_LIST_SCHEMA = Object.freeze({
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  $id: "https://wekruit.com/schemas/collab-jobs-list-response.json",
+  title: "CollabJobsListResponse",
+  description:
+    "Response from GET paCollabJobsList. `total` ignores offset/limit. `nextOffset` is null on the final page.",
+  type: "object",
+  required: ["ok", "jobs", "total", "nextOffset"],
+  additionalProperties: false,
+  properties: {
+    ok: { type: "boolean", const: true },
+    total: { type: "integer", minimum: 0 },
+    nextOffset: { type: ["integer", "null"], minimum: 0 },
+    jobs: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["jobId", "title", "jdBlocks", "recruiterBoard", "updatedAt"],
+        properties: {
+          jobId: { type: "string" },
+          title: { type: "string" },
+          compSummary: { type: "string" },
+          updatedAt: { type: ["string", "null"], format: "date-time" },
+          jdBlocks: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["heading", "body"],
+              properties: {
+                heading: { type: "string" },
+                body: { type: "string" },
+                kind: { type: "string", enum: ["list", "prose"] },
+              },
+            },
+          },
+          recruiterBoard: {
+            type: "object",
+            required: ["active", "sortOrder", "label", "culture", "checklist"],
+            properties: {
+              active: { type: "boolean" },
+              sortOrder: { type: "number" },
+              interviewProcess: { type: "string" },
+              label: {
+                type: "object",
+                required: ["company", "companyCode", "location", "pills"],
+                properties: {
+                  company: { type: "string" },
+                  companyCode: { type: "string" },
+                  location: { type: "string" },
+                  pills: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      required: ["text"],
+                      properties: {
+                        text: { type: "string" },
+                        tone: { type: "string", enum: ["warm", "cool", "neutral"] },
+                      },
+                    },
+                  },
+                },
+              },
+              culture: {
+                type: "object",
+                required: ["bet", "bullets"],
+                properties: {
+                  bet: { type: "string" },
+                  bullets: { type: "array", items: { type: "string" } },
+                },
+              },
+              checklist: {
+                type: "object",
+                required: ["groups"],
+                properties: {
+                  groups: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      required: ["kind", "heading", "items"],
+                      properties: {
+                        kind: { type: "string", enum: ["hard", "fit", "bonus", "anti"] },
+                        heading: { type: "string" },
+                        items: {
+                          type: "array",
+                          items: {
+                            type: "object",
+                            required: ["id", "text"],
+                            properties: {
+                              id: { type: "string" },
+                              text: { type: "string" },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+})
+
+export const paCollabJobsListSchema = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "GET") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    // The schema is frozen at deploy time, so it's safe to cache long.
+    res.set("Cache-Control", "public, max-age=3600, s-maxage=3600")
+    res.status(200).json(COLLAB_JOBS_LIST_SCHEMA)
   },
 )
 
@@ -267,7 +569,14 @@ interface SubmissionPayload {
     notes?: string
   }
   checklist: { [itemId: string]: boolean }
+  /** Caller hint: which surface produced this submission. Tracked verbatim. */
+  source?: string
 }
+
+/** Allowed values for `source` in the request body. */
+const ALLOWED_SUBMISSION_SOURCES = new Set(["hiring-board", "api", "unknown"])
+/** Pattern for the `Idempotency-Key` header. Mirrors Stripe's rules. */
+const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9_.:-]{1,200}$/
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0
@@ -311,6 +620,21 @@ function validateSubmission(input: unknown):
     cleanedChecklist[k] = v
   }
 
+  // Optional `source` hint. Unknown strings are rejected so audit data stays
+  // closed-vocab; missing values default to "unknown" downstream.
+  let source: string | undefined = undefined
+  if (b.source !== undefined) {
+    if (typeof b.source !== "string") return { ok: false, reason: "invalid_source" }
+    const trimmed = b.source.trim()
+    if (trimmed.length === 0) {
+      source = undefined
+    } else if (!ALLOWED_SUBMISSION_SOURCES.has(trimmed)) {
+      return { ok: false, reason: "invalid_source" }
+    } else {
+      source = trimmed
+    }
+  }
+
   return {
     ok: true,
     value: {
@@ -328,6 +652,7 @@ function validateSubmission(input: unknown):
         notes: typeof c.notes === "string" ? (c.notes as string).trim() : undefined,
       },
       checklist: cleanedChecklist,
+      source,
     },
   }
 }
@@ -368,7 +693,7 @@ export function computeSubmissionScore(
 }
 
 export const paRecruiterSubmission = onRequest(
-  { cors: false, region: "us-central1" },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
@@ -380,6 +705,17 @@ export const paRecruiterSubmission = onRequest(
       return
     }
 
+    // Idempotency-Key (optional). When provided, we use it as the Firestore
+    // doc id so retries of the same logical submission deduplicate. The
+    // existing doc is returned with 200 (the caller gets the same
+    // `submissionId` + `score` as the original write). Header is validated
+    // with a Stripe-style allowlist to keep doc-ids safe.
+    const idempotencyHeader = (req.get("idempotency-key") ?? "").trim()
+    if (idempotencyHeader && !IDEMPOTENCY_KEY_RE.test(idempotencyHeader)) {
+      res.status(400).json({ ok: false, reason: "invalid_idempotency_key" })
+      return
+    }
+
     const validated = validateSubmission(req.body)
     if (!validated.ok) {
       res.status(400).json({ ok: false, reason: validated.reason })
@@ -388,6 +724,26 @@ export const paRecruiterSubmission = onRequest(
     const payload = validated.value
 
     const db = getFirestore()
+
+    // Fast path: idempotent replay returns the existing doc without
+    // re-resolving the job or re-scoring the checklist.
+    if (idempotencyHeader) {
+      const existing = await db
+        .collection("pa-recruiter-submissions")
+        .doc(idempotencyHeader)
+        .get()
+      if (existing.exists) {
+        const existingData = existing.data() as { score?: SubmissionScore } | undefined
+        res.status(200).json({
+          ok: true,
+          submissionId: idempotencyHeader,
+          score: existingData?.score ?? null,
+          idempotent: true,
+        })
+        return
+      }
+    }
+
     // Frontend may send either the real Firestore doc id (admin path) or
     // an opaque `publicId` UUID (anonymous hiring-board path). Resolve to
     // the real doc id so every downstream reference is consistent.
@@ -415,8 +771,9 @@ export const paRecruiterSubmission = onRequest(
 
     const score = computeSubmissionScore(rb.checklist.groups, payload.checklist)
 
-    const submissionId = randomUUID()
+    const submissionId = idempotencyHeader || randomUUID()
     const ip = req.get("x-forwarded-for")?.split(",")[0]?.trim() || ""
+    const callerSource = payload.source ?? "unknown"
     const submissionDoc = {
       submissionId,
       // Canonical Firestore doc id (what admin tooling expects). When the
@@ -430,6 +787,10 @@ export const paRecruiterSubmission = onRequest(
       candidate: payload.candidate,
       checklist: payload.checklist,
       score,
+      // Caller-supplied audit surface. Tracks which UI (hiring-board, api,
+      // unknown) produced the submission so downstream filtering works.
+      callerSource,
+      idempotencyKey: idempotencyHeader || null,
       source: {
         userAgent: req.get("user-agent") ?? "",
         referrer: req.get("referer") ?? "",
@@ -441,7 +802,33 @@ export const paRecruiterSubmission = onRequest(
     }
 
     try {
-      await db.collection("pa-recruiter-submissions").doc(submissionId).set(submissionDoc)
+      if (idempotencyHeader) {
+        // `create()` fails when the doc already exists. Combined with the
+        // pre-check above, this protects against a narrow race where two
+        // concurrent retries of the same key both miss the existence check.
+        try {
+          await db.collection("pa-recruiter-submissions").doc(submissionId).create(submissionDoc)
+        } catch (createErr) {
+          const message = String(createErr)
+          if (message.includes("ALREADY_EXISTS") || message.includes("already exists")) {
+            const existing = await db
+              .collection("pa-recruiter-submissions")
+              .doc(submissionId)
+              .get()
+            const existingData = existing.data() as { score?: SubmissionScore } | undefined
+            res.status(200).json({
+              ok: true,
+              submissionId,
+              score: existingData?.score ?? null,
+              idempotent: true,
+            })
+            return
+          }
+          throw createErr
+        }
+      } else {
+        await db.collection("pa-recruiter-submissions").doc(submissionId).set(submissionDoc)
+      }
     } catch (err) {
       logger.error("paRecruiterSubmission_write_failed", { error: String(err), submissionId })
       res.status(500).json({ ok: false, reason: "write_failed" })
@@ -453,6 +840,8 @@ export const paRecruiterSubmission = onRequest(
       jobId: realJobId,
       submitterEmail: payload.submitter.email,
       hardScore: `${score.hardChecked}/${score.hardTotal}`,
+      callerSource,
+      idempotent: false,
     })
 
     // Best-effort Sheet sync. Failure does not block the 200 — the Firestore

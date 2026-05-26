@@ -1,0 +1,32 @@
+{
+  "name": "@pa/recruiter-board-fn",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "engines": {
+    "node": "24"
+  },
+  "scripts": {
+    "ensure:node": "node ../../scripts/ensure-node24.mjs",
+    "prebuild": "npm run ensure:node",
+    "build": "node build.mjs",
+    "pretypecheck": "npm run ensure:node",
+    "typecheck": "tsc --noEmit",
+    "pretest": "npm run ensure:node",
+    "test": "node --import tsx --test src/__tests__/*.test.ts",
+    "predeploy": "npm run ensure:node",
+    "deploy": "firebase deploy --only functions:recruiter-board --project wekruit-5f89b --non-interactive"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0",
+    "firebase-functions": "^6.0.0",
+    "googleapis": "^144.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.27.7",
+    "tsx": "^4.21.0",
+    "typescript": "^5.3.0"
+  }
+}
