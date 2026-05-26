@@ -2,21 +2,20 @@
  * Post-match retention FSM — conversational follow-up after job recs (Pattern D).
  * Runs before general Claire when `pa-users.postMatchRetention.stage` is active.
  *
- * Flow: like? → (if no) why? → daily subscribe? → collab prescreen offer?
+ * Flow: like? -> (if no) why? -> daily subscribe? -> complete.
  */
 import type { Firestore } from "firebase-admin/firestore"
 import type { InboundEvent } from "@pa/core-types"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { getFlag, writeFeedbackEvent } from "@pa/pa-persistence"
 import { detectLang } from "./voice/imperfection-injector/index.js"
-import { sendCollabPrescreenOfferFromCandidateOptIn } from "./collab-match-invite.js"
 import type { GenerateJobRecsFn } from "./match-connector-hooks.js"
-import { hasBlockingPrescreenSession } from "./prescreen-session-guards.js"
 
 export type PostMatchRetentionStage =
   | "await_liked"
   | "await_dislike_reason"
   | "await_subscribe"
+  // Legacy stored state from the removed partner-screen offer step.
   | "await_prescreen"
   | "complete"
 
@@ -28,8 +27,6 @@ export type PostMatchRetentionState = {
   jobIds?: string[]
   sentiment?: "positive" | "negative"
   subscribeOptIn?: boolean
-  prescreenOptIn?: boolean
-  suppressPrescreenOffer?: boolean
 }
 
 export type PostMatchRetentionStore = {
@@ -144,7 +141,9 @@ function isActionableJobPreferenceFeedback(body: string): boolean {
   )
 }
 
-function copyForStage(stage: PostMatchRetentionStage, lang: "zh" | "en"): string {
+type CurrentPromptStage = Exclude<PostMatchRetentionStage, "await_prescreen" | "complete">
+
+function copyForStage(stage: CurrentPromptStage, lang: "zh" | "en"): string {
   switch (stage) {
     case "await_liked":
       return lang === "zh"
@@ -158,10 +157,6 @@ function copyForStage(stage: PostMatchRetentionStage, lang: "zh" | "en"): string
       return lang === "zh"
         ? "要不要我每天给你推最新匹配的岗？有合适的直接发你，想停随时跟我说。"
         : "Want me to text you fresh matched roles daily? I'll only send good fits — say stop anytime."
-    case "await_prescreen":
-      return lang === "zh"
-        ? "我们有些合作公司愿意走 WeKruit 快速初筛（大概 5 分钟 iMessage）。你有兴趣试一个最匹配的 partner 岗吗？回「好」或「先不用」。"
-        : "Some partner companies do a quick ~5min WeKruit screen over iMessage. Want to try one top partner role? Reply yeah or pass."
     default:
       return lang === "zh" ? "收到，我们继续聊。" : "Sounds good — keep chatting anytime."
   }
@@ -319,7 +314,6 @@ export async function startPostMatchRetentionAfterJobRecs(input: {
   lang?: "zh" | "en"
   jobIds?: string[]
   enqueueOutbound?: PostMatchRetentionStore["enqueueOutbound"]
-  suppressPrescreenOffer?: boolean
 }): Promise<void> {
   const enabled = await isPostMatchRetentionEnabled(input.db, input.userId)
   if (!enabled || input.recCount <= 0) return
@@ -333,7 +327,6 @@ export async function startPostMatchRetentionAfterJobRecs(input: {
     updatedAt: at,
     recCount: input.recCount,
     ...(input.jobIds?.length ? { jobIds: input.jobIds } : {}),
-    ...(input.suppressPrescreenOffer ? { suppressPrescreenOffer: true } : {}),
   })
 
   if (input.enqueueOutbound && input.toE164) {
@@ -412,12 +405,6 @@ export async function handlePostMatchRetentionReply(
   const lang = detectLang(event.body) === "zh" ? "zh" : "en"
   const at = store.nowIso()
   const jobIds = await resolveJobIds(db, event.userId, state)
-  const prescreenBlocked =
-    state.suppressPrescreenOffer === true
-      ? true
-      : state.stage === "await_subscribe" || state.stage === "await_prescreen"
-        ? await hasBlockingPrescreenSession(db, event.userId, at, { jobIds })
-        : false
   let next: PostMatchRetentionState = { ...state, updatedAt: at }
   let reply = ""
 
@@ -481,80 +468,23 @@ export async function handlePostMatchRetentionReply(
         reasonText: event.body,
         nowIso: at,
       })
-      if (prescreenBlocked) {
-        next.stage = "complete"
-        reply =
-          lang === "zh"
-            ? "收到。我这边已有你的初筛记录，WeKruit 会在这里发你下一步。"
-            : "Got it. I already have your screen on file, and WeKruit will text the next step here."
-      } else {
-        next.stage = "await_prescreen"
-        reply = copyForStage("await_prescreen", lang)
-      }
+      next.stage = "complete"
+      reply =
+        yn === "yes"
+          ? lang === "zh"
+            ? "收到，我会继续在这里给你发强匹配岗位；想停随时说。"
+            : "Got it — I'll keep texting strong matches here. Say stop anytime."
+          : lang === "zh"
+            ? "没问题，我先不每天推送。你想看新岗位时随时跟我说。"
+            : "All good — I won't send daily matches. Ask anytime when you want a fresh batch."
       break
     }
     case "await_prescreen": {
-      if (prescreenBlocked) {
-        next.stage = "complete"
-        reply =
-          lang === "zh"
-            ? "你已经在初筛流程里了。WeKruit 正在看结果，下一步会直接发在这里。"
-            : "You're already in the screen flow. WeKruit is reviewing it, and the next step will come here."
-        break
-      }
-      const yn = detectYesNoIntent(event.body)
-      if (yn === "ambiguous") {
-        reply =
-          lang === "zh"
-            ? "合作公司的快速初筛 — 想试一个最匹配的岗吗？回「好」或「先不用」。"
-            : "Quick partner prescreen — try one top match? Reply yeah or pass."
-        break
-      }
-      next.prescreenOptIn = yn === "yes"
-      if (yn === "yes" && store.generateJobRecs) {
-        const offer = await sendCollabPrescreenOfferFromCandidateOptIn({
-          db,
-          userId: event.userId,
-          toE164: event.from,
-          sessionId: event.sessionId,
-          generateJobRecs: store.generateJobRecs,
-          enqueueOutbound: store.enqueueOutbound,
-          turnId,
-          log: (name, payload) => store.log(name, payload),
-        })
-        if (offer.sent) {
-          reply =
-            lang === "zh"
-              ? "好，我发你一个最匹配的合作岗邀请～看下上一条，感兴趣回「好」就开初筛。"
-              : "bet — check my last message for the partner role. reply yeah when you want the quick screen."
-        } else if (offer.reason === "active_prescreen_in_progress") {
-          reply =
-            lang === "zh"
-              ? "你现在还有一个初筛在进行中。先把这轮走完，我再给你开下一个合作岗。"
-              : "you've got an active screen open right now. finish that one first, then I'll line up the next partner role."
-        } else if (offer.reason === "prescreen_already_exists_for_job") {
-          reply =
-            lang === "zh"
-              ? "这个合作岗的初筛我这边已经有记录了。WeKruit 会在这里发你下一步。"
-              : "I already have a screen for that partner role on file. WeKruit will text the next step here."
-        } else {
-          reply =
-            lang === "zh"
-              ? "好。我这边暂时没捞到合适的合作初筛岗，有的话第一时间喊你。"
-              : "down — no strong partner screen match right now. I'll ping you when one lands."
-        }
-      } else if (yn === "yes") {
-        reply =
-          lang === "zh"
-            ? "好，我记下了。有合作初筛岗我第一时间喊你。"
-            : "got it — I'll ping you when a partner screen looks like a fit."
-      } else {
-        reply =
-          lang === "zh"
-            ? "没问题。以后有更合适的合作岗我再喊你。"
-            : "all good — I'll keep you in mind for partner screens later."
-      }
       next.stage = "complete"
+      reply =
+        lang === "zh"
+          ? "收到，我会继续在这里给你推匹配岗位；不用再额外确认。"
+          : "Got it — I'll keep sending matched roles here. No extra confirmation needed."
       break
     }
     default:
@@ -575,7 +505,6 @@ export async function handlePostMatchRetentionReply(
       recCount: state.recCount,
       sentiment: next.sentiment,
       subscribeOptIn: next.subscribeOptIn,
-      prescreenOptIn: next.prescreenOptIn,
     })
   } else {
     await writePostMatchRetention(db, event.userId, next)
