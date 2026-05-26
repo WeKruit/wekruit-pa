@@ -598,6 +598,13 @@ function postPrescreenOnboardingPrompt(lang: "zh" | "en", terminal?: string | nu
     : "Thanks for taking the time. I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
 }
 
+function pendingReviewFollowupAckText(lang: "zh" | "en"): string {
+  if (lang === "zh") {
+    return "收到，我已经把这条补充到你的岗位沟通里。这个结果还在人工 review 中，我不会在这里猜最终结论；review 完成后我会继续跟进。"
+  }
+  return "Got it — I added this to your role screen context. The outcome is still under human review, so I won’t guess at the final decision here. I’ll follow up once review is complete."
+}
+
 async function markUserPrescreenWorkSessionEnded(args: {
   db: Firestore
   userId: string
@@ -707,7 +714,17 @@ function isJobSearchRequest(reply: string): boolean {
   if (/(?:找|推荐|匹配|看看|发)(?:一些|几个|点)?\s*(?:工作|岗位|机会|职位|内推)/.test(normalized)) {
     return true
   }
-  return /\b(?:find|get|show|send|pull|recommend|match|search|look\s+for|help\s+me\s+find)\b[^.!?]{0,80}\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches|swe|software\s+engineering|software\s+engineer)\b/i.test(normalized)
+  return /\b(?:find|get|show|send|pull|recommend|match|search|look\s+for|looking\s+for|need|want|interested\s+in|help\s+me\s+find)\b[^.!?]{0,80}\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches|swe|software\s+engineering|software\s+engineer)\b/i.test(normalized)
+}
+
+function isJobOrCompanyInfoRequest(reply: string): boolean {
+  const body = reply.trim()
+  if (!body) return false
+  const asksQuestion =
+    /[?？]/.test(body) ||
+    /\b(?:what|which|who|where|how|can\s+you|could\s+you|tell\s+me|explain|details?)\b/i.test(body)
+  if (!asksQuestion) return false
+  return /\b(?:company|employer|hiring\s+manager|team|role|job|position|interviewing\s+for|interviewed\s+for|screening\s+for|screened\s+for)\b/i.test(body)
 }
 
 function isJobRecommendationExplanationRequest(reply: string): boolean {
@@ -738,7 +755,7 @@ function isJobRecommendationExplanationRequest(reply: string): boolean {
 }
 
 function isExplicitNewIntentAfterTerminal(reply: string): boolean {
-  return isJobRecommendationExplanationRequest(reply) || isJobSearchRequest(reply)
+  return isJobRecommendationExplanationRequest(reply) || isJobSearchRequest(reply) || isJobOrCompanyInfoRequest(reply)
 }
 
 function isShortTerminalAck(reply: string): boolean {
@@ -862,6 +879,7 @@ export async function runPrescreenTurnIfActive(
     const alreadyAcked = typeof sessData.postTerminalFollowupAckAt === "string"
     const nowIso = new Date().toISOString()
     if (sessData.terminalActionPendingReview === true) {
+      const text = pendingReviewFollowupAckText(args.lang ?? "en")
       await sessionRef.collection("turns").add({
         qId: "terminal",
         reply: args.replyText,
@@ -872,8 +890,16 @@ export async function runPrescreenTurnIfActive(
         },
         ts: nowIso,
       })
+      await sendSms({
+        to: args.toE164,
+        content: text,
+        userId: args.userId,
+        db: args.db,
+        runtimeSource: "pa_prescreen_runtime",
+        idempotencyKey: `prescreen_pending_review_ack:${lookup.sessionId}:${stablePrescreenSendKey(args.replyText, text)}`,
+      })
       await sessionRef.set({ reviewPendingFollowupAt: nowIso, updatedAt: nowIso }, { merge: true })
-      log("prescreen.turn.recent_terminal_pending_review_held", {
+      log("prescreen.turn.recent_terminal_pending_review_ack_sent", {
         sessionId: lookup.sessionId,
         userId: args.userId,
         terminal: lookup.terminal,
@@ -882,6 +908,7 @@ export async function runPrescreenTurnIfActive(
         handled: true,
         sessionId: lookup.sessionId,
         terminal: lookup.terminal,
+        textSent: text,
       }
     }
     const retention = sessData.postPrescreenRetention && typeof sessData.postPrescreenRetention === "object"

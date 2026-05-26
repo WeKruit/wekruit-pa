@@ -811,6 +811,12 @@ export async function handleSendblueWebhook(
               .doc(prescreenTriggerIdempotencyDocId(jobId, userId, messageHandle))
               .set({ lastFiredMs: ms, jobId, userId, messageHandle, updatedAt: new Date().toISOString() })
           },
+          clearLastFiredMs: async (jobId, userId, messageHandle) => {
+            await deps.db
+              .collection("pa-prescreen-trigger-idempotency")
+              .doc(prescreenTriggerIdempotencyDocId(jobId, userId, messageHandle))
+              .delete()
+          },
           runPreScreen: async ({ jobId, userId, toE164, initialReplyText, sourceRequestedUserId }) => {
             // Phase 77.3 — real handler: load config, build state, send 1st Q.
             // v1.9 hotfix 2026-05-13 — sourceRequestedUserId passed through
@@ -849,6 +855,7 @@ export async function handleSendblueWebhook(
                 textSent: Boolean(turn.textSent),
               })
             }
+            return result
           },
           audit: async (evt) => {
             await safeAudit(deps, evt as AuditEventInput, log)
@@ -931,6 +938,12 @@ export async function handleSendblueWebhook(
               .doc(`${jobId}_${userId}`)
               .set({ lastFiredMs: ms, jobId, userId, updatedAt: new Date().toISOString() })
           },
+          clearLastFiredMs: async (jobId, userId) => {
+            await deps.db
+              .collection("pa-apply-trigger-idempotency")
+              .doc(`${jobId}_${userId}`)
+              .delete()
+          },
           runPiiConfirm: async ({ jobId, userId, toE164, sourceSessionId }) => {
             await runPiiConfirmForUser({
               db: deps.db,
@@ -942,13 +955,14 @@ export async function handleSendblueWebhook(
             })
           },
           runPreScreen: async ({ jobId, userId, toE164 }) => {
-            await runPreScreenForUser({
+            const result = await runPreScreenForUser({
               db: deps.db,
               jobId,
               userId,
               toE164,
               log: (event, payload) => log(`pa.prescreen.${event}`, payload),
             })
+            return result
           },
           audit: async (evt) => {
             await safeAudit(deps, evt as AuditEventInput, log)
@@ -988,6 +1002,15 @@ export async function handleSendblueWebhook(
       hasMedia: !!mediaUrl,
     })
     if (routerResult.handled) {
+      if (routerResult.outcome?.kind === "error") {
+        reply(res, 500, {
+          ok: false,
+          error: "trigger_error",
+          action: `${routerResult.triggerName ?? "trigger"}_error`,
+          reason: routerResult.outcome.reason,
+        })
+        return
+      }
       const action =
         routerResult.outcome?.kind === "handled"
           ? routerResult.outcome.action

@@ -267,6 +267,7 @@ function makeGenerateJobRecs(): NonNullable<
       const visibleCount = resolveJobRecVisibleCount(opts?.requestedCount)
       const visibleItems = await collectLiveFirestoreJobRecommendationMessageItems(db, jobs, outputLang, {
         limit: visibleCount,
+        candidateTags: userTagsForJobRec,
         maxCandidates: Math.min(jobs.length, Math.max(10, visibleCount * 5)),
         log: (event, payload) => logger.warn(`[job-recs] ${event}`, payload ?? {}),
       })
@@ -467,7 +468,15 @@ function makeGenerateJobRecs(): NonNullable<
           jobs: messageItems.map((item) => item.sourceJob),
           source: "runtime_job_search_reply",
         },
-        (event, payload) => logger.info("[job-recs]", { event, ...(payload ?? {}) }),
+          (event, payload) => logger.info("[job-recs]", { event, ...(payload ?? {}) }),
+      )
+      const lastJobBatchSentAt = new Date().toISOString()
+      await db.collection("pa-job-profiles").doc(userId).set(
+        {
+          lastJobBatchSentAt,
+          updatedAt: lastJobBatchSentAt,
+        },
+        { merge: true },
       )
       return { message, recCount: messageItems.length }
     } catch (err) {

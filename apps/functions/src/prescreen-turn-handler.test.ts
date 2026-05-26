@@ -510,7 +510,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.match(sent[1] ?? "", /Do you want to proceed/i)
   })
 
-  it("holds a recent terminal prescreen pending human review without sending retention outbound", async () => {
+  it("acknowledges a recent terminal prescreen pending human review without sending retention outbound", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({
       "pa-prescreen-sessions/ps_pending_review": {
@@ -548,8 +548,9 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(result.handled, true)
     assert.equal(result.sessionId, "ps_pending_review")
     assert.equal(result.terminal, "PASS")
-    assert.equal(result.textSent, undefined)
-    assert.deepEqual(sent, [])
+    assert.match(result.textSent ?? "", /human review/i)
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /human review/i)
     const session = docs.get("pa-prescreen-sessions/ps_pending_review")?.data
     assert.equal(session?.postPrescreenRetention, undefined)
     assert.equal(typeof session?.reviewPendingFollowupAt, "string")
@@ -865,6 +866,51 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(turnEntries.length, 0)
   })
 
+  it("yields a recent terminal prescreen when a completed candidate corrects target seniority", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        onboardingState: "complete",
+        onboardingStatus: "active",
+        pipelineState: { completed: true },
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          sessionId: "ps_done",
+          jobId: "rain-software-engineer-fullstack-8849f6ef",
+          endedAt: now,
+          boundary: "terminal",
+          terminal: "PASS",
+        },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        terminalActionPendingReview: true,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "I need roles which require 1-2 or 1-3 years of experience",
+      sendSms: async () => {
+        throw new Error("should not send from prescreen")
+      },
+    })
+
+    assert.equal(result.handled, false)
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
+    assert.equal(turnEntries.length, 0)
+  })
+
   it("yields a recent terminal prescreen when a completed candidate asks to pull role matches", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({
@@ -943,6 +989,51 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
       userId: "u1",
       toE164: "+13054507715",
       replyText: "Why did you recommend Constant Contact and what part of my OFO work matched Rain? Also deprioritize internships.",
+      sendSms: async () => {
+        throw new Error("should not send from prescreen")
+      },
+    })
+
+    assert.equal(result.handled, false)
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
+    assert.equal(turnEntries.length, 0)
+  })
+
+  it("yields a recent terminal prescreen when candidate asks about the company", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        onboardingState: "complete",
+        onboardingStatus: "active",
+        pipelineState: { completed: true },
+        workSession: {
+          kind: "job_prescreen",
+          status: "ended",
+          sessionId: "ps_done",
+          jobId: "rain-software-engineer-fullstack-8849f6ef",
+          endedAt: now,
+          boundary: "terminal",
+          terminal: "PASS",
+        },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        terminalActionPendingReview: true,
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "Can you tell me a bit about the company that I was interviewing for",
       sendSms: async () => {
         throw new Error("should not send from prescreen")
       },

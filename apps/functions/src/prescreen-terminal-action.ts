@@ -224,16 +224,22 @@ async function defaultGenerateJobRecs(args: {
   if (!result.jobs || result.jobs.length === 0) {
     return { ok: false, jobCount: 0, reason: "no_matches" }
   }
-  const items = await collectLiveFirestoreJobRecommendationMessageItems(db, result.jobs, "en", { limit: 3 })
-  if (items.length === 0) {
-    return { ok: false, jobCount: 0, reason: "no_linkable_matches" }
-  }
+  let userTagsForJobRec: unknown
   let introContext: JobRecIntroContext | undefined
   try {
     const userDoc = await db.collection("pa-users").doc(args.userId).get()
-    introContext = compactJobRecContext(userDoc.exists ? userDoc.data()?.tags : undefined)
+    userTagsForJobRec = userDoc.exists ? userDoc.data()?.tags : undefined
+    introContext = compactJobRecContext(userTagsForJobRec)
   } catch {
+    userTagsForJobRec = undefined
     introContext = undefined
+  }
+  const items = await collectLiveFirestoreJobRecommendationMessageItems(db, result.jobs, "en", {
+    limit: 3,
+    candidateTags: userTagsForJobRec,
+  })
+  if (items.length === 0) {
+    return { ok: false, jobCount: 0, reason: "no_linkable_matches" }
   }
   const sendRes = await send(
     {
@@ -256,6 +262,14 @@ async function defaultGenerateJobRecs(args: {
         source: "prescreen_terminal_action",
       },
       () => undefined,
+    )
+    const lastJobBatchSentAt = new Date().toISOString()
+    await db.collection("pa-job-profiles").doc(args.userId).set(
+      {
+        lastJobBatchSentAt,
+        updatedAt: lastJobBatchSentAt,
+      },
+      { merge: true },
     )
   }
   return {

@@ -179,7 +179,75 @@ describe("job recommendation visible-message contract", () => {
     assert.doesNotMatch(body, /matchSourceLabel/i)
     assert.doesNotMatch(body, /general match/i)
     assert.doesNotMatch(body, /brain_performance_technologies/i)
-    assert.match(body, /brain performance technologies/)
+    assert.doesNotMatch(body, /same lane as your/i)
+  })
+
+  it("keeps specific cleaned reason copy but suppresses generic reason templates", () => {
+    const specific = collectJobRecommendationMessageItems(
+      [
+        {
+          jobTitle: "Frontend Engineer",
+          companyName: "Acme",
+          atsApplyUrl: "https://jobs.ashbyhq.com/acme/frontend",
+          requiredSkills: ["React"],
+          reason: "why: your OFO dashboard work maps to React-heavy product UI",
+        },
+      ],
+      "en",
+      { limit: 1 },
+    )
+    assert.equal(specific[0]?.reason, "why: your OFO dashboard work maps to React-heavy product UI")
+
+    const generic = collectJobRecommendationMessageItems(
+      [
+        {
+          jobTitle: "Sales Analytics Manager",
+          companyName: "Acme",
+          atsApplyUrl: "https://jobs.ashbyhq.com/acme/sales-analytics-manager",
+          requiredSkills: ["SQL"],
+          reason: "why: industry + experience align",
+        },
+      ],
+      "en",
+      { limit: 1 },
+    )
+    assert.equal(generic[0]?.reason, undefined)
+  })
+
+  it("filters senior and management roles from early-career candidate-visible batches", () => {
+    const items = collectJobRecommendationMessageItems(
+      [
+        {
+          jobTitle: "Senior Data Analyst",
+          companyName: "Acme",
+          atsApplyUrl: "https://jobs.ashbyhq.com/acme/senior-data",
+          requiredSkills: ["SQL"],
+          seniorityLevel: "senior",
+        },
+        {
+          jobTitle: "Sales Analytics Manager",
+          companyName: "Beta",
+          atsApplyUrl: "https://jobs.ashbyhq.com/beta/sales-analytics-manager",
+          requiredSkills: ["SQL"],
+          seniorityLevel: "manager",
+        },
+        {
+          jobTitle: "Data Analyst",
+          companyName: "Gamma",
+          atsApplyUrl: "https://jobs.ashbyhq.com/gamma/data-analyst",
+          requiredSkills: ["SQL", "Excel"],
+          seniorityLevel: "entry_level",
+        },
+      ],
+      "en",
+      {
+        limit: 3,
+        candidateTags: { careerStage: "entry_level", yoeRange: [0, 3] },
+      },
+    )
+
+    assert.equal(items.length, 1)
+    assert.equal(items[0]?.title, "Data Analyst")
   })
 
   it("does not instruct runtime LLMs to expose matchSourceLabel", () => {

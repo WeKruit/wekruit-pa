@@ -268,8 +268,6 @@ test("Phase 77: PrescreenTrigger fires for self (sender matches target userId)",
   const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job", { fromNumber: "+15551234" }))
   assert.equal(r.kind, "handled")
   if (r.kind === "handled") assert.equal(r.action, "prescreen_triggered")
-  // Wait a microtask for the fire-and-forget to land.
-  await new Promise((resolve) => setImmediate(resolve))
   assert.equal(deps.runs.length, 1)
   assert.deepEqual(deps.runs[0], { jobId: "j1", userId: "user123", toE164: "+15551234" })
 })
@@ -282,7 +280,6 @@ test("Phase 77: PrescreenTrigger passes text after token as the initial prescree
     { fromNumber: "+15551234" },
   ))
   assert.equal(r.kind, "handled")
-  await new Promise((resolve) => setImmediate(resolve))
   assert.equal(deps.runs.length, 1)
   assert.equal(
     deps.runs[0].initialReplyText,
@@ -515,9 +512,6 @@ test("v1.9 hotfix: pending-invite binds session to phone-resolved real userId (n
   const r = await trig.handle(makeCtx("WeKruit_j1_wkrAAA_Job", { fromNumber: "+15551234" }))
   assert.equal(r.kind, "handled")
   if (r.kind === "handled") assert.equal(r.action, "prescreen_triggered")
-
-  // Wait for fire-and-forget to settle
-  await new Promise((resolve) => setImmediate(resolve))
 
   assert.equal(deps.runs.length, 1, "exactly one runPreScreen call")
   assert.equal(deps.runs[0].userId, "realUser456", "session keyed by phone-resolved real userId")

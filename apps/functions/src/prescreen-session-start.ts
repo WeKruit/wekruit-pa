@@ -189,6 +189,7 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
         jobId: args.jobId,
         error: err instanceof Error ? err.message : String(err),
       })
+      return { ok: false, reason: "send_failed", sessionId }
     }
     return { ok: false, reason: "config_missing", sessionId }
   }

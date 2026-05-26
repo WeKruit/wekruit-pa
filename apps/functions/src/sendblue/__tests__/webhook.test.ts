@@ -747,6 +747,143 @@ describe("handleSendblueWebhook", () => {
     ))
   })
 
+  it("Test 16a (entrypoints): prescreen trigger waits for session bootstrap before replying", async () => {
+    const { db, inbound } = makeFakeDb()
+    const body = JSON.stringify(basePayload({
+      content: "WeKruit_rain-software-engineer-fullstack-8849f6ef_uJob1_Job",
+      message_handle: "msg-entry-job-wait-1",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    let started = false
+    let release!: () => void
+    const bootstrapGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+
+    const request = handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "uJob1",
+      runPreScreenForUser: async () => {
+        started = true
+        await bootstrapGate
+        return { ok: true, sessionId: "ps_job_wait_1" }
+      },
+    })
+
+    await new Promise((resolve) => setImmediate(resolve))
+
+    assert.equal(started, true)
+    assert.equal(res.bodyOut, null, "webhook must not reply before prescreen bootstrap finishes")
+    assert.equal(inbound.size, 0, "trigger token must not enter normal onboarding while waiting")
+
+    release()
+    await request
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_triggered" })
+  })
+
+  it("Test 16a.1 (entrypoints): prescreen trigger bootstrap failure does not acknowledge handled", async () => {
+    const { db, inbound, prescreenIdempotency } = makeFakeDb()
+    const body = JSON.stringify(basePayload({
+      content: "WeKruit_rain-software-engineer-fullstack-8849f6ef_uJob1_Job",
+      message_handle: "msg-entry-job-fail-1",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "uJob1",
+      runPreScreenForUser: async () => {
+        throw new Error("firestore unavailable")
+      },
+    })
+
+    assert.equal(res.statusCode, 500)
+    assert.deepEqual(res.bodyOut, {
+      ok: false,
+      error: "trigger_error",
+      action: "prescreen_error",
+      reason: "firestore unavailable",
+    })
+    assert.equal(inbound.size, 0, "failed control-plane token must not fall through as candidate text")
+    assert.equal(
+      prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_uJob1_msg-entry-job-fail-1"),
+      false,
+      "failed bootstrap must not leave a permanent retry-dedupe marker",
+    )
+  })
+
+  it("Test 16a.2 (entrypoints): prescreen trigger send_failed result does not acknowledge handled", async () => {
+    const { db, inbound, prescreenIdempotency } = makeFakeDb()
+    const body = JSON.stringify(basePayload({
+      content: "WeKruit_rain-software-engineer-fullstack-8849f6ef_uJob1_Job",
+      message_handle: "msg-entry-job-send-failed-1",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "uJob1",
+      runPreScreenForUser: async () => ({
+        ok: false,
+        reason: "send_failed",
+        sessionId: "ps_job_send_failed_1",
+      }),
+    })
+
+    assert.equal(res.statusCode, 500)
+    assert.deepEqual(res.bodyOut, {
+      ok: false,
+      error: "trigger_error",
+      action: "prescreen_error",
+      reason: "prescreen_start_send_failed",
+    })
+    assert.equal(inbound.size, 0, "failed control-plane token must not fall through as candidate text")
+    assert.equal(
+      prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_uJob1_msg-entry-job-send-failed-1"),
+      false,
+      "failed send result must not leave a permanent retry-dedupe marker",
+    )
+  })
+
+  it("Test 16a.3 (entrypoints): prescreen trigger config_missing reports the notice action", async () => {
+    const { db, inbound, prescreenIdempotency } = makeFakeDb()
+    const body = JSON.stringify(basePayload({
+      content: "WeKruit_rain-software-engineer-fullstack-8849f6ef_uJob1_Job",
+      message_handle: "msg-entry-job-config-missing-1",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "uJob1",
+      runPreScreenForUser: async () => ({
+        ok: false,
+        reason: "config_missing",
+        sessionId: "ps_job_config_missing_1",
+      }),
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_config_missing" })
+    assert.equal(inbound.size, 0, "config-missing control-plane token must not fall through as candidate text")
+    assert.equal(
+      prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_uJob1_msg-entry-job-config-missing-1"),
+      true,
+      "sent config-missing notice remains idempotent for the same inbound message",
+    )
+  })
+
   it("Test 16b (entrypoints): job prescreen token with answer binds and routes initial reply after session start", async () => {
     const { db, inbound } = makeFakeDb()
     const prescreenCalls: Array<{ jobId: string; userId: string; toE164: string; suppressFirstQuestion?: boolean }> = []
