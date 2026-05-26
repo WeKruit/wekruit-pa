@@ -266,6 +266,27 @@ export type Column<R> = {
   width?: number | string
   className?: string
   render?: (row: R) => ReactNode
+  /** When true the header becomes a button that calls onSort(key). */
+  sortable?: boolean
+}
+
+export interface DataTableSort {
+  key: string
+  dir: "asc" | "desc"
+}
+
+export interface DataTableChip {
+  id: string
+  label: string
+  multi: boolean
+  options: Array<{
+    key: string
+    label: string
+    title?: string
+    count: number
+    active: boolean
+    onClick: () => void
+  }>
 }
 
 export function DataTable<R extends { id?: string }>({
@@ -276,9 +297,17 @@ export function DataTable<R extends { id?: string }>({
   onSearch,
   searchPlaceholder = "Search…",
   filters,
+  chips,
   count,
+  totalCount,
   toolbar = true,
   empty,
+  sort,
+  onSort,
+  page,
+  pageCount,
+  onPageChange,
+  onResetFilters,
 }: {
   columns: Column<R>[]
   rows: R[]
@@ -287,12 +316,45 @@ export function DataTable<R extends { id?: string }>({
   onSearch?: (v: string) => void
   searchPlaceholder?: string
   filters?: { label: ReactNode; value?: ReactNode; onClick?: () => void }[]
+  /** Chip filter rows produced by useTable().chipsForRender. */
+  chips?: DataTableChip[]
   count?: number
+  /** Total row count pre-filter; rendered as "N of M" when both set. */
+  totalCount?: number
   toolbar?: boolean
   empty?: ReactNode
+  sort?: DataTableSort | null
+  onSort?: (key: string) => void
+  page?: number
+  pageCount?: number
+  onPageChange?: (page: number) => void
+  onResetFilters?: () => void
 }) {
+  const showPagination = page !== undefined && pageCount !== undefined && onPageChange && pageCount > 1
   return (
     <div className="dt-shell">
+      {chips && chips.length > 0 && (
+        <div className="dt-shell__chips">
+          {chips.map((chip) => (
+            <div key={chip.id} className="dt-chip-row">
+              <div className="dt-chip-row__label">{chip.label}</div>
+              <div className="dt-chip-row__options">
+                {chip.options.map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    className={`dt-chip${opt.active ? " dt-chip--active" : ""}`}
+                    title={opt.title}
+                    onClick={opt.onClick}
+                  >
+                    {opt.label} <span className="dt-chip__count">· {opt.count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       {toolbar && (
         <div className="dt-shell__toolbar">
           {onSearch && (
@@ -315,9 +377,16 @@ export function DataTable<R extends { id?: string }>({
                 )}
               </button>
             ))}
+          {onResetFilters && (
+            <button className="dt-shell__filter" onClick={onResetFilters} title="Clear all filters + search">
+              Reset
+            </button>
+          )}
           {count !== undefined && (
             <div className="dt-shell__count">
-              {count.toLocaleString()} {count === 1 ? "row" : "rows"}
+              {count.toLocaleString()}
+              {totalCount !== undefined && totalCount !== count ? ` of ${totalCount.toLocaleString()}` : ""}{" "}
+              {count === 1 ? "row" : "rows"}
             </div>
           )}
         </div>
@@ -333,11 +402,25 @@ export function DataTable<R extends { id?: string }>({
           <table className="dt">
             <thead>
               <tr>
-                {columns.map((c) => (
-                  <th key={c.key} style={{ width: c.width }}>
-                    {c.label}
-                  </th>
-                ))}
+                {columns.map((c) => {
+                  const isSorted = sort?.key === c.key
+                  const headerCls = c.sortable && onSort ? "dt-th--sortable" : undefined
+                  return (
+                    <th
+                      key={c.key}
+                      style={{ width: c.width }}
+                      className={headerCls}
+                      onClick={c.sortable && onSort ? () => onSort(c.key) : undefined}
+                    >
+                      {c.label}
+                      {c.sortable && (
+                        <span className="dt-th__sort">
+                          {isSorted ? (sort!.dir === "asc" ? "▲" : "▼") : "↕"}
+                        </span>
+                      )}
+                    </th>
+                  )
+                })}
               </tr>
             </thead>
             <tbody>
@@ -354,6 +437,27 @@ export function DataTable<R extends { id?: string }>({
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      {showPagination && (
+        <div className="dt-shell__pager">
+          <button
+            type="button"
+            disabled={page === 0}
+            onClick={() => onPageChange!(Math.max(0, page! - 1))}
+          >
+            ← Prev
+          </button>
+          <span>
+            Page {page! + 1} of {pageCount}
+          </span>
+          <button
+            type="button"
+            disabled={page! >= pageCount! - 1}
+            onClick={() => onPageChange!(Math.min(pageCount! - 1, page! + 1))}
+          >
+            Next →
+          </button>
         </div>
       )}
     </div>
