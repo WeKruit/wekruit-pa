@@ -21,6 +21,7 @@ import {
   resolveProfileForUser,
 } from "./voice/voice-profiles/index.js"
 import type { SharedOnboardingRunAgentTurn } from "./shared-onboarding-outbound.js"
+import { findBlockingPrescreenSession } from "./prescreen-session-guards.js"
 
 export type CollabInviteReplyStore = {
   db?: Firestore
@@ -401,6 +402,27 @@ export async function sendCollabPrescreenOfferFromCandidateOptIn(
       score,
     })
     return { sent: false, reason: "low_score" }
+  }
+
+  const existingScreen = await findBlockingPrescreenSession(
+    deps.db,
+    deps.userId,
+    new Date().toISOString(),
+    { jobIds: [matchResult.topJobId] }
+  )
+  if (existingScreen.blocked) {
+    const reason =
+      existingScreen.reason === "active_session"
+        ? "active_prescreen_in_progress"
+        : "prescreen_already_exists_for_job"
+    log("pa.collab_invite.post_match.skipped", {
+      userId: deps.userId,
+      jobId: matchResult.topJobId,
+      reason,
+      blockingSessionId: existingScreen.sessionId,
+      blockingJobId: existingScreen.jobId,
+    })
+    return { sent: false, reason }
   }
 
   const jobTitle = matchResult.topTitle ?? "this role"
