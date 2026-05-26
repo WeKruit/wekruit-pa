@@ -26,6 +26,22 @@
         "npm --prefix \"$RESOURCE_DIR/..\" run typecheck",
         "npm --prefix \"$RESOURCE_DIR/..\" test"
       ]
+    },
+    {
+      "source": "apps/recruiter-board-fn/lib",
+      "codebase": "recruiter-board",
+      "runtime": "nodejs24",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR/..\" run build",
+        "npm --prefix \"$RESOURCE_DIR/..\" test"
+      ]
     }
   ],
   "hosting": [
