@@ -96,6 +96,10 @@ function buildDeterministicChecks({ messages, traces, inboundEvents, evidenceWri
   const longRows = assistantRows.filter((row) => textOf(row).length > 420)
   const completedTraceCount = traces.filter((row) => traceStatus(row) === "completed").length
   const latestTrace = traces.at(-1) ?? null
+  const latestInbound = inboundEvents.at(-1) ?? null
+  const latestAssistant = [...assistantRows].reverse().find((row) => textOf(row).trim()) ?? null
+  const latestTurnCompletedTrace = findCompletedTraceForLatestTurn(traces, latestInbound, latestAssistant)
+  const latestTurnIsSavedPreferenceSummary = latestInbound != null && isSavedPreferenceSummaryQuestion(textOf(latestInbound))
 
   return [
     check("has_recent_inbound", inboundEvents.length > 0, "No inbound event was found after --since."),
@@ -106,6 +110,11 @@ function buildDeterministicChecks({ messages, traces, inboundEvents, evidenceWri
     check("no_late_conversation_restart", restartRows.length === 0, `Assistant restarted/reintroduced after prior context: ${restartRows.map((row) => row.id).join(", ")}`),
     check("assistant_text_short_enough_for_sms", longRows.length === 0, `Assistant SMS too long: ${longRows.map((row) => `${row.id}:${textOf(row).length}`).join(", ")}`),
     check("trace_reaches_completed", completedTraceCount > 0 || latestTrace == null, `No completed trace found; latest status=${traceStatus(latestTrace) ?? "none"}.`),
+    check(
+      "saved_preference_summary_has_completed_trace",
+      !latestTurnIsSavedPreferenceSummary || latestTurnCompletedTrace != null,
+      `Saved-preference summary turn has no completed trace for inbound ${latestInbound?.id ?? "unknown"}.`,
+    ),
     check("evidence_is_linked_when_written", evidenceWrites.every((row) => row.eventId || row.sourceTurnId || row.turnId), "At least one evidence row lacks event/turn linkage."),
   ]
 }
@@ -221,6 +230,30 @@ function groupDuplicateAssistantRows(rows) {
     }
     return false
   })
+}
+
+function findCompletedTraceForLatestTurn(traces, latestInbound, latestAssistant) {
+  const assistantTurnId = latestAssistant?.rawMeta?.turnId ?? null
+  const inboundId = latestInbound?.id ?? null
+  for (let i = traces.length - 1; i >= 0; i--) {
+    const trace = traces[i]
+    if (traceStatus(trace) !== "completed") continue
+    if (inboundId && trace?.eventId === inboundId) return trace
+    if (assistantTurnId && trace?.turnId === assistantTurnId) return trace
+  }
+  return null
+}
+
+function isSavedPreferenceSummaryQuestion(body) {
+  return (
+    /\b(?:w?hat|which|show|remind|tell)\b[\s\S]{0,40}\b(?:save|saved|store|stored|remember|remembered|have|using|use|used)\b[\s\S]{0,80}\b(?:job\s+)?(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b/i.test(body) ||
+    /\b(?:job\s+)?(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b[\s\S]{0,50}\b(?:save|saved|store|stored|remember|remembered|have|using|use|used)\b/i.test(body) ||
+    (
+      /\b(?:preferences?|prefs|matching profile|profile notes)\b/i.test(body) &&
+      /\b(?:match|matching|save|saved|store|stored|remember|remembered|using|use|used)\b/i.test(body) &&
+      /\b(?:w?hat|which|show|remind|reminder|tell|using|use|could you)\b/i.test(body)
+    )
+  )
 }
 
 function check(name, pass, detail) {

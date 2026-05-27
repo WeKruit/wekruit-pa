@@ -475,6 +475,24 @@ function applyAssertions(turn, reply, context = {}) {
       failures.push(`conversationAction did not include ${a.conversation_action}`)
     }
   }
+  if (typeof a.conversation_arbiter_owner === "string") {
+    const found = turnPatches.some((entry) => entry.patch?.conversationArbiterOwner === a.conversation_arbiter_owner)
+    if (!found) {
+      failures.push(`conversationArbiterOwner did not include ${a.conversation_arbiter_owner}`)
+    }
+  }
+  if (typeof a.direct_intent === "string") {
+    const found = turnPatches.some((entry) => entry.patch?.directIntent === a.direct_intent)
+    if (!found) {
+      failures.push(`directIntent did not include ${a.direct_intent}`)
+    }
+  }
+  if (typeof a.direct_intent_result === "string") {
+    const found = turnPatches.some((entry) => entry.patch?.directIntentResult === a.direct_intent_result)
+    if (!found) {
+      failures.push(`directIntentResult did not include ${a.direct_intent_result}`)
+    }
+  }
   if (typeof a.no_outbound_reason === "string") {
     const found = turnPatches.some((entry) => entry.patch?.conversationNoOutboundReason === a.no_outbound_reason)
     if (!found) {

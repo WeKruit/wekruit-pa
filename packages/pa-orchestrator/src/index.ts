@@ -149,6 +149,7 @@ import {
 import { applyTemplateOutboundHumanize } from "./outbound-template-humanize.js"
 import {
   decideConversationTurnOwner,
+  isSavedPreferenceSummaryQuestion,
   summarizeConversationTurnTrace,
   type OwnerDecision,
   type PrescreenEvidence,
@@ -156,6 +157,7 @@ import {
 } from "./conversation-turn-arbiter.js"
 export {
   decideConversationTurnOwner,
+  isSavedPreferenceSummaryQuestion,
   summarizeConversationTurnTrace,
   type OwnerDecision,
   type PrescreenEvidence,
@@ -2590,6 +2592,42 @@ async function handleDurablePreferenceUpdateTurn(
   return true
 }
 
+async function handleExplicitExplanationTurn(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  context: TurnContext,
+  ownerDecision: OwnerDecision,
+  actionDecision: ConversationActionDecision,
+  evidenceWrites: ConversationEvidenceWrite[],
+  evidenceCommitIds: string[] = [],
+): Promise<boolean> {
+  if (ownerDecision.selectedOwner !== "explicit_explanation") return false
+  if (!isSavedPreferenceSummaryQuestion(event.body)) return false
+
+  const lang = detectUserLang(event.body) === "zh" ? "zh" : "en"
+  const reply = composeSavedJobPreferencesReply(onboardingUser, lang)
+  await sendMemoryReply(store, event, turnId, reply)
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    completedAt: store.nowIso(),
+    directIntent: "explicit_explanation",
+    directIntentResult: "job_preferences_summary_answered",
+    conversationAction: actionDecision.selectedAction,
+    conversationNoOutboundReason: null,
+  })
+  await persistConversationTurnTrace(store, event, context, ownerDecision, "completed", actionDecision, evidenceWrites, {
+    outboundSource: "saved_job_preferences_summary",
+    memoryWrites: evidenceWrites.map((write) => write.kind),
+    evidenceCommitIds,
+    evidenceCommitCount: evidenceCommitIds.length,
+  })
+  await store.markEventSucceeded(event.id)
+  return true
+}
+
 function composePrescreenOutcomeExplanationReply(
   userText: string,
   evidence: PrescreenEvidence,
@@ -3432,7 +3470,6 @@ async function handleCompletedUserJobSearchRequest(
 
 type PrivacyIntent =
   | { kind: "summary"; includeMemory: boolean }
-  | { kind: "job_preferences_summary" }
   | { kind: "request"; requestKind: PrivacyRequestKind }
 
 function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | null {
@@ -3445,14 +3482,6 @@ function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | n
   const asksData =
     /\b(?:what\s+data|which\s+data|what\s+info|what\s+information|data\s+do\s+you\s+store|store\s+about\s+me|saved\s+about\s+me)\b/i.test(body) ||
     /(?:什么数据|哪些数据|保存.*我|存.*我)/.test(body)
-  const asksSavedJobPreferences =
-    /\b(?:w?hat|which|show|remind|tell)\b[\s\S]{0,40}\b(?:save|saved|store|stored|remember|remembered|have)\b[\s\S]{0,80}\b(?:job\s+)?(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b/i.test(body) ||
-    /\b(?:job\s+)?(?:preferences?|prefs)\b[\s\S]{0,50}\b(?:save|saved|store|stored|remember|remembered|have)\b/i.test(body) ||
-    (
-      /\b(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b/i.test(body) &&
-      /\b(?:match|matching|save|saved|store|stored|remember|remembered|using|use|used)\b/i.test(body) &&
-      /\b(?:what|which|show|remind|reminder|tell|using|use)\b/i.test(body)
-    )
   if (
     /\b(?:delete|erase|remove)\s+(?:all\s+)?(?:my\s+)?(?:data|profile|information|account)\b/i.test(body) ||
     /(?:删除|清除|抹掉).*(?:数据|资料|档案|账号|账户)/.test(body)
@@ -3471,9 +3500,6 @@ function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | n
   ) {
     return { kind: "request", requestKind: "stop_outreach" }
   }
-  if (asksSavedJobPreferences) {
-    return { kind: "job_preferences_summary" }
-  }
   if (asksData || asksMemory || lower.includes("privacy")) {
     return { kind: "summary", includeMemory: asksMemory }
   }
@@ -3488,17 +3514,6 @@ async function handlePrivacyIntent(
 ): Promise<boolean> {
   const lang = detectUserLang(event.body) === "zh" ? "zh" : "en"
   await store.updateTurn(turnId, { stage: "privacy_intent", updatedAt: store.nowIso() })
-
-  if (intent.kind === "job_preferences_summary") {
-    const onboardingUser = store.getOnboardingUser ? await store.getOnboardingUser(event.userId) : null
-    await sendMemoryReply(store, event, turnId, composeSavedJobPreferencesReply(onboardingUser, lang))
-    await store.updateTurn(turnId, {
-      directIntent: "explicit_explanation",
-      directIntentResult: "job_preferences_summary_answered",
-      updatedAt: store.nowIso(),
-    })
-    return true
-  }
 
   if (intent.kind === "summary") {
     const lines =
@@ -4287,6 +4302,23 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           event,
           store,
           turnId,
+          conversationTurnContext,
+          conversationOwnerDecision,
+          conversationActionDecision,
+          conversationEvidenceWrites,
+          conversationEvidenceCommitIds,
+        )
+      ) {
+        return
+      }
+      if (
+        conversationOwnerDecision.selectedOwner === "explicit_explanation" &&
+        conversationActionDecision &&
+        await handleExplicitExplanationTurn(
+          event,
+          store,
+          turnId,
+          onboardingUser,
           conversationTurnContext,
           conversationOwnerDecision,
           conversationActionDecision,
