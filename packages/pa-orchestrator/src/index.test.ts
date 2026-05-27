@@ -1711,6 +1711,74 @@ test("processInboundEvent answers saved job preference summary from shared onboa
   assert.doesNotMatch(outbound, /roles I just sent/i)
 })
 
+test("processInboundEvent answers matching preference reminder before active post-match retention", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  const turnUpdates: Record<string, unknown>[] = []
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-feature-flags/paPostMatchRetentionEnabled",
+      { key: "paPostMatchRetentionEnabled", value: true, type: "bool", scope: "global" },
+    ],
+    [
+      "pa-users/u1",
+      {
+        postMatchRetention: {
+          stage: "await_liked",
+          startedAt: "2026-05-27T23:00:00.000Z",
+          updatedAt: "2026-05-27T23:00:00.000Z",
+          recCount: 2,
+        },
+      },
+    ],
+  ])
+  const store = makeStore({
+    db: makeMapDb(docs),
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+      sharedOnboarding: {
+        status: "complete",
+        completed: true,
+        answers: {
+          main_goal: { answer: "Learning and career growth matter most." },
+          culture_stage: { answer: "Early startup or scale-up, high ownership, but not chaotic." },
+          industry_interest: { answer: "AI tools, devtools and fintech; avoid adtech and crypto." },
+          location_relocation: { answer: "SF or remote works best; NYC is okay but no other relocation." },
+          special_context: { answer: "No hard constraints. I can start in 2-4 weeks and want product-heavy roles." },
+        },
+      },
+    }),
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    id: "evt-preference-reminder",
+    body: "Quick reminder what preferences are you using for matching",
+  }, store)
+
+  assert.equal(llmCalls, 0)
+  assert.match(outbound, /Yep — I saved/)
+  assert.match(outbound, /product\/strategy-heavy work/)
+  assert.doesNotMatch(outbound, /roles I just sent/i)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "post_match_retention"), false)
+  assert.equal(
+    turnUpdates.some((patch) => patch.directIntentResult === "job_preferences_summary_answered"),
+    true,
+  )
+})
+
 test("processInboundEvent privacy: delete data creates privacy request without LLM", async () => {
   let llmCalls = 0
   let outbound = ""

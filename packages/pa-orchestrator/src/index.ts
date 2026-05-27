@@ -3447,7 +3447,12 @@ function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | n
     /(?:什么数据|哪些数据|保存.*我|存.*我)/.test(body)
   const asksSavedJobPreferences =
     /\b(?:w?hat|which|show|remind|tell)\b[\s\S]{0,40}\b(?:save|saved|store|stored|remember|remembered|have)\b[\s\S]{0,80}\b(?:job\s+)?(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b/i.test(body) ||
-    /\b(?:job\s+)?(?:preferences?|prefs)\b[\s\S]{0,50}\b(?:save|saved|store|stored|remember|remembered|have)\b/i.test(body)
+    /\b(?:job\s+)?(?:preferences?|prefs)\b[\s\S]{0,50}\b(?:save|saved|store|stored|remember|remembered|have)\b/i.test(body) ||
+    (
+      /\b(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b/i.test(body) &&
+      /\b(?:match|matching|save|saved|store|stored|remember|remembered|using|use|used)\b/i.test(body) &&
+      /\b(?:what|which|show|remind|reminder|tell|using|use)\b/i.test(body)
+    )
   if (
     /\b(?:delete|erase|remove)\s+(?:all\s+)?(?:my\s+)?(?:data|profile|information|account)\b/i.test(body) ||
     /(?:删除|清除|抹掉).*(?:数据|资料|档案|账号|账户)/.test(body)
@@ -3487,6 +3492,11 @@ async function handlePrivacyIntent(
   if (intent.kind === "job_preferences_summary") {
     const onboardingUser = store.getOnboardingUser ? await store.getOnboardingUser(event.userId) : null
     await sendMemoryReply(store, event, turnId, composeSavedJobPreferencesReply(onboardingUser, lang))
+    await store.updateTurn(turnId, {
+      directIntent: "explicit_explanation",
+      directIntentResult: "job_preferences_summary_answered",
+      updatedAt: store.nowIso(),
+    })
     return true
   }
 

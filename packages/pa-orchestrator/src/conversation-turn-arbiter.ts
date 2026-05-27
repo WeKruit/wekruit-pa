@@ -480,7 +480,16 @@ function isControlOrPrivacyIntent(text: string): boolean {
 function isMetaQuestion(text: string): boolean {
   return (
     text.includes("?") ||
-    /^(why|how|what|could you|can you|help me understand|explain|where did|what do you mean)\b/i.test(text)
+    /^(why|how|what|could you|can you|help me understand|explain|where did|what do you mean)\b/i.test(text) ||
+    isSavedPreferenceSummaryQuestion(text)
+  )
+}
+
+function isSavedPreferenceSummaryQuestion(text: string): boolean {
+  return (
+    /\b(?:preferences?|prefs|matching profile|profile notes)\b/i.test(text) &&
+    /\b(?:match|matching|save|saved|store|stored|remember|remembered|using|use|used)\b/i.test(text) &&
+    /\b(?:what|which|show|remind|reminder|tell|using|use)\b/i.test(text)
   )
 }
 
