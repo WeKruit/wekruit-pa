@@ -3550,19 +3550,20 @@ function composeSavedJobPreferencesReply(
     ? onboardingUser as { sharedOnboarding?: { answers?: Record<string, { answer?: unknown }> }; statedPreferences?: Record<string, unknown> }
     : null
   const shared = user?.sharedOnboarding?.answers ?? {}
-  const lines: string[] = []
+  const snippets: string[] = []
 
-  const addAnswer = (label: string, key: string) => {
+  const addAnswer = (key: string) => {
     const value = shared[key]?.answer
-    if (typeof value === "string" && value.trim()) lines.push(`${label}: ${value.trim()}`)
+    const snippet = formatSavedPreferenceSnippet(key, value)
+    if (snippet) snippets.push(snippet)
   }
-  addAnswer("Goals", "main_goal")
-  addAnswer("Company", "culture_stage")
-  addAnswer("Industries", "industry_interest")
-  addAnswer("Location", "location_relocation")
-  addAnswer("Context", "special_context")
+  addAnswer("main_goal")
+  addAnswer("culture_stage")
+  addAnswer("industry_interest")
+  addAnswer("location_relocation")
+  addAnswer("special_context")
 
-  if (lines.length === 0 && user?.statedPreferences && typeof user.statedPreferences === "object") {
+  if (snippets.length === 0 && user?.statedPreferences && typeof user.statedPreferences === "object") {
     const prefs = user.statedPreferences
     const readable = [
       formatSavedPreferenceValue("roles", prefs.targetRole),
@@ -3572,22 +3573,74 @@ function composeSavedJobPreferencesReply(
       formatSavedPreferenceValue("locations", prefs.targetLocations),
       formatSavedPreferenceValue("context", prefs.specialContext),
     ].filter((value): value is string => Boolean(value))
-    lines.push(...readable)
+    snippets.push(...readable.map((value) => truncateAtWord(value, 72)))
   }
 
-  if (lines.length === 0) {
+  if (snippets.length === 0) {
     return lang === "zh"
       ? "我现在还没有足够明确的求职偏好。你可以直接告诉我目标角色、地点、行业、薪资或不能接受的点。"
       : "I do not have much saved yet: tell me target roles, locations, industries, comp, or dealbreakers and I will use that for matching."
   }
 
-  const summary = lines
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter(Boolean)
-    .join("\n")
+  const summary = joinSavedPreferenceSnippets(snippets, 330)
   return lang === "zh"
-    ? `我现在用于匹配的是：\n${summary}`
-    : `Here is what I have saved for matching:\n${summary}`
+    ? `我现在会按这些匹配：${summary}。`
+    : `I have this saved: ${summary}. I'll use that for matching.`
+}
+
+function formatSavedPreferenceSnippet(key: string, value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null
+  let text = value
+    .replace(/[’]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[。]+/g, ".")
+    .replace(/\.\s+/g, "; ")
+    .replace(/[.;\s]+$/g, "")
+
+  if (key === "main_goal") {
+    text = text
+      .replace(/\bI(?:'m| am)\s+open\s+to\s+[^.;]+?\s+and\s+/i, "")
+      .replace(/\bI(?:'m| am)\s+more interested in\b/i, "more interested in")
+  } else if (key === "industry_interest") {
+    text = text
+      .replace(/\bare most interesting\b/i, "")
+      .replace(/\bI(?:'d| would)\s+avoid\b/i, "avoid")
+  } else if (key === "location_relocation") {
+    text = text
+      .replace(/\bworks best\b/i, "")
+      .replace(/\bis okay\b/i, "okay")
+  } else if (key === "special_context") {
+    text = text.replace(/\bI can start\b/i, "start")
+  }
+
+  return truncateAtWord(text.replace(/\s+/g, " ").trim(), key === "main_goal" ? 90 : 72)
+}
+
+function joinSavedPreferenceSnippets(snippets: string[], maxLength: number): string {
+  const parts: string[] = []
+  for (const raw of snippets) {
+    const snippet = raw.replace(/\s+/g, " ").trim()
+    if (!snippet) continue
+    const next = [...parts, snippet].join("; ")
+    if (next.length <= maxLength) {
+      parts.push(snippet)
+      continue
+    }
+    const remaining = maxLength - (parts.length > 0 ? parts.join("; ").length + 2 : 0)
+    if (remaining >= 24) parts.push(truncateAtWord(snippet, remaining))
+    break
+  }
+  return parts.join("; ")
+}
+
+function truncateAtWord(value: string, maxLength: number): string {
+  const text = value.replace(/\s+/g, " ").trim()
+  if (text.length <= maxLength) return text
+  const slice = text.slice(0, Math.max(0, maxLength - 3)).trimEnd()
+  const lastSpace = slice.lastIndexOf(" ")
+  const base = lastSpace > 24 ? slice.slice(0, lastSpace) : slice
+  return `${base.trimEnd()}...`
 }
 
 function formatSavedPreferenceValue(label: string, value: unknown): string | null {

@@ -1703,9 +1703,10 @@ test("processInboundEvent answers saved job preference summary from shared onboa
     body: "hat did you save about my job preferences",
   }, store)
   assert.equal(llmCalls, 0)
-  assert.match(outbound, /Here is what I have saved for matching:/)
+  assert.match(outbound, /I have this saved:/)
   assert.match(outbound, /AI tools, devtools and fintech/)
   assert.match(outbound, /2-4 weeks/)
+  assert.ok(outbound.length < 420, `expected SMS-sized summary, got ${outbound.length} chars`)
   assert.doesNotMatch(outbound, /roles I just sent/i)
 })
 
