@@ -247,10 +247,14 @@ test("commitConversationEvidenceWrites persists evidence rows and links tool cal
   })
 })
 
-test("processInboundEvent commits tapback interest evidence before suppressing outbound text", async () => {
+test("processInboundEvent sends tapback from coalesced rawPayload handle and suppresses outbound text", async () => {
   const docs = new Map<string, Record<string, unknown>>()
   let llmCalls = 0
   let outboundCount = 0
+  const reactions: Array<{ to: string; messageHandle: string; reaction: string }> = []
+  const turnUpdates: Record<string, unknown>[] = []
+  const previousTapbackFlag = process.env.paReactionTapbackEnabled
+  process.env.paReactionTapbackEnabled = "true"
   const store = makeStore({
     db: makeMapDb(docs),
     loadHistory: async () => [
@@ -270,19 +274,46 @@ test("processInboundEvent commits tapback interest evidence before suppressing o
     enqueueOutbound: async () => {
       outboundCount++
     },
+    sendReaction: async (input) => {
+      reactions.push(input)
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch)
+    },
   })
 
-  await processInboundEvent(
-    {
-      ...baseEvent,
-      id: "sendblue-live-msg-1",
-      body: "Sure",
-    },
-    store,
-  )
+  try {
+    await processInboundEvent(
+      {
+        ...baseEvent,
+        id: "inb_coalesced_live_sure",
+        body: "Sure",
+        rawPayload: {
+          source: "sendblue-coalesced",
+          messageHandle: "E8DFB79F-974C-42CE-849B-F2C59C64A28C",
+        },
+      } as InboundEvent,
+      store,
+    )
+  } finally {
+    if (previousTapbackFlag === undefined) {
+      delete process.env.paReactionTapbackEnabled
+    } else {
+      process.env.paReactionTapbackEnabled = previousTapbackFlag
+    }
+  }
 
   assert.equal(llmCalls, 0)
   assert.equal(outboundCount, 0)
+  assert.deepEqual(reactions, [
+    {
+      to: "+13125550123",
+      messageHandle: "E8DFB79F-974C-42CE-849B-F2C59C64A28C",
+      reaction: "like",
+    },
+  ])
+  assert.equal(turnUpdates.some((patch) => patch.reactionSent === true), true)
+  assert.equal(turnUpdates.some((patch) => patch.reactionSkippedReason === null), true)
 
   const evidenceRows = [...docs.entries()].filter(([path]) => path.startsWith(`${PA_COLLECTIONS.conversationEvidence}/`))
   assert.equal(evidenceRows.length, 1)
@@ -299,6 +330,9 @@ test("processInboundEvent commits tapback interest evidence before suppressing o
     ? (trace.actionDecision as { selectedAction?: string }).selectedAction
     : undefined, "tapback_only")
   assert.deepEqual(trace.evidenceCommitIds, ["turn1_0_job_interest"])
+  assert.equal(trace.reactionAttempted, true)
+  assert.equal(trace.reactionSent, true)
+  assert.equal(trace.reactionSkippedReason, null)
 })
 
 test("createFirestoreOrchestratorStore getOnboardingUser exposes resume context fields", async () => {

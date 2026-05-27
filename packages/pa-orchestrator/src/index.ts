@@ -1438,6 +1438,28 @@ function sendblueMessageHandleFromEventId(eventId: string): string | undefined {
   return eventId.startsWith(prefix) ? eventId.slice(prefix.length) : undefined
 }
 
+function inboundMessageHandleForReaction(event: InboundEvent): string | undefined {
+  const metadata = event as InboundEvent & {
+    messageHandle?: unknown
+    rawPayload?: Record<string, unknown>
+    rawMeta?: Record<string, unknown>
+  }
+  const candidates = [
+    metadata.messageHandle,
+    metadata.rawMeta?.messageHandle,
+    metadata.rawMeta?.message_handle,
+    metadata.rawPayload?.messageHandle,
+    metadata.rawPayload?.message_handle,
+    sendblueMessageHandleFromEventId(event.id),
+  ]
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue
+    const trimmed = candidate.trim()
+    if (trimmed) return trimmed
+  }
+  return undefined
+}
+
 /**
  * Adam 2026-05-19 voice polish §3 — build an outbound delivery plan for a
  * shared-onboarding composed reply. Returns `null` (legacy single-bubble
@@ -1459,7 +1481,7 @@ async function buildSharedOnboardingDeliveryPlan(args: {
     const choreoOn = await isBehaviorChoreographerEnabled(store.db, event.userId)
     if (!choreoOn) return null
     const tapbackOn = await isReactionTapbackEnabled(store.db, event.userId)
-    const inboundMessageHandle = sendblueMessageHandleFromEventId(event.id)
+    const inboundMessageHandle = inboundMessageHandleForReaction(event)
     const profile = await resolveProfileForUser(
       "friend_onboarding",
       event.userId
@@ -2372,7 +2394,7 @@ async function handleConversationTapbackOnlyTurn(
   evidenceCommitIds: string[] = [],
 ): Promise<boolean> {
   const reaction = actionDecision.deliveryPlan.reaction ?? "like"
-  const messageHandle = sendblueMessageHandleFromEventId(event.id)
+  const messageHandle = inboundMessageHandleForReaction(event)
   let reactionSent = false
   let reactionSkippedReason: string | null = null
 
@@ -2726,7 +2748,7 @@ async function handleSharedOnboardingRuntimeEvent(
       mode: "ask",
     }),
     agent,
-    inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+    inboundMessageHandle: inboundMessageHandleForReaction(event),
     toE164: event.from,
     recentSlangPicks: priorSlangPicks,
   })
@@ -2742,7 +2764,7 @@ async function handleSharedOnboardingRuntimeEvent(
   })
   await sendMemoryReply(store, event, turnId, composed.text, {
     deliveryPlan: runtimePlan ?? undefined,
-    inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+    inboundMessageHandle: inboundMessageHandleForReaction(event),
   })
   await persistSharedOnboardingSlangPicks({
     db: store.db,
@@ -2902,7 +2924,7 @@ async function handleSharedOnboardingUserReply(
         userMessage: event.body,
       }),
       agent,
-      inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+      inboundMessageHandle: inboundMessageHandleForReaction(event),
       toE164: event.from,
       recentSlangPicks: priorSlangPicks,
     })
@@ -2914,7 +2936,7 @@ async function handleSharedOnboardingUserReply(
     })
     await sendMemoryReply(store, event, turnId, composed.text, {
       deliveryPlan: nextAskPlan ?? undefined,
-      inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+      inboundMessageHandle: inboundMessageHandleForReaction(event),
     })
     await persistSharedOnboardingSlangPicks({
       db: store.db,
@@ -2970,7 +2992,7 @@ async function handleSharedOnboardingUserReply(
   })
   await sendMemoryReply(store, event, turnId, delivered.reply, {
     deliveryPlan: deliveredPlan ?? undefined,
-    inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+    inboundMessageHandle: inboundMessageHandleForReaction(event),
   })
   await store.updateTurn(turnId, {
     status: "succeeded",
@@ -3113,14 +3135,14 @@ async function handleSharedOnboardingBootstrap(
       mode: "ask",
     }),
     agent,
-    inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+    inboundMessageHandle: inboundMessageHandleForReaction(event),
     toE164: event.from,
     recentSlangPicks: priorSlangPicks,
   })
   const bootstrapPlan = buildSharedOnboardingBootstrapDeliveryPlan(bootstrapComposed.text)
   await sendMemoryReply(store, event, turnId, bootstrapComposed.text, {
     deliveryPlan: bootstrapPlan ?? undefined,
-    inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+    inboundMessageHandle: inboundMessageHandleForReaction(event),
   })
   await persistSharedOnboardingSlangPicks({
     db: store.db,
@@ -5220,7 +5242,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       // Either path must respect the ≤2-SMS-per-turn invariant.
       const choreoOn = await isBehaviorChoreographerEnabled(store.db, event.userId)
       const tapbackOn = await isReactionTapbackEnabled(store.db, event.userId)
-      const inboundMessageHandle = sendblueMessageHandleFromEventId(event.id)
+      const inboundMessageHandle = inboundMessageHandleForReaction(event)
       let deliveredViaPlan = false
       if (choreoOn && !runtimeEvent) {
         try {
