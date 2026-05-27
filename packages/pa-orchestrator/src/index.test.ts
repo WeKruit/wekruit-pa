@@ -410,6 +410,67 @@ test("processInboundEvent runtime job-rec handoff sends trusted deterministic bo
   assert.doesNotMatch(outbound, /LLM should not write/)
 })
 
+test("processInboundEvent runtime job-rec handoff focuses one role and splits delivery", async () => {
+  let llmCalls = 0
+  const outbound: string[] = []
+  const appended: Array<{ role?: string; body?: string }> = []
+  const store = makeStore({
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "LLM should not write job rec copy" }
+    },
+    appendMessage: async (message) => {
+      appended.push({ role: message.role, body: message.body })
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound.push(body)
+    },
+  })
+
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "runtime-job-rec-focused-1",
+      body: "[system-event:job_rec:send_imessage]",
+      rawMeta: {
+        runtimeEvent: true,
+        runtimeEventSource: "job_rec_daily_batch",
+        runtimeEventKind: "daily_job_recommendations",
+        context: {
+          trustedOutboundBody:
+            "Hey Adam, I found 2 roles that line up:\n\nData Analyst @ Acme\nhttps://jobs.example/acme\nrequirements: SQL, Python\nwhy: your analytics work maps well.\n\nBackend Engineer @ Beta\nhttps://jobs.example/beta\nrequirements: Go, Kubernetes\nwhy: your backend work maps well.",
+          jobs: [
+            {
+              title: "Data Analyst",
+              companyName: "Acme",
+              url: "https://jobs.example/acme",
+              requirements: "requirements: SQL, Python",
+              reason: "your analytics work maps well",
+            },
+            {
+              title: "Backend Engineer",
+              companyName: "Beta",
+              url: "https://jobs.example/beta",
+              requirements: "requirements: Go, Kubernetes",
+              reason: "your backend work maps well",
+            },
+          ],
+        },
+      },
+    },
+    store,
+  )
+
+  assert.equal(llmCalls, 0)
+  assert.equal(outbound.length, 2)
+  assert.match(outbound[0]!, /One role worth your time: Data Analyst @ Acme/)
+  assert.match(outbound[0]!, /https:\/\/jobs\.example\/acme/)
+  assert.match(outbound[1]!, /Before I move it forward/)
+  assert.doesNotMatch(outbound.join("\n"), /Backend Engineer/)
+  assert.equal(appended.at(-1)?.role, "assistant")
+  assert.match(appended.at(-1)?.body ?? "", /One role worth your time: Data Analyst @ Acme/)
+})
+
 test("processInboundEvent turn failure does not send generic candidate-visible error copy", async () => {
   let outboundCount = 0
   let failed = false

@@ -2521,6 +2521,79 @@ function trustedRuntimeOutboundBody(rawMeta: unknown): string | null {
   return body.slice(0, 4_000)
 }
 
+type RuntimeRecommendationJob = {
+  title: string
+  companyName: string
+  url: string
+  requirements: string
+  reason: string
+}
+
+function cleanRuntimeText(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : ""
+}
+
+function runtimeRecommendationJobs(rawMeta: unknown): RuntimeRecommendationJob[] {
+  const context = runtimeContext(rawMeta)
+  if (!Array.isArray(context.jobs)) return []
+  return context.jobs.flatMap((item): RuntimeRecommendationJob[] => {
+    if (!item || typeof item !== "object") return []
+    const row = item as Record<string, unknown>
+    const title = cleanRuntimeText(row.title)
+    const companyName = cleanRuntimeText(row.companyName)
+    const url = cleanRuntimeText(row.url)
+    if (!title || !url) return []
+    return [{
+      title,
+      companyName,
+      url,
+      requirements: cleanRuntimeText(row.requirements),
+      reason: cleanRuntimeText(row.reason).replace(/^why\s*:\s*/i, ""),
+    }]
+  })
+}
+
+function buildRoleFitGate(job: RuntimeRecommendationJob): string {
+  const haystack = `${job.title} ${job.requirements}`.toLowerCase()
+  if (/\breact\b|\bnext\.?js\b|\btypescript\b|\bts\b/.test(haystack)) {
+    return "Before I move it forward, quick fit check: have you shipped production React/Next.js with TypeScript?"
+  }
+  if (/\bjava\b|\bpython\b|\bjavascript\b|\bnode\.?js\b/.test(haystack)) {
+    return "Before I move it forward, quick fit check: have you shipped production Java, Python, JavaScript, or Node work?"
+  }
+  if (/\bsql\b|\bexcel\b|\bpower\s*bi\b|\banalytics?\b|\bdata\b/.test(haystack)) {
+    return "Before I move it forward, quick fit check: have you used SQL or analytics tooling on real business data?"
+  }
+  if (/\bhybrid\b|\bonsite\b|\boffice\b|\brelocat/.test(haystack)) {
+    return "Before I move it forward, quick fit check: are you open to the work setup for this role?"
+  }
+  return "Before I move it forward, quick fit check: does this look worth a quick screen?"
+}
+
+function buildFocusedRuntimeRecommendationPlan(rawMeta: unknown): { body: string; plan: OutboundDeliveryPlan } | null {
+  const [job] = runtimeRecommendationJobs(rawMeta)
+  if (!job) return null
+
+  const roleLine = `One role worth your time: ${job.title}${job.companyName ? ` @ ${job.companyName}` : ""}.`
+  const first = [
+    roleLine,
+    job.url,
+    job.requirements,
+    job.reason ? `Why it lines up: ${job.reason}` : "",
+  ].filter(Boolean).join("\n")
+  const second = buildRoleFitGate(job)
+  const body = `${first}\n\n${second}`
+  return {
+    body,
+    plan: {
+      mode: "text_split_2",
+      textParts: [first, second],
+      reason: "runtime_job_recommendation_focused_split_2",
+      smsCount: 2,
+    },
+  }
+}
+
 function detectJobRecommendationSubscriptionCancel(text: string): boolean {
   const normalized = text.trim().toLowerCase()
   if (!normalized) return false
@@ -3446,13 +3519,20 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       }
     }
 
+    const focusedRuntimeRecommendation = runtimeEvent
+      ? buildFocusedRuntimeRecommendationPlan(event.rawMeta)
+      : null
     const trustedRuntimeBody = runtimeEvent ? trustedRuntimeOutboundBody(event.rawMeta) : null
-    if (trustedRuntimeBody) {
-      await sendMemoryReply(store, event, turnId, trustedRuntimeBody)
+    if (focusedRuntimeRecommendation || trustedRuntimeBody) {
+      const body = focusedRuntimeRecommendation?.body ?? trustedRuntimeBody!
+      await sendMemoryReply(store, event, turnId, body, {
+        deliveryPlan: focusedRuntimeRecommendation?.plan,
+      })
       await store.updateTurn(turnId, {
         status: "succeeded",
         stage: "succeeded",
         runtimeTrustedOutbound: true,
+        runtimeFocusedRecommendation: Boolean(focusedRuntimeRecommendation),
         runtimeEventSource: event.rawMeta?.runtimeEventSource ?? null,
         runtimeEventKind: event.rawMeta?.runtimeEventKind ?? null,
         completedAt: store.nowIso(),
