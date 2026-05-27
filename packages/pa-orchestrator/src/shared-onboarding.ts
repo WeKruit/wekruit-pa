@@ -14,7 +14,7 @@ export const SHARED_ONBOARDING_EVENT_SOURCE = "shared_onboarding"
 export const SHARED_ONBOARDING_EVENT_KIND = "onboarding_started"
 export const SHARED_ONBOARDING_WORK_SESSION_KIND = "shared_onboarding"
 export const SHARED_ONBOARDING_BOUNDARY = "website_sms_onboarding"
-export const CANDIDATE_PROFILE_URL = "https://candidate.wekruit.com/me/profile"
+export const CANDIDATE_PROFILE_URL = "https://wekruit.com/me/profile"
 
 export type SharedOnboardingQuestionId =
   | "main_goal"

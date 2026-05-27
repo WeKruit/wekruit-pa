@@ -8,6 +8,7 @@ import {
   effectiveOnboardingComposeUserMessage,
   humanizeVisibleInternalTokens,
 } from "../shared-onboarding-outbound.js"
+import { CANDIDATE_PROFILE_URL } from "../shared-onboarding.js"
 
 const agent = { id: "friend", systemPrompt: "You are Claire." } as AgentDef
 
@@ -112,7 +113,7 @@ test("composeSharedOnboardingReply passes synthetic onboarding instruction for g
             "greeting bootstrap should carry opening welcome instructions"
           )
           assert.ok(
-            systemInputs?.some((s) => s.includes("https://candidate.wekruit.com/me/profile")),
+            systemInputs?.some((s) => s.includes(CANDIDATE_PROFILE_URL)),
             "opening welcome should mention the profile update link"
           )
           assert.ok(

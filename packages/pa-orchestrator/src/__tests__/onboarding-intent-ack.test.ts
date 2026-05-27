@@ -832,7 +832,7 @@ test("shared onboarding bootstrap loads parsed resume context before sending Q1"
   assert.match(outbound, /Saw your resume come through/i)
   assert.match(outbound, /Software Engineer - Fullstack/i)
   assert.match(outbound, /Rain/i)
-  assert.match(outbound, /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
+  assert.match(outbound, /https:\/\/wekruit\.com\/me\/profile/i)
 })
 
 test("shared onboarding bootstrap falls back to resume artifact summary when parsed resume pointer is stale", async () => {
@@ -879,7 +879,7 @@ test("shared onboarding bootstrap falls back to resume artifact summary when par
   assert.match(outbound, /Saw your resume come through/i)
   assert.match(outbound, /Software Engineer Intern/i)
   assert.match(outbound, /Tesla Inc/i)
-  assert.match(outbound, /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
+  assert.match(outbound, /https:\/\/wekruit\.com\/me\/profile/i)
 })
 
 test("integration: manual zh job_search before website start is redirected to candidate onboarding", async () => {
@@ -898,7 +898,7 @@ test("integration: manual zh job_search before website start is redirected to ca
   assert.deepEqual(captures.systemInputs, [])
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
   const outbound = joinedOutbound(captures)
-  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
   assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.doesNotMatch(outbound, new RegExp(["what " + "email", "send " + "stuff", "验证码", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.appliedSteps, [])
@@ -919,7 +919,7 @@ test("integration: manual en job_search before website start is redirected to ca
   assert.equal(captures.llmCalls, 0)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
   const outbound = joinedOutbound(captures)
-  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
   assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.doesNotMatch(outbound, new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.systemInputs, [])
@@ -941,7 +941,7 @@ test("integration: manual casual greeting before website start is redirected to 
   assert.equal(captures.llmCalls, 0)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
   const outbound = joinedOutbound(captures)
-  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
   assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.doesNotMatch(outbound, new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.systemInputs, [])
@@ -1033,7 +1033,7 @@ test("integration: intent-ack flag cannot bypass website-start redirect", async 
     assert.equal(captures.llmCalls, 0)
     // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
     const outbound = joinedOutbound(captures)
-    assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/i)
+    assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
     assert.match(outbound, /career growth, compensation, stability, mission, learning/)
     assert.doesNotMatch(outbound, new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   } finally {

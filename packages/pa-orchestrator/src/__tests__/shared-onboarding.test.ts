@@ -124,7 +124,7 @@ test("shared onboarding opening prompt carries Claire persona guidance without c
   assert.match(opener, /Figma/i)
   assert.match(opener, /hiring manager/i)
   assert.match(opener, /Before I match roles/i)
-  assert.match(opener, /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
+  assert.match(opener, /https:\/\/wekruit\.com\/me\/profile/i)
   assert.match(opener, /just tell me here/i)
   assert.match(opener, /career growth, compensation, stability, mission, learning/i)
   assert.doesNotMatch(opener, /I am Claire|How may I assist|software_and_saas|job_title|tech_swe|timeline|dealbreaker/i)

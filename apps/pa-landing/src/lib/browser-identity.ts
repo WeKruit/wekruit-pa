@@ -9,7 +9,7 @@ export const ONBOARDING_INTENT_KEY = "wkr_onboarding_intent"
 export const RETURN_JOB_PATH_KEY = "wkr_return_job_path"
 
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 180
-export const CANDIDATE_ORIGIN = "https://candidate.wekruit.com"
+export const CANDIDATE_ORIGIN = "https://wekruit.com"
 
 function storage(): Storage | null {
   try {

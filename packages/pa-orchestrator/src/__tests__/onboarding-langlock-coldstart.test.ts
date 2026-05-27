@@ -201,7 +201,7 @@ test("coldstart-langlock: ZH user '我想找工作' → website start gate witho
   assert.equal(captures.outboundBodies.length, 2)
   const outbound = joinedOutbound(captures)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
   assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.doesNotMatch(outbound, /email/i)
   assert.deepEqual(captures.systemPrompts, [])
@@ -228,7 +228,7 @@ test("coldstart-langlock: EN user 'I want a job' → website start gate without 
   assert.equal(captures.llmCalls, 0)
   const outbound = joinedOutbound(captures)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
   assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.doesNotMatch(outbound, /email/i)
   assert.deepEqual(captures.systemPrompts, [])
@@ -250,7 +250,7 @@ test("coldstart-langlock: 'swe的' → website start gate, no LLM lang-lock path
   assert.equal(captures.llmCalls, 0)
   const outbound = joinedOutbound(captures)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
   assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.doesNotMatch(outbound, /email/i)
   assert.deepEqual(captures.systemPrompts, [])
@@ -272,7 +272,7 @@ test("coldstart-langlock: 'yoe1年的' → website start gate, no LLM lang-lock 
   assert.equal(captures.llmCalls, 0)
   const outbound = joinedOutbound(captures)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/i)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
   assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.doesNotMatch(outbound, /email/i)
   assert.deepEqual(captures.systemPrompts, [])

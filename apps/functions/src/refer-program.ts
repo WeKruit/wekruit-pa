@@ -285,7 +285,7 @@ export const paReferInviteSend = onCall<InviteSendInput, Promise<InviteSendResul
 
       // Send email
       if (cfg) {
-        const link = `https://candidate.wekruit.com/r/${slug}?ref=${slug}`
+        const link = `https://wekruit.com/r/${slug}?ref=${slug}`
         const subject = `${inviterFirstName} thinks WeKruit could be a fit`
         const text = [
           `Hey —`,

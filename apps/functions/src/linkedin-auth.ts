@@ -16,6 +16,8 @@ const LINKEDIN_USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
 const STATE_MAX_AGE_MS = 10 * 60 * 1000
 
 const ALLOWED_RETURN_TO_ORIGINS = new Set([
+  "https://wekruit.com",
+  "https://www.wekruit.com",
   "https://candidate.wekruit.com",
   "https://pa.wekruit.com",
   "https://layoff.wekruit.com",

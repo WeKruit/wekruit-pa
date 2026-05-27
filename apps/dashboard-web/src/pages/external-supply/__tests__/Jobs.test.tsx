@@ -6,10 +6,10 @@ import {
   deriveJobLifecycleDisplay,
 } from "../Jobs.helpers.js"
 
-test("candidateJobPageUrl points external-supply jobs at candidate.wekruit.com", () => {
+test("candidateJobPageUrl points external-supply jobs at wekruit.com", () => {
   assert.equal(
     candidateJobPageUrl("rain-software-engineer-fullstack-8849f6ef"),
-    "https://candidate.wekruit.com/j/rain-software-engineer-fullstack-8849f6ef",
+    "https://wekruit.com/j/rain-software-engineer-fullstack-8849f6ef",
   )
 })
 
@@ -24,7 +24,7 @@ test("deriveJobLifecycleDisplay only exposes live candidate link for published p
     {
       pageLabel: "Live candidate page",
       pageTone: "public",
-      candidateHref: "https://candidate.wekruit.com/j/job-live",
+      candidateHref: "https://wekruit.com/j/job-live",
       collaborationLabel: "WeKruit collaborated",
     },
   )
