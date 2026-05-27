@@ -2788,8 +2788,10 @@ function detectJobRecommendationSubscriptionCancel(text: string): boolean {
 function detectJobRecommendationSubscriptionResume(text: string): boolean {
   const normalized = text.trim().toLowerCase()
   if (!normalized) return false
-  return /\b(?:restart|resume|start|subscribe|resubscribe|unpause|turn on|turn back on)\b[^.!?]{0,80}\b(?:job|jobs|role|roles|match|matches|matching|recommendation|recommendations|recs|daily|texts|outreach)\b/i.test(normalized) ||
-    /\b(?:job|jobs|role|roles|match|matches|matching|recommendation|recommendations|recs|daily|texts|outreach)\b[^.!?]{0,80}\b(?:restart|resume|start|subscribe|resubscribe|unpause|turn on|turn back on)\b/i.test(normalized)
+  const resumeVerb = String.raw`(?:restart|resume|subscribe|resubscribe|unpause|turn on|turn back on)`
+  const recNoun = String.raw`(?:job|jobs|role|roles|match|matches|matching|recommendation|recommendations|recs|daily|texts|outreach)`
+  return new RegExp(String.raw`\b${resumeVerb}\b[^.!?]{0,80}\b${recNoun}\b`, "i").test(normalized) ||
+    new RegExp(String.raw`\b${recNoun}\b[^.!?]{0,80}\b${resumeVerb}\b`, "i").test(normalized)
 }
 
 function parseSharedQuestionId(value: unknown): SharedOnboardingQuestionId {
