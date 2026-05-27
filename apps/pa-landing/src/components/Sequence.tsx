@@ -15,41 +15,9 @@
  * Styles ship in src/styles/wekruit-pages.css (imported by main.tsx) under
  * the .seq-* / .wk-aud-* prefixes.
  */
-import { Link, useLocation, useNavigate } from "react-router-dom"
+import { Link } from "react-router-dom"
 import { PulseDot } from "../pages/CandidateLogin.js"
-
-// ────────────────────────────────────────────────────────────────────────────
-// AudienceToggle — pill that flips between candidate landing (/) and
-// employer landing (/employers). Active state derived from the route.
-// ────────────────────────────────────────────────────────────────────────────
-
-export function AudienceToggle() {
-  const { pathname } = useLocation()
-  const navigate = useNavigate()
-  const isEmployer = pathname.startsWith("/employers")
-  return (
-    <div className="wk-aud" role="tablist" aria-label="Audience">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={!isEmployer}
-        className={`wk-aud__tab${!isEmployer ? " is-active" : ""}`}
-        onClick={() => navigate("/")}
-      >
-        For candidates
-      </button>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={isEmployer}
-        className={`wk-aud__tab${isEmployer ? " is-active" : ""}`}
-        onClick={() => navigate("/employers")}
-      >
-        For companies
-      </button>
-    </div>
-  )
-}
+export { AudienceToggle } from "./AudienceToggle.js"
 
 // ────────────────────────────────────────────────────────────────────────────
 // SeqGlyph — tiny 14px inline SVG icon set used by the headline verb pill.

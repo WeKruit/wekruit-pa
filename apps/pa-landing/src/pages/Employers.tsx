@@ -26,7 +26,7 @@ import {
   PulseDot,
   WekruitLogo,
 } from "./CandidateLogin.js"
-import { AudienceToggle } from "../components/Sequence.js"
+import { AudienceToggle } from "../components/AudienceToggle.js"
 import { EmployerSequence } from "../components/Sequence.js"
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -201,7 +201,7 @@ function EmployerShell({ children, signedIn = false }: { children: ReactNode; si
           <Link to="/employers" className="wk-header__brand" aria-label="WeKruit Employers">
             <WekruitLogo size={22} />
           </Link>
-          <AudienceToggle />
+          {signedIn ? null : <AudienceToggle />}
           <nav className="wk-nav" aria-label="Employer navigation">
             <Link to="/employers" className="wk-nav__link">How it works</Link>
             <Link to="/employers/inbox" className="wk-nav__link">Inbox preview</Link>
