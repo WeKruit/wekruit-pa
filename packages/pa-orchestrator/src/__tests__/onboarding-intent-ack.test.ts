@@ -651,12 +651,12 @@ test("shared onboarding Q5 timing answer is not mistaken for subscription resume
     workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "special_context" },
     sharedOnboarding: { status: "active", currentQuestionId: "special_context", completed: false },
   })
-  const recCalls: string[] = []
+  const recCalls: Array<{ userId: string; opts?: { force?: boolean; requestedCount?: number; allowBroadFallback?: boolean } }> = []
   const store = makeOnboardingCapturesStore(captures, "pending") as OrchestratorStore
   store.db = db
   store.getOnboardingUser = async () => docs.get("pa-users/u-onb") as Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
-  store.generateJobRecs = async (userId) => {
-    recCalls.push(userId)
+  store.generateJobRecs = async (userId, _lang, opts) => {
+    recCalls.push({ userId, opts })
     return {
       message:
         "One role worth your time: Product Engineer @ Example.\nhttps://example.com/a\nrequirements: product-heavy\nwhy: fits your product-heavy preference",
@@ -676,9 +676,60 @@ test("shared onboarding Q5 timing answer is not mistaken for subscription resume
     store,
   )
 
-  assert.deepEqual(recCalls, ["u-onb"])
+  assert.deepEqual(recCalls, [
+    { userId: "u-onb", opts: { force: true, requestedCount: 2, allowBroadFallback: false } },
+  ])
+  const user = docs.get("pa-users/u-onb")
+  const shared = user?.sharedOnboarding as Record<string, unknown>
+  const answers = shared.answers as Record<string, { answer?: string }>
+  assert.equal(user?.onboardingState, "complete")
+  assert.equal(shared.status, "complete")
+  assert.equal(answers.special_context?.answer, "No hard constraints. I can start in 2-4 weeks; prefer product-heavy roles.")
   assert.doesNotMatch(captures.outboundBodies[0] ?? "", /job recommendations are back on/i)
   assert.match(captures.outboundBodies[0] ?? "", /scanning|checking|Product Engineer @ Example/i)
+})
+
+test("shared onboarding Q5 no-match path stores the answer and keeps the reply contextual", async () => {
+  const captures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  const { db, store: docs } = fakeFirestore()
+  docs.set("pa-users/u-onb", {
+    id: "u-onb",
+    phoneE164: "+19999991000",
+    onboardingState: "pending",
+    workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "special_context" },
+    sharedOnboarding: { status: "active", currentQuestionId: "special_context", completed: false },
+  })
+  const store = makeOnboardingCapturesStore(captures, "pending") as OrchestratorStore
+  store.db = db
+  store.getOnboardingUser = async () => docs.get("pa-users/u-onb") as Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+  store.generateJobRecs = async () => ({ message: "", recCount: 0 })
+
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "evt-shared-q5-no-match-context",
+      body: "No hard constraints. I can start in 2-4 weeks and want product-heavy roles.",
+    },
+    store,
+  )
+
+  const user = docs.get("pa-users/u-onb")
+  const shared = user?.sharedOnboarding as Record<string, unknown>
+  const answers = shared.answers as Record<string, { answer?: string }>
+  const trace = docs.get(`${PA_COLLECTIONS.turnTraces}/turn-onb`) as Record<string, unknown>
+
+  assert.equal(answers.special_context?.answer, "No hard constraints. I can start in 2-4 weeks and want product-heavy roles.")
+  assert.equal(shared.status, "complete")
+  assert.equal(trace.status, "completed")
+  assert.equal((trace.decision as { selectedOwner?: string })?.selectedOwner, "shared_onboarding")
+  assert.match(captures.outboundBodies[0] ?? "", /product-heavy roles/i)
+  assert.match(captures.outboundBodies[0] ?? "", /2-4 week start/i)
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /could not pull fresh roles|fresh roles right now|job recommendations are back on/i)
 })
 
 test("shared onboarding rejects duplicate greeting on Q1 without recording an answer", async () => {
