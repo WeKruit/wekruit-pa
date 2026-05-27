@@ -1670,6 +1670,45 @@ test("processInboundEvent privacy: fuzzy data/memory question gets deterministic
   assert.doesNotMatch(outbound, /我记得这些/)
 })
 
+test("processInboundEvent answers saved job preference summary from shared onboarding state", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+      sharedOnboarding: {
+        status: "complete",
+        completed: true,
+        answers: {
+          main_goal: { answer: "Learning and career growth matter most." },
+          culture_stage: { answer: "Early startup or scale-up, high ownership, but not chaotic." },
+          industry_interest: { answer: "AI tools, devtools and fintech; avoid adtech and crypto." },
+          location_relocation: { answer: "SF or remote works best; NYC is okay but no other relocation." },
+          special_context: { answer: "No hard constraints. I can start in 2-4 weeks and want product-heavy roles." },
+        },
+      },
+    }),
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({
+    ...baseEvent,
+    body: "hat did you save about my job preferences",
+  }, store)
+  assert.equal(llmCalls, 0)
+  assert.match(outbound, /Here is what I have saved for matching:/)
+  assert.match(outbound, /AI tools, devtools and fintech/)
+  assert.match(outbound, /2-4 weeks/)
+  assert.doesNotMatch(outbound, /roles I just sent/i)
+})
+
 test("processInboundEvent privacy: delete data creates privacy request without LLM", async () => {
   let llmCalls = 0
   let outbound = ""

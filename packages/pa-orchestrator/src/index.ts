@@ -3432,6 +3432,7 @@ async function handleCompletedUserJobSearchRequest(
 
 type PrivacyIntent =
   | { kind: "summary"; includeMemory: boolean }
+  | { kind: "job_preferences_summary" }
   | { kind: "request"; requestKind: PrivacyRequestKind }
 
 function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | null {
@@ -3444,6 +3445,9 @@ function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | n
   const asksData =
     /\b(?:what\s+data|which\s+data|what\s+info|what\s+information|data\s+do\s+you\s+store|store\s+about\s+me|saved\s+about\s+me)\b/i.test(body) ||
     /(?:什么数据|哪些数据|保存.*我|存.*我)/.test(body)
+  const asksSavedJobPreferences =
+    /\b(?:w?hat|which|show|remind|tell)\b[\s\S]{0,40}\b(?:save|saved|store|stored|remember|remembered|have)\b[\s\S]{0,80}\b(?:job\s+)?(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b/i.test(body) ||
+    /\b(?:job\s+)?(?:preferences?|prefs)\b[\s\S]{0,50}\b(?:save|saved|store|stored|remember|remembered|have)\b/i.test(body)
   if (
     /\b(?:delete|erase|remove)\s+(?:all\s+)?(?:my\s+)?(?:data|profile|information|account)\b/i.test(body) ||
     /(?:删除|清除|抹掉).*(?:数据|资料|档案|账号|账户)/.test(body)
@@ -3462,6 +3466,9 @@ function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | n
   ) {
     return { kind: "request", requestKind: "stop_outreach" }
   }
+  if (asksSavedJobPreferences) {
+    return { kind: "job_preferences_summary" }
+  }
   if (asksData || asksMemory || lower.includes("privacy")) {
     return { kind: "summary", includeMemory: asksMemory }
   }
@@ -3476,6 +3483,12 @@ async function handlePrivacyIntent(
 ): Promise<boolean> {
   const lang = detectUserLang(event.body) === "zh" ? "zh" : "en"
   await store.updateTurn(turnId, { stage: "privacy_intent", updatedAt: store.nowIso() })
+
+  if (intent.kind === "job_preferences_summary") {
+    const onboardingUser = store.getOnboardingUser ? await store.getOnboardingUser(event.userId) : null
+    await sendMemoryReply(store, event, turnId, composeSavedJobPreferencesReply(onboardingUser, lang))
+    return true
+  }
 
   if (intent.kind === "summary") {
     const lines =
@@ -3527,6 +3540,64 @@ async function handlePrivacyIntent(
       : `Got it. I submitted a ${kindCopy[result.kind]} request.${result.existingOpen ? " You already had one open, so I did not create a duplicate." : " We will review it from the privacy queue and keep an audit trail."}`
   await sendMemoryReply(store, event, turnId, reply)
   return true
+}
+
+function composeSavedJobPreferencesReply(
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  lang: "en" | "zh",
+): string {
+  const user = onboardingUser && typeof onboardingUser === "object"
+    ? onboardingUser as { sharedOnboarding?: { answers?: Record<string, { answer?: unknown }> }; statedPreferences?: Record<string, unknown> }
+    : null
+  const shared = user?.sharedOnboarding?.answers ?? {}
+  const lines: string[] = []
+
+  const addAnswer = (label: string, key: string) => {
+    const value = shared[key]?.answer
+    if (typeof value === "string" && value.trim()) lines.push(`${label}: ${value.trim()}`)
+  }
+  addAnswer("Goals", "main_goal")
+  addAnswer("Company", "culture_stage")
+  addAnswer("Industries", "industry_interest")
+  addAnswer("Location", "location_relocation")
+  addAnswer("Context", "special_context")
+
+  if (lines.length === 0 && user?.statedPreferences && typeof user.statedPreferences === "object") {
+    const prefs = user.statedPreferences
+    const readable = [
+      formatSavedPreferenceValue("roles", prefs.targetRole),
+      formatSavedPreferenceValue("goals", prefs.nextCompanyGoals),
+      formatSavedPreferenceValue("company stage", prefs.companySize),
+      formatSavedPreferenceValue("industries", prefs.industrySector),
+      formatSavedPreferenceValue("locations", prefs.targetLocations),
+      formatSavedPreferenceValue("context", prefs.specialContext),
+    ].filter((value): value is string => Boolean(value))
+    lines.push(...readable)
+  }
+
+  if (lines.length === 0) {
+    return lang === "zh"
+      ? "我现在还没有足够明确的求职偏好。你可以直接告诉我目标角色、地点、行业、薪资或不能接受的点。"
+      : "I do not have much saved yet: tell me target roles, locations, industries, comp, or dealbreakers and I will use that for matching."
+  }
+
+  const summary = lines
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n")
+  return lang === "zh"
+    ? `我现在用于匹配的是：\n${summary}`
+    : `Here is what I have saved for matching:\n${summary}`
+}
+
+function formatSavedPreferenceValue(label: string, value: unknown): string | null {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => String(item).replace(/_/g, " ")).filter(Boolean)
+    return items.length > 0 ? `${label}: ${items.join(", ")}` : null
+  }
+  if (typeof value === "string" && value.trim()) return `${label}: ${value.replace(/_/g, " ")}`
+  if (typeof value === "number" || typeof value === "boolean") return `${label}: ${String(value)}`
+  return null
 }
 
 async function handleMemoryCommand(
