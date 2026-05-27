@@ -378,7 +378,7 @@ export function CandidateShell({
               <WekruitLogo size={22} />
             </Link>
             <nav className="wk-appnav" aria-label="App navigation">
-              <AppNavLink to="/me">Pipeline</AppNavLink>
+              <AppNavLink to="/me">My WeKruit</AppNavLink>
               <AppNavLink to="/me/profile">Profile</AppNavLink>
               <AppNavLink to="/me/refer">Refer · $4k</AppNavLink>
               <AppNavLink to="/market">Market</AppNavLink>
@@ -411,7 +411,7 @@ export function CandidateShell({
           <nav className="wk-nav" aria-label="Candidate navigation">
             <HowItWorksLink />
             <Link to="/refer" className="wk-nav__link">Earn $4k</Link>
-            <Link to="/me" className="wk-nav__link">Pipeline</Link>
+            <Link to="/me" className="wk-nav__link">My WeKruit</Link>
           </nav>
           <div className="wk-header__cta">
             <Link to="/login" className="wk-header__signin">Sign in</Link>
