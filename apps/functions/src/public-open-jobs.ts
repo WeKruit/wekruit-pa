@@ -827,6 +827,27 @@ export const paPublicOpenJobs = onRequest(
         const auth = verifyCollabAuth(apiKey, origin, keysCsv, originsCsv)
         if (!auth.ok) {
           const status = auth.reason === "origin_not_allowed" ? 403 : 401
+          // Never cache auth failures — partner may have just been issued a
+          // key, or just fixed a typo, and a CDN-cached 401 stalls them out
+          // for 5 minutes against the same query.
+          res.set("Cache-Control", "no-store")
+          // Diagnostic fingerprint for debugging client-side auth issues
+          // without leaking the full key. Logs the byte length, first 4 +
+          // last 4 chars, source (header vs query), and presence of common
+          // mangling signatures (whitespace, "Bearer " prefix).
+          const fp =
+            apiKey === undefined
+              ? "absent"
+              : `len=${apiKey.length} head=${apiKey.slice(0, 4)} tail=${apiKey.slice(-4)} ws=${/\s/.test(apiKey) ? "yes" : "no"} bearer=${apiKey.startsWith("Bearer ") ? "yes" : "no"}`
+          const src =
+            typeof req.query.apiKey === "string"
+              ? "query"
+              : typeof req.headers["x-wekruit-api-key"] === "string"
+                ? "header"
+                : "none"
+          console.warn(
+            `paPublicOpenJobs auth_fail reason=${auth.reason} src=${src} key_fp=${fp} origin=${origin ?? "absent"}`
+          )
           res.status(status).json({ ok: false, reason: auth.reason })
           return
         }
