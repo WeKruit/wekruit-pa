@@ -727,6 +727,22 @@ function isJobOrCompanyInfoRequest(reply: string): boolean {
   return /\b(?:company|employer|hiring\s+manager|team|role|job|position|interviewing\s+for|interviewed\s+for|screening\s+for|screened\s+for)\b/i.test(body)
 }
 
+function isPrescreenOutcomeExplanationRequest(reply: string): boolean {
+  const body = reply.trim()
+  if (!body) return false
+  const asksQuestion =
+    /[?？]/.test(body) ||
+    /\b(?:why|how|what|could\s+you|can\s+you|help\s+me|understand|explain|tell\s+me)\b/i.test(body) ||
+    /(?:为什么|为啥|怎么|哪里|解释|复盘|改进)/.test(body)
+  if (!asksQuestion) return false
+  const wantsOutcomeReason =
+    /\b(?:improv(?:e|ed|ing|ement)|better|stronger|strengthen|missing|gap|weak|low|pass|fail|failed|pause|paused|not\s+(?:a\s+)?fit|not\s+pass|didn'?t\s+pass|could\s+have)\b/i.test(body) ||
+    /(?:改进|提高|提升|匹配|不匹配|差距|缺口|没过|没通过|暂停|原因)/.test(body)
+  if (!wantsOutcomeReason) return false
+  return /\b(?:above|this|that|same|role|job|screen|interview|prescreen|pre-screen|rain|fit)\b/i.test(body) ||
+    /(?:这个|那个|岗位|职位|面试|初筛|筛选|匹配)/.test(body)
+}
+
 function isJobRecommendationExplanationRequest(reply: string): boolean {
   const body = reply.trim()
   if (!body) return false
@@ -755,6 +771,7 @@ function isJobRecommendationExplanationRequest(reply: string): boolean {
 }
 
 function isExplicitNewIntentAfterTerminal(reply: string): boolean {
+  if (isPrescreenOutcomeExplanationRequest(reply)) return false
   return isJobRecommendationExplanationRequest(reply) || isJobSearchRequest(reply) || isJobOrCompanyInfoRequest(reply)
 }
 
@@ -808,6 +825,7 @@ async function shouldHandleRecentTerminalSession(args: {
       error: err instanceof Error ? err.message : String(err),
     })
   }
+  if (isPrescreenOutcomeExplanationRequest(args.replyText)) return true
   if (hasActiveUserPostMatchRetention(user)) {
     args.log("prescreen.turn.recent_terminal_guard_yielded_to_post_match_retention", {
       userId: args.userId,
@@ -843,13 +861,19 @@ export async function runPrescreenTurnIfActive(
   const log = args.log ?? (() => {})
   const sendSms = args.sendSms ?? sendRuntimeApprovedIMessage
   const terminalAction = args.runTerminalAction ?? runPrescreenTerminalAction
-  if (await isLayoffIntakeActiveForUser(args.db, args.userId)) {
+  const intakeActive = await isLayoffIntakeActiveForUser(args.db, args.userId)
+  const wantsOutcomeExplanation = isPrescreenOutcomeExplanationRequest(args.replyText)
+  if (intakeActive && !wantsOutcomeExplanation) {
     log("prescreen.turn.yielded_to_layoff_onboarding", { userId: args.userId })
     return { handled: false }
   }
   let lookup = await findActiveSession(args.db, args.userId, { log })
   if (lookup.kind === "none") {
     lookup = await findRecentTerminalSession(args.db, args.userId, { log })
+  }
+  if (intakeActive && lookup.kind !== "recent_terminal") {
+    log("prescreen.turn.yielded_to_layoff_onboarding", { userId: args.userId })
+    return { handled: false }
   }
   if (lookup.kind === "none") return { handled: false }
 
@@ -900,6 +924,39 @@ export async function runPrescreenTurnIfActive(
       })
       await sessionRef.set({ reviewPendingFollowupAt: nowIso, updatedAt: nowIso }, { merge: true })
       log("prescreen.turn.recent_terminal_pending_review_ack_sent", {
+        sessionId: lookup.sessionId,
+        userId: args.userId,
+        terminal: lookup.terminal,
+      })
+      return {
+        handled: true,
+        sessionId: lookup.sessionId,
+        terminal: lookup.terminal,
+        textSent: text,
+      }
+    }
+    if (isPrescreenOutcomeExplanationRequest(args.replyText)) {
+      const text = recentTerminalOutcomeExplanationText(args.lang ?? "en", lookup.terminal, sessData)
+      await sessionRef.collection("turns").add({
+        qId: "terminal",
+        reply: args.replyText,
+        action: {
+          kind: "post_terminal_outcome_explanation",
+          terminal: lookup.terminal,
+          reason: "candidate_requested_fit_feedback",
+        },
+        ts: nowIso,
+      })
+      await sendSms({
+        to: args.toE164,
+        content: text,
+        userId: args.userId,
+        db: args.db,
+        runtimeSource: "pa_prescreen_runtime",
+        idempotencyKey: `prescreen_outcome_explanation:${lookup.sessionId}:${stablePrescreenSendKey(args.replyText, text)}`,
+      })
+      await sessionRef.set({ outcomeExplanationFollowupAt: nowIso, updatedAt: nowIso }, { merge: true })
+      log("prescreen.turn.recent_terminal_outcome_explanation_sent", {
         sessionId: lookup.sessionId,
         userId: args.userId,
         terminal: lookup.terminal,
@@ -1357,4 +1414,107 @@ function recentTerminalCourtesyAckText(lang: "zh" | "en"): string {
   return lang === "zh"
     ? "不客气 — 这个岗位 screen 我先保持结束状态。之后需要什么，直接在这里发我就行。"
     : "You're welcome — I’ll keep this role screen closed. If you need anything later, message me here."
+}
+
+function recentTerminalOutcomeExplanationText(
+  lang: "zh" | "en",
+  terminal: string | null | undefined,
+  session: Record<string, unknown>,
+): string {
+  const cfg = session.cfgSnapshot && typeof session.cfgSnapshot === "object"
+    ? session.cfgSnapshot as Record<string, unknown>
+    : {}
+  const jobTitle = cleanOutcomeText(cfg.jobTitle, 80) ?? "this role"
+  const company = cleanOutcomeText(cfg.company, 80)
+  const roleLabel = company ? `${jobTitle} at ${company}` : jobTitle
+  const strongest = strongestPrescreenSignal(session)
+  const weakest = weakestPrescreenSignal(session)
+  const terminalLabel = terminal === "PASS" ? "passed" : terminal === "PAUSE" ? "paused" : "ended"
+
+  if (lang === "zh") {
+    const strongText = strongest
+      ? `你最强的信号是 ${strongest.label}${strongest.summary ? `：${strongest.summary}` : ""}。`
+      : ""
+    const weakText = weakest
+      ? `这次主要差距在 ${weakest.label}${weakest.summary ? `：${weakest.summary}` : ""}。`
+      : "这次主要差距是证据还不够具体。"
+    return `${roleLabel} 这次 screen 已经${terminalLabel === "passed" ? "通过" : "结束"}。${strongText}${weakText} 下次要提高匹配度，直接给一个更具体的例子：你亲自负责什么、做了哪些实现或取舍、怎么验证有效、结果是什么。我会保留这些补充用于之后更合适的岗位。`
+  }
+
+  const strongText = strongest
+    ? `Your strongest signal was ${strongest.label}${strongest.summary ? `: ${strongest.summary}` : ""}. `
+    : ""
+  const weakText = weakest
+    ? `The main gap was ${weakest.label}${weakest.summary ? `: ${weakest.summary}` : ""}. `
+    : "The main gap was that the evidence stayed too general. "
+  return `For ${roleLabel}, this screen is ${terminalLabel}. ${strongText}${weakText}To improve fit next time, give one concrete example with what you personally owned, the implementation or tradeoff you handled, how you validated it, and the result. I’ll keep using what you shared for better-aligned roles.`
+}
+
+function cleanOutcomeText(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null
+  const clean = value.replace(/\s+/g, " ").trim()
+  return clean ? clean.slice(0, max) : null
+}
+
+function prescreenQuestionLabel(qId: string): string {
+  return qId
+    .replace(/_/g, " ")
+    .trim()
+}
+
+function cleanOutcomeSummary(value: unknown, max: number): string | null {
+  return cleanOutcomeText(value, max)?.replace(/[.。]+$/g, "") ?? null
+}
+
+function prescreenSignalRows(session: Record<string, unknown>): Array<{
+  qId: string
+  label: string
+  score: number
+  confidence: number
+  summary: string | null
+}> {
+  const questions = session.questions && typeof session.questions === "object"
+    ? session.questions as Record<string, unknown>
+    : {}
+  const rows: Array<{ qId: string; label: string; score: number; confidence: number; summary: string | null }> = []
+  for (const [qId, raw] of Object.entries(questions)) {
+    if (!raw || typeof raw !== "object") continue
+    const q = raw as Record<string, unknown>
+    const scored = q.scored && typeof q.scored === "object" ? q.scored as Record<string, unknown> : null
+    const aggregate = scored?.aggregate && typeof scored.aggregate === "object"
+      ? scored.aggregate as Record<string, unknown>
+      : null
+    const score = typeof q.finalS === "number"
+      ? q.finalS
+      : typeof aggregate?.s === "number"
+        ? aggregate.s
+        : Number.NaN
+    if (!Number.isFinite(score)) continue
+    const confidence = typeof q.finalC === "number"
+      ? q.finalC
+      : typeof aggregate?.c === "number"
+        ? aggregate.c
+        : Number.NaN
+    rows.push({
+      qId,
+      label: prescreenQuestionLabel(qId),
+      score,
+      confidence: Number.isFinite(confidence) ? confidence : 0,
+      summary: cleanOutcomeSummary(aggregate?.summary, 140),
+    })
+  }
+  return rows
+}
+
+function strongestPrescreenSignal(session: Record<string, unknown>) {
+  return prescreenSignalRows(session)
+    .sort((a, b) => b.score - a.score || b.confidence - a.confidence)[0] ?? null
+}
+
+function weakestPrescreenSignal(session: Record<string, unknown>) {
+  return prescreenSignalRows(session)
+    .filter((row) => row.score < 0.8 || row.confidence < 0.7)
+    .sort((a, b) => a.score - b.score || a.confidence - b.confidence)[0] ??
+    prescreenSignalRows(session).sort((a, b) => a.score - b.score || a.confidence - b.confidence)[0] ??
+    null
 }
