@@ -120,6 +120,66 @@ test("handlePostMatchRetentionReply yields explicit saved-preference question", 
   assert.deepEqual(sent, [])
 })
 
+test("handlePostMatchRetentionReply yields matching preference reminder", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-feature-flags/paPostMatchRetentionEnabled",
+      { key: "paPostMatchRetentionEnabled", value: true, type: "bool", scope: "global" },
+    ],
+    [
+      "pa-users/u1",
+      {
+        postMatchRetention: {
+          stage: "await_liked",
+          startedAt: "2026-05-27T23:00:00.000Z",
+          updatedAt: "2026-05-27T23:00:00.000Z",
+          recCount: 2,
+        },
+      },
+    ],
+  ])
+  const db = {
+    collection: (name: string) => ({
+      doc: (id: string) => ({
+        get: async () => {
+          const data = docs.get(`${name}/${id}`)
+          return { exists: data !== undefined, data: () => data }
+        },
+        set: async (data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+          const key = `${name}/${id}`
+          docs.set(key, opts?.merge ? { ...(docs.get(key) ?? {}), ...data } : data)
+        },
+      }),
+    }),
+  } as never
+  const sent: string[] = []
+  const handled = await handlePostMatchRetentionReply(
+    {
+      id: "e-preference-reminder",
+      userId: "u1",
+      sessionId: "s1",
+      from: "+14243201960",
+      body: "Quick reminder what preferences are you using for matching",
+      channel: "imessage",
+    } as never,
+    {
+      db,
+      nowIso: () => "2026-05-27T23:01:00.000Z",
+      log: () => {},
+      getOnboardingUser: async () => ({ onboardingState: "complete" }),
+      enqueueOutbound: async (_userId, _to, body) => {
+        sent.push(body)
+      },
+      updateTurn: async () => {},
+      markEventSucceeded: async () => {},
+    },
+    "t1"
+  )
+
+  assert.equal(handled, false)
+  assert.deepEqual(sent, [])
+})
+
 test("writePostMatchRetention clears state when null", async () => {
   let payload: unknown
   const db = {
