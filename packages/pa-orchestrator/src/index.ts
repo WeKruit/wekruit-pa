@@ -3550,6 +3550,9 @@ function composeSavedJobPreferencesReply(
     ? onboardingUser as { sharedOnboarding?: { answers?: Record<string, { answer?: unknown }> }; statedPreferences?: Record<string, unknown> }
     : null
   const shared = user?.sharedOnboarding?.answers ?? {}
+  const sharedReply = composeSharedSavedPreferenceReply(shared, lang)
+  if (sharedReply) return sharedReply
+
   const snippets: string[] = []
 
   const addAnswer = (key: string) => {
@@ -3586,6 +3589,81 @@ function composeSavedJobPreferencesReply(
   return lang === "zh"
     ? `我现在会按这些匹配：${summary}。`
     : `I have this saved: ${summary}. I'll use that for matching.`
+}
+
+function composeSharedSavedPreferenceReply(
+  shared: Record<string, { answer?: unknown }>,
+  lang: "en" | "zh",
+): string | null {
+  const textFor = (key: string) => {
+    const value = shared[key]?.answer
+    return typeof value === "string" ? value.replace(/[’]/g, "'").replace(/\s+/g, " ").trim() : ""
+  }
+  const main = textFor("main_goal")
+  const culture = textFor("culture_stage")
+  const industry = textFor("industry_interest")
+  const location = textFor("location_relocation")
+  const context = textFor("special_context")
+  const all = [main, culture, industry, location, context].join(" ")
+  if (!all.trim()) return null
+
+  const primary: string[] = []
+  const constraints: string[] = []
+  const add = (items: string[], value: string) => {
+    if (value && !items.includes(value)) items.push(value)
+  }
+
+  if (/\b(?:learning|career growth|growth)\b/i.test(main)) add(primary, "growth/learning")
+  if (/\b(?:product|strategy|product-heavy)\b/i.test(all)) add(primary, "product/strategy-leaning work")
+  if (/\b(?:early startup|scale[- ]?up|high ownership)\b/i.test(culture)) add(primary, "early/scale-up with ownership")
+  if (/\b(?:ai|devtools?|fintech|financial technology)\b/i.test(industry)) add(primary, "AI/devtools/fintech")
+  if (/\b(?:sf|san francisco|remote)\b/i.test(location)) add(primary, "SF or remote")
+  if (/\b(?:2\s*-\s*4|2\s+to\s+4)\s+weeks?\b/i.test(context)) add(primary, "2-4 week start")
+
+  if (/\b(?:adtech|crypto)\b/i.test(industry)) add(constraints, "avoid adtech/crypto")
+  if (/\b(?:no\s+(?:other\s+)?relocation|don'?t\s+want\s+to\s+relocate|do\s+not\s+want\s+to\s+relocate)\b/i.test(location)) {
+    add(constraints, /\bnyc|new york\b/i.test(location) ? "no relocation outside NYC" : "no relocation")
+  }
+  if (/\bnot chaotic\b/i.test(culture)) add(constraints, "not chaotic")
+
+  if (primary.length === 0) {
+    for (const answer of [main, culture, industry, location, context]) {
+      const compact = compactSavedPreferencePhrase(answer, 56)
+      if (compact) add(primary, compact)
+      if (primary.length >= 4) break
+    }
+  }
+  if (primary.length === 0) return null
+
+  const mainList = joinHumanList(primary.slice(0, 6))
+  const constraintList = joinHumanList(constraints.slice(0, 3))
+  if (lang === "zh") {
+    return constraintList
+      ? `我现在记的是：${mainList}。另外也会避开：${constraintList}。`
+      : `我现在记的是：${mainList}。我会按这个匹配。`
+  }
+  return constraintList
+    ? `I've got: ${mainList}. I also saved ${constraintList}.`
+    : `I've got: ${mainList}. I'll use that for matching.`
+}
+
+function compactSavedPreferencePhrase(value: string, maxLength: number): string | null {
+  const firstClause = value
+    .replace(/[’]/g, "'")
+    .replace(/\s+/g, " ")
+    .split(/[.;。]/)[0]
+    ?.trim()
+  if (!firstClause) return null
+  if (firstClause.length <= maxLength) return firstClause
+  const slice = firstClause.slice(0, maxLength).trimEnd()
+  const lastSpace = slice.lastIndexOf(" ")
+  return (lastSpace > 24 ? slice.slice(0, lastSpace) : slice).trim()
+}
+
+function joinHumanList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? ""
+  if (items.length === 2) return `${items[0]} and ${items[1]}`
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`
 }
 
 function formatSavedPreferenceSnippet(key: string, value: unknown): string | null {
