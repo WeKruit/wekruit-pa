@@ -851,6 +851,114 @@ test("completed user explicit data-role job request keeps stated target role ali
   assert.match(user.conversationDerivedPreferences?.jobSearchProfileUpdates?.last?.summary ?? "", /data analysis/)
 })
 
+test("completed user durable role preference commits before matching and stops the turn", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-users/u1",
+      {
+        tags: { schemaVersion: 1, skills: [], industryEnum: ["tech_software"], targetRoleFunction: ["software_engineering"] },
+        statedPreferences: { targetRole: ["software engineering"] },
+      },
+    ],
+  ])
+  let llmCalls = 0
+  let recCalls = 0
+  const outboundMessages: string[] = []
+  const appendedRoles: string[] = []
+  const turnUpdates: Record<string, unknown>[] = []
+  const store = makeStore({
+    db: makeMapDb(docs),
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+      statedPreferences: { targetRole: ["software engineering"] },
+      tags: { schemaVersion: 1, skills: [], industryEnum: ["tech_software"], targetRoleFunction: ["software_engineering"] },
+    }),
+    generateJobRecs: async () => {
+      recCalls++
+      return { recCount: 1, message: "Software Engineer @ Example" }
+    },
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-call-llm" }
+    },
+    enqueueOutbound: async (_userId, _to, body, input) => {
+      outboundMessages.push(body)
+      assert.equal(input?.role, "assistant")
+    },
+    appendMessage: async (message) => {
+      appendedRoles.push(message.role)
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "I want product strategy roles, not software developer roles.",
+  }, store)
+
+  assert.equal(llmCalls, 0)
+  assert.equal(recCalls, 0)
+  assert.equal(outboundMessages.length, 1)
+  assert.match(outboundMessages[0]!, /product management roles/i)
+  assert.equal(appendedRoles.includes("assistant"), true)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "durable_preference_update"), true)
+  assert.equal(turnUpdates.some((patch) => patch.directIntentProfileUpdated === true), true)
+
+  const user = docs.get("pa-users/u1") as {
+    tags?: { targetRoleFunction?: string[] }
+    statedPreferences?: { targetRole?: string[] }
+    conversationDerivedPreferences?: { jobSearchProfileUpdates?: { last?: { summary?: string } } }
+  }
+  assert.deepEqual(user.tags?.targetRoleFunction, ["product_management"])
+  assert.deepEqual(user.statedPreferences?.targetRole, ["product management"])
+  assert.match(user.conversationDerivedPreferences?.jobSearchProfileUpdates?.last?.summary ?? "", /product management/)
+  assert.equal(docs.has(`${PA_COLLECTIONS.conversationEvidence}/turn1_0_durable_preference`), true)
+})
+
+test("completed user durable role preference is stored before explicit matching runs", async () => {
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-users/u1",
+      {
+        tags: { schemaVersion: 1, skills: [], industryEnum: ["tech_software"], targetRoleFunction: ["software_engineering"] },
+        statedPreferences: { targetRole: ["software engineering"] },
+      },
+    ],
+  ])
+  let recCalls = 0
+  const store = makeStore({
+    db: makeMapDb(docs),
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+      statedPreferences: { targetRole: ["software engineering"] },
+      tags: { schemaVersion: 1, skills: [], industryEnum: ["tech_software"], targetRoleFunction: ["software_engineering"] },
+    }),
+    generateJobRecs: async (_userId, _lang, opts) => {
+      recCalls++
+      const user = docs.get("pa-users/u1") as { tags?: { targetRoleFunction?: string[] } } | undefined
+      assert.deepEqual(user?.tags?.targetRoleFunction, ["product_management"])
+      assert.equal(opts?.force, true)
+      return { recCount: 0, message: "" }
+    },
+    runAgentTurn: async () => {
+      throw new Error("should-not-call-llm")
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Please find product strategy roles, not software developer roles.",
+  }, store)
+
+  assert.equal(recCalls, 1)
+})
+
 test("processInboundEvent passes a Session and systemInputs into the default agent turn", async () => {
   type Captured = {
     session?: unknown

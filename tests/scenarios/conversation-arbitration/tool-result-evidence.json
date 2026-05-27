@@ -21,11 +21,11 @@
     }
   ],
   "expected": {
-    "owner": "fallback_claire",
+    "owner": "explicit_explanation",
     "action": "tool_result_reply",
     "evidenceWriteKinds": ["tool_result"],
     "trace": {
-      "selectedOwner": "fallback_claire"
+      "selectedOwner": "explicit_explanation"
     }
   }
 }

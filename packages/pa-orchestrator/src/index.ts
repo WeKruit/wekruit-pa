@@ -431,6 +431,7 @@ import {
   mapAnswerToVisa,
   mapAnswerToLocations,
   detectLang,
+  type RoleFunction,
 } from "./tags/onboarding-mappers.js"
 // Phase 54 — sole-writer for pa-users.tags Firestore I/O. All onboarding
 // chat hooks, CV ingest, and migration scripts funnel through this module
@@ -931,7 +932,7 @@ type LifecycleEventType =
   | "status_followup"
 
 type LifecycleSearchStatus = "still_looking" | "interviewing" | "paused" | "not_looking"
-type LifecyclePartialTags = PartialUserTags & { targetRoleFunction?: string[] }
+type LifecyclePartialTags = PartialUserTags & { targetRoleFunction?: RoleFunction[] }
 
 type LifecycleProfileUpdate = {
   summary: string
@@ -1132,10 +1133,31 @@ function orderLocationTokensByMention(text: string, tokens: string[]): string[] 
   })
 }
 
+function adjustLifecycleRoleFunctionsForPreferenceText(
+  text: string,
+  roleFunctions: RoleFunction[],
+): RoleFunction[] {
+  const out = new Set<RoleFunction>(roleFunctions)
+  if (/\b(product\s*[/+&]?\s*strategy|product\s+strategy|strategy\s+roles?|product\s+roles?|product\s+management|product\s+manager|\bpm\b)\b/i.test(text)) {
+    out.add("product_management")
+  }
+  if (
+    /\b(no|not|don't|do not|avoid|exclude|stop|without)\b[^.!?]{0,70}\b(software|developer|engineering|engineer|swe)\b/i.test(text) ||
+    /\b(software|developer|engineering|engineer|swe)\b[^.!?]{0,30}\b(no|not|off|wrong|avoid|exclude)\b/i.test(text)
+  ) {
+    out.delete("software_engineering")
+    out.delete("engineering_and_development")
+  }
+  return Array.from(out)
+}
+
 function extractLifecycleProfileUpdate(text: string): LifecycleProfileUpdate | null {
   const trimmed = text.trim()
   if (!trimmed) return null
-  const targetRoleFunction = mapAnswerToRoleFunction(trimmed)
+  const targetRoleFunction = adjustLifecycleRoleFunctionsForPreferenceText(
+    trimmed,
+    mapAnswerToRoleFunction(trimmed),
+  )
   const roleFocus = detectLifecycleRoleFocus(trimmed)
   const yoe = detectRequestedYoeRange(trimmed)
   const targetLocations = orderLocationTokensByMention(trimmed, mapAnswerToLocations(trimmed))
@@ -2402,6 +2424,52 @@ async function handleConversationTapbackOnlyTurn(
     memoryWrites: evidenceWrites.map((write) => write.kind),
     evidenceCommitIds,
     evidenceCommitCount: evidenceCommitIds.length,
+  })
+  await store.markEventSucceeded(event.id)
+  return true
+}
+
+async function handleDurablePreferenceUpdateTurn(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  context: TurnContext,
+  ownerDecision: OwnerDecision,
+  actionDecision: ConversationActionDecision,
+  evidenceWrites: ConversationEvidenceWrite[],
+  evidenceCommitIds: string[] = [],
+): Promise<boolean> {
+  const profileUpdate = extractLifecycleProfileUpdate(event.body)
+  const profileUpdated = await persistJobSearchProfileUpdate(event, store, turnId, profileUpdate)
+  const shouldContinueToSearch = ownerDecision.orderedActions.some((action) => action.kind === "run_job_search")
+
+  await persistConversationTurnTrace(store, event, context, ownerDecision, "completed", actionDecision, evidenceWrites, {
+    outboundSource: shouldContinueToSearch ? "durable_preference_then_search" : "durable_preference_update",
+    memoryWrites: profileUpdated ? ["durable_preference_update"] : evidenceWrites.map((write) => write.kind),
+    evidenceCommitIds,
+    evidenceCommitCount: evidenceCommitIds.length,
+  })
+
+  if (shouldContinueToSearch) {
+    await store.updateTurn(turnId, {
+      stage: "durable_preference_committed",
+      directIntent: "durable_preference_update",
+      directIntentProfileUpdated: profileUpdated,
+      updatedAt: store.nowIso(),
+    })
+    return false
+  }
+
+  const reply = profileUpdate?.ack ?? "Got it - I'll keep future matches aligned with that."
+  await sendMemoryReply(store, event, turnId, reply)
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    completedAt: store.nowIso(),
+    directIntent: "durable_preference_update",
+    directIntentResult: profileUpdated ? "profile_updated" : "evidence_recorded",
+    directIntentProfileUpdated: profileUpdated,
+    conversationAction: actionDecision.selectedAction,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -3801,6 +3869,35 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         )
       ) {
         return
+      }
+      if (
+        conversationOwnerDecision.selectedOwner === "durable_preference_update" &&
+        conversationActionDecision &&
+        await handleDurablePreferenceUpdateTurn(
+          event,
+          store,
+          turnId,
+          conversationTurnContext,
+          conversationOwnerDecision,
+          conversationActionDecision,
+          conversationEvidenceWrites,
+          conversationEvidenceCommitIds,
+        )
+      ) {
+        return
+      }
+      if (
+        conversationOwnerDecision.selectedOwner === "explicit_explanation" &&
+        conversationOwnerDecision.orderedActions.some((action) => action.kind === "commit_memory")
+      ) {
+        const profileUpdate = extractLifecycleProfileUpdate(event.body)
+        const profileUpdated = await persistJobSearchProfileUpdate(event, store, turnId, profileUpdate)
+        await store.updateTurn(turnId, {
+          stage: "explicit_explanation_preference_committed",
+          directIntent: "explicit_explanation",
+          directIntentProfileUpdated: profileUpdated,
+          updatedAt: store.nowIso(),
+        })
       }
     }
 

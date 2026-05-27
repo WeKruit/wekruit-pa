@@ -172,6 +172,30 @@ test("arbiter orders multi-intent prescreen explanation before durable preferenc
   ])
 })
 
+test("arbiter keeps explicit recommendation questions ahead of durable preference commit", () => {
+  const decision = decideConversationTurnOwner(baseContext({
+    inbound: {
+      text: "Why did you recommend the Constant Contact co-op? I prefer early-stage fullstack roles over internships.",
+      createdAt: "2026-05-26T23:08:30.000Z",
+      channel: "imessage",
+    },
+    recentOutbound: [
+      {
+        role: "assistant",
+        body: "One role worth checking: Constant Contact co-op.",
+        createdAt: "2026-05-26T23:08:00.000Z",
+      },
+    ],
+  }))
+
+  assert.equal(decision.selectedOwner, "explicit_explanation")
+  assert.deepEqual(decision.orderedActions.map((action) => action.kind), [
+    "fallback_reply",
+    "extract_durable_preferences",
+    "commit_memory",
+  ])
+})
+
 test("arbiter trace records the state machine and selected owner", () => {
   const decision = decideConversationTurnOwner(baseContext({
     inbound: {
