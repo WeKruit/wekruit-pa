@@ -3,6 +3,8 @@ import ReactDOM from "react-dom/client"
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import "./lib/auth-redirect-bootstrap.js"
+import "./styles/wekruit-tokens.css"
+import "./styles/wekruit-pages.css"
 import Landing from "./pages/Landing.js"
 import LayoffLanding from "./pages/LayoffLanding.js"
 import Legal from "./pages/Legal.js"
@@ -16,6 +18,7 @@ import CompanyProfile from "./pages/CompanyProfile.js"
 import OpenJobs from "./pages/OpenJobs.js"
 import Onboarding from "./pages/Onboarding.js"
 import EmployerSignup from "./pages/EmployerSignup.js"
+import Employers, { EmployersInbox } from "./pages/Employers.js"
 import RecruiterBoard from "./pages/RecruiterBoard.js"
 import RecruiterRole from "./pages/RecruiterRole.js"
 
@@ -78,6 +81,8 @@ const fullRoutes = (
     <Route path="/recruiters/job/:jobId" element={<RecruiterRole />} />
     <Route path="/onboarding" element={<Onboarding />} />
     <Route path="/employer" element={<EmployerSignup />} />
+    <Route path="/employers" element={<Employers />} />
+    <Route path="/employers/inbox" element={<EmployersInbox />} />
     <Route path="*" element={<HomeLanding />} />
   </Routes>
 )
