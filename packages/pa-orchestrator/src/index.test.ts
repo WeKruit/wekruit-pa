@@ -407,8 +407,10 @@ test("processInboundEvent routes short ack during shared onboarding to agentic r
   await processInboundEvent({ ...baseEvent, body: "Sure" }, store)
 
   assert.equal(llmCalls, 1)
-  assert.equal(lastAgentUserMessage, "Sure")
+  assert.match(lastAgentUserMessage, /candidate just replied: "Sure"/i)
+  assert.match(lastAgentUserMessage, /do not restart/i)
   assert.equal(lastAgentSystemInputs.some((input) => input.includes("FRIEND SLANG PALETTE")), false)
+  assert.equal(lastAgentSystemInputs.some((input) => input.includes("Recent SMS transcript")), true)
   assert.match(outbound, /preference piece|what matters most/i)
   assert.equal(reactionCalls, 0)
   const assistantMessage = appendedMessages.find((message) => message.role === "assistant")

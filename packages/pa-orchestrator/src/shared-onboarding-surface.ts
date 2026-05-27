@@ -80,6 +80,13 @@ export function buildOnboardingSurfaceIntent(input: {
     "Preserve the canonical question's topic exactly; do not swap it for a different preference question.",
     "No slang, meme phrases, or performatively casual openers; warm and plain is better.",
   ]
+  if (!input.opening) {
+    invariants.push(
+      "This is a continuation in an existing SMS thread, not a new first message.",
+      "Do not welcome the candidate again, do not introduce Claire again, and do not say their resume came through.",
+      "Use the recent transcript if provided; avoid repeating the previous Claire bubble.",
+    )
+  }
   if (input.tangentDetected) {
     invariants.push(buildTangentSurfaceDirective(lang))
   }
