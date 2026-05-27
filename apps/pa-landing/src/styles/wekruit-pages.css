@@ -1122,6 +1122,44 @@
 .wk-header--emp .wk-header__brand-meta { color: var(--ink-2); }
 .wk-shell--emp-app .wk-header--emp { background: var(--cream); border-bottom: 1px solid var(--border); }
 
+/* Signed-in employer app surface: nav sits next to brand (no auto-margin),
+   avatar floats right. Otherwise inherited `margin-left: auto` on .wk-nav from
+   CANDIDATE_STYLES pushes nav ~770px away from brand with nothing in between
+   (AudienceToggle is hidden in signedIn). */
+.wk-shell--emp-app .wk-header__inner > .wk-nav { margin-left: 0; }
+.wk-shell--emp-app .wk-header__inner > .wk-header__cta { margin-left: auto; }
+.wk-shell--emp-app .wk-header__inner { padding: 12px 24px; }
+/* Subtle "Inbox" context label after the brand mark — anchors the eye and
+   tells the user where they are without an extra row. */
+.wk-shell--emp-app .wk-header__brand::after {
+  content: "Inbox";
+  font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
+  font-style: italic;
+  font-size: 18px;
+  color: var(--ink-3);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  margin-left: 12px;
+  position: relative;
+}
+.wk-shell--emp-app .wk-header__brand::before {
+  content: "·";
+  color: var(--ink-4);
+  margin-left: 12px;
+  font-size: 14px;
+  align-self: center;
+  order: 2;
+}
+/* Reorder so the dot sits between WekruitLogo and "Inbox" */
+.wk-shell--emp-app .wk-header__brand { gap: 0; align-items: baseline; }
+.wk-shell--emp-app .wk-header__brand > .wk-logo { order: 1; }
+.wk-shell--emp-app .wk-header__brand::before { order: 2; }
+.wk-shell--emp-app .wk-header__brand::after { order: 3; }
+
+/* Inbox top bar: title + hint align center so the hint pill's vertical center
+   matches the h1 baseline area better than flex-end did. */
+.wk-emp-inbox__bar-inner { align-items: center; }
+
 .wk-emp-hero {
   background: var(--halo-hero);
   padding: clamp(48px, 8vw, 96px) 0 clamp(72px, 9vw, 120px);
