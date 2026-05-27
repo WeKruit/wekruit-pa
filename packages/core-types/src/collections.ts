@@ -19,6 +19,8 @@ export const PA_COLLECTIONS = {
   turns: "pa-turns",
   /** Upstream conversation-owner arbitration trace for Claire turn routing. */
   turnTraces: "pa-turn-traces",
+  /** First-class committed evidence extracted by the conversation arbiter/action layer. */
+  conversationEvidence: "pa-conversation-evidence",
   /** Memory action audit (remember/forget/list/clear) */
   memoryActions: "pa-memory-actions",
   /** Rolled-up conversation summaries */
