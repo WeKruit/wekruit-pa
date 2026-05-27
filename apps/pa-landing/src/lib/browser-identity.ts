@@ -291,7 +291,13 @@ export function redirectToCandidatePortal(next = "/me"): void {
 
 /** Onboarding path for the current signup source (layoff cookie/query vs candidate). */
 export function onboardingDestination(source: SignupSource = peekSource()): string {
-  return source === "WeKruit_Laid_Off" ? "/onboarding?source=layoff" : "/onboarding"
+  switch (source) {
+    case "WeKruit_Laid_Off":
+      return "/onboarding?source=layoff"
+    case "candidate":
+    case "layoffhedge":
+      return "/onboarding"
+  }
 }
 
 /** Login-first entry for layoff candidate signup (auth on candidate origin). */
