@@ -112,7 +112,7 @@ test("composeSharedOnboardingReply passes synthetic onboarding instruction for g
             "greeting bootstrap should carry opening welcome instructions"
           )
           assert.ok(
-            systemInputs?.some((s) => s.includes("https://candidate.wekruit.com/me/profile")),
+            systemInputs?.some((s) => s.includes("https://wekruit.com/me/profile")),
             "opening welcome should mention the profile update link"
           )
           assert.ok(

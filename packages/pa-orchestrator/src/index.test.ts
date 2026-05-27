@@ -1591,7 +1591,7 @@ test("processInboundEvent onboarding: incomplete SMS onboarding is gated before 
   assert.equal(lifecycleWrites, 0, "active onboarding reply must not be recorded as lifecycle reply")
   assert.equal(onboardingComposeCalls, 0, "shared onboarding bootstrap must own the reply without LLM compose")
   // 2026-05-19 — bootstrap shared_onboarding inline instead of redirecting to web.
-  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/)
   assert.doesNotMatch(outbound, /email/i)
   assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.equal(applied.length, 0)
@@ -1638,7 +1638,7 @@ test("processInboundEvent onboarding: process questions are gated to website sta
   assert.equal(llmCalls, 0)
   assert.equal(applyCalls, 0)
   // 2026-05-19 — bootstrap shared_onboarding Q1 inline instead of redirecting.
-  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/)
   assert.doesNotMatch(outbound, /email/i)
   assert.match(outbound, /career growth, compensation, stability, mission, learning/)
 })
@@ -1680,7 +1680,7 @@ test("processInboundEvent layoff: source-only incomplete layoff users bootstrap 
   assert.equal(llmCalls, 0)
   assert.equal(applyCalls, 0)
   // 2026-05-19 — bootstrap shared_onboarding Q1 inline instead of redirecting.
-  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/)
   assert.doesNotMatch(outbound, /email/i)
   assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.equal(turnUpdates.some((patch) => "onboardingDeterministicAction" in patch), false)
@@ -1745,7 +1745,7 @@ test("processInboundEvent layoff: inbound before shared_onboarding active bootst
   assert.equal(recCalls, 0)
   assert.equal(llmCalls, 0)
   assert.equal(applyCalls, 0)
-  assert.doesNotMatch(outbound, /candidate\.wekruit\.com\/onboarding/)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/)
   assert.doesNotMatch(outbound, /email/i)
   assert.match(outbound, /career growth, compensation, stability, mission, learning/)
   assert.equal(turnUpdates.some((patch) => "onboardingDeterministicAction" in patch), false)

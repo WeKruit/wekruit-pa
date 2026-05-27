@@ -107,7 +107,7 @@ export function buildOnboardingSurfaceIntent(input: {
       "Keep the whole opening plus the main-goal question concise: 2-3 short sentences max.",
       "Mention that Claire connects them directly with the hiring manager when a strong fit appears.",
       "Mention that Claire will ask a few quick questions to tune matches.",
-      "Mention https://candidate.wekruit.com/me/profile and that they can just tell Claire here instead.",
+      "Mention https://wekruit.com/me/profile and that they can just tell Claire here instead.",
       "Do not copy a fixed template; vary the wording while preserving those ingredients.",
       "If profile context is missing, stay natural and do not invent details.",
       )

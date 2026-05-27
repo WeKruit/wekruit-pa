@@ -41,11 +41,11 @@ test("isLayoffHost recognizes layoff Firebase hosting targets", () => {
 test("candidatePortalLoginUrl targets candidate origin for cross-host auth", () => {
   assert.equal(
     candidatePortalLoginUrl("/me"),
-    "https://candidate.wekruit.com/login?next=%2Fme",
+    "https://wekruit.com/login?next=%2Fme",
   )
   assert.equal(
     candidatePortalLoginUrl("/onboarding?source=layoff"),
-    "https://candidate.wekruit.com/login?next=%2Fonboarding%3Fsource%3Dlayoff",
+    "https://wekruit.com/login?next=%2Fonboarding%3Fsource%3Dlayoff",
   )
 })
 
