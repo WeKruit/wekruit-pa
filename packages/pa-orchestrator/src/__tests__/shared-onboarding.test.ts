@@ -46,7 +46,11 @@ test("shared onboarding asks the five conversational questions in launch order",
   ])
   assert.match(getSharedOnboardingQuestion("main_goal").prompt, /career growth, compensation, stability, mission, learning/i)
   assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote, onsite, or relocating/i)
-  assert.match(getSharedOnboardingQuestion("special_context").prompt, /constraints, strengths, dealbreakers, timing/i)
+  assert.match(getSharedOnboardingQuestion("special_context").prompt, /non-negotiables/i)
+  assert.doesNotMatch(
+    getSharedOnboardingQuestion("special_context").prompt,
+    /constraints, strengths, dealbreakers, timing/i,
+  )
   assert.doesNotMatch(
     SHARED_ONBOARDING_QUESTIONS.map((q) => q.prompt).join("\n"),
     /email|e-mail|what email|why are you looking/i,

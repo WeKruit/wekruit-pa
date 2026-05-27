@@ -141,6 +141,13 @@ export function buildOnboardingSurfaceIntent(input: {
       "Good shape: Got it - AI tools/devtools and fintech. Still SF or remote, or any other cities?",
     )
   }
+  if (!input.opening && input.slot === "special_context") {
+    invariants.push(
+      "For extra context before matching, ask for non-negotiables in one short question.",
+      "Do not list categories like constraints, strengths, dealbreakers, timing, and context in the visible SMS.",
+      "Good shape: Got it - SF or remote, NYC okay. Any non-negotiables before I match roles?",
+    )
+  }
 
   // Resume anchor — sexy/personal opener for Q1/Q2 only (Adam 2026-05-19).
   // The LLM is required to use it when present so it cannot regress to a

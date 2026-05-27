@@ -99,8 +99,7 @@ export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = 
   {
     id: "special_context",
     label: "special context",
-    prompt:
-      "Anything special I should know before matching you: constraints, strengths, dealbreakers, timing, or context that is not obvious from your resume?",
+    prompt: "Any non-negotiables I should keep in mind before matching you?",
   },
 ]
 
