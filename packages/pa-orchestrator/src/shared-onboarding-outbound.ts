@@ -370,6 +370,7 @@ function buildSyntheticOnboardingUserInstruction(
       `[ONBOARDING CONTINUATION] The candidate just answered the previous onboarding slot${current ? `: "${quoteForInstruction(current)}"` : "."}`,
       "Continue from the existing SMS thread. Do not restart the conversation, do not welcome them again, do not say their resume came through, and do not introduce Claire again.",
       "Start with one short acknowledgement grounded in that exact answer, then ask the next question.",
+      "Keep the visible SMS short: one acknowledgement clause, then one compact question.",
       `Ask the next ${label} question only after that acknowledgement. Do not extract tags; only compose the SMS.`,
     ].join(" ")
   }

@@ -706,7 +706,7 @@ export function buildSharedOnboardingPrompt(
   if (id === "location_relocation") {
     const location = locationSummary(ctx)
     const lead = location ? `I see ${location}. ` : ""
-    return `${lead}Where do you want to work next, and are you open to remote, onsite, or relocating to another city?`
+    return `${lead}Where should I look next: specific cities, remote, onsite, or open to relocating?`
   }
   return question.prompt
 }

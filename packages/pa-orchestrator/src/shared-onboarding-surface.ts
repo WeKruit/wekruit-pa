@@ -85,6 +85,8 @@ export function buildOnboardingSurfaceIntent(input: {
       "This is a continuation in an existing SMS thread, not a new first message.",
       "Do not welcome the candidate again, do not introduce Claire again, and do not say their resume came through.",
       "Use the recent transcript if provided; avoid repeating the previous Claire bubble.",
+      "Keep continuation replies compact: one short acknowledgement plus one concise question, ideally under 170 characters.",
+      "Ask one question only; compress related choices into a short phrase instead of stacking clauses.",
     )
   }
   if (input.tangentDetected) {
@@ -131,6 +133,12 @@ export function buildOnboardingSurfaceIntent(input: {
     invariants.push(
       `Ack hint: ${input.ackHint}`,
       "Do not ignore the latest candidate answer; reflect one concrete detail from it before the next question.",
+    )
+  }
+  if (!input.opening && input.slot === "location_relocation") {
+    invariants.push(
+      "For location/work style, if the recent transcript already mentions a city or remote preference, ask a short confirmation/update question instead of listing every option.",
+      "Good shape: Got it - AI tools/devtools and fintech. Still SF or remote, or any other cities?",
     )
   }
 

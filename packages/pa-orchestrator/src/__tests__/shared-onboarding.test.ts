@@ -96,7 +96,7 @@ test("shared onboarding prompts ground Q1 and Q4 in resume/profile context when 
 
   const q4 = buildSharedOnboardingPrompt("location_relocation", promptContext)
   assert.match(q4, /New York, NY/i)
-  assert.match(q4, /remote, onsite, or relocating/i)
+  assert.match(q4, /remote, onsite, or open to relocating/i)
 })
 
 test("shared onboarding opening prompt carries Claire persona guidance without changing the opener token", () => {

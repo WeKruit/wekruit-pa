@@ -291,12 +291,19 @@ test("composeSharedOnboardingReply asks next slot with grounded acknowledgement 
     })
 
     assert.match(capturedUserMessage, /Start with one short acknowledgement grounded in that exact answer/i)
+    assert.match(capturedUserMessage, /one acknowledgement clause, then one compact question/i)
     assert.match(capturedUserMessage, /high ownership, but not chaotic/i)
     assert.ok(
       capturedSystemInputs.some((input) =>
         input.includes("reflect one concrete detail from it before the next question")
       ),
       "accepted answer continuation should require a grounded ack before the next slot",
+    )
+    assert.ok(
+      capturedSystemInputs.some((input) =>
+        input.includes("one short acknowledgement plus one concise question")
+      ),
+      "accepted answer continuation should keep SMS compact",
     )
     assert.match(composed.text, /high ownership without chaos/i)
     assert.match(composed.text, /industries|domains/i)

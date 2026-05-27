@@ -145,7 +145,8 @@ async function runConversationJudges({ messages, userId, sinceIso }) {
       id: "answer_first",
       criterion: [
         "If the latest user message before the reply asks a direct question, grade whether the assistant answers that question first.",
-        "If no direct question was asked, pass when the reply acknowledges or continues naturally without pretending a question was asked.",
+        "If no direct question was asked, pass when the reply first acknowledges or naturally reflects the user's statement, then continues the active workflow.",
+        "Do not fail merely because a workflow follow-up question is asked after the acknowledgement.",
       ].join(" "),
     },
   ]
