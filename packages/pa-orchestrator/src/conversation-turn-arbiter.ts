@@ -166,6 +166,7 @@ export function decideConversationTurnOwner(context: TurnContext): OwnerDecision
   }
 
   const hasPrescreenOutcomeQuestion = frames.some((frame) => frame.intent === "prescreen_outcome_question")
+  const hasExplicitMetaQuestion = frames.some((frame) => frame.intent === "explicit_meta_question")
   const hasDurablePreferenceUpdate = frames.some((frame) => frame.intent === "durable_preference_update")
   const hasJobSearchRequest = frames.some((frame) => frame.intent === "job_search_request")
   const hasActiveWorkflowAnswer = frames.some((frame) => frame.intent === "active_workflow_answer")
@@ -198,6 +199,26 @@ export function decideConversationTurnOwner(context: TurnContext): OwnerDecision
           ? [
               { kind: "extract_durable_preferences" as const, owner: "durable_preference_update" as const, reason: "Same turn contains durable preference feedback." },
               { kind: "commit_memory" as const, owner: "durable_preference_update" as const, reason: "Durable preference must be committed before later matching." },
+            ]
+          : []),
+      ],
+    })
+  }
+
+  if (hasExplicitMetaQuestion && !hasJobSearchRequest) {
+    return decision({
+      selectedOwner: "explicit_explanation",
+      rejectedOwners,
+      reason: "User asked an explicit question; answer it before applying durable preference or workflow mutations.",
+      requiredTools,
+      forbiddenMutations,
+      intentFrames: frames,
+      orderedActions: [
+        { kind: "fallback_reply", owner: "explicit_explanation", reason: "Explicit question owns the visible reply." },
+        ...(hasDurablePreferenceUpdate
+          ? [
+              { kind: "extract_durable_preferences" as const, owner: "durable_preference_update" as const, reason: "Same turn contains durable preference feedback." },
+              { kind: "commit_memory" as const, owner: "durable_preference_update" as const, reason: "Durable preference should be committed without swallowing the explicit question." },
             ]
           : []),
       ],
