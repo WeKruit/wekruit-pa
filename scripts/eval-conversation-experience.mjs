@@ -27,7 +27,7 @@ const PA_TOOL_CALLS = "pa-tool-calls"
 const args = parseArgs(process.argv.slice(2))
 if (!args.userId && !args.phone) usage("Provide --user-id <uid> or --phone <e164>.")
 
-loadDotEnv(".env")
+loadDotEnv(process.env.PA_ENV_FILE || ".env")
 const db = getDb()
 const user = args.userId
   ? await loadUserById(db, String(args.userId))
