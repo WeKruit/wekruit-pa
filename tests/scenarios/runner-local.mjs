@@ -152,6 +152,8 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, userSta
   }))
   const outboundBodies = []
   const llmCalls = []
+  const logs = []
+  const reactions = []
   const onboardingHistory = []
   const seededUserState = userState && typeof userState === "object" ? userState : {}
   let onboardingState = seededUserState.onboardingState ?? undefined  // 'undefined' = pending → triggers send_first_mes
@@ -182,6 +184,8 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, userSta
     _captures: {
       outboundBodies,
       llmCalls,
+      logs,
+      reactions,
       systemInputs: [],
       appliedSteps: [],
       safetyBlocks: [],
@@ -221,6 +225,9 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, userSta
     async enqueueOutbound(_uid, _to, body) {
       outboundBodies.push(body)
     },
+    async sendReaction(input) {
+      reactions.push(input)
+    },
 
     async listMemoryFacts() { return [] },
     async createMemoryFact() { return "f-stub" },
@@ -258,6 +265,9 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, userSta
         history: (ctx.history ?? []).map((h) => ({ role: h.role, body: h.body })),
       })
       store._captures.systemInputs.push(ctx.systemInputs ?? [])
+      if (testMode && String(scenarioId ?? "").startsWith("conversation_experience_")) {
+        return { text: deterministicConversationExperienceReply(ctx.userMessage) }
+      }
       // chat.completions path: ctx.history + memoryBlock + systemPrompt.
       // We need to splice systemInputs into systemPrompt because chat.completions
       // path doesn't read systemInputs separately (that's an SDK-only field).
@@ -285,9 +295,17 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, userSta
     },
     async buildTurnTools() { return [] },
     async recordHostedToolCalls() {},
+    async generateJobRecs() {
+      return {
+        recCount: 1,
+        message: "One role worth your time: Product Engineer at Variance. It lines up with your frontend systems background. Want me to check the role-specific fit gates?",
+      }
+    },
 
     nowIso() { return new Date().toISOString() },
-    log() {},
+    log(name, payload) {
+      logs.push({ name, payload: payload ?? {} })
+    },
 
     // Real safety check, but no Firestore writes (we're not recording audit
     // rows — runner is read-only on prod data plane). Mirrors pa-safety's
@@ -350,6 +368,20 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, userSta
   }
 
   return store
+}
+
+function deterministicConversationExperienceReply(userMessage) {
+  const text = String(userMessage ?? "").replace(/\[ISO:[^\]]+\]/g, "").trim()
+  if (/\b(link|url|job post|posting|details)\b/i.test(text)) {
+    return "I can send the link. Before I move it forward, are you comfortable with the role requirements?"
+  }
+  if (/^(yes|yep|yeah|sure|ok|okay)\b/i.test(text)) {
+    return "Got it."
+  }
+  if (/\b(find|show|send|refresh|recommend|match|search|look for|pull)\b/i.test(text)) {
+    return "Got it. I'm checking that against the roles now."
+  }
+  return "Got it."
 }
 
 // ----------------------------------------------------------------------------
@@ -426,6 +458,9 @@ function applyAssertions(turn, reply, context = {}) {
   const a = turn.assert ?? {}
   const failures = []
   const turnPatches = context.turnPatches ?? []
+  const reactions = context.reactions ?? []
+  const replies = context.replies ?? (reply ? [reply] : [])
+  const joinedReplies = replies.join("\n\n")
   if (a.no_reply === true) {
     if (typeof reply === "string" && reply.length > 0) {
       failures.push(`expected no reply, got "${reply.slice(0, 120)}"`)
@@ -446,13 +481,29 @@ function applyAssertions(turn, reply, context = {}) {
       failures.push(`conversationNoOutboundReason did not include ${a.no_outbound_reason}`)
     }
   }
+  if (a.reaction_sent === true && reactions.length === 0) {
+    failures.push("expected a reaction/tapback to be sent")
+  }
   if (a.no_reply === true) return failures
   if (typeof reply !== "string" || reply.length === 0) {
     failures.push("reply was empty or missing")
     return failures
   }
+  if (typeof a.reply_count_min === "number" && replies.length < a.reply_count_min) {
+    failures.push(`reply count ${replies.length} < min ${a.reply_count_min}`)
+  }
   if (a.reply_min_length && reply.length < a.reply_min_length) {
     failures.push(`reply length ${reply.length} < min ${a.reply_min_length}`)
+  }
+  if (Array.isArray(a.joined_reply_contains_any) && a.joined_reply_contains_any.length > 0) {
+    if (!a.joined_reply_contains_any.some((needle) => joinedReplies.includes(needle))) {
+      failures.push(`joined replies do not contain any of [${a.joined_reply_contains_any.join(", ")}]`)
+    }
+  }
+  if (Array.isArray(a.joined_reply_matches_any) && a.joined_reply_matches_any.length > 0) {
+    if (!a.joined_reply_matches_any.some((pattern) => new RegExp(pattern, "iu").test(joinedReplies))) {
+      failures.push(`joined replies do not match any of [${a.joined_reply_matches_any.join(", ")}]`)
+    }
   }
   if (Array.isArray(a.reply_contains_any) && a.reply_contains_any.length > 0) {
     if (!a.reply_contains_any.some((needle) => reply.includes(needle))) {
@@ -520,8 +571,9 @@ async function runScenarioLocal(scenario, opts) {
 
   for (let idx = 0; idx < (scenario.turns ?? []).length; idx++) {
     const turn = scenario.turns[idx]
+    const isConversationExperience = String(scenario.id ?? "").startsWith("conversation_experience_")
     const event = {
-      id: `evt-${randomUUID().slice(0, 8)}`,
+      id: `${isConversationExperience ? "sendblue-" : "evt-"}${randomUUID().slice(0, 8)}`,
       userId,
       sessionId,
       channel: "imessage",
@@ -535,6 +587,7 @@ async function runScenarioLocal(scenario, opts) {
     }
 
     let lastReplyBefore = store._captures.outboundBodies.length
+    const lastReactionBefore = store._captures.reactions.length
     const lastTurnPatchBefore = store._captures.turnPatches.length
     let turnError = null
     try {
@@ -543,9 +596,11 @@ async function runScenarioLocal(scenario, opts) {
       turnError = err instanceof Error ? err.message : String(err)
     }
 
-    const reply = store._captures.outboundBodies[lastReplyBefore] ?? ""
+    const replies = store._captures.outboundBodies.slice(lastReplyBefore)
+    const reply = replies[0] ?? ""
     const turnPatches = store._captures.turnPatches.slice(lastTurnPatchBefore)
-    const baseFailures = turnError ? [`processInboundEvent threw: ${turnError}`] : applyAssertions(turn, reply, { turnPatches })
+    const reactions = store._captures.reactions.slice(lastReactionBefore)
+    const baseFailures = turnError ? [`processInboundEvent threw: ${turnError}`] : applyAssertions(turn, reply, { turnPatches, reactions, replies })
 
     // Judge: only if (a) PA_RUN_EVAL=1, (b) cell is in judge subset, (c)
     // turn has a judge clause, (d) we haven't blown the cost ceiling.
@@ -593,10 +648,14 @@ async function runScenarioLocal(scenario, opts) {
       idx,
       user: turn.user,
       reply,
+      replies,
       pass: turnPass,
       failures: allFailures,
       judgeRecord,
       onboardingStateAfter: store._captures.appliedSteps[store._captures.appliedSteps.length - 1] ?? null,
+      turnPatches,
+      reactions,
+      logs: store._captures.logs.slice(-20),
     })
 
     // Short-circuit on transport error to avoid hammering Qwen with a broken setup.

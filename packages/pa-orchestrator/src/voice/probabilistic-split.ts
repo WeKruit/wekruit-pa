@@ -51,6 +51,7 @@ export type SplitReason =
   | "hotline_trailer_force_1"
   | "mem0_marker_force_1"
   | "job_explanation_force_1"
+  | "answer_then_followup_force_2"
   | "long_high_prob_2"
   | "weighted_random_1"
   | "weighted_random_2"
@@ -290,6 +291,10 @@ function looksLikeMem0DegradedNotice(reply: string): boolean {
   return reply.includes("长期语义记忆暂时不可用")
 }
 
+function looksLikeAnswerThenFollowup(reply: string): boolean {
+  return /\b(before I (?:move|push|send|forward|pass)|before we (?:move|push|send|forward|pass))\b/i.test(reply)
+}
+
 // ---------------------------------------------------------------------------
 // Main entry point
 // ---------------------------------------------------------------------------
@@ -342,6 +347,20 @@ export function decideReplySplit(
     return { count: 1, parts: [reply], reason: "no_split_point" }
   }
 
+  if (looksLikeAnswerThenFollowup(reply)) {
+    const cut = candidates[0]!
+    const partA = reply.slice(0, cut.index).trimEnd()
+    const partB = reply.slice(cut.index).trimStart()
+    if (partA.length > 0 && partB.length > 0) {
+      return {
+        count: 2,
+        parts: [partA, partB],
+        reason: "answer_then_followup_force_2",
+        splitAtIndex: cut.index,
+      }
+    }
+  }
+
   // Probability adjustment: long replies skew toward 2.
   const isLong =
     reply.length > LONG_REPLY_CHAR_THRESHOLD && sentences >= 3
@@ -388,4 +407,5 @@ export const __testing = {
   findSplitCandidates,
   looksLikeHotlineTrailer,
   looksLikeMem0DegradedNotice,
+  looksLikeAnswerThenFollowup,
 }

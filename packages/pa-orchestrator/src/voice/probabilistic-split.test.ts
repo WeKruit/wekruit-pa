@@ -113,6 +113,16 @@ test("seed determinism — same seed + same input → identical decision", () =>
   assert.equal(d1.splitAtIndex, d2.splitAtIndex)
 })
 
+test("answer then follow-up gates split into two readable bubbles", () => {
+  const reply =
+    "I can send the link. Before I move it forward, are you comfortable with the role requirements?"
+  const d = decideReplySplit(reply, { seed: "answer-then-followup-force" })
+  assert.equal(d.count, 2)
+  assert.equal(d.reason, "answer_then_followup_force_2")
+  assert.equal(d.parts[0], "I can send the link.")
+  assert.match(d.parts[1]!, /^Before I move it forward/)
+})
+
 test("no split point in reply → count=1 fallback", () => {
   // Long reply but built as one big run-on with no terminator AND no marker.
   // We use commas only — those are NOT sentence boundaries in our tokenizer.
