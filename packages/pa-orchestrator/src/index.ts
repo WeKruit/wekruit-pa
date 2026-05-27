@@ -2858,6 +2858,7 @@ async function handleSharedOnboardingRuntimeEvent(
   await sendMemoryReply(store, event, turnId, composed.text, {
     deliveryPlan: runtimePlan ?? undefined,
     inboundMessageHandle: inboundMessageHandleForReaction(event),
+    transcriptIdempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", composed.text),
     allowImperfection: false,
   })
   await persistSharedOnboardingSlangPicks({
@@ -2882,6 +2883,44 @@ async function handleSharedOnboardingRuntimeEvent(
 
 function hasObjectKeys(value: Record<string, unknown>): boolean {
   return Object.keys(value).length > 0
+}
+
+type ConversationTraceBundle = {
+  context: TurnContext
+  ownerDecision: OwnerDecision
+  actionDecision?: ConversationActionDecision | null
+  evidenceWrites: ConversationEvidenceWrite[]
+  evidenceCommitIds: string[]
+}
+
+async function persistConversationTraceCompletion(
+  store: OrchestratorStore,
+  event: InboundEvent,
+  bundle: ConversationTraceBundle | undefined,
+  extra: {
+    outboundSource: string
+    memoryWrites?: string[]
+    noOutboundReason?: string | null
+    reactionAttempted?: boolean
+    reactionSent?: boolean
+    reactionSkippedReason?: string | null
+  },
+): Promise<void> {
+  if (!bundle) return
+  await persistConversationTurnTrace(
+    store,
+    event,
+    bundle.context,
+    bundle.ownerDecision,
+    "completed",
+    bundle.actionDecision ?? undefined,
+    bundle.evidenceWrites,
+    {
+      ...extra,
+      evidenceCommitIds: bundle.evidenceCommitIds,
+      evidenceCommitCount: bundle.evidenceCommitIds.length,
+    },
+  )
 }
 
 async function writeSharedOnboardingAnswer(
@@ -2949,6 +2988,7 @@ async function handleSharedOnboardingUserReply(
   store: OrchestratorStore,
   turnId: string,
   onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  traceBundle?: ConversationTraceBundle,
 ): Promise<boolean> {
   if (!onboardingUser || !isSharedOnboardingActiveUser(onboardingUser)) return false
   const questionId = currentSharedOnboardingQuestionId(onboardingUser)
@@ -2973,6 +3013,11 @@ async function handleSharedOnboardingUserReply(
       directIntentResult: "ignored_non_answer",
       sharedOnboardingQuestionId: questionId,
       sharedOnboardingJudgeReason: answerJudge.reason,
+    })
+    await persistConversationTraceCompletion(store, event, traceBundle, {
+      outboundSource: "shared_onboarding_ignored_non_answer",
+      memoryWrites: [],
+      noOutboundReason: "ignored_non_answer",
     })
     await store.markEventSucceeded(event.id)
     return true
@@ -3033,6 +3078,7 @@ async function handleSharedOnboardingUserReply(
     await sendMemoryReply(store, event, turnId, composed.text, {
       deliveryPlan: nextAskPlan ?? undefined,
       inboundMessageHandle: inboundMessageHandleForReaction(event),
+      transcriptIdempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", composed.text),
       allowImperfection: false,
     })
     await persistSharedOnboardingSlangPicks({
@@ -3057,6 +3103,10 @@ async function handleSharedOnboardingUserReply(
             sharedOnboardingJudgeReason: answerJudge.reason,
           }
         : {}),
+    })
+    await persistConversationTraceCompletion(store, event, traceBundle, {
+      outboundSource: "shared_onboarding_next_ask",
+      memoryWrites: traceBundle?.evidenceWrites.map((write) => write.kind) ?? [],
     })
     await store.markEventSucceeded(event.id)
     return true
@@ -3106,6 +3156,10 @@ async function handleSharedOnboardingUserReply(
           sharedOnboardingJudgeReason: answerJudge.reason,
         }
       : {}),
+  })
+  await persistConversationTraceCompletion(store, event, traceBundle, {
+    outboundSource: delivered.recCount > 0 ? "shared_onboarding_job_recs" : "shared_onboarding_saved_without_recs",
+    memoryWrites: traceBundle?.evidenceWrites.map((write) => write.kind) ?? [],
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -3240,6 +3294,7 @@ async function handleSharedOnboardingBootstrap(
   await sendMemoryReply(store, event, turnId, bootstrapComposed.text, {
     deliveryPlan: bootstrapPlan ?? undefined,
     inboundMessageHandle: inboundMessageHandleForReaction(event),
+    transcriptIdempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", bootstrapComposed.text),
     allowImperfection: false,
   })
   await persistSharedOnboardingSlangPicks({
@@ -4063,7 +4118,21 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     if (
       userAuthoredEvent &&
       allowSharedOnboardingUserReply &&
-      await handleSharedOnboardingUserReply(event, store, turnId, onboardingUser)
+      await handleSharedOnboardingUserReply(
+        event,
+        store,
+        turnId,
+        onboardingUser,
+        conversationTurnContext && conversationOwnerDecision
+          ? {
+              context: conversationTurnContext,
+              ownerDecision: conversationOwnerDecision,
+              actionDecision: conversationActionDecision,
+              evidenceWrites: conversationEvidenceWrites,
+              evidenceCommitIds: conversationEvidenceCommitIds,
+            }
+          : undefined,
+      )
     ) {
       return
     }
