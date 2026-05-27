@@ -169,8 +169,13 @@ function idSafe(value: string): string {
 }
 
 function sourceForProfileCreate(uploadSource?: string): PaUserSource {
-  return uploadSource === "layoff_signup" ? "WeKruit_Laid_Off" : "candidate"
+  if (uploadSource === "layoff_signup") return "WeKruit_Laid_Off"
+  if (isPaUserSource(uploadSource)) return uploadSource
+  return "candidate"
 }
+
+/** Internal — exported for unit tests only. Do not call from production code. */
+export const __test_sourceForProfileCreate = sourceForProfileCreate
 
 export function buildCandidateUploadResumeArtifactWrites(input: {
   candidateId: string
