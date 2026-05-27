@@ -59,6 +59,32 @@ test("short acknowledgement after async-search status becomes tapback only with 
   assert.ok(action.noOutboundReason)
 })
 
+test("short acknowledgement after a recommendation becomes tapback only and records interest evidence", () => {
+  const context = baseContext({
+    inbound: {
+      text: "Sure",
+      createdAt: "2026-05-26T23:12:00.000Z",
+      channel: "imessage",
+    },
+    recentOutbound: [
+      {
+        role: "assistant",
+        body: "I found 3 roles that line up with your data analysis lane. See if these fit - if not lmk, I'll keep digging.",
+        createdAt: "2026-05-26T23:11:30.000Z",
+      },
+    ],
+  })
+  const { ownerDecision, action } = decide(context)
+  const writes = buildConversationEvidenceWrites(context, ownerDecision, action)
+
+  assert.equal(ownerDecision.selectedOwner, "fallback_claire")
+  assert.equal(action.selectedAction, "tapback_only")
+  assert.equal(action.deliveryPlan.outboundTextRequired, false)
+  assert.equal(action.deliveryPlan.reaction, "like")
+  assert.equal(action.noOutboundReason, "low_information_ack_after_recommendation")
+  assert.ok(writes.some((write) => write.kind === "job_interest" && write.operation === "append"))
+})
+
 test("link question plus interest answers the explicit question first and stores job interest evidence", () => {
   const context = baseContext({
     inbound: {

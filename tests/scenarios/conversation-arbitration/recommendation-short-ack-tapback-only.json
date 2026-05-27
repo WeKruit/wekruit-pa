@@ -1,0 +1,30 @@
+{
+  "id": "recommendation-short-ack-tapback-only",
+  "description": "A low-information acknowledgment after Claire already sent recommendations should produce a tapback-only action and store job interest evidence.",
+  "initialFirestoreState": {
+    "pa-users/u-rec-ack": {
+      "onboardingState": "complete"
+    }
+  },
+  "inbound": {
+    "userId": "u-rec-ack",
+    "text": "Sure",
+    "createdAt": "2026-05-26T23:12:00.000Z",
+    "channel": "imessage"
+  },
+  "recentOutbound": [
+    {
+      "role": "assistant",
+      "body": "I found 3 roles that line up with your data analysis lane. See if these fit - if not lmk, I'll keep digging.",
+      "createdAt": "2026-05-26T23:11:30.000Z"
+    }
+  ],
+  "expected": {
+    "owner": "fallback_claire",
+    "action": "tapback_only",
+    "evidenceWriteKinds": ["job_interest"],
+    "trace": {
+      "selectedOwner": "fallback_claire"
+    }
+  }
+}
