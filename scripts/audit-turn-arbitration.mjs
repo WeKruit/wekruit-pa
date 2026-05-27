@@ -143,6 +143,8 @@ async function buildContextFromFirestore(db, userId, user, inboundText) {
       ? { kind: "shared_onboarding", status: "active", currentQuestionId: sharedQuestionId }
       : null
   const prescreenEvidence = await loadPrescreenEvidence(db, user, workSession)
+  const recentMessages = await loadRecentConversationMessages(db, userId)
+  const recentOutbound = recentMessages.filter((message) => message.role === "assistant")
   return {
     turnId: "dry-run",
     userId,
@@ -152,8 +154,8 @@ async function buildContextFromFirestore(db, userId, user, inboundText) {
       channel: "imessage",
     },
     activeWorkflow,
-    recentMessages: [],
-    recentOutbound: [],
+    recentMessages,
+    recentOutbound,
     prescreenEvidence,
     sharedOnboarding: {
       active: Boolean(sharedActive),
@@ -268,6 +270,45 @@ async function loadLatestUserMessage(db, userId) {
   return typeof body === "string" ? body : null
 }
 
+async function loadRecentConversationMessages(db, userId) {
+  let snap
+  try {
+    snap = await db
+      .collection(PA_MESSAGES)
+      .where("userId", "==", userId)
+      .orderBy("createdAt", "desc")
+      .limit(80)
+      .get()
+  } catch (err) {
+    if (!String(err instanceof Error ? err.message : err).includes("requires an index")) throw err
+    snap = await db
+      .collection(PA_MESSAGES)
+      .where("userId", "==", userId)
+      .limit(80)
+      .get()
+  }
+  return snap.docs
+    .map((doc) => {
+      const row = doc.data() ?? {}
+      const body = typeof row.body === "string"
+        ? row.body
+        : typeof row.text === "string"
+          ? row.text
+          : ""
+      const role = row.role === "assistant" || row.role === "user" || row.role === "system"
+        ? row.role
+        : undefined
+      return {
+        role,
+        body,
+        createdAt: normalizeCreatedAt(row.createdAt),
+      }
+    })
+    .filter((message) => message.body.trim())
+    .sort((a, b) => createdAtMillis(a.createdAt) - createdAtMillis(b.createdAt))
+    .slice(-16)
+}
+
 function getDb() {
   if (!getApps().length) {
     const jsonEnv = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
@@ -330,6 +371,19 @@ function normalizeE164(value) {
 
 function readObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null
+}
+
+function normalizeCreatedAt(value) {
+  if (value && typeof value.toDate === "function") return value.toDate().toISOString()
+  if (typeof value === "string") return value
+  if (typeof value === "number") return new Date(value).toISOString()
+  return undefined
+}
+
+function createdAtMillis(value) {
+  if (!value) return 0
+  const millis = Date.parse(value)
+  return Number.isFinite(millis) ? millis : 0
 }
 
 function usage(message) {
