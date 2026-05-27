@@ -251,7 +251,7 @@ test("processInboundEvent sends tapback from coalesced rawPayload handle and sup
   const docs = new Map<string, Record<string, unknown>>()
   let llmCalls = 0
   let outboundCount = 0
-  const reactions: Array<{ to: string; messageHandle: string; reaction: string }> = []
+  const reactions: Array<{ to: string; messageHandle: string; reaction: string; userId?: string }> = []
   const turnUpdates: Record<string, unknown>[] = []
   const previousTapbackFlag = process.env.paReactionTapbackEnabled
   process.env.paReactionTapbackEnabled = "true"
@@ -310,6 +310,7 @@ test("processInboundEvent sends tapback from coalesced rawPayload handle and sup
       to: "+13125550123",
       messageHandle: "E8DFB79F-974C-42CE-849B-F2C59C64A28C",
       reaction: "like",
+      userId: "u1",
     },
   ])
   assert.equal(turnUpdates.some((patch) => patch.reactionSent === true), true)
@@ -333,6 +334,87 @@ test("processInboundEvent sends tapback from coalesced rawPayload handle and sup
   assert.equal(trace.reactionAttempted, true)
   assert.equal(trace.reactionSent, true)
   assert.equal(trace.reactionSkippedReason, null)
+})
+
+test("processInboundEvent routes short ack during shared onboarding to agentic reask without tapback or slot mutation", async () => {
+  const docs = new Map<string, Record<string, unknown>>()
+  docs.set("pa-users/u1", {
+    id: "u1",
+    phoneE164: "+13125550123",
+    onboardingState: "pending",
+    workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "main_goal" },
+    sharedOnboarding: {
+      status: "active",
+      currentQuestionId: "main_goal",
+      completed: false,
+      answers: {},
+      promptContext: { firstName: "Adam", recentCompanies: ["Tesla Inc"] },
+    },
+  })
+  let outbound = ""
+  let llmCalls = 0
+  let reactionCalls = 0
+  let lastAgentUserMessage = ""
+  const turnUpdates: Record<string, unknown>[] = []
+  const store = makeStore({
+    db: makeMapDb(docs),
+    getOnboardingUser: async () => docs.get("pa-users/u1") as never,
+    loadHistory: async () => [
+      {
+        id: "assistant-rec-1",
+        userId: "u1",
+        sessionId: "s1",
+        role: "assistant",
+        body: "One role worth your time: Software Engineer at Rain. Tell me if it is interesting, and why or why not.",
+        createdAt: "2026-05-27T15:58:00.000Z",
+      },
+      {
+        id: "assistant-onboarding-1",
+        userId: "u1",
+        sessionId: "s1",
+        role: "assistant",
+        body: "Before I match roles, what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?",
+        createdAt: "2026-05-27T15:59:00.000Z",
+      },
+    ],
+    runAgentTurn: async (input: Parameters<NonNullable<OrchestratorStore["runAgentTurn"]>>[0]) => {
+      llmCalls++
+      lastAgentUserMessage = input.userMessage
+      return { text: "Totally. I still need the preference piece first: what matters most in your next company?" }
+    },
+    enqueueOutbound: async (_userId, _toE164, body) => {
+      outbound = body
+    },
+    sendReaction: async () => {
+      reactionCalls++
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch)
+    },
+  })
+
+  await processInboundEvent({ ...baseEvent, body: "Sure" }, store)
+
+  assert.equal(llmCalls, 1)
+  assert.equal(lastAgentUserMessage, "Sure")
+  assert.match(outbound, /preference piece|what matters most/i)
+  assert.equal(reactionCalls, 0)
+  assert.equal(turnUpdates.some((patch) => patch.directIntentResult === "reasked_question"), true)
+  assert.equal(turnUpdates.some((patch) => patch.sharedOnboardingAnsweredQuestionId === "main_goal"), false)
+  const evidenceRows = [...docs.entries()].filter(([path]) => path.startsWith(`${PA_COLLECTIONS.conversationEvidence}/`))
+  assert.equal(evidenceRows.length, 0)
+
+  const traces = [...docs.entries()].filter(([path]) => path.startsWith(`${PA_COLLECTIONS.turnTraces}/`))
+  assert.equal(traces.length, 1)
+  const completedTrace = traces.map(([, value]) => value).find((value) => value.status === "completed")!
+  assert.equal(
+    completedTrace.decision && typeof completedTrace.decision === "object"
+      ? (completedTrace.decision as { selectedOwner?: string }).selectedOwner
+      : undefined,
+    "shared_onboarding",
+  )
+  assert.equal(completedTrace.outboundSource, "shared_onboarding_reask")
+  assert.deepEqual(completedTrace.evidenceCommitIds, [])
 })
 
 test("createFirestoreOrchestratorStore getOnboardingUser exposes resume context fields", async () => {

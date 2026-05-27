@@ -792,6 +792,7 @@ export type OrchestratorStore = {
     to: string
     messageHandle: string
     reaction: "love" | "like" | "dislike" | "laugh" | "emphasize" | "question"
+    userId?: string
   }) => Promise<void>
 
   /**
@@ -1680,6 +1681,7 @@ async function sendPlannedOutbound(
         to: event.from,
         messageHandle: opts.inboundMessageHandle,
         reaction: plan.tapback,
+        userId: event.userId,
       })
       store.log("pa.outbound.delivery_plan.tapback_sent", {
         userId,
@@ -2412,6 +2414,7 @@ async function handleConversationTapbackOnlyTurn(
         to: event.from,
         messageHandle,
         reaction,
+        userId: event.userId,
       })
       reactionSent = true
     } catch (err) {
@@ -2444,6 +2447,86 @@ async function handleConversationTapbackOnlyTurn(
     reactionSent,
     reactionSkippedReason,
     memoryWrites: evidenceWrites.map((write) => write.kind),
+    evidenceCommitIds,
+    evidenceCommitCount: evidenceCommitIds.length,
+  })
+  await store.markEventSucceeded(event.id)
+  return true
+}
+
+function hasSharedOnboardingAnswerEvidence(writes: ConversationEvidenceWrite[]): boolean {
+  return writes.some((write) => write.kind === "shared_onboarding_answer" && write.operation === "set")
+}
+
+async function handleSharedOnboardingClarificationTurn(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  context: TurnContext,
+  ownerDecision: OwnerDecision,
+  actionDecision: ConversationActionDecision,
+  evidenceWrites: ConversationEvidenceWrite[],
+  evidenceCommitIds: string[] = [],
+): Promise<boolean> {
+  if (!onboardingUser || !isSharedOnboardingActiveUser(onboardingUser)) return false
+  if (hasSharedOnboardingAnswerEvidence(evidenceWrites)) return false
+  if (!ownerDecision.orderedActions.some((action) => action.kind === "clarify_shared_onboarding")) return false
+
+  const questionId = currentSharedOnboardingQuestionId(onboardingUser)
+  if (!questionId) return false
+
+  const promptContext = sharedPromptContextFrom(onboardingUser)
+  const agent = await requireAgentForUser(store, event.userId)
+  const priorSlangPicks = extractRecentSlangPicks(onboardingUser as { sharedOnboarding?: Record<string, unknown> | null } | null)
+  const composed = await composeSharedOnboardingReply({
+    store: sharedOnboardingOutboundSlice(store),
+    userId: event.userId,
+    sessionId: event.sessionId,
+    turnId,
+    slot: questionId,
+    mode: "reask",
+    promptContext,
+    userMessage: event.body,
+    composeContext: buildSharedOnboardingComposeContext({
+      inboundKind: "user_answer",
+      routerResult: "reasked_question",
+      slot: questionId,
+      mode: "reask",
+      userMessage: event.body,
+    }),
+    agent,
+    reaskReason: "unclear",
+    forceAgentic: true,
+    inboundMessageHandle: inboundMessageHandleForReaction(event),
+    toE164: event.from,
+    recentSlangPicks: priorSlangPicks,
+  })
+
+  await sendMemoryReply(store, event, turnId, composed.text)
+  await persistSharedOnboardingSlangPicks({
+    db: store.db,
+    userId: event.userId,
+    priorPicks: priorSlangPicks,
+    newPicks: composed.slangPicked,
+    nowIso: store.nowIso(),
+    log: (name, payload) => store.log(name, payload ?? {}),
+  })
+
+  const now = store.nowIso()
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    completedAt: now,
+    directIntent: "shared_onboarding",
+    directIntentResult: "reasked_question",
+    sharedOnboardingQuestionId: questionId,
+    conversationAction: actionDecision.selectedAction,
+    conversationNoOutboundReason: null,
+  })
+  await persistConversationTurnTrace(store, event, context, ownerDecision, "completed", actionDecision, evidenceWrites, {
+    outboundSource: "shared_onboarding_reask",
+    memoryWrites: [],
     evidenceCommitIds,
     evidenceCommitCount: evidenceCommitIds.length,
   })
@@ -3883,6 +3966,23 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           event,
           store,
           turnId,
+          conversationTurnContext,
+          conversationOwnerDecision,
+          conversationActionDecision,
+          conversationEvidenceWrites,
+          conversationEvidenceCommitIds,
+        )
+      ) {
+        return
+      }
+      if (
+        conversationOwnerDecision.selectedOwner === "shared_onboarding" &&
+        conversationActionDecision &&
+        await handleSharedOnboardingClarificationTurn(
+          event,
+          store,
+          turnId,
+          onboardingUser,
           conversationTurnContext,
           conversationOwnerDecision,
           conversationActionDecision,

@@ -37,6 +37,17 @@ export type SendReactionInput = {
   to: string
   messageHandle: string
   reaction: "love" | "like" | "dislike" | "laugh" | "emphasize" | "question"
+  /** Explicit sender line for the conversation thread. */
+  fromNumber?: string
+  /**
+   * Optional user id for pool-aware sender selection when no explicit sender
+   * was supplied. Same user id resolves to the same public Sendblue line.
+   */
+  userId?: string
+  /** Firestore handle for pool lookup; lazily resolved when omitted. */
+  db?: import("firebase-admin/firestore").Firestore
+  /** Default true for backwards compatibility; public runtime passes false. */
+  allowEnvFromNumberFallback?: boolean
 }
 
 export type SendReactionResponse = {
@@ -97,11 +108,13 @@ export async function sendReaction(
     throw new SendblueClientError(400, "send-reaction: to (recipient number) required", null)
   }
 
+  const resolvedFromNumber = await resolveReactionFromNumber(input, creds)
+
   const body = {
     number: input.to,
     message_handle: input.messageHandle,
     reaction: input.reaction,
-    ...(creds.fromNumber ? { from_number: creds.fromNumber } : {}),
+    ...(resolvedFromNumber ? { from_number: resolvedFromNumber } : {}),
   }
 
   let resp: Response
@@ -150,4 +163,26 @@ export async function sendReaction(
   }
   // 4xx — bad payload (e.g. message_handle expired). Don't trip breaker.
   throw new SendblueClientError(resp.status, message, parsed, retryAfter ?? undefined)
+}
+
+async function resolveReactionFromNumber(
+  input: SendReactionInput,
+  creds: SendblueCredentials
+): Promise<string | undefined> {
+  const explicit = input.fromNumber?.trim()
+  if (explicit) return explicit
+
+  if (input.userId) {
+    try {
+      const { loadSendbluePool, pickFromNumber } = await import("./pool.js")
+      const { getFirestore } = await import("firebase-admin/firestore")
+      const db = input.db ?? getFirestore()
+      const picked = pickFromNumber(await loadSendbluePool(db), input.userId)
+      if (picked) return picked
+    } catch {
+      // Pool lookup failure falls through to the caller-approved fallback.
+    }
+  }
+
+  return input.allowEnvFromNumberFallback === false ? undefined : creds.fromNumber
 }

@@ -515,6 +515,9 @@ export async function processCoalescedTurn(
         to: fired.fromNumber,
         messageHandle: fired.lastMessageId,
         reaction: "love",
+        userId,
+        db: deps.db,
+        allowEnvFromNumberFallback: false,
       })
       log("[coalesce] tap-back sent", {
         userId,

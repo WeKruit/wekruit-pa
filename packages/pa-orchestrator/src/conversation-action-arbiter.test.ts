@@ -85,6 +85,47 @@ test("short acknowledgement after a recommendation becomes tapback only and reco
   assert.ok(writes.some((write) => write.kind === "job_interest" && write.operation === "append"))
 })
 
+test("short acknowledgement while shared onboarding is active re-asks the slot instead of tapbacking older rec context", () => {
+  const context = baseContext({
+    inbound: {
+      text: "Sure",
+      createdAt: "2026-05-26T23:12:00.000Z",
+      channel: "imessage",
+    },
+    sharedOnboarding: {
+      active: true,
+      currentQuestionId: "main_goal",
+    },
+    activeWorkflow: {
+      kind: "shared_onboarding",
+      status: "active",
+      currentQuestionId: "main_goal",
+    },
+    recentOutbound: [
+      {
+        role: "assistant",
+        body: "One role worth your time: Senior Software Engineer at Rain. Tell me if it is interesting, and why or why not.",
+        createdAt: "2026-05-26T23:11:30.000Z",
+      },
+      {
+        role: "assistant",
+        body: "Before I match roles, what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?",
+        createdAt: "2026-05-26T23:11:45.000Z",
+      },
+    ],
+  })
+  const { ownerDecision, action } = decide(context)
+  const writes = buildConversationEvidenceWrites(context, ownerDecision, action)
+
+  assert.equal(ownerDecision.selectedOwner, "shared_onboarding")
+  assert.deepEqual(ownerDecision.orderedActions.map((item) => item.kind), ["clarify_shared_onboarding"])
+  assert.equal(action.selectedAction, "answer_then_continue")
+  assert.equal(action.deliveryPlan.outboundTextRequired, true)
+  assert.equal(action.deliveryPlan.reaction, undefined)
+  assert.ok(!writes.some((write) => write.kind === "shared_onboarding_answer"))
+  assert.ok(ownerDecision.forbiddenMutations.includes("sharedOnboarding.answers.main_goal"))
+})
+
 test("link question plus interest answers the explicit question first and stores job interest evidence", () => {
   const context = baseContext({
     inbound: {
