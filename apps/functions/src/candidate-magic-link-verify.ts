@@ -222,6 +222,23 @@ export async function runCandidateMagicLinkVerify(
     if (linkedinLinkedViaOauth) mergeFields.linkedinOauthLinked = true
     await userRef.set(mergeFields, { merge: true })
 
+    // Referral attribution (Adam Q5: same-email match only).
+    // Idempotent: only marks the first pending pa-referrals row for this email
+    // as joined. Failure here must not break sign-in.
+    if (email) {
+      try {
+        const { attachInviteeUserIdByEmail } = await import("./refer-program.js")
+        await attachInviteeUserIdByEmail({ uid: claim.candidateId, email })
+      } catch (err) {
+        // Non-fatal — sign-in flow continues regardless.
+        // eslint-disable-next-line no-console
+        console.warn("refer.attribution.failed", {
+          uid: claim.candidateId,
+          err: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+
     const userSnap = await userRef.get()
     const userData = userSnap.data() ?? {}
     const intakeCompletedAt = userData.intakeCompletedAt

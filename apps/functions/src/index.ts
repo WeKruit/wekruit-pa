@@ -2413,3 +2413,20 @@ export {
   openRegisterEmployer,
 } from "./openLayoff.js"
 export { paEmployerClaimVerification } from "./identity/employer-claim-verification.js"
+
+// ============================================================
+// Candidate referral program (2026-05-27)
+// ------------------------------------------------------------
+// Two-tier reward: $50 at interview, $4,000 at placement. Manual payout via
+// admin1@wekruit.com / adam.ylol@wekruit.com / noah.liu@wekruit.com email.
+// Schema in packages/core-types: pa-referrals + pa-referral-slugs.
+// Frontend: /refer (public), /r/:slug (inviter landing), /me/refer (dashboard).
+// ============================================================
+export {
+  paReferEnsureSlug,
+  paReferLinkResolve,
+  paReferInviteSend,
+  paReferDashboardList,
+  paReferOnPrescreenWrite,
+  paReferOnEmployerVisibleWrite,
+} from "./refer-program.js"

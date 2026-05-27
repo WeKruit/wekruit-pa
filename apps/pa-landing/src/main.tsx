@@ -19,6 +19,7 @@ import OpenJobs from "./pages/OpenJobs.js"
 import Onboarding from "./pages/Onboarding.js"
 import EmployerSignup from "./pages/EmployerSignup.js"
 import Employers, { EmployersInbox } from "./pages/Employers.js"
+import ReferPage, { ReferPublicPage } from "./pages/Refer.js"
 import RecruiterBoard from "./pages/RecruiterBoard.js"
 import RecruiterRole from "./pages/RecruiterRole.js"
 
@@ -83,6 +84,9 @@ const fullRoutes = (
     <Route path="/employer" element={<EmployerSignup />} />
     <Route path="/employers" element={<Employers />} />
     <Route path="/employers/inbox" element={<EmployersInbox />} />
+    <Route path="/refer" element={<ReferPublicPage />} />
+    <Route path="/r/:slug" element={<ReferPublicPage />} />
+    <Route path="/me/refer" element={<ReferPage />} />
     <Route path="*" element={<HomeLanding />} />
   </Routes>
 )
