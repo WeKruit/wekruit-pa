@@ -3609,22 +3609,22 @@ function composeSharedSavedPreferenceReply(
 
   const primary: string[] = []
   const constraints: string[] = []
+  let timing: string | null = null
   const add = (items: string[], value: string) => {
     if (value && !items.includes(value)) items.push(value)
   }
 
-  if (/\b(?:learning|career growth|growth)\b/i.test(main)) add(primary, "growth/learning")
-  if (/\b(?:product|strategy|product-heavy)\b/i.test(all)) add(primary, "product/strategy-leaning work")
-  if (/\b(?:early startup|scale[- ]?up|high ownership)\b/i.test(culture)) add(primary, "early/scale-up with ownership")
+  if (/\b(?:product|strategy|product-heavy)\b/i.test(all)) add(primary, "product/strategy-heavy work")
   if (/\b(?:ai|devtools?|fintech|financial technology)\b/i.test(industry)) add(primary, "AI/devtools/fintech")
   if (/\b(?:sf|san francisco|remote)\b/i.test(location)) add(primary, "SF or remote")
-  if (/\b(?:2\s*-\s*4|2\s+to\s+4)\s+weeks?\b/i.test(context)) add(primary, "2-4 week start")
+  if (/\b(?:early startup|scale[- ]?up|high ownership)\b/i.test(culture)) add(primary, "early/scale-up teams with ownership")
+  if (/\b(?:learning|career growth|growth)\b/i.test(main)) add(primary, "growth/learning")
+  if (/\b(?:2\s*-\s*4|2\s+to\s+4)\s+weeks?\b/i.test(context)) timing = "you can start in 2-4 weeks"
 
-  if (/\b(?:adtech|crypto)\b/i.test(industry)) add(constraints, "avoid adtech/crypto")
+  if (/\b(?:adtech|crypto)\b/i.test(industry)) add(constraints, "adtech/crypto")
   if (/\b(?:no\s+(?:other\s+)?relocation|don'?t\s+want\s+to\s+relocate|do\s+not\s+want\s+to\s+relocate)\b/i.test(location)) {
-    add(constraints, /\bnyc|new york\b/i.test(location) ? "no relocation outside NYC" : "no relocation")
+    add(constraints, /\bnyc|new york\b/i.test(location) ? "relocation outside NYC" : "relocation")
   }
-  if (/\bnot chaotic\b/i.test(culture)) add(constraints, "not chaotic")
 
   if (primary.length === 0) {
     for (const answer of [main, culture, industry, location, context]) {
@@ -3635,16 +3635,20 @@ function composeSharedSavedPreferenceReply(
   }
   if (primary.length === 0) return null
 
-  const mainList = joinHumanList(primary.slice(0, 6))
-  const constraintList = joinHumanList(constraints.slice(0, 3))
+  const mainList = joinHumanList(primary.slice(0, 4))
+  const constraintList = joinHumanList(constraints.slice(0, 2))
+  const secondSentence = [
+    constraintList ? `I'll avoid ${constraintList}` : null,
+    timing,
+  ].filter((value): value is string => Boolean(value)).join("; ")
   if (lang === "zh") {
-    return constraintList
-      ? `我现在记的是：${mainList}。另外也会避开：${constraintList}。`
-      : `我现在记的是：${mainList}。我会按这个匹配。`
+    return secondSentence
+      ? `我记的是：${mainList}。${secondSentence}。`
+      : `我记的是：${mainList}。我会按这个匹配。`
   }
-  return constraintList
-    ? `I've got: ${mainList}. I also saved ${constraintList}.`
-    : `I've got: ${mainList}. I'll use that for matching.`
+  return secondSentence
+    ? `Yep — I saved ${mainList}. ${secondSentence}.`
+    : `Yep — I saved ${mainList}. I'll use that for matching.`
 }
 
 function compactSavedPreferencePhrase(value: string, maxLength: number): string | null {
