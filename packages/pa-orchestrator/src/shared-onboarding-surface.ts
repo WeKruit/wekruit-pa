@@ -128,7 +128,10 @@ export function buildOnboardingSurfaceIntent(input: {
     invariants.push("No oversell language (perfect fit, guaranteed, definitely).")
   }
   if (input.ackHint) {
-    invariants.push(`Ack hint: ${input.ackHint}`)
+    invariants.push(
+      `Ack hint: ${input.ackHint}`,
+      "Do not ignore the latest candidate answer; reflect one concrete detail from it before the next question.",
+    )
   }
 
   // Resume anchor — sexy/personal opener for Q1/Q2 only (Adam 2026-05-19).

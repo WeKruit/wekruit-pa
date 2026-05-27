@@ -369,7 +369,8 @@ function buildSyntheticOnboardingUserInstruction(
     return [
       `[ONBOARDING CONTINUATION] The candidate just answered the previous onboarding slot${current ? `: "${quoteForInstruction(current)}"` : "."}`,
       "Continue from the existing SMS thread. Do not restart the conversation, do not welcome them again, do not say their resume came through, and do not introduce Claire again.",
-      `Ask the next ${label} question only. Do not extract tags; only compose the SMS.`,
+      "Start with one short acknowledgement grounded in that exact answer, then ask the next question.",
+      `Ask the next ${label} question only after that acknowledgement. Do not extract tags; only compose the SMS.`,
     ].join(" ")
   }
   return `[ONBOARDING CONTINUATION] Ask the candidate the ${label} onboarding question in friend tone. Continue from the existing SMS thread; do not restart, welcome, introduce Claire, or mention resume intake. Do not extract tags; only compose the SMS.`

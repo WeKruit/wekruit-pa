@@ -227,6 +227,84 @@ test("composeSharedOnboardingReply humanizes unknown future tag tokens from agen
   }
 })
 
+test("composeSharedOnboardingReply asks next slot with grounded acknowledgement after accepted answer", async () => {
+  const db = makeFlagDb()
+  let capturedUserMessage = ""
+  let capturedSystemInputs: string[] = []
+  const answer = "Early startup or scale-up, high ownership, but not chaotic."
+  const prevEnv = process.env
+  process.env = {
+    ...prevEnv,
+    paSharedOnboardingAgenticSurface: "true",
+    paBehaviorChoreographerEnabled: "true",
+    paReactionTapbackEnabled: "false",
+    paFindMatchToolEnabled: "false",
+    paHumanizeRuntimeEnabled: "false",
+    PA_SHARED_ONBOARDING_TEMPLATE_FALLBACK: "false",
+  }
+
+  try {
+    const composed = await composeSharedOnboardingReply({
+      store: {
+        db,
+        log: () => undefined,
+        runAgentTurn: async ({ userMessage, systemInputs }) => {
+          capturedUserMessage = userMessage
+          capturedSystemInputs = systemInputs ?? []
+          return {
+            text: "Got it - high ownership without chaos helps. What industries or domains should I bias toward?",
+          }
+        },
+        createSession: () => ({
+          async getSessionId() {
+            return "sess-1"
+          },
+          async getItems() {
+            return []
+          },
+          async addItems() {
+            /* no-op */
+          },
+          async popItem() {
+            return undefined
+          },
+          async clearSession() {
+            /* no-op */
+          },
+        }),
+      },
+      userId: "accepted-answer-user",
+      sessionId: "sess-1",
+      turnId: "turn-accepted-answer",
+      slot: "industry_interest",
+      mode: "ask",
+      promptContext: { industryTags: ["tech_software", "ai_ml"] },
+      userMessage: answer,
+      composeContext: buildSharedOnboardingComposeContext({
+        inboundKind: "user_answer",
+        routerResult: "asked_question",
+        slot: "industry_interest",
+        mode: "ask",
+        userMessage: answer,
+      }),
+      agent,
+    })
+
+    assert.match(capturedUserMessage, /Start with one short acknowledgement grounded in that exact answer/i)
+    assert.match(capturedUserMessage, /high ownership, but not chaotic/i)
+    assert.ok(
+      capturedSystemInputs.some((input) =>
+        input.includes("reflect one concrete detail from it before the next question")
+      ),
+      "accepted answer continuation should require a grounded ack before the next slot",
+    )
+    assert.match(composed.text, /high ownership without chaos/i)
+    assert.match(composed.text, /industries|domains/i)
+  } finally {
+    process.env = prevEnv
+  }
+})
+
 test("composeSharedOnboardingReply does not pressure shared onboarding reasks with slang", async () => {
   const db = makeFlagDb()
   let capturedSystemInputs: string[] = []
