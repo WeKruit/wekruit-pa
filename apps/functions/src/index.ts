@@ -1860,6 +1860,9 @@ export const paConversationRecoverySweep = onSchedule(
       QDRANT_URL,
       QDRANT_API_KEY,
       ANTHROPIC_API_KEY,
+      SENDBLUE_API_KEY_ID,
+      SENDBLUE_API_SECRET_KEY,
+      SENDBLUE_FROM_NUMBER,
     ],
     memory: "1GiB",
     maxInstances: 1,
@@ -1870,6 +1873,15 @@ export const paConversationRecoverySweep = onSchedule(
     process.env.SILICONFLOW_API_KEY = SILICONFLOW_API_KEY.value()
     process.env.QDRANT_URL = QDRANT_URL.value()
     process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
+    process.env.SENDBLUE_API_KEY_ID = SENDBLUE_API_KEY_ID.value()
+    process.env.SENDBLUE_API_SECRET_KEY = SENDBLUE_API_SECRET_KEY.value()
+    try {
+      const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
+      if (fromNumber) process.env.SENDBLUE_FROM_NUMBER = fromNumber
+      else delete process.env.SENDBLUE_FROM_NUMBER
+    } catch {
+      delete process.env.SENDBLUE_FROM_NUMBER
+    }
     try {
       const openAiAgentKey = PA_OPENAI_AGENT_API_KEY.value().trim()
       if (openAiAgentKey) process.env.PA_OPENAI_AGENT_API_KEY = openAiAgentKey
