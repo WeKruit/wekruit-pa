@@ -81,12 +81,12 @@ describe("public-open-jobs projection", () => {
 
   it("includes wekruitUrl built from doc id", () => {
     const r = toOpenJobRow("rain-xyz-swe-001", freshDoc(), NOW)
-    assert.equal(r!.wekruitUrl, "https://candidate.wekruit.com/j/rain-xyz-swe-001")
+    assert.equal(r!.wekruitUrl, "https://wekruit.com/j/rain-xyz-swe-001")
   })
 
   it("url-encodes doc ids with special chars in wekruitUrl", () => {
     const r = toOpenJobRow("rain xyz/swe?001", freshDoc(), NOW)
-    assert.equal(r!.wekruitUrl, "https://candidate.wekruit.com/j/rain%20xyz%2Fswe%3F001")
+    assert.equal(r!.wekruitUrl, "https://wekruit.com/j/rain%20xyz%2Fswe%3F001")
   })
 
   it("flags remote when locationBuckets contains remote", () => {
@@ -387,7 +387,7 @@ describe("toCollabJobRow", () => {
     const r = toCollabJobRow("rain-xyz-001", collabDoc(), NOW)
     assert.ok(r)
     assert.equal(r!.id, "rain-xyz-001")
-    assert.equal(r!.wekruitUrl, "https://candidate.wekruit.com/j/rain-xyz-001")
+    assert.equal(r!.wekruitUrl, "https://wekruit.com/j/rain-xyz-001")
     assert.equal(r!.title, "Senior iOS Engineer")
     assert.equal(r!.company, "Rain XYZ")
     assert.equal(r!.collaborated, true)

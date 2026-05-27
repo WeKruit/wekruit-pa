@@ -83,7 +83,7 @@ Filters compose with AND. Multi-value csv params compose with OR within the para
   "rows": [
     {
       "id": "rain-xyz-swe-001",
-      "wekruitUrl": "https://candidate.wekruit.com/j/rain-xyz-swe-001",
+      "wekruitUrl": "https://wekruit.com/j/rain-xyz-swe-001",
       "title": "Senior iOS Engineer",
       "company": "Rain XYZ",
       "function": "software_engineering",

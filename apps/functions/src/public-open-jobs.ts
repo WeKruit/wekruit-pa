@@ -71,8 +71,13 @@ const PA_PUBLIC_COLLAB_ORIGINS = defineSecret("PA_PUBLIC_COLLAB_ORIGINS")
 // ---------------------------------------------------------------- constants
 
 const API_VERSION = "v1"
+// Apex `wekruit.com` and `candidate.wekruit.com` both CNAME to the same
+// `wekruit-pa-landing` Firebase Hosting site (Vite SPA serving /j/:jobId),
+// so either host resolves to the same PublicJob page. Apex is the partner-
+// facing brand surface (shorter, no "candidate." subdomain leakage).
+// Override at runtime via WEKRUIT_PUBLIC_BASE env var if needed.
 const WEKRUIT_PUBLIC_BASE =
-  process.env.WEKRUIT_PUBLIC_BASE ?? "https://candidate.wekruit.com"
+  process.env.WEKRUIT_PUBLIC_BASE ?? "https://wekruit.com"
 
 // ---------------------------------------------------------------- types --
 
