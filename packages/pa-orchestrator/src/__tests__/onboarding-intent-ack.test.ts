@@ -684,7 +684,7 @@ test("shared onboarding rejects duplicate greeting on Q1 without recording an an
   assert.equal(turnUpdates.some((patch) => patch.directIntentResult === "ignored_non_answer"), true)
 })
 
-test("shared onboarding does not re-ask a rejected Q5 answer", async () => {
+test("shared onboarding does not mutate or complete on an unclear Q5 answer", async () => {
   const captures: OnboardingCaptures = {
     systemInputs: [],
     appliedSteps: [],
@@ -724,11 +724,11 @@ test("shared onboarding does not re-ask a rejected Q5 answer", async () => {
 
   const user = docs.get("pa-users/u-onb")
   const shared = user?.sharedOnboarding as Record<string, unknown>
-  assert.equal(shared.status, "complete")
-  assert.equal(recCalls.length, 1)
-  assert.match(captures.outboundBodies[0] ?? "", /Role A @ Example/)
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /anything special|constraints|dealbreakers/i)
-  assert.equal(turnUpdates.some((patch) => patch.sharedOnboardingFailForward === true), true)
+  assert.equal(shared.status, "active")
+  assert.equal(shared.currentQuestionId, "special_context")
+  assert.deepEqual(shared.answers, {})
+  assert.equal(recCalls.length, 0)
+  assert.equal(turnUpdates.some((patch) => patch.sharedOnboardingFailForward === true), false)
 })
 
 test("shared onboarding accepts a real Q1 answer and advances to culture_stage", async () => {

@@ -1,0 +1,33 @@
+{
+  "id": "active-prescreen-answer",
+  "description": "A direct answer to an active prescreen technical-depth question stays with the prescreen workflow.",
+  "initialFirestoreState": {
+    "pa-users/u1": {
+      "id": "u1",
+      "phoneE164": "+15109136602",
+      "onboardingState": "complete",
+      "workSession": {
+        "kind": "job_prescreen",
+        "status": "active",
+        "currentQuestionId": "technical_depth",
+        "sessionId": "ps-active",
+        "jobId": "rain-product-manager-cards-95ae1a01"
+      }
+    }
+  },
+  "inbound": {
+    "userId": "u1",
+    "text": "I designed the CRM sync schema and added retry jobs for failed writes.",
+    "createdAt": "2026-05-26T22:37:00.000Z",
+    "channel": "imessage"
+  },
+  "expected": {
+    "owner": "active_workflow",
+    "requiredTools": ["prescreen_turn_handler"],
+    "forbiddenMutations": [],
+    "orderedActionKinds": ["route_active_workflow"],
+    "trace": {
+      "selectedOwner": "active_workflow"
+    }
+  }
+}

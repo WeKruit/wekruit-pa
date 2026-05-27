@@ -148,6 +148,34 @@ import {
 } from "./shared-onboarding.js"
 import { applyTemplateOutboundHumanize } from "./outbound-template-humanize.js"
 import {
+  decideConversationTurnOwner,
+  summarizeConversationTurnTrace,
+  type OwnerDecision,
+  type PrescreenEvidence,
+  type TurnContext,
+} from "./conversation-turn-arbiter.js"
+export {
+  decideConversationTurnOwner,
+  summarizeConversationTurnTrace,
+  type OwnerDecision,
+  type PrescreenEvidence,
+  type TurnContext,
+} from "./conversation-turn-arbiter.js"
+import {
+  buildConversationEvidenceWrites,
+  decideConversationDeliveryAction,
+  type ConversationActionDecision,
+  type ConversationEvidenceWrite,
+} from "./conversation-action-arbiter.js"
+export {
+  buildConversationEvidenceWrites,
+  decideConversationDeliveryAction,
+  summarizeWarmConciseWordingPolicy,
+  type ConversationActionDecision,
+  type ConversationDeliveryAction,
+  type ConversationEvidenceWrite,
+} from "./conversation-action-arbiter.js"
+import {
   composeSharedOnboardingReply,
   deliverSharedOnboardingJobRecs,
   resolveAgentAllowedConnectors,
@@ -1976,45 +2004,76 @@ async function loadRecentPrescreenExplanationContext(
   store: OrchestratorStore,
   userId: string
 ): Promise<string | null> {
+  const evidence = await loadRecentPrescreenEvidenceForArbiter(store, userId)
+  if (!evidence) return null
+  const summary = evidence.summary?.trim() ?? ""
+  const evidenceTags = evidence.evidenceTags ?? []
+  const parts = [
+    "Recent prescreen context to use when answering role-match questions:",
+    evidence.jobId ? `- jobId: ${evidence.jobId}` : null,
+    evidence.terminal ? `- outcome: ${evidence.terminal}` : null,
+    summary ? `- summary: ${summary.slice(0, 900)}` : null,
+    evidenceTags.length ? `- evidence tags: ${evidenceTags.slice(0, 12).join(", ")}` : null,
+  ].filter((part): part is string => typeof part === "string")
+  return parts.length > 1 ? parts.join("\n") : null
+}
+
+async function loadRecentPrescreenEvidenceForArbiter(
+  store: OrchestratorStore,
+  userId: string
+): Promise<PrescreenEvidence | null> {
   if (!store.db) return null
   try {
-    const userSnap = await store.db.collection("pa-users").doc(userId).get()
+    const userSnap = await store.db.collection(PA_COLLECTIONS.users).doc(userId).get()
     const user = userSnap.exists ? userSnap.data() : null
     const workSession = user?.workSession && typeof user.workSession === "object"
       ? user.workSession as Record<string, unknown>
       : null
-    const sessionId = typeof workSession?.sessionId === "string" ? workSession.sessionId : null
+    const lastMemory = user?.lastPrescreenMemoryUpdate && typeof user.lastPrescreenMemoryUpdate === "object"
+      ? user.lastPrescreenMemoryUpdate as Record<string, unknown>
+      : null
+    const sessionId =
+      typeof workSession?.sessionId === "string"
+        ? workSession.sessionId
+        : typeof lastMemory?.sessionId === "string"
+          ? lastMemory.sessionId
+          : null
     if (!sessionId) return null
 
     const memorySnap = await store.db
       .collection("pa-prescreen-memory-events")
       .doc(sessionId)
       .get()
-    if (!memorySnap.exists) return null
-    const memory = memorySnap.data() ?? {}
+    const memory = memorySnap.exists ? memorySnap.data() ?? {} : lastMemory ?? {}
     const summary = typeof memory.summary === "string" ? memory.summary.trim() : ""
     const evidenceTags = Array.isArray(memory.evidenceTags)
       ? memory.evidenceTags.filter((tag): tag is string => typeof tag === "string")
+      : Array.isArray(lastMemory?.evidenceTags)
+        ? lastMemory.evidenceTags.filter((tag): tag is string => typeof tag === "string")
       : []
     const jobId = typeof workSession?.jobId === "string"
       ? workSession.jobId
       : typeof memory.jobId === "string"
         ? memory.jobId
+        : typeof lastMemory?.jobId === "string"
+          ? lastMemory.jobId
         : ""
     const terminal = typeof workSession?.terminal === "string"
       ? workSession.terminal
       : typeof memory.terminal === "string"
         ? memory.terminal
+        : typeof lastMemory?.terminal === "string"
+          ? lastMemory.terminal
         : ""
 
-    const parts = [
-      "Recent prescreen context to use when answering role-match questions:",
-      jobId ? `- jobId: ${jobId}` : null,
-      terminal ? `- outcome: ${terminal}` : null,
-      summary ? `- summary: ${summary.slice(0, 900)}` : null,
-      evidenceTags.length ? `- evidence tags: ${evidenceTags.slice(0, 12).join(", ")}` : null,
-    ].filter((part): part is string => typeof part === "string")
-    return parts.length > 1 ? parts.join("\n") : null
+    if (!summary && !jobId && !terminal && evidenceTags.length === 0) return null
+    return {
+      sessionId,
+      ...(jobId ? { jobId } : {}),
+      ...(terminal ? { terminal } : {}),
+      ...(summary ? { summary } : {}),
+      ...(evidenceTags.length ? { evidenceTags } : {}),
+    }
   } catch (err) {
     store.log("pa.runtime.job_explanation_context_failed", {
       userId,
@@ -2022,6 +2081,258 @@ async function loadRecentPrescreenExplanationContext(
     })
     return null
   }
+}
+
+async function buildConversationTurnContext(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+): Promise<TurnContext> {
+  const sharedActive = Boolean(onboardingUser && isSharedOnboardingActiveUser(onboardingUser))
+  const sharedQuestionId = sharedActive ? currentSharedOnboardingQuestionId(onboardingUser) : null
+  const workSession = onboardingUser?.workSession && typeof onboardingUser.workSession === "object"
+    ? onboardingUser.workSession as Record<string, unknown>
+    : null
+  const activeWorkflow =
+    workSession?.kind === "job_prescreen" && workSession.status === "active"
+      ? {
+          kind: "job_prescreen" as const,
+          status: typeof workSession.status === "string" ? workSession.status : undefined,
+          currentQuestionId: typeof workSession.currentQuestionId === "string" ? workSession.currentQuestionId : null,
+        }
+      : sharedActive
+        ? {
+            kind: "shared_onboarding" as const,
+            status: "active",
+            currentQuestionId: sharedQuestionId,
+          }
+        : null
+  const recentMessages = await store.loadHistory(event.sessionId, 8)
+    .then((messages) => messages.map((message) => ({
+      role: message.role,
+      body: message.body,
+      createdAt: message.createdAt,
+    })))
+    .catch(() => [])
+  const recentOutbound = recentMessages.filter((message) => message.role === "assistant")
+  return {
+    turnId,
+    userId: event.userId,
+    inbound: {
+      text: event.body,
+      createdAt: event.createdAt,
+      channel: event.channel,
+    },
+    activeWorkflow,
+    recentMessages,
+    recentOutbound,
+    prescreenEvidence: await loadRecentPrescreenEvidenceForArbiter(store, event.userId),
+    sharedOnboarding: {
+      active: sharedActive,
+      currentQuestionId: sharedQuestionId,
+    },
+    preferenceState: onboardingUser?.statedPreferences ?? null,
+  }
+}
+
+async function persistConversationTurnTrace(
+  store: OrchestratorStore,
+  event: InboundEvent,
+  context: TurnContext,
+  ownerDecision: OwnerDecision,
+  status: "owner_arbitrated" | "completed",
+  actionDecision?: ConversationActionDecision,
+  evidenceWrites: ConversationEvidenceWrite[] = [],
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  try {
+    const trace = summarizeConversationTurnTrace(context, ownerDecision, actionDecision, evidenceWrites)
+    const now = store.nowIso()
+    await store.updateTurn(context.turnId, {
+      conversationArbiterOwner: ownerDecision.selectedOwner,
+      conversationArbiterReason: ownerDecision.reason,
+      conversationArbiterRejectedOwners: ownerDecision.rejectedOwners,
+      conversationArbiterForbiddenMutations: ownerDecision.forbiddenMutations,
+      ...(actionDecision
+        ? {
+            conversationAction: actionDecision.selectedAction,
+            conversationNoOutboundReason: actionDecision.noOutboundReason ?? null,
+            conversationToolCallIds: actionDecision.toolCallIds,
+          }
+        : {}),
+    })
+    if (!store.db) return
+    await store.db.collection(PA_COLLECTIONS.turnTraces).doc(context.turnId).set(
+      {
+        ...trace,
+        eventId: event.id,
+        status,
+        updatedAt: now,
+        ...(status === "owner_arbitrated" ? { createdAt: now } : {}),
+        ...extra,
+      },
+      { merge: true },
+    )
+  } catch (err) {
+    store.log("pa.conversation_arbiter.trace_failed", {
+      userId: event.userId,
+      turnId: context.turnId,
+      eventId: event.id,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
+async function handlePrescreenOutcomeExplainerTurn(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  context: TurnContext,
+  ownerDecision: OwnerDecision,
+  actionDecision: ConversationActionDecision,
+  evidenceWrites: ConversationEvidenceWrite[],
+): Promise<boolean> {
+  const evidence = context.prescreenEvidence
+  if (!evidence) return false
+  const profileUpdate = extractLifecycleProfileUpdate(event.body)
+  const profileUpdated = await persistJobSearchProfileUpdate(event, store, turnId, profileUpdate)
+  const reply = composePrescreenOutcomeExplanationReply(event.body, evidence, profileUpdated)
+  await sendMemoryReply(store, event, turnId, reply)
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    completedAt: store.nowIso(),
+    directIntent: "prescreen_outcome_explainer",
+    directIntentResult: "answered",
+    directIntentProfileUpdated: profileUpdated,
+    prescreenEvidenceSessionId: evidence.sessionId,
+    prescreenEvidenceJobId: evidence.jobId ?? null,
+    prescreenEvidenceTerminal: evidence.terminal ?? null,
+  })
+  await persistConversationTurnTrace(store, event, context, ownerDecision, "completed", actionDecision, evidenceWrites, {
+    outboundSource: "prescreen_outcome_explainer",
+    memoryWrites: profileUpdated ? ["durable_preference_update"] : [],
+  })
+  await store.markEventSucceeded(event.id)
+  return true
+}
+
+async function handleConversationTapbackOnlyTurn(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  context: TurnContext,
+  ownerDecision: OwnerDecision,
+  actionDecision: ConversationActionDecision,
+  evidenceWrites: ConversationEvidenceWrite[],
+): Promise<boolean> {
+  const reaction = actionDecision.deliveryPlan.reaction ?? "like"
+  const messageHandle = sendblueMessageHandleFromEventId(event.id)
+  let reactionSent = false
+  let reactionSkippedReason: string | null = null
+
+  if (!messageHandle) {
+    reactionSkippedReason = "missing_message_handle"
+  } else if (!event.from) {
+    reactionSkippedReason = "missing_recipient"
+  } else if (!store.sendReaction) {
+    reactionSkippedReason = "send_reaction_unavailable"
+  } else if (!(await isReactionTapbackEnabled(store.db, event.userId))) {
+    reactionSkippedReason = "tapback_flag_disabled"
+  } else {
+    try {
+      await store.sendReaction({
+        to: event.from,
+        messageHandle,
+        reaction,
+      })
+      reactionSent = true
+    } catch (err) {
+      reactionSkippedReason = "send_reaction_failed"
+      store.log("pa.conversation_action.tapback_failed", {
+        userId: event.userId,
+        turnId,
+        eventId: event.id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  const now = store.nowIso()
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    completedAt: now,
+    directIntent: ownerDecision.selectedOwner,
+    conversationAction: actionDecision.selectedAction,
+    conversationNoOutboundReason: actionDecision.noOutboundReason ?? "tapback_only",
+    reactionAttempted: Boolean(messageHandle && event.from && store.sendReaction),
+    reactionSent,
+    reactionSkippedReason,
+  })
+  await persistConversationTurnTrace(store, event, context, ownerDecision, "completed", actionDecision, evidenceWrites, {
+    outboundSource: "tapback_only",
+    noOutboundReason: actionDecision.noOutboundReason ?? "tapback_only",
+    reactionAttempted: Boolean(messageHandle && event.from && store.sendReaction),
+    reactionSent,
+    reactionSkippedReason,
+    memoryWrites: evidenceWrites.map((write) => write.kind),
+  })
+  await store.markEventSucceeded(event.id)
+  return true
+}
+
+function composePrescreenOutcomeExplanationReply(
+  userText: string,
+  evidence: PrescreenEvidence,
+  profileUpdated: boolean,
+): string {
+  const roleLabel = inferPrescreenRoleLabel(userText, evidence.jobId)
+  const summary = evidence.summary?.replace(/\s+/g, " ").trim() ?? ""
+  const gap = extractPrescreenGap(summary)
+  const strength = extractPrescreenStrength(summary, gap)
+  const outcome = evidence.terminal ? ` The outcome I have on file is ${evidence.terminal}.` : ""
+  const lines = [
+    `For ${roleLabel}, the issue was not that your background had no fit.${outcome}`,
+    strength
+      ? `The positive signal was: ${strength}.`
+      : "The positive signal was your product and systems-adjacent ownership.",
+    gap
+      ? `The technical gap was: ${gap}.`
+      : "The gap was concrete implementation depth: exactly what you designed, which API/DB/schema decisions you owned, what failed, and what tradeoff you chose.",
+    "A stronger answer would name the system, your personal ownership, the data/API boundary, the failure mode, the retry or consistency design, and a measurable result.",
+  ]
+  if (profileUpdated) {
+    lines.push("I also saved the role-preference correction from this turn before any future matching.")
+  }
+  return lines.join(" ")
+}
+
+function inferPrescreenRoleLabel(userText: string, jobId: string | undefined): string {
+  const explicit = userText.match(/\bat\s+([A-Z][A-Za-z0-9&.-]{1,80})\b/)
+  if (explicit?.[1]) return `${explicit[1]}`
+  if (jobId) {
+    const first = jobId.split("-").find((part) => part && !/^[0-9a-f]{6,}$/i.test(part))
+    if (first) return `${first.charAt(0).toUpperCase()}${first.slice(1)}`
+  }
+  return "that role"
+}
+
+function extractPrescreenGap(summary: string): string | null {
+  if (!summary) return null
+  const match = summary.match(/\b(lacks?|limited|thin|weak|missing|gap(?: was| is)?)[^.;]{0,220}/i)
+  return match?.[0]?.trim().replace(/[.;]+$/, "") ?? null
+}
+
+function extractPrescreenStrength(summary: string, gap: string | null): string | null {
+  if (!summary) return null
+  const clauses = summary
+    .split(/[.;]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+  const candidate = clauses.find((part) => !gap || !part.toLowerCase().includes(gap.toLowerCase()))
+  return candidate ? candidate.slice(0, 220) : null
 }
 
 function asksBestCurrentMatch(text: string | undefined | null): boolean {
@@ -3223,6 +3534,59 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       return
     }
 
+    const conversationTurnContext = userAuthoredEvent
+      ? await buildConversationTurnContext(event, store, turnId, onboardingUser)
+      : null
+    const conversationOwnerDecision = conversationTurnContext
+      ? decideConversationTurnOwner(conversationTurnContext)
+      : null
+    const conversationActionDecision = conversationTurnContext && conversationOwnerDecision
+      ? decideConversationDeliveryAction(conversationTurnContext, conversationOwnerDecision)
+      : null
+    const conversationEvidenceWrites = conversationTurnContext && conversationOwnerDecision && conversationActionDecision
+      ? buildConversationEvidenceWrites(conversationTurnContext, conversationOwnerDecision, conversationActionDecision)
+      : []
+    if (conversationTurnContext && conversationOwnerDecision) {
+      await persistConversationTurnTrace(
+        store,
+        event,
+        conversationTurnContext,
+        conversationOwnerDecision,
+        "owner_arbitrated",
+        conversationActionDecision ?? undefined,
+        conversationEvidenceWrites,
+      )
+      if (
+        conversationActionDecision?.selectedAction === "tapback_only" &&
+        await handleConversationTapbackOnlyTurn(
+          event,
+          store,
+          turnId,
+          conversationTurnContext,
+          conversationOwnerDecision,
+          conversationActionDecision,
+          conversationEvidenceWrites,
+        )
+      ) {
+        return
+      }
+      if (
+        conversationOwnerDecision.selectedOwner === "prescreen_outcome_explainer" &&
+        conversationActionDecision &&
+        await handlePrescreenOutcomeExplainerTurn(
+          event,
+          store,
+          turnId,
+          conversationTurnContext,
+          conversationOwnerDecision,
+          conversationActionDecision,
+          conversationEvidenceWrites,
+        )
+      ) {
+        return
+      }
+    }
+
     if (userAuthoredEvent && await handleCompletedUserJobSearchRequest(event, store, turnId, onboardingUser)) {
       return
     }
@@ -3230,13 +3594,26 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // Website-started candidate and layoff onboarding use one runtime-led
     // intake. Do not force the generic deterministic pipeline.
     const sharedRuntimeSession = isSharedOnboardingActiveUser(onboardingUser)
+    const sharedQuestionId = sharedRuntimeSession ? currentSharedOnboardingQuestionId(onboardingUser) : null
     const onboardingIncomplete = Boolean(
       userAuthoredEvent &&
       onboardingUser &&
       onboardingUser.onboardingState !== "complete" &&
       !sharedRuntimeSession
     )
-    if (userAuthoredEvent && await handleSharedOnboardingUserReply(event, store, turnId, onboardingUser)) {
+    const allowSharedOnboardingUserReply =
+      !conversationOwnerDecision ||
+      conversationOwnerDecision.selectedOwner === "shared_onboarding" ||
+      Boolean(
+        sharedRuntimeSession &&
+        sharedQuestionId &&
+        shouldIgnoreSharedOnboardingDuplicateKickoff(sharedQuestionId, event.body),
+      )
+    if (
+      userAuthoredEvent &&
+      allowSharedOnboardingUserReply &&
+      await handleSharedOnboardingUserReply(event, store, turnId, onboardingUser)
+    ) {
       return
     }
     if (

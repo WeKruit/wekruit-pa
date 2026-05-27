@@ -139,14 +139,22 @@ function makeStubFirestore() {
   }
 }
 
-function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, initialOnboardingState, testMode, scenarioFlags }) {
+function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, userState, seedMessages, testMode, scenarioFlags }) {
   // Per-scenario state. Persists across turns within a scenario, fresh
   // per scenario. messages[] indexed by sessionId so SDK loadHistory works.
-  const messages = []
+  const messages = (seedMessages ?? []).map((msg, idx) => ({
+    id: msg.id ?? `seed-${idx}`,
+    sessionId,
+    userId,
+    role: msg.role,
+    body: msg.body,
+    createdAt: msg.createdAt ?? new Date(Date.now() - (seedMessages.length - idx) * 1000).toISOString(),
+  }))
   const outboundBodies = []
   const llmCalls = []
   const onboardingHistory = []
-  let onboardingState = initialOnboardingState ?? undefined  // 'undefined' = pending → triggers send_first_mes
+  const seededUserState = userState && typeof userState === "object" ? userState : {}
+  let onboardingState = seededUserState.onboardingState ?? undefined  // 'undefined' = pending → triggers send_first_mes
 
   // Default agent. Real Adam-locked first_mes is in the seeded pa_agents
   // doc; we pull a representative shape that triggers the F1 fix path.
@@ -178,6 +186,7 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, initial
       appliedSteps: [],
       safetyBlocks: [],
       crisisDetected: [],
+      turnPatches: [],
     },
 
     // Lifecycle no-ops
@@ -185,7 +194,9 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, initial
     async markEventSucceeded() {},
     async markEventFailed() {},
     async createTurn() { return `turn-${randomUUID().slice(0, 8)}` },
-    async updateTurn() {},
+    async updateTurn(turnId, patch) {
+      store._captures.turnPatches.push({ turnId, patch })
+    },
 
     // Message log — the orchestrator appends user + assistant messages here.
     // SDK FirestoreSession would also write; we collapse both into one log.
@@ -305,6 +316,7 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, initial
 
     async getOnboardingUser(uid) {
       return {
+        ...seededUserState,
         id: uid,
         phoneE164,
         onboardingState,
@@ -410,9 +422,31 @@ function deriveMatrixCell(filePath) {
 // Assertion engine — same regex/contains semantics as runner.mjs
 // applyAssertions (kept inlined to avoid coupling).
 // ----------------------------------------------------------------------------
-function applyAssertions(turn, reply) {
+function applyAssertions(turn, reply, context = {}) {
   const a = turn.assert ?? {}
   const failures = []
+  const turnPatches = context.turnPatches ?? []
+  if (a.no_reply === true) {
+    if (typeof reply === "string" && reply.length > 0) {
+      failures.push(`expected no reply, got "${reply.slice(0, 120)}"`)
+    }
+  } else if (typeof reply !== "string" || reply.length === 0) {
+    failures.push("reply was empty or missing")
+    return failures
+  }
+  if (typeof a.conversation_action === "string") {
+    const found = turnPatches.some((entry) => entry.patch?.conversationAction === a.conversation_action)
+    if (!found) {
+      failures.push(`conversationAction did not include ${a.conversation_action}`)
+    }
+  }
+  if (typeof a.no_outbound_reason === "string") {
+    const found = turnPatches.some((entry) => entry.patch?.conversationNoOutboundReason === a.no_outbound_reason)
+    if (!found) {
+      failures.push(`conversationNoOutboundReason did not include ${a.no_outbound_reason}`)
+    }
+  }
+  if (a.no_reply === true) return failures
   if (typeof reply !== "string" || reply.length === 0) {
     failures.push("reply was empty or missing")
     return failures
@@ -474,7 +508,8 @@ async function runScenarioLocal(scenario, opts) {
     sessionId,
     userId,
     phoneE164,
-    initialOnboardingState: scenario.userState?.onboardingState,
+    userState: scenario.userState,
+    seedMessages: scenario.seedMessages,
     testMode: scenario.testMode === true,
     scenarioFlags: scenario.flags,
   })
@@ -500,6 +535,7 @@ async function runScenarioLocal(scenario, opts) {
     }
 
     let lastReplyBefore = store._captures.outboundBodies.length
+    const lastTurnPatchBefore = store._captures.turnPatches.length
     let turnError = null
     try {
       await processInboundEvent(event, store)
@@ -508,7 +544,8 @@ async function runScenarioLocal(scenario, opts) {
     }
 
     const reply = store._captures.outboundBodies[lastReplyBefore] ?? ""
-    const baseFailures = turnError ? [`processInboundEvent threw: ${turnError}`] : applyAssertions(turn, reply)
+    const turnPatches = store._captures.turnPatches.slice(lastTurnPatchBefore)
+    const baseFailures = turnError ? [`processInboundEvent threw: ${turnError}`] : applyAssertions(turn, reply, { turnPatches })
 
     // Judge: only if (a) PA_RUN_EVAL=1, (b) cell is in judge subset, (c)
     // turn has a judge clause, (d) we haven't blown the cost ceiling.
