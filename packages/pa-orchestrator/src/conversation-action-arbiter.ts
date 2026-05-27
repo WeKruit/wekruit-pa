@@ -204,6 +204,27 @@ export function decideConversationDeliveryAction(
     })
   }
 
+  if (isShortLowInformationAck(text) && recentAssistantAskedForRecommendationDecision(context)) {
+    rejectedActions.push(
+      { action: "micro_ack", reason: "A text acknowledgment would repeat the candidate's short recommendation signal." },
+      { action: "rich_recommendation_summary", reason: "Claire already sent the recommendation summary." },
+    )
+    return actionDecision({
+      selectedAction: "tapback_only",
+      rejectedActions,
+      reason: "Short low-information acknowledgment after a recommendation is an interest signal, not a request for another text reply.",
+      deliveryPlan: { outboundTextRequired: false, reaction: "like" },
+      noOutboundReason: "low_information_ack_after_recommendation",
+      replyGuidance: [
+        "Do not send a text reply.",
+        "Use a like tapback when the channel supports reactions.",
+        "Record the short acknowledgement as recommendation interest evidence.",
+      ],
+      requiredTraceFields: ["noOutboundReason", "deliveryPlan", "evidenceWrites"],
+      toolCallIds,
+    })
+  }
+
   if (ownerDecision.selectedOwner === "safety_control") {
     return actionDecision({
       selectedAction: "answer_then_continue",
@@ -299,6 +320,26 @@ export function buildConversationEvidenceWrites(
     })
   }
 
+  if (
+    actionDecision.selectedAction === "tapback_only" &&
+    actionDecision.noOutboundReason === "low_information_ack_after_recommendation"
+  ) {
+    writes.push({
+      ...base,
+      kind: "job_interest",
+      confidence: 0.72,
+      scope: "one_off",
+      operation: "append",
+      targetPath: "pa-candidate-job-states.current.interestSignals",
+      value: {
+        text,
+        signal: "short_ack_after_recommendation",
+        acknowledged: true,
+        recentRecommendation: latestRecommendationPrompt(context),
+      },
+    })
+  }
+
   for (const result of context.toolResults ?? []) {
     if (result.status !== "completed") continue
     writes.push({
@@ -368,6 +409,31 @@ function recentAssistantSaidToolWorkIsInProgress(context: TurnContext): boolean 
       !body.includes("?")
     )
   })
+}
+
+function recentAssistantAskedForRecommendationDecision(context: TurnContext): boolean {
+  return recentAssistantBodies(context).some((body) => {
+    const recommendation = /\b(found|recommend|role|roles|job|posting|worth your time|line up|fit|forward)\b/i.test(body)
+    const decisionPrompt = /\b(see if|if (these|this) fit|lmk|let me know|interesting|why or why not|want me to|push this|move forward)\b/i.test(body)
+    return recommendation && decisionPrompt
+  })
+}
+
+function latestRecommendationPrompt(context: TurnContext): string | null {
+  const body = recentAssistantBodies(context).find((candidate) => {
+    const recommendation = /\b(found|recommend|role|roles|job|posting|worth your time|line up|fit|forward)\b/i.test(candidate)
+    const decisionPrompt = /\b(see if|if (these|this) fit|lmk|let me know|interesting|why or why not|want me to|push this|move forward)\b/i.test(candidate)
+    return recommendation && decisionPrompt
+  })
+  return body ? body.slice(0, 320) : null
+}
+
+function recentAssistantBodies(context: TurnContext): string[] {
+  return [...(context.recentOutbound ?? []), ...(context.recentMessages ?? [])]
+    .filter((message) => message.role === "assistant" && message.body.trim())
+    .slice(-6)
+    .map((message) => normalize(message.body))
+    .reverse()
 }
 
 function isLinkQuestionWithInterest(text: string): boolean {

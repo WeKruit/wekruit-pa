@@ -1,8 +1,8 @@
 id: conversation_experience_recommendation_short_ack_tapback
 description: |
-  Standout-inspired behavior: after Claire already said she is searching,
+  Standout-inspired behavior: after Claire already sent a recommendation,
   a short "Sure" should not produce another SMS. It should resolve as
-  tapback_only / no outbound text.
+  tapback_only / no outbound text while preserving the interest signal.
 testMode: true
 locale: en-US
 agentId: default
@@ -12,10 +12,10 @@ userState:
   onboardingState: complete
 seedMessages:
   - role: assistant
-    body: "Got it. I’m checking the market now and will come back with roles worth your time."
+    body: "I found 3 roles that line up with your data analysis lane. See if these fit - if not lmk, I'll keep digging."
 turns:
   - user: "Sure"
     assert:
       no_reply: true
       conversation_action: "tapback_only"
-      no_outbound_reason: "low_information_ack_after_status"
+      no_outbound_reason: "low_information_ack_after_recommendation"
