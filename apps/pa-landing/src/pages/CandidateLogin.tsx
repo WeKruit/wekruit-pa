@@ -322,6 +322,7 @@ type IconName =
   | "arrow-right" | "arrow-left" | "arrow-down"
   | "check" | "calendar" | "clock" | "message" | "video"
   | "upload" | "lock" | "bolt" | "pin" | "sparkle"
+  | "mail" | "link" | "shield"
 
 export function Icon({ name, size = 18, stroke = 1.6 }: { name: IconName; size?: number; stroke?: number }) {
   const props = {
@@ -345,6 +346,9 @@ export function Icon({ name, size = 18, stroke = 1.6 }: { name: IconName; size?:
     case "bolt":        return (<svg {...props}><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>)
     case "pin":         return (<svg {...props}><path d="M12 22s7-7.5 7-13a7 7 0 1 0-14 0c0 5.5 7 13 7 13z"/><circle cx="12" cy="9" r="2.5"/></svg>)
     case "sparkle":     return (<svg {...props}><path d="M12 3v6M12 15v6M3 12h6M15 12h6M6 6l4 4M14 14l4 4M6 18l4-4M14 10l4-4"/></svg>)
+    case "mail":        return (<svg {...props}><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>)
+    case "link":        return (<svg {...props}><path d="M10 13a5 5 0 0 0 7 0l4-4a5 5 0 0 0-7-7l-2 2M14 11a5 5 0 0 0-7 0l-4 4a5 5 0 0 0 7 7l2-2"/></svg>)
+    case "shield":      return (<svg {...props}><path d="M12 2l8 3v6c0 5-3.5 9.4-8 11-4.5-1.6-8-6-8-11V5l8-3z"/></svg>)
   }
 }
 
@@ -376,6 +380,7 @@ export function CandidateShell({
             <nav className="wk-appnav" aria-label="App navigation">
               <AppNavLink to="/me">Pipeline</AppNavLink>
               <AppNavLink to="/me/profile">Profile</AppNavLink>
+              <AppNavLink to="/me/refer">Refer · $4k</AppNavLink>
               <AppNavLink to="/market">Market</AppNavLink>
             </nav>
             <div className="wk-appbar__right">
@@ -401,17 +406,16 @@ export function CandidateShell({
         <div className="wk-header__inner">
           <Link to="/" className="wk-header__brand" aria-label="WeKruit home">
             <WekruitLogo size={22} />
-            <span className="wk-header__brand-meta">Open</span>
           </Link>
           <AudienceToggle />
           <nav className="wk-nav" aria-label="Candidate navigation">
-            <Link to="/" className="wk-nav__link">Open interviews</Link>
-            <Link to="/market" className="wk-nav__link">Open market</Link>
+            <Link to="/#how" className="wk-nav__link">How it works</Link>
+            <Link to="/refer" className="wk-nav__link">Earn $4k</Link>
             <Link to="/me" className="wk-nav__link">Pipeline</Link>
           </nav>
           <div className="wk-header__cta">
             <Link to="/login" className="wk-header__signin">Sign in</Link>
-            <Link to="/login" className="wk-btn wk-btn--ink wk-btn--sm">Interview with Claire</Link>
+            <Link to="/login" className="wk-btn wk-btn--ink wk-btn--sm">Start with Claire</Link>
           </div>
         </div>
       </header>

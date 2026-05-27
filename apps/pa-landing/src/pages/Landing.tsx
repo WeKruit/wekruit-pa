@@ -239,8 +239,11 @@ export default function Landing() {
       {/* ── What Claire does — 4-card editorial sequence (2026-05-26 design drop)
            Replaces the older 3-step "How it works" cards. Same conceptual slot,
            richer artifacts (résumé scan, iMessage prescreen, live feed of skips,
-           calendar invite) with the Standout-style inline verb pill. */}
-      <CandidateSequence />
+           calendar invite) with the Standout-style inline verb pill.
+           id="how" so the header nav "How it works" → /#how anchor scrolls here. */}
+      <section id="how">
+        <CandidateSequence />
+      </section>
 
       {/* ── Live interviews ──────────────────────────────── */}
       <section className="wk-section wk-section--live" id="interviews">
