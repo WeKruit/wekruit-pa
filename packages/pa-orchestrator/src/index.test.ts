@@ -436,6 +436,65 @@ test("processInboundEvent routes short ack during shared onboarding to agentic r
   assert.deepEqual(completedTrace.evidenceCommitIds, [])
 })
 
+test("processInboundEvent uses SDK assistant hash when shared onboarding advances to the next ask", async () => {
+  const docs = new Map<string, Record<string, unknown>>()
+  docs.set("pa-users/u1", {
+    id: "u1",
+    phoneE164: "+13125550123",
+    onboardingState: "pending",
+    workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "main_goal" },
+    sharedOnboarding: {
+      status: "active",
+      currentQuestionId: "main_goal",
+      completed: false,
+      answers: {},
+      promptContext: { firstName: "Adam", recentCompanies: ["Tesla Inc"] },
+    },
+  })
+  const reply = "Got it - product/strategy and growth. What company size or stage tends to work best for you?"
+  const appendedMessages: Array<{ role?: string; body?: string; idempotencyKey?: string }> = []
+  let outbound = ""
+  const store = makeStore({
+    db: makeMapDb(docs),
+    getOnboardingUser: async () => docs.get("pa-users/u1") as never,
+    loadHistory: async () => [
+      {
+        id: "m-prev",
+        userId: "u1",
+        sessionId: "s1",
+        role: "assistant",
+        body: "For this next phase, what matters most in your next company?",
+        createdAt: "2026-05-27T20:34:00.000Z",
+      },
+    ],
+    runAgentTurn: async () => {
+      return { text: reply }
+    },
+    appendMessage: async (message) => {
+      appendedMessages.push({
+        role: message.role,
+        body: message.body,
+        idempotencyKey: message.idempotencyKey,
+      })
+    },
+    enqueueOutbound: async (_userId, _toE164, body) => {
+      outbound = body
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Learning and career growth matter most.",
+  }, store)
+
+  assert.match(outbound, /company culture|company size|stage/i)
+  const assistantMessage = appendedMessages.find((message) => message.role === "assistant" && message.body === outbound)
+  assert.equal(
+    assistantMessage?.idempotencyKey,
+    deriveSessionMessageIdempotencyKey("s1", "assistant", outbound),
+  )
+})
+
 test("createFirestoreOrchestratorStore getOnboardingUser exposes resume context fields", async () => {
   const userDoc = {
     id: "u-resume",
