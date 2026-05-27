@@ -1772,11 +1772,30 @@ test("processInboundEvent answers matching preference reminder before active pos
   assert.match(outbound, /Yep — I saved/)
   assert.match(outbound, /product\/strategy-heavy work/)
   assert.doesNotMatch(outbound, /roles I just sent/i)
+  assert.equal(turnUpdates.some((patch) => patch.conversationArbiterOwner === "explicit_explanation"), true)
+  assert.equal(turnUpdates.some((patch) => patch.conversationAction === "answer_then_continue"), true)
   assert.equal(turnUpdates.some((patch) => patch.directIntent === "post_match_retention"), false)
   assert.equal(
     turnUpdates.some((patch) => patch.directIntentResult === "job_preferences_summary_answered"),
     true,
   )
+  const traces = [...docs.entries()].filter(([path]) => path.startsWith(`${PA_COLLECTIONS.turnTraces}/`))
+  assert.equal(traces.length, 1)
+  const trace = traces[0]![1]
+  assert.equal(trace.status, "completed")
+  assert.equal(
+    trace.decision && typeof trace.decision === "object"
+      ? (trace.decision as { selectedOwner?: string }).selectedOwner
+      : undefined,
+    "explicit_explanation",
+  )
+  assert.equal(
+    trace.actionDecision && typeof trace.actionDecision === "object"
+      ? (trace.actionDecision as { selectedAction?: string }).selectedAction
+      : undefined,
+    "answer_then_continue",
+  )
+  assert.equal(trace.outboundSource, "saved_job_preferences_summary")
 })
 
 test("processInboundEvent privacy: delete data creates privacy request without LLM", async () => {
