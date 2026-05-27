@@ -1462,6 +1462,23 @@ async function buildSharedOnboardingDeliveryPlan(args: {
   }
 }
 
+function buildSharedOnboardingBootstrapDeliveryPlan(reply: string): OutboundDeliveryPlan | null {
+  const marker = " Before I match roles,"
+  const splitAt = reply.indexOf(marker)
+  if (splitAt <= 0) return null
+
+  const first = reply.slice(0, splitAt).trim()
+  const second = reply.slice(splitAt + 1).trim()
+  if (!first || !second) return null
+
+  return {
+    mode: "text_split_2",
+    textParts: [first, second],
+    reason: "shared_onboarding_bootstrap_split_2",
+    smsCount: 2,
+  }
+}
+
 function sharedOnboardingOutboundSlice(store: OrchestratorStore): SharedOnboardingOutboundStore {
   return {
     db: store.db,
@@ -2959,7 +2976,11 @@ async function handleSharedOnboardingBootstrap(
     toE164: event.from,
     recentSlangPicks: priorSlangPicks,
   })
-  await sendMemoryReply(store, event, turnId, bootstrapComposed.text)
+  const bootstrapPlan = buildSharedOnboardingBootstrapDeliveryPlan(bootstrapComposed.text)
+  await sendMemoryReply(store, event, turnId, bootstrapComposed.text, {
+    deliveryPlan: bootstrapPlan ?? undefined,
+    inboundMessageHandle: sendblueMessageHandleFromEventId(event.id),
+  })
   await persistSharedOnboardingSlangPicks({
     db: store.db,
     userId: event.userId,

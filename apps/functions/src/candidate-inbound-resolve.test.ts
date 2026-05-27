@@ -190,6 +190,65 @@ test("DEV_BYPASS_PHONE (+14243201960): Hello, WeKruit! opener replaces stale pho
   assert.equal(followupResolved, candidateId)
 })
 
+test("DEV_BYPASS_PHONE follow-up resolves to active post-prescreen recommendation user over cold duplicate", async () => {
+  const fakeDb = new FakeFirestore()
+  const phoneE164 = "+14243201960"
+  fakeDb.seed(PA_COLLECTIONS.users, "cold_onboarding_duplicate", {
+    id: "cold_onboarding_duplicate",
+    source: "candidate",
+    phoneE164,
+    onboardingState: "pending",
+    workSession: {
+      kind: "shared_onboarding",
+      status: "active",
+      boundary: "website_sms_onboarding",
+      currentQuestionId: "main_goal",
+      startedAt: "2026-05-27T15:30:59.533Z",
+    },
+    sharedOnboarding: {
+      status: "active",
+      completed: false,
+      currentQuestionId: "main_goal",
+    },
+    updatedAt: "2026-05-27T15:30:59.533Z",
+  })
+  fakeDb.seed(PA_COLLECTIONS.users, "post_prescreen_recommendation_user", {
+    id: "post_prescreen_recommendation_user",
+    source: "candidate",
+    phoneE164,
+    onboardingState: "pending",
+    workSession: {
+      kind: "shared_onboarding",
+      status: "active",
+      boundary: "website_sms_onboarding",
+      startSource: "post_prescreen_pass",
+      currentQuestionId: "main_goal",
+      postPrescreenContext: {
+        jobTitle: "Software Engineer - Fullstack",
+        company: "Rain",
+      },
+      startedAt: "2026-05-24T04:57:01.194Z",
+    },
+    sharedOnboarding: {
+      status: "active",
+      completed: false,
+      currentQuestionId: "main_goal",
+    },
+    postMatchRetention: {
+      stage: "await_liked",
+      recCount: 2,
+      startedAt: "2026-05-24T05:07:14.601Z",
+      updatedAt: "2026-05-24T05:07:14.601Z",
+    },
+    updatedAt: "2026-05-24T16:53:12.821Z",
+  })
+  const db = fakeDb as unknown as Firestore
+
+  const resolved = await resolveInboundUserId(db, phoneE164, "Sure")
+
+  assert.equal(resolved, "post_prescreen_recommendation_user")
+})
+
 test("non-dev phone: Hello, WeKruit! opener REJECTS when phone is already owned by another candidate", async () => {
   // Adam invariant 2026-05-21 — every phone other than DEV_BYPASS_PHONE
   // is strict 1:1. An opener pointing at a different candidate from a

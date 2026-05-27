@@ -217,6 +217,10 @@ function emptyCaptures(): ColdStartCaptures {
   }
 }
 
+function joinedOutbound(captures: ColdStartCaptures): string {
+  return captures.outboundBodies.join(" ")
+}
+
 // ============================================================================
 // Test 1 — Cold-start ZH crisis (the actual repro from runner-local Bug A,
 // generalized to ZH).
@@ -330,8 +334,8 @@ test("coldstart-noncrisis: bare greeting '你好' → outbound has NO hotline to
     { ...baseEvent, id: "evt-greet", body: "你好" },
     store
   )
-  assert.equal(captures.outboundBodies.length, 1)
-  const body = captures.outboundBodies[0]
+  assert.equal(captures.outboundBodies.length, 2)
+  const body = joinedOutbound(captures)
   // No hotline tokens at all.
   for (const needle of [
     "400-161-9995",
