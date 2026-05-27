@@ -299,7 +299,10 @@ export async function runCandidateMagicLinkVerify(
 }
 
 export const paCandidateMagicLinkVerify = onRequest(
-  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60 },
+  // minInstances=1 keeps a warm instance to avoid 3-5s cold starts on /me
+  // (gate's first callable, blocks portal render). Cost ≈ $5/mo. Adam ack
+  // 2026-05-27 — "One moment" stuck reported by user.
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60, minInstances: 1 },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {

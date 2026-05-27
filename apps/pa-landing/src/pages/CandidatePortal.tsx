@@ -419,7 +419,7 @@ function CandidateMeReady({
             <div className="wkv2-status__copy">
               <div className="wkv2-status__eyebrow">
                 <PulseDot size={6} />
-                <span>Pipeline · <strong>live</strong></span>
+                <span>My WeKruit · <strong>live</strong></span>
               </div>
               <h1 className="wkv2-status__h1">
                 {actionsCount > 0 ? (
@@ -1387,13 +1387,15 @@ function PortalGatePending({
       </PortalCard>
     )
   }
+  const heading =
+    gate.status === "redirecting_onboarding" ? "Almost there" : "Welcome back"
   const message =
     gate.status === "redirecting_onboarding"
-      ? "Finish onboarding with Claire first…"
-      : "Checking your WeKruit access…"
+      ? "Finishing onboarding with Claire — one second…"
+      : "Loading your matches and interviews…"
   return (
     <PortalCard kicker={kicker}>
-      <h1 className="wk-prof__h1">One moment</h1>
+      <h1 className="wk-prof__h1">{heading}</h1>
       <p className="wk-prof__sub">{message}</p>
     </PortalCard>
   )
@@ -1415,8 +1417,8 @@ function SignInRequired({ kicker }: { kicker: string }) {
 function PortalLoading({ kicker }: { kicker: string }) {
   return (
     <PortalCard kicker={kicker}>
-      <h1 className="wk-prof__h1">Loading…</h1>
-      <p className="wk-prof__sub">Checking your signed-in WeKruit profile.</p>
+      <h1 className="wk-prof__h1">Welcome back</h1>
+      <p className="wk-prof__sub">Loading your matches and interviews…</p>
     </PortalCard>
   )
 }
