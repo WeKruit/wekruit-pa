@@ -1841,6 +1841,103 @@ export const paSendblueOutboxRetrySweep = onSchedule(
 )
 
 // =============================================================================
+// PA Conversation Recovery Sweep — raw Sendblue → runtime-approved recovery
+// =============================================================================
+//
+// Detects candidate-visible inbound rows that still have no later candidate-
+// visible outbound, classifies deterministic recovery classes, and writes
+// durable `pa-recovery-cases` rows before taking action. It never direct-sends
+// Sendblue; all candidate-visible recovery goes through runtime-approved
+// `pa-outbound` or the existing inbound/prescreen runtime.
+
+export const paConversationRecoverySweep = onSchedule(
+  {
+    schedule: "every 10 minutes",
+    region: "us-central1",
+    secrets: [
+      SILICONFLOW_API_KEY,
+      PA_OPENAI_AGENT_API_KEY,
+      QDRANT_URL,
+      QDRANT_API_KEY,
+      ANTHROPIC_API_KEY,
+    ],
+    memory: "1GiB",
+    maxInstances: 1,
+    timeoutSeconds: 300,
+    concurrency: 1,
+  },
+  async () => {
+    process.env.SILICONFLOW_API_KEY = SILICONFLOW_API_KEY.value()
+    process.env.QDRANT_URL = QDRANT_URL.value()
+    process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
+    try {
+      const openAiAgentKey = PA_OPENAI_AGENT_API_KEY.value().trim()
+      if (openAiAgentKey) process.env.PA_OPENAI_AGENT_API_KEY = openAiAgentKey
+      else delete process.env.PA_OPENAI_AGENT_API_KEY
+    } catch {
+      delete process.env.PA_OPENAI_AGENT_API_KEY
+    }
+    try {
+      const anthropicKey = ANTHROPIC_API_KEY.value().trim()
+      if (anthropicKey && anthropicKey !== "__UNSET__") process.env.ANTHROPIC_API_KEY = anthropicKey
+      else delete process.env.ANTHROPIC_API_KEY
+    } catch {
+      delete process.env.ANTHROPIC_API_KEY
+    }
+    const siliconflowBase = "https://api.siliconflow.cn/v1"
+    const trimOr = (v: string | undefined, fallback: string) => {
+      const t = v?.trim()
+      return t && t.length > 0 ? t.replace(/\/+$/, "") : fallback
+    }
+    process.env.MEM0_LLM_API_KEY = trimOr(process.env.MEM0_LLM_API_KEY, SILICONFLOW_API_KEY.value())
+    process.env.MEM0_LLM_BASE_URL = trimOr(process.env.MEM0_LLM_BASE_URL, siliconflowBase)
+    process.env.MEM0_LLM_MODEL = trimOr(process.env.MEM0_LLM_MODEL, "Qwen/Qwen2.5-72B-Instruct")
+    process.env.MEM0_EMBED_API_KEY = trimOr(process.env.MEM0_EMBED_API_KEY, SILICONFLOW_API_KEY.value())
+    process.env.MEM0_EMBED_BASE_URL = trimOr(process.env.MEM0_EMBED_BASE_URL, siliconflowBase)
+    process.env.MEM0_EMBED_MODEL = trimOr(process.env.MEM0_EMBED_MODEL, "BAAI/bge-m3")
+    process.env.MEM0_EMBED_DIMS = trimOr(process.env.MEM0_EMBED_DIMS, "1024")
+
+    const db = getFirestore()
+    const { paConversationRecoverySweepHandler } = await import("./sendblue/recovery-agent.js")
+    const { runPreScreenForUser } = await import("./prescreen-session-start.js")
+
+    try {
+      const result = await paConversationRecoverySweepHandler({
+        db,
+        log: (...args: unknown[]) => logger.info("[sendblue][recovery-agent]", ...args),
+        processInboundEventById: async (eventId) => {
+          const snap = await db.collection(PA_COLLECTIONS.inboundEvents).doc(eventId).get()
+          if (!snap.exists) {
+            logger.warn("[sendblue][recovery-agent] inbound event missing during replay", { eventId })
+            return
+          }
+          const data = { id: snap.id, ...snap.data() } as InboundEvent | BrokerImessageEvent
+          const orchestratorDeps = makeOrchestratorDeps()
+          if (isBrokerImessageEvent(data)) {
+            await processBrokerImessageEvent(db, data, orchestratorDeps)
+          } else {
+            await claimAndProcessInboundEvent(db, data.id, undefined, orchestratorDeps)
+          }
+        },
+        startPrescreen: async ({ jobId, userId, toE164 }) => runPreScreenForUser({
+          db,
+          jobId,
+          userId,
+          toE164,
+          log: (event, payload) => logger.info(`[prescreen][recovery-agent] ${event}`, payload ?? {}),
+        }),
+      })
+      logger.info("paConversationRecoverySweep done", result)
+    } catch (err) {
+      logger.error("paConversationRecoverySweep fatal", {
+        err: err instanceof Error ? err.message : String(err),
+      })
+      throw err
+    }
+  }
+)
+
+// =============================================================================
 // Stream A — Tapback → matching-feedback CF (BUG #6 sister-feature)
 // =============================================================================
 //
