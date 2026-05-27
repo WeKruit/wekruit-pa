@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { onAuthStateChanged } from "firebase/auth"
 import { auth } from "./firebase.js"
+import { ssoBootstrapPromise } from "./auth-redirect-bootstrap.js"
 import {
   candidateLoginPath,
   isCandidateHost,
@@ -46,9 +47,18 @@ export function useCandidatePortalGate(): CandidatePortalGateState {
 
   useEffect(() => {
     let cancelled = false
+    let unsubscribe: (() => void) | null = null
     const nextPath = `${location.pathname}${location.search}`
 
-    const unsubscribe = onAuthStateChanged(auth(), (user) => {
+    // Wait for any cross-domain SSO bootstrap to settle before reacting to
+    // Firebase auth state. Without this, the gate sees `null` immediately,
+    // redirects to /login, and the bootstrapped signInWithCustomToken lands
+    // on the wrong page ~300ms later — making cross-domain SSO feel broken.
+    void ssoBootstrapPromise
+      .catch(() => null)
+      .then(() => {
+        if (cancelled) return
+        unsubscribe = onAuthStateChanged(auth(), (user) => {
       if (cancelled) return
       if (!user) {
         setState({ status: "signed_out" })
@@ -111,11 +121,12 @@ export function useCandidatePortalGate(): CandidatePortalGateState {
           setState({ status: "verify_error", message })
         }
       })()
-    })
+        })
+      })
 
     return () => {
       cancelled = true
-      unsubscribe()
+      unsubscribe?.()
     }
   }, [location.pathname, location.search, navigate])
 
