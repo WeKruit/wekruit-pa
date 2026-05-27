@@ -582,7 +582,7 @@ function openingResumeDetail(ctx: SharedOnboardingPromptContext): string | null 
   const location = ctx.currentLocation ?? ctx.recentLocations?.[0]
   const industries = humanSignalList(ctx.industryTags, 2)
   const skills = humanSignalList(ctx.skills, 2)
-  if (title && location && company) return `${title} in ${location}, with ${company} on there`
+  if (title && location && company) return `${title} in ${location} at ${company}`
   if (title && company) return `${title} work at ${company}`
   if (title && location) return `${title} in ${location}`
   if (company && location) return `${company} in ${location}`
@@ -604,8 +604,9 @@ export function buildSharedOnboardingOpeningPrompt(
     : " Saw your resume come through."
   return [
     `${greeting}${resumeLine}`,
-    "I'm Claire; when I find a strong fit, I'll connect you directly with the hiring manager, and I'll ask a few quick questions so matches are tighter.",
-    `You can update ${CANDIDATE_PROFILE_URL} or just tell me here; ${getSharedOnboardingQuestion("main_goal").prompt}`,
+    "If there's a strong fit, I'll connect you with the hiring manager.",
+    `You can also update ${CANDIDATE_PROFILE_URL}, or just tell me here.`,
+    getSharedOnboardingQuestion("main_goal").prompt,
   ].join(" ")
 }
 
