@@ -182,4 +182,19 @@ describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
     assert.match(intent, /Do not use "Saw your resume come through"/i)
     assert.doesNotMatch(intent, /first SMS after the candidate opened with Hello, WeKruit/i)
   })
+
+  it("keeps the final context slot short instead of enumerating categories", () => {
+    const intent = buildOnboardingSurfaceIntent({
+      slot: "special_context",
+      mode: "ask",
+      voiceProfile: profile(),
+      promptContext: {},
+      ackHint: "Mirror location preferences first.",
+      lang: "en",
+    })
+
+    assert.match(intent, /Any non-negotiables I should keep in mind before matching you\?/)
+    assert.match(intent, /ask for non-negotiables in one short question/i)
+    assert.match(intent, /Do not list categories like constraints, strengths, dealbreakers, timing, and context/i)
+  })
 })
