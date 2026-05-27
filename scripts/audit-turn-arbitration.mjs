@@ -7,6 +7,7 @@ import { getFirestore } from "firebase-admin/firestore"
 
 const PA_USERS = "pa-users"
 const PA_MESSAGES = "pa-messages"
+const PA_OUTBOUND = "pa-outbound"
 const PRESCREEN_MEMORY = "pa-prescreen-memory-events"
 
 const args = parseArgs(process.argv.slice(2))
@@ -34,14 +35,15 @@ async function runFirestoreDryRun() {
     : await loadUserByPhone(db, normalizeE164(String(args.phone)))
   if (!user) throw new Error("No pa-users row found for requested user.")
 
-  const inboundText = typeof args.text === "string" && args.text.trim()
-    ? args.text.trim()
+  const inboundMessage = typeof args.text === "string" && args.text.trim()
+    ? { body: args.text.trim(), createdAt: new Date().toISOString() }
     : await loadLatestUserMessage(db, user.id)
+  const inboundText = inboundMessage?.body
   if (!inboundText) {
     throw new Error("No inbound text found. Pass --text to replay a specific turn.")
   }
 
-  const context = await buildContextFromFirestore(db, user.id, user.data, inboundText)
+  const context = await buildContextFromFirestore(db, user.id, user.data, inboundMessage)
   const decision = decideConversationTurnOwner(context)
   const action = decideConversationDeliveryAction(context, decision)
   const evidenceWrites = buildConversationEvidenceWrites(context, decision, action)
@@ -124,7 +126,8 @@ async function runFixtureAudit(dir) {
   if (results.some((result) => !result.pass)) process.exitCode = 1
 }
 
-async function buildContextFromFirestore(db, userId, user, inboundText) {
+async function buildContextFromFirestore(db, userId, user, inboundMessage) {
+  const inboundText = inboundMessage.body
   const workSession = readObject(user.workSession)
   const shared = readObject(user.sharedOnboarding)
   const sharedActive = shared?.status === "active" && shared.completed !== true
@@ -143,14 +146,17 @@ async function buildContextFromFirestore(db, userId, user, inboundText) {
       ? { kind: "shared_onboarding", status: "active", currentQuestionId: sharedQuestionId }
       : null
   const prescreenEvidence = await loadPrescreenEvidence(db, user, workSession)
-  const recentMessages = await loadRecentConversationMessages(db, userId)
+  const recentMessages = mergeRecentMessages(
+    await loadRecentConversationMessages(db, userId, inboundMessage.sessionId, inboundMessage.createdAt),
+    await loadRecentOutboundMessages(db, userId, inboundMessage.createdAt),
+  )
   const recentOutbound = recentMessages.filter((message) => message.role === "assistant")
   return {
     turnId: "dry-run",
     userId,
     inbound: {
       text: inboundText,
-      createdAt: new Date().toISOString(),
+      createdAt: inboundMessage.createdAt ?? new Date().toISOString(),
       channel: "imessage",
     },
     activeWorkflow,
@@ -267,18 +273,22 @@ async function loadLatestUserMessage(db, userId) {
     .filter((row) => row.role === "user" && typeof row.body === "string")
     .sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))[0]
   const body = latest?.body
-  return typeof body === "string" ? body : null
+  if (typeof body !== "string") return null
+  return {
+    body,
+    sessionId: typeof latest.sessionId === "string" ? latest.sessionId : undefined,
+    createdAt: normalizeCreatedAt(latest.createdAt),
+    messageId: typeof latest.id === "string" ? latest.id : undefined,
+  }
 }
 
-async function loadRecentConversationMessages(db, userId) {
+async function loadRecentConversationMessages(db, userId, sessionId, beforeIso) {
   let snap
   try {
-    snap = await db
-      .collection(PA_MESSAGES)
-      .where("userId", "==", userId)
-      .orderBy("createdAt", "desc")
-      .limit(80)
-      .get()
+    const query = sessionId
+      ? db.collection(PA_MESSAGES).where("sessionId", "==", sessionId).limit(200)
+      : db.collection(PA_MESSAGES).where("userId", "==", userId).orderBy("createdAt", "desc").limit(80)
+    snap = await query.get()
   } catch (err) {
     if (!String(err instanceof Error ? err.message : err).includes("requires an index")) throw err
     snap = await db
@@ -305,6 +315,44 @@ async function loadRecentConversationMessages(db, userId) {
       }
     })
     .filter((message) => message.body.trim())
+    .filter((message) => isBeforeReplayInbound(message.createdAt, beforeIso))
+    .sort((a, b) => createdAtMillis(a.createdAt) - createdAtMillis(b.createdAt))
+    .slice(-16)
+}
+
+async function loadRecentOutboundMessages(db, userId, beforeIso) {
+  let snap
+  try {
+    snap = await db
+      .collection(PA_OUTBOUND)
+      .where("userId", "==", userId)
+      .orderBy("createdAt", "desc")
+      .limit(80)
+      .get()
+  } catch (err) {
+    if (!String(err instanceof Error ? err.message : err).includes("requires an index")) throw err
+    snap = await db
+      .collection(PA_OUTBOUND)
+      .where("userId", "==", userId)
+      .limit(80)
+      .get()
+  }
+  return snap.docs
+    .map((doc) => {
+      const row = doc.data() ?? {}
+      const body = typeof row.body === "string"
+        ? row.body
+        : typeof row.text === "string"
+          ? row.text
+          : ""
+      return {
+        role: "assistant",
+        body,
+        createdAt: normalizeCreatedAt(row.createdAt),
+      }
+    })
+    .filter((message) => message.body.trim())
+    .filter((message) => isBeforeReplayInbound(message.createdAt, beforeIso))
     .sort((a, b) => createdAtMillis(a.createdAt) - createdAtMillis(b.createdAt))
     .slice(-16)
 }
@@ -384,6 +432,29 @@ function createdAtMillis(value) {
   if (!value) return 0
   const millis = Date.parse(value)
   return Number.isFinite(millis) ? millis : 0
+}
+
+function isBeforeReplayInbound(messageCreatedAt, inboundCreatedAt) {
+  const inboundMillis = createdAtMillis(inboundCreatedAt)
+  if (!inboundMillis) return true
+  const messageMillis = createdAtMillis(messageCreatedAt)
+  if (!messageMillis) return true
+  return messageMillis <= inboundMillis
+}
+
+function mergeRecentMessages(...messageLists) {
+  const seen = new Map()
+  for (const message of messageLists.flat()) {
+    const key = [
+      message.role ?? "",
+      message.createdAt ?? "",
+      message.body.trim(),
+    ].join("\u0000")
+    if (!seen.has(key)) seen.set(key, message)
+  }
+  return [...seen.values()]
+    .sort((a, b) => createdAtMillis(a.createdAt) - createdAtMillis(b.createdAt))
+    .slice(-16)
 }
 
 function usage(message) {
