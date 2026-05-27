@@ -16,7 +16,10 @@ turns:
   - user: "Do you have a link? Seems fine"
     assert:
       reply_min_length: 2
+      reply_count_min: 2
       conversation_action: "answer_then_continue"
+      joined_reply_contains_any:
+        - "Before I move it forward"
       reply_not_contains_any:
         - "overall fit looks low"
         - "optimize your candidacy"
