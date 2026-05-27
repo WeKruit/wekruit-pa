@@ -1554,6 +1554,7 @@ async function sendMemoryReply(
     deliveryPlan?: OutboundDeliveryPlan
     inboundMessageHandle?: string
     transcriptIdempotencyKey?: string
+    allowImperfection?: boolean
     /** Set true only when tapback was already sent earlier in the turn. */
     skipTapback?: boolean
   } = {}
@@ -1564,6 +1565,7 @@ async function sendMemoryReply(
     turnId,
     db: store.db,
     maxLength: 600,
+    allowImperfection: opts.allowImperfection,
   })
   const at = store.nowIso()
   await store.appendMessage({
@@ -2489,6 +2491,7 @@ async function handleSharedOnboardingClarificationTurn(
     mode: "reask",
     promptContext,
     userMessage: event.body,
+    recentMessages: context.recentMessages,
     composeContext: buildSharedOnboardingComposeContext({
       inboundKind: "user_answer",
       routerResult: "reasked_question",
@@ -2509,6 +2512,7 @@ async function handleSharedOnboardingClarificationTurn(
     // session hash here so appendMessage merges orchestrator metadata onto
     // that row instead of creating a second transcript row for one visible SMS.
     transcriptIdempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", composed.text),
+    allowImperfection: false,
   })
   await persistSharedOnboardingSlangPicks({
     db: store.db,
@@ -2854,6 +2858,7 @@ async function handleSharedOnboardingRuntimeEvent(
   await sendMemoryReply(store, event, turnId, composed.text, {
     deliveryPlan: runtimePlan ?? undefined,
     inboundMessageHandle: inboundMessageHandleForReaction(event),
+    allowImperfection: false,
   })
   await persistSharedOnboardingSlangPicks({
     db: store.db,
@@ -2996,6 +3001,7 @@ async function handleSharedOnboardingUserReply(
     // sharedOnboarding.voice sub-tree we never touch from writeSharedOnboardingAnswer,
     // so reusing onboardingUser is safe here.
     const priorSlangPicks = extractRecentSlangPicks(onboardingUser as { sharedOnboarding?: Record<string, unknown> | null } | null)
+    const recentMessagesForCompose = await store.loadHistory(event.sessionId, 8).catch(() => [])
     const composed = await composeSharedOnboardingReply({
       store: sharedOnboardingOutboundSlice(store),
       userId: event.userId,
@@ -3005,6 +3011,7 @@ async function handleSharedOnboardingUserReply(
       mode: "ask",
       promptContext,
       userMessage: event.body,
+      recentMessages: recentMessagesForCompose,
       composeContext: buildSharedOnboardingComposeContext({
         inboundKind: "user_answer",
         routerResult: advancedDespiteJudge ? "advanced_despite_judge" : "asked_question",
@@ -3026,6 +3033,7 @@ async function handleSharedOnboardingUserReply(
     await sendMemoryReply(store, event, turnId, composed.text, {
       deliveryPlan: nextAskPlan ?? undefined,
       inboundMessageHandle: inboundMessageHandleForReaction(event),
+      allowImperfection: false,
     })
     await persistSharedOnboardingSlangPicks({
       db: store.db,
@@ -3232,6 +3240,7 @@ async function handleSharedOnboardingBootstrap(
   await sendMemoryReply(store, event, turnId, bootstrapComposed.text, {
     deliveryPlan: bootstrapPlan ?? undefined,
     inboundMessageHandle: inboundMessageHandleForReaction(event),
+    allowImperfection: false,
   })
   await persistSharedOnboardingSlangPicks({
     db: store.db,
