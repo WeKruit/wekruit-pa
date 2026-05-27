@@ -2184,6 +2184,107 @@ async function persistConversationTurnTrace(
   }
 }
 
+export async function commitConversationEvidenceWrites(
+  store: Pick<OrchestratorStore, "db" | "nowIso" | "log">,
+  event: InboundEvent,
+  context: TurnContext,
+  evidenceWrites: ConversationEvidenceWrite[],
+): Promise<string[]> {
+  if (!store.db || evidenceWrites.length === 0) return []
+  const now = store.nowIso()
+  const committedIds: string[] = []
+
+  for (let index = 0; index < evidenceWrites.length; index++) {
+    const write = evidenceWrites[index]!
+    const evidenceId = sanitizeConversationEvidenceId(`${context.turnId}_${index}_${write.kind}`)
+    const row = stripUndefinedDeep({
+      id: evidenceId,
+      userId: event.userId,
+      eventId: event.id,
+      turnId: context.turnId,
+      sourceTurnId: write.sourceTurnId,
+      sourceMessageId: write.sourceMessageId ?? null,
+      owner: write.owner,
+      action: write.action,
+      kind: write.kind,
+      toolCallId: write.toolCallId ?? null,
+      evidenceSpan: write.evidenceSpan,
+      confidence: write.confidence,
+      scope: write.scope,
+      operation: write.operation,
+      targetPath: write.targetPath,
+      value: write.value,
+      status: "committed",
+      committedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    }) as Record<string, unknown>
+
+    try {
+      await store.db.collection(PA_COLLECTIONS.conversationEvidence).doc(evidenceId).set(row, { merge: true })
+      committedIds.push(evidenceId)
+
+      if (write.toolCallId) {
+        const link = {
+          evidenceId,
+          turnId: context.turnId,
+          userId: event.userId,
+          kind: write.kind,
+          targetPath: write.targetPath,
+          committedAt: now,
+        }
+        await store.db.collection(PA_COLLECTIONS.toolCalls).doc(write.toolCallId).set(
+          stripUndefinedDeep({
+            conversationEvidenceLast: link,
+            conversationEvidenceIndex: {
+              [evidenceId]: link,
+            },
+            updatedAt: now,
+          }) as Record<string, unknown>,
+          { merge: true },
+        )
+      }
+    } catch (err) {
+      store.log("pa.conversation_arbiter.evidence_commit_failed", {
+        userId: event.userId,
+        turnId: context.turnId,
+        eventId: event.id,
+        evidenceId,
+        kind: write.kind,
+        targetPath: write.targetPath,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  return committedIds
+}
+
+function sanitizeConversationEvidenceId(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 500)
+  return sanitized || randomUUID()
+}
+
+function stripUndefinedDeep(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefinedDeep(item))
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {}
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (child === undefined) continue
+      out[key] = stripUndefinedDeep(child)
+    }
+    return out
+  }
+  return value
+}
+
 async function handlePrescreenOutcomeExplainerTurn(
   event: InboundEvent,
   store: OrchestratorStore,
@@ -2192,6 +2293,7 @@ async function handlePrescreenOutcomeExplainerTurn(
   ownerDecision: OwnerDecision,
   actionDecision: ConversationActionDecision,
   evidenceWrites: ConversationEvidenceWrite[],
+  evidenceCommitIds: string[] = [],
 ): Promise<boolean> {
   const evidence = context.prescreenEvidence
   if (!evidence) return false
@@ -2213,6 +2315,8 @@ async function handlePrescreenOutcomeExplainerTurn(
   await persistConversationTurnTrace(store, event, context, ownerDecision, "completed", actionDecision, evidenceWrites, {
     outboundSource: "prescreen_outcome_explainer",
     memoryWrites: profileUpdated ? ["durable_preference_update"] : [],
+    evidenceCommitIds,
+    evidenceCommitCount: evidenceCommitIds.length,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -2226,6 +2330,7 @@ async function handleConversationTapbackOnlyTurn(
   ownerDecision: OwnerDecision,
   actionDecision: ConversationActionDecision,
   evidenceWrites: ConversationEvidenceWrite[],
+  evidenceCommitIds: string[] = [],
 ): Promise<boolean> {
   const reaction = actionDecision.deliveryPlan.reaction ?? "like"
   const messageHandle = sendblueMessageHandleFromEventId(event.id)
@@ -2278,6 +2383,8 @@ async function handleConversationTapbackOnlyTurn(
     reactionSent,
     reactionSkippedReason,
     memoryWrites: evidenceWrites.map((write) => write.kind),
+    evidenceCommitIds,
+    evidenceCommitCount: evidenceCommitIds.length,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -3546,6 +3653,9 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     const conversationEvidenceWrites = conversationTurnContext && conversationOwnerDecision && conversationActionDecision
       ? buildConversationEvidenceWrites(conversationTurnContext, conversationOwnerDecision, conversationActionDecision)
       : []
+    const conversationEvidenceCommitIds = conversationTurnContext
+      ? await commitConversationEvidenceWrites(store, event, conversationTurnContext, conversationEvidenceWrites)
+      : []
     if (conversationTurnContext && conversationOwnerDecision) {
       await persistConversationTurnTrace(
         store,
@@ -3555,6 +3665,10 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         "owner_arbitrated",
         conversationActionDecision ?? undefined,
         conversationEvidenceWrites,
+        {
+          evidenceCommitIds: conversationEvidenceCommitIds,
+          evidenceCommitCount: conversationEvidenceCommitIds.length,
+        },
       )
       if (
         conversationActionDecision?.selectedAction === "tapback_only" &&
@@ -3566,6 +3680,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           conversationOwnerDecision,
           conversationActionDecision,
           conversationEvidenceWrites,
+          conversationEvidenceCommitIds,
         )
       ) {
         return
@@ -3581,6 +3696,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           conversationOwnerDecision,
           conversationActionDecision,
           conversationEvidenceWrites,
+          conversationEvidenceCommitIds,
         )
       ) {
         return

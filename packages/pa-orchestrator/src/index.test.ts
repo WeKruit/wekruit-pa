@@ -1,8 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { AgentDef, InboundEvent, MemoryFact } from "@pa/core-types"
+import { PA_COLLECTIONS, type AgentDef, type InboundEvent, type MemoryFact } from "@pa/core-types"
+import type { ConversationEvidenceWrite } from "./conversation-action-arbiter.js"
+import type { TurnContext } from "./conversation-turn-arbiter.js"
 import {
   buildRecallSystemInput,
+  commitConversationEvidenceWrites,
   createFirestoreOrchestratorStore,
   isInboundLeaseExpired,
   memoryBlockWithFacts,
@@ -130,6 +133,173 @@ const baseEvent: InboundEvent = {
   createdAt: "2026-04-25T12:00:00.000Z",
   idempotencyKey: "imessage-in-1",
 }
+
+function makeMapDb(docs: Map<string, Record<string, unknown>>): FirebaseFirestore.Firestore {
+  return {
+    collection(name: string) {
+      return {
+        doc(id: string) {
+          const path = `${name}/${id}`
+          return {
+            async set(data: Record<string, unknown>, opts?: { merge?: boolean }) {
+              const existing = opts?.merge ? (docs.get(path) ?? {}) : {}
+              docs.set(path, { ...existing, ...data })
+            },
+            async get() {
+              const data = docs.get(path)
+              return {
+                exists: Boolean(data),
+                data: () => data,
+              }
+            },
+          }
+        },
+      }
+    },
+  } as unknown as FirebaseFirestore.Firestore
+}
+
+test("commitConversationEvidenceWrites persists evidence rows and links tool calls", async () => {
+  const docs = new Map<string, Record<string, unknown>>()
+  const event = { ...baseEvent, id: "evt-evidence-1" }
+  const context: TurnContext = {
+    turnId: "turn-evidence-1",
+    userId: event.userId,
+    inbound: {
+      text: "Do you have a link? Seems fine",
+      createdAt: event.createdAt,
+      channel: event.channel,
+    },
+  }
+  const writes: ConversationEvidenceWrite[] = [
+    {
+      kind: "job_interest",
+      sourceTurnId: context.turnId,
+      sourceMessageId: "msg-inbound-1",
+      owner: "fallback_claire",
+      action: "answer_then_continue",
+      evidenceSpan: "Do you have a link? Seems fine",
+      confidence: 0.78,
+      scope: "one_off",
+      operation: "append",
+      targetPath: "pa-candidate-job-states.current.interestSignals",
+      value: { askedForLink: true },
+    },
+    {
+      kind: "tool_result",
+      sourceTurnId: context.turnId,
+      owner: "fallback_claire",
+      action: "tool_result_reply",
+      toolCallId: "tool-call-1",
+      evidenceSpan: "Tool result summary",
+      confidence: 1,
+      scope: "one_off",
+      operation: "append",
+      targetPath: "pa-tool-calls.tool-call-1.conversationEvidence",
+      value: { name: "web_search", resultSummary: "Found the public job post." },
+    },
+  ]
+
+  const evidenceIds = await commitConversationEvidenceWrites(
+    makeStore({
+      db: makeMapDb(docs),
+      nowIso: () => "2026-05-27T16:00:00.000Z",
+    }),
+    event,
+    context,
+    writes,
+  )
+
+  assert.deepEqual(evidenceIds, [
+    "turn-evidence-1_0_job_interest",
+    "turn-evidence-1_1_tool_result",
+  ])
+
+  const jobInterest = docs.get(`${PA_COLLECTIONS.conversationEvidence}/${evidenceIds[0]}`)!
+  assert.equal(jobInterest.kind, "job_interest")
+  assert.equal(jobInterest.userId, "u1")
+  assert.equal(jobInterest.eventId, "evt-evidence-1")
+  assert.equal(jobInterest.status, "committed")
+  assert.deepEqual(jobInterest.value, { askedForLink: true })
+
+  const toolEvidence = docs.get(`${PA_COLLECTIONS.conversationEvidence}/${evidenceIds[1]}`)!
+  assert.equal(toolEvidence.kind, "tool_result")
+  assert.equal(toolEvidence.toolCallId, "tool-call-1")
+
+  const toolCall = docs.get(`${PA_COLLECTIONS.toolCalls}/tool-call-1`)!
+  assert.deepEqual(toolCall.conversationEvidenceLast, {
+    evidenceId: evidenceIds[1],
+    turnId: context.turnId,
+    userId: event.userId,
+    kind: "tool_result",
+    targetPath: "pa-tool-calls.tool-call-1.conversationEvidence",
+    committedAt: "2026-05-27T16:00:00.000Z",
+  })
+  assert.deepEqual(toolCall.conversationEvidenceIndex, {
+    [evidenceIds[1]]: {
+      evidenceId: evidenceIds[1],
+      turnId: context.turnId,
+      userId: event.userId,
+      kind: "tool_result",
+      targetPath: "pa-tool-calls.tool-call-1.conversationEvidence",
+      committedAt: "2026-05-27T16:00:00.000Z",
+    },
+  })
+})
+
+test("processInboundEvent commits tapback interest evidence before suppressing outbound text", async () => {
+  const docs = new Map<string, Record<string, unknown>>()
+  let llmCalls = 0
+  let outboundCount = 0
+  const store = makeStore({
+    db: makeMapDb(docs),
+    loadHistory: async () => [
+      {
+        id: "assistant-rec-1",
+        userId: "u1",
+        sessionId: "s1",
+        role: "assistant",
+        body: "I found one role worth your time: Senior Agentic Engineer at Webflow. See if this fits — if not lmk.",
+        createdAt: "2026-05-27T15:59:00.000Z",
+      },
+    ],
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "this should not send" }
+    },
+    enqueueOutbound: async () => {
+      outboundCount++
+    },
+  })
+
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "sendblue-live-msg-1",
+      body: "Sure",
+    },
+    store,
+  )
+
+  assert.equal(llmCalls, 0)
+  assert.equal(outboundCount, 0)
+
+  const evidenceRows = [...docs.entries()].filter(([path]) => path.startsWith(`${PA_COLLECTIONS.conversationEvidence}/`))
+  assert.equal(evidenceRows.length, 1)
+  const evidence = evidenceRows[0]![1]
+  assert.equal(evidence.kind, "job_interest")
+  assert.equal(evidence.action, "tapback_only")
+  assert.equal(evidence.operation, "append")
+  assert.equal(evidence.status, "committed")
+
+  const traces = [...docs.entries()].filter(([path]) => path.startsWith(`${PA_COLLECTIONS.turnTraces}/`))
+  assert.equal(traces.length, 1)
+  const trace = traces[0]![1]
+  assert.equal(trace.actionDecision && typeof trace.actionDecision === "object"
+    ? (trace.actionDecision as { selectedAction?: string }).selectedAction
+    : undefined, "tapback_only")
+  assert.deepEqual(trace.evidenceCommitIds, ["turn1_0_job_interest"])
+})
 
 test("createFirestoreOrchestratorStore getOnboardingUser exposes resume context fields", async () => {
   const userDoc = {
