@@ -409,7 +409,7 @@ export function CandidateShell({
           </Link>
           <AudienceToggle />
           <nav className="wk-nav" aria-label="Candidate navigation">
-            <Link to="/#how" className="wk-nav__link">How it works</Link>
+            <HowItWorksLink />
             <Link to="/refer" className="wk-nav__link">Earn $4k</Link>
             <Link to="/me" className="wk-nav__link">Pipeline</Link>
           </nav>
@@ -450,6 +450,31 @@ function AppNavLink({ to, children }: { to: string; children: ReactNode }) {
     <Link to={to} className={`wk-nav__link${active ? " is-active" : ""}`}>
       {children}
     </Link>
+  )
+}
+
+// "How it works" — SPA hash anchor needs an onClick scroll because
+// react-router-dom doesn't process the URL hash. If already on /, smooth
+// scroll directly. Else navigate to /#how and let Landing's mount-time
+// effect (Landing.tsx) handle scroll after render.
+function HowItWorksLink() {
+  const navigate = useNavigate()
+  function go(e: React.MouseEvent<HTMLAnchorElement>) {
+    e.preventDefault()
+    if (window.location.pathname === "/") {
+      document.getElementById("how")?.scrollIntoView({ behavior: "smooth", block: "start" })
+      // Keep the hash in the URL for shareability without reloading.
+      if (window.location.hash !== "#how") {
+        window.history.replaceState(null, "", "/#how")
+      }
+    } else {
+      navigate("/#how")
+    }
+  }
+  return (
+    <a href="/#how" className="wk-nav__link" onClick={go}>
+      How it works
+    </a>
   )
 }
 
