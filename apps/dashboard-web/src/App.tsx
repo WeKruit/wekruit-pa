@@ -94,20 +94,30 @@ import { Jobs as ExternalSupplyJobs } from "./pages/external-supply/Jobs.js"
 import { JobWorkspace } from "./pages/admin/JobWorkspace.js"
 
 import { auth } from "./lib/firebase.js"
+import {
+  bootstrapSsoFromCookie,
+  clearSsoCookie,
+  registerSsoCookieRefresh,
+} from "./lib/cross-domain-sso.js"
 
 export default function App() {
   const [user, setUser] = useState<unknown | null>(undefined)
   const [redirectHandled, setRedirectHandled] = useState(false)
 
-  // Consume Google redirect *before* routing (avoids redirect / sign-in races)
+  // Consume Google redirect *before* routing (avoids redirect / sign-in races).
+  // Also try to restore the per-origin session from the shared `.wekruit.com`
+  // SSO cookie in parallel so the admin survives navigating from another
+  // wekruit.com subdomain without re-authenticating.
   useEffect(() => {
-    getRedirectResult(auth())
+    Promise.allSettled([getRedirectResult(auth()), bootstrapSsoFromCookie()])
       .catch((e) => {
-        console.warn("[auth] getRedirectResult", e)
+        console.warn("[auth] bootstrap", e)
       })
       .finally(() => {
         setRedirectHandled(true)
       })
+    const unsubRefresh = registerSsoCookieRefresh()
+    return () => unsubRefresh()
   }, [])
 
   useEffect(() => {
@@ -134,7 +144,13 @@ export default function App() {
     (user && typeof user === "object" && (user as { email?: string }).email) || "operator"
 
   return (
-    <AppShell userEmail={email} onSignOut={() => signOut(auth())}>
+    <AppShell
+      userEmail={email}
+      onSignOut={async () => {
+        await clearSsoCookie()
+        await signOut(auth())
+      }}
+    >
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/conversations" element={<Users />} />
