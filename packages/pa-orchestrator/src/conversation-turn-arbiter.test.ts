@@ -105,8 +105,9 @@ test("arbiter blocks ambiguous shared-onboarding non-answers from advancing the 
     },
   }))
 
-  assert.equal(decision.selectedOwner, "fallback_claire")
+  assert.equal(decision.selectedOwner, "shared_onboarding")
   assert.ok(decision.forbiddenMutations.includes("sharedOnboarding.answers.location_relocation"))
+  assert.deepEqual(decision.orderedActions.map((action) => action.kind), ["clarify_shared_onboarding"])
   assert.ok(
     decision.rejectedOwners.some((owner) =>
       owner.owner === "shared_onboarding" && /not an answer/i.test(owner.reason)

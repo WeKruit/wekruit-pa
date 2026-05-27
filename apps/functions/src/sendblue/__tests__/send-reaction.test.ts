@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 
 import { sendReaction } from "../send-reaction.js"
 import { SendblueClientError, SendblueServerError } from "../sendblue-client.js"
+import { _resetPoolCache } from "../pool.js"
 import {
   __resetSendblueBreakerForTests,
   recordSendblueFailure,
@@ -46,9 +47,11 @@ const CREDS = { apiKeyId: "key", apiSecretKey: "secret" }
 describe("sendReaction", () => {
   beforeEach(() => {
     __resetSendblueBreakerForTests()
+    _resetPoolCache()
   })
   afterEach(() => {
     __resetSendblueBreakerForTests()
+    _resetPoolCache()
   })
 
   it("success path: 2xx → returns parsed body, posts correct shape to send-reaction endpoint", async () => {
@@ -96,6 +99,70 @@ describe("sendReaction", () => {
       // 4xx must not consume breaker budget — issuing 5 should NOT open it.
       // (Confirm by hitting a fresh fetcher with success after 5 4xx — but
       // simplest assertion: state is still CLOSED.)
+    } finally {
+      mock.restore()
+    }
+  })
+
+  it("uses explicit sender number before env fallback for thread-specific reactions", async () => {
+    const mock = installFetchMock(() => jsonResponse(200, { status: "QUEUED" }))
+    try {
+      await sendReaction(
+        {
+          to: "+15551234567",
+          messageHandle: "msg-abc-123",
+          reaction: "like",
+          fromNumber: "+17174919939",
+          allowEnvFromNumberFallback: false,
+        },
+        { ...CREDS, fromNumber: "+13054507715" },
+      )
+      const body = JSON.parse(String(mock.calls[0]!.init.body))
+      assert.equal(body.from_number, "+17174919939")
+    } finally {
+      mock.restore()
+    }
+  })
+
+  it("selects a public pool sender for user-backed reactions when no explicit sender is provided", async () => {
+    const mock = installFetchMock(() => jsonResponse(200, { status: "QUEUED" }))
+    const db = {
+      collection(name: string) {
+        assert.equal(name, "pa-config")
+        return {
+          doc(id: string) {
+            assert.equal(id, "sendblue-pool")
+            return {
+              async get() {
+                return {
+                  exists: true,
+                  data: () => ({
+                    numbers: [
+                      { number: "+13054507715", status: "active", audience: "admin", adminOnly: true },
+                      { number: "+17174919939", status: "active", audience: "public", adminOnly: false },
+                    ],
+                  }),
+                }
+              },
+            }
+          },
+        }
+      },
+    }
+    try {
+      await sendReaction(
+        {
+          to: "+15551234567",
+          messageHandle: "msg-abc-123",
+          reaction: "like",
+          userId: "u-public",
+          db: db as never,
+          allowEnvFromNumberFallback: false,
+        },
+        { ...CREDS, fromNumber: "+13054507715" },
+      )
+      const body = JSON.parse(String(mock.calls[0]!.init.body))
+      assert.equal(body.from_number, "+17174919939")
     } finally {
       mock.restore()
     }

@@ -290,6 +290,8 @@ export type ComposeSharedOnboardingReplyInput = {
   agent: AgentDef
   reaskReason?: string
   reaskClarifyingQuestion?: string
+  /** Force the agentic wording path for recovery turns that must not feel templated. */
+  forceAgentic?: boolean
   inboundMessageHandle?: string
   toE164?: string
   /**
@@ -448,8 +450,11 @@ export async function composeSharedOnboardingReply(
         })
       : buildSharedOnboardingPrompt(input.slot, input.promptContext)
 
-  const agentic = await isSharedOnboardingAgenticSurfaceEnabled(input.store.db, input.userId)
+  const agentic = input.forceAgentic === true || await isSharedOnboardingAgenticSurfaceEnabled(input.store.db, input.userId)
   if (!agentic || !input.store.runAgentTurn) {
+    if (input.forceAgentic === true) {
+      throw new Error("shared_onboarding_agentic_surface_required")
+    }
     const { text } = await applyTemplateOutboundHumanize({
       body: template,
       userId: input.userId,
@@ -633,6 +638,9 @@ export async function composeSharedOnboardingReply(
       turnId: input.turnId,
       error: err instanceof Error ? err.message : String(err),
     })
+    if (input.forceAgentic === true) {
+      throw err
+    }
     if (process.env.PA_SHARED_ONBOARDING_TEMPLATE_FALLBACK === "false") {
       throw err
     }

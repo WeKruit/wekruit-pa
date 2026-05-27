@@ -22,6 +22,7 @@ export type TurnIntent =
   | "job_search_request"
   | "active_workflow_answer"
   | "shared_onboarding_answer"
+  | "shared_onboarding_clarification"
   | "fallback_claire"
 
 export type ConversationOwner =
@@ -50,6 +51,7 @@ export type ArbiterActionKind =
   | "run_job_search"
   | "route_active_workflow"
   | "write_shared_onboarding_answer"
+  | "clarify_shared_onboarding"
   | "fallback_reply"
   | "safety_control"
 
@@ -171,6 +173,7 @@ export function decideConversationTurnOwner(context: TurnContext): OwnerDecision
   const hasJobSearchRequest = frames.some((frame) => frame.intent === "job_search_request")
   const hasActiveWorkflowAnswer = frames.some((frame) => frame.intent === "active_workflow_answer")
   const hasSharedOnboardingAnswer = frames.some((frame) => frame.intent === "shared_onboarding_answer")
+  const hasSharedOnboardingClarification = frames.some((frame) => frame.intent === "shared_onboarding_clarification")
   const hasSafetyControl = frames.some((frame) => frame.intent === "safety_control")
 
   if (hasSafetyControl) {
@@ -276,6 +279,18 @@ export function decideConversationTurnOwner(context: TurnContext): OwnerDecision
       forbiddenMutations,
       intentFrames: frames,
       orderedActions: [{ kind: "write_shared_onboarding_answer", owner: "shared_onboarding", reason: "Active shared-onboarding slot answer." }],
+    })
+  }
+
+  if (hasSharedOnboardingClarification) {
+    return decision({
+      selectedOwner: "shared_onboarding",
+      rejectedOwners,
+      reason: "Active shared onboarding still owns the unclear short reply; re-ask without mutating the slot.",
+      requiredTools,
+      forbiddenMutations,
+      intentFrames: frames,
+      orderedActions: [{ kind: "clarify_shared_onboarding", owner: "shared_onboarding", reason: "Reply did not answer the active onboarding slot." }],
     })
   }
 
@@ -396,6 +411,15 @@ function buildIntentFrames(context: TurnContext, text: string): IntentFrame[] {
     })
   }
 
+  if (isSharedOnboardingClarificationTurn(context, text)) {
+    frames.push({
+      intent: "shared_onboarding_clarification",
+      confidence: 0.76,
+      evidenceSpan: raw.slice(0, 240),
+      scope: "workflow",
+    })
+  }
+
   return frames
 }
 
@@ -451,6 +475,31 @@ function isPrescreenOutcomeQuestion(text: string): boolean {
   const asksReason = /\b(why|how|what|understand|feedback|improve|improved)\b/i.test(text)
   const mentionsRole = /\b(role|job|rain|company|above)\b/i.test(text)
   return hasOutcomeLanguage && asksReason && mentionsRole
+}
+
+function isSharedOnboardingClarificationTurn(context: TurnContext, text: string): boolean {
+  if (context.sharedOnboarding?.active !== true) return false
+  const questionId = context.sharedOnboarding.currentQuestionId
+  if (!questionId) return false
+  if (isSharedOnboardingSlotAnswer(questionId, text)) return false
+  if (isSharedOnboardingKickoffLike(text)) return false
+  if (isControlOrPrivacyIntent(text)) return false
+  if (isMetaQuestion(text)) return false
+  if (isDurablePreferenceUpdate(text)) return false
+  if (isJobSearchRequest(text)) return false
+  return isShortLowInformationReply(text) || isAmbiguousOnboardingReply(text)
+}
+
+function isShortLowInformationReply(text: string): boolean {
+  return /^(sure|ok|okay|yes|yeah|yep|sounds good|sg|cool|fine|great|got it|makes sense|👍)$/i.test(text)
+}
+
+function isAmbiguousOnboardingReply(text: string): boolean {
+  return /\b(not sure|unsure|idk|i don'?t know|confused|unclear|huh|what you mean)\b/i.test(text)
+}
+
+function isSharedOnboardingKickoffLike(text: string): boolean {
+  return /^hello,?\s*wekruit!?/i.test(text) || /^(hello|hi|hey|yo|sup)(\s+(wekruit|claire))?$/i.test(text)
 }
 
 function isDurablePreferenceUpdate(text: string): boolean {

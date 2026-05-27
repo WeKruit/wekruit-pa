@@ -170,6 +170,21 @@ export function decideConversationDeliveryAction(
   }
 
   if (ownerDecision.selectedOwner === "shared_onboarding") {
+    if (ownerDecision.orderedActions.some((action) => action.kind === "clarify_shared_onboarding")) {
+      return actionDecision({
+        selectedAction: "answer_then_continue",
+        rejectedActions,
+        reason: "Active shared onboarding needs a clarifying re-ask, not a recommendation tapback or slot mutation.",
+        deliveryPlan: { outboundTextRequired: true },
+        replyGuidance: [
+          "Do not store the unclear reply as an onboarding answer.",
+          "Briefly re-ask the active onboarding slot in natural language.",
+          "Do not infer recommendation interest from older messages.",
+        ],
+        requiredTraceFields: ["noForbiddenMutations", "outboundSource"],
+        toolCallIds,
+      })
+    }
     return actionDecision({
       selectedAction: "answer_then_continue",
       rejectedActions,

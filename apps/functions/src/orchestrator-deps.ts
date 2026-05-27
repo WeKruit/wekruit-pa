@@ -84,9 +84,30 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
         reason: result.reason,
       }
     },
-    sendReaction: async ({ to, messageHandle, reaction }) => {
+    sendReaction: async ({ to, messageHandle, reaction, userId }) => {
+      if (!getApps().length) initializeApp()
+      const db = getFirestore()
+      let fromNumber: string | undefined
+      if (userId) {
+        try {
+          const userSnap = await db.collection("pa-users").doc(userId).get()
+          const senderNumber = userSnap.data()?.senderNumber
+          fromNumber = typeof senderNumber === "string" && senderNumber.trim()
+            ? senderNumber.trim()
+            : undefined
+        } catch {
+          fromNumber = undefined
+        }
+      }
       const { sendReaction } = await import("./sendblue/send-reaction.js")
-      await sendReaction({ to, messageHandle, reaction })
+      await sendReaction({
+        to,
+        messageHandle,
+        reaction,
+        ...(userId ? { userId, db } : {}),
+        ...(fromNumber ? { fromNumber } : {}),
+        allowEnvFromNumberFallback: false,
+      })
     },
   }
 

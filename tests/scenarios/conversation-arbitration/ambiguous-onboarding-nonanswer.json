@@ -19,12 +19,13 @@
     "channel": "imessage"
   },
   "expected": {
-    "owner": "fallback_claire",
+    "owner": "shared_onboarding",
+    "action": "answer_then_continue",
     "requiredTools": [],
     "forbiddenMutations": ["sharedOnboarding.answers.location_relocation"],
-    "orderedActionKinds": ["fallback_reply"],
+    "orderedActionKinds": ["clarify_shared_onboarding"],
     "trace": {
-      "selectedOwner": "fallback_claire"
+      "selectedOwner": "shared_onboarding"
     }
   }
 }
