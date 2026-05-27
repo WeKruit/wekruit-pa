@@ -141,6 +141,26 @@
   --z-popover:       50;
   --z-modal:         100;
   --z-toast:         200;
+
+  /* ---- Candidate / employer surface tokens (design bundle 2026-05-26) ----
+     Layered on top of the editorial palette to add a "live / interview / signal"
+     terracotta accent and iMessage palette. Used by Employers, Sequence,
+     Me v2, and other candidate-side surfaces. */
+  --live:                  #9A4421;
+  --live-2:                #7A3318;
+  --live-soft:             #FBE8DA;
+  --live-soft-2:           #F6D6BE;
+  --live-border:           #F0BFA0;
+  --live-pulse:            #E0742E;
+  --imsg-blue:             #007AFF;
+  --imsg-blue-2:           #0A85FF;
+  --imsg-gray:             #E9E9EB;
+  --imsg-text:             #0B0C0E;
+  --imsg-stamp:            #8E8E93;
+  --candidate-page:        var(--cream);
+  --candidate-card:        var(--cream-3);
+  --candidate-card-hover:  #FFF8EB;
+  --shadow-live:           0 2px 0 0 rgba(154,68,33,.06), 0 10px 24px -14px rgba(154,68,33,.20);
 }
 
 /* =====================================================================

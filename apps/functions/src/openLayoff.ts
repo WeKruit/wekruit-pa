@@ -45,7 +45,10 @@ import {
 } from "./orchestrator-deps.js"
 
 /** Inbox that receives the "new employer signup" notification. */
-const EMPLOYER_SIGNUP_ADMIN_INBOX = "admin1@wekruit.com"
+// Mailgun's `to` field accepts comma-separated addresses. All three admins
+// receive the same notification (one Mailgun send, multi-recipient).
+// Adam directive 2026-05-27: fix recipient list.
+const EMPLOYER_SIGNUP_ADMIN_INBOX = "admin1@wekruit.com, adam.ylol@wekruit.com, noah.liu@wekruit.com"
 /** Deep link operators get in the notification email to jump straight to review. */
 const EMPLOYER_DASHBOARD_URL = "https://wekruit-pa.web.app/admin/layoff-employers"
 

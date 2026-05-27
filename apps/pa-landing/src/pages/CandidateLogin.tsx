@@ -41,6 +41,7 @@ import {
 import { peekSource, stickSourceFromLoginNext, type SignupSource } from "../lib/source.js"
 import { verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
 import { LayoffLoginCard } from "../components/LayoffLoginCard.js"
+import { AudienceToggle } from "../components/AudienceToggle.js"
 
 const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
 const OAUTH_PENDING_KEY = "pa_oauth_pending"
@@ -402,11 +403,11 @@ export function CandidateShell({
             <WekruitLogo size={22} />
             <span className="wk-header__brand-meta">Open</span>
           </Link>
+          <AudienceToggle />
           <nav className="wk-nav" aria-label="Candidate navigation">
             <Link to="/" className="wk-nav__link">Open interviews</Link>
             <Link to="/market" className="wk-nav__link">Open market</Link>
             <Link to="/me" className="wk-nav__link">Pipeline</Link>
-            <Link to="/me/profile" className="wk-nav__link">Profile</Link>
           </nav>
           <div className="wk-header__cta">
             <Link to="/login" className="wk-header__signin">Sign in</Link>
@@ -865,12 +866,14 @@ export const CANDIDATE_STYLES = `
 .wk-header__inner {
   max-width: 1160px;
   margin: 0 auto;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
   align-items: center;
   gap: 24px;
   padding: 14px 24px;
+  flex-wrap: nowrap;
 }
+.wk-header__inner > .wk-nav { margin-left: auto; }
+.wk-header__inner > .wk-header__cta { flex: none; }
 .wk-header__brand { text-decoration: none; display: inline-flex; align-items: baseline; gap: 10px; }
 .wk-header__brand-meta {
   display: inline-flex; align-items: baseline; gap: 10px;
