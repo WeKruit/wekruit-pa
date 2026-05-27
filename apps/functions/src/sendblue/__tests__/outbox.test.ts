@@ -517,6 +517,37 @@ describe("paSendblueOutboxHandler", () => {
     assert.equal(isMarketplaceOutreachOutbound({ idempotencyKey: "out-test-1" }), false)
   })
 
+  it("Test 9a: outbound transcript append stores assistant messages as assistant role", async () => {
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "Manual operator reply",
+      idempotencyKey: "manual-console-1",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb({ "doc-role": baseRow }, { [USER.id]: USER })
+    const sb = makeSendblueMock()
+    let appended: DocData | undefined
+
+    await paSendblueOutboxHandler(makeEvent("doc-role", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date("2026-05-26T22:39:00Z"),
+      log: () => {},
+      appendMessage: async (_db, input) => {
+        appended = input as never
+      },
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+
+    assert.equal(sb.calls, 1)
+    assert.equal(outbound.get("doc-role")!.status, "sent")
+    assert.equal(appended?.role, "assistant")
+    assert.equal((appended?.rawMeta as { source?: string } | undefined)?.source, "pa-outbound")
+  })
+
   it("Test 9b: marketplace outreach stop gate blocks before transcript, quota, typing, or Sendblue", async () => {
     const baseRow: DocData = {
       status: "pending",

@@ -17,6 +17,8 @@ export const PA_COLLECTIONS = {
   agentTurns: "pa-agent-turns",
   /** Per-turn state machine consumed by pa-orchestrator (Phase 1 Mem0 path) */
   turns: "pa-turns",
+  /** Upstream conversation-owner arbitration trace for Claire turn routing. */
+  turnTraces: "pa-turn-traces",
   /** Memory action audit (remember/forget/list/clear) */
   memoryActions: "pa-memory-actions",
   /** Rolled-up conversation summaries */

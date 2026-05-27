@@ -1,0 +1,26 @@
+{
+  "id": "negative-role-feedback",
+  "description": "Negative feedback about recommended role type must be treated as durable preference before any matching refresh.",
+  "initialFirestoreState": {
+    "pa-users/u1": {
+      "id": "u1",
+      "phoneE164": "+15109136602",
+      "onboardingState": "complete"
+    }
+  },
+  "inbound": {
+    "userId": "u1",
+    "text": "Not software developer roles. Product and strategy only, please.",
+    "createdAt": "2026-05-26T23:01:00.000Z",
+    "channel": "imessage"
+  },
+  "expected": {
+    "owner": "durable_preference_update",
+    "requiredTools": ["semantic_preference_extraction", "commit_memory"],
+    "forbiddenMutations": [],
+    "orderedActionKinds": ["extract_durable_preferences", "commit_memory"],
+    "trace": {
+      "selectedOwner": "durable_preference_update"
+    }
+  }
+}

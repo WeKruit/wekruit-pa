@@ -1623,6 +1623,112 @@ test("processInboundEvent job explanation injects multi-part answer contract and
   assert.match(directive, /data_workflows/)
 })
 
+test("processInboundEvent routes Rain fit-improvement question to prescreen outcome without advancing shared onboarding", async () => {
+  const writes: Array<{ name: string; id: string; data: Record<string, unknown> }> = []
+  const fakeDb = {
+    collection(name: string) {
+      return {
+        doc(id: string) {
+          return {
+            async get() {
+              if (name === "pa-users" && id === "u1") {
+                return {
+                  exists: true,
+                  data: () => ({
+                    workSession: {
+                      sessionId: "ps-rain",
+                      jobId: "rain-product-manager-cards-95ae1a01",
+                      status: "ended",
+                      boundary: "terminal",
+                      terminal: "PAUSE",
+                    },
+                    sharedOnboarding: {
+                      status: "active",
+                      currentQuestionId: "industry_interest",
+                    },
+                  }),
+                }
+              }
+              if (name === "pa-prescreen-memory-events" && id === "ps-rain") {
+                return {
+                  exists: true,
+                  data: () => ({
+                    jobId: "rain-product-manager-cards-95ae1a01",
+                    terminal: "PAUSE",
+                    summary:
+                      "Strong PM role fit: end-to-end ownership, integrations, and 3X lead lift. Mentions technical data-flow design and failure handling; lacks concrete implementation depth.",
+                    evidenceTags: ["product_management", "technical_depth_gap"],
+                  }),
+                }
+              }
+              return { exists: false, data: () => undefined }
+            },
+            async set(data: Record<string, unknown>) {
+              writes.push({ name, id, data })
+            },
+          }
+        },
+      }
+    },
+  }
+  let outbound = ""
+  let llmCalls = 0
+  let memoryWrites = 0
+  const turnPatches: Record<string, unknown>[] = []
+  const store = makeStore({
+    db: fakeDb as unknown as OrchestratorStore["db"],
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+14243201960",
+      onboardingState: "complete",
+      workSession: {
+        sessionId: "ps-rain",
+        jobId: "rain-product-manager-cards-95ae1a01",
+        status: "ended",
+        boundary: "terminal",
+        terminal: "PAUSE",
+      },
+      sharedOnboarding: {
+        status: "active",
+        currentQuestionId: "industry_interest",
+      },
+    }),
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "unexpected generic LLM reply" }
+    },
+    createMemoryFact: async () => {
+      memoryWrites++
+      return "memory-1"
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnPatches.push(patch)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Could you help me understand how I could have improved my fit for the above role at Rain?",
+  }, store)
+
+  assert.equal(llmCalls, 0)
+  assert.equal(memoryWrites, 0)
+  assert.match(outbound, /Rain/i)
+  assert.match(outbound, /technical/i)
+  assert.doesNotMatch(outbound, /Where do you want to work|remote, onsite|relocating/i)
+  assert.ok(turnPatches.some((patch) => patch.directIntent === "prescreen_outcome_explainer"))
+  assert.equal(
+    writes.some((write) => {
+      const shared = (write.data.sharedOnboarding as { answers?: Record<string, unknown> } | undefined)
+      return Boolean(shared?.answers?.industry_interest)
+    }),
+    false,
+  )
+})
+
 test("processInboundEvent job explanation replies atomically so ordered reasoning is not reversed in iMessage", async () => {
   const bodies: string[] = []
   const idempotencyKeys: Array<string | undefined> = []
