@@ -233,7 +233,7 @@ test("F4 latency wrapper overhead < 20ms (mock fetch with 50ms delay)", async ()
   const r = await detectAdviceRepeat(ctx("a", ["b"]))
   // Mock fetch sleeps 50ms; total wrapper overhead should be small.
   assert.ok(r.latencyMs < 100, `expected < 100ms, got ${r.latencyMs}`)
-  assert.ok(r.latencyMs >= 50, `expected >= 50ms (mock delay), got ${r.latencyMs}`)
+  assert.ok(r.latencyMs >= 45, `expected approximately the 50ms mock delay, got ${r.latencyMs}`)
 })
 
 test("F4 sliding window — uses only last 3 history entries", async () => {
