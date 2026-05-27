@@ -140,7 +140,13 @@ export { paLivenessSweepDaily } from "./liveness-sweep.js"
 // than 24h (warn) or 48h (error). Audit trail in
 // `matching-jobs-monitor-runs`. See `scrape-freshness-monitor.ts` for the
 // pure orchestrator + co-located unit tests.
-export { paScrapeFreshnessMonitorDaily } from "./scrape-freshness-monitor.js"
+export {
+  paScrapeFreshnessMonitorDaily,
+  // Public HTTP companion — feeds the Claude routine that doesn't have
+  // Firestore credentials. Returns latest monitor run + today's pipeline
+  // lock state as JSON. 60s CDN cache.
+  paScrapeFreshnessStatusPublic,
+} from "./scrape-freshness-monitor.js"
 
 // Phase A5 (post-v1.7) — `pa-companies` enrichment cascade (YC → Wikidata →
 // Clearbit → LLM). Scheduled Tue 04:00 UTC + admin-only ad-hoc callable.

@@ -36,6 +36,7 @@
  */
 
 import { onSchedule } from "firebase-functions/v2/scheduler"
+import { onRequest } from "firebase-functions/v2/https"
 import { logger } from "firebase-functions/v2"
 import { getApps, initializeApp } from "firebase-admin/app"
 import { getFirestore, Timestamp } from "firebase-admin/firestore"
@@ -272,5 +273,140 @@ export const paScrapeFreshnessMonitorDaily = onSchedule(
         logger.info(`[scrape-freshness-monitor] ${msg}`, ctx ?? {}),
     })
     logger.info("[scrape-freshness-monitor] done", result)
+  }
+)
+
+// ---------------------------------------------------------------------------
+// paScrapeFreshnessStatusPublic — public read-only HTTP endpoint exposing
+// the latest monitor-run record + the current pipeline lock status.
+//
+// Why public, no auth
+// -------------------
+// The Claude /schedule routine (`trig_01XGKR5L5oBVgowX7sRTY5NE`) runs in a
+// sandbox that has no Firestore credentials but does have `curl`. Reading
+// non-PII pipeline health counters from a public endpoint is acceptable —
+// the body contains only operational telemetry (timestamps + severity +
+// counts), no candidate or job-level data. We cache responses for 60s on
+// the CDN to absorb routine + ad-hoc curl bursts.
+// ---------------------------------------------------------------------------
+
+interface PublicStatusBody {
+  ts: string
+  monitor: {
+    foundRunRecord: boolean
+    runAt: string | null
+    hoursSinceNewest: number | null
+    freshDocsLast24h: number | null
+    severity: "ok" | "warn" | "error" | null
+    slackPosted: boolean | null
+  }
+  lock: {
+    found: boolean
+    lockId: string | null
+    acquiredBy: string | null
+    acquiredAtMs: number | null
+    releasedAt: string | null
+    outcome: string | null
+  }
+  thresholds: {
+    warnHours: number
+    errorHours: number
+  }
+}
+
+async function readLatestStatus(): Promise<PublicStatusBody> {
+  ensureAdmin()
+  const db = getFirestore()
+  const now = new Date()
+
+  // Latest monitor run record (always exists once the scheduled CF has
+  // fired at least once).
+  const runSnap = await db
+    .collection("matching-jobs-monitor-runs")
+    .orderBy("runAt", "desc")
+    .limit(1)
+    .get()
+
+  const monitor: PublicStatusBody["monitor"] = {
+    foundRunRecord: !runSnap.empty,
+    runAt: null,
+    hoursSinceNewest: null,
+    freshDocsLast24h: null,
+    severity: null,
+    slackPosted: null,
+  }
+  if (!runSnap.empty) {
+    const doc = runSnap.docs[0].data()
+    const runAt = doc.runAt as Timestamp | undefined
+    monitor.runAt = runAt ? runAt.toDate().toISOString() : null
+    monitor.hoursSinceNewest =
+      typeof doc.hoursSinceNewest === "number" ? doc.hoursSinceNewest : null
+    monitor.freshDocsLast24h =
+      typeof doc.freshDocsLast24h === "number" ? doc.freshDocsLast24h : null
+    monitor.severity = (doc.severity as PublicStatusBody["monitor"]["severity"]) ?? null
+    monitor.slackPosted = typeof doc.slackPosted === "boolean" ? doc.slackPosted : null
+  }
+
+  // Today's pipeline lock. UTC key matches the macmini + laptop + GH
+  // Actions wrappers (see wekruit-matching's src/wekruit_matching/lock.py).
+  const lockId = `scrape-daily-${now.toISOString().slice(0, 10)}`
+  const lockSnap = await db.collection("pa-system-locks").doc(lockId).get()
+
+  const lock: PublicStatusBody["lock"] = {
+    found: lockSnap.exists,
+    lockId,
+    acquiredBy: null,
+    acquiredAtMs: null,
+    releasedAt: null,
+    outcome: null,
+  }
+  if (lockSnap.exists) {
+    const data = lockSnap.data() ?? {}
+    lock.acquiredBy = (data.acquiredBy as string | undefined) ?? null
+    lock.acquiredAtMs =
+      typeof data.acquiredAtMs === "number" ? data.acquiredAtMs : null
+    const released = data.releasedAt as Timestamp | undefined | null
+    lock.releasedAt = released && typeof released.toDate === "function"
+      ? released.toDate().toISOString()
+      : null
+    lock.outcome = (data.outcome as string | null | undefined) ?? null
+  }
+
+  return {
+    ts: now.toISOString(),
+    monitor,
+    lock,
+    thresholds: {
+      warnHours: 24,
+      errorHours: 48,
+    },
+  }
+}
+
+export const paScrapeFreshnessStatusPublic = onRequest(
+  {
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 30,
+    cors: true,
+    invoker: "public",
+  },
+  async (req, res) => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      res.status(405).json({ error: "method_not_allowed" })
+      return
+    }
+    try {
+      const body = await readLatestStatus()
+      // 60s cache so a busy routine + ad-hoc curl don't fan out Firestore reads.
+      res.set("Cache-Control", "public, max-age=60, s-maxage=60")
+      res.set("X-Content-Type-Options", "nosniff")
+      res.status(200).json(body)
+    } catch (err) {
+      logger.error("[scrape-freshness-status-public] read failed", {
+        err: err instanceof Error ? err.message : String(err),
+      })
+      res.status(500).json({ error: "internal", message: "see Cloud Logging" })
+    }
   }
 )
