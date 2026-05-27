@@ -148,6 +148,13 @@ export {
   paScrapeFreshnessStatusPublic,
 } from "./scrape-freshness-monitor.js"
 
+// 2026-05-27 — Quality sampling CF. Returns counters per source + ≤20
+// random samples (company / role / atsApplyUrl / source) from the
+// last 24h of scraped jobs. Feeds a sibling Claude routine that
+// HEAD-checks each URL and opens a daily GitHub issue with the
+// quality verdict.
+export { paScrapeQualitySamplePublic } from "./scrape-quality-sample.js"
+
 // Phase A5 (post-v1.7) — `pa-companies` enrichment cascade (YC → Wikidata →
 // Clearbit → LLM). Scheduled Tue 04:00 UTC + admin-only ad-hoc callable.
 // Never overwrites docs where `lastReviewedBy != null`.
