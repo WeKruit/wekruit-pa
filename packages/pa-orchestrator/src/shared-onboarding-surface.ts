@@ -78,6 +78,7 @@ export function buildOnboardingSurfaceIntent(input: {
       ? "User asked something off-topic. Briefly answer (≤1 short sentence) and then re-ask this onboarding slot — do not skip the slot question, do not offer job search, do not write tags."
       : "Ask the onboarding question for this slot — do not offer job search, do not riff on the greeting.",
     "Preserve the canonical question's topic exactly; do not swap it for a different preference question.",
+    "No slang, meme phrases, or performatively casual openers; warm and plain is better.",
   ]
   if (input.tangentDetected) {
     invariants.push(buildTangentSurfaceDirective(lang))

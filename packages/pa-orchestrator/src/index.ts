@@ -1553,6 +1553,7 @@ async function sendMemoryReply(
      */
     deliveryPlan?: OutboundDeliveryPlan
     inboundMessageHandle?: string
+    transcriptIdempotencyKey?: string
     /** Set true only when tapback was already sent earlier in the turn. */
     skipTapback?: boolean
   } = {}
@@ -1572,7 +1573,7 @@ async function sendMemoryReply(
     role: "assistant",
     body: safe,
     createdAt: at,
-    idempotencyKey: `out-${event.id}`,
+    idempotencyKey: opts.transcriptIdempotencyKey ?? `out-${event.id}`,
     rawMeta: { source: "pa_orchestrator", turnId: turnId, eventId: event.id },
   })
   if (shouldSuppressOutbound(event)) return
@@ -2503,7 +2504,12 @@ async function handleSharedOnboardingClarificationTurn(
     recentSlangPicks: priorSlangPicks,
   })
 
-  await sendMemoryReply(store, event, turnId, composed.text)
+  await sendMemoryReply(store, event, turnId, composed.text, {
+    // The agent SDK already persisted this assistant item. Use the same
+    // session hash here so appendMessage merges orchestrator metadata onto
+    // that row instead of creating a second transcript row for one visible SMS.
+    transcriptIdempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", composed.text),
+  })
   await persistSharedOnboardingSlangPicks({
     db: store.db,
     userId: event.userId,

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { deriveSessionMessageIdempotencyKey } from "@pa/agent-runtime"
 import { PA_COLLECTIONS, type AgentDef, type InboundEvent, type MemoryFact } from "@pa/core-types"
 import type { ConversationEvidenceWrite } from "./conversation-action-arbiter.js"
 import type { TurnContext } from "./conversation-turn-arbiter.js"
@@ -355,6 +356,8 @@ test("processInboundEvent routes short ack during shared onboarding to agentic r
   let llmCalls = 0
   let reactionCalls = 0
   let lastAgentUserMessage = ""
+  let lastAgentSystemInputs: string[] = []
+  const appendedMessages: Array<{ role?: string; body?: string; idempotencyKey?: string }> = []
   const turnUpdates: Record<string, unknown>[] = []
   const store = makeStore({
     db: makeMapDb(docs),
@@ -380,7 +383,15 @@ test("processInboundEvent routes short ack during shared onboarding to agentic r
     runAgentTurn: async (input: Parameters<NonNullable<OrchestratorStore["runAgentTurn"]>>[0]) => {
       llmCalls++
       lastAgentUserMessage = input.userMessage
+      lastAgentSystemInputs = input.systemInputs ?? []
       return { text: "Totally. I still need the preference piece first: what matters most in your next company?" }
+    },
+    appendMessage: async (message) => {
+      appendedMessages.push({
+        role: message.role,
+        body: message.body,
+        idempotencyKey: message.idempotencyKey,
+      })
     },
     enqueueOutbound: async (_userId, _toE164, body) => {
       outbound = body
@@ -397,8 +408,14 @@ test("processInboundEvent routes short ack during shared onboarding to agentic r
 
   assert.equal(llmCalls, 1)
   assert.equal(lastAgentUserMessage, "Sure")
+  assert.equal(lastAgentSystemInputs.some((input) => input.includes("FRIEND SLANG PALETTE")), false)
   assert.match(outbound, /preference piece|what matters most/i)
   assert.equal(reactionCalls, 0)
+  const assistantMessage = appendedMessages.find((message) => message.role === "assistant")
+  assert.equal(
+    assistantMessage?.idempotencyKey,
+    deriveSessionMessageIdempotencyKey("s1", "assistant", "Totally. I still need the preference piece first: what matters most in your next company?"),
+  )
   assert.equal(turnUpdates.some((patch) => patch.directIntentResult === "reasked_question"), true)
   assert.equal(turnUpdates.some((patch) => patch.sharedOnboardingAnsweredQuestionId === "main_goal"), false)
   const evidenceRows = [...docs.entries()].filter(([path]) => path.startsWith(`${PA_COLLECTIONS.conversationEvidence}/`))

@@ -11,7 +11,8 @@
  *      double-send across CF retries
  *   2. Runtime approval gate (blocks direct pa-outbound producers)
  *   3. Append transcript (skip when idempotencyKey starts with
- *      `out-imessage-in-` OR `out-sendblue-` per D-02)
+ *      `out-imessage-in-`, `out-sendblue-`, or orchestrator-owned
+ *      `outbound-` rows that already appended transcript metadata)
  *   4. Optional typing indicator (PA_TYPING_INDICATOR=1, D-06)
  *   5. POST Sendblue REST → on 4xx → status=failed; on 5xx → status=pending
  *      with attemptCount bumped (CF re-fires via reclaim or next mutation)
@@ -36,6 +37,7 @@ export function shouldAppendOutboundTranscript(raw: { idempotencyKey?: unknown }
   const idempotencyKey = String(raw.idempotencyKey ?? "")
   if (idempotencyKey.startsWith("out-imessage-in-")) return false
   if (idempotencyKey.startsWith("out-sendblue-")) return false
+  if (idempotencyKey.startsWith("outbound-")) return false
   return true
 }
 

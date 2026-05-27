@@ -227,6 +227,76 @@ test("composeSharedOnboardingReply humanizes unknown future tag tokens from agen
   }
 })
 
+test("composeSharedOnboardingReply does not pressure shared onboarding reasks with slang", async () => {
+  const db = makeFlagDb()
+  let capturedSystemInputs: string[] = []
+  const prevEnv = process.env
+  process.env = {
+    ...prevEnv,
+    paSharedOnboardingAgenticSurface: "true",
+    paBehaviorChoreographerEnabled: "true",
+    paReactionTapbackEnabled: "false",
+    paFindMatchToolEnabled: "false",
+    paHumanizeRuntimeEnabled: "false",
+    PA_SHARED_ONBOARDING_TEMPLATE_FALLBACK: "false",
+  }
+
+  try {
+    const composed = await composeSharedOnboardingReply({
+      store: {
+        db,
+        log: () => undefined,
+        runAgentTurn: async ({ systemInputs }) => {
+          capturedSystemInputs = systemInputs ?? []
+          return { text: "Got it. What matters most in your next company: growth, compensation, stability, mission, learning, or something else?" }
+        },
+        createSession: () => ({
+          async getSessionId() {
+            return "sess-1"
+          },
+          async getItems() {
+            return []
+          },
+          async addItems() {
+            /* no-op */
+          },
+          async popItem() {
+            return undefined
+          },
+          async clearSession() {
+            /* no-op */
+          },
+        }),
+      },
+      userId: "reask-user",
+      sessionId: "sess-1",
+      turnId: "turn-reask",
+      slot: "main_goal",
+      mode: "reask",
+      promptContext: { firstName: "Adam", recentCompanies: ["Tesla Inc"] },
+      userMessage: "Sure",
+      composeContext: buildSharedOnboardingComposeContext({
+        inboundKind: "user_answer",
+        routerResult: "reasked_question",
+        slot: "main_goal",
+        mode: "reask",
+        userMessage: "Sure",
+      }),
+      agent,
+    })
+
+    assert.deepEqual(composed.slangPicked, [])
+    assert.equal(capturedSystemInputs.some((input) => input.includes("FRIEND SLANG PALETTE")), false)
+    assert.ok(
+      capturedSystemInputs.some((input) => input.includes("No slang, meme phrases")),
+      "surface intent should explicitly ban slangy reask openers",
+    )
+    assert.doesNotMatch(composed.text, /lowkey|manifest|deadass|fr\b/i)
+  } finally {
+    process.env = prevEnv
+  }
+})
+
 test("composeContext greeting_kickoff forces synthetic instruction even with non-empty userMessage", async () => {
   let capturedUserMessage = ""
   const db = makeFlagDb()
