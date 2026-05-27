@@ -13,6 +13,7 @@ import {
   candidateVerifyErrorMessage,
   verifyCandidateMagicLinkSession,
 } from "./candidate-verify.js"
+import { clearPortalCache, mergePortalCache, readPortalCache } from "./portal-cache.js"
 
 export type CandidatePortalGateState =
   | { status: "loading" }
@@ -59,12 +60,24 @@ export function useCandidatePortalGate(): CandidatePortalGateState {
         return
       }
 
-      setState({ status: "loading" })
+      // Optimistic render from cache. If we have portalReady=true for this
+      // uid, set state=ready immediately so the portal paints without
+      // waiting on the verify callable. Background verify still runs to
+      // detect invalidation (e.g. portalReady flipped to false server-side).
+      const cached = readPortalCache(user.uid)
+      if (cached?.portalReady === true) {
+        setState({ status: "ready" })
+      } else {
+        setState({ status: "loading" })
+      }
+
       void (async () => {
         try {
           const verified = await verifySessionWithRetry()
           if (cancelled) return
           if (!verified.portalReady) {
+            // Stale cache — invalidate so next render hits the slow path.
+            clearPortalCache(user.uid)
             const onboardingPath = onboardingDestination()
             setState({ status: "redirecting_onboarding" })
             if (!isCandidateHost()) {
@@ -74,9 +87,21 @@ export function useCandidatePortalGate(): CandidatePortalGateState {
             navigate(onboardingPath, { replace: true })
             return
           }
+          // Confirm ready (no-op if already ready from cache).
+          mergePortalCache(user.uid, {
+            portalReady: true,
+            candidateId: verified.candidateId,
+          })
           setState({ status: "ready" })
         } catch (err) {
           if (cancelled) return
+          // Don't override a cached-ready optimistic render on transient
+          // network errors. Only flip to verify_error when no cache existed.
+          if (cached?.portalReady === true) {
+            // eslint-disable-next-line no-console
+            console.warn("candidate-portal-gate.background_verify_failed", err)
+            return
+          }
           const reason =
             err instanceof CandidateVerifyError ? err.reason : "verify_failed"
           const message =
