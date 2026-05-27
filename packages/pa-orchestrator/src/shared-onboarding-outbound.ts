@@ -551,8 +551,11 @@ export async function composeSharedOnboardingReply(
           : "User may receive a separate 👍 bubble first — do NOT open your SMS with 👍 / thumbs-up. Lead with the question or a one-beat ack instead."
         : null
 
-    const slangDirective = opening ? null : choreography.slangDirective
-    const slangPicked = opening ? [] : choreography.slangPicked
+    // Shared onboarding needs to feel human, not performatively casual. Random
+    // slang palettes have produced visible openers like "lowkey manifest",
+    // which is worse than a plain contextual re-ask.
+    const slangDirective = null
+    const slangPicked: string[] = []
     const systemInputs = [
       injectVoiceProfilePrefix("", profile, lang),
       surfaceIntent,

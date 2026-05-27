@@ -508,9 +508,10 @@ describe("paSendblueOutboxHandler", () => {
     assert.equal(sb.calls, 1)
   })
 
-  it("Test 9: shouldAppendOutboundTranscript skips out-imessage-in- AND out-sendblue- prefixes", () => {
+  it("Test 9: shouldAppendOutboundTranscript skips transcript-owned outbound prefixes", () => {
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "out-imessage-in-123" }), false)
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "out-sendblue-abc" }), false)
+    assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "outbound-inb_123" }), false)
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "outbox-msg-doc-1" }), true)
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "any-other" }), true)
     assert.equal(isMarketplaceOutreachOutbound({ idempotencyKey: "outreach_idempotency_outinvite-1" }), true)
