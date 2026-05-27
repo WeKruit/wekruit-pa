@@ -779,7 +779,7 @@ export function buildSharedOnboardingStartedState(
 }
 
 function normalizedSource(value: unknown): WekruitSignupSource {
-  return value === WEKRUIT_CANDIDATE_SOURCE ? WEKRUIT_CANDIDATE_SOURCE : WEKRUIT_LAYOFF_SOURCE
+  return value === WEKRUIT_LAYOFF_SOURCE ? WEKRUIT_LAYOFF_SOURCE : WEKRUIT_CANDIDATE_SOURCE
 }
 
 export function sharedOnboardingSignupSource(value: unknown): WekruitSignupSource {
