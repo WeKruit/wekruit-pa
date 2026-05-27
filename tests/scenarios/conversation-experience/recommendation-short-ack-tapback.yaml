@@ -1,0 +1,21 @@
+id: conversation_experience_recommendation_short_ack_tapback
+description: |
+  Standout-inspired behavior: after Claire already said she is searching,
+  a short "Sure" should not produce another SMS. It should resolve as
+  tapback_only / no outbound text.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992001"
+chatId: "iMessage;+19999992001"
+userState:
+  onboardingState: complete
+seedMessages:
+  - role: assistant
+    body: "Got it. I’m checking the market now and will come back with roles worth your time."
+turns:
+  - user: "Sure"
+    assert:
+      no_reply: true
+      conversation_action: "tapback_only"
+      no_outbound_reason: "low_information_ack_after_status"

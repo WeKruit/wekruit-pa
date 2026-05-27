@@ -1,0 +1,29 @@
+{
+  "id": "short-ack-tapback-only",
+  "description": "A low-information acknowledgment after Claire already said she is searching should produce a tapback-only action and no outbound text.",
+  "initialFirestoreState": {
+    "pa-users/u-ack": {
+      "onboardingState": "complete"
+    }
+  },
+  "inbound": {
+    "userId": "u-ack",
+    "text": "Sure",
+    "createdAt": "2026-05-26T23:12:00.000Z",
+    "channel": "imessage"
+  },
+  "recentOutbound": [
+    {
+      "role": "assistant",
+      "body": "Got it. I’m checking the market now and will come back with roles worth your time.",
+      "createdAt": "2026-05-26T23:11:30.000Z"
+    }
+  ],
+  "expected": {
+    "owner": "fallback_claire",
+    "action": "tapback_only",
+    "trace": {
+      "selectedOwner": "fallback_claire"
+    }
+  }
+}

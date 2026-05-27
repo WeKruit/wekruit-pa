@@ -437,11 +437,11 @@ export async function paSendblueOutboxHandler(
       await deps.appendMessage(deps.db, {
         sessionId: session.id,
         userId,
-        role: "user",
+        role: "assistant",
         body,
         createdAt: now().toISOString(),
         idempotencyKey: `outbox-msg-${docId}`,
-        rawMeta: { source: "pa-console-outbound", outboundDocId: docId },
+        rawMeta: { source: "pa-outbound", outboundDocId: docId },
       } as never)
     } catch (err) {
       log(

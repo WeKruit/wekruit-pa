@@ -1,0 +1,30 @@
+{
+  "id": "ambiguous-onboarding-nonanswer",
+  "description": "Ambiguous clarification while shared onboarding waits on location must not advance the location answer slot.",
+  "initialFirestoreState": {
+    "pa-users/u1": {
+      "id": "u1",
+      "phoneE164": "+15109136602",
+      "onboardingState": "complete",
+      "sharedOnboarding": {
+        "status": "active",
+        "currentQuestionId": "location_relocation"
+      }
+    }
+  },
+  "inbound": {
+    "userId": "u1",
+    "text": "I am not sure what you mean by that.",
+    "createdAt": "2026-05-26T23:05:00.000Z",
+    "channel": "imessage"
+  },
+  "expected": {
+    "owner": "fallback_claire",
+    "requiredTools": [],
+    "forbiddenMutations": ["sharedOnboarding.answers.location_relocation"],
+    "orderedActionKinds": ["fallback_reply"],
+    "trace": {
+      "selectedOwner": "fallback_claire"
+    }
+  }
+}
