@@ -3712,20 +3712,20 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       typeof event.rawMeta?.runtimeNoSendToken === "string"
         ? event.rawMeta.runtimeNoSendToken.trim()
         : "__NO_SEND__"
+    const inboundTranscriptIdempotencyKey = runtimeEvent
+      ? deriveSessionMessageIdempotencyKey(event.sessionId, "system", event.body)
+      : `inbound-event:${event.id}`
     await store.appendMessage({
       sessionId: event.sessionId,
       userId: event.userId,
       role: runtimeEvent ? "system" : "user",
       body: event.body,
       createdAt: event.createdAt,
-      // Use the same hash FirestoreSession derives so the SDK\u2019s addItems()
-      // short-circuits on this row instead of double-writing the user turn.
-      // Original inbound idempotencyKey is preserved in rawMeta for audit.
-      idempotencyKey: deriveSessionMessageIdempotencyKey(
-        event.sessionId,
-        runtimeEvent ? "system" : "user",
-        event.body
-      ),
+      // User-authored turns must be event-unique: candidates can send the
+      // same short answer twice and both visible bubbles belong in history.
+      // FirestoreSession.addItems() skips SDK user items, so body-hash
+      // de-dupe is only needed for assistant rows written after model calls.
+      idempotencyKey: inboundTranscriptIdempotencyKey,
       rawMeta: {
         ...event.rawMeta,
         source: "pa-inbound-event",

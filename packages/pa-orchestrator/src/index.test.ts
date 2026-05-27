@@ -160,6 +160,42 @@ function makeMapDb(docs: Map<string, Record<string, unknown>>): FirebaseFirestor
   } as unknown as FirebaseFirestore.Firestore
 }
 
+test("processInboundEvent stores repeated identical user text as distinct transcript turns", async () => {
+  const appendedMessages: Array<{ role?: string; body?: string; idempotencyKey?: string }> = []
+  const store = makeStore({
+    appendMessage: async (message) => {
+      appendedMessages.push({
+        role: message.role,
+        body: message.body,
+        idempotencyKey: message.idempotencyKey,
+      })
+    },
+  })
+
+  await processInboundEvent(
+    { ...baseEvent, id: "evt-repeat-a", body: "Same exact answer.", idempotencyKey: "imessage-repeat-a" },
+    store,
+  )
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "evt-repeat-b",
+      body: "Same exact answer.",
+      createdAt: "2026-04-25T12:00:05.000Z",
+      idempotencyKey: "imessage-repeat-b",
+    },
+    store,
+  )
+
+  const userMessages = appendedMessages.filter((message) => message.role === "user")
+  assert.equal(userMessages.length, 2)
+  assert.deepEqual(
+    userMessages.map((message) => message.idempotencyKey),
+    ["inbound-event:evt-repeat-a", "inbound-event:evt-repeat-b"],
+  )
+  assert.equal(new Set(userMessages.map((message) => message.idempotencyKey)).size, 2)
+})
+
 test("commitConversationEvidenceWrites persists evidence rows and links tool calls", async () => {
   const docs = new Map<string, Record<string, unknown>>()
   const event = { ...baseEvent, id: "evt-evidence-1" }
