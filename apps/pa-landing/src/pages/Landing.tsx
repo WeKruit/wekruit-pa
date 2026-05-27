@@ -122,6 +122,25 @@ export default function Landing() {
     return () => { cancelled = true }
   }, [])
 
+  // Hash anchor scroll. Triggered on:
+  //   1. Initial mount when URL contains a hash (e.g. /#how from cross-route nav).
+  //   2. `hashchange` events (back/forward navigation).
+  // Header's HowItWorksLink handles same-page clicks directly; this covers
+  // the cross-route case where react-router-dom mounts Landing fresh.
+  useEffect(() => {
+    function scrollToHash() {
+      const hash = window.location.hash.replace(/^#/, "")
+      if (!hash) return
+      // Wait a tick so CandidateSequence has rendered before measuring offset.
+      setTimeout(() => {
+        document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" })
+      }, 60)
+    }
+    scrollToHash()
+    window.addEventListener("hashchange", scrollToHash)
+    return () => window.removeEventListener("hashchange", scrollToHash)
+  }, [])
+
   // Idle-prefetch /market and /open data while the user is reading the
   // landing hero. Both surfaces share the QueryClient configured in main.tsx
   // (staleTime=5min), so clicking "Open market" or "Open interviews" repaints
