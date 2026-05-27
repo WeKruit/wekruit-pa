@@ -38,10 +38,24 @@
  *     response. Wildcard CORS is intentionally not used.
  */
 import { onRequest, type HttpsOptions } from "firebase-functions/v2/https"
-import type { Request, Response } from "firebase-functions/v2/https"
 import { logger } from "firebase-functions/v2"
 import { getAuth as getAdminAuth } from "firebase-admin/auth"
 import { getApps, initializeApp } from "firebase-admin/app"
+
+// firebase-functions v2 does not re-export the Express Request/Response types
+// it hands to onRequest handlers, so we describe the minimal shape we use.
+export interface SsoRequestLike {
+  method: string
+  headers: Record<string, string | string[] | undefined>
+  body?: unknown
+}
+
+export interface SsoResponseLike {
+  setHeader(name: string, value: string | string[]): void
+  status(code: number): SsoResponseLike
+  send(body?: unknown): SsoResponseLike
+  json(body: unknown): SsoResponseLike
+}
 
 if (!getApps().length) initializeApp()
 
@@ -80,8 +94,8 @@ const HTTP_OPTS: HttpsOptions = {
 
 /** Set per-origin CORS headers. Returns false if the request was preflight (already handled). */
 export function applySsoCors(
-  req: Pick<Request, "headers" | "method">,
-  res: Pick<Response, "setHeader" | "status" | "send">,
+  req: Pick<SsoRequestLike, "headers" | "method">,
+  res: Pick<SsoResponseLike, "setHeader" | "status" | "send">,
   allowedOrigins: ReadonlySet<string> = SSO_ALLOWED_ORIGINS,
 ): boolean {
   const origin = typeof req.headers.origin === "string" ? req.headers.origin : ""
@@ -135,8 +149,8 @@ function liveAdmin(): SsoAdmin {
 // ---------------------------------------------------------------- handlers
 
 export async function handleSsoLogin(
-  req: Pick<Request, "method" | "headers" | "body">,
-  res: Pick<Response, "setHeader" | "status" | "send"> & { json?: (body: unknown) => void },
+  req: Pick<SsoRequestLike, "method" | "headers" | "body">,
+  res: Pick<SsoResponseLike, "setHeader" | "status" | "send"> & { json?: (body: unknown) => void },
   deps: { admin: SsoAdmin; allowedOrigins?: ReadonlySet<string> } = { admin: liveAdmin() },
 ): Promise<void> {
   if (!applySsoCors(req, res, deps.allowedOrigins)) return
@@ -144,8 +158,9 @@ export async function handleSsoLogin(
     res.status(405).send("Method not allowed")
     return
   }
-  const idToken = (req.body?.idToken as string | undefined) ?? ""
-  if (!idToken || typeof idToken !== "string") {
+  const body = (req.body ?? {}) as { idToken?: unknown }
+  const idToken = typeof body.idToken === "string" ? body.idToken : ""
+  if (!idToken) {
     res.status(400).send("missing idToken")
     return
   }
@@ -166,8 +181,8 @@ export async function handleSsoLogin(
 }
 
 export async function handleSsoBootstrap(
-  req: Pick<Request, "method" | "headers">,
-  res: Pick<Response, "setHeader" | "status" | "send" | "json">,
+  req: Pick<SsoRequestLike, "method" | "headers">,
+  res: Pick<SsoResponseLike, "setHeader" | "status" | "send" | "json">,
   deps: { admin: SsoAdmin; allowedOrigins?: ReadonlySet<string> } = { admin: liveAdmin() },
 ): Promise<void> {
   if (!applySsoCors(req, res, deps.allowedOrigins)) return
@@ -194,8 +209,8 @@ export async function handleSsoBootstrap(
 }
 
 export async function handleSsoLogout(
-  req: Pick<Request, "method" | "headers">,
-  res: Pick<Response, "setHeader" | "status" | "send">,
+  req: Pick<SsoRequestLike, "method" | "headers">,
+  res: Pick<SsoResponseLike, "setHeader" | "status" | "send">,
   deps: { allowedOrigins?: ReadonlySet<string> } = {},
 ): Promise<void> {
   if (!applySsoCors(req, res, deps.allowedOrigins)) return

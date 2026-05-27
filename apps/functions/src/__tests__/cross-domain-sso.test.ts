@@ -128,13 +128,13 @@ describe("parseCookieHeader", () => {
 describe("buildSetCookieHeader", () => {
   it("includes Domain, Path, HttpOnly, Secure, SameSite, Max-Age", () => {
     const h = buildSetCookieHeader("value", 3600)
-    assert.match(h, new RegExp(`^${SSO_COOKIE_NAME}=value;`))
-    assert.match(h, new RegExp(`Domain=${SSO_COOKIE_DOMAIN.replace(/\./g, "\\.")}`))
-    assert.match(h, /Path=\//)
-    assert.match(h, /HttpOnly/)
-    assert.match(h, /Secure/)
-    assert.match(h, /SameSite=Lax/)
-    assert.match(h, /Max-Age=3600/)
+    assert.ok(h.startsWith(`${SSO_COOKIE_NAME}=value;`), "starts with name=value")
+    assert.ok(h.includes(`Domain=${SSO_COOKIE_DOMAIN}`), "carries Domain")
+    assert.ok(h.includes("Path=/"), "carries Path")
+    assert.ok(h.includes("HttpOnly"), "carries HttpOnly")
+    assert.ok(h.includes("Secure"), "carries Secure")
+    assert.ok(h.includes("SameSite=Lax"), "carries SameSite=Lax")
+    assert.ok(h.includes("Max-Age=3600"), "carries Max-Age")
   })
 })
 
@@ -173,8 +173,8 @@ describe("handleSsoLogin", () => {
     assert.equal(res.statusCode, 204)
     const cookies = res.headers["Set-Cookie"]
     assert.ok(Array.isArray(cookies) && cookies.length === 1, "Set-Cookie array")
-    assert.match(cookies[0], /wkr_session=fresh-session-cookie;/)
-    assert.match(cookies[0], new RegExp(`Max-Age=${Math.floor(SSO_COOKIE_MAX_AGE_MS / 1000)}`))
+    assert.ok(cookies[0].includes("wkr_session=fresh-session-cookie;"))
+    assert.ok(cookies[0].includes(`Max-Age=${Math.floor(SSO_COOKIE_MAX_AGE_MS / 1000)}`))
   })
 
   it("returns 401 when idToken verification fails", async () => {
