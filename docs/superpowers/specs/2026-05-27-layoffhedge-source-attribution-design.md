@@ -163,14 +163,23 @@ prevents source overwrites on returning users.
 
 ### 4.5 Magic-link verify — `apps/functions/src/candidate-magic-link-verify.ts`
 
-No code change required. Line 165 already validates the incoming source via
-`isPaUserSource`. Once the enum has `"layoffhedge"`, this path accepts the
-new value automatically and writes it into `pa-users.source` via the merge
-at the end of the verify handler.
-
+Line 165 already validates the incoming source via `isPaUserSource`. Once
+the enum has `"layoffhedge"`, this path accepts the new value automatically.
 The frontend `candidate-verify.ts:69` already passes
 `options?.source ?? resolveSource()` to this endpoint, so the cookie-resolved
-value flows through with no change.
+value flows through with no client change.
+
+**Production code change required** (discovered during plan-writing): the
+merge block (lines 219–223) currently writes `mergeFields.source = source`
+unconditionally whenever a valid `PaUserSource` is supplied. There is no
+`existingUserSource` guard equivalent to the one at `public-cv-ingest.ts:213`.
+A returning user who later magic-links via `?source=layoffhedge` would have
+their original attribution silently overwritten — directly contradicting the
+"first-write sticky" contract this design promises in §2 and §6.
+
+Fix: read the current pa-users doc first; only write `source` if the existing
+value is not already a valid `PaUserSource`. The guard pattern mirrors
+`public-cv-ingest.ts` exactly. See plan Task 7 for the exact code.
 
 ### 4.6 Onboarding destination — `apps/pa-landing/src/lib/browser-identity.ts`
 
