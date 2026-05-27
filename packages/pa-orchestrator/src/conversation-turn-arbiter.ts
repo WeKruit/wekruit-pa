@@ -228,6 +228,46 @@ export function decideConversationTurnOwner(context: TurnContext): OwnerDecision
     })
   }
 
+  if (hasActiveWorkflowAnswer) {
+    return decision({
+      selectedOwner: "active_workflow",
+      rejectedOwners,
+      reason: "User answered the currently active workflow question.",
+      requiredTools,
+      forbiddenMutations,
+      intentFrames: frames,
+      orderedActions: [
+        { kind: "route_active_workflow", owner: "active_workflow", reason: "Active workflow owns the answer." },
+        ...(hasDurablePreferenceUpdate
+          ? [
+              { kind: "extract_durable_preferences" as const, owner: "durable_preference_update" as const, reason: "Same turn also contains durable preference signal." },
+              { kind: "commit_memory" as const, owner: "durable_preference_update" as const, reason: "Durable preference should be committed after the workflow answer is preserved." },
+            ]
+          : []),
+      ],
+    })
+  }
+
+  if (hasSharedOnboardingAnswer) {
+    return decision({
+      selectedOwner: "shared_onboarding",
+      rejectedOwners,
+      reason: "User answered the active shared-onboarding slot.",
+      requiredTools,
+      forbiddenMutations,
+      intentFrames: frames,
+      orderedActions: [
+        { kind: "write_shared_onboarding_answer", owner: "shared_onboarding", reason: "Active shared-onboarding slot answer." },
+        ...(hasDurablePreferenceUpdate
+          ? [
+              { kind: "extract_durable_preferences" as const, owner: "durable_preference_update" as const, reason: "Same turn also contains durable preference signal." },
+              { kind: "commit_memory" as const, owner: "durable_preference_update" as const, reason: "Durable preference should be committed after the onboarding answer is preserved." },
+            ]
+          : []),
+      ],
+    })
+  }
+
   if (hasDurablePreferenceUpdate) {
     return decision({
       selectedOwner: "durable_preference_update",
@@ -255,30 +295,6 @@ export function decideConversationTurnOwner(context: TurnContext): OwnerDecision
       forbiddenMutations,
       intentFrames: frames,
       orderedActions: [{ kind: "run_job_search", owner: "job_search", reason: "Explicit job-search request." }],
-    })
-  }
-
-  if (hasActiveWorkflowAnswer) {
-    return decision({
-      selectedOwner: "active_workflow",
-      rejectedOwners,
-      reason: "User answered the currently active workflow question.",
-      requiredTools,
-      forbiddenMutations,
-      intentFrames: frames,
-      orderedActions: [{ kind: "route_active_workflow", owner: "active_workflow", reason: "Active workflow owns the answer." }],
-    })
-  }
-
-  if (hasSharedOnboardingAnswer) {
-    return decision({
-      selectedOwner: "shared_onboarding",
-      rejectedOwners,
-      reason: "User answered the active shared-onboarding slot.",
-      requiredTools,
-      forbiddenMutations,
-      intentFrames: frames,
-      orderedActions: [{ kind: "write_shared_onboarding_answer", owner: "shared_onboarding", reason: "Active shared-onboarding slot answer." }],
     })
   }
 
@@ -387,8 +403,7 @@ function buildIntentFrames(context: TurnContext, text: string): IntentFrame[] {
     context.activeWorkflow?.kind === "job_prescreen" &&
     context.activeWorkflow.status === "active" &&
     !isMetaQuestion(text) &&
-    !isDurablePreferenceUpdate(text) &&
-    !isJobSearchRequest(text)
+    !isControlOrPrivacyIntent(text)
   ) {
     frames.push({
       intent: "active_workflow_answer",

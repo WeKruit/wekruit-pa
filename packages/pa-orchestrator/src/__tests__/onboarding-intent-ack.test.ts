@@ -615,7 +615,7 @@ test("shared onboarding answer writes memory/tags and waits until Q5 before job 
   ])
   assert.equal(recCalls.length, 0, "job recs must wait until Q5 is collected")
   assert.match(captures.outboundBodies[0] ?? "", /New York, NY/i)
-  assert.match(captures.outboundBodies[0] ?? "", /Where do you want to work/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Where should I look next/i)
 
   docs.set("pa-users/u-onb", {
     ...(docs.get("pa-users/u-onb") ?? {}),
@@ -634,6 +634,51 @@ test("shared onboarding answer writes memory/tags and waits until Q5 before job 
   assert.deepEqual(recCalls[0].opts, { force: true, requestedCount: 2, allowBroadFallback: false })
   assert.match(captures.outboundBodies[1] ?? "", /Role A @ Example/)
   assert.match(captures.outboundBodies[1] ?? "", /requirements:/)
+})
+
+test("shared onboarding Q5 timing answer is not mistaken for subscription resume", async () => {
+  const captures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  const { db, store: docs } = fakeFirestore()
+  docs.set("pa-users/u-onb", {
+    id: "u-onb",
+    phoneE164: "+19999991000",
+    onboardingState: "pending",
+    workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "special_context" },
+    sharedOnboarding: { status: "active", currentQuestionId: "special_context", completed: false },
+  })
+  const recCalls: string[] = []
+  const store = makeOnboardingCapturesStore(captures, "pending") as OrchestratorStore
+  store.db = db
+  store.getOnboardingUser = async () => docs.get("pa-users/u-onb") as Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+  store.generateJobRecs = async (userId) => {
+    recCalls.push(userId)
+    return {
+      message:
+        "One role worth your time: Product Engineer @ Example.\nhttps://example.com/a\nrequirements: product-heavy\nwhy: fits your product-heavy preference",
+      recCount: 1,
+    }
+  }
+  store.resumeJobRecommendationSubscription = async () => {
+    throw new Error("timing answer must not route to subscription resume")
+  }
+
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "evt-shared-q5-start-date",
+      body: "No hard constraints. I can start in 2-4 weeks; prefer product-heavy roles.",
+    },
+    store,
+  )
+
+  assert.deepEqual(recCalls, ["u-onb"])
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /job recommendations are back on/i)
+  assert.match(captures.outboundBodies[0] ?? "", /scanning|checking|Product Engineer @ Example/i)
 })
 
 test("shared onboarding rejects duplicate greeting on Q1 without recording an answer", async () => {
