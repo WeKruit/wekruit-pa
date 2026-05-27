@@ -3401,7 +3401,7 @@ async function handleCompletedUserJobSearchRequest(
       ? recs!.message
       : lang === "zh"
         ? "这次没捞到特别合适的，我记下了，晚点再帮你扫一轮。"
-        : "I could not pull fresh roles right now. I saved the request and will try again shortly."
+        : "I did not find a strong fresh match yet. I saved what you asked for and will keep checking."
   const frame = frameConnectorResult("find-match", lang, recCount)
   const reply = frame ? [frame, body].filter(Boolean).join("\n") : body
   await sendMemoryReply(store, event, turnId, reply)
@@ -4095,10 +4095,6 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       }
     }
 
-    if (userAuthoredEvent && await handleCompletedUserJobSearchRequest(event, store, turnId, onboardingUser)) {
-      return
-    }
-
     // Website-started candidate and layoff onboarding use one runtime-led
     // intake. Do not force the generic deterministic pipeline.
     const sharedRuntimeSession = isSharedOnboardingActiveUser(onboardingUser)
@@ -4138,6 +4134,16 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     ) {
       return
     }
+
+    if (
+      userAuthoredEvent &&
+      conversationOwnerDecision?.selectedOwner !== "shared_onboarding" &&
+      conversationOwnerDecision?.selectedOwner !== "active_workflow" &&
+      await handleCompletedUserJobSearchRequest(event, store, turnId, onboardingUser)
+    ) {
+      return
+    }
+
     if (
       userAuthoredEvent &&
       await handleSharedOnboardingBootstrap(

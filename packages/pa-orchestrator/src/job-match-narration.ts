@@ -5,14 +5,14 @@
 
 export const FIND_MATCH_PRE_CALL_VARIANTS: Record<"en" | "zh", readonly string[]> = {
   en: [
-    "ok one sec — pulling roles that might fit you",
-    "lemme dig through what's open for you real quick",
-    "hold on — gonna see what lines up",
-    "ok scanning for stuff in your lane, gimme a sec",
-    "let me look — see what's out there for you",
-    "one sec, hunting for matches",
-    "ok brb — finding things that could work",
-    "alright lemme pull a batch for you — hang tight",
+    "One sec, checking roles against what you shared.",
+    "Checking the latest roles now.",
+    "I am matching that against open roles now.",
+    "Got it. I am looking for a tighter fit.",
+    "One sec, I am checking what lines up.",
+    "I am pulling a focused batch now.",
+    "Got it. I am checking the role pool.",
+    "I am looking for roles that fit that context.",
   ],
   zh: [
     "好 等我翻一下有什么合适的",

@@ -801,10 +801,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
   if (!gen) {
     return {
       recCount: 0,
-      reply:
-        lang === "zh"
-          ? "收到。我会尽快给你推两个具体岗位。"
-          : "Got it. I saved that context and will send two concrete roles once I pull a fresh batch.",
+      reply: sharedOnboardingNoRecReply(lang, input.userMessage),
     }
   }
 
@@ -858,7 +855,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
           ? [frame, parsed.message].filter(Boolean).join("\n")
           : lang === "zh"
             ? "收到。我这边还在捞更合适的岗，有匹配的第一时间发你。"
-            : "Got it — still pulling a tighter batch; I'll ping you when two look right."
+            : sharedOnboardingNoRecReply(lang, input.userMessage)
       const { text } = await applyTemplateOutboundHumanize({
         body,
         userId: input.event.userId,
@@ -890,7 +887,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
       ? recs.message
       : lang === "zh"
         ? "收到。我会尽快给你推两个具体岗位。"
-        : "Got it. I saved that context and will send two concrete roles once I pull a fresh batch."
+        : sharedOnboardingNoRecReply(lang, input.userMessage)
   const { text } = await applyTemplateOutboundHumanize({
     body: reply,
     userId: input.event.userId,
@@ -907,4 +904,33 @@ export async function deliverSharedOnboardingJobRecs(input: {
     enqueueOutbound: input.store.enqueueOutbound,
   })
   return { recCount, reply: finalizeSharedOnboardingSmsText(text) }
+}
+
+function sharedOnboardingNoRecReply(lang: "en" | "zh", userMessage: string): string {
+  if (lang === "zh") return "收到。我会尽快给你推两个具体岗位。"
+  const context = summarizeSharedOnboardingFinalContext(userMessage)
+  if (context) {
+    return `Got it: ${context}. I saved that and will keep matching against it.`
+  }
+  return "Got it. I saved that context and will keep matching against it."
+}
+
+function summarizeSharedOnboardingFinalContext(userMessage: string): string {
+  const text = userMessage.toLowerCase()
+  const parts: string[] = []
+  if (/\bno\s+(?:hard\s+)?(?:constraints?|dealbreakers?)\b/.test(text)) {
+    parts.push("no hard constraints")
+  }
+  if (/\b(?:start|available|notice)\b/.test(text)) {
+    if (/\b2\s*[-–]\s*4\s+weeks?\b/.test(text)) parts.push("2-4 week start")
+    else if (/\b\d+\s+weeks?\b/.test(text)) parts.push("your start timing")
+    else parts.push("your timing")
+  }
+  if (/\bproduct[-\s]?heavy\b/.test(text)) parts.push("product-heavy roles")
+  else if (/\bproduct\b/.test(text) && /\b(strategy|pm|manager|operator|founder)\b/.test(text)) {
+    parts.push("product or strategy-leaning roles")
+  } else if (/\bproduct\b/.test(text)) {
+    parts.push("product-leaning roles")
+  }
+  return parts.slice(0, 3).join(", ")
 }
