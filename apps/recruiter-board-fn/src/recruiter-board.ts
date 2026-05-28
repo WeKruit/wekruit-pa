@@ -540,7 +540,7 @@ const COLLAB_JOBS_LIST_SCHEMA = Object.freeze({
 })
 
 export const paCollabJobsListSchema = onRequest(
-  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, invoker: "public" },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
