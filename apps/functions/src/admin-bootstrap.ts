@@ -437,6 +437,9 @@ const SEED_FLAGS: FlagSpec[] = [
   // Conversational Surface Platform — connector narration + find-match tool (default OFF).
   { key: "paConnectorNarrationEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paFindMatchToolEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // P2 Tier-1 reflex: slow-tool quick-ack fires as a deterministic reflex
+  // (independent of Tier-2 narration). DEFAULT OFF — zero behavior change until ramped.
+  { key: "paReflexQuickAckEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paSharedOnboardingAgenticSurface", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paBehaviorChoreographerEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paReactionTapbackEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
