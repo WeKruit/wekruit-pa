@@ -1,0 +1,23 @@
+{
+  "kind": "prescreen_fsm",
+  "description": "P3 deterministic gate — pending-step durability. q_experience has high s but LOW confidence (c=0.5 < 0.7): the real reducer CLARIFIES (holds the pending question) across non-confident/tangent turns rather than skipping or auto-advancing. Proves the FSM iterates qOrder and the LLM cannot skip a pending question — the deterministic half of the P3 tangent-bridging gate (the full answer-via-global-tool-then-resume is the scoped-agent real-LLM canary, next cycle).",
+  "session_id": "ps_tangent",
+  "user_id": "u_test",
+  "job_id": "job_test",
+  "threshold": 0.6,
+  "max_clarify_rounds": 2,
+  "questions": [
+    { "qId": "q_experience", "type": "PROBING", "weight": 1 },
+    { "qId": "q_followup", "type": "PROBING", "weight": 1 }
+  ],
+  "scores": {
+    "q_experience": { "s": 0.9, "c": 0.5 },
+    "q_followup": { "s": 0.9, "c": 0.9 }
+  },
+  "expect": {
+    "clarified_qids": ["q_experience"],
+    "no_skip": true,
+    "terminal_once": true,
+    "questions_not_answered": ["q_followup"]
+  }
+}
