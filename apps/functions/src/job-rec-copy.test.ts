@@ -270,6 +270,43 @@ describe("job recommendation visible-message contract", () => {
     assert.equal(context.trustedOutboundBody, composeJobRecommendationMessage(items, "en"))
   })
 
+  it("propagates a neutral collab boolean (not the internal label) so downstream copy can gate WeKruit-screen framing", () => {
+    const collabItems = collectJobRecommendationMessageItems(
+      [
+        {
+          jobTitle: "Product Designer",
+          companyName: "Invoko",
+          atsApplyUrl: "https://candidate.wekruit.com/j/invoko",
+          requiredSkills: ["Figma"],
+          matchSourceLabel: "WeKruit collaborated",
+        },
+      ],
+      "en",
+      { limit: 1 },
+    )
+    const externalItems = collectJobRecommendationMessageItems(
+      [
+        {
+          jobTitle: "Associate Account Executive",
+          companyName: "rho",
+          atsApplyUrl: "https://jobright.ai/jobs/info/abc",
+          requiredSkills: ["sales"],
+          matchSourceLabel: "general match",
+        },
+      ],
+      "en",
+      { limit: 1 },
+    )
+
+    const collabContext = buildJobRecommendationRuntimeContext(collabItems)
+    const externalContext = buildJobRecommendationRuntimeContext(externalItems)
+
+    assert.equal((collabContext.jobs as Array<{ collab?: unknown }>)[0]?.collab, true)
+    assert.equal((externalContext.jobs as Array<{ collab?: unknown }>)[0]?.collab, false)
+    // The internal label string must never reach the runtime/LLM-visible context.
+    assert.doesNotMatch(JSON.stringify(collabContext), /matchSourceLabel|WeKruit collaborated/)
+  })
+
   it("live collection skips and reports candidate-visible dead URLs before composing", async () => {
     const deadJobs: Array<{ id: string; reason: string; url: string }> = []
     const items = await collectLiveJobRecommendationMessageItems(

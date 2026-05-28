@@ -1,0 +1,33 @@
+id: conversation_experience_recommendation_offer_yes_answers
+description: |
+  Bug B regression. After a recommendation, Claire's LAST message was an OFFER
+  that expects a yes/no answer ("I can help you prep ... — yes?"). The candidate
+  replies "Yes". That affirmative is the ANSWER to the offer, so Claire must send
+  a real reply and continue — NOT suppress everything to a tapback (the live
+  dead-end where the user said "Yes" and Claire returned nothing).
+
+  Contrast with recommendation-short-ack-tapback.yaml, where the prior assistant
+  message was a plain recommendation statement (no pending question), so a short
+  "Sure" correctly resolves to tapback_only.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992010"
+chatId: "iMessage;+19999992010"
+userState:
+  onboardingState: complete
+flags:
+  paReactionTapbackEnabled: true
+seedMessages:
+  - role: assistant
+    body: "I found a role that lines up with your background. See if it fits - if not lmk, I'll keep digging."
+  - role: assistant
+    body: "I can help you prep a quick reply for it — want me to?"
+turns:
+  - user: "Yes"
+    assert:
+      reply_min_length: 2
+      no_reply: false
+      reply_not_matches_any:
+        - "overall fit looks low"
+        - "as an AI"

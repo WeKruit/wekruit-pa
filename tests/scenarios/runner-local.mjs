@@ -523,6 +523,13 @@ function applyAssertions(turn, reply, context = {}) {
       failures.push(`joined replies do not match any of [${a.joined_reply_matches_any.join(", ")}]`)
     }
   }
+  if (Array.isArray(a.joined_reply_not_matches_any)) {
+    for (const pattern of a.joined_reply_not_matches_any) {
+      if (new RegExp(pattern, "iu").test(joinedReplies)) {
+        failures.push(`joined replies match forbidden pattern "${pattern}"`)
+      }
+    }
+  }
   if (Array.isArray(a.reply_contains_any) && a.reply_contains_any.length > 0) {
     if (!a.reply_contains_any.some((needle) => reply.includes(needle))) {
       failures.push(`reply does not contain any of [${a.reply_contains_any.join(", ")}]`)
@@ -601,7 +608,9 @@ async function runScenarioLocal(scenario, opts) {
       status: "pending",
       createdAt: new Date().toISOString(),
       idempotencyKey: `imessage-in-${randomUUID().slice(0, 8)}`,
-      rawMeta: { source: "runner-local", turnIdx: idx },
+      // Scenario may inject rawMeta to exercise runtime (system) events such as the
+      // daily job-recommendation handoff (rawMeta.runtimeEvent + context.jobs[]).
+      rawMeta: { source: "runner-local", turnIdx: idx, ...(turn.rawMeta ?? {}) },
     }
 
     let lastReplyBefore = store._captures.outboundBodies.length

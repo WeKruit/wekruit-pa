@@ -2831,6 +2831,13 @@ type RuntimeRecommendationJob = {
   url: string
   requirements: string
   reason: string
+  /**
+   * True only for WeKruit collab/partner jobs, which are the only roles WeKruit can
+   * actually screen + forward. External scraped jobs (jobright/ATS links) are
+   * collab=false: the candidate applies via the link themselves and Claire must NOT
+   * imply a WeKruit prescreen ("move it forward", "quick screen", "WeKruit screen").
+   */
+  collab: boolean
 }
 
 function cleanRuntimeText(value: unknown): string {
@@ -2853,16 +2860,30 @@ function runtimeRecommendationJobs(rawMeta: unknown): RuntimeRecommendationJob[]
       url,
       requirements: cleanRuntimeText(row.requirements),
       reason: cleanRuntimeText(row.reason).replace(/^why\s*:\s*/i, ""),
+      collab: row.collab === true,
     }]
   })
 }
 
+/**
+ * Fit-gate question for WeKruit collab/partner jobs ONLY. These are the roles
+ * WeKruit can screen and forward, so a short "worth a quick screen?" gate is honest.
+ * Never call this for external (collab=false) jobs — see buildExternalApplyFollowUp.
+ *
+ * The phrasing is intentionally generic-first: the gate keys off the JOB only, so an
+ * over-specific SWE question can land on a non-SWE candidate (e.g. a customer-service
+ * applicant asked "shipped production Java/Python?"). We only emit a stack-specific
+ * gate when the role is unambiguously engineering; otherwise we ask a neutral,
+ * role-appropriate fit question.
+ */
 function buildRoleFitGate(job: RuntimeRecommendationJob): string {
   const haystack = `${job.title} ${job.requirements}`.toLowerCase()
-  if (/\breact\b|\bnext\.?js\b|\btypescript\b|\bts\b/.test(haystack)) {
+  const looksEngineering =
+    /\b(software|engineer|engineering|developer|frontend|front-end|backend|back-end|full[\s-]?stack|swe|programmer|devops|sre)\b/.test(haystack)
+  if (looksEngineering && /\breact\b|\bnext\.?js\b|\btypescript\b/.test(haystack)) {
     return "Before I move it forward, quick fit check: have you shipped production React/Next.js with TypeScript?"
   }
-  if (/\bjava\b|\bpython\b|\bjavascript\b|\bnode\.?js\b/.test(haystack)) {
+  if (looksEngineering && /\bjava\b|\bpython\b|\bjavascript\b|\bnode\.?js\b/.test(haystack)) {
     return "Before I move it forward, quick fit check: have you shipped production Java, Python, JavaScript, or Node work?"
   }
   if (/\bsql\b|\bexcel\b|\bpower\s*bi\b|\banalytics?\b|\bdata\b/.test(haystack)) {
@@ -2872,6 +2893,15 @@ function buildRoleFitGate(job: RuntimeRecommendationJob): string {
     return "Before I move it forward, quick fit check: are you open to the work setup for this role?"
   }
   return "Before I move it forward, quick fit check: does this look worth a quick screen?"
+}
+
+/**
+ * Follow-up for EXTERNAL (collab=false) scraped jobs. WeKruit has no prescreen
+ * relationship here, so we must not imply a WeKruit screen or that we forward the
+ * candidate. Neutral copy: they apply via the link themselves; offer to find more.
+ */
+function buildExternalApplyFollowUp(): string {
+  return "You'd apply through that link directly — want me to keep an eye out for more like it?"
 }
 
 function buildFocusedRuntimeRecommendationPlan(rawMeta: unknown): { body: string; plan: OutboundDeliveryPlan } | null {
@@ -2885,14 +2915,18 @@ function buildFocusedRuntimeRecommendationPlan(rawMeta: unknown): { body: string
     job.requirements,
     job.reason ? `Why it lines up: ${job.reason}` : "",
   ].filter(Boolean).join("\n")
-  const second = buildRoleFitGate(job)
+  // Only collab/partner jobs get the fit-gate → screen framing. External scraped
+  // jobs get neutral "apply via the link yourself" copy (no implied WeKruit screen).
+  const second = job.collab ? buildRoleFitGate(job) : buildExternalApplyFollowUp()
   const body = `${first}\n\n${second}`
   return {
     body,
     plan: {
       mode: "text_split_2",
       textParts: [first, second],
-      reason: "runtime_job_recommendation_focused_split_2",
+      reason: job.collab
+        ? "runtime_job_recommendation_focused_split_2"
+        : "runtime_job_recommendation_external_split_2",
       smsCount: 2,
     },
   }
