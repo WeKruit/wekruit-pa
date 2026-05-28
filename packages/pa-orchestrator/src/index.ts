@@ -306,10 +306,9 @@ import {
 } from "./voice/context-window.js"
 import { normalizeForIMessage, stripABProbeFromTail } from "./output-normalizer.js"
 // Phase 53 (v1.6 voice-quality closure) — conditional A/B framework strip
-// + mixed-register mirror append. Distinct from stripABProbeFromTail
-// (X-or-Y tail probes) — see ab-framework-detector.ts module docstring.
+// (if/then head). Distinct from stripABProbeFromTail (X-or-Y tail probes)
+// — see ab-framework-detector.ts module docstring.
 import { stripABFramework } from "./voice/ab-framework-detector.js"
-import { applyMixedRegisterMirror } from "./voice/mixed-register-mirror.js"
 // iter30 Wave 3 — am_i_ai post-gen flat-deny re-roll. V2 QA Agent-B
 // observed Claire occasionally replying "嗯，我是真人朋友。" when asked
 // "你是 AI 吗?" — the addendum forbids flat-deny ("deceptive"). This
@@ -5561,35 +5560,9 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     }
     void injectorAppliedFlag
     void injectorArm
-    // Phase 53 (v1.6 voice-quality closure) — mixed-register mirror append.
-    // ITER 16 DISABLED BY DEFAULT: Adam feedback "(re: swe)" appendix feels
-    // artificial. We rely on lang-mixed bypass + LLM having seen user input
-    // for natural mirror. Re-enable via env if A/B test shows value:
-    // PA_MIXED_REGISTER_MIRROR_FORCE=true.
-    try {
-      const humanizeOnMix = await isHumanizeRuntimeEnabled(store.db, event.userId)
-      const mixFlagEnabled = process.env.PA_MIXED_REGISTER_MIRROR_FORCE === "true"
-      if (humanizeOnMix && mixFlagEnabled) {
-        const mixResult = applyMixedRegisterMirror(event.body ?? "", replyAfterRewrite)
-        if (mixResult.applied) {
-          store.log("pa.voice.mixed_register_mirror.applied", {
-            userId: event.userId,
-            turnId,
-            appended: mixResult.appended ?? null,
-            beforeLen: replyAfterRewrite.length,
-            afterLen: mixResult.text.length,
-          })
-          replyAfterRewrite = mixResult.text
-        }
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      store.log("pa.voice.mixed_register_mirror.error", {
-        userId: event.userId,
-        turnId,
-        error: msg,
-      })
-    }
+    // P6 voice collapse: the mixed-register mirror append ("(re: TOKEN)") was
+    // DELETED. It was default-OFF (PA_MIXED_REGISTER_MIRROR_FORCE), so production
+    // already ran without it — the prompt+few-shot handles natural mirroring.
     // Phase 35/38 wire-in (LIFTED) — detectors + trackAdvice run on the FINAL
     // visible text regardless of `rewriteIfOff` outcome. Previously these
     // were gated behind the rewriter happy-path inside `rewriteIfOff` and
@@ -5764,7 +5737,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // missing API key — the (possibly wrong-lang) reply still ships.
     //
     // Placement: AFTER `rewriteIfOff` + opener-strip + injector +
-    // ab-probe-strip + mixed-register-mirror; BEFORE crisis-hotline guard
+    // ab-probe-strip; BEFORE crisis-hotline guard
     // so the hotline trailer (lang-aware via `guardCrisisHotline`) sees
     // the corrected reply lang and appends the matching trailer.
     // -------------------------------------------------------------------
