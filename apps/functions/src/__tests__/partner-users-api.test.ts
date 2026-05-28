@@ -191,7 +191,7 @@ test("fetchPartnerUsers embeds jobs[] with state + jobTitle", async () => {
       { id: "hs-1", data: { title: "Senior PM", company: "Invoko" } },
     ],
     "pa-prescreen-sessions": [
-      { id: "pss_1", data: { candidateId: "uA", jobId: "hs-1", updatedAt: "2026-05-28T09:05:00Z", updatedAtMs: 1779984300000 } },
+      { id: "pss_1", data: { userId: "uA", jobId: "hs-1", updatedAt: "2026-05-28T09:05:00Z" } },
     ],
   }
   const db = makeFakeDb(store) as Firestore
@@ -324,8 +324,8 @@ test("parseHandlerQuery rejects malformed since", () => {
 })
 
 test("parseHandlerQuery accepts a well-formed cursor", () => {
-  // A valid cursor is base64url of {"createdAtMs":<num>,"docId":<string>}.
-  const validCursor = Buffer.from(JSON.stringify({ createdAtMs: 1779915600000, docId: "uA" })).toString("base64url")
+  // A valid cursor is base64url of {"createdAt":<iso-string>,"docId":<string>}.
+  const validCursor = Buffer.from(JSON.stringify({ createdAt: "2026-05-27T12:00:00Z", docId: "uA" })).toString("base64url")
   const parsed = __test_parseHandlerQuery({ cursor: validCursor })
   assert.equal(parsed.cursorOpaque, validCursor)
 })

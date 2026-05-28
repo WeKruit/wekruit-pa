@@ -156,7 +156,10 @@ export interface PartnerUsersResponse {
 }
 
 interface CursorPayload {
-  createdAtMs: number
+  // pa-users stores createdAt as an ISO 8601 string (no numeric *Ms field).
+  // ISO 8601 sorts lexicographically === chronologically, so it is a valid
+  // Firestore orderBy + cursor key.
+  createdAt: string
   docId: string
 }
 
@@ -170,10 +173,10 @@ function decodeCursor(opaque: string): CursorPayload | null {
     if (
       decoded &&
       typeof decoded === "object" &&
-      typeof decoded.createdAtMs === "number" &&
+      typeof decoded.createdAt === "string" &&
       typeof decoded.docId === "string"
     ) {
-      return { createdAtMs: decoded.createdAtMs, docId: decoded.docId }
+      return { createdAt: decoded.createdAt, docId: decoded.docId }
     }
     return null
   } catch {
@@ -210,10 +213,10 @@ export async function fetchPartnerUsers(args: PartnerUsersFetchArgs): Promise<Pa
   let usersQ: Query = db
     .collection(PA_COLLECTIONS.users)
     .where("source", "==", partnerSource)
-    .orderBy("createdAtMs", "desc")
+    .orderBy("createdAt", "desc")
     .orderBy("__name__", "desc")
   const cursor = args.cursorOpaque ? decodeCursor(args.cursorOpaque) : null
-  if (cursor) usersQ = usersQ.startAfter(cursor.createdAtMs, cursor.docId)
+  if (cursor) usersQ = usersQ.startAfter(cursor.createdAt, cursor.docId)
   usersQ = usersQ.limit(safeLimit + 1)
   const usersSnap = await usersQ.get()
   const usersDocs = usersSnap.docs.slice(0, safeLimit)
@@ -225,13 +228,21 @@ export async function fetchPartnerUsers(args: PartnerUsersFetchArgs): Promise<Pa
       const userData = userDoc.data() ?? {}
       const candidateId = userDoc.id
 
+      // No orderBy here: `stateUpdatedAt` is an ISO string and an equality+orderBy
+      // on it would need a dedicated (candidateId, stateUpdatedAt) composite index.
+      // The per-user list is capped at PER_USER_JOB_CAP, so we sort in memory.
       const stateSnap = await db
         .collection(PA_COLLECTIONS.candidateJobStates)
         .where("candidateId", "==", candidateId)
-        .orderBy("stateUpdatedAtMs", "desc")
         .limit(PER_USER_JOB_CAP)
         .get()
-      const jobStates = stateSnap.docs.map((d) => ({ id: d.id, data: d.data() ?? {} }))
+      const jobStates = stateSnap.docs
+        .map((d) => ({ id: d.id, data: d.data() ?? {} }))
+        .sort((a, b) => {
+          const av = toIsoString(a.data.stateUpdatedAt, "")
+          const bv = toIsoString(b.data.stateUpdatedAt, "")
+          return av === bv ? 0 : av < bv ? 1 : -1 // desc
+        })
 
       const distinctJobIds = [
         ...new Set(jobStates.map((s) => (s.data.jobId as string | undefined) ?? "").filter(Boolean)),
@@ -262,15 +273,18 @@ export async function fetchPartnerUsers(args: PartnerUsersFetchArgs): Promise<Pa
         if (args.status && args.status.length > 0 && !args.status.includes(parsed.data)) continue
         const meta = jobMeta.get(jobId) ?? { title: "Unknown role", company: "" }
 
-        // Latest prescreen session for this candidate+job.
+        // Latest prescreen session for this candidate+job. pa-prescreen-sessions
+        // keys the candidate as `userId` (not candidateId) and timestamps as
+        // `updatedAt` (ISO string). The existing (jobId, userId, updatedAt desc)
+        // composite index covers this query.
         const psSnap = await db
           .collection("pa-prescreen-sessions")
-          .where("candidateId", "==", candidateId)
           .where("jobId", "==", jobId)
-          .orderBy("updatedAtMs", "desc")
+          .where("userId", "==", candidateId)
+          .orderBy("updatedAt", "desc")
           .limit(1)
           .get()
-          .catch(() => ({ docs: [] }))
+          .catch(() => ({ docs: [] as Array<{ id: string }> }))
         const prescreenSessionId = psSnap.docs[0]?.id
 
         jobs.push({
@@ -314,7 +328,7 @@ export async function fetchPartnerUsers(args: PartnerUsersFetchArgs): Promise<Pa
     const last = usersDocs[usersDocs.length - 1]!
     const lastData = last.data() ?? {}
     nextCursor = encodeCursor({
-      createdAtMs: Number(lastData.createdAtMs ?? 0),
+      createdAt: toIsoString(lastData.createdAt, new Date(0).toISOString()),
       docId: last.id,
     })
   }
