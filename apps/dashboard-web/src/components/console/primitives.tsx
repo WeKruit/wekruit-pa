@@ -404,13 +404,18 @@ export function DataTable<R extends { id?: string }>({
               <tr>
                 {columns.map((c) => {
                   const isSorted = sort?.key === c.key
-                  const headerCls = c.sortable && onSort ? "dt-th--sortable" : undefined
+                  const clickable = c.sortable && onSort
+                  const headerCls = [
+                    clickable ? "dt-th--sortable" : "",
+                    isSorted ? "dt-th--sorted" : "",
+                  ].filter(Boolean).join(" ") || undefined
                   return (
                     <th
                       key={c.key}
                       style={{ width: c.width }}
                       className={headerCls}
-                      onClick={c.sortable && onSort ? () => onSort(c.key) : undefined}
+                      onClick={clickable ? () => onSort(c.key) : undefined}
+                      title={clickable ? "Click to sort" : undefined}
                     >
                       {c.label}
                       {c.sortable && (

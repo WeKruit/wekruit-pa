@@ -651,13 +651,34 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 .dt-chip--active .dt-chip__count { color: var(--cream-2); }
 
 /* Sortable column headers */
-.dt-th--sortable { cursor: pointer; user-select: none; }
-.dt-th--sortable:hover { background: var(--cream); }
+.dt-th--sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--dur-micro) var(--ease), background var(--dur-micro) var(--ease);
+}
+.dt-th--sortable:hover { background: var(--cream); color: var(--ink); }
 .dt-th__sort {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-left: 6px;
-  color: var(--ink-4);
+  min-width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  color: var(--ink-3);
+  background: var(--cream);
+  border: 1px solid var(--border);
   font-size: 10px;
-  font-weight: 500;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.dt-th--sortable:hover .dt-th__sort { border-color: var(--border-strong); color: var(--ink); }
+/* Active sort column: accent the header + its arrow chip. */
+.dt-th--sorted { color: var(--ink); }
+.dt-th--sorted .dt-th__sort {
+  color: #fff;
+  background: #1e6b34;
+  border-color: #1e6b34;
 }
 
 /* Pagination footer */
