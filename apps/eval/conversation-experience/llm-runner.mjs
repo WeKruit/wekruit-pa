@@ -116,19 +116,6 @@ class FirestoreStub {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// Tag merge (mirror of mergeUserTags array-replace semantics for the
-// fields the extractor emits — enough to accumulate multi-turn state)
-// ────────────────────────────────────────────────────────────────────────
-
-function mergePatch(existing, patch) {
-  const out = { ...existing }
-  for (const [k, v] of Object.entries(patch)) {
-    out[k] = v // extractor patches are authoritative deltas (set semantics)
-  }
-  return out
-}
-
-// ────────────────────────────────────────────────────────────────────────
 // LLM grader
 // ────────────────────────────────────────────────────────────────────────
 
@@ -212,7 +199,14 @@ async function main() {
     console.error(`SETUP ERROR: build pa-orchestrator first (missing ${distPath})`)
     process.exit(2)
   }
-  const { runExtraction, productionLlmCall } = await import(pathToFileURL(distPath).href)
+  // FIDELITY (per .planning/LIVE-SMOKE-2026-05-28-RECEIPT.md): drive the REAL
+  // production extraction seam `maybeRunExtractor` — the exact wrapper the turn
+  // handler (handleDurablePreferenceUpdateTurn, index.ts:2614) calls. It injects
+  // the production writeUserTags = applyPartialUserTags (shallow replace-per-key
+  // into pa-users.tags), gates on onboardingState, and builds the request as
+  // production does. The prior harness used a stand-in mergePatch + bare
+  // runExtraction, which could false-green the avoid-swe removal case.
+  const { maybeRunExtractor } = await import(pathToFileURL(distPath).href)
 
   // `openai` is a transitive dep of pa-orchestrator; resolve it from the
   // orchestrator package (apps/eval has no node_modules of its own).
@@ -234,75 +228,71 @@ async function main() {
     console.log(`\n━━━ ${label} ━━━`)
     console.log(fixture.description ?? "")
 
+    const userId = fixture.user_id ?? "test_user"
     const db = new FirestoreStub()
-    let runningTags = { ...(fixture.initial_tags ?? {}) }
+    // Seed the candidate's existing global profile (tags + onboardingState) into
+    // the REAL store, then drive the production maybeRunExtractor seam each turn.
+    await db.collection("pa-users").doc(userId).set({
+      tags: { ...(fixture.initial_tags ?? {}) },
+      onboardingState: fixture.onboarding_state ?? "complete",
+    })
+    const readTags = async () => (await db.collection("pa-users").doc(userId).get()).data()?.tags ?? {}
     const transcript = []
-    const perTurnPatches = []
 
     for (let i = 0; i < fixture.turns.length; i++) {
       const turn = fixture.turns[i]
       transcript.push({ role: "user", body: turn.inbound })
-
-      let capturedPatch = null
-      let rawLlmJson = null
-      const wrappedLlm = async (args) => {
-        const out = await productionLlmCall(args)
-        rawLlmJson = out.json
-        return out
-      }
-      const deps = {
-        llm: wrappedLlm,
-        writeUserTags: async (_userId, patch) => {
-          capturedPatch = patch
-          return { ok: true }
-        },
-        writeMemoryEntities: async () => ({ ok: true, added: 0 }),
-        writeCostLedger: async () => {},
-        writeAudit: async () => {},
-        log: () => {},
-        now: () => new Date(),
-      }
-
-      const req = {
-        userId: fixture.user_id ?? "test_user",
-        recentMessages: transcript.map((t) => ({ role: t.role, body: t.body, createdAt: new Date().toISOString() })),
-        existingTags: runningTags,
-        trigger: "intent_signal",
-      }
+      const tagsBefore = await readTags()
 
       let outcome
       try {
-        outcome = await runExtraction(req, deps)
+        // The EXACT production seam: maybeRunExtractor builds the request + injects
+        // writeUserTags=applyPartialUserTags and writes into `db` internally.
+        outcome = await maybeRunExtractor({
+          db,
+          userId,
+          recentMessages: transcript.map((t) => ({ role: t.role, body: t.body, createdAt: new Date().toISOString() })),
+          existingTags: tagsBefore,
+          onboardingState: fixture.onboarding_state ?? "complete",
+          userMsgsThisBatch: 1,
+          forceTrigger: "intent_signal",
+          log: () => {},
+        })
       } catch (err) {
         console.log(`  turn ${i + 1} EXTRACTION THREW: ${err?.message ?? err}`)
         totalFail += 1
         continue
       }
 
-      perTurnPatches.push({ turn: i + 1, ran: outcome.ran, reason: outcome.reason, patch: capturedPatch })
+      const tagsAfter = await readTags()
+      const changed = Object.keys(tagsAfter).filter((k) => JSON.stringify(tagsAfter[k]) !== JSON.stringify(tagsBefore[k]))
       console.log(`  turn ${i + 1}: "${turn.inbound}"`)
-      console.log(`    ran=${outcome.ran} reason=${outcome.reason} model=${outcome.modelUsed ?? "n/a"}`)
-      console.log(`    LLM patch: ${JSON.stringify(capturedPatch)}`)
-      if (!outcome.ran && rawLlmJson != null) {
-        console.log(`    RAW LLM JSON (failed schema/confidence): ${JSON.stringify(rawLlmJson)}`)
-      }
-
-      if (capturedPatch) runningTags = mergePatch(runningTags, capturedPatch)
+      console.log(`    ran=${outcome.ran} reason=${outcome.reason ?? "n/a"} model=${outcome.modelUsed ?? "n/a"} changedKeys=${JSON.stringify(changed)}`)
       // assistant turn placeholder so multi-turn transcripts stay coherent
       if (turn.assistant) transcript.push({ role: "assistant", body: turn.assistant })
     }
 
-    console.log(`  final tags: ${JSON.stringify(runningTags)}`)
+    const runningTags = await readTags()
+    console.log(`  final tags (via production maybeRunExtractor seam): ${JSON.stringify(runningTags)}`)
 
-    // Deterministic subset assertion
-    const detFails = fixture.expect?.final_tags ? subsetMatch(fixture.expect.final_tags, runningTags) : []
+    // Deterministic assertions over the REAL merged tags:
+    //   final_tags          — subset equality
+    //   final_tags_includes — key must CONTAIN each listed value (e.g. full_time)
+    //   final_tags_excludes — key must NOT contain each listed value (e.g. software_engineering removed)
+    const detFails = []
+    if (fixture.expect?.final_tags) detFails.push(...subsetMatch(fixture.expect.final_tags, runningTags))
+    const asArr = (v) => (Array.isArray(v) ? v : v == null ? [] : [v])
+    for (const [k, vals] of Object.entries(fixture.expect?.final_tags_includes ?? {})) {
+      const actual = asArr(runningTags[k])
+      for (const v of vals) if (!actual.includes(v)) detFails.push(`  tags.${k}: expected to INCLUDE ${JSON.stringify(v)}, got ${JSON.stringify(runningTags[k])}`)
+    }
+    for (const [k, vals] of Object.entries(fixture.expect?.final_tags_excludes ?? {})) {
+      const actual = asArr(runningTags[k])
+      for (const v of vals) if (actual.includes(v)) detFails.push(`  tags.${k}: expected to EXCLUDE ${JSON.stringify(v)}, but present in ${JSON.stringify(runningTags[k])}`)
+    }
 
-    // LLM grader — ADVISORY ONLY. Per Anthropic's "Demystifying Evals for AI
-    // Agents" (code-grader > model-grader), the deterministic subset
-    // assertion is the gate; the model grader is non-deterministic even at
-    // temperature 0, so it informs rather than blocks. Its findings (e.g.
-    // "careerStage: intern conflicts with the full-time request") become
-    // follow-up signal, not a flaky CI failure.
+    // LLM grader — ADVISORY ONLY (code-grader > model-grader). Non-deterministic
+    // even at temp 0; informs follow-ups, never blocks.
     let grade = { pass: true, reasoning: "no grade_criteria" }
     if (fixture.expect?.grade_criteria) {
       grade = await gradeExtraction(grader, {
@@ -313,7 +303,16 @@ async function main() {
     }
 
     const gated = detFails.length === 0
-    if (gated) {
+    if (fixture.expect?.baseline_red) {
+      // Known-failing baseline (a live-smoke gap). RED here is CORRECT and does
+      // NOT fail the run — P5 must turn it green. A surprise GREEN is surfaced.
+      if (gated) {
+        console.log(`  ⚠ BASELINE NOW GREEN — expected-RED baseline passed; the P5 fix may have landed (update/retire this fixture).`)
+      } else {
+        console.log(`  RED (expected baseline — P5 target; advisory, does not block):`)
+        for (const f of detFails) console.log(`    ${f}`)
+      }
+    } else if (gated) {
       console.log(`  PASS  (deterministic gate)`)
     } else {
       console.log(`  FAIL  (deterministic gate)`)
