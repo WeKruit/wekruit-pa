@@ -4,13 +4,19 @@ import type { ConnectorContext, ConnectorDef, ConnectorNarrationTemplates } from
 
 export type { MatchConnectorHooks } from "./connector-types.js"
 
+// STRICT-COMPATIBLE (P1): the OpenAI Responses API rejects function schemas with
+// optional keys under strict function-calling ("required must include every key").
+// Use `.nullable()` (required + nullable) so the agent can call find-match through
+// the @openai/agents SDK without a 400. runConnector still re-parses with this Zod;
+// the execute coerces null → undefined for the hook. (Systemic Zod→strict-JSON in
+// the adapter buildSdkTools is deferred to a later phase; this slice only needs find-match.)
 const FindMatchInputSchema = z.object({
-  lang: z.enum(["en", "zh"]).optional(),
-  requestedCount: z.number().int().min(1).max(5).optional(),
-  source: z.string().optional(),
-  roleFocus: z.array(z.string()).nullable().optional(),
-  hardConstraintsActive: z.boolean().nullable().optional(),
-  allowBroadFallback: z.boolean().nullable().optional(),
+  lang: z.enum(["en", "zh"]).nullable(),
+  requestedCount: z.number().int().min(1).max(5).nullable(),
+  source: z.string().nullable(),
+  roleFocus: z.array(z.string()).nullable(),
+  hardConstraintsActive: z.boolean().nullable(),
+  allowBroadFallback: z.boolean().nullable(),
 })
 const FindMatchOutputSchema = z.object({
   ok: z.boolean(),
@@ -142,8 +148,8 @@ export const FIND_MATCH_CONNECTOR: ConnectorDef<
     }
     return hook(
       {
-        lang: input.lang,
-        requestedCount: input.requestedCount,
+        lang: input.lang ?? undefined,
+        requestedCount: input.requestedCount ?? undefined,
         source: input.source ?? "claire_tool",
         roleFocus: input.roleFocus ?? undefined,
         hardConstraintsActive: input.hardConstraintsActive ?? undefined,
