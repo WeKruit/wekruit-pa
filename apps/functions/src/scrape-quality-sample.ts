@@ -73,7 +73,14 @@ async function buildBody(): Promise<QualityBody> {
   ensureAdmin()
   const db = getFirestore()
   const now = new Date()
-  const cutoff = Timestamp.fromMillis(now.getTime() - SINCE_HOURS * 3600_000)
+  // CRITICAL: core-service (`syncMatchingJobs`) writes `syncedAt` as an ISO
+  // 8601 STRING (e.g. "2026-05-28T02:34:37.038Z"), NOT a Firestore Timestamp.
+  // A `where("syncedAt", ">=", <Timestamp>)` therefore matches zero docs
+  // (string vs Timestamp never compare equal). ISO-8601 strings sort
+  // lexicographically == chronologically, so we compare against an ISO
+  // string cutoff instead. Verified 2026-05-28: a Timestamp cutoff returned
+  // 0 while 383 active rows had just synced.
+  const cutoffIso = new Date(now.getTime() - SINCE_HOURS * 3600_000).toISOString()
 
   // Pull the recent set ordered by syncedAt desc. We cap at 500 so a
   // ~5000-row daily batch doesn't blow the function's memory or the
@@ -81,7 +88,7 @@ async function buildBody(): Promise<QualityBody> {
   // that's the slice we actually care about for "what JUST landed".
   const snap = await db
     .collection("matching-jobs")
-    .where("syncedAt", ">=", cutoff)
+    .where("syncedAt", ">=", cutoffIso)
     .orderBy("syncedAt", "desc")
     .limit(500)
     .get()
@@ -101,14 +108,21 @@ async function buildBody(): Promise<QualityBody> {
     const srcKey = src ?? "(unknown)"
     bySource[srcKey] = (bySource[srcKey] ?? 0) + 1
 
-    const syncedAt = d.syncedAt as Timestamp | undefined
+    // syncedAt is an ISO string from core-service. Keep as-is; tolerate a
+    // Timestamp too (defensive — in case a future writer changes the type).
+    const rawSynced = d.syncedAt as unknown
+    let syncedAtIso: string | null = null
+    if (typeof rawSynced === "string") syncedAtIso = rawSynced
+    else if (rawSynced && typeof (rawSynced as Timestamp).toDate === "function") {
+      syncedAtIso = (rawSynced as Timestamp).toDate().toISOString()
+    }
     all.push({
       id: doc.id,
       companyName: (d.companyName as string) ?? (d.company_name as string) ?? null,
       roleTitle: (d.roleTitle as string) ?? (d.role_title as string) ?? null,
       atsApplyUrl: (d.atsApplyUrl as string) ?? (d.ats_apply_url as string) ?? null,
       source: src,
-      syncedAt: syncedAt && typeof syncedAt.toDate === "function" ? syncedAt.toDate().toISOString() : null,
+      syncedAt: syncedAtIso,
     })
   }
 
