@@ -294,6 +294,9 @@ export { paCandidateMagicLinkVerify } from "./candidate-magic-link-verify.js"
 // matching-jobs (scraped/non-collab) with hard filters mirroring v16's
 // query (status==active, dead!=true, atsApplyUrl present, firstSeenAt fresh).
 export { paPublicOpenJobs } from "./public-open-jobs.js"
+// v2.0 Partner API — layoffhedge users export. HTTP callable returning
+// sourced candidates (status-filtered, paginated). Auth via X-API-Key.
+export { paPartnerUsersApi } from "./partner-users-api.js"
 // Adam 2026-05-18: rolling preview on layoff.wekruit.com now reads pa-users
 // (mix of demo + real, both filtered by `getHired !== true`) instead of a
 // hardcoded JS pool. Public, no-auth GET. See `public-layoff-preview.ts`.
@@ -302,6 +305,7 @@ export { paPublicLayoffPreview } from "./public-layoff-preview.js"
 // rejects token exchange without client_secret. These HTTP functions own the
 // OAuth exchange server-side and return a Firebase custom token.
 export { paLinkedinAuthStart, paLinkedinCallback } from "./linkedin-auth.js"
+export { paSsoLogin, paSsoBootstrap, paSsoLogout } from "./cross-domain-sso.js"
 // v2.0 S2 — candidate email-link claim callable. Authenticated candidates
 // receive only the redacted candidate self-profile projection.
 export { paCandidateClaimProfile } from "./identity/claim-api.js"
@@ -349,6 +353,7 @@ export {
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.
 import { makeHealthHandler } from "./health.js"
+import { readVersionChannel, setVersionChannel, parseChannel } from "./version-channel.js"
 
 export const paHealthSendblueWebhook = makeHealthHandler({
   name: "paSendblueWebhook",
@@ -1335,6 +1340,88 @@ export const paRuntimeMode = onRequest(
 )
 export const paHealthRuntimeMode = makeHealthHandler({
   name: "paRuntimeMode",
+  requiredSecrets: [],
+})
+
+// =============================================================================
+// Per-user version channel (canary / ring) admin endpoint.
+// Sibling of paRuntimeMode. Operator flips a single user's versionChannel to
+// "latest" (opts into newest conversation behavior under test) or "stable"
+// (previous behavior) + records audit (versionChannelAt + versionChannelSetBy
+// + versionChannelReason). Internal/test users (PA_INTERNAL_USER_IDS /
+// PA_INTERNAL_PHONE_NUMBERS incl. the dev phone) are ALWAYS resolved to
+// "latest" by the orchestrator regardless of this field — so we always test
+// on internal users before promoting a version to everyone.
+//
+// GET  ?userId=…           → { userId, versionChannel, effectiveChannel,
+//                              internal, versionChannelAt/SetBy/Reason }
+// POST { userId, channel, reason? } → sets the field. channel ∈ latest|stable.
+//
+// Zero-regression: this endpoint only WRITES a field. The field is a strict
+// no-op until a behavior is explicitly marked latest-only via
+// `isLatestChannel()` in the orchestrator.
+// =============================================================================
+export const paVersionChannel = onRequest(
+  {
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 30,
+    maxInstances: 1,
+    cors: false,
+  },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    try {
+      const decoded = await requireDashboardAdmin(req)
+      const userId = String(req.query.userId ?? req.body?.userId ?? "").trim()
+      if (!userId) {
+        sendJson(res, 400, { error: "userId is required" })
+        return
+      }
+      const db = getFirestore()
+      if (req.method === "GET") {
+        const read = await readVersionChannel(db, userId, process.env)
+        sendJson(res, 200, read)
+        return
+      }
+      if (req.method === "POST") {
+        const channel = parseChannel(req.body?.channel)
+        if (!channel) {
+          sendJson(res, 400, { error: "channel must be 'latest' or 'stable'" })
+          return
+        }
+        const reason = String(req.body?.reason ?? "").trim().slice(0, 500)
+        const setBy = decoded.email ?? decoded.uid ?? "operator"
+        const result = await setVersionChannel(db, {
+          userId,
+          channel,
+          reason,
+          setBy,
+          nowIso: nowIso(),
+          onAuditError: (auditErr) =>
+            logger.warn("paVersionChannel audit write failed", {
+              userId,
+              err: auditErr instanceof Error ? auditErr.message : String(auditErr),
+            }),
+        })
+        sendJson(res, 200, result)
+        return
+      }
+      sendJson(res, 405, { error: "Method not allowed" })
+    } catch (err) {
+      const rawStatus = typeof err === "object" && err && "status" in err ? Number((err as { status: unknown }).status) : 500
+      const status = Number.isFinite(rawStatus) ? rawStatus : 500
+      logger.warn("paVersionChannel failed", { status, error: err instanceof Error ? err.message : String(err) })
+      sendJson(res, status, { error: err instanceof Error ? err.message : String(err) })
+    }
+  }
+)
+export const paHealthVersionChannel = makeHealthHandler({
+  name: "paVersionChannel",
   requiredSecrets: [],
 })
 

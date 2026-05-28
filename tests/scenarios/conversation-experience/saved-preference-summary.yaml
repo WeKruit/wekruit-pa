@@ -1,0 +1,41 @@
+id: conversation_experience_saved_preference_summary
+description: |
+  A saved-preference reminder should route through explicit explanation and
+  answer from stored candidate preferences instead of restarting retention.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992005"
+chatId: "iMessage;+19999992005"
+userState:
+  onboardingState: complete
+  sharedOnboarding:
+    status: complete
+    completed: true
+    answers:
+      main_goal:
+        answer: "Learning and career growth matter most."
+      culture_stage:
+        answer: "Early startup or scale-up, high ownership, but not chaotic."
+      industry_interest:
+        answer: "AI tools, devtools and fintech; avoid adtech and crypto."
+      location_relocation:
+        answer: "SF or remote works best; NYC is okay but no other relocation."
+      special_context:
+        answer: "No hard constraints. I can start in 2-4 weeks and want product-heavy roles."
+seedMessages:
+  - role: assistant
+    body: "One role worth your time: Senior Product Engineer at Variance. Tell me if it is interesting, and why or why not."
+turns:
+  - user: "Could you remind me what matching preferences you're using?"
+    assert:
+      reply_min_length: 2
+      conversation_action: "answer_then_continue"
+      conversation_arbiter_owner: "explicit_explanation"
+      direct_intent: "explicit_explanation"
+      direct_intent_result: "job_preferences_summary_answered"
+      reply_contains_any:
+        - "Yep"
+      reply_not_contains_any:
+        - "roles I just sent"
+        - "overall useful or mostly off"

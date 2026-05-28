@@ -217,7 +217,18 @@ export async function runCandidateMagicLinkVerify(
     }
 
     const mergeFields: Record<string, unknown> = { updatedAt: new Date().toISOString() }
-    if (source) mergeFields.source = source
+    if (source) {
+      // First-write-sticky attribution: only stamp `source` if the pa-users
+      // doc does not already carry a valid PaUserSource. Mirrors the
+      // existingUserSource guard in public-cv-ingest.ts. Without this,
+      // a returning user who magic-links via a different partner URL
+      // would have their original attribution silently overwritten.
+      const existingUserSnap = await userRef.get()
+      const existingUserSource = (existingUserSnap.data() as { source?: unknown } | undefined)?.source
+      if (!isPaUserSource(existingUserSource)) {
+        mergeFields.source = source
+      }
+    }
     if (linkedinUrl) mergeFields.linkedinUrl = linkedinUrl
     if (linkedinLinkedViaOauth) mergeFields.linkedinOauthLinked = true
     await userRef.set(mergeFields, { merge: true })

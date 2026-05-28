@@ -160,6 +160,42 @@ function makeMapDb(docs: Map<string, Record<string, unknown>>): FirebaseFirestor
   } as unknown as FirebaseFirestore.Firestore
 }
 
+test("processInboundEvent stores repeated identical user text as distinct transcript turns", async () => {
+  const appendedMessages: Array<{ role?: string; body?: string; idempotencyKey?: string }> = []
+  const store = makeStore({
+    appendMessage: async (message) => {
+      appendedMessages.push({
+        role: message.role,
+        body: message.body,
+        idempotencyKey: message.idempotencyKey,
+      })
+    },
+  })
+
+  await processInboundEvent(
+    { ...baseEvent, id: "evt-repeat-a", body: "Same exact answer.", idempotencyKey: "imessage-repeat-a" },
+    store,
+  )
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "evt-repeat-b",
+      body: "Same exact answer.",
+      createdAt: "2026-04-25T12:00:05.000Z",
+      idempotencyKey: "imessage-repeat-b",
+    },
+    store,
+  )
+
+  const userMessages = appendedMessages.filter((message) => message.role === "user")
+  assert.equal(userMessages.length, 2)
+  assert.deepEqual(
+    userMessages.map((message) => message.idempotencyKey),
+    ["inbound-event:evt-repeat-a", "inbound-event:evt-repeat-b"],
+  )
+  assert.equal(new Set(userMessages.map((message) => message.idempotencyKey)).size, 2)
+})
+
 test("commitConversationEvidenceWrites persists evidence rows and links tool calls", async () => {
   const docs = new Map<string, Record<string, unknown>>()
   const event = { ...baseEvent, id: "evt-evidence-1" }
@@ -407,8 +443,10 @@ test("processInboundEvent routes short ack during shared onboarding to agentic r
   await processInboundEvent({ ...baseEvent, body: "Sure" }, store)
 
   assert.equal(llmCalls, 1)
-  assert.equal(lastAgentUserMessage, "Sure")
+  assert.match(lastAgentUserMessage, /candidate just replied: "Sure"/i)
+  assert.match(lastAgentUserMessage, /do not restart/i)
   assert.equal(lastAgentSystemInputs.some((input) => input.includes("FRIEND SLANG PALETTE")), false)
+  assert.equal(lastAgentSystemInputs.some((input) => input.includes("Recent SMS transcript")), true)
   assert.match(outbound, /preference piece|what matters most/i)
   assert.equal(reactionCalls, 0)
   const assistantMessage = appendedMessages.find((message) => message.role === "assistant")
@@ -432,6 +470,65 @@ test("processInboundEvent routes short ack during shared onboarding to agentic r
   )
   assert.equal(completedTrace.outboundSource, "shared_onboarding_reask")
   assert.deepEqual(completedTrace.evidenceCommitIds, [])
+})
+
+test("processInboundEvent uses SDK assistant hash when shared onboarding advances to the next ask", async () => {
+  const docs = new Map<string, Record<string, unknown>>()
+  docs.set("pa-users/u1", {
+    id: "u1",
+    phoneE164: "+13125550123",
+    onboardingState: "pending",
+    workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "main_goal" },
+    sharedOnboarding: {
+      status: "active",
+      currentQuestionId: "main_goal",
+      completed: false,
+      answers: {},
+      promptContext: { firstName: "Adam", recentCompanies: ["Tesla Inc"] },
+    },
+  })
+  const reply = "Got it - product/strategy and growth. What company size or stage tends to work best for you?"
+  const appendedMessages: Array<{ role?: string; body?: string; idempotencyKey?: string }> = []
+  let outbound = ""
+  const store = makeStore({
+    db: makeMapDb(docs),
+    getOnboardingUser: async () => docs.get("pa-users/u1") as never,
+    loadHistory: async () => [
+      {
+        id: "m-prev",
+        userId: "u1",
+        sessionId: "s1",
+        role: "assistant",
+        body: "For this next phase, what matters most in your next company?",
+        createdAt: "2026-05-27T20:34:00.000Z",
+      },
+    ],
+    runAgentTurn: async () => {
+      return { text: reply }
+    },
+    appendMessage: async (message) => {
+      appendedMessages.push({
+        role: message.role,
+        body: message.body,
+        idempotencyKey: message.idempotencyKey,
+      })
+    },
+    enqueueOutbound: async (_userId, _toE164, body) => {
+      outbound = body
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Learning and career growth matter most.",
+  }, store)
+
+  assert.match(outbound, /company culture|company size|stage/i)
+  const assistantMessage = appendedMessages.find((message) => message.role === "assistant" && message.body === outbound)
+  assert.equal(
+    assistantMessage?.idempotencyKey,
+    deriveSessionMessageIdempotencyKey("s1", "assistant", outbound),
+  )
 })
 
 test("createFirestoreOrchestratorStore getOnboardingUser exposes resume context fields", async () => {
@@ -598,10 +695,65 @@ test("processInboundEvent runtime job-rec handoff focuses one role and splits de
   assert.equal(outbound.length, 2)
   assert.match(outbound[0]!, /One role worth your time: Data Analyst @ Acme/)
   assert.match(outbound[0]!, /https:\/\/jobs\.example\/acme/)
-  assert.match(outbound[1]!, /Before I move it forward/)
+  // External (non-collab) job: WeKruit has no prescreen relationship, so the second
+  // message must NOT imply a WeKruit screen or that Claire forwards the candidate.
+  assert.doesNotMatch(outbound[1]!, /move it forward/i)
+  assert.doesNotMatch(outbound[1]!, /quick screen/i)
+  assert.doesNotMatch(outbound[1]!, /\bscreen\b/i)
+  assert.match(outbound[1]!, /apply through that link directly/i)
   assert.doesNotMatch(outbound.join("\n"), /Backend Engineer/)
   assert.equal(appended.at(-1)?.role, "assistant")
   assert.match(appended.at(-1)?.body ?? "", /One role worth your time: Data Analyst @ Acme/)
+})
+
+test("processInboundEvent runtime job-rec keeps the fit-gate → screen framing for collab jobs only", async () => {
+  let llmCalls = 0
+  const outbound: string[] = []
+  const store = makeStore({
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "LLM should not write job rec copy" }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound.push(body)
+    },
+  })
+
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "runtime-job-rec-collab-1",
+      body: "[system-event:job_rec:send_imessage]",
+      rawMeta: {
+        runtimeEvent: true,
+        runtimeEventSource: "job_rec_daily_batch",
+        runtimeEventKind: "daily_job_recommendations",
+        context: {
+          trustedOutboundBody:
+            "I found a partner role:\n\nProduct Designer @ Invoko\nhttps://candidate.wekruit.com/j/invoko\nrequirements: Figma, prototyping\nwhy: your design work maps well.",
+          jobs: [
+            {
+              title: "Product Designer",
+              companyName: "Invoko",
+              url: "https://candidate.wekruit.com/j/invoko",
+              requirements: "requirements: Figma, prototyping",
+              reason: "your design work maps well",
+              collab: true,
+            },
+          ],
+        },
+      },
+    },
+    store,
+  )
+
+  assert.equal(llmCalls, 0)
+  assert.equal(outbound.length, 2)
+  assert.match(outbound[0]!, /One role worth your time: Product Designer @ Invoko/)
+  // Collab/partner job keeps the honest fit-gate → screen framing.
+  assert.match(outbound[1]!, /Before I move it forward/)
+  // Non-SWE collab role must NOT get the SWE stack fit-gate (Bug C).
+  assert.doesNotMatch(outbound[1]!, /Java, Python, JavaScript, or Node/)
 })
 
 test("processInboundEvent turn failure does not send generic candidate-visible error copy", async () => {
@@ -1571,6 +1723,134 @@ test("processInboundEvent privacy: fuzzy data/memory question gets deterministic
   assert.match(outbound, /prefers New York or remote roles/)
   assert.doesNotMatch(outbound, /thingsyou/)
   assert.doesNotMatch(outbound, /我记得这些/)
+})
+
+test("processInboundEvent answers saved job preference summary from shared onboarding state", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  const store = makeStore({
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+      sharedOnboarding: {
+        status: "complete",
+        completed: true,
+        answers: {
+          main_goal: { answer: "Learning and career growth matter most." },
+          culture_stage: { answer: "Early startup or scale-up, high ownership, but not chaotic." },
+          industry_interest: { answer: "AI tools, devtools and fintech; avoid adtech and crypto." },
+          location_relocation: { answer: "SF or remote works best; NYC is okay but no other relocation." },
+          special_context: { answer: "No hard constraints. I can start in 2-4 weeks and want product-heavy roles." },
+        },
+      },
+    }),
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+  })
+  await processInboundEvent({
+    ...baseEvent,
+    body: "hat did you save about my job preferences",
+  }, store)
+  assert.equal(llmCalls, 0)
+  assert.match(outbound, /Yep — I'm using/)
+  assert.match(outbound, /AI\/devtools\/fintech/)
+  assert.match(outbound, /you can start in 2-4 weeks/i)
+  assert.doesNotMatch(outbound, /\.{3}/)
+  assert.ok(outbound.length < 220, `expected human-sized summary, got ${outbound.length} chars`)
+  assert.doesNotMatch(outbound, /roles I just sent/i)
+})
+
+test("processInboundEvent answers matching preference reminder before active post-match retention", async () => {
+  let llmCalls = 0
+  let outbound = ""
+  const turnUpdates: Record<string, unknown>[] = []
+  const docs = new Map<string, Record<string, unknown>>([
+    [
+      "pa-feature-flags/paPostMatchRetentionEnabled",
+      { key: "paPostMatchRetentionEnabled", value: true, type: "bool", scope: "global" },
+    ],
+    [
+      "pa-users/u1",
+      {
+        postMatchRetention: {
+          stage: "await_liked",
+          startedAt: "2026-05-27T23:00:00.000Z",
+          updatedAt: "2026-05-27T23:00:00.000Z",
+          recCount: 2,
+        },
+      },
+    ],
+  ])
+  const store = makeStore({
+    db: makeMapDb(docs),
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "complete",
+      sharedOnboarding: {
+        status: "complete",
+        completed: true,
+        answers: {
+          main_goal: { answer: "Learning and career growth matter most." },
+          culture_stage: { answer: "Early startup or scale-up, high ownership, but not chaotic." },
+          industry_interest: { answer: "AI tools, devtools and fintech; avoid adtech and crypto." },
+          location_relocation: { answer: "SF or remote works best; NYC is okay but no other relocation." },
+          special_context: { answer: "No hard constraints. I can start in 2-4 weeks and want product-heavy roles." },
+        },
+      },
+    }),
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "should-not-be-called" }
+    },
+    enqueueOutbound: async (_u, _t, body) => {
+      outbound = body
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    id: "evt-preference-reminder",
+    body: "Quick reminder what preferences are you using for matching",
+  }, store)
+
+  assert.equal(llmCalls, 0)
+  assert.match(outbound, /Yep — I'm using/)
+  assert.match(outbound, /product\/strategy-heavy work/)
+  assert.doesNotMatch(outbound, /roles I just sent/i)
+  assert.equal(turnUpdates.some((patch) => patch.conversationArbiterOwner === "explicit_explanation"), true)
+  assert.equal(turnUpdates.some((patch) => patch.conversationAction === "answer_then_continue"), true)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "post_match_retention"), false)
+  assert.equal(
+    turnUpdates.some((patch) => patch.directIntentResult === "job_preferences_summary_answered"),
+    true,
+  )
+  const traces = [...docs.entries()].filter(([path]) => path.startsWith(`${PA_COLLECTIONS.turnTraces}/`))
+  assert.equal(traces.length, 1)
+  const trace = traces[0]![1]
+  assert.equal(trace.status, "completed")
+  assert.equal(
+    trace.decision && typeof trace.decision === "object"
+      ? (trace.decision as { selectedOwner?: string }).selectedOwner
+      : undefined,
+    "explicit_explanation",
+  )
+  assert.equal(
+    trace.actionDecision && typeof trace.actionDecision === "object"
+      ? (trace.actionDecision as { selectedAction?: string }).selectedAction
+      : undefined,
+    "answer_then_continue",
+  )
+  assert.equal(trace.outboundSource, "saved_job_preferences_summary")
 })
 
 test("processInboundEvent privacy: delete data creates privacy request without LLM", async () => {

@@ -1,0 +1,6 @@
+{
+  "kind": "tool_choice",
+  "description": "Explicit job-search request (EN) should route to find-match.",
+  "turn": "hey can you find me some software engineering jobs?",
+  "expect": { "tool": "find-match" }
+}

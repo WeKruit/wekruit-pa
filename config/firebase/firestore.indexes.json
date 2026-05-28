@@ -1,6 +1,21 @@
 {
   "indexes": [
     {
+      "_comment": "paPartnerUsersApi — list partner-referred users newest-first, paginated.",
+      "collectionGroup": "pa-users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "source",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "pa-outbound",
       "queryScope": "COLLECTION",
       "fields": [

@@ -182,7 +182,7 @@ test("getItems strips a leading [ISO] timestamp prefix", async () => {
   assert.equal(items[0]!.content, "hello there")
 })
 
-test("addItems writes user + assistant rows and is idempotent on retry", async () => {
+test("addItems writes assistant rows only and is idempotent on retry", async () => {
   const fake = makeFakeDb()
   const session = makeSession({ db: fake.db })
   const items = [
@@ -195,16 +195,31 @@ test("addItems writes user + assistant rows and is idempotent on retry", async (
     },
   ] as unknown as Parameters<typeof session.addItems>[0]
   await session.addItems(items)
-  assert.equal(fake.rows().length, 2)
+  assert.equal(fake.rows().length, 1)
+  assert.equal(fake.rows()[0]!.role, "assistant")
+  assert.equal(fake.rows()[0]!.body, "pong")
   // Second call with same content must not double-write.
   await session.addItems(items)
-  assert.equal(fake.rows().length, 2)
-  // Both rows carry our SDK source meta.
+  assert.equal(fake.rows().length, 1)
+  // Assistant row carries our SDK source meta.
   for (const r of fake.rows()) {
     const meta = r.rawMeta as Record<string, unknown> | undefined
     assert.equal(meta?.source, "agents_sdk_session")
     assert.equal(typeof r.idempotencyKey, "string")
   }
+})
+
+test("addItems skips synthetic user inputs so internal prompts do not become transcript memory", async () => {
+  const fake = makeFakeDb()
+  const session = makeSession({ db: fake.db })
+  await session.addItems([
+    {
+      type: "message",
+      role: "user",
+      content: "[ONBOARDING CONTINUATION] The candidate just answered the previous onboarding slot.",
+    },
+  ] as unknown as Parameters<typeof session.addItems>[0])
+  assert.equal(fake.rows().length, 0)
 })
 
 test("addItems short-circuits on idempotencyKey collision with orchestrator-written rows", async () => {

@@ -43,7 +43,7 @@ import { parse as parseYaml } from "yaml"
 
 // Real production code under test. dist must be fresh — README documents:
 //   `npm run build --workspace=@pa/pa-orchestrator` before running.
-import { processInboundEvent } from "@pa/pa-orchestrator"
+import { processInboundEvent, resolveVersionChannel } from "@pa/pa-orchestrator"
 import { runAgentTurn as defaultRunAgentTurn } from "@pa/agent-runtime"
 import {
   checkPromptInjectionV2,
@@ -341,6 +341,23 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, userSta
       }
     },
 
+    // Per-user version channel (canary / ring). Mirrors the Firestore-backed
+    // store impl: resolve via the pure resolver from the seeded userState
+    // (`versionChannel`), the scenario participant phone, and the env that the
+    // runner mirrors `scenario.flags` into (so a scenario can flip a user to
+    // the internal allowlist via `flags: { PA_INTERNAL_USER_IDS: ... }` or set
+    // `userState: { versionChannel: latest }`). Lets a single behavior marked
+    // latest-only diverge: internal/latest user → NEW reply, everyone else →
+    // STABLE reply.
+    async getVersionChannel(uid) {
+      return resolveVersionChannel({
+        userId: uid,
+        phoneE164,
+        storedChannel: seededUserState.versionChannel,
+        env: process.env,
+      })
+    },
+
     async applyOnboarding(_uid, _phone, step, opts) {
       store._captures.appliedSteps.push({ step, intentAcked: !!opts?.intentAcked })
       // F1 fix path: send_first_mes + intentAcked=true → jump to q_role_asked.
@@ -475,6 +492,24 @@ function applyAssertions(turn, reply, context = {}) {
       failures.push(`conversationAction did not include ${a.conversation_action}`)
     }
   }
+  if (typeof a.conversation_arbiter_owner === "string") {
+    const found = turnPatches.some((entry) => entry.patch?.conversationArbiterOwner === a.conversation_arbiter_owner)
+    if (!found) {
+      failures.push(`conversationArbiterOwner did not include ${a.conversation_arbiter_owner}`)
+    }
+  }
+  if (typeof a.direct_intent === "string") {
+    const found = turnPatches.some((entry) => entry.patch?.directIntent === a.direct_intent)
+    if (!found) {
+      failures.push(`directIntent did not include ${a.direct_intent}`)
+    }
+  }
+  if (typeof a.direct_intent_result === "string") {
+    const found = turnPatches.some((entry) => entry.patch?.directIntentResult === a.direct_intent_result)
+    if (!found) {
+      failures.push(`directIntentResult did not include ${a.direct_intent_result}`)
+    }
+  }
   if (typeof a.no_outbound_reason === "string") {
     const found = turnPatches.some((entry) => entry.patch?.conversationNoOutboundReason === a.no_outbound_reason)
     if (!found) {
@@ -503,6 +538,13 @@ function applyAssertions(turn, reply, context = {}) {
   if (Array.isArray(a.joined_reply_matches_any) && a.joined_reply_matches_any.length > 0) {
     if (!a.joined_reply_matches_any.some((pattern) => new RegExp(pattern, "iu").test(joinedReplies))) {
       failures.push(`joined replies do not match any of [${a.joined_reply_matches_any.join(", ")}]`)
+    }
+  }
+  if (Array.isArray(a.joined_reply_not_matches_any)) {
+    for (const pattern of a.joined_reply_not_matches_any) {
+      if (new RegExp(pattern, "iu").test(joinedReplies)) {
+        failures.push(`joined replies match forbidden pattern "${pattern}"`)
+      }
     }
   }
   if (Array.isArray(a.reply_contains_any) && a.reply_contains_any.length > 0) {
@@ -583,7 +625,9 @@ async function runScenarioLocal(scenario, opts) {
       status: "pending",
       createdAt: new Date().toISOString(),
       idempotencyKey: `imessage-in-${randomUUID().slice(0, 8)}`,
-      rawMeta: { source: "runner-local", turnIdx: idx },
+      // Scenario may inject rawMeta to exercise runtime (system) events such as the
+      // daily job-recommendation handoff (rawMeta.runtimeEvent + context.jobs[]).
+      rawMeta: { source: "runner-local", turnIdx: idx, ...(turn.rawMeta ?? {}) },
     }
 
     let lastReplyBefore = store._captures.outboundBodies.length

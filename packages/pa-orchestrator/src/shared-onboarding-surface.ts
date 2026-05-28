@@ -80,6 +80,15 @@ export function buildOnboardingSurfaceIntent(input: {
     "Preserve the canonical question's topic exactly; do not swap it for a different preference question.",
     "No slang, meme phrases, or performatively casual openers; warm and plain is better.",
   ]
+  if (!input.opening) {
+    invariants.push(
+      "This is a continuation in an existing SMS thread, not a new first message.",
+      "Do not welcome the candidate again, do not introduce Claire again, and do not say their resume came through.",
+      "Use the recent transcript if provided; avoid repeating the previous Claire bubble.",
+      "Keep continuation replies compact: one short acknowledgement plus one concise question, ideally under 170 characters.",
+      "Ask one question only; compress related choices into a short phrase instead of stacking clauses.",
+    )
+  }
   if (input.tangentDetected) {
     invariants.push(buildTangentSurfaceDirective(lang))
   }
@@ -121,7 +130,23 @@ export function buildOnboardingSurfaceIntent(input: {
     invariants.push("No oversell language (perfect fit, guaranteed, definitely).")
   }
   if (input.ackHint) {
-    invariants.push(`Ack hint: ${input.ackHint}`)
+    invariants.push(
+      `Ack hint: ${input.ackHint}`,
+      "Do not ignore the latest candidate answer; reflect one concrete detail from it before the next question.",
+    )
+  }
+  if (!input.opening && input.slot === "location_relocation") {
+    invariants.push(
+      "For location/work style, if the recent transcript already mentions a city or remote preference, ask a short confirmation/update question instead of listing every option.",
+      "Good shape: Got it - AI tools/devtools and fintech. Still SF or remote, or any other cities?",
+    )
+  }
+  if (!input.opening && input.slot === "special_context") {
+    invariants.push(
+      "For extra context before matching, ask for non-negotiables in one short question.",
+      "Do not list categories like constraints, strengths, dealbreakers, timing, and context in the visible SMS.",
+      "Good shape: Got it - SF or remote, NYC okay. Any non-negotiables before I match roles?",
+    )
   }
 
   // Resume anchor — sexy/personal opener for Q1/Q2 only (Adam 2026-05-19).

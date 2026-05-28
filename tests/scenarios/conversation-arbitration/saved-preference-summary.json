@@ -1,0 +1,34 @@
+{
+  "id": "saved-preference-summary",
+  "description": "A saved-preference reminder should stay under explicit explanation ownership and answer directly.",
+  "initialFirestoreState": {
+    "pa-users/u-pref": {
+      "onboardingState": "complete",
+      "sharedOnboarding": {
+        "status": "complete",
+        "completed": true
+      }
+    }
+  },
+  "inbound": {
+    "userId": "u-pref",
+    "text": "Could you remind me what matching preferences you're using",
+    "createdAt": "2026-05-27T23:21:43.659Z",
+    "channel": "imessage"
+  },
+  "recentOutbound": [
+    {
+      "role": "assistant",
+      "body": "One role worth your time: Senior Product Engineer at Variance. Tell me if it is interesting, and why or why not.",
+      "createdAt": "2026-05-27T23:20:55.000Z"
+    }
+  ],
+  "expected": {
+    "owner": "explicit_explanation",
+    "action": "answer_then_continue",
+    "orderedActionKinds": ["fallback_reply"],
+    "trace": {
+      "selectedOwner": "explicit_explanation"
+    }
+  }
+}

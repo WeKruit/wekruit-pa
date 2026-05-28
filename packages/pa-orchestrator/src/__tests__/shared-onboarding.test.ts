@@ -16,6 +16,7 @@ import {
   resolveNextSharedOnboardingQuestionId,
   shouldIgnoreSharedOnboardingDuplicateKickoff,
   shouldSharedOnboardingAdvanceDespiteJudge,
+  sharedOnboardingSignupSource,
 } from "../shared-onboarding.js"
 import { WEKRUIT_CANDIDATE_SOURCE, WEKRUIT_LAYOFF_SOURCE } from "../onboarding.js"
 
@@ -46,7 +47,11 @@ test("shared onboarding asks the five conversational questions in launch order",
   ])
   assert.match(getSharedOnboardingQuestion("main_goal").prompt, /career growth, compensation, stability, mission, learning/i)
   assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote, onsite, or relocating/i)
-  assert.match(getSharedOnboardingQuestion("special_context").prompt, /constraints, strengths, dealbreakers, timing/i)
+  assert.match(getSharedOnboardingQuestion("special_context").prompt, /non-negotiables/i)
+  assert.doesNotMatch(
+    getSharedOnboardingQuestion("special_context").prompt,
+    /constraints, strengths, dealbreakers, timing/i,
+  )
   assert.doesNotMatch(
     SHARED_ONBOARDING_QUESTIONS.map((q) => q.prompt).join("\n"),
     /email|e-mail|what email|why are you looking/i,
@@ -96,7 +101,7 @@ test("shared onboarding prompts ground Q1 and Q4 in resume/profile context when 
 
   const q4 = buildSharedOnboardingPrompt("location_relocation", promptContext)
   assert.match(q4, /New York, NY/i)
-  assert.match(q4, /remote, onsite, or relocating/i)
+  assert.match(q4, /remote, onsite, or open to relocating/i)
 })
 
 test("shared onboarding opening prompt carries Claire persona guidance without changing the opener token", () => {
@@ -247,4 +252,24 @@ test("special_context accepts realtime-communication answer without waiting on L
   if (result.accept) {
     assert.equal(result.value, "I've done a lot of realtime communication handling. Maybe worthy?")
   }
+})
+
+test("sharedOnboardingSignupSource: explicit WeKruit_Laid_Off opts into layoff", () => {
+  assert.equal(sharedOnboardingSignupSource(WEKRUIT_LAYOFF_SOURCE), WEKRUIT_LAYOFF_SOURCE)
+})
+
+test("sharedOnboardingSignupSource: explicit candidate stays candidate", () => {
+  assert.equal(sharedOnboardingSignupSource(WEKRUIT_CANDIDATE_SOURCE), WEKRUIT_CANDIDATE_SOURCE)
+})
+
+test("sharedOnboardingSignupSource: layoffhedge defaults to candidate", () => {
+  assert.equal(sharedOnboardingSignupSource("layoffhedge"), WEKRUIT_CANDIDATE_SOURCE)
+})
+
+test("sharedOnboardingSignupSource: undefined defaults to candidate (post-fix)", () => {
+  assert.equal(sharedOnboardingSignupSource(undefined), WEKRUIT_CANDIDATE_SOURCE)
+})
+
+test("sharedOnboardingSignupSource: garbage defaults to candidate", () => {
+  assert.equal(sharedOnboardingSignupSource("totally-not-a-source"), WEKRUIT_CANDIDATE_SOURCE)
 })

@@ -48,8 +48,11 @@ export function buildBehaviorChoreographyPlan(input: {
       ? input.profile.choreography.ackThenAsk.rate
       : parseRate(process.env.PA_CHOREO_ACK_RATE, input.profile.choreography.ackThenAsk.rate)
   if (input.profile.choreography.ackThenAsk.allowed && ackRate > 0) {
-    const volunteered = input.userMessage.trim().length > 80
-    if (volunteered && Math.random() < ackRate) {
+    const normalized = input.userMessage.trim().toLowerCase()
+    const tinyAck = /^(sure|yes|yeah|yep|ok|okay|sounds good|fine|cool|got it)[.!]*$/i.test(normalized)
+    const volunteered = input.userMessage.trim().length > 18 && !tinyAck
+    const shouldAck = volunteered && (input.mode === "ack_then_ask" || Math.random() < ackRate)
+    if (shouldAck) {
       ackHint =
         /[一-鿿]/.test(input.userMessage)
           ? "先简短接住对方刚说的信息，再自然问下一个问题。"

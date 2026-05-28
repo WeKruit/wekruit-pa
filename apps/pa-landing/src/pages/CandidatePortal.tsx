@@ -21,6 +21,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { onAuthStateChanged, signOut, type User } from "firebase/auth"
+import { clearSsoCookie } from "../lib/cross-domain-sso.js"
 import { httpsCallable } from "firebase/functions"
 import { doc, getFirestore, onSnapshot } from "firebase/firestore"
 import { auth, functions } from "../lib/firebase.js"
@@ -530,7 +531,10 @@ function CandidateMeReady({
               <button
                 type="button"
                 className="wk-btn wk-btn--ghost wk-btn--sm wkv2-signout"
-                onClick={() => void signOut(auth())}
+                onClick={async () => {
+                  await clearSsoCookie()
+                  await signOut(auth())
+                }}
               >
                 Sign out
               </button>
@@ -1090,7 +1094,10 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
               <button
                 type="button"
                 className="wk-btn wk-btn--ghost wk-btn--sm wkv2-signout"
-                onClick={() => void signOut(auth())}
+                onClick={async () => {
+                  await clearSsoCookie()
+                  await signOut(auth())
+                }}
               >
                 Sign out
               </button>

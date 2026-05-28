@@ -228,6 +228,46 @@ export function decideConversationTurnOwner(context: TurnContext): OwnerDecision
     })
   }
 
+  if (hasActiveWorkflowAnswer) {
+    return decision({
+      selectedOwner: "active_workflow",
+      rejectedOwners,
+      reason: "User answered the currently active workflow question.",
+      requiredTools,
+      forbiddenMutations,
+      intentFrames: frames,
+      orderedActions: [
+        { kind: "route_active_workflow", owner: "active_workflow", reason: "Active workflow owns the answer." },
+        ...(hasDurablePreferenceUpdate
+          ? [
+              { kind: "extract_durable_preferences" as const, owner: "durable_preference_update" as const, reason: "Same turn also contains durable preference signal." },
+              { kind: "commit_memory" as const, owner: "durable_preference_update" as const, reason: "Durable preference should be committed after the workflow answer is preserved." },
+            ]
+          : []),
+      ],
+    })
+  }
+
+  if (hasSharedOnboardingAnswer) {
+    return decision({
+      selectedOwner: "shared_onboarding",
+      rejectedOwners,
+      reason: "User answered the active shared-onboarding slot.",
+      requiredTools,
+      forbiddenMutations,
+      intentFrames: frames,
+      orderedActions: [
+        { kind: "write_shared_onboarding_answer", owner: "shared_onboarding", reason: "Active shared-onboarding slot answer." },
+        ...(hasDurablePreferenceUpdate
+          ? [
+              { kind: "extract_durable_preferences" as const, owner: "durable_preference_update" as const, reason: "Same turn also contains durable preference signal." },
+              { kind: "commit_memory" as const, owner: "durable_preference_update" as const, reason: "Durable preference should be committed after the onboarding answer is preserved." },
+            ]
+          : []),
+      ],
+    })
+  }
+
   if (hasDurablePreferenceUpdate) {
     return decision({
       selectedOwner: "durable_preference_update",
@@ -255,30 +295,6 @@ export function decideConversationTurnOwner(context: TurnContext): OwnerDecision
       forbiddenMutations,
       intentFrames: frames,
       orderedActions: [{ kind: "run_job_search", owner: "job_search", reason: "Explicit job-search request." }],
-    })
-  }
-
-  if (hasActiveWorkflowAnswer) {
-    return decision({
-      selectedOwner: "active_workflow",
-      rejectedOwners,
-      reason: "User answered the currently active workflow question.",
-      requiredTools,
-      forbiddenMutations,
-      intentFrames: frames,
-      orderedActions: [{ kind: "route_active_workflow", owner: "active_workflow", reason: "Active workflow owns the answer." }],
-    })
-  }
-
-  if (hasSharedOnboardingAnswer) {
-    return decision({
-      selectedOwner: "shared_onboarding",
-      rejectedOwners,
-      reason: "User answered the active shared-onboarding slot.",
-      requiredTools,
-      forbiddenMutations,
-      intentFrames: frames,
-      orderedActions: [{ kind: "write_shared_onboarding_answer", owner: "shared_onboarding", reason: "Active shared-onboarding slot answer." }],
     })
   }
 
@@ -387,8 +403,7 @@ function buildIntentFrames(context: TurnContext, text: string): IntentFrame[] {
     context.activeWorkflow?.kind === "job_prescreen" &&
     context.activeWorkflow.status === "active" &&
     !isMetaQuestion(text) &&
-    !isDurablePreferenceUpdate(text) &&
-    !isJobSearchRequest(text)
+    !isControlOrPrivacyIntent(text)
   ) {
     frames.push({
       intent: "active_workflow_answer",
@@ -465,7 +480,21 @@ function isControlOrPrivacyIntent(text: string): boolean {
 function isMetaQuestion(text: string): boolean {
   return (
     text.includes("?") ||
-    /^(why|how|what|could you|can you|help me understand|explain|where did|what do you mean)\b/i.test(text)
+    /^(why|how|what|could you|can you|help me understand|explain|where did|what do you mean)\b/i.test(text) ||
+    isSavedPreferenceSummaryQuestion(text)
+  )
+}
+
+export function isSavedPreferenceSummaryQuestion(text: string): boolean {
+  return (
+    /\b(?:w?hat|which|show|remind|tell)\b[\s\S]{0,40}\b(?:save|saved|store|stored|remember|remembered|have|using|use|used)\b[\s\S]{0,80}\b(?:job\s+)?(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b/i.test(text) ||
+    /\b(?:job\s+)?(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b[\s\S]{0,50}\b(?:save|saved|store|stored|remember|remembered|have|using|use|used)\b/i.test(text) ||
+    /\b(?:w?hat|which|show|remind|tell)\b[\s\S]{0,50}\b(?:save|saved|store|stored|remember|remembered|have|using|use|used)\b[\s\S]{0,50}\b(?:for\s+matching|matching\b)\b/i.test(text) ||
+    (
+      /\b(?:preferences?|prefs|matching profile|profile notes|for matching|matching)\b/i.test(text) &&
+      /\b(?:match|matching|save|saved|store|stored|remember|remembered|using|use|used)\b/i.test(text) &&
+      /\b(?:w?hat|which|show|remind|reminder|tell|using|use|could you)\b/i.test(text)
+    )
   )
 }
 

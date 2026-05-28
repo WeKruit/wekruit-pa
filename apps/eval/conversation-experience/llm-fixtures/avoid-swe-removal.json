@@ -1,0 +1,26 @@
+{
+  "name": "avoid-swe-removal",
+  "description": "LIVE-SMOKE-2026-05-28 Gap A, driven through the REAL production seam (maybeRunExtractor + applyPartialUserTags + onboardingState). FINDING: on the seam, gpt-5.4-nano correctly emits a REPLACE patch (product-only) and writes full_time, so software_engineering IS removed — this gate PASSES. The production live-smoke RED (kept software_engineering) was NOT reproducible from a synthetic transcript; it is a live-multi-turn-context / non-determinism artifact tracked via live-smoke. This fixture now locks in the correct removal behavior on the seam; the structured-negative-axis gap is captured separately by negative-axis-baseline.json.",
+  "user_id": "test_user_avoid_swe_removal",
+  "onboarding_state": "complete",
+  "initial_tags": {
+    "targetRoleFunction": ["software_engineering"],
+    "targetJobType": ["internship"],
+    "careerStage": "intern"
+  },
+  "turns": [
+    {
+      "inbound": "hey, quick background — I just wrapped a software engineering internship, that's been my whole focus so far",
+      "assistant": "nice — got you down for software engineering then."
+    },
+    {
+      "inbound": "actually I'm done with pure software engineering — only product strategy / PM roles going forward, and full-time only",
+      "assistant": "got it — updating that."
+    }
+  ],
+  "expect": {
+    "final_tags_excludes": { "targetRoleFunction": ["software_engineering"] },
+    "final_tags_includes": { "targetJobType": ["full_time"] },
+    "grade_criteria": "Candidate rejected pure software engineering and asked for product management, full-time. PASS if the final targetRoleFunction EXCLUDES software_engineering AND targetJobType INCLUDES full_time."
+  }
+}

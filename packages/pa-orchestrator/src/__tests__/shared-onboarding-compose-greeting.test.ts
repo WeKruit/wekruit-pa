@@ -227,6 +227,91 @@ test("composeSharedOnboardingReply humanizes unknown future tag tokens from agen
   }
 })
 
+test("composeSharedOnboardingReply asks next slot with grounded acknowledgement after accepted answer", async () => {
+  const db = makeFlagDb()
+  let capturedUserMessage = ""
+  let capturedSystemInputs: string[] = []
+  const answer = "Early startup or scale-up, high ownership, but not chaotic."
+  const prevEnv = process.env
+  process.env = {
+    ...prevEnv,
+    paSharedOnboardingAgenticSurface: "true",
+    paBehaviorChoreographerEnabled: "true",
+    paReactionTapbackEnabled: "false",
+    paFindMatchToolEnabled: "false",
+    paHumanizeRuntimeEnabled: "false",
+    PA_SHARED_ONBOARDING_TEMPLATE_FALLBACK: "false",
+  }
+
+  try {
+    const composed = await composeSharedOnboardingReply({
+      store: {
+        db,
+        log: () => undefined,
+        runAgentTurn: async ({ userMessage, systemInputs }) => {
+          capturedUserMessage = userMessage
+          capturedSystemInputs = systemInputs ?? []
+          return {
+            text: "Got it - high ownership without chaos helps. What industries or domains should I bias toward?",
+          }
+        },
+        createSession: () => ({
+          async getSessionId() {
+            return "sess-1"
+          },
+          async getItems() {
+            return []
+          },
+          async addItems() {
+            /* no-op */
+          },
+          async popItem() {
+            return undefined
+          },
+          async clearSession() {
+            /* no-op */
+          },
+        }),
+      },
+      userId: "accepted-answer-user",
+      sessionId: "sess-1",
+      turnId: "turn-accepted-answer",
+      slot: "industry_interest",
+      mode: "ask",
+      promptContext: { industryTags: ["tech_software", "ai_ml"] },
+      userMessage: answer,
+      composeContext: buildSharedOnboardingComposeContext({
+        inboundKind: "user_answer",
+        routerResult: "asked_question",
+        slot: "industry_interest",
+        mode: "ask",
+        userMessage: answer,
+      }),
+      agent,
+    })
+
+    assert.match(capturedUserMessage, /Start with one short acknowledgement grounded in that exact answer/i)
+    assert.match(capturedUserMessage, /one acknowledgement clause, then one compact question/i)
+    assert.match(capturedUserMessage, /high ownership, but not chaotic/i)
+    assert.ok(
+      capturedSystemInputs.some((input) =>
+        input.includes("reflect one concrete detail from it before the next question")
+      ),
+      "accepted answer continuation should require a grounded ack before the next slot",
+    )
+    assert.ok(
+      capturedSystemInputs.some((input) =>
+        input.includes("one short acknowledgement plus one concise question")
+      ),
+      "accepted answer continuation should keep SMS compact",
+    )
+    assert.match(composed.text, /high ownership without chaos/i)
+    assert.match(composed.text, /industries|domains/i)
+  } finally {
+    process.env = prevEnv
+  }
+})
+
 test("composeSharedOnboardingReply does not pressure shared onboarding reasks with slang", async () => {
   const db = makeFlagDb()
   let capturedSystemInputs: string[] = []
@@ -292,6 +377,105 @@ test("composeSharedOnboardingReply does not pressure shared onboarding reasks wi
       "surface intent should explicitly ban slangy reask openers",
     )
     assert.doesNotMatch(composed.text, /lowkey|manifest|deadass|fr\b/i)
+  } finally {
+    process.env = prevEnv
+  }
+})
+
+test("composeSharedOnboardingReply gives reasks transcript memory and retries restart drafts", async () => {
+  const db = makeFlagDb()
+  let calls = 0
+  let popCalls = 0
+  let firstUserMessage = ""
+  let retryUserMessage = ""
+  let capturedSystemInputs: string[] = []
+  let capturedHistory: unknown[] = []
+  const prevEnv = process.env
+  process.env = {
+    ...prevEnv,
+    paSharedOnboardingAgenticSurface: "true",
+    paBehaviorChoreographerEnabled: "true",
+    paReactionTapbackEnabled: "false",
+    paFindMatchToolEnabled: "false",
+    paHumanizeRuntimeEnabled: "true",
+    PA_SHARED_ONBOARDING_TEMPLATE_FALLBACK: "false",
+  }
+
+  try {
+    const composed = await composeSharedOnboardingReply({
+      store: {
+        db,
+        log: () => undefined,
+        runAgentTurn: async ({ userMessage, systemInputs, history }) => {
+          calls += 1
+          capturedSystemInputs = systemInputs ?? []
+          capturedHistory = history ?? []
+          if (calls === 1) {
+            firstUserMessage = userMessage
+            return { text: "manifesting—Hey Adam, I saw your resume come through. What matters most in your next company?" }
+          }
+          retryUserMessage = userMessage
+          return { text: "Got it — I still need the preference piece first. What matters most in your next company?" }
+        },
+        createSession: () => ({
+          async getSessionId() {
+            return "sess-1"
+          },
+          async getItems() {
+            return []
+          },
+          async addItems() {
+            /* no-op */
+          },
+          async popItem() {
+            popCalls += 1
+            return undefined
+          },
+          async clearSession() {
+            /* no-op */
+          },
+        }),
+      },
+      userId: "reask-memory-user",
+      sessionId: "sess-1",
+      turnId: "turn-reask-memory",
+      slot: "main_goal",
+      mode: "reask",
+      promptContext: { firstName: "Adam", recentCompanies: ["Tesla Inc"] },
+      userMessage: "Sure",
+      recentMessages: [
+        {
+          role: "assistant",
+          body: "lowkey manifest — What matters most in your next company?",
+          createdAt: "2026-05-27T20:00:00.000Z",
+        },
+        { role: "user", body: "Sure", createdAt: "2026-05-27T20:01:00.000Z" },
+      ],
+      composeContext: buildSharedOnboardingComposeContext({
+        inboundKind: "user_answer",
+        routerResult: "reasked_question",
+        slot: "main_goal",
+        mode: "reask",
+        userMessage: "Sure",
+      }),
+      agent,
+    })
+
+    assert.equal(calls, 2)
+    assert.equal(popCalls, 1)
+    assert.match(firstUserMessage, /candidate just replied: "Sure"/i)
+    assert.match(firstUserMessage, /do not restart/i)
+    assert.match(retryUserMessage, /previous draft restarted/i)
+    assert.equal(capturedHistory.length, 2)
+    assert.ok(
+      capturedSystemInputs.some((input) => input.includes("Recent SMS transcript")),
+      "reask composer should pass recent transcript as explicit context",
+    )
+    assert.ok(
+      capturedSystemInputs.some((input) => input.includes("Do not copy odd prior Claire phrasing")),
+      "reask composer should tell the model not to mirror awkward prior wording",
+    )
+    assert.doesNotMatch(composed.text, /lowkey|manifest|resume come through/i)
   } finally {
     process.env = prevEnv
   }

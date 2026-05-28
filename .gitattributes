@@ -1,0 +1,3 @@
+# Local agentic integration branch only — union-merge the flag seed array so
+# each phase's added SEED_FLAGS lines combine instead of conflicting.
+apps/functions/src/admin-bootstrap.ts merge=union

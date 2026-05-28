@@ -99,8 +99,7 @@ export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = 
   {
     id: "special_context",
     label: "special context",
-    prompt:
-      "Anything special I should know before matching you: constraints, strengths, dealbreakers, timing, or context that is not obvious from your resume?",
+    prompt: "Any non-negotiables I should keep in mind before matching you?",
   },
 ]
 
@@ -706,7 +705,7 @@ export function buildSharedOnboardingPrompt(
   if (id === "location_relocation") {
     const location = locationSummary(ctx)
     const lead = location ? `I see ${location}. ` : ""
-    return `${lead}Where do you want to work next, and are you open to remote, onsite, or relocating to another city?`
+    return `${lead}Where should I look next: specific cities, remote, onsite, or open to relocating?`
   }
   return question.prompt
 }
@@ -780,7 +779,7 @@ export function buildSharedOnboardingStartedState(
 }
 
 function normalizedSource(value: unknown): WekruitSignupSource {
-  return value === WEKRUIT_CANDIDATE_SOURCE ? WEKRUIT_CANDIDATE_SOURCE : WEKRUIT_LAYOFF_SOURCE
+  return value === WEKRUIT_LAYOFF_SOURCE ? WEKRUIT_LAYOFF_SOURCE : WEKRUIT_CANDIDATE_SOURCE
 }
 
 export function sharedOnboardingSignupSource(value: unknown): WekruitSignupSource {

@@ -11,6 +11,16 @@ import {
   loadHandbook as loadHandbookV2,
   DEFAULT_HANDBOOK_SLUG,
 } from "./handbook/loader.js"
+// Per-user version channel (canary / ring) — pure resolver used by the
+// Firestore-backed store's getVersionChannel impl, plus the `isLatestChannel`
+// integration seam consumed by the __PA_CHANNEL_PROBE__ dev-trigger example.
+// Other helpers are re-exported from the bottom of this module via
+// `export ... from "./version-channel.js"`.
+import {
+  resolveVersionChannel,
+  isLatestChannel,
+  type VersionChannel,
+} from "./version-channel.js"
 // Stream D — CV context injection (appendCvContextToSystemPrompt).
 import { appendCvContextToSystemPrompt } from "./cv-context-injection.js"
 // v1.5 / Phase 53.5 — JOB MARKET CONTEXT harness (Adam 2026-05-02 spec).
@@ -149,6 +159,7 @@ import {
 import { applyTemplateOutboundHumanize } from "./outbound-template-humanize.js"
 import {
   decideConversationTurnOwner,
+  isSavedPreferenceSummaryQuestion,
   summarizeConversationTurnTrace,
   type OwnerDecision,
   type PrescreenEvidence,
@@ -156,6 +167,7 @@ import {
 } from "./conversation-turn-arbiter.js"
 export {
   decideConversationTurnOwner,
+  isSavedPreferenceSummaryQuestion,
   summarizeConversationTurnTrace,
   type OwnerDecision,
   type PrescreenEvidence,
@@ -179,11 +191,14 @@ import {
   composeSharedOnboardingReply,
   deliverSharedOnboardingJobRecs,
   resolveAgentAllowedConnectors,
+  isAgenticJobSearchEnabled,
   buildSharedOnboardingComposeContext,
   extractRecentSlangPicks,
   persistSharedOnboardingSlangPicks,
+  isAgenticOnboardingEnabled,
   type SharedOnboardingOutboundStore,
 } from "./shared-onboarding-outbound.js"
+import { runAgenticOnboardingTurn } from "./onboarding-agentic-turn.js"
 import { buildMatchConnectorHooks } from "./match-connector-hooks.js"
 import { composeFindMatchPreCall } from "./job-match-narration.js"
 import { frameConnectorResult } from "./run-connector-with-narration.js"
@@ -278,6 +293,11 @@ import { applyRealtimeTagWriteback } from "./voice/realtime-tagger.js"
 // See .planning/GOAL-chat-tag-memory-extraction.md.
 import { maybeRunExtractor } from "./conversation-extractor-runtime.js"
 import type { ConversationExtractMessage } from "./conversation-extractor.js"
+// 2026-05-27 — grounded 0-match copy using real V16 counters
+// (dropped/hardFilter/missingAxes/needsOnboarding). Replaces the generic
+// "I did not find a strong fresh match" line that threw the counters away
+// and gave the user no way to broaden a filter.
+import { composeNoMatchReply, noMatchReasonTag } from "./no-match-narration.js"
 // Adam iter 20 — phrase-repeat stripper. iter-19 10-turn sim found 5
 // consecutive replies opening with "要不要试" — F1 detects user-mirror
 // not Claire-self-mirror; stripRepeatOpener only checks last-2 + first
@@ -296,10 +316,9 @@ import {
 } from "./voice/context-window.js"
 import { normalizeForIMessage, stripABProbeFromTail } from "./output-normalizer.js"
 // Phase 53 (v1.6 voice-quality closure) — conditional A/B framework strip
-// + mixed-register mirror append. Distinct from stripABProbeFromTail
-// (X-or-Y tail probes) — see ab-framework-detector.ts module docstring.
+// (if/then head). Distinct from stripABProbeFromTail (X-or-Y tail probes)
+// — see ab-framework-detector.ts module docstring.
 import { stripABFramework } from "./voice/ab-framework-detector.js"
-import { applyMixedRegisterMirror } from "./voice/mixed-register-mirror.js"
 // iter30 Wave 3 — am_i_ai post-gen flat-deny re-roll. V2 QA Agent-B
 // observed Claire occasionally replying "嗯，我是真人朋友。" when asked
 // "你是 AI 吗?" — the addendum forbids flat-deny ("deceptive"). This
@@ -726,6 +745,16 @@ export type OrchestratorStore = {
   getRuntimeMode?(userId: string): Promise<"auto" | "paused">
 
   /**
+   * Per-user version channel (canary / ring). Returns "latest" when the user
+   * is an internal/test user OR pa-users.versionChannel === "latest"; "stable"
+   * otherwise (default / user-not-found). OPTIONAL so older / test stores are
+   * unaffected — `isLatestChannel()` self-gates to `false` (stable behavior)
+   * when this is unimplemented, exactly like `getRuntimeMode`. See
+   * `./version-channel.ts` for the pure resolver.
+   */
+  getVersionChannel?(userId: string): Promise<VersionChannel>
+
+  /**
    * iter31 — current ToS version string for acceptance writes. Reads
    * pa-remote-config/platform.tosVersion; defaults to "v1.0" when unset.
    */
@@ -779,6 +808,20 @@ export type OrchestratorStore = {
     message: string
     recCount: number
     topJob?: { jobId: string; title: string; company: string; score: number }
+    /**
+     * 2026-05-27 — V16 matcher counters exposed for grounded 0-match narration
+     * and `pa-tool-calls` audit ledger. Optional so older deps wrappers that
+     * don't surface them still type-check; consumers must tolerate undefined.
+     */
+    v16Counters?: {
+      noUserTags?: boolean
+      needsOnboarding?: boolean
+      missingAxes?: readonly string[]
+      total?: number
+      dropped?: number
+      hardFilter?: Readonly<Record<string, number>>
+      collabPrescreenOnly?: boolean
+    }
   } | null>
 
   /** Collab funnel — start prescreen after candidate accepts invite. */
@@ -1554,6 +1597,7 @@ async function sendMemoryReply(
     deliveryPlan?: OutboundDeliveryPlan
     inboundMessageHandle?: string
     transcriptIdempotencyKey?: string
+    allowImperfection?: boolean
     /** Set true only when tapback was already sent earlier in the turn. */
     skipTapback?: boolean
   } = {}
@@ -1564,6 +1608,7 @@ async function sendMemoryReply(
     turnId,
     db: store.db,
     maxLength: 600,
+    allowImperfection: opts.allowImperfection,
   })
   const at = store.nowIso()
   await store.appendMessage({
@@ -2489,6 +2534,7 @@ async function handleSharedOnboardingClarificationTurn(
     mode: "reask",
     promptContext,
     userMessage: event.body,
+    recentMessages: context.recentMessages,
     composeContext: buildSharedOnboardingComposeContext({
       inboundKind: "user_answer",
       routerResult: "reasked_question",
@@ -2509,6 +2555,7 @@ async function handleSharedOnboardingClarificationTurn(
     // session hash here so appendMessage merges orchestrator metadata onto
     // that row instead of creating a second transcript row for one visible SMS.
     transcriptIdempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", composed.text),
+    allowImperfection: false,
   })
   await persistSharedOnboardingSlangPicks({
     db: store.db,
@@ -2554,11 +2601,75 @@ async function handleDurablePreferenceUpdateTurn(
   const profileUpdated = await persistJobSearchProfileUpdate(event, store, turnId, profileUpdate)
   const shouldContinueToSearch = ownerDecision.orderedActions.some((action) => action.kind === "run_job_search")
 
+  // 2026-05-27 — synchronous reducer fire on durable_preference_update.
+  // `extractLifecycleProfileUpdate` is regex-based and only catches obvious
+  // negations / role swaps; it misses nuance ("I'm tired of pure SWE, give me
+  // product strategy work in SF or remote AI infra"). When V16 will run on
+  // this turn (shouldContinueToSearch), the canonical `pa-users.tags` MUST
+  // reflect the new preference BEFORE the matcher reads them, or we
+  // re-introduce the stale-tag bug. `maybeRunExtractor({forceTrigger:
+  // "intent_signal"})` bypasses the 5min/30min/10turn debounce and the
+  // `PA_CHAT_EXTRACTOR_ENABLED` feature flag (intent-driven extraction is
+  // always on — see conversation-extractor.ts trigger doc). Failure is
+  // logged + tolerated; the existing `persistJobSearchProfileUpdate` path
+  // above remains the regex fallback so we never regress.
+  let extractorRan = false
+  let extractorTagFieldsChanged: string[] = []
+  if (shouldContinueToSearch && store.db) {
+    try {
+      const recent = context.recentMessages ?? []
+      const existing = await store.db
+        .collection(PA_COLLECTIONS.users)
+        .doc(event.userId)
+        .get()
+        .then((snap) => snap.data() ?? {})
+      const onboardingState =
+        typeof (existing as Record<string, unknown>).onboardingState === "string"
+          ? ((existing as Record<string, unknown>).onboardingState as string)
+          : null
+      const existingTags = ((existing as Record<string, unknown>).tags ?? {}) as Record<string, unknown>
+      const recentForExtractor: ConversationExtractMessage[] = recent.map((msg) => ({
+        role: msg.role === "assistant" ? "assistant" : "user",
+        body: msg.body,
+        createdAt: msg.createdAt ?? store.nowIso(),
+      }))
+      const outcome = await maybeRunExtractor({
+        db: store.db,
+        userId: event.userId,
+        recentMessages: recentForExtractor,
+        existingTags,
+        onboardingState,
+        userMsgsThisBatch: 1,
+        forceTrigger: "intent_signal",
+        log: (eventName, payload) => store.log(eventName, payload ?? {}),
+      })
+      extractorRan = outcome.ran
+      extractorTagFieldsChanged = outcome.tagFieldsChanged ?? []
+      store.log("pa.runtime.durable_preference.extractor", {
+        userId: event.userId,
+        turnId,
+        ran: outcome.ran,
+        reason: outcome.reason,
+        tagFieldsChanged: extractorTagFieldsChanged,
+        confidence: outcome.confidence,
+        modelUsed: outcome.modelUsed,
+      })
+    } catch (err) {
+      store.log("pa.runtime.durable_preference.extractor_error", {
+        userId: event.userId,
+        turnId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   await persistConversationTurnTrace(store, event, context, ownerDecision, "completed", actionDecision, evidenceWrites, {
     outboundSource: shouldContinueToSearch ? "durable_preference_then_search" : "durable_preference_update",
     memoryWrites: profileUpdated ? ["durable_preference_update"] : evidenceWrites.map((write) => write.kind),
     evidenceCommitIds,
     evidenceCommitCount: evidenceCommitIds.length,
+    extractorRan,
+    extractorTagFieldsChanged,
   })
 
   if (shouldContinueToSearch) {
@@ -2581,6 +2692,42 @@ async function handleDurablePreferenceUpdateTurn(
     directIntentResult: profileUpdated ? "profile_updated" : "evidence_recorded",
     directIntentProfileUpdated: profileUpdated,
     conversationAction: actionDecision.selectedAction,
+  })
+  await store.markEventSucceeded(event.id)
+  return true
+}
+
+async function handleExplicitExplanationTurn(
+  event: InboundEvent,
+  store: OrchestratorStore,
+  turnId: string,
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  context: TurnContext,
+  ownerDecision: OwnerDecision,
+  actionDecision: ConversationActionDecision,
+  evidenceWrites: ConversationEvidenceWrite[],
+  evidenceCommitIds: string[] = [],
+): Promise<boolean> {
+  if (ownerDecision.selectedOwner !== "explicit_explanation") return false
+  if (!isSavedPreferenceSummaryQuestion(event.body)) return false
+
+  const lang = detectUserLang(event.body) === "zh" ? "zh" : "en"
+  const reply = composeSavedJobPreferencesReply(onboardingUser, lang)
+  await sendMemoryReply(store, event, turnId, reply)
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    completedAt: store.nowIso(),
+    directIntent: "explicit_explanation",
+    directIntentResult: "job_preferences_summary_answered",
+    conversationAction: actionDecision.selectedAction,
+    conversationNoOutboundReason: null,
+  })
+  await persistConversationTurnTrace(store, event, context, ownerDecision, "completed", actionDecision, evidenceWrites, {
+    outboundSource: "saved_job_preferences_summary",
+    memoryWrites: evidenceWrites.map((write) => write.kind),
+    evidenceCommitIds,
+    evidenceCommitCount: evidenceCommitIds.length,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -2706,6 +2853,13 @@ type RuntimeRecommendationJob = {
   url: string
   requirements: string
   reason: string
+  /**
+   * True only for WeKruit collab/partner jobs, which are the only roles WeKruit can
+   * actually screen + forward. External scraped jobs (jobright/ATS links) are
+   * collab=false: the candidate applies via the link themselves and Claire must NOT
+   * imply a WeKruit prescreen ("move it forward", "quick screen", "WeKruit screen").
+   */
+  collab: boolean
 }
 
 function cleanRuntimeText(value: unknown): string {
@@ -2728,16 +2882,30 @@ function runtimeRecommendationJobs(rawMeta: unknown): RuntimeRecommendationJob[]
       url,
       requirements: cleanRuntimeText(row.requirements),
       reason: cleanRuntimeText(row.reason).replace(/^why\s*:\s*/i, ""),
+      collab: row.collab === true,
     }]
   })
 }
 
+/**
+ * Fit-gate question for WeKruit collab/partner jobs ONLY. These are the roles
+ * WeKruit can screen and forward, so a short "worth a quick screen?" gate is honest.
+ * Never call this for external (collab=false) jobs — see buildExternalApplyFollowUp.
+ *
+ * The phrasing is intentionally generic-first: the gate keys off the JOB only, so an
+ * over-specific SWE question can land on a non-SWE candidate (e.g. a customer-service
+ * applicant asked "shipped production Java/Python?"). We only emit a stack-specific
+ * gate when the role is unambiguously engineering; otherwise we ask a neutral,
+ * role-appropriate fit question.
+ */
 function buildRoleFitGate(job: RuntimeRecommendationJob): string {
   const haystack = `${job.title} ${job.requirements}`.toLowerCase()
-  if (/\breact\b|\bnext\.?js\b|\btypescript\b|\bts\b/.test(haystack)) {
+  const looksEngineering =
+    /\b(software|engineer|engineering|developer|frontend|front-end|backend|back-end|full[\s-]?stack|swe|programmer|devops|sre)\b/.test(haystack)
+  if (looksEngineering && /\breact\b|\bnext\.?js\b|\btypescript\b/.test(haystack)) {
     return "Before I move it forward, quick fit check: have you shipped production React/Next.js with TypeScript?"
   }
-  if (/\bjava\b|\bpython\b|\bjavascript\b|\bnode\.?js\b/.test(haystack)) {
+  if (looksEngineering && /\bjava\b|\bpython\b|\bjavascript\b|\bnode\.?js\b/.test(haystack)) {
     return "Before I move it forward, quick fit check: have you shipped production Java, Python, JavaScript, or Node work?"
   }
   if (/\bsql\b|\bexcel\b|\bpower\s*bi\b|\banalytics?\b|\bdata\b/.test(haystack)) {
@@ -2747,6 +2915,15 @@ function buildRoleFitGate(job: RuntimeRecommendationJob): string {
     return "Before I move it forward, quick fit check: are you open to the work setup for this role?"
   }
   return "Before I move it forward, quick fit check: does this look worth a quick screen?"
+}
+
+/**
+ * Follow-up for EXTERNAL (collab=false) scraped jobs. WeKruit has no prescreen
+ * relationship here, so we must not imply a WeKruit screen or that we forward the
+ * candidate. Neutral copy: they apply via the link themselves; offer to find more.
+ */
+function buildExternalApplyFollowUp(): string {
+  return "You'd apply through that link directly — want me to keep an eye out for more like it?"
 }
 
 function buildFocusedRuntimeRecommendationPlan(rawMeta: unknown): { body: string; plan: OutboundDeliveryPlan } | null {
@@ -2760,14 +2937,18 @@ function buildFocusedRuntimeRecommendationPlan(rawMeta: unknown): { body: string
     job.requirements,
     job.reason ? `Why it lines up: ${job.reason}` : "",
   ].filter(Boolean).join("\n")
-  const second = buildRoleFitGate(job)
+  // Only collab/partner jobs get the fit-gate → screen framing. External scraped
+  // jobs get neutral "apply via the link yourself" copy (no implied WeKruit screen).
+  const second = job.collab ? buildRoleFitGate(job) : buildExternalApplyFollowUp()
   const body = `${first}\n\n${second}`
   return {
     body,
     plan: {
       mode: "text_split_2",
       textParts: [first, second],
-      reason: "runtime_job_recommendation_focused_split_2",
+      reason: job.collab
+        ? "runtime_job_recommendation_focused_split_2"
+        : "runtime_job_recommendation_external_split_2",
       smsCount: 2,
     },
   }
@@ -2784,8 +2965,10 @@ function detectJobRecommendationSubscriptionCancel(text: string): boolean {
 function detectJobRecommendationSubscriptionResume(text: string): boolean {
   const normalized = text.trim().toLowerCase()
   if (!normalized) return false
-  return /\b(?:restart|resume|start|subscribe|resubscribe|unpause|turn on|turn back on)\b[^.!?]{0,80}\b(?:job|jobs|role|roles|match|matches|matching|recommendation|recommendations|recs|daily|texts|outreach)\b/i.test(normalized) ||
-    /\b(?:job|jobs|role|roles|match|matches|matching|recommendation|recommendations|recs|daily|texts|outreach)\b[^.!?]{0,80}\b(?:restart|resume|start|subscribe|resubscribe|unpause|turn on|turn back on)\b/i.test(normalized)
+  const resumeVerb = String.raw`(?:restart|resume|subscribe|resubscribe|unpause|turn on|turn back on)`
+  const recNoun = String.raw`(?:job|jobs|role|roles|match|matches|matching|recommendation|recommendations|recs|daily|texts|outreach)`
+  return new RegExp(String.raw`\b${resumeVerb}\b[^.!?]{0,80}\b${recNoun}\b`, "i").test(normalized) ||
+    new RegExp(String.raw`\b${recNoun}\b[^.!?]{0,80}\b${resumeVerb}\b`, "i").test(normalized)
 }
 
 function parseSharedQuestionId(value: unknown): SharedOnboardingQuestionId {
@@ -2854,6 +3037,8 @@ async function handleSharedOnboardingRuntimeEvent(
   await sendMemoryReply(store, event, turnId, composed.text, {
     deliveryPlan: runtimePlan ?? undefined,
     inboundMessageHandle: inboundMessageHandleForReaction(event),
+    transcriptIdempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", composed.text),
+    allowImperfection: false,
   })
   await persistSharedOnboardingSlangPicks({
     db: store.db,
@@ -2877,6 +3062,51 @@ async function handleSharedOnboardingRuntimeEvent(
 
 function hasObjectKeys(value: Record<string, unknown>): boolean {
   return Object.keys(value).length > 0
+}
+
+type ConversationTraceBundle = {
+  context: TurnContext
+  ownerDecision: OwnerDecision
+  actionDecision?: ConversationActionDecision | null
+  evidenceWrites: ConversationEvidenceWrite[]
+  evidenceCommitIds: string[]
+}
+
+async function persistConversationTraceCompletion(
+  store: OrchestratorStore,
+  event: InboundEvent,
+  bundle: ConversationTraceBundle | undefined,
+  extra: {
+    outboundSource: string
+    memoryWrites?: string[]
+    noOutboundReason?: string | null
+    reactionAttempted?: boolean
+    reactionSent?: boolean
+    reactionSkippedReason?: string | null
+    // 2026-05-27 — extra metadata for job-search trace closure:
+    // surfaces the matcher tool-call id, the V16 result counters, and the
+    // no-match reason tag so `pa-turn-traces` has the full audit chain
+    // without needing a separate join against `pa-tool-calls`.
+    noMatchReason?: string | null
+    toolCallId?: string
+    recCount?: number
+  } & Record<string, unknown>,
+): Promise<void> {
+  if (!bundle) return
+  await persistConversationTurnTrace(
+    store,
+    event,
+    bundle.context,
+    bundle.ownerDecision,
+    "completed",
+    bundle.actionDecision ?? undefined,
+    bundle.evidenceWrites,
+    {
+      ...extra,
+      evidenceCommitIds: bundle.evidenceCommitIds,
+      evidenceCommitCount: bundle.evidenceCommitIds.length,
+    },
+  )
 }
 
 async function writeSharedOnboardingAnswer(
@@ -2939,11 +3169,85 @@ async function writeSharedOnboardingAnswer(
   )
 }
 
+/**
+ * P4 — tangent reply for the FLAG-ON scoped onboarding agent. The agent answered
+ * an off-topic question via `explain_context`; the slot is HELD (no write, no
+ * advance). Compose + send a reply for the current slot via the EXISTING surface
+ * and complete the turn. Only reachable when `paAgenticOnboardingEnabled` is ON.
+ */
+async function sendSharedOnboardingHeldSlotReply(
+  store: OrchestratorStore,
+  event: InboundEvent,
+  turnId: string,
+  questionId: SharedOnboardingQuestionId,
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  traceBundle?: ConversationTraceBundle,
+): Promise<boolean> {
+  const promptContext = sharedPromptContextFrom(onboardingUser)
+  const agent = await requireAgentForUser(store, event.userId)
+  const priorSlangPicks = extractRecentSlangPicks(
+    onboardingUser as { sharedOnboarding?: Record<string, unknown> | null } | null,
+  )
+  const recentMessagesForCompose = await store.loadHistory(event.sessionId, 8).catch(() => [])
+  const composed = await composeSharedOnboardingReply({
+    store: sharedOnboardingOutboundSlice(store),
+    userId: event.userId,
+    sessionId: event.sessionId,
+    turnId,
+    slot: questionId,
+    mode: "ask",
+    promptContext,
+    userMessage: event.body,
+    recentMessages: recentMessagesForCompose,
+    composeContext: buildSharedOnboardingComposeContext({
+      inboundKind: "user_answer",
+      routerResult: "asked_question",
+      slot: questionId,
+      mode: "ask",
+      userMessage: event.body,
+    }),
+    agent,
+    inboundMessageHandle: inboundMessageHandleForReaction(event),
+    toE164: event.from,
+    recentSlangPicks: priorSlangPicks,
+  })
+  const plan = await buildSharedOnboardingDeliveryPlan({ store, event, turnId, reply: composed.text })
+  await sendMemoryReply(store, event, turnId, composed.text, {
+    deliveryPlan: plan ?? undefined,
+    inboundMessageHandle: inboundMessageHandleForReaction(event),
+    transcriptIdempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", composed.text),
+    allowImperfection: false,
+  })
+  await persistSharedOnboardingSlangPicks({
+    db: store.db,
+    userId: event.userId,
+    priorPicks: priorSlangPicks,
+    newPicks: composed.slangPicked,
+    nowIso: store.nowIso(),
+    log: (name, payload) => store.log(name, payload ?? {}),
+  })
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    completedAt: store.nowIso(),
+    directIntent: "shared_onboarding",
+    directIntentResult: "tangent_slot_held",
+    sharedOnboardingQuestionId: questionId,
+  })
+  await persistConversationTraceCompletion(store, event, traceBundle, {
+    outboundSource: "shared_onboarding_tangent_slot_held",
+    memoryWrites: [],
+  })
+  await store.markEventSucceeded(event.id)
+  return true
+}
+
 async function handleSharedOnboardingUserReply(
   event: InboundEvent,
   store: OrchestratorStore,
   turnId: string,
   onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  traceBundle?: ConversationTraceBundle,
 ): Promise<boolean> {
   if (!onboardingUser || !isSharedOnboardingActiveUser(onboardingUser)) return false
   const questionId = currentSharedOnboardingQuestionId(onboardingUser)
@@ -2969,6 +3273,11 @@ async function handleSharedOnboardingUserReply(
       sharedOnboardingQuestionId: questionId,
       sharedOnboardingJudgeReason: answerJudge.reason,
     })
+    await persistConversationTraceCompletion(store, event, traceBundle, {
+      outboundSource: "shared_onboarding_ignored_non_answer",
+      memoryWrites: [],
+      noOutboundReason: "ignored_non_answer",
+    })
     await store.markEventSucceeded(event.id)
     return true
   }
@@ -2986,7 +3295,53 @@ async function handleSharedOnboardingUserReply(
   }
   const projection = projectSharedOnboardingAnswer(questionId, event.body)
   const next = resolveNextSharedOnboardingQuestionId(questionId)
-  await writeSharedOnboardingAnswer(store, event, questionId, projection, next)
+
+  // ── P4 flag-gated scoped onboarding agent (paAgenticOnboardingEnabled, default OFF).
+  // FLAG OFF → this whole block is skipped; the deterministic write below runs
+  // byte-for-byte unchanged. FLAG ON → a scoped agent routes an on-slot answer to
+  // `record_onboarding_answer` (which performs the EXISTING write — projection +
+  // resolveNext + writeSharedOnboardingAnswer, so the reducer advances the slot +
+  // projects durable tags) and a tangent to the global `explain_context` tool (no
+  // advance). ANY agent failure → handled:false → fall open to the deterministic
+  // write. The LLM has no skip/complete tool, so the reducer stays the controller.
+  let alreadyWrote = false
+  if (await isAgenticOnboardingEnabled(store.db, event.userId)) {
+    const agenticResult = await runAgenticOnboardingTurn({
+      slot: questionId,
+      userMessage: event.body,
+      promptContext: sharedPromptContextFrom(onboardingUser),
+      recordAnswer: async () => {
+        // Sole slot-write path — delegates to the existing deterministic write.
+        await writeSharedOnboardingAnswer(store, event, questionId, projection, next)
+        alreadyWrote = true
+        return { advancedTo: next.completed ? "__complete__" : (next.nextQuestionId as SharedOnboardingQuestionId) }
+      },
+      log: (name, payload) => store.log(name, payload ?? {}),
+    }).catch((err): { handled: false; reason: string } => ({
+      handled: false,
+      reason: `agentic_turn_threw:${err instanceof Error ? err.message : String(err)}`,
+    }))
+    store.log("pa.shared_onboarding.agentic_turn", {
+      userId: event.userId,
+      turnId,
+      questionId,
+      handled: agenticResult.handled,
+      ...(agenticResult.handled
+        ? { recorded: agenticResult.recorded, explained: agenticResult.explained }
+        : { reason: agenticResult.reason }),
+    })
+    // The agent answered a tangent (no record) — hold the slot, do not write/advance.
+    // Compose the reply via the EXISTING surface for the (held) current slot.
+    if (agenticResult.handled && agenticResult.explained && !agenticResult.recorded) {
+      return await sendSharedOnboardingHeldSlotReply(store, event, turnId, questionId, onboardingUser, traceBundle)
+    }
+    // If the agent did NOT record (handled:false or no tool call), fall through to
+    // the deterministic write below (fail-open). If it DID record, `alreadyWrote`
+    // is set and we skip the duplicate write but reuse the existing reply tail.
+  }
+  if (!alreadyWrote) {
+    await writeSharedOnboardingAnswer(store, event, questionId, projection, next)
+  }
 
   if (!next.completed && next.nextQuestionId) {
     const promptContext = sharedPromptContextFrom(onboardingUser)
@@ -2996,6 +3351,7 @@ async function handleSharedOnboardingUserReply(
     // sharedOnboarding.voice sub-tree we never touch from writeSharedOnboardingAnswer,
     // so reusing onboardingUser is safe here.
     const priorSlangPicks = extractRecentSlangPicks(onboardingUser as { sharedOnboarding?: Record<string, unknown> | null } | null)
+    const recentMessagesForCompose = await store.loadHistory(event.sessionId, 8).catch(() => [])
     const composed = await composeSharedOnboardingReply({
       store: sharedOnboardingOutboundSlice(store),
       userId: event.userId,
@@ -3005,6 +3361,7 @@ async function handleSharedOnboardingUserReply(
       mode: "ask",
       promptContext,
       userMessage: event.body,
+      recentMessages: recentMessagesForCompose,
       composeContext: buildSharedOnboardingComposeContext({
         inboundKind: "user_answer",
         routerResult: advancedDespiteJudge ? "advanced_despite_judge" : "asked_question",
@@ -3026,6 +3383,8 @@ async function handleSharedOnboardingUserReply(
     await sendMemoryReply(store, event, turnId, composed.text, {
       deliveryPlan: nextAskPlan ?? undefined,
       inboundMessageHandle: inboundMessageHandleForReaction(event),
+      transcriptIdempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", composed.text),
+      allowImperfection: false,
     })
     await persistSharedOnboardingSlangPicks({
       db: store.db,
@@ -3049,6 +3408,10 @@ async function handleSharedOnboardingUserReply(
             sharedOnboardingJudgeReason: answerJudge.reason,
           }
         : {}),
+    })
+    await persistConversationTraceCompletion(store, event, traceBundle, {
+      outboundSource: "shared_onboarding_next_ask",
+      memoryWrites: traceBundle?.evidenceWrites.map((write) => write.kind) ?? [],
     })
     await store.markEventSucceeded(event.id)
     return true
@@ -3098,6 +3461,10 @@ async function handleSharedOnboardingUserReply(
           sharedOnboardingJudgeReason: answerJudge.reason,
         }
       : {}),
+  })
+  await persistConversationTraceCompletion(store, event, traceBundle, {
+    outboundSource: delivered.recCount > 0 ? "shared_onboarding_job_recs" : "shared_onboarding_saved_without_recs",
+    memoryWrites: traceBundle?.evidenceWrites.map((write) => write.kind) ?? [],
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -3232,6 +3599,8 @@ async function handleSharedOnboardingBootstrap(
   await sendMemoryReply(store, event, turnId, bootstrapComposed.text, {
     deliveryPlan: bootstrapPlan ?? undefined,
     inboundMessageHandle: inboundMessageHandleForReaction(event),
+    transcriptIdempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", bootstrapComposed.text),
+    allowImperfection: false,
   })
   await persistSharedOnboardingSlangPicks({
     db: store.db,
@@ -3293,7 +3662,8 @@ async function handleCompletedUserJobSearchRequest(
   event: InboundEvent,
   store: OrchestratorStore,
   turnId: string,
-  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  traceBundle?: ConversationTraceBundle,
 ): Promise<boolean> {
   if (!store.generateJobRecs) return false
   if (isJobRecommendationExplanationRequest(event.body)) return false
@@ -3322,6 +3692,63 @@ async function handleCompletedUserJobSearchRequest(
     moreFollowup,
     profileUpdated,
   })
+
+  // 2026-05-27 — wrap matcher invocation in a `pa-tool-calls` ledger row so
+  // every job-search turn has an audit trail of (a) the user-tag snapshot
+  // V16 saw at call time, (b) the V16 counters returned, (c) the resulting
+  // recCount. Required by the conversation-action arbiter contract
+  // (`requiredTraceFields: ["toolCallIds", ...]` for `status_then_async_tool`
+  // and `tool_result_reply` paths). Pre-call insert + post-call merge so we
+  // capture latency + outcome on the same doc.
+  const toolCallId = randomUUID()
+  const matcherStartedAtIso = store.nowIso()
+  const matcherStartedAtMs = Date.now()
+  if (store.db) {
+    try {
+      let userTagsSnapshot: Record<string, unknown> | null = null
+      try {
+        const snap = await store.db.collection(PA_COLLECTIONS.users).doc(event.userId).get()
+        const tags = (snap.data() ?? {}).tags
+        if (tags && typeof tags === "object") {
+          userTagsSnapshot = tags as Record<string, unknown>
+        }
+      } catch (snapErr) {
+        store.log("pa.runtime.job_search.tool_call_snapshot_failed", {
+          userId: event.userId,
+          turnId,
+          error: snapErr instanceof Error ? snapErr.message : String(snapErr),
+        })
+      }
+      await store.db.collection(PA_COLLECTIONS.toolCalls).doc(toolCallId).set({
+        id: toolCallId,
+        turnId,
+        userId: event.userId,
+        eventId: event.id,
+        sessionId: event.sessionId,
+        name: "find-match",
+        source: "imessage_job_search_reply",
+        status: "pending",
+        createdAt: matcherStartedAtIso,
+        input: {
+          lang,
+          requestedCount: requestedCount ?? null,
+          roleFocus,
+          excludeInternships: excludeInternships ? true : false,
+          explicitJobSearch,
+          moreFollowup,
+          ...(userTagsSnapshot ? { userTagsSnapshot } : {}),
+        },
+      })
+    } catch (err) {
+      store.log("pa.runtime.job_search.tool_call_create_failed", {
+        userId: event.userId,
+        turnId,
+        toolCallId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   await sendFindMatchPreCallBubble(store, event, turnId, lang)
   const recs = await store.generateJobRecs(event.userId, lang, {
     force: true,
@@ -3329,14 +3756,49 @@ async function handleCompletedUserJobSearchRequest(
     ...(roleFocus.length > 0 ? { roleFocus } : {}),
     ...(excludeInternships ? { excludeInternships: true } : {}),
   })
+  const matcherFinishedAtMs = Date.now()
   const recCount = recs?.recCount ?? 0
+  const v16Counters = recs?.v16Counters
+  const noMatchReason = recCount === 0
+    ? noMatchReasonTag(v16Counters ?? { noUserTags: recs === null })
+    : null
+
+  // Post-call: merge tool-call doc with output + status. Best-effort; never
+  // throws into the user reply path.
+  if (store.db) {
+    try {
+      await store.db.collection(PA_COLLECTIONS.toolCalls).doc(toolCallId).set({
+        status: recs === null ? "failed" : "completed",
+        completedAt: store.nowIso(),
+        latencyMs: matcherFinishedAtMs - matcherStartedAtMs,
+        output: {
+          recCount,
+          ...(recs?.topJob ? { topJobId: recs.topJob.jobId } : {}),
+          ...(v16Counters ? { v16Counters } : {}),
+        },
+        ...(noMatchReason ? { noMatchReason } : {}),
+      }, { merge: true })
+    } catch (err) {
+      store.log("pa.runtime.job_search.tool_call_update_failed", {
+        userId: event.userId,
+        turnId,
+        toolCallId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  // Reply body: grounded no-match narration (using real V16 counters) when
+  // the matcher returned nothing; otherwise pass through the composed
+  // recommendation. The legacy generic apology copy is gone — when V16
+  // counters are unavailable (e.g. recs === null), `composeNoMatchReply`
+  // falls back to a useful next-step question rather than the dead "I will
+  // keep checking" line that taught the user to stop trusting Claire.
   const body =
     recCount > 0
       ? recs!.message
-      : lang === "zh"
-        ? "这次没捞到特别合适的，我记下了，晚点再帮你扫一轮。"
-        : "I could not pull fresh roles right now. I saved the request and will try again shortly."
-  const frame = frameConnectorResult("find-match", lang, recCount)
+      : composeNoMatchReply(v16Counters ?? { noUserTags: recs === null }, lang)
+  const frame = recCount > 0 ? frameConnectorResult("find-match", lang, recCount) : null
   const reply = frame ? [frame, body].filter(Boolean).join("\n") : body
   await sendMemoryReply(store, event, turnId, reply)
   if (recs && recs.recCount > 0 && store.db) {
@@ -3359,6 +3821,21 @@ async function handleCompletedUserJobSearchRequest(
     directIntentRecCount: recs?.recCount ?? 0,
     directIntentProfileUpdated: profileUpdated,
     directIntentFollowup: !explicitJobSearch,
+    jobSearchToolCallId: toolCallId,
+    ...(noMatchReason ? { jobSearchNoMatchReason: noMatchReason } : {}),
+  })
+
+  // 2026-05-27 — close `pa-turn-traces` as `completed` for job-search owners.
+  // Pre-fix: this fn fell through from the arbiter (which had already
+  // written `owner_arbitrated`) without ever updating the trace, leaving
+  // every job-search turn frozen at owner_arbitrated. Trace bundle carries
+  // the arbiter context the conversation handler built upstream.
+  await persistConversationTraceCompletion(store, event, traceBundle, {
+    outboundSource: "job_search",
+    memoryWrites: profileUpdated ? ["durable_preference_update"] : [],
+    noMatchReason,
+    toolCallId,
+    recCount,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -3461,6 +3938,208 @@ async function handlePrivacyIntent(
       : `Got it. I submitted a ${kindCopy[result.kind]} request.${result.existingOpen ? " You already had one open, so I did not create a duplicate." : " We will review it from the privacy queue and keep an audit trail."}`
   await sendMemoryReply(store, event, turnId, reply)
   return true
+}
+
+function composeSavedJobPreferencesReply(
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  lang: "en" | "zh",
+): string {
+  const user = onboardingUser && typeof onboardingUser === "object"
+    ? onboardingUser as { sharedOnboarding?: { answers?: Record<string, { answer?: unknown }> }; statedPreferences?: Record<string, unknown> }
+    : null
+  const shared = user?.sharedOnboarding?.answers ?? {}
+  const sharedReply = composeSharedSavedPreferenceReply(shared, lang)
+  if (sharedReply) return sharedReply
+
+  const snippets: string[] = []
+
+  const addAnswer = (key: string) => {
+    const value = shared[key]?.answer
+    const snippet = formatSavedPreferenceSnippet(key, value)
+    if (snippet) snippets.push(snippet)
+  }
+  addAnswer("main_goal")
+  addAnswer("culture_stage")
+  addAnswer("industry_interest")
+  addAnswer("location_relocation")
+  addAnswer("special_context")
+
+  if (snippets.length === 0 && user?.statedPreferences && typeof user.statedPreferences === "object") {
+    const prefs = user.statedPreferences
+    const readable = [
+      formatSavedPreferenceValue("roles", prefs.targetRole),
+      formatSavedPreferenceValue("goals", prefs.nextCompanyGoals),
+      formatSavedPreferenceValue("company stage", prefs.companySize),
+      formatSavedPreferenceValue("industries", prefs.industrySector),
+      formatSavedPreferenceValue("locations", prefs.targetLocations),
+      formatSavedPreferenceValue("context", prefs.specialContext),
+    ].filter((value): value is string => Boolean(value))
+    snippets.push(...readable.map((value) => truncateAtWord(value, 72)))
+  }
+
+  if (snippets.length === 0) {
+    return lang === "zh"
+      ? "我现在还没有足够明确的求职偏好。你可以直接告诉我目标角色、地点、行业、薪资或不能接受的点。"
+      : "I do not have much saved yet: tell me target roles, locations, industries, comp, or dealbreakers and I will use that for matching."
+  }
+
+  const summary = joinSavedPreferenceSnippets(snippets, 330)
+  return lang === "zh"
+    ? `我现在会按这些匹配：${summary}。`
+    : `I have this saved: ${summary}. I'll use that for matching.`
+}
+
+function composeSharedSavedPreferenceReply(
+  shared: Record<string, { answer?: unknown }>,
+  lang: "en" | "zh",
+): string | null {
+  const textFor = (key: string) => {
+    const value = shared[key]?.answer
+    return typeof value === "string" ? value.replace(/[’]/g, "'").replace(/\s+/g, " ").trim() : ""
+  }
+  const main = textFor("main_goal")
+  const culture = textFor("culture_stage")
+  const industry = textFor("industry_interest")
+  const location = textFor("location_relocation")
+  const context = textFor("special_context")
+  const all = [main, culture, industry, location, context].join(" ")
+  if (!all.trim()) return null
+
+  const primary: string[] = []
+  const constraints: string[] = []
+  let timing: string | null = null
+  const add = (items: string[], value: string) => {
+    if (value && !items.includes(value)) items.push(value)
+  }
+
+  if (/\b(?:product|strategy|product-heavy)\b/i.test(all)) add(primary, "product/strategy-heavy work")
+  if (/\b(?:ai|devtools?|fintech|financial technology)\b/i.test(industry)) add(primary, "AI/devtools/fintech")
+  if (/\b(?:sf|san francisco|remote)\b/i.test(location)) add(primary, "SF or remote")
+  if (/\b(?:early startup|scale[- ]?up|high ownership)\b/i.test(culture)) add(primary, "early/scale-up teams with ownership")
+  if (/\b(?:learning|career growth|growth)\b/i.test(main)) add(primary, "growth/learning")
+  if (/\b(?:2\s*-\s*4|2\s+to\s+4)\s+weeks?\b/i.test(context)) timing = "you can start in 2-4 weeks"
+
+  if (/\b(?:adtech|crypto)\b/i.test(industry)) add(constraints, "adtech/crypto")
+  if (/\b(?:no\s+(?:other\s+)?relocation|don'?t\s+want\s+to\s+relocate|do\s+not\s+want\s+to\s+relocate)\b/i.test(location)) {
+    add(constraints, /\bnyc|new york\b/i.test(location) ? "relocation outside NYC" : "relocation")
+  }
+
+  if (primary.length === 0) {
+    for (const answer of [main, culture, industry, location, context]) {
+      const compact = compactSavedPreferencePhrase(answer, 56)
+      if (compact) add(primary, compact)
+      if (primary.length >= 4) break
+    }
+  }
+  if (primary.length === 0) return null
+
+  const headlineList = joinHumanList(primary.slice(0, 3))
+  const extraPrimary = primary.slice(3, 4)
+  const constraintList = joinHumanList(constraints.slice(0, 2))
+  const timingEn = timing
+    ? `${timing.charAt(0).toUpperCase()}${timing.slice(1)}`
+    : null
+  const timingZh = timing ? "2-4周可以开始" : null
+  if (lang === "zh") {
+    const parts = [
+      `我会按这些匹配：${headlineList}。`,
+      extraPrimary[0] ? `也会偏向${extraPrimary[0]}。` : null,
+      constraintList ? `会避开${constraintList}。` : null,
+      timingZh ? `时间上${timingZh}。` : null,
+    ].filter((value): value is string => Boolean(value))
+    return parts.join(" ")
+  }
+  const parts = [
+    `Yep — I'm using ${headlineList}.`,
+    extraPrimary[0] ? `Also biasing toward ${extraPrimary[0]}.` : null,
+    constraintList ? `Avoiding ${constraintList}.` : null,
+    timingEn ? `${timingEn}.` : null,
+  ].filter((value): value is string => Boolean(value))
+  return parts.join(" ")
+}
+
+function compactSavedPreferencePhrase(value: string, maxLength: number): string | null {
+  const firstClause = value
+    .replace(/[’]/g, "'")
+    .replace(/\s+/g, " ")
+    .split(/[.;。]/)[0]
+    ?.trim()
+  if (!firstClause) return null
+  if (firstClause.length <= maxLength) return firstClause
+  const slice = firstClause.slice(0, maxLength).trimEnd()
+  const lastSpace = slice.lastIndexOf(" ")
+  return (lastSpace > 24 ? slice.slice(0, lastSpace) : slice).trim()
+}
+
+function joinHumanList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? ""
+  if (items.length === 2) return `${items[0]} and ${items[1]}`
+  return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`
+}
+
+function formatSavedPreferenceSnippet(key: string, value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null
+  let text = value
+    .replace(/[’]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[。]+/g, ".")
+    .replace(/\.\s+/g, "; ")
+    .replace(/[.;\s]+$/g, "")
+
+  if (key === "main_goal") {
+    text = text
+      .replace(/\bI(?:'m| am)\s+open\s+to\s+[^.;]+?\s+and\s+/i, "")
+      .replace(/\bI(?:'m| am)\s+more interested in\b/i, "more interested in")
+  } else if (key === "industry_interest") {
+    text = text
+      .replace(/\bare most interesting\b/i, "")
+      .replace(/\bI(?:'d| would)\s+avoid\b/i, "avoid")
+  } else if (key === "location_relocation") {
+    text = text
+      .replace(/\bworks best\b/i, "")
+      .replace(/\bis okay\b/i, "okay")
+  } else if (key === "special_context") {
+    text = text.replace(/\bI can start\b/i, "start")
+  }
+
+  return truncateAtWord(text.replace(/\s+/g, " ").trim(), key === "main_goal" ? 90 : 72)
+}
+
+function joinSavedPreferenceSnippets(snippets: string[], maxLength: number): string {
+  const parts: string[] = []
+  for (const raw of snippets) {
+    const snippet = raw.replace(/\s+/g, " ").trim()
+    if (!snippet) continue
+    const next = [...parts, snippet].join("; ")
+    if (next.length <= maxLength) {
+      parts.push(snippet)
+      continue
+    }
+    const remaining = maxLength - (parts.length > 0 ? parts.join("; ").length + 2 : 0)
+    if (remaining >= 24) parts.push(truncateAtWord(snippet, remaining))
+    break
+  }
+  return parts.join("; ")
+}
+
+function truncateAtWord(value: string, maxLength: number): string {
+  const text = value.replace(/\s+/g, " ").trim()
+  if (text.length <= maxLength) return text
+  const slice = text.slice(0, Math.max(0, maxLength - 3)).trimEnd()
+  const lastSpace = slice.lastIndexOf(" ")
+  const base = lastSpace > 24 ? slice.slice(0, lastSpace) : slice
+  return `${base.trimEnd()}...`
+}
+
+function formatSavedPreferenceValue(label: string, value: unknown): string | null {
+  if (Array.isArray(value)) {
+    const items = value.map((item) => String(item).replace(/_/g, " ")).filter(Boolean)
+    return items.length > 0 ? `${label}: ${items.join(", ")}` : null
+  }
+  if (typeof value === "string" && value.trim()) return `${label}: ${value.replace(/_/g, " ")}`
+  if (typeof value === "number" || typeof value === "boolean") return `${label}: ${String(value)}`
+  return null
 }
 
 async function handleMemoryCommand(
@@ -3646,20 +4325,20 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       typeof event.rawMeta?.runtimeNoSendToken === "string"
         ? event.rawMeta.runtimeNoSendToken.trim()
         : "__NO_SEND__"
+    const inboundTranscriptIdempotencyKey = runtimeEvent
+      ? deriveSessionMessageIdempotencyKey(event.sessionId, "system", event.body)
+      : `inbound-event:${event.id}`
     await store.appendMessage({
       sessionId: event.sessionId,
       userId: event.userId,
       role: runtimeEvent ? "system" : "user",
       body: event.body,
       createdAt: event.createdAt,
-      // Use the same hash FirestoreSession derives so the SDK\u2019s addItems()
-      // short-circuits on this row instead of double-writing the user turn.
-      // Original inbound idempotencyKey is preserved in rawMeta for audit.
-      idempotencyKey: deriveSessionMessageIdempotencyKey(
-        event.sessionId,
-        runtimeEvent ? "system" : "user",
-        event.body
-      ),
+      // User-authored turns must be event-unique: candidates can send the
+      // same short answer twice and both visible bubbles belong in history.
+      // FirestoreSession.addItems() skips SDK user items, so body-hash
+      // de-dupe is only needed for assistant rows written after model calls.
+      idempotencyKey: inboundTranscriptIdempotencyKey,
       rawMeta: {
         ...event.rawMeta,
         source: "pa-inbound-event",
@@ -3730,6 +4409,32 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         await store.markEventSucceeded(event.id)
         return
       }
+    }
+
+    // Dev/test-only version-channel probe (mirrors __PA_RESET__ / __PA_FIND_MATCH__
+    // dev-trigger convention, D14). Strictly inert for all real traffic — it
+    // ONLY fires on the exact magic token, and even then merely echoes which
+    // channel the user resolves to. It is the canonical worked example of a
+    // "latest-only" behavior: the NEW branch runs only when the user is on the
+    // latest channel (internal allowlist OR pa-users.versionChannel=latest);
+    // everyone else gets the STABLE branch. `isLatestChannel` self-gates to
+    // false when the store has no getVersionChannel, so this is a no-op on
+    // legacy/test stores too.
+    if (userAuthoredEvent && (event.body ?? "").trim() === "__PA_CHANNEL_PROBE__") {
+      const latest = await isLatestChannel(store, event.userId)
+      const reply = latest
+        ? "✨ latest channel: you're on the NEW conversation behavior (internal/canary)."
+        : "✓ stable channel: you're on the current stable conversation behavior."
+      await sendMemoryReply(store, event, turnId, reply)
+      await store.updateTurn(turnId, {
+        status: "succeeded",
+        stage: "succeeded",
+        directIntent: "version_channel_probe",
+        directIntentResult: latest ? "latest" : "stable",
+        completedAt: store.nowIso(),
+      })
+      await store.markEventSucceeded(event.id)
+      return
     }
 
     // iter30 WS6 — shadow-mode INPUT guardrail chain. Telemetry-only;
@@ -4016,6 +4721,23 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       }
       if (
         conversationOwnerDecision.selectedOwner === "explicit_explanation" &&
+        conversationActionDecision &&
+        await handleExplicitExplanationTurn(
+          event,
+          store,
+          turnId,
+          onboardingUser,
+          conversationTurnContext,
+          conversationOwnerDecision,
+          conversationActionDecision,
+          conversationEvidenceWrites,
+          conversationEvidenceCommitIds,
+        )
+      ) {
+        return
+      }
+      if (
+        conversationOwnerDecision.selectedOwner === "explicit_explanation" &&
         conversationOwnerDecision.orderedActions.some((action) => action.kind === "commit_memory")
       ) {
         const profileUpdate = extractLifecycleProfileUpdate(event.body)
@@ -4027,10 +4749,6 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           updatedAt: store.nowIso(),
         })
       }
-    }
-
-    if (userAuthoredEvent && await handleCompletedUserJobSearchRequest(event, store, turnId, onboardingUser)) {
-      return
     }
 
     // Website-started candidate and layoff onboarding use one runtime-led
@@ -4054,10 +4772,59 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     if (
       userAuthoredEvent &&
       allowSharedOnboardingUserReply &&
-      await handleSharedOnboardingUserReply(event, store, turnId, onboardingUser)
+      await handleSharedOnboardingUserReply(
+        event,
+        store,
+        turnId,
+        onboardingUser,
+        conversationTurnContext && conversationOwnerDecision
+          ? {
+              context: conversationTurnContext,
+              ownerDecision: conversationOwnerDecision,
+              actionDecision: conversationActionDecision,
+              evidenceWrites: conversationEvidenceWrites,
+              evidenceCommitIds: conversationEvidenceCommitIds,
+            }
+          : undefined,
+      )
     ) {
       return
     }
+
+    // P1 agentic job-search migration flag (DEFAULT OFF). Read once; reused
+    // for the dispatch-skip directly below AND the per-turn system-prompt
+    // directive further down. When OFF, both call sites are strict no-ops vs
+    // current main (the regex handler keeps ownership of job-search).
+    const agenticJobSearchOn = await isAgenticJobSearchEnabled(store.db, event.userId)
+    // When the flag is ON, SKIP the hand-wired job-search dispatch so the turn
+    // falls through to the agent loop (which self-routes via the find-match
+    // connector). `handleCompletedUserJobSearchRequest` only ever owns the
+    // job-search path — it returns false for every non-job-search turn — so
+    // gating the whole call on the flag is precise: nothing else changes.
+    if (
+      !agenticJobSearchOn &&
+      userAuthoredEvent &&
+      conversationOwnerDecision?.selectedOwner !== "shared_onboarding" &&
+      conversationOwnerDecision?.selectedOwner !== "active_workflow" &&
+      await handleCompletedUserJobSearchRequest(
+        event,
+        store,
+        turnId,
+        onboardingUser,
+        conversationTurnContext && conversationOwnerDecision
+          ? {
+              context: conversationTurnContext,
+              ownerDecision: conversationOwnerDecision,
+              actionDecision: conversationActionDecision ?? null,
+              evidenceWrites: conversationEvidenceWrites,
+              evidenceCommitIds: conversationEvidenceCommitIds,
+            }
+          : undefined,
+      )
+    ) {
+      return
+    }
+
     if (
       userAuthoredEvent &&
       await handleSharedOnboardingBootstrap(
@@ -4385,6 +5152,16 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       "('稍等下哈'), never like a system status page."
     const jobRecommendationExplanationDirective =
       await buildJobRecommendationExplanationDirective(store, event)
+    // P1 agentic job-search (DEFAULT OFF). When ON, tell the agent to use the
+    // find-match tool for job-search intents so the agent loop owns the turn
+    // (the regex dispatch is skipped above). When OFF this is `null` and the
+    // .filter() drops it — the composed system prompt is byte-for-byte
+    // unchanged vs current main.
+    const agenticJobSearchDirective: string | null = agenticJobSearchOn
+      ? "[JOB SEARCH] When the user asks to see jobs / matches / recommendations / " +
+        "new roles (or asks for more / different ones), call the find-match tool. " +
+        "Don't ask clarifying questions first — call the tool, then react to its result."
+      : null
     const systemInputs: string[] = [
       personaCard,
       recallEntry,
@@ -4394,6 +5171,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       academicIntegrityDirective,
       matchingPrivacyDirective,
       jobRecommendationExplanationDirective,
+      agenticJobSearchDirective,
       mirror.snippet,
     ].filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
     // Phase 10.5 T7 — bridge agent.allowedConnectors → SDK tools. When the
@@ -4862,35 +5640,9 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     }
     void injectorAppliedFlag
     void injectorArm
-    // Phase 53 (v1.6 voice-quality closure) — mixed-register mirror append.
-    // ITER 16 DISABLED BY DEFAULT: Adam feedback "(re: swe)" appendix feels
-    // artificial. We rely on lang-mixed bypass + LLM having seen user input
-    // for natural mirror. Re-enable via env if A/B test shows value:
-    // PA_MIXED_REGISTER_MIRROR_FORCE=true.
-    try {
-      const humanizeOnMix = await isHumanizeRuntimeEnabled(store.db, event.userId)
-      const mixFlagEnabled = process.env.PA_MIXED_REGISTER_MIRROR_FORCE === "true"
-      if (humanizeOnMix && mixFlagEnabled) {
-        const mixResult = applyMixedRegisterMirror(event.body ?? "", replyAfterRewrite)
-        if (mixResult.applied) {
-          store.log("pa.voice.mixed_register_mirror.applied", {
-            userId: event.userId,
-            turnId,
-            appended: mixResult.appended ?? null,
-            beforeLen: replyAfterRewrite.length,
-            afterLen: mixResult.text.length,
-          })
-          replyAfterRewrite = mixResult.text
-        }
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      store.log("pa.voice.mixed_register_mirror.error", {
-        userId: event.userId,
-        turnId,
-        error: msg,
-      })
-    }
+    // P6 voice collapse: the mixed-register mirror append ("(re: TOKEN)") was
+    // DELETED. It was default-OFF (PA_MIXED_REGISTER_MIRROR_FORCE), so production
+    // already ran without it — the prompt+few-shot handles natural mirroring.
     // Phase 35/38 wire-in (LIFTED) — detectors + trackAdvice run on the FINAL
     // visible text regardless of `rewriteIfOff` outcome. Previously these
     // were gated behind the rewriter happy-path inside `rewriteIfOff` and
@@ -5065,7 +5817,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // missing API key — the (possibly wrong-lang) reply still ships.
     //
     // Placement: AFTER `rewriteIfOff` + opener-strip + injector +
-    // ab-probe-strip + mixed-register-mirror; BEFORE crisis-hotline guard
+    // ab-probe-strip; BEFORE crisis-hotline guard
     // so the hotline trailer (lang-aware via `guardCrisisHotline`) sees
     // the corrected reply lang and appends the matching trailer.
     // -------------------------------------------------------------------
@@ -5734,7 +6486,14 @@ export function createFirestoreOrchestratorStore(
         turn.userId,
         agent.allowedConnectors
       )
-      const agentFiltered = { ...agent, allowedConnectors }
+      // P1 agentic job-search: when the flag is ON, guarantee toolPolicy is
+      // "allowlist" so the resolved connectors (incl. find-match) actually
+      // reach the SDK. Idempotent — the seed agent is already "allowlist",
+      // so flag-OFF leaves agent.toolPolicy untouched (strict no-op).
+      const agenticJobSearchOn = await isAgenticJobSearchEnabled(db, turn.userId)
+      const toolPolicy =
+        agenticJobSearchOn && agent.toolPolicy === "none" ? "allowlist" : agent.toolPolicy
+      const agentFiltered = { ...agent, allowedConnectors, toolPolicy }
       return buildTurnTools(db, agentFiltered, turn, hooks)
     },
     async recordHostedToolCalls({ turnId, userId, sessionId, calls }) {
@@ -6263,6 +7022,23 @@ export function createFirestoreOrchestratorStore(
       const data = snap.data() as { runtimeMode?: "auto" | "paused" } | undefined
       return data?.runtimeMode === "paused" ? "paused" : "auto"
     },
+    // Per-user version channel (canary / ring). Internal allowlist
+    // (PA_INTERNAL_USER_IDS / PA_INTERNAL_PHONE_NUMBERS incl. the dev phone)
+    // OR pa-users.versionChannel === "latest" ⇒ "latest"; else "stable".
+    // Default "stable" preserves byte-for-byte current behavior until a
+    // behavior is explicitly marked latest-only via isLatestChannel().
+    async getVersionChannel(userId): Promise<VersionChannel> {
+      const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      const data = snap.exists
+        ? (snap.data() as { versionChannel?: VersionChannel | string; phoneE164?: string } | undefined)
+        : undefined
+      return resolveVersionChannel({
+        userId,
+        phoneE164: data?.phoneE164,
+        storedChannel: data?.versionChannel,
+        env: process.env,
+      })
+    },
     async getTosVersion() {
       try {
         const snap = await db
@@ -6420,6 +7196,20 @@ export function startInboundEventListener(
     unsubscribe()
   }
 }
+
+// Per-user version channel (canary / ring) — re-export the pure resolver +
+// integration seam so functions / dashboard / sim consumers can mark a
+// behavior latest-only without a subpath import.
+export {
+  resolveVersionChannel,
+  isLatestChannel,
+  isInternalUser,
+  internalUserIds,
+  internalPhoneNumbers,
+  DEFAULT_INTERNAL_PHONE,
+  type VersionChannel,
+  type VersionChannelFacts,
+} from "./version-channel.js"
 
 // v1.8 — re-exports for dashboard / functions consumers (no subpath
 // imports because exports map is single-entry).

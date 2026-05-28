@@ -43,6 +43,11 @@ import {
   type PrescreenHumanReviewTerminal,
 } from "./prescreen-review-finalization.js"
 import type { MarkPrescreenReviewPendingArgs } from "./prescreen-outcome-service.js"
+import {
+  isAgenticPrescreenEnabled,
+  runAgenticPrescreenTurn,
+  type AgenticRunTurnResult,
+} from "./prescreen-agentic-turn.js"
 
 const ACTIVE_PRESCREEN_TIMEOUT_MS = 60 * 60 * 1000
 const RECENT_TERMINAL_PRESCREEN_GUARD_MS = 60 * 60 * 1000
@@ -1285,13 +1290,108 @@ export async function runPrescreenTurnIfActive(
     log,
     composeClarify: args.clarifyComposer ?? makeProductionClarifyComposer(),
   })
-  const result = await pipeline.runTurn({
-    sessionId,
-    reply: args.replyText,
-    lang: args.lang ?? "en",
-    nowIso: new Date().toISOString(),
-    judgeCtx: { userId: args.userId, turnId: `t_${Date.now()}` },
-  })
+  const runReducerTurn = (reply: string) =>
+    pipeline.runTurn({
+      sessionId,
+      reply,
+      lang: args.lang ?? "en",
+      nowIso: new Date().toISOString(),
+      judgeCtx: { userId: args.userId, turnId: `t_${Date.now()}` },
+    })
+
+  // ── P3 scoped prescreen agent (flag `paAgenticPrescreenEnabled`, default OFF)
+  // Flag OFF (default) → this whole block is skipped and the deterministic
+  // reducer turn below runs byte-for-byte unchanged (zero regression).
+  // Flag ON → a scoped agent composes the ASK + routes the reply; its ONLY
+  // FSM-write path is `record_prescreen_answer` → runReducerTurn (the reducer
+  // stays the controller). A tangent is held (pending question re-asked) and we
+  // return early. ANY agent error → fall through (fail open) to the reducer.
+  const agenticOn = await isAgenticPrescreenEnabled(args.db, args.userId)
+  if (agenticOn) {
+    try {
+      const activePrompt =
+        questions[activeQId]?.prompt?.[args.lang ?? "en"] ??
+        questions[activeQId]?.prompt?.en ??
+        ""
+      const agentic = await runAgenticPrescreenTurn({
+        replyText: args.replyText,
+        lang: args.lang ?? "en",
+        questionPrompt: activePrompt,
+        runTurn: (reply) => runReducerTurn(reply) as Promise<AgenticRunTurnResult>,
+        log,
+      })
+      if (agentic.routed === "tangent") {
+        // Pending question HELD — reducer NOT touched. Answer the tangent (or
+        // re-ask the pending question if the agent produced no usable text),
+        // record an observability turn, and short-circuit.
+        const reAsk = activePrompt
+        const text = agentic.tangentText?.trim()
+          ? `${agentic.tangentText.trim()}${reAsk ? `\n\n${reAsk}` : ""}`
+          : reAsk
+        await args.db
+          .collection("pa-prescreen-sessions")
+          .doc(sessionId)
+          .collection("turns")
+          .add({
+            qId: activeQId,
+            reply: args.replyText,
+            action: { kind: "agentic_tangent_held", reason: "off_topic_pending_held" },
+            ts: new Date().toISOString(),
+          })
+        if (text) {
+          try {
+            await sendSms({
+              to: args.toE164,
+              content: text,
+              userId: args.userId,
+              db: args.db,
+              runtimeSource: "pa_prescreen_runtime",
+              idempotencyKey: `prescreen_agentic_tangent:${sessionId}:${activeQId}:${stablePrescreenSendKey(args.replyText, text)}`,
+            })
+          } catch (err) {
+            log("prescreen.turn.agentic_tangent_send_failed", {
+              sessionId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+        }
+        log("prescreen.turn.agentic_tangent_held", { sessionId, currentQId: activeQId })
+        return { handled: true, sessionId, terminal: null, textSent: text }
+      }
+      // routed === "answered": the reducer already ran. Fall through to the
+      // SHARED downstream path with the reducer's result (turn record +
+      // idempotent ASK send + terminal commit) unchanged.
+      const result = agentic.result as unknown as Awaited<ReturnType<typeof runReducerTurn>>
+      return await finalizePrescreenTurnResult({ args, sessionId, activeQId, cfgSnapshot, sendSms, log, result })
+    } catch (err) {
+      log("prescreen.turn.agentic_fail_open", {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      // fall through to deterministic path
+    }
+  }
+
+  const result = await runReducerTurn(args.replyText)
+  return await finalizePrescreenTurnResult({ args, sessionId, activeQId, cfgSnapshot, sendSms, log, result })
+}
+
+/**
+ * Shared downstream commit for a completed reducer turn — used by BOTH the
+ * deterministic path (flag OFF) and the agentic "answered" path (flag ON). The
+ * agent toolset never reaches here, so the TERMINAL commit + idempotency keys
+ * stay outside the LLM's control and identical across both paths.
+ */
+async function finalizePrescreenTurnResult(params: {
+  args: RunPrescreenTurnArgs
+  sessionId: string
+  activeQId: string
+  cfgSnapshot: { questions: Array<{ qId: string; prompt: { zh: string; en: string }; clarifyPrompt: { zh: string; en: string }; keywords: KeywordSpec[] }> }
+  sendSms: RuntimeSmsSender
+  log: (event: string, payload: Record<string, unknown>) => void
+  result: Awaited<ReturnType<PreScreenPipeline["runTurn"]>>
+}): Promise<RunPrescreenTurnResult> {
+  const { args, sessionId, activeQId, cfgSnapshot, sendSms, log, result } = params
 
   // Persist a turn record for dashboard observability
   const turnQId = prescreenTurnRecordQId(result.action, activeQId)

@@ -132,6 +132,14 @@ test("onboardingDestination routes layoff source to layoff query", () => {
   assert.equal(onboardingDestination("candidate"), "/onboarding")
 })
 
+test("onboardingDestination routes layoffhedge to the standard candidate path", () => {
+  assert.equal(onboardingDestination("layoffhedge"), "/onboarding")
+})
+
+test("onboardingDestination routes candidate to the standard path", () => {
+  assert.equal(onboardingDestination("candidate"), "/onboarding")
+})
+
 test("layoffSignupLoginPath login-first before layoff onboarding", () => {
   assert.equal(
     layoffSignupLoginPath(),

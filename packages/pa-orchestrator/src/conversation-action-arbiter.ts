@@ -219,7 +219,11 @@ export function decideConversationDeliveryAction(
     })
   }
 
-  if (isShortLowInformationAck(text) && recentAssistantAskedForRecommendationDecision(context)) {
+  if (
+    isShortLowInformationAck(text) &&
+    recentAssistantAskedForRecommendationDecision(context) &&
+    !immediatelyPrecedingAssistantExpectsAnswer(context)
+  ) {
     rejectedActions.push(
       { action: "micro_ack", reason: "A text acknowledgment would repeat the candidate's short recommendation signal." },
       { action: "rich_recommendation_summary", reason: "Claire already sent the recommendation summary." },
@@ -432,6 +436,35 @@ function recentAssistantAskedForRecommendationDecision(context: TurnContext): bo
     const decisionPrompt = /\b(see if|if (these|this) fit|lmk|let me know|interesting|why or why not|want me to|push this|move forward)\b/i.test(body)
     return recommendation && decisionPrompt
   })
+}
+
+/**
+ * True when the LAST thing Claire said was a direct question or an offer/CTA that
+ * expects a yes/no answer (e.g. "I can help you prep... — yes?", "want me to push
+ * this forward?", "does this look worth a quick screen?"). In that case a short
+ * "Yes"/"Sure" is the ANSWER and must be replied to — not suppressed to a tapback,
+ * which would dead-end the conversation.
+ */
+function immediatelyPrecedingAssistantExpectsAnswer(context: TurnContext): boolean {
+  const body = mostRecentAssistantBody(context)
+  if (!body) return false
+  if (body.trim().endsWith("?")) return true
+  return /\b(i can help|i can|want me to|do you want|should i|would you like|ready to|are you (open|comfortable|down)|let me know if you( want| 'd like)?|shall i|can i)\b/i.test(body)
+}
+
+function mostRecentAssistantBody(context: TurnContext): string | null {
+  const recent = [...(context.recentOutbound ?? []), ...(context.recentMessages ?? [])]
+    .filter((message) => message.role === "assistant" && message.body.trim())
+  const sorted = recent
+    .slice()
+    .sort((a, b) => assistantMessageOrder(a) - assistantMessageOrder(b))
+  const last = sorted.at(-1)
+  return last ? normalize(last.body) : null
+}
+
+function assistantMessageOrder(message: { createdAt?: string }): number {
+  const ts = message.createdAt ? Date.parse(message.createdAt) : Number.NaN
+  return Number.isFinite(ts) ? ts : 0
 }
 
 function latestRecommendationPrompt(context: TurnContext): string | null {

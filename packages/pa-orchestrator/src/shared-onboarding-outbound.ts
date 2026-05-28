@@ -91,6 +91,23 @@ export async function isFindMatchToolEnabled(
   }
 }
 
+/**
+ * P4 — flag read for the scoped onboarding agent. Default OFF; mirrors
+ * `isFindMatchToolEnabled`. Fail-closed on any read error so flag-OFF behavior
+ * is the safe default and the deterministic onboarding path runs unchanged.
+ */
+export async function isAgenticOnboardingEnabled(
+  db: Firestore | undefined,
+  userId: string
+): Promise<boolean> {
+  if (!db) return false
+  try {
+    return (await getFlag(db, "paAgenticOnboardingEnabled", { userId, env: process.env })) === true
+  } catch {
+    return false
+  }
+}
+
 export async function isCollabMatchToolEnabled(
   db: Firestore | undefined,
   userId: string
@@ -98,6 +115,24 @@ export async function isCollabMatchToolEnabled(
   if (!db) return false
   try {
     return (await getFlag(db, "paCollabMatchToolEnabled", { userId, env: process.env })) === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * P1 agentic job-search migration flag. DEFAULT OFF. When ON, a job-search
+ * turn routes through the agent loop (run(agent) → the find-match connector)
+ * instead of the hand-wired regex handler. Mirrors `isFindMatchToolEnabled`
+ * exactly so reads stay consistent with the rest of the connector-flag family.
+ */
+export async function isAgenticJobSearchEnabled(
+  db: Firestore | undefined,
+  userId: string
+): Promise<boolean> {
+  if (!db) return false
+  try {
+    return (await getFlag(db, "paAgenticJobSearchEnabled", { userId, env: process.env })) === true
   } catch {
     return false
   }
@@ -114,9 +149,18 @@ export async function resolveAgentAllowedConnectors(
   const withRuntimeRequired = base.includes("set-daily-job-recommendation-subscription")
     ? base
     : [...base, "set-daily-job-recommendation-subscription"]
+  // P1 agentic job-search: when the flag is ON, guarantee `find-match` is in
+  // the allowlist so the agent loop can self-route job-search. Idempotent —
+  // the seed agent already lists `find-match`, so flag-OFF is a strict no-op
+  // (this only ever appends when an agent doc somehow lacks it).
+  const agenticJobSearchOn = await isAgenticJobSearchEnabled(db, userId)
+  const withFindMatch =
+    agenticJobSearchOn && !withRuntimeRequired.includes("find-match")
+      ? [...withRuntimeRequired, "find-match"]
+      : withRuntimeRequired
   const collabOn = await isCollabMatchToolEnabled(db, userId)
-  if (collabOn) return [...withRuntimeRequired]
-  return withRuntimeRequired.filter((name) => name !== "match-against-collab-jobs")
+  if (collabOn) return [...withFindMatch]
+  return withFindMatch.filter((name) => name !== "match-against-collab-jobs")
 }
 
 export async function isBehaviorChoreographerEnabled(
@@ -285,6 +329,7 @@ export type ComposeSharedOnboardingReplyInput = {
   mode: OnboardingSurfaceMode
   promptContext: SharedOnboardingPromptContext
   userMessage: string
+  recentMessages?: readonly SharedOnboardingConversationMessage[]
   /** Router decision — authoritative for synthetic user turn + lang lock. */
   composeContext: SharedOnboardingComposeContext
   agent: AgentDef
@@ -302,6 +347,12 @@ export type ComposeSharedOnboardingReplyInput = {
    * user doc after compose succeeds.
    */
   recentSlangPicks?: readonly string[]
+}
+
+export type SharedOnboardingConversationMessage = {
+  role?: "assistant" | "user" | "system"
+  body: string
+  createdAt?: string
 }
 
 /**
@@ -335,8 +386,39 @@ export function effectiveOnboardingComposeUserMessage(input: {
   return trimmed
 }
 
-function buildSyntheticOnboardingUserInstruction(slot: SharedOnboardingQuestionId): string {
-  return `[ONBOARDING] Ask the candidate the ${sharedOnboardingSlotCopyLabel(slot)} onboarding question in friend tone. Do not extract tags; only compose the SMS. Do not respond to greetings or kickoff phrases; deliver the slot question only.`
+function quoteForInstruction(value: string): string {
+  const clean = value.replace(/\s+/g, " ").trim()
+  return clean.length > 180 ? `${clean.slice(0, 177)}...` : clean
+}
+
+function buildSyntheticOnboardingUserInstruction(
+  slot: SharedOnboardingQuestionId,
+  input?: {
+    mode?: OnboardingSurfaceMode
+    routerResult?: SharedOnboardingRouterResult
+    userMessage?: string
+  },
+): string {
+  const label = sharedOnboardingSlotCopyLabel(slot)
+  const current = input?.userMessage?.trim()
+  if (input?.mode === "reask") {
+    return [
+      `[ONBOARDING CONTINUATION] The candidate just replied${current ? `: "${quoteForInstruction(current)}"` : "."}`,
+      `That did not answer the active ${label} slot.`,
+      "Continue from the existing SMS thread. Do not restart the conversation, do not welcome them again, do not say their resume came through, and do not introduce Claire again.",
+      `Briefly re-ask the ${label} question only. Do not extract tags; only compose the SMS.`,
+    ].join(" ")
+  }
+  if (input?.routerResult === "asked_question" || input?.routerResult === "advanced_despite_judge") {
+    return [
+      `[ONBOARDING CONTINUATION] The candidate just answered the previous onboarding slot${current ? `: "${quoteForInstruction(current)}"` : "."}`,
+      "Continue from the existing SMS thread. Do not restart the conversation, do not welcome them again, do not say their resume came through, and do not introduce Claire again.",
+      "Start with one short acknowledgement grounded in that exact answer, then ask the next question.",
+      "Keep the visible SMS short: one acknowledgement clause, then one compact question.",
+      `Ask the next ${label} question only after that acknowledgement. Do not extract tags; only compose the SMS.`,
+    ].join(" ")
+  }
+  return `[ONBOARDING CONTINUATION] Ask the candidate the ${label} onboarding question in friend tone. Continue from the existing SMS thread; do not restart, welcome, introduce Claire, or mention resume intake. Do not extract tags; only compose the SMS.`
 }
 
 function buildSyntheticOpeningUserInstruction(slot: SharedOnboardingQuestionId): string {
@@ -358,6 +440,45 @@ function sharedOnboardingSlotCopyLabel(slot: SharedOnboardingQuestionId): string
   if (slot === "industry_interest") return "industry or domain"
   if (slot === "location_relocation") return "location and work style"
   return "extra context before matching"
+}
+
+function buildRecentTranscriptSystemInput(input: {
+  messages?: readonly SharedOnboardingConversationMessage[]
+  userMessage: string
+  opening: boolean
+}): string | null {
+  if (input.opening) return null
+  const lines = (input.messages ?? [])
+    .filter((message) => message.role === "assistant" || message.role === "user")
+    .map((message) => {
+      const body = message.body.replace(/\s+/g, " ").trim()
+      if (!body) return null
+      const speaker = message.role === "assistant" ? "Claire" : "Candidate"
+      const clipped = body.length > 240 ? `${body.slice(0, 237)}...` : body
+      return `${speaker}: ${clipped}`
+    })
+    .filter((line): line is string => Boolean(line))
+    .slice(-8)
+  const current = input.userMessage.replace(/\s+/g, " ").trim()
+  if (current && !lines.some((line) => line.endsWith(current))) {
+    lines.push(`Candidate: ${current.length > 240 ? `${current.slice(0, 237)}...` : current}`)
+  }
+  if (lines.length === 0 && !current) return null
+  return [
+    "Recent SMS transcript, oldest to newest:",
+    ...lines,
+    "",
+    "Use this transcript as the conversation state. The next reply must continue from the latest Claire bubble, not restart onboarding.",
+    "Do not copy odd prior Claire phrasing; if the previous Claire bubble used slang or a performative opener, correct course and reply plainly.",
+    "If the candidate's latest message is a short ambiguous acknowledgment, treat it as unclear for the active slot and re-ask plainly.",
+  ].join("\n")
+}
+
+function violatesSharedOnboardingContinuationDraft(text: string): boolean {
+  return /\b(?:lowkey|manifest|manifesting|deadass|delulu|npc|fr fr)\b/i.test(text) ||
+    /\b(?:saw|seen)\s+your\s+resume\s+(?:come|came)\s+through\b/i.test(text) ||
+    /\bi['’]?m\s+claire\b/i.test(text) ||
+    /\bwelcome\b.{0,30}\b(?:wekruit|claire)\b/i.test(text)
 }
 
 const PROTECTED_VISIBLE_TOKEN_SEGMENT_RE =
@@ -460,6 +581,7 @@ export async function composeSharedOnboardingReply(
       userId: input.userId,
       turnId: input.turnId,
       db: input.store.db,
+      allowImperfection: false,
     })
     return { text: finalizeSharedOnboardingSmsText(text), slangPicked: [] }
   }
@@ -556,9 +678,15 @@ export async function composeSharedOnboardingReply(
     // which is worse than a plain contextual re-ask.
     const slangDirective = null
     const slangPicked: string[] = []
+    const transcriptInput = buildRecentTranscriptSystemInput({
+      messages: input.recentMessages,
+      userMessage: input.userMessage,
+      opening,
+    })
     const systemInputs = [
       injectVoiceProfilePrefix("", profile, lang),
       surfaceIntent,
+      transcriptInput,
       slangDirective,
       emojiHintCandidate,
     ].filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
@@ -581,12 +709,15 @@ export async function composeSharedOnboardingReply(
 
     const systemPrompt = injectVoiceProfilePrefix(input.agent.systemPrompt, profile, lang)
     const syntheticUser =
-      composeUserMessage ||
-      (opening
+      opening
         ? postPrescreenOpening
           ? buildSyntheticPostPrescreenOpeningUserInstruction(input.slot, input.composeContext.postPrescreenContext)
           : buildSyntheticOpeningUserInstruction(input.slot)
-        : buildSyntheticOnboardingUserInstruction(input.slot))
+        : buildSyntheticOnboardingUserInstruction(input.slot, {
+            mode: input.mode,
+            routerResult: input.composeContext.routerResult,
+            userMessage: composeUserMessage || input.userMessage,
+          })
 
     const session =
       input.store.createSession?.({
@@ -599,31 +730,73 @@ export async function composeSharedOnboardingReply(
       agent: AgentDef
       systemPrompt: string
       userMessage: string
-      history: []
+      history: SharedOnboardingConversationMessage[]
       memoryBlock: string
       session: AgentsSdkSession
       systemInputs: string[]
       tools: AgentTurnTool[]
     }) => Promise<{ text?: string | null }>
-    const { text } = await runTurn({
+    const firstTurn = await runTurn({
       agent: input.agent,
       systemPrompt,
       userMessage: syntheticUser,
-      history: [],
+      history: [...(input.recentMessages ?? [])],
       memoryBlock: "",
       session,
       systemInputs,
       tools,
     })
 
-    const trimmed = (text ?? "").trim()
+    let trimmed = (firstTurn.text ?? "").trim()
     if (!trimmed) throw new Error("empty_agent_reply")
+    if (!opening && violatesSharedOnboardingContinuationDraft(trimmed)) {
+      input.store.log("pa.shared_onboarding.agentic_surface.retry_continuation", {
+        userId: input.userId,
+        turnId: input.turnId,
+        slot: input.slot,
+        mode: input.mode,
+      })
+      try {
+        await session.popItem()
+      } catch (popErr) {
+        input.store.log("pa.shared_onboarding.agentic_surface.retry_pop_failed", {
+          userId: input.userId,
+          turnId: input.turnId,
+          error: popErr instanceof Error ? popErr.message : String(popErr),
+        })
+      }
+      const retry = await runTurn({
+        agent: input.agent,
+        systemPrompt,
+        userMessage: [
+          syntheticUser,
+          "Your previous draft restarted the conversation or copied awkward prior wording. Rewrite it as a continuation only: no welcome, no resume-intake line, no Claire intro, no slang. One plain re-ask for the active slot.",
+        ].join("\n\n"),
+        history: [...(input.recentMessages ?? [])],
+        memoryBlock: "",
+        session,
+        systemInputs,
+        tools,
+      })
+      trimmed = (retry.text ?? "").trim()
+      if (!trimmed) throw new Error("empty_agent_retry_reply")
+      if (violatesSharedOnboardingContinuationDraft(trimmed)) {
+        input.store.log("pa.shared_onboarding.agentic_surface.retry_rejected", {
+          userId: input.userId,
+          turnId: input.turnId,
+          slot: input.slot,
+          mode: input.mode,
+        })
+        trimmed = template
+      }
+    }
     const { text: safe } = await applyTemplateOutboundHumanize({
       body: trimmed,
       userId: input.userId,
       turnId: input.turnId,
       db: input.store.db,
       maxLength: profile.invariants.lengthCapChars,
+      allowImperfection: false,
     })
     input.store.log("pa.shared_onboarding.agentic_surface.applied", {
       userId: input.userId,
@@ -652,6 +825,7 @@ export async function composeSharedOnboardingReply(
       userId: input.userId,
       turnId: input.turnId,
       db: input.store.db,
+      allowImperfection: false,
     })
     return { text: finalizeSharedOnboardingSmsText(text), slangPicked: [] }
   }
@@ -671,10 +845,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
   if (!gen) {
     return {
       recCount: 0,
-      reply:
-        lang === "zh"
-          ? "收到。我会尽快给你推两个具体岗位。"
-          : "Got it. I saved that context and will send two concrete roles once I pull a fresh batch.",
+      reply: sharedOnboardingNoRecReply(lang, input.userMessage),
     }
   }
 
@@ -728,7 +899,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
           ? [frame, parsed.message].filter(Boolean).join("\n")
           : lang === "zh"
             ? "收到。我这边还在捞更合适的岗，有匹配的第一时间发你。"
-            : "Got it — still pulling a tighter batch; I'll ping you when two look right."
+            : sharedOnboardingNoRecReply(lang, input.userMessage)
       const { text } = await applyTemplateOutboundHumanize({
         body,
         userId: input.event.userId,
@@ -760,7 +931,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
       ? recs.message
       : lang === "zh"
         ? "收到。我会尽快给你推两个具体岗位。"
-        : "Got it. I saved that context and will send two concrete roles once I pull a fresh batch."
+        : sharedOnboardingNoRecReply(lang, input.userMessage)
   const { text } = await applyTemplateOutboundHumanize({
     body: reply,
     userId: input.event.userId,
@@ -777,4 +948,33 @@ export async function deliverSharedOnboardingJobRecs(input: {
     enqueueOutbound: input.store.enqueueOutbound,
   })
   return { recCount, reply: finalizeSharedOnboardingSmsText(text) }
+}
+
+function sharedOnboardingNoRecReply(lang: "en" | "zh", userMessage: string): string {
+  if (lang === "zh") return "收到。我会尽快给你推两个具体岗位。"
+  const context = summarizeSharedOnboardingFinalContext(userMessage)
+  if (context) {
+    return `Got it: ${context}. I saved that and will keep matching against it.`
+  }
+  return "Got it. I saved that context and will keep matching against it."
+}
+
+function summarizeSharedOnboardingFinalContext(userMessage: string): string {
+  const text = userMessage.toLowerCase()
+  const parts: string[] = []
+  if (/\bno\s+(?:hard\s+)?(?:constraints?|dealbreakers?)\b/.test(text)) {
+    parts.push("no hard constraints")
+  }
+  if (/\b(?:start|available|notice)\b/.test(text)) {
+    if (/\b2\s*[-–]\s*4\s+weeks?\b/.test(text)) parts.push("2-4 week start")
+    else if (/\b\d+\s+weeks?\b/.test(text)) parts.push("your start timing")
+    else parts.push("your timing")
+  }
+  if (/\bproduct[-\s]?heavy\b/.test(text)) parts.push("product-heavy roles")
+  else if (/\bproduct\b/.test(text) && /\b(strategy|pm|manager|operator|founder)\b/.test(text)) {
+    parts.push("product or strategy-leaning roles")
+  } else if (/\bproduct\b/.test(text)) {
+    parts.push("product-leaning roles")
+  }
+  return parts.slice(0, 3).join(", ")
 }

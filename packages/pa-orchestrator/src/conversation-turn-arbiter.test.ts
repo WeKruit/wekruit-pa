@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   decideConversationTurnOwner,
+  isSavedPreferenceSummaryQuestion,
   summarizeConversationTurnTrace,
   type TurnContext,
 } from "./conversation-turn-arbiter.js"
@@ -145,6 +146,28 @@ test("arbiter accepts concrete shared-onboarding role and special-context answer
   assert.ok(specialContext.requiredTools.includes("shared_onboarding_writer"))
 })
 
+test("arbiter keeps shared-onboarding Q5 answers ahead of durable preference wording", () => {
+  const decision = decideConversationTurnOwner(baseContext({
+    inbound: {
+      text: "No hard constraints. I can start in 2-4 weeks; prefer product-heavy roles.",
+      createdAt: "2026-05-27T21:29:48.559Z",
+      channel: "imessage",
+    },
+    sharedOnboarding: {
+      active: true,
+      currentQuestionId: "special_context",
+    },
+  }))
+
+  assert.equal(decision.selectedOwner, "shared_onboarding")
+  assert.deepEqual(decision.orderedActions.map((action) => action.kind), [
+    "write_shared_onboarding_answer",
+    "extract_durable_preferences",
+    "commit_memory",
+  ])
+  assert.ok(decision.requiredTools.includes("shared_onboarding_writer"))
+})
+
 test("arbiter orders multi-intent prescreen explanation before durable preference commit", () => {
   const decision = decideConversationTurnOwner(baseContext({
     inbound: {
@@ -195,6 +218,13 @@ test("arbiter keeps explicit recommendation questions ahead of durable preferenc
     "extract_durable_preferences",
     "commit_memory",
   ])
+})
+
+test("saved-preference summary detector catches saved-for-matching wording without explicit preference keyword", () => {
+  assert.equal(
+    isSavedPreferenceSummaryQuestion("What do you have saved for matching right now?"),
+    true,
+  )
 })
 
 test("arbiter trace records the state machine and selected owner", () => {

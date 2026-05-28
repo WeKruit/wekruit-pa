@@ -1,0 +1,9 @@
+{
+  "kind": "trigger",
+  "description": "Production PRESCREEN_RE parses WeKruit_<jobId>_<userId>_Job into {jobId,userId} and routes to prescreen; chit-chat and the _Apply trigger do not match the prescreen trigger.",
+  "cases": [
+    { "text": "WeKruit_job-abc_user123_Job", "expect_match": true, "expect_jobId": "job-abc", "expect_userId": "user123" },
+    { "text": "Hey Claire, can you find me a job?", "expect_match": false },
+    { "text": "WeKruit_job-abc_user123_Apply", "expect_match": false }
+  ]
+}

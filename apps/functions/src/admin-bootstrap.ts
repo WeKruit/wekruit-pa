@@ -437,7 +437,25 @@ const SEED_FLAGS: FlagSpec[] = [
   // Conversational Surface Platform — connector narration + find-match tool (default OFF).
   { key: "paConnectorNarrationEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paFindMatchToolEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // P1 agentic job-search migration (DEFAULT OFF). When ON for a user, a
+  // job-search turn routes through the agent loop (run(agent) → find-match
+  // connector) and the hand-wired regex dispatch is skipped. OFF = today's
+  // regex handler keeps ownership (zero regression). Adam ramps via dashboard.
+  { key: "paAgenticJobSearchEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // P2 Tier-1 reflex: slow-tool quick-ack fires as a deterministic reflex
+  // (independent of Tier-2 narration). DEFAULT OFF — zero behavior change until ramped.
+  { key: "paReflexQuickAckEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // P3 — scoped prescreen agent. perUser; default OFF for everyone (allowlist
+  // empty by design — Adam ramps via dashboard). When OFF, runPrescreenTurnIfActive
+  // runs the deterministic PreScreenPipeline.runTurn path byte-for-byte (no-op).
+  // When ON, a scoped agent composes the question ask + routes the reply through
+  // record_prescreen_answer → the same reducer (the reducer stays the controller);
+  // tangents go to a global explain tool (no FSM mutation). Any agent error
+  // fails open to the deterministic path. Kill switch: PA_AGENTIC_PRESCREEN_DISABLED=true.
+  { key: "paAgenticPrescreenEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paSharedOnboardingAgenticSurface", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // P4 — scoped onboarding agent (record→reducer; tangent→global tool; fail-open). Default OFF.
+  { key: "paAgenticOnboardingEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paBehaviorChoreographerEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paReactionTapbackEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   // Collab prescreen invite: match/copy helpers only; SMS requires HITL approve on dashboard (no ingest hook).
