@@ -1703,9 +1703,9 @@ test("processInboundEvent answers saved job preference summary from shared onboa
     body: "hat did you save about my job preferences",
   }, store)
   assert.equal(llmCalls, 0)
-  assert.match(outbound, /Yep — I saved/)
+  assert.match(outbound, /Yep — I'm using/)
   assert.match(outbound, /AI\/devtools\/fintech/)
-  assert.match(outbound, /you can start in 2-4 weeks/)
+  assert.match(outbound, /you can start in 2-4 weeks/i)
   assert.doesNotMatch(outbound, /\.{3}/)
   assert.ok(outbound.length < 220, `expected human-sized summary, got ${outbound.length} chars`)
   assert.doesNotMatch(outbound, /roles I just sent/i)
@@ -1769,7 +1769,7 @@ test("processInboundEvent answers matching preference reminder before active pos
   }, store)
 
   assert.equal(llmCalls, 0)
-  assert.match(outbound, /Yep — I saved/)
+  assert.match(outbound, /Yep — I'm using/)
   assert.match(outbound, /product\/strategy-heavy work/)
   assert.doesNotMatch(outbound, /roles I just sent/i)
   assert.equal(turnUpdates.some((patch) => patch.conversationArbiterOwner === "explicit_explanation"), true)

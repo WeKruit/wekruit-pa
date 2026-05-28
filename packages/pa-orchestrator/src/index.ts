@@ -3660,20 +3660,29 @@ function composeSharedSavedPreferenceReply(
   }
   if (primary.length === 0) return null
 
-  const mainList = joinHumanList(primary.slice(0, 4))
+  const headlineList = joinHumanList(primary.slice(0, 3))
+  const extraPrimary = primary.slice(3, 4)
   const constraintList = joinHumanList(constraints.slice(0, 2))
-  const secondSentence = [
-    constraintList ? `I'll avoid ${constraintList}` : null,
-    timing,
-  ].filter((value): value is string => Boolean(value)).join("; ")
+  const timingEn = timing
+    ? `${timing.charAt(0).toUpperCase()}${timing.slice(1)}`
+    : null
+  const timingZh = timing ? "2-4周可以开始" : null
   if (lang === "zh") {
-    return secondSentence
-      ? `我记的是：${mainList}。${secondSentence}。`
-      : `我记的是：${mainList}。我会按这个匹配。`
+    const parts = [
+      `我会按这些匹配：${headlineList}。`,
+      extraPrimary[0] ? `也会偏向${extraPrimary[0]}。` : null,
+      constraintList ? `会避开${constraintList}。` : null,
+      timingZh ? `时间上${timingZh}。` : null,
+    ].filter((value): value is string => Boolean(value))
+    return parts.join(" ")
   }
-  return secondSentence
-    ? `Yep — I saved ${mainList}. ${secondSentence}.`
-    : `Yep — I saved ${mainList}. I'll use that for matching.`
+  const parts = [
+    `Yep — I'm using ${headlineList}.`,
+    extraPrimary[0] ? `Also biasing toward ${extraPrimary[0]}.` : null,
+    constraintList ? `Avoiding ${constraintList}.` : null,
+    timingEn ? `${timingEn}.` : null,
+  ].filter((value): value is string => Boolean(value))
+  return parts.join(" ")
 }
 
 function compactSavedPreferencePhrase(value: string, maxLength: number): string | null {
