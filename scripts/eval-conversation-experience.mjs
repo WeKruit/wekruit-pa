@@ -141,13 +141,15 @@ async function runConversationJudges({ messages, userId, sinceIso }) {
       criterion: [
         "Grade whether the assistant uses concrete context from the recent transcript when available.",
         "If the user volunteered preferences, role direction, location, prescreen answers, or asked a question, the reply should reflect that context before moving forward.",
+        "If the latest user message asks what the assistant saved, remembered, or is using for matching, it may answer from durable saved preference state even if those details are not restated in the recent transcript.",
       ].join(" "),
     },
     {
       id: "human_feel",
       criterion: [
         "Grade whether the reply feels like a concise human recruiter over SMS.",
-        "It should be short, natural, one idea per bubble, not corporate, not templated, and not overly verbose.",
+        "It should be short, natural, easy to scan, not corporate, not templated, and not overly verbose.",
+        "For saved-preference summaries, a few short sentences are fine if each sentence carries one clear idea.",
       ].join(" "),
     },
     {
