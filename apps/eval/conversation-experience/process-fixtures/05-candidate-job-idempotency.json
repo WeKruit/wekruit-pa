@@ -1,0 +1,6 @@
+{
+  "kind": "candidate_job_idempotency",
+  "description": "Terminal PASS commits exactly once (replaying the same event = idempotent, no double transition); an illegal restart after terminal is rejected (dedup) and the state doc is unchanged.",
+  "candidate_id": "cand_test",
+  "job_id": "job_test"
+}

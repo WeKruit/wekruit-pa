@@ -122,9 +122,47 @@ The model was semantically correct (confidence 0.86, good evidence) but emitted 
 }
 ```
 
-## Roadmap
+## Two-layer eval (P0 — agentic rebuild)
 
-- Wire into `firebase.json` predeploy gate (currently runs manually).
-- Add side-effect simulation for shared-onboarding completion turns.
-- Add a fixture exercising the `composeNoMatchReply` counter narration end-to-end.
-- Add an LLM-judge advisory layer for voice / continuity (non-blocking, separate from this deterministic gate).
+Per `.planning/AGENTIC-ARCHITECTURE.md` §9, the harness is now a **two-layer** eval that gates every phase of the agent-core-first rebuild:
+
+### Layer 1 — process-intact (deterministic HARD gate, exit code)
+
+```bash
+node apps/eval/conversation-experience/process-intact-runner.mjs   # the gate
+node apps/eval/conversation-experience/runner.mjs                   # arbiter-decision canary
+```
+
+`process-intact-runner.mjs` grades **process integrity** (WHAT-must-happen) by driving the REAL production reducers — never a re-implementation:
+
+| Driver | Real code exercised | Invariant asserted |
+|---|---|---|
+| `prescreen_fsm` | `PreScreenPipeline.runTurn` + `InMemoryPreScreenStore` (stub judge supplies scores) | every question asked (`answeredAt`), **no-skip** (advance steps adjacent in `qOrder`), terminal correct, **terminal fires once** + idempotent on re-run |
+| `onboarding_slots` | `SHARED_ONBOARDING_QUESTIONS` + `resolveNextSharedOnboardingQuestionId` + `projectSharedOnboardingAnswer` | 5 slots walk in canonical order, **no skip**, complete; answer projects durable `memoryFact`/`tags` |
+| `trigger` | production `PRESCREEN_RE` literal (extracted from `apps/functions/.../triggers/prescreen.ts`, no firebase import) | `WeKruit_<jobId>_<userId>_Job` parses to `{jobId,userId}`; chit-chat + `_Apply` don't match |
+| `candidate_job_idempotency` | `applyCandidateJobEvent` (real reducer) over a faithful in-memory Firestore double | terminal PASS **commits exactly once** (replay = idempotent); illegal restart after terminal **rejected** (dedup), state unchanged |
+
+Fixtures: `process-fixtures/*.json` (`kind` selects the driver). Exit 0 = green, 1 = assertion failed (blocks), 2 = setup error. **This must stay green through P1..P8** — a deletion that breaks it is a process regression, not a refactor.
+
+Wired into `firebase.json` predeploy (functions block) as a blocking gate alongside `runner.mjs`.
+
+### Layer 2 — conversation-quality (real-LLM, ADVISORY, never blocks)
+
+```bash
+node apps/eval/conversation-experience/bfcl-runner.mjs   # tool-choice + abstention + delivery
+node apps/eval/conversation-experience/llm-runner.mjs    # extraction / answer-capture (+ grader)
+```
+
+`bfcl-runner.mjs` is BFCL-style (Berkeley Function Calling Leaderboard): it runs the REAL `@openai/agents` loop with the REAL `connectorRegistry` as the tool surface and a recorder `execute` that captures the chosen tool `{name,args}` without touching Firestore.
+
+| Metric | What it measures | Fixture kind |
+|---|---|---|
+| tool-choice | does the model pick the right connector? (AST `{name}` + optional args subset) | `tool_choice` |
+| abstention | when the correct action is NO tool call, does it abstain? (BFCL irrelevance) | `abstention` (`expect.tool: null`) |
+| delivery | tapback vs text vs no-reply | `delivery` |
+
+Fixtures: `bfcl-fixtures/*.json`. Exits 0 regardless of misses; prints a scorecard that flags follow-ups. `llm-runner.mjs` covers answer-capture (real extraction + advisory grader) via `llm-fixtures/*.json`.
+
+> **Known scaffolding debt surfaced by P0:** the production `buildSdkTools` (agent-runtime) passes raw Zod connector schemas to the Agents SDK with no strict override, and the connector `inputSchema`s have optional fields → the live agent path would 400 under Responses strict function-calling ("required must include every key"). `bfcl-runner.mjs` works around it (non-strict JSON schema) to MEASURE routing; **P1 must resolve this for real** when it wires `run(agent)` to drive job-search.
+
+The frozen **baseline receipt** is in `.planning/agentic/P0-eval-foundation/SUMMARY.md` — the contract every later phase must not regress.

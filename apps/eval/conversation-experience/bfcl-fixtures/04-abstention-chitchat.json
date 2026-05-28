@@ -1,0 +1,6 @@
+{
+  "kind": "abstention",
+  "description": "Casual small talk — the correct action is NO tool call (BFCL irrelevance). Claire should just reply.",
+  "turn": "haha yeah honestly this week has been a lot. how's your day going?",
+  "expect": { "tool": null }
+}
