@@ -66,6 +66,24 @@ export type AgentTurnContext = {
    * find-match call.
    */
   parallelToolCalls?: boolean
+  /**
+   * P8 — SDK-native input safety guardrails (crisis / prompt-injection /
+   * privacy-stop), adapted from the orchestrator's INPUT_GUARDRAIL_CHAIN. Each
+   * runs BEFORE the model with `runInParallel: false`; a tripwire halts the
+   * turn (no LLM call) and surfaces on `RunAgentTurnResult.tripwire`.
+   */
+  inputGuardrails?: AgentInputGuardrailSpec[]
+}
+
+/**
+ * P8 — SDK-shaped input safety guardrail spec (crisis / prompt-injection /
+ * privacy-stop). The orchestrator adapts INPUT_GUARDRAIL_CHAIN into these so
+ * @pa/agent-runtime stays free of firebase-admin / pa-orchestrator. `outputInfo`
+ * is opaque detail (e.g. which guardrail tripped) surfaced back on the result.
+ */
+export type AgentInputGuardrailSpec = {
+  name: string
+  execute: (input: string) => Promise<{ tripwireTriggered: boolean; outputInfo?: unknown }>
 }
 
 /**
@@ -93,6 +111,12 @@ export type RunAgentTurnUsage = {
 export type RunAgentTurnResult = {
   text: string
   usage?: RunAgentTurnUsage
+  /**
+   * P8 — set when an input safety guardrail tripwire halted the turn before the
+   * model ran. `text` is empty in this case; the caller emits the safe canned
+   * reply for `name`. `outputInfo` carries the guardrail's detail.
+   */
+  tripwire?: { name: string; outputInfo?: unknown }
 }
 
 /**

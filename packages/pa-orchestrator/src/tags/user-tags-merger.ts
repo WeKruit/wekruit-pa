@@ -265,6 +265,17 @@ export const UserTagsSchema = z.object({
    */
   roleFunctionNegativeList: z.array(z.enum(ROLE_FUNCTION_VOCAB)).max(30).optional(),
   /**
+   * lock #5 (negative axis) — candidate-rejected industry-sector tokens
+   * (canonical 42-token `INDUSTRY_SECTOR_VOCAB`, same vocab as the positive
+   * `industrySector` axis). Written by the conversation extractor when a user
+   * asks to AVOID/exclude an industry ("avoid adtech and crypto"). V16
+   * hard-drops jobs whose `matching-jobs.industrySector` intersects this list
+   * — gated behind `PA_NEGATIVE_INDUSTRY_FILTER` (default OFF). This is the
+   * SUBTRACT axis; do NOT confuse with the positive `industrySector` (soft
+   * overlap, never subtracted) or open `relevantTags` `avoid_*` strings.
+   */
+  negativeIndustrySector: z.array(z.enum(INDUSTRY_SECTOR_VOCAB)).max(30).optional(),
+  /**
    * Phase B1 — soft-boost positive list. Lowercased normalized company
    * names. Cap 30; +0.15 soft score when V16 scores a matching job.
    */

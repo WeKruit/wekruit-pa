@@ -1,0 +1,24 @@
+{
+  "kind": "prescreen_fsm",
+  "description": "Full question set is read completely: the reducer walks every Q in qOrder, no skip, and commits PASS exactly once.",
+  "session_id": "ps_full_set",
+  "user_id": "u_test",
+  "job_id": "job_test",
+  "threshold": 0.6,
+  "questions": [
+    { "qId": "q_experience", "type": "PROBING", "weight": 1 },
+    { "qId": "q_systems_design", "type": "PROBING", "weight": 1 },
+    { "qId": "q_motivation", "type": "GOOD_TO_HAVE", "weight": 1 }
+  ],
+  "scores": {
+    "q_experience": { "s": 0.95, "c": 0.95 },
+    "q_systems_design": { "s": 0.9, "c": 0.9 },
+    "q_motivation": { "s": 0.8, "c": 0.85 }
+  },
+  "expect": {
+    "terminal": "PASS",
+    "questions_answered": ["q_experience", "q_systems_design", "q_motivation"],
+    "no_skip": true,
+    "terminal_once": true
+  }
+}

@@ -9,6 +9,7 @@ export { runWithOpenAI, runOpenAITurn } from "./openai-provider.js"
 export { toOpenAIMessages, stripLeadingIsoTimestamp } from "./messages.js"
 export { assertProviderKey, hasOpenAICompatKey } from "./env.js"
 export type {
+  AgentInputGuardrailSpec,
   AgentTurnContext,
   AgentTurnTool,
   RunAgentTurnResult,

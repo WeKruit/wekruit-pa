@@ -1,0 +1,7 @@
+{
+  "kind": "abstention",
+  "description": "Context-bridging tangent: mid-onboarding the user asks about a past prescreen outcome. With no explain-prescreen tool wired yet (that is a P3 always-on tool), the correct baseline action is to ABSTAIN and answer in text — not to call a job/preference tool. P3 will add an answer tool and this fixture's expectation will update.",
+  "context": "Claire is mid-onboarding and just asked the user for their target salary range. The user has a prior prescreen for a 'Rain' role that did not pass.",
+  "turn": "wait — why didn't I pass the Rain interview last time?",
+  "expect": { "tool": null }
+}

@@ -695,10 +695,65 @@ test("processInboundEvent runtime job-rec handoff focuses one role and splits de
   assert.equal(outbound.length, 2)
   assert.match(outbound[0]!, /One role worth your time: Data Analyst @ Acme/)
   assert.match(outbound[0]!, /https:\/\/jobs\.example\/acme/)
-  assert.match(outbound[1]!, /Before I move it forward/)
+  // External (non-collab) job: WeKruit has no prescreen relationship, so the second
+  // message must NOT imply a WeKruit screen or that Claire forwards the candidate.
+  assert.doesNotMatch(outbound[1]!, /move it forward/i)
+  assert.doesNotMatch(outbound[1]!, /quick screen/i)
+  assert.doesNotMatch(outbound[1]!, /\bscreen\b/i)
+  assert.match(outbound[1]!, /apply through that link directly/i)
   assert.doesNotMatch(outbound.join("\n"), /Backend Engineer/)
   assert.equal(appended.at(-1)?.role, "assistant")
   assert.match(appended.at(-1)?.body ?? "", /One role worth your time: Data Analyst @ Acme/)
+})
+
+test("processInboundEvent runtime job-rec keeps the fit-gate → screen framing for collab jobs only", async () => {
+  let llmCalls = 0
+  const outbound: string[] = []
+  const store = makeStore({
+    runAgentTurn: async () => {
+      llmCalls++
+      return { text: "LLM should not write job rec copy" }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound.push(body)
+    },
+  })
+
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "runtime-job-rec-collab-1",
+      body: "[system-event:job_rec:send_imessage]",
+      rawMeta: {
+        runtimeEvent: true,
+        runtimeEventSource: "job_rec_daily_batch",
+        runtimeEventKind: "daily_job_recommendations",
+        context: {
+          trustedOutboundBody:
+            "I found a partner role:\n\nProduct Designer @ Invoko\nhttps://candidate.wekruit.com/j/invoko\nrequirements: Figma, prototyping\nwhy: your design work maps well.",
+          jobs: [
+            {
+              title: "Product Designer",
+              companyName: "Invoko",
+              url: "https://candidate.wekruit.com/j/invoko",
+              requirements: "requirements: Figma, prototyping",
+              reason: "your design work maps well",
+              collab: true,
+            },
+          ],
+        },
+      },
+    },
+    store,
+  )
+
+  assert.equal(llmCalls, 0)
+  assert.equal(outbound.length, 2)
+  assert.match(outbound[0]!, /One role worth your time: Product Designer @ Invoko/)
+  // Collab/partner job keeps the honest fit-gate → screen framing.
+  assert.match(outbound[1]!, /Before I move it forward/)
+  // Non-SWE collab role must NOT get the SWE stack fit-gate (Bug C).
+  assert.doesNotMatch(outbound[1]!, /Java, Python, JavaScript, or Node/)
 })
 
 test("processInboundEvent turn failure does not send generic candidate-visible error copy", async () => {

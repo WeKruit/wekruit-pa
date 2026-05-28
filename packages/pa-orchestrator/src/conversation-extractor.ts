@@ -61,9 +61,28 @@ export interface ExtractorTriggerState {
   userMsgsSinceLast: number
   /** Caller-injected `Date.now()` — required for determinism in tests. */
   nowMs: number
+  /**
+   * When set, `shouldRunExtractor` returns `{run: true, trigger: forceTrigger}`
+   * immediately without consulting debounce / compact / time_window / turn_count.
+   * Used by turn-handler when arbiter detects `durable_preference_update` —
+   * matcher correctness requires the reducer to fire on THIS turn, before the
+   * next read of `pa-users.tags`.
+   */
+  forceTrigger?: ExtractorTriggerKind
 }
 
-export type ExtractorTriggerKind = "compact" | "time_window" | "turn_count"
+/**
+ * Trigger kinds:
+ *   - `compact` — transcript fills ≥75% of model context window
+ *   - `time_window` — ≥30min + ≥3 user msgs since last extraction
+ *   - `turn_count` — ≥10 turns since last extraction
+ *   - `intent_signal` — caller observed an explicit `durable_preference_update`
+ *     intent and wants the reducer to fire synchronously before downstream
+ *     matcher reads `pa-users.tags`. Bypasses 5min debounce + feature flag —
+ *     intent-driven extraction is always on because matcher correctness
+ *     depends on the reducer running, not the model context filling up.
+ */
+export type ExtractorTriggerKind = "compact" | "time_window" | "turn_count" | "intent_signal"
 
 export interface ExtractorTriggerDecision {
   /** True if `runExtraction` should fire this turn. */
@@ -90,6 +109,11 @@ const TURN_COUNT_FLOOR = 10
  * the very first crossing of any threshold fires.
  */
 export function shouldRunExtractor(state: ExtractorTriggerState): ExtractorTriggerDecision {
+  // Force-trigger short-circuits everything. Used by intent-driven turn
+  // handlers (see ExtractorTriggerKind doc).
+  if (state.forceTrigger) {
+    return { run: true, trigger: state.forceTrigger, reason: `force:${state.forceTrigger}` }
+  }
   // Debounce — applies once we've ever extracted before.
   if (state.lastExtractedAt) {
     const lastMs = Date.parse(state.lastExtractedAt)
@@ -155,18 +179,52 @@ export interface MemoryEntity {
   evidence: string
 }
 
+/**
+ * Coerce a scalar into a single-element array before array validation.
+ *
+ * 2026-05-27 — real gpt-5.4-nano receipt (apps/eval/conversation-experience/
+ * llm-runner.mjs): when a candidate states ONE value for an array field, the
+ * model emits a scalar — `targetRoleFunction: "product_management"` — not
+ * `["product_management"]`. The old `z.array(...)` rejected the scalar →
+ * `parse_error` → the extractor silently returned `{ran:false}` → canonical
+ * tags never updated → matcher kept reading the stale onboarding tags. That
+ * is the actual Adam-bug root cause (NOT the trigger wiring). The model is
+ * semantically correct; the schema was too rigid. Coerce instead of reject —
+ * this is the boundary-tolerant version of Instructor's validation-retry
+ * pattern (cheaper: no second LLM round-trip for a shape the model got
+ * "right enough").
+ *
+ * Drops null / empty-string scalars to undefined so they don't become
+ * `[null]` / `[""]`.
+ */
+function coerceArray<T extends z.ZodTypeAny>(inner: T) {
+  // Inner array is `.optional()` so a preprocess result of `undefined`
+  // (null / empty-string scalar) validates cleanly to "field absent" rather
+  // than failing the required-array check.
+  return z.preprocess((v) => {
+    if (v === null || v === undefined) return undefined
+    if (Array.isArray(v)) return v
+    if (typeof v === "string" && v.trim() === "") return undefined
+    return [v]
+  }, z.array(inner).optional())
+}
+
 /** Canonical schema for the LLM response. Strict — drops unknown fields. */
 export const ConversationExtractResultSchema = z.object({
   tagPatch: z
     .object({
-      targetRoleFunction: z.array(z.enum(ROLE_FUNCTION_VOCAB)).optional(),
-      industrySector: z.array(z.enum(INDUSTRY_SECTOR_VOCAB)).optional(),
+      targetRoleFunction: coerceArray(z.enum(ROLE_FUNCTION_VOCAB)).optional(),
+      industrySector: coerceArray(z.enum(INDUSTRY_SECTOR_VOCAB)).optional(),
+      negativeIndustrySector: coerceArray(z.enum(INDUSTRY_SECTOR_VOCAB)).optional(),
       visaStatus: z.enum(VISA_STATUS_VOCAB).optional(),
       careerStage: z.enum(CAREER_STAGE_VOCAB).optional(),
-      targetJobType: z.array(z.enum(JOB_TYPE_VOCAB)).optional(),
-      targetLocations: z.array(z.string().min(1).max(80)).optional(),
+      targetJobType: coerceArray(z.enum(JOB_TYPE_VOCAB)).optional(),
+      targetLocations: coerceArray(z.string().min(1).max(80)),
       minSalaryUsd: z.number().int().nonnegative().optional(),
-      relevantTags: z.array(z.string().min(1).max(40)).max(12).optional(),
+      relevantTags: coerceArray(z.string().min(1).max(40)).refine(
+        (v) => v === undefined || v.length <= 12,
+        { message: "relevantTags exceeds 12" },
+      ),
     })
     .strict(),
   memoryEntities: z.array(
@@ -266,12 +324,29 @@ export function buildExtractorPrompt(req: ConversationExtractRequest): string {
     "    schema violation — the whole extraction is rejected.",
     "  - If tagPatch is empty, memoryEntities may also be empty.",
     "",
-    "Canonical vocabs:",
-    `  roleFunction:   ${ROLE_FUNCTION_VOCAB.join(", ")}`,
-    `  industrySector: ${INDUSTRY_SECTOR_VOCAB.join(", ")}`,
-    `  visaStatus:     ${VISA_STATUS_VOCAB.join(", ")}`,
-    `  careerStage:    ${CAREER_STAGE_VOCAB.join(", ")}`,
-    `  jobType:        ${JOB_TYPE_VOCAB.join(", ")}`,
+    // 2026-05-27 — tagPatch keys MUST be the EXACT schema field names. The
+    // real-LLM baseline (apps/eval/conversation-experience/llm-runner.mjs)
+    // caught the model copying the vocab label as the key — emitting `jobType`
+    // / `roleFunction` instead of `targetJobType` / `targetRoleFunction` →
+    // `.strict()` rejected the unknown key → silent parse_error → the patch was
+    // dropped and matcher tags stayed stale (same class of bug as the #245
+    // scalar/array mismatch). Label each vocab with its exact field name and
+    // list every emittable field (targetLocations was previously omitted, so
+    // the model dropped locations entirely).
+    "tagPatch fields — use these EXACT keys (closed enums; do NOT invent values):",
+    `  targetRoleFunction (string[]):  ${ROLE_FUNCTION_VOCAB.join(", ")}`,
+    `  industrySector (string[]):      ${INDUSTRY_SECTOR_VOCAB.join(", ")}`,
+    `  negativeIndustrySector (string[]): ${INDUSTRY_SECTOR_VOCAB.join(", ")}`,
+    `  visaStatus (string):            ${VISA_STATUS_VOCAB.join(", ")}`,
+    `  careerStage (string):           ${CAREER_STAGE_VOCAB.join(", ")}`,
+    `  targetJobType (string[]):       ${JOB_TYPE_VOCAB.join(", ")}`,
+    "  targetLocations (string[]):     free-form normalized location tokens, e.g. new_york, san_francisco_bay_area, remote",
+    "  minSalaryUsd (integer):         minimum acceptable base salary in USD",
+    "  relevantTags (string[], max 12): free-form lowercase skill/interest tokens",
+    "Do NOT emit any key not in this list. A single-value field may be a scalar or a 1-element array.",
+    "If the user asks to AVOID / exclude / is not interested in an industry (e.g. \"avoid crypto and adtech\"),",
+    "emit that industry in negativeIndustrySector (canonical token, e.g. crypto_web3_blockchain) — do NOT put it",
+    "in industrySector. industrySector is ONLY for PREFERRED industries the user wants more of.",
     "",
     "Existing tags (do NOT duplicate):",
     JSON.stringify(req.existingTags),
@@ -340,11 +415,18 @@ export async function runExtraction(
   try {
     parsed = ConversationExtractResultSchema.parse(llmOut.json)
   } catch (err) {
+    // 2026-05-27 — surface the raw model output on parse failure. A silent
+    // `parse_error` is how the Adam-bug hid for weeks: the model emitted a
+    // semantically-correct patch in a shape the schema rejected, and we
+    // dropped it without a trace. Logging the raw JSON (capped) makes the
+    // next schema/model mismatch debuggable from production logs alone.
     log("pa.conversation_extractor.parse_error", {
       userId: req.userId,
       error: err instanceof Error ? err.message : String(err),
+      modelUsed: llmOut.modelUsed,
+      rawJson: JSON.stringify(llmOut.json).slice(0, 1000),
     })
-    return { ran: false, reason: "parse_error" }
+    return { ran: false, reason: "parse_error", modelUsed: llmOut.modelUsed }
   }
 
   if (parsed.confidence < MIN_CONFIDENCE) {
