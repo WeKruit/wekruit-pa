@@ -56,8 +56,29 @@ export const SCHEDULE_INTERVIEW_CONNECTOR: ConnectorDef<ScheduleInterviewInput, 
     const requestedWindows = (input.preferredWindows ?? []).map((s) => (typeof s === "string" ? s.trim() : "")).filter(Boolean)
     const ref = ctx.db.collection("pa-interview-bookings").doc(bookingId)
 
-    const snap = await ref.get()
-    if (snap.exists) {
+    // Atomic dedup + commit-once. The existence check AND the write happen in
+    // ONE transaction so two concurrent same-user×job turns can't both read
+    // "absent" and double-book (a plain get()-then-set() was racy). Firestore
+    // serializes the txn on the doc; the loser retries, sees the booking, and
+    // dedups. Returns true iff THIS turn created the booking.
+    const committed = await ctx.db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref)
+      if (snap.exists) return false
+      tx.set(ref, {
+        bookingId,
+        userId: ctx.userId,
+        jobId,
+        requestedWindows,
+        timezone: input.timezone ?? null,
+        status: "requested",
+        turnId: ctx.turnId,
+        sessionId: ctx.sessionId,
+        createdAt: new Date().toISOString(),
+      })
+      return true
+    })
+
+    if (!committed) {
       // DEDUP — scheduling no-rebook. The LLM narrates this verdict to the user.
       return {
         ok: true,
@@ -68,18 +89,6 @@ export const SCHEDULE_INTERVIEW_CONNECTOR: ConnectorDef<ScheduleInterviewInput, 
         summary: "You already have an interview booked for this role — I didn't double-book.",
       }
     }
-
-    await ref.set({
-      bookingId,
-      userId: ctx.userId,
-      jobId,
-      requestedWindows,
-      timezone: input.timezone ?? null,
-      status: "requested",
-      turnId: ctx.turnId,
-      sessionId: ctx.sessionId,
-      createdAt: new Date().toISOString(),
-    })
 
     return {
       ok: true,
