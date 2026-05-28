@@ -299,3 +299,30 @@ test("fetchPartnerUsers cross-partner isolation: layoffhedge key cannot see cand
   })
   assert.equal(res.users.length, 0)
 })
+
+import { __test_parseHandlerQuery } from "../partner-users-api.js"
+
+test("parseHandlerQuery clamps limit to [1, 200]", () => {
+  assert.equal(__test_parseHandlerQuery({ limit: "10" }).limit, 10)
+  assert.equal(__test_parseHandlerQuery({ limit: "0" }).limit, 1)
+  assert.equal(__test_parseHandlerQuery({ limit: "9999" }).limit, 200)
+  assert.equal(__test_parseHandlerQuery({}).limit, 50)
+})
+
+test("parseHandlerQuery parses status csv", () => {
+  const parsed = __test_parseHandlerQuery({ status: "passed,prescreen_started" })
+  assert.deepEqual(parsed.status, ["passed", "prescreen_started"])
+})
+
+test("parseHandlerQuery rejects unknown status value", () => {
+  assert.throws(() => __test_parseHandlerQuery({ status: "bogus_state" }), /invalid_query/)
+})
+
+test("parseHandlerQuery rejects malformed since", () => {
+  assert.throws(() => __test_parseHandlerQuery({ since: "yesterday" }), /invalid_query/)
+})
+
+test("parseHandlerQuery accepts opaque cursor as-is", () => {
+  const parsed = __test_parseHandlerQuery({ cursor: "anyOpaqueValue=" })
+  assert.equal(parsed.cursorOpaque, "anyOpaqueValue=")
+})

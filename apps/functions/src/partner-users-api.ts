@@ -328,6 +328,55 @@ export async function fetchPartnerUsers(args: PartnerUsersFetchArgs): Promise<Pa
 
 export const __test_fetchPartnerUsers = fetchPartnerUsers
 
+// ---------------------------------------------------------------- request
+
+interface ParsedHandlerQuery {
+  limit: number
+  cursorOpaque?: string
+  status?: CandidateJobState[]
+  since?: string
+}
+
+function parseHandlerQuery(q: Record<string, string | string[] | undefined>): ParsedHandlerQuery {
+  const out: ParsedHandlerQuery = { limit: DEFAULT_LIMIT }
+
+  const rawLimit = typeof q.limit === "string" ? q.limit : undefined
+  if (rawLimit !== undefined) {
+    const n = Number(rawLimit)
+    if (!Number.isFinite(n)) throw new Error("invalid_query:limit")
+    out.limit = Math.max(1, Math.min(MAX_LIMIT, Math.floor(n)))
+  }
+
+  const rawStatus = typeof q.status === "string" ? q.status : undefined
+  if (rawStatus) {
+    const items = rawStatus
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+    const validated: CandidateJobState[] = []
+    for (const item of items) {
+      const parsed = CandidateJobStateSchema.safeParse(item)
+      if (!parsed.success) throw new Error("invalid_query:status")
+      validated.push(parsed.data)
+    }
+    out.status = validated
+  }
+
+  const rawSince = typeof q.since === "string" ? q.since : undefined
+  if (rawSince) {
+    const t = Date.parse(rawSince)
+    if (!Number.isFinite(t)) throw new Error("invalid_query:since")
+    out.since = rawSince
+  }
+
+  const rawCursor = typeof q.cursor === "string" ? q.cursor : undefined
+  if (rawCursor) out.cursorOpaque = rawCursor
+
+  return out
+}
+
+export const __test_parseHandlerQuery = parseHandlerQuery
+
 // ---------------------------------------------------------------- handler
 
 export const paPartnerUsersApi = onRequest(
@@ -368,7 +417,39 @@ export const paPartnerUsersApi = onRequest(
       return
     }
 
-    // Query layer + response shaping land in Task 3 + Task 4.
-    res.status(501).json({ ok: false, reason: "not_implemented" })
+    let parsedQuery: ParsedHandlerQuery
+    try {
+      parsedQuery = parseHandlerQuery(req.query as Record<string, string | string[] | undefined>)
+    } catch (err) {
+      // parseHandlerQuery throws Error with messages like "invalid_query:limit" —
+      // log the full detail server-side, but return only the top-level reason
+      // to the client (per spec §4.7).
+      const detail = err instanceof Error ? err.message : "invalid_query"
+      console.warn(`paPartnerUsersApi invalid_query detail=${detail}`)
+      res.status(400).json({ ok: false, reason: "invalid_query" })
+      return
+    }
+
+    try {
+      const t0 = Date.now()
+      const response = await fetchPartnerUsers({
+        db: getFirestore(),
+        partnerSource: auth.partnerSource,
+        limit: parsedQuery.limit,
+        cursorOpaque: parsedQuery.cursorOpaque,
+        status: parsedQuery.status,
+        since: parsedQuery.since,
+      })
+      const ms = Date.now() - t0
+      console.info(
+        `paPartnerUsersApi ok partner=${auth.partnerSource} users=${response.users.length} hasMore=${response.hasMore} latency_ms=${ms}`,
+      )
+      res.status(200).json(response)
+    } catch (err) {
+      const fp = apiKey ? createHash("sha256").update(apiKey).digest("hex").slice(0, 8) : "absent"
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`paPartnerUsersApi internal_error key_fp=${fp} err=${msg}`)
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
   },
 )
