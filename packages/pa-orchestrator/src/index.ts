@@ -3281,6 +3281,49 @@ async function handleSharedOnboardingUserReply(
     await store.markEventSucceeded(event.id)
     return true
   }
+  // A (QA 2026-05-28) — EXTRACT-FIRST onboarding. Before slot bookkeeping, capture
+  // EVERY durable fact the user volunteered this turn (not just the active slot)
+  // into the unified pa-users.tags via the production extractor seam. forceTrigger
+  // bypasses the passive flag + the onboarding-incomplete gate. Without this,
+  // out-of-slot facts sent mid-onboarding ("$160k", "need H1B", "React/TS/Python",
+  // "fintech/AI", "NYC or remote") were dropped to fallback and never persisted —
+  // the live QA failure (stuck pending → matcher starved, recall empty). Flag-gated
+  // (paAgenticOnboardingEnabled, default OFF → flag-off is byte-identical to prior
+  // prod). Best-effort: never blocks the reply.
+  if (store.db && (await isAgenticOnboardingEnabled(store.db, event.userId))) {
+    try {
+      const priorForExtract = (await store.loadHistory(event.sessionId, 8).catch(() => [])) as Array<{
+        role?: string
+        body?: unknown
+        createdAt?: unknown
+      }>
+      const recentForExtract = [
+        ...priorForExtract.map((m) => ({
+          role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
+          body: String(m.body ?? ""),
+          createdAt: String(m.createdAt ?? store.nowIso()),
+        })),
+        { role: "user" as const, body: event.body, createdAt: store.nowIso() },
+      ].filter((m) => m.body.trim().length > 0)
+      await maybeRunExtractor({
+        db: store.db,
+        userId: event.userId,
+        recentMessages: recentForExtract,
+        existingTags: (onboardingUser as { tags?: Record<string, unknown> } | null)?.tags ?? {},
+        onboardingState:
+          (onboardingUser as { onboardingState?: string } | null)?.onboardingState ?? "pending",
+        userMsgsThisBatch: 1,
+        forceTrigger: "intent_signal",
+        log: (name, payload) => store.log(name, payload ?? {}),
+      })
+    } catch (err) {
+      store.log("pa.shared_onboarding.extract_first_error", {
+        userId: event.userId,
+        turnId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
   const advancedDespiteJudge =
     !answerJudge.accept && shouldSharedOnboardingAdvanceDespiteJudge(questionId, event.body)
   if (advancedDespiteJudge) {
@@ -4764,6 +4807,15 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     const allowSharedOnboardingUserReply =
       !conversationOwnerDecision ||
       conversationOwnerDecision.selectedOwner === "shared_onboarding" ||
+      // A (QA 2026-05-28) — out-of-slot facts mid-onboarding land on `fallback_claire`
+      // (the frame classifier doesn't recognize them as a slot answer or durable
+      // preference), which previously dropped them to a generic reply with NO capture
+      // and NO slot advance — the re-ask loop. During an active shared-onboarding
+      // session, route those into the onboarding handler instead, where extract-first
+      // captures the facts and the slot advances. Higher-priority owners (job_search,
+      // durable_preference_update, explicit_explanation, prescreen) already returned
+      // above, so this only reclaims the generic-fallback case.
+      (sharedRuntimeSession && conversationOwnerDecision.selectedOwner === "fallback_claire") ||
       Boolean(
         sharedRuntimeSession &&
         sharedQuestionId &&
