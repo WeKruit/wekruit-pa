@@ -135,6 +135,26 @@ export { paBackfillAtsUrlsBatch, paCostSummaryWeekly } from "./backfill-ats-urls
 // resolver from paBackfillMatchingJobsAtsUrl (cap 1000/run).
 export { paLivenessSweepDaily } from "./liveness-sweep.js"
 
+// 2026-05-27 — daily watchdog over the macmini → Firestore scrape pipeline.
+// Posts a Slack alert when the newest `matching-jobs.syncedAt` is older
+// than 24h (warn) or 48h (error). Audit trail in
+// `matching-jobs-monitor-runs`. See `scrape-freshness-monitor.ts` for the
+// pure orchestrator + co-located unit tests.
+export {
+  paScrapeFreshnessMonitorDaily,
+  // Public HTTP companion — feeds the Claude routine that doesn't have
+  // Firestore credentials. Returns latest monitor run + today's pipeline
+  // lock state as JSON. 60s CDN cache.
+  paScrapeFreshnessStatusPublic,
+} from "./scrape-freshness-monitor.js"
+
+// 2026-05-27 — Quality sampling CF. Returns counters per source + ≤20
+// random samples (company / role / atsApplyUrl / source) from the
+// last 24h of scraped jobs. Feeds a sibling Claude routine that
+// HEAD-checks each URL and opens a daily GitHub issue with the
+// quality verdict.
+export { paScrapeQualitySamplePublic } from "./scrape-quality-sample.js"
+
 // Phase A5 (post-v1.7) — `pa-companies` enrichment cascade (YC → Wikidata →
 // Clearbit → LLM). Scheduled Tue 04:00 UTC + admin-only ad-hoc callable.
 // Never overwrites docs where `lastReviewedBy != null`.
@@ -274,6 +294,9 @@ export { paCandidateMagicLinkVerify } from "./candidate-magic-link-verify.js"
 // matching-jobs (scraped/non-collab) with hard filters mirroring v16's
 // query (status==active, dead!=true, atsApplyUrl present, firstSeenAt fresh).
 export { paPublicOpenJobs } from "./public-open-jobs.js"
+// v2.0 Partner API — layoffhedge users export. HTTP callable returning
+// sourced candidates (status-filtered, paginated). Auth via X-API-Key.
+export { paPartnerUsersApi } from "./partner-users-api.js"
 // Adam 2026-05-18: rolling preview on layoff.wekruit.com now reads pa-users
 // (mix of demo + real, both filtered by `getHired !== true`) instead of a
 // hardcoded JS pool. Public, no-auth GET. See `public-layoff-preview.ts`.
@@ -282,6 +305,7 @@ export { paPublicLayoffPreview } from "./public-layoff-preview.js"
 // rejects token exchange without client_secret. These HTTP functions own the
 // OAuth exchange server-side and return a Firebase custom token.
 export { paLinkedinAuthStart, paLinkedinCallback } from "./linkedin-auth.js"
+export { paSsoLogin, paSsoBootstrap, paSsoLogout } from "./cross-domain-sso.js"
 // v2.0 S2 — candidate email-link claim callable. Authenticated candidates
 // receive only the redacted candidate self-profile projection.
 export { paCandidateClaimProfile } from "./identity/claim-api.js"
@@ -329,6 +353,7 @@ export {
 // {ok, name, version, ts, deps:{firestore, secrets}}. No auth (probes
 // must be reachable). All endpoints HTTP 200 always; failure surfaces in body.
 import { makeHealthHandler } from "./health.js"
+import { readVersionChannel, setVersionChannel, parseChannel } from "./version-channel.js"
 
 export const paHealthSendblueWebhook = makeHealthHandler({
   name: "paSendblueWebhook",
@@ -1319,6 +1344,88 @@ export const paHealthRuntimeMode = makeHealthHandler({
 })
 
 // =============================================================================
+// Per-user version channel (canary / ring) admin endpoint.
+// Sibling of paRuntimeMode. Operator flips a single user's versionChannel to
+// "latest" (opts into newest conversation behavior under test) or "stable"
+// (previous behavior) + records audit (versionChannelAt + versionChannelSetBy
+// + versionChannelReason). Internal/test users (PA_INTERNAL_USER_IDS /
+// PA_INTERNAL_PHONE_NUMBERS incl. the dev phone) are ALWAYS resolved to
+// "latest" by the orchestrator regardless of this field — so we always test
+// on internal users before promoting a version to everyone.
+//
+// GET  ?userId=…           → { userId, versionChannel, effectiveChannel,
+//                              internal, versionChannelAt/SetBy/Reason }
+// POST { userId, channel, reason? } → sets the field. channel ∈ latest|stable.
+//
+// Zero-regression: this endpoint only WRITES a field. The field is a strict
+// no-op until a behavior is explicitly marked latest-only via
+// `isLatestChannel()` in the orchestrator.
+// =============================================================================
+export const paVersionChannel = onRequest(
+  {
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 30,
+    maxInstances: 1,
+    cors: false,
+  },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    try {
+      const decoded = await requireDashboardAdmin(req)
+      const userId = String(req.query.userId ?? req.body?.userId ?? "").trim()
+      if (!userId) {
+        sendJson(res, 400, { error: "userId is required" })
+        return
+      }
+      const db = getFirestore()
+      if (req.method === "GET") {
+        const read = await readVersionChannel(db, userId, process.env)
+        sendJson(res, 200, read)
+        return
+      }
+      if (req.method === "POST") {
+        const channel = parseChannel(req.body?.channel)
+        if (!channel) {
+          sendJson(res, 400, { error: "channel must be 'latest' or 'stable'" })
+          return
+        }
+        const reason = String(req.body?.reason ?? "").trim().slice(0, 500)
+        const setBy = decoded.email ?? decoded.uid ?? "operator"
+        const result = await setVersionChannel(db, {
+          userId,
+          channel,
+          reason,
+          setBy,
+          nowIso: nowIso(),
+          onAuditError: (auditErr) =>
+            logger.warn("paVersionChannel audit write failed", {
+              userId,
+              err: auditErr instanceof Error ? auditErr.message : String(auditErr),
+            }),
+        })
+        sendJson(res, 200, result)
+        return
+      }
+      sendJson(res, 405, { error: "Method not allowed" })
+    } catch (err) {
+      const rawStatus = typeof err === "object" && err && "status" in err ? Number((err as { status: unknown }).status) : 500
+      const status = Number.isFinite(rawStatus) ? rawStatus : 500
+      logger.warn("paVersionChannel failed", { status, error: err instanceof Error ? err.message : String(err) })
+      sendJson(res, status, { error: err instanceof Error ? err.message : String(err) })
+    }
+  }
+)
+export const paHealthVersionChannel = makeHealthHandler({
+  name: "paVersionChannel",
+  requiredSecrets: [],
+})
+
+// =============================================================================
 // Phase 21 — Sendblue channel migration (CHANNEL-01, CHANNEL-05)
 // =============================================================================
 
@@ -1841,6 +1948,115 @@ export const paSendblueOutboxRetrySweep = onSchedule(
 )
 
 // =============================================================================
+// PA Conversation Recovery Sweep — raw Sendblue → runtime-approved recovery
+// =============================================================================
+//
+// Detects candidate-visible inbound rows that still have no later candidate-
+// visible outbound, classifies deterministic recovery classes, and writes
+// durable `pa-recovery-cases` rows before taking action. It never direct-sends
+// Sendblue; all candidate-visible recovery goes through runtime-approved
+// `pa-outbound` or the existing inbound/prescreen runtime.
+
+export const paConversationRecoverySweep = onSchedule(
+  {
+    schedule: "every 10 minutes",
+    region: "us-central1",
+    secrets: [
+      SILICONFLOW_API_KEY,
+      PA_OPENAI_AGENT_API_KEY,
+      QDRANT_URL,
+      QDRANT_API_KEY,
+      ANTHROPIC_API_KEY,
+      SENDBLUE_API_KEY_ID,
+      SENDBLUE_API_SECRET_KEY,
+      SENDBLUE_FROM_NUMBER,
+    ],
+    memory: "1GiB",
+    maxInstances: 1,
+    timeoutSeconds: 300,
+    concurrency: 1,
+  },
+  async () => {
+    process.env.SILICONFLOW_API_KEY = SILICONFLOW_API_KEY.value()
+    process.env.QDRANT_URL = QDRANT_URL.value()
+    process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
+    process.env.SENDBLUE_API_KEY_ID = SENDBLUE_API_KEY_ID.value()
+    process.env.SENDBLUE_API_SECRET_KEY = SENDBLUE_API_SECRET_KEY.value()
+    try {
+      const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
+      if (fromNumber) process.env.SENDBLUE_FROM_NUMBER = fromNumber
+      else delete process.env.SENDBLUE_FROM_NUMBER
+    } catch {
+      delete process.env.SENDBLUE_FROM_NUMBER
+    }
+    try {
+      const openAiAgentKey = PA_OPENAI_AGENT_API_KEY.value().trim()
+      if (openAiAgentKey) process.env.PA_OPENAI_AGENT_API_KEY = openAiAgentKey
+      else delete process.env.PA_OPENAI_AGENT_API_KEY
+    } catch {
+      delete process.env.PA_OPENAI_AGENT_API_KEY
+    }
+    try {
+      const anthropicKey = ANTHROPIC_API_KEY.value().trim()
+      if (anthropicKey && anthropicKey !== "__UNSET__") process.env.ANTHROPIC_API_KEY = anthropicKey
+      else delete process.env.ANTHROPIC_API_KEY
+    } catch {
+      delete process.env.ANTHROPIC_API_KEY
+    }
+    const siliconflowBase = "https://api.siliconflow.cn/v1"
+    const trimOr = (v: string | undefined, fallback: string) => {
+      const t = v?.trim()
+      return t && t.length > 0 ? t.replace(/\/+$/, "") : fallback
+    }
+    process.env.MEM0_LLM_API_KEY = trimOr(process.env.MEM0_LLM_API_KEY, SILICONFLOW_API_KEY.value())
+    process.env.MEM0_LLM_BASE_URL = trimOr(process.env.MEM0_LLM_BASE_URL, siliconflowBase)
+    process.env.MEM0_LLM_MODEL = trimOr(process.env.MEM0_LLM_MODEL, "Qwen/Qwen2.5-72B-Instruct")
+    process.env.MEM0_EMBED_API_KEY = trimOr(process.env.MEM0_EMBED_API_KEY, SILICONFLOW_API_KEY.value())
+    process.env.MEM0_EMBED_BASE_URL = trimOr(process.env.MEM0_EMBED_BASE_URL, siliconflowBase)
+    process.env.MEM0_EMBED_MODEL = trimOr(process.env.MEM0_EMBED_MODEL, "BAAI/bge-m3")
+    process.env.MEM0_EMBED_DIMS = trimOr(process.env.MEM0_EMBED_DIMS, "1024")
+
+    const db = getFirestore()
+    const { paConversationRecoverySweepHandler } = await import("./sendblue/recovery-agent.js")
+    const { runPreScreenForUser } = await import("./prescreen-session-start.js")
+
+    try {
+      const result = await paConversationRecoverySweepHandler({
+        db,
+        log: (...args: unknown[]) => logger.info("[sendblue][recovery-agent]", ...args),
+        processInboundEventById: async (eventId) => {
+          const snap = await db.collection(PA_COLLECTIONS.inboundEvents).doc(eventId).get()
+          if (!snap.exists) {
+            logger.warn("[sendblue][recovery-agent] inbound event missing during replay", { eventId })
+            return
+          }
+          const data = { id: snap.id, ...snap.data() } as InboundEvent | BrokerImessageEvent
+          const orchestratorDeps = makeOrchestratorDeps()
+          if (isBrokerImessageEvent(data)) {
+            await processBrokerImessageEvent(db, data, orchestratorDeps)
+          } else {
+            await claimAndProcessInboundEvent(db, data.id, undefined, orchestratorDeps)
+          }
+        },
+        startPrescreen: async ({ jobId, userId, toE164 }) => runPreScreenForUser({
+          db,
+          jobId,
+          userId,
+          toE164,
+          log: (event, payload) => logger.info(`[prescreen][recovery-agent] ${event}`, payload ?? {}),
+        }),
+      })
+      logger.info("paConversationRecoverySweep done", result)
+    } catch (err) {
+      logger.error("paConversationRecoverySweep fatal", {
+        err: err instanceof Error ? err.message : String(err),
+      })
+      throw err
+    }
+  }
+)
+
+// =============================================================================
 // Stream A — Tapback → matching-feedback CF (BUG #6 sister-feature)
 // =============================================================================
 //
@@ -2304,3 +2520,20 @@ export {
   openRegisterEmployer,
 } from "./openLayoff.js"
 export { paEmployerClaimVerification } from "./identity/employer-claim-verification.js"
+
+// ============================================================
+// Candidate referral program (2026-05-27)
+// ------------------------------------------------------------
+// Two-tier reward: $50 at interview, $4,000 at placement. Manual payout via
+// admin1@wekruit.com / adam.ylol@wekruit.com / noah.liu@wekruit.com email.
+// Schema in packages/core-types: pa-referrals + pa-referral-slugs.
+// Frontend: /refer (public), /r/:slug (inviter landing), /me/refer (dashboard).
+// ============================================================
+export {
+  paReferEnsureSlug,
+  paReferLinkResolve,
+  paReferInviteSend,
+  paReferDashboardList,
+  paReferOnPrescreenWrite,
+  paReferOnEmployerVisibleWrite,
+} from "./refer-program.js"

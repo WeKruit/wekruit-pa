@@ -1,0 +1,32 @@
+id: version_channel_probe_optin_latest
+description: |
+  Per-user version channel (canary / ring) — explicit OPT-IN demonstration.
+
+  An ordinary phone (NOT in the internal allowlist) whose pa-users doc has
+  `versionChannel: latest` (the field the `paVersionChannel` setter writes).
+  The orchestrator's `getVersionChannel` resolves "latest" via the stored
+  field, so the latest-only branch runs the NEW reply.
+
+  This is the per-user opt-in route an operator uses to expand a canary cohort
+  beyond the internal allowlist before full promotion.
+
+  Run:
+    pnpm --filter @pa/pa-orchestrator build && \
+      PA_RUN_EVAL=0 node tests/scenarios/runner-local.mjs \
+        tests/scenarios/version-channel/channel-probe-optin-latest.yaml
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19996665555"   # ordinary phone — NOT internal
+userState:
+  versionChannel: latest       # operator opted this user into the canary
+turns:
+  - user: "__PA_CHANNEL_PROBE__"
+    assert:
+      direct_intent: version_channel_probe
+      direct_intent_result: latest
+      reply_contains_any:
+        - "latest channel"
+        - "NEW conversation behavior"
+      reply_not_contains_any:
+        - "stable channel"

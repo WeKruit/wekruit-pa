@@ -1,4 +1,4 @@
-const CANDIDATE_HOST = "https://candidate.wekruit.com"
+const CANDIDATE_HOST = "https://wekruit.com"
 
 export type JobLifecycleLike = {
   jobId: string

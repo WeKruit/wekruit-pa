@@ -1,0 +1,11 @@
+{
+  "kind": "onboarding_slots",
+  "description": "Shared-onboarding walks all 5 slots in canonical order with no skip, then completes; an answer projects durable capture (memoryFact + tags).",
+  "expect": {
+    "slot_order": ["main_goal", "culture_stage", "industry_interest", "location_relocation", "special_context"],
+    "walk": ["main_goal", "culture_stage", "industry_interest", "location_relocation", "special_context", "__complete__"]
+  },
+  "projections": [
+    { "questionId": "main_goal", "answer": "I want senior backend / platform roles at AI infrastructure startups" }
+  ]
+}

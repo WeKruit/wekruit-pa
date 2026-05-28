@@ -6,6 +6,7 @@
 import { useMemo, useRef, useState, useEffect } from "react"
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom"
 import { onAuthStateChanged, signOut, type User } from "firebase/auth"
+import { clearSsoCookie } from "../lib/cross-domain-sso.js"
 import "../styles/wekruit-tokens.css"
 import { deriveFunction, registerCandidate, type RegisterInput } from "../lib/onboarding-api"
 import { uploadResume } from "../lib/onboarding-cv"
@@ -169,6 +170,7 @@ export default function Onboarding() {
           )
           setIntakeChecked(false)
           try {
+            await clearSsoCookie()
             await signOut(auth())
           } catch {
             // Login owns the next auth attempt.

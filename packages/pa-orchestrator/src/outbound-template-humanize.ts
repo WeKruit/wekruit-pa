@@ -9,6 +9,7 @@ export type TemplateHumanizeInput = {
   turnId: string
   db?: Firestore
   maxLength?: number
+  allowImperfection?: boolean
 }
 
 /** Phase A — template SMS gets normalize + optional imperfection when humanize is on. */
@@ -20,7 +21,11 @@ export async function applyTemplateOutboundHumanize(
   let humanizeApplied = false
 
   const humanizeOn = await isHumanizeRuntimeEnabled(input.db, input.userId)
-  if (humanizeOn && process.env.PA_IMPERFECTION_INJECTOR_ENABLED !== "false") {
+  if (
+    input.allowImperfection !== false &&
+    humanizeOn &&
+    process.env.PA_IMPERFECTION_INJECTOR_ENABLED !== "false"
+  ) {
     const arm = resolveArm(input.userId)
     if (arm !== "off") {
       const inj = injectImperfection({ text, arm, userId: input.userId })

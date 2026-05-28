@@ -1089,6 +1089,126 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(turnEntries.length, 0)
   })
 
+  it("answers a recent terminal fit-improvement question before shared onboarding can consume it", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        onboardingState: "pending",
+        onboardingStatus: "invited",
+        sharedOnboarding: {
+          status: "active",
+          currentQuestionId: "industry_interest",
+          completed: false,
+          answers: {
+            main_goal: { answer: "Career growth" },
+            culture_stage: { answer: "strategy or product management" },
+          },
+        },
+        workSession: {
+          kind: "shared_onboarding",
+          status: "active",
+          currentQuestionId: "industry_interest",
+        },
+        postMatchRetention: {
+          stage: "await_liked",
+          startedAt: now,
+          updatedAt: now,
+          recCount: 2,
+        },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-product-manager-cards-95ae1a01",
+        terminal: "PAUSE",
+        terminalReason: "S+R_max=3.62 < T*S_max=3.80",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        cfgSnapshot: {
+          jobTitle: "Product Manager, Cards",
+          company: "Rain",
+        },
+        questions: {
+          role_fit: {
+            qId: "role_fit",
+            type: "MUST_HAVE",
+            finalS: 0.9,
+            finalC: 0.78,
+            scored: {
+              kind: "scored",
+              answered: true,
+              aggregate: {
+                s: 0.9,
+                c: 0.78,
+                summary: "Strong PM role fit: end-to-end ownership and measurable impact.",
+              },
+              perKeyword: [],
+            },
+          },
+          technical_depth: {
+            qId: "technical_depth",
+            type: "PROBING",
+            finalS: 0.72,
+            finalC: 0.66,
+            terminalCause: "viability_fail",
+            scored: {
+              kind: "scored",
+              answered: true,
+              aggregate: {
+                s: 0.72,
+                c: 0.66,
+                summary: "Mentions data-flow design, but lacks concrete implementation depth.",
+              },
+              perKeyword: [],
+            },
+          },
+        },
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+15109136602",
+      replyText: "Could you help me understand how I could have improved my fit for the above role at Rain?",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(result.sessionId, "ps_done")
+    assert.equal(result.terminal, "PAUSE")
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /Product Manager, Cards at Rain/)
+    assert.match(sent[0] ?? "", /strongest signal was Role Fit/i)
+    assert.match(sent[0] ?? "", /main gap was Technical Depth/i)
+    assert.match(sent[0] ?? "", /implementation or tradeoff/i)
+
+    const user = docs.get("pa-users/u1")?.data
+    assert.equal((user?.sharedOnboarding as { currentQuestionId?: string } | undefined)?.currentQuestionId, "industry_interest")
+    assert.equal(
+      ((user?.sharedOnboarding as { answers?: Record<string, unknown> } | undefined)?.answers ?? {}).industry_interest,
+      undefined,
+    )
+    const session = docs.get("pa-prescreen-sessions/ps_done")?.data
+    assert.equal(typeof session?.outcomeExplanationFollowupAt, "string")
+    const turnEntries = [...docs.entries()].filter(([path]) => path.startsWith("pa-prescreen-sessions/ps_done/turns/"))
+    assert.equal(turnEntries.length, 1)
+    assert.equal((turnEntries[0][1].data.action as { kind?: string }).kind, "post_terminal_outcome_explanation")
+  })
+
   it("yields a recent paused prescreen to an incomplete onboarding location answer", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({

@@ -4,6 +4,7 @@ import OpenAI from "openai"
 import type { ChatMessage } from "@pa/core-types"
 import { resolveOpenAICompatConfig } from "./openai-provider.js"
 import type {
+  AgentInputGuardrailSpec,
   AgentTurnContext,
   AgentTurnTool,
   RunAgentTurnResult,
@@ -310,6 +311,55 @@ function buildModelSettings(ctx: AgentTurnContext, hasTools: boolean) {
   }
 }
 
+/**
+ * P8 — adapt the orchestrator's input safety guardrail specs to the SDK
+ * `inputGuardrail` shape. `runInParallel: false` is REQUIRED for safety: the
+ * guardrail must complete (and can halt the turn) BEFORE the model is invoked —
+ * it must never race the LLM. A tripwire makes the SDK throw
+ * `InputGuardrailTripwireTriggered`, which `runDefaultAgent` catches and
+ * surfaces as `result.tripwire`. Returns `[]` when the caller passes none —
+ * which the SDK treats as a no-op (byte-identical to omitting the field), so
+ * every existing caller is unaffected.
+ */
+function buildInputGuardrails(ctx: AgentTurnContext): unknown[] {
+  const specs = ctx.inputGuardrails ?? []
+  return specs.map((spec: AgentInputGuardrailSpec) => ({
+    name: spec.name,
+    runInParallel: false,
+    execute: async (args: { input?: unknown }) => {
+      const raw = args?.input
+      const input = typeof raw === "string" ? raw : ctx.userMessage
+      const out = await spec.execute(input)
+      return {
+        tripwireTriggered: Boolean(out?.tripwireTriggered),
+        outputInfo: out?.outputInfo ?? null,
+      }
+    },
+  }))
+}
+
+/**
+ * P8 — detect the SDK's input-guardrail tripwire on a thrown error and map it to
+ * our `tripwire` shape. Returns null for any other error (caller rethrows).
+ * Robust to the SDK class not being `instanceof`-comparable across the
+ * dual-package boundary — matches by constructor name too.
+ */
+function mapTripwire(err: unknown): { name: string; outputInfo?: unknown } | null {
+  const e = err as {
+    name?: string
+    constructor?: { name?: string }
+    result?: { guardrail?: { name?: string }; output?: { outputInfo?: unknown } }
+  }
+  const isTripwire =
+    e?.constructor?.name === "InputGuardrailTripwireTriggered" ||
+    e?.name === "InputGuardrailTripwireTriggered"
+  if (!isTripwire) return null
+  return {
+    name: e?.result?.guardrail?.name ?? "input_guardrail",
+    outputInfo: e?.result?.output?.outputInfo ?? null,
+  }
+}
+
 async function runDefaultAgent(
   ctx: AgentTurnContext,
   provider: "openai" | "siliconflow"
@@ -322,23 +372,40 @@ async function runDefaultAgent(
   const sdkTools = [...hostedTools, ...customSdkTools]
   const hasTools = sdkTools.length > 0
   const model = resolveModel(ctx)
+  const inputGuardrails = buildInputGuardrails(ctx)
   const agent = new Agent({
     name: ctx.agent.name || ctx.agent.id,
     instructions: ctx.systemPrompt,
     model,
     modelSettings: buildModelSettings(ctx, hasTools),
     tools: sdkTools,
+    // P8 — SDK-native safety tripwires (crisis / prompt-injection /
+    // privacy-stop). Empty array is a no-op, so callers that pass no
+    // guardrails see byte-identical behavior. Cast mirrors the tool-params
+    // cast above (the SDK's deeply-generic guardrail type vs our plain shape).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    inputGuardrails: inputGuardrails as any,
   })
-  const sdkResult = ctx.session
-    ? await run(agent, buildAgentsInputItems(ctx), { session: ctx.session })
-    : await run(agent, buildAgentsInput(ctx))
-  const text = String((sdkResult as { finalOutput?: unknown }).finalOutput ?? "").trim()
-  const usage = extractUsage(
-    sdkResult as { rawResponses?: ReadonlyArray<unknown> },
-    provider,
-    model
-  )
-  return { text, usage }
+  try {
+    const sdkResult = ctx.session
+      ? await run(agent, buildAgentsInputItems(ctx), { session: ctx.session })
+      : await run(agent, buildAgentsInput(ctx))
+    const text = String((sdkResult as { finalOutput?: unknown }).finalOutput ?? "").trim()
+    const usage = extractUsage(
+      sdkResult as { rawResponses?: ReadonlyArray<unknown> },
+      provider,
+      model
+    )
+    return { text, usage }
+  } catch (err) {
+    const tripwire = mapTripwire(err)
+    if (tripwire) {
+      // A safety guardrail halted the turn BEFORE the model produced output.
+      // Surface the tripwire so the caller emits the safe canned reply.
+      return { text: "", usage: { provider, model }, tripwire }
+    }
+    throw err
+  }
 }
 
 /**
@@ -369,4 +436,6 @@ export const __forTesting = {
   extractUsage,
   buildHostedToolsForDefault,
   buildModelSettings,
+  buildInputGuardrails,
+  mapTripwire,
 }

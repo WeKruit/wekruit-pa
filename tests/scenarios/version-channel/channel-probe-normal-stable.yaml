@@ -1,0 +1,30 @@
+id: version_channel_probe_normal_stable
+description: |
+  Per-user version channel (canary / ring) — NORMAL user demonstration.
+
+  Sends the dev/test-only `__PA_CHANNEL_PROBE__` trigger as an ordinary phone
+  with no versionChannel field set. The orchestrator's `getVersionChannel`
+  resolves "stable" (the zero-regression default), so the latest-only branch
+  is SKIPPED and the user gets the previous STABLE reply.
+
+  This is the everyone-else side of the canary: a behavior marked latest-only
+  is a strict no-op for normal users until the version is promoted.
+
+  Run:
+    pnpm --filter @pa/pa-orchestrator build && \
+      PA_RUN_EVAL=0 node tests/scenarios/runner-local.mjs \
+        tests/scenarios/version-channel/channel-probe-normal-stable.yaml
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19998887777"   # ordinary phone — not internal ⇒ stable channel
+turns:
+  - user: "__PA_CHANNEL_PROBE__"
+    assert:
+      direct_intent: version_channel_probe
+      direct_intent_result: stable
+      reply_contains_any:
+        - "stable channel"
+        - "current stable conversation behavior"
+      reply_not_contains_any:
+        - "latest channel"

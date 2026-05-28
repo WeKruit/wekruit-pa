@@ -38,6 +38,18 @@ export const RECHECK_DEAD_AFTER_DAYS = 7
 export const HARD_DELETE_AFTER_DAYS = 30
 export const MAX_BACKFILL_PER_RUN = 1000
 export const MAX_ACTIVE_DOCS = 30_000
+/**
+ * 2026-05-28: demote no-ats docs to inactive once old enough that the hourly
+ * `paBackfillAtsUrlsBatch` has demonstrably failed to resolve an apply URL.
+ * Such docs are unservable forever (V16 hard-filters on `atsApplyUrl`
+ * present), yet liveness never HEAD-checks them (no URL) → never marks them
+ * dead → never hard-deletes them. They leaked as immortal-active (239 such
+ * docs at the 2026-05-28 audit). 14d gives backfill ~336 hourly attempts
+ * before we give up. The demotion is W1-protected on the core-service side
+ * (`upsertJobs` skips existing `status==="inactive"`) so the next macmini
+ * scrape will not re-activate them.
+ */
+export const UNRESOLVABLE_ATS_DEMOTE_DAYS = 14
 
 const MS_PER_DAY = 24 * 3600 * 1000
 
@@ -107,6 +119,8 @@ export type SweepCounters = {
   errors: number
   skipped_recheck_window: number
   skipped_no_url: number
+  /** No-ats docs demoted to inactive after the backfill grace window. */
+  demoted_unresolvable_ats: number
 }
 
 export function emptyCounters(): SweepCounters {
@@ -122,6 +136,7 @@ export function emptyCounters(): SweepCounters {
     errors: 0,
     skipped_recheck_window: 0,
     skipped_no_url: 0,
+    demoted_unresolvable_ats: 0,
   }
 }
 
@@ -136,6 +151,8 @@ export type SweepJobDoc = {
   dead?: boolean
   /** ISO string OR Firestore Timestamp-like. */
   deadCheckedAt?: string | { toMillis: () => number } | null
+  /** ISO string OR Firestore Timestamp-like. Drives the unresolvable-ats grace. */
+  firstSeenAt?: string | { toMillis: () => number } | null
 }
 
 export type SweepUpdates = {
@@ -146,6 +163,10 @@ export type SweepUpdates = {
   primaryUrl?: string
   atsResolvedAt?: string
   atsResolvedBy?: string
+  /** Lifecycle demotion (no-ats grace expiry). */
+  status?: string
+  inactiveReason?: string | null
+  inactiveAt?: string
 }
 
 export type SweepStore = {
@@ -170,6 +191,7 @@ export type SweepDeps = {
   throttleMs?: number
   rcheckDeadAfterDays?: number
   hardDeleteAfterDays?: number
+  unresolvableAtsDemoteDays?: number
   maxBackfillPerRun?: number
   log?: (msg: string, ctx?: Record<string, unknown>) => void
   errorLog?: (msg: string, ctx?: Record<string, unknown>) => void
@@ -301,6 +323,23 @@ export async function processOneJob(
     if (normalizedPrimary !== job.primaryUrl) normalizedUrlUpdates.primaryUrl = normalizedPrimary
   }
   if (!atsUrl) {
+    // No apply URL. If the doc has aged past the backfill grace window the
+    // hourly resolver has given up — demote to inactive so it leaves the
+    // active pool (it can never be served: V16 hard-filters on atsApplyUrl).
+    // Fresh no-ats docs are left active so backfill keeps trying.
+    const demoteMs = (deps.unresolvableAtsDemoteDays ?? UNRESOLVABLE_ATS_DEMOTE_DAYS) * MS_PER_DAY
+    const firstSeenMs = toMillis(job.firstSeenAt)
+    if (firstSeenMs !== null && now - firstSeenMs > demoteMs) {
+      counters.demoted_unresolvable_ats++
+      return {
+        kind: "update",
+        updates: {
+          status: "inactive",
+          inactiveReason: "unresolvable_ats",
+          inactiveAt: new Date(now).toISOString(),
+        },
+      }
+    }
     counters.skipped_no_url++
     return { kind: "noop" }
   }
@@ -454,6 +493,7 @@ function makeFirestoreStore(): SweepStore {
       return snap.docs.map((d): SweepJobDoc => {
         const data = d.data() as Record<string, unknown>
         const dca = data.deadCheckedAt
+        const fsa = data.firstSeenAt
         return {
           id: d.id,
           primaryUrl: typeof data.primaryUrl === "string" ? data.primaryUrl : undefined,
@@ -468,6 +508,12 @@ function makeFirestoreStore(): SweepStore {
               ? dca
               : dca && typeof dca === "object" && "toMillis" in dca
                 ? (dca as { toMillis: () => number })
+                : null,
+          firstSeenAt:
+            typeof fsa === "string"
+              ? fsa
+              : fsa && typeof fsa === "object" && "toMillis" in fsa
+                ? (fsa as { toMillis: () => number })
                 : null,
         }
       })

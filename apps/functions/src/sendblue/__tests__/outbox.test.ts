@@ -508,13 +508,45 @@ describe("paSendblueOutboxHandler", () => {
     assert.equal(sb.calls, 1)
   })
 
-  it("Test 9: shouldAppendOutboundTranscript skips out-imessage-in- AND out-sendblue- prefixes", () => {
+  it("Test 9: shouldAppendOutboundTranscript skips transcript-owned outbound prefixes", () => {
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "out-imessage-in-123" }), false)
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "out-sendblue-abc" }), false)
+    assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "outbound-inb_123" }), false)
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "outbox-msg-doc-1" }), true)
     assert.equal(shouldAppendOutboundTranscript({ idempotencyKey: "any-other" }), true)
     assert.equal(isMarketplaceOutreachOutbound({ idempotencyKey: "outreach_idempotency_outinvite-1" }), true)
     assert.equal(isMarketplaceOutreachOutbound({ idempotencyKey: "out-test-1" }), false)
+  })
+
+  it("Test 9a: outbound transcript append stores assistant messages as assistant role", async () => {
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "Manual operator reply",
+      idempotencyKey: "manual-console-1",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb({ "doc-role": baseRow }, { [USER.id]: USER })
+    const sb = makeSendblueMock()
+    let appended: DocData | undefined
+
+    await paSendblueOutboxHandler(makeEvent("doc-role", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date("2026-05-26T22:39:00Z"),
+      log: () => {},
+      appendMessage: async (_db, input) => {
+        appended = input as never
+      },
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1" } as never),
+    })
+
+    assert.equal(sb.calls, 1)
+    assert.equal(outbound.get("doc-role")!.status, "sent")
+    assert.equal(appended?.role, "assistant")
+    assert.equal((appended?.rawMeta as { source?: string } | undefined)?.source, "pa-outbound")
   })
 
   it("Test 9b: marketplace outreach stop gate blocks before transcript, quota, typing, or Sendblue", async () => {

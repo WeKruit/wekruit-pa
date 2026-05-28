@@ -370,6 +370,36 @@ t6test("find-match via runConnector calls matching hook and writes completed too
   assert.match(String(row.resultSummary), /"source":"find-match"/)
 })
 
+t6test("P7 schedule-interview via runConnector: commits once, then dedups (no-rebook) + verdict shape", async () => {
+  const { db, store } = fakeFirestoreT6()
+  const agent: AgentDef = { ...t6Agent, allowedConnectors: ["schedule-interview"] }
+  const ctx = { db, agent, turnId: "turn-sched", userId: "u1", sessionId: "s1", usedThisTurn: 0 }
+  const args = { jobId: "job-stripe", preferredWindows: ["2026-06-02 morning"], timezone: "America/New_York" }
+
+  const first = (await runConnector("schedule-interview" as never, args, ctx)) as {
+    ok?: boolean
+    action?: string
+    reason?: string | null
+    detail?: { bookingId?: string | null }
+  }
+  assert.equal(first.ok, true)
+  assert.equal(first.action, "committed")
+  assert.equal(first.detail?.bookingId, "booking-u1__job-stripe")
+
+  // replay (same candidate×job) → dedup, no rebook
+  const replay = (await runConnector("schedule-interview" as never, args, { ...ctx, turnId: "turn-sched-2" })) as {
+    action?: string
+    reason?: string | null
+  }
+  assert.equal(replay.action, "deduped")
+  assert.equal(replay.reason, "already_booked")
+
+  const bookings = [...store.entries()].filter(([k]) => k.startsWith("pa-interview-bookings/"))
+  assert.equal(bookings.length, 1) // no double-book
+  const audits = [...store.entries()].filter(([k]) => k.startsWith(`${PA_COLLECTIONS.toolCalls}/`))
+  assert.equal(audits.length, 2) // both runs audited via the same runConnector infra
+})
+
 // -------- Phase 13 T13.1: wekruit-matching connector tests --------
 //
 // Exhaustive coverage of:

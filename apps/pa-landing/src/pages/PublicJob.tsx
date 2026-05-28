@@ -48,7 +48,7 @@ import {
 } from "../lib/public-jobs.js"
 import { canonicalPublicJobId } from "../lib/public-job-slugs.js"
 import { buildWekruitJobOpenerBody } from "../lib/hello-wekruit.js"
-import { stickSourceFromLoginNext } from "../lib/source.js"
+import { peekSource, resolveSource, stickSourceFromLoginNext } from "../lib/source.js"
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
@@ -183,6 +183,13 @@ export default function PublicJob() {
 
   const requestedUserId = useMemo(() => (publicJobId ? getOrCreateRequestedUserId(publicJobId) : ""), [publicJobId])
   const nextPath = useMemo(() => (publicJobId ? `/j/${publicJobId}` : "/"), [publicJobId])
+
+  useEffect(() => {
+    // Stamp ?source=… into the wko_source cookie on first paint so the
+    // subsequent CV-ingest POST has the right attribution available via
+    // peekSource(). Idempotent — safe to run on every mount.
+    resolveSource()
+  }, [])
 
   useEffect(() => {
     if (!publicJobId) return
@@ -899,7 +906,7 @@ function InlineCvUpload({ jobId, requestedUserId, uploadUserId, onUploaded }: In
           resumeBase64: b64,
           resumeName: file.name,
           jobIdContext: jobId,
-          source: "public_job_page",
+          source: peekSource(),
         }),
       })
       if (!res.ok) {

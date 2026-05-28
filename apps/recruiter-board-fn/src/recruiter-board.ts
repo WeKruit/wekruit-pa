@@ -25,9 +25,11 @@ import { appendSubmissionToSheet } from "./recruiter-board-sheet.js"
 // Memory floor for these endpoints. They serve small JSON payloads (11 docs
 // today, ~80 docs ceiling). Pinned to a fixed value rather than the platform
 // default to make cost behavior predictable; the new dedicated codebase has
-// no shared bundle weight. 128MiB tested OOM (firebase-admin+googleapis
-// runtime alone ~140MB), bumped to 256MiB. See firebase.json
-// `recruiter-board` codebase entry for deploy isolation.
+// no shared bundle weight. 128MiB OOMed at startup (firebase-admin +
+// googleapis runtime peak ~144MiB; logs 2026-05-27 14:49-16:12 UTC showed
+// "Memory limit of 128 MiB exceeded with 144 MiB used" → readiness probe
+// failed → 500). Bumped to 256MiB. See firebase.json `recruiter-board`
+// codebase entry for deploy isolation.
 const RECRUITER_BOARD_MEMORY = "256MiB"
 
 // Optional environment variable. When set and the runtime SA has Editor access

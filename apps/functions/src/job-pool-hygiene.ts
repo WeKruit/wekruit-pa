@@ -26,7 +26,9 @@
  *   from any matching surface. Predicate:
  *     1. dead === true                                → inactiveReason="dead_flag"
  *     2. jobTitle missing/empty (trim().length === 0) → "no_title"
- *     3. firstSeenAt < (NOW - 20 days)                → "stale_firstseenat"
+ *     3. firstSeenAt < (NOW - 90 days)                → "stale_firstseenat"
+ *        (90d = V16's widest adaptive-cascade window; 20d would flip the
+ *         live cascade reserve — see STALE_FIRSTSEENAT_DAYS_DEFAULT)
  *     4. atsApplyUrl missing OR matches /jobright.ai/i → "missing_or_placeholder_ats"
  *
  *   Write payload (merge=true preserves other fields):
@@ -64,8 +66,20 @@ import {
 // Configuration
 // ---------------------------------------------------------------------------
 
-/** V16 hard-filter freshness window. Docs older than this are bad-active. */
-export const STALE_FIRSTSEENAT_DAYS_DEFAULT = 20
+/**
+ * Stale-firstSeenAt demotion cutoff. MUST stay aligned with V16's WIDEST
+ * adaptive-freshness cascade window, not the strict 20d default.
+ *
+ * 2026-05-28 footgun fix: this was 20 (the strict D10 window). But V16
+ * (`query-matching-jobs-v16.ts`) relaxes the freshness hard-filter to 45d
+ * then 90d for thin corpora — so docs aged 20–90d are the live cascade
+ * RESERVE that V16 serves when a user's strict-20d slice is empty. At the
+ * 2026-05-28 audit that reserve was 3,418 of 4,169 active docs (82%). A 20d
+ * cutoff would flip the entire reserve to inactive and turn the adaptive
+ * cascade into dead code. 90d demotes only docs past every cascade tier —
+ * genuinely unservable. (0 such docs today; this is the safe ceiling.)
+ */
+export const STALE_FIRSTSEENAT_DAYS_DEFAULT = 90
 
 export const BATCH_SIZE = 500
 export const PAGE_SIZE = 500
@@ -188,7 +202,7 @@ export type HygieneDeps = {
   store: HygieneStore
   /** Returns ms-since-epoch; stubbable for tests. */
   now: () => number
-  /** Default 20 (matches V16 freshness window). */
+  /** Default 90 (V16's widest adaptive-cascade window — NOT the strict 20d). */
   staleFirstSeenAtDays?: number
   batchSize?: number
   pageSize?: number

@@ -437,6 +437,20 @@ export interface MaybeRunExtractorArgs {
   deps?: ConversationExtractorDeps
   qdrantUrl?: string
   qdrantApiKey?: string
+  /**
+   * Caller signals the reducer MUST fire this turn (typically because the
+   * conversation arbiter detected `durable_preference_update` intent). Bypasses
+   * the `PA_CHAT_EXTRACTOR_ENABLED` feature flag AND every debounce/time-window
+   * trigger inside `shouldRunExtractor`. The trigger kind is recorded as
+   * `intent_signal` on the run audit so we can separate intent-driven from
+   * passive extraction runs.
+   *
+   * Matcher correctness depends on this firing — when a user says "actually
+   * avoid pure SWE, product strategy only", the canonical `pa-users.tags` must
+   * be updated BEFORE V16 reads them on the next matcher invocation. Letting
+   * the debounce skip this would re-introduce the stale-tag bug.
+   */
+  forceTrigger?: ExtractorTriggerKind
 }
 
 const DEFAULT_MODEL_CONTEXT_LIMIT = 128_000
@@ -456,7 +470,10 @@ export async function maybeRunExtractor(
   args: MaybeRunExtractorArgs,
 ): Promise<RunExtractionOutcome> {
   const log = args.log ?? (() => {})
-  const enabled = args.enabled ?? envFlagEnabled()
+  // Intent-driven extraction (forceTrigger) bypasses the feature flag —
+  // matcher correctness depends on it. Passive extraction still respects the
+  // flag for gradual rollout.
+  const enabled = args.forceTrigger ? true : (args.enabled ?? envFlagEnabled())
   if (!enabled) return { ran: false, reason: "feature_flag_off" }
   if (!args.userId) return { ran: false, reason: "no_user_id" }
   if (args.onboardingState && args.onboardingState !== "complete") {
@@ -488,6 +505,7 @@ export async function maybeRunExtractor(
     modelContextLimit: args.modelContextLimit ?? DEFAULT_MODEL_CONTEXT_LIMIT,
     userMsgsSinceLast: args.userMsgsThisBatch ?? 0,
     nowMs: Date.now(),
+    ...(args.forceTrigger ? { forceTrigger: args.forceTrigger } : {}),
   }
   const decision = shouldRunExtractor(triggerState)
   if (!decision.run) {

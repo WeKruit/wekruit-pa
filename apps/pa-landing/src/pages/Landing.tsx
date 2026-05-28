@@ -23,6 +23,7 @@ import {
   IMessageThread,
   Icon,
 } from "./CandidateLogin.js"
+import { CandidateSequence } from "../components/Sequence.js"
 
 interface PublicJobListDoc {
   publicVisible?: boolean
@@ -119,6 +120,25 @@ export default function Landing() {
       }
     })()
     return () => { cancelled = true }
+  }, [])
+
+  // Hash anchor scroll. Triggered on:
+  //   1. Initial mount when URL contains a hash (e.g. /#how from cross-route nav).
+  //   2. `hashchange` events (back/forward navigation).
+  // Header's HowItWorksLink handles same-page clicks directly; this covers
+  // the cross-route case where react-router-dom mounts Landing fresh.
+  useEffect(() => {
+    function scrollToHash() {
+      const hash = window.location.hash.replace(/^#/, "")
+      if (!hash) return
+      // Wait a tick so CandidateSequence has rendered before measuring offset.
+      setTimeout(() => {
+        document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" })
+      }, 60)
+    }
+    scrollToHash()
+    window.addEventListener("hashchange", scrollToHash)
+    return () => window.removeEventListener("hashchange", scrollToHash)
   }, [])
 
   // Idle-prefetch /market and /open data while the user is reading the
@@ -235,39 +255,13 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── How it works ─────────────────────────────────── */}
-      <section className="wk-section">
-        <div className="wk-container">
-          <header className="wk-section__head">
-            <p className="wk-eyebrow">How it works</p>
-            <h2 className="wk-section__h2">
-              Three steps. <em className="wk-accent">No</em> application form.
-            </h2>
-          </header>
-          <div className="wk-steps">
-            <StepCard
-              n="01"
-              title="Tell Claire once"
-              icon="message"
-              body="Upload your résumé and chat with Claire for five minutes on iMessage. Skills, visa, salary floor, location, dream companies — captured for every future role."
-              footer="≈ 5 min · iMessage"
-            />
-            <StepCard
-              n="02"
-              title="We pitch you to employers"
-              icon="sparkle"
-              body="Hiring managers see your passed profile only after you clear the screen. No résumé spray. No cold-applying. You stay private until there's a real match."
-              footer="Private until matched"
-            />
-            <StepCard
-              n="03"
-              title="Interview directly"
-              icon="calendar"
-              body="Match found → calendar invite from the hiring manager. No recruiter middleman, no screening call about TypeScript years."
-              footer="Direct calendar handoff"
-            />
-          </div>
-        </div>
+      {/* ── What Claire does — 4-card editorial sequence (2026-05-26 design drop)
+           Replaces the older 3-step "How it works" cards. Same conceptual slot,
+           richer artifacts (résumé scan, iMessage prescreen, live feed of skips,
+           calendar invite) with the Standout-style inline verb pill.
+           id="how" so the header nav "How it works" → /#how anchor scrolls here. */}
+      <section id="how">
+        <CandidateSequence />
       </section>
 
       {/* ── Live interviews ──────────────────────────────── */}

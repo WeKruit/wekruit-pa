@@ -52,10 +52,10 @@ async function runAudit(db, opts) {
       latestInbound: null,
       latestOutbound: null,
     }
-    if (!parsed.outbound && (!current.latestInbound || parsed.receivedAt > current.latestInbound.receivedAt)) {
+    if (!parsed.outbound && (!current.latestInbound || parsed.messageAt > current.latestInbound.messageAt)) {
       current.latestInbound = parsed
     }
-    if (parsed.outbound && (!current.latestOutbound || parsed.receivedAt > current.latestOutbound.receivedAt)) {
+    if (parsed.outbound && (!current.latestOutbound || parsed.messageAt > current.latestOutbound.messageAt)) {
       current.latestOutbound = parsed
     }
     conversations.set(parsed.peer, current)
@@ -65,9 +65,9 @@ async function runAudit(db, opts) {
     .filter((conversation) => {
       if (!conversation.latestInbound) return false
       if (!conversation.latestOutbound) return true
-      return conversation.latestInbound.receivedAt > conversation.latestOutbound.receivedAt
+      return conversation.latestInbound.messageAt > conversation.latestOutbound.messageAt
     })
-    .sort((a, b) => b.latestInbound.receivedAt.localeCompare(a.latestInbound.receivedAt))
+    .sort((a, b) => b.latestInbound.messageAt.localeCompare(a.latestInbound.messageAt))
 
   const rows = []
   for (const conversation of unresponded.slice(0, opts.samples)) {
@@ -109,10 +109,14 @@ function parseRawWebhookDoc(doc) {
   const outbound = payload.is_outbound === true || from === WEKRUIT_SENDER
   const peer = outbound ? to : from
   if (!peer) return null
+  const webhookReceivedAt = cleanString(data.receivedAt, 80) ?? timestampToIso(data.receivedAt) ?? ""
+  const providerSentAt = cleanString(payload.date_sent, 80)
+  const messageAt = providerSentAt ?? webhookReceivedAt
 
   return {
     rawId: doc.id,
-    receivedAt: cleanString(data.receivedAt, 80) ?? timestampToIso(data.receivedAt) ?? "",
+    receivedAt: webhookReceivedAt,
+    messageAt,
     from,
     to,
     peer,
@@ -129,10 +133,10 @@ async function classifyConversation(db, conversation) {
   const token = inbound.content.match(PRESCREEN_TOKEN_RE)
   const base = {
     phone: conversation.phone,
-    latestInboundAt: inbound.receivedAt,
+    latestInboundAt: inbound.messageAt,
     latestInboundRawId: inbound.rawId,
     latestInboundText: inbound.content.slice(0, 240),
-    latestOutboundAt: latestOutbound?.receivedAt ?? null,
+    latestOutboundAt: latestOutbound?.messageAt ?? null,
     latestOutboundText: latestOutbound?.content?.slice(0, 160) ?? null,
     messageHandle: inbound.messageHandle ?? null,
   }
@@ -171,7 +175,7 @@ async function classifyConversation(db, conversation) {
     .filter((session) => session.jobId === jobId || session.paJobId === jobId)
   const outboundAfterInbound = outboundSnap.docs
     .map((doc) => ({ id: doc.id, ...(doc.data() ?? {}) }))
-    .filter((outbound) => isAtOrAfter(outbound.createdAt ?? outbound.queuedAt ?? outbound.updatedAt, inbound.receivedAt))
+    .filter((outbound) => isAtOrAfter(outbound.createdAt ?? outbound.queuedAt ?? outbound.updatedAt, inbound.messageAt))
   const auditTypes = auditSnap.docs.map((doc) => {
     const data = doc.data() ?? {}
     return data.type ?? data.reason ?? data.payload?.type ?? null

@@ -21,8 +21,11 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { onAuthStateChanged, signOut, type User } from "firebase/auth"
+import { clearSsoCookie } from "../lib/cross-domain-sso.js"
 import { httpsCallable } from "firebase/functions"
+import { doc, getFirestore, onSnapshot } from "firebase/firestore"
 import { auth, functions } from "../lib/firebase.js"
+import { mergePortalCache, readPortalCache } from "../lib/portal-cache.js"
 import {
   createCandidateProfileCorrectionSubmitter,
   type CandidateSelfProfile,
@@ -78,12 +81,32 @@ export function useClaimedProfile(): ClaimState {
 
   useEffect(() => {
     let cancelled = false
+    // Firestore live-update unsubscribe handle; recreated on claim success.
+    let unsubSnapshot: (() => void) | null = null
+
     const unsubscribe = onAuthStateChanged(auth(), (user) => {
+      // Reset prior listener on auth change.
+      if (unsubSnapshot) {
+        unsubSnapshot()
+        unsubSnapshot = null
+      }
       if (!user) {
         setState({ status: "signed_out" })
         return
       }
-      setState({ status: "loading" })
+
+      // Optimistic: hydrate from localStorage cache if we have both
+      // candidateId + selfProfile for this uid. UI paints immediately;
+      // the claim callable runs in the background to invalidate.
+      const cached = readPortalCache(user.uid)
+      if (cached?.candidateId && cached?.selfProfile) {
+        setState({ status: "ready", user, profile: cached.selfProfile })
+        attachSnapshot(cached.candidateId)
+      } else {
+        setState({ status: "loading" })
+      }
+
+      // Background callable — confirm + refresh.
       void (async () => {
         try {
           const claimProfile = httpsCallable<{ browserUid?: string | null }, CandidateClaimResult>(
@@ -92,20 +115,55 @@ export function useClaimedProfile(): ClaimState {
           )
           const browserUid = readStoredValue(GLOBAL_UID_KEY)
           const result = await claimProfile({ browserUid })
-          if (!cancelled) {
-            setState({ status: "ready", user, profile: result.data.selfProfile })
-          }
+          if (cancelled) return
+          mergePortalCache(user.uid, {
+            candidateId: result.data.candidateId,
+            selfProfile: result.data.selfProfile,
+          })
+          setState({ status: "ready", user, profile: result.data.selfProfile })
+          // (Re)attach snapshot listener to the now-known candidateId.
+          attachSnapshot(result.data.candidateId)
         } catch (err) {
-          console.error("candidate profile claim failed", err)
-          if (!cancelled) {
-            setState({ status: "error", message: profileLoadErrorMessage(err) })
+          if (cancelled) return
+          // Don't override optimistic-ready render on transient failure.
+          if (cached?.selfProfile) {
+            console.warn("candidate profile background refresh failed", err)
+            return
           }
+          console.error("candidate profile claim failed", err)
+          setState({ status: "error", message: profileLoadErrorMessage(err) })
         }
       })()
+
+      // Live updates: pa-candidate-self-profiles/{candidateId} read rule
+      // permits the mapped candidate. Real-time = no callable poll needed.
+      // Capture user.uid into closure-local const (User can churn).
+      const capturedUid = user.uid
+      function attachSnapshot(candidateId: string) {
+        if (unsubSnapshot) unsubSnapshot()
+        unsubSnapshot = onSnapshot(
+          doc(getFirestore(), "pa-candidate-self-profiles", candidateId),
+          (snap) => {
+            if (cancelled) return
+            if (!snap.exists()) return
+            const fresh = snap.data() as CandidateSelfProfile
+            mergePortalCache(capturedUid, { selfProfile: fresh })
+            setState((prev) => {
+              if (prev.status === "ready") return { status: "ready", user: prev.user, profile: fresh }
+              return prev
+            })
+          },
+          (err) => {
+            // Listener failure is non-fatal — callable already populated us.
+            console.warn("candidate self-profile snapshot failed", err)
+          },
+        )
+      }
     })
     return () => {
       cancelled = true
       unsubscribe()
+      if (unsubSnapshot) unsubSnapshot()
     }
   }, [])
 
@@ -419,7 +477,7 @@ function CandidateMeReady({
             <div className="wkv2-status__copy">
               <div className="wkv2-status__eyebrow">
                 <PulseDot size={6} />
-                <span>Pipeline · <strong>live</strong></span>
+                <span>My WeKruit · <strong>live</strong></span>
               </div>
               <h1 className="wkv2-status__h1">
                 {actionsCount > 0 ? (
@@ -473,7 +531,10 @@ function CandidateMeReady({
               <button
                 type="button"
                 className="wk-btn wk-btn--ghost wk-btn--sm wkv2-signout"
-                onClick={() => void signOut(auth())}
+                onClick={async () => {
+                  await clearSsoCookie()
+                  await signOut(auth())
+                }}
               >
                 Sign out
               </button>
@@ -1033,7 +1094,10 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
               <button
                 type="button"
                 className="wk-btn wk-btn--ghost wk-btn--sm wkv2-signout"
-                onClick={() => void signOut(auth())}
+                onClick={async () => {
+                  await clearSsoCookie()
+                  await signOut(auth())
+                }}
               >
                 Sign out
               </button>
@@ -1387,15 +1451,73 @@ function PortalGatePending({
       </PortalCard>
     )
   }
+  const heading =
+    gate.status === "redirecting_onboarding" ? "Almost there" : "Welcome back"
   const message =
     gate.status === "redirecting_onboarding"
-      ? "Finish onboarding with Claire first…"
-      : "Checking your WeKruit access…"
+      ? "Finishing onboarding with Claire — one second…"
+      : "Loading your matches and interviews…"
   return (
     <PortalCard kicker={kicker}>
-      <h1 className="wk-prof__h1">One moment</h1>
+      <h1 className="wk-prof__h1">{heading}</h1>
       <p className="wk-prof__sub">{message}</p>
+      <PortalSkeletonShimmer />
     </PortalCard>
+  )
+}
+
+// Tiny 3-dot bounce + 2 shimmer rows so the loading card feels alive
+// even when it does have to wait on the verify callable (first visit only,
+// once portal-cache stores portalReady=true subsequent renders skip this).
+function PortalSkeletonShimmer() {
+  return (
+    <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 12 }} aria-hidden="true">
+      <div style={{ display: "inline-flex", gap: 6 }}>
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 999,
+              background: "var(--ink-3)",
+              opacity: 0.4,
+              animation: `wk-skel-bounce 1.1s ${i * 0.15}s ease-in-out infinite`,
+            }}
+          />
+        ))}
+      </div>
+      <span
+        style={{
+          height: 10,
+          width: "85%",
+          borderRadius: 6,
+          background: "linear-gradient(90deg, var(--border) 0%, var(--cream-2) 50%, var(--border) 100%)",
+          backgroundSize: "200% 100%",
+          animation: "wk-skel-shimmer 1.6s linear infinite",
+        }}
+      />
+      <span
+        style={{
+          height: 10,
+          width: "65%",
+          borderRadius: 6,
+          background: "linear-gradient(90deg, var(--border) 0%, var(--cream-2) 50%, var(--border) 100%)",
+          backgroundSize: "200% 100%",
+          animation: "wk-skel-shimmer 1.6s 0.2s linear infinite",
+        }}
+      />
+      <style>{`
+        @keyframes wk-skel-bounce {
+          0%, 80%, 100% { transform: scale(0.7); opacity: 0.3; }
+          40% { transform: scale(1); opacity: 0.9; }
+        }
+        @keyframes wk-skel-shimmer {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+      `}</style>
+    </div>
   )
 }
 
@@ -1415,8 +1537,8 @@ function SignInRequired({ kicker }: { kicker: string }) {
 function PortalLoading({ kicker }: { kicker: string }) {
   return (
     <PortalCard kicker={kicker}>
-      <h1 className="wk-prof__h1">Loading…</h1>
-      <p className="wk-prof__sub">Checking your signed-in WeKruit profile.</p>
+      <h1 className="wk-prof__h1">Welcome back</h1>
+      <p className="wk-prof__sub">Loading your matches and interviews…</p>
     </PortalCard>
   )
 }

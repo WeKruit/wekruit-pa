@@ -4,13 +4,19 @@ import type { ConnectorContext, ConnectorDef, ConnectorNarrationTemplates } from
 
 export type { MatchConnectorHooks } from "./connector-types.js"
 
+// STRICT-COMPATIBLE (P1): the OpenAI Responses API rejects function schemas with
+// optional keys under strict function-calling ("required must include every key").
+// Use `.nullable()` (required + nullable) so the agent can call find-match through
+// the @openai/agents SDK without a 400. runConnector still re-parses with this Zod;
+// the execute coerces null → undefined for the hook. (Systemic Zod→strict-JSON in
+// the adapter buildSdkTools is deferred to a later phase; this slice only needs find-match.)
 const FindMatchInputSchema = z.object({
-  lang: z.enum(["en", "zh"]).optional(),
-  requestedCount: z.number().int().min(1).max(5).optional(),
-  source: z.string().optional(),
-  roleFocus: z.array(z.string()).nullable().optional(),
-  hardConstraintsActive: z.boolean().nullable().optional(),
-  allowBroadFallback: z.boolean().nullable().optional(),
+  lang: z.enum(["en", "zh"]).nullable(),
+  requestedCount: z.number().int().min(1).max(5).nullable(),
+  source: z.string().nullable(),
+  roleFocus: z.array(z.string()).nullable(),
+  hardConstraintsActive: z.boolean().nullable(),
+  allowBroadFallback: z.boolean().nullable(),
 })
 const FindMatchOutputSchema = z.object({
   ok: z.boolean(),
@@ -111,10 +117,19 @@ export const FIND_MATCH_CONNECTOR: ConnectorDef<
 > = {
   name: "find-match",
   version: "1",
+  // Hermes-style routing boundary (replaces the deleted job_search regex router):
+  // WHAT + verbatim positive triggers (EN + ZH) + explicit "Do NOT call when ...".
+  // The positive triggers fix the P0 baseline's EN under-call; the negatives encode
+  // the BFCL abstention cases (chit-chat, past-outcome questions, mere preference).
   description:
-    "Find ranked job matches for this user from the general WeKruit job catalog (V16 cascade). " +
-    "Use when the user asks for job recommendations, new openings, or 'what fits me' in the open market. " +
-    "Do NOT use for WeKruit partner/collab interview roles — use match-against-collab-jobs instead.",
+    "Find ranked open-market job matches for this user from the general WeKruit catalog (V16 cascade). " +
+    "CALL THIS as soon as the user expresses they want to see jobs / matches / recommendations / new openings / " +
+    "'what fits me' — even briefly. Example triggers: \"find me a job\", \"find me some software engineering jobs\", " +
+    "\"any new roles for me?\", \"show me matches\", \"got any recommendations?\", \"what's out there for me\", " +
+    "\"帮我看看有什么岗位匹配\", \"有没有合适的工作\", \"最近有没有推荐机会\", \"看看有什么新职位\". " +
+    "Do NOT call for: casual chit-chat or emotional support; a question about a PAST prescreen/interview outcome; " +
+    "PII edits; WeKruit partner/collab interview roles (use match-against-collab-jobs instead); or when the user is " +
+    "merely stating a preference/constraint without asking to search (use set-matching-preferences instead).",
   inputSchema: FindMatchInputSchema,
   outputSchema: FindMatchOutputSchema,
   expectedLatencyMs: 3500,
@@ -133,8 +148,8 @@ export const FIND_MATCH_CONNECTOR: ConnectorDef<
     }
     return hook(
       {
-        lang: input.lang,
-        requestedCount: input.requestedCount,
+        lang: input.lang ?? undefined,
+        requestedCount: input.requestedCount ?? undefined,
         source: input.source ?? "claire_tool",
         roleFocus: input.roleFocus ?? undefined,
         hardConstraintsActive: input.hardConstraintsActive ?? undefined,

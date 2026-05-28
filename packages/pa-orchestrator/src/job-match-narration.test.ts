@@ -39,6 +39,12 @@ test("composeFindMatchPreCall pre-call lines stay short (iMessage-friendly)", ()
   }
 })
 
+test("composeFindMatchPreCall avoids slangy status copy", () => {
+  for (const line of FIND_MATCH_PRE_CALL_VARIANTS.en) {
+    assert.doesNotMatch(line, /\b(?:gimme|lemme|brb|stuff|hang tight|hunting)\b/i)
+  }
+})
+
 test("composeMatchCollabPreCall returns collab-specific copy", () => {
   const en = composeMatchCollabPreCall("en", "u:e")
   assert.match(en, /partner|collab|interview/i)

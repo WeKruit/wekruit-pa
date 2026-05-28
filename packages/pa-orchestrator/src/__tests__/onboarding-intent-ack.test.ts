@@ -379,6 +379,10 @@ interface OnboardingCaptures {
   outboundBodies: string[]
 }
 
+function joinedOutbound(captures: OnboardingCaptures): string {
+  return captures.outboundBodies.join(" ")
+}
+
 function makeOnboardingCapturesStore(
   captures: OnboardingCaptures,
   onboardingState: string | undefined
@@ -611,7 +615,7 @@ test("shared onboarding answer writes memory/tags and waits until Q5 before job 
   ])
   assert.equal(recCalls.length, 0, "job recs must wait until Q5 is collected")
   assert.match(captures.outboundBodies[0] ?? "", /New York, NY/i)
-  assert.match(captures.outboundBodies[0] ?? "", /Where do you want to work/i)
+  assert.match(captures.outboundBodies[0] ?? "", /Where should I look next/i)
 
   docs.set("pa-users/u-onb", {
     ...(docs.get("pa-users/u-onb") ?? {}),
@@ -630,6 +634,102 @@ test("shared onboarding answer writes memory/tags and waits until Q5 before job 
   assert.deepEqual(recCalls[0].opts, { force: true, requestedCount: 2, allowBroadFallback: false })
   assert.match(captures.outboundBodies[1] ?? "", /Role A @ Example/)
   assert.match(captures.outboundBodies[1] ?? "", /requirements:/)
+})
+
+test("shared onboarding Q5 timing answer is not mistaken for subscription resume", async () => {
+  const captures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  const { db, store: docs } = fakeFirestore()
+  docs.set("pa-users/u-onb", {
+    id: "u-onb",
+    phoneE164: "+19999991000",
+    onboardingState: "pending",
+    workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "special_context" },
+    sharedOnboarding: { status: "active", currentQuestionId: "special_context", completed: false },
+  })
+  const recCalls: Array<{ userId: string; opts?: { force?: boolean; requestedCount?: number; allowBroadFallback?: boolean } }> = []
+  const store = makeOnboardingCapturesStore(captures, "pending") as OrchestratorStore
+  store.db = db
+  store.getOnboardingUser = async () => docs.get("pa-users/u-onb") as Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+  store.generateJobRecs = async (userId, _lang, opts) => {
+    recCalls.push({ userId, opts })
+    return {
+      message:
+        "One role worth your time: Product Engineer @ Example.\nhttps://example.com/a\nrequirements: product-heavy\nwhy: fits your product-heavy preference",
+      recCount: 1,
+    }
+  }
+  store.resumeJobRecommendationSubscription = async () => {
+    throw new Error("timing answer must not route to subscription resume")
+  }
+
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "evt-shared-q5-start-date",
+      body: "No hard constraints. I can start in 2-4 weeks; prefer product-heavy roles.",
+    },
+    store,
+  )
+
+  assert.deepEqual(recCalls, [
+    { userId: "u-onb", opts: { force: true, requestedCount: 2, allowBroadFallback: false } },
+  ])
+  const user = docs.get("pa-users/u-onb")
+  const shared = user?.sharedOnboarding as Record<string, unknown>
+  const answers = shared.answers as Record<string, { answer?: string }>
+  assert.equal(user?.onboardingState, "complete")
+  assert.equal(shared.status, "complete")
+  assert.equal(answers.special_context?.answer, "No hard constraints. I can start in 2-4 weeks; prefer product-heavy roles.")
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /job recommendations are back on/i)
+  assert.match(captures.outboundBodies[0] ?? "", /scanning|checking|Product Engineer @ Example/i)
+})
+
+test("shared onboarding Q5 no-match path stores the answer and keeps the reply contextual", async () => {
+  const captures: OnboardingCaptures = {
+    systemInputs: [],
+    appliedSteps: [],
+    llmCalls: 0,
+    outboundBodies: [],
+  }
+  const { db, store: docs } = fakeFirestore()
+  docs.set("pa-users/u-onb", {
+    id: "u-onb",
+    phoneE164: "+19999991000",
+    onboardingState: "pending",
+    workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "special_context" },
+    sharedOnboarding: { status: "active", currentQuestionId: "special_context", completed: false },
+  })
+  const store = makeOnboardingCapturesStore(captures, "pending") as OrchestratorStore
+  store.db = db
+  store.getOnboardingUser = async () => docs.get("pa-users/u-onb") as Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+  store.generateJobRecs = async () => ({ message: "", recCount: 0 })
+
+  await processInboundEvent(
+    {
+      ...baseEvent,
+      id: "evt-shared-q5-no-match-context",
+      body: "No hard constraints. I can start in 2-4 weeks and want product-heavy roles.",
+    },
+    store,
+  )
+
+  const user = docs.get("pa-users/u-onb")
+  const shared = user?.sharedOnboarding as Record<string, unknown>
+  const answers = shared.answers as Record<string, { answer?: string }>
+  const trace = docs.get(`${PA_COLLECTIONS.turnTraces}/turn-onb`) as Record<string, unknown>
+
+  assert.equal(answers.special_context?.answer, "No hard constraints. I can start in 2-4 weeks and want product-heavy roles.")
+  assert.equal(shared.status, "complete")
+  assert.equal(trace.status, "completed")
+  assert.equal((trace.decision as { selectedOwner?: string })?.selectedOwner, "shared_onboarding")
+  assert.match(captures.outboundBodies[0] ?? "", /product-heavy roles/i)
+  assert.match(captures.outboundBodies[0] ?? "", /2-4 week start/i)
+  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /could not pull fresh roles|fresh roles right now|job recommendations are back on/i)
 })
 
 test("shared onboarding rejects duplicate greeting on Q1 without recording an answer", async () => {
@@ -684,7 +784,7 @@ test("shared onboarding rejects duplicate greeting on Q1 without recording an an
   assert.equal(turnUpdates.some((patch) => patch.directIntentResult === "ignored_non_answer"), true)
 })
 
-test("shared onboarding does not re-ask a rejected Q5 answer", async () => {
+test("shared onboarding does not mutate or complete on an unclear Q5 answer", async () => {
   const captures: OnboardingCaptures = {
     systemInputs: [],
     appliedSteps: [],
@@ -724,11 +824,11 @@ test("shared onboarding does not re-ask a rejected Q5 answer", async () => {
 
   const user = docs.get("pa-users/u-onb")
   const shared = user?.sharedOnboarding as Record<string, unknown>
-  assert.equal(shared.status, "complete")
-  assert.equal(recCalls.length, 1)
-  assert.match(captures.outboundBodies[0] ?? "", /Role A @ Example/)
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /anything special|constraints|dealbreakers/i)
-  assert.equal(turnUpdates.some((patch) => patch.sharedOnboardingFailForward === true), true)
+  assert.equal(shared.status, "active")
+  assert.equal(shared.currentQuestionId, "special_context")
+  assert.deepEqual(shared.answers, {})
+  assert.equal(recCalls.length, 0)
+  assert.equal(turnUpdates.some((patch) => patch.sharedOnboardingFailForward === true), false)
 })
 
 test("shared onboarding accepts a real Q1 answer and advances to culture_stage", async () => {
@@ -822,10 +922,13 @@ test("shared onboarding bootstrap loads parsed resume context before sending Q1"
   const promptContext = shared.promptContext as Record<string, unknown>
   assert.deepEqual(promptContext.recentCompanies, ["Rain"])
   assert.deepEqual(promptContext.recentTitles, ["Software Engineer - Fullstack"])
-  assert.match(captures.outboundBodies[0] ?? "", /Saw your resume come through/i)
-  assert.match(captures.outboundBodies[0] ?? "", /Software Engineer - Fullstack/i)
-  assert.match(captures.outboundBodies[0] ?? "", /Rain/i)
-  assert.match(captures.outboundBodies[0] ?? "", /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
+  assert.equal(captures.outboundBodies.length, 2, "bootstrap opener should ship as two readable bubbles")
+  assert.ok(captures.outboundBodies.every((body) => body.length < 260), "each bootstrap bubble should stay short")
+  const outbound = joinedOutbound(captures)
+  assert.match(outbound, /Saw your resume come through/i)
+  assert.match(outbound, /Software Engineer - Fullstack/i)
+  assert.match(outbound, /Rain/i)
+  assert.match(outbound, /https:\/\/wekruit\.com\/me\/profile/i)
 })
 
 test("shared onboarding bootstrap falls back to resume artifact summary when parsed resume pointer is stale", async () => {
@@ -866,10 +969,13 @@ test("shared onboarding bootstrap falls back to resume artifact summary when par
   assert.deepEqual(promptContext.recentCompanies, ["Tesla Inc"])
   assert.deepEqual(promptContext.recentTitles, ["Software Engineer Intern"])
   assert.deepEqual(promptContext.skills, ["C++", "JavaScript", "Python"])
-  assert.match(captures.outboundBodies[0] ?? "", /Saw your resume come through/i)
-  assert.match(captures.outboundBodies[0] ?? "", /Software Engineer Intern/i)
-  assert.match(captures.outboundBodies[0] ?? "", /Tesla Inc/i)
-  assert.match(captures.outboundBodies[0] ?? "", /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
+  assert.equal(captures.outboundBodies.length, 2, "bootstrap opener should ship as two readable bubbles")
+  assert.ok(captures.outboundBodies.every((body) => body.length < 260), "each bootstrap bubble should stay short")
+  const outbound = joinedOutbound(captures)
+  assert.match(outbound, /Saw your resume come through/i)
+  assert.match(outbound, /Software Engineer Intern/i)
+  assert.match(outbound, /Tesla Inc/i)
+  assert.match(outbound, /https:\/\/wekruit\.com\/me\/profile/i)
 })
 
 test("integration: manual zh job_search before website start is redirected to candidate onboarding", async () => {
@@ -887,9 +993,10 @@ test("integration: manual zh job_search before website start is redirected to ca
   assert.equal(captures.llmCalls, 0, "fresh onboarding now uses the runtime pipeline, not LLM compose")
   assert.deepEqual(captures.systemInputs, [])
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "验证码", "6-digit"].join("|"), "i"))
+  const outbound = joinedOutbound(captures)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
+  assert.match(outbound, /career growth, compensation, stability, mission, learning/)
+  assert.doesNotMatch(outbound, new RegExp(["what " + "email", "send " + "stuff", "验证码", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.appliedSteps, [])
 })
 
@@ -907,9 +1014,10 @@ test("integration: manual en job_search before website start is redirected to ca
   )
   assert.equal(captures.llmCalls, 0)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
+  const outbound = joinedOutbound(captures)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
+  assert.match(outbound, /career growth, compensation, stability, mission, learning/)
+  assert.doesNotMatch(outbound, new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.systemInputs, [])
   assert.deepEqual(captures.appliedSteps, [])
 })
@@ -928,9 +1036,10 @@ test("integration: manual casual greeting before website start is redirected to 
   )
   assert.equal(captures.llmCalls, 0)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
+  const outbound = joinedOutbound(captures)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
+  assert.match(outbound, /career growth, compensation, stability, mission, learning/)
+  assert.doesNotMatch(outbound, new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   assert.deepEqual(captures.systemInputs, [])
   assert.deepEqual(captures.appliedSteps, [])
 })
@@ -1019,9 +1128,10 @@ test("integration: intent-ack flag cannot bypass website-start redirect", async 
     )
     assert.equal(captures.llmCalls, 0)
     // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-    assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-    assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
-    assert.doesNotMatch(captures.outboundBodies[0] ?? "", new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
+    const outbound = joinedOutbound(captures)
+    assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
+    assert.match(outbound, /career growth, compensation, stability, mission, learning/)
+    assert.doesNotMatch(outbound, new RegExp(["what " + "email", "send " + "stuff", "6-digit"].join("|"), "i"))
   } finally {
     if (prev === undefined) delete process.env.PA_ONBOARDING_INTENT_ACK_DISABLED
     else process.env.PA_ONBOARDING_INTENT_ACK_DISABLED = prev

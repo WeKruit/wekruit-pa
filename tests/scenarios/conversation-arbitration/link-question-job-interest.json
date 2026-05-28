@@ -1,0 +1,30 @@
+{
+  "id": "link-question-job-interest",
+  "description": "A link question with soft interest should answer the explicit question first and store job-interest evidence.",
+  "initialFirestoreState": {
+    "pa-users/u-link": {
+      "onboardingState": "complete"
+    }
+  },
+  "inbound": {
+    "userId": "u-link",
+    "text": "Do you have a link? Seems fine",
+    "createdAt": "2026-05-26T23:13:00.000Z",
+    "channel": "imessage"
+  },
+  "recentOutbound": [
+    {
+      "role": "assistant",
+      "body": "One role worth your time: Senior Software Engineer at Variance. Tell me if it is interesting, and why or why not.",
+      "createdAt": "2026-05-26T23:12:30.000Z"
+    }
+  ],
+  "expected": {
+    "owner": "explicit_explanation",
+    "action": "answer_then_continue",
+    "evidenceWriteKinds": ["job_interest"],
+    "trace": {
+      "selectedOwner": "explicit_explanation"
+    }
+  }
+}

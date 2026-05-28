@@ -306,7 +306,7 @@ export async function planJobOutreach(
     if (finalDecision.allowQueue) {
       if (!deps.enqueueRuntimeInvite) throw new Error("enqueueRuntimeInvite dependency required")
       if (!candidate.phoneE164) throw new Error("candidate_phone_required_for_live_queue")
-      const jobUrl = `https://candidate.wekruit.com/j/${input.job.jobId}`
+      const jobUrl = `https://wekruit.com/j/${input.job.jobId}`
       const enqueueResult = await deps.enqueueRuntimeInvite({
         userId: candidate.candidateId,
         toE164: candidate.phoneE164,

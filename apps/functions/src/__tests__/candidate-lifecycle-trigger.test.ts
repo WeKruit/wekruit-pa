@@ -126,7 +126,7 @@ describe("evaluateCandidateLifecycleTrigger", () => {
           jobId: "rain-fullstack-1",
           jobTitle: "Software Engineer - Fullstack",
           companyName: "Rain",
-          jobUrl: "https://candidate.wekruit.com/j/rain-fullstack-1",
+          jobUrl: "https://wekruit.com/j/rain-fullstack-1",
           requirements: ["React", "Node.js", "SQL"],
           matchReason: "Your dashboard and SQL ownership are relevant here.",
           matchId: "match-1",
@@ -141,7 +141,7 @@ describe("evaluateCandidateLifecycleTrigger", () => {
       assert.equal((ready.runtimeContext.job as Record<string, unknown>)?.companyName, "Rain")
       assert.equal(
         (ready.runtimeContext.job as Record<string, unknown>)?.jobUrl,
-        "https://candidate.wekruit.com/j/rain-fullstack-1",
+        "https://wekruit.com/j/rain-fullstack-1",
       )
       assert.deepEqual(
         (ready.runtimeContext.job as Record<string, unknown>)?.requirements,
@@ -180,7 +180,7 @@ describe("runCandidateLifecycleTrigger", () => {
         jobId: "rain-fullstack-1",
         jobTitle: "Software Engineer - Fullstack",
         companyName: "Rain",
-        jobUrl: "https://candidate.wekruit.com/j/rain-fullstack-1",
+        jobUrl: "https://wekruit.com/j/rain-fullstack-1",
         requirements: ["React", "Node.js", "SQL"],
         matchReason: "It matches your dashboard and SQL work.",
       },
@@ -196,7 +196,7 @@ describe("runCandidateLifecycleTrigger", () => {
     assert.equal((outbound[0]?.context as Record<string, unknown>)?.eventType, "match_notification")
     assert.equal(
       ((outbound[0]?.context as Record<string, unknown>)?.job as Record<string, unknown>)?.jobUrl,
-      "https://candidate.wekruit.com/j/rain-fullstack-1",
+      "https://wekruit.com/j/rain-fullstack-1",
     )
     assert.deepEqual(
       ((outbound[0]?.context as Record<string, unknown>)?.job as Record<string, unknown>)?.requirements,

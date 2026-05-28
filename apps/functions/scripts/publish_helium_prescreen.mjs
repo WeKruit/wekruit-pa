@@ -135,7 +135,7 @@ console.log(`After:  publicVisible=true, candidatePageStatus=published, prescree
 
 if (APPLY) {
   await ref.set(updates, { merge: true });
-  console.log(`WROTE — ${JOB_ID} prescreen page live at https://candidate.wekruit.com/j/${JOB_ID}`);
+  console.log(`WROTE — ${JOB_ID} prescreen page live at https://wekruit.com/j/${JOB_ID}`);
 } else {
   console.log("DRY-RUN — pass --apply to write.");
 }

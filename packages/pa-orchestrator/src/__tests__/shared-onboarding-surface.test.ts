@@ -152,7 +152,7 @@ describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
     assert.match(intent, /exactly one resume\/profile detail/i)
     assert.match(intent, /2-3 short sentences max/i)
     assert.match(intent, /hiring manager/i)
-    assert.match(intent, /https:\/\/candidate\.wekruit\.com\/me\/profile/i)
+    assert.match(intent, /https:\/\/wekruit\.com\/me\/profile/i)
     assert.match(intent, /do not copy a fixed template/i)
     assert.match(intent, /what matters most in your next company/i)
     assert.doesNotMatch(intent, /what kind of role/i)
@@ -181,5 +181,20 @@ describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
     assert.match(intent, /Photon/i)
     assert.match(intent, /Do not use "Saw your resume come through"/i)
     assert.doesNotMatch(intent, /first SMS after the candidate opened with Hello, WeKruit/i)
+  })
+
+  it("keeps the final context slot short instead of enumerating categories", () => {
+    const intent = buildOnboardingSurfaceIntent({
+      slot: "special_context",
+      mode: "ask",
+      voiceProfile: profile(),
+      promptContext: {},
+      ackHint: "Mirror location preferences first.",
+      lang: "en",
+    })
+
+    assert.match(intent, /Any non-negotiables I should keep in mind before matching you\?/)
+    assert.match(intent, /ask for non-negotiables in one short question/i)
+    assert.match(intent, /Do not list categories like constraints, strengths, dealbreakers, timing, and context/i)
   })
 })

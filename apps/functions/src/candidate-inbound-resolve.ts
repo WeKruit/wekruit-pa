@@ -15,6 +15,7 @@ import { isE164 } from "./sendblue/handle-format.js"
  */
 export const DEV_BYPASS_PHONE = "+14243201960"
 const PRESCREEN_TOKEN_RE = /WeKruit_([A-Za-z0-9-]+)_([A-Za-z0-9_-]+)_Job/i
+type CandidatePhoneMatch = { id: string; data: Record<string, unknown> }
 
 function parsePrescreenCandidateId(text: string): string | null {
   const match = text.match(PRESCREEN_TOKEN_RE)
@@ -28,11 +29,26 @@ async function lookupUserByPhoneE164(db: Firestore, phoneE164: string): Promise<
   // non-E.164 string; never write a non-E.164 handle to candidate-handles.
   if (!isE164(phoneE164)) return null
   try {
-    const snap = await db.collection(PA_COLLECTIONS.users).where("phoneE164", "==", phoneE164).limit(1).get()
-    if (!snap.empty) return snap.docs[0]!.id
+    const limit = phoneE164 === DEV_BYPASS_PHONE ? 25 : 1
+    const snap = await db.collection(PA_COLLECTIONS.users).where("phoneE164", "==", phoneE164).limit(limit).get()
+    if (!snap.empty) {
+      const matches = snap.docs.map((doc) => ({
+        id: doc.id,
+        data: (doc.data() ?? {}) as Record<string, unknown>,
+      }))
+      if (phoneE164 === DEV_BYPASS_PHONE && matches.length > 1) {
+        const handleOwner = await lookupPhoneHandleOwner(db, phoneE164)
+        return chooseDevBypassPhoneMatch(matches, handleOwner)
+      }
+      return snap.docs[0]!.id
+    }
   } catch {
     // Fall through to handle fallback.
   }
+  return lookupPhoneHandleOwner(db, phoneE164)
+}
+
+async function lookupPhoneHandleOwner(db: Firestore, phoneE164: string): Promise<string | null> {
   try {
     const { handleId } = hashCandidateHandle("phone", phoneE164)
     const snap = await db.collection(PA_COLLECTIONS.candidateHandles).doc(handleId).get()
@@ -42,6 +58,61 @@ async function lookupUserByPhoneE164(db: Firestore, phoneE164: string): Promise<
   } catch {
     return null
   }
+}
+
+function chooseDevBypassPhoneMatch(matches: CandidatePhoneMatch[], handleOwner: string | null): string {
+  const ranked = matches
+    .map((match) => ({
+      ...match,
+      score: devBypassConversationScore(match.data, match.id === handleOwner),
+      updatedAtMs: timestampMs(match.data.updatedAt),
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score
+      if (b.updatedAtMs !== a.updatedAtMs) return b.updatedAtMs - a.updatedAtMs
+      return a.id.localeCompare(b.id)
+    })
+  return ranked[0]?.id ?? handleOwner ?? matches[0]!.id
+}
+
+function devBypassConversationScore(data: Record<string, unknown>, isHandleOwner: boolean): number {
+  const workSession = asRecord(data.workSession)
+  const sharedOnboarding = asRecord(data.sharedOnboarding)
+  const postMatchRetention = asRecord(data.postMatchRetention)
+
+  let score = isHandleOwner ? 5 : 0
+  if (workSession?.kind === "job_prescreen" && workSession.status === "active") score += 1000
+  if (postMatchRetention?.stage && postMatchRetention.stage !== "complete") score += 900
+  if (
+    workSession?.kind === "shared_onboarding" &&
+    workSession.status === "active" &&
+    workSession.startSource === "post_prescreen_pass"
+  ) {
+    score += 700
+  }
+  if (workSession?.kind === "shared_onboarding" && workSession.status === "active") score += 100
+  if (sharedOnboarding?.status === "active" && sharedOnboarding.completed !== true) score += 100
+  return score
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function timestampMs(value: unknown): number {
+  if (typeof value === "string") {
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  if (value && typeof value === "object") {
+    const candidate = value as { toDate?: () => Date; _seconds?: number; seconds?: number }
+    if (typeof candidate.toDate === "function") return candidate.toDate().getTime()
+    if (typeof candidate._seconds === "number") return candidate._seconds * 1000
+    if (typeof candidate.seconds === "number") return candidate.seconds * 1000
+  }
+  return 0
 }
 
 async function bindPhoneToCandidate(

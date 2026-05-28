@@ -13,7 +13,7 @@
 
 import { cookieDomainForHost } from "./browser-identity"
 
-export type SignupSource = "WeKruit_Laid_Off" | "candidate"
+export type SignupSource = "WeKruit_Laid_Off" | "candidate" | "layoffhedge"
 
 /**
  * Build marker — minifiers rename exported function names, so the deploy
@@ -31,6 +31,7 @@ function urlSource(): SignupSource | null {
   if (!v) return null
   if (v === "layoff" || v === "WeKruit_Laid_Off") return "WeKruit_Laid_Off"
   if (v === "candidate") return "candidate"
+  if (v === "layoffhedge") return "layoffhedge"
   return null
 }
 
@@ -46,7 +47,7 @@ function cookieSource(): SignupSource | null {
   const match = document.cookie.match(new RegExp("(?:^|; )" + COOKIE_NAME + "=([^;]+)"))
   if (!match) return null
   const v = decodeURIComponent(match[1])
-  if (v === "WeKruit_Laid_Off" || v === "candidate") return v
+  if (v === "WeKruit_Laid_Off" || v === "candidate" || v === "layoffhedge") return v
   return null
 }
 
@@ -89,6 +90,8 @@ export function stickSourceFromLoginNext(raw: string | null | undefined): void {
   const fromQuery = params.get("source")
   if (fromQuery === "layoff" || fromQuery === "WeKruit_Laid_Off") {
     writeCookie("WeKruit_Laid_Off")
+  } else if (fromQuery === "layoffhedge") {
+    writeCookie("layoffhedge")
   } else if (fromQuery === "candidate") {
     writeCookie("candidate")
   }

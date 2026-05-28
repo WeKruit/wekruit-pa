@@ -18,10 +18,14 @@ import { stripLeadingIsoTimestamp } from "./messages.js"
  *  - `clearSession` is a *soft* delete. Hard deletion of a user's
  *    transcript is reserved for `__PA_RESET__` (A6). The SDK must never
  *    be able to wipe history.
+ *  - `addItems` persists assistant output only. The orchestrator is the
+ *    source of truth for user transcript rows; SDK user items are model
+ *    inputs and may contain synthetic routing instructions rather than
+ *    candidate-visible text.
  *  - `addItems` is idempotent on retry. We hash `(sessionId, role, body)`
  *    and short-circuit on collision so the orchestrator's own
- *    `appendMessage(out-${eventId})` write isn't double-written by the
- *    SDK persisting the same assistant turn back through `addItems`.
+ *    assistant transcript write isn't double-written by the SDK persisting
+ *    the same assistant turn back through `addItems`.
  *  - All `.set(...)` writes filter `undefined` fields per the Phase 10
  *    `appendAuditEvent`/`runConnector` pattern (Firestore rejects `undefined`).
  */
@@ -197,6 +201,12 @@ export class FirestoreSession implements Session {
         continue
       }
       if (extracted.role === "system") continue
+      if (extracted.role === "user") {
+        this.log("[firestore-session] skipping sdk user input; orchestrator owns user transcript", {
+          sessionId: this.sessionId,
+        })
+        continue
+      }
 
       const idempotencyKey = deriveIdempotencyKey(this.sessionId, extracted.role, extracted.body)
       const existing = await this.db

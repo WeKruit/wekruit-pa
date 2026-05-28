@@ -14,7 +14,7 @@ export const SHARED_ONBOARDING_EVENT_SOURCE = "shared_onboarding"
 export const SHARED_ONBOARDING_EVENT_KIND = "onboarding_started"
 export const SHARED_ONBOARDING_WORK_SESSION_KIND = "shared_onboarding"
 export const SHARED_ONBOARDING_BOUNDARY = "website_sms_onboarding"
-export const CANDIDATE_PROFILE_URL = "https://candidate.wekruit.com/me/profile"
+export const CANDIDATE_PROFILE_URL = "https://wekruit.com/me/profile"
 
 export type SharedOnboardingQuestionId =
   | "main_goal"
@@ -99,8 +99,7 @@ export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = 
   {
     id: "special_context",
     label: "special context",
-    prompt:
-      "Anything special I should know before matching you: constraints, strengths, dealbreakers, timing, or context that is not obvious from your resume?",
+    prompt: "Any non-negotiables I should keep in mind before matching you?",
   },
 ]
 
@@ -582,7 +581,7 @@ function openingResumeDetail(ctx: SharedOnboardingPromptContext): string | null 
   const location = ctx.currentLocation ?? ctx.recentLocations?.[0]
   const industries = humanSignalList(ctx.industryTags, 2)
   const skills = humanSignalList(ctx.skills, 2)
-  if (title && location && company) return `${title} in ${location}, with ${company} on there`
+  if (title && location && company) return `${title} in ${location} at ${company}`
   if (title && company) return `${title} work at ${company}`
   if (title && location) return `${title} in ${location}`
   if (company && location) return `${company} in ${location}`
@@ -604,8 +603,9 @@ export function buildSharedOnboardingOpeningPrompt(
     : " Saw your resume come through."
   return [
     `${greeting}${resumeLine}`,
-    "I'm Claire; when I find a strong fit, I'll connect you directly with the hiring manager, and I'll ask a few quick questions so matches are tighter.",
-    `You can update ${CANDIDATE_PROFILE_URL} or just tell me here; ${getSharedOnboardingQuestion("main_goal").prompt}`,
+    "If there's a strong fit, I'll connect you with the hiring manager.",
+    `You can also update ${CANDIDATE_PROFILE_URL}, or just tell me here.`,
+    getSharedOnboardingQuestion("main_goal").prompt,
   ].join(" ")
 }
 
@@ -705,7 +705,7 @@ export function buildSharedOnboardingPrompt(
   if (id === "location_relocation") {
     const location = locationSummary(ctx)
     const lead = location ? `I see ${location}. ` : ""
-    return `${lead}Where do you want to work next, and are you open to remote, onsite, or relocating to another city?`
+    return `${lead}Where should I look next: specific cities, remote, onsite, or open to relocating?`
   }
   return question.prompt
 }
@@ -779,7 +779,7 @@ export function buildSharedOnboardingStartedState(
 }
 
 function normalizedSource(value: unknown): WekruitSignupSource {
-  return value === WEKRUIT_CANDIDATE_SOURCE ? WEKRUIT_CANDIDATE_SOURCE : WEKRUIT_LAYOFF_SOURCE
+  return value === WEKRUIT_LAYOFF_SOURCE ? WEKRUIT_LAYOFF_SOURCE : WEKRUIT_CANDIDATE_SOURCE
 }
 
 export function sharedOnboardingSignupSource(value: unknown): WekruitSignupSource {

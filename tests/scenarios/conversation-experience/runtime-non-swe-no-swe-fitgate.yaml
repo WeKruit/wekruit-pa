@@ -1,0 +1,47 @@
+id: conversation_experience_runtime_non_swe_no_swe_fitgate
+description: |
+  Bug C regression. The live bug asked a customer-service / virtual-assistant
+  candidate "have you shipped production Java, Python, JavaScript, or Node work?"
+  because the SWE fit-gate keyed off the JOB's requirement tokens only and ignored
+  candidate fit + collab status.
+
+  Here an EXTERNAL job whose requirements DO contain SWE tokens (python, javascript)
+  is recommended. Pre-fix, buildRoleFitGate matched those tokens and emitted the
+  SWE stack question as the second bubble. Post-fix, an external (collab=false) job
+  gets no fit-gate at all — neutral apply-via-link copy — so the absurd SWE question
+  never reaches a non-engineering candidate.
+
+  Uses joined_reply_not_matches_any so the forbidden copy is checked across BOTH
+  delivery bubbles (the offending line was always the second bubble).
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992012"
+chatId: "iMessage;+19999992012"
+userState:
+  onboardingState: complete
+turns:
+  - user: "[system-event:job_rec:send_imessage]"
+    rawMeta:
+      runtimeEvent: true
+      runtimeEventSource: "job_rec_daily_batch"
+      runtimeEventKind: "daily_job_recommendations"
+      context:
+        trustedOutboundBody: "I found a role that lines up:\n\nCustomer Service Agent @ Helply\nhttps://jobright.ai/jobs/info/cs999\nrequirements: python, javascript, support tooling"
+        jobs:
+          - title: "Customer Service Agent"
+            companyName: "Helply"
+            url: "https://jobright.ai/jobs/info/cs999"
+            requirements: "requirements: python, javascript, support tooling"
+            reason: "your customer-facing background maps well"
+            collab: false
+    assert:
+      reply_min_length: 2
+      reply_count_min: 2
+      joined_reply_contains_any:
+        - "apply through that link directly"
+      joined_reply_not_matches_any:
+        - "Java, Python, JavaScript, or Node"
+        - "shipped production"
+        - "\\bscreen\\b"
+        - "move it forward"

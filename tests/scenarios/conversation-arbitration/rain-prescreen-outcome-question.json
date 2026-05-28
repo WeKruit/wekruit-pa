@@ -1,0 +1,49 @@
+{
+  "id": "rain-prescreen-outcome-question",
+  "description": "Rain fit-improvement question while shared onboarding is waiting on industry_interest must answer prescreen outcome first.",
+  "initialFirestoreState": {
+    "pa-users/u1": {
+      "id": "u1",
+      "phoneE164": "+15109136602",
+      "onboardingState": "complete",
+      "workSession": {
+        "sessionId": "ps-rain",
+        "jobId": "rain-product-manager-cards-95ae1a01",
+        "status": "ended",
+        "boundary": "terminal",
+        "terminal": "PAUSE"
+      },
+      "sharedOnboarding": {
+        "status": "active",
+        "currentQuestionId": "industry_interest"
+      }
+    },
+    "pa-prescreen-memory-events/ps-rain": {
+      "userId": "u1",
+      "jobId": "rain-product-manager-cards-95ae1a01",
+      "terminal": "PAUSE",
+      "summary": "Strong PM role fit: end-to-end ownership, integrations, and 3X lead lift. Mentions technical data-flow design and failure handling; lacks concrete implementation depth.",
+      "evidenceTags": ["product_management", "technical_depth_gap"]
+    }
+  },
+  "inbound": {
+    "userId": "u1",
+    "text": "Could you help me understand how I could have improved my fit for the above role at Rain?",
+    "createdAt": "2026-05-26T22:39:04.000Z",
+    "channel": "imessage"
+  },
+  "expected": {
+    "owner": "prescreen_outcome_explainer",
+    "requiredTools": ["load_prescreen_evidence"],
+    "forbiddenMutations": ["sharedOnboarding.answers.industry_interest"],
+    "orderedActionKinds": ["answer_prescreen_outcome"],
+    "outbound": {
+      "source": "prescreen_outcome_explainer",
+      "contains": ["Rain", "technical"],
+      "notContains": ["Where do you want to work", "remote, onsite", "relocating"]
+    },
+    "trace": {
+      "selectedOwner": "prescreen_outcome_explainer"
+    }
+  }
+}

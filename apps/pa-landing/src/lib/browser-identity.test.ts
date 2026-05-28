@@ -41,11 +41,11 @@ test("isLayoffHost recognizes layoff Firebase hosting targets", () => {
 test("candidatePortalLoginUrl targets candidate origin for cross-host auth", () => {
   assert.equal(
     candidatePortalLoginUrl("/me"),
-    "https://candidate.wekruit.com/login?next=%2Fme",
+    "https://wekruit.com/login?next=%2Fme",
   )
   assert.equal(
     candidatePortalLoginUrl("/onboarding?source=layoff"),
-    "https://candidate.wekruit.com/login?next=%2Fonboarding%3Fsource%3Dlayoff",
+    "https://wekruit.com/login?next=%2Fonboarding%3Fsource%3Dlayoff",
   )
 })
 
@@ -129,6 +129,14 @@ test("deriveOnboardingIntentFromPath distinguishes job prescreen from normal onb
 
 test("onboardingDestination routes layoff source to layoff query", () => {
   assert.equal(onboardingDestination("WeKruit_Laid_Off"), "/onboarding?source=layoff")
+  assert.equal(onboardingDestination("candidate"), "/onboarding")
+})
+
+test("onboardingDestination routes layoffhedge to the standard candidate path", () => {
+  assert.equal(onboardingDestination("layoffhedge"), "/onboarding")
+})
+
+test("onboardingDestination routes candidate to the standard path", () => {
   assert.equal(onboardingDestination("candidate"), "/onboarding")
 })
 

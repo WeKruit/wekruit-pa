@@ -1,0 +1,7 @@
+{
+  "kind": "delivery",
+  "description": "Substantive new information warrants a written text reply, not a tapback.",
+  "context": "Claire asked about the user's background.",
+  "turn": "I've got 5 years of backend experience at Stripe and I'm targeting staff engineer roles now",
+  "expect": { "mode": "text" }
+}

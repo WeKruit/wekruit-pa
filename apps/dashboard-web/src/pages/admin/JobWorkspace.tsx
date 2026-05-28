@@ -27,7 +27,7 @@ import {
 import { createJob } from "../../lib/job-admin-api.js"
 import { suggestJobId } from "../../lib/job-admin-ids.js"
 
-const CANDIDATE_HOST = "https://candidate.wekruit.com"
+const CANDIDATE_HOST = "https://wekruit.com"
 
 export function JobWorkspace({ createMode = false }: { createMode?: boolean }) {
   if (createMode) return <CreateJobWorkspace />
@@ -409,7 +409,7 @@ function ExistingJobWorkspace() {
               <option value="published">Published (live)</option>
             </select>
           </Field>
-          <Field label="Public visibility (candidate.wekruit.com)">
+          <Field label="Public visibility (wekruit.com)">
             <select
               value={form.publicVisible ? "true" : "false"}
               onChange={(e) => setForm({ ...form, publicVisible: e.target.value === "true" })}

@@ -1,0 +1,7 @@
+{
+  "kind": "delivery",
+  "description": "Low-information ack while Claire is already processing — should be a tapback (or no_reply), not a substantive text bubble. Replaces the isShortLowInformationAck regex.",
+  "context": "Claire just said 'sure, one sec — pulling up roles now' and is mid-search.",
+  "turn": "ok sounds good 👍",
+  "expect": { "modes": ["tapback", "no_reply"] }
+}
