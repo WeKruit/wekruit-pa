@@ -27,6 +27,7 @@ import { Icon } from "../components/console/Icon.js"
 import {
   Card,
   DataTable,
+  type DataTableSort,
   EmptyState,
   MetricStrip,
   PageHeader,
@@ -462,6 +463,7 @@ export function Candidates() {
   const [lookupLoading, setLookupLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [search, setSearch] = useState("")
+  const [sort, setSort] = useState<DataTableSort | null>({ key: "last", dir: "desc" })
   const [stateFilter, setStateFilter] = useState<Set<LifecycleState>>(new Set())
   const [sourceFilter, setSourceFilter] = useState<Set<SourceKind>>(new Set())
   const [identityFilter, setIdentityFilter] = useState<Set<IdentityFilter>>(new Set())
@@ -643,6 +645,38 @@ export function Candidates() {
     sourceFilter,
     stateFilter,
   ])
+
+  // Ranking. Sortable columns: handle (alpha), lifecycle (pipeline order),
+  // profile (completeness %), last (recency). Header click toggles
+  // asc → desc → off via DataTable's onSort.
+  const sorted = useMemo(() => {
+    if (!sort) return filtered
+    const dir = sort.dir === "asc" ? 1 : -1
+    const val = (r: Row): number | string => {
+      switch (sort.key) {
+        case "handle": return (r.handle || "").toLowerCase()
+        case "lifecycle": return LIFECYCLE_ORDER.indexOf(r.lifecycle)
+        case "source": return SOURCE_LABEL[r.source] || ""
+        case "profile": return r.profilePct ?? 0
+        case "last": return r.lastActiveIso ? Date.parse(r.lastActiveIso) || 0 : 0
+        default: return 0
+      }
+    }
+    return [...filtered].sort((a, b) => {
+      const av = val(a)
+      const bv = val(b)
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir
+      return String(av).localeCompare(String(bv)) * dir
+    })
+  }, [filtered, sort])
+
+  const toggleSort = (key: string) => {
+    setSort((s) => {
+      if (!s || s.key !== key) return { key, dir: "asc" }
+      if (s.dir === "asc") return { key, dir: "desc" }
+      return null
+    })
+  }
 
   const toggleState = (s: LifecycleState) => {
     const next = new Set(stateFilter)
@@ -922,14 +956,19 @@ export function Candidates() {
         />
       ) : (
         <DataTable
-          rows={filtered}
+          rows={sorted}
           onRowClick={(r) => setDrawer(r as Row)}
           search={search}
           onSearch={setSearch}
+          sort={sort}
+          onSort={toggleSort}
+          count={sorted.length}
+          totalCount={rows.length}
           columns={[
             {
               key: "handle",
               label: "Handle",
+              sortable: true,
               render: (r) => (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                   <Icon name={handleIcon((r as Row).handleKind)} size={13} style={{ color: "var(--ink-3)" }} />
@@ -965,6 +1004,7 @@ export function Candidates() {
             {
               key: "lifecycle",
               label: "State",
+              sortable: true,
               render: (r) => (
                 <StatusPill tone={LIFECYCLE_TONE[(r as Row).lifecycle]} dot>
                   {LIFECYCLE_LABEL[(r as Row).lifecycle]}
@@ -974,6 +1014,7 @@ export function Candidates() {
             {
               key: "source",
               label: "Source",
+              sortable: true,
               render: (r) => {
                 const row = r as Row
                 const identity = identitySummary(row)
@@ -993,6 +1034,7 @@ export function Candidates() {
             {
               key: "profile",
               label: "Profile",
+              sortable: true,
               render: (r) => <PctBar pct={(r as Row).profilePct} />,
             },
             {
@@ -1026,6 +1068,7 @@ export function Candidates() {
               key: "last",
               label: "Last active",
               className: "mono",
+              sortable: true,
               render: (r) => relTime((r as Row).lastActiveIso),
             },
             {
