@@ -437,6 +437,11 @@ const SEED_FLAGS: FlagSpec[] = [
   // Conversational Surface Platform — connector narration + find-match tool (default OFF).
   { key: "paConnectorNarrationEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paFindMatchToolEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // P1 agentic job-search migration (DEFAULT OFF). When ON for a user, a
+  // job-search turn routes through the agent loop (run(agent) → find-match
+  // connector) and the hand-wired regex dispatch is skipped. OFF = today's
+  // regex handler keeps ownership (zero regression). Adam ramps via dashboard.
+  { key: "paAgenticJobSearchEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paSharedOnboardingAgenticSurface", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paBehaviorChoreographerEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paReactionTapbackEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
