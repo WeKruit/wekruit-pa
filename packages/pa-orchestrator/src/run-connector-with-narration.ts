@@ -52,6 +52,24 @@ export async function isConnectorNarrationEnabled(
   }
 }
 
+/**
+ * P2 Tier-1 reflex flag. DEFAULT OFF. When ON, the quick-ack BEFORE a known-slow
+ * tool fires as a deterministic reflex for ANY connector whose expectedLatencyMs
+ * crosses the threshold — independent of the Tier-2 narration flag. (find-match /
+ * match-against-collab-jobs already always-pre-call; this generalizes the reflex.)
+ */
+export async function isReflexQuickAckEnabled(
+  db: Firestore | undefined,
+  userId: string
+): Promise<boolean> {
+  if (!db) return false
+  try {
+    return (await getFlag(db, "paReflexQuickAckEnabled", { userId, env: process.env })) === true
+  } catch {
+    return false
+  }
+}
+
 export function frameConnectorResult(
   connectorName: ConnectorName,
   lang: "en" | "zh",
@@ -86,6 +104,9 @@ export async function runConnectorWithNarration(
   const def = connectorRegistry[input.connectorName] as ConnectorDef<unknown, unknown>
   const latencyMinMs = Number(process.env.PA_CONNECTOR_NARRATION_LATENCY_MIN_MS ?? "1500")
   const narrationOn = await isConnectorNarrationEnabled(input.db, input.ctx.userId)
+  // P2 Tier-1 reflex (default OFF): generalize the slow-tool quick-ack to fire as
+  // a deterministic reflex regardless of the Tier-2 narration flag.
+  const reflexQuickAckOn = await isReflexQuickAckEnabled(input.db, input.ctx.userId)
   const lang = input.lang === "zh" ? "zh" : "en"
   let preCallSent = false
 
@@ -108,7 +129,7 @@ export async function runConnectorWithNarration(
   const alwaysPreCall = ALWAYS_PRE_CALL_CONNECTORS.includes(input.connectorName)
   const shouldSendPreCall =
     Boolean(def.narration) &&
-    (alwaysPreCall || (narrationOn && (def.expectedLatencyMs ?? 0) >= latencyMinMs))
+    (alwaysPreCall || ((narrationOn || reflexQuickAckOn) && (def.expectedLatencyMs ?? 0) >= latencyMinMs))
 
   if (shouldSendPreCall && def.narration) {
     const pre = pickConnectorPreCall(

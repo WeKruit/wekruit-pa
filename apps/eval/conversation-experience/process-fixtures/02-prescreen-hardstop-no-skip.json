@@ -1,0 +1,21 @@
+{
+  "kind": "prescreen_fsm",
+  "description": "A failed MUST_HAVE drives a terminal stop; later questions are NOT reached (the FSM does not skip past the blocker), and the terminal commits once.",
+  "session_id": "ps_hardstop",
+  "user_id": "u_test",
+  "job_id": "job_test",
+  "threshold": 0.6,
+  "questions": [
+    { "qId": "q_core_skill", "type": "MUST_HAVE", "weight": 1, "matchThreshold": 0.85 },
+    { "qId": "q_followup", "type": "PROBING", "weight": 1 }
+  ],
+  "scores": {
+    "q_core_skill": { "s": 0.1, "c": 0.95 },
+    "q_followup": { "s": 0.9, "c": 0.9 }
+  },
+  "expect": {
+    "terminal": "HARD_STOP",
+    "questions_not_answered": ["q_followup"],
+    "terminal_once": true
+  }
+}

@@ -1,0 +1,42 @@
+id: conversation_experience_runtime_external_job_no_screen
+description: |
+  Bug A regression. A daily job-recommendation handoff for an EXTERNAL scraped job
+  (jobright.ai link, collab=false). WeKruit has NO prescreen relationship for these,
+  so Claire must NEVER imply or offer a WeKruit prescreen ("move it forward",
+  "quick screen", "WeKruit screen"). The second bubble must use neutral copy that
+  implies the candidate applies via the link themselves and offers to find more.
+
+  Drives the deterministic runtime recommendation split (buildFocusedRuntimeRecommendationPlan),
+  so no live LLM is involved — the assertion is fully reproducible.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992011"
+chatId: "iMessage;+19999992011"
+userState:
+  onboardingState: complete
+turns:
+  - user: "[system-event:job_rec:send_imessage]"
+    rawMeta:
+      runtimeEvent: true
+      runtimeEventSource: "job_rec_daily_batch"
+      runtimeEventKind: "daily_job_recommendations"
+      context:
+        trustedOutboundBody: "I found a role that lines up:\n\nAssociate Account Executive @ rho\nhttps://jobright.ai/jobs/info/abc123\nrequirements: sales, prospecting"
+        jobs:
+          - title: "Associate Account Executive"
+            companyName: "rho"
+            url: "https://jobright.ai/jobs/info/abc123"
+            requirements: "requirements: sales, prospecting"
+            reason: "your customer-facing experience maps well"
+            collab: false
+    assert:
+      reply_min_length: 2
+      reply_count_min: 2
+      joined_reply_contains_any:
+        - "apply through that link directly"
+      joined_reply_not_matches_any:
+        - "move it forward"
+        - "quick screen"
+        - "WeKruit screen"
+        - "\\bscreen\\b"

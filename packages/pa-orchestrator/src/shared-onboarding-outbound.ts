@@ -91,6 +91,23 @@ export async function isFindMatchToolEnabled(
   }
 }
 
+/**
+ * P4 — flag read for the scoped onboarding agent. Default OFF; mirrors
+ * `isFindMatchToolEnabled`. Fail-closed on any read error so flag-OFF behavior
+ * is the safe default and the deterministic onboarding path runs unchanged.
+ */
+export async function isAgenticOnboardingEnabled(
+  db: Firestore | undefined,
+  userId: string
+): Promise<boolean> {
+  if (!db) return false
+  try {
+    return (await getFlag(db, "paAgenticOnboardingEnabled", { userId, env: process.env })) === true
+  } catch {
+    return false
+  }
+}
+
 export async function isCollabMatchToolEnabled(
   db: Firestore | undefined,
   userId: string
@@ -98,6 +115,24 @@ export async function isCollabMatchToolEnabled(
   if (!db) return false
   try {
     return (await getFlag(db, "paCollabMatchToolEnabled", { userId, env: process.env })) === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * P1 agentic job-search migration flag. DEFAULT OFF. When ON, a job-search
+ * turn routes through the agent loop (run(agent) → the find-match connector)
+ * instead of the hand-wired regex handler. Mirrors `isFindMatchToolEnabled`
+ * exactly so reads stay consistent with the rest of the connector-flag family.
+ */
+export async function isAgenticJobSearchEnabled(
+  db: Firestore | undefined,
+  userId: string
+): Promise<boolean> {
+  if (!db) return false
+  try {
+    return (await getFlag(db, "paAgenticJobSearchEnabled", { userId, env: process.env })) === true
   } catch {
     return false
   }
@@ -114,9 +149,18 @@ export async function resolveAgentAllowedConnectors(
   const withRuntimeRequired = base.includes("set-daily-job-recommendation-subscription")
     ? base
     : [...base, "set-daily-job-recommendation-subscription"]
+  // P1 agentic job-search: when the flag is ON, guarantee `find-match` is in
+  // the allowlist so the agent loop can self-route job-search. Idempotent —
+  // the seed agent already lists `find-match`, so flag-OFF is a strict no-op
+  // (this only ever appends when an agent doc somehow lacks it).
+  const agenticJobSearchOn = await isAgenticJobSearchEnabled(db, userId)
+  const withFindMatch =
+    agenticJobSearchOn && !withRuntimeRequired.includes("find-match")
+      ? [...withRuntimeRequired, "find-match"]
+      : withRuntimeRequired
   const collabOn = await isCollabMatchToolEnabled(db, userId)
-  if (collabOn) return [...withRuntimeRequired]
-  return withRuntimeRequired.filter((name) => name !== "match-against-collab-jobs")
+  if (collabOn) return [...withFindMatch]
+  return withFindMatch.filter((name) => name !== "match-against-collab-jobs")
 }
 
 export async function isBehaviorChoreographerEnabled(

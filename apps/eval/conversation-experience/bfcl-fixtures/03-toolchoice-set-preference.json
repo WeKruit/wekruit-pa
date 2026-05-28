@@ -1,0 +1,6 @@
+{
+  "kind": "tool_choice",
+  "description": "Durable preference statement should persist a matching preference before/instead of immediately searching. (Genuinely ambiguous find-match vs set-matching-preferences — the baseline reveals which the model prefers.)",
+  "turn": "going forward only show me fully remote roles, and nothing below 150k base",
+  "expect": { "tool": "set-matching-preferences" }
+}

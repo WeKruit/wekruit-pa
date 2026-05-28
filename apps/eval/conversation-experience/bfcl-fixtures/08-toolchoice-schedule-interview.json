@@ -1,0 +1,6 @@
+{
+  "kind": "tool_choice",
+  "description": "P7 scaling proof — the agent routes to the BRAND-NEW schedule-interview connector by its description alone (added as a pure registry addition + one allowlist line; ZERO agent-loop changes). Demonstrates new capability = registry addition.",
+  "turn": "can you set up / schedule my first interview for the Stripe role?",
+  "expect": { "tool": "schedule-interview" }
+}
