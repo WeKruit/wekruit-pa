@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   decideConversationTurnOwner,
+  isSavedPreferenceSummaryQuestion,
   summarizeConversationTurnTrace,
   type TurnContext,
 } from "./conversation-turn-arbiter.js"
@@ -217,6 +218,13 @@ test("arbiter keeps explicit recommendation questions ahead of durable preferenc
     "extract_durable_preferences",
     "commit_memory",
   ])
+})
+
+test("saved-preference summary detector catches saved-for-matching wording without explicit preference keyword", () => {
+  assert.equal(
+    isSavedPreferenceSummaryQuestion("What do you have saved for matching right now?"),
+    true,
+  )
 })
 
 test("arbiter trace records the state machine and selected owner", () => {
