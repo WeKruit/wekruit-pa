@@ -120,6 +120,10 @@
       ],
       "rewrites": [
         {
+          "source": "/api/v1/partner/users",
+          "function": { "functionId": "paPartnerUsersApi", "region": "us-central1" }
+        },
+        {
           "_comment": "Same-origin SSO proxy. Cloud Functions live on cloudfunctions.net which is a different eTLD+1 from wekruit.com; browsers refuse to honor Set-Cookie Domain=.wekruit.com from a cross-site response. Routing /_sso/* through Firebase Hosting makes the SSO endpoints look like first-party wekruit.com URLs so the shared cookie can actually be written and read.",
           "source": "/_sso/login",
           "function": { "functionId": "paSsoLogin", "region": "us-central1" }
