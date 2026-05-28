@@ -802,6 +802,21 @@ export function applyV16HardFilters(
           .filter(Boolean)
       : []
   )
+  // lock #5 (negative axis) — candidate-rejected industry sectors. Built from
+  // `userTags.negativeIndustrySector` (canonical INDUSTRY_SECTOR_VOCAB). The
+  // drop is FLAG-GATED behind env `PA_NEGATIVE_INDUSTRY_FILTER === "1"`
+  // (default OFF) so ranking is unchanged until Adam flips it. Mirrors the
+  // `negativeRoleFunctionSet` precedent above.
+  const negativeIndustryFilterEnabled =
+    (typeof process !== "undefined" ? process.env?.PA_NEGATIVE_INDUSTRY_FILTER : undefined) === "1"
+  const negativeIndustrySet = new Set<string>(
+    negativeIndustryFilterEnabled &&
+    Array.isArray((userTags as { negativeIndustrySector?: unknown }).negativeIndustrySector)
+      ? ((userTags as { negativeIndustrySector?: unknown[] }).negativeIndustrySector as unknown[])
+          .map((s) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
+          .filter(Boolean)
+      : []
+  )
   const careerStage = userTags.careerStage
   const careerStageValid =
     typeof careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(careerStage)
@@ -986,6 +1001,19 @@ export function applyV16HardFilters(
       if (
         roleFunctions.some((role) =>
           typeof role === "string" && negativeRoleFunctionSet.has(role.trim().toLowerCase())
+        )
+      ) {
+        counters.negativeListDrop++
+        continue
+      }
+    }
+    // lock #5 — negative-industry subtract (flag-gated; set is empty unless
+    // PA_NEGATIVE_INDUSTRY_FILTER === "1", so this is a no-op by default).
+    if (negativeIndustrySet.size > 0) {
+      const jobSectors = Array.isArray(job.industrySector) ? job.industrySector : []
+      if (
+        jobSectors.some((sector) =>
+          typeof sector === "string" && negativeIndustrySet.has(sector.trim().toLowerCase())
         )
       ) {
         counters.negativeListDrop++

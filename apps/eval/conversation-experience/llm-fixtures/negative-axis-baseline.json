@@ -11,7 +11,7 @@
     }
   ],
   "expect": {
-    "baseline_red": true,
+    "baseline_red": false,
     "final_tags_includes": { "negativeIndustrySector": ["crypto_web3_blockchain"] },
     "grade_criteria": "Candidate asked to AVOID adtech and crypto. PASS only if a structured negative axis (e.g. negativeIndustrySector) records the avoided sectors so the matcher can subtract them — an open relevantTags 'avoid_*' string does NOT count."
   }
