@@ -595,3 +595,106 @@ test("runCandidateMagicLinkVerify still passes allowCreate=true when LinkedIn cu
     "LinkedIn OAuth path passes through the default (allowCreate=true via the persistence layer)",
   )
 })
+
+test("runCandidateMagicLinkVerify stamps layoffhedge on first-time pa-users create", async () => {
+  const db = fakeDb()
+  const { status, result } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-1", source: "layoffhedge" },
+    undefined,
+    {
+      db,
+      verifyIdToken: async () => ({
+        uid: "fb-1",
+        email: "new.layoffhedge@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-lh-1",
+        authMapping: {
+          firebaseUid: "fb-1",
+          candidateId: "cand-lh-1",
+          createdAt: "2026-05-27T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-lh-1",
+          kind: "email" as const,
+          handleHash: "h",
+          source: "candidate" as const,
+          createdAt: "2026-05-27T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: false,
+        selfProfile: {
+          candidateId: "cand-lh-1",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-27T00:00:00.000Z",
+        },
+      }),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+    },
+  )
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+
+  const snap = await db.collection(PA_COLLECTIONS.users).doc("cand-lh-1").get()
+  assert.equal((snap.data() as { source?: string } | undefined)?.source, "layoffhedge")
+})
+
+test("runCandidateMagicLinkVerify does NOT overwrite an existing pa-users.source", async () => {
+  const db = fakeDb()
+  ;(db as unknown as FakeFirestore).seed(PA_COLLECTIONS.users, "cand-lh-2", {
+    source: "candidate",
+    createdAt: "2026-04-01T00:00:00.000Z",
+  })
+
+  const { status, result } = await runCandidateMagicLinkVerify(
+    { firebaseIdToken: "token-2", source: "layoffhedge" },
+    undefined,
+    {
+      db,
+      verifyIdToken: async () => ({
+        uid: "fb-2",
+        email: "returning@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-lh-2",
+        authMapping: {
+          firebaseUid: "fb-2",
+          candidateId: "cand-lh-2",
+          createdAt: "2026-05-27T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-lh-2",
+          kind: "email" as const,
+          handleHash: "h",
+          source: "candidate" as const,
+          createdAt: "2026-05-27T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: true,
+        selfProfile: {
+          candidateId: "cand-lh-2",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-27T00:00:00.000Z",
+        },
+      }),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+    },
+  )
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+
+  const snap = await db.collection(PA_COLLECTIONS.users).doc("cand-lh-2").get()
+  assert.equal(
+    (snap.data() as { source?: string } | undefined)?.source,
+    "candidate",
+    "returning user must keep first-stamped source",
+  )
+})

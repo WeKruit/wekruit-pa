@@ -108,6 +108,21 @@ export function detectRecBatchSentiment(body: string): "positive" | "negative" |
   return "ambiguous"
 }
 
+function isExplicitQuestionOrMemoryRequest(text: string | undefined | null): boolean {
+  const body = (text ?? "").trim()
+  if (!body) return false
+  const asksSavedMatchingPreferences =
+    /\b(?:preferences?|prefs|matching profile|profile notes)\b/i.test(body) &&
+    /\b(?:match|matching|save|saved|store|stored|remember|remembered|using|use|used)\b/i.test(body) &&
+    /\b(?:what|which|show|remind|reminder|tell|using|use)\b/i.test(body)
+  return (
+    /[?？]/.test(body) ||
+    /^(?:w?hat|why|how|where|when|which|who|can|could|do|does|did|is|are|should|would|will)\b/i.test(body) ||
+    /\b(?:save|saved|store|stored|remember|remembered)\b[\s\S]{0,80}\b(?:job\s+)?(?:preferences?|prefs|profile|memory)\b/i.test(body) ||
+    asksSavedMatchingPreferences
+  )
+}
+
 export function detectYesNoIntent(body: string): "yes" | "no" | "ambiguous" {
   const t = normalizeBody(body)
   if (!t) return "ambiguous"
@@ -395,6 +410,14 @@ export async function handlePostMatchRetentionReply(
     isActionableJobPreferenceFeedback(event.body)
   ) {
     store.log("pa.post_match_retention.yielded_to_job_search", {
+      userId: event.userId,
+      turnId,
+      stage: state.stage,
+    })
+    return false
+  }
+  if (state.stage === "await_liked" && isExplicitQuestionOrMemoryRequest(event.body)) {
+    store.log("pa.post_match_retention.yielded_to_explicit_question", {
       userId: event.userId,
       turnId,
       stage: state.stage,

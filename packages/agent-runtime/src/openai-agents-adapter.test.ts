@@ -2,7 +2,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { AgentDef, ChatMessage } from "@pa/core-types"
 import { z } from "zod"
-import { buildAgentsInput } from "./openai-agents-adapter.js"
+import { buildAgentsInput, __forTesting } from "./openai-agents-adapter.js"
+import type { AgentTurnContext } from "./types.js"
 
 const agent: AgentDef = {
   id: "default",
@@ -461,4 +462,86 @@ test("buildModelSettings applies router-enforced tool choice and sequential tool
   )
   assert.equal(settings.toolChoice, "required")
   assert.equal(settings.parallelToolCalls, false)
+})
+
+// ---------------------------------------------------------------------------
+// P8 — SDK-native input safety guardrails (crisis / injection / privacy-stop)
+// ---------------------------------------------------------------------------
+
+function ctxWith(inputGuardrails: AgentTurnContext["inputGuardrails"]): AgentTurnContext {
+  return { agent, systemPrompt: "Be useful.", userMessage: "hello there", inputGuardrails }
+}
+
+test("buildInputGuardrails: no specs → empty array (SDK no-op, zero regression)", () => {
+  assert.deepEqual(__forTesting.buildInputGuardrails(ctxWith(undefined)), [])
+  assert.deepEqual(__forTesting.buildInputGuardrails(ctxWith([])), [])
+})
+
+test("buildInputGuardrails: maps spec → SDK shape with runInParallel:false (safety blocks the model)", async () => {
+  const seen: string[] = []
+  const built = __forTesting.buildInputGuardrails(
+    ctxWith([
+      {
+        name: "crisis",
+        execute: async (input: string) => {
+          seen.push(input)
+          return { tripwireTriggered: true, outputInfo: { trippedBy: "crisis" } }
+        },
+      },
+    ])
+  ) as Array<{ name: string; runInParallel: boolean; execute: (a: { input?: unknown }) => Promise<{ tripwireTriggered: boolean; outputInfo: unknown }> }>
+
+  assert.equal(built.length, 1)
+  assert.equal(built[0]!.name, "crisis")
+  // runInParallel MUST be false — a safety tripwire has to complete before the
+  // model runs, never race it.
+  assert.equal(built[0]!.runInParallel, false)
+
+  const out = await built[0]!.execute({ input: "i want to end it all" })
+  assert.equal(out.tripwireTriggered, true)
+  assert.deepEqual(out.outputInfo, { trippedBy: "crisis" })
+  assert.deepEqual(seen, ["i want to end it all"])
+})
+
+test("buildInputGuardrails: non-string SDK input falls back to ctx.userMessage", async () => {
+  let received = ""
+  const built = __forTesting.buildInputGuardrails(
+    ctxWith([
+      {
+        name: "injection",
+        execute: async (input: string) => {
+          received = input
+          return { tripwireTriggered: false }
+        },
+      },
+    ])
+  ) as Array<{ execute: (a: { input?: unknown }) => Promise<{ tripwireTriggered: boolean; outputInfo: unknown }> }>
+
+  const out = await built[0]!.execute({ input: [{ type: "message" }] as unknown })
+  assert.equal(received, "hello there") // fell back to ctx.userMessage
+  assert.equal(out.tripwireTriggered, false)
+  assert.equal(out.outputInfo, null) // missing outputInfo coerced to null
+})
+
+test("mapTripwire: detects InputGuardrailTripwireTriggered → {name, outputInfo}", () => {
+  // Faux SDK error shape (constructor name match — robust across the dual-package boundary).
+  class InputGuardrailTripwireTriggered extends Error {
+    result: unknown
+    constructor(result: unknown) {
+      super("tripwire")
+      this.name = "InputGuardrailTripwireTriggered"
+      this.result = result
+    }
+  }
+  const err = new InputGuardrailTripwireTriggered({
+    guardrail: { name: "prompt-injection" },
+    output: { tripwireTriggered: true, outputInfo: { rule: "ignore_previous" } },
+  })
+  const mapped = __forTesting.mapTripwire(err)
+  assert.deepEqual(mapped, { name: "prompt-injection", outputInfo: { rule: "ignore_previous" } })
+})
+
+test("mapTripwire: non-tripwire error → null (caller rethrows)", () => {
+  assert.equal(__forTesting.mapTripwire(new Error("network down")), null)
+  assert.equal(__forTesting.mapTripwire({ message: "weird" }), null)
 })

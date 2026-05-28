@@ -217,10 +217,38 @@ export async function runCandidateMagicLinkVerify(
     }
 
     const mergeFields: Record<string, unknown> = { updatedAt: new Date().toISOString() }
-    if (source) mergeFields.source = source
+    if (source) {
+      // First-write-sticky attribution: only stamp `source` if the pa-users
+      // doc does not already carry a valid PaUserSource. Mirrors the
+      // existingUserSource guard in public-cv-ingest.ts. Without this,
+      // a returning user who magic-links via a different partner URL
+      // would have their original attribution silently overwritten.
+      const existingUserSnap = await userRef.get()
+      const existingUserSource = (existingUserSnap.data() as { source?: unknown } | undefined)?.source
+      if (!isPaUserSource(existingUserSource)) {
+        mergeFields.source = source
+      }
+    }
     if (linkedinUrl) mergeFields.linkedinUrl = linkedinUrl
     if (linkedinLinkedViaOauth) mergeFields.linkedinOauthLinked = true
     await userRef.set(mergeFields, { merge: true })
+
+    // Referral attribution (Adam Q5: same-email match only).
+    // Idempotent: only marks the first pending pa-referrals row for this email
+    // as joined. Failure here must not break sign-in.
+    if (email) {
+      try {
+        const { attachInviteeUserIdByEmail } = await import("./refer-program.js")
+        await attachInviteeUserIdByEmail({ uid: claim.candidateId, email })
+      } catch (err) {
+        // Non-fatal — sign-in flow continues regardless.
+        // eslint-disable-next-line no-console
+        console.warn("refer.attribution.failed", {
+          uid: claim.candidateId,
+          err: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
 
     const userSnap = await userRef.get()
     const userData = userSnap.data() ?? {}
@@ -282,7 +310,10 @@ export async function runCandidateMagicLinkVerify(
 }
 
 export const paCandidateMagicLinkVerify = onRequest(
-  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60 },
+  // minInstances=1 keeps a warm instance to avoid 3-5s cold starts on /me
+  // (gate's first callable, blocks portal render). Cost ≈ $5/mo. Adam ack
+  // 2026-05-27 — "One moment" stuck reported by user.
+  { region: "us-central1", memory: "512MiB", timeoutSeconds: 60, minInstances: 1 },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {

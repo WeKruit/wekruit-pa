@@ -1,0 +1,18 @@
+{
+  "name": "multi-value-visa-extraction",
+  "description": "P0 baseline probe: multi-value array fields + visa scalar in one turn. Tests the scalar→array coercion (#245) on real multi-value output AND whether the model captures visa + multiple locations + multiple industries together.",
+  "user_id": "test_user_multival",
+  "initial_tags": {},
+  "turns": [
+    {
+      "inbound": "I need H1B sponsorship. Open to NYC or remote. Interested in fintech or AI infra. Full-time only.",
+      "assistant": "got it."
+    }
+  ],
+  "expect": {
+    "final_tags": {
+      "visaStatus": "sponsor_needed"
+    },
+    "grade_criteria": "The candidate stated: needs H1B sponsorship (visaStatus=sponsor_needed), locations NYC + remote, industries fintech + AI/infra, full-time. PASS if visaStatus=sponsor_needed AND targetLocations captures both NYC and remote AND targetJobType=full_time AND industrySector reflects fintech and AI/infra. Partial-credit note in reasoning if some axes are captured but not all — flag which axes the extractor dropped (this is baseline signal for prompt tuning)."
+  }
+}

@@ -1,3 +1,8 @@
+import type {
+  ConversationActionDecision,
+  ConversationEvidenceWrite,
+} from "./conversation-action-arbiter.js"
+
 export type TurnState =
   | "received"
   | "context_loaded"
@@ -17,6 +22,7 @@ export type TurnIntent =
   | "job_search_request"
   | "active_workflow_answer"
   | "shared_onboarding_answer"
+  | "shared_onboarding_clarification"
   | "fallback_claire"
 
 export type ConversationOwner =
@@ -45,6 +51,7 @@ export type ArbiterActionKind =
   | "run_job_search"
   | "route_active_workflow"
   | "write_shared_onboarding_answer"
+  | "clarify_shared_onboarding"
   | "fallback_reply"
   | "safety_control"
 
@@ -77,6 +84,12 @@ export type TurnContext = {
     currentQuestionId?: string | null
   } | null
   preferenceState?: Record<string, unknown> | null
+  toolResults?: Array<{
+    toolCallId: string
+    name: string
+    status: "completed" | "failed" | "pending"
+    resultSummary?: string
+  }>
 }
 
 export type PrescreenEvidence = {
@@ -115,6 +128,8 @@ export type TurnTrace = {
   userId: string
   states: TurnState[]
   decision: OwnerDecision
+  actionDecision?: ConversationActionDecision
+  evidenceWrites?: ConversationEvidenceWrite[]
   inbound: {
     text: string
     createdAt?: string
@@ -153,10 +168,12 @@ export function decideConversationTurnOwner(context: TurnContext): OwnerDecision
   }
 
   const hasPrescreenOutcomeQuestion = frames.some((frame) => frame.intent === "prescreen_outcome_question")
+  const hasExplicitMetaQuestion = frames.some((frame) => frame.intent === "explicit_meta_question")
   const hasDurablePreferenceUpdate = frames.some((frame) => frame.intent === "durable_preference_update")
   const hasJobSearchRequest = frames.some((frame) => frame.intent === "job_search_request")
   const hasActiveWorkflowAnswer = frames.some((frame) => frame.intent === "active_workflow_answer")
   const hasSharedOnboardingAnswer = frames.some((frame) => frame.intent === "shared_onboarding_answer")
+  const hasSharedOnboardingClarification = frames.some((frame) => frame.intent === "shared_onboarding_clarification")
   const hasSafetyControl = frames.some((frame) => frame.intent === "safety_control")
 
   if (hasSafetyControl) {
@@ -185,6 +202,66 @@ export function decideConversationTurnOwner(context: TurnContext): OwnerDecision
           ? [
               { kind: "extract_durable_preferences" as const, owner: "durable_preference_update" as const, reason: "Same turn contains durable preference feedback." },
               { kind: "commit_memory" as const, owner: "durable_preference_update" as const, reason: "Durable preference must be committed before later matching." },
+            ]
+          : []),
+      ],
+    })
+  }
+
+  if (hasExplicitMetaQuestion && !hasJobSearchRequest) {
+    return decision({
+      selectedOwner: "explicit_explanation",
+      rejectedOwners,
+      reason: "User asked an explicit question; answer it before applying durable preference or workflow mutations.",
+      requiredTools,
+      forbiddenMutations,
+      intentFrames: frames,
+      orderedActions: [
+        { kind: "fallback_reply", owner: "explicit_explanation", reason: "Explicit question owns the visible reply." },
+        ...(hasDurablePreferenceUpdate
+          ? [
+              { kind: "extract_durable_preferences" as const, owner: "durable_preference_update" as const, reason: "Same turn contains durable preference feedback." },
+              { kind: "commit_memory" as const, owner: "durable_preference_update" as const, reason: "Durable preference should be committed without swallowing the explicit question." },
+            ]
+          : []),
+      ],
+    })
+  }
+
+  if (hasActiveWorkflowAnswer) {
+    return decision({
+      selectedOwner: "active_workflow",
+      rejectedOwners,
+      reason: "User answered the currently active workflow question.",
+      requiredTools,
+      forbiddenMutations,
+      intentFrames: frames,
+      orderedActions: [
+        { kind: "route_active_workflow", owner: "active_workflow", reason: "Active workflow owns the answer." },
+        ...(hasDurablePreferenceUpdate
+          ? [
+              { kind: "extract_durable_preferences" as const, owner: "durable_preference_update" as const, reason: "Same turn also contains durable preference signal." },
+              { kind: "commit_memory" as const, owner: "durable_preference_update" as const, reason: "Durable preference should be committed after the workflow answer is preserved." },
+            ]
+          : []),
+      ],
+    })
+  }
+
+  if (hasSharedOnboardingAnswer) {
+    return decision({
+      selectedOwner: "shared_onboarding",
+      rejectedOwners,
+      reason: "User answered the active shared-onboarding slot.",
+      requiredTools,
+      forbiddenMutations,
+      intentFrames: frames,
+      orderedActions: [
+        { kind: "write_shared_onboarding_answer", owner: "shared_onboarding", reason: "Active shared-onboarding slot answer." },
+        ...(hasDurablePreferenceUpdate
+          ? [
+              { kind: "extract_durable_preferences" as const, owner: "durable_preference_update" as const, reason: "Same turn also contains durable preference signal." },
+              { kind: "commit_memory" as const, owner: "durable_preference_update" as const, reason: "Durable preference should be committed after the onboarding answer is preserved." },
             ]
           : []),
       ],
@@ -221,27 +298,15 @@ export function decideConversationTurnOwner(context: TurnContext): OwnerDecision
     })
   }
 
-  if (hasActiveWorkflowAnswer) {
-    return decision({
-      selectedOwner: "active_workflow",
-      rejectedOwners,
-      reason: "User answered the currently active workflow question.",
-      requiredTools,
-      forbiddenMutations,
-      intentFrames: frames,
-      orderedActions: [{ kind: "route_active_workflow", owner: "active_workflow", reason: "Active workflow owns the answer." }],
-    })
-  }
-
-  if (hasSharedOnboardingAnswer) {
+  if (hasSharedOnboardingClarification) {
     return decision({
       selectedOwner: "shared_onboarding",
       rejectedOwners,
-      reason: "User answered the active shared-onboarding slot.",
+      reason: "Active shared onboarding still owns the unclear short reply; re-ask without mutating the slot.",
       requiredTools,
       forbiddenMutations,
       intentFrames: frames,
-      orderedActions: [{ kind: "write_shared_onboarding_answer", owner: "shared_onboarding", reason: "Active shared-onboarding slot answer." }],
+      orderedActions: [{ kind: "clarify_shared_onboarding", owner: "shared_onboarding", reason: "Reply did not answer the active onboarding slot." }],
     })
   }
 
@@ -258,13 +323,20 @@ export function decideConversationTurnOwner(context: TurnContext): OwnerDecision
   })
 }
 
-export function summarizeConversationTurnTrace(context: TurnContext, ownerDecision: OwnerDecision): TurnTrace {
+export function summarizeConversationTurnTrace(
+  context: TurnContext,
+  ownerDecision: OwnerDecision,
+  actionDecision?: ConversationActionDecision,
+  evidenceWrites?: ConversationEvidenceWrite[],
+): TurnTrace {
   return {
     traceVersion: 1,
     turnId: context.turnId,
     userId: context.userId,
     states: [...TRACE_STATES],
     decision: ownerDecision,
+    ...(actionDecision ? { actionDecision } : {}),
+    ...(evidenceWrites ? { evidenceWrites } : {}),
     inbound: {
       text: context.inbound.text,
       createdAt: context.inbound.createdAt,
@@ -331,8 +403,7 @@ function buildIntentFrames(context: TurnContext, text: string): IntentFrame[] {
     context.activeWorkflow?.kind === "job_prescreen" &&
     context.activeWorkflow.status === "active" &&
     !isMetaQuestion(text) &&
-    !isDurablePreferenceUpdate(text) &&
-    !isJobSearchRequest(text)
+    !isControlOrPrivacyIntent(text)
   ) {
     frames.push({
       intent: "active_workflow_answer",
@@ -350,6 +421,15 @@ function buildIntentFrames(context: TurnContext, text: string): IntentFrame[] {
     frames.push({
       intent: "shared_onboarding_answer",
       confidence: 0.81,
+      evidenceSpan: raw.slice(0, 240),
+      scope: "workflow",
+    })
+  }
+
+  if (isSharedOnboardingClarificationTurn(context, text)) {
+    frames.push({
+      intent: "shared_onboarding_clarification",
+      confidence: 0.76,
       evidenceSpan: raw.slice(0, 240),
       scope: "workflow",
     })
@@ -400,7 +480,21 @@ function isControlOrPrivacyIntent(text: string): boolean {
 function isMetaQuestion(text: string): boolean {
   return (
     text.includes("?") ||
-    /^(why|how|what|could you|can you|help me understand|explain|where did|what do you mean)\b/i.test(text)
+    /^(why|how|what|could you|can you|help me understand|explain|where did|what do you mean)\b/i.test(text) ||
+    isSavedPreferenceSummaryQuestion(text)
+  )
+}
+
+export function isSavedPreferenceSummaryQuestion(text: string): boolean {
+  return (
+    /\b(?:w?hat|which|show|remind|tell)\b[\s\S]{0,40}\b(?:save|saved|store|stored|remember|remembered|have|using|use|used)\b[\s\S]{0,80}\b(?:job\s+)?(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b/i.test(text) ||
+    /\b(?:job\s+)?(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b[\s\S]{0,50}\b(?:save|saved|store|stored|remember|remembered|have|using|use|used)\b/i.test(text) ||
+    /\b(?:w?hat|which|show|remind|tell)\b[\s\S]{0,50}\b(?:save|saved|store|stored|remember|remembered|have|using|use|used)\b[\s\S]{0,50}\b(?:for\s+matching|matching\b)\b/i.test(text) ||
+    (
+      /\b(?:preferences?|prefs|matching profile|profile notes|for matching|matching)\b/i.test(text) &&
+      /\b(?:match|matching|save|saved|store|stored|remember|remembered|using|use|used)\b/i.test(text) &&
+      /\b(?:w?hat|which|show|remind|reminder|tell|using|use|could you)\b/i.test(text)
+    )
   )
 }
 
@@ -410,6 +504,31 @@ function isPrescreenOutcomeQuestion(text: string): boolean {
   const asksReason = /\b(why|how|what|understand|feedback|improve|improved)\b/i.test(text)
   const mentionsRole = /\b(role|job|rain|company|above)\b/i.test(text)
   return hasOutcomeLanguage && asksReason && mentionsRole
+}
+
+function isSharedOnboardingClarificationTurn(context: TurnContext, text: string): boolean {
+  if (context.sharedOnboarding?.active !== true) return false
+  const questionId = context.sharedOnboarding.currentQuestionId
+  if (!questionId) return false
+  if (isSharedOnboardingSlotAnswer(questionId, text)) return false
+  if (isSharedOnboardingKickoffLike(text)) return false
+  if (isControlOrPrivacyIntent(text)) return false
+  if (isMetaQuestion(text)) return false
+  if (isDurablePreferenceUpdate(text)) return false
+  if (isJobSearchRequest(text)) return false
+  return isShortLowInformationReply(text) || isAmbiguousOnboardingReply(text)
+}
+
+function isShortLowInformationReply(text: string): boolean {
+  return /^(sure|ok|okay|yes|yeah|yep|sounds good|sg|cool|fine|great|got it|makes sense|👍)$/i.test(text)
+}
+
+function isAmbiguousOnboardingReply(text: string): boolean {
+  return /\b(not sure|unsure|idk|i don'?t know|confused|unclear|huh|what you mean)\b/i.test(text)
+}
+
+function isSharedOnboardingKickoffLike(text: string): boolean {
+  return /^hello,?\s*wekruit!?/i.test(text) || /^(hello|hi|hey|yo|sup)(\s+(wekruit|claire))?$/i.test(text)
 }
 
 function isDurablePreferenceUpdate(text: string): boolean {
@@ -428,7 +547,7 @@ function isSharedOnboardingSlotAnswer(questionId: string, text: string): boolean
   if (/^(not sure|i'?m not sure|idk|i do not know|don't know|what do you mean|unclear)\b/i.test(text)) return false
 
   if (questionId === "main_goal") {
-    return /\b(growth|compensation|salary|stability|mission|learning|ownership|career|work[- ]?life|impact|manager|title)\b/i.test(text)
+    return /\b(growth|compensation|salary|stability|mission|learning|ownership|career|work[- ]?life|impact|manager|title|software|engineering|engineer|backend|frontend|front[- ]?end|full[- ]?stack|platform|product|strategy|data|machine learning|ml|ai|infra|infrastructure|systems?)\b/i.test(text)
   }
   if (questionId === "culture_stage") {
     return /\b(startup|scale[- ]?up|larger|big company|small company|high ownership|calm|collaborative|culture|team|stage|series [abc])\b/i.test(text)
@@ -440,7 +559,7 @@ function isSharedOnboardingSlotAnswer(questionId: string, text: string): boolean
     return /\b(remote|onsite|on-site|hybrid|relocat|city|nyc|new york|sf|san francisco|bay area|seattle|austin|boston|london|singapore|open to|not relocating)\b/i.test(text)
   }
   if (questionId === "special_context") {
-    return /\b(none|nothing|visa|sponsor|sponsorship|constraint|dealbreaker|timing|start|notice|strength|context|prefer|avoid)\b/i.test(text)
+    return /\b(none|nothing|nope|visa|sponsor|sponsorship|h[-\s]?1b|opt|cpt|constraint|dealbreaker|timing|start|notice|severance|urgent|asap|strength|strongest|context|prefer|avoid|backend|frontend|front[-\s]?end|full[-\s]?stack|platform|systems?|infrastructure|distributed|built|handled?)\b/i.test(text)
   }
   return false
 }

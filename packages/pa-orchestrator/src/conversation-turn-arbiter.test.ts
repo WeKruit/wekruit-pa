@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   decideConversationTurnOwner,
+  isSavedPreferenceSummaryQuestion,
   summarizeConversationTurnTrace,
   type TurnContext,
 } from "./conversation-turn-arbiter.js"
@@ -105,13 +106,66 @@ test("arbiter blocks ambiguous shared-onboarding non-answers from advancing the 
     },
   }))
 
-  assert.equal(decision.selectedOwner, "fallback_claire")
+  assert.equal(decision.selectedOwner, "shared_onboarding")
   assert.ok(decision.forbiddenMutations.includes("sharedOnboarding.answers.location_relocation"))
+  assert.deepEqual(decision.orderedActions.map((action) => action.kind), ["clarify_shared_onboarding"])
   assert.ok(
     decision.rejectedOwners.some((owner) =>
       owner.owner === "shared_onboarding" && /not an answer/i.test(owner.reason)
     ),
   )
+})
+
+test("arbiter accepts concrete shared-onboarding role and special-context answers", () => {
+  const mainGoal = decideConversationTurnOwner(baseContext({
+    inbound: {
+      text: "Software engineering, ideally backend or platform.",
+      createdAt: "2026-05-26T23:06:00.000Z",
+      channel: "imessage",
+    },
+    sharedOnboarding: {
+      active: true,
+      currentQuestionId: "main_goal",
+    },
+  }))
+  const specialContext = decideConversationTurnOwner(baseContext({
+    inbound: {
+      text: "I need to move fast because severance ends soon, and backend systems are my strongest area.",
+      createdAt: "2026-05-26T23:07:00.000Z",
+      channel: "imessage",
+    },
+    sharedOnboarding: {
+      active: true,
+      currentQuestionId: "special_context",
+    },
+  }))
+
+  assert.equal(mainGoal.selectedOwner, "shared_onboarding")
+  assert.ok(mainGoal.requiredTools.includes("shared_onboarding_writer"))
+  assert.equal(specialContext.selectedOwner, "shared_onboarding")
+  assert.ok(specialContext.requiredTools.includes("shared_onboarding_writer"))
+})
+
+test("arbiter keeps shared-onboarding Q5 answers ahead of durable preference wording", () => {
+  const decision = decideConversationTurnOwner(baseContext({
+    inbound: {
+      text: "No hard constraints. I can start in 2-4 weeks; prefer product-heavy roles.",
+      createdAt: "2026-05-27T21:29:48.559Z",
+      channel: "imessage",
+    },
+    sharedOnboarding: {
+      active: true,
+      currentQuestionId: "special_context",
+    },
+  }))
+
+  assert.equal(decision.selectedOwner, "shared_onboarding")
+  assert.deepEqual(decision.orderedActions.map((action) => action.kind), [
+    "write_shared_onboarding_answer",
+    "extract_durable_preferences",
+    "commit_memory",
+  ])
+  assert.ok(decision.requiredTools.includes("shared_onboarding_writer"))
 })
 
 test("arbiter orders multi-intent prescreen explanation before durable preference commit", () => {
@@ -140,6 +194,37 @@ test("arbiter orders multi-intent prescreen explanation before durable preferenc
     "extract_durable_preferences",
     "commit_memory",
   ])
+})
+
+test("arbiter keeps explicit recommendation questions ahead of durable preference commit", () => {
+  const decision = decideConversationTurnOwner(baseContext({
+    inbound: {
+      text: "Why did you recommend the Constant Contact co-op? I prefer early-stage fullstack roles over internships.",
+      createdAt: "2026-05-26T23:08:30.000Z",
+      channel: "imessage",
+    },
+    recentOutbound: [
+      {
+        role: "assistant",
+        body: "One role worth checking: Constant Contact co-op.",
+        createdAt: "2026-05-26T23:08:00.000Z",
+      },
+    ],
+  }))
+
+  assert.equal(decision.selectedOwner, "explicit_explanation")
+  assert.deepEqual(decision.orderedActions.map((action) => action.kind), [
+    "fallback_reply",
+    "extract_durable_preferences",
+    "commit_memory",
+  ])
+})
+
+test("saved-preference summary detector catches saved-for-matching wording without explicit preference keyword", () => {
+  assert.equal(
+    isSavedPreferenceSummaryQuestion("What do you have saved for matching right now?"),
+    true,
+  )
 })
 
 test("arbiter trace records the state machine and selected owner", () => {

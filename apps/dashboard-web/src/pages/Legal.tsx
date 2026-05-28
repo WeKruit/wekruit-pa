@@ -10,7 +10,7 @@
  * editing this file directly; the URL stays stable.
  */
 export default function Legal() {
-  const updatedAt = "May 4, 2026"
+  const updatedAt = "May 27, 2026"
   return (
     <div
       style={{
@@ -28,7 +28,7 @@ export default function Legal() {
         </p>
         <h1 style={{ margin: "0.4rem 0 0 0", fontSize: "1.7em" }}>Privacy &amp; Terms</h1>
         <p style={{ margin: "0.4rem 0 0 0", color: "#64748b", fontSize: "0.85em" }}>
-          Version v1.0 · Last updated {updatedAt}
+          Version v1.1 · Last updated {updatedAt}
         </p>
       </header>
 
@@ -68,6 +68,15 @@ export default function Legal() {
           and respond to support requests. Operators may pause Claire's auto-replies in your conversation
           and respond manually as part of human-in-the-loop. We do not sell your data to third parties.
         </p>
+        <p>
+          <b>Partner referrals.</b> If you arrived at WeKruit through a referral link from a partner
+          site (such as a layoff-tracking service that included <code>?source=&lt;partner&gt;</code> in
+          the URL you clicked), we share your candidacy progress with that partner. Specifically: your
+          email, name, the jobs you've started pre-screening for, and the status of each pre-screen
+          (in progress / passed / not passed / paused). We do not share your résumé, conversation
+          transcript, or other sensitive details with the partner. You can request that we stop
+          sharing by emailing <a href="mailto:hello@wekruit.com">hello@wekruit.com</a>.
+        </p>
       </section>
 
       <section style={{ marginBottom: "1.6rem" }}>
@@ -87,6 +96,23 @@ export default function Legal() {
             <b>Email questions:</b> <a href="mailto:hello@wekruit.com">hello@wekruit.com</a>.
           </li>
         </ul>
+      </section>
+
+      <section style={{ marginBottom: "1.6rem" }}>
+        <h2 style={{ fontSize: "1.15em", marginBottom: "0.4rem" }}>Partners we share with</h2>
+        <p>Current referral partners:</p>
+        <ul>
+          <li>
+            <a href="https://layoffhedge.com" target="_blank" rel="noreferrer">
+              layoffhedge.com
+            </a>{" "}
+            — layoff-tracking and job-discovery service.
+          </li>
+        </ul>
+        <p>
+          When we add a new partner, this list is updated in the same release that adds the partner's
+          referral link support.
+        </p>
       </section>
 
       <section style={{ marginBottom: "1.6rem" }}>

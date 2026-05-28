@@ -1,0 +1,31 @@
+{
+  "id": "tool-result-evidence",
+  "description": "A completed tool result should surface a grounded reply action and a tool_result evidence write.",
+  "initialFirestoreState": {
+    "pa-users/u-tool": {
+      "onboardingState": "complete"
+    }
+  },
+  "inbound": {
+    "userId": "u-tool",
+    "text": "What did you find?",
+    "createdAt": "2026-05-26T23:16:00.000Z",
+    "channel": "imessage"
+  },
+  "toolResults": [
+    {
+      "toolCallId": "tool-1",
+      "name": "generate_job_recommendations",
+      "status": "completed",
+      "resultSummary": "Found one strong role: Senior Software Engineer at Variance."
+    }
+  ],
+  "expected": {
+    "owner": "explicit_explanation",
+    "action": "tool_result_reply",
+    "evidenceWriteKinds": ["tool_result"],
+    "trace": {
+      "selectedOwner": "explicit_explanation"
+    }
+  }
+}

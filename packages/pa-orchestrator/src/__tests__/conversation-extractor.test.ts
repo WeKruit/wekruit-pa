@@ -339,6 +339,64 @@ describe("ConversationExtractResultSchema", () => {
       }),
     )
   })
+
+  // 2026-05-27 — real gpt-5.4-nano receipt (apps/eval/conversation-experience/
+  // llm-runner.mjs): the model emits a SCALAR for single-value array fields,
+  // e.g. `targetRoleFunction: "product_management"` not `["product_management"]`.
+  // The old strict `z.array(...)` rejected the scalar → parse_error → the
+  // extractor silently dropped a correct patch → matcher kept stale tags.
+  // These tests pin the scalar→array coercion that fixes the Adam-bug.
+  it("coerces a scalar enum to a single-element array (targetRoleFunction)", () => {
+    const r = ConversationExtractResultSchema.parse({
+      tagPatch: { targetRoleFunction: "product_management" },
+      memoryEntities: [],
+      confidence: 0.9,
+      rationale: "",
+    })
+    assert.deepEqual(r.tagPatch.targetRoleFunction, ["product_management"])
+  })
+
+  it("coerces scalar targetJobType + targetLocations", () => {
+    const r = ConversationExtractResultSchema.parse({
+      tagPatch: { targetJobType: "full_time", targetLocations: "san_francisco_bay_area" },
+      memoryEntities: [],
+      confidence: 0.9,
+      rationale: "",
+    })
+    assert.deepEqual(r.tagPatch.targetJobType, ["full_time"])
+    assert.deepEqual(r.tagPatch.targetLocations, ["san_francisco_bay_area"])
+  })
+
+  it("still accepts a real array (no double-wrap)", () => {
+    const r = ConversationExtractResultSchema.parse({
+      tagPatch: { targetRoleFunction: ["product_management", "data_analysis"] },
+      memoryEntities: [],
+      confidence: 0.9,
+      rationale: "",
+    })
+    assert.deepEqual(r.tagPatch.targetRoleFunction, ["product_management", "data_analysis"])
+  })
+
+  it("still rejects a scalar that is out of vocab after coercion", () => {
+    assert.throws(() =>
+      ConversationExtractResultSchema.parse({
+        tagPatch: { targetRoleFunction: "underwater_basket_weaving" },
+        memoryEntities: [],
+        confidence: 0.9,
+        rationale: "",
+      }),
+    )
+  })
+
+  it("drops empty-string scalar to undefined (no [\"\"])", () => {
+    const r = ConversationExtractResultSchema.parse({
+      tagPatch: { targetLocations: "" },
+      memoryEntities: [],
+      confidence: 0.9,
+      rationale: "",
+    })
+    assert.equal(r.tagPatch.targetLocations, undefined)
+  })
 })
 
 describe("buildExtractorPrompt", () => {

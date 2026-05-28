@@ -19,6 +19,7 @@ import OpenJobs from "./pages/OpenJobs.js"
 import Onboarding from "./pages/Onboarding.js"
 import EmployerSignup from "./pages/EmployerSignup.js"
 import Employers, { EmployersInbox } from "./pages/Employers.js"
+import ReferPage, { ReferPublicPage } from "./pages/Refer.js"
 import RecruiterBoard from "./pages/RecruiterBoard.js"
 import RecruiterRole from "./pages/RecruiterRole.js"
 
@@ -33,6 +34,23 @@ if (!root) throw new Error("Missing #root element")
 const host = typeof window !== "undefined" ? window.location.hostname.toLowerCase() : ""
 const IS_LAYOFF_HOST = host.startsWith("layoff.") || host === "layoff-wekruit.web.app"
 const HomeLanding = IS_LAYOFF_HOST ? LayoffLanding : Landing
+
+// Canonical host = apex `wekruit.com`. Adam directive 2026-05-27 — partner
+// API now emits `wekruitUrl: https://wekruit.com/j/<id>` instead of
+// `candidate.wekruit.com/j/<id>`. Stale partner caches still link to the
+// old `candidate.` subdomain; transparently bounce those to apex so the
+// address bar never leaks the internal subdomain. Skip during SSR
+// (`typeof window`), skip if the path doesn't start with `/j/` (the
+// candidate portal at /me etc. stays on candidate. for now), skip in
+// dev/preview hosts.
+if (
+  typeof window !== "undefined" &&
+  host === "candidate.wekruit.com" &&
+  window.location.pathname.startsWith("/j/")
+) {
+  const target = `https://wekruit.com${window.location.pathname}${window.location.search}${window.location.hash}`
+  window.location.replace(target)
+}
 
 // Adam directive 2026-05-16: "tanstack / cache / paginated job load". Single
 // shared QueryClient — 5 min staleTime means revisits to /open and /market
@@ -83,6 +101,9 @@ const fullRoutes = (
     <Route path="/employer" element={<EmployerSignup />} />
     <Route path="/employers" element={<Employers />} />
     <Route path="/employers/inbox" element={<EmployersInbox />} />
+    <Route path="/refer" element={<ReferPublicPage />} />
+    <Route path="/r/:slug" element={<ReferPublicPage />} />
+    <Route path="/me/refer" element={<ReferPage />} />
     <Route path="*" element={<HomeLanding />} />
   </Routes>
 )

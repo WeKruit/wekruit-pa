@@ -606,6 +606,106 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
 }
 .dt-shell__filter:hover { border-color: var(--border-strong); }
 
+/* Chip filter rows */
+.dt-shell__chips {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--cream-3);
+  border-bottom: 1px solid var(--border);
+}
+.dt-chip-row {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 14px;
+  align-items: center;
+}
+.dt-chip-row__label {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 600;
+}
+.dt-chip-row__options { display: flex; flex-wrap: wrap; gap: 6px; }
+.dt-chip {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--cream-2);
+  color: var(--ink-2);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background var(--dur-micro) var(--ease), border-color var(--dur-micro) var(--ease);
+}
+.dt-chip:hover { background: var(--cream); border-color: var(--border-strong); }
+.dt-chip__count { color: var(--ink-3); font-weight: 500; margin-left: 2px; }
+.dt-chip--active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--cream);
+}
+.dt-chip--active .dt-chip__count { color: var(--cream-2); }
+
+/* Sortable column headers */
+.dt-th--sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--dur-micro) var(--ease), background var(--dur-micro) var(--ease);
+}
+.dt-th--sortable:hover { background: var(--cream); color: var(--ink); }
+.dt-th__sort {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  color: var(--ink-3);
+  background: var(--cream);
+  border: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.dt-th--sortable:hover .dt-th__sort { border-color: var(--border-strong); color: var(--ink); }
+/* Active sort column: accent the header + its arrow chip. */
+.dt-th--sorted { color: var(--ink); }
+.dt-th--sorted .dt-th__sort {
+  color: #fff;
+  background: #1e6b34;
+  border-color: #1e6b34;
+}
+
+/* Pagination footer */
+.dt-shell__pager {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--cream-3);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.dt-shell__pager button {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--cream);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--ink-2);
+  cursor: pointer;
+  font-family: inherit;
+}
+.dt-shell__pager button:hover:not(:disabled) { border-color: var(--border-strong); }
+.dt-shell__pager button:disabled { opacity: 0.4; cursor: not-allowed; }
+
 .dt {
   width: 100%;
   border-collapse: collapse;

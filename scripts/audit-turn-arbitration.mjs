@@ -7,10 +7,16 @@ import { getFirestore } from "firebase-admin/firestore"
 
 const PA_USERS = "pa-users"
 const PA_MESSAGES = "pa-messages"
+const PA_OUTBOUND = "pa-outbound"
 const PRESCREEN_MEMORY = "pa-prescreen-memory-events"
 
 const args = parseArgs(process.argv.slice(2))
-const { decideConversationTurnOwner, summarizeConversationTurnTrace } = await loadArbiter()
+const {
+  buildConversationEvidenceWrites,
+  decideConversationDeliveryAction,
+  decideConversationTurnOwner,
+  summarizeConversationTurnTrace,
+} = await loadArbiter()
 
 if (args.fixtures) {
   await runFixtureAudit(resolve(String(args.fixtures)))
@@ -29,16 +35,19 @@ async function runFirestoreDryRun() {
     : await loadUserByPhone(db, normalizeE164(String(args.phone)))
   if (!user) throw new Error("No pa-users row found for requested user.")
 
-  const inboundText = typeof args.text === "string" && args.text.trim()
-    ? args.text.trim()
+  const inboundMessage = typeof args.text === "string" && args.text.trim()
+    ? { body: args.text.trim(), createdAt: new Date().toISOString() }
     : await loadLatestUserMessage(db, user.id)
+  const inboundText = inboundMessage?.body
   if (!inboundText) {
     throw new Error("No inbound text found. Pass --text to replay a specific turn.")
   }
 
-  const context = await buildContextFromFirestore(db, user.id, user.data, inboundText)
+  const context = await buildContextFromFirestore(db, user.id, user.data, inboundMessage)
   const decision = decideConversationTurnOwner(context)
-  const trace = summarizeConversationTurnTrace(context, decision)
+  const action = decideConversationDeliveryAction(context, decision)
+  const evidenceWrites = buildConversationEvidenceWrites(context, decision, action)
+  const trace = summarizeConversationTurnTrace(context, decision, action, evidenceWrites)
   const currentQuestionId = context.sharedOnboarding?.currentQuestionId
   const currentAnswer = currentQuestionId
     ? user.data.sharedOnboarding?.answers?.[currentQuestionId]?.answer
@@ -53,9 +62,14 @@ async function runFirestoreDryRun() {
     userId: user.id,
     inboundText,
     selectedOwner: decision.selectedOwner,
+    selectedAction: action.selectedAction,
     rejectedOwners: decision.rejectedOwners,
+    rejectedActions: action.rejectedActions,
     requiredTools: decision.requiredTools,
     forbiddenMutations: decision.forbiddenMutations,
+    noOutboundReason: action.noOutboundReason ?? null,
+    toolCallIds: action.toolCallIds,
+    evidenceWrites,
     orderedActions: decision.orderedActions,
     traceStates: trace.states,
     wouldFlagExistingForbiddenMutation,
@@ -70,24 +84,36 @@ async function runFixtureAudit(dir) {
     const fixture = JSON.parse(await readFile(join(dir, file), "utf8"))
     const context = buildContextFromFixture(fixture)
     const decision = decideConversationTurnOwner(context)
+    const action = decideConversationDeliveryAction(context, decision)
+    const evidenceWrites = buildConversationEvidenceWrites(context, decision, action)
     const missingTools = (fixture.expected.requiredTools ?? []).filter((tool) => !decision.requiredTools.includes(tool))
     const missingForbidden = (fixture.expected.forbiddenMutations ?? []).filter((mutation) => !decision.forbiddenMutations.includes(mutation))
+    const missingEvidenceWrites = (fixture.expected.evidenceWriteKinds ?? []).filter(
+      (kind) => !evidenceWrites.some((write) => write.kind === kind),
+    )
     const ordered = decision.orderedActions.map((action) => action.kind)
     const orderedOk = fixture.expected.orderedActionKinds
       ? JSON.stringify(ordered) === JSON.stringify(fixture.expected.orderedActionKinds)
       : true
+    const actionOk = fixture.expected.action ? action.selectedAction === fixture.expected.action : true
     const pass =
       decision.selectedOwner === fixture.expected.owner &&
+      actionOk &&
       missingTools.length === 0 &&
       missingForbidden.length === 0 &&
+      missingEvidenceWrites.length === 0 &&
       orderedOk
     results.push({
       id: fixture.id,
       pass,
       expectedOwner: fixture.expected.owner,
       actualOwner: decision.selectedOwner,
+      expectedAction: fixture.expected.action ?? null,
+      actualAction: action.selectedAction,
       missingTools,
       missingForbidden,
+      missingEvidenceWrites,
+      noOutboundReason: action.noOutboundReason ?? null,
       orderedActions: ordered,
     })
   }
@@ -100,7 +126,8 @@ async function runFixtureAudit(dir) {
   if (results.some((result) => !result.pass)) process.exitCode = 1
 }
 
-async function buildContextFromFirestore(db, userId, user, inboundText) {
+async function buildContextFromFirestore(db, userId, user, inboundMessage) {
+  const inboundText = inboundMessage.body
   const workSession = readObject(user.workSession)
   const shared = readObject(user.sharedOnboarding)
   const sharedActive = shared?.status === "active" && shared.completed !== true
@@ -119,17 +146,22 @@ async function buildContextFromFirestore(db, userId, user, inboundText) {
       ? { kind: "shared_onboarding", status: "active", currentQuestionId: sharedQuestionId }
       : null
   const prescreenEvidence = await loadPrescreenEvidence(db, user, workSession)
+  const recentMessages = mergeRecentMessages(
+    await loadRecentConversationMessages(db, userId, inboundMessage.sessionId, inboundMessage.createdAt),
+    await loadRecentOutboundMessages(db, userId, inboundMessage.createdAt),
+  )
+  const recentOutbound = recentMessages.filter((message) => message.role === "assistant")
   return {
     turnId: "dry-run",
     userId,
     inbound: {
       text: inboundText,
-      createdAt: new Date().toISOString(),
+      createdAt: inboundMessage.createdAt ?? new Date().toISOString(),
       channel: "imessage",
     },
     activeWorkflow,
-    recentMessages: [],
-    recentOutbound: [],
+    recentMessages,
+    recentOutbound,
     prescreenEvidence,
     sharedOnboarding: {
       active: Boolean(sharedActive),
@@ -187,7 +219,7 @@ function buildContextFromFixture(fixture) {
       ? { kind: "job_prescreen", status: "active", currentQuestionId: workSession.currentQuestionId ?? null }
       : null,
     recentMessages: [],
-    recentOutbound: [],
+    recentOutbound: Array.isArray(fixture.recentOutbound) ? fixture.recentOutbound : [],
     prescreenEvidence: sessionId && memory
       ? {
           sessionId,
@@ -202,6 +234,7 @@ function buildContextFromFixture(fixture) {
       currentQuestionId: sharedQuestionId,
     },
     preferenceState: readObject(user.statedPreferences),
+    toolResults: Array.isArray(fixture.toolResults) ? fixture.toolResults : undefined,
   }
 }
 
@@ -240,7 +273,88 @@ async function loadLatestUserMessage(db, userId) {
     .filter((row) => row.role === "user" && typeof row.body === "string")
     .sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))[0]
   const body = latest?.body
-  return typeof body === "string" ? body : null
+  if (typeof body !== "string") return null
+  return {
+    body,
+    sessionId: typeof latest.sessionId === "string" ? latest.sessionId : undefined,
+    createdAt: normalizeCreatedAt(latest.createdAt),
+    messageId: typeof latest.id === "string" ? latest.id : undefined,
+  }
+}
+
+async function loadRecentConversationMessages(db, userId, sessionId, beforeIso) {
+  let snap
+  try {
+    const query = sessionId
+      ? db.collection(PA_MESSAGES).where("sessionId", "==", sessionId).limit(200)
+      : db.collection(PA_MESSAGES).where("userId", "==", userId).orderBy("createdAt", "desc").limit(80)
+    snap = await query.get()
+  } catch (err) {
+    if (!String(err instanceof Error ? err.message : err).includes("requires an index")) throw err
+    snap = await db
+      .collection(PA_MESSAGES)
+      .where("userId", "==", userId)
+      .limit(80)
+      .get()
+  }
+  return snap.docs
+    .map((doc) => {
+      const row = doc.data() ?? {}
+      const body = typeof row.body === "string"
+        ? row.body
+        : typeof row.text === "string"
+          ? row.text
+          : ""
+      const role = row.role === "assistant" || row.role === "user" || row.role === "system"
+        ? row.role
+        : undefined
+      return {
+        role,
+        body,
+        createdAt: normalizeCreatedAt(row.createdAt),
+      }
+    })
+    .filter((message) => message.body.trim())
+    .filter((message) => isBeforeReplayInbound(message.createdAt, beforeIso))
+    .sort((a, b) => createdAtMillis(a.createdAt) - createdAtMillis(b.createdAt))
+    .slice(-16)
+}
+
+async function loadRecentOutboundMessages(db, userId, beforeIso) {
+  let snap
+  try {
+    snap = await db
+      .collection(PA_OUTBOUND)
+      .where("userId", "==", userId)
+      .orderBy("createdAt", "desc")
+      .limit(80)
+      .get()
+  } catch (err) {
+    if (!String(err instanceof Error ? err.message : err).includes("requires an index")) throw err
+    snap = await db
+      .collection(PA_OUTBOUND)
+      .where("userId", "==", userId)
+      .limit(80)
+      .get()
+  }
+  return snap.docs
+    .map((doc) => {
+      const row = doc.data() ?? {}
+      const body = typeof row.body === "string"
+        ? row.body
+        : typeof row.text === "string"
+          ? row.text
+          : ""
+      return {
+        role: "assistant",
+        body,
+        createdAt: normalizeCreatedAt(row.createdAt),
+      }
+    })
+    .filter((message) => message.body.trim())
+    .filter((message) => isBeforeReplayInbound(message.createdAt, beforeIso))
+    .sort((a, b) => createdAtMillis(a.createdAt) - createdAtMillis(b.createdAt))
+    .slice(-16)
 }
 
 function getDb() {
@@ -262,7 +376,9 @@ function getDb() {
 
 async function loadArbiter() {
   try {
-    return await import("../packages/pa-orchestrator/dist/conversation-turn-arbiter.js")
+    const turn = await import("../packages/pa-orchestrator/dist/conversation-turn-arbiter.js")
+    const action = await import("../packages/pa-orchestrator/dist/conversation-action-arbiter.js")
+    return { ...turn, ...action }
   } catch (err) {
     throw new Error(
       `Cannot load built arbiter. Run "npm run build --workspace=@pa/pa-orchestrator" first. ${err instanceof Error ? err.message : String(err)}`
@@ -303,6 +419,42 @@ function normalizeE164(value) {
 
 function readObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null
+}
+
+function normalizeCreatedAt(value) {
+  if (value && typeof value.toDate === "function") return value.toDate().toISOString()
+  if (typeof value === "string") return value
+  if (typeof value === "number") return new Date(value).toISOString()
+  return undefined
+}
+
+function createdAtMillis(value) {
+  if (!value) return 0
+  const millis = Date.parse(value)
+  return Number.isFinite(millis) ? millis : 0
+}
+
+function isBeforeReplayInbound(messageCreatedAt, inboundCreatedAt) {
+  const inboundMillis = createdAtMillis(inboundCreatedAt)
+  if (!inboundMillis) return true
+  const messageMillis = createdAtMillis(messageCreatedAt)
+  if (!messageMillis) return true
+  return messageMillis <= inboundMillis
+}
+
+function mergeRecentMessages(...messageLists) {
+  const seen = new Map()
+  for (const message of messageLists.flat()) {
+    const key = [
+      message.role ?? "",
+      message.createdAt ?? "",
+      message.body.trim(),
+    ].join("\u0000")
+    if (!seen.has(key)) seen.set(key, message)
+  }
+  return [...seen.values()]
+    .sort((a, b) => createdAtMillis(a.createdAt) - createdAtMillis(b.createdAt))
+    .slice(-16)
 }
 
 function usage(message) {

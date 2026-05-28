@@ -1,0 +1,29 @@
+id: conversation_experience_fit_gate_short_yes
+description: |
+  A short answer to a role-specific fit gate should be treated as an
+  active workflow answer and micro-ack, not as generic onboarding.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992003"
+chatId: "iMessage;+19999992003"
+userState:
+  onboardingState: complete
+  workSession:
+    kind: job_prescreen
+    status: active
+    sessionId: ps-local-fitgate
+    jobId: variance-swe
+    currentQuestionId: stack_fit
+seedMessages:
+  - role: assistant
+    body: "Before I push this forward, this role leans heavy on React/Next.js with TypeScript. Have you shipped production features in that stack?"
+turns:
+  - user: "Yes"
+    assert:
+      reply_min_length: 2
+      conversation_action: "micro_ack"
+      reply_not_contains_any:
+        - "industry are you interested"
+        - "what location"
+        - "overall fit looks low"

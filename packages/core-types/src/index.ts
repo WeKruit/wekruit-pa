@@ -245,6 +245,27 @@ export const UserSchema = z.object({
   runtimeModeSetBy: z.string().optional(),
   /** Free-text reason recorded by operator for the pause/resume. */
   runtimeModeReason: z.string().optional(),
+  /**
+   * Per-user version channel (canary / ring). `stable` (default / unset) =
+   * the user runs the PREVIOUS stable conversation behavior. `latest` = the
+   * user runs the newest behavior currently under test. Internal/test users
+   * (env `PA_INTERNAL_USER_IDS` or phone in `PA_INTERNAL_PHONE_NUMBERS`,
+   * which always includes the dev phone +14243201960) resolve to `latest`
+   * regardless of this field, so we always test on internal users before
+   * promoting a version to everyone. A behavior is only affected once it is
+   * explicitly marked "latest-only" via `isLatestChannel()`; until then this
+   * field is a strict no-op — byte-for-byte current behavior. Operator flips
+   * via dashboard or the `paVersionChannel` HTTP endpoint; promotion =
+   * flipping everyone from `stable` to `latest` (or removing the
+   * latest-only gate so the new behavior becomes the unconditional default).
+   */
+  versionChannel: z.enum(["latest", "stable"]).optional(),
+  /** ISO of last versionChannel flip. */
+  versionChannelAt: z.string().optional(),
+  /** Operator email that flipped versionChannel (audit). */
+  versionChannelSetBy: z.string().optional(),
+  /** Free-text reason recorded by operator for the channel change. */
+  versionChannelReason: z.string().optional(),
 })
 export type User = z.infer<typeof UserSchema>
 

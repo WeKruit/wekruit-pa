@@ -84,6 +84,10 @@ export const paCandidateClaimProfile = onCall(
     region: "us-central1",
     memory: "512MiB",
     timeoutSeconds: 30,
+    // minInstances=1 keeps a warm instance — second blocking callable on
+    // /me (useClaimedProfile). Pairs with paCandidateMagicLinkVerify so
+    // the portal renders fast. Adam ack 2026-05-27.
+    minInstances: 1,
   },
   async (req): Promise<CandidateClaimCallableResult> => {
     return runCandidateClaimProfile(req.data, req.auth, {

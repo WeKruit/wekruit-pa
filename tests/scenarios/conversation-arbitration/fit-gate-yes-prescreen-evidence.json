@@ -1,0 +1,37 @@
+{
+  "id": "fit-gate-yes-prescreen-evidence",
+  "description": "A short yes to a role-specific fit gate in an active prescreen stores prescreen answer evidence, not onboarding evidence.",
+  "initialFirestoreState": {
+    "pa-users/u-fitgate": {
+      "workSession": {
+        "kind": "job_prescreen",
+        "status": "active",
+        "sessionId": "ps-fitgate",
+        "jobId": "variance-swe",
+        "currentQuestionId": "stack_fit"
+      }
+    }
+  },
+  "inbound": {
+    "userId": "u-fitgate",
+    "text": "Yes",
+    "createdAt": "2026-05-26T23:14:00.000Z",
+    "channel": "imessage"
+  },
+  "recentOutbound": [
+    {
+      "role": "assistant",
+      "body": "Before I push this forward, this role leans heavy on React/Next.js with TypeScript. Have you shipped production features in that stack?",
+      "createdAt": "2026-05-26T23:13:30.000Z"
+    }
+  ],
+  "expected": {
+    "owner": "active_workflow",
+    "action": "micro_ack",
+    "requiredTools": ["prescreen_turn_handler"],
+    "evidenceWriteKinds": ["prescreen_answer"],
+    "trace": {
+      "selectedOwner": "active_workflow"
+    }
+  }
+}

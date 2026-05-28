@@ -301,6 +301,29 @@ describe("processOneJob", () => {
     assert.equal(counters.skipped_no_url, 1)
   })
 
+  it("no-ats + firstSeenAt past 14d grace → demote to inactive (unresolvable_ats)", async () => {
+    const counters = emptyCounters()
+    const job: SweepJobDoc = { id: "j1", firstSeenAt: dayAgo(20) } // 20d > 14d grace
+    const plan = await processOneJob(job, counters, baseDeps({}))
+    assert.equal(plan.kind, "update")
+    if (plan.kind === "update") {
+      assert.equal(plan.updates.status, "inactive")
+      assert.equal(plan.updates.inactiveReason, "unresolvable_ats")
+      assert.ok(plan.updates.inactiveAt)
+    }
+    assert.equal(counters.demoted_unresolvable_ats, 1)
+    assert.equal(counters.skipped_no_url, 0)
+  })
+
+  it("no-ats + firstSeenAt within 14d grace → skip (backfill still trying)", async () => {
+    const counters = emptyCounters()
+    const job: SweepJobDoc = { id: "j1", firstSeenAt: dayAgo(5) } // 5d < 14d grace
+    const plan = await processOneJob(job, counters, baseDeps({}))
+    assert.equal(plan.kind, "noop")
+    assert.equal(counters.skipped_no_url, 1)
+    assert.equal(counters.demoted_unresolvable_ats, 0)
+  })
+
   it("v1.7 Phase 65: missing atsApplyUrl is now skipped (no inline backfill, batch CF handles)", async () => {
     // Even with primaryUrl pointing at a known ATS host, liveness-sweep no
     // longer copies it across — that's the batch CF's job.

@@ -82,7 +82,7 @@ describe("planJobOutreach", () => {
           assert.equal(input.toE164, "+15555550123")
           assert.equal(input.context.inviteId.length > 0, true)
           assert.equal(input.context.jobTitle, "Product Designer")
-          assert.equal(input.context.jobUrl, "https://candidate.wekruit.com/j/job-1")
+          assert.equal(input.context.jobUrl, "https://wekruit.com/j/job-1")
           return { id: "runtime-1", created: true }
         },
       }
@@ -253,9 +253,9 @@ describe("renderOutreachInviteBody", () => {
     assert.equal(
       renderOutreachInviteBody({
         job: job({ jobTitle: "Product Designer", companyName: "Invoko" }),
-        jobUrl: "https://candidate.wekruit.com/j/job-1",
+        jobUrl: "https://wekruit.com/j/job-1",
       }),
-      "Claire from WeKruit here. Invoko looks like a strong fit for Product Designer. Want to do the quick first interview? https://candidate.wekruit.com/j/job-1 Reply stop to pause outreach."
+      "Claire from WeKruit here. Invoko looks like a strong fit for Product Designer. Want to do the quick first interview? https://wekruit.com/j/job-1 Reply stop to pause outreach."
     )
   })
 })

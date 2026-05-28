@@ -1,0 +1,32 @@
+id: version_channel_probe_internal_latest
+description: |
+  Per-user version channel (canary / ring) — INTERNAL user demonstration.
+
+  Sends the dev/test-only `__PA_CHANNEL_PROBE__` trigger as the internal dev
+  phone +14243201960. That phone is ALWAYS in the internal allowlist (baked
+  into version-channel.ts DEFAULT_INTERNAL_PHONE), so the orchestrator's
+  `getVersionChannel` resolves "latest" and the `isLatestChannel`-gated branch
+  runs the NEW reply.
+
+  Pair with channel-probe-normal-stable.yaml (same trigger, normal phone) to
+  see the latest-vs-stable divergence: one behavior marked latest-only ⇒
+  internal user gets the NEW reply, everyone else gets the STABLE reply.
+
+  Run:
+    pnpm --filter @pa/pa-orchestrator build && \
+      PA_RUN_EVAL=0 node tests/scenarios/runner-local.mjs \
+        tests/scenarios/version-channel/channel-probe-internal-latest.yaml
+testMode: true
+locale: en-US
+agentId: default
+participant: "+14243201960"   # dev phone — always internal ⇒ latest channel
+turns:
+  - user: "__PA_CHANNEL_PROBE__"
+    assert:
+      direct_intent: version_channel_probe
+      direct_intent_result: latest
+      reply_contains_any:
+        - "latest channel"
+        - "NEW conversation behavior"
+      reply_not_contains_any:
+        - "stable channel"

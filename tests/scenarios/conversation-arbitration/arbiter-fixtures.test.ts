@@ -9,6 +9,10 @@ import {
   type PrescreenEvidence,
   type TurnContext,
 } from "../../../packages/pa-orchestrator/src/conversation-turn-arbiter.js"
+import {
+  buildConversationEvidenceWrites,
+  decideConversationDeliveryAction,
+} from "../../../packages/pa-orchestrator/src/conversation-action-arbiter.js"
 
 type Fixture = {
   id: string
@@ -19,11 +23,15 @@ type Fixture = {
     createdAt?: string
     channel?: string
   }
+  recentOutbound?: Array<{ role?: "assistant" | "user" | "system"; body: string; createdAt?: string }>
+  toolResults?: TurnContext["toolResults"]
   expected: {
     owner: string
+    action?: string
     requiredTools?: string[]
     forbiddenMutations?: string[]
     orderedActionKinds?: string[]
+    evidenceWriteKinds?: string[]
     trace?: { selectedOwner?: string }
   }
 }
@@ -40,9 +48,14 @@ test("conversation arbitration scenario fixtures match expected owners and trace
     const fixture = JSON.parse(await readFile(join(fixtureDir.pathname, file), "utf8")) as Fixture
     const context = buildContextFromFixture(fixture)
     const decision = decideConversationTurnOwner(context)
-    const trace = summarizeConversationTurnTrace(context, decision)
+    const action = decideConversationDeliveryAction(context, decision)
+    const evidenceWrites = buildConversationEvidenceWrites(context, decision, action)
+    const trace = summarizeConversationTurnTrace(context, decision, action, evidenceWrites)
 
     assert.equal(decision.selectedOwner, fixture.expected.owner, fixture.id)
+    if (fixture.expected.action) {
+      assert.equal(action.selectedAction, fixture.expected.action, fixture.id)
+    }
     for (const tool of fixture.expected.requiredTools ?? []) {
       assert.ok(decision.requiredTools.includes(tool as never), `${fixture.id}: missing tool ${tool}`)
     }
@@ -52,8 +65,14 @@ test("conversation arbitration scenario fixtures match expected owners and trace
     if (fixture.expected.orderedActionKinds) {
       assert.deepEqual(decision.orderedActions.map((action) => action.kind), fixture.expected.orderedActionKinds, fixture.id)
     }
+    for (const kind of fixture.expected.evidenceWriteKinds ?? []) {
+      assert.ok(evidenceWrites.some((write) => write.kind === kind), `${fixture.id}: missing evidence write ${kind}`)
+    }
     if (fixture.expected.trace?.selectedOwner) {
       assert.equal(trace.decision.selectedOwner, fixture.expected.trace.selectedOwner, fixture.id)
+    }
+    if (fixture.expected.action) {
+      assert.equal(trace.actionDecision?.selectedAction, fixture.expected.action, fixture.id)
     }
     assert.deepEqual(trace.states, [
       "received",
@@ -113,8 +132,9 @@ function buildContextFromFixture(fixture: Fixture): TurnContext {
       currentQuestionId: sharedQuestionId,
     },
     recentMessages: [],
-    recentOutbound: [],
+    recentOutbound: fixture.recentOutbound ?? [],
     preferenceState: readObject(user.statedPreferences),
+    toolResults: fixture.toolResults,
   }
 }
 

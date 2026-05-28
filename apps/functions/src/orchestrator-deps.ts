@@ -84,9 +84,30 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
         reason: result.reason,
       }
     },
-    sendReaction: async ({ to, messageHandle, reaction }) => {
+    sendReaction: async ({ to, messageHandle, reaction, userId }) => {
+      if (!getApps().length) initializeApp()
+      const db = getFirestore()
+      let fromNumber: string | undefined
+      if (userId) {
+        try {
+          const userSnap = await db.collection("pa-users").doc(userId).get()
+          const senderNumber = userSnap.data()?.senderNumber
+          fromNumber = typeof senderNumber === "string" && senderNumber.trim()
+            ? senderNumber.trim()
+            : undefined
+        } catch {
+          fromNumber = undefined
+        }
+      }
       const { sendReaction } = await import("./sendblue/send-reaction.js")
-      await sendReaction({ to, messageHandle, reaction })
+      await sendReaction({
+        to,
+        messageHandle,
+        reaction,
+        ...(userId ? { userId, db } : {}),
+        ...(fromNumber ? { fromNumber } : {}),
+        allowEnvFromNumberFallback: false,
+      })
     },
   }
 
@@ -221,9 +242,34 @@ function makeGenerateJobRecs(): NonNullable<
             logger.info("[job-recs][v16]", { event, ...(payload ?? {}) }),
         }
       )
+      // 2026-05-27 — V16 counter pass-through. Adam's live test caught the
+      // matcher returning 0 jobs (hard-filter wipeout) and the legacy
+      // generic "I did not find a strong fresh match yet" copy. The
+      // orchestrator's `composeNoMatchReply` needs the real V16 counters
+      // (total / dropped / hardFilter / needsOnboarding / missingAxes) to
+      // narrate the actual cause. We surface them on every return path —
+      // including the previously `null`-returning 0-match branches — so
+      // the caller can always produce a grounded reply.
+      const counters: {
+        noUserTags?: boolean
+        needsOnboarding?: boolean
+        missingAxes?: readonly string[]
+        total?: number
+        dropped?: number
+        hardFilter?: Readonly<Record<string, number>>
+        collabPrescreenOnly?: boolean
+      } = {
+        ...(out.noUserTags ? { noUserTags: true } : {}),
+        ...(out.needsOnboarding ? { needsOnboarding: true } : {}),
+        ...(out.missingAxes ? { missingAxes: out.missingAxes } : {}),
+        ...(typeof out.total === "number" ? { total: out.total } : {}),
+        ...(typeof out.dropped === "number" ? { dropped: out.dropped } : {}),
+        ...(out.hardFilter ? { hardFilter: out.hardFilter as Record<string, number> } : {}),
+        ...(opts?.collabPrescreenOnly ? { collabPrescreenOnly: true } : {}),
+      }
       if (out.noUserTags) {
         logger.info("[job-recs] no pa-users.tags — fallback", { userId })
-        return null
+        return { message: "", recCount: 0, v16Counters: counters }
       }
       if (
         opts?.allowBroadFallback === false &&
@@ -234,7 +280,7 @@ function makeGenerateJobRecs(): NonNullable<
           userId,
           missingAxes: out.missingAxes,
         })
-        return null
+        return { message: "", recCount: 0, v16Counters: counters }
       }
       const jobs = out.jobs ?? []
       if (jobs.length === 0) {
@@ -245,7 +291,7 @@ function makeGenerateJobRecs(): NonNullable<
           hardFilter: out.hardFilter,
           collabPrescreenOnly: opts?.collabPrescreenOnly ?? false,
         })
-        return null
+        return { message: "", recCount: 0, v16Counters: counters }
       }
       if (opts?.collabPrescreenOnly === true) {
         const top = jobs[0]!
@@ -262,6 +308,7 @@ function makeGenerateJobRecs(): NonNullable<
             company: String(top.companyName ?? "Company"),
             score,
           },
+          v16Counters: counters,
         }
       }
       const visibleCount = resolveJobRecVisibleCount(opts?.requestedCount)
@@ -277,7 +324,7 @@ function makeGenerateJobRecs(): NonNullable<
           total: out.total,
           dropped: out.dropped,
         })
-        return null
+        return { message: "", recCount: 0, v16Counters: counters }
       }
 
       // v1.7 hotfix — LLM-composed nuanced reasoning for top-2.
@@ -478,7 +525,7 @@ function makeGenerateJobRecs(): NonNullable<
         },
         { merge: true },
       )
-      return { message, recCount: messageItems.length }
+      return { message, recCount: messageItems.length, v16Counters: counters }
     } catch (err) {
       logger.warn("[job-recs] queryMatchingJobsV16 threw", {
         userId,

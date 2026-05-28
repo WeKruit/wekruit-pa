@@ -1,0 +1,50 @@
+{
+  "id": "active-onboarding-short-ack-no-tapback",
+  "description": "A short acknowledgement while shared onboarding is waiting on Q1 must re-ask Q1 instead of treating older recommendation context as job interest.",
+  "initialFirestoreState": {
+    "pa-users/u-onb-ack": {
+      "id": "u-onb-ack",
+      "phoneE164": "+15109136602",
+      "onboardingState": "pending",
+      "workSession": {
+        "kind": "shared_onboarding",
+        "status": "active",
+        "currentQuestionId": "main_goal"
+      },
+      "sharedOnboarding": {
+        "status": "active",
+        "currentQuestionId": "main_goal",
+        "completed": false,
+        "answers": {}
+      }
+    }
+  },
+  "inbound": {
+    "userId": "u-onb-ack",
+    "text": "Sure",
+    "createdAt": "2026-05-26T23:12:00.000Z",
+    "channel": "imessage"
+  },
+  "recentOutbound": [
+    {
+      "role": "assistant",
+      "body": "One role worth your time: Software Engineer at Rain. Tell me if it is interesting, and why or why not.",
+      "createdAt": "2026-05-26T23:10:30.000Z"
+    },
+    {
+      "role": "assistant",
+      "body": "Before I match roles, what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?",
+      "createdAt": "2026-05-26T23:11:30.000Z"
+    }
+  ],
+  "expected": {
+    "owner": "shared_onboarding",
+    "action": "answer_then_continue",
+    "requiredTools": [],
+    "forbiddenMutations": ["sharedOnboarding.answers.main_goal"],
+    "orderedActionKinds": ["clarify_shared_onboarding"],
+    "trace": {
+      "selectedOwner": "shared_onboarding"
+    }
+  }
+}

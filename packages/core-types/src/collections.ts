@@ -19,6 +19,8 @@ export const PA_COLLECTIONS = {
   turns: "pa-turns",
   /** Upstream conversation-owner arbitration trace for Claire turn routing. */
   turnTraces: "pa-turn-traces",
+  /** First-class committed evidence extracted by the conversation arbiter/action layer. */
+  conversationEvidence: "pa-conversation-evidence",
   /** Memory action audit (remember/forget/list/clear) */
   memoryActions: "pa-memory-actions",
   /** Rolled-up conversation summaries */
@@ -128,6 +130,22 @@ export const PA_COLLECTIONS = {
   companies: "pa-companies",
   /** Canonical practice interview question bank imported from legacy sources. */
   practiceQuestionBank: "pa-practice-question-bank",
+  /**
+   * v2.0 — candidate referral records.
+   * Doc shape: { inviterId, inviteeEmail (lower), inviteeUserId?, stage, slug,
+   *   rewardInterviewAmount/Paid, rewardPlacementAmount/Paid, payoutStatus,
+   *   note, createdAt, updatedAt, detail? }.
+   * Attribution rule (Adam directive 2026-05-27 Q5): inviteeEmail MUST match
+   * the signing-up user's auth email lower-cased; no fuzzy match.
+   */
+  referrals: "pa-referrals",
+  /**
+   * v2.0 — referral slug → inviter uid reverse index. Doc id is the URL slug
+   * (e.g. `maya-okafor`). One doc per slug. Used by /r/:slug to resolve the
+   * inviter for the hero copy + by signup attribution to find the right
+   * referral row.
+   */
+  referralSlugs: "pa-referral-slugs",
 } as const
 
 /**

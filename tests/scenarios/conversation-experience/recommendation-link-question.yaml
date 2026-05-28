@@ -1,0 +1,26 @@
+id: conversation_experience_recommendation_link_question
+description: |
+  A candidate asks a meta/link question while giving soft interest.
+  Claire should answer the explicit question first, then continue.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992002"
+chatId: "iMessage;+19999992002"
+userState:
+  onboardingState: complete
+seedMessages:
+  - role: assistant
+    body: "One role worth your time: Senior Software Engineer at Variance. Tell me if it is interesting, and why or why not."
+turns:
+  - user: "Do you have a link? Seems fine"
+    assert:
+      reply_min_length: 2
+      reply_count_min: 2
+      conversation_action: "answer_then_continue"
+      joined_reply_contains_any:
+        - "Before I move it forward"
+      reply_not_contains_any:
+        - "overall fit looks low"
+        - "optimize your candidacy"
+        - "as an AI"

@@ -17,7 +17,11 @@ const FAILURE_TAXONOMY = [
 const args = parseArgs(process.argv.slice(2))
 const fixtureDir = resolve(args.fixtures ?? "tests/scenarios/conversation-arbitration")
 const reportPath = resolve(args.report ?? ".tmp/conversation-arbiter-auto-pr/report.json")
-const { decideConversationTurnOwner } = await loadArbiter()
+const {
+  buildConversationEvidenceWrites,
+  decideConversationDeliveryAction,
+  decideConversationTurnOwner,
+} = await loadArbiter()
 
 const report = await auditFixtures(fixtureDir)
 mkdirSync(resolve(reportPath, ".."), { recursive: true })
@@ -40,6 +44,8 @@ async function auditFixtures(dir) {
     const fixture = JSON.parse(await readFile(join(dir, file), "utf8"))
     const context = buildContextFromFixture(fixture)
     const decision = decideConversationTurnOwner(context)
+    const action = decideConversationDeliveryAction(context, decision)
+    const evidenceWrites = buildConversationEvidenceWrites(context, decision, action)
     if (decision.selectedOwner !== fixture.expected.owner) {
       failures.push({
         fixtureId: fixture.id,
@@ -47,6 +53,15 @@ async function auditFixtures(dir) {
         expectedOwner: fixture.expected.owner,
         actualOwner: decision.selectedOwner,
         suggestedPatch: "Add or adjust a conversation-turn-arbiter fixture first, then update owner detection with the smallest rule change.",
+      })
+    }
+    if (fixture.expected.action && action.selectedAction !== fixture.expected.action) {
+      failures.push({
+        fixtureId: fixture.id,
+        taxonomy: "weak_outbound",
+        expectedAction: fixture.expected.action,
+        actualAction: action.selectedAction,
+        suggestedPatch: "Adjust conversation-action-arbiter with a fixture-first rule for this delivery behavior.",
       })
     }
     for (const tool of fixture.expected.requiredTools ?? []) {
@@ -81,6 +96,17 @@ async function auditFixtures(dir) {
         suggestedPatch: "Preserve explicit answer first, then memory commit, then matching/tool execution.",
       })
     }
+    for (const kind of fixture.expected.evidenceWriteKinds ?? []) {
+      if (!evidenceWrites.some((write) => write.kind === kind)) {
+        failures.push({
+          fixtureId: fixture.id,
+          taxonomy: "bad_memory_order",
+          expectedEvidenceWriteKind: kind,
+          actualEvidenceWriteKinds: evidenceWrites.map((write) => write.kind),
+          suggestedPatch: "Emit a structured evidence write before composing the final reply.",
+        })
+      }
+    }
   }
   return {
     generatedAt: new Date().toISOString(),
@@ -106,7 +132,7 @@ function createAutoPr(report) {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 12)
   const branch = `codex/conversation-arbiter-autopr-${stamp}`
   execFileSync("git", ["switch", "-c", branch], { stdio: "inherit" })
-  execFileSync("zsh", ["-lc", "source ~/.zshrc && nvm use 24 >/dev/null && node --import tsx --test tests/scenarios/conversation-arbitration/arbiter-fixtures.test.ts packages/pa-orchestrator/src/conversation-turn-arbiter.test.ts"], { stdio: "inherit" })
+  execFileSync("zsh", ["-lc", "source ~/.zshrc && nvm use 24 >/dev/null && node --import tsx --test tests/scenarios/conversation-arbitration/arbiter-fixtures.test.ts packages/pa-orchestrator/src/conversation-turn-arbiter.test.ts packages/pa-orchestrator/src/conversation-action-arbiter.test.ts"], { stdio: "inherit" })
   execFileSync("git", ["add", reportPath, "tests/scenarios/conversation-arbitration"], { stdio: "inherit" })
   execFileSync("git", ["commit", "-m", "Add conversation arbiter auto-pr failure report"], { stdio: "inherit" })
   execFileSync("gh", [
@@ -151,7 +177,7 @@ function buildContextFromFixture(fixture) {
       ? { kind: "job_prescreen", status: "active", currentQuestionId: workSession.currentQuestionId ?? null }
       : null,
     recentMessages: [],
-    recentOutbound: [],
+    recentOutbound: Array.isArray(fixture.recentOutbound) ? fixture.recentOutbound : [],
     prescreenEvidence: sessionId && memory
       ? {
           sessionId,
@@ -166,12 +192,15 @@ function buildContextFromFixture(fixture) {
       currentQuestionId: sharedQuestionId,
     },
     preferenceState: readObject(user.statedPreferences),
+    toolResults: Array.isArray(fixture.toolResults) ? fixture.toolResults : undefined,
   }
 }
 
 async function loadArbiter() {
   try {
-    return await import("../packages/pa-orchestrator/dist/conversation-turn-arbiter.js")
+    const turn = await import("../packages/pa-orchestrator/dist/conversation-turn-arbiter.js")
+    const action = await import("../packages/pa-orchestrator/dist/conversation-action-arbiter.js")
+    return { ...turn, ...action }
   } catch (err) {
     throw new Error(
       `Cannot load built arbiter. Run "npm run build --workspace=@pa/pa-orchestrator" first. ${err instanceof Error ? err.message : String(err)}`

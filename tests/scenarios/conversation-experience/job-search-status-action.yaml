@@ -1,0 +1,23 @@
+id: conversation_experience_job_search_status_action
+description: |
+  A direct job-search request should plan status_then_async_tool so Claire can
+  acknowledge quickly before matching/tool work.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992004"
+chatId: "iMessage;+19999992004"
+userState:
+  onboardingState: complete
+turns:
+  - user: "Can you find roles like that in New York?"
+    assert:
+      reply_min_length: 2
+      reply_count_min: 2
+      conversation_action: "status_then_async_tool"
+      joined_reply_contains_any:
+        - "One role worth your time"
+      reply_not_contains_any:
+        - "overall fit looks low"
+        - "optimize your candidacy"
+        - "as an AI"

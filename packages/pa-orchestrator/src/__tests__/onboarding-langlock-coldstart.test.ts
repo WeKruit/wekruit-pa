@@ -180,6 +180,10 @@ function emptyCaptures(): ColdStartLangCaptures {
   }
 }
 
+function joinedOutbound(captures: ColdStartLangCaptures): string {
+  return captures.outboundBodies.join(" ")
+}
+
 // ============================================================================
 // Test 1 — Cold-start ZH user: manual SMS onboarding is gated to the website.
 // ============================================================================
@@ -194,11 +198,12 @@ test("coldstart-langlock: ZH user '我想找工作' → website start gate witho
     store
   )
   assert.equal(captures.llmCalls, 0)
-  assert.equal(captures.outboundBodies.length, 1)
+  assert.equal(captures.outboundBodies.length, 2)
+  const outbound = joinedOutbound(captures)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email/i)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
+  assert.match(outbound, /career growth, compensation, stability, mission, learning/)
+  assert.doesNotMatch(outbound, /email/i)
   assert.deepEqual(captures.systemPrompts, [])
   assert.deepEqual(captures.userMessages, [])
   // No translate event fired — reply was already ZH.
@@ -221,10 +226,11 @@ test("coldstart-langlock: EN user 'I want a job' → website start gate without 
     store
   )
   assert.equal(captures.llmCalls, 0)
+  const outbound = joinedOutbound(captures)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email/i)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
+  assert.match(outbound, /career growth, compensation, stability, mission, learning/)
+  assert.doesNotMatch(outbound, /email/i)
   assert.deepEqual(captures.systemPrompts, [])
   assert.deepEqual(captures.userMessages, [])
 })
@@ -242,10 +248,11 @@ test("coldstart-langlock: 'swe的' → website start gate, no LLM lang-lock path
     store
   )
   assert.equal(captures.llmCalls, 0)
+  const outbound = joinedOutbound(captures)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email/i)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
+  assert.match(outbound, /career growth, compensation, stability, mission, learning/)
+  assert.doesNotMatch(outbound, /email/i)
   assert.deepEqual(captures.systemPrompts, [])
   assert.deepEqual(captures.userMessages, [])
 })
@@ -263,10 +270,11 @@ test("coldstart-langlock: 'yoe1年的' → website start gate, no LLM lang-lock 
     store
   )
   assert.equal(captures.llmCalls, 0)
+  const outbound = joinedOutbound(captures)
   // 2026-05-19 — shared_onboarding bootstrap owns cold-start Q1, no URL redirect.
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /candidate\.wekruit\.com\/onboarding/i)
-  assert.match(captures.outboundBodies[0] ?? "", /career growth, compensation, stability, mission, learning/)
-  assert.doesNotMatch(captures.outboundBodies[0] ?? "", /email/i)
+  assert.doesNotMatch(outbound, /wekruit\.com\/onboarding/i)
+  assert.match(outbound, /career growth, compensation, stability, mission, learning/)
+  assert.doesNotMatch(outbound, /email/i)
   assert.deepEqual(captures.systemPrompts, [])
 })
 

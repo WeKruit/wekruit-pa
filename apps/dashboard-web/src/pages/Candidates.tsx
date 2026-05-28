@@ -27,6 +27,7 @@ import { Icon } from "../components/console/Icon.js"
 import {
   Card,
   DataTable,
+  type DataTableSort,
   EmptyState,
   MetricStrip,
   PageHeader,
@@ -83,6 +84,42 @@ const LIFECYCLE_LABEL: Record<LifecycleState, string> = {
   retained: "Retained",
   opted_out: "Opted out",
   deleted: "Deleted",
+}
+
+// Tooltips explaining the predicate behind each state chip. The "Claimed"
+// label is a known misnomer (lastClaimedAt is empty across the corpus —
+// see chip-redesign tracking in INITIATIVE-recruiter-board.md follow-ups).
+const LIFECYCLE_TOOLTIP: Record<LifecycleState, string> = {
+  prospect: "No reachable handle yet (no email + no phone). Identity row only.",
+  profile_created: "pa-users doc exists with at least one handle but not Firebase-claimed yet (onboardingStatus = provisional).",
+  reachable: "Has email or phone but candidateLifecycleState was never stamped. Heuristic fallback.",
+  claimed: "candidateLifecycleState = claimed OR onboardingStatus = active. Note: lastClaimedAt is not currently populated.",
+  profile_ready: "Resume parsed, core tags present, reachable handle exists.",
+  active_job_seeker: "Explicitly or behaviorally signals open to opportunities.",
+  retained: "Not actively searching, allows future outreach.",
+  opted_out: "Stop / no-outreach / delete signal received. No outbound allowed.",
+  deleted: "Hard-delete requested + fulfilled. Terminal.",
+}
+
+const IDENTITY_TOOLTIP: Record<string, string> = {
+  registered: "Has a pa-candidate-auth mapping (Firebase Auth account claimed via magic link or OAuth).",
+  phone_ready: "Doc has a valid E.164 phone number on the root field (no handle binding required).",
+  phone_bound: "Doc has a pa-candidate-handles entry of kind=phone (link confirmed by candidate).",
+  sendblue_eligible: "candidate_account class + registered + phone_ready (the three preconditions for Sendblue outbound).",
+}
+
+const SOURCE_TOOLTIP: Record<string, string> = {
+  imessage: "Inbound from Sendblue / Apple iMessage transport.",
+  public_job: "Hit candidate.wekruit.com/j/:jobId (public job page).",
+  layoff: "Layoff host (layoff.wekruit.com) WeKruit Open intake.",
+  ats: "ATS inbound webhook (Handshake / Greenhouse etc).",
+  bulk_resume: "Employer bulk resume upload.",
+  juicebox: "Juicebox external-supply import.",
+  lessie: "Lessie external-supply import.",
+  coresignal: "Coresignal LinkedIn-centered external-supply import.",
+  manual_csv: "Manual CSV / inspection script.",
+  synthetic_test: "Demo / synthetic / internal test profile.",
+  unknown: "No pa-candidate-source-links entry resolved — provenance unknown.",
 }
 
 const LIFECYCLE_ORDER: LifecycleState[] = [
@@ -426,6 +463,7 @@ export function Candidates() {
   const [lookupLoading, setLookupLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [search, setSearch] = useState("")
+  const [sort, setSort] = useState<DataTableSort | null>({ key: "last", dir: "desc" })
   const [stateFilter, setStateFilter] = useState<Set<LifecycleState>>(new Set())
   const [sourceFilter, setSourceFilter] = useState<Set<SourceKind>>(new Set())
   const [identityFilter, setIdentityFilter] = useState<Set<IdentityFilter>>(new Set())
@@ -608,6 +646,38 @@ export function Candidates() {
     stateFilter,
   ])
 
+  // Ranking. Sortable columns: handle (alpha), lifecycle (pipeline order),
+  // profile (completeness %), last (recency). Header click toggles
+  // asc → desc → off via DataTable's onSort.
+  const sorted = useMemo(() => {
+    if (!sort) return filtered
+    const dir = sort.dir === "asc" ? 1 : -1
+    const val = (r: Row): number | string => {
+      switch (sort.key) {
+        case "handle": return (r.handle || "").toLowerCase()
+        case "lifecycle": return LIFECYCLE_ORDER.indexOf(r.lifecycle)
+        case "source": return SOURCE_LABEL[r.source] || ""
+        case "profile": return r.profilePct ?? 0
+        case "last": return r.lastActiveIso ? Date.parse(r.lastActiveIso) || 0 : 0
+        default: return 0
+      }
+    }
+    return [...filtered].sort((a, b) => {
+      const av = val(a)
+      const bv = val(b)
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir
+      return String(av).localeCompare(String(bv)) * dir
+    })
+  }, [filtered, sort])
+
+  const toggleSort = (key: string) => {
+    setSort((s) => {
+      if (!s || s.key !== key) return { key, dir: "asc" }
+      if (s.dir === "asc") return { key, dir: "desc" }
+      return null
+    })
+  }
+
   const toggleState = (s: LifecycleState) => {
     const next = new Set(stateFilter)
     if (next.has(s)) next.delete(s)
@@ -770,6 +840,7 @@ export function Candidates() {
                   active={active}
                   tone={LIFECYCLE_TONE[s]}
                   onClick={() => toggleState(s)}
+                  title={LIFECYCLE_TOOLTIP[s]}
                 >
                   {LIFECYCLE_LABEL[s]} <span style={{ opacity: 0.6 }}>· {n}</span>
                 </Chip>
@@ -782,7 +853,13 @@ export function Candidates() {
               if (n === 0) return null
               const active = sourceFilter.has(s)
               return (
-                <Chip key={s} active={active} tone="info" onClick={() => toggleSource(s)}>
+                <Chip
+                  key={s}
+                  active={active}
+                  tone="info"
+                  onClick={() => toggleSource(s)}
+                  title={SOURCE_TOOLTIP[s]}
+                >
                   {SOURCE_LABEL[s]} <span style={{ opacity: 0.6 }}>· {n}</span>
                 </Chip>
               )
@@ -794,7 +871,13 @@ export function Candidates() {
               if (n === 0) return null
               const active = identityFilter.has(key)
               return (
-                <Chip key={key} active={active} tone={tone} onClick={() => toggleIdentity(key)}>
+                <Chip
+                  key={key}
+                  active={active}
+                  tone={tone}
+                  onClick={() => toggleIdentity(key)}
+                  title={IDENTITY_TOOLTIP[key]}
+                >
                   {label} <span style={{ opacity: 0.6 }}>· {n}</span>
                 </Chip>
               )
@@ -873,14 +956,19 @@ export function Candidates() {
         />
       ) : (
         <DataTable
-          rows={filtered}
+          rows={sorted}
           onRowClick={(r) => setDrawer(r as Row)}
           search={search}
           onSearch={setSearch}
+          sort={sort}
+          onSort={toggleSort}
+          count={sorted.length}
+          totalCount={rows.length}
           columns={[
             {
               key: "handle",
               label: "Handle",
+              sortable: true,
               render: (r) => (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                   <Icon name={handleIcon((r as Row).handleKind)} size={13} style={{ color: "var(--ink-3)" }} />
@@ -916,6 +1004,7 @@ export function Candidates() {
             {
               key: "lifecycle",
               label: "State",
+              sortable: true,
               render: (r) => (
                 <StatusPill tone={LIFECYCLE_TONE[(r as Row).lifecycle]} dot>
                   {LIFECYCLE_LABEL[(r as Row).lifecycle]}
@@ -925,6 +1014,7 @@ export function Candidates() {
             {
               key: "source",
               label: "Source",
+              sortable: true,
               render: (r) => {
                 const row = r as Row
                 const identity = identitySummary(row)
@@ -944,6 +1034,7 @@ export function Candidates() {
             {
               key: "profile",
               label: "Profile",
+              sortable: true,
               render: (r) => <PctBar pct={(r as Row).profilePct} />,
             },
             {
@@ -977,6 +1068,7 @@ export function Candidates() {
               key: "last",
               label: "Last active",
               className: "mono",
+              sortable: true,
               render: (r) => relTime((r as Row).lastActiveIso),
             },
             {
@@ -1010,16 +1102,19 @@ function Chip({
   tone,
   onClick,
   children,
+  title,
 }: {
   active: boolean
   tone: Tone
   onClick: () => void
   children: React.ReactNode
+  title?: string
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      title={title}
       className={`pill pill--${active ? tone : "neutral"}`}
       style={{
         cursor: "pointer",
@@ -1216,6 +1311,10 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
           <DrawerKV k="Updated" v={relTime(doc.updatedAt)} />
         </Card>
 
+        <Card title="Profile details">
+          <DrawerProfileDetails doc={doc} />
+        </Card>
+
         <Card title="Management actions">
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <DrawerLink to={`/admin/candidates/${doc.id}/profile`} label="Full profile" icon="user_check" />
@@ -1248,6 +1347,185 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
         </Card>
       </div>
     </div>
+  )
+}
+
+// Inline expansion shown inside CandidateDrawer — same data the Full Profile
+// page surfaces, condensed for drawer width. Keeps the existing DrawerLink to
+// the full /admin/candidates/:id/profile route as a "view detached" affordance.
+function DrawerProfileDetails({ doc }: { doc: UserDoc }) {
+  const d = doc as Record<string, unknown>
+  const tags = (d.tags ?? {}) as {
+    topTags?: string[]
+    skills?: Array<string | { value: string }>
+    targetRoleFunction?: string[]
+    industrySector?: string[]
+    careerStage?: string
+    visaStatus?: string
+    targetLocations?: string[]
+    minSalary?: number
+  }
+  const derivedExp = d.derivedExperience as
+    | { summary?: string; years?: number; titles?: string[]; companies?: string[] }
+    | undefined
+  const prefs = d.conversationDerivedPreferences as
+    | { summary?: string; updatedAt?: { seconds?: number } | string }
+    | undefined
+  const ctx = d.candidateContext as string | undefined
+  const postMatch = d.postMatchRetention as
+    | { state?: string; lastInteractionAt?: { seconds?: number } | string }
+    | undefined
+  const resumeCount = (d.resumeParseCount ?? 0) as number
+  const resumeLast = d.resumeParseLastAt as { seconds?: number } | string | undefined
+  const resumeId = d.latestResumeArtifactId as string | undefined
+  const layoffCtx = d.layoffContext as Record<string, unknown> | undefined
+  const onboardingStatus = d.onboardingStatus as string | undefined
+  const claireStarted = d.claireConversationStarted as boolean | undefined
+
+  const skills = Array.isArray(tags.skills)
+    ? tags.skills.map((s) => (typeof s === "string" ? s : s?.value)).filter(Boolean).slice(0, 10)
+    : []
+
+  const noData = !derivedExp?.summary &&
+    !prefs?.summary &&
+    !ctx &&
+    !resumeCount &&
+    !tags.topTags?.length &&
+    !skills.length &&
+    !tags.targetRoleFunction?.length &&
+    !tags.industrySector?.length &&
+    !postMatch?.state &&
+    !layoffCtx
+
+  if (noData) {
+    return (
+      <div style={{ fontSize: 12.5, color: "var(--ink-3)", padding: "4px 0" }}>
+        No derived profile data on this doc yet — resume parse, conversation extraction, and tag enrichment have not run (or returned empty).
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 13 }}>
+      {resumeCount > 0 && (
+        <div>
+          <DrawerSectionLabel>Resume</DrawerSectionLabel>
+          <div style={{ color: "var(--ink-2)" }}>
+            Parsed {resumeCount}× · last {relTime(toIsoLike(resumeLast))}
+            {resumeId && (
+              <span style={{ color: "var(--ink-3)", fontFamily: "var(--font-mono)", fontSize: 11, marginLeft: 6 }}>
+                · {String(resumeId).slice(0, 12)}…
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {derivedExp?.summary && (
+        <div>
+          <DrawerSectionLabel>Experience summary</DrawerSectionLabel>
+          <div style={{ color: "var(--ink-2)", whiteSpace: "pre-wrap" }}>{derivedExp.summary}</div>
+          {(derivedExp.years || derivedExp.titles?.length || derivedExp.companies?.length) && (
+            <div style={{ marginTop: 4, color: "var(--ink-3)", fontSize: 12 }}>
+              {derivedExp.years ? `${derivedExp.years} yrs · ` : ""}
+              {derivedExp.titles?.slice(0, 3).join(", ")}
+              {derivedExp.companies?.length ? ` · @ ${derivedExp.companies.slice(0, 3).join(", ")}` : ""}
+            </div>
+          )}
+        </div>
+      )}
+
+      {(tags.targetRoleFunction?.length || tags.industrySector?.length || tags.careerStage || tags.visaStatus || tags.targetLocations?.length || tags.minSalary) && (
+        <div>
+          <DrawerSectionLabel>Canonical tags</DrawerSectionLabel>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {tags.targetRoleFunction?.map((r) => <TagChip key={r}>role: {r}</TagChip>)}
+            {tags.industrySector?.slice(0, 5).map((i) => <TagChip key={i}>industry: {i}</TagChip>)}
+            {tags.careerStage && <TagChip>stage: {tags.careerStage}</TagChip>}
+            {tags.visaStatus && <TagChip>visa: {tags.visaStatus}</TagChip>}
+            {tags.targetLocations?.slice(0, 3).map((l) => <TagChip key={l}>loc: {l}</TagChip>)}
+            {tags.minSalary && <TagChip>min: ${tags.minSalary.toLocaleString()}</TagChip>}
+          </div>
+        </div>
+      )}
+
+      {skills.length > 0 && (
+        <div>
+          <DrawerSectionLabel>Skills (top {skills.length})</DrawerSectionLabel>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {skills.map((s) => <TagChip key={String(s)}>{String(s)}</TagChip>)}
+          </div>
+        </div>
+      )}
+
+      {prefs?.summary && (
+        <div>
+          <DrawerSectionLabel>Conversation preferences</DrawerSectionLabel>
+          <div style={{ color: "var(--ink-2)", whiteSpace: "pre-wrap" }}>{prefs.summary}</div>
+        </div>
+      )}
+
+      {ctx && (
+        <div>
+          <DrawerSectionLabel>Candidate context</DrawerSectionLabel>
+          <div style={{ color: "var(--ink-2)", whiteSpace: "pre-wrap", fontSize: 12 }}>
+            {ctx.length > 400 ? ctx.slice(0, 400) + "…" : ctx}
+          </div>
+        </div>
+      )}
+
+      {postMatch?.state && (
+        <div>
+          <DrawerSectionLabel>Post-match retention</DrawerSectionLabel>
+          <div style={{ color: "var(--ink-2)" }}>
+            State: <strong>{postMatch.state}</strong>
+            {postMatch.lastInteractionAt && <> · last {relTime(toIsoLike(postMatch.lastInteractionAt))}</>}
+          </div>
+        </div>
+      )}
+
+      {onboardingStatus && (
+        <div>
+          <DrawerSectionLabel>Onboarding status</DrawerSectionLabel>
+          <div style={{ color: "var(--ink-2)" }}>
+            {onboardingStatus}
+            {claireStarted !== undefined && <> · Claire started: {String(claireStarted)}</>}
+          </div>
+        </div>
+      )}
+
+      {layoffCtx && (
+        <div>
+          <DrawerSectionLabel>Layoff context</DrawerSectionLabel>
+          <pre style={{ margin: 0, fontSize: 11, color: "var(--ink-3)", whiteSpace: "pre-wrap", fontFamily: "var(--font-mono)" }}>
+            {JSON.stringify(layoffCtx, null, 2).slice(0, 500)}
+          </pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function toIsoLike(v: string | { seconds?: number } | undefined): string | undefined {
+  if (!v) return undefined
+  if (typeof v === "string") return v
+  if (typeof v.seconds === "number") return new Date(v.seconds * 1000).toISOString()
+  return undefined
+}
+
+function DrawerSectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, marginBottom: 4 }}>
+      {children}
+    </div>
+  )
+}
+
+function TagChip({ children }: { children: React.ReactNode }) {
+  return (
+    <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 4, background: "var(--cream)", border: "1px solid var(--border)", fontSize: 11.5, color: "var(--ink-2)" }}>
+      {children}
+    </span>
   )
 }
 
