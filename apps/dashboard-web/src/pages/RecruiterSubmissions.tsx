@@ -1,12 +1,15 @@
 /**
  * Admin view of pa-recruiter-submissions.
  *
- * Lists every recruiter submission newest-first, with score summary +
- * drill-down. Auth-gated to @wekruit.com (AppShell).
+ * Lists every recruiter submission newest-first, with chip filters (job + status),
+ * sortable columns, pagination, row drill-down. Backed by the unified DataTable
+ * primitive + useTable hook.
  */
-import { Fragment, useEffect, useState } from "react"
+import { Fragment, useEffect, useMemo, useState } from "react"
 import { collection, getDocs, limit, orderBy, query } from "firebase/firestore"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
+import { DataTable, type Column } from "../components/console/primitives.js"
+import { useTable } from "../components/console/useTable.js"
 import { db } from "../lib/firebase.js"
 
 interface SubmissionDoc {
@@ -37,6 +40,8 @@ interface SubmissionDoc {
   sheetSyncedAt?: { seconds: number } | null
   sheetSyncError?: string | null
   createdAt?: { seconds: number } | null
+  createdAtMs?: number
+  hardScorePct?: number
 }
 
 function formatTimestamp(ts: SubmissionDoc["createdAt"]): string {
@@ -53,12 +58,12 @@ function statusBadge(s: string | undefined): "ok" | "warn" | "info" | "muted" {
   }
 }
 
+const STATUS_VALUES = ["new", "reviewing", "advanced", "rejected", "duplicate"]
+
 export default function RecruiterSubmissions() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [rows, setRows] = useState<SubmissionDoc[]>([])
-  const [jobFilter, setJobFilter] = useState<string>("")
-  const [statusFilter, setStatusFilter] = useState<string>("")
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -69,11 +74,18 @@ export default function RecruiterSubmissions() {
         const q = query(
           collection(db(), "pa-recruiter-submissions"),
           orderBy("createdAt", "desc"),
-          limit(200),
+          limit(500),
         )
         const snap = await getDocs(q)
         if (cancelled) return
-        const all = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionDoc, "id">) }))
+        const all = snap.docs.map((d) => {
+          const data = d.data() as Omit<SubmissionDoc, "id">
+          const createdAtMs = data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0
+          const hardScorePct = data.score?.hardTotal
+            ? data.score.hardChecked / data.score.hardTotal
+            : 0
+          return { id: d.id, ...data, createdAtMs, hardScorePct }
+        })
         setRows(all)
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
@@ -86,212 +98,294 @@ export default function RecruiterSubmissions() {
     }
   }, [])
 
+  const jobOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const r of rows) {
+      if (r.jobId && !seen.has(r.jobId)) {
+        seen.set(r.jobId, r.jobTitleSnapshot ?? r.jobId)
+      }
+    }
+    return [...seen.entries()].map(([jobId, label]) => ({
+      key: jobId,
+      label,
+      title: jobId,
+      test: (r: SubmissionDoc) => r.jobId === jobId,
+    }))
+  }, [rows])
+
+  const table = useTable<SubmissionDoc>(rows, {
+    defaultSort: { key: "createdAtMs", dir: "desc" },
+    pageSize: 50,
+    search: (r, q) =>
+      (r.submitter?.name?.toLowerCase().includes(q) ?? false) ||
+      (r.submitter?.email?.toLowerCase().includes(q) ?? false) ||
+      (r.candidate?.name?.toLowerCase().includes(q) ?? false) ||
+      (r.candidate?.link?.toLowerCase().includes(q) ?? false) ||
+      (r.jobTitleSnapshot?.toLowerCase().includes(q) ?? false),
+    chips: [
+      { id: "job", label: "Job", multi: false, options: jobOptions },
+      {
+        id: "status",
+        label: "Status",
+        multi: true,
+        options: STATUS_VALUES.map((s) => ({
+          key: s,
+          label: s,
+          test: (r: SubmissionDoc) => (r.status ?? "new") === s,
+        })),
+      },
+      {
+        id: "score",
+        label: "Score",
+        multi: false,
+        options: [
+          {
+            key: "hardFull",
+            label: "Hard 100%",
+            title: "All hard-filter boxes ticked",
+            test: (r: SubmissionDoc) =>
+              !!r.score && r.score.hardTotal > 0 && r.score.hardChecked === r.score.hardTotal,
+          },
+          {
+            key: "hardPartial",
+            label: "Hard < 100%",
+            title: "At least one hard filter missing",
+            test: (r: SubmissionDoc) =>
+              !!r.score && r.score.hardTotal > 0 && r.score.hardChecked < r.score.hardTotal,
+          },
+          {
+            key: "antiFlagged",
+            label: "Anti-flag ≥ 1",
+            title: "At least one anti-signal ticked",
+            test: (r: SubmissionDoc) => !!r.score && r.score.antiChecked > 0,
+          },
+          {
+            key: "sheetError",
+            label: "Sheet sync error",
+            test: (r: SubmissionDoc) => Boolean(r.sheetSyncError),
+          },
+        ],
+      },
+    ],
+  })
+
   if (loading) return <LoadingState label="Loading submissions..." />
   if (err) return <ErrorState message={err} />
 
-  const filtered = rows.filter((r) => {
-    if (jobFilter && r.jobId !== jobFilter) return false
-    if (statusFilter && r.status !== statusFilter) return false
-    return true
-  })
-
-  const jobIds = Array.from(new Set(rows.map((r) => r.jobId).filter(Boolean))) as string[]
+  const columns: Column<SubmissionDoc>[] = [
+    {
+      key: "createdAtMs",
+      label: "Submitted",
+      sortable: true,
+      width: 170,
+      render: (r) => <span style={{ whiteSpace: "nowrap" }}>{formatTimestamp(r.createdAt)}</span>,
+    },
+    {
+      key: "jobTitleSnapshot",
+      label: "Job",
+      sortable: true,
+      render: (r) => (
+        <>
+          <div style={{ fontWeight: 500 }}>{r.jobTitleSnapshot ?? r.jobId}</div>
+          <div style={{ color: "#777", fontSize: 11 }}>{r.companyLabelSnapshot ?? ""}</div>
+        </>
+      ),
+    },
+    {
+      key: "submitter",
+      label: "Submitter",
+      render: (r) => (
+        <>
+          <div>{r.submitter?.name ?? "—"}</div>
+          <div style={{ color: "#777", fontSize: 11 }}>{r.submitter?.email ?? ""}</div>
+        </>
+      ),
+    },
+    {
+      key: "candidate",
+      label: "Candidate",
+      render: (r) => (
+        <>
+          <div>{r.candidate?.name ?? "—"}</div>
+          {r.candidate?.link && (
+            <a
+              href={r.candidate.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              style={{ fontSize: 11, color: "#2a5fb8" }}
+            >
+              {r.candidate.link.length > 36 ? r.candidate.link.slice(0, 36) + "…" : r.candidate.link}
+            </a>
+          )}
+        </>
+      ),
+    },
+    {
+      key: "hardScorePct",
+      label: "Hard",
+      sortable: true,
+      width: 70,
+      render: (r) => (r.score ? `${r.score.hardChecked}/${r.score.hardTotal}` : "—"),
+    },
+    {
+      key: "fitScore",
+      label: "Fit",
+      width: 70,
+      render: (r) => (r.score ? `${r.score.fitChecked}/${r.score.fitTotal}` : "—"),
+    },
+    {
+      key: "antiScore",
+      label: "Anti",
+      width: 70,
+      render: (r) => (r.score ? `${r.score.antiChecked}/${r.score.antiTotal}` : "—"),
+    },
+    {
+      key: "sheet",
+      label: "Sheet",
+      width: 80,
+      render: (r) => (r.sheetSyncedAt ? "✓ synced" : r.sheetSyncError ? "× error" : "—"),
+    },
+    {
+      key: "status",
+      label: "Status",
+      sortable: true,
+      width: 100,
+      render: (r) => <Badge tone={statusBadge(r.status)}>{r.status ?? "new"}</Badge>,
+    },
+  ]
 
   return (
     <div>
       <PageHeader
         title="Recruiter Submissions"
-        description={`${rows.length} submissions across ${jobIds.length} collab roles. Filter, drill in, change status.`}
+        description="Submissions from the WeKruit recruiter board. Click a row to expand the full checklist."
       />
-
-      <Panel title="Filters">
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <label style={{ fontSize: 13, color: "#444" }}>
-            Job:&nbsp;
-            <select value={jobFilter} onChange={(e) => setJobFilter(e.target.value)}>
-              <option value="">All ({rows.length})</option>
-              {jobIds.map((id) => {
-                const cnt = rows.filter((r) => r.jobId === id).length
-                return <option key={id} value={id}>{id} ({cnt})</option>
-              })}
-            </select>
-          </label>
-          <label style={{ fontSize: 13, color: "#444" }}>
-            Status:&nbsp;
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-              <option value="">All</option>
-              <option value="new">new</option>
-              <option value="reviewing">reviewing</option>
-              <option value="advanced">advanced</option>
-              <option value="rejected">rejected</option>
-              <option value="duplicate">duplicate</option>
-            </select>
-          </label>
-          <span style={{ color: "#777", fontSize: 12 }}>
-            Showing {filtered.length} of {rows.length}
-          </span>
-        </div>
+      <Panel>
+        <DataTable<SubmissionDoc>
+          columns={columns}
+          rows={table.visibleRows}
+          chips={table.chipsForRender}
+          search={table.search}
+          onSearch={table.setSearch}
+          searchPlaceholder="Search submitter / candidate / job…"
+          sort={table.sort}
+          onSort={table.toggleSort}
+          page={table.page}
+          pageCount={table.pageCount}
+          onPageChange={table.setPage}
+          onResetFilters={table.reset}
+          count={table.filteredCount}
+          totalCount={table.totalRows}
+          onRowClick={(r) => setExpandedId(expandedId === r.id ? null : r.id ?? null)}
+          empty={
+            <div style={{ padding: 40, textAlign: "center", color: "#777" }}>
+              No submissions match the current filters.
+            </div>
+          }
+        />
       </Panel>
 
-      <Panel title="Submissions">
-        {filtered.length === 0 ? (
-          <p style={{ color: "#777", padding: 12 }}>No submissions match the current filters.</p>
-        ) : (
-          <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ textAlign: "left", borderBottom: "1px solid #e6e6e2" }}>
-                <th style={{ padding: 8 }}>Submitted</th>
-                <th style={{ padding: 8 }}>Job</th>
-                <th style={{ padding: 8 }}>Submitter</th>
-                <th style={{ padding: 8 }}>Candidate</th>
-                <th style={{ padding: 8 }}>Hard</th>
-                <th style={{ padding: 8 }}>Fit</th>
-                <th style={{ padding: 8 }}>Anti</th>
-                <th style={{ padding: 8 }}>Sheet</th>
-                <th style={{ padding: 8 }}>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((r) => {
-                const expanded = expandedId === r.id
-                return (
-                  <Fragment key={r.id}>
-                    <tr
-                      key={r.id}
-                      style={{ borderBottom: "1px solid #f0f0ec", cursor: "pointer" }}
-                      onClick={() => setExpandedId(expanded ? null : r.id)}
-                    >
-                      <td style={{ padding: 8, whiteSpace: "nowrap" }}>{formatTimestamp(r.createdAt)}</td>
-                      <td style={{ padding: 8 }}>
-                        <div style={{ fontWeight: 500 }}>{r.jobTitleSnapshot ?? r.jobId}</div>
-                        <div style={{ color: "#777", fontSize: 11 }}>{r.companyLabelSnapshot ?? ""}</div>
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        <div>{r.submitter?.name ?? "—"}</div>
-                        <div style={{ color: "#777", fontSize: 11 }}>{r.submitter?.email ?? ""}</div>
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        <div>{r.candidate?.name ?? "—"}</div>
-                        {r.candidate?.link && (
-                          <a
-                            href={r.candidate.link}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            style={{ fontSize: 11, color: "#2a5fb8" }}
-                          >
-                            {r.candidate.link.length > 40 ? r.candidate.link.slice(0, 40) + "…" : r.candidate.link}
-                          </a>
-                        )}
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        {r.score ? `${r.score.hardChecked}/${r.score.hardTotal}` : "—"}
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        {r.score ? `${r.score.fitChecked}/${r.score.fitTotal}` : "—"}
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        {r.score ? `${r.score.antiChecked}/${r.score.antiTotal}` : "—"}
-                      </td>
-                      <td style={{ padding: 8, fontSize: 12 }}>
-                        {r.sheetSyncedAt ? "✓ synced" : r.sheetSyncError ? "× error" : "—"}
-                      </td>
-                      <td style={{ padding: 8 }}>
-                        <Badge tone={statusBadge(r.status)}>{r.status ?? "new"}</Badge>
-                      </td>
-                    </tr>
-                    {expanded && (
-                      <tr key={r.id + ":x"}>
-                        <td colSpan={9} style={{ padding: 12, background: "#fafaf6" }}>
-                          <RowDetail row={r} />
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                )
-              })}
-            </tbody>
-          </table>
-        )}
-      </Panel>
+      {expandedId && (() => {
+        const row = rows.find((r) => r.id === expandedId)
+        if (!row) return null
+        return <RowDetailPanel row={row} onClose={() => setExpandedId(null)} />
+      })()}
     </div>
   )
 }
 
-function RowDetail({ row }: { row: SubmissionDoc }) {
+function RowDetailPanel({ row, onClose }: { row: SubmissionDoc; onClose: () => void }) {
   const checks = row.checklist ?? {}
-  const ticked = Object.entries(checks).filter(([_, v]) => v).map(([k]) => k)
+  const ticked = Object.entries(checks).filter(([, v]) => v).map(([k]) => k)
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-      <div>
-        <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
-          Submitter
-        </h4>
-        <p style={{ margin: 0, fontSize: 13 }}>
-          {row.submitter?.name} &lt;{row.submitter?.email}&gt;
-          {row.submitter?.company && <> · {row.submitter.company}</>}
-        </p>
-
-        <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
-          Candidate
-        </h4>
-        <p style={{ margin: 0, fontSize: 13 }}>
-          <strong>{row.candidate?.name}</strong>
-          {row.candidate?.currentRole && <> · {row.candidate.currentRole}</>}
-          {row.candidate?.yoe && <> · {row.candidate.yoe} YOE</>}
-        </p>
-        {row.candidate?.link && (
-          <p style={{ margin: "4px 0 0", fontSize: 12 }}>
-            <a href={row.candidate.link} target="_blank" rel="noopener noreferrer">{row.candidate.link}</a>
-          </p>
-        )}
-        {row.candidate?.notes && (
-          <>
-            <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
-              Notes
-            </h4>
-            <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{row.candidate.notes}</p>
-          </>
-        )}
-      </div>
-
-      <div>
-        <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
-          Score
-        </h4>
-        {row.score ? (
+    <Panel
+      title="Submission detail"
+      actions={
+        <button
+          onClick={onClose}
+          style={{ border: "none", background: "none", cursor: "pointer", color: "#888", fontSize: 16 }}
+          aria-label="Close"
+        >
+          ✕
+        </button>
+      }
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div>
+          <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+            Submitter
+          </h4>
           <p style={{ margin: 0, fontSize: 13 }}>
-            Hard {row.score.hardChecked}/{row.score.hardTotal} ·{" "}
-            Fit {row.score.fitChecked}/{row.score.fitTotal} ·{" "}
-            Bonus {row.score.bonusChecked}/{row.score.bonusTotal} ·{" "}
-            Anti {row.score.antiChecked}/{row.score.antiTotal}
+            {row.submitter?.name} &lt;{row.submitter?.email}&gt;
+            {row.submitter?.company && <> · {row.submitter.company}</>}
           </p>
-        ) : (
-          <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No score.</p>
-        )}
 
-        <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
-          Ticked items ({ticked.length})
-        </h4>
-        {ticked.length === 0 ? (
-          <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No items ticked.</p>
-        ) : (
-          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "#444" }}>
-            {ticked.map((id) => <li key={id}><code>{id}</code></li>)}
-          </ul>
-        )}
-
-        {row.sheetSyncError && (
-          <>
-            <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#a00" }}>
-              Sheet sync error
-            </h4>
-            <p style={{ margin: 0, fontSize: 12, color: "#a00", whiteSpace: "pre-wrap" }}>
-              {row.sheetSyncError}
+          <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+            Candidate
+          </h4>
+          <p style={{ margin: 0, fontSize: 13 }}>
+            <strong>{row.candidate?.name}</strong>
+            {row.candidate?.currentRole && <> · {row.candidate.currentRole}</>}
+            {row.candidate?.yoe && <> · {row.candidate.yoe} YOE</>}
+          </p>
+          {row.candidate?.link && (
+            <p style={{ margin: "4px 0 0", fontSize: 12 }}>
+              <a href={row.candidate.link} target="_blank" rel="noopener noreferrer">
+                {row.candidate.link}
+              </a>
             </p>
-          </>
-        )}
+          )}
+          {row.candidate?.notes && (
+            <>
+              <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+                Notes
+              </h4>
+              <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{row.candidate.notes}</p>
+            </>
+          )}
+        </div>
+
+        <div>
+          <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+            Score
+          </h4>
+          {row.score ? (
+            <p style={{ margin: 0, fontSize: 13 }}>
+              Hard {row.score.hardChecked}/{row.score.hardTotal} ·{" "}
+              Fit {row.score.fitChecked}/{row.score.fitTotal} ·{" "}
+              Bonus {row.score.bonusChecked}/{row.score.bonusTotal} ·{" "}
+              Anti {row.score.antiChecked}/{row.score.antiTotal}
+            </p>
+          ) : (
+            <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No score.</p>
+          )}
+
+          <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+            Ticked items ({ticked.length})
+          </h4>
+          {ticked.length === 0 ? (
+            <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No items ticked.</p>
+          ) : (
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "#444" }}>
+              {ticked.map((id) => (
+                <li key={id}><code>{id}</code></li>
+              ))}
+            </ul>
+          )}
+
+          {row.sheetSyncError && (
+            <>
+              <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#a00" }}>
+                Sheet sync error
+              </h4>
+              <p style={{ margin: 0, fontSize: 12, color: "#a00", whiteSpace: "pre-wrap" }}>
+                {row.sheetSyncError}
+              </p>
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </Panel>
   )
 }
