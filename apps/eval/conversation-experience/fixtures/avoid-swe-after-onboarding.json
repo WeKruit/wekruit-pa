@@ -1,0 +1,59 @@
+{
+  "name": "avoid-swe-after-onboarding",
+  "description": "Adam-bug regression canary (2026-05-27 live test +1 717-491-9939). User onboards as SWE intern → mid-conversation says 'actually avoid pure SWE, product strategy only, SF or remote' → asks for recommendations. Pre-fix: matcher reads stale tags.targetRoleFunction=software_engineering + tags.targetJobType=internship → V16 hard-filter wipeout → 'I did not find a strong fresh match'. Post-fix: synchronous reducer fires on the avoid turn, canonical tags mutate, matcher input snapshot in pa-tool-calls reflects the new tags, trace closes as completed.",
+  "user_id": "test_user_avoid_swe",
+  "session_id": "test_session_avoid_swe",
+  "initial_state": {
+    "pa-users/{user_id}": {
+      "id": "{user_id}",
+      "onboardingState": "complete",
+      "tags": {
+        "targetRoleFunction": ["software_engineering"],
+        "targetJobType": ["internship"],
+        "careerStage": "intern",
+        "visaStatus": "sponsor_needed",
+        "schemaVersion": 1
+      },
+      "sharedOnboarding": { "status": "complete" }
+    }
+  },
+  "turns": [
+    {
+      "inbound": "actually avoid pure SWE, product strategy only, SF or remote",
+      "shared_onboarding_active": false,
+      "extractor_simulated_patch": {
+        "targetRoleFunction": ["product_management"],
+        "targetLocations": ["san_francisco_bay_area", "remote"]
+      },
+      "expect": {
+        "owner": "durable_preference_update",
+        "action": "micro_ack",
+        "evidence_kinds": ["durable_preference"],
+        "firestore_after": {
+          "pa-users/{user_id}.tags.targetRoleFunction": ["product_management"],
+          "pa-users/{user_id}.tags.targetLocations": ["san_francisco_bay_area", "remote"]
+        }
+      }
+    },
+    {
+      "inbound": "can you recommend me some roles?",
+      "shared_onboarding_active": false,
+      "matcher_simulated_result": {
+        "recCount": 1,
+        "v16Counters": { "total": 500, "dropped": 499, "hardFilter": { "visa": 200, "roleFunction": 0 } }
+      },
+      "expect": {
+        "owner": "job_search",
+        "action": "status_then_async_tool",
+        "firestore_after": {
+          "pa-turn-traces/turn-2.status": "completed",
+          "pa-turn-traces/turn-2.owner": "job_search",
+          "pa-tool-calls/tool-2.name": "find-match",
+          "pa-tool-calls/tool-2.status": "completed",
+          "pa-tool-calls/tool-2.output.recCount": 1,
+          "pa-tool-calls/tool-2.input.userTagsSnapshot.targetRoleFunction": ["product_management"]
+        }
+      }
+    }
+  ]
+}

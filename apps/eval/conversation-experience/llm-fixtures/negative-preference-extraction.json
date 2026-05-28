@@ -1,0 +1,20 @@
+{
+  "name": "negative-preference-extraction",
+  "description": "P0 baseline probe: does the real extractor capture NEGATIVE preferences (avoid X)? Per AGENTIC-ARCHITECTURE.md lock #5 + the Surface Attribution Error risk, 'avoid adtech and crypto' must NOT become a positive industry tag, and ideally lands a negative axis. This fixture is expected to expose a gap in the current extractor (no negative axis yet) — that is the point of a baseline receipt.",
+  "user_id": "test_user_negpref",
+  "initial_tags": {
+    "targetRoleFunction": ["software_engineering"]
+  },
+  "turns": [
+    {
+      "inbound": "keep the SWE roles but please avoid adtech and crypto companies, not interested in those at all",
+      "assistant": "noted."
+    }
+  ],
+  "expect": {
+    "final_tags": {
+      "targetRoleFunction": ["software_engineering"]
+    },
+    "grade_criteria": "The candidate kept software engineering but rejected adtech and crypto INDUSTRIES. PASS only if: software_engineering stays; adtech and crypto are NOT added as positive industrySector tags; and the rejection is represented as a negative signal (e.g. a negative-industry field or evidence) rather than silently dropped. FAIL if adtech/crypto appear as positive industry targets, or if the rejection is lost entirely with no negative representation."
+  }
+}

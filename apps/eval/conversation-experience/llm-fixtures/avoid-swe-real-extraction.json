@@ -1,0 +1,22 @@
+{
+  "name": "avoid-swe-real-extraction",
+  "description": "REAL LLM receipt for the Adam-bug. Onboarded as SWE intern; user pivots to product strategy. NO pre-written patch — the real model must extract the canonical delta. Asserts the model both ADDS product_management AND does not keep software_engineering as the active target.",
+  "user_id": "test_user_avoid_swe_real",
+  "initial_tags": {
+    "targetRoleFunction": ["software_engineering"],
+    "targetJobType": ["internship"],
+    "careerStage": "intern"
+  },
+  "turns": [
+    {
+      "inbound": "actually I'm done with pure software engineering — I only want product strategy / PM roles now, full-time, in SF or remote",
+      "assistant": "Got it — updating that now."
+    }
+  ],
+  "expect": {
+    "final_tags": {
+      "targetRoleFunction": ["product_management"]
+    },
+    "grade_criteria": "The candidate explicitly rejected software engineering and asked for product management / product strategy, full-time, SF or remote. PASS only if: targetRoleFunction reflects product_management and NO LONGER lists software_engineering as a target; targetJobType moved off internship toward full_time; and (if present) location reflects SF / remote. FAIL if software_engineering survives as an active target role."
+  }
+}
