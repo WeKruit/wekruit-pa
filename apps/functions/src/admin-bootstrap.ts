@@ -454,6 +454,8 @@ const SEED_FLAGS: FlagSpec[] = [
   // fails open to the deterministic path. Kill switch: PA_AGENTIC_PRESCREEN_DISABLED=true.
   { key: "paAgenticPrescreenEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paSharedOnboardingAgenticSurface", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // P4 — scoped onboarding agent (record→reducer; tangent→global tool; fail-open). Default OFF.
+  { key: "paAgenticOnboardingEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paBehaviorChoreographerEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paReactionTapbackEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   // Collab prescreen invite: match/copy helpers only; SMS requires HITL approve on dashboard (no ingest hook).

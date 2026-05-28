@@ -185,8 +185,10 @@ import {
   buildSharedOnboardingComposeContext,
   extractRecentSlangPicks,
   persistSharedOnboardingSlangPicks,
+  isAgenticOnboardingEnabled,
   type SharedOnboardingOutboundStore,
 } from "./shared-onboarding-outbound.js"
+import { runAgenticOnboardingTurn } from "./onboarding-agentic-turn.js"
 import { buildMatchConnectorHooks } from "./match-connector-hooks.js"
 import { composeFindMatchPreCall } from "./job-match-narration.js"
 import { frameConnectorResult } from "./run-connector-with-narration.js"
@@ -3114,6 +3116,79 @@ async function writeSharedOnboardingAnswer(
   )
 }
 
+/**
+ * P4 — tangent reply for the FLAG-ON scoped onboarding agent. The agent answered
+ * an off-topic question via `explain_context`; the slot is HELD (no write, no
+ * advance). Compose + send a reply for the current slot via the EXISTING surface
+ * and complete the turn. Only reachable when `paAgenticOnboardingEnabled` is ON.
+ */
+async function sendSharedOnboardingHeldSlotReply(
+  store: OrchestratorStore,
+  event: InboundEvent,
+  turnId: string,
+  questionId: SharedOnboardingQuestionId,
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  traceBundle?: ConversationTraceBundle,
+): Promise<boolean> {
+  const promptContext = sharedPromptContextFrom(onboardingUser)
+  const agent = await requireAgentForUser(store, event.userId)
+  const priorSlangPicks = extractRecentSlangPicks(
+    onboardingUser as { sharedOnboarding?: Record<string, unknown> | null } | null,
+  )
+  const recentMessagesForCompose = await store.loadHistory(event.sessionId, 8).catch(() => [])
+  const composed = await composeSharedOnboardingReply({
+    store: sharedOnboardingOutboundSlice(store),
+    userId: event.userId,
+    sessionId: event.sessionId,
+    turnId,
+    slot: questionId,
+    mode: "ask",
+    promptContext,
+    userMessage: event.body,
+    recentMessages: recentMessagesForCompose,
+    composeContext: buildSharedOnboardingComposeContext({
+      inboundKind: "user_answer",
+      routerResult: "asked_question",
+      slot: questionId,
+      mode: "ask",
+      userMessage: event.body,
+    }),
+    agent,
+    inboundMessageHandle: inboundMessageHandleForReaction(event),
+    toE164: event.from,
+    recentSlangPicks: priorSlangPicks,
+  })
+  const plan = await buildSharedOnboardingDeliveryPlan({ store, event, turnId, reply: composed.text })
+  await sendMemoryReply(store, event, turnId, composed.text, {
+    deliveryPlan: plan ?? undefined,
+    inboundMessageHandle: inboundMessageHandleForReaction(event),
+    transcriptIdempotencyKey: deriveSessionMessageIdempotencyKey(event.sessionId, "assistant", composed.text),
+    allowImperfection: false,
+  })
+  await persistSharedOnboardingSlangPicks({
+    db: store.db,
+    userId: event.userId,
+    priorPicks: priorSlangPicks,
+    newPicks: composed.slangPicked,
+    nowIso: store.nowIso(),
+    log: (name, payload) => store.log(name, payload ?? {}),
+  })
+  await store.updateTurn(turnId, {
+    status: "succeeded",
+    stage: "succeeded",
+    completedAt: store.nowIso(),
+    directIntent: "shared_onboarding",
+    directIntentResult: "tangent_slot_held",
+    sharedOnboardingQuestionId: questionId,
+  })
+  await persistConversationTraceCompletion(store, event, traceBundle, {
+    outboundSource: "shared_onboarding_tangent_slot_held",
+    memoryWrites: [],
+  })
+  await store.markEventSucceeded(event.id)
+  return true
+}
+
 async function handleSharedOnboardingUserReply(
   event: InboundEvent,
   store: OrchestratorStore,
@@ -3167,7 +3242,53 @@ async function handleSharedOnboardingUserReply(
   }
   const projection = projectSharedOnboardingAnswer(questionId, event.body)
   const next = resolveNextSharedOnboardingQuestionId(questionId)
-  await writeSharedOnboardingAnswer(store, event, questionId, projection, next)
+
+  // ── P4 flag-gated scoped onboarding agent (paAgenticOnboardingEnabled, default OFF).
+  // FLAG OFF → this whole block is skipped; the deterministic write below runs
+  // byte-for-byte unchanged. FLAG ON → a scoped agent routes an on-slot answer to
+  // `record_onboarding_answer` (which performs the EXISTING write — projection +
+  // resolveNext + writeSharedOnboardingAnswer, so the reducer advances the slot +
+  // projects durable tags) and a tangent to the global `explain_context` tool (no
+  // advance). ANY agent failure → handled:false → fall open to the deterministic
+  // write. The LLM has no skip/complete tool, so the reducer stays the controller.
+  let alreadyWrote = false
+  if (await isAgenticOnboardingEnabled(store.db, event.userId)) {
+    const agenticResult = await runAgenticOnboardingTurn({
+      slot: questionId,
+      userMessage: event.body,
+      promptContext: sharedPromptContextFrom(onboardingUser),
+      recordAnswer: async () => {
+        // Sole slot-write path — delegates to the existing deterministic write.
+        await writeSharedOnboardingAnswer(store, event, questionId, projection, next)
+        alreadyWrote = true
+        return { advancedTo: next.completed ? "__complete__" : (next.nextQuestionId as SharedOnboardingQuestionId) }
+      },
+      log: (name, payload) => store.log(name, payload ?? {}),
+    }).catch((err): { handled: false; reason: string } => ({
+      handled: false,
+      reason: `agentic_turn_threw:${err instanceof Error ? err.message : String(err)}`,
+    }))
+    store.log("pa.shared_onboarding.agentic_turn", {
+      userId: event.userId,
+      turnId,
+      questionId,
+      handled: agenticResult.handled,
+      ...(agenticResult.handled
+        ? { recorded: agenticResult.recorded, explained: agenticResult.explained }
+        : { reason: agenticResult.reason }),
+    })
+    // The agent answered a tangent (no record) — hold the slot, do not write/advance.
+    // Compose the reply via the EXISTING surface for the (held) current slot.
+    if (agenticResult.handled && agenticResult.explained && !agenticResult.recorded) {
+      return await sendSharedOnboardingHeldSlotReply(store, event, turnId, questionId, onboardingUser, traceBundle)
+    }
+    // If the agent did NOT record (handled:false or no tool call), fall through to
+    // the deterministic write below (fail-open). If it DID record, `alreadyWrote`
+    // is set and we skip the duplicate write but reuse the existing reply tail.
+  }
+  if (!alreadyWrote) {
+    await writeSharedOnboardingAnswer(store, event, questionId, projection, next)
+  }
 
   if (!next.completed && next.nextQuestionId) {
     const promptContext = sharedPromptContextFrom(onboardingUser)
