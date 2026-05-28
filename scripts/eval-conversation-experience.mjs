@@ -250,8 +250,9 @@ function isSavedPreferenceSummaryQuestion(body) {
   return (
     /\b(?:w?hat|which|show|remind|tell)\b[\s\S]{0,40}\b(?:save|saved|store|stored|remember|remembered|have|using|use|used)\b[\s\S]{0,80}\b(?:job\s+)?(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b/i.test(body) ||
     /\b(?:job\s+)?(?:preferences?|prefs|matching\s+profile|profile\s+notes)\b[\s\S]{0,50}\b(?:save|saved|store|stored|remember|remembered|have|using|use|used)\b/i.test(body) ||
+    /\b(?:w?hat|which|show|remind|tell)\b[\s\S]{0,50}\b(?:save|saved|store|stored|remember|remembered|have|using|use|used)\b[\s\S]{0,50}\b(?:for\s+matching|matching\b)\b/i.test(body) ||
     (
-      /\b(?:preferences?|prefs|matching profile|profile notes)\b/i.test(body) &&
+      /\b(?:preferences?|prefs|matching profile|profile notes|for matching|matching)\b/i.test(body) &&
       /\b(?:match|matching|save|saved|store|stored|remember|remembered|using|use|used)\b/i.test(body) &&
       /\b(?:w?hat|which|show|remind|reminder|tell|using|use|could you)\b/i.test(body)
     )
