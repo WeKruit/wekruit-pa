@@ -11,6 +11,16 @@ import {
   loadHandbook as loadHandbookV2,
   DEFAULT_HANDBOOK_SLUG,
 } from "./handbook/loader.js"
+// Per-user version channel (canary / ring) — pure resolver used by the
+// Firestore-backed store's getVersionChannel impl, plus the `isLatestChannel`
+// integration seam consumed by the __PA_CHANNEL_PROBE__ dev-trigger example.
+// Other helpers are re-exported from the bottom of this module via
+// `export ... from "./version-channel.js"`.
+import {
+  resolveVersionChannel,
+  isLatestChannel,
+  type VersionChannel,
+} from "./version-channel.js"
 // Stream D — CV context injection (appendCvContextToSystemPrompt).
 import { appendCvContextToSystemPrompt } from "./cv-context-injection.js"
 // v1.5 / Phase 53.5 — JOB MARKET CONTEXT harness (Adam 2026-05-02 spec).
@@ -731,6 +741,16 @@ export type OrchestratorStore = {
    * are preserved). Default "auto" when unset / user-not-found.
    */
   getRuntimeMode?(userId: string): Promise<"auto" | "paused">
+
+  /**
+   * Per-user version channel (canary / ring). Returns "latest" when the user
+   * is an internal/test user OR pa-users.versionChannel === "latest"; "stable"
+   * otherwise (default / user-not-found). OPTIONAL so older / test stores are
+   * unaffected — `isLatestChannel()` self-gates to `false` (stable behavior)
+   * when this is unimplemented, exactly like `getRuntimeMode`. See
+   * `./version-channel.ts` for the pure resolver.
+   */
+  getVersionChannel?(userId: string): Promise<VersionChannel>
 
   /**
    * iter31 — current ToS version string for acceptance writes. Reads
@@ -4236,6 +4256,32 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       }
     }
 
+    // Dev/test-only version-channel probe (mirrors __PA_RESET__ / __PA_FIND_MATCH__
+    // dev-trigger convention, D14). Strictly inert for all real traffic — it
+    // ONLY fires on the exact magic token, and even then merely echoes which
+    // channel the user resolves to. It is the canonical worked example of a
+    // "latest-only" behavior: the NEW branch runs only when the user is on the
+    // latest channel (internal allowlist OR pa-users.versionChannel=latest);
+    // everyone else gets the STABLE branch. `isLatestChannel` self-gates to
+    // false when the store has no getVersionChannel, so this is a no-op on
+    // legacy/test stores too.
+    if (userAuthoredEvent && (event.body ?? "").trim() === "__PA_CHANNEL_PROBE__") {
+      const latest = await isLatestChannel(store, event.userId)
+      const reply = latest
+        ? "✨ latest channel: you're on the NEW conversation behavior (internal/canary)."
+        : "✓ stable channel: you're on the current stable conversation behavior."
+      await sendMemoryReply(store, event, turnId, reply)
+      await store.updateTurn(turnId, {
+        status: "succeeded",
+        stage: "succeeded",
+        directIntent: "version_channel_probe",
+        directIntentResult: latest ? "latest" : "stable",
+        completedAt: store.nowIso(),
+      })
+      await store.markEventSucceeded(event.id)
+      return
+    }
+
     // iter30 WS6 — shadow-mode INPUT guardrail chain. Telemetry-only;
     // does NOT gate the request. Runs the locked 4-stage input chain
     // (crisisDetector → promptInjectionDetector → piiScanner →
@@ -6818,6 +6864,23 @@ export function createFirestoreOrchestratorStore(
       const data = snap.data() as { runtimeMode?: "auto" | "paused" } | undefined
       return data?.runtimeMode === "paused" ? "paused" : "auto"
     },
+    // Per-user version channel (canary / ring). Internal allowlist
+    // (PA_INTERNAL_USER_IDS / PA_INTERNAL_PHONE_NUMBERS incl. the dev phone)
+    // OR pa-users.versionChannel === "latest" ⇒ "latest"; else "stable".
+    // Default "stable" preserves byte-for-byte current behavior until a
+    // behavior is explicitly marked latest-only via isLatestChannel().
+    async getVersionChannel(userId): Promise<VersionChannel> {
+      const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      const data = snap.exists
+        ? (snap.data() as { versionChannel?: VersionChannel | string; phoneE164?: string } | undefined)
+        : undefined
+      return resolveVersionChannel({
+        userId,
+        phoneE164: data?.phoneE164,
+        storedChannel: data?.versionChannel,
+        env: process.env,
+      })
+    },
     async getTosVersion() {
       try {
         const snap = await db
@@ -6975,6 +7038,20 @@ export function startInboundEventListener(
     unsubscribe()
   }
 }
+
+// Per-user version channel (canary / ring) — re-export the pure resolver +
+// integration seam so functions / dashboard / sim consumers can mark a
+// behavior latest-only without a subpath import.
+export {
+  resolveVersionChannel,
+  isLatestChannel,
+  isInternalUser,
+  internalUserIds,
+  internalPhoneNumbers,
+  DEFAULT_INTERNAL_PHONE,
+  type VersionChannel,
+  type VersionChannelFacts,
+} from "./version-channel.js"
 
 // v1.8 — re-exports for dashboard / functions consumers (no subpath
 // imports because exports map is single-entry).
