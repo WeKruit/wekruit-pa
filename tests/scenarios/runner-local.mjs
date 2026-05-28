@@ -43,7 +43,7 @@ import { parse as parseYaml } from "yaml"
 
 // Real production code under test. dist must be fresh — README documents:
 //   `npm run build --workspace=@pa/pa-orchestrator` before running.
-import { processInboundEvent } from "@pa/pa-orchestrator"
+import { processInboundEvent, resolveVersionChannel } from "@pa/pa-orchestrator"
 import { runAgentTurn as defaultRunAgentTurn } from "@pa/agent-runtime"
 import {
   checkPromptInjectionV2,
@@ -339,6 +339,23 @@ function makeFakeStore({ scenarioId, lang, sessionId, userId, phoneE164, userSta
         phoneE164,
         onboardingState,
       }
+    },
+
+    // Per-user version channel (canary / ring). Mirrors the Firestore-backed
+    // store impl: resolve via the pure resolver from the seeded userState
+    // (`versionChannel`), the scenario participant phone, and the env that the
+    // runner mirrors `scenario.flags` into (so a scenario can flip a user to
+    // the internal allowlist via `flags: { PA_INTERNAL_USER_IDS: ... }` or set
+    // `userState: { versionChannel: latest }`). Lets a single behavior marked
+    // latest-only diverge: internal/latest user → NEW reply, everyone else →
+    // STABLE reply.
+    async getVersionChannel(uid) {
+      return resolveVersionChannel({
+        userId: uid,
+        phoneE164,
+        storedChannel: seededUserState.versionChannel,
+        env: process.env,
+      })
     },
 
     async applyOnboarding(_uid, _phone, step, opts) {
