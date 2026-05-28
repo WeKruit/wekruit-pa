@@ -61,9 +61,28 @@ export interface ExtractorTriggerState {
   userMsgsSinceLast: number
   /** Caller-injected `Date.now()` — required for determinism in tests. */
   nowMs: number
+  /**
+   * When set, `shouldRunExtractor` returns `{run: true, trigger: forceTrigger}`
+   * immediately without consulting debounce / compact / time_window / turn_count.
+   * Used by turn-handler when arbiter detects `durable_preference_update` —
+   * matcher correctness requires the reducer to fire on THIS turn, before the
+   * next read of `pa-users.tags`.
+   */
+  forceTrigger?: ExtractorTriggerKind
 }
 
-export type ExtractorTriggerKind = "compact" | "time_window" | "turn_count"
+/**
+ * Trigger kinds:
+ *   - `compact` — transcript fills ≥75% of model context window
+ *   - `time_window` — ≥30min + ≥3 user msgs since last extraction
+ *   - `turn_count` — ≥10 turns since last extraction
+ *   - `intent_signal` — caller observed an explicit `durable_preference_update`
+ *     intent and wants the reducer to fire synchronously before downstream
+ *     matcher reads `pa-users.tags`. Bypasses 5min debounce + feature flag —
+ *     intent-driven extraction is always on because matcher correctness
+ *     depends on the reducer running, not the model context filling up.
+ */
+export type ExtractorTriggerKind = "compact" | "time_window" | "turn_count" | "intent_signal"
 
 export interface ExtractorTriggerDecision {
   /** True if `runExtraction` should fire this turn. */
@@ -90,6 +109,11 @@ const TURN_COUNT_FLOOR = 10
  * the very first crossing of any threshold fires.
  */
 export function shouldRunExtractor(state: ExtractorTriggerState): ExtractorTriggerDecision {
+  // Force-trigger short-circuits everything. Used by intent-driven turn
+  // handlers (see ExtractorTriggerKind doc).
+  if (state.forceTrigger) {
+    return { run: true, trigger: state.forceTrigger, reason: `force:${state.forceTrigger}` }
+  }
   // Debounce — applies once we've ever extracted before.
   if (state.lastExtractedAt) {
     const lastMs = Date.parse(state.lastExtractedAt)

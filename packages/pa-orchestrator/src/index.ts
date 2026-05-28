@@ -280,6 +280,11 @@ import { applyRealtimeTagWriteback } from "./voice/realtime-tagger.js"
 // See .planning/GOAL-chat-tag-memory-extraction.md.
 import { maybeRunExtractor } from "./conversation-extractor-runtime.js"
 import type { ConversationExtractMessage } from "./conversation-extractor.js"
+// 2026-05-27 — grounded 0-match copy using real V16 counters
+// (dropped/hardFilter/missingAxes/needsOnboarding). Replaces the generic
+// "I did not find a strong fresh match" line that threw the counters away
+// and gave the user no way to broaden a filter.
+import { composeNoMatchReply, noMatchReasonTag } from "./no-match-narration.js"
 // Adam iter 20 — phrase-repeat stripper. iter-19 10-turn sim found 5
 // consecutive replies opening with "要不要试" — F1 detects user-mirror
 // not Claire-self-mirror; stripRepeatOpener only checks last-2 + first
@@ -781,6 +786,20 @@ export type OrchestratorStore = {
     message: string
     recCount: number
     topJob?: { jobId: string; title: string; company: string; score: number }
+    /**
+     * 2026-05-27 — V16 matcher counters exposed for grounded 0-match narration
+     * and `pa-tool-calls` audit ledger. Optional so older deps wrappers that
+     * don't surface them still type-check; consumers must tolerate undefined.
+     */
+    v16Counters?: {
+      noUserTags?: boolean
+      needsOnboarding?: boolean
+      missingAxes?: readonly string[]
+      total?: number
+      dropped?: number
+      hardFilter?: Readonly<Record<string, number>>
+      collabPrescreenOnly?: boolean
+    }
   } | null>
 
   /** Collab funnel — start prescreen after candidate accepts invite. */
@@ -2560,11 +2579,75 @@ async function handleDurablePreferenceUpdateTurn(
   const profileUpdated = await persistJobSearchProfileUpdate(event, store, turnId, profileUpdate)
   const shouldContinueToSearch = ownerDecision.orderedActions.some((action) => action.kind === "run_job_search")
 
+  // 2026-05-27 — synchronous reducer fire on durable_preference_update.
+  // `extractLifecycleProfileUpdate` is regex-based and only catches obvious
+  // negations / role swaps; it misses nuance ("I'm tired of pure SWE, give me
+  // product strategy work in SF or remote AI infra"). When V16 will run on
+  // this turn (shouldContinueToSearch), the canonical `pa-users.tags` MUST
+  // reflect the new preference BEFORE the matcher reads them, or we
+  // re-introduce the stale-tag bug. `maybeRunExtractor({forceTrigger:
+  // "intent_signal"})` bypasses the 5min/30min/10turn debounce and the
+  // `PA_CHAT_EXTRACTOR_ENABLED` feature flag (intent-driven extraction is
+  // always on — see conversation-extractor.ts trigger doc). Failure is
+  // logged + tolerated; the existing `persistJobSearchProfileUpdate` path
+  // above remains the regex fallback so we never regress.
+  let extractorRan = false
+  let extractorTagFieldsChanged: string[] = []
+  if (shouldContinueToSearch && store.db) {
+    try {
+      const recent = context.recentMessages ?? []
+      const existing = await store.db
+        .collection(PA_COLLECTIONS.users)
+        .doc(event.userId)
+        .get()
+        .then((snap) => snap.data() ?? {})
+      const onboardingState =
+        typeof (existing as Record<string, unknown>).onboardingState === "string"
+          ? ((existing as Record<string, unknown>).onboardingState as string)
+          : null
+      const existingTags = ((existing as Record<string, unknown>).tags ?? {}) as Record<string, unknown>
+      const recentForExtractor: ConversationExtractMessage[] = recent.map((msg) => ({
+        role: msg.role === "assistant" ? "assistant" : "user",
+        body: msg.body,
+        createdAt: msg.createdAt ?? store.nowIso(),
+      }))
+      const outcome = await maybeRunExtractor({
+        db: store.db,
+        userId: event.userId,
+        recentMessages: recentForExtractor,
+        existingTags,
+        onboardingState,
+        userMsgsThisBatch: 1,
+        forceTrigger: "intent_signal",
+        log: (eventName, payload) => store.log(eventName, payload ?? {}),
+      })
+      extractorRan = outcome.ran
+      extractorTagFieldsChanged = outcome.tagFieldsChanged ?? []
+      store.log("pa.runtime.durable_preference.extractor", {
+        userId: event.userId,
+        turnId,
+        ran: outcome.ran,
+        reason: outcome.reason,
+        tagFieldsChanged: extractorTagFieldsChanged,
+        confidence: outcome.confidence,
+        modelUsed: outcome.modelUsed,
+      })
+    } catch (err) {
+      store.log("pa.runtime.durable_preference.extractor_error", {
+        userId: event.userId,
+        turnId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   await persistConversationTurnTrace(store, event, context, ownerDecision, "completed", actionDecision, evidenceWrites, {
     outboundSource: shouldContinueToSearch ? "durable_preference_then_search" : "durable_preference_update",
     memoryWrites: profileUpdated ? ["durable_preference_update"] : evidenceWrites.map((write) => write.kind),
     evidenceCommitIds,
     evidenceCommitCount: evidenceCommitIds.length,
+    extractorRan,
+    extractorTagFieldsChanged,
   })
 
   if (shouldContinueToSearch) {
@@ -2944,7 +3027,14 @@ async function persistConversationTraceCompletion(
     reactionAttempted?: boolean
     reactionSent?: boolean
     reactionSkippedReason?: string | null
-  },
+    // 2026-05-27 — extra metadata for job-search trace closure:
+    // surfaces the matcher tool-call id, the V16 result counters, and the
+    // no-match reason tag so `pa-turn-traces` has the full audit chain
+    // without needing a separate join against `pa-tool-calls`.
+    noMatchReason?: string | null
+    toolCallId?: string
+    recCount?: number
+  } & Record<string, unknown>,
 ): Promise<void> {
   if (!bundle) return
   await persistConversationTurnTrace(
@@ -3397,7 +3487,8 @@ async function handleCompletedUserJobSearchRequest(
   event: InboundEvent,
   store: OrchestratorStore,
   turnId: string,
-  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>
+  onboardingUser: Awaited<ReturnType<OrchestratorStore["getOnboardingUser"]>>,
+  traceBundle?: ConversationTraceBundle,
 ): Promise<boolean> {
   if (!store.generateJobRecs) return false
   if (isJobRecommendationExplanationRequest(event.body)) return false
@@ -3426,6 +3517,63 @@ async function handleCompletedUserJobSearchRequest(
     moreFollowup,
     profileUpdated,
   })
+
+  // 2026-05-27 — wrap matcher invocation in a `pa-tool-calls` ledger row so
+  // every job-search turn has an audit trail of (a) the user-tag snapshot
+  // V16 saw at call time, (b) the V16 counters returned, (c) the resulting
+  // recCount. Required by the conversation-action arbiter contract
+  // (`requiredTraceFields: ["toolCallIds", ...]` for `status_then_async_tool`
+  // and `tool_result_reply` paths). Pre-call insert + post-call merge so we
+  // capture latency + outcome on the same doc.
+  const toolCallId = randomUUID()
+  const matcherStartedAtIso = store.nowIso()
+  const matcherStartedAtMs = Date.now()
+  if (store.db) {
+    try {
+      let userTagsSnapshot: Record<string, unknown> | null = null
+      try {
+        const snap = await store.db.collection(PA_COLLECTIONS.users).doc(event.userId).get()
+        const tags = (snap.data() ?? {}).tags
+        if (tags && typeof tags === "object") {
+          userTagsSnapshot = tags as Record<string, unknown>
+        }
+      } catch (snapErr) {
+        store.log("pa.runtime.job_search.tool_call_snapshot_failed", {
+          userId: event.userId,
+          turnId,
+          error: snapErr instanceof Error ? snapErr.message : String(snapErr),
+        })
+      }
+      await store.db.collection(PA_COLLECTIONS.toolCalls).doc(toolCallId).set({
+        id: toolCallId,
+        turnId,
+        userId: event.userId,
+        eventId: event.id,
+        sessionId: event.sessionId,
+        name: "find-match",
+        source: "imessage_job_search_reply",
+        status: "pending",
+        createdAt: matcherStartedAtIso,
+        input: {
+          lang,
+          requestedCount: requestedCount ?? null,
+          roleFocus,
+          excludeInternships: excludeInternships ? true : false,
+          explicitJobSearch,
+          moreFollowup,
+          ...(userTagsSnapshot ? { userTagsSnapshot } : {}),
+        },
+      })
+    } catch (err) {
+      store.log("pa.runtime.job_search.tool_call_create_failed", {
+        userId: event.userId,
+        turnId,
+        toolCallId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   await sendFindMatchPreCallBubble(store, event, turnId, lang)
   const recs = await store.generateJobRecs(event.userId, lang, {
     force: true,
@@ -3433,14 +3581,49 @@ async function handleCompletedUserJobSearchRequest(
     ...(roleFocus.length > 0 ? { roleFocus } : {}),
     ...(excludeInternships ? { excludeInternships: true } : {}),
   })
+  const matcherFinishedAtMs = Date.now()
   const recCount = recs?.recCount ?? 0
+  const v16Counters = recs?.v16Counters
+  const noMatchReason = recCount === 0
+    ? noMatchReasonTag(v16Counters ?? { noUserTags: recs === null })
+    : null
+
+  // Post-call: merge tool-call doc with output + status. Best-effort; never
+  // throws into the user reply path.
+  if (store.db) {
+    try {
+      await store.db.collection(PA_COLLECTIONS.toolCalls).doc(toolCallId).set({
+        status: recs === null ? "failed" : "completed",
+        completedAt: store.nowIso(),
+        latencyMs: matcherFinishedAtMs - matcherStartedAtMs,
+        output: {
+          recCount,
+          ...(recs?.topJob ? { topJobId: recs.topJob.jobId } : {}),
+          ...(v16Counters ? { v16Counters } : {}),
+        },
+        ...(noMatchReason ? { noMatchReason } : {}),
+      }, { merge: true })
+    } catch (err) {
+      store.log("pa.runtime.job_search.tool_call_update_failed", {
+        userId: event.userId,
+        turnId,
+        toolCallId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  // Reply body: grounded no-match narration (using real V16 counters) when
+  // the matcher returned nothing; otherwise pass through the composed
+  // recommendation. The legacy generic apology copy is gone — when V16
+  // counters are unavailable (e.g. recs === null), `composeNoMatchReply`
+  // falls back to a useful next-step question rather than the dead "I will
+  // keep checking" line that taught the user to stop trusting Claire.
   const body =
     recCount > 0
       ? recs!.message
-      : lang === "zh"
-        ? "这次没捞到特别合适的，我记下了，晚点再帮你扫一轮。"
-        : "I did not find a strong fresh match yet. I saved what you asked for and will keep checking."
-  const frame = frameConnectorResult("find-match", lang, recCount)
+      : composeNoMatchReply(v16Counters ?? { noUserTags: recs === null }, lang)
+  const frame = recCount > 0 ? frameConnectorResult("find-match", lang, recCount) : null
   const reply = frame ? [frame, body].filter(Boolean).join("\n") : body
   await sendMemoryReply(store, event, turnId, reply)
   if (recs && recs.recCount > 0 && store.db) {
@@ -3463,6 +3646,21 @@ async function handleCompletedUserJobSearchRequest(
     directIntentRecCount: recs?.recCount ?? 0,
     directIntentProfileUpdated: profileUpdated,
     directIntentFollowup: !explicitJobSearch,
+    jobSearchToolCallId: toolCallId,
+    ...(noMatchReason ? { jobSearchNoMatchReason: noMatchReason } : {}),
+  })
+
+  // 2026-05-27 — close `pa-turn-traces` as `completed` for job-search owners.
+  // Pre-fix: this fn fell through from the arbiter (which had already
+  // written `owner_arbitrated`) without ever updating the trace, leaving
+  // every job-search turn frozen at owner_arbitrated. Trace bundle carries
+  // the arbiter context the conversation handler built upstream.
+  await persistConversationTraceCompletion(store, event, traceBundle, {
+    outboundSource: "job_search",
+    memoryWrites: profileUpdated ? ["durable_preference_update"] : [],
+    noMatchReason,
+    toolCallId,
+    recCount,
   })
   await store.markEventSucceeded(event.id)
   return true
@@ -4396,7 +4594,21 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       userAuthoredEvent &&
       conversationOwnerDecision?.selectedOwner !== "shared_onboarding" &&
       conversationOwnerDecision?.selectedOwner !== "active_workflow" &&
-      await handleCompletedUserJobSearchRequest(event, store, turnId, onboardingUser)
+      await handleCompletedUserJobSearchRequest(
+        event,
+        store,
+        turnId,
+        onboardingUser,
+        conversationTurnContext && conversationOwnerDecision
+          ? {
+              context: conversationTurnContext,
+              ownerDecision: conversationOwnerDecision,
+              actionDecision: conversationActionDecision ?? null,
+              evidenceWrites: conversationEvidenceWrites,
+              evidenceCommitIds: conversationEvidenceCommitIds,
+            }
+          : undefined,
+      )
     ) {
       return
     }
