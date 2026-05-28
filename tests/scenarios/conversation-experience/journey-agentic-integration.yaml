@@ -1,0 +1,34 @@
+id: conversation_experience_journey_agentic_integration
+description: |
+  Integrated agentic-stack journey sim (P1+P2+P4+P5 flags ON). Observes how
+  Claire responds across: switch industry (replace, P5 negative axis) → add
+  industry → ask recommendation (P1 agentic find-match) → short ack (P2
+  delivery: tapback vs text). Run with runner-local (in-process, captured
+  outbound, no prod). Prescreen (P3) is a separate CF-trigger path, not covered
+  by the orchestrator runner-local.
+testMode: true
+locale: en-US
+agentId: default
+participant: "+19999992050"
+chatId: "iMessage;+19999992050"
+userState:
+  onboardingState: complete
+  tags:
+    targetRoleFunction: ["data_and_analytics"]
+    industrySector: ["healthcare_and_life_sciences"]
+    careerStage: "mid"
+    targetLocations: ["new_york", "remote"]
+    preferredLang: "en"
+  statedPreferences:
+    preferredLang: "en"
+flags:
+  paAgenticJobSearchEnabled: true
+  paAgenticOnboardingEnabled: true
+  paReflexQuickAckEnabled: true
+  paReactionTapbackEnabled: true
+  paHumanizeRuntimeEnabled: true
+turns:
+  - user: "actually I'm not into healthcare anymore — I only want fintech roles now"
+  - user: "oh and I'm also open to crypto / web3 startups"
+  - user: "cool, show me a few roles that fit then"
+  - user: "nice, thanks"
