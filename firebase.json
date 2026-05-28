@@ -107,6 +107,10 @@
       ],
       "rewrites": [
         {
+          "source": "/api/v1/partner/users",
+          "function": { "functionId": "paPartnerUsersApi", "region": "us-central1" }
+        },
+        {
           "source": "**",
           "destination": "/index.html"
         }

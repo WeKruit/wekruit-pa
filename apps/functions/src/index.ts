@@ -294,6 +294,9 @@ export { paCandidateMagicLinkVerify } from "./candidate-magic-link-verify.js"
 // matching-jobs (scraped/non-collab) with hard filters mirroring v16's
 // query (status==active, dead!=true, atsApplyUrl present, firstSeenAt fresh).
 export { paPublicOpenJobs } from "./public-open-jobs.js"
+// v2.0 Partner API — layoffhedge users export. HTTP callable returning
+// sourced candidates (status-filtered, paginated). Auth via X-API-Key.
+export { paPartnerUsersApi } from "./partner-users-api.js"
 // Adam 2026-05-18: rolling preview on layoff.wekruit.com now reads pa-users
 // (mix of demo + real, both filtered by `getHired !== true`) instead of a
 // hardcoded JS pool. Public, no-auth GET. See `public-layoff-preview.ts`.

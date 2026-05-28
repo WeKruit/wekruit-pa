@@ -326,3 +326,9 @@ test("parseHandlerQuery accepts opaque cursor as-is", () => {
   const parsed = __test_parseHandlerQuery({ cursor: "anyOpaqueValue=" })
   assert.equal(parsed.cursorOpaque, "anyOpaqueValue=")
 })
+
+test("paPartnerUsersApi is re-exported from src/index.ts", async () => {
+  const mod = await import("../index.js")
+  // The Firebase Functions runtime requires the export to be a callable/handler.
+  assert.ok(typeof (mod as Record<string, unknown>).paPartnerUsersApi === "function" || typeof (mod as Record<string, unknown>).paPartnerUsersApi === "object")
+})
