@@ -111,10 +111,19 @@ export const FIND_MATCH_CONNECTOR: ConnectorDef<
 > = {
   name: "find-match",
   version: "1",
+  // Hermes-style routing boundary (replaces the deleted job_search regex router):
+  // WHAT + verbatim positive triggers (EN + ZH) + explicit "Do NOT call when ...".
+  // The positive triggers fix the P0 baseline's EN under-call; the negatives encode
+  // the BFCL abstention cases (chit-chat, past-outcome questions, mere preference).
   description:
-    "Find ranked job matches for this user from the general WeKruit job catalog (V16 cascade). " +
-    "Use when the user asks for job recommendations, new openings, or 'what fits me' in the open market. " +
-    "Do NOT use for WeKruit partner/collab interview roles — use match-against-collab-jobs instead.",
+    "Find ranked open-market job matches for this user from the general WeKruit catalog (V16 cascade). " +
+    "CALL THIS as soon as the user expresses they want to see jobs / matches / recommendations / new openings / " +
+    "'what fits me' — even briefly. Example triggers: \"find me a job\", \"find me some software engineering jobs\", " +
+    "\"any new roles for me?\", \"show me matches\", \"got any recommendations?\", \"what's out there for me\", " +
+    "\"帮我看看有什么岗位匹配\", \"有没有合适的工作\", \"最近有没有推荐机会\", \"看看有什么新职位\". " +
+    "Do NOT call for: casual chit-chat or emotional support; a question about a PAST prescreen/interview outcome; " +
+    "PII edits; WeKruit partner/collab interview roles (use match-against-collab-jobs instead); or when the user is " +
+    "merely stating a preference/constraint without asking to search (use set-matching-preferences instead).",
   inputSchema: FindMatchInputSchema,
   outputSchema: FindMatchOutputSchema,
   expectedLatencyMs: 3500,
