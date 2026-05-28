@@ -48,6 +48,8 @@ export type AgenticPrescreenTurnInput = {
    */
   runTurn: (reply: string) => Promise<AgenticRunTurnResult>
   log?: (event: string, payload: Record<string, unknown>) => void
+  /** Test-only: inject a fake SDK to drive the tool loop deterministically. */
+  __loadSdk?: () => AgentsSdk
 }
 
 export type AgenticPrescreenTurnOutput =
@@ -128,7 +130,7 @@ export async function runAgenticPrescreenTurn(
   input: AgenticPrescreenTurnInput
 ): Promise<AgenticPrescreenTurnOutput> {
   const log = input.log ?? (() => {})
-  const sdk = loadConfiguredSdk()
+  const sdk = input.__loadSdk ? input.__loadSdk() : loadConfiguredSdk()
   const model = process.env.PA_AGENT_MODEL?.trim() || "gpt-5.4-nano"
 
   // Boxed so the tool closures' mutations are visible to TS after the run()
@@ -151,6 +153,19 @@ export async function runAgenticPrescreenTurn(
       },
       strict: false,
       execute: async (a: unknown) => {
+        // Record-once per human turn (keystone integrity). The SDK loop
+        // (toolChoice:"auto") can emit this tool call more than once, but
+        // `runTurn` is the real PreScreenPipeline reducer — it SCORES and
+        // ADVANCES qOrder each call. A 2nd call would advance past the next
+        // question and score it against text the candidate never sent
+        // (skip/fabricate). The FSM must advance at most once per turn, so
+        // ignore any extra calls and echo the already-recorded action.
+        if (box.recorded) {
+          return JSON.stringify({
+            action: box.recorded.action.kind,
+            note: "already_recorded_this_turn",
+          })
+        }
         const reply = String((a as { reply?: unknown })?.reply ?? input.replyText)
         box.recorded = await input.runTurn(reply)
         return JSON.stringify({ action: box.recorded.action.kind })
