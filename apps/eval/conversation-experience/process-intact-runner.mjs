@@ -201,6 +201,13 @@ async function runPrescreenFsm(fx, R) {
       if (ti !== fi + 1) fails.push(`SKIP DETECTED: advance ${a.fromQId}->${a.toQId} not adjacent in qOrder ${JSON.stringify(finalState.qOrder)}`)
     }
   }
+  // P3 pending-step durability: a non-answer/tangent turn must HOLD the pending
+  // question (the reducer clarifies / re-asks), never skip or auto-advance it.
+  for (const qId of fx.expect.clarified_qids ?? []) {
+    if (!actions.some((a) => a.kind === "clarify" && a.qId === qId)) {
+      fails.push(`PENDING NOT HELD: expected a clarify for '${qId}' (a non-confident/tangent turn must hold the pending question, not skip/advance it)`)
+    }
+  }
   if (fx.expect.terminal_once) {
     if (terminalCount !== 1) fails.push(`terminal action fired ${terminalCount}x, expected exactly 1`)
     const termBefore = finalState.terminal
