@@ -3,6 +3,22 @@
 **Branch:** `claude/agentic-P0-eval-foundation` off `origin/main` `883d7d45`. **Node 24.3.0.**
 P0 adds eval scaffolding only — **zero** `packages/**` / `apps/functions/**` source modified, **nothing deleted**. The deletions begin in P1 and are gated by the baseline frozen here.
 
+## P0 fidelity update — driven by .planning/LIVE-SMOKE-2026-05-28-RECEIPT.md (supersedes the Layer-2 extraction numbers below)
+
+Adam's live production smoke (PR #245, user `LF8blURXyFBaeF7bhupu`) flagged that the conversation-quality harness used a stand-in `mergePatch` + bare `runExtraction` and could false-green the preference-removal case. Fixes applied to `llm-runner.mjs`:
+
+- **Now drives the EXACT production seam `maybeRunExtractor`** (conversation-extractor-runtime.ts:469 — the wrapper `handleDurablePreferenceUpdateTurn` calls at index.ts:2614). It injects the real `writeUserTags = applyPartialUserTags` (shallow replace-per-key into `pa-users.tags`), gates on `onboardingState`, and builds the request as production does. No stand-in merge, no bare runExtraction.
+- Assertions extended: `final_tags_includes` / `final_tags_excludes` + a `baseline_red` tracker (a known-failing baseline reports RED without blocking; a surprise GREEN is surfaced).
+- New fixtures: `avoid-swe-removal.json`, `negative-axis-baseline.json` (+ `onboarding_state` seed).
+
+**Honest findings (evidence over expectation):**
+- The receipt expected `avoid-swe-removal` to be RED. On the real seam it is **GREEN**: gpt-5.4-nano reliably emits a REPLACE patch (product-only) + writes `full_time`, so `software_engineering` IS removed (single- AND multi-turn). The production RED (kept SWE) was **not reproducible from a synthetic transcript** — the production path uses the same `maybeRunExtractor`, so the live RED is a multi-turn-live-context / non-determinism artifact, not a deterministic extractor failure on this scenario. Recommendation: capture the exact production transcript (via `verify-smoke.mjs`) as a fixture if a deterministic RED gate is required; otherwise live-smoke covers the production-context reproduction.
+- The genuine, **deterministic lock-#5 RED is the structured negative axis** (`negative-axis-baseline.json`): "avoid adtech/crypto" lands in open `relevantTags:["avoid_*"]` (a soft-overlap field the matcher never subtracts) — and on one seam run the extractor even emitted `industrySector:["software_and_saas","crypto_web3_blockchain"]`, a **surface-attribution error** turning "avoid crypto" into a POSITIVE crypto tag. No subtractive `negativeIndustrySector` axis exists → RED now → **P5 turns it green** (negative axis + matcher subtraction + extractor support).
+
+**Re-run receipt (real `maybeRunExtractor` seam):** `avoid-swe-real-extraction` PASS · `avoid-swe-removal` PASS · `multi-value-visa` PASS · `negative-axis-baseline` RED (expected baseline, advisory) · `negative-preference` PASS → `llm-runner` exit 0. Deterministic gate unchanged: process-intact **5/5** exit 0 · arbiter canary exit 0.
+
+---
+
 ## What shipped
 
 ```

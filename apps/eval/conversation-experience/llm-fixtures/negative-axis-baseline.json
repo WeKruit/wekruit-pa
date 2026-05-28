@@ -1,0 +1,18 @@
+{
+  "name": "negative-axis-baseline",
+  "description": "LIVE-SMOKE-2026-05-28 / lock #5 — the DETERMINISTIC negative-axis gap. 'avoid adtech and crypto' must write a STRUCTURED negative axis the matcher SUBTRACTS (negativeIndustrySector), not just an open relevantTags 'avoid_*' string (which is a soft-overlap field, never subtracted). On the production seam the extractor emits relevantTags=['avoid_adtech','avoid_crypto_web3_blockchain'] and NO negativeIndustrySector, so this is RED now (correct failing baseline); P5 (negative axis + matcher subtraction + extractor support) turns it green.",
+  "user_id": "test_user_negative_axis",
+  "onboarding_state": "complete",
+  "initial_tags": { "targetRoleFunction": ["software_engineering"] },
+  "turns": [
+    {
+      "inbound": "keep the SWE roles but please avoid adtech and crypto companies, not interested in those at all",
+      "assistant": "noted — I'll steer clear of those."
+    }
+  ],
+  "expect": {
+    "baseline_red": true,
+    "final_tags_includes": { "negativeIndustrySector": ["crypto_web3_blockchain"] },
+    "grade_criteria": "Candidate asked to AVOID adtech and crypto. PASS only if a structured negative axis (e.g. negativeIndustrySector) records the avoided sectors so the matcher can subtract them — an open relevantTags 'avoid_*' string does NOT count."
+  }
+}
