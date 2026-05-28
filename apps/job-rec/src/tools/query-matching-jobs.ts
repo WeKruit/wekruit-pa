@@ -1401,6 +1401,17 @@ export type QueryMatchingJobsDeps = {
    * for the recruiter-agent / LLM tool path.
    */
   includeEmbedding?: boolean
+  /**
+   * Pinned "now" (ms since epoch) for the D.9 recency freshness filter.
+   * When omitted the filter falls back to `Date.now()` (live behavior).
+   * Callers that own a batch clock — daily-batch derives this from its
+   * injected `todayYmd` — thread it here so the freshness window is
+   * anchored to the batch's notion of "today" rather than wall-clock.
+   * This keeps the cron's freshness cut deterministic and stops unit
+   * tests with fixed seed dates from rotting out of the window as real
+   * time advances.
+   */
+  nowMs?: number
 }
 
 function defaultLog(..._args: unknown[]): void {
@@ -1875,7 +1886,10 @@ export async function queryMatchingJobs(
   }
   const afterAtsGate = atsGateResult.kept
 
-  const recencyResult = applyRecencyFilterWithFallback(afterAtsGate)
+  const recencyResult = applyRecencyFilterWithFallback(
+    afterAtsGate,
+    deps.nowMs != null ? { nowMs: deps.nowMs } : undefined
+  )
   log("[queryMatchingJobs] recency_filter_applied", {
     before: afterAtsGate.length,
     kept: recencyResult.kept.length,
