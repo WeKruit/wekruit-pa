@@ -35,7 +35,7 @@ const MODEL = process.env.PA_AGENT_MODEL?.trim() || "gpt-5.4-nano"
 // Claire triage-mode tool surface for the baseline. Mirrors the connectors a
 // job-search/triage turn would expose (buildTurnTools maps allowedConnectors →
 // tools the same way). Keep these to names present in connectorRegistry.
-const TRIAGE_ALLOWLIST = ["find-match", "set-matching-preferences", "set-daily-job-recommendation-subscription", "remember-fact", "save-job-profile"]
+const TRIAGE_ALLOWLIST = ["find-match", "set-matching-preferences", "set-daily-job-recommendation-subscription", "remember-fact", "save-job-profile", "schedule-interview"]
 
 const SYSTEM_PROMPT = [
   "You are Claire, a warm, concise job-search companion who texts like a friend.",
