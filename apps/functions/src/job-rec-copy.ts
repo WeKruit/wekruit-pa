@@ -387,6 +387,11 @@ export function buildJobRecommendationRuntimeContext(
       previouslyRecommended: item.previouslyRecommended,
       recommendationCount: item.recommendationCount ?? 0,
       lastRecommendedAt: item.lastRecommendedAt ?? null,
+      // Collab/partner jobs are the ONLY ones WeKruit can screen + forward. Surface
+      // a neutral boolean (never the internal "matchSourceLabel" string, which must
+      // stay out of the runtime/LLM-visible context) so downstream copy can gate the
+      // "quick screen / move it forward" framing to collab jobs only.
+      collab: item.matchSourceLabel === "WeKruit collaborated",
     })),
     instructions: [
       "Write candidate-visible copy in English only.",
@@ -394,6 +399,7 @@ export function buildJobRecommendationRuntimeContext(
       "For every role include title, company, URL, requirements, and reason.",
       "Do not expose internal labels, field names, ids, or scoring metadata.",
       "If a role has previouslyRecommended=true, say briefly that it may be a repeat and why it is still worth another look.",
+      "Only offer a WeKruit screen or to move a candidate forward when collab=true; for collab=false roles the candidate applies via the link themselves, so never imply WeKruit screens or forwards them.",
       "If timing is awkward or the request should not send, respond __NO_SEND__.",
     ],
   }
