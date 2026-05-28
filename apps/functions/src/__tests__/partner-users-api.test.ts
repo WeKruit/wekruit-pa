@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import type { Firestore } from "firebase-admin/firestore"
 
 import { __test_verifyPartnerKey, __test_PARTNER_KEY_RE } from "../partner-users-api.js"
 

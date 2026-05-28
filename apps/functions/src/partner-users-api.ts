@@ -25,8 +25,12 @@ if (!getApps().length) initializeApp()
 
 // ---------------------------------------------------------------- secrets
 
-/** CSV of partner-scoped API keys. Each `key_<source>_<random>`. */
-const PA_PARTNER_USERS_API_KEYS = defineSecret("PA_PARTNER_USERS_API_KEYS")
+// Reuses the SAME partner-key secret as the job API (paPublicOpenJobs). One
+// key per partner, shaped `key_<source>_<random>` — the prefix is parsed to
+// derive the pa-users.source filter, so a job-API key already issued to a
+// partner (e.g. key_layoffhedge_…) also authorizes that partner's users feed,
+// scoped to their own source. No separate secret to provision.
+const PA_PUBLIC_COLLAB_API_KEYS = defineSecret("PA_PUBLIC_COLLAB_API_KEYS")
 /** Reused from paPublicOpenJobs — same browser origin allowlist applies. */
 const PA_PUBLIC_COLLAB_ORIGINS = defineSecret("PA_PUBLIC_COLLAB_ORIGINS")
 
@@ -387,7 +391,7 @@ export const paPartnerUsersApi = onRequest(
     region: "us-central1",
     memory: "512MiB",
     maxInstances: 10,
-    secrets: [PA_PARTNER_USERS_API_KEYS, PA_PUBLIC_COLLAB_ORIGINS],
+    secrets: [PA_PUBLIC_COLLAB_API_KEYS, PA_PUBLIC_COLLAB_ORIGINS],
   },
   async (req, res) => {
     // CORS preflight — partners may call from a browser.
@@ -409,7 +413,7 @@ export const paPartnerUsersApi = onRequest(
     const auth = verifyPartnerKey(
       apiKey,
       origin,
-      PA_PARTNER_USERS_API_KEYS.value(),
+      PA_PUBLIC_COLLAB_API_KEYS.value(),
       PA_PUBLIC_COLLAB_ORIGINS.value(),
     )
     if (!auth.ok) {

@@ -1449,23 +1449,35 @@ git fetch origin main
 git rev-parse origin/main # capture merge SHA for the deploy log
 ```
 
-- [ ] **Step 2: Generate the layoffhedge API key**
+> **SUPERSEDED (Adam directive 2026-05-27):** the secret is NOT new. The
+> function reuses the existing `PA_PUBLIC_COLLAB_API_KEYS` (job-API key secret).
+> Steps 2 + 3 below are replaced by a single check: does layoffhedge already
+> have a `key_layoffhedge_<random>` entry in `PA_PUBLIC_COLLAB_API_KEYS`?
+
+- [ ] **Step 2 (revised): Confirm or add layoffhedge's key in the EXISTING secret**
+
+The deployer (or Adam) inspects the current `PA_PUBLIC_COLLAB_API_KEYS` value.
+- If a `key_layoffhedge_<random>` entry already exists (layoffhedge was
+  onboarded to the job API), nothing to do — reuse it for the probe in Step 6.
+- If layoffhedge's existing key uses a different slug, OR no layoffhedge key
+  exists, append a new `key_layoffhedge_<32hex>` entry to the CSV. Generate the
+  tail with `openssl rand -hex 16`. Surface the full key to the user via the
+  report — do NOT commit, log, or Slack it.
 
 ```bash
-openssl rand -hex 16
-```
-Capture the 32-hex string. The full key is `key_layoffhedge_<32hex>`. Surface to the user via the report — do NOT commit it anywhere, do NOT echo into Slack, do NOT log.
-
-- [ ] **Step 3: Create the Firebase Secret**
-
-```bash
+# Append a key to the existing CSV secret (only if needed):
 export GOOGLE_APPLICATION_CREDENTIALS=/tmp/wekruit-deploy-creds.json
 grep -E "^FIREBASE_SERVICE_ACCOUNT_JSON=" /Users/adam/Desktop/WeKruit/wekruit-pa/.env | sed 's/^FIREBASE_SERVICE_ACCOUNT_JSON=//' > "$GOOGLE_APPLICATION_CREDENTIALS"
-
-echo -n "key_layoffhedge_<32hex>" | firebase functions:secrets:set PA_PARTNER_USERS_API_KEYS --project=wekruit-5f89b --data-file=-
+# Read current value, append ",key_layoffhedge_<32hex>", re-set:
+firebase functions:secrets:access PA_PUBLIC_COLLAB_API_KEYS --project=wekruit-5f89b
+# then (manually compose CSV with the new key appended):
+printf '%s' "<existing-csv>,key_layoffhedge_<32hex>" | firebase functions:secrets:set PA_PUBLIC_COLLAB_API_KEYS --project=wekruit-5f89b --data-file=-
 ```
 
-Expected: secret created. The function definition in `partner-users-api.ts` references `defineSecret("PA_PARTNER_USERS_API_KEYS")`, so the next deploy will attach it.
+NOTE: the function attaches `defineSecret("PA_PUBLIC_COLLAB_API_KEYS")` — the
+same secret the job API already uses — so no new secret is provisioned. If the
+secret value was edited, BOTH `paPublicOpenJobs` and `paPartnerUsersApi` will
+pick up the new revision on their next deploy.
 
 - [ ] **Step 4: Set up clean deploy worktree**
 

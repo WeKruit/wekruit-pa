@@ -66,14 +66,23 @@ The function is a new HTTP `onRequest` handler exported from
 ### 4.2 Auth — `verifyPartnerKey()`
 
 Reuses the constant-time CSV-compare pattern from `verifyCollabAuth` in
-`apps/functions/src/public-open-jobs.ts:527`. **New secret** (separate from
-`PA_PUBLIC_COLLAB_API_KEYS` which gates the job API):
+`apps/functions/src/public-open-jobs.ts:527`. **Reuses the SAME secret as the
+job API** — `PA_PUBLIC_COLLAB_API_KEYS` (Adam directive 2026-05-27: "we already
+have a key… why a new one"). One key per partner; the key layoffhedge already
+holds for the job API also authorizes this users feed, scoped to their source.
+No new secret to provision → no pre-deploy secret-creation step.
 
 ```
-Secret: PA_PARTNER_USERS_API_KEYS
+Secret: PA_PUBLIC_COLLAB_API_KEYS  (shared with paPublicOpenJobs)
 Format: CSV of keys, each shaped `key_<partnerSource>_<random>`
-Example: "key_layoffhedge_abc123def456,key_layoffheaven_xyz789..."
+Example: "key_layoffhedge_abc123def456,key_partnerB_xyz789..."
 ```
+
+**Security note (Adam-owned tradeoff):** because the secret is shared with the
+job API, every holder of a job-API key can also call the users feed — but only
+for their OWN source bucket (per-partner isolation via key-prefix parse still
+holds). Acceptable while layoffhedge is the only external partner. If a future
+job-API partner must NOT see candidate PII, split secrets at that point.
 
 Key prefix parsing:
 
@@ -310,13 +319,17 @@ in the partner-facing API docs (not in this repo).
 ## 8. Compatibility & Migration
 
 - New endpoint; no existing consumer.
-- New secret `PA_PARTNER_USERS_API_KEYS` must be created in Firebase Secret
-  Manager BEFORE first deploy, populated with at least one `key_layoffhedge_<random>`.
-  Generate the random with `openssl rand -hex 16` (32-hex-char tail).
-- The first layoffhedge key value is communicated out-of-band to the partner
-  (encrypted message; not in any git commit or log).
+- **No new secret.** Reuses `PA_PUBLIC_COLLAB_API_KEYS` (already provisioned for
+  the job API). If layoffhedge already holds a `key_layoffhedge_<random>` key in
+  that secret, the deploy works immediately with zero pre-deploy provisioning.
+  Verify the existing key's prefix is exactly `key_layoffhedge_…`; if their
+  current job-API key uses a different slug, add a `key_layoffhedge_<random>`
+  entry to the existing CSV secret (one `gcloud`/console edit, not a new secret).
+- Any key value is communicated out-of-band to the partner (encrypted message;
+  not in any git commit or log).
 - Subsequent partners follow the same recipe: add their slug to `PA_USER_SOURCES`
-  + add a new key to the CSV secret + update `Legal.tsx` partners list.
+  + add a `key_<slug>_<random>` entry to the existing CSV secret + update
+  `Legal.tsx` partners list.
 
 ## 9. Risk & Mitigation
 
@@ -356,12 +369,17 @@ in the partner-facing API docs (not in this repo).
 
 1. Land code + tests + legal copy in one PR.
 2. Predeploy gate green (orchestrator + functions + landing).
-3. Create Firebase Secret `PA_PARTNER_USERS_API_KEYS` and populate with one `key_layoffhedge_<32-hex>` value via `gcloud secrets create` or Firebase console.
+3. Confirm layoffhedge has a `key_layoffhedge_<random>` entry in the EXISTING
+   `PA_PUBLIC_COLLAB_API_KEYS` secret. If not, add one (edit the existing CSV
+   secret — no new secret to create). The function attaches the secret via
+   `defineSecret("PA_PUBLIC_COLLAB_API_KEYS")` already used by the job API.
 4. Deploy:
    - `firebase deploy --only functions:pa-orchestrator:paPartnerUsersApi`
    - `firebase deploy --only hosting:pa-landing` (picks up the rewrite)
-5. Live probe (see §10.3).
-6. Securely transmit the `key_layoffhedge_<...>` value to layoffhedge via password manager / encrypted message — NOT email, NOT chat. Out of band.
+5. Live probe (see §10.3) using layoffhedge's existing key.
+6. If a NEW key value was added in step 3, transmit it to layoffhedge via
+   password manager / encrypted message — NOT email, NOT chat. Out of band.
+   If they already had the key (from job-API onboarding), nothing to send.
 7. Mark v1 GA.
 
 ## 12. Open Questions
