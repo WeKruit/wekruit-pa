@@ -369,6 +369,23 @@ function defaultTodayYmd(): string {
 }
 
 /**
+ * Map a `YYYYMMDD` batch stamp to the END-of-that-UTC-day in ms, used to
+ * anchor queryMatchingJobs' recency freshness filter to the batch clock
+ * instead of wall-clock `Date.now()`. End-of-day (next UTC midnight) — not
+ * start — because `matching-jobs.lastSeenAt` carries intraday crawl times;
+ * a start-of-day anchor would make jobs re-seen earlier today read as
+ * `age < 0` (future) and drop the freshest inventory. Malformed stamp →
+ * `Date.now()` (never blind the cron to freshness).
+ */
+function batchClockNowMs(ymd: string): number {
+  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(ymd)
+  if (!m) return Date.now()
+  const startOfDay = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  if (!Number.isFinite(startOfDay)) return Date.now()
+  return startOfDay + 24 * 60 * 60 * 1000
+}
+
+/**
  * Format a single job into a roommate-style 3-line preview block.
  * Bible v7.5.2: bare URL on its own line, no markdown.
  */
@@ -1136,23 +1153,37 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
         ? Math.min(20, Math.max(jobsPerUser, deps.candidatePoolSize ?? 20))
         : jobsPerUser
 
-      // Phase 60 — V16 single-source cascade (CLAUDE.md D8). When the user
-      // has `pa-users.tags`, the V16 entry reads it once and runs the
-      // canonical role → hard-filter → weighted-score → reason pipeline.
-      // V16 short-circuits the rest of the legacy ranking (cosine /
-      // cross-encoder / startup-boost / weighted-skill-match / anti-bias)
-      // because its scoring already incorporates those signals via
-      // `V16_SCORE_WEIGHTS` (llmMatch + skillJaccard + relevantTags +
-      // industrySector + cvEmbCosine + salaryFit).
+      // Phase 60 — V16 single-source cascade (CLAUDE.md D8), AUTHORITATIVE for
+      // tagged users. When `pa-users.tags` exists, V16 reads the latest
+      // canonical tags once and runs the role → hard-filter → weighted-score →
+      // reason pipeline (its `V16_SCORE_WEIGHTS` already fold in llmMatch +
+      // skillJaccard + relevantTags + industrySector + cvEmbCosine + salaryFit,
+      // so the legacy cosine / cross-encoder / boost stack is skipped).
       //
-      // Fallback: when `noUserTags: true` is returned (user has not yet
-      // been migrated into the v1.6 single source), drop through to the
-      // legacy queryMatchingJobs path so the user still gets recs — zero
-      // regression for the migration window.
+      // The V16 verdict is final for a tagged user:
+      //   • jobs > 0          → use them.
+      //   • tagged, 0 matches → send NOTHING. Do NOT rescue with legacy.
+      //     Incident 2026-05-28: legacy fallback on a tagged user's no-match
+      //     leaked Jobright mirrors + off-axis roles into candidate SMS and
+      //     burned trust. Better no rec than a wrong rec.
+      //   • noUserTags        → genuinely un-migrated; legacy path still
+      //     serves recs until the canonical-tag migration covers them.
+      //   • V16 threw         → infra error, not a clean no-match; legacy
+      //     path serves so a transient blip never zeroes out a user.
       let v16Jobs: MatchingJob[] | null = null
+      let v16AuthoritativeEmpty = false
       try {
         const v16Result = await queryMatchingJobsV16(
-          { userId, limit: poolSize, lang: "en", allowBroadFallback: true },
+          {
+            userId,
+            limit: poolSize,
+            lang: "en",
+            allowBroadFallback: true,
+            // Anchor V16's freshness window to the batch clock (same source
+            // as the legacy path) so both retrieval paths agree on "today"
+            // and the cron stays deterministic instead of wall-clock.
+            nowMs: batchClockNowMs(todayYmd),
+          },
           {
             db: deps.db,
             log: (event, payload) =>
@@ -1169,10 +1200,19 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
             hardFilter: v16Result.hardFilter,
             llmCacheStale: v16Result.llmCacheStale ?? false,
           })
+        } else if (!v16Result.noUserTags) {
+          // Tagged user, V16 found no clean match → authoritative empty.
+          v16AuthoritativeEmpty = true
+          log("[job-rec-daily] v16_no_match_skip", {
+            userId,
+            total: v16Result.total,
+            dropped: v16Result.dropped,
+            hardFilter: v16Result.hardFilter,
+          })
         } else {
           log("[job-rec-daily] v16_cascade_fallback", {
             userId,
-            reason: v16Result.noUserTags ? "no_user_tags" : "no_matches",
+            reason: "no_user_tags",
           })
         }
       } catch (err) {
@@ -1180,6 +1220,13 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
           userId,
           error: err instanceof Error ? err.message : String(err),
         })
+      }
+
+      // V16 authoritative for tagged users: a clean no-match means send
+      // nothing rather than rescue with the weaker legacy matcher.
+      if (v16AuthoritativeEmpty) {
+        skippedNoJobs += 1
+        continue
       }
 
       // Phase 51 (v1.5 / Stream-G.2) — flag-gated tag cluster path. When
@@ -1279,7 +1326,7 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
             },
             limit: poolSize,
           },
-          { db: deps.db, log, includeEmbedding: true }
+          { db: deps.db, log, includeEmbedding: true, nowMs: batchClockNowMs(todayYmd) }
         )
       }
 

@@ -251,6 +251,13 @@ test("runDailyJobRecBatch: active subscribe row can use canonical pa-users tags"
     industryKey: "tech",
     companyName: "TagCo",
     roleTitle: "Software Engineer",
+    // Canonical job-side tags — V16 queries `roleFunction array-contains-any`
+    // + scores on industrySector/locationBuckets. Prod corpus is 100%
+    // canonical (audit 2026-05-28); a fixture without these would only ever
+    // pass via the legacy rescue this path now (correctly) refuses.
+    roleFunction: ["software_engineering"],
+    industrySector: ["tech_software"],
+    locationBuckets: ["remote_anywhere"],
     salaryMax: 180000,
     locationRaw: "Remote",
     primaryUrl: "https://j/tags",
@@ -273,6 +280,60 @@ test("runDailyJobRecBatch: active subscribe row can use canonical pa-users tags"
   assert.equal(out.errors, 0)
   assert.equal(jobRecRuntimeWrites(mfs).length, 1)
   assert.match(firstJobRecSourceNotes(mfs), /TagCo/)
+})
+
+// Incident 2026-05-28 regression lock — a tagged candidate whose canonical
+// V16 match is empty must get NOTHING, never a legacy rescue. Before the fix,
+// legacy (matching on industryKey only) sent off-axis roles (e.g. customer
+// support to a SWE candidate) and Jobright mirrors, burning candidate trust.
+test("runDailyJobRecBatch: tagged user with no V16 match sends nothing (no legacy rescue)", async () => {
+  const mfs = new MockFirestore()
+  await seedUser(mfs, "u_off", "+15551114444", {
+    tags: {
+      industrySector: ["tech_software"],
+      targetLocations: ["remote_anywhere"],
+      targetRoleFunction: ["software_engineering"],
+    },
+  })
+  await mfs.collection("pa-job-profiles").doc("u_off").set({
+    userId: "u_off",
+    status: "active",
+    createdAt: "2026-04-30T00:00:00Z",
+    updatedAt: "2026-04-30T00:00:00Z",
+  })
+  // Off-axis role: legacy's industryKey=tech match WOULD return + send this
+  // ("Marketing Manager" is not on the tech-leaning title blacklist), but
+  // V16's roleFunction hard filter rejects it (marketing ≠ software eng).
+  // This is the yvNS/LF8 incident shape — off-axis role to a SWE candidate.
+  await mfs.collection("matching-jobs").doc("j_off").set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "BrandCo",
+    roleTitle: "Marketing Manager",
+    roleFunction: ["marketing_and_advertising"],
+    industrySector: ["tech_software"],
+    locationBuckets: ["remote_anywhere"],
+    salaryMax: 130000,
+    locationRaw: "Remote",
+    primaryUrl: "https://j/off",
+    atsApplyUrl: "https://greenhouse.io/brandco/jobs/9",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-04-30",
+    lastSeenAt: "2026-04-30",
+    requiredSkills: ["SEO", "Content Strategy"],
+  })
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async () => true,
+    todayYmd: () => "20260430",
+    jobsPerUser: 1,
+  })
+  assert.equal(out.delivered, 0)
+  assert.equal(out.skippedNoJobs, 1)
+  assert.equal(out.errors, 0)
+  // No candidate-visible send at all — the off-axis role never reaches Claire.
+  assert.equal(jobRecRuntimeWrites(mfs).length, 0)
 })
 
 test("runDailyJobRecBatch: skips candidate-visible send when jobs lack concrete requirements", async () => {
