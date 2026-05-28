@@ -442,6 +442,9 @@ const SEED_FLAGS: FlagSpec[] = [
   // connector) and the hand-wired regex dispatch is skipped. OFF = today's
   // regex handler keeps ownership (zero regression). Adam ramps via dashboard.
   { key: "paAgenticJobSearchEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // P2 Tier-1 reflex: slow-tool quick-ack fires as a deterministic reflex
+  // (independent of Tier-2 narration). DEFAULT OFF — zero behavior change until ramped.
+  { key: "paReflexQuickAckEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paSharedOnboardingAgenticSurface", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paBehaviorChoreographerEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paReactionTapbackEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
