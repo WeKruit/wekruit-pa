@@ -91,6 +91,23 @@ export async function isFindMatchToolEnabled(
   }
 }
 
+/**
+ * P4 — flag read for the scoped onboarding agent. Default OFF; mirrors
+ * `isFindMatchToolEnabled`. Fail-closed on any read error so flag-OFF behavior
+ * is the safe default and the deterministic onboarding path runs unchanged.
+ */
+export async function isAgenticOnboardingEnabled(
+  db: Firestore | undefined,
+  userId: string
+): Promise<boolean> {
+  if (!db) return false
+  try {
+    return (await getFlag(db, "paAgenticOnboardingEnabled", { userId, env: process.env })) === true
+  } catch {
+    return false
+  }
+}
+
 export async function isCollabMatchToolEnabled(
   db: Firestore | undefined,
   userId: string

@@ -438,6 +438,8 @@ const SEED_FLAGS: FlagSpec[] = [
   { key: "paConnectorNarrationEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paFindMatchToolEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paSharedOnboardingAgenticSurface", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // P4 — scoped onboarding agent (record→reducer; tangent→global tool; fail-open). Default OFF.
+  { key: "paAgenticOnboardingEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paBehaviorChoreographerEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paReactionTapbackEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   // Collab prescreen invite: match/copy helpers only; SMS requires HITL approve on dashboard (no ingest hook).
