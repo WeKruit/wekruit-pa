@@ -23,6 +23,15 @@ model+prompt self-does it.
 PRIMARY SOURCE OF TRUTH (read first, obey literally):
 - .planning/AGENTIC-ARCHITECTURE.md   ← the locked design; every decision is here
 Supporting sources:
+- .planning/LIVE-SMOKE-2026-05-28-RECEIPT.md  ← REAL production receipt (read before
+  P0 and P5). Two NON-NEGOTIABLE acceptance items it proves: (1) P5/lock-5 — preference
+  updates must support replace/remove/avoid + a negative axis: "only product / avoid SWE"
+  must REMOVE software_engineering and write full-time, not merely ADD product (live run
+  left targetRoleFunction=["product_management","software_engineering"], targetJobType
+  undefined). (2) P0 — the conversation-quality harness MUST drive the REAL
+  applyPartialUserTags write path; the current harness false-greened this by using a
+  stand-in replace-merge. Add the avoid-swe-removal fixture; it WILL be red against
+  current code (correct baseline) and P5 turns it green.
 - CLAUDE.md  (deploy authority, Node 24, "done = real proof", worktree rules)
 - AGENTS.md
 - README.md  (Product Blueprint: Candidate Retention Marketplace)
