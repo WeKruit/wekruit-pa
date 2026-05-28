@@ -28,15 +28,19 @@ import { auth } from "./firebase.js"
  *     any other subdomain returns 401 and tears down the cross-domain session.
  */
 
+// Same-origin paths proxied by Firebase Hosting rewrites in firebase.json. Going
+// through the cloudfunctions.net hostname would make the request cross-site and
+// the browser would refuse to honor Set-Cookie Domain=.wekruit.com on the response.
+// Override with VITE_PA_SSO_BASE_URL for local dev against the Functions emulator.
 const SSO_BASE_URL = ((): string => {
   const explicit = import.meta.env.VITE_PA_SSO_BASE_URL
   if (typeof explicit === "string" && explicit.length > 0) return explicit.replace(/\/$/, "")
-  return "https://us-central1-wekruit-5f89b.cloudfunctions.net"
+  return ""
 })()
 
-const SSO_LOGIN_URL = `${SSO_BASE_URL}/paSsoLogin`
-const SSO_BOOTSTRAP_URL = `${SSO_BASE_URL}/paSsoBootstrap`
-const SSO_LOGOUT_URL = `${SSO_BASE_URL}/paSsoLogout`
+const SSO_LOGIN_URL = `${SSO_BASE_URL}/_sso/login`
+const SSO_BOOTSTRAP_URL = `${SSO_BASE_URL}/_sso/bootstrap`
+const SSO_LOGOUT_URL = `${SSO_BASE_URL}/_sso/logout`
 
 // One bootstrap attempt per tab session. Without this every SPA navigation
 // would re-fetch `paSsoBootstrap` even though Firebase already wrote a session
