@@ -905,44 +905,53 @@ export function applyV16HardFilters(
       }
     }
 
-    // 2. location intersect (anywhere bypass).
+    // 2. location intersect (anywhere bypass — user side OR job side).
+    // A job tagged remote_anywhere/anywhere is accessible from any location;
+    // bypass the intersect check so SF-only users still receive global remote roles.
     if (!options.relaxSpecificLocation && !isAnywhere && targetLocations.length > 0) {
       const jobLocs = Array.isArray(job.locationBuckets) ? job.locationBuckets : []
-      let hit = false
-      for (const l of jobLocs) {
-        if (targetLocationSet.has(String(l).trim().toLowerCase())) {
-          hit = true
-          break
-        }
-      }
-      // Fallback: substring match on locationRaw when locationBuckets missing
-      // (legacy / unmigrated jobs). Conservative — only "remote" ≈ "remote".
-      if (!hit && (jobLocs.length === 0 || !job.locationBuckets)) {
-        const raw = (job.locationRaw ?? "").toLowerCase()
-        for (const l of targetLocations) {
-          const key = l.trim().toLowerCase()
-          if (key.length >= 3 && raw.includes(key)) {
-            hit = true
-            break
-          }
-          // remote variants tolerate raw "remote" / "anywhere"
-          if (key.startsWith("remote") && raw.includes("remote")) {
+      const jobIsAnywhere = jobLocs.some((l) =>
+        ANYWHERE_LOCATION_TOKENS.has(String(l).trim().toLowerCase())
+      )
+      if (!jobIsAnywhere) {
+        let hit = false
+        for (const l of jobLocs) {
+          if (targetLocationSet.has(String(l).trim().toLowerCase())) {
             hit = true
             break
           }
         }
-      }
-      if (!hit) {
-        counters.location++
-        continue
+        // Fallback: substring match on locationRaw when locationBuckets missing
+        // (legacy / unmigrated jobs). Conservative — only "remote" ≈ "remote".
+        if (!hit && (jobLocs.length === 0 || !job.locationBuckets)) {
+          const raw = (job.locationRaw ?? "").toLowerCase()
+          for (const l of targetLocations) {
+            const key = l.trim().toLowerCase()
+            if (key.length >= 3 && raw.includes(key)) {
+              hit = true
+              break
+            }
+            // remote variants tolerate raw "remote" / "anywhere"
+            if (key.startsWith("remote") && raw.includes("remote")) {
+              hit = true
+              break
+            }
+          }
+        }
+        if (!hit) {
+          counters.location++
+          continue
+        }
       }
     }
 
-    // 3. careerStage window — prefer enriched seniority, infer from title when
-    // the scraper missed the structured field so senior/lead/director jobs do
-    // not leak to junior users.
+    // 3. careerStage window — hard-gate only on explicit job.seniorityLevel.
+    // Title inference (senior/manager/lead) is too noisy for a hard drop and
+    // causes recall collapse for marketing/BA users where the corpus skews
+    // heavily toward senior titles. Explicit field is trustworthy; inferred
+    // title stage feeds soft scoring only.
     if (acceptableStages) {
-      const jobStage = normalizeCareerStageToken(job.seniorityLevel) ?? inferCareerStageFromTitle(getMatchingJobTitle(job))
+      const jobStage = normalizeCareerStageToken(job.seniorityLevel)
       if (jobStage && !acceptableStages.has(jobStage)) {
         counters.careerStage++
         continue

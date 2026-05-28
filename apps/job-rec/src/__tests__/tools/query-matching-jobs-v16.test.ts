@@ -259,7 +259,7 @@ test("applyV16HardFilters: visa gate is no-op when user is citizen", () => {
   assert.equal(r.counters.visa, 0)
 })
 
-test("applyV16HardFilters: location intersect bypasses for remote_anywhere", () => {
+test("applyV16HardFilters: location intersect bypasses for remote_anywhere (user side)", () => {
   const jobs: MatchingJob[] = [
     mkJob({ id: "x", locationBuckets: ["new_york_city"] }),
     mkJob({ id: "y", locationBuckets: ["los_angeles"] }),
@@ -272,6 +272,26 @@ test("applyV16HardFilters: location intersect bypasses for remote_anywhere", () 
   } as never
   const r = applyV16HardFilters(jobs, tags, NOW)
   assert.equal(r.kept.length, 2)
+})
+
+test("applyV16HardFilters: location intersect bypasses for remote_anywhere (job side — recall fix)", () => {
+  // A job tagged remote_anywhere is accessible from any location.
+  // SF-targeting user must still receive it even without remote_anywhere in their targetLocations.
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "remote", locationBuckets: ["remote_anywhere"] }),
+    mkJob({ id: "sf", locationBuckets: ["san_francisco_bay_area"] }),
+    mkJob({ id: "ny", locationBuckets: ["new_york_city"] }),
+  ]
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetLocations: ["san_francisco_bay_area"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  // remote_anywhere job and sf-specific job kept; ny dropped
+  assert.deepEqual(r.kept.map((j) => j.id), ["remote", "sf"])
+  assert.equal(r.counters.location, 1)
 })
 
 test("applyV16HardFilters: location intersect drops non-overlap", () => {
@@ -321,7 +341,10 @@ test("applyV16HardFilters: careerStage window enforces (entry → entry/junior, 
   assert.equal(r.counters.careerStage, 2)
 })
 
-test("applyV16HardFilters: careerStage infers seniority from title when structured field is missing", () => {
+test("applyV16HardFilters: careerStage hard gate uses only explicit seniorityLevel, not title inference", () => {
+  // Title inference removed from hard gate — noisy signal causes recall collapse
+  // for marketing/BA users. Explicit seniorityLevel is trustworthy; title feeds
+  // soft scoring only. All three pass because none set seniorityLevel.
   const jobs: MatchingJob[] = [
     mkJob({ id: "associate", jobTitle: "Business Operations Associate", seniorityLevel: undefined }),
     mkJob({ id: "lead", jobTitle: "Content Marketing Lead, Bridge", seniorityLevel: undefined }),
@@ -329,8 +352,9 @@ test("applyV16HardFilters: careerStage infers seniority from title when structur
   ]
   const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "junior" } as never
   const r = applyV16HardFilters(jobs, tags, NOW)
-  assert.deepEqual(r.kept.map((j) => j.id), ["associate"])
-  assert.equal(r.counters.careerStage, 2)
+  // All kept — no explicit seniorityLevel → no hard drop regardless of title
+  assert.deepEqual(r.kept.map((j) => j.id), ["associate", "lead", "director"])
+  assert.equal(r.counters.careerStage, 0)
 })
 
 test("applyV16HardFilters: careerStage normalizes human-readable seniorityLevel values", () => {
