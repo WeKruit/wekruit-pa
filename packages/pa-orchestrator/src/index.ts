@@ -4796,13 +4796,21 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // directive further down. When OFF, both call sites are strict no-ops vs
     // current main (the regex handler keeps ownership of job-search).
     const agenticJobSearchOn = await isAgenticJobSearchEnabled(store.db, event.userId)
-    // When the flag is ON, SKIP the hand-wired job-search dispatch so the turn
-    // falls through to the agent loop (which self-routes via the find-match
-    // connector). `handleCompletedUserJobSearchRequest` only ever owns the
-    // job-search path — it returns false for every non-job-search turn — so
-    // gating the whole call on the flag is precise: nothing else changes.
+    // The conversation arbiter is the authority on job-search ownership. When it
+    // explicitly routes a turn to `job_search`, the deterministic, audited matcher
+    // handler MUST run — the agent-loop self-routing path (flag-on) does NOT
+    // reliably call the find-match connector (QA 2026-05-28: an explicit
+    // "show me a few roles that fit" produced arbiterOwner=job_search yet 0
+    // pa-tool-calls and 0 jobs delivered, just a "let me pull" promise). So the
+    // agentic flag only skips the hand-wired handler for turns the arbiter did
+    // NOT route to job_search; an arbiter `job_search` decision always executes
+    // the real matcher. `handleCompletedUserJobSearchRequest` still self-gates on
+    // `isExplicitJobSearchRequest`, so it returns false for non-job-search bodies.
+    const arbiterRoutedJobSearch =
+      conversationOwnerDecision?.selectedOwner === "job_search" ||
+      Boolean(conversationOwnerDecision?.orderedActions.some((action) => action.kind === "run_job_search"))
     if (
-      !agenticJobSearchOn &&
+      (arbiterRoutedJobSearch || !agenticJobSearchOn) &&
       userAuthoredEvent &&
       conversationOwnerDecision?.selectedOwner !== "shared_onboarding" &&
       conversationOwnerDecision?.selectedOwner !== "active_workflow" &&

@@ -4,6 +4,7 @@ import { deriveSessionMessageIdempotencyKey } from "@pa/agent-runtime"
 import { PA_COLLECTIONS, type AgentDef, type InboundEvent, type MemoryFact } from "@pa/core-types"
 import type { ConversationEvidenceWrite } from "./conversation-action-arbiter.js"
 import type { TurnContext } from "./conversation-turn-arbiter.js"
+import { isAgenticJobSearchEnabled } from "./shared-onboarding-outbound.js"
 import {
   buildRecallSystemInput,
   commitConversationEvidenceWrites,
@@ -938,6 +939,60 @@ test("profiled incomplete user explicit job-search request calls matching before
   assert.equal(recCalls, 1)
   assert.match(outbound, /Software Engineer Intern @ Sparksoft/)
   assert.doesNotMatch(outbound, /what matters most in your next company/i)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), true)
+})
+
+test("agentic job-search flag ON still runs the audited matcher when arbiter routes job_search (QA 2026-05-28 regression)", async () => {
+  // Reproduces the LIVE canary condition: paAgenticJobSearchEnabled ON. This flag
+  // is db-gated — isAgenticJobSearchEnabled() returns false without a db, so a
+  // db-less makeStore silently exercises the flag-OFF (pre-rebuild) path. That is
+  // the green-wall trap (QA 2026-05-28): the suite tested flag-OFF while the
+  // canary ran flag-ON, so 0 unit tests covered the live behavior. We MUST seed a
+  // real feature-flags doc so the flag is genuinely ON.
+  // Pre-fix: flag ON skipped handleCompletedUserJobSearchRequest; the agent loop
+  // did not call find-match (QA: arbiterOwner=job_search, 0 pa-tool-calls, 0 jobs).
+  // Post-fix: the arbiter's explicit job_search decision still runs the matcher.
+  const flagDocs = new Map<string, Record<string, unknown>>([
+    ["pa-feature-flags/paAgenticJobSearchEnabled", { key: "paAgenticJobSearchEnabled", value: true, type: "bool", scope: "global" }],
+  ])
+  const db = makeMapDb(flagDocs)
+  // Guard against the false-green: assert the flag is actually ON in this store.
+  assert.equal(await isAgenticJobSearchEnabled(db, "u1"), true)
+
+  let recCalls = 0
+  let outbound = ""
+  const turnUpdates: Record<string, unknown>[] = []
+  const store = makeStore({
+    db,
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "pending",
+      tags: { schemaVersion: 1, skills: [], industryEnum: ["tech_software"] },
+    }),
+    generateJobRecs: async (_userId, _lang, opts) => {
+      recCalls++
+      assert.equal(opts?.force, true)
+      return {
+        recCount: 1,
+        message: "Fresh software roles:\n• Software Engineer @ Rain",
+      }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Show me a few roles that fit",
+  }, store)
+
+  assert.equal(recCalls, 1)
+  assert.match(outbound, /Software Engineer @ Rain/)
   assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), true)
 })
 
