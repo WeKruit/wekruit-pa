@@ -179,18 +179,51 @@ export interface MemoryEntity {
   evidence: string
 }
 
+/**
+ * Coerce a scalar into a single-element array before array validation.
+ *
+ * 2026-05-27 — real gpt-5.4-nano receipt (apps/eval/conversation-experience/
+ * llm-runner.mjs): when a candidate states ONE value for an array field, the
+ * model emits a scalar — `targetRoleFunction: "product_management"` — not
+ * `["product_management"]`. The old `z.array(...)` rejected the scalar →
+ * `parse_error` → the extractor silently returned `{ran:false}` → canonical
+ * tags never updated → matcher kept reading the stale onboarding tags. That
+ * is the actual Adam-bug root cause (NOT the trigger wiring). The model is
+ * semantically correct; the schema was too rigid. Coerce instead of reject —
+ * this is the boundary-tolerant version of Instructor's validation-retry
+ * pattern (cheaper: no second LLM round-trip for a shape the model got
+ * "right enough").
+ *
+ * Drops null / empty-string scalars to undefined so they don't become
+ * `[null]` / `[""]`.
+ */
+function coerceArray<T extends z.ZodTypeAny>(inner: T) {
+  // Inner array is `.optional()` so a preprocess result of `undefined`
+  // (null / empty-string scalar) validates cleanly to "field absent" rather
+  // than failing the required-array check.
+  return z.preprocess((v) => {
+    if (v === null || v === undefined) return undefined
+    if (Array.isArray(v)) return v
+    if (typeof v === "string" && v.trim() === "") return undefined
+    return [v]
+  }, z.array(inner).optional())
+}
+
 /** Canonical schema for the LLM response. Strict — drops unknown fields. */
 export const ConversationExtractResultSchema = z.object({
   tagPatch: z
     .object({
-      targetRoleFunction: z.array(z.enum(ROLE_FUNCTION_VOCAB)).optional(),
-      industrySector: z.array(z.enum(INDUSTRY_SECTOR_VOCAB)).optional(),
+      targetRoleFunction: coerceArray(z.enum(ROLE_FUNCTION_VOCAB)).optional(),
+      industrySector: coerceArray(z.enum(INDUSTRY_SECTOR_VOCAB)).optional(),
       visaStatus: z.enum(VISA_STATUS_VOCAB).optional(),
       careerStage: z.enum(CAREER_STAGE_VOCAB).optional(),
-      targetJobType: z.array(z.enum(JOB_TYPE_VOCAB)).optional(),
-      targetLocations: z.array(z.string().min(1).max(80)).optional(),
+      targetJobType: coerceArray(z.enum(JOB_TYPE_VOCAB)).optional(),
+      targetLocations: coerceArray(z.string().min(1).max(80)),
       minSalaryUsd: z.number().int().nonnegative().optional(),
-      relevantTags: z.array(z.string().min(1).max(40)).max(12).optional(),
+      relevantTags: coerceArray(z.string().min(1).max(40)).refine(
+        (v) => v === undefined || v.length <= 12,
+        { message: "relevantTags exceeds 12" },
+      ),
     })
     .strict(),
   memoryEntities: z.array(
@@ -364,11 +397,18 @@ export async function runExtraction(
   try {
     parsed = ConversationExtractResultSchema.parse(llmOut.json)
   } catch (err) {
+    // 2026-05-27 — surface the raw model output on parse failure. A silent
+    // `parse_error` is how the Adam-bug hid for weeks: the model emitted a
+    // semantically-correct patch in a shape the schema rejected, and we
+    // dropped it without a trace. Logging the raw JSON (capped) makes the
+    // next schema/model mismatch debuggable from production logs alone.
     log("pa.conversation_extractor.parse_error", {
       userId: req.userId,
       error: err instanceof Error ? err.message : String(err),
+      modelUsed: llmOut.modelUsed,
+      rawJson: JSON.stringify(llmOut.json).slice(0, 1000),
     })
-    return { ran: false, reason: "parse_error" }
+    return { ran: false, reason: "parse_error", modelUsed: llmOut.modelUsed }
   }
 
   if (parsed.confidence < MIN_CONFIDENCE) {
