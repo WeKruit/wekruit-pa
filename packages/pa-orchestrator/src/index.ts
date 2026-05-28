@@ -181,6 +181,7 @@ import {
   composeSharedOnboardingReply,
   deliverSharedOnboardingJobRecs,
   resolveAgentAllowedConnectors,
+  isAgenticJobSearchEnabled,
   buildSharedOnboardingComposeContext,
   extractRecentSlangPicks,
   persistSharedOnboardingSlangPicks,
@@ -4590,7 +4591,18 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       return
     }
 
+    // P1 agentic job-search migration flag (DEFAULT OFF). Read once; reused
+    // for the dispatch-skip directly below AND the per-turn system-prompt
+    // directive further down. When OFF, both call sites are strict no-ops vs
+    // current main (the regex handler keeps ownership of job-search).
+    const agenticJobSearchOn = await isAgenticJobSearchEnabled(store.db, event.userId)
+    // When the flag is ON, SKIP the hand-wired job-search dispatch so the turn
+    // falls through to the agent loop (which self-routes via the find-match
+    // connector). `handleCompletedUserJobSearchRequest` only ever owns the
+    // job-search path — it returns false for every non-job-search turn — so
+    // gating the whole call on the flag is precise: nothing else changes.
     if (
+      !agenticJobSearchOn &&
       userAuthoredEvent &&
       conversationOwnerDecision?.selectedOwner !== "shared_onboarding" &&
       conversationOwnerDecision?.selectedOwner !== "active_workflow" &&
@@ -4940,6 +4952,16 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       "('稍等下哈'), never like a system status page."
     const jobRecommendationExplanationDirective =
       await buildJobRecommendationExplanationDirective(store, event)
+    // P1 agentic job-search (DEFAULT OFF). When ON, tell the agent to use the
+    // find-match tool for job-search intents so the agent loop owns the turn
+    // (the regex dispatch is skipped above). When OFF this is `null` and the
+    // .filter() drops it — the composed system prompt is byte-for-byte
+    // unchanged vs current main.
+    const agenticJobSearchDirective: string | null = agenticJobSearchOn
+      ? "[JOB SEARCH] When the user asks to see jobs / matches / recommendations / " +
+        "new roles (or asks for more / different ones), call the find-match tool. " +
+        "Don't ask clarifying questions first — call the tool, then react to its result."
+      : null
     const systemInputs: string[] = [
       personaCard,
       recallEntry,
@@ -4949,6 +4971,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       academicIntegrityDirective,
       matchingPrivacyDirective,
       jobRecommendationExplanationDirective,
+      agenticJobSearchDirective,
       mirror.snippet,
     ].filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
     // Phase 10.5 T7 — bridge agent.allowedConnectors → SDK tools. When the
@@ -6289,7 +6312,14 @@ export function createFirestoreOrchestratorStore(
         turn.userId,
         agent.allowedConnectors
       )
-      const agentFiltered = { ...agent, allowedConnectors }
+      // P1 agentic job-search: when the flag is ON, guarantee toolPolicy is
+      // "allowlist" so the resolved connectors (incl. find-match) actually
+      // reach the SDK. Idempotent — the seed agent is already "allowlist",
+      // so flag-OFF leaves agent.toolPolicy untouched (strict no-op).
+      const agenticJobSearchOn = await isAgenticJobSearchEnabled(db, turn.userId)
+      const toolPolicy =
+        agenticJobSearchOn && agent.toolPolicy === "none" ? "allowlist" : agent.toolPolicy
+      const agentFiltered = { ...agent, allowedConnectors, toolPolicy }
       return buildTurnTools(db, agentFiltered, turn, hooks)
     },
     async recordHostedToolCalls({ turnId, userId, sessionId, calls }) {
