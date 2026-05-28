@@ -12,6 +12,11 @@ interface ImportMetaEnv {
    * When set, Agent registry shows whether `MEM0_API_KEY` is present on that worker.
    */
   readonly VITE_WORKER_HEALTH_URL?: string
+  /**
+   * Optional override for the `paVersionChannel` Cloud Function endpoint.
+   * Defaults to `https://us-central1-<projectId>.cloudfunctions.net/paVersionChannel`.
+   */
+  readonly VITE_VERSION_CHANNEL_URL?: string
 }
 
 interface ImportMeta {

@@ -140,14 +140,16 @@ describe("evaluateHygiene — predicate", () => {
     assert.deepEqual(ev, { flip: false })
   })
 
-  it("firstSeenAt 21d ago: flip with reason stale_firstseenat (>20d)", () => {
-    const doc = { ...healthyBase(), firstSeenAt: dayAgoIso(21) }
+  it("firstSeenAt 100d ago: flip with reason stale_firstseenat (>90d)", () => {
+    const doc = { ...healthyBase(), firstSeenAt: dayAgoIso(100) }
     const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
     assert.deepEqual(ev, { flip: true, reason: "stale_firstseenat" })
   })
 
-  it("firstSeenAt 19d ago: KEEP (just inside 20d window)", () => {
-    const doc = { ...healthyBase(), firstSeenAt: dayAgoIso(19) }
+  it("firstSeenAt 45d ago: KEEP (inside V16 90d adaptive-cascade reserve)", () => {
+    // 45d is past the strict 20d window but within V16's cascade — must NOT
+    // be flipped or the adaptive 45d/90d tier loses its corpus.
+    const doc = { ...healthyBase(), firstSeenAt: dayAgoIso(45) }
     const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
     assert.deepEqual(ev, { flip: false })
   })
@@ -200,7 +202,7 @@ describe("evaluateHygiene — predicate", () => {
   })
 
   it("firstSeenAt as Timestamp-like object", () => {
-    const doc = { ...healthyBase(), firstSeenAt: dayAgoTs(30) }
+    const doc = { ...healthyBase(), firstSeenAt: dayAgoTs(100) }
     const ev = evaluateHygiene(doc, NOW, staleCutoffMs)
     assert.deepEqual(ev, { flip: true, reason: "stale_firstseenat" })
   })
@@ -535,9 +537,9 @@ describe("runJobPoolHygiene — end-to-end", () => {
     // 2 no-title
     { id: "no_title_a", status: "active", dead: false, jobTitle: "", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
     { id: "no_title_b", status: "active", dead: false, jobTitle: "   ", firstSeenAt: dayAgoIso(5), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
-    // 2 stale (firstSeenAt > 20d, otherwise healthy)
-    { id: "stale_a", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(30), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
-    { id: "stale_b", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(40), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
+    // 2 stale (firstSeenAt > 90d cascade ceiling, otherwise healthy)
+    { id: "stale_a", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(100), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
+    { id: "stale_b", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(120), atsApplyUrl: "https://x.com", primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
     // 1 missing-ats (otherwise healthy)
     { id: "no_ats_a", status: "active", dead: false, jobTitle: "Engineer", firstSeenAt: dayAgoIso(5), atsApplyUrl: null, primaryUrl: "https://x.com", jobDescription: E2E_JD, requiredSkills: E2E_SKILLS, unresolvableAts: false },
     // 2 healthy
@@ -780,13 +782,15 @@ describe("runJobPoolHygiene — end-to-end", () => {
     )
     const start = messages.find((m) => m.msg === "job_pool_hygiene_start")
     assert.ok(start, "start log emitted")
-    assert.equal(start!.ctx.staleFirstSeenAtDays, 20)
+    assert.equal(start!.ctx.staleFirstSeenAtDays, 90)
     const complete = messages.find((m) => m.msg === "job_pool_hygiene_complete")
     assert.ok(complete, "complete log emitted")
     assert.ok(typeof complete!.ctx.duration_seconds === "number")
   })
 
-  it("default stale window is 20d (matches V16 hard-filter window)", () => {
-    assert.equal(STALE_FIRSTSEENAT_DAYS_DEFAULT, 20)
+  it("default stale window is 90d (V16's widest adaptive-cascade window, NOT strict 20d)", () => {
+    // 2026-05-28 footgun fix: a 20d cutoff would flip V16's 20–90d adaptive
+    // cascade reserve to inactive. 90d only demotes docs past every cascade tier.
+    assert.equal(STALE_FIRSTSEENAT_DAYS_DEFAULT, 90)
   })
 })

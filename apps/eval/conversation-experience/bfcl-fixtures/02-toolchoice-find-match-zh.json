@@ -1,0 +1,6 @@
+{
+  "kind": "tool_choice",
+  "description": "Explicit job-search request (ZH) should route to find-match — verbatim trigger phrase from the connector description.",
+  "turn": "帮我看看最近有什么岗位匹配",
+  "expect": { "tool": "find-match" }
+}
