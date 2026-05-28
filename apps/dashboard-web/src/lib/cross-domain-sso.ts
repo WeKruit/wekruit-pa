@@ -16,15 +16,18 @@ import { auth } from "./firebase.js"
  * pulling in the pa-landing source tree.
  */
 
+// Same-origin paths proxied by Firebase Hosting rewrites in firebase.json. Going
+// through cloudfunctions.net would make the request cross-site and the browser
+// would refuse to honor Set-Cookie Domain=.wekruit.com on the response.
 const SSO_BASE_URL = ((): string => {
   const explicit = import.meta.env.VITE_PA_SSO_BASE_URL
   if (typeof explicit === "string" && explicit.length > 0) return explicit.replace(/\/$/, "")
-  return "https://us-central1-wekruit-5f89b.cloudfunctions.net"
+  return ""
 })()
 
-const SSO_LOGIN_URL = `${SSO_BASE_URL}/paSsoLogin`
-const SSO_BOOTSTRAP_URL = `${SSO_BASE_URL}/paSsoBootstrap`
-const SSO_LOGOUT_URL = `${SSO_BASE_URL}/paSsoLogout`
+const SSO_LOGIN_URL = `${SSO_BASE_URL}/_sso/login`
+const SSO_BOOTSTRAP_URL = `${SSO_BASE_URL}/_sso/bootstrap`
+const SSO_LOGOUT_URL = `${SSO_BASE_URL}/_sso/logout`
 
 const SSO_BOOTSTRAP_TRIED_KEY = "wkr_sso_bootstrap_tried"
 

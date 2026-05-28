@@ -24,7 +24,7 @@ import {
   type User,
 } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
-import { redirectResultPromise } from "../lib/auth-redirect-bootstrap.js"
+import { redirectResultPromise, ssoBootstrapPromise } from "../lib/auth-redirect-bootstrap.js"
 import {
   CLAIM_EMAIL_KEY,
   clearRememberedLoginNext,
@@ -572,7 +572,10 @@ export default function CandidateLogin() {
         if (linkedinPayload && !linkedinPayload.ok) throw new Error(linkedinPayload.error)
 
         // Redirect result is consumed at app bootstrap (main.tsx import) before React mounts.
-        const result = await redirectResultPromise
+        // Cross-domain SSO bootstrap runs in parallel — wait for it too so a user who
+        // signed in on candidate.wekruit.com gets auto-recognized here on wekruit.com
+        // without seeing the login form flash.
+        const [result] = await Promise.all([redirectResultPromise, ssoBootstrapPromise.catch(() => null)])
         if (cancelled) return
 
         window.sessionStorage.removeItem(OAUTH_PENDING_KEY)
