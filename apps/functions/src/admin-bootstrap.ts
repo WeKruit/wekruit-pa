@@ -437,6 +437,14 @@ const SEED_FLAGS: FlagSpec[] = [
   // Conversational Surface Platform — connector narration + find-match tool (default OFF).
   { key: "paConnectorNarrationEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paFindMatchToolEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
+  // P3 — scoped prescreen agent. perUser; default OFF for everyone (allowlist
+  // empty by design — Adam ramps via dashboard). When OFF, runPrescreenTurnIfActive
+  // runs the deterministic PreScreenPipeline.runTurn path byte-for-byte (no-op).
+  // When ON, a scoped agent composes the question ask + routes the reply through
+  // record_prescreen_answer → the same reducer (the reducer stays the controller);
+  // tangents go to a global explain tool (no FSM mutation). Any agent error
+  // fails open to the deterministic path. Kill switch: PA_AGENTIC_PRESCREEN_DISABLED=true.
+  { key: "paAgenticPrescreenEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paSharedOnboardingAgenticSurface", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paBehaviorChoreographerEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paReactionTapbackEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
