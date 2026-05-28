@@ -322,9 +322,15 @@ test("parseHandlerQuery rejects malformed since", () => {
   assert.throws(() => __test_parseHandlerQuery({ since: "yesterday" }), /invalid_query/)
 })
 
-test("parseHandlerQuery accepts opaque cursor as-is", () => {
-  const parsed = __test_parseHandlerQuery({ cursor: "anyOpaqueValue=" })
-  assert.equal(parsed.cursorOpaque, "anyOpaqueValue=")
+test("parseHandlerQuery accepts a well-formed cursor", () => {
+  // A valid cursor is base64url of {"createdAtMs":<num>,"docId":<string>}.
+  const validCursor = Buffer.from(JSON.stringify({ createdAtMs: 1779915600000, docId: "uA" })).toString("base64url")
+  const parsed = __test_parseHandlerQuery({ cursor: validCursor })
+  assert.equal(parsed.cursorOpaque, validCursor)
+})
+
+test("parseHandlerQuery rejects a malformed cursor with invalid_query", () => {
+  assert.throws(() => __test_parseHandlerQuery({ cursor: "!!!garbage!!!" }), /invalid_query/)
 })
 
 test("paPartnerUsersApi is re-exported from src/index.ts", async () => {

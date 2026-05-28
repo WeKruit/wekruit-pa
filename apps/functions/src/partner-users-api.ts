@@ -36,7 +36,6 @@ const API_VERSION = "v1"
 const DEFAULT_LIMIT = 50
 const MAX_LIMIT = 200
 const PER_USER_JOB_CAP = 50
-const SNAPSHOT_TTL_MS = 60_000
 
 // ---------------------------------------------------------------- types
 
@@ -370,7 +369,11 @@ function parseHandlerQuery(q: Record<string, string | string[] | undefined>): Pa
   }
 
   const rawCursor = typeof q.cursor === "string" ? q.cursor : undefined
-  if (rawCursor) out.cursorOpaque = rawCursor
+  if (rawCursor) {
+    // Validate the cursor decodes; reject garbage with 400 (spec §4.5).
+    if (decodeCursor(rawCursor) === null) throw new Error("invalid_query:cursor")
+    out.cursorOpaque = rawCursor
+  }
 
   return out
 }
@@ -425,7 +428,7 @@ export const paPartnerUsersApi = onRequest(
       // log the full detail server-side, but return only the top-level reason
       // to the client (per spec §4.7).
       const detail = err instanceof Error ? err.message : "invalid_query"
-      console.warn(`paPartnerUsersApi invalid_query detail=${detail}`)
+      console.warn(`paPartnerUsersApi query_fail reason=invalid_query detail=${detail} partner=${auth.partnerSource}`)
       res.status(400).json({ ok: false, reason: "invalid_query" })
       return
     }
