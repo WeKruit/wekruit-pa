@@ -323,12 +323,25 @@ export function buildExtractorPrompt(req: ConversationExtractRequest): string {
     "    schema violation — the whole extraction is rejected.",
     "  - If tagPatch is empty, memoryEntities may also be empty.",
     "",
-    "Canonical vocabs:",
-    `  roleFunction:   ${ROLE_FUNCTION_VOCAB.join(", ")}`,
-    `  industrySector: ${INDUSTRY_SECTOR_VOCAB.join(", ")}`,
-    `  visaStatus:     ${VISA_STATUS_VOCAB.join(", ")}`,
-    `  careerStage:    ${CAREER_STAGE_VOCAB.join(", ")}`,
-    `  jobType:        ${JOB_TYPE_VOCAB.join(", ")}`,
+    // 2026-05-27 — tagPatch keys MUST be the EXACT schema field names. The
+    // real-LLM baseline (apps/eval/conversation-experience/llm-runner.mjs)
+    // caught the model copying the vocab label as the key — emitting `jobType`
+    // / `roleFunction` instead of `targetJobType` / `targetRoleFunction` →
+    // `.strict()` rejected the unknown key → silent parse_error → the patch was
+    // dropped and matcher tags stayed stale (same class of bug as the #245
+    // scalar/array mismatch). Label each vocab with its exact field name and
+    // list every emittable field (targetLocations was previously omitted, so
+    // the model dropped locations entirely).
+    "tagPatch fields — use these EXACT keys (closed enums; do NOT invent values):",
+    `  targetRoleFunction (string[]):  ${ROLE_FUNCTION_VOCAB.join(", ")}`,
+    `  industrySector (string[]):      ${INDUSTRY_SECTOR_VOCAB.join(", ")}`,
+    `  visaStatus (string):            ${VISA_STATUS_VOCAB.join(", ")}`,
+    `  careerStage (string):           ${CAREER_STAGE_VOCAB.join(", ")}`,
+    `  targetJobType (string[]):       ${JOB_TYPE_VOCAB.join(", ")}`,
+    "  targetLocations (string[]):     free-form normalized location tokens, e.g. new_york, san_francisco_bay_area, remote",
+    "  minSalaryUsd (integer):         minimum acceptable base salary in USD",
+    "  relevantTags (string[], max 12): free-form lowercase skill/interest tokens",
+    "Do NOT emit any key not in this list. A single-value field may be a scalar or a 1-element array.",
     "",
     "Existing tags (do NOT duplicate):",
     JSON.stringify(req.existingTags),
