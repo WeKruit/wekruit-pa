@@ -106,6 +106,228 @@ export function verifyPartnerKey(
 export const __test_verifyPartnerKey = verifyPartnerKey
 export const __test_PARTNER_KEY_RE = PARTNER_KEY_RE
 
+// ---------------------------------------------------------------- query
+
+export interface PartnerUsersFetchArgs {
+  db: Firestore
+  partnerSource: PaUserSource
+  limit: number
+  cursorOpaque?: string
+  status?: CandidateJobState[]
+  since?: string // ISO 8601
+}
+
+export interface PartnerUsersJobRow {
+  jobId: string
+  jobTitle: string
+  company: string
+  state: CandidateJobState
+  stateUpdatedAt: string
+  prescreenSessionId?: string
+  wekruitJobUrl: string
+}
+
+export interface PartnerUsersUserRow {
+  email: string
+  name?: string
+  wekruitUserId: string
+  registeredAt: string
+  lifecycleState?: string
+  jobs: PartnerUsersJobRow[]
+  summary: {
+    totalJobs: number
+    passedJobs: number
+    notPassedJobs: number
+    activePrescreens: number
+    employerVisibleJobs: number
+  }
+}
+
+export interface PartnerUsersResponse {
+  users: PartnerUsersUserRow[]
+  nextCursor?: string
+  hasMore: boolean
+  generatedAt: string
+  partner: PaUserSource
+  apiVersion: string
+}
+
+interface CursorPayload {
+  createdAtMs: number
+  docId: string
+}
+
+function encodeCursor(payload: CursorPayload): string {
+  return Buffer.from(JSON.stringify(payload)).toString("base64url")
+}
+
+function decodeCursor(opaque: string): CursorPayload | null {
+  try {
+    const decoded = JSON.parse(Buffer.from(opaque, "base64url").toString("utf8"))
+    if (
+      decoded &&
+      typeof decoded === "object" &&
+      typeof decoded.createdAtMs === "number" &&
+      typeof decoded.docId === "string"
+    ) {
+      return { createdAtMs: decoded.createdAtMs, docId: decoded.docId }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function toIsoString(value: unknown, fallback: string): string {
+  if (typeof value === "string" && value) return value
+  if (value instanceof Timestamp) return value.toDate().toISOString()
+  if (typeof value === "object" && value !== null && "_seconds" in value) {
+    const sec = Number((value as { _seconds?: unknown })._seconds ?? 0)
+    return new Date(sec * 1000).toISOString()
+  }
+  return fallback
+}
+
+function activePrescreenStates(): ReadonlySet<CandidateJobState> {
+  return new Set<CandidateJobState>([
+    "prescreen_started",
+    "prescreen_review_pending",
+    "paused",
+  ])
+}
+
+const ACTIVE_PRESCREEN = activePrescreenStates()
+
+export async function fetchPartnerUsers(args: PartnerUsersFetchArgs): Promise<PartnerUsersResponse> {
+  const { db, partnerSource, limit } = args
+  const safeLimit = Math.max(1, Math.min(MAX_LIMIT, limit))
+  const sinceMs = args.since ? Date.parse(args.since) : undefined
+
+  // Users page (limit + 1 to detect hasMore).
+  let usersQ: Query = db
+    .collection(PA_COLLECTIONS.users)
+    .where("source", "==", partnerSource)
+    .orderBy("createdAtMs", "desc")
+    .orderBy("__name__", "desc")
+  const cursor = args.cursorOpaque ? decodeCursor(args.cursorOpaque) : null
+  if (cursor) usersQ = usersQ.startAfter(cursor.createdAtMs, cursor.docId)
+  usersQ = usersQ.limit(safeLimit + 1)
+  const usersSnap = await usersQ.get()
+  const usersDocs = usersSnap.docs.slice(0, safeLimit)
+  const hasMore = usersSnap.docs.length > safeLimit
+
+  // Per-user job states + job-doc hydration + prescreen session join.
+  const rows = await Promise.all(
+    usersDocs.map(async (userDoc) => {
+      const userData = userDoc.data() ?? {}
+      const candidateId = userDoc.id
+
+      const stateSnap = await db
+        .collection(PA_COLLECTIONS.candidateJobStates)
+        .where("candidateId", "==", candidateId)
+        .orderBy("stateUpdatedAtMs", "desc")
+        .limit(PER_USER_JOB_CAP)
+        .get()
+      const jobStates = stateSnap.docs.map((d) => ({ id: d.id, data: d.data() ?? {} }))
+
+      const distinctJobIds = [
+        ...new Set(jobStates.map((s) => (s.data.jobId as string | undefined) ?? "").filter(Boolean)),
+      ]
+      const jobDocs = await Promise.all(
+        distinctJobIds.map((jobId) =>
+          db.collection(PA_COLLECTIONS.jobs).doc(jobId).get().catch(() => null),
+        ),
+      )
+      const jobMeta = new Map<string, { title: string; company: string }>()
+      for (let i = 0; i < distinctJobIds.length; i++) {
+        const snap = jobDocs[i]
+        const data = (snap && typeof snap === "object" && "data" in snap ? snap.data?.() : null) ?? {}
+        jobMeta.set(distinctJobIds[i]!, {
+          title: (data.title as string | undefined) ?? "Unknown role",
+          company: (data.company as string | undefined) ?? "",
+        })
+      }
+
+      const jobs: PartnerUsersJobRow[] = []
+      for (const s of jobStates) {
+        const parsed = CandidateJobStateSchema.safeParse(s.data.state)
+        if (!parsed.success) continue
+        const jobId = (s.data.jobId as string | undefined) ?? ""
+        if (!jobId) continue
+        const stateUpdatedAt = toIsoString(s.data.stateUpdatedAt, new Date(0).toISOString())
+        if (sinceMs !== undefined && Date.parse(stateUpdatedAt) < sinceMs) continue
+        if (args.status && args.status.length > 0 && !args.status.includes(parsed.data)) continue
+        const meta = jobMeta.get(jobId) ?? { title: "Unknown role", company: "" }
+
+        // Latest prescreen session for this candidate+job.
+        const psSnap = await db
+          .collection("pa-prescreen-sessions")
+          .where("candidateId", "==", candidateId)
+          .where("jobId", "==", jobId)
+          .orderBy("updatedAtMs", "desc")
+          .limit(1)
+          .get()
+          .catch(() => ({ docs: [] }))
+        const prescreenSessionId = psSnap.docs[0]?.id
+
+        jobs.push({
+          jobId,
+          jobTitle: meta.title,
+          company: meta.company,
+          state: parsed.data,
+          stateUpdatedAt,
+          prescreenSessionId,
+          wekruitJobUrl: `https://wekruit.com/j/${jobId}`,
+        })
+      }
+
+      // If a status filter is present, drop users with zero remaining jobs.
+      if (args.status && args.status.length > 0 && jobs.length === 0) return null
+
+      const summary = {
+        totalJobs: jobs.length,
+        passedJobs: jobs.filter((j) => j.state === "passed").length,
+        notPassedJobs: jobs.filter((j) => j.state === "not_passed").length,
+        activePrescreens: jobs.filter((j) => ACTIVE_PRESCREEN.has(j.state)).length,
+        employerVisibleJobs: jobs.filter((j) => j.state === "employer_visible").length,
+      }
+
+      return {
+        email: (userData.email as string | undefined) ?? "",
+        name: (userData.displayName as string | undefined) ?? undefined,
+        wekruitUserId: candidateId,
+        registeredAt: toIsoString(userData.createdAt, new Date(0).toISOString()),
+        lifecycleState: (userData.lifecycleState as string | undefined) ?? undefined,
+        jobs,
+        summary,
+      } as PartnerUsersUserRow
+    }),
+  )
+
+  const filteredRows = rows.filter((r): r is PartnerUsersUserRow => r !== null)
+
+  let nextCursor: string | undefined
+  if (hasMore && usersDocs.length > 0) {
+    const last = usersDocs[usersDocs.length - 1]!
+    const lastData = last.data() ?? {}
+    nextCursor = encodeCursor({
+      createdAtMs: Number(lastData.createdAtMs ?? 0),
+      docId: last.id,
+    })
+  }
+
+  return {
+    users: filteredRows,
+    nextCursor,
+    hasMore,
+    generatedAt: new Date().toISOString(),
+    partner: partnerSource,
+    apiVersion: API_VERSION,
+  }
+}
+
+export const __test_fetchPartnerUsers = fetchPartnerUsers
+
 // ---------------------------------------------------------------- handler
 
 export const paPartnerUsersApi = onRequest(
