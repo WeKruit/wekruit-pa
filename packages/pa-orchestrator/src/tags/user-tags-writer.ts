@@ -32,6 +32,7 @@ import {
   type UserTags,
 } from "./user-tags-merger.js"
 import { SkillSchema, type Skill } from "@wekruit/shared-tags"
+import { canonicalizeLocationTokens } from "./onboarding-mappers.js"
 
 const PA_USERS_COLLECTION = "pa-users"
 
@@ -229,26 +230,31 @@ export async function applyPartialUserTags(
     cleaned.skills = upgraded
   }
 
-  // targetLocations — preserve the V16 anywhere-bypass token. "open to
-  // anything" (captured by the projector/extractor as `targetLocations:
-  // ['anywhere']`) is the matcher's anywhere-bypass signal
-  // (`ANYWHERE_LOCATION_TOKENS` in query-matching-jobs-v16.ts). V16 lowercases
-  // on read, but normalize here at the sole-writer boundary so the stored token
-  // is canonical (`anywhere`, not `Anywhere`/`ANYWHERE`) and the bypass survives
-  // verbatim. Whitespace-trim + lowercase every entry, drop empties, dedupe.
-  // Note: this is the ONE location-array casing normalizer — V16 anywhere-bypass
-  // depends on the token reaching `pa-users.tags.targetLocations` unmangled.
-  if (Array.isArray(cleaned.targetLocations)) {
+  // targetLocations — canonicalize to LOCATION_VOCAB at the sole-writer boundary
+  // so EVERY source (onboarding mapper, conversation-extractor free-form strings,
+  // CV) lands canonical tokens that intersect the job side
+  // (`matching-jobs.locationBuckets` = LOCATION_VOCAB enum). This is the ONE
+  // location canonicalizer — fixes the recurring drift (new_york vs
+  // new_york_metro) that over-filtered the location hard gate to recCount=0. The
+  // V16 anywhere-bypass tokens (anywhere/any/remote_*) are preserved verbatim by
+  // canonicalizeLocationTokens, so the bypass still fires.
+  if (cleaned.targetLocations !== undefined) {
+    cleaned.targetLocations = canonicalizeLocationTokens(cleaned.targetLocations)
+  }
+  // targetCountry — its own small region vocab (usa/canada/uk/.../anywhere), NOT
+  // the city-level LOCATION_VOCAB. Just trim+lowercase+dedupe (the extractor /
+  // onboarding extractCountries already emit canonical lowercase region tokens).
+  if (Array.isArray(cleaned.targetCountry)) {
     const seen = new Set<string>()
     const normalized: string[] = []
-    for (const raw of cleaned.targetLocations as unknown[]) {
+    for (const raw of cleaned.targetCountry as unknown[]) {
       if (typeof raw !== "string") continue
       const norm = raw.trim().toLowerCase()
       if (norm.length === 0 || seen.has(norm)) continue
       seen.add(norm)
       normalized.push(norm)
     }
-    cleaned.targetLocations = normalized
+    cleaned.targetCountry = normalized
   }
 
   if (Object.keys(cleaned).length === 0) {

@@ -371,6 +371,62 @@ export function mapAnswerToLocations(
   return Array.from(matched)
 }
 
+/**
+ * Canonicalize ALREADY-TOKENIZED location strings → `LOCATION_VOCAB`. The
+ * conversation-extractor emits free-form location strings ("new_york", "nyc",
+ * "remote"); onboarding emits canonical via `mapAnswerToLocations`. Funnel BOTH
+ * through here at the SOLE writer (`applyPartialUserTags`) so the stored token
+ * is canonical and actually intersects the job side (`matching-jobs.locationBuckets`
+ * = `LOCATION_VOCAB` enum, enforced by the enrichment writer). This is the fix
+ * for the recurring location drift (new_york vs new_york_metro) that silently
+ * over-filtered the location hard gate to recCount=0.
+ *
+ * Preserve the V16 anywhere-bypass tokens verbatim (`anywhere`/`any`, plus the
+ * in-vocab `remote_*` forms) — all are in `ANYWHERE_LOCATION_TOKENS`. Tokens we
+ * can't resolve are kept lowercased: never DROP a stated preference. Used by the
+ * writer for both `targetLocations` and `targetCountry`.
+ */
+// The V16 anywhere-bypass tokens that are NOT in LOCATION_VOCAB — keep these
+// verbatim so the matcher's location bypass still fires. Mirrors the non-vocab
+// members of ANYWHERE_LOCATION_TOKENS (query-matching-jobs-v16.ts): bare
+// "remote"/"anywhere"/"any" are generic open-location signals, NOT specific
+// regions — do NOT canonicalize them to remote_united_states (that would narrow
+// to US-remote and drop the bypass). The in-vocab forms (remote_anywhere,
+// remote_global) are preserved by the vocab check.
+const LOCATION_BYPASS_KEEP = new Set<string>(["anywhere", "any", "remote"])
+export function canonicalizeLocationTokens(input: unknown): string[] {
+  if (!Array.isArray(input)) return []
+  const vocab = new Set<string>(LOCATION_VOCAB as readonly string[])
+  const seen = new Set<string>()
+  const out: string[] = []
+  const push = (t: string): void => {
+    const v = t.trim().toLowerCase()
+    if (v && !seen.has(v)) {
+      seen.add(v)
+      out.push(v)
+    }
+  }
+  for (const raw of input) {
+    if (typeof raw !== "string") continue
+    const tok = raw.trim().toLowerCase()
+    if (!tok) continue
+    // Already canonical, or a bypass token the matcher recognizes → keep verbatim.
+    if (vocab.has(tok) || LOCATION_BYPASS_KEEP.has(tok)) {
+      push(tok)
+      continue
+    }
+    // Loose token ("new_york", "nyc", "remote") → run through the SAME alias/vocab
+    // mapper onboarding uses (underscores → spaces so "new_york" hits the alias).
+    const mapped = mapAnswerToLocations(tok.replace(/_/g, " "))
+    if (mapped.length > 0) {
+      for (const m of mapped) push(m)
+    } else {
+      push(tok) // unmappable → keep lowercased, never drop a stated preference
+    }
+  }
+  return out
+}
+
 // ---------------------------------------------------------------------------
 // preferredLang detector
 // ---------------------------------------------------------------------------
