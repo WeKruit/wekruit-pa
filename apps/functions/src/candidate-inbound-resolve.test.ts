@@ -249,6 +249,60 @@ test("DEV_BYPASS_PHONE follow-up resolves to active post-prescreen recommendatio
   assert.equal(resolved, "post_prescreen_recommendation_user")
 })
 
+test("non-dev phone with TWO matching pa-users picks oldest createdAt deterministically (not doc-name order)", async () => {
+  // Identity hardening 2026-05-28 — guard against the latent flap: Firestore's
+  // implicit order is doc-name asc, so a newer orphan whose id sorts FIRST
+  // would hijack the thread. Resolution must be stable on the original
+  // (oldest createdAt) profile regardless of doc-name order.
+  const fakeDb = new FakeFirestore()
+  const phoneE164 = "+14155550234"
+  // "aaa_orphan" sorts BEFORE "zzz_original" by doc name, but is the NEWER doc.
+  fakeDb.seed(PA_COLLECTIONS.users, "aaa_orphan", {
+    id: "aaa_orphan",
+    source: "candidate",
+    phoneE164,
+    createdAt: "2026-05-26T18:33:30.836Z",
+    updatedAt: "2026-05-28T19:22:07.386Z",
+  })
+  fakeDb.seed(PA_COLLECTIONS.users, "zzz_original", {
+    id: "zzz_original",
+    source: "candidate",
+    phoneE164,
+    createdAt: "2026-05-21T21:40:04.862Z",
+    updatedAt: "2026-05-28T19:47:09.252Z",
+  })
+  const db = fakeDb as unknown as Firestore
+
+  // No opener token → pure phone lookup path → deterministic tiebreak.
+  const resolved = await resolveInboundUserId(db, phoneE164, "remote or NYC")
+  assert.equal(resolved, "zzz_original", "oldest createdAt wins, not doc-name-first orphan")
+
+  // Stable across repeated turns.
+  const again = await resolveInboundUserId(db, phoneE164, "any AI startups?")
+  assert.equal(again, "zzz_original")
+})
+
+test("non-dev phone multi-match falls back to most-recent updatedAt when createdAt is absent", async () => {
+  const fakeDb = new FakeFirestore()
+  const phoneE164 = "+14155550235"
+  fakeDb.seed(PA_COLLECTIONS.users, "doc_stale", {
+    id: "doc_stale",
+    source: "candidate",
+    phoneE164,
+    updatedAt: "2026-05-20T00:00:00.000Z",
+  })
+  fakeDb.seed(PA_COLLECTIONS.users, "doc_fresh", {
+    id: "doc_fresh",
+    source: "candidate",
+    phoneE164,
+    updatedAt: "2026-05-28T00:00:00.000Z",
+  })
+  const db = fakeDb as unknown as Firestore
+
+  const resolved = await resolveInboundUserId(db, phoneE164, "hi")
+  assert.equal(resolved, "doc_fresh", "no createdAt on either → most-recent updatedAt wins")
+})
+
 test("non-dev phone: Hello, WeKruit! opener REJECTS when phone is already owned by another candidate", async () => {
   // Adam invariant 2026-05-21 — every phone other than DEV_BYPASS_PHONE
   // is strict 1:1. An opener pointing at a different candidate from a

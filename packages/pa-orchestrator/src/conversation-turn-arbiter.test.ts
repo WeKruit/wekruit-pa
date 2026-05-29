@@ -227,6 +227,22 @@ test("saved-preference summary detector catches saved-for-matching wording witho
   )
 })
 
+test("arbiter routes system-control sentinels to safety_control so they never get a tapback", () => {
+  for (const sentinel of ["__PA_RESET__", "__PA_FIND_MATCH__"]) {
+    const decision = decideConversationTurnOwner(baseContext({
+      inbound: {
+        text: sentinel,
+        createdAt: "2026-05-27T22:39:04.000Z",
+        channel: "imessage",
+      },
+    }))
+
+    assert.equal(decision.selectedOwner, "safety_control", `${sentinel} should route to safety_control`)
+    assert.equal(decision.intentFrames[0]?.intent, "safety_control")
+    assert.deepEqual(decision.orderedActions.map((action) => action.kind), ["safety_control"])
+  }
+})
+
 test("arbiter trace records the state machine and selected owner", () => {
   const decision = decideConversationTurnOwner(baseContext({
     inbound: {

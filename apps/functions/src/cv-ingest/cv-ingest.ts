@@ -872,7 +872,8 @@ function mapWorkAuthorizationToVisaStatus(raw: string | null | undefined): strin
     return "citizen"
   }
   if (/\b(green\s*card|permanent\s+resident|lawful\s+permanent|gc)\b/.test(v)) {
-    return "gc"
+    // D4 canonicalization (2026-05-28): canonical `permanent_resident`, not `gc`.
+    return "permanent_resident"
   }
   if (/\b(h-?1b|opt|cpt|stem\s+opt|sponsor(ship)?|visa\s+sponsor)/.test(v)) {
     return "sponsor_needed"
@@ -991,6 +992,14 @@ async function runUserTagsMerge(args: {
       description: e.description,
     })),
     industryTags: args.parsed.industryTags,
+  }
+  // Thread résumé YoE so the merger can reconcile careerStage (a recent
+  // intern/TA title must not drag a multi-year career down to intern/student).
+  if (
+    typeof args.resumeMatchingTagSignals?.totalYearsExperience === "number" &&
+    Number.isFinite(args.resumeMatchingTagSignals.totalYearsExperience)
+  ) {
+    cvInput.totalYearsExperience = args.resumeMatchingTagSignals.totalYearsExperience
   }
   // v2 workHistory carries per-job skills, used by mergeUserTags's full
   // skill bag. Tolerate the unknown[] runtime shape (caller passes the

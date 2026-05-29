@@ -94,8 +94,35 @@ Be accurate; null when unknown. Match the user's resume language for inferred an
 (zh resume → zh answers; en resume → en answers; mixed → user's dominant language).
 
 For workHistory.bullets: split each job description into individual sentences. Each bullet = one responsibility.
-For skills: extract individual atomic skills, NOT categories. "Python, Java" → ["Python", "Java"].
-For totalYearsExperience: compute from earliest start to latest end across workHistory.
+
+For skills: extract the meaningful, distinct skills the candidate EXPLICITLY lists
+or clearly demonstrates. Keep them atomic where they are genuinely different
+competencies (\`Python\` and \`Java\` are separate; \`React\` and \`Node.js\` are
+separate). But do NOT explode a single competency into many near-duplicate
+platform/tool tokens. If a candidate is "experienced in social media marketing",
+emit ONE skill like \`social_media_marketing\` — do NOT list
+\`twitter\`, \`instagram\`, \`tiktok\`, \`pinterest\`, \`snapchat\`, \`reddit\`, etc. as
+separate skills unless the candidate specifically calls out deep, distinct
+expertise in a given platform. Same rule for any tool family: prefer the umbrella
+competency over a long tail of sibling tools.
+Return the ~12-20 most meaningful skills, ordered by relevance and recency
+(skills central to the candidate's recent/primary roles first). Hard ceiling: never
+emit more than 25 skills — pick the most important ones if you would exceed that.
+
+For totalYearsExperience: SUM the actual tenure of each role in workHistory
+(endDate − startDate per role; treat a missing/null endDate on a current role as
+"today"), then round to the nearest whole year. Do NOT measure from earliest start
+to latest end — that calendar span over-counts. Specifically:
+  • Do NOT count employment GAPS between jobs.
+  • Do NOT double-count OVERLAPPING or CONCURRENT roles (e.g. a part-time job held
+    during a full-time job, or two simultaneous internships) — count the overlapping
+    window once, not twice.
+  • EXCLUDE pure-education periods (degrees in \`education\`, with no concurrent job).
+  • Brief internships count only for their actual duration (a 3-month internship adds
+    ~0.25 years, not a full year).
+Example: roles spanning 2019→2025 calendar with a 2-year gap and two concurrent
+3-month internships should yield the summed worked time (~3 years), NOT the 6-year
+span.
 For inferredAnswers: generate 7-9 entries covering common recruiter questions:
   years experience, highest education, current/most-recent title, work-authorization,
   relocation willingness, salary range (if inferable), start date, remote-preference,

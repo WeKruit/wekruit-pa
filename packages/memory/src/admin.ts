@@ -303,6 +303,19 @@ async function resetUserOnboardingState(
         tags: FieldValue.delete(),
         resumeParseCount: FieldValue.delete(),
         resumeParseLastAt: FieldValue.delete(),
+        // QA 2026-05-28 (D): post-reset cold-start greeted "Hey Adam — got your
+        // resume (Tesla SWE intern)" because reset left displayName + the resume
+        // linkage intact (greeting reads displayName + derivedExperience /
+        // latestResumeArtifactId). Clear the name + resume-derived greeting sources
+        // so a (testMode/admin-gated) reset is a true clean slate.
+        displayName: FieldValue.delete(),
+        name: FieldValue.delete(),
+        latestResumeArtifactId: FieldValue.delete(),
+        derivedExperience: FieldValue.delete(),
+        derivedExperienceVersion: FieldValue.delete(),
+        derivedExperienceContentHash: FieldValue.delete(),
+        claireConversationStarted: FieldValue.delete(),
+        claireConversationStartedAt: FieldValue.delete(),
         preferredLang: FieldValue.delete(),
         // 2026-05-07 — Adam reset live test surfaced 4 more leakers. Must clear:
         //   - onboardedAt (timestamp — leaving it makes orchestrator skip
@@ -511,8 +524,23 @@ export function isResetCommand(body: string): boolean {
   return false
 }
 
-/** Operator-facing summary, included in the reply outbound. */
-export function summarizeClearResult(r: ClearUserMemoryResult): string {
+/**
+ * Summary of a memory clear. Two registers:
+ *  - `forCandidate:true` → a short, human reset confirmation safe to send over
+ *    iMessage. QA 2026-05-28: the candidate-visible `__PA_RESET__` reply dumped
+ *    internal counts ("qdrant pa_memory=0; firestore pa-memory-facts=13…") —
+ *    that's operator telemetry, never for the candidate.
+ *  - default (operator) → the detailed counts, kept for logs / dashboards.
+ */
+export function summarizeClearResult(
+  r: ClearUserMemoryResult,
+  opts?: { forCandidate?: boolean },
+): string {
+  if (opts?.forCandidate) {
+    return r.dryRun
+      ? "Dry run — nothing cleared."
+      : "All clear — fresh start. Say hi whenever you're ready."
+  }
   const fsParts = Object.entries(r.firestore)
     .filter(([, n]) => n > 0)
     .map(([c, n]) => `${c}=${n}`)

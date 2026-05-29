@@ -23,7 +23,8 @@ describe("buildLevel1TagPatch", () => {
       }),
       {
         yoeRange: [2, 4],
-        visaStatus: "gc",
+        // D4 canonical (2026-05-28): keep `permanent_resident`, not the `gc` alias.
+        visaStatus: "permanent_resident",
         targetLocations: ["san_francisco"],
         minSalary: 140000,
         industrySector: ["software_and_saas"],

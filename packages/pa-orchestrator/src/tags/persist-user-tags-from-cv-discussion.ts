@@ -88,14 +88,27 @@ export async function persistUserTagsFromResumeDiscussionData(
     if (Array.isArray(row.workHistory) && row.workHistory.length > 0) {
       cv.workHistory = row.workHistory as UserTagsCvInput["workHistory"]
     }
+    // Thread résumé YoE so the merger can reconcile careerStage (recent
+    // intern/TA title must not override a multi-year career).
+    if (typeof row.totalYearsExperience === "number" && Number.isFinite(row.totalYearsExperience)) {
+      cv.totalYearsExperience = row.totalYearsExperience
+    }
     if (Array.isArray(row.experiences) && row.experiences.length > 0) {
       cv.experiences = row.experiences as UserTagsCvInput["experiences"]
     }
     if (Array.isArray(row.industryTags) && row.industryTags.length > 0) {
       cv.industryTags = row.industryTags as string[]
     }
-    if (Array.isArray(row.industrySector) && row.industrySector.length > 0) {
-      cv.industrySector = row.industrySector as string[]
+    // `parsedCandidateResumes` rows store canonical sectors under `industries`
+    // (cv-ingest); accept either key. The merger now prefers `relevantIndustry`
+    // and only falls back to this when relevantIndustry has no canonical token.
+    const rowIndustrySector = Array.isArray(row.industrySector)
+      ? (row.industrySector as string[])
+      : Array.isArray(row.industries)
+        ? (row.industries as string[])
+        : undefined
+    if (rowIndustrySector && rowIndustrySector.length > 0) {
+      cv.industrySector = rowIndustrySector
     }
     if (Array.isArray(row.relevantIndustry) && row.relevantIndustry.length > 0) {
       cv.relevantIndustry = row.relevantIndustry as string[]

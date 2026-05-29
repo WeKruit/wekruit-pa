@@ -187,7 +187,21 @@ export function stripPhraseRepeat(
     .replace(/^[\s，,。.;；!！？?…]+/, "")
     .replace(/^[的了啊呗吧嘛呀嗯哦]+/, "")
     .replace(/^[\s，,。.;；!！？?…]+/, "")
-  const result = (before + after).trim()
+  // QA 2026-05-28 (E): when the stripped phrase sits MID-reply, the matched span
+  // carries away the inter-word whitespace, so `before + after` welds the two
+  // surviving words into one token (prod: "dig up matches"→"dig upmatches",
+  // "missed the"→"missedthe", "$160k and"→"$160kand"). snapToWordBoundary only
+  // guards the MATCH edges, never this JOIN seam. Re-insert a single space when
+  // both sides survive, neither already carries boundary whitespace, and at least
+  // one seam char is an ASCII word char (CJK glyphs are single-token → untouched,
+  // preserving zh behavior).
+  const needsSeamSpace =
+    before.length > 0 &&
+    after.length > 0 &&
+    !/\s$/.test(before) &&
+    !/^\s/.test(after) &&
+    (isAsciiWord(before[before.length - 1]!) || isAsciiWord(after[0]!))
+  const result = (needsSeamSpace ? `${before} ${after}` : before + after).trim()
   if (result.length < minRemaining) {
     // Removal would nuke the reply. Fail-open.
     return { stripped: false, text: trimmed }

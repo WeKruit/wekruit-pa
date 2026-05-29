@@ -1,9 +1,14 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import { existsSync, readFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import test, { afterEach } from "node:test"
 import { deriveSessionMessageIdempotencyKey } from "@pa/agent-runtime"
+import { _clearFeatureFlagCache } from "@pa/pa-persistence"
 import { PA_COLLECTIONS, type AgentDef, type InboundEvent, type MemoryFact } from "@pa/core-types"
 import type { ConversationEvidenceWrite } from "./conversation-action-arbiter.js"
 import type { TurnContext } from "./conversation-turn-arbiter.js"
+import { isAgenticJobSearchEnabled, isAgenticOnboardingEnabled } from "./shared-onboarding-outbound.js"
+import { resolveNextMissingSharedOnboardingQuestionId } from "./shared-onboarding.js"
 import {
   buildRecallSystemInput,
   commitConversationEvidenceWrites,
@@ -11,8 +16,45 @@ import {
   isInboundLeaseExpired,
   memoryBlockWithFacts,
   processInboundEvent,
+  summarizeDurableTagsForRecall,
   type OrchestratorStore,
 } from "./index.js"
+
+// QA 2026-05-28: clear the 30s feature-flag cache after every test. A test that seeds
+// a flag (e.g. the agentic job-search canary below) was bleeding its cached value into
+// a later same-userId test (cacheKey includes the userId ctx) → 2 job-search tests
+// failed only under full-suite load. This makes the suite order-independent.
+afterEach(() => {
+  _clearFeatureFlagCache()
+})
+
+test("summarizeDurableTagsForRecall surfaces captured durable prefs for recall (QA 2026-05-28 C-recall)", () => {
+  // The live recall ("what do you remember") omitted everything the extractor wrote
+  // to tags — only listed 2 onboarding-answer facts. Recall must surface tags too.
+  const out = summarizeDurableTagsForRecall(
+    {
+      targetRoleFunction: ["software_engineering"],
+      industrySector: ["financial_technology", "artificial_intelligence_and_machine_learning"],
+      targetLocations: ["new_york", "remote"],
+      visaStatus: "sponsor_needed",
+      minSalary: 160000,
+      skills: [{ name: "react" }, { name: "python" }],
+    },
+    "en",
+  )
+  assert.ok(out, "expected a non-null summary")
+  assert.match(out!, /Target roles: software engineering/)
+  assert.match(out!, /Industries:.*financial technology/)
+  assert.match(out!, /Locations:.*new york.*remote/)
+  assert.match(out!, /Work authorization: sponsor needed/)
+  assert.match(out!, /Min salary: \$160k/)
+  assert.match(out!, /Skills on file: 2/)
+})
+
+test("summarizeDurableTagsForRecall returns null when no durable prefs are set", () => {
+  assert.equal(summarizeDurableTagsForRecall({}, "en"), null)
+  assert.equal(summarizeDurableTagsForRecall(null, "en"), null)
+})
 
 const agent: AgentDef = {
   id: "default",
@@ -938,6 +980,60 @@ test("profiled incomplete user explicit job-search request calls matching before
   assert.equal(recCalls, 1)
   assert.match(outbound, /Software Engineer Intern @ Sparksoft/)
   assert.doesNotMatch(outbound, /what matters most in your next company/i)
+  assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), true)
+})
+
+test("agentic job-search flag ON still runs the audited matcher when arbiter routes job_search (QA 2026-05-28 regression)", async () => {
+  // Reproduces the LIVE canary condition: paAgenticJobSearchEnabled ON. This flag
+  // is db-gated — isAgenticJobSearchEnabled() returns false without a db, so a
+  // db-less makeStore silently exercises the flag-OFF (pre-rebuild) path. That is
+  // the green-wall trap (QA 2026-05-28): the suite tested flag-OFF while the
+  // canary ran flag-ON, so 0 unit tests covered the live behavior. We MUST seed a
+  // real feature-flags doc so the flag is genuinely ON.
+  // Pre-fix: flag ON skipped handleCompletedUserJobSearchRequest; the agent loop
+  // did not call find-match (QA: arbiterOwner=job_search, 0 pa-tool-calls, 0 jobs).
+  // Post-fix: the arbiter's explicit job_search decision still runs the matcher.
+  const flagDocs = new Map<string, Record<string, unknown>>([
+    ["pa-feature-flags/paAgenticJobSearchEnabled", { key: "paAgenticJobSearchEnabled", value: true, type: "bool", scope: "global" }],
+  ])
+  const db = makeMapDb(flagDocs)
+  // Guard against the false-green: assert the flag is actually ON in this store.
+  assert.equal(await isAgenticJobSearchEnabled(db, "u1"), true)
+
+  let recCalls = 0
+  let outbound = ""
+  const turnUpdates: Record<string, unknown>[] = []
+  const store = makeStore({
+    db,
+    getOnboardingUser: async () => ({
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "pending",
+      tags: { schemaVersion: 1, skills: [], industryEnum: ["tech_software"] },
+    }),
+    generateJobRecs: async (_userId, _lang, opts) => {
+      recCalls++
+      assert.equal(opts?.force, true)
+      return {
+        recCount: 1,
+        message: "Fresh software roles:\n• Software Engineer @ Rain",
+      }
+    },
+    enqueueOutbound: async (_userId, _to, body) => {
+      outbound = body
+    },
+    updateTurn: async (_turnId, patch) => {
+      turnUpdates.push(patch)
+    },
+  })
+
+  await processInboundEvent({
+    ...baseEvent,
+    body: "Show me a few roles that fit",
+  }, store)
+
+  assert.equal(recCalls, 1)
+  assert.match(outbound, /Software Engineer @ Rain/)
   assert.equal(turnUpdates.some((patch) => patch.directIntent === "job_search"), true)
 })
 
@@ -3287,4 +3383,283 @@ test("processInboundEvent throws when event.body is null (Bug 5 invariant)", asy
     () => processInboundEvent(badEvent, store),
     /event\.body is required/
   )
+})
+
+// ════════════════════════════════════════════════════════════════════════════
+// QA 2026-05-28 — extract-first onboarding + fallback→onboarding reroute WIRING
+// proof, driven through the PRODUCTION turn handler `processInboundEvent`.
+//
+// The existing real-seam fixtures call `maybeRunExtractor(...)` DIRECTLY with a
+// hard-coded forceTrigger (apps/eval/.../real-seam-runner.mjs:159) — they prove the
+// extractor honors the bypass, NOT that the production handler WIRES it. These
+// tests close that gap: they seed a real `pa-feature-flags/paAgenticOnboardingEnabled`
+// doc + a mid-onboarding `pa-users` doc, drive `processInboundEvent`, and assert the
+// durable `pa-users/{uid}.tags` actually captured the out-of-slot facts — which can
+// only happen if the handler invoked the extractor (index.ts ~3356) and the
+// fallback→onboarding reroute (index.ts ~4888).
+//
+// Proof level: REAL MODEL. The extractor runs the production gpt-5.4-nano caller
+// (PA_OPENAI_AGENT_API_KEY / OPENAI_API_KEY). When no key is present the test
+// SELF-SKIPS (it never fakes a pass — same contract as real-seam-runner.mjs which
+// exits 2 without a key). With a key it grades the real durable tag write.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Minimal synchronous .env loader (no dep). Walks up from cwd to find the repo
+// `.env` (worktrees: cwd is the package dir; the key lives at the worktree root).
+function loadRepoDotEnvOnce(): void {
+  if ((globalThis as { __paQaEnvLoaded?: boolean }).__paQaEnvLoaded) return
+  ;(globalThis as { __paQaEnvLoaded?: boolean }).__paQaEnvLoaded = true
+  let dir = process.cwd()
+  for (let i = 0; i < 6; i++) {
+    const candidate = join(dir, ".env")
+    if (existsSync(candidate)) {
+      try {
+        for (const raw of readFileSync(candidate, "utf8").split("\n")) {
+          const line = raw.trim()
+          if (!line || line.startsWith("#")) continue
+          const eq = line.indexOf("=")
+          if (eq < 0) continue
+          const k = line.slice(0, eq).trim()
+          let v = line.slice(eq + 1).trim()
+          if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1)
+          if (process.env[k] === undefined) process.env[k] = v
+        }
+      } catch {
+        /* .env optional */
+      }
+      return
+    }
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+}
+
+function realOpenAiKeyOrSkip(t: { skip: (msg?: string) => void }): boolean {
+  loadRepoDotEnvOnce()
+  const key = (process.env.PA_OPENAI_AGENT_API_KEY ?? process.env.OPENAI_API_KEY ?? "").trim()
+  if (!key.startsWith("sk-")) {
+    t.skip("no real OpenAI key (PA_OPENAI_AGENT_API_KEY / OPENAI_API_KEY) — real-seam extractor proof self-skips rather than faking a pass")
+    return false
+  }
+  return true
+}
+
+// makeMapDb (above) only models the flat `collection().doc()` surface. The
+// extractor also writes cost-ledger + audit rows via `collection().add()`; add a
+// no-op `add` so the production extractor's best-effort writes don't throw.
+function makeMapDbWithAdd(docs: Map<string, Record<string, unknown>>): FirebaseFirestore.Firestore {
+  const base = makeMapDb(docs) as unknown as {
+    collection(name: string): {
+      doc(id: string): { set(d: Record<string, unknown>, o?: { merge?: boolean }): Promise<void>; get(): Promise<unknown> }
+    }
+  }
+  return {
+    collection(name: string) {
+      const col = base.collection(name)
+      return {
+        doc: (id: string) => col.doc(id),
+        add: async (_data: Record<string, unknown>) => ({ id: `auto-${name}-${docs.size}` }),
+      }
+    },
+  } as unknown as FirebaseFirestore.Firestore
+}
+
+// Shared store wiring for the handler-driven onboarding tests. Stubs only the
+// transport/compose LLM seam (store.runAgentTurn) the way the existing shared-
+// onboarding tests do — the EXTRACTOR is NOT stubbed (it runs the real model).
+function makeOnboardingHandlerStore(args: {
+  docs: Map<string, Record<string, unknown>>
+  turnUpdates: Record<string, unknown>[]
+  outbound: { value: string }
+}): OrchestratorStore {
+  return makeStore({
+    db: makeMapDbWithAdd(args.docs),
+    getOnboardingUser: async () => args.docs.get("pa-users/u1") as never,
+    loadHistory: async () => [
+      {
+        id: "assistant-onboarding-1",
+        userId: "u1",
+        sessionId: "s1",
+        role: "assistant",
+        body: "Before I match roles, what matters most in your next company?",
+        createdAt: "2026-05-27T15:59:00.000Z",
+      },
+    ],
+    // Compose seam for the next-ask reply (template/agent compose routes here).
+    runAgentTurn: async () => ({ text: "Got it. Where do you want to work — remote, onsite, or open to relocating?" }),
+    enqueueOutbound: async (_userId, _toE164, body) => {
+      args.outbound.value = body
+    },
+    updateTurn: async (_turnId, patch) => {
+      args.turnUpdates.push(patch)
+    },
+  })
+}
+
+test("A#2+A#4 (REAL MODEL): flag ON reroutes a fallback_claire mid-onboarding fact into the handler and the extractor persists it to pa-users.tags", async (t) => {
+  if (!realOpenAiKeyOrSkip(t)) return
+
+  const docs = new Map<string, Record<string, unknown>>([
+    // Genuinely ON — global bool flag doc (matches the agentic job-search canary shape).
+    ["pa-feature-flags/paAgenticOnboardingEnabled", { key: "paAgenticOnboardingEnabled", value: true, type: "bool", scope: "global" }],
+    ["pa-users/u1", {
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "pending",
+      workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "main_goal" },
+      sharedOnboarding: { status: "active", currentQuestionId: "main_goal", completed: false, answers: {} },
+    }],
+  ])
+  const turnUpdates: Record<string, unknown>[] = []
+  const outbound = { value: "" }
+  const store = makeOnboardingHandlerStore({ docs, turnUpdates, outbound })
+
+  // GREEN-WALL GUARD: prove the flag is REALLY on in this store (the db-less path
+  // returns false; that is the false-green trap this whole effort exists to avoid).
+  assert.equal(await isAgenticOnboardingEnabled(store.db, "u1"), true)
+
+  // "$160k + H1B sponsorship" on slot main_goal is NOT a main_goal slot answer,
+  // NOT a clarification (not short/ambiguous), NOT durable/job-search/meta → the
+  // deterministic arbiter routes it to `fallback_claire`. Only the A#4 reroute can
+  // carry it into the onboarding handler.
+  await processInboundEvent({ ...baseEvent, body: "I need at least $160k and H1B sponsorship" }, store)
+
+  // The turn was arbitrated to fallback_claire (so this exercises the reroute, not
+  // a normal shared_onboarding-owner turn).
+  assert.equal(
+    turnUpdates.some((p) => p.conversationArbiterOwner === "fallback_claire"),
+    true,
+    "expected the arbiter to route this out-of-slot fact to fallback_claire",
+  )
+  // A#4: the reroute carried the fallback_claire turn INTO handleSharedOnboardingUserReply.
+  assert.equal(
+    turnUpdates.some((p) => p.directIntent === "shared_onboarding" && p.sharedOnboardingAnsweredQuestionId === "main_goal"),
+    true,
+    "A#4: flag ON must reroute the fallback_claire turn into the shared-onboarding handler",
+  )
+  // A#2: the handler invoked the extractor and the real model's patch reached the
+  // unified pa-users.tags (minSalaryUsd→minSalary normalized by the sole writer).
+  const tags = (docs.get("pa-users/u1") as { tags?: Record<string, unknown> } | undefined)?.tags ?? {}
+  assert.equal(tags.minSalary, 160000, `A#2: expected tags.minSalary=160000, got ${JSON.stringify(tags)}`)
+  assert.equal(tags.visaStatus, "sponsor_needed", `A#2: expected tags.visaStatus="sponsor_needed", got ${JSON.stringify(tags)}`)
+})
+
+test("A#4 SAFETY: flag OFF leaves the fallback_claire mid-onboarding fact on the generic path — no reroute, no extractor write", async (t) => {
+  if (!realOpenAiKeyOrSkip(t)) return
+
+  const docs = new Map<string, Record<string, unknown>>([
+    // Genuinely OFF.
+    ["pa-feature-flags/paAgenticOnboardingEnabled", { key: "paAgenticOnboardingEnabled", value: false, type: "bool", scope: "global" }],
+    ["pa-users/u1", {
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "pending",
+      workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "main_goal" },
+      sharedOnboarding: { status: "active", currentQuestionId: "main_goal", completed: false, answers: {} },
+    }],
+  ])
+  const turnUpdates: Record<string, unknown>[] = []
+  const outbound = { value: "" }
+  const store = makeOnboardingHandlerStore({ docs, turnUpdates, outbound })
+
+  assert.equal(await isAgenticOnboardingEnabled(store.db, "u1"), false)
+
+  await processInboundEvent({ ...baseEvent, body: "I need at least $160k and H1B sponsorship" }, store)
+
+  // Still routed to fallback_claire by the (flag-independent) deterministic arbiter…
+  assert.equal(turnUpdates.some((p) => p.conversationArbiterOwner === "fallback_claire"), true)
+  // …but flag OFF means NO reroute into the onboarding handler (byte-identical to prior prod).
+  assert.equal(
+    turnUpdates.some((p) => p.directIntent === "shared_onboarding"),
+    false,
+    "A#4 safety: flag OFF must NOT reroute fallback_claire into the shared-onboarding handler",
+  )
+  // …and the extractor never ran, so no out-of-slot fact was persisted.
+  const tags = (docs.get("pa-users/u1") as { tags?: Record<string, unknown> } | undefined)?.tags ?? {}
+  assert.equal(tags.minSalary, undefined, `A#4 safety: extractor must not run flag-off, got ${JSON.stringify(tags)}`)
+  assert.equal(tags.visaStatus, undefined, `A#4 safety: extractor must not run flag-off, got ${JSON.stringify(tags)}`)
+})
+
+test("A#2+A#3 (REAL MODEL): flag ON extract-first fills the industry slot and the next onboarding question SKIPS it", async (t) => {
+  if (!realOpenAiKeyOrSkip(t)) return
+
+  const docs = new Map<string, Record<string, unknown>>([
+    ["pa-feature-flags/paAgenticOnboardingEnabled", { key: "paAgenticOnboardingEnabled", value: true, type: "bool", scope: "global" }],
+    // On slot culture_stage; positional next = industry_interest (index 2).
+    ["pa-users/u1", {
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "pending",
+      workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "culture_stage" },
+      sharedOnboarding: { status: "active", currentQuestionId: "culture_stage", completed: false, answers: {} },
+    }],
+  ])
+  const turnUpdates: Record<string, unknown>[] = []
+  const outbound = { value: "" }
+  const store = makeOnboardingHandlerStore({ docs, turnUpdates, outbound })
+
+  assert.equal(await isAgenticOnboardingEnabled(store.db, "u1"), true)
+
+  // Answers culture_stage ("early-stage startups" → slot answer) AND volunteers the
+  // industry out of order ("fintech and AI") → the extractor fills tags.industrySector,
+  // so the NEXT ask must skip industry_interest (index 2) → location_relocation (index 3).
+  await processInboundEvent({ ...baseEvent, body: "I like early-stage startups working on fintech and AI" }, store)
+
+  // A#2: the extractor (fired by the live handler) wrote the industry tag.
+  const tags = (docs.get("pa-users/u1") as { tags?: Record<string, unknown> } | undefined)?.tags ?? {}
+  assert.ok(
+    Array.isArray(tags.industrySector) && (tags.industrySector as string[]).length > 0,
+    `A#2: expected tags.industrySector populated by the live extractor, got ${JSON.stringify(tags)}`,
+  )
+
+  // Cross-check the skip-aware resolver agrees industry_interest is now satisfied
+  // (this is the pure function the live recompute at index.ts ~3397 calls).
+  assert.equal(
+    resolveNextMissingSharedOnboardingQuestionId("culture_stage", tags, null).nextQuestionId,
+    "location_relocation",
+  )
+
+  // A#3: the LIVE handler's recompute skipped the now-filled industry slot. Observable
+  // both on the turn patch and on the persisted shared-onboarding cursor.
+  assert.equal(
+    turnUpdates.some((p) => p.sharedOnboardingQuestionId === "location_relocation"),
+    true,
+    `A#3: next ask must SKIP the filled industry slot → location_relocation; patches=${JSON.stringify(turnUpdates.map((p) => p.sharedOnboardingQuestionId))}`,
+  )
+  const persisted = (docs.get("pa-users/u1") as { sharedOnboarding?: { currentQuestionId?: string } } | undefined)?.sharedOnboarding
+  assert.equal(persisted?.currentQuestionId, "location_relocation", "A#3: persisted onboarding cursor must skip to location_relocation")
+})
+
+test("A#3 SAFETY: flag OFF asks the next onboarding question POSITIONALLY — no slot skip, no extractor", async (t) => {
+  if (!realOpenAiKeyOrSkip(t)) return
+
+  const docs = new Map<string, Record<string, unknown>>([
+    ["pa-feature-flags/paAgenticOnboardingEnabled", { key: "paAgenticOnboardingEnabled", value: false, type: "bool", scope: "global" }],
+    ["pa-users/u1", {
+      id: "u1",
+      phoneE164: "+13125550123",
+      onboardingState: "pending",
+      workSession: { kind: "shared_onboarding", status: "active", currentQuestionId: "culture_stage" },
+      sharedOnboarding: { status: "active", currentQuestionId: "culture_stage", completed: false, answers: {} },
+    }],
+  ])
+  const turnUpdates: Record<string, unknown>[] = []
+  const outbound = { value: "" }
+  const store = makeOnboardingHandlerStore({ docs, turnUpdates, outbound })
+
+  assert.equal(await isAgenticOnboardingEnabled(store.db, "u1"), false)
+
+  await processInboundEvent({ ...baseEvent, body: "I like early-stage startups working on fintech and AI" }, store)
+
+  // Flag OFF → extractor did not run → industry slot stays empty → positional next.
+  const tags = (docs.get("pa-users/u1") as { tags?: Record<string, unknown> } | undefined)?.tags ?? {}
+  assert.equal(tags.industrySector, undefined, `A#3 safety: extractor must not run flag-off, got ${JSON.stringify(tags)}`)
+  assert.equal(
+    turnUpdates.some((p) => p.sharedOnboardingQuestionId === "industry_interest"),
+    true,
+    `A#3 safety: flag OFF must ask the POSITIONAL next (industry_interest); patches=${JSON.stringify(turnUpdates.map((p) => p.sharedOnboardingQuestionId))}`,
+  )
+  const persisted = (docs.get("pa-users/u1") as { sharedOnboarding?: { currentQuestionId?: string } } | undefined)?.sharedOnboarding
+  assert.equal(persisted?.currentQuestionId, "industry_interest", "A#3 safety: positional cursor must be industry_interest")
 })

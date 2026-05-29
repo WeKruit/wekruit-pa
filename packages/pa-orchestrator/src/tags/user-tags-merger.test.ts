@@ -470,10 +470,26 @@ test("mergeUserTags: visaStatus 'unknown' → 'other' rename", () => {
 })
 
 test("mergeUserTags: visaStatus pass-through for canonical tokens", () => {
-  for (const v of ["citizen", "gc", "opt", "h1b"] as const) {
+  // `citizen` / `opt` / `h1b` pass through unchanged. `gc` is intentionally
+  // excluded here — it canonicalizes to `permanent_resident` (see next test).
+  for (const v of ["citizen", "opt", "h1b"] as const) {
     const out = mergeUserTags({ statedPreferences: { visaStatus: v } })
     assert.equal(out.visaStatus, v)
   }
+})
+
+test("mergeUserTags: visaStatus 'gc' → 'permanent_resident' (D4 canonical, not the legacy alias)", () => {
+  const out = mergeUserTags({ statedPreferences: { visaStatus: "gc" } })
+  assert.equal(out.visaStatus, "permanent_resident")
+})
+
+test("mergeUserTags: visaStatus 'permanent_resident' passes through canonically", () => {
+  const out = mergeUserTags({
+    statedPreferences: { visaStatus: "permanent_resident" } as unknown as NonNullable<
+      Parameters<typeof mergeUserTags>[0]["statedPreferences"]
+    >,
+  })
+  assert.equal(out.visaStatus, "permanent_resident")
 })
 
 test("mergeUserTags: preferredLang 'mixed' → undefined (downgrade to runtime detect)", () => {
@@ -492,6 +508,127 @@ test("mergeUserTags: preferredLang from input overrides statedPreferences", () =
 test("mergeUserTags: yoeRange tuple pass-through", () => {
   const out = mergeUserTags({ statedPreferences: { yoeRange: [3, 5] } })
   assert.deepEqual(out.yoeRange, [3, 5])
+})
+
+// ---------------------------------------------------------------------------
+// careerStage reconcile (Jyesht-Diwani fix 2026-05-28): a recent intern / TA
+// gig must NOT drag a multi-year career down to `intern`/`student`.
+// ---------------------------------------------------------------------------
+
+test("mergeUserTags: 5y onboarding yoeRange + recent intern title → NOT intern (reconciled to mid_level)", () => {
+  const out = mergeUserTags({
+    cv: {
+      workHistory: [
+        { title: "Marketing Intern", company: "Acme" },
+        { title: "Marketing Manager", company: "BigCo" },
+      ],
+    },
+    statedPreferences: { yoeRange: [5, 8] },
+  })
+  assert.equal(out.recentRoleTitle, "Marketing Intern")
+  assert.notEqual(out.careerStage, "intern")
+  assert.notEqual(out.careerStage, "student")
+  // yoeRange [5,8] → high 8, low 5 → "mid_level" band by
+  // deriveCareerStageFromYoeRange (low < 7 so not "senior").
+  assert.equal(out.careerStage, "mid_level")
+})
+
+test("mergeUserTags: résumé totalYearsExperience + recent TA title → NOT intern (no onboarding yoe)", () => {
+  const out = mergeUserTags({
+    cv: {
+      workHistory: [
+        { title: "Teaching Assistant", company: "Grad School" },
+        { title: "Marketing Lead", company: "Startup" },
+      ],
+      totalYearsExperience: 5,
+    },
+  })
+  assert.notEqual(out.careerStage, "intern")
+  assert.notEqual(out.careerStage, "student")
+  // 5y → "mid_level" via deriveCareerStageFromYears.
+  assert.equal(out.careerStage, "mid_level")
+})
+
+test("mergeUserTags: genuine intern (no/low yoe) stays intern — reconcile does NOT over-fire", () => {
+  // No yoe signal at all → title wins (existing behavior preserved).
+  const noYoe = mergeUserTags({
+    cv: { workHistory: [{ title: "Software Engineer Intern", company: "Tesla" }] },
+  })
+  assert.equal(noYoe.careerStage, "intern")
+  // <2y yoe → below the NON_INTERN threshold → title still wins.
+  const lowYoe = mergeUserTags({
+    cv: {
+      workHistory: [{ title: "Software Engineer Intern", company: "Tesla" }],
+      totalYearsExperience: 1,
+    },
+  })
+  assert.equal(lowYoe.careerStage, "intern")
+})
+
+test("mergeUserTags: explicit onboarding-stated careerStage stays authoritative over reconcile", () => {
+  const out = mergeUserTags({
+    cv: {
+      workHistory: [{ title: "Marketing Intern", company: "Acme" }],
+      totalYearsExperience: 5,
+    },
+    statedPreferences: { careerStage: "junior" } as unknown as NonNullable<
+      Parameters<typeof mergeUserTags>[0]["statedPreferences"]
+    >,
+  })
+  assert.equal(out.careerStage, "junior")
+})
+
+test("mergeUserTags: non-intern title is NOT downgraded by reconcile (senior title + low yoe keeps title)", () => {
+  // Reconcile only rescues intern/student titles; a real senior title with a
+  // small yoe number must keep the title-derived stage.
+  const out = mergeUserTags({
+    cv: {
+      workHistory: [{ title: "Senior Engineer", company: "Acme" }],
+      totalYearsExperience: 1,
+    },
+  })
+  assert.equal(out.careerStage, "senior")
+})
+
+// ---------------------------------------------------------------------------
+// industrySector source (Jyesht-Diwani fix 2026-05-28): follow the parser's
+// accurate `relevantIndustry`, NOT the weak second-pass `industrySector`.
+// ---------------------------------------------------------------------------
+
+test("mergeUserTags: industrySector follows parser relevantIndustry, dropping the weak industrySector source", () => {
+  const out = mergeUserTags({
+    cv: {
+      // The accurate parser signal (canonical tokens from real experience).
+      relevantIndustry: ["education_technology", "professional_services", "technology_general"],
+      // The weak source that historically hallucinated sectors for a marketer.
+      industrySector: ["artificial_intelligence_and_machine_learning", "clean_energy_and_climate_tech"],
+    },
+  })
+  assert.deepEqual(out.industrySector, [
+    "education_technology",
+    "professional_services",
+    "technology_general",
+  ])
+})
+
+test("mergeUserTags: industrySector falls back to industrySector source when relevantIndustry has no canonical token", () => {
+  const out = mergeUserTags({
+    cv: {
+      relevantIndustry: ["not_a_real_sector", "another_bogus_token"],
+      industrySector: ["financial_technology", "software_and_saas"],
+    },
+  })
+  assert.deepEqual(out.industrySector, ["financial_technology", "software_and_saas"])
+})
+
+test("mergeUserTags: non-canonical relevantIndustry tokens are dropped from industrySector", () => {
+  const out = mergeUserTags({
+    cv: {
+      relevantIndustry: ["education_technology", "totally_made_up_sector"],
+    },
+  })
+  // Only the canonical token survives; the bogus one is dropped.
+  assert.deepEqual(out.industrySector, ["education_technology"])
 })
 
 test("mergeUserTags: targetLocations pass-through", () => {

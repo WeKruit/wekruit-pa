@@ -155,6 +155,24 @@ export function decideConversationDeliveryAction(
   }
 
   if (ownerDecision.selectedOwner === "active_workflow") {
+    if (isAffirmativeReply(text) && immediatelyPrecedingAssistantExpectsAnswer(context)) {
+      rejectedActions.push({
+        action: "micro_ack",
+        reason: "An affirmative to a pending workflow question must advance, not re-ask the same prompt as a bare acknowledgment.",
+      })
+      return actionDecision({
+        selectedAction: "answer_then_continue",
+        rejectedActions,
+        reason: "User gave an affirmative answer to the pending workflow question; advance the workflow instead of re-asking it.",
+        deliveryPlan: { outboundTextRequired: true },
+        replyGuidance: [
+          "Treat the affirmative as the answer to the pending question; do not repeat that question.",
+          "Store the answer, then advance to the next workflow step or question.",
+        ],
+        requiredTraceFields: ["evidenceWrites", "outboundSource"],
+        toolCallIds,
+      })
+    }
     return actionDecision({
       selectedAction: "micro_ack",
       rejectedActions,
@@ -199,17 +217,35 @@ export function decideConversationDeliveryAction(
     })
   }
 
-  if (isShortLowInformationAck(text) && recentAssistantSaidToolWorkIsInProgress(context)) {
+  if (
+    isShortLowInformationAck(text) &&
+    (recentAssistantSaidToolWorkIsInProgress(context) ||
+      (hasAssistantContext(context) &&
+        !immediatelyPrecedingAssistantExpectsAnswer(context) &&
+        // Defer to the recommendation-decision gate below, which records the
+        // short ack as recommendation-interest evidence rather than a bare
+        // statement ack. Both are tapback_only, but the recommendation path
+        // carries extra evidence we must not drop.
+        !recentAssistantAskedForRecommendationDecision(context)))
+  ) {
+    const afterStatus = recentAssistantSaidToolWorkIsInProgress(context)
     rejectedActions.push(
-      { action: "micro_ack", reason: "A text acknowledgment would add noise after an already-clear status update." },
+      {
+        action: "micro_ack",
+        reason: afterStatus
+          ? "A text acknowledgment would add noise after an already-clear status update."
+          : "A text acknowledgment to a short ack on a statement would push an unsolicited new question.",
+      },
       { action: "status_then_async_tool", reason: "Tool/search status was already sent in the previous assistant turn." },
     )
     return actionDecision({
       selectedAction: "tapback_only",
       rejectedActions,
-      reason: "Short low-information acknowledgment after an in-progress status is best handled as a reaction.",
+      reason: afterStatus
+        ? "Short low-information acknowledgment after an in-progress status is best handled as a reaction."
+        : "Short low-information acknowledgment to a Claire statement (not a question) is best handled as a reaction, not a fresh question.",
       deliveryPlan: { outboundTextRequired: false, reaction: "like" },
-      noOutboundReason: "low_information_ack_after_status",
+      noOutboundReason: afterStatus ? "low_information_ack_after_status" : "low_information_ack_after_statement",
       replyGuidance: [
         "Do not send a text reply.",
         "Use a like tapback when the channel supports reactions.",
@@ -417,6 +453,18 @@ function isShortLowInformationAck(text: string): boolean {
   return /^(sure|ok|okay|k|yes|yep|yeah|sounds good|fine|great|cool|👍|👍🏻|👍🏼|👍🏽|👍🏾|👍🏿)[.!]*$/i.test(text)
 }
 
+/**
+ * Affirmative short reply ("yes", "yep", "sure", "sounds good", "absolutely", …).
+ * Used to distinguish a yes/no answer to a pending question from a substantive
+ * workflow answer, so an affirmative ADVANCES the workflow rather than being
+ * acknowledged with a bare micro-ack that re-asks the same question.
+ */
+function isAffirmativeReply(text: string): boolean {
+  return /^(yes|yep|yeah|yup|ya|yah|sure|absolutely|definitely|of course|ok|okay|k|sounds good|sg|for sure|i have|i did|i do|yes i have|yep i have|yeah i have)[.! ]*$/i.test(
+    text.trim(),
+  )
+}
+
 function recentAssistantSaidToolWorkIsInProgress(context: TurnContext): boolean {
   const recent = [...(context.recentOutbound ?? []), ...(context.recentMessages ?? [])]
     .filter((message) => message.role === "assistant" && message.body.trim())
@@ -450,6 +498,15 @@ function immediatelyPrecedingAssistantExpectsAnswer(context: TurnContext): boole
   if (!body) return false
   if (body.trim().endsWith("?")) return true
   return /\b(i can help|i can|want me to|do you want|should i|would you like|ready to|are you (open|comfortable|down)|let me know if you( want| 'd like)?|shall i|can i)\b/i.test(body)
+}
+
+/**
+ * True when there is at least one prior assistant message in context. Guards the
+ * "short ack to a statement → tapback" branch so a cold-open short ack (no prior
+ * assistant turn) still gets a real reply instead of a silent tapback.
+ */
+function hasAssistantContext(context: TurnContext): boolean {
+  return mostRecentAssistantBody(context) !== null
 }
 
 function mostRecentAssistantBody(context: TurnContext): string | null {

@@ -242,6 +242,48 @@ describe("planOutboundDelivery — substantive boost", () => {
   })
 })
 
+describe("planOutboundDelivery — F3 short-inbound tapback suppression", () => {
+  it("short / low-information inbound never draws a tapback-bearing mode", () => {
+    const shortInbounds = ["ok", "yes", "k", "sure", "got it", "okok", "yep"]
+    for (const inbound of shortInbounds) {
+      for (let i = 0; i < 50; i++) {
+        const plan = planOutboundDelivery({
+          reply: LONG_REPLY,
+          turnId: `f3-${inbound}-${i}`,
+          profile: profileWith(),
+          inboundBody: inbound,
+          hasMessageHandle: true,
+        })
+        assert.equal(
+          plan.tapback,
+          undefined,
+          `inbound "${inbound}" leaked tapback in mode ${plan.mode} at seed ${i}`,
+        )
+        const forbidden: OutboundDeliveryMode[] = ["tapback_then_text", "tapback_emoji_text"]
+        assert.ok(
+          !forbidden.includes(plan.mode),
+          `inbound "${inbound}" should not produce ${plan.mode}`,
+        )
+      }
+    }
+  })
+
+  it("substantive inbound still CAN draw a tapback mode (suppression is scoped to short replies)", () => {
+    let sawTapback = false
+    for (let i = 0; i < 200 && !sawTapback; i++) {
+      const plan = planOutboundDelivery({
+        reply: LONG_REPLY,
+        turnId: `f3-sub-${i}`,
+        profile: profileWith(),
+        inboundBody: SUBSTANTIVE_INBOUND,
+        hasMessageHandle: true,
+      })
+      if (plan.tapback) sawTapback = true
+    }
+    assert.ok(sawTapback, "expected at least one tapback mode across 200 substantive-inbound seeds")
+  })
+})
+
 describe("planOutboundDelivery — determinism", () => {
   it("same turnId + inputs produce identical plans", () => {
     const base: PlanOutboundDeliveryInput = {

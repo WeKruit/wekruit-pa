@@ -53,7 +53,10 @@ export function buildLevel1TagPatch(level1: PiiConfirmAnswers["level1"] | undefi
   const tagPatch: PartialUserTags = {}
   if (level1.yoeRange) tagPatch.yoeRange = level1.yoeRange
   if (level1.visaStatus) {
-    tagPatch.visaStatus = level1.visaStatus === "permanent_resident" ? "gc" : level1.visaStatus
+    // D4 canonicalization (2026-05-28): keep the canonical `permanent_resident`
+    // token. The `pa-users.tags.visaStatus` schema accepts it directly; the
+    // legacy `gc` downgrade here was the source of non-canonical visa tags.
+    tagPatch.visaStatus = level1.visaStatus
   }
   if (level1.targetLocations) tagPatch.targetLocations = level1.targetLocations
   if (level1.minSalaryUsd !== undefined) tagPatch.minSalary = level1.minSalaryUsd

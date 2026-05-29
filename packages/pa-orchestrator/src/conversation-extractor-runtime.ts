@@ -476,7 +476,14 @@ export async function maybeRunExtractor(
   const enabled = args.forceTrigger ? true : (args.enabled ?? envFlagEnabled())
   if (!enabled) return { ran: false, reason: "feature_flag_off" }
   if (!args.userId) return { ran: false, reason: "no_user_id" }
-  if (args.onboardingState && args.onboardingState !== "complete") {
+  // A (QA 2026-05-28): a forceTrigger caller (the extract-first onboarding handler
+  // / arbiter durable_preference_update) KNOWS this turn must capture volunteered
+  // facts. Bypass the onboarding-incomplete short-circuit so mid-onboarding
+  // out-of-slot prefs (salary / visa / skills / industry / location) persist into
+  // the unified tags instead of being silently dropped (the live QA failure: stuck
+  // pending → "$160k"/"H1B" never saved, matcher starved). Passive extraction
+  // (no forceTrigger) still respects the gate — don't passively extract mid-onboarding.
+  if (!args.forceTrigger && args.onboardingState && args.onboardingState !== "complete") {
     return { ran: false, reason: `onboarding_incomplete:${args.onboardingState}` }
   }
   if (args.activePrescreenSessionId) {

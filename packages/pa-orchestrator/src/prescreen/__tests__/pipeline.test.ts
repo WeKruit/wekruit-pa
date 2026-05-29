@@ -1401,3 +1401,134 @@ test("Phase 76: terminal text does not contain the reason string (PS15)", async 
   // But state.terminalReason captures it for dashboard
   assert.ok(r.state.terminalReason?.includes("MUST_HAVE"))
 })
+
+// ════════════════════════════════════════════════════════════════════════════
+// Regression: strong/moderate answer must NOT trigger early-PAUSE under the
+// production 0.95 human-review PASS bar (live failure 2026-05-28,
+// hs-11005308-paradigm-gtm-growth: Q1 STRONG GTM answer → PAUSE after Q1).
+//
+// The viability "should we keep going" check must use a LOWER continue bar,
+// not the 0.95 PASS-proposal threshold, and must never fire on a single
+// answered question.
+// ════════════════════════════════════════════════════════════════════════════
+
+test("Regression: STRONG Q1 under 0.95 PASS bar advances, does NOT PAUSE", async () => {
+  // Mirrors the live GTM config: role_fit MUST_HAVE first, then PROBING Qs,
+  // PASS threshold forced to 0.95 (human-review bar). A STRONG role_fit
+  // answer (s=0.85) must advance to Q2 — not PAUSE after Q1.
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      role_fit: makeQ("role_fit", [
+        { perKeyword: [{ keyword: "role_fit", match: 0.85, confidence: 0.9, evidence: "200k leads, $2M pipeline, end-to-end GTM ownership", reasoning: "strong direct match" }] },
+      ]),
+      technical_depth: makeQ("technical_depth", [
+        { perKeyword: [{ keyword: "technical_depth", match: 0.8, confidence: 0.9, evidence: "ok", reasoning: "ok" }] },
+      ]),
+      compensation_alignment: makeQ("compensation_alignment", [
+        { perKeyword: [{ keyword: "compensation_alignment", match: 0.8, confidence: 0.9, evidence: "ok", reasoning: "ok" }] },
+      ]),
+    },
+    store,
+  })
+  // threshold = 0.95: this is the human-review PASS-proposal bar (config.ts
+  // forces it via Math.max(cfg.threshold, PRESCREEN_REVIEW_PASS_THRESHOLD)).
+  await setupSession(
+    pipeline,
+    store,
+    [
+      { qId: "role_fit", type: "MUST_HAVE", weight: 1, matchThreshold: 0.85 },
+      { qId: "technical_depth", type: "PROBING", weight: 1, matchThreshold: 0.65 },
+      { qId: "compensation_alignment", type: "PROBING", weight: 1, matchThreshold: 0.65 },
+    ],
+    0.95
+  )
+  // Turn 1: STRONG role_fit answer.
+  const r1 = await pipeline.runTurn({
+    sessionId: "s1",
+    reply: "I drove 200k leads and $2M in pipeline, owning GTM end to end",
+    lang: "en",
+    nowIso: "2026-05-12T00:01:00Z",
+    judgeCtx: ctx,
+  })
+  // MUST advance to the next question, NOT pause the screen.
+  assert.equal(r1.action.kind, "advance", `expected advance, got ${r1.action.kind} (terminal=${r1.state.terminal})`)
+  if (r1.action.kind === "advance") assert.equal(r1.action.toQId, "technical_depth")
+  assert.equal(r1.state.terminal, null)
+})
+
+test("Regression: MODERATE answers across hysteresis advance, do NOT PAUSE under 0.95 bar", async () => {
+  // 3 Qs, all moderate (s=0.6). Under the bug, after ⌈3/3⌉=1 answered the
+  // viability check used T=0.95 → S+R_max=0.6+2=2.6 < 0.95*3=2.85 → PAUSE.
+  // Fixed: continue bar is lower AND hysteresis won't fire on 1 answered Q.
+  const store = new InMemoryPreScreenStore()
+  const pipeline = new PreScreenPipeline({
+    questions: {
+      role_fit: makeQ("role_fit", [
+        { perKeyword: [{ keyword: "role_fit", match: 0.6, confidence: 0.9, evidence: "adjacent GTM ownership", reasoning: "credible" }] },
+        { perKeyword: [{ keyword: "role_fit", match: 0.6, confidence: 0.9, evidence: "adjacent GTM ownership", reasoning: "credible" }] },
+        { perKeyword: [{ keyword: "role_fit", match: 0.6, confidence: 0.9, evidence: "adjacent GTM ownership", reasoning: "credible" }] },
+      ]),
+      q2: makeQ("q2", [
+        { perKeyword: [{ keyword: "q2", match: 0.6, confidence: 0.9, evidence: "ok", reasoning: "ok" }] },
+      ]),
+      q3: makeQ("q3", [
+        { perKeyword: [{ keyword: "q3", match: 0.6, confidence: 0.9, evidence: "ok", reasoning: "ok" }] },
+      ]),
+    },
+    store,
+  })
+  await setupSession(
+    pipeline,
+    store,
+    [
+      { qId: "role_fit", type: "PROBING", weight: 1, matchThreshold: 0.5 },
+      { qId: "q2", type: "PROBING", weight: 1, matchThreshold: 0.5 },
+      { qId: "q3", type: "PROBING", weight: 1, matchThreshold: 0.5 },
+    ],
+    0.95
+  )
+  // Drive answers; the screen must reach a terminal only via Final (PASS/FAIL),
+  // never via early viability PAUSE.
+  let result
+  let sawPause = false
+  for (let i = 0; i < 4; i++) {
+    result = await pipeline.runTurn({
+      sessionId: "s1",
+      reply: `moderate answer ${i}`,
+      lang: "en",
+      nowIso: `2026-05-12T00:0${i + 1}:00Z`,
+      judgeCtx: ctx,
+    })
+    if (result.action.kind === "terminal" && result.action.terminal === "PAUSE") sawPause = true
+    if (result.action.kind === "terminal") break
+  }
+  assert.equal(sawPause, false, "viability must not PAUSE on moderate answers under the 0.95 PASS bar")
+})
+
+test("Control: genuine hard-fail still early-terminates (zero-evidence across all Qs → PAUSE)", async () => {
+  // A real disqualifier: every answer scores 0. The legitimate early-terminate
+  // path (PAUSE once even the LOWER continue bar is unreachable) must remain.
+  const store = new InMemoryPreScreenStore()
+  const qIds = ["q1", "q2", "q3", "q4", "q5", "q6"]
+  const questions: Record<string, PreScreenQuestion> = {}
+  for (const qId of qIds) {
+    questions[qId] = makeQ(qId, [{ perKeyword: [{ keyword: qId, match: 0, confidence: 0.9, evidence: "", reasoning: "" }] }])
+  }
+  const pipeline = new PreScreenPipeline({ questions, store })
+  await setupSession(
+    pipeline,
+    store,
+    qIds.map((qId) => ({ qId, type: "GOOD_TO_HAVE", weight: 1 } as const)),
+    0.95
+  )
+  let result
+  for (let i = 0; i < 6; i++) {
+    result = await pipeline.runTurn({
+      sessionId: "s1", reply: `t${i}`, lang: "en", nowIso: `2026-05-12T00:0${i}:00Z`, judgeCtx: ctx,
+    })
+    if (result.action.kind === "terminal") break
+  }
+  assert.equal(result?.action.kind, "terminal")
+  if (result?.action.kind === "terminal") assert.equal(result.action.terminal, "PAUSE")
+})
