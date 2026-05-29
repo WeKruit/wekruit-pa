@@ -60,134 +60,16 @@ import { createRequire } from "node:module"
 import { join, basename, dirname } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { existsSync } from "node:fs"
-import { repoRootFrom, loadDotEnv, loadJsonFixtures } from "./harness-lib.mjs"
+import { repoRootFrom, loadDotEnv, runRealSeamFixtures } from "./harness-lib.mjs"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = repoRootFrom(import.meta.url)
 const GRADER_MODEL = process.env.PA_AGENT_MODEL?.trim() || "gpt-5.4-nano"
 
-// ────────────────────────────────────────────────────────────────────────
-// In-memory Firestore stub — identical shape to llm-runner.mjs's, so the
-// mid-onboarding fixture drives `maybeRunExtractor` over the same double the
-// production-fidelity extraction harness uses. (set merge = shallow per-key,
-// which is what applyPartialUserTags relies on.)
-// ────────────────────────────────────────────────────────────────────────
-class FirestoreStub {
-  constructor() {
-    this.cols = new Map()
-  }
-  collection(name) {
-    if (!this.cols.has(name)) this.cols.set(name, new Map())
-    const col = this.cols.get(name)
-    return {
-      doc: (id) => ({
-        get: async () => ({ exists: col.has(id), data: () => col.get(id) ?? undefined }),
-        set: async (data, opts) => {
-          const existing = col.get(id) ?? {}
-          col.set(id, opts?.merge ? { ...existing, ...data } : data)
-        },
-      }),
-      add: async (data) => {
-        const id = `auto-${col.size}`
-        col.set(id, data)
-        return { id }
-      },
-    }
-  }
-}
-
-const asArr = (v) => (Array.isArray(v) ? v : v == null ? [] : [v])
-const sortIfArray = (v) => (Array.isArray(v) ? [...v].sort() : v)
-
-function subsetMatch(expected, actual) {
-  const fails = []
-  for (const [k, v] of Object.entries(expected)) {
-    if (JSON.stringify(sortIfArray(v)) !== JSON.stringify(sortIfArray(actual[k]))) {
-      fails.push(`tags.${k}: expected ${JSON.stringify(v)}, got ${JSON.stringify(actual[k])}`)
-    }
-  }
-  return fails
-}
-
-function evalCaptureFixture(expect, finalTags) {
-  const fails = []
-  if (expect?.final_tags) fails.push(...subsetMatch(expect.final_tags, finalTags))
-  for (const [k, vals] of Object.entries(expect?.final_tags_includes ?? {})) {
-    const actual = asArr(finalTags[k])
-    for (const v of vals) {
-      if (!actual.includes(v)) fails.push(`tags.${k}: expected to INCLUDE ${JSON.stringify(v)}, got ${JSON.stringify(finalTags[k])}`)
-    }
-  }
-  for (const [k, vals] of Object.entries(expect?.final_tags_excludes ?? {})) {
-    const actual = asArr(finalTags[k])
-    for (const v of vals) {
-      if (actual.includes(v)) fails.push(`tags.${k}: expected to EXCLUDE ${JSON.stringify(v)}, but present in ${JSON.stringify(finalTags[k])}`)
-    }
-  }
-  return fails
-}
-
-// ────────────────────────────────────────────────────────────────────────
-// In-process real-seam fixtures (real maybeRunExtractor, fixture-controlled
-// onboardingState — this is the bit llm-runner.mjs CANNOT express because it
-// hard-defaults onboarding_state to "complete" when seeding/driving).
-// ────────────────────────────────────────────────────────────────────────
-async function runRealSeamFixtures(maybeRunExtractor) {
-  const dir = join(__dirname, "real-seam-fixtures")
-  const fixtures = loadJsonFixtures(dir)
-  const results = []
-  for (const { fixture, name } of fixtures) {
-    const userId = fixture.user_id ?? "test_user"
-    const onboardingState = fixture.onboarding_state ?? "complete"
-    const db = new FirestoreStub()
-    await db.collection("pa-users").doc(userId).set({
-      tags: { ...(fixture.initial_tags ?? {}) },
-      onboardingState,
-    })
-    const readTags = async () => (await db.collection("pa-users").doc(userId).get()).data()?.tags ?? {}
-    const transcript = []
-    const ranOutcomes = []
-
-    for (const turn of fixture.turns ?? []) {
-      transcript.push({ role: "user", body: turn.inbound })
-      const tagsBefore = await readTags()
-      let outcome
-      try {
-        // EXACT production seam. With onboardingState=pending this returns
-        // {ran:false, reason:"onboarding_incomplete:pending"} — i.e. the live
-        // phone behavior (out-of-slot facts never persist). No mock of the seam.
-        outcome = await maybeRunExtractor({
-          db,
-          userId,
-          recentMessages: transcript.map((t) => ({ role: t.role, body: t.body, createdAt: new Date().toISOString() })),
-          existingTags: tagsBefore,
-          onboardingState,
-          userMsgsThisBatch: 1,
-          forceTrigger: "intent_signal",
-          log: () => {},
-        })
-      } catch (err) {
-        outcome = { ran: false, reason: `threw:${err?.message ?? err}` }
-      }
-      ranOutcomes.push(outcome)
-      if (turn.assistant) transcript.push({ role: "assistant", body: turn.assistant })
-    }
-
-    const finalTags = await readTags()
-    const detFails = evalCaptureFixture(fixture.expect, finalTags)
-    const gated = detFails.length === 0
-    results.push({
-      name,
-      baselineRed: fixture.expect?.baseline_red === true,
-      gated,
-      detFails,
-      onboardingState,
-      ranOutcomes,
-      finalTags,
-    })
-  }
-  return results
-}
+// The in-process real-seam fixture engine (FirestoreStub + maybeRunExtractor
+// drive loop + capture assertion) lives in harness-lib.mjs::runRealSeamFixtures
+// so the BLOCKING predeploy gate (real-seam-gate.mjs) exercises the EXACT same
+// code path this manual scorecard does.
 
 // ────────────────────────────────────────────────────────────────────────
 // Sub-runner orchestration (each in its own node process; capture exit code)
@@ -249,7 +131,7 @@ async function main() {
   console.log("\n── In-process real-seam fixtures (real maybeRunExtractor) ──")
   let fixtureResults = []
   try {
-    fixtureResults = await runRealSeamFixtures(maybeRunExtractor)
+    fixtureResults = await runRealSeamFixtures(maybeRunExtractor, join(__dirname, "real-seam-fixtures"))
   } catch (err) {
     console.error(`  in-process fixtures crashed: ${err?.message ?? err}`)
     process.exit(2)

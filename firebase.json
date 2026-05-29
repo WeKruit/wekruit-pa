@@ -21,6 +21,7 @@
         "npm --prefix \"$RESOURCE_DIR/../../..\" run build --workspace @pa/pa-broker --workspace @pa/pa-safety --workspace @pa/agent-runtime --workspace @pa/memory --workspace @pa/pa-connectors --workspace @pa/agent-registry --workspace @pa/external-supply --workspace @pa/pa-resume-parser --workspace @pa/pa-experience-extractor --workspace @pa/pa-orchestrator --workspace @pa/job-tag-enricher --workspace @pa/job-rec",
         "node \"$RESOURCE_DIR/../../../apps/eval/conversation-experience/process-intact-runner.mjs\"",
         "node \"$RESOURCE_DIR/../../../apps/eval/conversation-experience/runner.mjs\"",
+        "node \"$RESOURCE_DIR/../../../apps/eval/conversation-experience/real-seam-gate.mjs\"",
         "node \"$RESOURCE_DIR/../scripts/predeploy-smoke.mjs\"",
         "npm --prefix \"$RESOURCE_DIR/..\" run build",
         "npm --prefix \"$RESOURCE_DIR\" install --no-package-lock --production --legacy-peer-deps",
