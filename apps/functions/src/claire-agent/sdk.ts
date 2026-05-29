@@ -36,8 +36,22 @@ import type * as Agents from "@openai/agents"
 // runtime")` (its exports map exposes no require-resolvable main — the trap a prior attempt hit),
 // then build a require anchored at that path so @openai/agents + zod resolve from agent-runtime's
 // own (zod@4) subtree.
+// Resolve the SDK + zod@4 in BOTH environments, because they store zod@4 in different places:
+//   - PROD bundle: build.mjs INLINES @pa/* workspace deps (so @pa/agent-runtime is NOT a
+//     node_modules entry — resolving it throws), and writes a runtime package.json pinning
+//     zod@^4.3.6 + @openai/agents at the FUNCTION ROOT. So the function-root require gets zod@4.
+//   - tsx unit tests / dev: the function root (apps/functions) pins zod@3, so we must instead
+//     resolve from @pa/agent-runtime's own node_modules (zod@^4.3.6 there).
+// Try the agent-runtime anchor first (dev/test); if it isn't installed (prod bundle), fall back
+// to the function-root require, which the runtime package.json has stocked with zod@4. This is
+// what makes the gate (tsx) and the deployed container BOOT consistently on one zod@4.
 const baseRequire = createRequire(import.meta.url)
-const req = createRequire(baseRequire.resolve("@pa/agent-runtime/package.json"))
+let req: NodeJS.Require
+try {
+  req = createRequire(baseRequire.resolve("@pa/agent-runtime/package.json"))
+} catch {
+  req = baseRequire
+}
 const sdk = req("@openai/agents") as Record<string, unknown>
 
 /** zod@4 — the SAME instance @openai/agents-core uses. Use this for ALL tool param schemas. */
