@@ -153,6 +153,7 @@ import {
   loadSharedOnboardingParsedResumeForPrompt,
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
+  resolveNextMissingSharedOnboardingQuestionId,
   type SharedOnboardingQuestionId,
   type SharedOnboardingPromptContext,
 } from "./shared-onboarding.js"
@@ -3337,7 +3338,24 @@ async function handleSharedOnboardingUserReply(
     })
   }
   const projection = projectSharedOnboardingAnswer(questionId, event.body)
-  const next = resolveNextSharedOnboardingQuestionId(questionId)
+  let next = resolveNextSharedOnboardingQuestionId(questionId)
+  // QA 2026-05-28 (#3): extract-first may have just captured out-of-slot facts
+  // (industry / location). Skip the slots those already satisfy so onboarding asks
+  // only what's still MISSING instead of re-asking a volunteered slot (the re-ask
+  // loop). Flag-gated; falls back to the positional resolver on any read error.
+  if (store.db && (await isAgenticOnboardingEnabled(store.db, event.userId))) {
+    try {
+      const freshDoc =
+        (await store.db.collection(PA_COLLECTIONS.users).doc(event.userId).get()).data() ?? {}
+      next = resolveNextMissingSharedOnboardingQuestionId(
+        questionId,
+        (freshDoc as { tags?: Record<string, unknown> }).tags ?? null,
+        (freshDoc as { statedPreferences?: Record<string, unknown> }).statedPreferences ?? null,
+      )
+    } catch {
+      /* fall back to positional next */
+    }
+  }
 
   // ── P4 flag-gated scoped onboarding agent (paAgenticOnboardingEnabled, default OFF).
   // FLAG OFF → this whole block is skipped; the deterministic write below runs
