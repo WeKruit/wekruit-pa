@@ -269,13 +269,13 @@ function matchesLoadErrorMessage(err: unknown): string {
     return "Your session expired. Sign in again to see your matches."
   }
   if (code === "functions/failed-precondition" || /failed-precondition/i.test(rawMessage)) {
-    return "We need to finish setting up your profile before matches show. Open Profile to fill in the basics."
+    return "We need to finish setting up your profile before roles show. Open Profile to fill in the basics."
   }
   if (code === "functions/permission-denied" || /permission-denied/i.test(rawMessage)) {
     return "This account isn't authorized to view matches."
   }
   if (code === "functions/deadline-exceeded" || /timeout|deadline/i.test(rawMessage)) {
-    return "Matches took too long to load. Refresh in a moment."
+    return "Roles took too long to load. Refresh in a moment."
   }
   if (
     code === "functions/internal" ||
@@ -283,9 +283,9 @@ function matchesLoadErrorMessage(err: unknown): string {
     rawMessage === "internal" ||
     /network|fetch|cors|503|429/i.test(rawMessage)
   ) {
-    return "Matches are temporarily unavailable. We'll keep retrying — try refreshing in a moment."
+    return "Roles are temporarily unavailable. We'll keep retrying — try refreshing in a moment."
   }
-  return "We couldn't load your matches just now. Refresh the page, or sign in again if this keeps happening."
+  return "We couldn't load your roles just now. Refresh the page, or sign in again if this keeps happening."
 }
 
 // Generic translator for callable mutations (corrections, privacy requests).
@@ -594,7 +594,7 @@ function deriveCompleteness(profile: CandidateSelfProfile): MeCompleteness {
   const checks: Array<{ id: string; label: string; impact: string; done: boolean; critical?: boolean }> = [
     { id: "resume", label: "Upload résumé", impact: "Unblocks matching", done: !!profile.latestResumeArtifactId, critical: true },
     { id: "targets", label: "Target roles", impact: "Claire pitches sharper", done: !!tags?.roleFunction?.length },
-    { id: "locations", label: "Location preferences", impact: "2× more matches", done: !!tags?.targetLocations?.length },
+    { id: "locations", label: "Location preferences", impact: "2× more roles", done: !!tags?.targetLocations?.length },
     { id: "industries", label: "Industry preferences", impact: "Sharper comp matching", done: !!tags?.industrySector?.length },
     { id: "skills", label: "Skills", impact: "Better role fit", done: !!tags?.skills?.length },
     { id: "linkedin", label: "Connect LinkedIn", impact: "Backfills experience", done: !!profile.linkedinUrl },
@@ -617,7 +617,7 @@ function deriveVisibility(activeCount: number, matchCount: number): MeVisibility
       label: "In active interviews",
       one: `${activeCount} ${activeCount === 1 ? "employer is" : "employers are"} talking with you.`,
       two: "Claire keeps your profile current while you focus.",
-      cta: "Pause new matches",
+      cta: "Pause new roles",
     }
   }
   return {
@@ -626,7 +626,7 @@ function deriveVisibility(activeCount: number, matchCount: number): MeVisibility
     one: "Claire is matching you with new roles.",
     two:
       matchCount > 0
-        ? `${matchCount} new ${matchCount === 1 ? "match" : "matches"} waiting for you.`
+        ? `${matchCount} new ${matchCount === 1 ? "role" : "roles"} waiting for you.`
         : "We'll text you the moment a role fits.",
     cta: "Pause for a week",
   }
@@ -702,7 +702,7 @@ function MeStatusHeader({
             )}
           </h1>
           <p className="wkv3-status__sub">
-            Active interviews, new matches, and what&apos;s waiting on you — all in one place. Claire keeps it
+            Active interviews, new roles, and what&apos;s waiting on you — all in one place. Claire keeps it
             current.
           </p>
         </div>
@@ -818,7 +818,7 @@ function MeWaitingCard({ recommendedCount }: { recommendedCount: number }) {
         <h3 className="wkv3-wait__t">Claire is matching you with new roles.</h3>
         <p className="wkv3-wait__sub">
           {recommendedCount > 0
-            ? `${recommendedCount} new ${recommendedCount === 1 ? "match" : "matches"} surfaced — take a look below.`
+            ? `${recommendedCount} new ${recommendedCount === 1 ? "role" : "roles"} surfaced — take a look below.`
             : "We'll text you the moment a hiring manager says yes — usually within 48 hours of completing your profile."}
         </p>
         <div className="wkv3-wait__bar" aria-hidden="true">
@@ -1006,7 +1006,7 @@ function MeNewMatches({
     <section className="wkv3-sec" id="matches">
       <header className="wkv3-sec__head">
         <h2 className="wkv3-sec__h">
-          New matches
+          New roles
           {matches.length > 0 ? <span className="wkv3-sec__count">{matches.length}</span> : null}
         </h2>
         {matches.length > 0 ? (
@@ -1018,7 +1018,7 @@ function MeNewMatches({
         )}
       </header>
       {loading ? (
-        <div className="wkv3-empty-block">Loading new matches…</div>
+        <div className="wkv3-empty-block">Loading new roles…</div>
       ) : errored ? (
         <div className="wkv3-empty-block">{error}</div>
       ) : matches.length > 0 ? (
@@ -1029,13 +1029,13 @@ function MeNewMatches({
             ))}
           </div>
           <Link to="/me/matches" className="wkv3-seeall">
-            {matches.length > 2 ? `See all ${matches.length} matches` : "Open Matches — filter, save & decide"}
+            {matches.length > 2 ? `See all ${matches.length} roles` : "Open all your roles — filter, save & decide"}
             <Icon name="arrow-right" size={13} stroke={2} />
           </Link>
         </>
       ) : (
         <div className="wkv3-empty-block">
-          <h3>No matches yet.</h3>
+          <h3>No roles yet.</h3>
           <p>
             Claire is pitching you. Roles show up here when hiring managers say yes — usually within 48 hours of
             completing your profile.
@@ -1082,7 +1082,7 @@ function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
       <div className="wkv3-peek__right">
         <span className="wkv3-peek__salary">{match.job.salaryRange ?? "By interview"}</span>
         <span className="wkv3-peek__go">
-          See match <Icon name="arrow-right" size={12} stroke={2} />
+          {isInvite ? "See match" : "See role"} <Icon name="arrow-right" size={12} stroke={2} />
         </span>
       </div>
     </article>
@@ -1129,7 +1129,9 @@ function MeCompletenessCard({ completeness }: { completeness: MeCompleteness }) 
       {missing.length > 0 ? (
         <>
           <p className="wkv3-comp__lede">
-            {pct < 60 ? "Add a résumé so Claire can match you." : "Add a few things — Claire's matches get sharper."}
+            {missing.some((m) => m.id === "resume")
+              ? "Add a résumé so Claire can match you."
+              : "Add a few things — your roles get sharper."}
           </p>
           <ul className="wkv3-comp__list">
             {missing.slice(0, 3).map((m) => (
@@ -1780,7 +1782,7 @@ function PrivacyCard() {
         >
           <span>
             <strong>Show me to employers</strong>
-            <em>Pause if you don't want new matches.</em>
+            <em>Pause if you don't want new roles.</em>
           </span>
           <span className={`wk-prof-toggle${showMe ? " is-on" : ""}`} aria-hidden="true"><span /></span>
         </button>
@@ -1977,7 +1979,7 @@ function PortalGatePending({
   const message =
     gate.status === "redirecting_onboarding"
       ? "Finishing onboarding with Claire — one second…"
-      : "Loading your matches and interviews…"
+      : "Loading your roles and interviews…"
   return (
     <PortalCard kicker={kicker}>
       <h1 className="wk-prof__h1">{heading}</h1>
@@ -2059,7 +2061,7 @@ function PortalLoading({ kicker }: { kicker: string }) {
   return (
     <PortalCard kicker={kicker}>
       <h1 className="wk-prof__h1">Welcome back</h1>
-      <p className="wk-prof__sub">Loading your matches and interviews…</p>
+      <p className="wk-prof__sub">Loading your roles and interviews…</p>
     </PortalCard>
   )
 }
