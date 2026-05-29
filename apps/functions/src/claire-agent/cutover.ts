@@ -87,6 +87,11 @@ export async function maybeRunThinClaire(
       inboundMessageHandle,
       userId,
       sessionId,
+      // UNIQUE per inbound → outbound idempotency keys on the event, not just sessionId+body.
+      // Without this the kickoff/onboarding question (deterministic body + stable sessionId)
+      // re-keys identically across turns and ALREADY_EXISTS against an earlier `sent` row →
+      // the reply is silently dropped (2026-05-29 dev-phone silent-kickoff).
+      inboundEventId: eventId,
       log,
       ...(deps.dryRun ? { dryRun: true } : {}),
     })

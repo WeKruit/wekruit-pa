@@ -39,7 +39,11 @@ console.log(`tags: keeping résumé [${keptTagKeys.join(", ")||"none"}] (skills:
 const msgs = await db.collection("pa-messages").where("userId","==",uid).get()
 const ps = await db.collection("pa-prescreen-sessions").where("userId","==",uid).get()
 const sess = await db.collection("pa-sessions").where("userId","==",uid).get()
-console.log(`clear: pa-messages=${msgs.size} pa-prescreen-sessions=${ps.size} pa-sessions=${sess.size}`)
+// NOTE: we intentionally DO NOT clear pa-outbound. Delivery rows are audit history, and the real
+// fix (outbound idempotency keyed on the inbound EVENT id, not sessionId+body — see transport.ts)
+// means a fresh inbound after reinit always re-keys uniquely and sends regardless of stale rows.
+// Clearing outbound was a band-aid that masked the real bug + destroyed audit (2026-05-29).
+console.log(`clear: pa-messages=${msgs.size} pa-prescreen-sessions=${ps.size} pa-sessions=${sess.size} (pa-outbound preserved — audit)`)
 console.log(`onboardingState → pending | sharedOnboarding/workSession → removed`)
 if (!APPLY) { console.log("\nDRY — 0 writes. Re-run with --apply."); process.exit(0) }
 

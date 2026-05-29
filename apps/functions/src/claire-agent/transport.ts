@@ -80,12 +80,27 @@ export interface SendblueTransport extends ClaireTransport {
 
 const noopLog = (_event: string, _payload?: Record<string, unknown>): void => {}
 
-/** Stable, idempotent outbound key for one Claire text reply on this turn. */
+/**
+ * Stable, idempotent outbound key for one Claire text reply on this turn.
+ *
+ * Key = `<turn-scope>:<body-hash>`. The turn scope is the inbound event id when the cutover
+ * supplies it — UNIQUE per inbound, so a webhook RETRY of the SAME event re-keys identically
+ * (dedups a true double-send) while a DIFFERENT inbound always re-keys (always sends).
+ *
+ * The body hash is ALWAYS folded in — even with an event id — so a multi-bubble turn (two
+ * sendText calls with different prose) does not self-dedup to a single bubble.
+ *
+ * The previous key fell back to `sessionId` ALONE when no event id was passed (the prod path —
+ * cutover never set inboundEventId). The sessionId is stable per user and the onboarding question
+ * bodies are deterministic, so a re-kickoff composed an identical body → identical key →
+ * ALREADY_EXISTS against an earlier `sent` row → the reply was silently dropped (the 2026-05-29
+ * dev-phone silent-kickoff: reinit cleared pa-messages/pa-sessions but NOT pa-outbound, so the
+ * stale sent rows kept blocking every re-send). Keying on the inbound event id kills that.
+ */
 function textIdempotencyKey(deps: SendblueTransportDeps, body: string): string {
-  const seed =
-    deps.inboundEventId?.trim() ||
-    `${deps.sessionId}:${createHash("sha256").update(body, "utf8").digest("hex").slice(0, 16)}`
-  return `claire-reply-${seed}`
+  const scope = deps.inboundEventId?.trim() || deps.sessionId
+  const bodyHash = createHash("sha256").update(body, "utf8").digest("hex").slice(0, 16)
+  return `claire-reply-${scope}:${bodyHash}`
 }
 
 export function createSendblueTransport(
