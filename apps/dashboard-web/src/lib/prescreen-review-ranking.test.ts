@@ -5,6 +5,7 @@ import {
   PRESCREEN_TOP_FIVE_PASS_RATIO,
   classifyPrescreenReviewRow,
   filterAndSortPrescreenRows,
+  summarizePrescreenReviewRows,
 } from "./prescreen-review-ranking.js"
 
 test("classifyPrescreenReviewRow requires top-five direct evidence for strict pass", () => {
@@ -103,4 +104,175 @@ test("filterAndSortPrescreenRows ranks likely rejects before top-five pass when 
     filterAndSortPrescreenRows(rows, { bucket: "top_five_pass", sort: "strict_priority", search: "" }).map((row) => row.id),
     ["top"],
   )
+})
+
+test("filterAndSortPrescreenRows supports review queue, terminal, action, draft, and search filters", () => {
+  const rows = [
+    {
+      id: "pending-reject",
+      terminal: "PASS",
+      score: 2.6,
+      scoreMax: 3,
+      terminalActionPendingReview: true,
+      createdAt: "2026-05-25T10:00:00Z",
+      jobId: "job-growth",
+      userId: "user-a",
+      questions: {
+        q_growth_marketing_experience: {
+          type: "MUST_HAVE",
+          finalS: 0.7,
+          finalC: 0.8,
+          scored: { aggregate: { summary: "Helped on campaigns without ownership metrics." } },
+        },
+      },
+    },
+    {
+      id: "committed-pass",
+      terminal: "PASS",
+      score: 3,
+      scoreMax: 3,
+      terminalActionPendingReview: false,
+      createdAt: "2026-05-25T11:00:00Z",
+      jobId: "job-pass",
+      userId: "user-b",
+      review: {
+        finalTerminal: "PASS",
+        candidateDecision: {
+          candidateMessageBody: "Next step.",
+          decisionReason: "Strong ownership.",
+          recommendedActions: ["Watch for next steps."],
+          finalTerminal: "PASS",
+          reviewedAt: "2026-05-25T12:00:00Z",
+        },
+      },
+      questions: {
+        q_growth_marketing_experience: {
+          type: "MUST_HAVE",
+          finalS: 0.97,
+          finalC: 0.9,
+          scored: { aggregate: { summary: "Owned campaign and grew signups by 38%." } },
+        },
+      },
+    },
+    {
+      id: "pending-hard-stop",
+      terminal: "HARD_STOP",
+      score: 0,
+      scoreMax: 3,
+      terminalActionPendingReview: true,
+      createdAt: "2026-05-25T12:00:00Z",
+      jobId: "job-stop",
+      userId: "user-c",
+      questions: {},
+    },
+  ]
+
+  assert.deepEqual(
+    filterAndSortPrescreenRows(rows, {
+      bucket: "all",
+      sort: "strict_priority",
+      search: "",
+      queue: "committed",
+      terminal: "PASS",
+      action: "PASS",
+      draft: "has_decision",
+    }).map((row) => row.id),
+    ["committed-pass"],
+  )
+  assert.deepEqual(
+    filterAndSortPrescreenRows(rows, {
+      bucket: "all",
+      sort: "strict_priority",
+      search: "",
+      queue: "pending",
+      terminal: "HARD_STOP",
+      action: "HARD_STOP",
+      draft: "missing_decision",
+    }).map((row) => row.id),
+    ["pending-hard-stop"],
+  )
+  assert.deepEqual(
+    filterAndSortPrescreenRows(rows, {
+      bucket: "all",
+      sort: "strict_priority",
+      search: "job-growth",
+      queue: "all",
+      terminal: "all",
+      action: "all",
+      draft: "all",
+    }).map((row) => row.id),
+    ["pending-reject"],
+  )
+})
+
+test("classifyPrescreenReviewRow treats PAUSE as low-confidence paused state, not likely reject", () => {
+  const pausedRow = {
+    id: "paused",
+    terminal: "PAUSE",
+    score: 1.4,
+    scoreMax: 3,
+    terminalActionPendingReview: false,
+    createdAt: "2026-05-25T13:00:00Z",
+    jobId: "job-paused",
+    userId: "user-paused",
+    questions: {
+      q_product_design_experience: {
+        type: "MUST_HAVE",
+        finalS: 0.76,
+        finalC: 0.42,
+        scored: { aggregate: { summary: "Shared partial design evidence but confidence stayed low." } },
+      },
+    },
+  }
+
+  const paused = classifyPrescreenReviewRow(pausedRow)
+
+  assert.equal(paused.recommendation, "PAUSE")
+  assert.equal(paused.bucket, "paused")
+  assert.equal(paused.label, "Paused - low confidence")
+  assert.doesNotMatch(paused.reasons.join(" "), /likely reject|AI did not propose PASS/i)
+
+  const rejectRow = {
+    id: "reject",
+    terminal: "PASS",
+    score: 2.4,
+    scoreMax: 3,
+    terminalActionPendingReview: true,
+    createdAt: "2026-05-25T14:00:00Z",
+    jobId: "job-reject",
+    userId: "user-reject",
+    questions: {
+      q_product_design_experience: {
+        type: "MUST_HAVE",
+        finalS: 0.7,
+        finalC: 0.8,
+        scored: { aggregate: { summary: "Helped a team prototype without direct ownership." } },
+      },
+    },
+  }
+  const rows = [pausedRow, rejectRow]
+
+  assert.deepEqual(
+    filterAndSortPrescreenRows(rows, {
+      bucket: "paused",
+      sort: "strict_priority",
+      search: "",
+      terminal: "PAUSE",
+      action: "all",
+      draft: "all",
+    }).map((row) => row.id),
+    ["paused"],
+  )
+  assert.deepEqual(
+    filterAndSortPrescreenRows(rows, {
+      bucket: "batch_reject",
+      sort: "strict_priority",
+      search: "",
+      terminal: "all",
+      action: "all",
+      draft: "all",
+    }).map((row) => row.id),
+    ["reject"],
+  )
+  assert.equal(summarizePrescreenReviewRows(rows).paused, 1)
 })

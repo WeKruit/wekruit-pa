@@ -197,6 +197,14 @@ function profileLoadErrorMessage(err: unknown): string {
 // useCandidateMatches — paCandidateListMatches callable wrapper
 // ────────────────────────────────────────────────────────────────────────────
 
+export type CandidateReviewDecision = {
+  candidateMessageBody: string
+  decisionReason: string
+  recommendedActions: string[]
+  finalTerminal: "PASS" | "FAIL" | "HARD_STOP"
+  reviewedAt: string
+}
+
 export type CandidateMatchCard = {
   matchId: string
   jobId: string
@@ -212,6 +220,7 @@ export type CandidateMatchCard = {
   whyMatched: string[]
   rank?: number
   computedAt: string
+  reviewDecision?: CandidateReviewDecision
 }
 
 type CandidateMatchesResult = {
@@ -713,6 +722,7 @@ function PipelineRow({ match }: { match: CandidateMatchCard }) {
   const h = djb2(match.jobId || match.job.company)
   const logo = (match.job.company[0] ?? "?").toUpperCase()
   const logoBg = LOGO_BG_POOL[h % LOGO_BG_POOL.length]
+  const showDecision = shouldShowReviewDecision(match)
   return (
     <article className="wkv2-row">
       <CompanyMark logo={logo} bg={logoBg} size={48} />
@@ -725,6 +735,7 @@ function PipelineRow({ match }: { match: CandidateMatchCard }) {
           {match.job.company}{match.job.location ? ` · ${match.job.location}` : ""}
         </p>
         <p className="wkv2-row__next">{display.nextStep}</p>
+        {showDecision ? <ReviewDecisionBlock match={match} /> : null}
       </div>
       <div className="wkv2-row__right">
         <Link to={match.job.href} className="wk-btn wk-btn--secondary wk-btn--sm">
@@ -732,6 +743,37 @@ function PipelineRow({ match }: { match: CandidateMatchCard }) {
         </Link>
       </div>
     </article>
+  )
+}
+
+function shouldShowReviewDecision(match: CandidateMatchCard): boolean {
+  if (!match.reviewDecision) return false
+  return match.status === "passed" || match.status === "not_passed"
+}
+
+function ReviewDecisionBlock({ match }: { match: CandidateMatchCard }) {
+  const decision = match.reviewDecision
+  if (!decision) return null
+  const isNotPassed = match.status === "not_passed"
+  return (
+    <div className="wkv2-decision">
+      <p className="wkv2-decision__msg">{decision.candidateMessageBody}</p>
+      <div className="wkv2-decision__reason">
+        <span>{isNotPassed ? "Why this role closed" : "Next-step note"}</span>
+        <p>{decision.decisionReason}</p>
+        {isNotPassed ? <p>Your profile stays active for stronger WeKruit matches.</p> : null}
+      </div>
+      {decision.recommendedActions.length > 0 ? (
+        <ul className="wkv2-decision__actions">
+          {decision.recommendedActions.slice(0, 5).map((action, index) => (
+            <li key={`${match.matchId}-action-${index}`}>
+              <Icon name="check" size={12} stroke={2.4} />
+              <span>{action}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   )
 }
 
@@ -1755,6 +1797,51 @@ const ME_PORTAL_STYLES = `
   color: var(--wk-ink-2); line-height: 1.4;
 }
 .wkv2-row__right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; white-space: nowrap; }
+.wkv2-decision {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--wk-border);
+  border-radius: var(--wk-r-sm);
+  background: #fff;
+  display: grid;
+  gap: 8px;
+}
+.wkv2-decision__msg,
+.wkv2-decision__reason p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--wk-ink-2);
+}
+.wkv2-decision__reason {
+  display: grid;
+  gap: 4px;
+}
+.wkv2-decision__reason span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--wk-ink);
+}
+.wkv2-decision__actions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.wkv2-decision__actions li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--wk-ink-2);
+}
+.wkv2-decision__actions svg {
+  color: var(--wk-live);
+  margin-top: 2px;
+}
 
 .wkv2-chip {
   display: inline-flex; align-items: center; gap: 6px;

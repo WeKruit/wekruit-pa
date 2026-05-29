@@ -14,6 +14,7 @@
  */
 import { Link, useParams } from "react-router-dom"
 import { useEffect, useMemo, useState } from "react"
+import { AdminJobLink } from "../../components/AdminEntityLink.js"
 import {
   Badge,
   EmptyState,
@@ -258,10 +259,12 @@ function CompanyJobs({ companyId }: { companyId: string }) {
                   <tr key={j.jobId} style={{ borderBottom: "1px solid #f0f0f0" }}>
                     <td style={{ padding: "8px 6px" }}>{j.department ?? "—"}</td>
                     <td style={{ padding: "8px 6px" }}>
-                      <Link to={`/admin/jobs/${encodeURIComponent(j.jobId)}`}>
+                      <AdminJobLink jobId={j.jobId}>
                         <strong>{j.title ?? j.jobId}</strong>
-                      </Link>
-                      <div style={{ fontSize: 12, color: "#666" }}>{j.jobId}</div>
+                      </AdminJobLink>
+                      <div style={{ fontSize: 12, color: "#666" }}>
+                        <AdminJobLink jobId={j.jobId}>{j.jobId}</AdminJobLink>
+                      </div>
                       <div style={{ fontSize: 11, marginTop: 2, display: "flex", gap: 4 }}>
                         <span style={pageToneStyle(lifecycle.pageTone)}>
                           {lifecycle.pageLabel}
@@ -288,9 +291,7 @@ function CompanyJobs({ companyId }: { companyId: string }) {
                           Open candidate page →
                         </a>
                       ) : (
-                        <Link to={`/admin/jobs/${encodeURIComponent(j.jobId)}`}>
-                          Publish in job workspace
-                        </Link>
+                        <AdminJobLink jobId={j.jobId}>Publish in job workspace</AdminJobLink>
                       )}
                     </td>
                     <td style={{ padding: "8px 6px", whiteSpace: "nowrap" }}>

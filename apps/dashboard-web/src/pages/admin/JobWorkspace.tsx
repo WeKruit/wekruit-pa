@@ -476,13 +476,13 @@ function ExistingJobWorkspace() {
 
       <Panel title="Candidate pipeline" eyebrow="job-scoped evidence">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-          <Link to={`/admin/passed-candidates?jobId=${encodeURIComponent(jobId)}`} style={secondaryBtnStyle}>
+          <Link to={`/admin/passed-candidates?jobId=${encodeURIComponent(jobId)}`} target="_blank" rel="noopener noreferrer" style={secondaryBtnStyle}>
             View passed prescreen snapshots
           </Link>
-          <Link to={`/admin/match-debug?jobId=${encodeURIComponent(jobId)}`} style={secondaryBtnStyle}>
+          <Link to={`/admin/match-debug?jobId=${encodeURIComponent(jobId)}`} target="_blank" rel="noopener noreferrer" style={secondaryBtnStyle}>
             Run job-to-candidates match debug
           </Link>
-          <Link to={`/admin/jobs/${encodeURIComponent(jobId)}/prescreen`} style={secondaryBtnStyle}>
+          <Link to={`/admin/jobs/${encodeURIComponent(jobId)}/prescreen`} target="_blank" rel="noopener noreferrer" style={secondaryBtnStyle}>
             Edit Claire prescreen
           </Link>
         </div>

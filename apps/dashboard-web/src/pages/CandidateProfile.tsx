@@ -56,7 +56,7 @@ export function CandidateProfile() {
   return (
     <div className="page-stack">
       <p>
-        <Link to={`/users/${candidateId}`}>Back to conversation detail</Link>
+        <Link to={`/users/${candidateId}`} target="_blank" rel="noopener noreferrer">Open conversation detail</Link>
       </p>
       <PageHeader
         eyebrow="Marketplace profile"

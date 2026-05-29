@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react"
+import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react"
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore"
 import { httpsCallable } from "firebase/functions"
 import { FileText, Play, Plus, RefreshCw, Upload } from "lucide-react"
-import { Link } from "react-router-dom"
+import { AdminJobLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import {
   Badge,
   DataTable,
@@ -441,14 +441,14 @@ function BatchMeta({ batch }: { batch: BulkResumeBatch | null }) {
     <div style={{ display: "grid", gap: "0.35rem", fontSize: "0.86rem" }}>
       <MetaRow label="batchId" value={batch.batchId} />
       <MetaRow label="source" value={batch.source ?? "-"} />
-      <MetaRow label="jobId" value={batch.jobId ?? "-"} />
+      <MetaRow label="jobId" value={batch.jobId ? <AdminJobLink jobId={batch.jobId} /> : "-"} />
       <MetaRow label="createdBy" value={batch.createdBy ?? "-"} />
       <MetaRow label="updated" value={formatTime(batch.updatedAt)} />
     </div>
   )
 }
 
-function MetaRow({ label, value }: { label: string; value: string }) {
+function MetaRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "7rem minmax(0, 1fr)", gap: "0.5rem" }}>
       <span className="muted-copy">{label}</span>
@@ -573,7 +573,7 @@ function compactCell(value: string | undefined, max = 18): string {
 
 function renderCandidateLink(candidateId: string | undefined) {
   if (!candidateId) return "-"
-  return <Link to={`/admin/candidates/${encodeURIComponent(candidateId)}/profile`}>{compactCell(candidateId)}</Link>
+  return <AdminUserLink userId={candidateId}>{compactCell(candidateId)}</AdminUserLink>
 }
 
 function renderResumeLink(item: BulkResumeItem) {
@@ -581,9 +581,9 @@ function renderResumeLink(item: BulkResumeItem) {
   if (!resumeId) return "-"
   if (!item.candidateId) return compactCell(resumeId)
   return (
-    <Link to={`/admin/candidates/${encodeURIComponent(item.candidateId)}/profile#${encodeURIComponent(resumeId)}`}>
+    <AdminUserLink userId={item.candidateId} fragment={resumeId}>
       {compactCell(resumeId)}
-    </Link>
+    </AdminUserLink>
   )
 }
 

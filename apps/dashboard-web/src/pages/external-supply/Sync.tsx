@@ -7,6 +7,7 @@
  */
 import { useEffect, useState } from "react"
 import type { InstantlySyncRecord, OutreachEvent } from "@pa/core-types"
+import { AdminJobLink, AdminUserLink } from "../../components/AdminEntityLink.js"
 import { EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
 import { InstantlySyncStateChip } from "../../components/external-supply/InstantlySyncStateChip.js"
 import {
@@ -150,10 +151,10 @@ export function Sync() {
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ fontSize: "0.85em" }}>
                 <div>
-                  candidate: <code>{selected.candidateId}</code>
+                  candidate: <code><AdminUserLink userId={selected.candidateId} /></code>
                 </div>
                 <div>
-                  job: <code>{selected.jobId}</code>
+                  job: <code><AdminJobLink jobId={selected.jobId} /></code>
                 </div>
                 <div>
                   company: <code>{selected.companyId}</code>

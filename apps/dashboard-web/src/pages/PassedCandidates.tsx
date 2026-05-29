@@ -2,6 +2,7 @@ import * as React from "react"
 import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
+import { AdminJobLink, AdminPrescreenSessionLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import {
   PASSED_CANDIDATES_CALLABLE_NAME,
   PASSED_CANDIDATES_DEFAULT_LIMIT,
@@ -152,7 +153,7 @@ export function PassedCandidatesSnapshotView({ snapshot }: { snapshot: PassedCan
           <Metric label="State Mismatch" value={formatCount(snapshot.summary.droppedStateMismatch)} tone="warn" />
         </div>
         <div style={filterSummaryStyle}>
-          <Fact label="job" value={snapshot.filters.jobId} />
+          <Fact label="job" value={<AdminJobLink jobId={snapshot.filters.jobId} />} />
           <Fact label="limit" value={snapshot.filters.limit} />
         </div>
       </Panel>
@@ -179,7 +180,9 @@ function PassedCandidateCard({ row }: { row: PassedCandidatesRow }) {
       <div style={cardHeaderStyle}>
         <div>
           <h3 style={cardTitleStyle}>{formatSafeText(row.displayName, 120)}</h3>
-          <p style={mutedLineStyle}>{formatSafeText(row.candidateId)} · {formatTimestamp(row.createdAt)}</p>
+          <p style={mutedLineStyle}>
+            <AdminUserLink userId={row.candidateId}>{formatSafeText(row.candidateId)}</AdminUserLink> · {formatTimestamp(row.createdAt)}
+          </p>
         </div>
         <Badge tone={row.profile.consentStatus === "granted" ? "ok" : "warn"}>
           {row.profile.consentStatus === "granted" ? "PII consent" : "consent missing"}
@@ -189,7 +192,10 @@ function PassedCandidateCard({ row }: { row: PassedCandidatesRow }) {
         <Fact label="state" value={row.state} />
         <Fact label="level 1" value={row.profile.level1Status ?? "-"} />
         <Fact label="lifecycle" value={row.profile.candidateLifecycleState ?? "-"} />
-        <Fact label="session" value={row.transcript.prescreenSessionId ?? "-"} />
+        <Fact
+          label="session"
+          value={row.transcript.prescreenSessionId ? <AdminPrescreenSessionLink sessionId={row.transcript.prescreenSessionId} /> : "-"}
+        />
       </div>
       <SummaryBlock title="Resume Summary" value={row.resumeSummary} />
       <SummaryBlock title="Level 1 Signals" value={formatSafeJson(row.level1Snapshot)} />
@@ -238,10 +244,11 @@ function Metric({ label, value, tone = "muted" }: { label: string; value: string
 }
 
 function Fact({ label, value }: { label: string; value: ReactNode }) {
+  const renderedValue = typeof value === "string" || typeof value === "number" ? formatSafeText(value, 180) : value
   return (
     <span style={factStyle}>
       <strong>{label}</strong>
-      <span>{formatSafeText(value, 180)}</span>
+      <span>{renderedValue}</span>
     </span>
   )
 }

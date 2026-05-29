@@ -1,6 +1,6 @@
 import { collection, getDocs, limit, query, where } from "firebase/firestore"
 import { useEffect, useMemo, useState } from "react"
-import { Link } from "react-router-dom"
+import { AdminJobLink, AdminPrescreenSessionLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import { DataTable, EmptyState, ErrorState, LoadingState, Panel, StatusBadge, type DataTableColumn } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
 import {
@@ -411,30 +411,46 @@ function valueCell(field: string, max = 180) {
   return (row: MarketplaceRow) => compactValue(row[field], max)
 }
 
+function jobLinkCell(field = "jobId", max = 180) {
+  return (row: MarketplaceRow) => {
+    const jobId = linkableId(row[field])
+    return jobId ? <AdminJobLink jobId={jobId}>{compactValue(jobId, max)}</AdminJobLink> : "-"
+  }
+}
+
+function userLinkCell(field: string, max = 180) {
+  return (row: MarketplaceRow) => {
+    const userId = linkableId(row[field])
+    return userId ? <AdminUserLink userId={userId}>{compactValue(userId, max)}</AdminUserLink> : "-"
+  }
+}
+
+function prescreenSessionLinkCell(field = "prescreenSessionId", max = 180) {
+  return (row: MarketplaceRow) => {
+    const sessionId = linkableId(row[field])
+    return sessionId ? <AdminPrescreenSessionLink sessionId={sessionId}>{compactValue(sessionId, max)}</AdminPrescreenSessionLink> : "-"
+  }
+}
+
+function linkableId(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null
+}
+
 function statusCell(field: string) {
   return (row: MarketplaceRow) => <StatusBadge value={String(row[field] ?? "")} />
 }
 
 const jobStateColumns: DataTableColumn<MarketplaceRow>[] = [
-  { key: "jobId", header: "Job", render: valueCell("jobId") },
+  { key: "jobId", header: "Job", render: jobLinkCell() },
   { key: "state", header: "State", render: statusCell("state") },
   { key: "stateUpdatedAt", header: "Updated", render: valueCell("stateUpdatedAt") },
   { key: "reason", header: "Reason", render: valueCell("reason", 260) },
-  {
-    key: "prescreenSessionId",
-    header: "Prescreen",
-    render: (row) =>
-      typeof row.prescreenSessionId === "string" && row.prescreenSessionId ? (
-        <Link to={`/admin/prescreen-sessions/${row.prescreenSessionId}`}>{compactValue(row.prescreenSessionId, 160)}</Link>
-      ) : (
-        "-"
-      ),
-  },
+  { key: "prescreenSessionId", header: "Prescreen", render: prescreenSessionLinkCell("prescreenSessionId", 160) },
   { key: "latestMatchId", header: "Latest match", render: valueCell("latestMatchId") },
 ]
 
 const matchColumns: DataTableColumn<MarketplaceRow>[] = [
-  { key: "jobId", header: "Job", render: valueCell("jobId") },
+  { key: "jobId", header: "Job", render: jobLinkCell() },
   { key: "finalScore", header: "Score", render: (row) => formatScore(row.finalScore) },
   { key: "recommendedAction", header: "Action", render: statusCell("recommendedAction") },
   { key: "hardFilterResult", header: "Hard filter", render: statusCell("hardFilterResult") },
@@ -442,7 +458,7 @@ const matchColumns: DataTableColumn<MarketplaceRow>[] = [
 ]
 
 const inviteColumns: DataTableColumn<MarketplaceRow>[] = [
-  { key: "jobId", header: "Job", render: valueCell("jobId") },
+  { key: "jobId", header: "Job", render: jobLinkCell() },
   { key: "status", header: "Status", render: statusCell("status") },
   { key: "policyDecision", header: "Policy", render: statusCell("policyDecision") },
   { key: "updatedAt", header: "Updated", render: valueCell("updatedAt") },
@@ -450,7 +466,7 @@ const inviteColumns: DataTableColumn<MarketplaceRow>[] = [
 ]
 
 const employerSnapshotColumns: DataTableColumn<MarketplaceRow>[] = [
-  { key: "jobId", header: "Job", render: valueCell("jobId") },
+  { key: "jobId", header: "Job", render: jobLinkCell() },
   { key: "createdAt", header: "Created", render: valueCell("createdAt") },
   { key: "createdBy", header: "By", render: statusCell("createdBy") },
   { key: "passReason", header: "Pass reason", render: valueCell("passReason", 280) },
@@ -466,8 +482,8 @@ const handleColumns: DataTableColumn<MarketplaceRow>[] = [
 ]
 
 const authMappingColumns: DataTableColumn<MarketplaceRow>[] = [
-  { key: "id", header: "Firebase uid", render: valueCell("id") },
-  { key: "candidateId", header: "Candidate", render: valueCell("candidateId") },
+  { key: "id", header: "Firebase uid", render: userLinkCell("id") },
+  { key: "candidateId", header: "Candidate", render: userLinkCell("candidateId") },
   { key: "emailNormalized", header: "Email", render: valueCell("emailNormalized") },
   { key: "provider", header: "Provider", render: statusCell("provider") },
   { key: "claimedAt", header: "Claimed", render: valueCell("claimedAt") },
@@ -504,7 +520,7 @@ const feedbackColumns: DataTableColumn<MarketplaceRow>[] = [
   { key: "createdAt", header: "Created", render: valueCell("createdAt") },
   { key: "kind", header: "Kind", render: statusCell("kind") },
   { key: "actor", header: "Actor", render: statusCell("actor") },
-  { key: "jobId", header: "Job", render: valueCell("jobId") },
+  { key: "jobId", header: "Job", render: jobLinkCell() },
   { key: "outcome", header: "Outcome", render: valueCell("outcome", 260) },
 ]
 
@@ -512,7 +528,7 @@ const correctionColumns: DataTableColumn<MarketplaceRow>[] = [
   { key: "createdAt", header: "Created", render: valueCell("createdAt") },
   { key: "targetType", header: "Target", render: statusCell("targetType") },
   { key: "actor", header: "Actor", render: statusCell("actor") },
-  { key: "jobId", header: "Job", render: valueCell("jobId") },
+  { key: "jobId", header: "Job", render: jobLinkCell() },
   { key: "reason", header: "Reason", render: valueCell("reason", 320) },
 ]
 

@@ -2,6 +2,7 @@ import * as React from "react"
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react"
 
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
+import { AdminJobLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import {
   FLYWHEEL_EVAL_DEFAULT_LIMIT,
   FLYWHEEL_EVAL_ROUTE,
@@ -180,8 +181,8 @@ function ArtifactCard({ row }: { row: FlywheelEvalArtifactRow }) {
         <Badge tone={statusTone(row.status)}>{formatSafeText(row.status, 40)}</Badge>
       </div>
       <div style={factGridStyle}>
-        <Fact label="candidate" value={row.candidateId ?? "-"} />
-        <Fact label="job" value={row.jobId ?? "-"} />
+        <Fact label="candidate" value={row.candidateId ? <AdminUserLink userId={row.candidateId} /> : "-"} />
+        <Fact label="job" value={row.jobId ? <AdminJobLink jobId={row.jobId} /> : "-"} />
         <Fact label="corrections" value={row.sourceCorrectionEventIds.length} />
         <Fact label="feedback" value={row.sourceFeedbackEventIds.length} />
         <Fact label="latest run" value={row.latestRunResult?.status ?? "not_run"} />
@@ -207,8 +208,8 @@ function CorrectionCard({ row }: { row: FlywheelEvalCorrectionRow }) {
       </div>
       <div style={factGridStyle}>
         <Fact label="target" value={row.targetId ?? "-"} />
-        <Fact label="candidate" value={row.candidateId ?? "-"} />
-        <Fact label="job" value={row.jobId ?? "-"} />
+        <Fact label="candidate" value={row.candidateId ? <AdminUserLink userId={row.candidateId} /> : "-"} />
+        <Fact label="job" value={row.jobId ? <AdminJobLink jobId={row.jobId} /> : "-"} />
       </div>
       <SummaryBlock title="Reason" value={row.reason ?? ""} />
       <RedactedBlock title="Before" value={row.beforeRedacted} />
@@ -230,8 +231,8 @@ function FeedbackCard({ row }: { row: FlywheelEvalFeedbackRow }) {
       </div>
       <div style={factGridStyle}>
         <Fact label="outcome" value={row.outcome ?? "-"} />
-        <Fact label="candidate" value={row.candidateId ?? "-"} />
-        <Fact label="job" value={row.jobId ?? "-"} />
+        <Fact label="candidate" value={row.candidateId ? <AdminUserLink userId={row.candidateId} /> : "-"} />
+        <Fact label="job" value={row.jobId ? <AdminJobLink jobId={row.jobId} /> : "-"} />
         <Fact label="state" value={row.candidateJobStateId ?? "-"} />
       </div>
       <RedactedBlock title="Payload Summary" value={row.payloadRedacted} />
@@ -271,10 +272,11 @@ function SummaryBlock({ title, value }: { title: string; value: string }) {
 }
 
 function Fact({ label, value }: { label: string; value: ReactNode }) {
+  const renderedValue = typeof value === "string" || typeof value === "number" ? formatSafeText(value, 180) : value
   return (
     <span style={factStyle}>
       <strong>{label}</strong>
-      <span>{formatSafeText(value, 180)}</span>
+      <span>{renderedValue}</span>
     </span>
   )
 }

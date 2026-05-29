@@ -22,6 +22,7 @@ import { PA_COLLECTIONS } from "@pa/core-types"
 import { collection, doc as firestoreDoc, getDoc, getDocs, limit, orderBy, query, where } from "firebase/firestore"
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
+import { AdminPrescreenSessionLink } from "../components/AdminEntityLink.js"
 import { db } from "../lib/firebase.js"
 import { Icon } from "../components/console/Icon.js"
 import {
@@ -2165,9 +2166,9 @@ function DrawerPrescreenSummary({
         return (
           <div key={session.id} style={{ borderBottom: "1px solid var(--border)", paddingBottom: 9 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
-              <Link to={`/admin/prescreen-sessions/${session.id}`} style={{ color: "var(--ink)", fontWeight: 600, fontSize: 13 }}>
+              <AdminPrescreenSessionLink sessionId={session.id} style={{ color: "var(--ink)", fontWeight: 600, fontSize: 13 }}>
                 {jobId ? jobLabels[jobId] ?? shortUid(jobId) : shortUid(session.id)}
-              </Link>
+              </AdminPrescreenSessionLink>
               <StatusPill tone={terminal === "PASS" ? "live" : terminal ? "hitl" : "neutral"}>
                 {terminal || "in progress"}
               </StatusPill>

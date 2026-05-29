@@ -24,6 +24,8 @@ const ReviewEvaluationAttemptInputSchema = z.object({
   status: HumanReviewStatusSchema,
   finalOutcome: z.unknown().optional(),
   candidateMessageBody: z.string().max(2_000).optional(),
+  decisionReason: z.string().max(1_000).optional(),
+  recommendedActions: z.array(z.string().max(240)).max(5).optional(),
   note: z.string().max(2_000).optional(),
   correctionReason: z.string().max(2_000).optional(),
 })
@@ -50,6 +52,7 @@ export interface ReviewEvaluationAttemptResult {
   prescreenTerminalActionFired?: boolean
   prescreenOutcomeCommitted?: boolean
   candidateOutboundId?: string
+  candidateDecision?: PrescreenCandidateDecision
   externalEvaluationUpdated?: boolean
 }
 
@@ -66,7 +69,18 @@ export interface DraftPrescreenReviewMessage {
   proposedTerminal?: string
   finalTerminal: "PASS" | "FAIL" | "HARD_STOP"
   candidateMessageBody: string
+  decisionReason: string
+  recommendedActions: string[]
   evidenceSummary: string
+}
+
+export type PrescreenCandidateDecision = {
+  candidateMessageBody: string
+  decisionReason: string
+  recommendedActions: string[]
+  finalTerminal: "PASS" | "FAIL" | "HARD_STOP"
+  reviewedAt: string
+  decisionOutboundId?: string
 }
 
 export interface DraftPrescreenReviewMessagesResult {
@@ -151,6 +165,7 @@ export async function runReviewEvaluationAttempt(
 
   let prescreenOutcomeCommitted = false
   let candidateOutboundId: string | undefined
+  let candidateDecision: PrescreenCandidateDecision | undefined
   let externalEvaluationUpdated = false
 
   if (input.status === "approved" || input.status === "overridden") {
@@ -160,6 +175,8 @@ export async function runReviewEvaluationAttempt(
         attempt: saved.attempt,
         finalOutcome,
         candidateMessageBody: candidateMessageBody ?? "",
+        decisionReason: input.decisionReason,
+        recommendedActions: input.recommendedActions,
         reviewedAt: nowIso,
         reviewer: uid,
         reviewStatus: input.status,
@@ -168,6 +185,7 @@ export async function runReviewEvaluationAttempt(
       })
       prescreenOutcomeCommitted = committed.committed
       candidateOutboundId = committed.outboundId
+      candidateDecision = committed.candidateDecision
     }
     if (attempt.source === "external_supply") {
       externalEvaluationUpdated = await commitExternalSupplyProjection({
@@ -190,6 +208,7 @@ export async function runReviewEvaluationAttempt(
     prescreenTerminalActionFired: false,
     prescreenOutcomeCommitted,
     ...(candidateOutboundId ? { candidateOutboundId } : {}),
+    ...(candidateDecision ? { candidateDecision } : {}),
     externalEvaluationUpdated,
   }
 }
@@ -251,6 +270,8 @@ export async function runDraftPrescreenReviewMessages(
       })),
       turns: await loadTurns(deps.db, sessionId),
     }
+    const composed = await composeDraft(context)
+    const normalized = normalizePrescreenDraftDecision(context.finalTerminal, composed, context)
     drafts.push({
       sessionId,
       attemptId,
@@ -258,7 +279,7 @@ export async function runDraftPrescreenReviewMessages(
       jobId,
       proposedTerminal: context.proposedTerminal,
       finalTerminal: input.terminal,
-      ...(await composeDraft(context)),
+      ...normalized,
     })
   }
 
@@ -327,11 +348,22 @@ function buildPrescreenDraftEvidenceSummary(context: PrescreenReviewDraftContext
 const PRESCREEN_REVIEW_DRAFT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["candidateMessageBody", "evidenceSummary"],
+  required: ["candidateMessageBody", "decisionReason", "recommendedActions", "evidenceSummary"],
   properties: {
     candidateMessageBody: {
       type: "string",
       description: "Candidate-facing iMessage body, 1-3 short sentences, no internal score/status jargon.",
+    },
+    decisionReason: {
+      type: "string",
+      description: "Candidate-visible reason for the decision, one concise sentence grounded only in evidence.",
+    },
+    recommendedActions: {
+      type: "array",
+      minItems: 1,
+      maxItems: 3,
+      items: { type: "string" },
+      description: "Short candidate-visible action bullets. Avoid internal status jargon.",
     },
     evidenceSummary: {
       type: "string",
@@ -342,7 +374,7 @@ const PRESCREEN_REVIEW_DRAFT_SCHEMA = {
 
 async function composePrescreenReviewCandidateMessage(
   context: PrescreenReviewDraftContext,
-): Promise<Pick<DraftPrescreenReviewMessage, "candidateMessageBody" | "evidenceSummary">> {
+): Promise<Pick<DraftPrescreenReviewMessage, "candidateMessageBody" | "decisionReason" | "recommendedActions" | "evidenceSummary">> {
   const openai = getOpenAIConfig()
   if (!openai.apiKey) {
     throw new HttpsError("failed-precondition", "PA_OPENAI_AGENT_API_KEY is required to draft prescreen review messages.")
@@ -381,20 +413,50 @@ async function composePrescreenReviewCandidateMessage(
     schemaName: "PrescreenReviewCandidateMessageDraft",
     schema: PRESCREEN_REVIEW_DRAFT_SCHEMA as unknown as Record<string, unknown>,
   })
-  let parsed: { candidateMessageBody?: string; evidenceSummary?: string }
+  let parsed: {
+    candidateMessageBody?: string
+    decisionReason?: string
+    recommendedActions?: unknown
+    evidenceSummary?: string
+  }
   try {
     parsed = JSON.parse(result.rawJson)
   } catch {
     throw new HttpsError("internal", "LLM returned invalid JSON for prescreen review draft.")
   }
-  const candidateMessageBody = cleanNonEmptyString(parsed.candidateMessageBody)
-  const evidenceSummary = cleanNonEmptyString(parsed.evidenceSummary)
+  const normalized = normalizePrescreenDraftDecision(context.finalTerminal, parsed, context)
+  if (normalized.candidateMessageBody.length > 2_000) {
+    throw new HttpsError("internal", "LLM returned an invalid candidate message draft.")
+  }
+  return normalized
+}
+
+function normalizePrescreenDraftDecision(
+  terminal: "PASS" | "FAIL" | "HARD_STOP",
+  raw: {
+    candidateMessageBody?: unknown
+    decisionReason?: unknown
+    recommendedActions?: unknown
+    evidenceSummary?: unknown
+  },
+  context: PrescreenReviewDraftContext,
+): Pick<DraftPrescreenReviewMessage, "candidateMessageBody" | "decisionReason" | "recommendedActions" | "evidenceSummary"> {
+  const candidateMessageBody = cleanNonEmptyString(raw.candidateMessageBody)
   if (!candidateMessageBody || candidateMessageBody.length > 2_000) {
     throw new HttpsError("internal", "LLM returned an invalid candidate message draft.")
   }
+  const evidenceSummary =
+    cleanNonEmptyString(raw.evidenceSummary) ??
+    buildPrescreenDraftEvidenceSummary(context).slice(0, 500)
+  const decisionReason =
+    cleanNonEmptyString(raw.decisionReason) ??
+    defaultDecisionReason(terminal, evidenceSummary)
+  const recommendedActions = cleanStringArray(raw.recommendedActions, 3, 160)
   return {
     candidateMessageBody,
-    evidenceSummary: evidenceSummary ?? evidence.slice(0, 500),
+    decisionReason,
+    recommendedActions: recommendedActions.length > 0 ? recommendedActions : defaultRecommendedActions(terminal),
+    evidenceSummary,
   }
 }
 
@@ -462,14 +524,21 @@ async function commitPrescreenOutcome(args: {
   attempt: EvaluationAttempt
   finalOutcome?: EvaluationOutcome
   candidateMessageBody: string
+  decisionReason?: string
+  recommendedActions?: string[]
   reviewedAt: string
   reviewer: string
   reviewStatus: "approved" | "overridden"
   markPrescreenOutcome: typeof markPrescreenTerminalOutcome
   sendSms: typeof sendRuntimeApprovedIMessage
-}): Promise<{ committed: boolean; outboundId?: string }> {
+}): Promise<{ committed: boolean; outboundId?: string; candidateDecision?: PrescreenCandidateDecision }> {
   const terminal = args.finalOutcome?.prescreenTerminal
-  if (!terminal || !args.attempt.prescreenSessionId || !args.attempt.candidateId || !args.attempt.jobId) {
+  if (
+    (terminal !== "PASS" && terminal !== "FAIL" && terminal !== "HARD_STOP") ||
+    !args.attempt.prescreenSessionId ||
+    !args.attempt.candidateId ||
+    !args.attempt.jobId
+  ) {
     return { committed: false }
   }
   const snap = await args.db.collection("pa-prescreen-sessions").doc(args.attempt.prescreenSessionId).get()
@@ -495,6 +564,14 @@ async function commitPrescreenOutcome(args: {
     idempotencyKey: `prescreen_review_decision:${args.attempt.attemptId}`,
   })
   const outboundId = typeof sent.outboundId === "string" ? sent.outboundId : undefined
+  const candidateDecision = buildPrescreenCandidateDecision({
+    candidateMessageBody: args.candidateMessageBody,
+    decisionReason: args.decisionReason,
+    recommendedActions: args.recommendedActions,
+    finalTerminal: terminal,
+    reviewedAt: args.reviewedAt,
+    outboundId,
+  })
   await args.db.collection("pa-prescreen-sessions").doc(args.attempt.prescreenSessionId).set(
     {
       terminalActionPendingReview: false,
@@ -505,6 +582,7 @@ async function commitPrescreenOutcome(args: {
         reviewedAt: args.reviewedAt,
         reviewer: args.reviewer,
         ...(outboundId ? { decisionOutboundId: outboundId } : {}),
+        candidateDecision,
         updatedAt: args.reviewedAt,
       },
       ...(outboundId ? { reviewDecisionOutboundId: outboundId } : {}),
@@ -525,7 +603,57 @@ async function commitPrescreenOutcome(args: {
     },
     { merge: true },
   )
-  return { committed: true, outboundId }
+  return { committed: true, outboundId, candidateDecision }
+}
+
+function buildPrescreenCandidateDecision(args: {
+  candidateMessageBody: string
+  decisionReason?: unknown
+  recommendedActions?: unknown
+  finalTerminal: "PASS" | "FAIL" | "HARD_STOP"
+  reviewedAt: string
+  outboundId?: string
+}): PrescreenCandidateDecision {
+  const decisionReason =
+    cleanNonEmptyString(args.decisionReason) ??
+    defaultDecisionReason(args.finalTerminal, args.candidateMessageBody)
+  const recommendedActions = cleanStringArray(args.recommendedActions, 5, 240)
+  return {
+    candidateMessageBody: args.candidateMessageBody,
+    decisionReason,
+    recommendedActions,
+    finalTerminal: args.finalTerminal,
+    reviewedAt: args.reviewedAt,
+    ...(args.outboundId ? { decisionOutboundId: args.outboundId } : {}),
+  }
+}
+
+function cleanStringArray(value: unknown, maxItems: number, maxLength: number): string[] {
+  if (!Array.isArray(value)) return []
+  const out: string[] = []
+  for (const item of value) {
+    const cleaned = cleanNonEmptyString(item)
+    if (cleaned) out.push(cleaned.slice(0, maxLength))
+    if (out.length >= maxItems) break
+  }
+  return out
+}
+
+function defaultDecisionReason(terminal: "PASS" | "FAIL" | "HARD_STOP", evidence: string): string {
+  if (terminal === "PASS") return "The screen showed enough role-relevant evidence to move to the next step."
+  const cleaned = evidence.replace(/\s+/g, " ").trim()
+  if (cleaned) return cleaned.slice(0, 240)
+  return "This screen did not show enough direct evidence for this specific role."
+}
+
+function defaultRecommendedActions(terminal: "PASS" | "FAIL" | "HARD_STOP"): string[] {
+  if (terminal === "PASS") {
+    return ["Watch for the next WeKruit message.", "Keep your profile details current."]
+  }
+  return [
+    "Keep your WeKruit profile active for stronger matches.",
+    "Add a concrete example that shows the target experience.",
+  ]
 }
 
 async function commitExternalSupplyProjection(args: {

@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import type { CandidateEvaluationRun } from "@pa/core-types"
+import { AdminJobLink } from "../../components/AdminEntityLink.js"
 import { EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
 import { listEvaluationRuns } from "../../lib/external-supply-client.js"
 
@@ -80,7 +81,9 @@ export function Evaluations() {
                       {r.runId.slice(0, 8)}…
                     </Link>
                   </td>
-                  <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.8em" }}>{r.jobId}</td>
+                  <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.8em" }}>
+                    <AdminJobLink jobId={r.jobId} />
+                  </td>
                   <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.8em" }}>{r.companyId}</td>
                   <td style={tdStyle}>
                     <span className={`status-badge ${runTone(r.status)}`}>{r.status}</span>
