@@ -468,11 +468,19 @@ function inferTargetJobTypeFromProfile(tags: UserTags, careerStage: CareerStage 
     .filter((part): part is string => Boolean(part))
     .join(" ")
     .toLowerCase()
-  if (/\bintern(ship)?\b/.test(title) || careerStage === "intern" || careerStage === "student") {
-    return ["internship"]
+  // Gate internship on the candidate's ACTUAL careerStage, never on a résumé
+  // title alone — a past/current "Intern" title for someone already classified
+  // junior+ (e.g. "Software Engineer Intern → junior") must NOT lock them to
+  // internship-only, which hard-drops the entire full-time pool (the 2026-05-29
+  // recall-zero bug). Even true students stay open to new-grad/full-time so the
+  // jobType gate never zeroes a student's recall.
+  if (careerStage === "intern" || careerStage === "student") {
+    return ["internship", "new_graduate", "full_time"]
   }
-  if (/\b(new\s+grad|graduate)\b/.test(title)) return ["new_graduate"]
+  if (/\b(new\s+grad|graduate)\b/.test(title)) return ["new_graduate", "full_time"]
   if (careerStage === "entry_level") return ["full_time", "new_graduate"]
+  // junior and above: leave targetJobType unset → the jobType hard gate bypasses
+  // (fires only when a target set exists), so it can't over-filter.
   return undefined
 }
 
