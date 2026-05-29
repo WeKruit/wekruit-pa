@@ -43,6 +43,7 @@ import {
   type CareerStage,
   ROLE_FUNCTION_VOCAB,
   CAREER_STAGE_VOCAB,
+  CAREER_STAGE_INDEX,
   JOB_TYPE_VOCAB,
   INDUSTRY_SECTOR_VOCAB,
 } from "@wekruit/shared-tags"
@@ -72,6 +73,7 @@ export type IndustryTag = IndustryEnumBucket
  */
 export type TagsVisaStatus =
   | "citizen"
+  | "permanent_resident"
   | "gc"
   | "opt"
   | "h1b"
@@ -211,8 +213,16 @@ export const UserTagsSchema = z.object({
    * token applied at match time.
    */
   careerStage: z.enum(CAREER_STAGE_VOCAB).optional(),
+  /**
+   * Canonical D4 4-enum (`citizen` / `permanent_resident` / `sponsor_needed` /
+   * `other`) is what new writes commit to. Legacy `gc` / `opt` / `h1b` tokens
+   * remain accepted so pre-existing `pa-users.tags` rows (and the
+   * `opt`/`h1b`-specific match-reason readers) keep validating; the merger
+   * normalizes a `gc` statedPreference to `permanent_resident` on the next
+   * merge.
+   */
   visaStatus: z
-    .enum(["citizen", "gc", "opt", "h1b", "sponsor_needed", "other"])
+    .enum(["citizen", "permanent_resident", "gc", "opt", "h1b", "sponsor_needed", "other"])
     .optional(),
   prefersStartup: z.enum(["startup", "bigtech", "either"]).optional(),
   /** Free-text location hints from chat. */
@@ -332,6 +342,14 @@ export interface UserTagsCvInput {
   }>
   /** Existing CV-derived industry buckets (canonical 10-tag enum). */
   industryTags?: string[]
+  /**
+   * Parser v2 `totalYearsExperience` — total professional YoE inferred from
+   * the résumé. Used (alongside onboarding `statedPreferences.yoeRange`) to
+   * reconcile `careerStage` so a recent intern / teaching-assistant gig can't
+   * drag a multi-year career down to `intern`/`student`. Pass-through from
+   * `parsedResumeData.totalYearsExperience`.
+   */
+  totalYearsExperience?: number
   /** 1536d embedding pass-through. */
   embedding?: number[]
   embeddingModel?: string
@@ -918,6 +936,58 @@ function deriveCareerStageFromYoeRange(yoeRange: [number, number] | undefined): 
   return "mid_level"
 }
 
+/** Map a scalar YoE count → coarse career stage (mirrors the yoeRange bands). */
+function deriveCareerStageFromYears(years: number | undefined): CareerStage | undefined {
+  if (typeof years !== "number" || !Number.isFinite(years) || years < 0) return undefined
+  return deriveCareerStageFromYoeRange([years, years])
+}
+
+/**
+ * The set of "downward" stages that a recent intern/TA/student gig can wrongly
+ * pin a candidate to. When the title says one of these but the candidate's
+ * years-of-experience says otherwise, the title is almost certainly a stale or
+ * side gig (e.g. a grad-school teaching-assistant role on a 5-year marketer's
+ * résumé) and must NOT override the yoe-derived stage.
+ */
+const JUNIOR_TITLE_STAGES: ReadonlySet<CareerStage> = new Set<CareerStage>(["intern", "student"])
+
+/** Minimum years that disqualifies an intern/student stage. */
+const NON_INTERN_YOE_THRESHOLD = 2
+
+/**
+ * Reconcile the title-derived and yoe-derived career stage.
+ *
+ * Precedence (do NOT change without milestone):
+ *  1. Onboarding-stated `careerStage` is authoritative (handled by caller).
+ *  2. Otherwise prefer the title-derived stage …
+ *  3. … EXCEPT when the title-derived stage is `intern`/`student` while YoE
+ *     (résumé `totalYearsExperience` or onboarding `yoeRange`) indicates
+ *     ≥ ~2 years AND the yoe-derived stage is genuinely more senior. In that
+ *     case the recent intern/TA gig is overriding a multi-year career, so we
+ *     prefer the yoe-derived stage.
+ *  4. Fall back to the yoe-derived stage when there is no title signal.
+ *
+ * `yoeYearsHigh` is the high end of the YoE signal (max of yoeRange, or the
+ * scalar totalYearsExperience) — used to apply the ≥2-year floor.
+ */
+function reconcileCareerStage(
+  titleStage: CareerStage | undefined,
+  yoeStage: CareerStage | undefined,
+  yoeYearsHigh: number | undefined,
+): CareerStage | undefined {
+  if (!titleStage) return yoeStage
+  if (
+    JUNIOR_TITLE_STAGES.has(titleStage) &&
+    yoeStage &&
+    typeof yoeYearsHigh === "number" &&
+    yoeYearsHigh >= NON_INTERN_YOE_THRESHOLD &&
+    CAREER_STAGE_INDEX[yoeStage] > CAREER_STAGE_INDEX[titleStage]
+  ) {
+    return yoeStage
+  }
+  return titleStage
+}
+
 function deriveCareerStageFromTitle(title: string | undefined): CareerStage | undefined {
   const t = title?.trim().toLowerCase()
   if (!t) return undefined
@@ -964,15 +1034,28 @@ function mapCompanySizePreference(value: unknown): UserTags["companySize"] {
   return undefined
 }
 
-/** Map StatedPreferences.visaStatus → tag-schema visa token. */
-function mapVisaStatus(v: StatedPreferences["visaStatus"]): TagsVisaStatus | undefined {
+/**
+ * Map StatedPreferences.visaStatus → tag-schema visa token.
+ *
+ * D4 canonicalization (Jyesht-Diwani fix 2026-05-28): a green-card holder must
+ * land on the canonical `permanent_resident` token, NOT the legacy `gc` alias.
+ * Both `gc` and the canonical `permanent_resident` (which `StatedPreferences`
+ * may carry from `onboarding.ts`) normalize to `permanent_resident`. `opt` /
+ * `h1b` are intentionally preserved (downstream match-reason readers key on
+ * them and they are out of scope for this fix).
+ */
+function mapVisaStatus(
+  v: StatedPreferences["visaStatus"] | "permanent_resident",
+): TagsVisaStatus | undefined {
   if (v == null) return undefined
   switch (v) {
     case "citizen":
-    case "gc":
     case "opt":
     case "h1b":
       return v
+    case "gc":
+    case "permanent_resident":
+      return "permanent_resident"
     case "sponsorship_needed":
       return "sponsor_needed"
     case "unknown":
@@ -1058,9 +1141,28 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
         targetJobTypes?: unknown
       })
     | undefined
+  // careerStage precedence: onboarding-stated wins; otherwise reconcile the
+  // title-derived stage against the YoE-derived stage so a recent intern/TA
+  // gig can't drag a multi-year career down to `intern`/`student`. YoE comes
+  // from onboarding `yoeRange` first, falling back to résumé
+  // `totalYearsExperience`.
+  const cvTotalYears =
+    typeof cv?.totalYearsExperience === "number" && Number.isFinite(cv.totalYearsExperience)
+      ? cv.totalYearsExperience
+      : undefined
+  const yoeHigh =
+    yoeRange !== undefined
+      ? Math.max(yoeRange[0], yoeRange[1])
+      : cvTotalYears
+  const yoeDerivedStage =
+    deriveCareerStageFromYoeRange(yoeRange) ?? deriveCareerStageFromYears(cvTotalYears)
   const careerStage = isCareerStage(statedPreferencesExt?.careerStage)
     ? statedPreferencesExt.careerStage
-    : deriveCareerStageFromTitle(recentRoleTitle) ?? deriveCareerStageFromYoeRange(yoeRange)
+    : reconcileCareerStage(
+        deriveCareerStageFromTitle(recentRoleTitle),
+        yoeDerivedStage,
+        yoeHigh,
+      )
   const visaStatus = mapVisaStatus(statedPreferences?.visaStatus)
   const prefersStartup = mapPrefersStartup(statedPreferences?.prefersStartup)
   const targetLocations = Array.isArray(statedPreferences?.targetLocations)
@@ -1112,17 +1214,33 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
     return out.length > 0 ? out : undefined
   }
   // W3 — `industrySector` field is now typed as `IndustrySector[]`
-  // (canonical 42-token vocab). Narrow the deduped strings to the
-  // canonical set so a non-vocab upstream value is dropped at the merge
-  // boundary rather than silently corrupting the schema. `INDUSTRY_SECTOR_VOCAB`
-  // is bound at module top.
-  const industrySectorRaw = dedupedStrings(cv?.industrySector, 6)
-  const industrySector = industrySectorRaw
-    ? (industrySectorRaw.filter(
-        (t): t is (typeof INDUSTRY_SECTOR_VOCAB)[number] =>
-          (INDUSTRY_SECTOR_VOCAB as readonly string[]).includes(t),
-      ) as Array<(typeof INDUSTRY_SECTOR_VOCAB)[number]>)
-    : undefined
+  // (canonical 42-token vocab). Narrow the deduped strings to the canonical
+  // set so a non-vocab upstream value is dropped at the merge boundary rather
+  // than silently corrupting the schema. `INDUSTRY_SECTOR_VOCAB` is bound at
+  // module top.
+  const onlyCanonicalSectors = (
+    raw: string[] | undefined,
+  ): Array<(typeof INDUSTRY_SECTOR_VOCAB)[number]> | undefined => {
+    if (!raw) return undefined
+    const filtered = raw.filter(
+      (t): t is (typeof INDUSTRY_SECTOR_VOCAB)[number] =>
+        (INDUSTRY_SECTOR_VOCAB as readonly string[]).includes(t),
+    )
+    return filtered.length > 0 ? filtered : undefined
+  }
+  // industrySector source precedence (Jyesht-Diwani fix 2026-05-28):
+  //   1. parser `relevantIndustry` / `industries` (accurate — extracted from
+  //      the candidate's actual work experience) filtered to canonical vocab,
+  //   2. fall back to `cv.industrySector` ONLY when the parser yielded no
+  //      canonical sector. Historically `cv.industrySector` carried the
+  //      cv-ingest "industry second-pass" output, which fires on a weak F1
+  //      `industryTags` extract and can hallucinate sectors a candidate never
+  //      worked in (e.g. AI/ML + clean-energy for a pure marketer). Preferring
+  //      `relevantIndustry` keeps the accurate signal and drops the
+  //      low-confidence override. Non-canonical tokens are dropped either way.
+  const industrySector =
+    onlyCanonicalSectors(dedupedStrings(cv?.relevantIndustry, 6)) ??
+    onlyCanonicalSectors(dedupedStrings(cv?.industrySector, 6))
   const relevantIndustry = dedupedStrings(cv?.relevantIndustry, 6)
   const relevantSpecialization = dedupedStrings(cv?.relevantSpecialization, 6)
   const proposedTags = dedupedStrings(cv?.proposedTags, 12)
