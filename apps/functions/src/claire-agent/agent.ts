@@ -229,9 +229,30 @@ export async function runClaireTurn(
   if (finalText && !deliveredViaTool) {
     finalText = normalizeReply(finalText)
   }
-  await deliverFinalText(ctx, finalText, deliveredViaTool).catch((e) =>
-    log("deliverFinalText_failed", { err: String(e) }),
-  )
+  const sent = await deliverFinalText(ctx, finalText, deliveredViaTool).catch((e) => {
+    log("deliverFinalText_failed", { err: String(e) })
+    return false
+  })
+
+  // ONBOARDING ASK NET — gpt-5.4-nano intermittently calls the ask_next_onboarding_question TOOL
+  // (logged onboarding.ask_next) then ENDS the turn without emitting the question as text → finalText
+  // is empty → nothing is delivered → the candidate sees a read receipt and silence (the live kickoff
+  // bug, 2026-05-29). If we're in onboarding, NOTHING was delivered (no text, no delivery tool, not a
+  // guardrail block), and a pending question exists, send it deterministically. This is canonical
+  // PROCESS content (buildSharedOnboardingPrompt — the deterministic RAIL of the onboarding process),
+  // NOT fabricated conversational text, so sending it when the agent skips the turn is correct, not a
+  // hardcoded reply. Mirrors the record-net below: deterministic start, agentic within.
+  if (deps.mode === "onboarding" && !sent && !deliveredViaTool && !blocked) {
+    const q = (deps.pendingStep ?? "").trim()
+    if (q) {
+      await deps.transport
+        .sendText(q)
+        .catch((e) => log("onboarding.ask_net_failed", { slot: deps.onboardingSlot, err: String(e) }))
+      log("onboarding.ask_net_sent", { slot: deps.onboardingSlot })
+    } else {
+      log("onboarding.ask_net_no_pending", { slot: deps.onboardingSlot })
+    }
+  }
 
   // ONBOARDING NET — the agent normally records via the record_onboarding_answer TOOL (which writes
   // the canonical pa-users.tags + sharedOnboarding interface). gpt-5.4-nano intermittently skips that
