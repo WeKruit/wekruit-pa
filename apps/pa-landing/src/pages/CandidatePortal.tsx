@@ -315,12 +315,103 @@ function callableSubmitErrorMessage(err: unknown): string {
 // Helpers — humanize canonical-tag tokens, derive sidebar data from schema
 // ────────────────────────────────────────────────────────────────────────────
 
-export function formatProfileValue(value: string) {
+// Humanize canonical tag tokens for display (single source of tag labels).
+// Overrides for the awkward ones; general rule handles the rest (_and_ → &,
+// underscores → spaces, Title Case, known acronyms upper-cased).
+const TAG_LABEL_OVERRIDES: Record<string, string> = {
+  artificial_intelligence_and_machine_learning: "AI & Machine Learning",
+  software_and_saas: "Software & SaaS",
+  crypto_web3_blockchain: "Crypto / Web3",
+  e_commerce_and_retail: "E-commerce & Retail",
+  healthcare_and_life_sciences: "Healthcare & Life Sciences",
+  human_resources_and_recruiting: "HR & Recruiting",
+  non_profit_and_social_impact: "Non-profit & Social Impact",
+  clean_energy_and_climate_tech: "Clean Energy & Climate Tech",
+  real_estate_and_proptech: "Real Estate & PropTech",
+  agriculture_and_foodtech: "Agriculture & FoodTech",
+  accessibility_and_assistive_technology: "Accessibility & Assistive Tech",
+  research_and_academia: "Research & Academia",
+  media_and_entertainment: "Media & Entertainment",
+  hardware_and_semiconductors: "Hardware & Semiconductors",
+  transportation_and_logistics: "Transportation & Logistics",
+  automotive_and_mobility: "Automotive & Mobility",
+  aerospace_and_defense: "Aerospace & Defense",
+  energy_and_utilities: "Energy & Utilities",
+  manufacturing_and_industrial: "Manufacturing & Industrial",
+  construction_and_built_environment: "Construction & Built Environment",
+  hospitality_and_travel: "Hospitality & Travel",
+  advertising_and_marketing: "Advertising & Marketing",
+  professional_services: "Professional Services",
+  accounting_and_audit: "Accounting & Audit",
+  sports_and_recreation: "Sports & Recreation",
+  fashion_and_apparel: "Fashion & Apparel",
+  beauty_and_personal_care: "Beauty & Personal Care",
+  arts_and_culture: "Arts & Culture",
+  robotics_and_automation: "Robotics & Automation",
+  technology_general: "Technology (general)",
+  education_technology: "Education Technology",
+  // role function
+  engineering_and_development: "Engineering & Development",
+  software_engineering: "Software Engineering",
+  product_management: "Product Management",
+  customer_service_and_support: "Customer Service & Support",
+  legal_and_compliance: "Legal & Compliance",
+  management_and_executive: "Management & Executive",
+  public_sector_and_government: "Public Sector & Government",
+  arts_and_entertainment: "Arts & Entertainment",
+  creatives_and_design: "Creatives & Design",
+  accounting_and_finance: "Accounting & Finance",
+  education_and_training: "Education & Training",
+  human_resources: "Human Resources",
+  data_analysis: "Data Analysis",
+  business_analyst: "Business Analyst",
+  // company stage
+  pre_seed: "Pre-seed",
+  series_a: "Series A",
+  series_b: "Series B",
+  series_c: "Series C",
+  series_d_plus: "Series D+",
+  ipo_public: "IPO / Public",
+  private_mature: "Private (mature)",
+  non_profit: "Non-profit",
+  // company size (orchestrator enum)
+  early_startup: "Early-stage startup",
+  scale_up: "Scale-up",
+  mid_market: "Mid-market",
+  enterprise: "Enterprise",
+  open: "Any size",
+  // job type
+  full_time: "Full-time",
+  part_time: "Part-time",
+  new_graduate: "New graduate",
+  co_op_rotation: "Co-op / Rotation",
+  return_to_work_program: "Return-to-work",
+  // career stage
+  c_level: "C-level",
+  vp: "VP",
+  entry_level: "Entry level",
+  mid_level: "Mid level",
+  // visa
+  citizen: "U.S. citizen",
+  permanent_resident: "Permanent resident",
+  sponsor_needed: "Needs sponsorship",
+}
+const TAG_ACRONYMS = new Set([
+  "ai", "ml", "api", "saas", "hr", "it", "ux", "ui", "qa", "sql", "vp",
+  "ceo", "cto", "cfo", "b2b", "b2c", "sdk", "ar", "vr", "iot", "ev", "gtm",
+])
+
+export function formatProfileValue(value: string): string {
+  const key = value.trim().toLowerCase()
+  if (TAG_LABEL_OVERRIDES[key]) return TAG_LABEL_OVERRIDES[key]
   return value
+    .replace(/_and_/g, " & ")
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .split(" ")
+    .map((w) => (TAG_ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(" ")
 }
 
 export function formatProfileStatus(value: string) {
@@ -1661,44 +1752,111 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
 // projection includes the field) and persist through the existing correction
 // pipeline (free-form → Claire maps to canonical tags). No mock-only toggles.
 type ProfilePrefGroup = {
-  key: string
+  field: string
   label: string
   hint: string
+  multi: boolean
   tone: "default" | "warn"
+  readFields: string[]
   options: string[]
-  sources: string[]
 }
-const PROFILE_PREF_GROUPS: ProfilePrefGroup[] = [
-  { key: "stage", label: "Company stage", hint: "Where they are in growth.", tone: "default",
-    sources: ["companyStage"],
-    options: ["Pre-seed", "Seed", "Series A", "Series B", "Series C–D", "Late / public"] },
-  { key: "size", label: "Company size", hint: "Headcount Claire filters by.", tone: "default",
-    sources: ["companySize"],
-    options: ["1–10", "10–50", "50–200", "200–1k", "1k–10k", "10k+"] },
-  { key: "industry", label: "Industry", hint: "Sectors you want to work in.", tone: "default",
-    sources: ["industrySector", "relevantIndustry"],
-    options: ["AI infra", "Developer tools", "API", "Fintech", "Healthtech", "Enterprise SaaS", "Consumer", "Marketplace", "Crypto / Web3", "Climate", "Defense"] },
-  { key: "pace", label: "Work pace & culture", hint: "The way they ship.", tone: "default",
-    sources: ["workPace", "culture"],
-    options: ["Intense / high-output", "Balanced (40–50hr)", "Async-first", "In-office", "Hybrid (2–3 days)", "Remote-only", "Move-fast tolerant of bugs", "Move-careful, high bar"] },
-  { key: "dealbreakers", label: "Deal-breakers", hint: "Claire won't pitch you these.", tone: "warn",
-    sources: ["dealBreakers", "negativeRoleFunction"],
-    options: ["No equity", "On-call rotation", "Stack-ranked perf", "Full RTO", "Sponsored visa req'd", "Defense / weapons", "Crypto", "Agency / consultancy"] },
-]
 
-function profileNormalizeLabel(s: string): string {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
-}
-function profilePickInitial(values: string[], options: string[]): Set<string> {
-  const set = new Set<string>()
-  if (values.length === 0) return set
-  const norm = values.map(profileNormalizeLabel)
-  for (const opt of options) {
-    const o = profileNormalizeLabel(opt)
-    if (norm.some((v) => v === o || (o.length >= 3 && (v.includes(o) || o.includes(v))))) set.add(opt)
-  }
-  return set
-}
+// Canonical vocab tokens — mirror @wekruit/shared-tags canonical vocabs
+// (role-function, industry-sector, company-stage, job-type, career-stage, visa)
+// + the orchestrator `companySize` enum. shared-tags is the single source of
+// truth; the tokens are inlined here only to avoid a vite build-time dependency
+// on the package's compiled dist. Keep in sync with packages/shared-tags.
+const PROFILE_PREF_GROUPS: ProfilePrefGroup[] = [
+  {
+    field: "targetRoleFunction",
+    label: "Target roles",
+    hint: "What you want to do — Claire's first hard filter.",
+    multi: true,
+    tone: "default",
+    readFields: ["targetRoleFunction", "roleFunction"],
+    options: [
+      "software_engineering", "engineering_and_development", "product_management", "data_analysis",
+      "business_analyst", "creatives_and_design", "marketing", "sales", "customer_service_and_support",
+      "management_and_executive", "consultant", "accounting_and_finance", "human_resources",
+      "legal_and_compliance", "education_and_training", "public_sector_and_government", "arts_and_entertainment",
+    ],
+  },
+  {
+    field: "industrySector",
+    label: "Industry",
+    hint: "Sectors you want to work in.",
+    multi: true,
+    tone: "default",
+    readFields: ["industrySector", "relevantIndustry"],
+    options: [
+      "artificial_intelligence_and_machine_learning", "software_and_saas", "financial_technology",
+      "healthcare_and_life_sciences", "biotechnology_and_pharmaceuticals", "hardware_and_semiconductors",
+      "e_commerce_and_retail", "consumer_goods", "cybersecurity", "crypto_web3_blockchain", "gaming_and_esports",
+      "education_technology", "real_estate_and_proptech", "transportation_and_logistics", "automotive_and_mobility",
+      "aerospace_and_defense", "energy_and_utilities", "clean_energy_and_climate_tech", "manufacturing_and_industrial",
+      "construction_and_built_environment", "agriculture_and_foodtech", "hospitality_and_travel",
+      "media_and_entertainment", "advertising_and_marketing", "telecommunications", "professional_services",
+      "legal_services", "accounting_and_audit", "management_consulting", "human_resources_and_recruiting",
+      "non_profit_and_social_impact", "public_sector_and_government", "research_and_academia", "sports_and_recreation",
+      "fashion_and_apparel", "beauty_and_personal_care", "arts_and_culture", "accessibility_and_assistive_technology",
+      "robotics_and_automation", "quantum_computing", "space_technology", "technology_general",
+    ],
+  },
+  {
+    field: "companyStage",
+    label: "Company stage",
+    hint: "Funding stage you'd join.",
+    multi: true,
+    tone: "default",
+    readFields: ["companyStage"],
+    options: [
+      "pre_seed", "seed", "series_a", "series_b", "series_c", "series_d_plus",
+      "ipo_public", "private_mature", "bootstrapped", "non_profit",
+    ],
+  },
+  {
+    field: "companySize",
+    label: "Company size",
+    hint: "How big — pick one.",
+    multi: false,
+    tone: "default",
+    readFields: ["companySize"],
+    options: ["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"],
+  },
+  {
+    field: "targetJobType",
+    label: "Job type",
+    hint: "Employment type.",
+    multi: true,
+    tone: "default",
+    readFields: ["targetJobType"],
+    options: [
+      "full_time", "internship", "new_graduate", "contract", "part_time",
+      "fellowship", "apprenticeship", "freelance", "return_to_work_program", "co_op_rotation",
+    ],
+  },
+  {
+    field: "careerStage",
+    label: "Your seniority",
+    hint: "Your level — pick one.",
+    multi: false,
+    tone: "default",
+    readFields: ["careerStage"],
+    options: [
+      "intern", "student", "entry_level", "junior", "mid_level", "senior",
+      "staff", "principal", "manager", "director", "vp", "c_level", "founder",
+    ],
+  },
+  {
+    field: "visaStatus",
+    label: "Work authorization",
+    hint: "Pick one.",
+    multi: false,
+    tone: "default",
+    readFields: ["visaStatus"],
+    options: ["citizen", "permanent_resident", "sponsor_needed", "other"],
+  },
+]
 
 function MatchPreferencesCard({
   profile,
@@ -1708,14 +1866,20 @@ function MatchPreferencesCard({
   onSaved: (p: CandidateSelfProfile) => void
 }) {
   const tags = (profile.globalTags ?? {}) as Record<string, unknown>
-  const readArr = (key: string): string[] =>
-    Array.isArray(tags[key]) ? (tags[key] as unknown[]).map((v) => String(v)) : []
+  const readField = (fields: string[]): string[] => {
+    for (const f of fields) {
+      const v = tags[f]
+      if (Array.isArray(v)) return v.map((x) => String(x))
+      if (typeof v === "string" && v.length > 0) return [v]
+    }
+    return []
+  }
 
   const [picked, setPicked] = useState<Record<string, Set<string>>>(() => {
     const init: Record<string, Set<string>> = {}
     for (const g of PROFILE_PREF_GROUPS) {
-      const values = g.sources.flatMap(readArr)
-      init[g.key] = profilePickInitial(values, g.options)
+      const current = readField(g.readFields).filter((t) => g.options.includes(t))
+      init[g.field] = new Set(g.multi ? current : current.slice(0, 1))
     }
     return init
   })
@@ -1723,13 +1887,20 @@ function MatchPreferencesCard({
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle")
   const [message, setMessage] = useState<string | null>(null)
 
-  function toggle(key: string, opt: string) {
+  function toggle(field: string, opt: string, multi: boolean) {
     setPicked((prev) => {
       const next = { ...prev }
-      const s = new Set(next[key])
-      if (s.has(opt)) s.delete(opt)
-      else s.add(opt)
-      next[key] = s
+      const s = new Set(next[field])
+      if (multi) {
+        if (s.has(opt)) s.delete(opt)
+        else s.add(opt)
+      } else if (s.has(opt)) {
+        s.clear()
+      } else {
+        s.clear()
+        s.add(opt)
+      }
+      next[field] = s
       return next
     })
     setDirty(true)
@@ -1740,27 +1911,24 @@ function MatchPreferencesCard({
   async function save() {
     setStatus("submitting")
     setMessage(null)
-    const parts: string[] = []
+    // Deterministic canonical tag patch — keyed by the real candidate tag fields.
+    const structuredFields: Record<string, unknown> = {}
+    const summary: string[] = []
     for (const g of PROFILE_PREF_GROUPS) {
-      const sel = Array.from(picked[g.key] ?? [])
-      if (sel.length === 0) continue
-      parts.push(
-        g.key === "dealbreakers"
-          ? `Deal-breakers (do NOT pitch me roles with these): ${sel.join(", ")}.`
-          : `${g.label}: ${sel.join(", ")}.`,
-      )
+      const sel = Array.from(picked[g.field] ?? [])
+      structuredFields[g.field] = g.multi ? sel : (sel[0] ?? null)
+      if (sel.length > 0) summary.push(`${g.label}: ${sel.map(formatProfileValue).join(", ")}`)
     }
-    const correctionText = parts.length
-      ? `Update my match preferences. ${parts.join(" ")}`
-      : "Clear my match preferences — no company-stage, size, industry, pace, or deal-breaker constraints."
+    const correctionText = summary.length
+      ? `Match preferences updated — ${summary.join("; ")}.`
+      : "Match preferences cleared."
     try {
       const submit = createCandidateProfileCorrectionSubmitter(functions())
-      const result = await submit({ correctionText })
+      const result = await submit({ correctionText, structuredFields })
       onSaved(result.selfProfile)
       setDirty(false)
       setStatus("success")
-      const applied = result.appliedKeys?.length ? ` Updated: ${result.appliedKeys.join(", ")}.` : ""
-      setMessage(`Sent to Claire — she'll match against these.${applied}`)
+      setMessage("Saved — Claire will match against these.")
     } catch (err) {
       setStatus("error")
       setMessage(callableSubmitErrorMessage(err))
@@ -1774,18 +1942,18 @@ function MatchPreferencesCard({
         <span className="wk-prof-card__src">Claire matches against these</span>
       </h3>
       <p className="wk-prof-card__hint">
-        The shape of a role you&apos;d actually say yes to — beyond title and comp. Toggle what fits, then
-        send it to Claire.
+        The canonical tags Claire matches you against — the same vocabulary used to tag every job. Toggle what
+        fits, then send it to Claire.
       </p>
       {PROFILE_PREF_GROUPS.map((g) => (
         <PrefGroup
-          key={g.key}
+          key={g.field}
           label={g.label}
           hint={g.hint}
           tone={g.tone}
           options={g.options}
-          selected={picked[g.key]}
-          onToggle={(o) => toggle(g.key, o)}
+          selected={picked[g.field]}
+          onToggle={(o) => toggle(g.field, o, g.multi)}
         />
       ))}
       <div className="wk-prefs__save">
@@ -1839,7 +2007,7 @@ function PrefGroup({
               <span className="wk-pref__check" aria-hidden="true">
                 {on ? <Icon name="check" size={10} stroke={2.6} /> : null}
               </span>
-              {o}
+              {formatProfileValue(o)}
             </button>
           )
         })}
@@ -3423,5 +3591,6 @@ const MATCHES_STYLES = `
   .wkv3-match__primaries .wk-btn { flex: 1; justify-content: center; }
 }
 `
+
 
 
