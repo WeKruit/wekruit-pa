@@ -17,3 +17,11 @@ test("CandidatePortal renders review decisions only inside committed pipeline ro
   assert.match(source, /recommendedActions/)
   assert.doesNotMatch(source, /employer_visible/)
 })
+
+test("CandidatePortal does not show unimplemented account connectors as connectable", () => {
+  assert.doesNotMatch(source, /label: "GitHub"/)
+  assert.doesNotMatch(source, /label: "Cal\.com"/)
+  assert.doesNotMatch(source, /wkv2-conn__btn--connect/)
+  assert.doesNotMatch(source, />Connect</)
+  assert.doesNotMatch(source, />Manage</)
+})

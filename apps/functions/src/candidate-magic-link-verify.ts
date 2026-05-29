@@ -12,6 +12,7 @@ import { assignCandidateSenderNumber } from "./identity/candidate-sender-number.
 export interface CandidateMagicLinkVerifyInput {
   firebaseIdToken?: string
   source?: string
+  referralSlug?: string | null
   linkedinUrl?: string | null
   /** True when the Firebase session is from LinkedIn OAuth (custom token / li_* uid). */
   linkedinSignIn?: boolean
@@ -100,6 +101,11 @@ export interface CandidateMagicLinkVerifyDeps {
     candidateId: string,
     userData: Record<string, unknown> | null,
   ) => Promise<{ senderNumber?: string; senderGroupId?: string }>
+  attachReferralOnSignup?: (args: {
+    uid: string
+    email: string
+    referralSlug?: string | null
+  }) => Promise<{ matchedReferralId?: string }>
 }
 
 export async function runCandidateMagicLinkVerify(
@@ -159,6 +165,7 @@ export async function runCandidateMagicLinkVerify(
   const browserUid = cleanString(input.browserUid, 128) ?? null
   const displayName =
     cleanString(input.displayName, 200) ?? cleanString(decoded.name, 200) ?? null
+  const referralSlug = cleanString(input.referralSlug, 120)?.toLowerCase() ?? null
   const linkedinUrlInput = cleanString(input.linkedinUrl, 500) ?? null
   const linkedinSignIn = input.linkedinSignIn === true || decoded.uid.startsWith("li_")
   const sourceRaw = cleanString(input.source, 64)
@@ -234,12 +241,15 @@ export async function runCandidateMagicLinkVerify(
     await userRef.set(mergeFields, { merge: true })
 
     // Referral attribution (Adam Q5: same-email match only).
-    // Idempotent: only marks the first pending pa-referrals row for this email
-    // as joined. Failure here must not break sign-in.
+    // Idempotent: email invites are matched by exact lower-cased email first;
+    // shared /r/:slug links create a referral row only after verified signup.
+    // Failure here must not break sign-in.
     if (email) {
       try {
-        const { attachInviteeUserIdByEmail } = await import("./refer-program.js")
-        await attachInviteeUserIdByEmail({ uid: claim.candidateId, email })
+        const attachReferralOnSignup =
+          deps.attachReferralOnSignup ??
+          (await import("./refer-program.js")).attachInviteeReferralOnSignup
+        await attachReferralOnSignup({ uid: claim.candidateId, email, referralSlug })
       } catch (err) {
         // Non-fatal — sign-in flow continues regardless.
         // eslint-disable-next-line no-console

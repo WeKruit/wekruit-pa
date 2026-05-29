@@ -135,8 +135,8 @@ export const PA_COLLECTIONS = {
    * Doc shape: { inviterId, inviteeEmail (lower), inviteeUserId?, stage, slug,
    *   rewardInterviewAmount/Paid, rewardPlacementAmount/Paid, payoutStatus,
    *   note, createdAt, updatedAt, detail? }.
-   * Attribution rule (Adam directive 2026-05-27 Q5): inviteeEmail MUST match
-   * the signing-up user's auth email lower-cased; no fuzzy match.
+   * Attribution rule: inviteeEmail is always the signing-up user's verified
+   * auth email lower-cased; no fuzzy match.
    */
   referrals: "pa-referrals",
   /**
