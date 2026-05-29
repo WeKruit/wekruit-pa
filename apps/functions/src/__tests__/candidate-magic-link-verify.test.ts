@@ -140,7 +140,7 @@ test("runCandidateMagicLinkVerify forwards stored referral slug after verified s
   const { result, status } = await runCandidateMagicLinkVerify(
     {
       firebaseIdToken: "token-ref",
-      referralSlug: "maya-chen",
+      referralSlug: "Maya-Chen",
     },
     undefined,
     {
@@ -191,7 +191,7 @@ test("runCandidateMagicLinkVerify forwards stored referral slug after verified s
     {
       uid: "cand-ref",
       email: "referraluser@example.com",
-      referralSlug: "maya-chen",
+      referralSlug: "Maya-Chen",
     },
   ])
 })
