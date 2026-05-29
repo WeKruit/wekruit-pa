@@ -199,6 +199,7 @@ export default function Landing() {
       <section className="wk-hero">
         <div className="wk-container wk-hero__grid">
           <div className="wk-hero__copy">
+            <AllianceBackedBadge />
             <p className="wk-eyebrow">
               <PulseDot size={7} /> Skip the application. Interview.
             </p>
@@ -253,7 +254,6 @@ export default function Landing() {
               <PulseDot size={6} />
               <span>Claire texts back within a minute.</span>
             </div>
-            <AllianceBackedBadge />
           </div>
         </div>
       </section>
@@ -486,11 +486,12 @@ const LANDING_STYLES = `
 .wk-hero__proof strong { color: var(--wk-ink-2); font-weight: 600; }
 .wk-hero__proof > .wk-avatar { margin-right: -10px; box-shadow: inset 0 0 0 1px rgba(45,26,10,.08), 0 0 0 2px var(--wk-cream-3); }
 .wk-alliance-badge {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 11px;
   max-width: 100%;
   width: fit-content;
+  margin-bottom: 14px;
   padding: 5px 10px 5px 5px;
   border-radius: var(--wk-r-pill);
   border: 1px solid rgba(45, 26, 10, 0.09);
