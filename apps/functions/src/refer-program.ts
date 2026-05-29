@@ -5,8 +5,9 @@
  *   • $50    "interview" — invitee's first hiring-manager interview confirmed
  *   • $4,000 "placement" — invitee signs an offer
  *
- * Attribution rule (Adam Q5): invitee MUST sign up with the *same email*
- * the inviter sent the invite to. No fuzzy match. Strict lower-cased equality.
+ * Attribution rule: email invites match the invitee's verified email by strict
+ * lower-cased equality. Shared /r/:slug links create the referral row only
+ * after the invitee verifies an email.
  *
  * Payouts (Adam Q4): manual for now — when a reward unlocks, the server emails
  * admin1@wekruit.com / adam.ylol@wekruit.com / noah.liu@wekruit.com with the
@@ -44,6 +45,7 @@
  *     detail?               string  (latest human-readable status snippet)
  *   pa-referral-slugs/{slug}    → { uid, createdAt }
  */
+import { createHash } from "node:crypto"
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore"
 import { logger } from "firebase-functions/v2"
 import { onCall, HttpsError, type CallableRequest } from "firebase-functions/v2/https"
@@ -85,6 +87,7 @@ function escapeHtml(s: string): string {
 
 const SLUG_RANDOM_SUFFIX_LEN = 4
 const SLUG_BASE_MAX = 32
+const REFERRAL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/
 
 function slugify(input: string): string {
   return input
@@ -94,6 +97,13 @@ function slugify(input: string): string {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, SLUG_BASE_MAX)
+}
+
+function normalizeReferralSlug(input: unknown): string | null {
+  if (typeof input !== "string") return null
+  const slug = input.trim().toLowerCase()
+  if (!REFERRAL_SLUG_RE.test(slug)) return null
+  return slug
 }
 
 function randomSuffix(): string {
@@ -168,18 +178,16 @@ export const paReferEnsureSlug = onCall<unknown, Promise<{ slug: string }>>(
 // paReferLinkResolve
 // ────────────────────────────────────────────────────────────────────────────
 
-export const paReferLinkResolve = onCall<{ slug: string }, Promise<{ name: string | null }>>(
+export const paReferLinkResolve = onCall<{ slug: string }, Promise<{ name: string | null; valid: boolean }>>(
   { region: "us-central1" },
   async (req: CallableRequest<{ slug: string }>) => {
-    const slug = String(req.data?.slug ?? "")
-      .trim()
-      .toLowerCase()
-    if (!slug) return { name: null }
+    const slug = normalizeReferralSlug(req.data?.slug)
+    if (!slug) return { name: null, valid: false }
     const db = getFirestore()
     const slugSnap = await db.collection(PA_COLLECTIONS.referralSlugs).doc(slug).get()
-    if (!slugSnap.exists) return { name: null }
+    if (!slugSnap.exists) return { name: null, valid: false }
     const uid = slugSnap.get("uid") as string | undefined
-    if (!uid) return { name: null }
+    if (!uid) return { name: null, valid: false }
     const userSnap = await db.collection(PA_COLLECTIONS.users).doc(uid).get()
     const userData = userSnap.data() ?? {}
     const name =
@@ -187,7 +195,7 @@ export const paReferLinkResolve = onCall<{ slug: string }, Promise<{ name: strin
       (userData.fullName as string | undefined) ??
       (userData.firstName as string | undefined) ??
       null
-    return { name: name ?? null }
+    return { name: name ?? null, valid: true }
   },
 )
 
@@ -504,6 +512,86 @@ export async function attachInviteeUserIdByEmail(args: {
     uid: args.uid,
   })
   return { matchedReferralId: docRef.id }
+}
+
+function linkReferralDocId(slug: string, email: string): string {
+  const hash = createHash("sha256").update(`${slug}:${email}`).digest("hex").slice(0, 24)
+  return `link_${slug.slice(0, 40)}_${hash}`
+}
+
+/**
+ * Shared referral links do not know the invitee email until signup. Once the
+ * candidate verifies an email, create an idempotent referral row from the
+ * resolved inviter slug and mark it joined immediately.
+ */
+export async function attachInviteeUserIdByReferralSlug(args: {
+  uid: string
+  email: string
+  referralSlug: string
+}): Promise<{ matchedReferralId?: string }> {
+  const email = args.email.trim().toLowerCase()
+  const slug = normalizeReferralSlug(args.referralSlug)
+  if (!email || !EMAIL_RE.test(email) || !slug) return {}
+
+  const db = getFirestore()
+  const slugSnap = await db.collection(PA_COLLECTIONS.referralSlugs).doc(slug).get()
+  if (!slugSnap.exists) return {}
+  const inviterId = slugSnap.get("uid") as string | undefined
+  if (!inviterId || inviterId === args.uid) return {}
+
+  const referralId = linkReferralDocId(slug, email)
+  const referralRef = db.collection(PA_COLLECTIONS.referrals).doc(referralId)
+  await db.runTransaction(async (tx) => {
+    const existing = await tx.get(referralRef)
+    const patch = {
+      inviteeUserId: args.uid,
+      stage: "joined",
+      detail: "Joined via referral link. Claire is matching them now.",
+      updatedAt: FieldValue.serverTimestamp(),
+    }
+    if (existing.exists) {
+      tx.set(referralRef, patch, { merge: true })
+      return
+    }
+    tx.set(referralRef, {
+      inviterId,
+      inviterSlug: slug,
+      inviteeEmail: email,
+      inviteeUserId: args.uid,
+      stage: "joined",
+      rewardInterviewAmount: REWARD_INTERVIEW,
+      rewardInterviewPaid: false,
+      rewardPlacementAmount: REWARD_PLACEMENT,
+      rewardPlacementPaid: false,
+      payoutStatus: "none",
+      note: "",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      detail: "Joined via referral link. Claire is matching them now.",
+    })
+  })
+
+  logger.info("refer.attachInviteeUserIdByReferralSlug.matched", {
+    referralId,
+    uid: args.uid,
+    slug,
+  })
+  return { matchedReferralId: referralId }
+}
+
+export async function attachInviteeReferralOnSignup(args: {
+  uid: string
+  email: string
+  referralSlug?: string | null
+}): Promise<{ matchedReferralId?: string }> {
+  const byEmail = await attachInviteeUserIdByEmail({ uid: args.uid, email: args.email })
+  if (byEmail.matchedReferralId) return byEmail
+  if (!args.referralSlug) return {}
+  return attachInviteeUserIdByReferralSlug({
+    uid: args.uid,
+    email: args.email,
+    referralSlug: args.referralSlug,
+  })
 }
 
 // ────────────────────────────────────────────────────────────────────────────

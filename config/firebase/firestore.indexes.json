@@ -1,6 +1,36 @@
 {
   "indexes": [
     {
+      "_comment": "Candidate referral dashboard — paReferDashboardList filters by inviter and shows newest referrals first.",
+      "collectionGroup": "pa-referrals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "inviterId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "Candidate referral invite rate limit — paReferInviteSend counts inviter referrals created in the last 24h.",
+      "collectionGroup": "pa-referrals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "inviterId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "_comment": "paPartnerUsersApi — list partner-referred users newest-first, paginated.",
       "collectionGroup": "pa-users",
       "queryScope": "COLLECTION",

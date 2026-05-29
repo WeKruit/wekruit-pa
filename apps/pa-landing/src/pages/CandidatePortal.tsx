@@ -405,22 +405,6 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
       brand: "#34C759",
       letter: "S",
     },
-    {
-      id: "github",
-      label: "GitHub",
-      meta: hasHandle("github") ? "Connected" : "Not connected",
-      connected: hasHandle("github"),
-      brand: "#0B0B0B",
-      letter: "G",
-    },
-    {
-      id: "calcom",
-      label: "Cal.com",
-      meta: hasHandle("calcom") ? "Connected" : "Not connected",
-      connected: hasHandle("calcom"),
-      brand: "#0E1217",
-      letter: "✱",
-    },
   ]
 }
 
@@ -1017,14 +1001,12 @@ function SidebarConnectorsCard({ profile }: { profile: CandidateSelfProfile }) {
               <span className="wkv2-conn__meta">{c.meta}</span>
             </div>
             {c.connected ? (
-              <span className="wkv2-conn__btn">
+              <span className="wkv2-conn__btn wkv2-conn__btn--status">
                 <span className="wkv2-conn__check"><Icon name="check" size={9} stroke={3} /></span>
-                Manage
+                On file
               </span>
             ) : (
-              <Link to="/me/profile" className="wkv2-conn__btn wkv2-conn__btn--connect">
-                Connect
-              </Link>
+              <span className="wkv2-conn__btn wkv2-conn__btn--status wkv2-conn__btn--muted">Not connected</span>
             )}
           </div>
         ))}
@@ -1274,11 +1256,9 @@ function ConnectedAccountsCard({ profile }: { profile: CandidateSelfProfile }) {
               {c.label}
               <span className="wkv2-conn__meta">{c.meta}</span>
             </span>
-            {c.connected ? (
-              <span className="wkv2-conn__btn">Manage</span>
-            ) : (
-              <Link to="/me/profile" className="wkv2-conn__btn wkv2-conn__btn--connect">Connect</Link>
-            )}
+            <span className={`wkv2-conn__btn wkv2-conn__btn--status${c.connected ? "" : " wkv2-conn__btn--muted"}`}>
+              {c.connected ? "On file" : "Not connected"}
+            </span>
           </div>
         ))}
       </div>
@@ -2068,12 +2048,9 @@ const ME_PORTAL_STYLES = `
   white-space: nowrap; text-decoration: none;
 }
 .wkv2-conn__btn:hover { background: var(--wk-cream-2); color: var(--wk-ink); }
-.wkv2-conn__btn--connect {
-  color: var(--wk-live);
-  border: 1px solid var(--wk-live-border);
-  background: var(--wk-live-soft);
-}
-.wkv2-conn__btn--connect:hover { background: var(--wk-cream); color: var(--wk-live-2); }
+.wkv2-conn__btn--status:hover { background: transparent; color: var(--wk-ink-2); }
+.wkv2-conn__btn--muted { color: var(--wk-ink-3); }
+.wkv2-conn__btn--muted:hover { color: var(--wk-ink-3); }
 .wkv2-conn__check {
   width: 14px; height: 14px; border-radius: 50%;
   background: var(--wk-live); color: var(--wk-cream);
