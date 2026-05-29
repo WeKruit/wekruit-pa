@@ -1,10 +1,10 @@
 export const REFERRAL_SLUG_STORAGE_KEY = "pa_referrer_slug"
 
-const REFERRAL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/
+const REFERRAL_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,79}$/
 
 export function normalizeReferralSlug(value: unknown): string | null {
   if (typeof value !== "string") return null
-  const slug = value.trim().toLowerCase()
+  const slug = value.trim()
   if (!REFERRAL_SLUG_RE.test(slug)) return null
   return slug
 }
