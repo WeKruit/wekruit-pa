@@ -12,7 +12,7 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// apps/functions/src/sendblue/pool.ts
+// ../../functions/src/sendblue/pool.ts
 var pool_exports = {};
 __export(pool_exports, {
   _resetPoolCache: () => _resetPoolCache,
@@ -307,14 +307,14 @@ function _resetPoolCache() {
 }
 var cached, POOL_TTL_MS;
 var init_pool = __esm({
-  "apps/functions/src/sendblue/pool.ts"() {
+  "../../functions/src/sendblue/pool.ts"() {
     "use strict";
     cached = null;
     POOL_TTL_MS = 60 * 1e3;
   }
 });
 
-// apps/functions/src/claire-agent/sdk.ts
+// ../../functions/src/claire-agent/sdk.ts
 import { createRequire } from "node:module";
 import OpenAI from "openai";
 var baseRequire = createRequire(import.meta.url);
@@ -346,14 +346,15 @@ function configureClaireSdk() {
   configured = true;
 }
 
-// apps/functions/src/claire-agent/tools/matching-tools.ts
+// ../../functions/src/claire-agent/tools/matching-tools.ts
 import { ROLE_FUNCTION_VOCAB, JOB_TYPE_VOCAB } from "@wekruit/shared-tags";
 import { applyPartialUserTags } from "@pa/pa-orchestrator";
 import { mem0Add } from "@pa/memory";
 import { parseResumeText } from "@pa/pa-resume-parser";
-import { queryMatchingJobsV16 } from "@pa/job-rec";
+import { queryMatchingJobsV16, recordRecommendedJobs } from "@pa/job-rec";
+import { writeFeedbackEvent } from "@pa/pa-persistence";
 
-// apps/functions/src/claire-agent/reducers/matching-profile-reducer.ts
+// ../../functions/src/claire-agent/reducers/matching-profile-reducer.ts
 function dedup(values) {
   const seen = /* @__PURE__ */ new Set();
   const out = [];
@@ -405,7 +406,7 @@ function reduceMatchingPreferences(current, proposal) {
   return { next, changed, removedFromPositive };
 }
 
-// apps/functions/src/production-hardening.ts
+// ../../functions/src/production-hardening.ts
 import { getFirestore as getFirestore3 } from "firebase-admin/firestore";
 import { defineSecret as defineSecret3 } from "firebase-functions/params";
 import { HttpsError as HttpsError3, onCall as onCall3 } from "firebase-functions/v2/https";
@@ -425,7 +426,7 @@ import {
   writePrivacyRequest
 } from "@pa/pa-persistence";
 
-// apps/functions/src/flywheel-eval.ts
+// ../../functions/src/flywheel-eval.ts
 import { createHash } from "node:crypto";
 import { getFirestore as getFirestore2 } from "firebase-admin/firestore";
 import { defineSecret as defineSecret2 } from "firebase-functions/params";
@@ -441,7 +442,7 @@ import {
 } from "@pa/core-types";
 import { writeEvalArtifact } from "@pa/pa-persistence";
 
-// apps/functions/src/promote-sandbox-tag.ts
+// ../../functions/src/promote-sandbox-tag.ts
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import { logger } from "firebase-functions/v2";
@@ -553,7 +554,7 @@ var paPromoteSandboxTag = onCall(
   }
 );
 
-// apps/functions/src/flywheel-eval.ts
+// ../../functions/src/flywheel-eval.ts
 var PA_ADMIN_TOKEN2 = defineSecret2("PA_ADMIN_TOKEN");
 var SAFE_STRUCTURED_KEY_RE = /^[A-Za-z0-9_.:-]{1,80}$/;
 var UNSAFE_KEY_RE = /(?:contact|correctiontext|email|freeform|linkedin|message|phone|prompt|raw|resume|storage|transcript)/i;
@@ -785,7 +786,7 @@ var paFlywheelCorrectionEvalArtifact = onDocumentCreated(
   }
 );
 
-// apps/functions/src/production-hardening.ts
+// ../../functions/src/production-hardening.ts
 var PA_ADMIN_TOKEN3 = defineSecret3("PA_ADMIN_TOKEN");
 var CandidatePrivacyRequestInputSchema = z4.object({
   kind: PrivacyRequestKindSchema,
@@ -1026,7 +1027,7 @@ var paAdminOutreachStopControl = onCall3(
   }
 );
 
-// apps/functions/src/claire-agent/tools/matching-tools.ts
+// ../../functions/src/claire-agent/tools/matching-tools.ts
 var RoleFunctionEnum = z.enum(ROLE_FUNCTION_VOCAB);
 var JobTypeEnum = z.enum(JOB_TYPE_VOCAB);
 var PA_USERS_COLLECTION = "pa-users";
@@ -1073,7 +1074,55 @@ function resolveMem0Config() {
     qdrantCollection: process.env.PA_QDRANT_COLLECTION || void 0
   };
 }
-function makeV16FindMatch(db) {
+async function recordAgentPresentation(db, args) {
+  const jobIds = [
+    ...new Set(
+      args.jobs.map((j) => typeof j.id === "string" ? j.id.trim() : "").filter((id) => id.length > 0)
+    )
+  ];
+  if (jobIds.length === 0) return;
+  const reason = args.fallbackApplied === true ? "general_market_fallback" : "claire_agent";
+  try {
+    await recordRecommendedJobs(
+      db,
+      { userId: args.userId, jobs: jobIds.map((id) => ({ id })), source: "claire_agent", reason, nowIso: args.nowIso },
+      args.log
+    );
+  } catch (err) {
+    args.log("pa.claire.find_match_ledger_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
+  await Promise.all(
+    jobIds.map(async (jobId) => {
+      const event = {
+        eventId: `job-presented-${args.userId}-${jobId}-${args.nowIso}`,
+        kind: "job_presented",
+        actor: "orchestrator",
+        candidateId: args.userId,
+        jobId,
+        outcome: "claire_agent",
+        evidence: [{ source: "job_match", summary: `job offered to candidate via claire_agent` }],
+        payloadRedacted: { flow: "claire_agent", channel: "imessage" },
+        createdAt: args.nowIso
+      };
+      try {
+        await writeFeedbackEvent(db, event);
+      } catch (err) {
+        args.log("pa.claire.find_match_feedback_error", {
+          userId: args.userId,
+          jobId,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    })
+  );
+}
+function makeV16FindMatch(db, opts) {
+  const log = opts?.log ?? (() => {
+  });
+  const nowIso = opts?.nowIso ?? (() => (/* @__PURE__ */ new Date()).toISOString());
   return async ({
     userId,
     requestedCount
@@ -1081,7 +1130,17 @@ function makeV16FindMatch(db) {
     try {
       const limit = typeof requestedCount === "number" && requestedCount > 0 ? Math.min(5, Math.floor(requestedCount)) : 3;
       const result = await queryMatchingJobsV16({ userId, limit }, { db });
-      const jobs = (result.jobs ?? []).map((j) => {
+      const rawJobs = result.jobs ?? [];
+      if (rawJobs.length > 0) {
+        await recordAgentPresentation(db, {
+          userId,
+          jobs: rawJobs,
+          fallbackApplied: result.fallbackApplied,
+          log,
+          nowIso: nowIso()
+        });
+      }
+      const jobs = rawJobs.map((j) => {
         const title = (j.jobTitle || j.roleTitle || "Role").trim();
         const company = (j.companyName || "Company").trim();
         const url = (j.atsApplyUrl ?? "").trim();
@@ -1469,7 +1528,7 @@ ${url}` : `${title} @ ${company}`;
   ];
 }
 
-// apps/functions/src/claire-agent/tools/delivery-tools.ts
+// ../../functions/src/claire-agent/tools/delivery-tools.ts
 function buildDeliveryTools(ctx) {
   const reactToUser = tool({
     name: "react_to_user",
@@ -1503,7 +1562,7 @@ function buildDeliveryTools(ctx) {
   return [reactToUser, sendStatusThenContinue, noReply];
 }
 
-// apps/functions/src/claire-agent/reducers/onboarding-fsm.ts
+// ../../functions/src/claire-agent/reducers/onboarding-fsm.ts
 import { SHARED_ONBOARDING_QUESTIONS } from "@pa/pa-orchestrator";
 var DEFAULT_ONBOARDING_SLOTS = SHARED_ONBOARDING_QUESTIONS.map(
   (q) => q.id
@@ -1545,7 +1604,7 @@ function recordOnboardingAnswer(state, slot, answer) {
   return { ok: true, recorded: slot, pending: next, complete: state.complete };
 }
 
-// apps/functions/src/claire-agent/tools/process-tools.ts
+// ../../functions/src/claire-agent/tools/process-tools.ts
 import {
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
@@ -1555,7 +1614,7 @@ import {
   SHARED_ONBOARDING_WORK_SESSION_KIND
 } from "@pa/pa-orchestrator";
 
-// apps/functions/src/claire-agent/reducers/prescreen-fsm.ts
+// ../../functions/src/claire-agent/reducers/prescreen-fsm.ts
 var DEFAULT_PRESCREEN_THRESHOLD = 0.6;
 function earliestPending2(state) {
   return state.questions.find((q) => !(q in state.scores)) ?? null;
@@ -1611,7 +1670,7 @@ function recordPrescreenScore(state, question, score) {
   };
 }
 
-// apps/functions/src/claire-agent/tools/process-tools.ts
+// ../../functions/src/claire-agent/tools/process-tools.ts
 function asSharedSlot(slot) {
   return DEFAULT_ONBOARDING_SLOTS.includes(slot) ? slot : null;
 }
@@ -1788,7 +1847,7 @@ Candidate answer: ${answer}`);
   ];
 }
 
-// apps/functions/src/claire-agent/tools/index.ts
+// ../../functions/src/claire-agent/tools/index.ts
 function buildClaireTools(ctx) {
   return [
     ...buildMatchingTools(ctx),
@@ -1797,7 +1856,7 @@ function buildClaireTools(ctx) {
   ];
 }
 
-// apps/functions/src/claire-agent/prompt.ts
+// ../../functions/src/claire-agent/prompt.ts
 var PERSONA = [
   "You are Claire, a warm, concise recruiter friend texting a candidate on iMessage.",
   "Text like a real friend: short (1-2 sentences), lowercase-ok, contractions, use 2025 slang naturally",
@@ -1908,7 +1967,7 @@ function buildClairePrompt(opts) {
   ].filter(Boolean).join("\n");
 }
 
-// apps/functions/src/claire-agent/guardrails.ts
+// ../../functions/src/claire-agent/guardrails.ts
 import { checkPromptInjection, detectCrisisInInput } from "@pa/pa-safety";
 import { normalizeForIMessage } from "@pa/pa-orchestrator";
 var EXTRA_INJECTION_PATTERNS = [
@@ -2008,7 +2067,7 @@ function normalizeReply(text) {
   }).text;
 }
 
-// apps/functions/src/claire-agent/delivery.ts
+// ../../functions/src/claire-agent/delivery.ts
 var SLOW_TOOLS = ["find_match", "match_collab", "cv_parse"];
 async function markReadReflex(ctx) {
   await ctx.transport.markRead();
@@ -2030,7 +2089,7 @@ async function deliverFinalText(ctx, finalText, deliveredViaTool = false) {
   return true;
 }
 
-// apps/functions/src/claire-agent/session.ts
+// ../../functions/src/claire-agent/session.ts
 import { FirestoreSession } from "@pa/agent-runtime";
 function makeClaireSession(deps) {
   return new FirestoreSession({
@@ -2040,7 +2099,7 @@ function makeClaireSession(deps) {
   });
 }
 
-// apps/functions/src/claire-agent/agent.ts
+// ../../functions/src/claire-agent/agent.ts
 import { appendHotlineIfMissing } from "@pa/pa-safety";
 var CLAIRE_MODEL = "gpt-5.4-nano";
 var RUN_TIMEOUT_MS = 6e4;
@@ -2190,10 +2249,10 @@ async function runClaireTurn(input, deps) {
   return { finalText, toolCalls: [], deliveredViaTool: deliveredViaTool || blocked };
 }
 
-// apps/functions/src/claire-agent/transport.ts
+// ../../functions/src/claire-agent/transport.ts
 import { createHash as createHash2 } from "node:crypto";
 
-// apps/functions/src/sendblue/circuit-breaker.ts
+// ../../functions/src/sendblue/circuit-breaker.ts
 var FAILURE_THRESHOLD = 5;
 var OPEN_DURATION_MS = 6e4;
 var states = /* @__PURE__ */ new Map();
@@ -2224,7 +2283,7 @@ function recordSendblueSuccess(key = "sendblue") {
   s.openedAt = null;
 }
 
-// apps/functions/src/sendblue/sendblue-client.ts
+// ../../functions/src/sendblue/sendblue-client.ts
 var SEND_MESSAGE_URL = "https://api.sendblue.co/api/send-message";
 var DEFAULT_TIMEOUT_MS = 3e4;
 var SendblueClientError = class extends Error {
@@ -2344,7 +2403,7 @@ async function sendImessage(input, creds = getSendblueCreds()) {
   throw new SendblueClientError(resp.status, message, parsed, retryAfter ?? void 0);
 }
 
-// apps/functions/src/sendblue/typing-indicator.ts
+// ../../functions/src/sendblue/typing-indicator.ts
 var TYPING_URL = "https://api.sendblue.co/api/send-typing-indicator";
 var TYPING_TIMEOUT_MS = 5e3;
 async function sendTypingIndicator(input, creds = getSendblueCreds(), log = console.log) {
@@ -2378,7 +2437,7 @@ async function sendTypingIndicator(input, creds = getSendblueCreds(), log = cons
   }
 }
 
-// apps/functions/src/sendblue/read-receipt.ts
+// ../../functions/src/sendblue/read-receipt.ts
 var MARK_READ_URLS = [
   "https://api.sendblue.com/api/mark-read",
   "https://api.sendblue.co/api/mark-read"
@@ -2416,7 +2475,7 @@ async function sendReadReceipt(input, creds = getSendblueCreds(), log = console.
   );
 }
 
-// apps/functions/src/sendblue/send-reaction.ts
+// ../../functions/src/sendblue/send-reaction.ts
 var SEND_REACTION_URL = "https://api.sendblue.com/api/send-reaction";
 var REACTION_BREAKER_KEY = "sendblue-reaction";
 var DEFAULT_TIMEOUT_MS2 = 3e4;
@@ -2511,7 +2570,7 @@ async function resolveReactionFromNumber(input, creds) {
   return input.allowEnvFromNumberFallback === false ? void 0 : creds.fromNumber;
 }
 
-// apps/functions/src/claire-agent/transport.ts
+// ../../functions/src/claire-agent/transport.ts
 import { enqueueOutbound as defaultEnqueueOutbound } from "@pa/pa-broker";
 var noopLog = (_event, _payload) => {
 };
@@ -2640,10 +2699,10 @@ function createSendblueTransport(deps) {
   };
 }
 
-// apps/functions/src/claire-agent/cutover.ts
+// ../../functions/src/claire-agent/cutover.ts
 import { PA_COLLECTIONS as PA_COLLECTIONS3 } from "@pa/core-types";
 
-// apps/functions/src/claire-agent/flags.ts
+// ../../functions/src/claire-agent/flags.ts
 import { getFlag } from "@pa/pa-persistence";
 var THIN_CLAIRE_FLAG_KEY = "paThinClaireEnabled";
 var THIN_CLAIRE_CANARY_UIDS = [
@@ -2663,7 +2722,7 @@ async function isThinClaireEnabled(db, userId) {
   return value === true;
 }
 
-// apps/functions/src/claire-agent/mode-selector.ts
+// ../../functions/src/claire-agent/mode-selector.ts
 import {
   isSharedOnboardingActiveUser,
   currentSharedOnboardingQuestionId,
@@ -2771,7 +2830,7 @@ async function selectClaireMode(args) {
   return { mode: "triage" };
 }
 
-// apps/functions/src/claire-agent/cutover.ts
+// ../../functions/src/claire-agent/cutover.ts
 async function maybeRunThinClaire(db, eventId, deps = {}) {
   const log = deps.log ?? (() => {
   });

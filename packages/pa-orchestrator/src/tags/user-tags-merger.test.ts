@@ -242,7 +242,13 @@ test("mergeUserTags: workHistory entry with `role` (alt key) honored when title 
   assert.equal(out.recentRoleTitle, "Lead Eng")
 })
 
-test("mergeUserTags: resume-only intern title infers intern career stage and internship target job type", () => {
+test("mergeUserTags: résumé-only 'Intern' title is HISTORY, not a TARGET — no targetJobType, careerStage UNSET (live recall bug fix)", () => {
+  // THE LIVE BUG: a candidate whose recent title was "Software Engineer Intern"
+  // (with empty statedPreferences / no YoE) used to get
+  // `targetJobType=[internship]` + `careerStage='intern'` derived from HISTORY.
+  // V16 then hard-dropped every non-internship job → recCount=0. Contract fix:
+  // targetJobType is INTENT-ONLY (UNSET here), and an intern title with no YoE
+  // leaves careerStage UNSET so the matcher widens its seniority window.
   const out = mergeUserTags({
     cv: {
       candidateProfile: { skills: ["Python", "TypeScript", "React"] },
@@ -253,13 +259,20 @@ test("mergeUserTags: resume-only intern title infers intern career stage and int
     },
   })
 
+  // HISTORY fields still emit.
   assert.equal(out.recentRoleTitle, "Software Engineer Intern")
-  assert.equal(out.careerStage, "intern")
-  assert.deepEqual(out.targetJobType, ["internship"])
+  assert.equal(out.skills.length > 0, true)
+  // TARGET hard-filter fields are NOT inferred from the résumé.
+  assert.equal(out.targetJobType, undefined, "targetJobType must be INTENT-only, not résumé-derived")
+  assert.notEqual(out.careerStage, "intern", "intern TITLE must not pin careerStage as a target")
+  assert.notEqual(out.careerStage, "student")
+  assert.equal(out.careerStage, undefined, "intern title + no YoE → careerStage UNSET (matcher widens window)")
+  // targetRoleFunction IS the single allowed résumé→target derivation (role
+  // family from a SWE résumé is a reasonable last-resort default).
   assert.deepEqual(out.targetRoleFunction, ["software_engineering"])
 })
 
-test("mergeUserTags: explicit stated target job type wins over resume-title inference", () => {
+test("mergeUserTags: stated targetJobType=['full_time'] (intent) wins — résumé intern title contributes nothing", () => {
   const out = mergeUserTags({
     cv: { workHistory: [{ title: "Software Engineer Intern", company: "Tesla" }] },
     statedPreferences: {
@@ -268,8 +281,11 @@ test("mergeUserTags: explicit stated target job type wins over resume-title infe
     } as StatedPreferences & { targetJobType: string[] },
   })
 
-  assert.equal(out.careerStage, "intern")
+  // Intent wins for jobType.
   assert.deepEqual(out.targetJobType, ["full_time"])
+  // careerStage still UNSET (intern title, no YoE, no stated careerStage) —
+  // the title never pins a target stage.
+  assert.equal(out.careerStage, undefined)
 })
 
 test("mergeUserTags: workHistorySummary joins first 3 roles with '; '", () => {
@@ -549,20 +565,26 @@ test("mergeUserTags: résumé totalYearsExperience + recent TA title → NOT int
   assert.equal(out.careerStage, "mid_level")
 })
 
-test("mergeUserTags: genuine intern (no/low yoe) stays intern — reconcile does NOT over-fire", () => {
-  // No yoe signal at all → title wins (existing behavior preserved).
+test("mergeUserTags: intern title never pins careerStage as a TARGET (UNSET when no YoE; YoE band wins when present)", () => {
+  // Capture-merger-writer contract (2026-05-29): an intern/student TITLE is a
+  // soft HISTORY hint, NOT a target. With no YoE signal at all, careerStage is
+  // left UNSET so the V16 matcher widens its seniority window (this is the
+  // recall-bug fix — pinning 'intern' over-filtered to internship-only jobs).
   const noYoe = mergeUserTags({
     cv: { workHistory: [{ title: "Software Engineer Intern", company: "Tesla" }] },
   })
-  assert.equal(noYoe.careerStage, "intern")
-  // <2y yoe → below the NON_INTERN threshold → title still wins.
+  assert.equal(noYoe.careerStage, undefined, "intern title + no YoE → UNSET, not 'intern'")
+  // With a YoE signal present, prefer the YoE-derived band over the title even
+  // below the 2y reconcile threshold (1y → entry_level band) — the title is the
+  // weaker signal.
   const lowYoe = mergeUserTags({
     cv: {
       workHistory: [{ title: "Software Engineer Intern", company: "Tesla" }],
       totalYearsExperience: 1,
     },
   })
-  assert.equal(lowYoe.careerStage, "intern")
+  assert.notEqual(lowYoe.careerStage, "intern")
+  assert.equal(lowYoe.careerStage, "entry_level", "1y YoE band wins over intern title")
 })
 
 test("mergeUserTags: explicit onboarding-stated careerStage stays authoritative over reconcile", () => {

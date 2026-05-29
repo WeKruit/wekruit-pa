@@ -987,15 +987,29 @@ const NON_INTERN_YOE_THRESHOLD = 2
 /**
  * Reconcile the title-derived and yoe-derived career stage.
  *
+ * `careerStage` is a TARGET hard-filter axis (V16 builds a seniority window
+ * around it). A résumé title is a SOFT HINT, NOT a target — the live bug was
+ * "Software Engineer Intern" history pinning `careerStage = "intern"`, which
+ * (with empty `targetLocations`) over-filtered the matcher to zero. So a
+ * downward intern/student TITLE must never become a hard `intern`/`student`
+ * target on its own. Capture-merger-writer contract (2026-05-29).
+ *
  * Precedence (do NOT change without milestone):
  *  1. Onboarding-stated `careerStage` is authoritative (handled by caller).
- *  2. Otherwise prefer the title-derived stage …
- *  3. … EXCEPT when the title-derived stage is `intern`/`student` while YoE
- *     (résumé `totalYearsExperience` or onboarding `yoeRange`) indicates
- *     ≥ ~2 years AND the yoe-derived stage is genuinely more senior. In that
- *     case the recent intern/TA gig is overriding a multi-year career, so we
- *     prefer the yoe-derived stage.
- *  4. Fall back to the yoe-derived stage when there is no title signal.
+ *  2. Prefer the YoE-derived stage for an intern/student title (YoE is a
+ *     stronger, intent-adjacent signal than a possibly-stale recent gig):
+ *     - YoE ≥ ~2y and genuinely more senior → use the yoe-derived stage
+ *       (a recent intern/TA gig overriding a multi-year career).
+ *     - any yoe-derived stage present → prefer it over the intern/student
+ *       title (the title is a soft hint, the YoE band is the better target).
+ *  3. … and when an intern/student title has NO YoE signal at all → leave
+ *     careerStage UNSET (return `undefined`) rather than pinning it to
+ *     `intern`/`student` as a target. An unset stage lets the V16 matcher
+ *     apply its widened (no-window) seniority bypass instead of clamping to
+ *     intern-only jobs.
+ *  4. A non-intern title with no YoE → keep the title-derived stage (a real
+ *     "Senior Engineer" title is a reasonable target hint).
+ *  5. No title signal → fall back to the yoe-derived stage.
  *
  * `yoeYearsHigh` is the high end of the YoE signal (max of yoeRange, or the
  * scalar totalYearsExperience) — used to apply the ≥2-year floor.
@@ -1006,14 +1020,21 @@ function reconcileCareerStage(
   yoeYearsHigh: number | undefined,
 ): CareerStage | undefined {
   if (!titleStage) return yoeStage
-  if (
-    JUNIOR_TITLE_STAGES.has(titleStage) &&
-    yoeStage &&
-    typeof yoeYearsHigh === "number" &&
-    yoeYearsHigh >= NON_INTERN_YOE_THRESHOLD &&
-    CAREER_STAGE_INDEX[yoeStage] > CAREER_STAGE_INDEX[titleStage]
-  ) {
-    return yoeStage
+  if (JUNIOR_TITLE_STAGES.has(titleStage)) {
+    // Intern/student TITLE: never pin it as a hard target.
+    if (
+      yoeStage &&
+      typeof yoeYearsHigh === "number" &&
+      yoeYearsHigh >= NON_INTERN_YOE_THRESHOLD &&
+      CAREER_STAGE_INDEX[yoeStage] > CAREER_STAGE_INDEX[titleStage]
+    ) {
+      return yoeStage
+    }
+    // Any yoe-derived stage present → prefer it over the soft title hint.
+    if (yoeStage) return yoeStage
+    // No YoE signal at all → leave UNSET so the matcher widens the window
+    // instead of clamping to intern/student-only jobs.
+    return undefined
   }
   return titleStage
 }
@@ -1051,18 +1072,13 @@ function deriveCareerStageFromTitle(title: string | undefined): CareerStage | un
   return undefined
 }
 
-function deriveTargetJobTypeFromProfile(
-  title: string | undefined,
-  careerStage: CareerStage | undefined,
-): UserTags["targetJobType"] {
-  const t = title?.trim().toLowerCase() ?? ""
-  if (/\bintern(ship)?\b/.test(t) || careerStage === "intern" || careerStage === "student") {
-    return ["internship"]
-  }
-  if (/\b(new\s+grad|graduate)\b/.test(t)) return ["new_graduate"]
-  if (careerStage === "entry_level") return ["full_time", "new_graduate"]
-  return undefined
-}
+// NOTE (capture-merger-writer contract, 2026-05-29): the former
+// `deriveTargetJobTypeFromProfile(title, careerStage)` helper was REMOVED.
+// `targetJobType` is a TARGET hard-filter axis and must come from INTENT only
+// (statedPreferences / onboarding / extractor) — never from the résumé title
+// or a title-derived careerStage. Deriving a target jobType from a "...Intern"
+// history title (→ `["internship"]`) was the live recall bug. Do NOT
+// reintroduce a résumé→targetJobType derivation.
 
 function mapCompanySizePreference(value: unknown): UserTags["companySize"] {
   if (
@@ -1167,6 +1183,19 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   // ---- chat side ------------------------------------------------------
   const targetRoleValues = stringsFromUnknown(statedPreferences?.targetRole)
   const targetRole = targetRoleValues.length > 0 ? [...targetRoleValues] : undefined
+  // RÉSUMÉ→TARGET DERIVATION — SINGLE ALLOWED EXCEPTION (capture-merger-writer
+  // contract, 2026-05-29). `targetRoleFunction` is a TARGET hard-filter axis,
+  // and almost every target axis must come from INTENT (statedPreferences /
+  // onboarding / extractor), NEVER from the résumé. The ONE exception is
+  // `targetRoleFunction`: inferring the role family from the candidate's recent
+  // title / skill mix is reasonable as a LAST-RESORT default when intent gave
+  // us nothing (a SWE résumé → targeting software_engineering is a sane guess,
+  // and an empty `targetRoleFunction` makes V16 fall back to a non-role-gated
+  // query). statedPreferences ALWAYS wins; CV-title and CV-skill derivations
+  // only fire when intent is empty. This is intentionally distinct from
+  // `targetJobType` (intent-ONLY — see below — because "Software Engineer
+  // Intern" history must NOT become a `targetJobType=[internship]` hard filter)
+  // and `careerStage` (title is a soft hint only — see below).
   const targetRoleFunction =
     deriveTargetRoleFunctionFromStatedPreferences(statedPreferences) ??
     deriveTargetRoleFunctionFromCvTitle(recentRoleTitle) ??
@@ -1225,10 +1254,22 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
           ? Math.max(0, Math.floor(statedPreferences.salaryFloor))
           : undefined
   const companySize = mapCompanySizePreference(statedPreferencesExt?.companySize)
+  // targetJobType is INTENT-ONLY (capture-merger-writer contract, 2026-05-29).
+  // THE LIVE BUG: this previously had a
+  //   `?? deriveTargetJobTypeFromProfile(recentRoleTitle, careerStage)`
+  // résumé fallback, so a candidate whose recent title was "Software Engineer
+  // Intern" got `targetJobType = ["internship"]` — a TARGET hard filter
+  // inferred from HISTORY. V16 then hard-dropped every non-internship job →
+  // recCount=0. targetJobType is a TARGET axis (what the candidate wants NOW),
+  // never derivable from what they did BEFORE. It is set ONLY from
+  // statedPreferences (onboarding / triage / extractor intent). When intent
+  // carries none → leave UNSET so the matcher does not gate on jobType at all
+  // (the matcher domain owns the intent-confirmed graceful fallback, NOT the
+  // résumé). `deriveTargetJobTypeFromProfile` is intentionally retired here.
   const targetJobType = deriveTargetJobTypeFromStatedPreferences(
     statedPreferencesExt?.targetJobType,
     statedPreferencesExt?.targetJobTypes
-  ) ?? deriveTargetJobTypeFromProfile(recentRoleTitle, careerStage)
+  )
 
   // ---- Phase B2 — company preference pass-through ---------------------
   // targetCompanyTags: dedupe + lowercase, cap at 30 to mirror UserTagsSchema.

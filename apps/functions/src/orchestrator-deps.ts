@@ -145,6 +145,31 @@ export function resolveRuntimeJobRecRoleFocus(explicitFocus: unknown, userTags: 
 }
 
 /**
+ * Rec tracking (req #4, 2026-05-29) — pick the attribution `reason` label for a
+ * `recordRecommendedJobs` ledger row from the V16 matcher result + the call
+ * intent. Single source of truth so the orchestrator-deps path and the
+ * claire_agent tool path tag the same canonical vocabulary:
+ *
+ *   - `collab_prescreen`        — collab/partner-only request (opts.collabPrescreenOnly).
+ *   - `general_market_fallback` — V16 relaxed all hard filters and surfaced
+ *     general scraped-market jobs (out.fallbackApplied) so Claire is never
+ *     dead-silent (req #5).
+ *   - `runtime_job_search_reply`— the default curated/collab+market mix.
+ *
+ * Pure + exported for unit test (orchestrator-deps.test.ts): the un-DI'd
+ * `makeGenerateJobRecs` reads Firestore directly, so we lock the reason-
+ * selection contract here rather than driving the whole closure.
+ */
+export function resolveRecommendationReason(args: {
+  collabPrescreenOnly?: boolean
+  fallbackApplied?: boolean
+}): "collab_prescreen" | "general_market_fallback" | "runtime_job_search_reply" {
+  if (args.collabPrescreenOnly === true) return "collab_prescreen"
+  if (args.fallbackApplied === true) return "general_market_fallback"
+  return "runtime_job_search_reply"
+}
+
+/**
  * Phase 61 hotfix — V16 cutover. Replaces the legacy `queryMatchingJobs`
  * call (which read fragmented sources: parsedCandidateResumes.topSkills +
  * pa-users.statedPreferences) with `queryMatchingJobsV16` (single-source
@@ -507,13 +532,34 @@ function makeGenerateJobRecs(): NonNullable<
         total: out.total,
         dropped: out.dropped,
         llmCacheStale: out.llmCacheStale ?? false,
+        fallbackApplied: out.fallbackApplied ?? false,
+        relaxedHardFilters: out.relaxedHardFilters ?? [],
       })
+      // Rec tracking (req #4/#5) — distinguish WHY the batch was surfaced so the
+      // flywheel can tell a curated/collab mix apart from a general-market
+      // fallback. `source` stays the coarse scalar; `reason` is the precise
+      // ledger label resolved from the matcher result + intent.
+      const recommendationReason = resolveRecommendationReason({
+        collabPrescreenOnly: opts?.collabPrescreenOnly,
+        fallbackApplied: out.fallbackApplied,
+      })
+      if (out.fallbackApplied === true) {
+        // req #5 — Claire fell back to general scraped-market jobs (no curated/
+        // collab match). Surface it so the never-dead-silence path is auditable.
+        logger.info("pa.match.general_market_fallback_activated", {
+          userId,
+          visible: messageItems.length,
+          total: out.total,
+          relaxedHardFilters: out.relaxedHardFilters ?? [],
+        })
+      }
       await recordRecommendedJobs(
         db,
         {
           userId,
           jobs: messageItems.map((item) => item.sourceJob),
           source: "runtime_job_search_reply",
+          reason: recommendationReason,
         },
           (event, payload) => logger.info("[job-recs]", { event, ...(payload ?? {}) }),
       )

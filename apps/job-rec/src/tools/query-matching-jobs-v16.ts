@@ -38,6 +38,7 @@ import { createRequire } from "node:module"
 import type { UserTags } from "@pa/pa-orchestrator"
 import {
   acceptableCareerStages,
+  earlyCareerRelaxWindow,
   type CareerStage,
   CAREER_STAGE_VOCAB,
   CAREER_STAGE_INDEX,
@@ -460,18 +461,22 @@ function inferCandidateCareerStage(
   return inferCareerStageFromYears(derivedExperience?.yearsTotal ?? userDoc?.totalYearsExperience)
 }
 
-function inferTargetJobTypeFromProfile(tags: UserTags, careerStage: CareerStage | undefined): UserTags["targetJobType"] {
-  const title = [
-    typeof tags.recentRoleTitle === "string" ? tags.recentRoleTitle : undefined,
-    firstWorkHistoryTitle(tags.workHistorySummary),
-  ]
-    .filter((part): part is string => Boolean(part))
-    .join(" ")
-    .toLowerCase()
-  if (/\bintern(ship)?\b/.test(title) || careerStage === "intern" || careerStage === "student") {
-    return ["internship"]
-  }
-  if (/\b(new\s+grad|graduate)\b/.test(title)) return ["new_graduate"]
+/**
+ * Live-bug fix (2026-05-29): a candidate's RÉSUMÉ saying "Software Engineer
+ * Intern" must NOT set `targetJobType=['internship']`. Target job type is an
+ * INTENT field (what you want next), not a HISTORY field (what you did). The
+ * candidate who interned last summer is overwhelmingly targeting full-time
+ * roles. Inferring `internship` from a résumé title (or a careerStage that was
+ * itself title-inferred) drops every full-time job at the jobType hard gate →
+ * recCount=0. This mirrors the merger-side Rule 1 fix so neither layer
+ * re-injects a résumé-derived internship target.
+ *
+ * The narrow safe inference that survives: an `entry_level` candidate gets the
+ * broad early-career target `['full_time', 'new_graduate']` (no `internship`,
+ * which would hard-drop full-time inventory). Everything else → `undefined`
+ * (no jobType constraint at all, which the hard gate no-ops on).
+ */
+function inferTargetJobTypeFromProfile(_tags: UserTags, careerStage: CareerStage | undefined): UserTags["targetJobType"] {
   if (careerStage === "entry_level") return ["full_time", "new_graduate"]
   return undefined
 }
@@ -808,8 +813,38 @@ function isSponsorshipNeeded(visaStatus: string | undefined): boolean {
   return visaStatus === "sponsor_needed" || visaStatus === "sponsorship_needed"
 }
 
-/** Anywhere bypass tokens (location intersect skipped when present in user). */
-const ANYWHERE_LOCATION_TOKENS = new Set(["remote_anywhere", "remote_global", "anywhere", "any"])
+/**
+ * Anywhere bypass tokens (location intersect skipped when present in user).
+ *
+ * Recall fix (2026-05-29): `remote` is added so a user who said "open to
+ * remote" (captured as `targetLocations=['remote']`) bypasses the metro
+ * intersect the same way an explicit `anywhere` token does. `remote_anywhere`
+ * was already present (job-side anywhere bypass). The US-only country gate
+ * (see `userWantsUsOnly` below) still runs even when a token here matches, so
+ * a `sponsor_needed` / US-target user is never leaked a non-US-only role.
+ */
+const ANYWHERE_LOCATION_TOKENS = new Set([
+  "remote_anywhere",
+  "remote_global",
+  "remote",
+  "anywhere",
+  "any",
+])
+
+/**
+ * True when the user has NO location constraint that would block roles: an
+ * empty `targetLocations` ("open to anything") OR an explicit anywhere/remote
+ * token. Mirrors the `isAnywhere` computation inside `applyV16HardFilters` so
+ * the careerStage relax ladder only fires for candidates whose location isn't
+ * the real blocker.
+ */
+function isAnywhereLocation(tags: UserTags): boolean {
+  const targetLocations = Array.isArray(tags.targetLocations)
+    ? tags.targetLocations.filter((l): l is string => typeof l === "string")
+    : []
+  if (targetLocations.length === 0) return true
+  return targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()))
+}
 
 // ---------------------------------------------------------------------------
 // SOFT-vs-HARD preference model (2026-05-28)
@@ -1044,7 +1079,23 @@ export function applyV16HardFilters(
   userTags: UserTags,
   nowMs: number = Date.now(),
   freshnessWindowMs: number = FRESHNESS_WINDOW_MS,
-  options: { relaxSpecificLocation?: boolean; preferenceHardnessEnabled?: boolean } = {},
+  options: {
+    relaxSpecificLocation?: boolean
+    preferenceHardnessEnabled?: boolean
+    /**
+     * Recall fix (2026-05-29) — careerStage relax ladder rung:
+     *   - `undefined` / `"strict"` → default ±1 `matchingCareerStageWindow`.
+     *   - `"early_down"` → early-career window widened ONE tier DOWN
+     *     (`earlyCareerRelaxWindow`) so a junior/entry candidate matches legit
+     *     intern-tagged roles; never widens UP (no senior leakage).
+     *   - `"all"` → last-resort: skip the careerStage gate entirely.
+     * The caller (`queryMatchingJobsV16`) only escalates this when
+     * `counters.careerStage` is the dominant zero-blocker AND the candidate is
+     * early-career with no/anywhere location. The SOFT-vs-HARD widened window
+     * (flag ON) takes precedence over this when active.
+     */
+    careerStageRelax?: "strict" | "early_down" | "all"
+  } = {},
 ): { kept: MatchingJob[]; counters: V16HardFilterCounters } {
   const counters: V16HardFilterCounters = {
     visa: 0,
@@ -1079,9 +1130,16 @@ export function applyV16HardFilters(
   const targetLocations = Array.isArray(userTags.targetLocations)
     ? userTags.targetLocations.filter((l): l is string => typeof l === "string")
     : []
-  const isAnywhere = targetLocations.some((l) =>
-    ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase())
-  )
+  // Recall fix (2026-05-29): an EMPTY targetLocations set ("open to anything"
+  // that captured nothing) is treated as anywhere — the candidate has no
+  // location constraint, so the metro intersect must not zero them out. This
+  // mirrors an explicit `anywhere`/`remote` token. The `userWantsUsOnly`
+  // country gate below is NOT bypassed by this (a sponsor_needed / US-target
+  // user still drops non-US-only roles); only the metro intersect + the
+  // careerStage relax ladder consult `isAnywhere`.
+  const isAnywhere =
+    targetLocations.length === 0 ||
+    targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()))
   const targetLocationSet = new Set(targetLocations.map((l) => l.trim().toLowerCase()))
   // careerStage window — only enforce when both user + job sides present.
   // W5 — `careerStage`, `targetJobType`, `targetRoleFunction`, `relevantTags`,
@@ -1137,13 +1195,24 @@ export function applyV16HardFilters(
   // `bufferSteps` extra ordinal tiers each side (the default hard window stays
   // exactly `matchingCareerStageWindow`). Flag OFF → `hCareerStage` is null →
   // the original window is used unchanged.
-  const acceptableStages = careerStageValid
-    ? new Set(
-        hCareerStage && hCareerStage.hardness === "soft"
-          ? widenCareerStageWindow(careerStage as CareerStage, hCareerStage.bufferSteps)
-          : matchingCareerStageWindow(careerStage as CareerStage),
-      )
-    : null
+  // Recall fix (2026-05-29) — careerStage relax ladder. Precedence:
+  //   1. SOFT-vs-HARD widened window (flag ON + axis soft) wins.
+  //   2. else the explicit `careerStageRelax` rung:
+  //        "all"        → no window (gate skipped via null below)
+  //        "early_down" → early-career one-tier-down window
+  //        strict/undef → default ±1 window
+  const careerStageRelax = options.careerStageRelax ?? "strict"
+  const careerStageWindow = (s: CareerStage): CareerStage[] => {
+    if (hCareerStage && hCareerStage.hardness === "soft") {
+      return widenCareerStageWindow(s, hCareerStage.bufferSteps)
+    }
+    if (careerStageRelax === "early_down") return earlyCareerRelaxWindow(s)
+    return matchingCareerStageWindow(s)
+  }
+  const acceptableStages =
+    careerStageValid && careerStageRelax !== "all"
+      ? new Set(careerStageWindow(careerStage as CareerStage))
+      : null
   const targetJobType = userTags.targetJobType
   const legacyTargetJobTypes = (userTags as unknown as { targetJobTypes?: string[] }).targetJobTypes
   const targetJobTypesRaw = Array.isArray(targetJobType)
@@ -1405,6 +1474,161 @@ export function applyV16HardFilters(
       }
     }
 
+    kept.push(job)
+  }
+  return { kept, counters }
+}
+
+/**
+ * Market fallback (req #5, 2026-05-29) — relaxed hard-filter chain used ONLY
+ * when the strict cascade (+ location relax + careerStage relax) yields zero
+ * jobs. Keeps the SAFETY gates that must never be bypassed:
+ *   - visa intersect (sponsor_needed → require sponsorship=true)
+ *   - US-only country gate (sponsor_needed / US-target → drop non-US-only)
+ *   - freshness window (firstSeenAt within window)
+ *   - atsApplyUrl present + not jobright.ai
+ *   - dead !== true
+ *   - negative company / role-function / industry subtracts
+ * but SKIPS the preference gates that over-filter to zero:
+ *   - location intersect
+ *   - careerStage window
+ *   - jobType intersect
+ * so Claire ALWAYS has something real to offer rather than dead-silence. The
+ * survivors are scored normally; matchSourceLabel on fallback jobs stays
+ * 'general match'. Pure / deterministic. Mirrors the relevant gates in
+ * `applyV16HardFilters` 1:1 (any future gate change there must mirror here).
+ */
+export function applyFallbackHardFilters(
+  jobs: MatchingJob[],
+  userTags: UserTags,
+  nowMs: number = Date.now(),
+  freshnessWindowMs: number = FRESHNESS_WINDOW_MS,
+): { kept: MatchingJob[]; counters: V16HardFilterCounters } {
+  const counters = zeroV16Counters()
+  if (!Array.isArray(jobs) || jobs.length === 0) return { kept: [], counters }
+
+  const sponsorshipNeeded = isSponsorshipNeeded(userTags.visaStatus)
+  const targetLocations = Array.isArray(userTags.targetLocations)
+    ? userTags.targetLocations.filter((l): l is string => typeof l === "string")
+    : []
+  const userWantsUsOnly =
+    sponsorshipNeeded ||
+    (Array.isArray(userTags.targetCountry) &&
+      userTags.targetCountry.some((c: unknown) => {
+        const k = typeof c === "string" ? c.trim().toLowerCase() : ""
+        return k === "usa" || k === "us" || k === "united_states"
+      })) ||
+    targetLocations.some((l) => {
+      const k = l.toLowerCase()
+      return k.includes("united_states") || k === "us" || k === "usa" ||
+        k.includes("san_francisco") || k.includes("new_york") ||
+        k.includes("seattle") || k.includes("los_angeles") ||
+        k.includes("boston") || k.includes("chicago") ||
+        k.includes("austin") || k.includes("denver") ||
+        k.includes("remote_us")
+    })
+
+  const negativeSet = new Set<string>(
+    Array.isArray(userTags.companyNegativeList)
+      ? userTags.companyNegativeList.filter((s): s is string => typeof s === "string")
+      : []
+  )
+  const negativeRoleFunctionRaw = Array.isArray(
+    (userTags as { negativeRoleFunction?: unknown }).negativeRoleFunction,
+  )
+    ? ((userTags as { negativeRoleFunction?: unknown[] }).negativeRoleFunction as unknown[])
+    : Array.isArray((userTags as { roleFunctionNegativeList?: unknown }).roleFunctionNegativeList)
+      ? ((userTags as { roleFunctionNegativeList?: unknown[] }).roleFunctionNegativeList as unknown[])
+      : []
+  const negativeRoleFunctionSet = new Set<string>(
+    negativeRoleFunctionRaw
+      .map((s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
+      .filter(Boolean),
+  )
+
+  const kept: MatchingJob[] = []
+  for (const job of jobs) {
+    // visa intersect
+    if (sponsorshipNeeded && job.sponsorship !== true) {
+      counters.visa++
+      continue
+    }
+    // US-only country gate
+    if (userWantsUsOnly) {
+      const buckets = Array.isArray(job.locationBuckets)
+        ? job.locationBuckets.map((b) => String(b).toLowerCase())
+        : []
+      const rawLoc = (job.locationRaw ?? "").toLowerCase()
+      const US_HINTS = [
+        "united_states", "us", "usa", "remote_united_states", "remote_us",
+        "san_francisco_bay_area", "new_york_metro", "new_york_city_metro",
+        "seattle_metro", "los_angeles_metro", "boston_metro", "chicago_metro",
+        "austin_metro", "denver_metro", "remote_anywhere",
+      ]
+      const NON_US_COUNTRY_HINTS = [
+        "bulgaria", "sofia", "london", "uk", "united_kingdom", "england", "ireland", "dublin",
+        "germany", "berlin", "munich", "france", "paris", "spain", "madrid",
+        "india", "bangalore", "hyderabad", "mumbai", "delhi", "pune",
+        "china", "beijing", "shanghai", "singapore", "japan", "tokyo", "korea", "seoul",
+        "australia", "sydney", "melbourne", "brazil", "mexico", "argentina",
+        "canada", "toronto", "vancouver", "montreal",
+        "ukraine", "poland", "warsaw", "netherlands", "amsterdam", "hong_kong",
+      ]
+      const hasUsHint =
+        buckets.some((b) => US_HINTS.some((u) => b.includes(u))) ||
+        US_HINTS.some((u) => rawLoc.includes(u.replace(/_/g, " ")))
+      const hasNonUsHint =
+        buckets.some((b) => NON_US_COUNTRY_HINTS.some((c) => b.includes(c))) ||
+        NON_US_COUNTRY_HINTS.some((c) => rawLoc.includes(c.replace(/_/g, " ")))
+      if (hasNonUsHint && !hasUsHint) {
+        counters.location++
+        continue
+      }
+    }
+    // SKIP location intersect / careerStage window / jobType intersect.
+
+    // role-title sanity gate — kept (cheap, prevents obvious cross-function leakage)
+    if (isRoleTitleMismatch(userTags, job)) {
+      counters.roleTitleMismatch++
+      continue
+    }
+    // freshness
+    const firstSeenMs = timestampToMs(job.firstSeenAt)
+    if (firstSeenMs === 0 || nowMs - firstSeenMs > freshnessWindowMs) {
+      counters.freshness++
+      continue
+    }
+    // atsApplyUrl present + not jobright.ai
+    const url = job.atsApplyUrl ?? ""
+    if (!url || /jobright\.ai/i.test(url)) {
+      counters.atsApplyUrl++
+      continue
+    }
+    // dead !== true
+    if (job.dead === true) {
+      counters.dead++
+      continue
+    }
+    // negative company subtract
+    if (negativeSet.size > 0) {
+      const norm = normalizeCompanyName(job.companyName ?? "")
+      if (norm.length > 0 && negativeSet.has(norm)) {
+        counters.negativeListDrop++
+        continue
+      }
+    }
+    // negative role-function subtract
+    if (negativeRoleFunctionSet.size > 0) {
+      const roleFunctions = Array.isArray(job.roleFunction) ? job.roleFunction : []
+      if (
+        roleFunctions.some((role) =>
+          typeof role === "string" && negativeRoleFunctionSet.has(role.trim().toLowerCase())
+        )
+      ) {
+        counters.negativeListDrop++
+        continue
+      }
+    }
     kept.push(job)
   }
   return { kept, counters }
@@ -1706,6 +1930,17 @@ export const V16_FRESHNESS_HALF_LIFE_MS = 3 * 24 * 3600 * 1000  // τ = 3 days
  */
 export const V16_FRESHNESS_RELEVANCE_THRESHOLD = 0.20
 
+/**
+ * Collab priority (req #3, 2026-05-29) — additive boost for WeKruit
+ * collaboration jobs (`pa-jobs/{jobId}.wekruitCollaborationStatus ===
+ * "collaborated"`). These are curated demand events WeKruit owns the
+ * relationship for; they should rank above the general scraped market when
+ * relevance is comparable. 0.08 is sized between `freshnessBoost` (0.10 max)
+ * and `companyStageBoost`, large enough to break ties in favour of collab but
+ * small enough that a clearly stronger general-market match still wins.
+ */
+export const V16_COLLAB_BOOST_WEIGHT = 0.08
+
 export function scoreV16Job(
   user: UserTags,
   job: MatchingJob & { embedding?: number[] | null },
@@ -1729,6 +1964,15 @@ export function scoreV16Job(
    * + `softMissDemerit` breakdown keys are omitted → byte-identical to today.
    */
   preferenceHardness?: { enabled?: boolean },
+  /**
+   * Collab priority (req #3, 2026-05-29) — when true the job is a WeKruit
+   * collaboration job (`pa-jobs.wekruitCollaborationStatus === "collaborated"`)
+   * and gets an additive `+V16_COLLAB_BOOST_WEIGHT` (0.08) in `total`, surfaced
+   * in the breakdown as `collabBoost`. Default (false/undefined) → `collabBoost`
+   * is 0 and `total` is byte-identical to the pre-collab blend. The collab set
+   * is resolved once by the caller via `loadMatchSourceLabels` (no extra read).
+   */
+  isCollaborationJob?: boolean,
 ): { breakdown: V16ScoreBreakdown; matched: MatchedSkillContribution[] } {
   const phEnabled = preferenceHardness?.enabled === true
   const llm = typeof llmRerankScore === "number" && Number.isFinite(llmRerankScore)
@@ -1856,12 +2100,16 @@ export function scoreV16Job(
     softMissDemerit = demerit
   }
 
+  // Collab priority (req #3) — additive boost for WeKruit collaboration jobs.
+  const collabBoost = isCollaborationJob === true ? V16_COLLAB_BOOST_WEIGHT : 0
+
   const total =
     baseScore +
     tagOverlapScore +
     positiveHitBoost +
     urgencyBoost +
     freshnessBoost +
+    collabBoost +
     (companyStageBoost ?? 0) +
     (softMissDemerit ?? 0)
   return {
@@ -1876,6 +2124,7 @@ export function scoreV16Job(
       positiveHit: positiveHitBoost,
       urgencyBoost,
       freshnessBoost,
+      collabBoost,
       ...(companyStageBoost !== undefined ? { companyStageBoost } : {}),
       ...(softMissDemerit !== undefined ? { softMissDemerit } : {}),
       total,
@@ -2299,13 +2548,59 @@ async function loadCollabPrescreenEligibleJobIds(
   return eligible
 }
 
-async function loadMatchSourceLabels(
+/**
+ * Collab priority (req #3, 2026-05-29) — read `pa-jobs/{jobId}` for the
+ * surviving candidate set and return the set of jobIds whose
+ * `wekruitCollaborationStatus === "collaborated"`. Used to drive the
+ * `collabBoost` in scoring. Fail-graceful per job (a read error just means
+ * that job is not treated as collab). Runs ONCE before the scoring loop; the
+ * result is reused for `loadMatchSourceLabels` so we never read `pa-jobs`
+ * twice.
+ */
+async function loadCollabJobIds(
   db: Firestore,
   jobIds: string[],
   log: (event: string, payload?: Record<string, unknown>) => void
+): Promise<Set<string>> {
+  const collab = new Set<string>()
+  const uniqueIds = [...new Set(jobIds.filter((id) => typeof id === "string" && id.trim().length > 0))]
+  await Promise.all(
+    uniqueIds.map(async (jobId) => {
+      try {
+        const snap = await db.collection(PA_JOBS_COLLECTION).doc(jobId).get()
+        const data = snap.exists ? (snap.data() as Record<string, unknown> | undefined) : undefined
+        if (data?.wekruitCollaborationStatus === "collaborated") collab.add(jobId)
+      } catch (err) {
+        log("pa.match.collab_status_read_failed", {
+          jobId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    })
+  )
+  return collab
+}
+
+/**
+ * Map jobIds → candidate-visible source label. When `collabJobIds` is supplied
+ * (the set already resolved by `loadCollabJobIds` before scoring), the label
+ * is derived from it WITHOUT a second `pa-jobs` read; otherwise it reads
+ * `pa-jobs` per job (back-compat for callers that didn't pre-resolve).
+ */
+async function loadMatchSourceLabels(
+  db: Firestore,
+  jobIds: string[],
+  log: (event: string, payload?: Record<string, unknown>) => void,
+  collabJobIds?: Set<string>,
 ): Promise<Map<string, "WeKruit collaborated" | "general match">> {
   const labels = new Map<string, "WeKruit collaborated" | "general match">()
   const uniqueIds = [...new Set(jobIds.filter((id) => typeof id === "string" && id.trim().length > 0))]
+  if (collabJobIds) {
+    for (const jobId of uniqueIds) {
+      labels.set(jobId, collabJobIds.has(jobId) ? "WeKruit collaborated" : "general match")
+    }
+    return labels
+  }
   await Promise.all(
     uniqueIds.map(async (jobId) => {
       try {
@@ -2405,7 +2700,10 @@ export async function queryMatchingJobsV16(
   let counters: V16HardFilterCounters = zeroV16Counters()
   let appliedFreshnessMs = FRESHNESS_RELAX_LADDER[0]!
   let relaxedHardFilters: string[] = []
-  const runFreshnessLadder = (options: { relaxSpecificLocation?: boolean } = {}) => {
+  let fallbackApplied = false
+  const runFreshnessLadder = (
+    options: { relaxSpecificLocation?: boolean; careerStageRelax?: "strict" | "early_down" | "all" } = {},
+  ) => {
     let kept: MatchingJob[] = []
     let lastCounters: V16HardFilterCounters = zeroV16Counters()
     let applied = FRESHNESS_RELAX_LADDER[0]!
@@ -2453,6 +2751,93 @@ export async function queryMatchingJobsV16(
       appliedFreshnessMs = relaxedRun.appliedFreshnessMs
       relaxedHardFilters = ["specific_location"]
       log("pa.match.broad_fallback_location_relax", {
+        total: rawJobs.length,
+        output: filteredJobs.length,
+        freshnessWindowDays: Math.round(appliedFreshnessMs / (24 * 3600 * 1000)),
+      })
+    }
+  }
+
+  // Recall fix (req #2, 2026-05-29) — careerStage relax ladder. The live bug:
+  // a `junior`/`entry_level` candidate with no/anywhere location gets zeroed
+  // because the corpus role-bucket skews intern-tagged (or noisy seniority).
+  // Only escalate when careerStage is the DOMINANT zero-blocker AND the
+  // candidate is early-career with no/anywhere location constraint (so we
+  // never widen a senior/manager candidate's window, and we never widen when
+  // location was actually the blocker — that's the location-relax path above).
+  // Ladder rungs mirror the freshness ladder: early_down (one tier down to
+  // include intern) → all (last-resort: skip the careerStage gate). The
+  // upper window bound is never widened, so senior leakage is impossible.
+  const userCareerStage = userTags.careerStage
+  const userIsEarlyCareer =
+    typeof userCareerStage === "string" &&
+    (userCareerStage === "student" ||
+      userCareerStage === "intern" ||
+      userCareerStage === "entry_level" ||
+      userCareerStage === "junior")
+  const dominantCareerStageBlocker =
+    counters.careerStage > 0 &&
+    counters.careerStage >= counters.visa &&
+    counters.careerStage >= counters.location &&
+    counters.careerStage >= counters.jobType &&
+    counters.careerStage >= counters.freshness &&
+    counters.careerStage >= counters.atsApplyUrl &&
+    counters.careerStage >= counters.dead &&
+    counters.careerStage >= counters.negativeListDrop &&
+    counters.careerStage >= counters.roleTitleMismatch
+  if (
+    filteredJobs.length === 0 &&
+    userIsEarlyCareer &&
+    isAnywhereLocation(userTags) &&
+    dominantCareerStageBlocker
+  ) {
+    for (const rung of ["early_down", "all"] as const) {
+      const relaxedRun = runFreshnessLadder({ careerStageRelax: rung })
+      if (relaxedRun.kept.length > 0) {
+        filteredJobs = relaxedRun.kept
+        counters = relaxedRun.counters
+        appliedFreshnessMs = relaxedRun.appliedFreshnessMs
+        relaxedHardFilters = [...relaxedHardFilters, `career_stage_${rung}`]
+        log("pa.match.career_stage_relax", {
+          rung,
+          total: rawJobs.length,
+          output: filteredJobs.length,
+          freshnessWindowDays: Math.round(appliedFreshnessMs / (24 * 3600 * 1000)),
+        })
+        break
+      }
+    }
+  }
+
+  // Market fallback (req #5, 2026-05-29) — last line of defense against
+  // dead-silence. When the strict cascade + location relax + careerStage relax
+  // ALL yield zero, run the relaxed fallback filter over the raw corpus
+  // (keeps visa/country/freshness/atsApplyUrl/dead/negative gates, skips
+  // location/careerStage/jobType). If it surfaces anything, use it so Claire
+  // always has a real general-market role to offer. Self-contained inside the
+  // matcher so `makeV16FindMatch` benefits with zero extra wiring. Runs the
+  // freshness ladder too (20d → 45d → 90d) when freshness is the blocker.
+  if (filteredJobs.length === 0) {
+    let fbKept: MatchingJob[] = []
+    let fbCounters = zeroV16Counters()
+    let fbApplied = FRESHNESS_RELAX_LADDER[0]!
+    for (const win of FRESHNESS_RELAX_LADDER) {
+      const r = applyFallbackHardFilters(rawJobs, userTags, nowMs, win)
+      fbKept = r.kept
+      fbCounters = r.counters
+      fbApplied = win
+      if (fbKept.length > 0) break
+      if (fbCounters.freshness === 0) break
+    }
+    if (fbKept.length > 0) {
+      filteredJobs = fbKept
+      counters = fbCounters
+      appliedFreshnessMs = fbApplied
+      fallbackApplied = true
+      if (!relaxedHardFilters.includes("general_market_fallback")) {
+        relaxedHardFilters = [...relaxedHardFilters, "general_market_fallback"]
+      }
+      log("pa.match.general_market_fallback", {
         total: rawJobs.length,
         output: filteredJobs.length,
         freshnessWindowDays: Math.round(appliedFreshnessMs / (24 * 3600 * 1000)),
@@ -2546,11 +2931,19 @@ export async function queryMatchingJobsV16(
     freshnessWindowDays: Math.round(appliedFreshnessMs / (24 * 3600 * 1000)),
   })
 
-  // Cache reads run in parallel — both fail-graceful.
-  const [jdRelCache, rerankCache, recommendationStates] = await Promise.all([
+  // Cache reads run in parallel — all fail-graceful. The collab set (req #3)
+  // is resolved ONCE here over the surviving candidate set and reused both for
+  // the `collabBoost` in scoring and for `loadMatchSourceLabels` later (no
+  // second pa-jobs read). On the general-market fallback path the survivors
+  // are general market by selection — skip the read and treat the set as empty
+  // so neither collabBoost nor a collab label can apply.
+  const [jdRelCache, rerankCache, recommendationStates, collabJobIds] = await Promise.all([
     loadJdRelCache(deps.db, args.userId, log),
     loadLlmRerankCache(deps.db, args.userId, log),
     loadRecommendedJobStates(deps.db, args.userId, filteredJobs.map((job) => job.id), log),
+    fallbackApplied
+      ? Promise.resolve(new Set<string>())
+      : loadCollabJobIds(deps.db, filteredJobs.map((job) => job.id), log),
   ])
 
   // 4. Soft score (Phase 70 weightOverrides + Phase B4 companyInfo/nowMs).
@@ -2567,6 +2960,7 @@ export async function queryMatchingJobsV16(
       companyInfo,
       nowMs,
       { enabled: preferenceHardnessEnabled },
+      collabJobIds.has(job.id),
     )
     const recommendedState = recommendationStates.get(job.id)
     const repeatPenalty = previousRecommendationPenalty(recommendedState)
@@ -2628,10 +3022,14 @@ export async function queryMatchingJobsV16(
       reason: "missing_requiredSkills",
     })
   }
+  // Reuse the `collabJobIds` set resolved before scoring — no second pa-jobs
+  // read. On the fallback path `collabJobIds` is empty, so every fallback job
+  // is labelled 'general match' (req #5: fallback jobs stay general match).
   const sourceLabels = await loadMatchSourceLabels(
     deps.db,
     dedupedTop.map((s) => s.job.id),
     log,
+    collabJobIds,
   )
   const top = dedupedTop.map(({ job, breakdown, matched, companyInfo, recommendedState }) => {
     const reason = composeReason(userTags, job, matched, breakdown, companyInfo)
@@ -2673,6 +3071,7 @@ export async function queryMatchingJobsV16(
     hardFilter: counters,
     ...(rerankCache.stale ? { llmCacheStale: true as const } : {}),
     ...(relaxedHardFilters.length > 0 ? { relaxedHardFilters } : {}),
+    ...(fallbackApplied ? { fallbackApplied: true as const } : {}),
     // Phase 70 — surface a snapshot of the user's tags so the admin
     // match-debug page can render the canonical profile alongside ranked
     // output. Cast through `unknown` so we can attach without leaking the

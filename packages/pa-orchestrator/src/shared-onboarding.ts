@@ -1,7 +1,7 @@
 import type { PartialUserTags } from "./tags/user-tags-writer.js"
-import { mapAnswerToLocations, mapAnswerToRoleFunction } from "./tags/onboarding-mappers.js"
+import { mapAnswerToLocations, mapAnswerToRoleFunction, mapAnswerToVisa } from "./tags/onboarding-mappers.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import type { IndustrySector } from "@wekruit/shared-tags"
+import type { IndustrySector, Visa } from "@wekruit/shared-tags"
 import type { JudgeResult, Lang } from "./onboarding/question.js"
 import { GuidedOpenJudge, type LlmCallFn } from "./onboarding/judges/guided-open.js"
 import {
@@ -928,6 +928,99 @@ function relocationOpen(text: string): boolean | undefined {
   return undefined
 }
 
+/**
+ * Live-bug fix (2026-05-29): "open to anything" / "open to relocation" /
+ * "flexible" / "anywhere" with no concrete place captured NOTHING — the
+ * candidate ended up with empty `targetLocations`, and V16's location hard
+ * filter over-filtered to recCount=0. Detect the open-ended signal so the
+ * projector can emit the V16 anywhere-bypass token on BOTH `targetLocations`
+ * and `targetCountry`. Deliberately broad: a generic "I'm flexible" / "wherever"
+ * / "no preference" is a real open-to-anything signal in the location slot.
+ */
+function isOpenToAnywhere(text: string): boolean {
+  return /\b(open\s+to\s+(anything|anywhere|relocat(?:e|ing|ion)|moving)|anywhere|wherever|no\s+(location\s+)?preference|flexible(?:\s+on\s+location)?|i'?m\s+flexible|location\s+(?:is\s+)?(?:not\s+important|doesn'?t\s+matter|isn'?t\s+a\s+(?:big\s+)?(?:deal|issue))|don'?t\s+care\s+(?:where|about\s+location))\b/i.test(
+    text,
+  ) || /(哪都行|哪儿都行|都行|无所谓|随便|哪里都(?:行|可以))/i.test(text)
+}
+
+/**
+ * Country / region extractor for Q4 (location). V16 reads `targetCountry` and
+ * treats `["anywhere"]` as a country-level bypass. Maps the common spelled-out
+ * country signals + the open-ended "anywhere" token. Returns canonical
+ * lowercase region tokens (NOT abbrev — D5). Empty → caller emits nothing.
+ */
+function extractCountries(text: string): string[] {
+  const out: string[] = []
+  const push = (token: string) => {
+    if (!out.includes(token)) out.push(token)
+  }
+  if (isOpenToAnywhere(text)) push("anywhere")
+  if (/\b(usa|u\.?s\.?a?\.?|united\s+states|america|stateside)\b/i.test(text) || /(美国|美國)/.test(text)) {
+    push("usa")
+  }
+  if (/\bcanada\b/i.test(text) || /加拿大/.test(text)) push("canada")
+  if (/\b(uk|united\s+kingdom|england|britain|gb)\b/i.test(text) || /(英国|英國)/.test(text)) push("uk")
+  if (/\b(china|prc|mainland\s+china)\b/i.test(text) || /(中国|中國)/.test(text)) push("china")
+  if (/\b(india)\b/i.test(text) || /印度/.test(text)) push("india")
+  if (/\b(germany)\b/i.test(text) || /德国/.test(text)) push("germany")
+  if (/\b(singapore)\b/i.test(text) || /新加坡/.test(text)) push("singapore")
+  if (/\b(australia)\b/i.test(text) || /澳大利亚/.test(text)) push("australia")
+  return out
+}
+
+/**
+ * Q5 visa-intent → canonical 4-enum `visaStatus` (D4). Live-bug fix: the
+ * candidate said "I need H1B sponsorship" and we only emitted a
+ * `targetCompanyTags=['visa_context']` label — V16's visa hard filter reads
+ * `tags.visaStatus`, so the sponsorship intent never reached the matcher. Now
+ * we ALSO emit the canonical enum (reusing the writer-side `mapAnswerToVisa`
+ * which collapses OPT/CPT/H1B/F1 → `sponsor_needed`). Returns undefined when
+ * the answer carries no visa signal so a weaker "other" never overwrites a
+ * value captured elsewhere.
+ */
+function extractVisaStatus(text: string): Visa | undefined {
+  if (!/\b(visa|sponsor|sponsorship|h[-\s]?1\s*b|h1\b|\bh4\b|\bopt\b|stem\s*opt|\bcpt\b|f[-\s]?1\b|green\s*card|permanent\s+resident|\bpr\b|citizen|tn\s*visa|j[-\s]?1\b|work\s+authoriz)\b/i.test(
+    text,
+  ) && !/(签证|绿卡|公民|永久居民|身份)/.test(text)) {
+    return undefined
+  }
+  const mapped = mapAnswerToVisa(text)
+  return mapped === "other" ? undefined : mapped
+}
+
+/**
+ * Salary-floor extractor. Pulls a minimum acceptable USD figure from an
+ * explicit floor phrase only ("at least 100k", "minimum 140k", "starting at
+ * 120000", "120k+", "no less than 90k"). Returns the integer USD value, or
+ * undefined when the answer carries no explicit floor. NEVER infer salary from
+ * résumé/history pay — onboarding answers are intent. Exported for reuse.
+ */
+export function extractSalaryFloorUsd(text: string): number | undefined {
+  if (!text || typeof text !== "string") return undefined
+  const floorContext =
+    /\b(at\s+least|minimum|min\b|no\s+less\s+than|starting\s+at|floor\s+(?:of|is)|>=|north\s+of|above)\b/i.test(
+      text,
+    ) || /\+\s*$/.test(text.trim())
+  // Match "100k", "100 k", "100,000", "$120000", optionally trailed by "+".
+  const matches = [
+    ...text.matchAll(/\$?\s*(\d{1,3}(?:,\d{3})+|\d{2,7})\s*(k\b|thousand|\+)?/gi),
+  ]
+  let best: number | undefined
+  for (const m of matches) {
+    const rawNum = m[1].replace(/,/g, "")
+    const unit = (m[2] ?? "").toLowerCase()
+    let value = parseInt(rawNum, 10)
+    if (!Number.isFinite(value)) continue
+    if (unit.startsWith("k") || unit === "thousand") value *= 1000
+    const hasPlus = unit === "+" || /\+\s*$/.test(text.slice(m.index ?? 0))
+    if (!floorContext && !hasPlus && !(unit.startsWith("k") || unit === "thousand")) continue
+    // Plausible annual USD salary window — reject ages, years, tiny counts.
+    if (value < 20_000 || value > 2_000_000) continue
+    if (best === undefined || value < best) best = value
+  }
+  return best
+}
+
 function companySize(text: string): PartialUserTags["companySize"] | undefined {
   if (/\b(seed|pre[-\s]?seed|founding|early[-\s]?stage|startup)\b/i.test(text)) return "early_startup"
   if (/\b(series\s+[bcde]|scale[-\s]?up|growth[-\s]?stage)\b/i.test(text)) return "scale_up"
@@ -1011,11 +1104,24 @@ export function projectSharedOnboardingAnswer(
   }
 
   if (questionId === "location_relocation") {
-    const targetLocations = orderedLocations(trimmed)
+    const concreteLocations = orderedLocations(trimmed)
+    const openToAnywhere = isOpenToAnywhere(trimmed)
+    const countries = extractCountries(trimmed)
     const industries = industryTags(trimmed)
     const relocate = relocationOpen(trimmed)
-    if (targetLocations.length > 0) tags.targetLocations = targetLocations
-    if (targetLocations.length > 0) statedPreferences.targetLocations = targetLocations
+    // Live-bug fix: "open to anything" with no concrete place → emit the V16
+    // anywhere-bypass token on BOTH axes so the location hard filter does not
+    // over-filter to recCount=0. Concrete places are APPENDED, not dropped.
+    const targetLocations: string[] = [...concreteLocations]
+    if (openToAnywhere && !targetLocations.includes("anywhere")) targetLocations.push("anywhere")
+    if (targetLocations.length > 0) {
+      tags.targetLocations = targetLocations
+      statedPreferences.targetLocations = targetLocations
+    }
+    if (countries.length > 0) {
+      tags.targetCountry = countries
+      statedPreferences.targetCountry = countries
+    }
     if (industries.length > 0) {
       tags.industrySector = industries
       statedPreferences.industrySector = industries
@@ -1029,11 +1135,27 @@ export function projectSharedOnboardingAnswer(
   if (questionId === "special_context") {
     const targetRoleFunction = mapAnswerToRoleFunction(trimmed)
     const industries = industryTags(trimmed)
+    const visaStatus = extractVisaStatus(trimmed)
+    const minSalaryUsd = extractSalaryFloorUsd(trimmed)
+    const urgent = /\b(laid\s*off|layoff|severance|urgent|asap)\b/i.test(trimmed)
     const specialTags = []
     if (/\b(visa|sponsor|h[-\s]?1b|opt|cpt)\b/i.test(trimmed)) specialTags.push("visa_context")
-    if (/\b(laid\s*off|layoff|severance|urgent|asap)\b/i.test(trimmed)) specialTags.push("urgent_search_context")
+    if (urgent) specialTags.push("urgent_search_context")
     if (/\b(parent|caregiver|health|family)\b/i.test(trimmed)) specialTags.push("personal_constraint")
     if (specialTags.length > 0) tags.targetCompanyTags = specialTags
+    // D4 canonical visa enum — V16's visa hard filter reads `tags.visaStatus`,
+    // not the `visa_context` label. Keep BOTH (label for context, enum for the
+    // matcher). UserTags.visaStatus accepts the 4-token Visa (it's a superset).
+    if (visaStatus) {
+      tags.visaStatus = visaStatus
+      statedPreferences.visaStatus = visaStatus
+    }
+    if (urgent) tags.urgentlySeeking = true
+    // Salary floor (intent only). V16 reads `tags.minSalary`. NEVER from résumé.
+    if (minSalaryUsd !== undefined) {
+      tags.minSalary = minSalaryUsd
+      statedPreferences.minSalaryUsd = minSalaryUsd
+    }
     if (targetRoleFunction.length > 0) {
       tags.targetRoleFunction = targetRoleFunction
       statedPreferences.targetRoleFunction = targetRoleFunction

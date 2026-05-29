@@ -182,6 +182,80 @@ test("applyPartialUserTags: normalizes extractor minSalaryUsd to V16 minSalary",
   assert.equal("minSalaryUsd" in written.tags, false)
 })
 
+test("applyPartialUserTags: minSalaryUsd=100000 normalizes to V16 minSalary=100000 ('at least 100k')", async () => {
+  // Capture-merger-writer contract: the candidate said "at least 100k" → the
+  // extractor emits `minSalaryUsd`; V16 reads `tags.minSalary`. The sole writer
+  // normalizes at the boundary so the salary floor survives (the live bug
+  // dropped it entirely). This is the exact value from the root-caused case.
+  const ctx = makeDb()
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { minSalaryUsd: 100000 } as Record<string, unknown>,
+    { source: "chat", nowIso: "2026-05-29T00:00:00.000Z" }
+  )
+  assert.equal(res.ok, true)
+  assert.deepEqual(res.mergedKeys, ["minSalary"])
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  assert.equal(written.tags.minSalary, 100000)
+  assert.equal("minSalaryUsd" in written.tags, false)
+})
+
+test("applyPartialUserTags: targetLocations=['anywhere'] preserved (V16 anywhere-bypass token survives)", async () => {
+  // "open to anything" → targetLocations:['anywhere'] is the matcher's
+  // anywhere-bypass signal (ANYWHERE_LOCATION_TOKENS). The token must reach
+  // pa-users.tags verbatim (lowercased) or the bypass never fires and an empty
+  // location list over-filters to zero — part of the live recall bug.
+  const ctx = makeDb()
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { targetLocations: ["anywhere"] } as Record<string, unknown>,
+    { source: "chat" }
+  )
+  assert.equal(res.ok, true)
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  assert.deepEqual(written.tags.targetLocations, ["anywhere"])
+})
+
+test("applyPartialUserTags: targetLocations mixed-case 'Anywhere' lowercased + deduped (token canonical)", async () => {
+  const ctx = makeDb()
+  await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { targetLocations: ["Anywhere", "  anywhere ", "Remote", "remote", ""] } as Record<string, unknown>,
+    { source: "chat" }
+  )
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  // lowercased, trimmed, empties dropped, deduped — "anywhere" survives so the
+  // V16 ANYWHERE_LOCATION_TOKENS check (also lowercasing) matches.
+  assert.deepEqual(written.tags.targetLocations, ["anywhere", "remote"])
+})
+
+test("applyPartialUserTags: legacy roleFunctionNegativeList folds into canonical negativeRoleFunction", async () => {
+  // Back-compat fold: older callers/docs used `roleFunctionNegativeList`; the
+  // canonical SUBTRACT field V16 reads is `negativeRoleFunction`. The writer
+  // folds the legacy key in (union + dedupe) and drops the legacy name so there
+  // is exactly one source of truth.
+  const ctx = makeDb()
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    {
+      roleFunctionNegativeList: ["software_engineering", "sales_and_account_management"],
+      negativeRoleFunction: ["software_engineering"],
+    } as Record<string, unknown>,
+    { source: "chat" }
+  )
+  assert.equal(res.ok, true)
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  assert.deepEqual(
+    (written.tags.negativeRoleFunction as string[]).sort(),
+    ["sales_and_account_management", "software_engineering"]
+  )
+  assert.equal("roleFunctionNegativeList" in written.tags, false)
+})
+
 test("applyPartialUserTags: no userId → ok:false skip", async () => {
   const ctx = makeDb()
   const res = await applyPartialUserTags(ctx.db, "", { skills: ["x"] } as Record<string, unknown>)

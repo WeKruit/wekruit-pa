@@ -229,6 +229,28 @@ export async function applyPartialUserTags(
     cleaned.skills = upgraded
   }
 
+  // targetLocations — preserve the V16 anywhere-bypass token. "open to
+  // anything" (captured by the projector/extractor as `targetLocations:
+  // ['anywhere']`) is the matcher's anywhere-bypass signal
+  // (`ANYWHERE_LOCATION_TOKENS` in query-matching-jobs-v16.ts). V16 lowercases
+  // on read, but normalize here at the sole-writer boundary so the stored token
+  // is canonical (`anywhere`, not `Anywhere`/`ANYWHERE`) and the bypass survives
+  // verbatim. Whitespace-trim + lowercase every entry, drop empties, dedupe.
+  // Note: this is the ONE location-array casing normalizer — V16 anywhere-bypass
+  // depends on the token reaching `pa-users.tags.targetLocations` unmangled.
+  if (Array.isArray(cleaned.targetLocations)) {
+    const seen = new Set<string>()
+    const normalized: string[] = []
+    for (const raw of cleaned.targetLocations as unknown[]) {
+      if (typeof raw !== "string") continue
+      const norm = raw.trim().toLowerCase()
+      if (norm.length === 0 || seen.has(norm)) continue
+      seen.add(norm)
+      normalized.push(norm)
+    }
+    cleaned.targetLocations = normalized
+  }
+
   if (Object.keys(cleaned).length === 0) {
     log("pa.user_tags.skip", { reason: "empty_partial", userId })
     return { ok: false, error: "empty_partial" }

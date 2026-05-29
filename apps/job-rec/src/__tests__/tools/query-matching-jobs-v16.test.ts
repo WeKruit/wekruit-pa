@@ -20,6 +20,7 @@ import {
   loadJdRelCache,
   loadLlmRerankCache,
   applyV16HardFilters,
+  applyFallbackHardFilters,
   computeWeightedSkillJaccard,
   computeOverlap,
   cosineSim,
@@ -29,6 +30,7 @@ import {
   queryMatchingJobsV16,
   V16_FRESHNESS_BOOST_MAX,
   V16_FRESHNESS_HALF_LIFE_MS,
+  V16_COLLAB_BOOST_WEIGHT,
   resolveHardness,
   computeCompanyStageFit,
   PREFERENCE_HARDNESS_FLAG_KEY,
@@ -540,6 +542,7 @@ test("composeReason: top-2 weighted matched skills surface zh by default", () =>
     positiveHit: 0,
     urgencyBoost: 0,
     freshnessBoost: 0,
+    collabBoost: 0,
     total: 0.1,
   })
   // top-2: python + typescript only
@@ -557,7 +560,7 @@ test("composeReason: en lang switch when preferredLang='en'", () => {
     tags,
     job,
     [{ name: "python", proficiency: "advanced", weight: 1 }],
-    { llmMatch: 0, skillJaccard: 0.5, relevantTags: 0, industrySector: 0, cvEmbCosine: 0, salaryFit: 0, tagOverlap: 0, positiveHit: 0, urgencyBoost: 0, freshnessBoost: 0, total: 0.1 }
+    { llmMatch: 0, skillJaccard: 0.5, relevantTags: 0, industrySector: 0, cvEmbCosine: 0, salaryFit: 0, tagOverlap: 0, positiveHit: 0, urgencyBoost: 0, freshnessBoost: 0, collabBoost: 0, total: 0.1 }
   )
   assert.match(reason, /Why match/)
   assert.match(reason, /python/)
@@ -577,6 +580,7 @@ test("composeReason: empty matched falls back to industry-only message when indu
     positiveHit: 0,
     urgencyBoost: 0,
     freshnessBoost: 0,
+    collabBoost: 0,
     total: 0.05,
   })
   assert.match(reason, /行业方向/)
@@ -1627,10 +1631,18 @@ test("queryMatchingJobsV16: broad fallback relaxes exact location only when stri
     jobTitle: "Frontend Engineer",
   })
 
+  // Without allowBroadFallback the location-relax path does NOT fire, but the
+  // req #5 general-market fallback still surfaces the visa/freshness-eligible
+  // SF job (never dead-silence). It is labelled via the fallback path.
   const strict = await queryMatchingJobsV16({ userId: "u_location", nowMs: NOW }, { db: asFirestore(mfs) })
-  assert.equal(strict.jobs.length, 0)
-  assert.equal(strict.hardFilter.location, 1)
+  assert.equal(strict.jobs.length, 1)
+  assert.equal(strict.jobs[0]!.id, "sf-swe")
+  assert.equal(strict.fallbackApplied, true)
+  assert.equal(strict.jobs[0]!.matchSourceLabel, "general match")
+  assert.ok(strict.relaxedHardFilters?.includes("general_market_fallback"))
 
+  // With allowBroadFallback the location-relax path fires FIRST (before the
+  // market fallback), so the surfaced job is attributed to the location relax.
   const broad = await queryMatchingJobsV16(
     { userId: "u_location", nowMs: NOW, lang: "en", allowBroadFallback: true },
     { db: asFirestore(mfs) },
@@ -1638,6 +1650,7 @@ test("queryMatchingJobsV16: broad fallback relaxes exact location only when stri
   assert.equal(broad.jobs.length, 1)
   assert.equal(broad.jobs[0]!.id, "sf-swe")
   assert.deepEqual(broad.relaxedHardFilters, ["specific_location"])
+  assert.notEqual(broad.fallbackApplied, true)
 })
 
 test("queryMatchingJobsV16: presentationRoleFocus keeps explicit frontend/fullstack requests on-role", async () => {
@@ -2376,7 +2389,13 @@ test("queryMatchingJobsV16: early-startup company size rejects late-stage and pu
   assert.deepEqual(r.jobs.map((job) => job.id), ["series-a-fit"])
 })
 
-test("queryMatchingJobsV16: resume-derived SWE intern profile rejects senior full-time jobs", async () => {
+test("queryMatchingJobsV16: resume 'Intern' title alone does NOT set targetJobType (live-bug fix 2026-05-29)", async () => {
+  // LIVE BUG: a candidate whose résumé says "Software Engineer Intern" had
+  // targetJobType=['internship'] WRONGLY inferred from the title (target !=
+  // history). That dropped every full-time job at the jobType gate → recCount=0.
+  // After the fix: targetJobType is NOT inferred from a résumé title; a candidate
+  // with NO explicit jobType intent has NO jobType hard filter, so full-time
+  // roles in their careerStage window survive.
   const mfs = new MockFirestore()
   await mfs
     .collection("pa-users")
@@ -2401,28 +2420,31 @@ test("queryMatchingJobsV16: resume-derived SWE intern profile rejects senior ful
     seniorityLevel: "intern",
     jobType: "internship",
   })
-  await seedJob(mfs, "senior-drop", {
+  // An ENTRY-level full-time job in the intern±1 careerStage window. Pre-fix
+  // this was dropped by the bogus internship jobType target; post-fix it
+  // survives because there is no jobType hard filter.
+  await seedJob(mfs, "entry-ft", {
     roleFunction: ["software_engineering"],
     requiredSkills: ["python", "typescript", "react"],
-    companyName: "SeniorCo",
-    jobTitle: "Senior Software Engineer",
-    seniorityLevel: "senior",
-    jobType: "full_time",
-  })
-  await seedJob(mfs, "staff-drop", {
-    roleFunction: ["software_engineering"],
-    requiredSkills: ["python", "typescript", "react"],
-    companyName: "StaffCo",
-    jobTitle: "Staff Software Engineer",
-    seniorityLevel: "staff",
+    companyName: "EntryCo",
+    jobTitle: "Software Engineer, New Grad",
+    seniorityLevel: "entry_level",
     jobType: "full_time",
   })
 
   const r = await queryMatchingJobsV16({ userId: "u_resume_intern", nowMs: NOW }, { db: asFirestore(mfs) })
 
-  assert.deepEqual(r.jobs.map((job) => job.id), ["intern-fit"])
+  // Bug fix: targetJobType is NOT set from the résumé "Intern" title.
+  assert.equal(r.userTags?.targetJobType, undefined)
+  // careerStage is still inferred from the title (that's a HISTORY/level signal,
+  // legitimate for the seniority window) — but it no longer forces a jobType.
   assert.equal(r.userTags?.careerStage, "intern")
-  assert.deepEqual(r.userTags?.targetJobType, ["internship"])
+  // Both the intern role AND the entry-level full-time role survive now that
+  // the spurious internship jobType filter is gone.
+  const ids = new Set(r.jobs.map((job) => job.id))
+  assert.ok(ids.has("intern-fit"), "intern role survives")
+  assert.ok(ids.has("entry-ft"), "entry full-time role survives (no bogus internship jobType drop)")
+  assert.equal(r.hardFilter.jobType, 0)
   assert.ok(!r.missingAxes?.includes("careerStage"))
   assert.ok(!r.missingAxes?.includes("targetJobType"))
 })
@@ -3261,4 +3283,275 @@ test("queryMatchingJobsV16: flag ON — company-stage HARD drops real out-of-ban
   // in-band seed kept, unknown kept, out-of-band ipo dropped.
   assert.deepEqual(ids, ["atseed", "atunknown"])
   assert.equal(r.hardFilter.companyStage, 1)
+})
+
+// ===========================================================================
+// 2026-05-29 — Matcher recall + collab priority + market fallback (this swarm)
+// ===========================================================================
+
+// (a) junior + empty targetLocations + empty targetJobType on a mixed
+//     intern/junior/mid corpus → jobs.length>0, counters.location==0.
+test("queryMatchingJobsV16: junior + empty location + empty jobType returns jobs, location counter 0", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_jr").set({
+    tags: {
+      skills: ["python", "typescript"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+      careerStage: "junior",
+      // explicit empty arrays — "open to anything" captured nothing.
+      targetLocations: [],
+      targetJobType: [],
+    },
+  })
+  await seedJob(mfs, "intern-j", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    seniorityLevel: "intern",
+    jobType: "internship",
+    locationBuckets: ["los_angeles"],
+    companyName: "InternCo",
+    jobTitle: "SWE Intern",
+  })
+  await seedJob(mfs, "junior-j", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python", "typescript"],
+    seniorityLevel: "junior",
+    jobType: "full_time",
+    locationBuckets: ["new_york_city"],
+    companyName: "JuniorCo",
+    jobTitle: "Junior SWE",
+  })
+  await seedJob(mfs, "mid-j", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    seniorityLevel: "mid_level",
+    jobType: "full_time",
+    locationBuckets: ["seattle_metro"],
+    companyName: "MidCo",
+    jobTitle: "SWE",
+  })
+  const r = await queryMatchingJobsV16({ userId: "u_jr", nowMs: NOW }, { db: asFirestore(mfs) })
+  assert.ok(r.jobs.length > 0, "junior candidate with no location/jobType must get jobs")
+  // empty targetLocations must NOT zero the candidate out.
+  assert.equal(r.hardFilter.location, 0)
+  // strict junior±1 window keeps junior + mid (entry/junior/mid), drops intern.
+  const ids = new Set(r.jobs.map((j) => j.id))
+  assert.ok(ids.has("junior-j"))
+  assert.ok(ids.has("mid-j"))
+})
+
+// (b) junior + isAnywhere → window includes intern (relax ladder fires when
+//     careerStage is the dominant zero-blocker).
+test("queryMatchingJobsV16: junior + anywhere relaxes careerStage window down to intern when otherwise zero", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_jr_any").set({
+    tags: {
+      skills: ["python"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+      careerStage: "junior",
+      targetLocations: ["anywhere"],
+    },
+  })
+  // ONLY intern-tagged roles exist → strict junior±1 (entry/junior/mid) drops
+  // all of them. The relax ladder must widen down to intern so the candidate
+  // is not zeroed.
+  await seedJob(mfs, "intern-only-1", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    seniorityLevel: "intern",
+    companyName: "InternCo1",
+    jobTitle: "SWE Intern",
+  })
+  await seedJob(mfs, "intern-only-2", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    seniorityLevel: "intern",
+    companyName: "InternCo2",
+    jobTitle: "Engineering Intern",
+  })
+  const r = await queryMatchingJobsV16({ userId: "u_jr_any", nowMs: NOW }, { db: asFirestore(mfs) })
+  assert.ok(r.jobs.length > 0, "intern-tagged roles must surface after careerStage relax")
+  assert.ok(
+    r.relaxedHardFilters?.includes("career_stage_early_down") ||
+      r.relaxedHardFilters?.includes("career_stage_all") ||
+      r.fallbackApplied === true,
+    "a relax/fallback flag must be set",
+  )
+})
+
+// (c) US-target user still drops non-US-only jobs even when anywhere.
+test("queryMatchingJobsV16: US-target user still drops non-US-only jobs even when location is anywhere", async () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "us", locationBuckets: ["san_francisco_bay_area"] }),
+    mkJob({ id: "nonus", locationBuckets: ["london"], locationRaw: "London, UK" }),
+  ]
+  // sponsor_needed → userWantsUsOnly, even though targetLocations is anywhere.
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetLocations: ["anywhere"],
+    visaStatus: "sponsor_needed",
+  } as never
+  // both jobs need explicit sponsorship to pass the visa gate.
+  jobs[0]!.sponsorship = true
+  jobs[1]!.sponsorship = true
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["us"])
+  assert.equal(r.counters.location, 1)
+})
+
+// (d) scoreV16Job isCollaborationJob=true raises total by 0.08 and
+//     breakdown.collabBoost==0.08; false→0.
+test("scoreV16Job: collab job gets +V16_COLLAB_BOOST_WEIGHT in total + breakdown.collabBoost", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1 } as never
+  const job = mkJob({ id: "c", requiredSkills: [] })
+  // Pin nowMs + zero salary so only the collab delta differs between the two.
+  const notCollab = scoreV16Job(tags, job, undefined, 0.5, { salaryFit: 0 }, undefined, NOW, undefined, false)
+  const collab = scoreV16Job(tags, job, undefined, 0.5, { salaryFit: 0 }, undefined, NOW, undefined, true)
+  assert.equal(notCollab.breakdown.collabBoost, 0)
+  assert.equal(collab.breakdown.collabBoost, V16_COLLAB_BOOST_WEIGHT)
+  assert.ok(
+    Math.abs(collab.breakdown.total - notCollab.breakdown.total - V16_COLLAB_BOOST_WEIGHT) < 1e-9,
+    `delta=${collab.breakdown.total - notCollab.breakdown.total}`,
+  )
+})
+
+test("queryMatchingJobsV16: collab job outranks equally-relevant general-market job", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_collab").set({
+    tags: {
+      skills: ["typescript"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+    },
+  })
+  await seedJob(mfs, "collab", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["typescript"],
+    companyName: "CollabCo",
+    jobTitle: "Backend Engineer",
+  })
+  await seedJob(mfs, "general", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["typescript"],
+    companyName: "GeneralCo",
+    jobTitle: "Frontend Engineer",
+  })
+  await mfs.collection("pa-jobs").doc("collab").set({ wekruitCollaborationStatus: "collaborated" })
+  await mfs.collection("pa-jobs").doc("general").set({ wekruitCollaborationStatus: "not_collaborated" })
+  const r = await queryMatchingJobsV16({ userId: "u_collab", nowMs: NOW, lang: "en" }, { db: asFirestore(mfs) })
+  assert.equal(r.jobs.length, 2)
+  assert.equal(r.jobs[0]!.id, "collab", "collab job must rank first")
+  assert.ok((r.jobs[0]!.v16Score.collabBoost ?? 0) > 0)
+  assert.equal(r.jobs[1]!.v16Score.collabBoost, 0)
+})
+
+// (e) applyFallbackHardFilters keeps visa/freshness/atsApplyUrl/dead, skips
+//     location/careerStage/jobType.
+test("applyFallbackHardFilters: keeps safety gates, skips location/careerStage/jobType", () => {
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetRoleFunction: ["software_engineering"],
+    targetLocations: ["new_york_city"],
+    careerStage: "junior",
+    targetJobType: ["full_time"],
+    visaStatus: "sponsor_needed",
+  } as never
+  const jobs: MatchingJob[] = [
+    // off-location + senior + internship — would be dropped strictly, but
+    // fallback skips location/careerStage/jobType. Has sponsorship + fresh + url.
+    mkJob({
+      id: "survivor",
+      locationBuckets: ["san_francisco_bay_area"],
+      seniorityLevel: "senior",
+      jobType: "internship",
+      sponsorship: true,
+      requiredSkills: ["x"],
+    }),
+    // visa gate still drops this (no sponsorship for a sponsor_needed user).
+    mkJob({ id: "novisa", sponsorship: false, requiredSkills: ["x"] }),
+    // dead still dropped.
+    mkJob({ id: "dead", sponsorship: true, dead: true, requiredSkills: ["x"] }),
+    // missing atsApplyUrl still dropped.
+    mkJob({ id: "nourl", sponsorship: true, atsApplyUrl: "", requiredSkills: ["x"] }),
+    // stale still dropped.
+    mkJob({ id: "stale", sponsorship: true, firstSeenAt: STALE_TS, requiredSkills: ["x"] }),
+  ]
+  const r = applyFallbackHardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["survivor"])
+  assert.equal(r.counters.visa, 1)
+  assert.equal(r.counters.dead, 1)
+  assert.equal(r.counters.atsApplyUrl, 1)
+  assert.equal(r.counters.freshness, 1)
+  // location/careerStage/jobType counters never fired in the fallback filter.
+  assert.equal(r.counters.location, 0)
+  assert.equal(r.counters.careerStage, 0)
+  assert.equal(r.counters.jobType, 0)
+})
+
+// (f) queryMatchingJobsV16 returns fallbackApplied jobs (general match) when
+//     strict yields 0 but corpus has visa-eligible fresh jobs; 0 only when
+//     fallback also empty.
+test("queryMatchingJobsV16: general-market fallback fires when strict is 0 but corpus has eligible jobs", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_fb").set({
+    tags: {
+      skills: ["typescript"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+      // a metro the corpus does NOT have → strict location zeroes out, but the
+      // user is a citizen (no visa block) so the fallback can surface the job.
+      targetLocations: ["denver_metro"],
+      visaStatus: "citizen",
+    },
+  })
+  await seedJob(mfs, "sf-only", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["typescript"],
+    locationBuckets: ["san_francisco_bay_area"],
+    locationRaw: "San Francisco, CA",
+    companyName: "SFCo",
+    jobTitle: "SWE",
+  })
+  const r = await queryMatchingJobsV16({ userId: "u_fb", nowMs: NOW, lang: "en" }, { db: asFirestore(mfs) })
+  assert.equal(r.fallbackApplied, true)
+  assert.equal(r.jobs.length, 1)
+  assert.equal(r.jobs[0]!.id, "sf-only")
+  assert.equal(r.jobs[0]!.matchSourceLabel, "general match")
+  assert.ok(r.relaxedHardFilters?.includes("general_market_fallback"))
+})
+
+test("queryMatchingJobsV16: returns 0 only when even the general-market fallback is empty", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_fb_empty").set({
+    tags: {
+      skills: ["typescript"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+      visaStatus: "sponsor_needed", // needs sponsorship=true
+    },
+  })
+  // Only a non-sponsoring job exists → visa gate drops it in BOTH strict and
+  // fallback → genuine zero.
+  await seedJob(mfs, "nosponsor", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["typescript"],
+    sponsorship: false,
+    companyName: "NoSponsorCo",
+    jobTitle: "SWE",
+  })
+  const r = await queryMatchingJobsV16({ userId: "u_fb_empty", nowMs: NOW, lang: "en" }, { db: asFirestore(mfs) })
+  assert.equal(r.jobs.length, 0)
+  assert.equal(r.total, 0)
+  assert.notEqual(r.fallbackApplied, true)
 })

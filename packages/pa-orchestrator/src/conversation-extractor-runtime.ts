@@ -122,7 +122,14 @@ function safeParseJson(text: string): unknown {
 const SYSTEM_PROMPT =
   "You extract canonical preference deltas from chat between a job-seeker and an assistant. " +
   "Output JSON only that validates the `ConversationExtractResult` schema (tagPatch, " +
-  "memoryEntities, confidence, rationale). No prose."
+  "memoryEntities, confidence, rationale). No prose. tagPatch may include any of: " +
+  "targetRoleFunction, negativeRoleFunction, industrySector, negativeIndustrySector, visaStatus, " +
+  "careerStage, targetJobType, targetLocations, targetCountry, minSalaryUsd, companySize, " +
+  "prefersStartup, companyNegativeList, companyPositiveList, targetCompanyTags, urgentlySeeking, " +
+  "relevantTags, preferenceHardness. Capture INTENT not résumé history: targetJobType/" +
+  "targetRoleFunction describe the user's NEXT role, never inferred from past titles. Salary " +
+  "(minSalaryUsd) only from an explicit floor like 'at least 100k'. 'open to anything'/'flexible' " +
+  "location → targetLocations:['anywhere']."
 
 async function callOpenAi(args: {
   prompt: string

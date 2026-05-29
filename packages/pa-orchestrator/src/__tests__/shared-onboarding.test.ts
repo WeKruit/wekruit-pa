@@ -210,6 +210,42 @@ test("free-form answers produce memory evidence and confident tag patches", () =
   ])
 })
 
+test("live-bug capture fix: Q4 open-to-anything → anywhere bypass on both axes; Q5 visa + salary floor", () => {
+  // Q4 "open to anything" with no concrete place previously captured NOTHING →
+  // empty targetLocations → V16 location hard filter over-filtered to recCount=0.
+  const anywhere = projectSharedOnboardingAnswer(
+    "location_relocation",
+    "honestly i'm open to anything, wherever the right role is",
+  )
+  assert.ok(
+    (anywhere.tags.targetLocations ?? []).includes("anywhere"),
+    "open-to-anything must emit the 'anywhere' bypass token on targetLocations",
+  )
+  assert.ok(
+    (anywhere.tags.targetCountry ?? []).includes("anywhere"),
+    "open-to-anything must emit 'anywhere' on targetCountry too",
+  )
+
+  // A named country → canonical lowercase region token.
+  const usa = projectSharedOnboardingAnswer("location_relocation", "USA, open to anywhere in the states")
+  assert.ok((usa.tags.targetCountry ?? []).includes("usa"))
+
+  // Concrete-only answer must NOT emit anywhere.
+  const concrete = projectSharedOnboardingAnswer("location_relocation", "just NYC for me")
+  assert.ok(!(concrete.tags.targetLocations ?? []).includes("anywhere"))
+
+  // Q5 "I need H1B sponsorship" previously only set a visa_context LABEL — V16's
+  // visa hard filter reads tags.visaStatus, so the sponsorship intent was lost.
+  const visa = projectSharedOnboardingAnswer("special_context", "I'll need H1B sponsorship to keep working here")
+  assert.equal(visa.tags.visaStatus, "sponsor_needed")
+  // Keep the context label too.
+  assert.ok((visa.tags.targetCompanyTags ?? []).includes("visa_context"))
+
+  // Q5 explicit salary floor (intent) → tags.minSalary (V16 salary fit).
+  const salary = projectSharedOnboardingAnswer("special_context", "looking for at least 120k base, below that is a no")
+  assert.equal(salary.tags.minSalary, 120000)
+})
+
 test("recommendations become eligible only after Q5 is collected", () => {
   assert.deepEqual(resolveNextSharedOnboardingQuestionId("main_goal"), {
     nextQuestionId: "culture_stage",

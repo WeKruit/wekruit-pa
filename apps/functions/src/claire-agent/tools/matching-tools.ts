@@ -33,7 +33,9 @@ const JobTypeEnum = z.enum(JOB_TYPE_VOCAB)
 import { applyPartialUserTags, type PartialUserTags } from "@pa/pa-orchestrator"
 import { mem0Add, type Mem0Config } from "@pa/memory"
 import { parseResumeText } from "@pa/pa-resume-parser"
-import { queryMatchingJobsV16 } from "@pa/job-rec"
+import { queryMatchingJobsV16, recordRecommendedJobs } from "@pa/job-rec"
+import { writeFeedbackEvent } from "@pa/pa-persistence"
+import type { FeedbackEvent } from "@pa/core-types"
 import type { Firestore } from "firebase-admin/firestore"
 import {
   reduceMatchingPreferences,
@@ -110,12 +112,97 @@ function resolveMem0Config(): Mem0Config | null {
 }
 
 /**
+ * Rec tracking (req #4, 2026-05-29) — after the agent's find_match surfaces
+ * jobs, persist them to the per-(user,job) ledger AND emit one `job_presented`
+ * FeedbackEvent each, so (a) the matcher's `previousRecommendationPenalty`
+ * de-prioritises them next time (automatic dedup — no re-offering the same
+ * role) and (b) the flywheel learns "a job was offered via the claire_agent".
+ *
+ * FAIL-OPEN: the find_match TOOL must NEVER throw (RC2). Every flywheel write
+ * here is best-effort and swallowed; a Firestore hiccup must not break the
+ * candidate's turn. Returns void.
+ *
+ * Exported for unit test (src/__tests__/claire-find-match-ledger.test.ts):
+ * locks "writes ledger + job_presented event, and stays fail-open when the
+ * writes throw".
+ */
+export async function recordAgentPresentation(
+  db: Firestore,
+  args: {
+    userId: string
+    jobs: Array<{ id?: unknown }>
+    fallbackApplied?: boolean
+    log: ClaireToolContext["log"]
+    nowIso: string
+  },
+): Promise<void> {
+  const jobIds = [
+    ...new Set(
+      args.jobs
+        .map((j) => (typeof j.id === "string" ? j.id.trim() : ""))
+        .filter((id) => id.length > 0),
+    ),
+  ]
+  if (jobIds.length === 0) return
+  // req #5 — when V16 relaxed all hard filters to a general scraped-market
+  // result, tag the ledger row accordingly; otherwise it's the agent-driven
+  // curated/collab+market mix.
+  const reason = args.fallbackApplied === true ? "general_market_fallback" : "claire_agent"
+  // (1) Ledger — drives `previousRecommendationPenalty` dedup on the next pull.
+  try {
+    await recordRecommendedJobs(
+      db,
+      { userId: args.userId, jobs: jobIds.map((id) => ({ id })), source: "claire_agent", reason, nowIso: args.nowIso },
+      args.log,
+    )
+  } catch (err) {
+    args.log("pa.claire.find_match_ledger_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  // (2) Flywheel — one append-only `job_presented` event per offered job. The
+  // canonical actor for the Claire agent runtime is `orchestrator` (we do NOT
+  // add a parallel `agent` enum member — D8/Rule 8); the surfacing flow lives
+  // in `outcome` ("claire_agent"). Deterministic eventId keeps it idempotent.
+  await Promise.all(
+    jobIds.map(async (jobId) => {
+      const event: FeedbackEvent = {
+        eventId: `job-presented-${args.userId}-${jobId}-${args.nowIso}`,
+        kind: "job_presented",
+        actor: "orchestrator",
+        candidateId: args.userId,
+        jobId,
+        outcome: "claire_agent",
+        evidence: [{ source: "job_match", summary: `job offered to candidate via claire_agent` }],
+        payloadRedacted: { flow: "claire_agent", channel: "imessage" },
+        createdAt: args.nowIso,
+      }
+      try {
+        await writeFeedbackEvent(db, event)
+      } catch (err) {
+        args.log("pa.claire.find_match_feedback_error", {
+          userId: args.userId,
+          jobId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }),
+  )
+}
+
+/**
  * Production wiring for ctx.findMatch — wraps `queryMatchingJobsV16` (@pa/job-rec).
  * Wave B injects this in prod; evals pass a fake catalog instead. Formats each
  * ranked job as "Title @ Company\n<atsApplyUrl>" (the find-match line shape the
  * LLM relays to the user). NEVER throws — returns a grounded ok:false on error.
  */
-export function makeV16FindMatch(db: Firestore): ClaireToolContext["findMatch"] {
+export function makeV16FindMatch(
+  db: Firestore,
+  opts?: { log?: ClaireToolContext["log"]; nowIso?: () => string },
+): ClaireToolContext["findMatch"] {
+  const log: ClaireToolContext["log"] = opts?.log ?? (() => {})
+  const nowIso = opts?.nowIso ?? (() => new Date().toISOString())
   return async ({
     userId,
     requestedCount,
@@ -129,7 +216,19 @@ export function makeV16FindMatch(db: Firestore): ClaireToolContext["findMatch"] 
           ? Math.min(5, Math.floor(requestedCount))
           : 3
       const result = await queryMatchingJobsV16({ userId, limit }, { db })
-      const jobs = (result.jobs ?? []).map((j) => {
+      const rawJobs = result.jobs ?? []
+      // Rec tracking (req #4/#5) — write the ledger + job_presented events for
+      // the offered jobs. Fail-open: never breaks the never-throws contract.
+      if (rawJobs.length > 0) {
+        await recordAgentPresentation(db, {
+          userId,
+          jobs: rawJobs,
+          fallbackApplied: result.fallbackApplied,
+          log,
+          nowIso: nowIso(),
+        })
+      }
+      const jobs = rawJobs.map((j) => {
         const title = (j.jobTitle || j.roleTitle || "Role").trim()
         const company = (j.companyName || "Company").trim()
         const url = (j.atsApplyUrl ?? "").trim()

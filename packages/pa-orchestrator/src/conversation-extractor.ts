@@ -31,6 +31,7 @@ import {
   INDUSTRY_SECTOR_VOCAB,
   CAREER_STAGE_VOCAB,
   JOB_TYPE_VOCAB,
+  LOCATION_VOCAB,
   HARDNESS_AXIS_VOCAB,
   HardnessSchema,
   type RoleFunction,
@@ -223,7 +224,30 @@ export const ConversationExtractResultSchema = z.object({
       careerStage: z.enum(CAREER_STAGE_VOCAB).optional(),
       targetJobType: coerceArray(z.enum(JOB_TYPE_VOCAB)).optional(),
       targetLocations: coerceArray(z.string().min(1).max(80)),
+      // V16 reads `targetCountry` as a country-level location bypass (incl.
+      // "anywhere"). Open-vocab strings; canonical lowercase region tokens.
+      targetCountry: coerceArray(z.string().min(1).max(80)).optional(),
       minSalaryUsd: z.number().int().nonnegative().optional(),
+      // Company stage / size preference (toggle-UI dimensions). LWW scalars —
+      // same enums as UserTags.companySize / prefersStartup.
+      companySize: z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"]).optional(),
+      prefersStartup: z.enum(["startup", "bigtech", "either"]).optional(),
+      // Deal-breaker + positive company signals + work-pace/culture labels
+      // (open-vocab bags, cap 30 — matches UserTags).
+      companyNegativeList: coerceArray(z.string().min(1).max(80)).refine(
+        (v) => v === undefined || v.length <= 30,
+        { message: "companyNegativeList exceeds 30" },
+      ),
+      companyPositiveList: coerceArray(z.string().min(1).max(80)).refine(
+        (v) => v === undefined || v.length <= 30,
+        { message: "companyPositiveList exceeds 30" },
+      ),
+      targetCompanyTags: coerceArray(z.string().min(1).max(80)).refine(
+        (v) => v === undefined || v.length <= 30,
+        { message: "targetCompanyTags exceeds 30" },
+      ),
+      // Actively-searching intent signal.
+      urgentlySeeking: z.boolean().optional(),
       relevantTags: coerceArray(z.string().min(1).max(40)).refine(
         (v) => v === undefined || v.length <= 12,
         { message: "relevantTags exceeds 12" },
@@ -374,10 +398,34 @@ export function buildExtractorPrompt(req: ConversationExtractRequest): string {
     `  careerStage (string):           ${CAREER_STAGE_VOCAB.join(", ")}`,
     `  targetJobType (string[]):       ${JOB_TYPE_VOCAB.join(", ")}`,
     "  targetLocations (string[]):     free-form normalized location tokens, e.g. new_york, san_francisco_bay_area, remote",
+    "  targetCountry (string[]):       lowercase country/region tokens, e.g. usa, canada, anywhere",
     "  minSalaryUsd (integer):         minimum acceptable base salary in USD",
+    "  companySize (string):           seed, early_startup, scale_up, mid_market, enterprise, open",
+    "  prefersStartup (string):        startup, bigtech, either",
+    "  companyNegativeList (string[], max 30): companies to AVOID, lowercased, e.g. meta, amazon",
+    "  companyPositiveList (string[], max 30): companies the user explicitly WANTS, lowercased",
+    "  targetCompanyTags (string[], max 30): work-pace / culture / stage labels, lowercase_snake_case, e.g. high_ownership, calm_collaborative_culture",
+    "  urgentlySeeking (boolean):      true only on a clear active/urgent-search signal",
     "  relevantTags (string[], max 12): free-form lowercase skill/interest tokens",
     `  preferenceHardness (object):    per-axis { hardness: "hard" | "soft" } keyed by: ${HARDNESS_AXIS_VOCAB.join(", ")}`,
     "Do NOT emit any key not in this list. A single-value field may be a scalar or a 1-element array.",
+    "",
+    "Capture rules for specific dimensions:",
+    "  - LOCATION: when the user says 'anywhere' / 'open to anything' / 'open to relocation' / 'flexible' /",
+    "    'wherever' / 'no location preference', emit targetLocations:['anywhere'] (the matcher's anywhere-bypass",
+    "    token). For a named country (USA, Canada, UK, …) emit targetCountry with a lowercase token (e.g. 'usa',",
+    "    'canada', 'anywhere'). Concrete cities go in targetLocations.",
+    "  - SALARY: extract minSalaryUsd ONLY from an explicit floor the user states for their NEXT role ('at least",
+    "    100k' → 100000, 'minimum 140k' → 140000, '130k+'). IGNORE any salary describing their résumé/current/past",
+    "    pay — that is history, not a target floor. Annual USD only.",
+    "  - INTENT-vs-HISTORY: targetJobType and targetRoleFunction are the user's INTENT for their NEXT role. NEVER",
+    "    infer them from résumé titles or work history. A résumé line like 'Software Engineer Intern' is HISTORY —",
+    "    do NOT emit targetJobType:['internship'] from it. Only emit targetJobType when the user states what they",
+    "    WANT next ('looking for full-time roles' → ['full_time']).",
+    "  - COMPANY: 'avoid Meta' / 'anywhere but Amazon' → companyNegativeList; explicit positive company asks →",
+    "    companyPositiveList; work-pace/culture/stage labels → targetCompanyTags. companySize ∈ {seed, early_startup,",
+    "    scale_up, mid_market, enterprise, open}; prefersStartup ∈ {startup, bigtech, either}.",
+    `  location vocab (targetLocations tokens): ${LOCATION_VOCAB.join(", ")}`,
     "",
     "preferenceHardness — a SECONDARY annotation only. It NEVER replaces the value fields above:",
     "  ALWAYS capture the axis VALUE field (industrySector, targetLocations, minSalaryUsd, careerStage, …)",

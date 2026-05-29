@@ -59,3 +59,27 @@ export function acceptableCareerStages(stage: CareerStage): CareerStage[] {
   const userIdx = CAREER_STAGE_INDEX[stage]
   return stages.filter((s) => Math.abs(CAREER_STAGE_INDEX[s] - userIdx) <= 1)
 }
+
+/**
+ * Recall fix (2026-05-29) — early-career relax window: the standard ±1
+ * `acceptableCareerStages` window plus ONE tier DOWN so legit early-career
+ * roles tagged `intern` (e.g. a `junior`-tagged candidate whose matching
+ * corpus skews intern/new-grad) are not zeroed out. Only widens DOWNWARD —
+ * the upper bound is left at the default `acceptableCareerStages` ceiling so a
+ * junior candidate is never leaked director/VP/C-level roles.
+ *
+ * For `student`/`intern`/`entry_level`/`junior` this folds `intern` (and
+ * `student` when already adjacent) into the acceptable set. For any other
+ * stage it returns the default window unchanged (no upward leakage).
+ */
+export function earlyCareerRelaxWindow(stage: CareerStage): CareerStage[] {
+  const base = new Set<CareerStage>(acceptableCareerStages(stage))
+  const userIdx = CAREER_STAGE_INDEX[stage]
+  for (const s of CAREER_STAGE_VOCAB) {
+    const idx = CAREER_STAGE_INDEX[s]
+    // widen DOWN only: include stages up to TWO tiers below the user, never
+    // above the default ceiling (userIdx + 1).
+    if (idx <= userIdx + 1 && idx >= userIdx - 2) base.add(s)
+  }
+  return [...base]
+}

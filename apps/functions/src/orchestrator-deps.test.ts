@@ -36,6 +36,7 @@ import {
   formatJobRequirementsLine,
   resolveRuntimeJobRecRoleFocus,
   resolveJobRecVisibleCount,
+  resolveRecommendationReason,
 } from "./orchestrator-deps.js"
 import type { RerankInput, RerankOutput } from "./lib/llm-rerank.js"
 
@@ -720,5 +721,44 @@ describe("makeGenerateJobRecs filters: cvEmbedding wire-through (iter34 H.2 CR5)
     const raw: unknown = [1, "two", 3]
     const ok = Array.isArray(raw) && raw.every((n) => typeof n === "number")
     assert.equal(ok, false, "mixed types must NOT pass the validator")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Rec tracking (req #4/#5) — `resolveRecommendationReason` is the single source
+// of truth for the `recordRecommendedJobs` ledger `reason` label that
+// `makeGenerateJobRecs` writes. `makeGenerateJobRecs` reads Firestore with no
+// DI, so we lock the reason-selection contract on the pure helper.
+// ---------------------------------------------------------------------------
+describe("resolveRecommendationReason (rec tracking req #4/#5)", () => {
+  it("records 'general_market_fallback' when the matcher returns fallbackApplied", () => {
+    // req #5 — V16 relaxed all hard filters and surfaced general scraped-market
+    // jobs so Claire is never dead-silent; the ledger must say so.
+    assert.equal(
+      resolveRecommendationReason({ fallbackApplied: true }),
+      "general_market_fallback",
+    )
+  })
+
+  it("records 'collab_prescreen' when opts.collabPrescreenOnly is set", () => {
+    // collab/partner-only request — overrides fallback when both happen to be
+    // set (collab is the more specific intent).
+    assert.equal(
+      resolveRecommendationReason({ collabPrescreenOnly: true }),
+      "collab_prescreen",
+    )
+    assert.equal(
+      resolveRecommendationReason({ collabPrescreenOnly: true, fallbackApplied: true }),
+      "collab_prescreen",
+      "collab intent wins over fallback",
+    )
+  })
+
+  it("records the default 'runtime_job_search_reply' for a normal curated+market mix", () => {
+    assert.equal(resolveRecommendationReason({}), "runtime_job_search_reply")
+    assert.equal(
+      resolveRecommendationReason({ collabPrescreenOnly: false, fallbackApplied: false }),
+      "runtime_job_search_reply",
+    )
   })
 })
