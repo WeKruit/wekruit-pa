@@ -751,10 +751,25 @@ const LANDING_STYLES = `
 /* Mobile ---------------------------------------------------------------- */
 @media (max-width: 980px) {
   .wk-hero { padding: 36px 0 64px; }
-  .wk-hero__grid { grid-template-columns: 1fr; gap: 40px; }
+  .wk-hero__grid {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 0.78fr);
+    gap: 36px;
+    align-items: start;
+  }
+  .wk-hero__h1 { font-size: clamp(54px, 6.7vw, 68px); }
+  .wk-hero__visual { padding-top: 32px; }
+  .wk-hero__visual .wk-imsg-phone { max-width: 320px; }
   .wk-steps { grid-template-columns: 1fr; }
   .wk-joblist { grid-template-columns: 1fr; }
   .wk-trust-logos { grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 48px; }
+}
+@media (max-width: 760px) {
+  .wk-hero__grid { grid-template-columns: 1fr; gap: 40px; }
+  .wk-hero__visual {
+    padding-top: 0;
+    align-items: center;
+  }
+  .wk-hero__visual .wk-imsg-phone { max-width: 360px; }
 }
 @media (max-width: 600px) {
   .wk-section { padding: 56px 0; }
