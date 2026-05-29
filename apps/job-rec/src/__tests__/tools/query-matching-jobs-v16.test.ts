@@ -771,7 +771,7 @@ test("queryMatchingJobsV16: empty user tags → noUserTags=true + empty result",
   assert.equal(r.total, 0)
 })
 
-test("queryMatchingJobsV16: empty targetRoleFunction → needsOnboarding=true + missingAxes lists gaps", async () => {
+test("queryMatchingJobsV16: empty targetRoleFunction → needsOnboarding=true + missingAxes lists only role", async () => {
   const mfs = new MockFirestore()
   // User has SOME tags (skills only) but lacks targetRoleFunction + targetLocations + visa.
   await mfs
@@ -800,12 +800,152 @@ test("queryMatchingJobsV16: empty targetRoleFunction → needsOnboarding=true + 
   )
   assert.equal(r.needsOnboarding, true)
   assert.ok(r.missingAxes && r.missingAxes.includes("targetRoleFunction"))
-  assert.ok(r.missingAxes!.includes("targetLocations"))
-  assert.ok(r.missingAxes!.includes("visaStatus"))
+  // 2026-05-28 — optional axes (location, visa) the candidate never provided
+  // must NOT be flagged as onboarding gaps. Only the role axis blocks matching.
+  assert.ok(!r.missingAxes!.includes("targetLocations"))
+  assert.ok(!r.missingAxes!.includes("visaStatus"))
   // Missing role axis must not degrade to a broad active-job scan for real
   // candidates; that can surface unrelated engineering roles.
   assert.equal(r.jobs.length, 0)
   assert.equal(r.total, 0)
+})
+
+// ---------------------------------------------------------------------------
+// 2026-05-28 — "如果没写就不做 match 标准": a field the candidate never provided
+// must NOT become a matching criterion and must NOT flag the user incomplete.
+// Only `targetRoleFunction` is a true-required axis.
+// ---------------------------------------------------------------------------
+
+test("queryMatchingJobsV16: no visaStatus → no needsOnboarding, still returns matches (no sponsorship filter)", async () => {
+  const mfs = new MockFirestore()
+  // Résumé-derived profile: role + location present, but NO visaStatus (résumés
+  // don't state work authorization). This is ~99% of real users.
+  await mfs
+    .collection("pa-users")
+    .doc("u_no_visa")
+    .set({
+      tags: {
+        skills: ["python"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+        targetLocations: ["new_york_city"],
+        // visaStatus intentionally absent
+      },
+    })
+  // Job with unknown sponsorship (the default seedJob shape). A sponsor_needed
+  // user would drop this; a no-visa user must keep it.
+  await seedJob(mfs, "swe-unknown-sponsor", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "NoVisaCo",
+    jobTitle: "Software Engineer",
+    sponsorship: null,
+    locationBuckets: ["new_york_city"],
+    locationRaw: "New York, NY",
+  })
+  const r = await queryMatchingJobsV16(
+    { userId: "u_no_visa", nowMs: NOW },
+    { db: asFirestore(mfs) }
+  )
+  // Absent visa must not block / flag onboarding.
+  assert.equal(r.needsOnboarding, undefined)
+  assert.equal(r.missingAxes, undefined)
+  // And the sponsorship hard filter must NOT have fired (job kept).
+  assert.equal(r.hardFilter.visa, 0)
+  assert.equal(r.jobs.length, 1)
+  assert.equal(r.jobs[0]!.id, "swe-unknown-sponsor")
+})
+
+test("queryMatchingJobsV16: no targetLocations → no needsOnboarding, location filter bypassed", async () => {
+  const mfs = new MockFirestore()
+  // Role + visa present, but NO targetLocations.
+  await mfs
+    .collection("pa-users")
+    .doc("u_no_loc")
+    .set({
+      tags: {
+        skills: ["python"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+        visaStatus: "citizen",
+        // targetLocations intentionally absent
+      },
+    })
+  // Two jobs in unrelated metros — with no location constraint both survive.
+  await seedJob(mfs, "swe-nyc", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "NycCo",
+    jobTitle: "Software Engineer",
+    locationBuckets: ["new_york_city"],
+    locationRaw: "New York, NY",
+  })
+  await seedJob(mfs, "swe-sf", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "SfCo",
+    jobTitle: "Software Engineer",
+    locationBuckets: ["san_francisco_bay_area"],
+    locationRaw: "San Francisco, CA",
+  })
+  const r = await queryMatchingJobsV16(
+    { userId: "u_no_loc", nowMs: NOW },
+    { db: asFirestore(mfs) }
+  )
+  // Absent location must not block / flag onboarding.
+  assert.equal(r.needsOnboarding, undefined)
+  assert.equal(r.missingAxes, undefined)
+  // Location hard filter must be a no-op → both metros kept.
+  assert.equal(r.hardFilter.location, 0)
+  assert.equal(r.jobs.length, 2)
+  assert.deepEqual(r.jobs.map((j) => j.id).sort(), ["swe-nyc", "swe-sf"])
+})
+
+test("queryMatchingJobsV16: visaStatus=sponsor_needed → sponsorship hard filter still applies", async () => {
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u_sponsor")
+    .set({
+      tags: {
+        skills: ["python"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+        targetLocations: ["remote_anywhere"],
+        visaStatus: "sponsor_needed",
+      },
+    })
+  // Job that sponsors → kept.
+  await seedJob(mfs, "swe-sponsors", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "SponsorCo",
+    jobTitle: "Software Engineer",
+    sponsorship: true,
+    locationBuckets: ["remote_anywhere", "new_york_city"],
+    locationRaw: "Remote, US",
+  })
+  // Job that does NOT sponsor (unknown) → dropped by visa gate.
+  await seedJob(mfs, "swe-nosponsor", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "NoSponsorCo",
+    jobTitle: "Software Engineer",
+    sponsorship: null,
+    locationBuckets: ["remote_anywhere", "new_york_city"],
+    locationRaw: "Remote, US",
+  })
+  const r = await queryMatchingJobsV16(
+    { userId: "u_sponsor", nowMs: NOW },
+    { db: asFirestore(mfs) }
+  )
+  // Explicit sponsor_needed is a provided field → filter must fire.
+  assert.equal(r.hardFilter.visa, 1)
+  assert.equal(r.jobs.length, 1)
+  assert.equal(r.jobs[0]!.id, "swe-sponsors")
 })
 
 test("queryMatchingJobsV16: infers missing targetRoleFunction from resume title history", async () => {

@@ -526,13 +526,27 @@ function isRoleTitleMismatch(userTags: UserTags, job: MatchingJob): boolean {
   return !titleAllowedByExplicitNonSoftwareTarget(title, targetRoles, userTags)
 }
 
+/**
+ * Compute the onboarding gaps that must block matching.
+ *
+ * Product directive (2026-05-28, Adam — "如果没写就不做 match 标准"): a field the
+ * candidate never provided must NOT become a matching criterion and must NOT
+ * flag the user as incomplete. Empirically ~99% of résumé-having users have no
+ * `visaStatus` (résumés don't state work authorization) and many lack an
+ * explicit `targetLocations`; flagging those as `needsOnboarding` wrongly
+ * diverted nearly every user away from receiving recommendations.
+ *
+ * Therefore `targetRoleFunction` is the ONLY true-required axis: without it the
+ * role hard filter has nothing to match against and matching is meaningless
+ * (V16 early-returns empty when it is absent). Every other axis is optional —
+ * its hard filter already no-ops when the user signal is absent
+ * (`isSponsorshipNeeded` only fires on `sponsor_needed`; the location intersect
+ * only fires when `targetLocations.length > 0`; careerStage/jobType only fire
+ * when present). Optional gaps therefore neither block nor set `needsOnboarding`.
+ */
 function buildMissingAxes(userTags: UserTags): V16QueryResult["missingAxes"] {
   const missingAxes: V16QueryResult["missingAxes"] = []
   if (!userTags.targetRoleFunction?.length) missingAxes!.push("targetRoleFunction")
-  if (!userTags.targetLocations?.length) missingAxes!.push("targetLocations")
-  if (!userTags.visaStatus) missingAxes!.push("visaStatus")
-  if (!userTags.careerStage) missingAxes!.push("careerStage")
-  if (!userTags.targetJobType?.length) missingAxes!.push("targetJobType")
   return missingAxes
 }
 
@@ -2141,13 +2155,13 @@ export async function queryMatchingJobsV16(
   // ordered retrieval, but Claire never knows to ask. Compute missingAxes
   // from the loaded tags so the orchestrator can inject "weave these questions
   // into your next 2-3 replies" into the system prompt.
-  // W5 — all 5 fields are typed on UserTagsSchema (W3 #117). Read directly.
-  // NOTE: this 5-axis check (3 W4 REQUIRED_AXES + careerStage + targetJobType)
-  // is intentionally broader than `REQUIRED_AXES` from the W4 registry —
-  // Claire surfaces careerStage/targetJobType as onboarding follow-ups even
-  // though V16 degrades gracefully without them. Switching to registry-driven
-  // REQUIRED_AXES would narrow this to 3 axes and is deferred to a follow-up
-  // PR alongside the matching `V16QueryResult["missingAxes"]` enum change.
+  // 2026-05-28 — narrowed to the single true-required axis (`targetRoleFunction`).
+  // Per Adam's "如果没写就不做 match 标准" directive, optional axes (location, visa,
+  // careerStage, jobType) no longer flag `needsOnboarding`: a field the candidate
+  // never provided must not block them or become a hard filter, and the hard
+  // filters already no-op on absent optional signals. See `buildMissingAxes`.
+  // When `targetRoleFunction` is present this list is empty, so a successfully-
+  // matched user is never spuriously flagged as incomplete.
   const missingAxes = initialMissingAxes
 
   return {
