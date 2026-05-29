@@ -8,6 +8,7 @@ import {
   isSyntheticTestProfile,
   matchesPhoneSearch,
   normalizeCandidatePhoneLookup,
+  previewCandidateDrawerText,
 } from "../Candidates.helpers.js"
 
 test("Candidates classifies explicit testMode users as synthetic", () => {
@@ -137,4 +138,24 @@ test("Candidates phone search matches partial and formatted phone inputs", () =>
   assert.equal(matchesPhoneSearch(phone, "(424) 320-1960"), true)
   assert.equal(matchesPhoneSearch(phone, "+14243201960"), true)
   assert.equal(matchesPhoneSearch(phone, "999"), false)
+})
+
+test("Candidates drawer renders structured context as text", () => {
+  const preview = previewCandidateDrawerText(
+    {
+      lastCompany: "Acme",
+      jobTitle: "Founding Designer",
+      email: "candidate@example.com",
+    },
+    200
+  )
+
+  assert.equal(typeof preview, "string")
+  assert.match(preview ?? "", /lastCompany/)
+  assert.match(preview ?? "", /Acme/)
+})
+
+test("Candidates drawer truncates long context previews", () => {
+  const preview = previewCandidateDrawerText("x".repeat(12), 5)
+  assert.equal(preview, "xxxxx...")
 })

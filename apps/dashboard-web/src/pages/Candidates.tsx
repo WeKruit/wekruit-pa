@@ -42,6 +42,7 @@ import {
   matchesPhoneSearch,
   normalizeCandidatePhoneLookup,
   phoneSearchDigits,
+  previewCandidateDrawerText,
   type CandidateClass,
   type ExternalSource,
   type SourceKind,
@@ -1371,7 +1372,9 @@ function DrawerProfileDetails({ doc }: { doc: UserDoc }) {
   const prefs = d.conversationDerivedPreferences as
     | { summary?: string; updatedAt?: { seconds?: number } | string }
     | undefined
-  const ctx = d.candidateContext as string | undefined
+  const derivedSummary = previewCandidateDrawerText(derivedExp?.summary, 700)
+  const prefsSummary = previewCandidateDrawerText(prefs?.summary, 500)
+  const ctx = previewCandidateDrawerText(d.candidateContext, 400)
   const postMatch = d.postMatchRetention as
     | { state?: string; lastInteractionAt?: { seconds?: number } | string }
     | undefined
@@ -1386,8 +1389,8 @@ function DrawerProfileDetails({ doc }: { doc: UserDoc }) {
     ? tags.skills.map((s) => (typeof s === "string" ? s : s?.value)).filter(Boolean).slice(0, 10)
     : []
 
-  const noData = !derivedExp?.summary &&
-    !prefs?.summary &&
+  const noData = !derivedSummary &&
+    !prefsSummary &&
     !ctx &&
     !resumeCount &&
     !tags.topTags?.length &&
@@ -1421,10 +1424,10 @@ function DrawerProfileDetails({ doc }: { doc: UserDoc }) {
         </div>
       )}
 
-      {derivedExp?.summary && (
+      {derivedSummary && derivedExp && (
         <div>
           <DrawerSectionLabel>Experience summary</DrawerSectionLabel>
-          <div style={{ color: "var(--ink-2)", whiteSpace: "pre-wrap" }}>{derivedExp.summary}</div>
+          <div style={{ color: "var(--ink-2)", whiteSpace: "pre-wrap" }}>{derivedSummary}</div>
           {(derivedExp.years || derivedExp.titles?.length || derivedExp.companies?.length) && (
             <div style={{ marginTop: 4, color: "var(--ink-3)", fontSize: 12 }}>
               {derivedExp.years ? `${derivedExp.years} yrs · ` : ""}
@@ -1458,10 +1461,10 @@ function DrawerProfileDetails({ doc }: { doc: UserDoc }) {
         </div>
       )}
 
-      {prefs?.summary && (
+      {prefsSummary && (
         <div>
           <DrawerSectionLabel>Conversation preferences</DrawerSectionLabel>
-          <div style={{ color: "var(--ink-2)", whiteSpace: "pre-wrap" }}>{prefs.summary}</div>
+          <div style={{ color: "var(--ink-2)", whiteSpace: "pre-wrap" }}>{prefsSummary}</div>
         </div>
       )}
 
@@ -1469,7 +1472,7 @@ function DrawerProfileDetails({ doc }: { doc: UserDoc }) {
         <div>
           <DrawerSectionLabel>Candidate context</DrawerSectionLabel>
           <div style={{ color: "var(--ink-2)", whiteSpace: "pre-wrap", fontSize: 12 }}>
-            {ctx.length > 400 ? ctx.slice(0, 400) + "…" : ctx}
+            {ctx}
           </div>
         </div>
       )}

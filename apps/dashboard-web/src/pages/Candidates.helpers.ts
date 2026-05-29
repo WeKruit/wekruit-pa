@@ -40,3 +40,19 @@ export function matchesPhoneSearch(phoneE164: string | undefined, search: string
   if (!queryDigits || !phoneE164) return false
   return digitsOnly(phoneE164).includes(queryDigits)
 }
+
+export function previewCandidateDrawerText(value: unknown, max = 400): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined
+  const raw =
+    typeof value === "string"
+      ? value
+      : (() => {
+          try {
+            return JSON.stringify(value, null, 2)
+          } catch {
+            return String(value)
+          }
+        })()
+  if (!raw) return undefined
+  return raw.length > max ? `${raw.slice(0, max)}...` : raw
+}
