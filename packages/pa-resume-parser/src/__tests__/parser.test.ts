@@ -232,6 +232,33 @@ describe("parseResumeText", () => {
     assert.deepEqual(anthropicCalls, ["claude-sonnet-4-6"])
   })
 
+  it("truncates over-generated skills to SKILLS_MAX (does NOT reject)", async () => {
+    // Model ignores the breadth instruction and returns 45 skills (the
+    // Jyesht-Diwani platform-atomization failure mode). Parser must keep the
+    // first 25 (prompt orders most-relevant-first) and still succeed.
+    const overGenerated = {
+      ...VALID_PARSED,
+      skills: Array.from({ length: 45 }, (_, i) => `skill_${i}`),
+    }
+    const result = await parseResumeText({
+      apiKey: "sk-test",
+      resumeText: "stub",
+      clientFactory: () => clientWithJson(overGenerated),
+    })
+    assert.equal(result.parsed.skills.length, 25)
+    assert.equal(result.parsed.skills[0], "skill_0")
+    assert.equal(result.parsed.skills[24], "skill_24")
+  })
+
+  it("leaves a normal-length skills list unchanged", async () => {
+    const result = await parseResumeText({
+      apiKey: "sk-test",
+      resumeText: "stub",
+      clientFactory: () => clientWithJson(VALID_PARSED),
+    })
+    assert.deepEqual(result.parsed.skills, ["TypeScript", "Python"])
+  })
+
   it("rejects on Zod schema-violation (parser throws)", async () => {
     const bad = { fullName: 42 } // wrong types — Zod will reject
     await assert.rejects(

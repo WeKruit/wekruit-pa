@@ -46,7 +46,10 @@ export const PARSED_RESUME_JSON_SCHEMA = {
     totalYearsExperience: { type: ["number", "null"] },
     workAuthorization: { type: ["string", "null"] },
     parseConfidence: { type: "number", minimum: 0, maximum: 1 },
-    skills: { type: "array", items: { type: "string" } },
+    // maxItems mirrors SKILLS_MAX in schema.ts — advertises the breadth cap
+    // to the model. The Zod schema additionally *truncates* (not rejects) if
+    // the model exceeds it, so this is a hint, not a hard contract.
+    skills: { type: "array", maxItems: 25, items: { type: "string" } },
     certifications: { type: "array", items: { type: "string" } },
     languages: { type: "array", items: { type: "string" } },
     interests: { type: "array", items: { type: "string" } },
