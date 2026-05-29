@@ -18,7 +18,7 @@
  *  floor, visa, Claire-this-week stats) are hidden or derived from what we have
  *  rather than mocked — they will light up as the backend grows.
  */
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
+import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { onAuthStateChanged, signOut, type User } from "firebase/auth"
 import { clearSsoCookie } from "../lib/cross-domain-sso.js"
@@ -46,6 +46,7 @@ import {
   CompanyMark,
   Icon,
   PulseDot,
+  CLAIRE_IMESSAGE_HREF,
 } from "./CandidateLogin.js"
 
 const LOGO_BG_POOL = [
@@ -454,69 +455,76 @@ function CandidateMeReady({
   const profile = profileState.profile
   const allMatches = matchesState.status === "ready" ? matchesState.matches : []
 
+  // Real-status → v3 buckets. No mocked rows: everything below derives from the
+  // claim-profile + list-matches callables (or hides when we don't have it yet).
   const upNext = allMatches.filter(
     (m) => m.status === "invited" || m.status === "interview_started",
   )
   const recommended = allMatches.filter((m) => m.status === "recommended")
   const pipelineMatches = allMatches.filter((m) => m.status !== "recommended")
+  const activeInterviewCount = allMatches.filter(
+    (m) =>
+      m.status === "invited" ||
+      m.status === "interview_started" ||
+      m.status === "review_pending",
+  ).length
 
   const matchesLoading = matchesState.status === "loading" || matchesState.status === "idle"
   const matchesErrored = matchesState.status === "error"
   const matchesError = matchesState.status === "error" ? matchesState.message : null
 
-  const actionsCount = upNext.length
   const firstName = firstNameOf(profile)
-  const greet = firstName ? `, ${firstName}` : ""
+  const completeness = deriveCompleteness(profile)
+  const visibility = deriveVisibility(activeInterviewCount, recommended.length)
+
+  const actions: MeAction[] = upNext.map((m) => {
+    const display = getCandidateJobStatusDisplay(m.status, m.job.title)
+    const claire = m.status === "interview_started"
+    return {
+      key: m.matchId,
+      logo: (m.job.company[0] ?? "?").toUpperCase(),
+      logoBg: LOGO_BG_POOL[djb2(m.jobId || m.job.company) % LOGO_BG_POOL.length],
+      urgent: m.status === "invited",
+      meta: `${display.label} · ${m.job.title}`,
+      title: display.nextStep,
+      sub: [m.job.company, m.job.location].filter(Boolean).join(" · "),
+      cta: claire ? "Continue with Claire" : display.ctaLabel,
+      href: claire ? CLAIRE_IMESSAGE_HREF : m.job.href,
+      external: claire,
+      when: meWhen(m.computedAt),
+    }
+  })
 
   return (
-    <CandidateShell signedIn signedInUser={{ name: profile.displayName ?? "You" }}>
-      <style>{ME_PORTAL_STYLES}</style>
-      <div className="wkv2">
-        <header className="wkv2-status">
-          <div className="wk-container wkv2-status__inner">
-            <div className="wkv2-status__copy">
-              <div className="wkv2-status__eyebrow">
-                <PulseDot size={6} />
-                <span>My WeKruit · <strong>live</strong></span>
-              </div>
-              <h1 className="wkv2-status__h1">
-                {actionsCount > 0 ? (
-                  <>
-                    <em className="wkv2-num">{actionsCount}</em> thing{actionsCount === 1 ? "" : "s"} need{actionsCount === 1 ? "s" : ""} you.
-                  </>
-                ) : (
-                  <>Welcome back{greet}.</>
-                )}
-              </h1>
-            </div>
-            {upNext.length > 0 ? (
-              <div className="wkv2-status__cta">
-                <Link to={upNext[0].job.href} className="wk-btn wk-btn--primary">
-                  Continue with Claire <Icon name="arrow-right" size={14} stroke={2} />
-                </Link>
-                <span className="wkv2-status__when">
-                  Next: {upNext[0].job.title} at {upNext[0].job.company}
-                </span>
-              </div>
-            ) : null}
-          </div>
-        </header>
+    <CandidateShell
+      signedIn
+      signedInUser={{ name: profile.displayName ?? "You", email: profile.emailMasked }}
+    >
+      <style>{ME_V3_STYLES}</style>
+      <div className="wkv3">
+        <MeStatusHeader
+          actionsCount={actions.length}
+          firstName={firstName}
+          visibility={visibility}
+          hasPrimary={actions.length > 0}
+        />
 
         <div className="wk-container">
-          <div className="wkv2-grid">
-            <div className="wkv2-main">
-              <UpNextSection
-                upNext={upNext}
+          <div className="wkv3-grid">
+            <div className="wkv3-main">
+              <MeUpNext
+                actions={actions}
                 loading={matchesLoading}
                 errored={matchesErrored}
                 error={matchesError}
+                recommendedCount={recommended.length}
               />
-              <PipelineSection
+              <MePipeline
                 matches={pipelineMatches}
                 recommendedCount={recommended.length}
                 loading={matchesLoading}
               />
-              <NewMatchesSection
+              <MeNewMatches
                 matches={recommended}
                 loading={matchesLoading}
                 errored={matchesErrored}
@@ -524,20 +532,9 @@ function CandidateMeReady({
               />
             </div>
 
-            <aside className="wkv2-side">
-              <SidebarProfileCard profile={profile} />
-              <SidebarConnectorsCard profile={profile} />
-              <SidebarClaireWeekCard activeCount={pipelineMatches.length} matchCount={recommended.length} />
-              <button
-                type="button"
-                className="wk-btn wk-btn--ghost wk-btn--sm wkv2-signout"
-                onClick={async () => {
-                  await clearSsoCookie()
-                  await signOut(auth())
-                }}
-              >
-                Sign out
-              </button>
+            <aside className="wkv3-side">
+              <MeCompletenessCard completeness={completeness} />
+              <MeVisibilityCard visibility={visibility} />
             </aside>
           </div>
         </div>
@@ -546,81 +543,309 @@ function CandidateMeReady({
   )
 }
 
-function UpNextSection({
-  upNext,
+// ────────────────────────────────────────────────────────────────────────────
+// /me — derived view models (honest: from real profile + matches, never mocked)
+// ────────────────────────────────────────────────────────────────────────────
+
+type MeAction = {
+  key: string
+  logo: string
+  logoBg: string
+  urgent: boolean
+  meta: string
+  title: string
+  sub: string
+  cta: string
+  href: string
+  external: boolean
+  when: string
+}
+
+type MeCompleteness = {
+  pct: number
+  missing: Array<{ id: string; label: string; impact: string; critical?: boolean }>
+}
+
+type MeVisibility = {
+  state: "discoverable" | "interviewing"
+  label: string
+  one: string
+  two: string
+  cta: string
+}
+
+// Relative timestamp for the "when" hints — derived from the match computedAt.
+function meWhen(iso?: string): string {
+  if (!iso) return ""
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ""
+  const diff = Date.now() - t
+  const day = 86_400_000
+  if (diff < 3_600_000) return "Just now"
+  if (diff < day) return "Today"
+  if (diff < 2 * day) return "Yesterday"
+  return `${Math.floor(diff / day)}d ago`
+}
+
+// Profile completeness is computed from which durable fields actually exist on
+// the claimed profile — so the ring + checklist reflect reality, not a constant.
+function deriveCompleteness(profile: CandidateSelfProfile): MeCompleteness {
+  const tags = profile.globalTags
+  const checks: Array<{ id: string; label: string; impact: string; done: boolean; critical?: boolean }> = [
+    { id: "resume", label: "Upload résumé", impact: "Unblocks matching", done: !!profile.latestResumeArtifactId, critical: true },
+    { id: "targets", label: "Target roles", impact: "Claire pitches sharper", done: !!tags?.roleFunction?.length },
+    { id: "locations", label: "Location preferences", impact: "2× more matches", done: !!tags?.targetLocations?.length },
+    { id: "industries", label: "Industry preferences", impact: "Sharper comp matching", done: !!tags?.industrySector?.length },
+    { id: "skills", label: "Skills", impact: "Better role fit", done: !!tags?.skills?.length },
+    { id: "linkedin", label: "Connect LinkedIn", impact: "Backfills experience", done: !!profile.linkedinUrl },
+    { id: "story", label: "Career summary", impact: "Better pitch by Claire", done: !!profile.profileSummary },
+  ]
+  const done = checks.filter((c) => c.done).length
+  const pct = Math.round((done / checks.length) * 100)
+  const missing = checks
+    .filter((c) => !c.done)
+    .map((c) => ({ id: c.id, label: c.label, impact: c.impact, critical: c.critical }))
+  return { pct, missing }
+}
+
+// Visibility reflects real interview activity. We don't have a hidden/retained
+// flag yet, so only the two states we can prove are surfaced.
+function deriveVisibility(activeCount: number, matchCount: number): MeVisibility {
+  if (activeCount > 0) {
+    return {
+      state: "interviewing",
+      label: "In active interviews",
+      one: `${activeCount} ${activeCount === 1 ? "employer is" : "employers are"} talking with you.`,
+      two: "Claire keeps your profile current while you focus.",
+      cta: "Pause new matches",
+    }
+  }
+  return {
+    state: "discoverable",
+    label: "Open to matches",
+    one: "Claire is matching you with new roles.",
+    two:
+      matchCount > 0
+        ? `${matchCount} new ${matchCount === 1 ? "match" : "matches"} waiting for you.`
+        : "We'll text you the moment a role fits.",
+    cta: "Pause for a week",
+  }
+}
+
+// Extra glyphs not in the shared Icon set (kept local to this surface).
+function MeIcon({
+  name,
+  size = 14,
+  stroke = 1.8,
+}: {
+  name: "chevron-right" | "eye-off"
+  size?: number
+  stroke?: number
+}) {
+  const p = {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: stroke,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    style: { display: "inline-block", flex: "none", verticalAlign: "middle" } as CSSProperties,
+  }
+  if (name === "eye-off")
+    return (
+      <svg {...p}>
+        <path d="M17 17s5-5 5-5-4-7-10-7c-1.6 0-3.1.4-4.4 1M3 3l18 18M9.9 5.1A9.4 9.4 0 0 0 2 12s4 7 10 7c1.6 0 3.1-.4 4.4-1" />
+      </svg>
+    )
+  return (
+    <svg {...p}>
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// /me — status header
+// ────────────────────────────────────────────────────────────────────────────
+
+function MeStatusHeader({
+  actionsCount,
+  firstName,
+  visibility,
+  hasPrimary,
+}: {
+  actionsCount: number
+  firstName: string
+  visibility: MeVisibility
+  hasPrimary: boolean
+}) {
+  return (
+    <header className="wkv3-status">
+      <div className="wk-container wkv3-status__inner">
+        <div className="wkv3-status__copy">
+          <div className="wkv3-status__eyebrow">
+            <span className="wkv3-status__dot"><PulseDot size={6} /></span>
+            <span>Home · <strong>{visibility.label.toLowerCase()}</strong></span>
+          </div>
+          <h1 className="wkv3-status__h1">
+            {actionsCount > 0 ? (
+              <>
+                <em className="wkv3-num">{actionsCount}</em> thing{actionsCount === 1 ? "" : "s"} need
+                {actionsCount === 1 ? "s" : ""} you.
+              </>
+            ) : firstName ? (
+              <>Nothing on your plate, {firstName}. <em className="wkv3-num">Claire is working.</em></>
+            ) : (
+              <>Nothing on your plate. <em className="wkv3-num">Claire is working.</em></>
+            )}
+          </h1>
+          <p className="wkv3-status__sub">
+            Active interviews, new matches, and what&apos;s waiting on you — all in one place. Claire keeps it
+            current.
+          </p>
+        </div>
+        {hasPrimary ? (
+          <div className="wkv3-status__cta">
+            <button
+              type="button"
+              className="wk-btn wk-btn--primary wk-btn--sm"
+              onClick={() => {
+                document.getElementById("up-next")?.scrollIntoView({ behavior: "smooth", block: "start" })
+              }}
+            >
+              Continue with Claire <Icon name="arrow-right" size={13} stroke={2} />
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </header>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// /me — Up next
+// ────────────────────────────────────────────────────────────────────────────
+
+function MeUpNext({
+  actions,
   loading,
   errored,
   error,
+  recommendedCount,
 }: {
-  upNext: CandidateMatchCard[]
+  actions: MeAction[]
   loading: boolean
   errored: boolean
   error: string | null
+  recommendedCount: number
 }) {
   return (
-    <section className="wkv2-sec" id="up-next">
-      <header className="wkv2-sec__head">
-        <h2 className="wkv2-sec__h">
+    <section className="wkv3-sec" id="up-next">
+      <header className="wkv3-sec__head">
+        <h2 className="wkv3-sec__h">
           Up next
-          {upNext.length > 0 ? <span className="wkv2-sec__count">{upNext.length}</span> : null}
+          {actions.length > 0 ? <span className="wkv3-sec__count">{actions.length}</span> : null}
         </h2>
-        <span className="wkv2-sec__sub">Only things waiting on you.</span>
+        <span className="wkv3-sec__sub">
+          {actions.length > 0 ? "Only things waiting on you." : "Nothing waiting — WeKruit is working."}
+        </span>
       </header>
       {loading ? (
-        <div className="wkv2-empty">Loading your pipeline…</div>
+        <div className="wkv3-empty-block">Loading your pipeline…</div>
       ) : errored ? (
-        <div className="wkv2-empty wkv2-empty--error">{error}</div>
-      ) : upNext.length === 0 ? (
-        <div className="wkv2-empty">
-          Nothing waiting on you right now. Claire will text you when she lines something up.
+        <div className="wkv3-empty-block">{error}</div>
+      ) : actions.length > 0 ? (
+        <div className="wkv3-actions">
+          {actions.map((a) => (
+            <MeActionRow key={a.key} a={a} />
+          ))}
         </div>
       ) : (
-        <div className="wkv2-actions">
-          {upNext.map((m) => <UpNextRow key={m.matchId} match={m} />)}
-        </div>
+        <MeWaitingCard recommendedCount={recommendedCount} />
       )}
     </section>
   )
 }
 
-function UpNextRow({ match }: { match: CandidateMatchCard }) {
-  const display = getCandidateJobStatusDisplay(match.status, match.job.title)
-  const h = djb2(match.jobId || match.job.company)
-  const logo = (match.job.company[0] ?? "?").toUpperCase()
-  const logoBg = LOGO_BG_POOL[h % LOGO_BG_POOL.length]
-  const urgent = match.status === "invited"
+function MeActionRow({ a }: { a: MeAction }) {
+  const btnClass = `wk-btn ${a.urgent ? "wk-btn--primary" : "wk-btn--secondary"} wk-btn--sm`
+  const label = (
+    <>
+      {a.cta} <Icon name="arrow-right" size={14} stroke={2} />
+    </>
+  )
   return (
-    <article className={`wkv2-act${urgent ? " wkv2-act--urgent" : ""}`}>
-      <div className="wkv2-act__mark" style={{ background: logoBg }}>{logo}</div>
-      <div className="wkv2-act__body">
-        <p className={`wkv2-act__meta${urgent ? " wkv2-act__meta--urgent" : ""}`}>
-          {urgent ? <PulseDot size={5} /> : null}
-          <span>{display.label} · {match.job.title}</span>
-        </p>
-        <h3 className="wkv2-act__t">{display.nextStep}</h3>
-        {match.job.location ? <p className="wkv2-act__sub">{match.job.company} · {match.job.location}</p> : null}
+    <article className={`wkv3-act${a.urgent ? " wkv3-act--urgent" : ""}`}>
+      <div className="wkv3-act__mark" style={{ background: a.logoBg }}>
+        {a.logo}
       </div>
-      <div className="wkv2-act__right">
-        <Link to={match.job.href} className={`wk-btn ${urgent ? "wk-btn--primary" : "wk-btn--secondary"} wk-btn--sm`}>
-          {display.ctaLabel} <Icon name="arrow-right" size={14} stroke={2} />
-        </Link>
+      <div className="wkv3-act__body">
+        <p className={`wkv3-act__meta${a.urgent ? " is-urgent" : ""}`}>
+          {a.urgent ? <PulseDot size={5} /> : null}
+          <span>{a.meta}</span>
+        </p>
+        <h3 className="wkv3-act__t">{a.title}</h3>
+        {a.sub ? <p className="wkv3-act__sub">{a.sub}</p> : null}
+      </div>
+      <div className="wkv3-act__right">
+        {a.external ? (
+          <a href={a.href} className={btnClass}>
+            {label}
+          </a>
+        ) : (
+          <Link to={a.href} className={btnClass}>
+            {label}
+          </Link>
+        )}
+        {a.when ? <span className="wkv3-act__when">{a.when}</span> : null}
       </div>
     </article>
   )
 }
 
-type StageDef = { id: CandidateJobStatus | "all"; label: string; dot: string }
+function MeWaitingCard({ recommendedCount }: { recommendedCount: number }) {
+  return (
+    <article className="wkv3-wait">
+      <div className="wkv3-wait__ico" aria-hidden="true">
+        <span className="wkv3-wait__pulse" />
+        <span className="wkv3-wait__pulse wkv3-wait__pulse--2" />
+        <span className="wkv3-wait__core" />
+      </div>
+      <div className="wkv3-wait__body">
+        <p className="wkv3-wait__kicker">WeKruit is working</p>
+        <h3 className="wkv3-wait__t">Claire is matching you with new roles.</h3>
+        <p className="wkv3-wait__sub">
+          {recommendedCount > 0
+            ? `${recommendedCount} new ${recommendedCount === 1 ? "match" : "matches"} surfaced — take a look below.`
+            : "We'll text you the moment a hiring manager says yes — usually within 48 hours of completing your profile."}
+        </p>
+        <div className="wkv3-wait__bar" aria-hidden="true">
+          <span />
+        </div>
+        <p className="wkv3-wait__meta">No action needed right now.</p>
+      </div>
+    </article>
+  )
+}
 
-const STAGES: StageDef[] = [
-  { id: "invited", label: "Invited", dot: "var(--wk-live-pulse)" },
-  { id: "interview_started", label: "Screening", dot: "#1f6feb" },
-  { id: "review_pending", label: "Reviewing", dot: "#c08800" },
-  { id: "passed", label: "Passed", dot: "#1f6feb" },
-  { id: "not_passed", label: "Not passed", dot: "var(--wk-ink-4)" },
-  { id: "paused", label: "Paused", dot: "var(--wk-ink-4)" },
+// ────────────────────────────────────────────────────────────────────────────
+// /me — Active interviews (stage bar + rows)
+// ────────────────────────────────────────────────────────────────────────────
+
+type MeStageDef = { id: string; label: string; dot: string; statuses: CandidateJobStatus[] }
+
+const ME_STAGES: MeStageDef[] = [
+  { id: "new", label: "New", dot: "var(--wk-ink-3)", statuses: [] },
+  { id: "invited", label: "Invited", dot: "var(--wk-live-pulse)", statuses: ["invited"] },
+  { id: "screening", label: "Screening", dot: "#1f6feb", statuses: ["interview_started"] },
+  { id: "passed", label: "Passed", dot: "#1f6feb", statuses: ["passed"] },
+  { id: "sent", label: "With employer", dot: "#3a8a5a", statuses: ["review_pending"] },
+  { id: "closed", label: "Closed", dot: "var(--wk-ink-4)", statuses: ["not_passed", "paused"] },
 ]
 
-function PipelineSection({
+function MePipeline({
   matches,
   recommendedCount,
   loading,
@@ -629,26 +854,29 @@ function PipelineSection({
   recommendedCount: number
   loading: boolean
 }) {
-  const [activeStage, setActiveStage] = useState<CandidateJobStatus | null>(null)
+  const [activeStage, setActiveStage] = useState<string | null>(null)
   const counts = useMemo(() => {
-    const c: Partial<Record<CandidateJobStatus, number>> = {}
-    matches.forEach((m) => {
-      c[m.status] = (c[m.status] ?? 0) + 1
+    const c: Record<string, number> = { new: recommendedCount }
+    ME_STAGES.forEach((s) => {
+      if (s.id === "new") return
+      c[s.id] = matches.filter((m) => s.statuses.includes(m.status)).length
     })
     return c
-  }, [matches])
-  const filtered = activeStage ? matches.filter((m) => m.status === activeStage) : matches
+  }, [matches, recommendedCount])
+
+  const activeDef = activeStage ? ME_STAGES.find((s) => s.id === activeStage) : null
+  const filtered =
+    activeDef && activeDef.statuses.length > 0
+      ? matches.filter((m) => activeDef.statuses.includes(m.status))
+      : matches
+
   return (
-    <section className="wkv2-sec" id="pipeline">
-      <header className="wkv2-sec__head">
-        <h2 className="wkv2-sec__h">Interview pipeline</h2>
-        <span className="wkv2-sec__sub">
+    <section className="wkv3-sec" id="pipeline">
+      <header className="wkv3-sec__head">
+        <h2 className="wkv3-sec__h">Active interviews</h2>
+        <span className="wkv3-sec__sub">
           {activeStage ? (
-            <button
-              type="button"
-              className="wkv2-clear"
-              onClick={() => setActiveStage(null)}
-            >
+            <button type="button" className="wkv3-sec__clear" onClick={() => setActiveStage(null)}>
               Clear filter ×
             </button>
           ) : (
@@ -657,24 +885,9 @@ function PipelineSection({
         </span>
       </header>
 
-      <div className="wkv2-stages" role="tablist" aria-label="Pipeline stage filter">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeStage === null}
-          className={`wkv2-stage${activeStage === null ? " is-active" : ""}`}
-          onClick={() => setActiveStage(null)}
-        >
-          <span className="wkv2-stage__top">
-            <span className="wkv2-stage__dot" style={{ background: "var(--wk-ink-3)" }} />
-            <span>New match</span>
-          </span>
-          <span className={`wkv2-stage__num${recommendedCount === 0 ? " wkv2-stage__num--zero" : ""}`}>
-            {recommendedCount}
-          </span>
-        </button>
-        {STAGES.map((s) => {
-          const n = counts[s.id as CandidateJobStatus] ?? 0
+      <div className="wkv3-stages" role="tablist" aria-label="Pipeline stage filter">
+        {ME_STAGES.map((s) => {
+          const n = counts[s.id] ?? 0
           const active = activeStage === s.id
           return (
             <button
@@ -682,90 +895,103 @@ function PipelineSection({
               type="button"
               role="tab"
               aria-selected={active}
-              className={`wkv2-stage${active ? " is-active" : ""}`}
-              onClick={() => setActiveStage(active ? null : (s.id as CandidateJobStatus))}
+              className={`wkv3-stage${active ? " is-active" : ""}`}
+              onClick={() => setActiveStage(active ? null : s.id)}
             >
-              <span className="wkv2-stage__top">
-                <span className="wkv2-stage__dot" style={{ background: s.dot }} />
+              <span className="wkv3-stage__top">
+                <span className="wkv3-stage__sdot" style={{ background: s.dot }} />
                 <span>{s.label}</span>
               </span>
-              <span className={`wkv2-stage__num${n === 0 ? " wkv2-stage__num--zero" : ""}`}>{n}</span>
+              <span className={`wkv3-stage__n${n === 0 ? " is-zero" : ""}`}>{n}</span>
             </button>
           )
         })}
       </div>
 
       {loading ? (
-        <div className="wkv2-empty">Loading interview pipeline…</div>
+        <div className="wkv3-empty-block">Loading interview pipeline…</div>
       ) : filtered.length === 0 ? (
-        <div className="wkv2-empty">Nothing in this stage right now.</div>
+        <div className="wkv3-empty-block">
+          {matches.length === 0
+            ? "No interviews yet. Claire lines them up as employers say yes."
+            : "Nothing in this stage right now."}
+        </div>
       ) : (
-        <div className="wkv2-rows">
-          {filtered.map((m) => <PipelineRow key={m.matchId} match={m} />)}
+        <div className="wkv3-rows">
+          {filtered.map((m) => (
+            <MePipelineRow key={m.matchId} match={m} />
+          ))}
         </div>
       )}
     </section>
   )
 }
 
-function PipelineRow({ match }: { match: CandidateMatchCard }) {
+function meStageChip(status: CandidateJobStatus) {
+  switch (status) {
+    case "invited":
+      return (
+        <span className="wkv3-chip wkv3-chip--live">
+          <PulseDot size={6} /> Invited
+        </span>
+      )
+    case "interview_started":
+      return (
+        <span className="wkv3-chip wkv3-chip--blue">
+          <PulseDot size={6} color="#1f6feb" /> Screening
+        </span>
+      )
+    case "review_pending":
+      return <span className="wkv3-chip wkv3-chip--ink">With employer</span>
+    case "passed":
+      return (
+        <span className="wkv3-chip wkv3-chip--warm">
+          <Icon name="check" size={11} stroke={2.4} /> Passed
+        </span>
+      )
+    case "not_passed":
+      return <span className="wkv3-chip wkv3-chip--muted">Closed</span>
+    case "paused":
+      return <span className="wkv3-chip wkv3-chip--muted">Paused</span>
+    default:
+      return <span className="wkv3-chip wkv3-chip--muted">New</span>
+  }
+}
+
+function MePipelineRow({ match }: { match: CandidateMatchCard }) {
   const display = getCandidateJobStatusDisplay(match.status, match.job.title)
-  const h = djb2(match.jobId || match.job.company)
   const logo = (match.job.company[0] ?? "?").toUpperCase()
-  const logoBg = LOGO_BG_POOL[h % LOGO_BG_POOL.length]
+  const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
+  const when = meWhen(match.computedAt)
   return (
-    <article className="wkv2-row">
+    <article className="wkv3-row">
       <CompanyMark logo={logo} bg={logoBg} size={48} />
-      <div className="wkv2-row__body">
-        <div className="wkv2-row__head">
-          <h4 className="wkv2-row__t">{match.job.title}</h4>
-          <StageChip status={match.status} />
+      <div className="wkv3-row__body">
+        <div className="wkv3-row__head">
+          <h4 className="wkv3-row__t">{match.job.title}</h4>
+          {meStageChip(match.status)}
         </div>
-        <p className="wkv2-row__co">
-          {match.job.company}{match.job.location ? ` · ${match.job.location}` : ""}
+        <p className="wkv3-row__co">
+          {match.job.company}
+          {match.job.location ? ` · ${match.job.location}` : ""}
         </p>
-        <p className="wkv2-row__next">{display.nextStep}</p>
+        <p className="wkv3-row__next">{display.nextStep}</p>
       </div>
-      <div className="wkv2-row__right">
+      <div className="wkv3-row__right">
         <Link to={match.job.href} className="wk-btn wk-btn--secondary wk-btn--sm">
           Open <Icon name="arrow-right" size={12} stroke={2} />
         </Link>
+        {when ? <span className="wkv3-row__when">{when}</span> : null}
       </div>
     </article>
   )
 }
 
-function StageChip({ status }: { status: CandidateJobStatus }) {
-  if (status === "invited")
-    return (
-      <span className="wkv2-chip wkv2-chip--live">
-        <PulseDot size={6} /> Invited
-      </span>
-    )
-  if (status === "interview_started")
-    return (
-      <span className="wkv2-chip wkv2-chip--blue">
-        <PulseDot size={6} color="#1f6feb" /> Screening
-      </span>
-    )
-  if (status === "review_pending")
-    return (
-      <span className="wkv2-chip wkv2-chip--warm">
-        <Icon name="clock" size={11} stroke={2.4} /> Reviewing
-      </span>
-    )
-  if (status === "passed")
-    return (
-      <span className="wkv2-chip wkv2-chip--warm">
-        <Icon name="check" size={11} stroke={2.4} /> Passed
-      </span>
-    )
-  if (status === "not_passed") return <span className="wkv2-chip wkv2-chip--muted">Not passed</span>
-  if (status === "paused") return <span className="wkv2-chip wkv2-chip--muted">Paused</span>
-  return <span className="wkv2-chip wkv2-chip--muted">New match</span>
-}
+// ────────────────────────────────────────────────────────────────────────────
+// /me — New matches (digest peeks; full inbox lives on /me/matches)
+// ────────────────────────────────────────────────────────────────────────────
 
-function NewMatchesSection({
+function MeNewMatches({
   matches,
   loading,
   errored,
@@ -777,257 +1003,552 @@ function NewMatchesSection({
   error: string | null
 }) {
   return (
-    <section className="wkv2-sec" id="matches">
-      <header className="wkv2-sec__head">
-        <h2 className="wkv2-sec__h">
+    <section className="wkv3-sec" id="matches">
+      <header className="wkv3-sec__head">
+        <h2 className="wkv3-sec__h">
           New matches
-          {matches.length > 0 ? <span className="wkv2-sec__count">{matches.length}</span> : null}
+          {matches.length > 0 ? <span className="wkv3-sec__count">{matches.length}</span> : null}
         </h2>
-        <span className="wkv2-sec__sub">Claire matched these. Mark them so she learns.</span>
+        {matches.length > 0 ? (
+          <Link to="/me/matches" className="wkv3-sec__viewall">
+            See all <Icon name="arrow-right" size={12} stroke={2} />
+          </Link>
+        ) : (
+          <span className="wkv3-sec__sub">Nothing in your inbox right now.</span>
+        )}
       </header>
       {loading ? (
-        <div className="wkv2-empty">Loading new matches…</div>
+        <div className="wkv3-empty-block">Loading new matches…</div>
       ) : errored ? (
-        <div className="wkv2-empty wkv2-empty--error">{error}</div>
-      ) : matches.length === 0 ? (
-        <div className="wkv2-empty">
-          No new matches this week. Claire is still hunting — she'll text when something fits.
-        </div>
+        <div className="wkv3-empty-block">{error}</div>
+      ) : matches.length > 0 ? (
+        <>
+          <div className="wkv3-peeks">
+            {matches.slice(0, 2).map((m) => (
+              <MeMatchPeek key={m.matchId} match={m} />
+            ))}
+          </div>
+          <Link to="/me/matches" className="wkv3-seeall">
+            {matches.length > 2 ? `See all ${matches.length} matches` : "Open Matches — filter, save & decide"}
+            <Icon name="arrow-right" size={13} stroke={2} />
+          </Link>
+        </>
       ) : (
-        <div className="wkv2-inbox">
-          {matches.map((m) => <MatchInboxCard key={m.matchId} match={m} />)}
+        <div className="wkv3-empty-block">
+          <h3>No matches yet.</h3>
+          <p>
+            Claire is pitching you. Roles show up here when hiring managers say yes — usually within 48 hours of
+            completing your profile.
+          </p>
         </div>
       )}
     </section>
   )
 }
 
-function MatchInboxCard({ match }: { match: CandidateMatchCard }) {
-  const [vote, setVote] = useState<"yes" | "no" | null>(null)
-  const h = djb2(match.jobId || match.job.company)
+function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
+  const navigate = useNavigate()
   const logo = (match.job.company[0] ?? "?").toUpperCase()
-  const logoBg = LOGO_BG_POOL[h % LOGO_BG_POOL.length]
+  const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
   const isInvite = match.bucket === "invited"
+  const go = () => navigate(match.job.href)
   return (
-    <article className={`wkv2-match${isInvite ? " is-invite" : ""}`}>
-      <CompanyMark logo={logo} bg={logoBg} size={48} />
-      <div className="wkv2-match__body">
-        <div className="wkv2-match__head">
+    <article
+      className="wkv3-peek"
+      role="link"
+      tabIndex={0}
+      onClick={go}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") go()
+      }}
+    >
+      <CompanyMark logo={logo} bg={logoBg} size={44} />
+      <div className="wkv3-peek__body">
+        <div className="wkv3-peek__head">
+          <h4 className="wkv3-peek__t">{match.job.title}</h4>
           {isInvite ? (
-            <span className="wkv2-match__chip">WeKruit invite — worth screening</span>
+            <span className="wkv3-chip wkv3-chip--warm">
+              <PulseDot size={5} /> Invite
+            </span>
           ) : (
-            <span className="wkv2-match__chip wkv2-match__chip--muted">New match</span>
+            <span className="wkv3-chip wkv3-chip--muted">New</span>
           )}
-          <h3 className="wkv2-match__t">{match.job.title}</h3>
         </div>
-        <p className="wkv2-match__co">
-          <b>{match.job.company}</b>{match.job.location ? ` · ${match.job.location}` : ""}
+        <p className="wkv3-peek__co">
+          <b>{match.job.company}</b>
+          {match.job.location ? ` · ${match.job.location}` : ""}
         </p>
-        {match.whyMatched.length > 0 ? (
-          <div className="wkv2-match__why">
-            <div className="wkv2-match__why-h">Why this matches you</div>
-            <ul>
-              {match.whyMatched.slice(0, 4).map((w, i) => (
-                <li key={i}>
-                  <Icon name="check" size={12} stroke={2.4} />
-                  <span>{w}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
       </div>
-      <div className="wkv2-match__foot">
-        <div className="wkv2-match__salary">
-          {match.job.salaryRange ?? <span className="wkv2-match__no-salary">Salary by interview</span>}
-        </div>
-        <div className="wkv2-match__actions">
-          <div className="wkv2-match__feedback">
-            <button
-              type="button"
-              className={`wkv2-fb wkv2-fb--yes${vote === "yes" ? " is-on" : ""}`}
-              onClick={() => setVote(vote === "yes" ? null : "yes")}
-              aria-pressed={vote === "yes"}
-            >
-              <ThumbIcon dir="up" /> Interested
-            </button>
-            <button
-              type="button"
-              className={`wkv2-fb wkv2-fb--no${vote === "no" ? " is-on" : ""}`}
-              onClick={() => setVote(vote === "no" ? null : "no")}
-              aria-pressed={vote === "no"}
-            >
-              <ThumbIcon dir="down" /> Not for me
-            </button>
-          </div>
-          <Link to={match.job.href} className="wk-btn wk-btn--primary wk-btn--sm">
-            See role <Icon name="arrow-right" size={14} stroke={2} />
-          </Link>
-        </div>
+      <div className="wkv3-peek__right">
+        <span className="wkv3-peek__salary">{match.job.salaryRange ?? "By interview"}</span>
+        <span className="wkv3-peek__go">
+          See match <Icon name="arrow-right" size={12} stroke={2} />
+        </span>
       </div>
     </article>
   )
 }
 
-function ThumbIcon({ dir }: { dir: "up" | "down" }) {
-  const up = dir === "up"
-  return (
-    <svg
-      width={13}
-      height={13}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      style={{ display: "inline-block", verticalAlign: "middle", flex: "none" }}
-    >
-      {up ? (
-        <path d="M7 22V11M2 13v7a2 2 0 0 0 2 2h3V11H4a2 2 0 0 0-2 2zM15 5l-1 5h6.5a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 19 21H7V11l4-9h1.5A2.5 2.5 0 0 1 15 4.5z" />
-      ) : (
-        <path d="M17 2v11M22 11V4a2 2 0 0 0-2-2h-3v11h3a2 2 0 0 0 2-2zM9 19l1-5H3.5a2 2 0 0 1-2-2.3l1.4-7A2 2 0 0 1 5 3h12v11l-4 9h-1.5A2.5 2.5 0 0 1 9 19.5z" />
-      )}
-    </svg>
-  )
-}
+// ────────────────────────────────────────────────────────────────────────────
+// /me — sidebar cards
+// ────────────────────────────────────────────────────────────────────────────
 
-function SidebarProfileCard({ profile }: { profile: CandidateSelfProfile }) {
-  const tone: "warm" | "moss" | "slate" = TONE_POOL[djb2(profile.displayName ?? "you") % TONE_POOL.length]
-  const headline = deriveHeadline(profile)
-  const tags = profile.globalTags
-  const rows: Array<{ label: string; value: string }> = []
-  if (tags?.roleFunction?.length) rows.push({ label: "Targets", value: joinTags(tags.roleFunction, 3) })
-  if (tags?.targetLocations?.length) rows.push({ label: "Where", value: joinTags(tags.targetLocations, 3, ", ") })
-  if (tags?.industrySector?.length) rows.push({ label: "Industries", value: joinTags(tags.industrySector, 3, " · ") })
-  if (tags?.targetJobType?.length) rows.push({ label: "Job type", value: joinTags(tags.targetJobType, 3, " · ") })
-  if (profile.emailMasked) rows.push({ label: "Email", value: profile.emailMasked })
-  if (profile.phoneMasked) rows.push({ label: "Phone", value: profile.phoneMasked })
-  const skills = tags?.skills?.slice(0, 10) ?? []
+function MeCompletenessCard({ completeness }: { completeness: MeCompleteness }) {
+  const navigate = useNavigate()
+  const { pct, missing } = completeness
+  const radius = 22
+  const circ = 2 * Math.PI * radius
+  const dash = (pct / 100) * circ
   return (
-    <div className="wkv2-card">
-      <div className="wkv2-prof__head">
-        <Avatar name={profile.displayName ?? "You"} size={52} tone={tone} />
-        <div style={{ minWidth: 0 }}>
-          <h2 className="wkv2-prof__name">{profile.displayName ?? "Your profile"}</h2>
-          {headline ? <p className="wkv2-prof__sub">{headline}</p> : null}
+    <div className="wkv3-comp">
+      <div className="wkv3-comp__top">
+        <svg className="wkv3-comp__ring" width="60" height="60" viewBox="0 0 60 60" aria-hidden="true">
+          <circle cx="30" cy="30" r={radius} strokeWidth="5" fill="none" style={{ stroke: "var(--wk-border)" }} />
+          <circle
+            cx="30"
+            cy="30"
+            r={radius}
+            strokeWidth="5"
+            fill="none"
+            strokeDasharray={`${dash} ${circ - dash}`}
+            strokeDashoffset={circ * 0.25}
+            strokeLinecap="round"
+            transform="rotate(-90 30 30)"
+            style={{ stroke: "var(--wk-live)" }}
+          />
+        </svg>
+        <div className="wkv3-comp__head">
+          <div className="wkv3-comp__pct">
+            <strong>{pct}</strong>
+            <span>%</span>
+          </div>
+          <div className="wkv3-comp__lbl">profile complete</div>
         </div>
       </div>
 
-      {rows.length > 0 ? (
+      {missing.length > 0 ? (
         <>
-          <h3 className="wkv2-card__h">
-            What Claire pitches
-            <Link to="/me/profile">Edit</Link>
-          </h3>
-          <ul className="wkv2-prof__fields">
-            {rows.map((r) => (
-              <li key={r.label}><strong>{r.label}</strong><span>{r.value}</span></li>
+          <p className="wkv3-comp__lede">
+            {pct < 60 ? "Add a résumé so Claire can match you." : "Add a few things — Claire's matches get sharper."}
+          </p>
+          <ul className="wkv3-comp__list">
+            {missing.slice(0, 3).map((m) => (
+              <li key={m.id} className={m.critical ? "is-critical" : ""}>
+                <span className="wkv3-comp__check" aria-hidden="true" />
+                <div className="wkv3-comp__item">
+                  <span className="wkv3-comp__what">{m.label}</span>
+                  <span className="wkv3-comp__impact">{m.impact}</span>
+                </div>
+              </li>
             ))}
           </ul>
+          <button
+            type="button"
+            className="wk-btn wk-btn--ink wk-btn--block wk-btn--sm"
+            onClick={() => navigate("/me/profile")}
+          >
+            Complete profile <Icon name="arrow-right" size={13} stroke={2} />
+          </button>
         </>
       ) : (
-        <p className="wkv2-prof__empty">
-          Claire is still learning what you want. Open the profile editor to fill in roles,
-          locations, and industries.
-        </p>
+        <div className="wkv3-comp__done">
+          <span className="wkv3-comp__check is-on" aria-hidden="true">
+            <Icon name="check" size={11} stroke={2.6} />
+          </span>
+          <div>
+            <strong>Profile complete.</strong>
+            <span>Claire has everything she needs to match you.</span>
+          </div>
+        </div>
       )}
-
-      {skills.length > 0 ? (
-        <div>
-          <h3 className="wkv2-card__h" style={{ marginBottom: 8 }}>Skills</h3>
-          <div className="wkv2-prof__skills">
-            {skills.map((s) => (
-              <span key={s} className="wkv2-prof__skill">{formatProfileValue(s)}</span>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <Link to="/me/profile" className="wkv2-prof__fix">
-        <Icon name="check" size={12} stroke={2} />
-        <span>Fix something — Claire updates everything</span>
-      </Link>
     </div>
   )
 }
 
-function SidebarConnectorsCard({ profile }: { profile: CandidateSelfProfile }) {
-  const items = deriveConnectors(profile)
+function MeVisibilityCard({ visibility }: { visibility: MeVisibility }) {
+  const navigate = useNavigate()
   return (
-    <div className="wkv2-card">
-      <h3 className="wkv2-card__h">
-        Connected
-        <Link to="/me/profile">Add more</Link>
-      </h3>
-      <div className="wkv2-conn">
-        {items.map((c) => (
-          <div key={c.id} className="wkv2-conn__row">
-            <span
-              className="wkv2-conn__ico"
-              style={{ background: c.brand, color: "#fff", fontSize: 11, fontWeight: 700, letterSpacing: "-0.02em" }}
-            >
-              {c.letter}
-            </span>
-            <div style={{ minWidth: 0 }}>
-              <span className="wkv2-conn__label">{c.label}</span>
-              <span className="wkv2-conn__meta">{c.meta}</span>
-            </div>
-            {c.connected ? (
-              <span className="wkv2-conn__btn">
-                <span className="wkv2-conn__check"><Icon name="check" size={9} stroke={3} /></span>
-                Manage
-              </span>
-            ) : (
-              <Link to="/me/profile" className="wkv2-conn__btn wkv2-conn__btn--connect">
-                Connect
-              </Link>
-            )}
-          </div>
-        ))}
+    <div className={`wkv3-vis wkv3-vis--${visibility.state}`}>
+      <div className="wkv3-vis__top">
+        <div className="wkv3-vis__head">
+          <span className="wkv3-vis__kicker">Visibility</span>
+          <strong className="wkv3-vis__label">{visibility.label}</strong>
+        </div>
+        <button
+          type="button"
+          className="wkv3-vis__manage"
+          aria-label="Manage visibility"
+          onClick={() => navigate("/me/profile")}
+        >
+          <MeIcon name="chevron-right" size={14} stroke={2} />
+        </button>
+      </div>
+      <p className="wkv3-vis__one">{visibility.one}</p>
+      <p className="wkv3-vis__two">{visibility.two}</p>
+      <div className="wkv3-vis__actions">
+        <button type="button" className="wk-btn wk-btn--secondary wk-btn--sm" onClick={() => navigate("/me/profile")}>
+          {visibility.cta}
+        </button>
+        <button
+          type="button"
+          className="wkv3-vis__btn wkv3-vis__btn--quiet"
+          onClick={() => navigate("/me/profile")}
+        >
+          Who&apos;s seeing me?
+        </button>
       </div>
     </div>
   )
 }
 
-function SidebarClaireWeekCard({
-  activeCount,
-  matchCount,
-}: {
-  activeCount: number
-  matchCount: number
-}) {
-  return (
-    <div className="wkv2-card wkv2-card--ink">
-      <h3 className="wkv2-card__h">This week with Claire</h3>
-      <p className="wkv2-ink-h">
-        {matchCount > 0 ? (
-          <>Surfaced <em>{matchCount} new match{matchCount === 1 ? "" : "es"}</em> for you to weigh.</>
-        ) : (
-          <>Claire is keeping <em>your profile</em> visible to hiring managers.</>
-        )}
-      </p>
-      <div className="wkv2-ink-stats">
-        <div>
-          <div className="wkv2-ink-stat__num">{matchCount}</div>
-          <div className="wkv2-ink-stat__lbl">Matches</div>
-        </div>
-        <div>
-          <div className="wkv2-ink-stat__num">{activeCount}</div>
-          <div className="wkv2-ink-stat__lbl">Active</div>
-        </div>
-        <div>
-          <div className="wkv2-ink-stat__num">{activeCount + matchCount}</div>
-          <div className="wkv2-ink-stat__lbl">Total</div>
-        </div>
-      </div>
-      <a href="sms:+18004448888?body=Hi%20Claire" className="wkv2-ink-link">
-        Open iMessage with Claire <Icon name="arrow-right" size={12} stroke={2} />
-      </a>
-    </div>
-  )
+// ────────────────────────────────────────────────────────────────────────────
+// /me — styles (ported from the v3 design bundle; unprefixed design tokens are
+// aliased to the production --wk-* set so the page reads verbatim).
+// ────────────────────────────────────────────────────────────────────────────
+
+const ME_V3_STYLES = `
+.wkv3 {
+  --cream: var(--wk-cream); --cream-2: var(--wk-cream-2); --cream-3: var(--wk-cream-3);
+  --ink: var(--wk-ink); --ink-2: var(--wk-ink-2); --ink-3: var(--wk-ink-3); --ink-4: var(--wk-ink-4);
+  --border: var(--wk-border); --border-strong: var(--wk-border-strong);
+  --peach-50: var(--wk-peach-50); --peach-100: var(--wk-peach-100);
+  --peach-200: var(--wk-peach-200); --peach-300: var(--wk-peach-300);
+  --live: var(--wk-live); --live-2: var(--wk-live-2); --live-soft: var(--wk-live-soft);
+  --live-border: var(--wk-live-border); --live-pulse: var(--wk-live-pulse);
+  --r-sm: var(--wk-r-sm); --r-md: var(--wk-r-md); --r-lg: var(--wk-r-lg); --r-pill: var(--wk-r-pill);
+  --ease: var(--wk-ease); --dur-fast: 200ms; --dur-base: 240ms;
+  --success: #3a8a5a; --success-bg: rgba(58,138,90,.12);
+  --candidate-card: var(--wk-cream-3); --candidate-card-hover: #FFF8EB;
+  --font-serif: 'Newsreader', 'Tiempos Headline', Georgia, serif;
+  --font-sans: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  padding: 0 0 80px;
+  background: var(--cream);
+  min-height: 100vh;
 }
+.wkv3 .wk-btn--block { width: 100%; }
+
+/* Status header */
+.wkv3-status {
+  padding: 28px 0 22px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+.wkv3-status__inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 28px;
+  align-items: end;
+}
+.wkv3-status__copy { max-width: 720px; min-width: 0; }
+.wkv3-status__eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-sans);
+  font-size: 11.5px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--ink-3); margin: 0 0 12px;
+}
+.wkv3-status__eyebrow strong { color: var(--ink); font-weight: 700; }
+.wkv3-status__dot {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; color: var(--ink-3);
+}
+.wkv3-status__h1 {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: clamp(28px, 3.4vw, 40px);
+  line-height: 1.06;
+  letter-spacing: -0.022em;
+  color: var(--ink);
+  margin: 0;
+  text-wrap: balance;
+}
+.wkv3-status__h1 .wkv3-num { font-style: italic; color: var(--live); font-weight: 400; }
+.wkv3-status__sub {
+  font-size: 14.5px; color: var(--ink-2); line-height: 1.5;
+  max-width: 580px; margin: 10px 0 0;
+}
+.wkv3-status__cta {
+  display: grid; gap: 6px; justify-items: end; text-align: right; align-self: end;
+}
+.wkv3-status__cta .wk-btn { white-space: nowrap; }
+
+/* Page grid */
+.wkv3-grid {
+  padding: 24px 0 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 28px;
+  align-items: start;
+}
+.wkv3-main { display: grid; gap: 28px; min-width: 0; }
+.wkv3-side { display: grid; gap: 14px; position: sticky; top: 24px; }
+
+/* Section heads */
+.wkv3-sec { display: grid; gap: 14px; }
+.wkv3-sec__head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.wkv3-sec__h {
+  font-family: var(--font-sans); font-weight: 600; font-size: 17px;
+  letter-spacing: -0.005em; line-height: 1.2; color: var(--ink);
+  margin: 0; display: inline-flex; align-items: baseline; gap: 10px; white-space: nowrap;
+}
+.wkv3-sec__count {
+  font-family: var(--font-sans); font-weight: 600; font-size: 11.5px;
+  color: var(--live); background: var(--live-soft); border: 1px solid var(--live-border);
+  border-radius: var(--r-pill); padding: 2px 8px;
+}
+.wkv3-sec__sub { color: var(--ink-3); font-size: 13px; font-weight: 500; }
+.wkv3-sec__clear { background: transparent; border: 0; cursor: pointer; color: var(--live); font: inherit; font-weight: 600; }
+.wkv3-sec__viewall {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--font-sans); font-size: 12.5px; font-weight: 600;
+  color: var(--live); text-decoration: none; white-space: nowrap;
+}
+.wkv3-sec__viewall:hover { text-decoration: underline; }
+
+/* Sidebar: completeness */
+.wkv3-comp {
+  background: var(--candidate-card); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 16px;
+  display: grid; gap: 12px; position: relative; overflow: hidden;
+}
+.wkv3-comp__top { display: flex; align-items: center; gap: 14px; position: relative; }
+.wkv3-comp__ring { flex: none; }
+.wkv3-comp__head { min-width: 0; }
+.wkv3-comp__pct {
+  font-family: var(--font-serif); font-weight: 400; font-size: 28px;
+  line-height: 1; letter-spacing: -0.02em; color: var(--ink);
+  display: inline-flex; align-items: baseline; gap: 2px;
+}
+.wkv3-comp__pct strong { font-weight: 400; }
+.wkv3-comp__pct span { font-size: 14px; color: var(--ink-3); font-style: italic; }
+.wkv3-comp__lbl {
+  margin-top: 2px; font-size: 11.5px; color: var(--ink-3);
+  letter-spacing: 0.04em; text-transform: uppercase; font-weight: 500;
+}
+.wkv3-comp__lede { margin: 0; font-size: 13px; color: var(--ink-2); line-height: 1.4; }
+.wkv3-comp__list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.wkv3-comp__list li {
+  display: grid; grid-template-columns: 16px 1fr; gap: 10px; align-items: start; position: relative;
+}
+.wkv3-comp__check {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 1.5px dashed var(--border-strong); background: var(--cream);
+  margin-top: 2px; display: inline-flex; align-items: center; justify-content: center; color: var(--cream);
+}
+.wkv3-comp__check.is-on { border: none; background: var(--live); }
+.wkv3-comp__list li.is-critical .wkv3-comp__check { border: 1.5px solid var(--live); border-style: solid; background: var(--live-soft); }
+.wkv3-comp__item { display: grid; gap: 1px; }
+.wkv3-comp__what { font-size: 12.5px; color: var(--ink); font-weight: 600; letter-spacing: -0.005em; line-height: 1.2; }
+.wkv3-comp__impact { font-size: 11px; color: var(--ink-3); line-height: 1.3; }
+.wkv3-comp__done {
+  display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: center;
+  font-size: 12.5px; color: var(--ink-2); line-height: 1.4;
+}
+.wkv3-comp__done strong { color: var(--ink); display: block; }
+.wkv3-comp__done span { color: var(--ink-3); }
+
+/* Sidebar: visibility */
+.wkv3-vis {
+  position: relative; border-radius: var(--r-md); padding: 16px;
+  display: grid; gap: 12px; border: 1px solid var(--border);
+  background: var(--candidate-card); overflow: hidden;
+}
+.wkv3-vis__top { display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 8px; }
+.wkv3-vis__head { display: grid; gap: 4px; min-width: 0; }
+.wkv3-vis__kicker { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); font-weight: 600; }
+.wkv3-vis__label {
+  font-family: var(--font-sans); font-weight: 600; font-size: 16px; color: var(--ink);
+  line-height: 1.2; letter-spacing: -0.01em; display: inline-flex; align-items: center; gap: 8px;
+}
+.wkv3-vis__label::after {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--live); display: inline-block; box-shadow: 0 0 0 3px rgba(224,116,46,.18);
+}
+.wkv3-vis--interviewing .wkv3-vis__label::after { background: var(--success); box-shadow: 0 0 0 3px rgba(58,138,90,.15); }
+.wkv3-vis__manage { appearance: none; border: 0; background: transparent; padding: 4px; cursor: pointer; color: var(--ink-3); border-radius: var(--r-sm); }
+.wkv3-vis__manage:hover { background: rgba(45,26,10,.06); color: var(--ink); }
+.wkv3-vis__one { margin: 0; font-size: 13.5px; color: var(--ink-2); line-height: 1.45; }
+.wkv3-vis__two {
+  margin: 0; padding-top: 8px; border-top: 1px dashed var(--border);
+  font-size: 12px; color: var(--ink-3); line-height: 1.4;
+}
+.wkv3-vis__actions { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.wkv3-vis__btn {
+  appearance: none; background: transparent; border: 0; color: var(--ink);
+  font: inherit; font-size: 12.5px; font-weight: 600; padding: 2px 0; cursor: pointer;
+  border-bottom: 1px solid var(--ink); transition: opacity var(--dur-fast) var(--ease); letter-spacing: -0.005em;
+}
+.wkv3-vis__btn:hover { opacity: 0.65; }
+.wkv3-vis__btn--quiet { color: var(--ink-3); border-bottom-color: var(--border-strong); border-bottom-style: dashed; font-weight: 500; }
+.wkv3-vis__btn--quiet:hover { color: var(--ink); border-bottom-color: var(--ink); opacity: 1; }
+
+/* Up next: action rows */
+.wkv3-actions { display: grid; gap: 10px; }
+.wkv3-act {
+  display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; align-items: start;
+  padding: 14px 16px; background: var(--candidate-card); border: 1px solid var(--border);
+  border-radius: var(--r-md); transition: border-color var(--dur-fast) var(--ease), transform var(--dur-base) var(--ease);
+}
+.wkv3-act:hover { border-color: var(--live-border); transform: translateY(-1px); }
+.wkv3-act--urgent { border-color: var(--live-border); box-shadow: 0 0 0 4px rgba(224,116,46,0.06); }
+.wkv3-act__mark {
+  width: 44px; height: 44px; border-radius: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--font-serif); color: var(--cream); font-size: 19px; letter-spacing: -0.02em; flex: none;
+}
+.wkv3-act__body { min-width: 0; }
+.wkv3-act__meta {
+  margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--ink-3); line-height: 1.4;
+  display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.wkv3-act__meta.is-urgent { color: var(--live); }
+.wkv3-act__t {
+  margin: 0; font-family: var(--font-sans); font-weight: 600; font-size: 15px;
+  letter-spacing: -0.005em; line-height: 1.35; color: var(--ink);
+}
+.wkv3-act__sub { margin: 3px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.4; }
+.wkv3-act__right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; min-width: 120px; }
+.wkv3-act__when { font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+/* Waiting card */
+.wkv3-wait {
+  display: grid; grid-template-columns: 64px 1fr; gap: 18px; align-items: start;
+  padding: 20px 22px; background: linear-gradient(180deg, var(--cream-3) 0%, var(--cream-2) 100%);
+  border: 1px solid var(--border); border-radius: var(--r-md); position: relative; overflow: hidden;
+}
+.wkv3-wait::before {
+  content: ""; position: absolute; inset: 0;
+  background: radial-gradient(circle at 18px 36px, var(--peach-50) 0%, transparent 22%);
+  pointer-events: none;
+}
+.wkv3-wait__ico { position: relative; width: 56px; height: 56px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.wkv3-wait__core { width: 12px; height: 12px; border-radius: 50%; background: var(--live); z-index: 2; }
+.wkv3-wait__pulse { position: absolute; inset: 8px; border-radius: 50%; background: var(--live); opacity: 0.25; animation: wkv3-wait-pulse 2.4s ease-out infinite; }
+.wkv3-wait__pulse--2 { animation-delay: 1.2s; }
+@keyframes wkv3-wait-pulse { 0% { transform: scale(0.6); opacity: 0.35; } 100% { transform: scale(1.7); opacity: 0; } }
+.wkv3-wait__body { min-width: 0; position: relative; z-index: 1; }
+.wkv3-wait__kicker { margin: 0 0 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--live); }
+.wkv3-wait__t { margin: 0; font-family: var(--font-serif); font-weight: 400; font-size: 20px; letter-spacing: -0.018em; line-height: 1.2; color: var(--ink); }
+.wkv3-wait__sub { margin: 6px 0 12px; font-size: 13px; color: var(--ink-2); line-height: 1.45; }
+.wkv3-wait__bar { height: 4px; background: var(--cream); border-radius: 2px; overflow: hidden; border: 1px solid var(--border); }
+.wkv3-wait__bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--live-pulse), var(--live)); border-radius: 2px; animation: wkv3-wait-shimmer 3s ease-in-out infinite alternate; }
+@keyframes wkv3-wait-shimmer { from { width: 38%; } to { width: 78%; } }
+.wkv3-wait__meta { margin: 8px 0 0; font-size: 11.5px; color: var(--ink-3); }
+
+/* Stage bar */
+.wkv3-stages {
+  display: grid; grid-template-columns: repeat(6, 1fr);
+  border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--candidate-card); overflow: hidden;
+}
+.wkv3-stage {
+  appearance: none; border: 0; background: transparent; text-align: left;
+  padding: 12px 14px 14px; display: grid; gap: 6px; cursor: pointer;
+  border-right: 1px solid var(--border); position: relative;
+  transition: background var(--dur-fast) var(--ease);
+}
+.wkv3-stage:last-child { border-right: 0; }
+.wkv3-stage:hover { background: var(--candidate-card-hover); }
+.wkv3-stage.is-active { background: var(--cream); }
+.wkv3-stage.is-active::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: 0; height: 2px; background: var(--live); border-radius: 2px; }
+.wkv3-stage__top { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: -0.005em; color: var(--ink); white-space: nowrap; }
+.wkv3-stage__sdot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
+.wkv3-stage__n { font-family: var(--font-sans); font-weight: 600; font-size: 20px; letter-spacing: -0.01em; color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums; }
+.wkv3-stage__n.is-zero { color: var(--ink-4); }
+
+/* Pipeline rows */
+.wkv3-rows { display: grid; gap: 8px; }
+.wkv3-row {
+  display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 16px; align-items: center;
+  padding: 14px 18px; background: var(--candidate-card); border: 1px solid var(--border);
+  border-radius: var(--r-md); transition: border-color var(--dur-fast) var(--ease), transform var(--dur-base) var(--ease);
+}
+.wkv3-row:hover { border-color: var(--live-border); transform: translateY(-1px); }
+.wkv3-row__body { min-width: 0; }
+.wkv3-row__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 3px; }
+.wkv3-row__t { margin: 0; font-family: var(--font-sans); font-weight: 600; font-size: 14.5px; color: var(--ink); letter-spacing: -0.005em; line-height: 1.35; }
+.wkv3-row__co { margin: 0; font-size: 12.5px; color: var(--ink-3); }
+.wkv3-row__co b { color: var(--ink-2); font-weight: 600; }
+.wkv3-row__next { margin: 4px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.4; }
+.wkv3-row__right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; white-space: nowrap; }
+.wkv3-row__when { font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+/* Chips */
+.wkv3-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: var(--r-pill); font-size: 11.5px; font-weight: 600; line-height: 1; }
+.wkv3-chip--warm { background: var(--peach-50); color: var(--ink); border: 1px solid var(--peach-100); }
+.wkv3-chip--blue { background: rgba(31,111,235,.10); color: #1f6feb; }
+.wkv3-chip--live { background: var(--live-soft); color: var(--live); border: 1px solid var(--live-border); }
+.wkv3-chip--muted { background: var(--cream-2); color: var(--ink-3); border: 1px solid var(--border); }
+.wkv3-chip--ink { background: var(--ink); color: var(--cream); }
+
+/* Match peeks */
+.wkv3-peeks { display: grid; gap: 8px; }
+.wkv3-peek {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 14px; align-items: center;
+  padding: 13px 18px; background: var(--candidate-card); border: 1px solid var(--border);
+  border-radius: var(--r-md); cursor: pointer; transition: border-color var(--dur-fast) var(--ease), transform var(--dur-base) var(--ease);
+}
+.wkv3-peek:hover { border-color: var(--live-border); transform: translateY(-1px); }
+.wkv3-peek:focus-visible { outline: 2px solid var(--live); outline-offset: 2px; }
+.wkv3-peek__body { min-width: 0; }
+.wkv3-peek__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; }
+.wkv3-peek__t { margin: 0; font-family: var(--font-sans); font-weight: 600; font-size: 14.5px; color: var(--ink); letter-spacing: -0.005em; line-height: 1.3; }
+.wkv3-peek__co { margin: 0; font-size: 12.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wkv3-peek__co b { color: var(--ink-2); font-weight: 600; }
+.wkv3-peek__right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; white-space: nowrap; }
+.wkv3-peek__salary { font-size: 12.5px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.wkv3-peek__go { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600; color: var(--live); }
+.wkv3-seeall {
+  display: inline-flex; align-items: center; gap: 6px; justify-self: start;
+  padding: 9px 15px; font-family: var(--font-sans); font-size: 13px; font-weight: 600;
+  color: var(--ink-2); text-decoration: none; border: 1px solid var(--border);
+  border-radius: var(--r-pill); background: var(--cream-2);
+  transition: border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.wkv3-seeall:hover { border-color: var(--live-border); color: var(--ink); }
+
+/* Empty / loading block */
+.wkv3-empty-block {
+  padding: 28px 24px; background: var(--cream-3); border: 1px dashed var(--border-strong);
+  border-radius: var(--r-md); color: var(--ink-3); font-size: 14px; line-height: 1.5; text-align: center;
+}
+.wkv3-empty-block h3 { margin: 0 0 6px; font-family: var(--font-serif); font-weight: 400; font-size: 20px; color: var(--ink); letter-spacing: -0.018em; }
+.wkv3-empty-block p { margin: 0 auto; color: var(--ink-2); font-size: 13px; max-width: 460px; }
+
+/* Responsive */
+@media (max-width: 1180px) {
+  .wkv3-grid { grid-template-columns: 1fr; }
+  .wkv3-side { position: static; grid-template-columns: 1fr 1fr; gap: 14px; }
+}
+@media (max-width: 820px) {
+  .wkv3-stages { grid-template-columns: repeat(3, 1fr); }
+  .wkv3-stage:nth-child(3) { border-right: 0; }
+  .wkv3-stage:nth-child(n+4) { border-top: 1px solid var(--border); }
+  .wkv3-row { grid-template-columns: 44px 1fr; padding: 12px 14px; }
+  .wkv3-row__right { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: center; }
+}
+@media (max-width: 700px) {
+  .wkv3-status { padding: 22px 0 14px; }
+  .wkv3-status__inner { grid-template-columns: 1fr; gap: 16px; align-items: stretch; }
+  .wkv3-status__cta { justify-items: stretch; text-align: left; }
+  .wkv3-status__cta .wk-btn { justify-content: space-between; }
+  .wkv3-side { grid-template-columns: 1fr; }
+  .wkv3-act { grid-template-columns: 44px 1fr; padding: 14px 16px; }
+  .wkv3-act__right { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; min-width: 0; gap: 10px; }
+  .wkv3-stages { grid-template-columns: repeat(2, 1fr); }
+  .wkv3-stage:nth-child(odd) { border-right: 1px solid var(--border); }
+  .wkv3-stage:nth-child(even) { border-right: 0; }
+  .wkv3-stage:nth-child(n+3) { border-top: 1px solid var(--border); }
+  .wkv3-wait { grid-template-columns: 1fr; }
+  .wkv3-wait__ico { display: none; }
+}
+`
 
 // ────────────────────────────────────────────────────────────────────────────
 // /me/profile — full edit surface (v2 layout)
@@ -2224,3 +2745,4 @@ const PROFILE_STYLES = `
   .wk-prof-row { grid-template-columns: 1fr; gap: 4px; }
 }
 `
+
