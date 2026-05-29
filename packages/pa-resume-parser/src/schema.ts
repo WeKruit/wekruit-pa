@@ -113,13 +113,34 @@ export type InferredAnswer = z.infer<typeof inferredAnswer>
  */
 const PROPOSED_TAG_PATTERN = /^[a-z][a-z0-9_]{1,79}$/
 
+/**
+ * Skills breadth cap (FIX 2026-05-28 — parser over-generated skills).
+ *
+ * The prompt instructs the model to return ~12-20 meaningful skills ordered
+ * by relevance/recency, with a hard ceiling of 25. We enforce the ceiling in
+ * the schema as a *truncation* (not a hard `.max()` rejection): if a model
+ * ignores the instruction and returns more, we keep the first `SKILLS_MAX`
+ * (which the prompt has ordered most-relevant-first) rather than failing the
+ * whole parse. Rejecting would waste a successful LLM call and trigger the
+ * fallback chain over a benign over-generation. 25 is chosen as a sane cap:
+ * comfortably above the 12-20 target so genuinely broad polyglots aren't
+ * clipped, while killing the 40-50-skill platform-atomization blowups
+ * (e.g. social_media → twitter/instagram/tiktok/pinterest/...).
+ */
+export const SKILLS_MAX = 25
+
 export const parsedResumeData = z.object({
   fullName: z.string().nullable(),
   email: z.string().nullable(),
   phone: z.string().nullable(),
   location: z.string().nullable(),
   summary: z.string().nullable(),
-  skills: z.array(z.string()).default([]),
+  // Truncate (not reject) to SKILLS_MAX — the prompt orders skills
+  // most-relevant-first, so slicing keeps the highest-priority ones.
+  skills: z
+    .array(z.string())
+    .default([])
+    .transform((arr) => (arr.length > SKILLS_MAX ? arr.slice(0, SKILLS_MAX) : arr)),
   workHistory: z.array(workHistoryEntry).default([]),
   education: z.array(educationEntry).default([]),
   projects: z.array(projectEntry).default([]),
