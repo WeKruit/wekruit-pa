@@ -41,6 +41,8 @@ export const run = sdk.run as typeof Agents.run
 export const tool = sdk.tool as typeof Agents.tool
 export const InputGuardrailTripwireTriggered =
   sdk.InputGuardrailTripwireTriggered as typeof Agents.InputGuardrailTripwireTriggered
+/** in-memory Session (eval/test stand-in for FirestoreSession). */
+export const MemorySession = sdk.MemorySession as typeof Agents.MemorySession
 
 let configured = false
 /**

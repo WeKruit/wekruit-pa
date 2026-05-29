@@ -1,135 +1,29 @@
 #!/usr/bin/env node
 /**
- * eval-delivery.mjs — WS-delivery production L3 eval (real gpt-5.4-nano, exit 0/1).
+ * WS-delivery eval — production delivery reflexes (mark-read + typing) + LLM-decided delivery
+ * tools (react/status/no-reply) + a recording (dryRun) createSendblueTransport. Mirrors poc-v2
+ * 4/4. Real gpt-5.4-nano, in-process, no deploy. A LOCAL stub `find_match` tool triggers the
+ * typing reflex (keyed on tool name) without WS-tools' real find_match.
  *
- * Mirrors poc-v2's 4/4 delivery contract, but drives the PRODUCTION delivery
- * layer instead of the POC's inline copy:
- *   - buildDeliveryTools(ctx)            ← apps/functions/.../tools/delivery-tools.ts
- *   - markReadReflex / wireTypingReflex  ← apps/functions/.../delivery.ts
- *   - createSendblueTransport({dryRun})  ← apps/functions/.../transport.ts  (the
- *        RECORDING ClaireTransport: every method records {kind,value} into
- *        `recordedEvents` and makes NO real Sendblue / pa-outbound call)
- *
- * To trigger the typing-before-slow-tool reflex we register a LOCAL stub tool
- * named EXACTLY "find_match" (returns a fixed result) alongside the production
- * delivery tools — the reflex keys on the tool NAME, so we don't need WS-tools'
- * real find_match.
- *
- * Asserts, per inbound turn:
- *   1. mark-read fires on EVERY inbound (markReadReflex is called before run()).
- *   2. "recommend me roles" → events include status (before find_match) + typing
- *      (find_match ran) + text result; never hangs.
- *   3. low-info "sure" after a Claire STATEMENT → tapback OR no_reply, NOT text.
- *   4. substantive question → text, never a bare tapback.
- * best-of-3 for the LLM-driven cases (loop internally). PASS/FAIL + exit(0/1).
- *
+ * Loaded via the shared esbuild-bundle harness (_claire-bundle.mjs) so the SDK loads as compiled
+ * .js on the zod@4 graph — no tsx intercepting @openai/agents-core against zod@3.
  * Run: source ~/.zshrc && nvm use 24 && node apps/eval/thin-claire/eval-delivery.mjs
- * (self-bootstraps: symlinks node_modules → agent-runtime, writes a tsx tsconfig
- *  that remaps @openai/agents + zod to the v4 graph for the production .ts files,
- *  then re-execs itself under `node --import tsx`.)
  */
-import { createRequire } from "node:module"
-import { fileURLToPath, pathToFileURL } from "node:url"
-import { dirname, join } from "node:path"
-import { tmpdir } from "node:os"
-import {
-  existsSync,
-  symlinkSync,
-  readFileSync,
-  writeFileSync,
-  realpathSync,
-} from "node:fs"
-import { spawnSync } from "node:child_process"
+import { loadClaireBundle, loadEnv } from "./_claire-bundle.mjs"
 
-const here = dirname(fileURLToPath(import.meta.url))
-
-// ── self-bootstrap: ensure node_modules symlink + tsx + path-remap tsconfig ──
-const BOOTSTRAPPED = process.env.__EVAL_DELIVERY_BOOTSTRAPPED === "1"
-if (!BOOTSTRAPPED) {
-  const nm = join(here, "node_modules")
-  const rtTarget = join(here, "../../../packages/agent-runtime/node_modules")
-  if (!existsSync(nm)) {
-    try {
-      symlinkSync(rtTarget, nm)
-    } catch (e) {
-      console.error(`could not symlink node_modules → ${rtTarget}: ${e?.message ?? e}`)
-    }
-  }
-  // Remap the bare specifiers used by the PRODUCTION delivery-tools.ts (which
-  // lives under apps/functions, where zod is pinned to v3 and crashes the SDK
-  // at import). Point them at agent-runtime's v4 graph — the proven POC graph.
-  const rt = realpathSync(rtTarget)
-  // Write to the OS temp dir (not the repo tree) so no untracked artifact with a
-  // machine-specific absolute path is ever left under apps/eval/thin-claire.
-  const tsconfigPath = join(tmpdir(), `claire-eval-delivery-tsconfig-${process.pid}.json`)
-  writeFileSync(
-    tsconfigPath,
-    JSON.stringify(
-      {
-        compilerOptions: {
-          module: "NodeNext",
-          moduleResolution: "NodeNext",
-          target: "ES2022",
-          baseUrl: ".",
-          paths: {
-            "@openai/agents": [`${rt}/@openai/agents/dist/index.mjs`],
-            "@openai/agents/*": [`${rt}/@openai/agents/dist/*`],
-            zod: [`${rt}/zod/index.js`],
-            "zod/*": [`${rt}/zod/*`],
-          },
-        },
-      },
-      null,
-      2,
-    ),
-  )
-  // Resolve tsx's ESM loader from the symlinked node_modules (root cwd has no
-  // tsx). `--import <abs file url>` is robust regardless of cwd.
-  const req = createRequire(join(here, "node_modules", "_eval_.js"))
-  const tsxLoader = pathToFileURL(req.resolve("tsx")).href
-  const r = spawnSync(
-    process.execPath,
-    ["--import", tsxLoader, fileURLToPath(import.meta.url)],
-    {
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        __EVAL_DELIVERY_BOOTSTRAPPED: "1",
-        TSX_TSCONFIG_PATH: tsconfigPath,
-      },
-    },
-  )
-  process.exit(r.status ?? 1)
-}
-
-// ── from here we are running under `node --import tsx` with path remapping ──
-const { Agent, run, tool, MemorySession } = await import("@openai/agents")
-const { z } = await import("zod")
-const { buildDeliveryTools } = await import(
-  "../../../apps/functions/src/claire-agent/tools/delivery-tools.ts"
-)
-const { markReadReflex, wireTypingReflex, deliverFinalText } = await import(
-  "../../../apps/functions/src/claire-agent/delivery.ts"
-)
-const { createSendblueTransport } = await import(
-  "../../../apps/functions/src/claire-agent/transport.ts"
-)
-
-// ── OpenAI key from repo-root .env (same as the POCs) ──
-const ENV_PATH = "/Users/adam/Desktop/WeKruit/wekruit-pa/.env"
-try {
-  for (const line of readFileSync(ENV_PATH, "utf8").split("\n")) {
-    const m = line.match(/^(PA_OPENAI_AGENT_API_KEY|OPENAI_API_KEY)=(.*)$/)
-    if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim()
-  }
-} catch {
-  /* worktree may lack .env; rely on exported key */
-}
-if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = process.env.PA_OPENAI_AGENT_API_KEY
-if (!process.env.OPENAI_API_KEY) {
-  console.error("FAIL: no OPENAI_API_KEY / PA_OPENAI_AGENT_API_KEY available")
-  process.exit(1)
-}
+loadEnv()
+const {
+  Agent,
+  run,
+  tool,
+  MemorySession,
+  z,
+  buildDeliveryTools,
+  markReadReflex,
+  wireTypingReflex,
+  deliverFinalText,
+  createSendblueTransport,
+} = await loadClaireBundle()
 
 // ── recording transport = production createSendblueTransport in dryRun ──
 // dryRun makes every method record {kind,value} into recordedEvents and skip the

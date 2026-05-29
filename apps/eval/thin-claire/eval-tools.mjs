@@ -2,135 +2,24 @@
 /**
  * L3 side-effect eval for WS-tools (matching/tool layer).
  *
- * Real `gpt-5.4-nano`, in-process, isolated fake Firestore + fake findMatch.
- * Drives the production `buildMatchingTools(ctx)` (NOT a stand-in) so the
- * assertions exercise the REAL `reduceMatchingPreferences` keystone reducer +
- * the REAL `applyPartialUserTags` sole writer (the RC1 seam).
+ * Drives the PRODUCTION `buildMatchingTools(ctx)` (the real `reduceMatchingPreferences`
+ * keystone reducer + the real `applyPartialUserTags` sole writer) against a fake Firestore +
+ * fake findMatch. Real `gpt-5.4-nano`, in-process, no deploy.
  *
- * Proves:
- *   RC1 — after "done with pure SWE, only product strategy / PM, full-time, SF
- *         or remote", fake pa-users.tags.targetRoleFunction == ["product_management"]
- *         (software_engineering GONE — NOT unioned back in by the real writer),
- *         negativeRoleFunction includes "software_engineering", targetJobType
- *         == ["full_time"].
- *   RC2 — "recommend me roles" → find_match recCount > 0, snapshot shows SWE
- *         absent, and the tool never throws.
- *   dedup — schedule_interview twice → second deduped.
+ * Proves: RC1 (after "done with pure SWE, only product, full-time" → pa-users.tags
+ * targetRoleFunction == ["product_management"], negativeRoleFunction has SWE, full_time),
+ * RC2 (find_match returns, snapshot SWE-absent, never throws), and schedule dedup.
  *
- * Run: source ~/.zshrc && nvm use 24 && node --import tsx apps/eval/thin-claire/eval-tools.mjs
+ * Loaded via the shared esbuild-bundle harness (_claire-bundle.mjs) so the SDK loads as
+ * compiled .js on the zod@4 graph — no tsx intercepting @openai/agents-core against zod@3
+ * (which sdk.ts's createRequire would hit under a tsx resolve-hook).
  *
- * RESOLUTION NOTE (eval-only, never ships): the monorepo has TWO installed
- * `@openai/agents@0.8.5` builds — one paired with zod@3 (apps/functions's pin)
- * and one with zod@4 (agent-runtime's pin). The zod@3 build crashes at runtime
- * (z.discriminatedUnion incompatibility), so the WORKING build is the zod@4
- * one. The production tool modules import `@openai/agents` + `zod` relative to
- * apps/functions (the zod@3 build). To drive the REAL `buildMatchingTools`
- * against a working SDK, this eval installs a resolve hook that pins every
- * `zod` + `@openai/agents*` specifier to the zod@4 build — giving ONE
- * consistent zod across the SDK, the tools, and shared-tags. The tool LOGIC
- * (reducer + writer + dedup) is unchanged; only the zod runtime is unified.
- *
- * tsx is registered so the `.ts` tool modules + `@pa/*` workspace imports
- * resolve under a plain `node` run too; `node --import tsx` stays canonical.
+ * Run: source ~/.zshrc && nvm use 24 && node apps/eval/thin-claire/eval-tools.mjs
  */
-import { readFileSync, existsSync, symlinkSync, realpathSync, readdirSync } from "node:fs"
-import { fileURLToPath, pathToFileURL } from "node:url"
-import { dirname, join } from "node:path"
-import { createRequire, register as registerHook } from "node:module"
+import { loadClaireBundle, loadEnv } from "./_claire-bundle.mjs"
 
-const here = dirname(fileURLToPath(import.meta.url))
-
-// ── ensure @openai/agents + zod resolve from this dir (run-evals.mjs pattern) ──
-const nm = join(here, "node_modules")
-const agentRuntimeNm = join(here, "../../../packages/agent-runtime/node_modules")
-if (!existsSync(nm)) {
-  try {
-    symlinkSync(agentRuntimeNm, nm)
-  } catch (e) {
-    console.error(`could not symlink node_modules → ${agentRuntimeNm}: ${e?.message ?? e}`)
-  }
-}
-
-// load env up front (the tool modules also read it lazily).
-for (const line of readFileSync(
-  "/Users/adam/Desktop/WeKruit/wekruit-pa/.env",
-  "utf8",
-).split("\n")) {
-  const m = line.match(/^(PA_OPENAI_AGENT_API_KEY|OPENAI_API_KEY)=(.*)$/)
-  if (m && !process.env[m[1]]) process.env[m[1]] = m[2].trim()
-}
-if (!process.env.OPENAI_API_KEY) process.env.OPENAI_API_KEY = process.env.PA_OPENAI_AGENT_API_KEY
-
-// ── pin zod + @openai/agents* → the working zod@4 build (eval-only) ──────────
-const repoRoot = join(here, "../../..")
-const pnpm = (glob) => {
-  // resolve the single .pnpm dir whose name starts with glob AND pins zod@4
-  const base = join(repoRoot, "node_modules/.pnpm")
-  const hit = readdirSync(base).find((d) => d.startsWith(glob) && d.includes("zod@4"))
-  return hit ? join(base, hit, "node_modules") : null
-}
-const ZOD4 = realpathSync(join(agentRuntimeNm, "zod"))
-const AGENTS_NM = {
-  "@openai/agents": realpathSync(join(agentRuntimeNm, "@openai/agents")),
-}
-// agents-core / -openai / -realtime resolve through the @openai/agents pkg's
-// own node_modules; we point those bare specifiers at the zod@4 builds too.
-const agentsZod4 = {
-  "@openai/agents-core": pnpm("@openai+agents-core@0.8.5_") ,
-  "@openai/agents-openai": pnpm("@openai+agents-openai@0.8.5_"),
-  "@openai/agents-realtime": pnpm("@openai+agents-realtime@0.8.5_"),
-}
-for (const [spec, base] of Object.entries(agentsZod4)) {
-  if (base) {
-    try {
-      AGENTS_NM[spec] = realpathSync(join(base, spec))
-    } catch {
-      /* zod@3 fallback dir may be picked; the hook handles the common ones */
-    }
-  }
-}
-// pre-resolve the working ESM entry for each pinned @openai/agents* package.
-const AGENTS_ENTRY = {}
-for (const [spec, dir] of Object.entries(AGENTS_NM)) {
-  const req = createRequire(join(dir, "package.json"))
-  const pkg = req("./package.json")
-  const ent =
-    (pkg.exports && pkg.exports["."] && (pkg.exports["."].import || pkg.exports["."].default)) ||
-    pkg.module ||
-    pkg.main ||
-    "index.js"
-  AGENTS_ENTRY[spec] = pathToFileURL(join(dir, ent)).href
-}
-
-// ── bootstrap tsx FIRST so it's the inner loader; our pin hook (registered
-// next) runs OUTERMOST and rewrites bare `zod`/`@openai/agents*` specifiers
-// before tsx/default resolution. (Hooks chain last-registered-first.) ────────
-const fnRequire = createRequire(join(here, "../../functions/package.json"))
-try {
-  const tsxEsm = pathToFileURL(fnRequire.resolve("tsx/esm/api")).href
-  const { register } = await import(tsxEsm)
-  register()
-} catch {
-  // if --import tsx was used the loader is already active; the import below works.
-}
-
-// register the zod@4 pin hook (inline data: module). Runs before tsx.
-const hookSrc = `
-const ZOD4_URL = ${JSON.stringify(pathToFileURL(ZOD4).href)};
-const AGENTS_ENTRY = ${JSON.stringify(AGENTS_ENTRY)};
-export async function resolve(spec, ctx, next) {
-  if (spec === "zod") return next(ZOD4_URL + "/index.js", ctx);
-  if (spec.startsWith("zod/")) return next(ZOD4_URL + "/" + spec.slice(4), ctx);
-  if (AGENTS_ENTRY[spec]) return next(AGENTS_ENTRY[spec], ctx);
-  return next(spec, ctx);
-}
-`
-registerHook("data:text/javascript," + encodeURIComponent(hookSrc), import.meta.url)
-
-const { Agent, run, MemorySession } = await import("@openai/agents")
-const { buildMatchingTools } = await import(
-  "../../functions/src/claire-agent/tools/matching-tools.ts"
-)
+loadEnv()
+const { Agent, run, MemorySession, buildMatchingTools } = await loadClaireBundle()
 
 // ════════════ minimal in-memory fake Firestore ════════════
 // collection(name).doc(id) → { get(): {exists, data()}, set(data,{merge}) }

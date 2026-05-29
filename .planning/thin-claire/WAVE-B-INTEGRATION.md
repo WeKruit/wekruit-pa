@@ -38,18 +38,16 @@ the REAL `runClaireTurn` with the zod@4 SDK loading at RUNTIME (not just buildin
 RC1 (avoid-SWE→drop-SWE replace+negative+full_time), RC2 (recommend completes, no hang),
 RC3 (saved-pref reads canonical tags), RC4 (no "scratch that" artifact).
 
-## HARNESS DEBT (honest RED — not a green wall)
-`eval-tools.mjs` + `eval-delivery.mjs` are RED **in the integrated tree** — a TEST-HARNESS issue,
-not a logic/production issue:
-- both ran GREEN in their own Wave-A worktrees (slice logic proven; see commits 6f08724f / 0a270319);
-- they load the production tool files via **tsx**, but `sdk.ts`'s `createRequire` (required for the
-  prod zod-4 fix) bypasses tsx's tsconfig path-remap → resolves apps/functions zod@3 → a dual zod
-  instance → schema-introspection crash. The fix is to convert them to the **esbuild-bundle harness**
-  that eval-process / eval-proactive / eval-canary already use (resolve @openai/agents+zod external
-  from a zod@4-symlinked node_modules; no tsx interception);
-- their INTEGRATION is already covered GREEN by `eval-canary-twoturn.mjs` (which drives
-  set_matching_preferences + find_match + mark-read/typing/status/text delivery through the real
-  `runClaireTurn`). Conversion is a tracked follow-up; it does not block the Wave-C live canary.
+## Eval harness — RESOLVED (full per-WS eval stack green in the integrated tree)
+`eval-tools.mjs` + `eval-delivery.mjs` were briefly RED in the integrated tree — a TEST-HARNESS
+issue, not a logic/production bug: they loaded the production tool files via **tsx**, but `sdk.ts`'s
+CJS `createRequire` (required for the prod zod-4 fix) is not subject to tsx's ESM resolve hook →
+resolved apps/functions zod@3 → a dual zod instance.
+**Fixed**: both converted to the shared esbuild-bundle harness `apps/eval/thin-claire/_claire-bundle.mjs`
+(loads the production claire-agent as compiled .js on the zod@4 graph; @openai/agents+zod external,
+resolved from a zod@4-symlinked node_modules — no tsx interception). Now GREEN: eval-tools
+(RC1/RC2/dedup), eval-delivery (4/4). `sdk.ts` also re-exports `MemorySession` for the eval sessions.
+The entire per-WS eval stack (tools/delivery/process/guardrail/proactive) + canary + L1 + POC is green.
 
 ## Wave C — ADAM-GATED (deploy + live flag + real iMessage)
 Per CLAUDE.md, prod-Claire cutover + flag rollout + real iMessage to the 424 number are Adam-gated.
