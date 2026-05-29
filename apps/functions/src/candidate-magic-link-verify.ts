@@ -165,7 +165,7 @@ export async function runCandidateMagicLinkVerify(
   const browserUid = cleanString(input.browserUid, 128) ?? null
   const displayName =
     cleanString(input.displayName, 200) ?? cleanString(decoded.name, 200) ?? null
-  const referralSlug = cleanString(input.referralSlug, 120)?.toLowerCase() ?? null
+  const referralSlug = cleanString(input.referralSlug, 120) ?? null
   const linkedinUrlInput = cleanString(input.linkedinUrl, 500) ?? null
   const linkedinSignIn = input.linkedinSignIn === true || decoded.uid.startsWith("li_")
   const sourceRaw = cleanString(input.source, 64)
