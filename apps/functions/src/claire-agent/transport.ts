@@ -32,6 +32,7 @@ import type { Firestore } from "firebase-admin/firestore"
 import type { ClaireReaction, ClaireTransport } from "./types.js"
 import { sendImessage as defaultSendImessage } from "../sendblue/sendblue-client.js"
 import { sendTypingIndicator as defaultSendTypingIndicator } from "../sendblue/typing-indicator.js"
+import { sendReadReceipt as defaultSendReadReceipt } from "../sendblue/read-receipt.js"
 import { sendReaction as defaultSendReaction } from "../sendblue/send-reaction.js"
 import { enqueueOutbound as defaultEnqueueOutbound } from "@pa/pa-broker"
 
@@ -67,6 +68,7 @@ export interface SendblueTransportDeps {
   /** Test seams (default to the real Sendblue/pa-broker fns in production). */
   sendImessage?: typeof defaultSendImessage
   sendTypingIndicator?: typeof defaultSendTypingIndicator
+  sendReadReceipt?: typeof defaultSendReadReceipt
   sendReaction?: typeof defaultSendReaction
   enqueueOutbound?: typeof defaultEnqueueOutbound
 }
@@ -94,6 +96,7 @@ export function createSendblueTransport(
   const dryRun = deps.dryRun === true
   const sendImessage = deps.sendImessage ?? defaultSendImessage
   const sendTypingIndicator = deps.sendTypingIndicator ?? defaultSendTypingIndicator
+  const sendReadReceipt = deps.sendReadReceipt ?? defaultSendReadReceipt
   const sendReaction = deps.sendReaction ?? defaultSendReaction
   const enqueueOutbound = deps.enqueueOutbound ?? defaultEnqueueOutbound
 
@@ -104,17 +107,23 @@ export function createSendblueTransport(
   return {
     recordedEvents,
 
-    // Sendblue has NO read-receipt endpoint → an immediate typing indicator is
-    // the closest read signal (AGENTIC-ARCHITECTURE §7).
+    // Sendblue DOES support read receipts (POST /api/mark-read) — fire the REAL receipt so the
+    // candidate sees the blue "Read" label, then an immediate typing bubble so it feels live.
     async markRead(): Promise<void> {
       record("mark_read")
       if (dryRun) return
       try {
-        await sendTypingIndicator({ to: deps.toE164 })
+        await sendReadReceipt({ to: deps.toE164 })
       } catch (err) {
         log("claire.transport.markRead.error", {
           message: err instanceof Error ? err.message : String(err),
         })
+      }
+      // Best-effort typing right after the read receipt (the "…" while Claire composes).
+      try {
+        await sendTypingIndicator({ to: deps.toE164 })
+      } catch {
+        /* typing is pure UX; never block on it */
       }
     },
 
