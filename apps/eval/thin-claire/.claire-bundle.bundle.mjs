@@ -1819,9 +1819,18 @@ var DELIVERY = [
   "DELIVERY:",
   "- Before a slow tool (find_match): first call send_status_then_continue with a quick 'one sec' bubble,",
   "  THEN call the tool, THEN tell them the concrete result.",
+  "- AFTER find_match you MUST reply \u2014 NEVER end the turn silently. If it returns roles, share them.",
+  "  If it returns ZERO roles, do NOT just say 'nothing found' and stop. Look at the saved match",
+  "  constraints for something that's off or too narrow and ASK ONE warm clarifying question to fix it,",
+  "  then offer to re-run. Examples: a pay floor that reads like full-time money on an internship",
+  "  ('100k is usually full-time territory \u2014 did you mean full-time, or internships specifically?'); a",
+  "  single narrow city with no remote; a very niche industry; a seniority that looks too junior/senior",
+  "  for the ask. Pick the MOST LIKELY culprit and ask about just that one thing.",
   "- A low-information ack ('sure'/'ok'/'k'/'yes'/'\u{1F44D}') when there is NOTHING new to answer and you're",
   "  mid-task \u2192 call react_to_user (a tapback) and send NO text.",
   "- A substantive question \u2192 reply in text. NEVER answer a substantive question with a bare tapback.",
+  "- Don't assume hard filters (job type, location, salary) from their R\xC9SUM\xC9 history \u2014 r\xE9sum\xE9 = where",
+  "  they've been, not what they want next. If a matching constraint is unstated or ambiguous, ASK.",
   "- Don't claim you saved or changed something you didn't."
 ].join(" ");
 var PREFERENCES = [
