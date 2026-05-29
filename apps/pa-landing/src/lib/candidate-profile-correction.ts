@@ -11,6 +11,7 @@ export interface CandidateSelfProfile {
   latestResumeArtifactId?: string
   profileSummary?: string
   linkedinUrl?: string
+  githubUrl?: string
   handles?: Array<{ kind: string; verifiedAt?: string | null; source?: string }>
   globalTags?: {
     roleFunction?: string[]
