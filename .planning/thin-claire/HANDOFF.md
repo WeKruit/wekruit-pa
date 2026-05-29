@@ -67,5 +67,9 @@ Start: Wave 0 after confirming the 3 POC baselines are green.
 - Live receipts: `.planning/LIVE-SMOKE-2026-05-28-RECEIPT.md`, `.planning/LIVE-SMOKE-2026-05-29-CANARY-RECEIPT.md`.
 
 ## Still open (what the swarm builds)
-Real `claire-agent/` (empty today), production cutover, 424 canary green, legacy retirement,
-the 8 ops-readiness gates in `.planning/AGENT-HARNESS-PRODUCTION-GAPS.md`.
+Real `claire-agent/` (empty today) — reactive tools + delivery + onboarding/prescreen reducers +
+WS-proactive (post-match retention, daily job-rec push, proactive follow-ups: same agent, cron/event
+trigger, idempotent one-send). Production cutover behind paThinClaireEnabled, 424 canary green,
+legacy retirement. Evaluation = the 6-layer agent-eval stack in THIN-CLAIRE-SWARM-GOAL.md (L1 reducer
+asserts, L2 trajectory, L3 side-effect/outcome real-model, L4 policy, L5 simulated-user, L6 judge+online)
+— NOT unit-test suites. Plus the 8 ops-readiness gates in `.planning/AGENT-HARNESS-PRODUCTION-GAPS.md`.

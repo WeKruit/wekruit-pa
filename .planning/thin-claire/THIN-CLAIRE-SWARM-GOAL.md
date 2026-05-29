@@ -157,6 +157,16 @@ SWARM WORKSTREAMS (disjoint write scope; spawn in waves; each ends with its own 
                     Eval: poc-v3 C/C2/C3 (all-asked, no-skip, commit-once, flex resume, idempotent).
      WS-guardrail — inputGuardrail (pa-safety crisis/injection) + outputGuardrail voice-drift + normalizer.
                     Eval: poc-v3 D + injection corpus; voice-drift flags long-context regressions.
+     WS-proactive — OUTBOUND-INITIATED turns (not user-triggered). Claire proactively sends:
+                    post-match retention (after recs sent), daily job-rec batch push, proactive
+                    follow-ups. SAME agent + tools; the trigger is a cron/event, not an inbound msg.
+                    Wrap existing post-match-retention.ts + proactive-turn.ts + the daily batch CF as
+                    a `runProactiveTurn(userId, kind)` entry that builds the same Agent with a proactive
+                    system-prompt directive and emits via the same delivery tools (status/text, dedup,
+                    idempotency so a retry never double-sends). multi-bubble split = prompt instruction
+                    ("split into ≤2 short bubbles") or repeated send_message, NOT probabilistic-split.ts.
+                    Eval: L3 side-effect — a proactive trigger produces exactly one outbound (idempotent),
+                    respects opt-out/cooldown, and dedups already-sent jobs.
   Wave B (lead): prompt.ts (persona+slang+delivery+mode directives) + agent.ts assembly +
      onPaInbound/paMessageCoalescer cutover behind paThinClaireEnabled (default OFF).
      Full real-model eval: the deployed-handler two-turn canary (avoid-SWE turn THEN recommend turn)
@@ -167,24 +177,55 @@ SWARM WORKSTREAMS (disjoint write scope; spawn in waves; each ends with its own 
 
 PER-WORKSTREAM CONTRACT
   - Own a disjoint directory; no two workstreams write the same file.
-  - Deliver: code + an in-process real-model eval (poc-style) that exits 0; paste its output.
-  - Must not regress the three POC evals or pa-orchestrator/functions unit tests.
-  - Node 24. Real key from .env (PA_OPENAI_AGENT_API_KEY). No deploy to test — eval is in-process.
+  - Deliver: code + the eval layers below that apply to it, run + output pasted.
+  - Node 24. Real key from .env (PA_OPENAI_AGENT_API_KEY). No deploy to test — evals are in-process.
 
-EVAL GATES (the contract; all must stay green)
-  1. .planning/thin-claire/poc/*.mjs — the design spec (1 core, v2 4/4, v3 7/7).
-  2. apps/eval/thin-claire/ — production mirror of poc-v3 with real backend wiring.
-  3. apps/eval/conversation-experience/{process-intact-runner,real-seam-gate,bfcl-runner}.mjs — existing, keep green.
-  4. Deployed-handler two-turn canary (flag-ON) — the integration test the unit seams miss.
-  5. pa-orchestrator + apps/functions unit suites — no regression.
+EVAL STACK — replaces unit-test suites entirely (research-backed: Anthropic "Demystifying
+Evals for AI Agents", BFCL v3, Sierra τ-bench/τ²-bench, LangChain agentevals). Unit tests do
+NOT meaningfully evaluate an agent; these six layers do. CI blocks on L1-L4 + L3-outcome;
+judges/online are advisory and never break the build.
+
+  L1  Reducer/schema code-asserts        [BLOCKING · offline/CI every PR]
+      Pure deterministic asserts on the reducers: tag canonicalization, identity merge,
+      candidate + candidate×job state transitions, only/avoid/replace tag math (poc-v1),
+      single-commit idempotency. No LLM. (This is the ONLY "unit-like" layer and it tests
+      the deterministic reducers, not the agent's words.)
+  L2  Trajectory / tool-choice           [BLOCKING · offline/CI]
+      agentevals createTrajectoryMatchEvaluator (TS-native) in strict/subset mode: did Claire
+      call the right tools with right args, in the right order, AND abstain when no tool applies
+      (BFCL irrelevance). Reference trajectories per scenario; deterministic, no model call at grade time.
+  L3  Side-effect / outcome              [BLOCKING on outcome · offline, real model, sampled]
+      The poc-v3-style harness: real gpt-5.4-nano + an ISOLATED stub DB/channel per trial; assert
+      the ENVIRONMENT end-state, not the transcript (Anthropic outcome>transcript). e.g. pa-users.tags
+      == expected (SWE removed, negativeRoleFunction set, full_time), tool-call ledger row exists,
+      terminal committed exactly once, proactive trigger emits exactly one outbound. Run pass^k
+      (all k repeats pass) for the core flows. This is the load-bearing layer.
+  L4  Process-adherence / policy          [BLOCKING · offline/CI]
+      Deterministic state-machine asserts on the typed event ledger (NOT a judge): all required
+      prescreen questions covered + never skipped, terminal PASS/FAIL committed once, no terminal
+      without a preceding rubric-pass event, onboarding slots all filled in order. (poc-v3 C/C2.)
+  L5  Simulated-user multi-turn           [outcome-blocking · offline nightly, real model, sampled]
+      τ-bench-style: an LLM user-simulator (scenario / expected_outcome / user_description) converses
+      with Claire ≥10 turns; graded on FINAL tag/DB state + required-info coverage, not wording.
+      Catches long-context goal/context drift. DeepEval ConversationSimulator shape or hand-rolled.
+  L6  Judge quality + online              [ADVISORY only · offline + online/prod]
+      ConversationalGEval / G-Eval for voice/humanization/answer-first — multi-judge, order-swapped,
+      human-calibrated; NEVER a hard gate (non-deterministic, position+self-preference bias). Plus
+      online scoring of sampled live traffic (Langfuse/Braintrust) for drift + real candidate outcomes
+      (prescreen-completion rate, reply rate).
+
+  Also keep green (do not drop): the 3 POC evals (design spec) + the existing
+  apps/eval/conversation-experience/{process-intact-runner,real-seam-gate,bfcl-runner}.mjs.
+  Deployed-handler two-turn canary (flag-ON) is the L3 integration instance on the real handler.
 
 DEPLOY / DONE (CLAUDE.md: done = real proof)
   - Merge to main; deploy minimum scope functions:pa-orchestrator:onPaInbound,paMessageCoalescer.
   - Flip paThinClaireEnabled for the 424 canary only; run the live test sequence; paste
     pa-turn-traces(completed) + pa-tool-calls(snapshot reflects new tags) + pa-users.tags(SWE removed,
     negativeRoleFunction set, full_time) + pa-outbound(DELIVERED) + the iMessage transcript.
-  - Done = thin agent passes the live 424 canary (avoid-SWE→drop-SWE, no hang, reads tags) AND all
-    eval gates green AND legacy path retired for the cohort. Not done from unit tests alone.
+  - Done = thin agent passes the live 424 canary (avoid-SWE→drop-SWE, no hang, reads tags) AND the
+    L1-L5 eval layers are green AND legacy path retired for the cohort. Not done from any single layer
+    alone — the live outcome + L3 side-effect + L4 policy are the real bar.
 
 ASK ADAM ONLY FOR: product behavior not in the docs; deploy approval for prod-Claire; destructive
   migration; live outbound beyond the 424 canary; re-litigating an architecture invariant.
@@ -194,7 +235,7 @@ SELF-REVIEW (end of every workstream AND final — write into the workstream SUM
   [ ] KEYSTONE held — every state transition is reducer code; the LLM only proposed. Cite the reducer.
   [ ] No deterministic logic deleted that was load-bearing (process integrity / commit / safety / idempotency).
   [ ] Added behavior as a tool/reducer, not a new regex branch.
-  [ ] In-process real-model eval pasted + green; POC evals + unit suites not regressed.
+  [ ] Eval layers that apply (L1-L6) run + pasted; L1-L4 + L3-outcome green; POC evals not regressed.
   [ ] Voice came from prompt+few-shot, not a new post-processor (only normalizer + 1 voice-drift guardrail kept).
   [ ] Delivery: mark-read/typing reflexes + tapback/no-reply/status tools (no regex arbiter).
   [ ] Single agent, no handoff; mid-flow interrupt answered + pending resumes (cite the flex eval).
