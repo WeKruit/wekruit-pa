@@ -31,6 +31,8 @@ import {
   INDUSTRY_SECTOR_VOCAB,
   CAREER_STAGE_VOCAB,
   JOB_TYPE_VOCAB,
+  HARDNESS_AXIS_VOCAB,
+  HardnessSchema,
   type RoleFunction,
   type IndustrySector,
   type CareerStage,
@@ -214,6 +216,7 @@ export const ConversationExtractResultSchema = z.object({
   tagPatch: z
     .object({
       targetRoleFunction: coerceArray(z.enum(ROLE_FUNCTION_VOCAB)).optional(),
+      negativeRoleFunction: coerceArray(z.enum(ROLE_FUNCTION_VOCAB)).optional(),
       industrySector: coerceArray(z.enum(INDUSTRY_SECTOR_VOCAB)).optional(),
       negativeIndustrySector: coerceArray(z.enum(INDUSTRY_SECTOR_VOCAB)).optional(),
       visaStatus: z.enum(VISA_STATUS_VOCAB).optional(),
@@ -225,6 +228,26 @@ export const ConversationExtractResultSchema = z.object({
         (v) => v === undefined || v.length <= 12,
         { message: "relevantTags exceeds 12" },
       ),
+      /**
+       * SOFT-vs-HARD preference model (2026-05-28) — per-axis hardness the
+       * user signalled in chat. Keyed by `HARDNESS_AXIS_VOCAB`. Each entry is
+       * `{ hardness: "hard" | "soft" }` (the matcher fills buffer defaults).
+       * `.strict()` on the parent would otherwise reject this key; included
+       * here so the extractor can capture "must"/"only"/"dealbreaker" → hard
+       * and "prefer"/"ideally"/"open to" → soft. Emitted ONLY when the user
+       * clearly signals; absent = unset = matcher uses DEFAULT_HARDNESS.
+       */
+      preferenceHardness: z
+        .object(
+          Object.fromEntries(
+            HARDNESS_AXIS_VOCAB.map((a) => [
+              a,
+              z.object({ hardness: HardnessSchema }).strict().optional(),
+            ]),
+          ),
+        )
+        .strict()
+        .optional(),
     })
     .strict(),
   memoryEntities: z.array(
@@ -344,6 +367,7 @@ export function buildExtractorPrompt(req: ConversationExtractRequest): string {
     // the model dropped locations entirely).
     "tagPatch fields — use these EXACT keys (closed enums; do NOT invent values):",
     `  targetRoleFunction (string[]):  ${ROLE_FUNCTION_VOCAB.join(", ")}`,
+    `  negativeRoleFunction (string[]): ${ROLE_FUNCTION_VOCAB.join(", ")}`,
     `  industrySector (string[]):      ${INDUSTRY_SECTOR_VOCAB.join(", ")}`,
     `  negativeIndustrySector (string[]): ${INDUSTRY_SECTOR_VOCAB.join(", ")}`,
     `  visaStatus (string):            ${VISA_STATUS_VOCAB.join(", ")}`,
@@ -352,10 +376,35 @@ export function buildExtractorPrompt(req: ConversationExtractRequest): string {
     "  targetLocations (string[]):     free-form normalized location tokens, e.g. new_york, san_francisco_bay_area, remote",
     "  minSalaryUsd (integer):         minimum acceptable base salary in USD",
     "  relevantTags (string[], max 12): free-form lowercase skill/interest tokens",
+    `  preferenceHardness (object):    per-axis { hardness: "hard" | "soft" } keyed by: ${HARDNESS_AXIS_VOCAB.join(", ")}`,
     "Do NOT emit any key not in this list. A single-value field may be a scalar or a 1-element array.",
+    "",
+    "preferenceHardness — a SECONDARY annotation only. It NEVER replaces the value fields above:",
+    "  ALWAYS capture the axis VALUE field (industrySector, targetLocations, minSalaryUsd, careerStage, …)",
+    "  FIRST from what the user said. preferenceHardness is an OPTIONAL extra you may add on top when — and",
+    "  ONLY when — the user clearly signals how strict they are. Capturing hardness must never cause you to",
+    "  drop or omit the underlying value.",
+    "  - HARD (dealbreaker): \"must\", \"only\", \"required\", \"need\", \"dealbreaker\", \"non-negotiable\", \"won't consider\".",
+    "    e.g. \"I ONLY want fintech\" → industrySector = [financial_technology] AND preferenceHardness.industrySector = { hardness: \"hard\" }.",
+    "    e.g. \"remote is a dealbreaker\" → targetLocations = [remote] AND preferenceHardness.location = { hardness: \"hard\" }.",
+    "    e.g. \"I need at least 140k, below that is a no\" → minSalaryUsd = 140000 AND preferenceHardness.salary = { hardness: \"hard\" }.",
+    "  - SOFT (preference): \"prefer\", \"ideally\", \"would like\", \"open to\", \"flexible\", \"lean toward\", \"nice to have\".",
+    "    e.g. \"I'd prefer an early-stage startup in fintech and AI\" → industrySector = [financial_technology,",
+    "      artificial_intelligence_and_machine_learning] (STILL capture the industries) AND, if a stage signal is",
+    "      present, preferenceHardness.companyStage = { hardness: \"soft\" }.",
+    "  - If the user is AMBIGUOUS about strictness, do NOT emit a preferenceHardness entry for that axis (leave it",
+    "    unset so the matcher defaults are used). You STILL emit the axis VALUE field as usual.",
     "If the user asks to AVOID / exclude / is not interested in an industry (e.g. \"avoid crypto and adtech\"),",
     "emit that industry in negativeIndustrySector (canonical token, e.g. crypto_web3_blockchain) — do NOT put it",
     "in industrySector. industrySector is ONLY for PREFERRED industries the user wants more of.",
+    "If the user asks to AVOID / move away from / does NOT want a ROLE FUNCTION (e.g. \"I want to avoid pure SWE\",",
+    "\"not a coding role\", \"product strategy only, not engineering\", \"away from hands-on dev\"), emit that role",
+    "function in negativeRoleFunction (canonical token, e.g. software_engineering) — do NOT put it in",
+    "targetRoleFunction. targetRoleFunction is ONLY for role functions the user WANTS.",
+    "If the user says they want ONLY one role function (e.g. \"product strategy only\", \"I only want product\"), set",
+    "targetRoleFunction to that single role (e.g. [product_management]) AND, when they framed it as moving AWAY",
+    "from another role (\"product only, not pure SWE\"), also emit the rejected role in negativeRoleFunction",
+    "(e.g. [software_engineering]).",
     "",
     "Existing tags (do NOT duplicate):",
     JSON.stringify(req.existingTags),
@@ -471,6 +520,25 @@ export async function runExtraction(
   // Dual-write with Promise.allSettled so a Qdrant outage never blocks the
   // Firestore write (or vice versa). Both are logged on failure.
   const tagPatch: PartialUserTags = parsed.tagPatch as PartialUserTags
+
+  // SOFT-vs-HARD (2026-05-28) — stamp provenance on captured hardness entries
+  // so each hard/soft signal is auditable (source + timestamp). The matcher
+  // fills buffer defaults from `DEFAULT_HARDNESS`, so we only carry hardness +
+  // provenance here. Pure decoration over the LLM-emitted entries.
+  if (parsed.tagPatch.preferenceHardness) {
+    const stampedAt = now().toISOString()
+    const stamped: Record<string, { hardness: "hard" | "soft"; source: "conversation"; updatedAt: string }> = {}
+    for (const [axis, entry] of Object.entries(parsed.tagPatch.preferenceHardness)) {
+      if (entry && (entry.hardness === "hard" || entry.hardness === "soft")) {
+        stamped[axis] = { hardness: entry.hardness, source: "conversation", updatedAt: stampedAt }
+      }
+    }
+    if (Object.keys(stamped).length > 0) {
+      ;(tagPatch as { preferenceHardness?: unknown }).preferenceHardness = stamped
+    } else {
+      delete (tagPatch as { preferenceHardness?: unknown }).preferenceHardness
+    }
+  }
   const [tagWrite, memWrite] = await Promise.allSettled([
     tagFields.length > 0
       ? deps.writeUserTags(req.userId, tagPatch)

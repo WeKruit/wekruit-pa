@@ -158,6 +158,21 @@ export async function applyPartialUserTags(
   }
   delete cleaned.minSalaryUsd
 
+  // Negative role function — `negativeRoleFunction` is the SINGLE canonical
+  // field (mirrors `negativeIndustrySector`). Older callers / persisted docs
+  // used `roleFunctionNegativeList`; fold any such legacy key into the
+  // canonical field at the sole-writer boundary so there is exactly one source
+  // of truth and the V16 matcher's `negativeRoleFunction` read always sees it.
+  if (Array.isArray((cleaned as Record<string, unknown>).roleFunctionNegativeList)) {
+    const legacy = (cleaned as Record<string, unknown>).roleFunctionNegativeList as unknown[]
+    const canonical = Array.isArray((cleaned as Record<string, unknown>).negativeRoleFunction)
+      ? ((cleaned as Record<string, unknown>).negativeRoleFunction as unknown[])
+      : []
+    const merged = [...canonical, ...legacy].filter((s): s is string => typeof s === "string")
+    ;(cleaned as Record<string, unknown>).negativeRoleFunction = Array.from(new Set(merged))
+  }
+  delete (cleaned as Record<string, unknown>).roleFunctionNegativeList
+
   // Phase 61 — canonicalize `skills` if the caller passed raw strings or a
   // mixed array. The Phase 56 V16 score reads `skills[].baseWeight`; if we
   // wrote raw strings the multiplier is undefined → score=0 for everyone.
@@ -244,6 +259,26 @@ export async function applyPartialUserTags(
   // Merge: partial wins on conflict (caller's authoritative for the keys
   // they pass). Schema version + timestamp bookkeeping.
   const merged: Record<string, unknown> = { ...existing, ...cleaned }
+
+  // SOFT-vs-HARD (2026-05-28) — `preferenceHardness` is the ONE field merged
+  // PER-AXIS rather than wholesale-replaced. The conversation extractor emits
+  // hardness deltas one axis at a time (e.g. turn 1 → salary, turn 5 →
+  // location); a shallow replace would drop earlier axes. Per-axis keys still
+  // let a new signal overwrite the SAME axis. Behaviour for every other field
+  // is unchanged (shallow replace).
+  if (
+    cleaned.preferenceHardness &&
+    typeof cleaned.preferenceHardness === "object" &&
+    !Array.isArray(cleaned.preferenceHardness) &&
+    existing.preferenceHardness &&
+    typeof existing.preferenceHardness === "object" &&
+    !Array.isArray(existing.preferenceHardness)
+  ) {
+    merged.preferenceHardness = {
+      ...(existing.preferenceHardness as Record<string, unknown>),
+      ...(cleaned.preferenceHardness as Record<string, unknown>),
+    }
+  }
   if (merged.schemaVersion == null) merged.schemaVersion = USER_TAGS_SCHEMA_VERSION
   if (source === "chat" || source === "migration") {
     merged.lastUpdatedFromChat = nowIso

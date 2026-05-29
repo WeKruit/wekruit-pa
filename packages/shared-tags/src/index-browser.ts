@@ -28,3 +28,6 @@ export * from "./canonical/skills.js"
 export * from "./canonical/validation.js"
 export * from "./canonical/overlay.js"
 export * from "./canonical/registry.js"
+
+// ─── SOFT-vs-HARD preference model (2026-05-28) ───────────────────
+export * from "./canonical/preference-hardness.js"

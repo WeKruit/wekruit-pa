@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { PreferenceHardnessSchema } from "@wekruit/shared-tags"
 import { ChannelSchema, type Channel } from "./channel.js"
 export * from "./candidate-profile-classifier.js"
 
@@ -142,6 +143,14 @@ export const StatedPreferencesSchema = z.object({
    * lock — Claire mirrors the user turn but stays anchored to lock).
    */
   preferredLang: z.enum(["zh", "en", "mixed"]).optional(),
+  /**
+   * SOFT-vs-HARD preference model (2026-05-28) — per-axis hardness
+   * annotations captured during onboarding / conversation. Optional;
+   * pass-through into `tags.preferenceHardness` by `mergeUserTags`. Drives
+   * the V16 hard/soft buffer behaviour behind `paPreferenceHardnessEnabled`
+   * (default OFF). Absent = current behaviour.
+   */
+  preferenceHardness: PreferenceHardnessSchema.optional(),
   /** ISO timestamp of last write. */
   updatedAt: z.string().optional(),
 })

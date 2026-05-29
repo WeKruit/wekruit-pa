@@ -230,8 +230,12 @@ export const SET_MATCHING_PREFERENCES_CONNECTOR: ConnectorDef<
     }
     const negativeRoleFunctions = normalizeStringArray(input.negativeRoleFunctions)
     if (negativeRoleFunctions.length > 0) {
-      tagsPatch.roleFunctionNegativeList = negativeRoleFunctions
-      updatedTags.push("roleFunctionNegativeList")
+      // Write the SINGLE canonical field `negativeRoleFunction` (mirrors
+      // `negativeIndustrySector`) — the SAME field the live conversation
+      // extractor writes and the V16 matcher reads. No second source of truth
+      // (was `roleFunctionNegativeList`, renamed 2026-05-28).
+      tagsPatch.negativeRoleFunction = negativeRoleFunctions
+      updatedTags.push("negativeRoleFunction")
     }
 
     if (updatedTags.length === 0) {

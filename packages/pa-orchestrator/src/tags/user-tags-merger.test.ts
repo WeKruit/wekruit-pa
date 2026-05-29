@@ -664,7 +664,8 @@ test("mergeUserTags: targetCompanyTags + urgentlySeeking pass-through", () => {
 test("mergeUserTags: schemaVersion always set", () => {
   const out = mergeUserTags({})
   assert.equal(out.schemaVersion, USER_TAGS_SCHEMA_VERSION)
-  assert.equal(out.schemaVersion, 1)
+  // v2 (2026-05-28) — additive preferenceHardness bump.
+  assert.equal(out.schemaVersion, 2)
 })
 
 test("mergeUserTags: lastUpdatedFromCv set only when cv input present", () => {
@@ -763,7 +764,8 @@ test("UserTagsSchema parses output of a fully-populated mergeUserTags call", () 
   })
   // .parse throws on schema violation — passing means shape matches.
   const parsed = UserTagsSchema.parse(out)
-  assert.equal(parsed.schemaVersion, 1)
+  // v2 (2026-05-28) — additive preferenceHardness bump.
+  assert.equal(parsed.schemaVersion, 2)
   assert.equal(parsed.skills.length, 2)
 })
 
@@ -931,4 +933,42 @@ test("W4: userField type-level compatibility with UserTags keys", async () => {
   }
   // Reference _check so tsc doesn't strip — and assert it stays inhabited.
   assert.equal(Object.keys(_check).length, 11)
+})
+
+// ===========================================================================
+// SOFT-vs-HARD preference model (2026-05-28) — preferenceHardness pass-through
+// ===========================================================================
+
+test("mergeUserTags: preferenceHardness pass-through from statedPreferences", () => {
+  const out = mergeUserTags({
+    statedPreferences: {
+      targetRole: ["software engineer"],
+      preferenceHardness: {
+        industrySector: { hardness: "hard", source: "onboarding" },
+        salary: { hardness: "soft", bufferPct: 0.15 },
+      },
+    } as unknown as StatedPreferences,
+  })
+  assert.equal(out.preferenceHardness?.industrySector?.hardness, "hard")
+  assert.equal(out.preferenceHardness?.industrySector?.source, "onboarding")
+  assert.equal(out.preferenceHardness?.salary?.hardness, "soft")
+  assert.equal(out.preferenceHardness?.salary?.bufferPct, 0.15)
+  // Round-trips through the canonical schema.
+  assert.doesNotThrow(() => UserTagsSchema.parse(out))
+})
+
+test("mergeUserTags: omits preferenceHardness when statedPreferences has none (backward compat)", () => {
+  const out = mergeUserTags({ statedPreferences: { targetRole: ["pm"] } as StatedPreferences })
+  assert.equal(out.preferenceHardness, undefined)
+})
+
+test("mergeUserTags: drops malformed preferenceHardness (invalid hardness value)", () => {
+  const out = mergeUserTags({
+    statedPreferences: {
+      targetRole: ["pm"],
+      // invalid hardness token → safeParse fails → field omitted entirely
+      preferenceHardness: { location: { hardness: "maybe" } },
+    } as unknown as StatedPreferences,
+  })
+  assert.equal(out.preferenceHardness, undefined)
 })

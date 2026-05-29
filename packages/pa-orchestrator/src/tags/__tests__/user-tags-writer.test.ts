@@ -105,7 +105,7 @@ test("applyPartialUserTags: read-merge-write (chat source stamps lastUpdatedFrom
     "u-1": {
       tags: {
         skills: ["python"],
-        schemaVersion: 1,
+        schemaVersion: USER_TAGS_SCHEMA_VERSION,
       },
     },
   })
@@ -280,4 +280,72 @@ test("auditUsersWithoutTags: counts users with/without tags", async () => {
   assert.equal(res.total, 4)
   assert.equal(res.withTags, 2)
   assert.deepEqual(res.missing.sort(), ["u-2", "u-4"])
+})
+
+// ===========================================================================
+// SOFT-vs-HARD (2026-05-28) — preferenceHardness per-axis merge
+// ===========================================================================
+
+test("applyPartialUserTags: preferenceHardness merges PER-AXIS (accumulates deltas)", async () => {
+  const ctx = makeDb({
+    "u-ph": {
+      tags: {
+        skills: ["python"],
+        schemaVersion: USER_TAGS_SCHEMA_VERSION,
+        preferenceHardness: {
+          salary: { hardness: "hard", source: "conversation" },
+        },
+      },
+    },
+  })
+  // A later chat turn adds a DIFFERENT axis — salary must survive.
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-ph",
+    { preferenceHardness: { location: { hardness: "soft", source: "conversation" } } } as Record<string, unknown>,
+    { source: "chat" },
+  )
+  assert.equal(res.ok, true)
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  const ph = written.tags.preferenceHardness as Record<string, { hardness: string }>
+  assert.equal(ph.salary?.hardness, "hard") // preserved
+  assert.equal(ph.location?.hardness, "soft") // added
+})
+
+test("applyPartialUserTags: preferenceHardness same-axis update overwrites", async () => {
+  const ctx = makeDb({
+    "u-ph2": {
+      tags: {
+        skills: ["python"],
+        schemaVersion: USER_TAGS_SCHEMA_VERSION,
+        preferenceHardness: { industrySector: { hardness: "soft" } },
+      },
+    },
+  })
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-ph2",
+    { preferenceHardness: { industrySector: { hardness: "hard" } } } as Record<string, unknown>,
+    { source: "chat" },
+  )
+  assert.equal(res.ok, true)
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  const ph = written.tags.preferenceHardness as Record<string, { hardness: string }>
+  assert.equal(ph.industrySector?.hardness, "hard") // overwritten
+})
+
+test("applyPartialUserTags: preferenceHardness on a doc with none writes it wholesale", async () => {
+  const ctx = makeDb({
+    "u-ph3": { tags: { skills: ["python"], schemaVersion: USER_TAGS_SCHEMA_VERSION } },
+  })
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-ph3",
+    { preferenceHardness: { salary: { hardness: "hard" } } } as Record<string, unknown>,
+    { source: "chat" },
+  )
+  assert.equal(res.ok, true)
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  const ph = written.tags.preferenceHardness as Record<string, { hardness: string }>
+  assert.equal(ph.salary?.hardness, "hard")
 })

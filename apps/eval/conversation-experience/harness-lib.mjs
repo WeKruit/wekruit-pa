@@ -92,3 +92,179 @@ export async function importDist(repoRoot, relPath) {
   }
   return import(pathToFileURL(abs).href)
 }
+
+// ────────────────────────────────────────────────────────────────────────
+// Shared real-seam fixture engine
+// ════════════════════════════════════════════════════════════════════════
+// Single source of truth for driving the REAL production extraction seam
+// (`maybeRunExtractor`) over the `real-seam-fixtures/` set, asserting the
+// durable tag store, and grading the result. Consumed by BOTH the manual
+// `real-seam-runner.mjs` scorecard AND the blocking `real-seam-gate.mjs`
+// predeploy gate, so the manual receipt and the deploy gate exercise the
+// EXACT same code path (no drift between "what we run by hand" and "what
+// blocks deploys").
+// ────────────────────────────────────────────────────────────────────────
+
+/**
+ * In-memory Firestore double. `set({merge:true})` is shallow per-key, which
+ * is what production `applyPartialUserTags` relies on (it replaces whole tag
+ * keys). Identical shape to the stub the production extraction harness uses.
+ */
+export class FirestoreStub {
+  constructor() {
+    this.cols = new Map()
+  }
+  collection(name) {
+    if (!this.cols.has(name)) this.cols.set(name, new Map())
+    const col = this.cols.get(name)
+    return {
+      doc: (id) => ({
+        get: async () => ({ exists: col.has(id), data: () => col.get(id) ?? undefined }),
+        set: async (data, opts) => {
+          const existing = col.get(id) ?? {}
+          col.set(id, opts?.merge ? { ...existing, ...data } : data)
+        },
+      }),
+      add: async (data) => {
+        const id = `auto-${col.size}`
+        col.set(id, data)
+        return { id }
+      },
+    }
+  }
+}
+
+const asArr = (v) => (Array.isArray(v) ? v : v == null ? [] : [v])
+const sortIfArray = (v) => (Array.isArray(v) ? [...v].sort() : v)
+
+function subsetMatch(expected, actual) {
+  const fails = []
+  for (const [k, v] of Object.entries(expected)) {
+    if (JSON.stringify(sortIfArray(v)) !== JSON.stringify(sortIfArray(actual[k]))) {
+      fails.push(`tags.${k}: expected ${JSON.stringify(v)}, got ${JSON.stringify(actual[k])}`)
+    }
+  }
+  return fails
+}
+
+/** Deterministic capture assertion: final_tags subset + includes/excludes. */
+export function evalCaptureFixture(expect, finalTags) {
+  const fails = []
+  if (expect?.final_tags) fails.push(...subsetMatch(expect.final_tags, finalTags))
+  for (const [k, vals] of Object.entries(expect?.final_tags_includes ?? {})) {
+    const actual = asArr(finalTags[k])
+    for (const v of vals) {
+      if (!actual.includes(v)) fails.push(`tags.${k}: expected to INCLUDE ${JSON.stringify(v)}, got ${JSON.stringify(finalTags[k])}`)
+    }
+  }
+  for (const [k, vals] of Object.entries(expect?.final_tags_excludes ?? {})) {
+    const actual = asArr(finalTags[k])
+    for (const v of vals) {
+      if (actual.includes(v)) fails.push(`tags.${k}: expected to EXCLUDE ${JSON.stringify(v)}, but present in ${JSON.stringify(finalTags[k])}`)
+    }
+  }
+  return fails
+}
+
+const TRANSIENT_RE = /(ECONN|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|network|timeout|fetch failed|rate.?limit|429|5\d\d)/i
+
+/**
+ * Call `maybeRunExtractor` with bounded retries on TRANSIENT network/5xx
+ * errors only. A non-transient throw (e.g. a bug) surfaces immediately as
+ * `{ran:false, reason:"threw:..."}` — we never retry a deterministic failure.
+ *
+ * `onAttempt(n, errMsg)` is invoked before each retry so callers can log the
+ * blip. Returns the seam outcome (never throws).
+ */
+async function callSeamWithRetry(maybeRunExtractor, callArgs, { retries = 1, onAttempt } = {}) {
+  let lastErr
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await maybeRunExtractor(callArgs)
+    } catch (err) {
+      const msg = err?.message ?? String(err)
+      lastErr = msg
+      if (attempt < retries && TRANSIENT_RE.test(msg)) {
+        if (onAttempt) onAttempt(attempt + 1, msg)
+        await new Promise((r) => setTimeout(r, 750 * (attempt + 1)))
+        continue
+      }
+      // Non-transient, or out of retries: report as a soft outcome (matches
+      // maybeRunExtractor's own never-throw contract).
+      return { ran: false, reason: `threw:${msg}` }
+    }
+  }
+  return { ran: false, reason: `threw:${lastErr}` }
+}
+
+/**
+ * Drive every fixture in `real-seam-fixtures/` through the REAL
+ * `maybeRunExtractor` seam (fixture-controlled `onboarding_state`, the bit
+ * `llm-runner.mjs` cannot express because it hard-defaults to "complete"),
+ * then assert the durable tag store with `evalCaptureFixture`.
+ *
+ * @param maybeRunExtractor production seam (imported from dist).
+ * @param fixturesDir absolute path to the real-seam-fixtures directory.
+ * @param opts.maxModelCalls hard ceiling on total seam invocations across all
+ *        fixtures/turns. Throws BEFORE exceeding it — bounds cost on a deploy
+ *        gate so a runaway fixture set can never burn unbounded spend.
+ * @param opts.retries transient-error retries per seam call (default 1).
+ * @param opts.onTransient(name, attempt, msg) optional retry logger.
+ * @returns array of per-fixture results: {name, baselineRed, gated, detFails,
+ *          onboardingState, ranOutcomes, finalTags}. Plus `_modelCalls` total
+ *          attached to the array.
+ */
+export async function runRealSeamFixtures(maybeRunExtractor, fixturesDir, opts = {}) {
+  const { maxModelCalls = Infinity, retries = 1, onTransient } = opts
+  const fixtures = loadJsonFixtures(fixturesDir)
+  const results = []
+  let modelCalls = 0
+  for (const { fixture, name } of fixtures) {
+    const userId = fixture.user_id ?? "test_user"
+    const onboardingState = fixture.onboarding_state ?? "complete"
+    const db = new FirestoreStub()
+    await db.collection("pa-users").doc(userId).set({ tags: { ...(fixture.initial_tags ?? {}) }, onboardingState })
+    const readTags = async () => (await db.collection("pa-users").doc(userId).get()).data()?.tags ?? {}
+    const transcript = []
+    const ranOutcomes = []
+
+    for (const turn of fixture.turns ?? []) {
+      transcript.push({ role: "user", body: turn.inbound })
+      if (modelCalls >= maxModelCalls) {
+        throw new Error(`real-seam cost ceiling hit: maxModelCalls=${maxModelCalls} reached at fixture '${name}'. Trim the fixture set or raise the ceiling.`)
+      }
+      const tagsBefore = await readTags()
+      modelCalls += 1
+      const outcome = await callSeamWithRetry(
+        maybeRunExtractor,
+        {
+          db,
+          userId,
+          recentMessages: transcript.map((t) => ({ role: t.role, body: t.body, createdAt: new Date().toISOString() })),
+          existingTags: tagsBefore,
+          onboardingState,
+          userMsgsThisBatch: 1,
+          forceTrigger: "intent_signal",
+          log: () => {},
+        },
+        { retries, onAttempt: (a, m) => onTransient?.(name, a, m) },
+      )
+      ranOutcomes.push(outcome)
+      if (turn.assistant) transcript.push({ role: "assistant", body: turn.assistant })
+    }
+
+    const finalTags = await readTags()
+    const detFails = evalCaptureFixture(fixture.expect, finalTags)
+    results.push({
+      name,
+      baselineRed: fixture.expect?.baseline_red === true,
+      gated: detFails.length === 0,
+      detFails,
+      onboardingState,
+      ranOutcomes,
+      finalTags,
+    })
+  }
+  results._modelCalls = modelCalls
+  return results
+}

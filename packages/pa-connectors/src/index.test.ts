@@ -245,7 +245,9 @@ t6test("set-matching-preferences via runConnector persists H1B hard constraint w
   assert.deepEqual(tags.targetCountry, ["usa"])
   assert.equal(tags.careerStage, "junior")
   assert.deepEqual(tags.companyNegativeList, ["OpenAI"])
-  assert.deepEqual(tags.roleFunctionNegativeList, ["customer_service_and_support"])
+  // Canonical field (mirrors negativeIndustrySector) — was roleFunctionNegativeList
+  // before the 2026-05-28 rename. Single source of truth read by the V16 matcher.
+  assert.deepEqual(tags.negativeRoleFunction, ["customer_service_and_support"])
   const prefs = user.conversationDerivedPreferences as Record<string, unknown>
   const matchingProfile = prefs.matchingProfile as Record<string, unknown>
   const last = matchingProfile.last as Record<string, unknown>
