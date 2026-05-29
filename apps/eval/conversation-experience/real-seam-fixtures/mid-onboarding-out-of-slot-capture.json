@@ -1,0 +1,26 @@
+{
+  "name": "mid-onboarding-out-of-slot-capture",
+  "description": "THE LIVE-PHONE FAILURE, end-to-end on the real seam. A candidate MID-ONBOARDING (onboardingState=pending, active shared-onboarding slot = culture_stage) volunteers a dense multi-fact message OUT OF SLOT (the active question only asks about company culture/stage, but they answer with role+yoe+industry+location+visa+salary at once). This fixture drives maybeRunExtractor exactly as the (now-fixed) extract-first onboarding handler / arbiter does: forceTrigger='intent_signal'. RED is the CORRECT baseline. TWO independent production root causes were verified on the real seam 2026-05-28 — and the concurrent orchestrator worktree has now FIXED CAUSE 1 but NOT CAUSE 2, which this fixture proves: (CAUSE 1 — onboarding gate, NOW FIXED in source) maybeRunExtractor used to HARD short-circuit when onboardingState !== 'complete'. The orchestrator owner added `!args.forceTrigger &&` to that gate (conversation-extractor-runtime.ts:486), so a forced/intent-driven extraction now BYPASSES the gate mid-onboarding (their comment cites the same live QA failure: 'stuck pending -> $160k/H1B never saved, matcher starved'). The PASSIVE path (no forceTrigger) still gates, by design. (CAUSE 2 — schema parse_error, STILL BROKEN, this is why the fixture is RED now) with the gate bypassed the model IS called, and gpt-5.4-nano emits a PERFECT tagPatch ({targetRoleFunction:[software_engineering], industrySector:[financial_technology, artificial_intelligence_and_machine_learning], visaStatus:sponsor_needed, targetLocations:[new_york, remote], minSalaryUsd:160000}) but ALSO emits a memoryEntities[] row for the salary whose `value` is the NUMBER 160000, while MemoryEntity.value is z.string() (conversation-extractor.ts:233). The strict ConversationExtractResultSchema.parse() rejects the whole object on that one field -> reason='parse_error' -> the perfect tagPatch is silently dropped -> pa-users.tags stays {}. SAME bug class as the documented Adam-bug (model right, schema rejects on a type mismatch, whole patch lost) but a NEW instance the existing coerceArray fix does NOT cover (coerceArray handles tagPatch arrays, not memoryEntities[].value). REMAINING FIX (in packages/** — integrator-owned): coerce memoryEntities[].value to string (z.coerce.string() / z.preprocess) so a numeric salary entity does not nuke the patch. salary-memory-entity-parse-error.json isolates CAUSE 2 alone at onboardingState=complete. When CAUSE 2 lands, BOTH fixtures flip GREEN. NOTE on assertions: only axes the chat extractor's tagPatch schema (conversation-extractor.ts:213) can emit — visaStatus, minSalaryUsd, targetLocations, industrySector. 'skills' is intentionally NOT asserted: the chat extractor has NO skills field (skills are owned by the resume parser), so asserting it would be RED for the wrong reason.",
+  "user_id": "test_user_mid_onboarding",
+  "onboarding_state": "pending",
+  "active_onboarding_slot": "culture_stage",
+  "initial_tags": {},
+  "turns": [
+    {
+      "inbound": "honestly I'm a software engineer with about 3 years building React / TypeScript / Python apps, want fintech or AI roles, NYC or remote, I need H1B sponsorship, and minimum 160k",
+      "assistant": "got it — that's a lot of helpful detail."
+    }
+  ],
+  "expect": {
+    "baseline_red": false,
+    "final_tags": {
+      "visaStatus": "sponsor_needed",
+      "minSalary": 160000
+    },
+    "final_tags_includes": {
+      "targetLocations": ["new_york", "remote"],
+      "industrySector": ["financial_technology", "artificial_intelligence_and_machine_learning"]
+    },
+    "grade_criteria": "The candidate, while mid-onboarding, volunteered: role=software engineer, ~3 years experience, React/TypeScript/Python, industries fintech + AI, locations NYC + remote, needs H1B sponsorship, minimum salary 160k. PASS only if the durable profile actually captured the extractor-emittable out-of-slot facts: visaStatus=sponsor_needed, minSalaryUsd≈160000, targetLocations includes NYC + remote, industrySector includes fintech + AI/ML. If the durable store is empty (extractor short-circuited because onboarding is incomplete), that is the live-phone bug — pass=false."
+  }
+}

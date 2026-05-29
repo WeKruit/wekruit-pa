@@ -166,3 +166,32 @@ Fixtures: `bfcl-fixtures/*.json`. Exits 0 regardless of misses; prints a scoreca
 > **Known scaffolding debt surfaced by P0:** the production `buildSdkTools` (agent-runtime) passes raw Zod connector schemas to the Agents SDK with no strict override, and the connector `inputSchema`s have optional fields → the live agent path would 400 under Responses strict function-calling ("required must include every key"). `bfcl-runner.mjs` works around it (non-strict JSON schema) to MEASURE routing; **P1 must resolve this for real** when it wires `run(agent)` to drive job-search.
 
 The frozen **baseline receipt** is in `.planning/agentic/P0-eval-foundation/SUMMARY.md` — the contract every later phase must not regress.
+
+## Real-seam suite (`real-seam-runner.mjs`) — the anti-false-green gate
+
+```bash
+node apps/eval/conversation-experience/real-seam-runner.mjs   # needs .env OpenAI key (real gpt-5.4-nano)
+```
+
+**Why:** the P0 blocking gate `runner.mjs` is a **false green for the candidate journey** — it grades a Firestore mock that the fixture itself pre-seeds via `extractor_simulated_patch` / `matcher_simulated_result`. It never runs the real model and never drives `maybeRunExtractor`, so it can pass while the same scenario fails on the live phone (proof: `avoid-swe-after-onboarding.json` PASS/exit 0 vs the live failure). `real-seam-runner.mjs` is the single entrypoint that runs only code that touches **production seams**, and prints one baseline scorecard.
+
+It runs:
+
+| Check | Real code exercised | Today |
+|---|---|---|
+| `real-seam-fixtures/*.json` (in-process) | the EXACT production `maybeRunExtractor` seam, with `onboardingState` **fixture-controlled** (what `llm-runner.mjs` cannot express — it hard-defaults `complete`) | both fixtures **RED** (`baseline_red`, advisory) |
+| `agent-onboarding-canary.mjs` | scoped onboarding agent + `SHARED_ONBOARDING_QUESTIONS`/`resolveNext` reducer | GREEN |
+| `agent-jobsearch-canary.mjs` | `run(agent)` + `find-match` connector; post-reducer tag snapshot | GREEN |
+| `agent-prescreen-canary.mjs` | scoped prescreen agent + `PreScreenPipeline.runTurn` | GREEN |
+| `llm-runner.mjs` | real `maybeRunExtractor` extraction (+ advisory grader) over `llm-fixtures/*.json` | GREEN (its own `negative-axis-baseline` is advisory RED) |
+
+Exit `0` = every **non-`baseline_red`** check passed; `1` = a real gate failed (would block); `2` = setup error (no key / dist not built — it does **not** fake a pass). `baseline_red` fixtures are advisory: RED never blocks, but a **surprise GREEN** is surfaced (a fix landed → retire the baseline).
+
+### Real-seam fixtures (`real-seam-fixtures/*.json`)
+
+Same `expect` shape as `llm-fixtures` (`final_tags` / `final_tags_includes` / `final_tags_excludes` / `baseline_red` / `grade_criteria`) **plus** `onboarding_state` (drives the seam's onboarding gate) and an optional `active_onboarding_slot` doc tag.
+
+- **`mid-onboarding-out-of-slot-capture.json`** — the live-phone failure end-to-end: a `onboardingState=pending` candidate volunteers role+industry+location+visa+salary out of the active `culture_stage` slot; the fixture drives `maybeRunExtractor` with `forceTrigger='intent_signal'` exactly as the now-fixed extract-first handler does. **RED.** Two root causes were found on the seam (2026-05-28): **CAUSE 1 (onboarding gate) is now FIXED in source** — the orchestrator owner added `!args.forceTrigger &&` to the gate (`conversation-extractor-runtime.ts:486`) so forced extraction bypasses it mid-onboarding (passive path still gates, by design); **CAUSE 2 (parse_error) is still broken** — `gpt-5.4-nano` emits a perfect `tagPatch` but also a `memoryEntities[]` salary row whose `value` is the **number** `160000`, and `MemoryEntity.value` is `z.string()` (`conversation-extractor.ts:233`), so the strict `.parse()` rejects the whole object → `parse_error` → the perfect patch is silently dropped. Same class as the documented Adam-bug; the `coerceArray` fix covered `tagPatch` arrays, not `memoryEntities[].value`.
+- **`salary-memory-entity-parse-error.json`** — CAUSE 2 isolated at `onboardingState=complete` (gate open, model called). Proves the numeric-salary `parse_error` independently of onboarding. **RED** until `memoryEntities[].value` is coerced to string. When fixed, **both** fixtures flip GREEN.
+
+> Note: `skills` is intentionally NOT asserted — the chat extractor's `tagPatch` schema has no `skills` field (skills are owned by the resume parser, not this seam).
