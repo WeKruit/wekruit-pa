@@ -374,6 +374,22 @@ export function CandidateShell({
   const location = useLocation()
   const [drawerOpen, setDrawerOpen] = useState(false)
 
+  // Marketing header is auth-aware: once a session resolves, drop the
+  // "Sign in" link and swap the CTA for a single "My WeKruit" entry. Stays
+  // "unknown" until onAuthStateChanged fires so signed-in users don't flash
+  // the signed-out chrome on first paint where a session already exists.
+  const [authState, setAuthState] = useState<User | null | "unknown">("unknown")
+  useEffect(() => {
+    let unsub = () => {}
+    try {
+      unsub = onAuthStateChanged(auth(), (u) => setAuthState(u))
+    } catch {
+      setAuthState(null)
+    }
+    return () => unsub()
+  }, [])
+  const isAuthed = authState !== "unknown" && authState !== null
+
   if (signedIn) {
     // v3 candidate operating-center chrome: a left navigation rail (desktop)
     // that collapses to a slide-in drawer + compact top bar under 900px.
@@ -428,8 +444,14 @@ export function CandidateShell({
             <Link to="/me" className="wk-nav__link">My WeKruit</Link>
           </nav>
           <div className="wk-header__cta">
-            <Link to="/login" className="wk-header__signin">Sign in</Link>
-            <Link to="/login" className="wk-btn wk-btn--ink wk-btn--sm">Start with Claire</Link>
+            {isAuthed ? (
+              <Link to="/me" className="wk-btn wk-btn--ink wk-btn--sm">My WeKruit</Link>
+            ) : (
+              <>
+                <Link to="/login" className="wk-header__signin">Sign in</Link>
+                <Link to="/login" className="wk-btn wk-btn--ink wk-btn--sm">Start with Claire</Link>
+              </>
+            )}
           </div>
         </div>
       </header>
