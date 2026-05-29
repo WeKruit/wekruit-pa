@@ -39,6 +39,7 @@ import {
   classifyCandidateProfile,
   deriveCandidateSource,
   candidateDrawerPreviewMax,
+  candidateDrawerRegionCount,
   firstCandidateDrawerText,
   candidateDrawerVisibleCount,
   isValidE164Phone,
@@ -1246,6 +1247,15 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
   const setAllExpanded = (expanded: boolean) => {
     setExpandedSections(expanded ? new Set(CANDIDATE_DRAWER_SECTION_IDS) : new Set())
   }
+  const detailStatus = detailLoading ? "Loading detail" : "Detail loaded"
+  const experienceCount = drawerExperienceRows(detail.resumes[0]).length
+  const visibleRegions = [
+    row.registered ? "Registered" : "Unregistered",
+    row.phoneReady ? "Phone ready" : undefined,
+    row.phoneBound ? "Phone-bound" : undefined,
+    doc.latestResumeArtifactId ? "Resume on file" : undefined,
+    doc.mem0UserId ? "mem0" : undefined,
+  ].filter((label): label is string => Boolean(label))
 
   return (
     <div
@@ -1332,24 +1342,46 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <StatusPill tone={LIFECYCLE_TONE[row.lifecycle]} dot>
-            {LIFECYCLE_LABEL[row.lifecycle]}
-          </StatusPill>
-          {doc.outreach?.status && doc.outreach.status !== "allowed" && (
-            <StatusPill tone={doc.outreach.status === "opted_out" ? "blocked" : "hitl"}>
-              outreach: {doc.outreach.status}
-            </StatusPill>
-          )}
-          {doc.piiConsentAt && <StatusPill tone="live">PII consent</StatusPill>}
-          {doc.latestResumeArtifactId && <StatusPill tone="info">Resume on file</StatusPill>}
-          {doc.mem0UserId && <StatusPill tone="info">mem0</StatusPill>}
-          {row.registered && <StatusPill tone="live">Registered</StatusPill>}
-          {row.phoneReady && <StatusPill tone="live">Phone ready</StatusPill>}
-          {row.phoneBound && <StatusPill tone="info">Phone-bound</StatusPill>}
-          {row.sendblueEligible && <StatusPill tone="hitl">Sendblue eligible</StatusPill>}
-          <StatusPill tone="neutral">{detail.messages.length} messages</StatusPill>
-          <StatusPill tone="neutral">{detail.prescreens.length} prescreens</StatusPill>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) minmax(220px, auto)",
+            gap: 12,
+            padding: 12,
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            background: "var(--cream)",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <DrawerSectionLabel>Candidate state</DrawerSectionLabel>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <StatusPill tone={LIFECYCLE_TONE[row.lifecycle]} dot>
+                {LIFECYCLE_LABEL[row.lifecycle]}
+              </StatusPill>
+              {doc.outreach?.status && doc.outreach.status !== "allowed" && (
+                <StatusPill tone={doc.outreach.status === "opted_out" ? "blocked" : "hitl"}>
+                  outreach: {doc.outreach.status}
+                </StatusPill>
+              )}
+              {doc.piiConsentAt && <StatusPill tone="live">PII consent</StatusPill>}
+              {visibleRegions.map((label) => (
+                <StatusPill key={label} tone={label === "Registered" || label === "Phone ready" ? "live" : "info"}>
+                  {label}
+                </StatusPill>
+              ))}
+              {row.sendblueEligible && <StatusPill tone="hitl">Sendblue eligible</StatusPill>}
+            </div>
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <DrawerSectionLabel>{detailStatus}</DrawerSectionLabel>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <StatusPill tone="neutral">{candidateDrawerRegionCount(detail.resumes.length, "resume")}</StatusPill>
+              <StatusPill tone="neutral">{candidateDrawerRegionCount(detail.messages.length, "message")}</StatusPill>
+              <StatusPill tone="neutral">{candidateDrawerRegionCount(detail.prescreens.length, "session")}</StatusPill>
+              <StatusPill tone="neutral">{candidateDrawerRegionCount(detail.jobStates.length, "job state")}</StatusPill>
+            </div>
+          </div>
         </div>
 
         {detailErr && (
@@ -1366,16 +1398,23 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
           </div>
         )}
 
+        <DrawerSectionLabel>Detail regions</DrawerSectionLabel>
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+            gridTemplateColumns: "repeat(auto-fit, minmax(min(320px, 100%), 1fr))",
             gap: 14,
             alignItems: "start",
+            padding: 12,
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            background: "var(--cream-2)",
           }}
         >
           <DrawerSectionCard
             title="Identity"
+            subtitle="Contact, source, lifecycle, and account handles."
+            meta={row.registered ? "Registered" : "Identity record"}
             sectionId="identity"
             expanded={isExpanded("identity")}
             onToggle={toggleSection}
@@ -1410,6 +1449,8 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
 
           <DrawerSectionCard
             title="Profile"
+            subtitle="Global tags, durable preferences, and profile completeness."
+            meta={candidateDrawerRegionCount(row.skills.length, "tag")}
             sectionId="profile"
             expanded={isExpanded("profile")}
             onToggle={toggleSection}
@@ -1426,6 +1467,8 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
 
           <DrawerSectionCard
             title="Resume"
+            subtitle="Parsed resume source and extracted resume summary."
+            meta={detailLoading ? "Loading" : candidateDrawerRegionCount(detail.resumes.length, "resume")}
             sectionId="resume"
             expanded={isExpanded("resume")}
             onToggle={toggleSection}
@@ -1442,6 +1485,8 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
 
           <DrawerSectionCard
             title="Experience"
+            subtitle="Roles from the latest parsed resume."
+            meta={detailLoading ? "Loading" : candidateDrawerRegionCount(experienceCount, "role")}
             sectionId="experience"
             expanded={isExpanded("experience")}
             onToggle={toggleSection}
@@ -1457,6 +1502,8 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
 
           <DrawerSectionCard
             title="Conversation"
+            subtitle="Candidate messages plus stored agent turns."
+            meta={detailLoading ? "Loading" : candidateDrawerRegionCount(detail.messages.length, "message")}
             sectionId="conversation"
             expanded={isExpanded("conversation")}
             onToggle={toggleSection}
@@ -1473,6 +1520,8 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
 
           <DrawerSectionCard
             title="Prescreened jobs"
+            subtitle="Job sessions, outcomes, and candidate job-state rows."
+            meta={detailLoading ? "Loading" : candidateDrawerRegionCount(detail.prescreens.length, "session")}
             sectionId="prescreens"
             expanded={isExpanded("prescreens")}
             onToggle={toggleSection}
@@ -1487,7 +1536,9 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
           </DrawerSectionCard>
 
           <DrawerSectionCard
-            title="Management"
+            title="Ops links"
+            subtitle="Full profile, conversation, tags, and ops queues."
+            meta="6 links"
             sectionId="management"
             expanded={isExpanded("management")}
             onToggle={toggleSection}
@@ -1509,6 +1560,8 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
 
 function DrawerSectionCard({
   title,
+  subtitle,
+  meta,
   sectionId,
   expanded,
   onToggle,
@@ -1517,6 +1570,8 @@ function DrawerSectionCard({
   children,
 }: {
   title: string
+  subtitle: string
+  meta?: string
   sectionId: CandidateDrawerSectionId
   expanded: boolean
   onToggle: (sectionId: CandidateDrawerSectionId) => void
@@ -1527,11 +1582,13 @@ function DrawerSectionCard({
   return (
     <div style={{ gridColumn: expanded ? "1 / -1" : undefined, minWidth: 0 }}>
       <Card
-        title={title}
+        title={<DrawerRegionHeading title={title} subtitle={subtitle} meta={meta} />}
         style={{
           height: "100%",
           borderColor: expanded ? "var(--border-strong)" : undefined,
           boxShadow: expanded ? "var(--shadow-sm)" : undefined,
+          background: expanded ? "var(--cream)" : "var(--cream-3)",
+          padding: expanded ? 22 : 18,
         }}
         action={
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
@@ -1551,6 +1608,59 @@ function DrawerSectionCard({
       >
         {children}
       </Card>
+    </div>
+  )
+}
+
+function DrawerRegionHeading({
+  title,
+  subtitle,
+  meta,
+}: {
+  title: string
+  subtitle: string
+  meta?: string
+}) {
+  return (
+    <div style={{ display: "grid", gap: 5, whiteSpace: "normal", minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ color: "var(--ink)", fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+          {title}
+        </span>
+        {meta && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              minHeight: 20,
+              padding: "2px 7px",
+              borderRadius: 6,
+              background: "var(--cream-2)",
+              border: "1px solid var(--border)",
+              color: "var(--ink-2)",
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: 0,
+              textTransform: "none",
+            }}
+          >
+            {meta}
+          </span>
+        )}
+      </div>
+      <div
+        style={{
+          maxWidth: "58ch",
+          color: "var(--ink-3)",
+          fontSize: 12,
+          fontWeight: 500,
+          letterSpacing: 0,
+          lineHeight: 1.35,
+          textTransform: "none",
+        }}
+      >
+        {subtitle}
+      </div>
     </div>
   )
 }

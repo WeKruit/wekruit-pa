@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   classifyCandidateProfile,
   candidateDrawerPreviewMax,
+  candidateDrawerRegionCount,
   candidateDrawerTimeMs,
   candidateDrawerVisibleCount,
   deriveCandidateSource,
@@ -188,4 +189,10 @@ test("Candidates drawer shows bounded previews until a card is expanded", () => 
   assert.equal(candidateDrawerVisibleCount(12, true, 5), 12)
   assert.equal(candidateDrawerPreviewMax(false, 220, 1200), 220)
   assert.equal(candidateDrawerPreviewMax(true, 220, 1200), 1200)
+})
+
+test("Candidates drawer formats clear section count labels", () => {
+  assert.equal(candidateDrawerRegionCount(1, "resume"), "1 resume")
+  assert.equal(candidateDrawerRegionCount(3, "message"), "3 messages")
+  assert.equal(candidateDrawerRegionCount(Number.NaN, "session"), "0 sessions")
 })

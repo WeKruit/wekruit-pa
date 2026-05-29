@@ -115,3 +115,12 @@ export function candidateDrawerPreviewMax(
 ): number {
   return expanded ? expandedMax : collapsedMax
 }
+
+export function candidateDrawerRegionCount(
+  total: number,
+  singular: string,
+  plural = `${singular}s`
+): string {
+  const count = Number.isFinite(total) && total > 0 ? Math.trunc(total) : 0
+  return `${count} ${count === 1 ? singular : plural}`
+}
