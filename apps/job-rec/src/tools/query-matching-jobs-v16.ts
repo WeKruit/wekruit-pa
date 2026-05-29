@@ -68,11 +68,26 @@ const PA_JOBS_COLLECTION = "pa-jobs"
 const ACTIVE_STATUS = "active"
 
 /**
- * v1.6 fetch cap. Raised from legacy 50 to 500 (D9) so role-filtered top-50
- * doesn't accidentally fall back to all-sales rows when the role bucket has
- * a sales-heavy 50-item batch at the top.
+ * v1.6 fetch cap. 50 → 500 (D9) → 3000 (2026-05-28).
+ *
+ * The query pushes ONLY `roleFunction` to Firestore (array-contains-any) plus
+ * `orderBy(firstSeenAt desc)`; location / visa / careerStage / jobType are
+ * hard-filtered IN MEMORY over the fetched page (see applyV16HardFilters).
+ * Firestore allows just one array-contains-any per query, so location can't
+ * also be pushed down. That means the cap must be large enough that a role
+ * bucket's freshest slice still contains a niche-location candidate's matches.
+ *
+ * The active pool grew ~6x (≈4k → ≈26k) after the 2026-05-28 enrichment-
+ * backlog unlock. At 500 a location/visa-constrained candidate could see only
+ * the 500 newest role-matching docs — a recency window that may exclude every
+ * job in their city → recall collapse (the spec's own "filter-then-rank-low-
+ * limit" anti-pattern, CLAUDE.md). 3000 keeps the in-memory location filter
+ * fed across realistic role-bucket sizes at 26k. Read cost is negligible on
+ * the low-QPS rec path; in-memory scoring still runs only over post-hard-
+ * filter survivors. Robust follow-up (true fix for huge buckets): paginate
+ * firstSeenAt-desc until enough post-filter survivors accumulate.
  */
-const V16_FETCH_CAP = 500
+const V16_FETCH_CAP = 3000
 
 /**
  * D10 freshness window: drop jobs whose `firstSeenAt` is more than this old.
