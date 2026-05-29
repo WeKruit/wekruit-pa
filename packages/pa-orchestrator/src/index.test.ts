@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import test, { afterEach } from "node:test"
 import { deriveSessionMessageIdempotencyKey } from "@pa/agent-runtime"
+import { _clearFeatureFlagCache } from "@pa/pa-persistence"
 import { PA_COLLECTIONS, type AgentDef, type InboundEvent, type MemoryFact } from "@pa/core-types"
 import type { ConversationEvidenceWrite } from "./conversation-action-arbiter.js"
 import type { TurnContext } from "./conversation-turn-arbiter.js"
@@ -15,6 +16,14 @@ import {
   summarizeDurableTagsForRecall,
   type OrchestratorStore,
 } from "./index.js"
+
+// QA 2026-05-28: clear the 30s feature-flag cache after every test. A test that seeds
+// a flag (e.g. the agentic job-search canary below) was bleeding its cached value into
+// a later same-userId test (cacheKey includes the userId ctx) → 2 job-search tests
+// failed only under full-suite load. This makes the suite order-independent.
+afterEach(() => {
+  _clearFeatureFlagCache()
+})
 
 test("summarizeDurableTagsForRecall surfaces captured durable prefs for recall (QA 2026-05-28 C-recall)", () => {
   // The live recall ("what do you remember") omitted everything the extractor wrote
