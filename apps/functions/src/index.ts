@@ -207,6 +207,7 @@ export { paLlmRerankNightly } from "./nightly-rerank.js"
 // writes pa-canonical-tags overlay doc + audit row. Validates token format
 // via @wekruit/shared-tags `validateCanonicalToken` (rejects abbreviations).
 export { paPromoteSandboxTag } from "./promote-sandbox-tag.js"
+export { paReinitializeCandidate } from "./admin-reinitialize-candidate.js"
 
 // v1.6 Phase 61 (QA-01..05) — V1.6 SHIP GATE. Cloud Scheduler 09:00 UTC
 // Mondays. Samples 100 user×match pairs (priority queue first), evaluates
