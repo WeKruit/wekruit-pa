@@ -1164,10 +1164,12 @@ function detectStartupPreferenceForLifecycle(text: string): "startup" | "bigtech
   return undefined
 }
 
-function visaTagForLifecycle(text: string): { tag?: "citizen" | "gc" | "opt" | "h1b" | "sponsor_needed" | "other"; stated?: string; label?: string } {
+function visaTagForLifecycle(text: string): { tag?: "citizen" | "permanent_resident" | "gc" | "opt" | "h1b" | "sponsor_needed" | "other"; stated?: string; label?: string } {
   const mapped = mapAnswerToVisa(text)
   if (mapped === "other") return {}
-  if (mapped === "permanent_resident") return { tag: "gc", stated: "gc", label: "green card / permanent resident" }
+  // D4 canonicalization (2026-05-28): write the canonical `permanent_resident`
+  // token, not the legacy `gc` alias.
+  if (mapped === "permanent_resident") return { tag: "permanent_resident", stated: "permanent_resident", label: "green card / permanent resident" }
   if (mapped === "sponsor_needed") {
     const hasOpt = /\b(stem\s*)?opt\b/i.test(text)
     const hasH1b = /\bh[-\s]?1\s*b\b/i.test(text)
