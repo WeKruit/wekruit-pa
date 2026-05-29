@@ -18,10 +18,15 @@ test("CandidatePortal renders review decisions only inside committed pipeline ro
   assert.doesNotMatch(source, /employer_visible/)
 })
 
-test("CandidatePortal does not show unimplemented account connectors as connectable", () => {
-  assert.doesNotMatch(source, /label: "GitHub"/)
-  assert.doesNotMatch(source, /label: "Cal\.com"/)
-  assert.doesNotMatch(source, /wkv2-conn__btn--connect/)
-  assert.doesNotMatch(source, />Connect</)
-  assert.doesNotMatch(source, />Manage</)
+test("CandidatePortal wires connector buttons through the account OAuth start callable", () => {
+  assert.match(source, /label: "LinkedIn"/)
+  assert.match(source, /label: "GitHub"/)
+  assert.match(source, /label: "Cal\.com"/)
+  assert.match(source, /paCandidateConnectorOAuthStart/)
+  assert.match(source, /provider: "linkedin"/)
+  assert.match(source, /provider: "github"/)
+  assert.match(source, /github_oauth_config_missing/)
+  assert.match(source, /calcom_oauth_config_missing/)
+  assert.match(source, /wkv2-conn__btn--connect/)
+  assert.match(source, />Connect</)
 })

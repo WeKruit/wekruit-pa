@@ -1124,17 +1124,24 @@ test("candidate profile URL fields normalize bare LinkedIn URLs", () => {
   assert.equal(
     CandidateProfileMarketplaceFieldsSchema.parse({
       linkedinUrl: "www.linkedin.com/in/sreya-gopaladasu-b77540211",
+      githubUrl: "github.com/sreya",
     }).linkedinUrl,
     "https://www.linkedin.com/in/sreya-gopaladasu-b77540211",
   )
   assert.equal(
-    CandidateSelfProfileSchema.parse({
-      candidateId: "cand-1",
-      linkedinUrl: "linkedin.com/in/sreya-gopaladasu-b77540211",
-      createdAt: now,
-    }).linkedinUrl,
-    "https://linkedin.com/in/sreya-gopaladasu-b77540211",
+    CandidateProfileMarketplaceFieldsSchema.parse({
+      githubUrl: "github.com/sreya",
+    }).githubUrl,
+    "https://github.com/sreya",
   )
+  const selfProfile = CandidateSelfProfileSchema.parse({
+    candidateId: "cand-1",
+    linkedinUrl: "linkedin.com/in/sreya-gopaladasu-b77540211",
+    githubUrl: "github.com/sreya",
+    createdAt: now,
+  })
+  assert.equal(selfProfile.linkedinUrl, "https://linkedin.com/in/sreya-gopaladasu-b77540211")
+  assert.equal(selfProfile.githubUrl, "https://github.com/sreya")
 })
 
 test("bulk resume schemas parse S3 batch and item contracts", () => {

@@ -365,6 +365,7 @@ type ConnectorRow = {
   connected: boolean
   brand: string
   letter: string
+  provider?: "linkedin" | "github" | "calcom"
 }
 
 function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
@@ -372,6 +373,8 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
     profile.handles?.some((h) => h.kind === kind && h.verifiedAt) ?? false
   const phoneVerified = !!profile.phoneMasked || hasHandle("phone")
   const emailVerified = !!profile.emailMasked || hasHandle("email")
+  const linkedinConnected = !!profile.linkedinUrl || hasHandle("linkedin")
+  const githubConnected = !!profile.githubUrl || hasHandle("github")
   return [
     {
       id: "resume",
@@ -384,10 +387,11 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
     {
       id: "linkedin",
       label: "LinkedIn",
-      meta: profile.linkedinUrl ? linkedinHandleFromUrl(profile.linkedinUrl) : "Not connected",
-      connected: !!profile.linkedinUrl,
+      meta: profile.linkedinUrl ? linkedinHandleFromUrl(profile.linkedinUrl) : linkedinConnected ? "Connected" : "Not connected",
+      connected: linkedinConnected,
       brand: "#0A66C2",
       letter: "in",
+      provider: "linkedin",
     },
     {
       id: "email",
@@ -405,6 +409,24 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
       brand: "#34C759",
       letter: "S",
     },
+    {
+      id: "github",
+      label: "GitHub",
+      meta: profile.githubUrl ? githubHandleFromUrl(profile.githubUrl) : githubConnected ? "Connected" : "Not connected",
+      connected: githubConnected,
+      brand: "#0B0B0B",
+      letter: "G",
+      provider: "github",
+    },
+    {
+      id: "calcom",
+      label: "Cal.com",
+      meta: hasHandle("calcom") ? "Connected" : "Not connected",
+      connected: hasHandle("calcom"),
+      brand: "#0E1217",
+      letter: "✱",
+      provider: "calcom",
+    },
   ]
 }
 
@@ -417,6 +439,78 @@ function linkedinHandleFromUrl(url: string): string {
   } catch {
     return url.replace(/^https?:\/\//, "")
   }
+}
+
+function githubHandleFromUrl(url: string): string {
+  try {
+    const u = new URL(url)
+    const m = u.pathname.match(/^\/([^/]+)\/?/)
+    if (m && m[1]) return `@${m[1]}`
+    return u.host.replace(/^www\./, "")
+  } catch {
+    return url.replace(/^https?:\/\//, "")
+  }
+}
+
+async function startCandidateConnectorOAuth(provider: "linkedin" | "github" | "calcom"): Promise<void> {
+  const call = httpsCallable<
+    { provider: "linkedin" | "github" | "calcom"; returnTo: string },
+    { ok: true; provider: "linkedin"; authUrl: string }
+  >(functions(), "paCandidateConnectorOAuthStart")
+  const result = await call({ provider, returnTo: window.location.href })
+  if (!result.data.authUrl) {
+    throw new Error("connector_auth_url_missing")
+  }
+  window.location.assign(result.data.authUrl)
+}
+
+function connectorErrorMessage(err: unknown, provider: ConnectorRow["provider"]): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (raw.includes("github_oauth_config_missing")) {
+    return "GitHub OAuth is not configured yet. Add the GitHub OAuth app secrets first."
+  }
+  if (raw.includes("calcom_oauth_config_missing")) {
+    return "Cal.com OAuth is not configured yet. Add the Cal.com OAuth app secrets first."
+  }
+  if (raw.includes("linkedin_config_missing")) {
+    return "LinkedIn OAuth is not configured yet."
+  }
+  if (raw.includes("not linked to a candidate profile")) {
+    return "Open the profile once it finishes loading, then try connecting again."
+  }
+  return `Could not connect ${provider ?? "account"}. Try again.`
+}
+
+function ConnectorAction({ connector, withCheck = false }: { connector: ConnectorRow; withCheck?: boolean }) {
+  const [busy, setBusy] = useState(false)
+  if (connector.connected) {
+    return (
+      <span className="wkv2-conn__btn">
+        {withCheck ? <span className="wkv2-conn__check"><Icon name="check" size={9} stroke={3} /></span> : null}
+        Manage
+      </span>
+    )
+  }
+  if (!connector.provider) {
+    return <Link to="/me/profile" className="wkv2-conn__btn wkv2-conn__btn--connect">Connect</Link>
+  }
+  return (
+    <button
+      type="button"
+      className="wkv2-conn__btn wkv2-conn__btn--connect"
+      disabled={busy}
+      onClick={() => {
+        setBusy(true)
+        void startCandidateConnectorOAuth(connector.provider!)
+          .catch((err) => {
+            window.alert(connectorErrorMessage(err, connector.provider))
+          })
+          .finally(() => setBusy(false))
+      }}
+    >
+      Connect
+    </button>
+  )
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1000,14 +1094,7 @@ function SidebarConnectorsCard({ profile }: { profile: CandidateSelfProfile }) {
               <span className="wkv2-conn__label">{c.label}</span>
               <span className="wkv2-conn__meta">{c.meta}</span>
             </div>
-            {c.connected ? (
-              <span className="wkv2-conn__btn wkv2-conn__btn--status">
-                <span className="wkv2-conn__check"><Icon name="check" size={9} stroke={3} /></span>
-                On file
-              </span>
-            ) : (
-              <span className="wkv2-conn__btn wkv2-conn__btn--status wkv2-conn__btn--muted">Not connected</span>
-            )}
+            <ConnectorAction connector={c} withCheck />
           </div>
         ))}
       </div>
@@ -1256,9 +1343,7 @@ function ConnectedAccountsCard({ profile }: { profile: CandidateSelfProfile }) {
               {c.label}
               <span className="wkv2-conn__meta">{c.meta}</span>
             </span>
-            <span className={`wkv2-conn__btn wkv2-conn__btn--status${c.connected ? "" : " wkv2-conn__btn--muted"}`}>
-              {c.connected ? "On file" : "Not connected"}
-            </span>
+            <ConnectorAction connector={c} />
           </div>
         ))}
       </div>
@@ -2048,9 +2133,16 @@ const ME_PORTAL_STYLES = `
   white-space: nowrap; text-decoration: none;
 }
 .wkv2-conn__btn:hover { background: var(--wk-cream-2); color: var(--wk-ink); }
-.wkv2-conn__btn--status:hover { background: transparent; color: var(--wk-ink-2); }
-.wkv2-conn__btn--muted { color: var(--wk-ink-3); }
-.wkv2-conn__btn--muted:hover { color: var(--wk-ink-3); }
+.wkv2-conn__btn--connect {
+  color: var(--wk-live);
+  border: 1px solid var(--wk-live-border);
+  background: var(--wk-live-soft);
+}
+.wkv2-conn__btn--connect:hover { background: var(--wk-cream); color: var(--wk-live-2); }
+.wkv2-conn__btn--connect:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
 .wkv2-conn__check {
   width: 14px; height: 14px; border-radius: 50%;
   background: var(--wk-live); color: var(--wk-cream);
