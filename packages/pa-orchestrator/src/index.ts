@@ -6640,7 +6640,9 @@ export function createFirestoreOrchestratorStore(
           { db, qdrantUrl, qdrantApiKey, qdrantCollection: process.env.QDRANT_COLLECTION },
           { keepMessages: false, dryRun: false }
         )
-        return { handled: true, summary: summarizeClearResult(result) }
+        // QA 2026-05-28 (D): the reply goes to the CANDIDATE over iMessage — send a
+        // short human confirmation, NOT the internal qdrant/firestore counts.
+        return { handled: true, summary: summarizeClearResult(result, { forCandidate: true }) }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         return { handled: true, summary: `✗ Test memory clear failed: ${msg}` }

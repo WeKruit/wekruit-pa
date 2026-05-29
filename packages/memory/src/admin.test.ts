@@ -51,6 +51,25 @@ test("summarizeClearResult flags dry-run results distinctly", () => {
   assert.match(out, /all empty/)
 })
 
+test("summarizeClearResult forCandidate is a short human confirm with NO internal counts (QA 2026-05-28 D)", () => {
+  const out = summarizeClearResult(
+    {
+      userId: "u1",
+      dryRun: false,
+      qdrant: { collection: "pa-memory", matched: 13, deleted: true },
+      firestore: { "pa-memory-facts": 13, "pa-messages": 126, "pa-rate-limits": 40 },
+    },
+    { forCandidate: true },
+  )
+  // The candidate-visible reply must NOT leak operator telemetry (the live bug:
+  // "✓ Test memory cleared — qdrant pa_memory=0; firestore pa-memory-facts=13…").
+  assert.doesNotMatch(out, /qdrant/i)
+  assert.doesNotMatch(out, /firestore/i)
+  assert.doesNotMatch(out, /pa-memory|pa-messages|pa-rate-limits/)
+  assert.doesNotMatch(out, /=\d/)
+  assert.ok(out.trim().length > 0 && out.length < 120, "should be a short human line")
+})
+
 // ----------------------------------------------------------------------------
 // Phase 11.3 — clearUserMemory partition-key passthrough
 // ----------------------------------------------------------------------------
