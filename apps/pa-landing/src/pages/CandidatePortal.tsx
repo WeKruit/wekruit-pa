@@ -638,7 +638,7 @@ function MeIcon({
   size = 14,
   stroke = 1.8,
 }: {
-  name: "chevron-right" | "eye-off"
+  name: "chevron-right" | "eye-off" | "thumb-up" | "thumb-down"
   size?: number
   stroke?: number
 }) {
@@ -657,6 +657,18 @@ function MeIcon({
     return (
       <svg {...p}>
         <path d="M17 17s5-5 5-5-4-7-10-7c-1.6 0-3.1.4-4.4 1M3 3l18 18M9.9 5.1A9.4 9.4 0 0 0 2 12s4 7 10 7c1.6 0 3.1-.4 4.4-1" />
+      </svg>
+    )
+  if (name === "thumb-up")
+    return (
+      <svg {...p}>
+        <path d="M7 22V11M2 13v7a2 2 0 0 0 2 2h3V11H4a2 2 0 0 0-2 2zM15 5l-1 5h6.5a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 19 21H7V11l4-9h1.5A2.5 2.5 0 0 1 15 4.5z" />
+      </svg>
+    )
+  if (name === "thumb-down")
+    return (
+      <svg {...p}>
+        <path d="M17 2v11M22 11V4a2 2 0 0 0-2-2h-3v11h3a2 2 0 0 0 2-2zM9 19l1-5H3.5a2 2 0 0 1-2-2.3l1.4-7A2 2 0 0 1 5 3h12v11l-4 9h-1.5A2.5 2.5 0 0 1 9 19.5z" />
       </svg>
     )
   return (
@@ -2745,6 +2757,430 @@ const PROFILE_STYLES = `
   .wk-prof__h1 { font-size: 28px; }
   .wk-prof__live { display: none; }
   .wk-prof-row { grid-template-columns: 1fr; gap: 4px; }
+}
+`
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// /me/matches — the roles inbox (full list; Home shows a digest)
+// ────────────────────────────────────────────────────────────────────────────
+
+export function CandidateMatches() {
+  const gate = useCandidatePortalGate()
+  const profileState = useClaimedProfile()
+
+  if (gate.status !== "ready") return <PortalGatePending gate={gate} kicker="Your roles" />
+  if (profileState.status === "signed_out") return <SignInRequired kicker="Your roles" />
+  if (profileState.status === "loading") return <PortalLoading kicker="Your roles" />
+  if (profileState.status === "error") return <PortalError kicker="Your roles" message={profileState.message} />
+  return <MatchesSurface profileState={profileState} />
+}
+
+type MatchesFilter = "all" | "invite" | "role"
+const MATCHES_FILTERS: Array<{ id: MatchesFilter; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "invite", label: "Invites" },
+  { id: "role", label: "Roles" },
+]
+
+function MatchesSurface({
+  profileState,
+}: {
+  profileState: Extract<ClaimState, { status: "ready" }>
+}) {
+  const matchesState = useCandidateMatches(true)
+  // The roles inbox surfaces open opportunities (recommended + WeKruit invites).
+  // In-progress interviews live on Home under "Active interviews".
+  const all = (matchesState.status === "ready" ? matchesState.matches : []).filter(
+    (m) => m.status === "recommended" || m.status === "invited",
+  )
+  return (
+    <MatchesView
+      profile={profileState.profile}
+      all={all}
+      loading={matchesState.status === "loading" || matchesState.status === "idle"}
+      errored={matchesState.status === "error"}
+      error={matchesState.status === "error" ? matchesState.message : null}
+    />
+  )
+}
+
+function MatchesView({
+  profile,
+  all,
+  loading,
+  errored,
+  error,
+}: {
+  profile: CandidateSelfProfile
+  all: CandidateMatchCard[]
+  loading: boolean
+  errored: boolean
+  error: string | null
+}) {
+  const [filter, setFilter] = useState<MatchesFilter>("all")
+  const counts: Record<MatchesFilter, number> = {
+    all: all.length,
+    invite: all.filter((m) => m.bucket === "invited").length,
+    role: all.filter((m) => m.bucket === "recommended").length,
+  }
+  const filtered =
+    filter === "invite"
+      ? all.filter((m) => m.bucket === "invited")
+      : filter === "role"
+        ? all.filter((m) => m.bucket === "recommended")
+        : all
+
+  return (
+    <CandidateShell
+      signedIn
+      signedInUser={{ name: profile.displayName ?? "You", email: profile.emailMasked }}
+    >
+      <style>{ME_V3_STYLES}</style>
+      <style>{MATCHES_STYLES}</style>
+      <div className="wkmp">
+        <div className="wk-container wkmp__inner">
+          <header className="wkmp__head">
+            <div>
+              <p className="wkmp__eye">
+                <PulseDot size={6} /> Matches · {all.length} active
+              </p>
+              <h1 className="wkmp__h1">
+                <em>Roles</em> Claire matched for you.
+              </h1>
+              <p className="wkmp__sub">
+                You don&apos;t apply — Claire pitches you, hiring managers say yes, then it lands here. Mark
+                each one so she learns.
+              </p>
+            </div>
+            <div className="wkmp__action">
+              <Link to="/me/profile" className="wk-btn wk-btn--primary wk-btn--sm">
+                Adjust matching <Icon name="arrow-right" size={12} stroke={1.9} />
+              </Link>
+            </div>
+          </header>
+
+          <div className="wkmp-filters" role="tablist" aria-label="Filter roles">
+            {MATCHES_FILTERS.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                role="tab"
+                aria-selected={filter === f.id}
+                className={`wkmp-chip${filter === f.id ? " is-on" : ""}`}
+                onClick={() => setFilter(f.id)}
+              >
+                {f.label}
+                <span className="wkmp-chip__n">{counts[f.id]}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="wkmp-grid">
+            <div className="wkmp-main">
+              {loading ? (
+                <div className="wkmp-empty">
+                  <h3>Loading…</h3>
+                  <p>Pulling the roles Claire matched for you.</p>
+                </div>
+              ) : errored ? (
+                <div className="wkmp-empty">
+                  <h3>Couldn&apos;t load roles.</h3>
+                  <p>{error ?? "Refresh in a moment."}</p>
+                </div>
+              ) : filtered.length > 0 ? (
+                <div className="wkmp-list">
+                  {filtered.map((m) => (
+                    <MeMatchFull key={m.matchId} match={m} />
+                  ))}
+                </div>
+              ) : (
+                <div className="wkmp-empty">
+                  <h3>Nothing here.</h3>
+                  <p>
+                    {all.length === 0
+                      ? "Claire is still pitching you — roles land here when hiring managers say yes, usually within 48 hours of completing your profile."
+                      : "No roles in this filter — try All."}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <aside className="wkmp-side">
+              <div className="wkmp-side__card">
+                <div className="wkmp-side__claire-id">
+                  <Avatar name="Claire WeKruit" size={36} tone="moss" />
+                  <div>
+                    <strong className="wkmp-side__claire-name">Claire</strong>
+                    <span className="wkmp-side__claire-meta">
+                      <PulseDot size={5} /> Active · iMessage
+                    </span>
+                  </div>
+                </div>
+                <p className="wkmp-side__sub">
+                  Say yes to a role and Claire handles the screening questions for you.
+                </p>
+                <a href={CLAIRE_IMESSAGE_HREF} className="wk-btn wk-btn--primary wk-btn--block wk-btn--sm">
+                  Continue with Claire <Icon name="arrow-right" size={13} stroke={2} />
+                </a>
+              </div>
+
+              <div className="wkmp-side__card wkmp-side__card--quiet">
+                <h3 className="wkmp-side__h">How matching works</h3>
+                <ol className="wkmp-how">
+                  <li><strong>Claire scans</strong> openings from companies in your preference set.</li>
+                  <li><strong>Hiring managers review</strong> her pitch of you — only if it passes their bar does the role land here.</li>
+                  <li><strong>You decide.</strong> Yes runs you through a screen. No teaches Claire.</li>
+                </ol>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </CandidateShell>
+  )
+}
+
+function MeMatchFull({ match }: { match: CandidateMatchCard }) {
+  const navigate = useNavigate()
+  const [vote, setVote] = useState<"yes" | "no" | null>(null)
+  const isInvite = match.bucket === "invited"
+  const logo = (match.job.company[0] ?? "?").toUpperCase()
+  const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
+  const reasons = match.whyMatched ?? []
+  return (
+    <article className={`wkv3-match${isInvite ? " is-invite" : ""}`}>
+      <header className="wkv3-match__head">
+        <CompanyMark logo={logo} bg={logoBg} size={52} />
+        <div className="wkv3-match__head-body">
+          <div className="wkv3-match__chiprow">
+            {isInvite ? (
+              <span className="wkv3-match__chip is-warm">
+                <PulseDot size={5} /> WeKruit invite · worth screening
+              </span>
+            ) : (
+              <span className="wkv3-match__chip">New role</span>
+            )}
+          </div>
+          <h3 className="wkv3-match__t">{match.job.title}</h3>
+          <p className="wkv3-match__co">
+            <b>{match.job.company}</b>
+            {match.job.location ? ` · ${match.job.location}` : ""}
+          </p>
+        </div>
+        <div className="wkv3-match__salary">{match.job.salaryRange ?? "By interview"}</div>
+      </header>
+
+      {reasons.length > 0 ? (
+        <div className="wkv3-match__ev">
+          <span className="wkv3-match__ev-eye">Why Claire matched you</span>
+          <ul>
+            {reasons.slice(0, 4).map((r, i) => (
+              <li key={i}>
+                <blockquote>{r}</blockquote>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <footer className="wkv3-match__foot">
+        <div className="wkv3-match__feedback">
+          <button
+            type="button"
+            className={`wkv3-fb wkv3-fb--yes${vote === "yes" ? " is-on" : ""}`}
+            onClick={() => setVote(vote === "yes" ? null : "yes")}
+            aria-pressed={vote === "yes"}
+          >
+            <MeIcon name="thumb-up" size={13} stroke={1.8} /> Interested
+          </button>
+          <button
+            type="button"
+            className={`wkv3-fb wkv3-fb--no${vote === "no" ? " is-on" : ""}`}
+            onClick={() => setVote(vote === "no" ? null : "no")}
+            aria-pressed={vote === "no"}
+          >
+            <MeIcon name="thumb-down" size={13} stroke={1.8} /> Not for now
+          </button>
+          <a
+            href="#"
+            className="wkv3-match__prefs"
+            onClick={(e) => {
+              e.preventDefault()
+              navigate("/me/profile")
+            }}
+          >
+            Update prefs
+          </a>
+        </div>
+        <div className="wkv3-match__primaries">
+          <a href={CLAIRE_IMESSAGE_HREF} className="wk-btn wk-btn--secondary wk-btn--sm">
+            <Icon name="message" size={12} stroke={1.9} /> Continue with Claire
+          </a>
+          <Link to={match.job.href} className="wk-btn wk-btn--primary wk-btn--sm">
+            {isInvite ? "See match" : "See role"} <Icon name="arrow-right" size={13} stroke={2} />
+          </Link>
+        </div>
+      </footer>
+    </article>
+  )
+}
+
+const MATCHES_STYLES = `
+.wkmp {
+  --cream: var(--wk-cream); --cream-2: var(--wk-cream-2); --cream-3: var(--wk-cream-3);
+  --ink: var(--wk-ink); --ink-2: var(--wk-ink-2); --ink-3: var(--wk-ink-3); --ink-4: var(--wk-ink-4);
+  --border: var(--wk-border); --border-strong: var(--wk-border-strong);
+  --peach-50: var(--wk-peach-50); --peach-100: var(--wk-peach-100); --peach-200: var(--wk-peach-200);
+  --live: var(--wk-live); --live-soft: var(--wk-live-soft); --live-border: var(--wk-live-border); --live-pulse: var(--wk-live-pulse);
+  --r-sm: var(--wk-r-sm); --r-md: var(--wk-r-md); --r-pill: var(--wk-r-pill);
+  --ease: var(--wk-ease); --dur-fast: 200ms;
+  --candidate-card: var(--wk-cream-3);
+  --font-serif: 'Newsreader', 'Tiempos Headline', Georgia, serif;
+  --font-sans: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--cream); min-height: 100vh; padding-bottom: 80px;
+}
+.wkmp__inner { padding-top: 0; }
+
+/* Header */
+.wkmp__head {
+  padding: 28px 0 22px; border-bottom: 1px solid var(--border); margin-bottom: 24px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 28px; align-items: end;
+}
+.wkmp__head > div { min-width: 0; }
+.wkmp__eye {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-sans); font-size: 11.5px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 12px;
+}
+.wkmp__h1 {
+  font-family: var(--font-serif); font-weight: 400; font-size: clamp(28px, 3.4vw, 40px);
+  line-height: 1.06; letter-spacing: -0.022em; color: var(--ink); margin: 0; text-wrap: balance;
+}
+.wkmp__h1 em { font-style: italic; color: var(--live); font-weight: 400; }
+.wkmp__sub { font-size: 14.5px; color: var(--ink-2); line-height: 1.5; max-width: 580px; margin: 10px 0 0; }
+.wkmp__action { display: grid; justify-items: end; align-self: end; }
+.wkmp__action .wk-btn { white-space: nowrap; }
+
+/* Filter chips */
+.wkmp-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 24px; }
+.wkmp-chip {
+  appearance: none; background: var(--cream-3); border: 1px solid var(--border); color: var(--ink-2);
+  border-radius: var(--r-pill); padding: 6px 14px; font: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.wkmp-chip:hover { border-color: var(--ink); color: var(--ink); }
+.wkmp-chip.is-on { background: var(--ink); color: var(--cream); border-color: var(--ink); }
+.wkmp-chip__n {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: var(--r-pill);
+  background: var(--cream); color: var(--ink-3); font-variant-numeric: tabular-nums; min-width: 18px;
+}
+.wkmp-chip.is-on .wkmp-chip__n { background: rgba(245,237,227,.15); color: var(--cream); }
+
+/* Body grid */
+.wkmp-grid { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 28px; align-items: start; }
+.wkmp-main { display: grid; gap: 14px; min-width: 0; }
+.wkmp-side { display: grid; gap: 14px; position: sticky; top: 24px; }
+.wkmp-list { display: grid; gap: 12px; }
+.wkmp-empty {
+  padding: 36px 28px; background: var(--cream-3); border: 1px dashed var(--border-strong);
+  border-radius: var(--r-md); text-align: center;
+}
+.wkmp-empty h3 { margin: 0 0 6px; font-family: var(--font-serif); font-weight: 400; font-size: 22px; color: var(--ink); letter-spacing: -0.02em; }
+.wkmp-empty p { margin: 0 auto; color: var(--ink-2); font-size: 13.5px; max-width: 460px; line-height: 1.5; }
+
+/* Side rail */
+.wkmp-side__card { background: var(--candidate-card); border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px; display: grid; gap: 10px; }
+.wkmp-side__card--quiet { background: var(--cream-3); border-style: dashed; border-color: var(--border-strong); }
+.wkmp-side__h { margin: 0; font-family: var(--font-sans); font-weight: 600; font-size: 13px; color: var(--ink); }
+.wkmp-side__sub { margin: 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.4; }
+.wkmp-side__claire-id { display: flex; align-items: center; gap: 10px; }
+.wkmp-side__claire-name { display: block; font-family: var(--font-sans); font-weight: 600; font-size: 14px; color: var(--ink); line-height: 1.2; }
+.wkmp-side__claire-meta { display: inline-flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 11.5px; color: var(--ink-3); }
+.wkmp-how { margin: 0; padding: 0 0 0 18px; display: grid; gap: 8px; counter-reset: how; list-style: none; }
+.wkmp-how li { position: relative; font-size: 12.5px; color: var(--ink-2); line-height: 1.5; padding-left: 4px; counter-increment: how; }
+.wkmp-how li::before {
+  content: counter(how); position: absolute; left: -18px; top: 0; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--live-soft); border: 1px solid var(--live-border); color: var(--live);
+  font-size: 9px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+}
+.wkmp-how strong { color: var(--ink); font-weight: 600; }
+
+/* Match card (full) */
+.wkv3-match {
+  background: var(--candidate-card); border: 1px solid var(--border); border-radius: var(--r-md);
+  padding: 20px 22px; display: grid; gap: 14px; transition: border-color var(--dur-fast) var(--ease);
+  position: relative; overflow: hidden;
+}
+.wkv3-match:hover { border-color: var(--live-border); }
+.wkv3-match.is-invite { background: linear-gradient(180deg, var(--peach-50) 0%, var(--candidate-card) 14%); border-color: var(--peach-200); }
+.wkv3-match__head { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: start; }
+.wkv3-match__head-body { min-width: 0; }
+.wkv3-match__chiprow { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+.wkv3-match__chip {
+  display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: var(--r-pill);
+  background: var(--cream-2); border: 1px solid var(--border); color: var(--ink-3); white-space: nowrap;
+}
+.wkv3-match__chip.is-warm { background: var(--live-soft); border-color: var(--live-border); color: var(--live); }
+.wkv3-match__t { margin: 2px 0 4px; font-family: var(--font-sans); font-weight: 600; font-size: 17px; letter-spacing: -0.01em; line-height: 1.3; color: var(--ink); }
+.wkv3-match__co { margin: 0; font-size: 13px; color: var(--ink-3); line-height: 1.4; }
+.wkv3-match__co b { color: var(--ink-2); font-weight: 600; }
+.wkv3-match__salary {
+  font-family: var(--font-serif); font-weight: 400; font-size: 19px; letter-spacing: -0.018em;
+  color: var(--ink); line-height: 1.15; text-align: right; white-space: nowrap;
+}
+.wkv3-match__ev { display: grid; gap: 6px; }
+.wkv3-match__ev-eye { font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); }
+.wkv3-match__ev ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.wkv3-match__ev li {
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--cream);
+}
+.wkv3-match__ev blockquote {
+  margin: 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.4; font-style: italic;
+  position: relative; padding-left: 12px;
+}
+.wkv3-match__ev blockquote::before {
+  content: '"'; position: absolute; left: 0; top: -2px; color: var(--live);
+  font-family: var(--font-serif); font-size: 18px; font-style: normal; line-height: 1;
+}
+.wkv3-match__foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding-top: 12px; border-top: 1px dashed var(--border);
+}
+.wkv3-match__feedback { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.wkv3-fb {
+  appearance: none; border: 1px solid var(--border); background: var(--cream); color: var(--ink-2);
+  border-radius: var(--r-pill); padding: 5px 11px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px; transition: all var(--dur-fast) var(--ease);
+}
+.wkv3-fb:hover { border-color: var(--ink); color: var(--ink); }
+.wkv3-fb--yes.is-on { background: var(--ink); color: var(--cream); border-color: var(--ink); }
+.wkv3-fb--no.is-on { background: var(--cream-2); color: var(--ink-3); border-color: var(--border-strong); opacity: 0.7; }
+.wkv3-match__prefs {
+  font-size: 11.5px; font-weight: 600; color: var(--ink-3); text-decoration: none;
+  border-bottom: 1px dashed var(--border-strong); padding-bottom: 1px; margin-left: 4px;
+}
+.wkv3-match__prefs:hover { color: var(--ink); border-color: var(--ink); }
+.wkv3-match__primaries { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* Responsive */
+@media (max-width: 1180px) {
+  .wkmp-grid { grid-template-columns: 1fr; }
+  .wkmp-side { position: static; grid-template-columns: 1fr 1fr; gap: 14px; }
+}
+@media (max-width: 700px) {
+  .wkmp__head { grid-template-columns: 1fr; gap: 16px; align-items: stretch; }
+  .wkmp__action { justify-items: stretch; }
+  .wkmp__action .wk-btn { justify-content: center; }
+  .wkmp-side { grid-template-columns: 1fr; }
+  .wkv3-match__head { grid-template-columns: auto 1fr; }
+  .wkv3-match__salary { grid-column: 1 / -1; text-align: left; padding-top: 4px; border-top: 1px dashed var(--border); }
+  .wkv3-match__foot { flex-direction: column; align-items: stretch; }
+  .wkv3-match__primaries { justify-content: stretch; }
+  .wkv3-match__primaries .wk-btn { flex: 1; justify-content: center; }
 }
 `
 
