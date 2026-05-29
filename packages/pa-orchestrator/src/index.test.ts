@@ -12,8 +12,37 @@ import {
   isInboundLeaseExpired,
   memoryBlockWithFacts,
   processInboundEvent,
+  summarizeDurableTagsForRecall,
   type OrchestratorStore,
 } from "./index.js"
+
+test("summarizeDurableTagsForRecall surfaces captured durable prefs for recall (QA 2026-05-28 C-recall)", () => {
+  // The live recall ("what do you remember") omitted everything the extractor wrote
+  // to tags — only listed 2 onboarding-answer facts. Recall must surface tags too.
+  const out = summarizeDurableTagsForRecall(
+    {
+      targetRoleFunction: ["software_engineering"],
+      industrySector: ["financial_technology", "artificial_intelligence_and_machine_learning"],
+      targetLocations: ["new_york", "remote"],
+      visaStatus: "sponsor_needed",
+      minSalary: 160000,
+      skills: [{ name: "react" }, { name: "python" }],
+    },
+    "en",
+  )
+  assert.ok(out, "expected a non-null summary")
+  assert.match(out!, /Target roles: software engineering/)
+  assert.match(out!, /Industries:.*financial technology/)
+  assert.match(out!, /Locations:.*new york.*remote/)
+  assert.match(out!, /Work authorization: sponsor needed/)
+  assert.match(out!, /Min salary: \$160k/)
+  assert.match(out!, /Skills on file: 2/)
+})
+
+test("summarizeDurableTagsForRecall returns null when no durable prefs are set", () => {
+  assert.equal(summarizeDurableTagsForRecall({}, "en"), null)
+  assert.equal(summarizeDurableTagsForRecall(null, "en"), null)
+})
 
 const agent: AgentDef = {
   id: "default",

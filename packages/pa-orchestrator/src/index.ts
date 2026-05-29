@@ -905,6 +905,53 @@ function memoryReplyForList(facts: { content: string }[], lang: "zh" | "en" = "z
 }
 
 /**
+ * QA 2026-05-28 (C-recall) — "what do you remember" used to read ONLY
+ * pa-memory-facts (the onboarding-answer rows), so recall OMITTED everything the
+ * conversation extractor writes to the unified `pa-users.tags` (role / industry /
+ * location / visa / salary). The live QA recall returned just two generic
+ * onboarding answers while Claire had acknowledged 160k / crypto / H1B / NYC.
+ * Surface those durable preferences too. Returns null when no tags are set.
+ */
+export function summarizeDurableTagsForRecall(
+  tags: Record<string, unknown> | null | undefined,
+  lang: "zh" | "en",
+): string | null {
+  const t = tags ?? {}
+  const lines: string[] = []
+  const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])
+  const human = (s: string): string => s.replace(/_/g, " ")
+  const role = arr(t.targetRoleFunction)
+  if (role.length) lines.push((lang === "zh" ? "目标方向: " : "Target roles: ") + role.map(human).join(", "))
+  if (typeof t.careerStage === "string") lines.push((lang === "zh" ? "阶段: " : "Level: ") + human(t.careerStage))
+  const ind = [...new Set([...arr(t.industrySector), ...arr(t.relevantIndustry)])]
+  if (ind.length) lines.push((lang === "zh" ? "行业: " : "Industries: ") + ind.map(human).join(", "))
+  const loc = arr(t.targetLocations)
+  if (loc.length) lines.push((lang === "zh" ? "地点: " : "Locations: ") + loc.map(human).join(", "))
+  if (typeof t.visaStatus === "string") lines.push((lang === "zh" ? "签证: " : "Work authorization: ") + human(t.visaStatus))
+  if (typeof t.minSalary === "number" && t.minSalary > 0) {
+    lines.push((lang === "zh" ? "最低薪资: " : "Min salary: ") + `$${Math.round(t.minSalary / 1000)}k`)
+  }
+  const skillCount = Array.isArray(t.skills) ? t.skills.length : 0
+  if (skillCount > 0) lines.push(lang === "zh" ? `技能: 已记录 ${skillCount} 项` : `Skills on file: ${skillCount}`)
+  if (lines.length === 0) return null
+  const heading = lang === "zh" ? "你的求职偏好（我已记下）：" : "Your preferences on file:"
+  return `${heading}\n${lines.map((l) => `· ${l}`).join("\n")}`
+}
+
+async function readUserTagsForRecall(
+  store: OrchestratorStore,
+  userId: string,
+): Promise<Record<string, unknown> | undefined> {
+  if (!store.db) return undefined
+  try {
+    const snap = await store.db.collection(PA_COLLECTIONS.users).doc(userId).get()
+    return (snap.data() as { tags?: Record<string, unknown> } | undefined)?.tags
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Phase 11.1.3 — legacy concatenated memory block.
  *
  * Surface contract:
@@ -3963,6 +4010,9 @@ async function handlePrivacyIntent(
     if (intent.includeMemory) {
       const facts = await store.listMemoryFacts(event.userId)
       lines.push(memoryReplyForList(facts, lang))
+      // C-recall: also surface the durable preferences the extractor captured into tags.
+      const tagSummary = summarizeDurableTagsForRecall(await readUserTagsForRecall(store, event.userId), lang)
+      if (tagSummary) lines.push(tagSummary)
       await store.recordMemoryAction({ userId: event.userId, eventId: event.id, action: "list", status: "succeeded" })
     }
     await sendMemoryReply(store, event, turnId, lines.join("\n\n"))
@@ -4214,7 +4264,11 @@ async function handleMemoryCommand(
   if (command.kind === "list") {
     const facts = await store.listMemoryFacts(event.userId)
     await store.recordMemoryAction({ userId: event.userId, eventId: event.id, action: "list", status: "succeeded" })
-    await sendMemoryReply(store, event, turnId, memoryReplyForList(facts, lang))
+    // C-recall: surface durable tag preferences (role/industry/location/visa/salary)
+    // alongside the explicit memory facts — the extractor writes them to tags, not pa-memory-facts.
+    const tagSummary = summarizeDurableTagsForRecall(await readUserTagsForRecall(store, event.userId), lang)
+    const listReply = tagSummary ? `${memoryReplyForList(facts, lang)}\n\n${tagSummary}` : memoryReplyForList(facts, lang)
+    await sendMemoryReply(store, event, turnId, listReply)
     return true
   }
 
