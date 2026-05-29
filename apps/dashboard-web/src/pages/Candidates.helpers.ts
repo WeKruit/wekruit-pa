@@ -101,3 +101,17 @@ function firstCandidateDrawerTime(row: Record<string, unknown>, timeFields: stri
   }
   return 0
 }
+
+export function candidateDrawerVisibleCount(total: number, expanded: boolean, collapsedCount: number): number {
+  if (!Number.isFinite(total) || total <= 0) return 0
+  if (expanded) return total
+  return Math.min(total, collapsedCount)
+}
+
+export function candidateDrawerPreviewMax(
+  expanded: boolean,
+  collapsedMax: number,
+  expandedMax: number
+): number {
+  return expanded ? expandedMax : collapsedMax
+}

@@ -3,7 +3,9 @@ import test from "node:test"
 
 import {
   classifyCandidateProfile,
+  candidateDrawerPreviewMax,
   candidateDrawerTimeMs,
+  candidateDrawerVisibleCount,
   deriveCandidateSource,
   firstCandidateDrawerText,
   isDemoPreviewProfile,
@@ -179,4 +181,11 @@ test("Candidates drawer sorts hydrated detail rows by known timestamps", () => {
 
   assert.deepEqual(rows.map((row) => row.id), ["new", "old", "missing"])
   assert.equal(candidateDrawerTimeMs({ seconds: 1_800_000_000 }), 1_800_000_000_000)
+})
+
+test("Candidates drawer shows bounded previews until a card is expanded", () => {
+  assert.equal(candidateDrawerVisibleCount(12, false, 5), 5)
+  assert.equal(candidateDrawerVisibleCount(12, true, 5), 12)
+  assert.equal(candidateDrawerPreviewMax(false, 220, 1200), 220)
+  assert.equal(candidateDrawerPreviewMax(true, 220, 1200), 1200)
 })

@@ -38,7 +38,9 @@ import {
 import {
   classifyCandidateProfile,
   deriveCandidateSource,
+  candidateDrawerPreviewMax,
   firstCandidateDrawerText,
+  candidateDrawerVisibleCount,
   isValidE164Phone,
   matchesPhoneSearch,
   normalizeCandidatePhoneLookup,
@@ -240,6 +242,25 @@ type CandidateDrawerDetail = {
   jobStates: DrawerDetailRow[]
   jobLabels: Record<string, string>
 }
+
+type CandidateDrawerSectionId =
+  | "identity"
+  | "profile"
+  | "resume"
+  | "experience"
+  | "conversation"
+  | "prescreens"
+  | "management"
+
+const CANDIDATE_DRAWER_SECTION_IDS: CandidateDrawerSectionId[] = [
+  "identity",
+  "profile",
+  "resume",
+  "experience",
+  "conversation",
+  "prescreens",
+  "management",
+]
 
 function emptyIdentityIndex(): IdentityIndex {
   return { registeredIds: new Set(), phoneBoundIds: new Set() }
@@ -1186,12 +1207,16 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
   const [detail, setDetail] = useState<CandidateDrawerDetail>(() => emptyCandidateDrawerDetail())
   const [detailLoading, setDetailLoading] = useState(true)
   const [detailErr, setDetailErr] = useState<string | null>(null)
+  const [expandedSections, setExpandedSections] = useState<Set<CandidateDrawerSectionId>>(
+    () => new Set()
+  )
 
   useEffect(() => {
     let cancelled = false
     setDetail(emptyCandidateDrawerDetail())
     setDetailLoading(true)
     setDetailErr(null)
+    setExpandedSections(new Set())
     ;(async () => {
       try {
         const loaded = await loadCandidateDrawerDetail(doc.id)
@@ -1207,6 +1232,20 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
       cancelled = true
     }
   }, [doc.id])
+
+  const isExpanded = (sectionId: CandidateDrawerSectionId) => expandedSections.has(sectionId)
+  const allExpanded = expandedSections.size === CANDIDATE_DRAWER_SECTION_IDS.length
+  const toggleSection = (sectionId: CandidateDrawerSectionId) => {
+    setExpandedSections((current) => {
+      const next = new Set(current)
+      if (next.has(sectionId)) next.delete(sectionId)
+      else next.add(sectionId)
+      return next
+    })
+  }
+  const setAllExpanded = (expanded: boolean) => {
+    setExpandedSections(expanded ? new Set(CANDIDATE_DRAWER_SECTION_IDS) : new Set())
+  }
 
   return (
     <div
@@ -1270,14 +1309,27 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
               {shortUid(doc.id)}
             </div>
           </div>
-          <button
-            type="button"
-            className="btn btn--ghost btn--icon"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            <Icon name="x" size={14} />
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <DrawerInlineLink to={`/admin/candidates/${doc.id}/profile`}>Open full page</DrawerInlineLink>
+            <button
+              type="button"
+              className="btn btn--secondary btn--sm"
+              onClick={() => setAllExpanded(!allExpanded)}
+              aria-pressed={allExpanded}
+              title={allExpanded ? "Collapse every section" : "Expand every section in this modal"}
+            >
+              <Icon name={allExpanded ? "chev_d" : "layers"} size={13} />
+              {allExpanded ? "Collapse all" : "Expand all"}
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost btn--icon"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -1322,88 +1374,183 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
             alignItems: "start",
           }}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <Card title="Identity">
-              <DrawerKV k="Display name" v={doc.displayName || "—"} />
-              <DrawerKV k="Email" v={doc.email || "—"} mono={!!doc.email} />
-              <DrawerKV k="Phone" v={doc.phoneE164 || "—"} mono={!!doc.phoneE164} />
-              <DrawerKV
-                k="LinkedIn"
-                v={
-                  doc.linkedinUrl ? (
-                    <a href={doc.linkedinUrl} target="_blank" rel="noreferrer">
-                      {row.linkedinHandle || doc.linkedinUrl}
-                    </a>
-                  ) : (
-                    "—"
-                  )
-                }
-              />
-              <DrawerKV k="Created" v={relTime(doc.createdAt)} />
-              <DrawerKV k="Updated" v={relTime(doc.updatedAt)} />
-            </Card>
+          <DrawerSectionCard
+            title="Identity"
+            sectionId="identity"
+            expanded={isExpanded("identity")}
+            onToggle={toggleSection}
+          >
+            <DrawerKV k="Display name" v={doc.displayName || "—"} />
+            <DrawerKV k="Email" v={doc.email || "—"} mono={!!doc.email} />
+            <DrawerKV k="Phone" v={doc.phoneE164 || "—"} mono={!!doc.phoneE164} />
+            <DrawerKV
+              k="LinkedIn"
+              v={
+                doc.linkedinUrl ? (
+                  <a href={doc.linkedinUrl} target="_blank" rel="noreferrer">
+                    {row.linkedinHandle || doc.linkedinUrl}
+                  </a>
+                ) : (
+                  "—"
+                )
+              }
+            />
+            <DrawerKV k="Created" v={relTime(doc.createdAt)} />
+            <DrawerKV k="Updated" v={relTime(doc.updatedAt)} />
+            {isExpanded("identity") && (
+              <>
+                <DrawerKV k="Candidate id" v={doc.id} mono />
+                <DrawerKV k="Source" v={SOURCE_LABEL[row.source]} />
+                <DrawerKV k="Lifecycle" v={LIFECYCLE_LABEL[row.lifecycle]} />
+                <DrawerKV k="mem0 id" v={doc.mem0UserId || "—"} mono={!!doc.mem0UserId} />
+                <DrawerKV k="Outreach" v={doc.outreach?.status || "allowed"} />
+              </>
+            )}
+          </DrawerSectionCard>
 
-            <Card title="Profile">
-              <DrawerKV k="Completeness" v={<PctBar pct={row.profilePct} />} />
-              <DrawerKV
-                k="Top tags"
-                v={row.skills.length === 0 ? "—" : <DrawerChipList values={row.skills} />}
-              />
-              <DrawerProfileDetails doc={doc} compact />
-            </Card>
+          <DrawerSectionCard
+            title="Profile"
+            sectionId="profile"
+            expanded={isExpanded("profile")}
+            onToggle={toggleSection}
+            openTo={`/admin/candidates/${doc.id}/profile`}
+            openLabel="Open profile page"
+          >
+            <DrawerKV k="Completeness" v={<PctBar pct={row.profilePct} />} />
+            <DrawerKV
+              k="Top tags"
+              v={row.skills.length === 0 ? "—" : <DrawerChipList values={row.skills} />}
+            />
+            <DrawerProfileDetails doc={doc} compact={!isExpanded("profile")} />
+          </DrawerSectionCard>
 
-            <Card title="Resume">
-              <DrawerResumeSummary
-                doc={doc}
-                resume={detail.resumes[0]}
-                loading={detailLoading}
-              />
-            </Card>
-          </div>
+          <DrawerSectionCard
+            title="Resume"
+            sectionId="resume"
+            expanded={isExpanded("resume")}
+            onToggle={toggleSection}
+            openTo={`/admin/candidates/${doc.id}/profile`}
+            openLabel="Open profile page"
+          >
+            <DrawerResumeSummary
+              doc={doc}
+              resumes={detail.resumes}
+              loading={detailLoading}
+              expanded={isExpanded("resume")}
+            />
+          </DrawerSectionCard>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <Card title="Experience">
-              <DrawerExperienceSummary
-                resume={detail.resumes[0]}
-                loading={detailLoading}
-              />
-            </Card>
+          <DrawerSectionCard
+            title="Experience"
+            sectionId="experience"
+            expanded={isExpanded("experience")}
+            onToggle={toggleSection}
+            openTo={`/admin/candidates/${doc.id}/profile`}
+            openLabel="Open profile page"
+          >
+            <DrawerExperienceSummary
+              resume={detail.resumes[0]}
+              loading={detailLoading}
+              expanded={isExpanded("experience")}
+            />
+          </DrawerSectionCard>
 
-            <Card
-              title="Conversation"
-              action={<DrawerInlineLink to={`/users/${doc.id}`}>Open conversation</DrawerInlineLink>}
-            >
-              <DrawerConversationSummary
-                messages={detail.messages}
-                turns={detail.turns}
-                loading={detailLoading}
-              />
-            </Card>
-          </div>
+          <DrawerSectionCard
+            title="Conversation"
+            sectionId="conversation"
+            expanded={isExpanded("conversation")}
+            onToggle={toggleSection}
+            openTo={`/users/${doc.id}`}
+            openLabel="Open conversation page"
+          >
+            <DrawerConversationSummary
+              messages={detail.messages}
+              turns={detail.turns}
+              loading={detailLoading}
+              expanded={isExpanded("conversation")}
+            />
+          </DrawerSectionCard>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <Card title="Prescreened jobs">
-              <DrawerPrescreenSummary
-                prescreens={detail.prescreens}
-                jobStates={detail.jobStates}
-                jobLabels={detail.jobLabels}
-                loading={detailLoading}
-              />
-            </Card>
+          <DrawerSectionCard
+            title="Prescreened jobs"
+            sectionId="prescreens"
+            expanded={isExpanded("prescreens")}
+            onToggle={toggleSection}
+          >
+            <DrawerPrescreenSummary
+              prescreens={detail.prescreens}
+              jobStates={detail.jobStates}
+              jobLabels={detail.jobLabels}
+              loading={detailLoading}
+              expanded={isExpanded("prescreens")}
+            />
+          </DrawerSectionCard>
 
-            <Card title="Management">
-              <div style={{ display: "grid", gap: 6 }}>
-                <DrawerLink to={`/admin/candidates/${doc.id}/profile`} label="Full profile" icon="user_check" />
-                <DrawerLink to={`/users/${doc.id}`} label="Conversation detail" icon="message" />
-                <DrawerLink to={`/admin/users/${doc.id}/tag-snapshots`} label="Tag snapshots" icon="tag" />
-                <DrawerLink to="/admin/identity-conflicts" label="Identity conflicts queue" icon="user_merge" />
-                <DrawerLink to="/admin/match-debug" label="Run in match debug" icon="zap" />
-                <DrawerLink to="/admin/outreach-ops" label="Outreach ops" icon="send" />
-              </div>
-            </Card>
-          </div>
+          <DrawerSectionCard
+            title="Management"
+            sectionId="management"
+            expanded={isExpanded("management")}
+            onToggle={toggleSection}
+          >
+            <div style={{ display: "grid", gap: 6, gridTemplateColumns: isExpanded("management") ? "repeat(auto-fit, minmax(220px, 1fr))" : undefined }}>
+              <DrawerLink to={`/admin/candidates/${doc.id}/profile`} label="Full profile" icon="user_check" />
+              <DrawerLink to={`/users/${doc.id}`} label="Conversation detail" icon="message" />
+              <DrawerLink to={`/admin/users/${doc.id}/tag-snapshots`} label="Tag snapshots" icon="tag" />
+              <DrawerLink to="/admin/identity-conflicts" label="Identity conflicts queue" icon="user_merge" />
+              <DrawerLink to="/admin/match-debug" label="Run in match debug" icon="zap" />
+              <DrawerLink to="/admin/outreach-ops" label="Outreach ops" icon="send" />
+            </div>
+          </DrawerSectionCard>
         </div>
       </div>
+    </div>
+  )
+}
+
+function DrawerSectionCard({
+  title,
+  sectionId,
+  expanded,
+  onToggle,
+  openTo,
+  openLabel = "Open page",
+  children,
+}: {
+  title: string
+  sectionId: CandidateDrawerSectionId
+  expanded: boolean
+  onToggle: (sectionId: CandidateDrawerSectionId) => void
+  openTo?: string
+  openLabel?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div style={{ gridColumn: expanded ? "1 / -1" : undefined, minWidth: 0 }}>
+      <Card
+        title={title}
+        style={{
+          height: "100%",
+          borderColor: expanded ? "var(--border-strong)" : undefined,
+          boxShadow: expanded ? "var(--shadow-sm)" : undefined,
+        }}
+        action={
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {openTo && <DrawerInlineLink to={openTo}>{openLabel}</DrawerInlineLink>}
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => onToggle(sectionId)}
+              aria-expanded={expanded}
+              title={expanded ? `Collapse ${title}` : `Expand ${title} in this modal`}
+            >
+              <Icon name={expanded ? "chev_d" : "layers"} size={13} />
+              {expanded ? "Collapse" : "Expand"}
+            </button>
+          </div>
+        }
+      >
+        {children}
+      </Card>
     </div>
   )
 }
@@ -1429,9 +1576,16 @@ function DrawerProfileDetails({ doc, compact = false }: { doc: UserDoc; compact?
   const prefs = d.conversationDerivedPreferences as
     | { summary?: string; updatedAt?: { seconds?: number } | string }
     | undefined
-  const derivedSummary = previewCandidateDrawerText(derivedExp?.summary, 700)
-  const prefsSummary = previewCandidateDrawerText(prefs?.summary, 500)
-  const ctx = previewCandidateDrawerText(d.candidateContext, 400)
+  const expanded = !compact
+  const derivedSummary = previewCandidateDrawerText(
+    derivedExp?.summary,
+    candidateDrawerPreviewMax(expanded, 700, 1800)
+  )
+  const prefsSummary = previewCandidateDrawerText(
+    prefs?.summary,
+    candidateDrawerPreviewMax(expanded, 500, 1600)
+  )
+  const ctx = previewCandidateDrawerText(d.candidateContext, candidateDrawerPreviewMax(expanded, 400, 1800))
   const postMatch = d.postMatchRetention as
     | { state?: string; lastInteractionAt?: { seconds?: number } | string }
     | undefined
@@ -1559,7 +1713,7 @@ function DrawerProfileDetails({ doc, compact = false }: { doc: UserDoc; compact?
         <div>
           <DrawerSectionLabel>Layoff context</DrawerSectionLabel>
           <pre style={{ margin: 0, fontSize: 11, color: "var(--ink-3)", whiteSpace: "pre-wrap", fontFamily: "var(--font-mono)" }}>
-            {JSON.stringify(layoffCtx, null, 2).slice(0, 500)}
+            {JSON.stringify(layoffCtx, null, 2).slice(0, candidateDrawerPreviewMax(expanded, 500, 2200))}
           </pre>
         </div>
       )}
@@ -1571,14 +1725,17 @@ function DrawerProfileDetails({ doc, compact = false }: { doc: UserDoc; compact?
 
 function DrawerResumeSummary({
   doc,
-  resume,
+  resumes,
   loading,
+  expanded,
 }: {
   doc: UserDoc
-  resume?: DrawerDetailRow
+  resumes: DrawerDetailRow[]
   loading: boolean
+  expanded: boolean
 }) {
   if (loading) return <DrawerLoadingText />
+  const resume = resumes[0]
   const resumeId = doc.latestResumeArtifactId ?? firstCandidateDrawerText(resume?.id)
   if (!resume && !resumeId) return <DrawerEmptyText>No resume record loaded.</DrawerEmptyText>
   const fileName = firstCandidateDrawerText(
@@ -1594,6 +1751,14 @@ function DrawerResumeSummary({
   ].filter(Boolean).join(" · ")
   const skills = drawerStringList(resume?.topSkills ?? resume?.skills ?? readNested(resume, ["candidateProfile", "skills"])).slice(0, 8)
   const industries = drawerStringList(resume?.industryTags ?? resume?.industries ?? readNested(resume, ["candidateProfile", "industries"])).slice(0, 4)
+  const summary = firstCandidateDrawerText(
+    resume?.summary,
+    resume?.candidateSummary,
+    resume?.resumeSummary,
+    readNested(resume, ["candidateProfile", "summary"])
+  )
+  const visibleResumeCount = candidateDrawerVisibleCount(resumes.length, expanded, 1)
+  const visibleResumes = resumes.slice(0, visibleResumeCount)
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <DrawerKV k="File" v={fileName || "—"} />
@@ -1602,6 +1767,38 @@ function DrawerResumeSummary({
       {parser && <DrawerKV k="Parser" v={parser} />}
       {skills.length > 0 && <DrawerKV k="Skills" v={<DrawerChipList values={skills} />} />}
       {industries.length > 0 && <DrawerKV k="Industries" v={<DrawerChipList values={industries} />} />}
+      {summary && (
+        <div style={{ paddingTop: 4 }}>
+          <DrawerSectionLabel>Parsed summary</DrawerSectionLabel>
+          <div style={{ color: "var(--ink-2)", fontSize: 12.5, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+            {previewCandidateDrawerText(summary, candidateDrawerPreviewMax(expanded, 420, 1800))}
+          </div>
+        </div>
+      )}
+      {expanded && visibleResumes.length > 1 && (
+        <div style={{ paddingTop: 4 }}>
+          <DrawerSectionLabel>Resume records loaded</DrawerSectionLabel>
+          <div style={{ display: "grid", gap: 8 }}>
+            {visibleResumes.map((row) => {
+              const rowFile = firstCandidateDrawerText(
+                row.originalFileName,
+                row.fileName,
+                row.resumeFileName,
+                row.sourceFileName,
+                row.id
+              )
+              return (
+                <div key={row.id} style={{ border: "1px solid var(--border)", borderRadius: 6, padding: 8 }}>
+                  <div style={{ color: "var(--ink)", fontWeight: 600, fontSize: 12.5 }}>{rowFile || shortUid(row.id)}</div>
+                  <div style={{ color: "var(--ink-3)", fontSize: 11.5, marginTop: 3 }}>
+                    {shortUid(row.id)} · {relTime(toIsoLike(row.updatedAt) ?? toIsoLike(row.createdAt) ?? toIsoLike(row.ingestedAt))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1609,12 +1806,16 @@ function DrawerResumeSummary({
 function DrawerExperienceSummary({
   resume,
   loading,
+  expanded,
 }: {
   resume?: DrawerDetailRow
   loading: boolean
+  expanded: boolean
 }) {
   if (loading) return <DrawerLoadingText />
-  const experiences = drawerExperienceRows(resume).slice(0, 5)
+  const allExperiences = drawerExperienceRows(resume)
+  const visibleCount = candidateDrawerVisibleCount(allExperiences.length, expanded, 5)
+  const experiences = allExperiences.slice(0, visibleCount)
   if (experiences.length === 0) return <DrawerEmptyText>No parsed experience rows loaded.</DrawerEmptyText>
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1634,11 +1835,17 @@ function DrawerExperienceSummary({
           </div>
           {exp.description && (
             <div style={{ color: "var(--ink-2)", fontSize: 12, marginTop: 5, lineHeight: 1.45 }}>
-              {previewCandidateDrawerText(exp.description, 180)}
+              {previewCandidateDrawerText(
+                exp.description,
+                candidateDrawerPreviewMax(expanded, 180, 1200)
+              )}
             </div>
           )}
         </div>
       ))}
+      {!expanded && allExperiences.length > experiences.length && (
+        <DrawerEmptyText>{allExperiences.length - experiences.length} more experience rows available. Expand to show them in this modal.</DrawerEmptyText>
+      )}
     </div>
   )
 }
@@ -1647,19 +1854,40 @@ function DrawerConversationSummary({
   messages,
   turns,
   loading,
+  expanded,
 }: {
   messages: DrawerDetailRow[]
   turns: DrawerDetailRow[]
   loading: boolean
+  expanded: boolean
 }) {
   if (loading) return <DrawerLoadingText />
-  const snippets = messages.slice(0, 5).map((message) => ({
+  const visibleMessageCount = candidateDrawerVisibleCount(messages.length, expanded, 5)
+  const visibleTurnCount = candidateDrawerVisibleCount(turns.length, expanded, 0)
+  const snippets = messages.slice(0, visibleMessageCount).map((message) => ({
     id: message.id,
     role: firstCandidateDrawerText(message.role, message.direction, message.kind) ?? "message",
     text: firstCandidateDrawerText(message.body, message.message, message.text, message.content) ?? previewCandidateDrawerText(message, 160) ?? "",
     at: toIsoLike(message.createdAt) ?? toIsoLike(message.ts) ?? toIsoLike(message.updatedAt),
   })).filter((snippet) => snippet.text)
+  const turnSnippets = turns.slice(0, visibleTurnCount).map((turn) => ({
+    id: turn.id,
+    role: firstCandidateDrawerText(turn.role, turn.kind, turn.source) ?? "turn",
+    text: firstCandidateDrawerText(
+      turn.text,
+      turn.message,
+      turn.content,
+      turn.prompt,
+      turn.reply,
+      turn.assistantMessage,
+      turn.userMessage,
+      turn.decision,
+      turn.reason
+    ) ?? previewCandidateDrawerText(turn, 220) ?? "",
+    at: toIsoLike(turn.createdAt) ?? toIsoLike(turn.ts) ?? toIsoLike(turn.updatedAt),
+  })).filter((snippet) => snippet.text)
   if (snippets.length === 0 && turns.length === 0) return <DrawerEmptyText>No conversation rows loaded.</DrawerEmptyText>
+  const previewMax = candidateDrawerPreviewMax(expanded, 220, 1200)
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -1674,12 +1902,29 @@ function DrawerConversationSummary({
                 {snippet.role}
               </span>
               <span style={{ color: "var(--ink-4)", marginLeft: 6 }}>{relTime(snippet.at)}</span>
-              <div style={{ marginTop: 2, lineHeight: 1.45 }}>{previewCandidateDrawerText(snippet.text, 220)}</div>
+              <div style={{ marginTop: 2, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>{previewCandidateDrawerText(snippet.text, previewMax)}</div>
             </div>
           ))}
         </div>
       ) : (
         <DrawerEmptyText>No message snippets loaded.</DrawerEmptyText>
+      )}
+      {!expanded && messages.length > snippets.length && (
+        <DrawerEmptyText>{messages.length - snippets.length} more messages available. Expand to show them in this modal.</DrawerEmptyText>
+      )}
+      {expanded && turnSnippets.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 4 }}>
+          <DrawerSectionLabel>Agent turns</DrawerSectionLabel>
+          {turnSnippets.map((snippet) => (
+            <div key={snippet.id} style={{ fontSize: 12, color: "var(--ink-2)" }}>
+              <span style={{ color: "var(--ink-3)", textTransform: "uppercase", fontSize: 10.5, fontWeight: 600 }}>
+                {snippet.role}
+              </span>
+              <span style={{ color: "var(--ink-4)", marginLeft: 6 }}>{relTime(snippet.at)}</span>
+              <div style={{ marginTop: 2, lineHeight: 1.45, whiteSpace: "pre-wrap" }}>{previewCandidateDrawerText(snippet.text, previewMax)}</div>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )
@@ -1690,19 +1935,24 @@ function DrawerPrescreenSummary({
   jobStates,
   jobLabels,
   loading,
+  expanded,
 }: {
   prescreens: DrawerDetailRow[]
   jobStates: DrawerDetailRow[]
   jobLabels: Record<string, string>
   loading: boolean
+  expanded: boolean
 }) {
   if (loading) return <DrawerLoadingText />
   if (prescreens.length === 0 && jobStates.length === 0) {
     return <DrawerEmptyText>No prescreen or job-state rows loaded.</DrawerEmptyText>
   }
+  const visiblePrescreenCount = candidateDrawerVisibleCount(prescreens.length, expanded, 6)
+  const showJobStates = expanded || prescreens.length === 0
+  const visibleJobStateCount = showJobStates ? candidateDrawerVisibleCount(jobStates.length, expanded, 5) : 0
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      {prescreens.slice(0, 6).map((session) => {
+      {prescreens.slice(0, visiblePrescreenCount).map((session) => {
         const jobId = firstCandidateDrawerText(session.jobId)
         const terminal = firstCandidateDrawerText(session.terminal, session.review && typeof session.review === "object" ? (session.review as Record<string, unknown>).finalTerminal : undefined)
         const score = drawerScoreLabel(session)
@@ -1724,11 +1974,17 @@ function DrawerPrescreenSummary({
                 <StatusPill tone="hitl">Pending review</StatusPill>
               </div>
             )}
+            {expanded && (
+              <div style={{ marginTop: 5, color: "var(--ink-3)", fontSize: 11.5, fontFamily: "var(--font-mono)" }}>
+                {session.id}
+              </div>
+            )}
           </div>
         )
       })}
-      {prescreens.length > 6 && <DrawerEmptyText>{prescreens.length - 6} more prescreen sessions on this candidate.</DrawerEmptyText>}
-      {prescreens.length === 0 && jobStates.slice(0, 5).map((state) => {
+      {!expanded && prescreens.length > visiblePrescreenCount && <DrawerEmptyText>{prescreens.length - visiblePrescreenCount} more prescreen sessions available. Expand to show them in this modal.</DrawerEmptyText>}
+      {showJobStates && jobStates.length > 0 && prescreens.length > 0 && <DrawerSectionLabel>Candidate job states</DrawerSectionLabel>}
+      {jobStates.slice(0, visibleJobStateCount).map((state) => {
         const jobId = firstCandidateDrawerText(state.jobId)
         return (
           <DrawerKV
@@ -1738,6 +1994,7 @@ function DrawerPrescreenSummary({
           />
         )
       })}
+      {!expanded && showJobStates && jobStates.length > visibleJobStateCount && <DrawerEmptyText>{jobStates.length - visibleJobStateCount} more job-state rows available. Expand to show them in this modal.</DrawerEmptyText>}
     </div>
   )
 }
@@ -1755,11 +2012,11 @@ function emptyCandidateDrawerDetail(): CandidateDrawerDetail {
 
 async function loadCandidateDrawerDetail(candidateId: string): Promise<CandidateDrawerDetail> {
   const [resumeSnap, prescreenSnap, messageSnap, turnSnap, jobStateSnap] = await Promise.all([
-    getDocs(query(collection(db(), "parsedCandidateResumes"), where("userId", "==", candidateId), limit(20))),
-    getDocs(query(collection(db(), "pa-prescreen-sessions"), where("userId", "==", candidateId), limit(40))),
-    getDocs(query(collection(db(), PA_COLLECTIONS.messages), where("userId", "==", candidateId), limit(80))),
-    getDocs(query(collection(db(), PA_COLLECTIONS.agentTurns), where("userId", "==", candidateId), limit(80))),
-    getDocs(query(collection(db(), PA_COLLECTIONS.candidateJobStates), where("candidateId", "==", candidateId), limit(60))),
+    getDocs(query(collection(db(), "parsedCandidateResumes"), where("userId", "==", candidateId))),
+    getDocs(query(collection(db(), "pa-prescreen-sessions"), where("userId", "==", candidateId))),
+    getDocs(query(collection(db(), PA_COLLECTIONS.messages), where("userId", "==", candidateId))),
+    getDocs(query(collection(db(), PA_COLLECTIONS.agentTurns), where("userId", "==", candidateId))),
+    getDocs(query(collection(db(), PA_COLLECTIONS.candidateJobStates), where("candidateId", "==", candidateId))),
   ])
   const resumes = sortCandidateDrawerRows(
     resumeSnap.docs.map((snap) => ({ id: snap.id, ...snap.data() }) as DrawerDetailRow),
@@ -1784,7 +2041,7 @@ async function loadCandidateDrawerDetail(candidateId: string): Promise<Candidate
   const jobIds = uniqueStrings([
     ...prescreens.map((row) => firstCandidateDrawerText(row["jobId"])),
     ...jobStates.map((row) => firstCandidateDrawerText(row["jobId"])),
-  ]).slice(0, 20)
+  ])
   const jobLabels = Object.fromEntries(await Promise.all(jobIds.map(loadJobLabel)))
   return { resumes, prescreens, messages, turns, jobStates, jobLabels }
 }
