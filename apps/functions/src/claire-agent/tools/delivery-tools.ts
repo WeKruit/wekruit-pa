@@ -9,14 +9,50 @@
  *
  * (mark-read + typing are deterministic REFLEXES in delivery.ts, not tools.)
  *
- * WS-delivery: replace the body — return an array of `tool({...})` (let TS infer).
+ * Each execute is a thin pass-through to the injected ClaireTransport — the same
+ * seam the POC's fake channel records. The transport itself is fail-open, so an
+ * execute here never throws into the agent run loop.
  */
 import { tool } from "@openai/agents"
+import { z } from "zod"
 import type { ClaireToolContext } from "../types.js"
 
-void tool
+export function buildDeliveryTools(ctx: ClaireToolContext) {
+  const reactToUser = tool({
+    name: "react_to_user",
+    description:
+      "Tapback a low-info ack ('sure','ok','yes') INSTEAD of text, esp while processing; " +
+      "never for substantive questions.",
+    parameters: z.object({
+      reaction: z.enum(["love", "like", "laugh", "emphasize"]),
+    }),
+    async execute({ reaction }) {
+      await ctx.transport.tapback(reaction)
+      return { ok: true, delivered: `tapback:${reaction}` }
+    },
+  })
 
-export function buildDeliveryTools(_ctx: ClaireToolContext) {
-  // TODO(WS-delivery): react_to_user, send_status_then_continue, no_reply.
-  return [] as ReturnType<typeof tool>[]
+  const sendStatusThenContinue = tool({
+    name: "send_status_then_continue",
+    description:
+      "Send a quick 'one sec' bubble NOW before a slow tool, then call the slow tool, then reply.",
+    parameters: z.object({ status: z.string() }),
+    async execute({ status }) {
+      await ctx.transport.sendStatus(status)
+      return { ok: true }
+    },
+  })
+
+  const noReply = tool({
+    name: "no_reply",
+    description:
+      "Send nothing at all; only when truly no acknowledgement is needed.",
+    parameters: z.object({ reason: z.string() }),
+    async execute({ reason }) {
+      await ctx.transport.noReply(reason)
+      return { ok: true, reason }
+    },
+  })
+
+  return [reactToUser, sendStatusThenContinue, noReply]
 }
