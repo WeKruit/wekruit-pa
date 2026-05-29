@@ -17,8 +17,7 @@
  * (seam below). Either way the reducers in reducers/onboarding-fsm.ts +
  * reducers/prescreen-fsm.ts are the sole authority on every transition.
  */
-import { Agent, run, tool } from "@openai/agents"
-import { z } from "zod"
+import { Agent, run, tool, z } from "../sdk.js"
 import type { ClaireToolContext } from "../types.js"
 import {
   DEFAULT_ONBOARDING_SLOTS,

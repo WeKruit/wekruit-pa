@@ -13,8 +13,7 @@
  * seam the POC's fake channel records. The transport itself is fail-open, so an
  * execute here never throws into the agent run loop.
  */
-import { tool } from "@openai/agents"
-import { z } from "zod"
+import { tool, z } from "../sdk.js"
 import type { ClaireToolContext } from "../types.js"
 
 export function buildDeliveryTools(ctx: ClaireToolContext) {

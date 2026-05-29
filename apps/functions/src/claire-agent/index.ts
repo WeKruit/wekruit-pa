@@ -5,7 +5,11 @@
  * triggers. See README.md for the file-ownership map and the KEYSTONE.
  */
 export { buildClaireAgent, runClaireTurn, CLAIRE_MODEL } from "./agent.js"
+export type { RunClaireTurnDeps, BuildClaireAgentOptions } from "./agent.js"
 export { makeClaireSession } from "./session.js"
+export { makeV16FindMatch } from "./tools/matching-tools.js"
+export { createSendblueTransport } from "./transport.js"
+export type { SendblueTransportDeps } from "./transport.js"
 export {
   isThinClaireEnabled,
   THIN_CLAIRE_FLAG_KEY,
@@ -13,6 +17,7 @@ export {
   THIN_CLAIRE_CANARY_UIDS,
 } from "./flags.js"
 export { runProactiveTurn } from "./proactive.js"
+export { maybeRunThinClaire } from "./cutover.js"
 export {
   reduceMatchingPreferences,
   type MatchingPreferenceProposal,

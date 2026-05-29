@@ -307,19 +307,22 @@ async function defaultComposeCopy(input: {
   transport: ClaireTransport
   db: Firestore
 }): Promise<string[]> {
-  const { run } = await import("@openai/agents")
+  const { run } = await import("./sdk.js")
   const { buildClaireAgent, CLAIRE_MODEL } = await import("./agent.js")
   const directive = proactiveDirective(input.kind, input.lang, input.jobs)
-  const agent = buildClaireAgent({
-    db: input.db,
-    userId: input.userId,
-    sessionId: `proactive:${input.userId}:${input.kind}`,
-    lang: input.lang,
-    transport: input.transport,
-    judgeModel: CLAIRE_MODEL,
-    log: () => {},
-    nowIso: () => new Date().toISOString(),
-  })
+  const agent = buildClaireAgent(
+    {
+      db: input.db,
+      userId: input.userId,
+      sessionId: `proactive:${input.userId}:${input.kind}`,
+      lang: input.lang,
+      transport: input.transport,
+      judgeModel: CLAIRE_MODEL,
+      log: () => {},
+      nowIso: () => new Date().toISOString(),
+    },
+    { mode: "triage", lang: input.lang },
+  )
   const res = await run(agent, directive)
   const text = String((res as { finalOutput?: unknown }).finalOutput ?? "").trim()
   return splitBubbles(text)

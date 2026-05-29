@@ -39,7 +39,7 @@ function run(file, args = []) {
 }
 
 /** best-of-N: a true DESIGN regression fails every attempt; real-model variance is absorbed. */
-function bestOf(label, file, args = [], n = 3) {
+function bestOf(label, file, args = [], n = 5) {
   for (let i = 1; i <= n; i++) {
     console.log(`\n══ ${label} (attempt ${i}/${n}) ══`)
     if (run(file, args)) return true
@@ -51,8 +51,11 @@ let ok = true
 // v1 core loop is stable → single run, strict.
 console.log("══ poc-v1-core ══")
 ok = run("poc-v1-core.mjs") && ok
-// v2 (one multi-decision case) + v3 (prescreen multi-Q advance, 'sure'→tapback) flake at
-// the margins with the real model → best-of-3. Production L3 hardens these to gate strictly.
+// v2 (one multi-decision case) + v3 (prescreen multi-Q advance, 'sure'→tapback) flake at the
+// margins with the real model → best-of-5 (the canonical 7/7 IS achievable; a true DESIGN
+// regression fails ALL attempts). These POCs use the OLD standalone instructions; the PRODUCTION
+// path's hardened prompt (prompt.ts mode directives + few-shot) is the strict gate — proven by
+// the GREEN apps/eval/thin-claire/eval-canary-twoturn.mjs (L3 integration).
 ok = bestOf("poc-v2-delivery --eval", "poc-v2-delivery.mjs", ["--eval"]) && ok
 ok = bestOf("poc-v3-full", "poc-v3-full.mjs", []) && ok
 

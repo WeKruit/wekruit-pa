@@ -22,9 +22,14 @@
  * preferences calls `reduceMatchingPreferences` (reducers/matching-profile-
  * reducer.ts) — it does NOT re-derive the only/avoid/replace semantics.
  */
-import { tool } from "@openai/agents"
-import { z } from "zod"
-import { RoleFunctionSchema, JobTypeSchema } from "@wekruit/shared-tags"
+import { tool, z } from "../sdk.js"
+import { ROLE_FUNCTION_VOCAB, JOB_TYPE_VOCAB } from "@wekruit/shared-tags"
+
+// Rebuild the closed enums on the SDK's zod@4 instance. shared-tags' RoleFunctionSchema /
+// JobTypeSchema are built with zod@3 (a different instance) and cannot be mixed into a zod@4
+// tool param schema — but the underlying VOCAB arrays are plain strings, instance-agnostic.
+const RoleFunctionEnum = z.enum(ROLE_FUNCTION_VOCAB)
+const JobTypeEnum = z.enum(JOB_TYPE_VOCAB)
 import { applyPartialUserTags, type PartialUserTags } from "@pa/pa-orchestrator"
 import { mem0Add, type Mem0Config } from "@pa/memory"
 import { parseResumeText } from "@pa/pa-resume-parser"
@@ -181,9 +186,9 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "(e.g. 'done with software engineering, only product' → onlyRoleFunctions:[product_management] AND avoidRoleFunctions:[software_engineering]). " +
       "Also pass jobType (full_time/internship/...) and locations when stated. Pass null for anything not stated.",
     parameters: z.object({
-      onlyRoleFunctions: z.array(RoleFunctionSchema).nullable(),
-      avoidRoleFunctions: z.array(RoleFunctionSchema).nullable(),
-      jobType: z.array(JobTypeSchema).nullable(),
+      onlyRoleFunctions: z.array(RoleFunctionEnum).nullable(),
+      avoidRoleFunctions: z.array(RoleFunctionEnum).nullable(),
+      jobType: z.array(JobTypeEnum).nullable(),
       locations: z.array(z.string()).nullable(),
     }),
     async execute({ onlyRoleFunctions, avoidRoleFunctions, jobType, locations }) {

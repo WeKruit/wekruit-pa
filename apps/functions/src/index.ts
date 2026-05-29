@@ -56,6 +56,9 @@ import {
   compactJobRecContext,
   resolveJobRecVisibleCount,
 } from "./job-rec-copy.js"
+// Thin Claire cutover — flag-gated (paThinClaireEnabled, default OFF). Returns false for
+// everyone but the 424 canary → legacy claimAndProcessInboundEvent path stays unchanged.
+import { maybeRunThinClaire } from "./claire-agent/index.js"
 export {
   MAILGUN_API_KEY,
   MAILGUN_DOMAIN,
@@ -1117,9 +1120,17 @@ export const onPaInbound = onDocumentCreated(
     // default Claire orchestrator path UNCONDITIONALLY for every event.
     try {
       const orchestratorDeps = makeOrchestratorDeps()
+      // Thin Claire (flag-gated): for canary users, handle the turn and skip the legacy path.
+      const thinHandled = isBrokerImessageEvent(data)
+        ? false
+        : await maybeRunThinClaire(db, data.id, {
+            log: (e, p) => logger.info(`[thin-claire] ${e}`, p ?? {}),
+          })
       const processed = isBrokerImessageEvent(data)
         ? await processBrokerImessageEvent(db, data, orchestratorDeps)
-        : await claimAndProcessInboundEvent(db, data.id, undefined, orchestratorDeps)
+        : thinHandled
+          ? "thin_claire"
+          : await claimAndProcessInboundEvent(db, data.id, undefined, orchestratorDeps)
       logger.info("onPaInbound processed", { eventId: data.id, userId: "userId" in data ? data.userId : undefined, processed })
     } catch (err) {
       logger.error("onPaInbound failed", {
