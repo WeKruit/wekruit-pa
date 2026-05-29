@@ -1,0 +1,107 @@
+{
+  "datasetVersion": "ranking-golden-2026-05-29",
+  "direction": "job_to_candidates",
+  "note": "Hand-authored job queries + relevant candidate-id judgments against corpus-candidates.json. Each job mirrors the MatchingJob shape consumed by rankCandidatesForJob (apps/job-rec/src/two-way-match.ts). relevantIds = candidates a human reviewer would activate for this job (strong role+skill+location fit, contactable). do-not-contact / role-mismatch / weak-skill candidates are expected to be hard-blocked or ranked low. firstSeenAt placeholder {{FRESH}} is substituted by the runner relative to nowMs.",
+  "queries": [
+    {
+      "queryId": "job-frontend-swe-sf",
+      "job": {
+        "id": "job-frontend-swe-sf",
+        "status": "active",
+        "companyName": "Brightloop",
+        "roleTitle": "Frontend Software Engineer",
+        "jobTitle": "Frontend Software Engineer",
+        "roleFunction": ["software_engineering"],
+        "requiredSkills": ["typescript", "react", "javascript", "css"],
+        "industrySector": ["artificial_intelligence_and_machine_learning"],
+        "relevantTags": ["frontend", "web"],
+        "locationBuckets": ["san_francisco_bay_area"],
+        "locationRaw": "San Francisco, CA",
+        "seniorityLevel": "mid_level",
+        "jobType": "full_time",
+        "sponsorship": true,
+        "salaryMin": 150000,
+        "salaryMax": 190000,
+        "atsApplyUrl": "https://boards.greenhouse.io/brightloop/job-frontend-swe-sf",
+        "primaryUrl": "https://brightloop.example.com/swe-fe",
+        "firstSeenAt": "{{FRESH}}"
+      },
+      "relevantIds": ["u-frontend-swe", "u-fullstack-swe", "u-backend-swe"]
+    },
+    {
+      "queryId": "job-backend-swe-remote",
+      "job": {
+        "id": "job-backend-swe-remote",
+        "status": "active",
+        "companyName": "Coreflux",
+        "roleTitle": "Backend Software Engineer",
+        "jobTitle": "Backend Software Engineer",
+        "roleFunction": ["software_engineering"],
+        "requiredSkills": ["python", "postgresql", "go", "api"],
+        "industrySector": ["financial_technology"],
+        "relevantTags": ["backend", "distributed_systems"],
+        "locationBuckets": ["san_francisco_bay_area", "remote_us"],
+        "locationRaw": "San Francisco, CA / Remote (US)",
+        "seniorityLevel": "mid_level",
+        "jobType": "full_time",
+        "sponsorship": true,
+        "salaryMin": 160000,
+        "salaryMax": 200000,
+        "atsApplyUrl": "https://jobs.lever.co/coreflux/job-backend-swe-remote",
+        "primaryUrl": "https://coreflux.example.com/swe-be",
+        "firstSeenAt": "{{FRESH}}"
+      },
+      "relevantIds": ["u-backend-swe", "u-fullstack-swe"]
+    },
+    {
+      "queryId": "job-data-scientist-nyc",
+      "job": {
+        "id": "job-data-scientist-nyc",
+        "status": "active",
+        "companyName": "Insightful",
+        "roleTitle": "Data Scientist",
+        "jobTitle": "Data Scientist",
+        "roleFunction": ["data_analysis"],
+        "requiredSkills": ["python", "sql", "machine_learning", "statistics"],
+        "industrySector": ["artificial_intelligence_and_machine_learning"],
+        "relevantTags": ["analytics", "ml"],
+        "locationBuckets": ["new_york_city", "remote_us"],
+        "locationRaw": "New York, NY / Remote (US)",
+        "seniorityLevel": "mid_level",
+        "jobType": "full_time",
+        "sponsorship": true,
+        "salaryMin": 140000,
+        "salaryMax": 175000,
+        "atsApplyUrl": "https://jobs.ashbyhq.com/insightful/job-data-scientist-nyc",
+        "primaryUrl": "https://insightful.example.com/data-scientist",
+        "firstSeenAt": "{{FRESH}}"
+      },
+      "relevantIds": ["u-data-scientist", "u-data-analyst"]
+    },
+    {
+      "queryId": "job-pm-nyc-senior",
+      "job": {
+        "id": "job-pm-nyc-senior",
+        "status": "active",
+        "companyName": "Productive",
+        "roleTitle": "Product Manager",
+        "jobTitle": "Product Manager",
+        "roleFunction": ["product_management"],
+        "requiredSkills": ["roadmapping", "user_research", "sql"],
+        "industrySector": ["enterprise_software"],
+        "relevantTags": ["product"],
+        "locationBuckets": ["new_york_city"],
+        "locationRaw": "New York, NY",
+        "seniorityLevel": "senior",
+        "jobType": "full_time",
+        "sponsorship": true,
+        "salaryMin": 170000,
+        "salaryMax": 210000,
+        "atsApplyUrl": "https://boards.greenhouse.io/productive/job-pm-nyc-senior",
+        "primaryUrl": "https://productive.example.com/pm",
+        "firstSeenAt": "{{FRESH}}"
+      },
+      "relevantIds": ["u-pm"]
+    }
+  ]
+}

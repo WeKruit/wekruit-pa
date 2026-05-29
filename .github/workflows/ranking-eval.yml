@@ -1,0 +1,80 @@
+# Offline ranking eval — precision@k / recall@k / NDCG@k, BOTH directions.
+#
+# This is a NON-BLOCKING, informational job (mirrors eval.yml's philosophy):
+# it surfaces matcher ranking quality but never gates a merge. Ranking
+# threshold regressions are signal for a reviewer, not an automatic block —
+# the golden dataset is small and a legitimate matcher change may shift the
+# macro-average.
+#
+# Cost: $0. Fully deterministic — no LLM, no network. The matchers run against
+# an in-memory Firestore seeded with the versioned golden corpus; the LLM
+# rerank / jd-rel caches are absent so scoring is driven entirely by the
+# deterministic hard filters + weighted blend.
+#
+# Triggers:
+#   - PRs that touch the matchers, the eval, or shared tags
+#   - nightly schedule on main
+#   - manual workflow_dispatch
+
+name: ranking-eval
+
+on:
+  pull_request:
+    paths:
+      - "apps/eval/ranking/**"
+      - "apps/job-rec/src/tools/query-matching-jobs-v16.ts"
+      - "apps/job-rec/src/two-way-match.ts"
+      - "apps/job-rec/src/match-weights.ts"
+      - "packages/shared-tags/**"
+  schedule:
+    # 04:23 UTC nightly — off-peak.
+    - cron: "23 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ranking-eval:
+    name: ranking metrics (informational, both directions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Informational only — never fail the workflow on a ranking regression.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The ranking eval imports the compiled matchers from @pa/job-rec/dist,
+      # so build the workspace first.
+      - name: Build (matcher workspaces)
+        run: pnpm --filter @pa/job-rec... build
+
+      - name: Metrics unit tests
+        run: pnpm --filter @pa/ranking-eval test
+
+      - name: Run ranking eval (human report)
+        run: node apps/eval/ranking/run-ranking-eval.mjs
+
+      - name: Run ranking eval (JSON artifact)
+        run: node apps/eval/ranking/run-ranking-eval.mjs --json > ranking-eval-report.json
+
+      - name: Upload ranking report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ranking-eval-${{ github.run_id }}
+          path: ranking-eval-report.json
+          if-no-files-found: warn
+          retention-days: 30

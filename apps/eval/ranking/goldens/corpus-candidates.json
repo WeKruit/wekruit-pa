@@ -1,0 +1,159 @@
+{
+  "datasetVersion": "ranking-golden-2026-05-29",
+  "note": "Mock retained-candidate pool for the job->candidates offline ranking eval. Each row mirrors MatchingCandidateRow consumed by rankCandidatesForJob (apps/job-rec/src/two-way-match.ts): userId + lifecycle + outreach + tags{skills,targetRoleFunction,targetLocations,careerStage,targetJobType,visaStatus,minSalary,industrySector,relevantTags}. Canonical vocab from @wekruit/shared-tags.",
+  "candidates": [
+    {
+      "userId": "u-frontend-swe",
+      "displayName": "Frontend SWE",
+      "lifecycle": "profile_ready",
+      "outreach": { "reachable": true },
+      "tags": {
+        "skills": ["typescript", "react", "javascript", "css"],
+        "targetRoleFunction": ["software_engineering"],
+        "industrySector": ["artificial_intelligence_and_machine_learning"],
+        "relevantTags": ["frontend", "web"],
+        "targetLocations": ["san_francisco_bay_area"],
+        "careerStage": "mid_level",
+        "targetJobType": ["full_time"],
+        "visaStatus": "citizen",
+        "minSalary": 140000
+      }
+    },
+    {
+      "userId": "u-fullstack-swe",
+      "displayName": "Full Stack SWE",
+      "lifecycle": "profile_ready",
+      "outreach": { "reachable": true },
+      "tags": {
+        "skills": ["typescript", "react", "node", "python"],
+        "targetRoleFunction": ["software_engineering"],
+        "industrySector": ["artificial_intelligence_and_machine_learning"],
+        "relevantTags": ["fullstack"],
+        "targetLocations": ["san_francisco_bay_area"],
+        "careerStage": "mid_level",
+        "targetJobType": ["full_time"],
+        "visaStatus": "citizen",
+        "minSalary": 145000
+      }
+    },
+    {
+      "userId": "u-backend-swe",
+      "displayName": "Backend SWE",
+      "lifecycle": "profile_ready",
+      "outreach": { "reachable": true },
+      "tags": {
+        "skills": ["python", "go", "postgresql", "api"],
+        "targetRoleFunction": ["software_engineering"],
+        "industrySector": ["financial_technology"],
+        "relevantTags": ["backend", "distributed_systems"],
+        "targetLocations": ["san_francisco_bay_area", "remote_us"],
+        "careerStage": "mid_level",
+        "targetJobType": ["full_time"],
+        "visaStatus": "citizen",
+        "minSalary": 150000
+      }
+    },
+    {
+      "userId": "u-cobol-swe-weak",
+      "displayName": "Legacy SWE (weak skill overlap)",
+      "lifecycle": "profile_ready",
+      "outreach": { "reachable": true },
+      "tags": {
+        "skills": ["cobol", "mainframe", "jcl"],
+        "targetRoleFunction": ["software_engineering"],
+        "industrySector": ["banking_and_lending"],
+        "relevantTags": ["legacy"],
+        "targetLocations": ["san_francisco_bay_area"],
+        "careerStage": "mid_level",
+        "targetJobType": ["full_time"],
+        "visaStatus": "citizen",
+        "minSalary": 130000
+      }
+    },
+    {
+      "userId": "u-data-analyst",
+      "displayName": "Data Analyst",
+      "lifecycle": "profile_ready",
+      "outreach": { "reachable": true },
+      "tags": {
+        "skills": ["sql", "python", "tableau", "statistics"],
+        "targetRoleFunction": ["data_analysis"],
+        "industrySector": ["e_commerce_and_retail"],
+        "relevantTags": ["analytics", "bi"],
+        "targetLocations": ["new_york_city"],
+        "careerStage": "mid_level",
+        "targetJobType": ["full_time"],
+        "visaStatus": "citizen",
+        "minSalary": 90000
+      }
+    },
+    {
+      "userId": "u-data-scientist",
+      "displayName": "Data Scientist",
+      "lifecycle": "profile_ready",
+      "outreach": { "reachable": true },
+      "tags": {
+        "skills": ["python", "sql", "machine_learning", "statistics"],
+        "targetRoleFunction": ["data_analysis"],
+        "industrySector": ["artificial_intelligence_and_machine_learning"],
+        "relevantTags": ["analytics", "ml"],
+        "targetLocations": ["new_york_city", "remote_us"],
+        "careerStage": "mid_level",
+        "targetJobType": ["full_time"],
+        "visaStatus": "citizen",
+        "minSalary": 140000
+      }
+    },
+    {
+      "userId": "u-pm",
+      "displayName": "Product Manager",
+      "lifecycle": "profile_ready",
+      "outreach": { "reachable": true },
+      "tags": {
+        "skills": ["roadmapping", "user_research", "sql"],
+        "targetRoleFunction": ["product_management"],
+        "industrySector": ["enterprise_software"],
+        "relevantTags": ["product"],
+        "targetLocations": ["new_york_city"],
+        "careerStage": "senior",
+        "targetJobType": ["full_time"],
+        "visaStatus": "citizen",
+        "minSalary": 160000
+      }
+    },
+    {
+      "userId": "u-marketer",
+      "displayName": "Marketing Manager",
+      "lifecycle": "profile_ready",
+      "outreach": { "reachable": true },
+      "tags": {
+        "skills": ["seo", "content_marketing", "analytics"],
+        "targetRoleFunction": ["marketing"],
+        "industrySector": ["media_and_entertainment"],
+        "relevantTags": ["growth"],
+        "targetLocations": ["los_angeles"],
+        "careerStage": "mid_level",
+        "targetJobType": ["full_time"],
+        "visaStatus": "citizen",
+        "minSalary": 90000
+      }
+    },
+    {
+      "userId": "u-do-not-contact-swe",
+      "displayName": "Strong-fit SWE but opted out of outreach",
+      "lifecycle": "opted_out",
+      "outreach": { "doNotContact": true },
+      "tags": {
+        "skills": ["typescript", "react", "javascript", "css"],
+        "targetRoleFunction": ["software_engineering"],
+        "industrySector": ["artificial_intelligence_and_machine_learning"],
+        "relevantTags": ["frontend", "web"],
+        "targetLocations": ["san_francisco_bay_area"],
+        "careerStage": "mid_level",
+        "targetJobType": ["full_time"],
+        "visaStatus": "citizen",
+        "minSalary": 140000
+      }
+    }
+  ]
+}
