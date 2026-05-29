@@ -38,6 +38,7 @@ import {
 import {
   classifyCandidateProfile,
   deriveCandidateSource,
+  candidateDrawerExternalHref,
   candidateDrawerPreviewMax,
   candidateDrawerRegionCount,
   firstCandidateDrawerText,
@@ -237,6 +238,7 @@ type DrawerDetailRow = Record<string, unknown> & { id: string }
 
 type CandidateDrawerDetail = {
   resumes: DrawerDetailRow[]
+  resumeArtifacts: DrawerDetailRow[]
   prescreens: DrawerDetailRow[]
   messages: DrawerDetailRow[]
   turns: DrawerDetailRow[]
@@ -1220,7 +1222,7 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
     setExpandedSections(new Set())
     ;(async () => {
       try {
-        const loaded = await loadCandidateDrawerDetail(doc.id)
+        const loaded = await loadCandidateDrawerDetail(doc.id, doc.latestResumeArtifactId)
         if (cancelled) return
         setDetail(loaded)
       } catch (e: unknown) {
@@ -1478,6 +1480,7 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
             <DrawerResumeSummary
               doc={doc}
               resumes={detail.resumes}
+              resumeArtifacts={detail.resumeArtifacts}
               loading={detailLoading}
               expanded={isExpanded("resume")}
             />
@@ -1836,16 +1839,19 @@ function DrawerProfileDetails({ doc, compact = false }: { doc: UserDoc; compact?
 function DrawerResumeSummary({
   doc,
   resumes,
+  resumeArtifacts,
   loading,
   expanded,
 }: {
   doc: UserDoc
   resumes: DrawerDetailRow[]
+  resumeArtifacts: DrawerDetailRow[]
   loading: boolean
   expanded: boolean
 }) {
   if (loading) return <DrawerLoadingText />
   const resume = resumes[0]
+  const source = drawerResumeOriginalSource(resume, resumeArtifacts, doc.latestResumeArtifactId)
   const resumeId = doc.latestResumeArtifactId ?? firstCandidateDrawerText(resume?.id)
   if (!resume && !resumeId) return <DrawerEmptyText>No resume record loaded.</DrawerEmptyText>
   const fileName = firstCandidateDrawerText(
@@ -1872,6 +1878,18 @@ function DrawerResumeSummary({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <DrawerKV k="File" v={fileName || "—"} />
+      <DrawerKV
+        k="Original file"
+        v={
+          source.href ? (
+            <DrawerExternalFileLink href={source.href} label="Open original file" detail={source.raw} />
+          ) : source.raw ? (
+            <span style={{ color: "var(--ink-3)" }}>{previewCandidateDrawerText(source.raw, 72)}</span>
+          ) : (
+            "No source link stored"
+          )
+        }
+      />
       <DrawerKV k="Resume id" v={resumeId ? shortUid(String(resumeId)) : "—"} mono={!!resumeId} />
       <DrawerKV k="Parsed" v={relTime(toIsoLike(resume?.updatedAt) ?? toIsoLike(resume?.createdAt) ?? toIsoLike(resume?.ingestedAt))} />
       {parser && <DrawerKV k="Parser" v={parser} />}
@@ -1897,9 +1915,13 @@ function DrawerResumeSummary({
                 row.sourceFileName,
                 row.id
               )
+              const rowSource = drawerResumeOriginalSource(row, resumeArtifacts)
               return (
                 <div key={row.id} style={{ border: "1px solid var(--border)", borderRadius: 6, padding: 8 }}>
-                  <div style={{ color: "var(--ink)", fontWeight: 600, fontSize: 12.5 }}>{rowFile || shortUid(row.id)}</div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ color: "var(--ink)", fontWeight: 600, fontSize: 12.5 }}>{rowFile || shortUid(row.id)}</div>
+                    {rowSource.href && <DrawerExternalFileLink href={rowSource.href} label="Open" compact />}
+                  </div>
                   <div style={{ color: "var(--ink-3)", fontSize: 11.5, marginTop: 3 }}>
                     {shortUid(row.id)} · {relTime(toIsoLike(row.updatedAt) ?? toIsoLike(row.createdAt) ?? toIsoLike(row.ingestedAt))}
                   </div>
@@ -1911,6 +1933,80 @@ function DrawerResumeSummary({
       )}
     </div>
   )
+}
+
+function DrawerExternalFileLink({
+  href,
+  label,
+  detail,
+  compact = false,
+}: {
+  href: string
+  label: string
+  detail?: string
+  compact?: boolean
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={detail}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        width: "fit-content",
+        padding: compact ? "4px 7px" : "6px 9px",
+        border: "1px solid var(--border-strong)",
+        borderRadius: 6,
+        background: "var(--cream)",
+        color: "var(--ink)",
+        fontSize: compact ? 11.5 : 12.5,
+        fontWeight: 650,
+        textDecoration: "none",
+      }}
+    >
+      <Icon name="download" size={compact ? 11 : 12} style={{ color: "var(--ink-3)" }} />
+      {label}
+    </a>
+  )
+}
+
+function drawerResumeOriginalSource(
+  resume: DrawerDetailRow | undefined,
+  artifacts: DrawerDetailRow[],
+  preferredArtifactId?: string
+): { raw?: string; href?: string } {
+  const artifact = drawerResumeArtifactForResume(resume, artifacts, preferredArtifactId)
+  const raw = firstCandidateDrawerText(
+    resume?.mediaUrl,
+    resume?.resumeUrl,
+    resume?.sourceUrl,
+    resume?.fileUrl,
+    artifact?.storageUri,
+    artifact?.mediaUrl,
+    artifact?.resumeUrl,
+    artifact?.sourceUrl
+  )
+  return { raw, href: candidateDrawerExternalHref(raw) }
+}
+
+function drawerResumeArtifactForResume(
+  resume: DrawerDetailRow | undefined,
+  artifacts: DrawerDetailRow[],
+  preferredArtifactId?: string
+): DrawerDetailRow | undefined {
+  if (preferredArtifactId) {
+    const preferred = artifacts.find((artifact) => artifact.id === preferredArtifactId || artifact.resumeId === preferredArtifactId)
+    if (preferred) return preferred
+  }
+  if (resume?.id) {
+    const resumeId = String(resume.id)
+    const linked = artifacts.find((artifact) => firstCandidateDrawerText(artifact.parsedCandidateResumeId) === resumeId)
+    if (linked) return linked
+  }
+  return artifacts[0]
 }
 
 function DrawerExperienceSummary({
@@ -2112,6 +2208,7 @@ function DrawerPrescreenSummary({
 function emptyCandidateDrawerDetail(): CandidateDrawerDetail {
   return {
     resumes: [],
+    resumeArtifacts: [],
     prescreens: [],
     messages: [],
     turns: [],
@@ -2120,9 +2217,13 @@ function emptyCandidateDrawerDetail(): CandidateDrawerDetail {
   }
 }
 
-async function loadCandidateDrawerDetail(candidateId: string): Promise<CandidateDrawerDetail> {
-  const [resumeSnap, prescreenSnap, messageSnap, turnSnap, jobStateSnap] = await Promise.all([
+async function loadCandidateDrawerDetail(candidateId: string, latestResumeArtifactId?: string): Promise<CandidateDrawerDetail> {
+  const [resumeSnap, resumeArtifactSnap, latestResumeArtifactSnap, prescreenSnap, messageSnap, turnSnap, jobStateSnap] = await Promise.all([
     getDocs(query(collection(db(), "parsedCandidateResumes"), where("userId", "==", candidateId))),
+    getDocs(query(collection(db(), PA_COLLECTIONS.resumeArtifacts), where("candidateId", "==", candidateId))),
+    latestResumeArtifactId
+      ? getDoc(firestoreDoc(db(), PA_COLLECTIONS.resumeArtifacts, latestResumeArtifactId))
+      : Promise.resolve(null),
     getDocs(query(collection(db(), "pa-prescreen-sessions"), where("userId", "==", candidateId))),
     getDocs(query(collection(db(), PA_COLLECTIONS.messages), where("userId", "==", candidateId))),
     getDocs(query(collection(db(), PA_COLLECTIONS.agentTurns), where("userId", "==", candidateId))),
@@ -2132,6 +2233,11 @@ async function loadCandidateDrawerDetail(candidateId: string): Promise<Candidate
     resumeSnap.docs.map((snap) => ({ id: snap.id, ...snap.data() }) as DrawerDetailRow),
     ["updatedAt", "createdAt", "ingestedAt", "parsedAt"]
   )
+  const resumeArtifactRows = resumeArtifactSnap.docs.map((snap) => ({ id: snap.id, ...snap.data() }) as DrawerDetailRow)
+  if (latestResumeArtifactSnap?.exists() && !resumeArtifactRows.some((row) => row.id === latestResumeArtifactSnap.id)) {
+    resumeArtifactRows.push({ id: latestResumeArtifactSnap.id, ...latestResumeArtifactSnap.data() } as DrawerDetailRow)
+  }
+  const resumeArtifacts = sortCandidateDrawerRows(resumeArtifactRows, ["updatedAt", "createdAt"])
   const prescreens = sortCandidateDrawerRows(
     prescreenSnap.docs.map((snap) => ({ id: snap.id, ...snap.data() }) as DrawerDetailRow),
     ["updatedAt", "createdAt", "startedAt"]
@@ -2153,7 +2259,7 @@ async function loadCandidateDrawerDetail(candidateId: string): Promise<Candidate
     ...jobStates.map((row) => firstCandidateDrawerText(row["jobId"])),
   ])
   const jobLabels = Object.fromEntries(await Promise.all(jobIds.map(loadJobLabel)))
-  return { resumes, prescreens, messages, turns, jobStates, jobLabels }
+  return { resumes, resumeArtifacts, prescreens, messages, turns, jobStates, jobLabels }
 }
 
 async function loadJobLabel(jobId: string): Promise<[string, string]> {

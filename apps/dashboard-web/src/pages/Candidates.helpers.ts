@@ -124,3 +124,21 @@ export function candidateDrawerRegionCount(
   const count = Number.isFinite(total) && total > 0 ? Math.trunc(total) : 0
   return `${count} ${count === 1 ? singular : plural}`
 }
+
+export function candidateDrawerExternalHref(value?: string): string | undefined {
+  const raw = firstCandidateDrawerText(value)
+  if (!raw) return undefined
+  if (/^https?:\/\//i.test(raw)) return raw
+  return candidateDrawerStorageHref(raw)
+}
+
+function candidateDrawerStorageHref(value: string): string | undefined {
+  const match = /^gs:\/\/([^/]+)\/(.+)$/i.exec(value.trim())
+  if (!match) return undefined
+  const bucket = encodeURIComponent(match[1]!)
+  const objectPath = match[2]!
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/")
+  return `https://storage.cloud.google.com/${bucket}/${objectPath}`
+}

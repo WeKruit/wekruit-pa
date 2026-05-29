@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   classifyCandidateProfile,
+  candidateDrawerExternalHref,
   candidateDrawerPreviewMax,
   candidateDrawerRegionCount,
   candidateDrawerTimeMs,
@@ -195,4 +196,13 @@ test("Candidates drawer formats clear section count labels", () => {
   assert.equal(candidateDrawerRegionCount(1, "resume"), "1 resume")
   assert.equal(candidateDrawerRegionCount(3, "message"), "3 messages")
   assert.equal(candidateDrawerRegionCount(Number.NaN, "session"), "0 sessions")
+})
+
+test("Candidates drawer builds original resume file links from stored source refs", () => {
+  assert.equal(candidateDrawerExternalHref("https://storage.example/resume.pdf"), "https://storage.example/resume.pdf")
+  assert.equal(
+    candidateDrawerExternalHref("gs://wekruit-resumes/bulk uploads/Adam Resume.pdf"),
+    "https://storage.cloud.google.com/wekruit-resumes/bulk%20uploads/Adam%20Resume.pdf"
+  )
+  assert.equal(candidateDrawerExternalHref("inline://public-profile-upload.pdf"), undefined)
 })
