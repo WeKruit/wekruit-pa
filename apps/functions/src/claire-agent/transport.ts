@@ -104,6 +104,22 @@ export function createSendblueTransport(
     recordedEvents.push(value === undefined ? { kind } : { kind, value })
   }
 
+  // Resolve the conversation's Sendblue pool line ONCE per turn (memoized). Both the read
+  // receipt AND the typing indicator must come FROM this line or Sendblue can't match the
+  // thread → no "Read", no typing bubble. `undefined` (no pool / resolve error) lets the
+  // Sendblue clients fall back to creds.fromNumber — no regression on single-number accounts.
+  let fromNumberCache: string | undefined | "unresolved" = "unresolved"
+  const resolveFromNumber = async (): Promise<string | undefined> => {
+    if (fromNumberCache !== "unresolved") return fromNumberCache
+    try {
+      const { loadSendbluePool, pickFromNumber } = await import("../sendblue/pool.js")
+      fromNumberCache = pickFromNumber(await loadSendbluePool(deps.db), deps.userId) ?? undefined
+    } catch {
+      fromNumberCache = undefined
+    }
+    return fromNumberCache
+  }
+
   return {
     recordedEvents,
 
@@ -113,23 +129,15 @@ export function createSendblueTransport(
     async markRead(): Promise<void> {
       record("mark_read")
       if (dryRun) return
-      // Resolve the SAME pool line the reply uses (pickFromNumber(pool, userId)); the read receipt
-      // must come FROM that line or Sendblue can't match the thread → no "Read". Falls back to the
-      // env from_number (sendReadReceipt default) when no pool is configured → no regression.
-      let fromNumber: string | undefined
-      try {
-        const { loadSendbluePool, pickFromNumber } = await import("../sendblue/pool.js")
-        fromNumber = pickFromNumber(await loadSendbluePool(deps.db), deps.userId) ?? undefined
-      } catch {
-        /* pool resolution best-effort; sendReadReceipt falls back to creds.fromNumber */
-      }
+      // Read receipt AND typing both come FROM the resolved pool line (see resolveFromNumber).
+      const fromNumber = await resolveFromNumber()
       await Promise.allSettled([
         sendReadReceipt({ to: deps.toE164, fromNumber }).catch((err) =>
           log("claire.transport.markRead.error", {
             message: err instanceof Error ? err.message : String(err),
           }),
         ),
-        sendTypingIndicator({ to: deps.toE164 }).catch(() => {
+        sendTypingIndicator({ to: deps.toE164, fromNumber }).catch(() => {
           /* typing is pure UX; never block on it */
         }),
       ])
@@ -139,7 +147,8 @@ export function createSendblueTransport(
       record("typing")
       if (dryRun) return
       try {
-        await sendTypingIndicator({ to: deps.toE164 })
+        // typing reflex (before a slow tool) must also use the thread's pool line.
+        await sendTypingIndicator({ to: deps.toE164, fromNumber: await resolveFromNumber() })
       } catch (err) {
         log("claire.transport.typing.error", {
           message: err instanceof Error ? err.message : String(err),

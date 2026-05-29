@@ -15,6 +15,11 @@ const TYPING_TIMEOUT_MS = 5_000
 
 export type TypingIndicatorInput = {
   to: string
+  /** the Sendblue pool line this conversation is on; falls back to creds.fromNumber.
+   *  Required for multi-number pools — typing must come FROM the thread's line or
+   *  Sendblue can't match it to the conversation → no typing bubble (same constraint
+   *  as the read receipt). */
+  fromNumber?: string
 }
 
 export async function sendTypingIndicator(
@@ -34,7 +39,9 @@ export async function sendTypingIndicator(
       },
       body: JSON.stringify({
         number: input.to,
-        ...(creds.fromNumber ? { from_number: creds.fromNumber } : {}),
+        ...((input.fromNumber?.trim() || creds.fromNumber)
+          ? { from_number: input.fromNumber?.trim() || creds.fromNumber }
+          : {}),
       }),
       signal: ctrl.signal,
     })

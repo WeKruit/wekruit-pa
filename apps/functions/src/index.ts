@@ -972,6 +972,9 @@ async function processBrokerImessageEvent(
   // free-conversation (triage) turn, matching its triage-only mode and leaving the reducer-owned
   // FSMs to the legacy path. maybeRunThinClaire re-checks isThinClaireEnabled(userId) itself and
   // returns false on flag-off / any error, so non-canary users hit legacy below, unchanged.
+  // NOTE: thin is no longer triage-only — its mode-selector also runs ONBOARDING on the thin agent
+  // (reusing the canonical sharedOnboarding state + tag writer). An active prescreen still defers to
+  // the legacy runner (mode-selector returns deferToLegacy → maybeRunThinClaire returns false here).
   try {
     const thinHandled = await maybeRunThinClaire(db, claimed.id, {
       log: (e, p) => logger.info(`[thin-claire][onPaInbound] ${e}`, p ?? {}),

@@ -21,6 +21,7 @@ import type {
   ClaireTurnInput,
 } from "./types.js"
 import { buildClaireTools } from "./tools/index.js"
+import { persistOnboardingAnswerThrough, type ProcessSessionStore, type ProcessToolContext } from "./tools/process-tools.js"
 import { buildClairePrompt } from "./prompt.js"
 import { buildClaireGuardrails, normalizeReply } from "./guardrails.js"
 import { markReadReflex, wireTypingReflex, deliverFinalText } from "./delivery.js"
@@ -39,6 +40,10 @@ export interface BuildClaireAgentOptions {
   pendingStep?: string
   /** injected global read-context (canonical tags summary, prescreen history). */
   globalContext?: string
+  /** onboarding: the slot the inbound answers (the agent records THIS slot via the tool). */
+  onboardingSlot?: string
+  /** onboarding: false on the kickoff turn (ask only, don't record); true once a question was asked. */
+  awaitingAnswer?: boolean
 }
 
 /** Construct the single Claire agent (tools + guardrails + persona). */
@@ -53,6 +58,8 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
       lang: opts.lang,
       pendingStep: opts.pendingStep,
       globalContext: opts.globalContext,
+      onboardingSlot: opts.onboardingSlot,
+      awaitingAnswer: opts.awaitingAnswer,
     }),
     tools: buildClaireTools(ctx),
     inputGuardrails: guardrails.input,
@@ -125,6 +132,12 @@ export interface RunClaireTurnDeps {
   /** deterministic mode from durable process state (default "triage"). */
   mode?: ClaireMode
   pendingStep?: string
+  /** per-turn process store seeded from durable state (mode-selector); the FSM tools read/write it. */
+  processStore?: ProcessSessionStore
+  /** onboarding: the slot the inbound answers (the agent records it via record_onboarding_answer). */
+  onboardingSlot?: string
+  /** onboarding: false on the kickoff turn (ask only); true once a question was asked. */
+  awaitingAnswer?: boolean
 }
 
 /**
@@ -150,6 +163,9 @@ export async function runClaireTurn(
     nowIso: deps.nowIso ?? (() => new Date().toISOString()),
     findMatch: deps.findMatch,
   }
+  // Inject the per-turn process store seeded from durable state (mode-selector) so the onboarding/
+  // prescreen FSM tools enforce order + write through to the canonical interface.
+  if (deps.processStore) (ctx as ProcessToolContext).processStore = deps.processStore
 
   // Tier-1 reflex: mark-read (real read receipt) + typing on EVERY inbound. FIRE-AND-FORGET —
   // these make network calls and awaiting them added seconds to the first reply. They run in
@@ -162,6 +178,8 @@ export async function runClaireTurn(
     lang,
     pendingStep: deps.pendingStep,
     globalContext,
+    onboardingSlot: deps.onboardingSlot,
+    awaitingAnswer: deps.awaitingAnswer,
   })
   const session = makeClaireSession({
     db: deps.db,
@@ -214,6 +232,21 @@ export async function runClaireTurn(
   await deliverFinalText(ctx, finalText, deliveredViaTool).catch((e) =>
     log("deliverFinalText_failed", { err: String(e) }),
   )
+
+  // ONBOARDING NET — the agent normally records via the record_onboarding_answer TOOL (which writes
+  // the canonical pa-users.tags + sharedOnboarding interface). gpt-5.4-nano intermittently skips that
+  // call (live sim: ~1/5, esp. the completion turn → onboarding never completes). If we were awaiting
+  // an answer and the tool did NOT fire (the slot isn't in the seeded store's answers after the run),
+  // persist it deterministically via the SAME writer. Guarantees no dropped slot; never a 2nd write.
+  if (deps.mode === "onboarding" && deps.awaitingAnswer && deps.onboardingSlot) {
+    const recorded = !!deps.processStore?.onboarding.answers?.[deps.onboardingSlot]
+    if (!recorded && input.text.trim()) {
+      await persistOnboardingAnswerThrough(ctx, deps.onboardingSlot, input.text).catch((e) =>
+        log("onboarding.net_record_failed", { slot: deps.onboardingSlot, err: String(e) }),
+      )
+      log("onboarding.net_recorded", { slot: deps.onboardingSlot })
+    }
+  }
 
   return { finalText, toolCalls: [], deliveredViaTool: deliveredViaTool || blocked }
 }

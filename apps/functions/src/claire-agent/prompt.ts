@@ -18,6 +18,10 @@ export interface ClairePromptOptions {
   pendingStep?: string
   /** injected global read-context (canonical tags summary, prescreen history). */
   globalContext?: string
+  /** onboarding: the slot the inbound answers (the agent records THIS slot via the tool). */
+  onboardingSlot?: string
+  /** onboarding: false on the kickoff turn (ask only, don't record); true once a question was asked. */
+  awaitingAnswer?: boolean
 }
 
 const PERSONA = [
@@ -66,14 +70,33 @@ const FLEXIBILITY = [
   "Process state is durable — you won't lose their place.",
 ].join(" ")
 
-function modeDirective(mode: ClaireMode): string {
+function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
   switch (mode) {
-    case "onboarding":
+    case "onboarding": {
+      const slot = opts?.onboardingSlot ?? ""
+      const nextQ = opts?.pendingStep?.trim()
+      const turnLine = opts?.awaitingAnswer
+        ? [
+            `The candidate's latest message ANSWERS the onboarding slot "${slot}". You MUST first call`,
+            `record_onboarding_answer(slot:"${slot}", answer:<their message, verbatim>) — this SAVES it to their`,
+            "durable profile (tags: where they want to work, expected company size, industry, status, etc.).",
+            nextQ
+              ? `THEN ask this next question, phrased warmly in your voice (exactly one question): ${nextQ}`
+              : "That was the LAST question — after recording, wrap up warmly and offer to find matches. Ask nothing more.",
+          ]
+        : [
+            "This is the FIRST onboarding turn (a greeting/kickoff, not an answer) — do NOT record anything.",
+            nextQ
+              ? `Just ask this question, phrased warmly (a short résumé-aware lead-in is great): ${nextQ}`
+              : "Ask the first onboarding question warmly.",
+          ]
       return [
-        "MODE = ONBOARDING. On EACH of their replies you MUST: (1) call ask_next_onboarding_question to get",
-        "the pending slot, (2) call record_onboarding_answer with that exact slot id + their answer, (3) ask the",
-        "NEXT pending slot in your text. You CANNOT skip slots — the reducer enforces order. Repeat until complete.",
+        "MODE = ONBOARDING. You collect the candidate's profile through the onboarding TOOLS — these write the",
+        "SAME canonical profile (pa-users.tags + preferences) the matcher uses. The reducer enforces slot order;",
+        "you can never skip, batch, or invent questions.",
+        ...turnLine,
       ].join(" ")
+    }
     case "prescreen":
       return [
         "MODE = PRESCREEN (job interview). On EACH candidate reply you MUST: (1) call ask_next_prescreen_question",
@@ -111,10 +134,14 @@ export function buildClairePrompt(opts: ClairePromptOptions): string {
     VOICE,
     PREFERENCES,
     DELIVERY,
-    modeDirective(opts.mode),
+    modeDirective(opts.mode, opts),
     FLEXIBILITY,
     opts.globalContext ? `CONTEXT — ${opts.globalContext}` : "",
-    opts.pendingStep ? `PENDING STEP to resume after any tangent: ${opts.pendingStep}.` : "",
+    // onboarding folds pendingStep into its directive (the next question to ask); other modes
+    // surface it as a resume-after-tangent reminder.
+    opts.pendingStep && opts.mode !== "onboarding"
+      ? `PENDING STEP to resume after any tangent: ${opts.pendingStep}.`
+      : "",
     FEWSHOT,
   ]
     .filter(Boolean)

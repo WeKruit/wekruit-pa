@@ -317,7 +317,13 @@ var init_pool = __esm({
 // apps/functions/src/claire-agent/sdk.ts
 import { createRequire } from "node:module";
 import OpenAI from "openai";
-var req = createRequire(import.meta.url);
+var baseRequire = createRequire(import.meta.url);
+var req;
+try {
+  req = createRequire(baseRequire.resolve("@pa/agent-runtime/package.json"));
+} catch {
+  req = baseRequire;
+}
 var sdk = req("@openai/agents");
 var z = req("zod");
 var Agent = sdk.Agent;
@@ -1539,6 +1545,16 @@ function recordOnboardingAnswer(state, slot, answer) {
   return { ok: true, recorded: slot, pending: next, complete: state.complete };
 }
 
+// apps/functions/src/claire-agent/tools/process-tools.ts
+import {
+  projectSharedOnboardingAnswer,
+  resolveNextSharedOnboardingQuestionId,
+  applyPartialUserTags as applyPartialUserTags2,
+  buildSharedOnboardingPrompt,
+  getSharedOnboardingQuestion,
+  SHARED_ONBOARDING_WORK_SESSION_KIND
+} from "@pa/pa-orchestrator";
+
 // apps/functions/src/claire-agent/reducers/prescreen-fsm.ts
 var DEFAULT_PRESCREEN_THRESHOLD = 0.6;
 function earliestPending2(state) {
@@ -1596,6 +1612,9 @@ function recordPrescreenScore(state, question, score) {
 }
 
 // apps/functions/src/claire-agent/tools/process-tools.ts
+function asSharedSlot(slot) {
+  return DEFAULT_ONBOARDING_SLOTS.includes(slot) ? slot : null;
+}
 function emptyProcessStore() {
   return {
     onboarding: { slots: [...DEFAULT_ONBOARDING_SLOTS], answers: {}, complete: false },
@@ -1607,6 +1626,56 @@ function emptyProcessStore() {
       terminalCommits: 0
     }
   };
+}
+function hasKeys(o) {
+  return !!o && typeof o === "object" && Object.keys(o).length > 0;
+}
+async function persistOnboardingAnswerThrough(ctx, slot, answer) {
+  const sp = asSharedSlot(slot);
+  if (!sp) return;
+  const now = ctx.nowIso();
+  const projection = projectSharedOnboardingAnswer(sp, answer);
+  const next = resolveNextSharedOnboardingQuestionId(sp);
+  if (hasKeys(projection.tags)) {
+    await applyPartialUserTags2(ctx.db, ctx.userId, projection.tags, {
+      source: "chat",
+      nowIso: now,
+      log: (name, payload) => ctx.log(name, payload ?? {})
+    }).catch(
+      (err) => ctx.log("onboarding.tags_error", { slot, error: err instanceof Error ? err.message : String(err) })
+    );
+  }
+  await ctx.db.collection("pa-users").doc(ctx.userId).set(
+    {
+      onboardingState: next.completed ? "complete" : "pending",
+      onboardingStatus: next.completed ? "complete" : "invited",
+      updatedAt: now,
+      ...hasKeys(projection.statedPreferences) ? { statedPreferences: projection.statedPreferences } : {},
+      sharedOnboarding: {
+        status: next.completed ? "complete" : "active",
+        updatedAt: now,
+        currentQuestionId: next.nextQuestionId,
+        completed: next.completed,
+        ...next.completed ? { completedAt: now } : {},
+        answers: {
+          [sp]: {
+            answer: answer.trim(),
+            answeredAt: now,
+            questionId: sp,
+            questionLabel: getSharedOnboardingQuestion(sp).label,
+            evidence: projection.evidence
+          }
+        }
+      },
+      workSession: {
+        kind: SHARED_ONBOARDING_WORK_SESSION_KIND,
+        status: next.completed ? "ended" : "active",
+        currentQuestionId: next.nextQuestionId,
+        ...next.completed ? { endedAt: now, boundary: "completed" } : {}
+      }
+    },
+    { merge: true }
+  );
 }
 function makeJudge(model) {
   return new Agent({
@@ -1626,28 +1695,37 @@ function buildProcessTools(ctx, prescreenPrompts = {}) {
   const judge = makeJudge(ctx.judgeModel);
   const askNextOnboarding = tool({
     name: "ask_next_onboarding_question",
-    description: "Get the next onboarding slot to ask. Returns the pending slot id + prompt, or done.",
+    description: "Get the next onboarding question to ask. Returns the pending slot id + the natural-language prompt to phrase, or done.",
     parameters: z.object({}),
     async execute() {
       const next = nextOnboardingSlot(store.onboarding);
       ctx.log("onboarding.ask_next", { pending: next.pending, complete: next.complete });
-      return next.pending ? { pending: next.pending, prompt: next.prompt } : { pending: null, complete: true };
+      if (!next.pending) return { pending: null, complete: true };
+      const sp = asSharedSlot(next.pending);
+      const prompt = sp ? buildSharedOnboardingPrompt(sp, null) : next.prompt;
+      return { pending: next.pending, prompt };
     }
   });
   const recordOnboarding = tool({
     name: "record_onboarding_answer",
-    description: "Record the candidate's answer to the CURRENT onboarding slot. Reducer advances; you cannot skip slots.",
+    description: "Record the candidate's answer to the CURRENT onboarding slot. The reducer advances (you cannot skip slots) AND this persists their answer into their durable profile: tags (where they want to work, expected company size, industry, etc.), stated preferences, and onboarding progress.",
     parameters: z.object({ slot: z.string(), answer: z.string() }),
     async execute({ slot, answer }) {
       const result = recordOnboardingAnswer(store.onboarding, slot, answer);
-      ctx.log("onboarding.record", {
-        slot,
-        ok: result.ok,
-        reason: result.reason,
-        pending: result.pending,
-        complete: result.complete
-      });
-      return result;
+      if (!result.ok) {
+        ctx.log("onboarding.record.rejected", { slot, reason: result.reason, pending: result.pending });
+        return result;
+      }
+      await persistOnboardingAnswerThrough(ctx, slot, answer).catch(
+        (err) => ctx.log("onboarding.record.persist_error", {
+          slot,
+          error: err instanceof Error ? err.message : String(err)
+        })
+      );
+      ctx.log("onboarding.record", { slot, pending: result.pending, complete: result.complete });
+      const nextSlot = result.pending ? asSharedSlot(result.pending) : null;
+      const nextPrompt = nextSlot ? buildSharedOnboardingPrompt(nextSlot, null) : void 0;
+      return { ...result, ...nextPrompt ? { nextPrompt } : {} };
     }
   });
   const askNextPrescreen = tool({
@@ -1723,8 +1801,19 @@ function buildClaireTools(ctx) {
 var PERSONA = [
   "You are Claire, a warm, concise recruiter friend texting a candidate on iMessage.",
   "Text like a real friend: short (1-2 sentences), lowercase-ok, contractions, use 2025 slang naturally",
-  "(lfg, cooked, lock in, \u5377, \u6446\u70C2) only when it matches their register. No markdown, no bullet lists,",
-  "no repeated openers, never say you're an AI or a bot. Mirror their language (English or Mandarin)."
+  "(lfg, cooked, lock in, \u5377, \u6446\u70C2) only when it matches their register. Never say you're an AI or a bot.",
+  "Mirror their language (English or Mandarin)."
+].join(" ");
+var VOICE = [
+  "VOICE DISCIPLINE (iMessage is plain text \u2014 these are hard rules, not suggestions):",
+  "- NEVER use markdown. No *asterisks*, no _underscores_, no `backticks`, no #headers, and no",
+  "  '-'/'\u2022'/'1.' bullet lists. They render as literal junk characters on a phone. Write plain prose;",
+  "  if you must list 2-3 things, do it inline in a sentence or on separate lines with NO bullet marker.",
+  "- Keep every NON-recommendation reply under ~280 characters (roughly 2 short sentences). Recommendation",
+  "  lists (job title + link lines) are the only thing allowed to be longer. Do not pad as the chat grows.",
+  "- VARY your opener every turn. Do NOT start two replies in the same conversation with the same first",
+  "  word/phrase ('got it', 'got you', 'one sec', 'right now'). If you just used one, pick a different",
+  "  lead-in or none at all. Repetition reads like a broken bot over a long thread."
 ].join(" ");
 var DELIVERY = [
   "DELIVERY:",
@@ -1738,21 +1827,36 @@ var DELIVERY = [
 var PREFERENCES = [
   "PREFERENCES: persist durable role/job-type/location prefs with set_matching_preferences BEFORE matching.",
   "'only X' / 'just X' / 'switch to X' \u2192 onlyRoleFunctions (a REPLACE).",
-  "'done with Y' / 'avoid Y' / 'not interested in Y' \u2192 avoidRoleFunctions.",
+  "'done with Y' / 'avoid Y' / 'not interested in Y' / 'scrap Y' / 'take Y back off' / 'remove Y' /",
+  "'drop Y' / 'no longer want Y' \u2192 avoidRoleFunctions (this REMOVES Y you previously added). You MUST",
+  "call set_matching_preferences for these BEFORE replying \u2014 do not just say you removed it in text.",
   "Never compose an additive sentence ('I'll keep both') from a negative statement \u2014 a 'done with X' means X is REMOVED."
 ].join(" ");
 var FLEXIBILITY = [
   "FLEXIBILITY: the candidate can ask anything mid-flow. Answer it, then steer back to the pending step.",
   "Process state is durable \u2014 you won't lose their place."
 ].join(" ");
-function modeDirective(mode) {
+function modeDirective(mode, opts) {
   switch (mode) {
-    case "onboarding":
+    case "onboarding": {
+      const slot = opts?.onboardingSlot ?? "";
+      const nextQ = opts?.pendingStep?.trim();
+      const turnLine = opts?.awaitingAnswer ? [
+        `The candidate's latest message ANSWERS the onboarding slot "${slot}". You MUST first call`,
+        `record_onboarding_answer(slot:"${slot}", answer:<their message, verbatim>) \u2014 this SAVES it to their`,
+        "durable profile (tags: where they want to work, expected company size, industry, status, etc.).",
+        nextQ ? `THEN ask this next question, phrased warmly in your voice (exactly one question): ${nextQ}` : "That was the LAST question \u2014 after recording, wrap up warmly and offer to find matches. Ask nothing more."
+      ] : [
+        "This is the FIRST onboarding turn (a greeting/kickoff, not an answer) \u2014 do NOT record anything.",
+        nextQ ? `Just ask this question, phrased warmly (a short r\xE9sum\xE9-aware lead-in is great): ${nextQ}` : "Ask the first onboarding question warmly."
+      ];
       return [
-        "MODE = ONBOARDING. On EACH of their replies you MUST: (1) call ask_next_onboarding_question to get",
-        "the pending slot, (2) call record_onboarding_answer with that exact slot id + their answer, (3) ask the",
-        "NEXT pending slot in your text. You CANNOT skip slots \u2014 the reducer enforces order. Repeat until complete."
+        "MODE = ONBOARDING. You collect the candidate's profile through the onboarding TOOLS \u2014 these write the",
+        "SAME canonical profile (pa-users.tags + preferences) the matcher uses. The reducer enforces slot order;",
+        "you can never skip, batch, or invent questions.",
+        ...turnLine
       ].join(" ");
+    }
     case "prescreen":
       return [
         "MODE = PRESCREEN (job interview). On EACH candidate reply you MUST: (1) call ask_next_prescreen_question",
@@ -1782,12 +1886,15 @@ function buildClairePrompt(opts) {
   return [
     PERSONA,
     langLine,
+    VOICE,
     PREFERENCES,
     DELIVERY,
-    modeDirective(opts.mode),
+    modeDirective(opts.mode, opts),
     FLEXIBILITY,
     opts.globalContext ? `CONTEXT \u2014 ${opts.globalContext}` : "",
-    opts.pendingStep ? `PENDING STEP to resume after any tangent: ${opts.pendingStep}.` : "",
+    // onboarding folds pendingStep into its directive (the next question to ask); other modes
+    // surface it as a resume-after-tangent reminder.
+    opts.pendingStep && opts.mode !== "onboarding" ? `PENDING STEP to resume after any tangent: ${opts.pendingStep}.` : "",
     FEWSHOT
   ].filter(Boolean).join("\n");
 }
@@ -1938,7 +2045,9 @@ function buildClaireAgent(ctx, opts) {
       mode: opts.mode,
       lang: opts.lang,
       pendingStep: opts.pendingStep,
-      globalContext: opts.globalContext
+      globalContext: opts.globalContext,
+      onboardingSlot: opts.onboardingSlot,
+      awaitingAnswer: opts.awaitingAnswer
     }),
     tools: buildClaireTools(ctx),
     inputGuardrails: guardrails.input,
@@ -2005,13 +2114,16 @@ async function runClaireTurn(input, deps) {
     nowIso: deps.nowIso ?? (() => (/* @__PURE__ */ new Date()).toISOString()),
     findMatch: deps.findMatch
   };
-  await markReadReflex(ctx).catch((e) => log("markReadReflex_failed", { err: String(e) }));
+  if (deps.processStore) ctx.processStore = deps.processStore;
+  void markReadReflex(ctx).catch((e) => log("markReadReflex_failed", { err: String(e) }));
   const globalContext = await loadGlobalContext(deps.db, input.userId);
   const agent = buildClaireAgent(ctx, {
     mode: deps.mode ?? "triage",
     lang,
     pendingStep: deps.pendingStep,
-    globalContext
+    globalContext,
+    onboardingSlot: deps.onboardingSlot,
+    awaitingAnswer: deps.awaitingAnswer
   });
   const session = makeClaireSession({
     db: deps.db,
@@ -2057,6 +2169,15 @@ async function runClaireTurn(input, deps) {
   await deliverFinalText(ctx, finalText, deliveredViaTool).catch(
     (e) => log("deliverFinalText_failed", { err: String(e) })
   );
+  if (deps.mode === "onboarding" && deps.awaitingAnswer && deps.onboardingSlot) {
+    const recorded = !!deps.processStore?.onboarding.answers?.[deps.onboardingSlot];
+    if (!recorded && input.text.trim()) {
+      await persistOnboardingAnswerThrough(ctx, deps.onboardingSlot, input.text).catch(
+        (e) => log("onboarding.net_record_failed", { slot: deps.onboardingSlot, err: String(e) })
+      );
+      log("onboarding.net_recorded", { slot: deps.onboardingSlot });
+    }
+  }
   return { finalText, toolCalls: [], deliveredViaTool: deliveredViaTool || blocked };
 }
 
@@ -2230,7 +2351,7 @@ async function sendTypingIndicator(input, creds = getSendblueCreds(), log = cons
       },
       body: JSON.stringify({
         number: input.to,
-        ...creds.fromNumber ? { from_number: creds.fromNumber } : {}
+        ...input.fromNumber?.trim() || creds.fromNumber ? { from_number: input.fromNumber?.trim() || creds.fromNumber } : {}
       }),
       signal: ctrl.signal
     });
@@ -2246,6 +2367,44 @@ async function sendTypingIndicator(input, creds = getSendblueCreds(), log = cons
   } finally {
     clearTimeout(t);
   }
+}
+
+// apps/functions/src/sendblue/read-receipt.ts
+var MARK_READ_URLS = [
+  "https://api.sendblue.com/api/mark-read",
+  "https://api.sendblue.co/api/mark-read"
+];
+var MARK_READ_TIMEOUT_MS = 3e3;
+async function sendReadReceipt(input, creds = getSendblueCreds(), log = console.log) {
+  const fromNumber = input.fromNumber?.trim() || creds.fromNumber;
+  const body = JSON.stringify({
+    number: input.to,
+    ...fromNumber ? { from_number: fromNumber } : {}
+  });
+  await Promise.allSettled(
+    MARK_READ_URLS.map(async (url) => {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), MARK_READ_TIMEOUT_MS);
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: {
+            "sb-api-key-id": creds.apiKeyId,
+            "sb-api-secret-key": creds.apiSecretKey,
+            "content-type": "application/json"
+          },
+          body,
+          signal: ctrl.signal
+        });
+        const txt = resp.ok ? "" : await resp.text().catch(() => "");
+        log(`[sendblue][mark-read] ${resp.ok ? "ok" : "non-2xx"}`, url, resp.status, txt.slice(0, 160));
+      } catch (err) {
+        log("[sendblue][mark-read] error", url, err instanceof Error ? err.message : String(err));
+      } finally {
+        clearTimeout(t);
+      }
+    })
+  );
 }
 
 // apps/functions/src/sendblue/send-reaction.ts
@@ -2357,31 +2516,47 @@ function createSendblueTransport(deps) {
   const dryRun = deps.dryRun === true;
   const sendImessage2 = deps.sendImessage ?? sendImessage;
   const sendTypingIndicator2 = deps.sendTypingIndicator ?? sendTypingIndicator;
+  const sendReadReceipt2 = deps.sendReadReceipt ?? sendReadReceipt;
   const sendReaction2 = deps.sendReaction ?? sendReaction;
   const enqueueOutbound = deps.enqueueOutbound ?? defaultEnqueueOutbound;
   const record = (kind, value) => {
     recordedEvents.push(value === void 0 ? { kind } : { kind, value });
   };
+  let fromNumberCache = "unresolved";
+  const resolveFromNumber = async () => {
+    if (fromNumberCache !== "unresolved") return fromNumberCache;
+    try {
+      const { loadSendbluePool: loadSendbluePool2, pickFromNumber: pickFromNumber2 } = await Promise.resolve().then(() => (init_pool(), pool_exports));
+      fromNumberCache = pickFromNumber2(await loadSendbluePool2(deps.db), deps.userId) ?? void 0;
+    } catch {
+      fromNumberCache = void 0;
+    }
+    return fromNumberCache;
+  };
   return {
     recordedEvents,
-    // Sendblue has NO read-receipt endpoint → an immediate typing indicator is
-    // the closest read signal (AGENTIC-ARCHITECTURE §7).
+    // Sendblue DOES support read receipts (POST /api/mark-read). Fire the REAL receipt (blue
+    // "Read" label) AND the typing bubble in PARALLEL — both are best-effort UX, and the caller
+    // runs this fire-and-forget so it never sits on the reply's critical path.
     async markRead() {
       record("mark_read");
       if (dryRun) return;
-      try {
-        await sendTypingIndicator2({ to: deps.toE164 });
-      } catch (err) {
-        log("claire.transport.markRead.error", {
-          message: err instanceof Error ? err.message : String(err)
-        });
-      }
+      const fromNumber = await resolveFromNumber();
+      await Promise.allSettled([
+        sendReadReceipt2({ to: deps.toE164, fromNumber }).catch(
+          (err) => log("claire.transport.markRead.error", {
+            message: err instanceof Error ? err.message : String(err)
+          })
+        ),
+        sendTypingIndicator2({ to: deps.toE164, fromNumber }).catch(() => {
+        })
+      ]);
     },
     async typing() {
       record("typing");
       if (dryRun) return;
       try {
-        await sendTypingIndicator2({ to: deps.toE164 });
+        await sendTypingIndicator2({ to: deps.toE164, fromNumber: await resolveFromNumber() });
       } catch (err) {
         log("claire.transport.typing.error", {
           message: err instanceof Error ? err.message : String(err)
@@ -2455,6 +2630,214 @@ function createSendblueTransport(deps) {
     }
   };
 }
+
+// apps/functions/src/claire-agent/cutover.ts
+import { PA_COLLECTIONS as PA_COLLECTIONS3 } from "@pa/core-types";
+
+// apps/functions/src/claire-agent/flags.ts
+import { getFlag } from "@pa/pa-persistence";
+var THIN_CLAIRE_FLAG_KEY = "paThinClaireEnabled";
+var THIN_CLAIRE_CANARY_UIDS = [
+  "8fEwIduUrzxZsblHHsNz",
+  "LF8blURXyFBaeF7bhupu"
+];
+var THIN_CLAIRE_FLAG_SEED = {
+  key: THIN_CLAIRE_FLAG_KEY,
+  value: false,
+  type: "bool",
+  scope: "perUser",
+  allowlist: [...THIN_CLAIRE_CANARY_UIDS],
+  blocklist: []
+};
+async function isThinClaireEnabled(db, userId) {
+  const value = await getFlag(db, THIN_CLAIRE_FLAG_KEY, { userId }, false);
+  return value === true;
+}
+
+// apps/functions/src/claire-agent/mode-selector.ts
+import {
+  isSharedOnboardingActiveUser,
+  currentSharedOnboardingQuestionId,
+  resolveNextSharedOnboardingQuestionId as resolveNextSharedOnboardingQuestionId2,
+  buildSharedOnboardingPrompt as buildSharedOnboardingPrompt2,
+  SHARED_ONBOARDING_WORK_SESSION_KIND as SHARED_ONBOARDING_WORK_SESSION_KIND2
+} from "@pa/pa-orchestrator";
+var USERS = "pa-users";
+var PRESCREEN_SESSIONS = "pa-prescreen-sessions";
+async function hasActivePrescreen(db, userId) {
+  try {
+    const snap = await db.collection(PRESCREEN_SESSIONS).where("userId", "==", userId).where("terminal", "==", null).limit(1).get();
+    if (snap.empty) return { active: false };
+    const d = snap.docs[0].data();
+    return { active: true, jobId: typeof d.jobId === "string" ? d.jobId : void 0 };
+  } catch {
+    return { active: false };
+  }
+}
+async function bootstrapOnboarding(db, userId, now) {
+  await db.collection(USERS).doc(userId).set(
+    {
+      onboardingState: "pending",
+      onboardingStatus: "invited",
+      updatedAt: now,
+      sharedOnboarding: {
+        status: "active",
+        startedAt: now,
+        updatedAt: now,
+        currentQuestionId: "main_goal",
+        questionOrder: [...DEFAULT_ONBOARDING_SLOTS],
+        answers: {},
+        completed: false
+      },
+      workSession: {
+        kind: SHARED_ONBOARDING_WORK_SESSION_KIND2,
+        status: "active",
+        startedAt: now,
+        currentQuestionId: "main_goal",
+        boundary: "shared_onboarding"
+      }
+    },
+    { merge: true }
+  );
+}
+function seedStore(answeredSlots) {
+  const store = emptyProcessStore();
+  store.onboarding = {
+    slots: [...DEFAULT_ONBOARDING_SLOTS],
+    answers: Object.fromEntries(answeredSlots.map((s) => [s, "recorded"])),
+    complete: false
+  };
+  return store;
+}
+async function selectClaireMode(args) {
+  const log = args.log ?? (() => {
+  });
+  const now = (args.nowIso ?? (() => (/* @__PURE__ */ new Date()).toISOString()))();
+  const ps = await hasActivePrescreen(args.db, args.userId);
+  if (ps.active) {
+    log("mode.prescreen_defer_legacy", { userId: args.userId, jobId: ps.jobId });
+    return { mode: "prescreen", deferToLegacy: true, jobId: ps.jobId };
+  }
+  let user = {};
+  try {
+    const snap = await args.db.collection(USERS).doc(args.userId).get();
+    user = (snap.exists ? snap.data() : {}) ?? {};
+  } catch {
+    return { mode: "triage" };
+  }
+  const shared = user.sharedOnboarding ?? null;
+  const onboardingComplete = shared?.completed === true || user.onboardingState === "complete";
+  if (!onboardingComplete) {
+    try {
+      if (!isSharedOnboardingActiveUser(user)) {
+        await bootstrapOnboarding(args.db, args.userId, now);
+        log("mode.onboarding_bootstrap", { userId: args.userId });
+        return {
+          mode: "onboarding",
+          awaitingAnswer: false,
+          onboardingSlot: "main_goal",
+          pendingStep: buildSharedOnboardingPrompt2("main_goal", null),
+          processStore: seedStore([])
+        };
+      }
+      const cur = currentSharedOnboardingQuestionId(user);
+      const answeredSlots = Object.keys(shared?.answers ?? {});
+      const next = resolveNextSharedOnboardingQuestionId2(cur);
+      log("mode.onboarding_active", { userId: args.userId, currentSlot: cur, next: next.nextQuestionId, answered: answeredSlots.length });
+      return {
+        mode: "onboarding",
+        awaitingAnswer: true,
+        onboardingSlot: cur,
+        ...next.nextQuestionId ? { pendingStep: buildSharedOnboardingPrompt2(next.nextQuestionId, null) } : {},
+        processStore: seedStore(answeredSlots)
+      };
+    } catch (err) {
+      log("mode.onboarding_error", {
+        userId: args.userId,
+        error: err instanceof Error ? err.message : String(err)
+      });
+      return { mode: "triage" };
+    }
+  }
+  return { mode: "triage" };
+}
+
+// apps/functions/src/claire-agent/cutover.ts
+async function maybeRunThinClaire(db, eventId, deps = {}) {
+  const log = deps.log ?? (() => {
+  });
+  let data;
+  try {
+    const snap = await db.collection(PA_COLLECTIONS3.inboundEvents).doc(eventId).get();
+    if (!snap.exists) return false;
+    data = snap.data() ?? {};
+  } catch {
+    return false;
+  }
+  const userId = typeof data.userId === "string" ? data.userId : void 0;
+  const sessionId = typeof data.sessionId === "string" ? data.sessionId : void 0;
+  const text = typeof data.body === "string" ? data.body : typeof data.text === "string" ? data.text : "";
+  if (!userId || !sessionId || !text.trim()) return false;
+  let enabled = false;
+  try {
+    enabled = await isThinClaireEnabled(db, userId);
+  } catch {
+    return false;
+  }
+  if (!enabled) return false;
+  const rawMeta = data.rawMeta ?? {};
+  const toE164 = typeof data.fromNumber === "string" && data.fromNumber || typeof data.externalChatId === "string" && data.externalChatId || typeof data.from === "string" && data.from || "";
+  const inboundMessageHandle = typeof rawMeta.messageHandle === "string" ? rawMeta.messageHandle : void 0;
+  const lang = data.lang === "zh" ? "zh" : "en";
+  const decision = await selectClaireMode({ db, userId, inboundText: text, log });
+  if (decision.deferToLegacy) {
+    log("thin_claire_defer_legacy", { eventId, userId, mode: decision.mode, jobId: decision.jobId });
+    return false;
+  }
+  try {
+    const transport = createSendblueTransport({
+      db,
+      toE164: String(toE164),
+      inboundMessageHandle,
+      userId,
+      sessionId,
+      log,
+      ...deps.dryRun ? { dryRun: true } : {}
+    });
+    await runClaireTurn(
+      {
+        userId,
+        sessionId,
+        text,
+        toE164: toE164 ? String(toE164) : void 0,
+        inboundMessageHandle,
+        inboundEventId: eventId,
+        lang
+      },
+      {
+        db,
+        transport,
+        findMatch: makeV16FindMatch(db),
+        log,
+        mode: decision.mode,
+        ...decision.pendingStep ? { pendingStep: decision.pendingStep } : {},
+        ...decision.processStore ? { processStore: decision.processStore } : {},
+        ...decision.onboardingSlot ? { onboardingSlot: decision.onboardingSlot } : {},
+        ...decision.awaitingAnswer !== void 0 ? { awaitingAnswer: decision.awaitingAnswer } : {}
+      }
+    );
+    await db.collection(PA_COLLECTIONS3.inboundEvents).doc(eventId).set({ status: "completed", handledBy: "thin_claire" }, { merge: true });
+    log("thin_claire_handled", { eventId, userId });
+    return true;
+  } catch (e) {
+    log("thin_claire_failed_fallthrough", {
+      eventId,
+      userId,
+      err: e instanceof Error ? e.message : String(e)
+    });
+    return false;
+  }
+}
 export {
   Agent,
   CLAIRE_MODEL,
@@ -2470,9 +2853,11 @@ export {
   deliverFinalText,
   makeV16FindMatch,
   markReadReflex,
+  maybeRunThinClaire,
   normalizeReply,
   run,
   runClaireTurn,
+  selectClaireMode,
   tool,
   wireTypingReflex,
   z

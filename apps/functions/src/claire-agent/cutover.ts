@@ -17,6 +17,7 @@ import { isThinClaireEnabled } from "./flags.js"
 import { runClaireTurn } from "./agent.js"
 import { createSendblueTransport } from "./transport.js"
 import { makeV16FindMatch } from "./tools/matching-tools.js"
+import { selectClaireMode } from "./mode-selector.js"
 import type { ClaireLang } from "./types.js"
 
 export interface MaybeThinClaireDeps {
@@ -70,6 +71,15 @@ export async function maybeRunThinClaire(
     typeof rawMeta.messageHandle === "string" ? rawMeta.messageHandle : undefined
   const lang: ClaireLang = data.lang === "zh" ? "zh" : "en"
 
+  // Deterministic mode pick from durable state (onboarding/prescreen/triage). An active
+  // prescreen DEFERS this turn to the proven legacy runner (return false → legacy handles it).
+  // Fail-safe: selectClaireMode never throws — any read error degrades to triage.
+  const decision = await selectClaireMode({ db, userId, inboundText: text, log })
+  if (decision.deferToLegacy) {
+    log("thin_claire_defer_legacy", { eventId, userId, mode: decision.mode, jobId: decision.jobId })
+    return false
+  }
+
   try {
     const transport = createSendblueTransport({
       db,
@@ -90,7 +100,17 @@ export async function maybeRunThinClaire(
         inboundEventId: eventId,
         lang,
       },
-      { db, transport, findMatch: makeV16FindMatch(db), log },
+      {
+        db,
+        transport,
+        findMatch: makeV16FindMatch(db),
+        log,
+        mode: decision.mode,
+        ...(decision.pendingStep ? { pendingStep: decision.pendingStep } : {}),
+        ...(decision.processStore ? { processStore: decision.processStore } : {}),
+        ...(decision.onboardingSlot ? { onboardingSlot: decision.onboardingSlot } : {}),
+        ...(decision.awaitingAnswer !== undefined ? { awaitingAnswer: decision.awaitingAnswer } : {}),
+      },
     )
     await db
       .collection(PA_COLLECTIONS.inboundEvents)
