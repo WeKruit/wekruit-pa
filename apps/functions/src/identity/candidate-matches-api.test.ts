@@ -151,6 +151,7 @@ test("runCandidateListMatches recommends published jobs from parsed candidate ta
   })
   await mfs.collection("pa-jobs").doc("job-fit").set({
     publicVisible: true,
+    wekruitCollaborationStatus: "collaborated",
     status: "active",
     title: "Backend Engineer",
     companyName: "Rain",
@@ -199,6 +200,9 @@ test("runCandidateListMatches recommends published jobs from parsed candidate ta
   assert.equal(result.matches[0]!.job.href, "/j/job-fit")
   assert.equal(result.matches[0]!.job.salaryRange, "$150k-$220k")
   assert.match(result.matches[0]!.whyMatched.join(" "), /python|sql|software_engineering|financial_technology/)
+  assert.equal(result.matches[0]!.collab, true)
+  // job-weak is publicVisible but NOT collaborated → no longer surfaced.
+  assert.equal(result.matches.some((match) => match.jobId === "job-weak"), false)
   assert.equal(result.matches.some((match) => match.jobId === "job-hidden"), false)
 })
 

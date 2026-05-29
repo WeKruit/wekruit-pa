@@ -203,6 +203,8 @@ export type CandidateMatchCard = {
   jobId: string
   bucket: "recommended" | "invited"
   status: CandidateJobStatus
+  /** WeKruit-collaborated job → pre-screen CTA + viewable session/status. */
+  collab?: boolean
   job: {
     title: string
     company: string
@@ -1153,7 +1155,7 @@ function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
   const navigate = useNavigate()
   const logo = (match.job.company[0] ?? "?").toUpperCase()
   const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
-  const isInvite = match.bucket === "invited"
+  const isCollab = !!match.collab
   const go = () => navigate(match.job.href)
   return (
     <article
@@ -1169,9 +1171,9 @@ function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
       <div className="wkv3-peek__body">
         <div className="wkv3-peek__head">
           <h4 className="wkv3-peek__t">{match.job.title}</h4>
-          {isInvite ? (
+          {isCollab ? (
             <span className="wkv3-chip wkv3-chip--warm">
-              <PulseDot size={5} /> Invite
+              <PulseDot size={5} /> Collab
             </span>
           ) : (
             <span className="wkv3-chip wkv3-chip--muted">New</span>
@@ -1185,7 +1187,7 @@ function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
       <div className="wkv3-peek__right">
         <span className="wkv3-peek__salary">{match.job.salaryRange ?? "By interview"}</span>
         <span className="wkv3-peek__go">
-          {isInvite ? "See match" : "See role"} <Icon name="arrow-right" size={12} stroke={2} />
+          {isCollab ? "See match" : "See role"} <Icon name="arrow-right" size={12} stroke={2} />
         </span>
       </div>
     </article>
@@ -3184,11 +3186,11 @@ export function CandidateMatches() {
   return <MatchesSurface profileState={profileState} />
 }
 
-type MatchesFilter = "all" | "invite" | "role"
+type MatchesFilter = "all" | "collab" | "rec"
 const MATCHES_FILTERS: Array<{ id: MatchesFilter; label: string }> = [
   { id: "all", label: "All" },
-  { id: "invite", label: "Invites" },
-  { id: "role", label: "Roles" },
+  { id: "collab", label: "WeKruit collab" },
+  { id: "rec", label: "Recommended" },
 ]
 
 function MatchesSurface({
@@ -3197,11 +3199,9 @@ function MatchesSurface({
   profileState: Extract<ClaimState, { status: "ready" }>
 }) {
   const matchesState = useCandidateMatches(true)
-  // The roles inbox surfaces open opportunities (recommended + WeKruit invites).
-  // In-progress interviews live on Home under "Active interviews".
-  const all = (matchesState.status === "ready" ? matchesState.matches : []).filter(
-    (m) => m.status === "recommended" || m.status === "invited",
-  )
+  // Backend curates the set: WeKruit-collab jobs (pre-screenable) + daily-recommend
+  // recs, deduped. Show all; the filter splits collab vs recommended.
+  const all = matchesState.status === "ready" ? matchesState.matches : []
   return (
     <MatchesView
       profile={profileState.profile}
@@ -3229,14 +3229,14 @@ function MatchesView({
   const [filter, setFilter] = useState<MatchesFilter>("all")
   const counts: Record<MatchesFilter, number> = {
     all: all.length,
-    invite: all.filter((m) => m.bucket === "invited").length,
-    role: all.filter((m) => m.bucket === "recommended").length,
+    collab: all.filter((m) => m.collab).length,
+    rec: all.filter((m) => !m.collab).length,
   }
   const filtered =
-    filter === "invite"
-      ? all.filter((m) => m.bucket === "invited")
-      : filter === "role"
-        ? all.filter((m) => m.bucket === "recommended")
+    filter === "collab"
+      ? all.filter((m) => m.collab)
+      : filter === "rec"
+        ? all.filter((m) => !m.collab)
         : all
 
   return (
@@ -3352,23 +3352,27 @@ function MatchesView({
 function MeMatchFull({ match }: { match: CandidateMatchCard }) {
   const navigate = useNavigate()
   const [vote, setVote] = useState<"yes" | "no" | null>(null)
-  const isInvite = match.bucket === "invited"
+  const isCollab = !!match.collab
   const logo = (match.job.company[0] ?? "?").toUpperCase()
   const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
   const reasons = match.whyMatched ?? []
+  const statusDisplay = getCandidateJobStatusDisplay(match.status, match.job.title)
+  // Collab jobs let the candidate view their pre-screen / job status.
+  const showStatus = isCollab && match.status !== "recommended"
   return (
-    <article className={`wkv3-match${isInvite ? " is-invite" : ""}`}>
+    <article className={`wkv3-match${isCollab ? " is-invite" : ""}`}>
       <header className="wkv3-match__head">
         <CompanyMark logo={logo} bg={logoBg} size={52} />
         <div className="wkv3-match__head-body">
           <div className="wkv3-match__chiprow">
-            {isInvite ? (
+            {isCollab ? (
               <span className="wkv3-match__chip is-warm">
-                <PulseDot size={5} /> WeKruit invite · worth screening
+                <PulseDot size={5} /> WeKruit collab
               </span>
             ) : (
               <span className="wkv3-match__chip">New role</span>
             )}
+            {showStatus ? <span className="wkv3-match__chip">{statusDisplay.label}</span> : null}
           </div>
           <h3 className="wkv3-match__t">{match.job.title}</h3>
           <p className="wkv3-match__co">
@@ -3422,12 +3426,20 @@ function MeMatchFull({ match }: { match: CandidateMatchCard }) {
           </a>
         </div>
         <div className="wkv3-match__primaries">
-          <a href={CLAIRE_IMESSAGE_HREF} className="wk-btn wk-btn--secondary wk-btn--sm">
-            <Icon name="message" size={12} stroke={1.9} /> Continue with Claire
-          </a>
-          <Link to={match.job.href} className="wk-btn wk-btn--primary wk-btn--sm">
-            {isInvite ? "See match" : "See role"} <Icon name="arrow-right" size={13} stroke={2} />
-          </Link>
+          {isCollab ? (
+            <>
+              <a href={CLAIRE_IMESSAGE_HREF} className="wk-btn wk-btn--secondary wk-btn--sm">
+                <Icon name="message" size={12} stroke={1.9} /> Continue with Claire
+              </a>
+              <Link to={match.job.href} className="wk-btn wk-btn--primary wk-btn--sm">
+                {statusDisplay.ctaLabel} <Icon name="arrow-right" size={13} stroke={2} />
+              </Link>
+            </>
+          ) : (
+            <Link to={match.job.href} className="wk-btn wk-btn--primary wk-btn--sm">
+              See role <Icon name="arrow-right" size={13} stroke={2} />
+            </Link>
+          )}
         </div>
       </footer>
     </article>
