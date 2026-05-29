@@ -1586,17 +1586,22 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
   const [profile, setProfile] = useState<CandidateSelfProfile>(initial)
   const [editing, setEditing] = useState(false)
   useEffect(() => setProfile(initial), [initial])
+  const completeness = deriveCompleteness(profile)
+  const visibility = deriveVisibility(0, 0)
   return (
-    <CandidateShell signedIn signedInUser={{ name: profile.displayName ?? "You" }}>
+    <CandidateShell signedIn signedInUser={{ name: profile.displayName ?? "You", email: profile.emailMasked }}>
       <style>{ME_PORTAL_STYLES}</style>
+      <style>{ME_V3_STYLES}</style>
       <style>{PROFILE_STYLES}</style>
       <div className="wk-prof">
         <div className="wk-container">
           <header className="wk-prof__head">
             <div>
-              <h1 className="wk-prof__h1">Profile</h1>
+              <p className="wk-eyebrow">Profile · what Claire pitches</p>
+              <h1 className="wk-prof__h1">Your operating profile.</h1>
               <p className="wk-prof__sub">
-                Everything Claire knows about you, and what she pitches on your behalf.
+                Everything Claire knows about you, and exactly what she shares on your behalf. The more
+                you fill in, the sharper she matches.
               </p>
             </div>
             <div className="wk-prof__head-actions">
@@ -1613,9 +1618,16 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
             </div>
           </header>
 
+          {/* Top strip: completeness + visibility — first-class state (reused from Home) */}
+          <div className="wk-prof__topstrip">
+            <MeCompletenessCard completeness={completeness} />
+            <MeVisibilityCard visibility={visibility} />
+          </div>
+
           <div className="wk-prof__grid">
             <div className="wk-prof__main">
               <IdentityCard profile={profile} />
+              <MatchPreferencesCard profile={profile} onSaved={setProfile} />
               <WhatClairePitchesCard profile={profile} />
               <SkillsCard profile={profile} editing={editing} />
               <UpdatePreferencesPanel onProfileUpdated={setProfile} />
@@ -1641,6 +1653,198 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
         </div>
       </div>
     </CandidateShell>
+  )
+}
+
+// ── Match preferences — the canonical-tag tagging surface ───────────────────
+// Chips read current selections from globalTags (best-effort, real where the
+// projection includes the field) and persist through the existing correction
+// pipeline (free-form → Claire maps to canonical tags). No mock-only toggles.
+type ProfilePrefGroup = {
+  key: string
+  label: string
+  hint: string
+  tone: "default" | "warn"
+  options: string[]
+  sources: string[]
+}
+const PROFILE_PREF_GROUPS: ProfilePrefGroup[] = [
+  { key: "stage", label: "Company stage", hint: "Where they are in growth.", tone: "default",
+    sources: ["companyStage"],
+    options: ["Pre-seed", "Seed", "Series A", "Series B", "Series C–D", "Late / public"] },
+  { key: "size", label: "Company size", hint: "Headcount Claire filters by.", tone: "default",
+    sources: ["companySize"],
+    options: ["1–10", "10–50", "50–200", "200–1k", "1k–10k", "10k+"] },
+  { key: "industry", label: "Industry", hint: "Sectors you want to work in.", tone: "default",
+    sources: ["industrySector", "relevantIndustry"],
+    options: ["AI infra", "Developer tools", "API", "Fintech", "Healthtech", "Enterprise SaaS", "Consumer", "Marketplace", "Crypto / Web3", "Climate", "Defense"] },
+  { key: "pace", label: "Work pace & culture", hint: "The way they ship.", tone: "default",
+    sources: ["workPace", "culture"],
+    options: ["Intense / high-output", "Balanced (40–50hr)", "Async-first", "In-office", "Hybrid (2–3 days)", "Remote-only", "Move-fast tolerant of bugs", "Move-careful, high bar"] },
+  { key: "dealbreakers", label: "Deal-breakers", hint: "Claire won't pitch you these.", tone: "warn",
+    sources: ["dealBreakers", "negativeRoleFunction"],
+    options: ["No equity", "On-call rotation", "Stack-ranked perf", "Full RTO", "Sponsored visa req'd", "Defense / weapons", "Crypto", "Agency / consultancy"] },
+]
+
+function profileNormalizeLabel(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+}
+function profilePickInitial(values: string[], options: string[]): Set<string> {
+  const set = new Set<string>()
+  if (values.length === 0) return set
+  const norm = values.map(profileNormalizeLabel)
+  for (const opt of options) {
+    const o = profileNormalizeLabel(opt)
+    if (norm.some((v) => v === o || (o.length >= 3 && (v.includes(o) || o.includes(v))))) set.add(opt)
+  }
+  return set
+}
+
+function MatchPreferencesCard({
+  profile,
+  onSaved,
+}: {
+  profile: CandidateSelfProfile
+  onSaved: (p: CandidateSelfProfile) => void
+}) {
+  const tags = (profile.globalTags ?? {}) as Record<string, unknown>
+  const readArr = (key: string): string[] =>
+    Array.isArray(tags[key]) ? (tags[key] as unknown[]).map((v) => String(v)) : []
+
+  const [picked, setPicked] = useState<Record<string, Set<string>>>(() => {
+    const init: Record<string, Set<string>> = {}
+    for (const g of PROFILE_PREF_GROUPS) {
+      const values = g.sources.flatMap(readArr)
+      init[g.key] = profilePickInitial(values, g.options)
+    }
+    return init
+  })
+  const [dirty, setDirty] = useState(false)
+  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle")
+  const [message, setMessage] = useState<string | null>(null)
+
+  function toggle(key: string, opt: string) {
+    setPicked((prev) => {
+      const next = { ...prev }
+      const s = new Set(next[key])
+      if (s.has(opt)) s.delete(opt)
+      else s.add(opt)
+      next[key] = s
+      return next
+    })
+    setDirty(true)
+    setStatus("idle")
+    setMessage(null)
+  }
+
+  async function save() {
+    setStatus("submitting")
+    setMessage(null)
+    const parts: string[] = []
+    for (const g of PROFILE_PREF_GROUPS) {
+      const sel = Array.from(picked[g.key] ?? [])
+      if (sel.length === 0) continue
+      parts.push(
+        g.key === "dealbreakers"
+          ? `Deal-breakers (do NOT pitch me roles with these): ${sel.join(", ")}.`
+          : `${g.label}: ${sel.join(", ")}.`,
+      )
+    }
+    const correctionText = parts.length
+      ? `Update my match preferences. ${parts.join(" ")}`
+      : "Clear my match preferences — no company-stage, size, industry, pace, or deal-breaker constraints."
+    try {
+      const submit = createCandidateProfileCorrectionSubmitter(functions())
+      const result = await submit({ correctionText })
+      onSaved(result.selfProfile)
+      setDirty(false)
+      setStatus("success")
+      const applied = result.appliedKeys?.length ? ` Updated: ${result.appliedKeys.join(", ")}.` : ""
+      setMessage(`Sent to Claire — she'll match against these.${applied}`)
+    } catch (err) {
+      setStatus("error")
+      setMessage(callableSubmitErrorMessage(err))
+    }
+  }
+
+  return (
+    <section className="wkv2-card wk-prof-card">
+      <h3 className="wkv2-card__h">
+        Match preferences
+        <span className="wk-prof-card__src">Claire matches against these</span>
+      </h3>
+      <p className="wk-prof-card__hint">
+        The shape of a role you&apos;d actually say yes to — beyond title and comp. Toggle what fits, then
+        send it to Claire.
+      </p>
+      {PROFILE_PREF_GROUPS.map((g) => (
+        <PrefGroup
+          key={g.key}
+          label={g.label}
+          hint={g.hint}
+          tone={g.tone}
+          options={g.options}
+          selected={picked[g.key]}
+          onToggle={(o) => toggle(g.key, o)}
+        />
+      ))}
+      <div className="wk-prefs__save">
+        <button
+          type="button"
+          className="wk-btn wk-btn--primary wk-btn--sm"
+          disabled={!dirty || status === "submitting"}
+          onClick={save}
+        >
+          {status === "submitting" ? "Saving…" : "Save preferences"}
+        </button>
+        {status === "success" && message ? <span className="wk-success">{message}</span> : null}
+        {status === "error" && message ? <span className="wk-error">{message}</span> : null}
+      </div>
+    </section>
+  )
+}
+
+function PrefGroup({
+  label,
+  hint,
+  options,
+  selected,
+  onToggle,
+  tone = "default",
+}: {
+  label: string
+  hint: string
+  options: string[]
+  selected: Set<string> | undefined
+  onToggle: (opt: string) => void
+  tone?: "default" | "warn"
+}) {
+  return (
+    <div className="wk-prefs">
+      <div className="wk-prefs__head">
+        <span className="wk-prefs__label">{label}</span>
+        <span className="wk-prefs__hint">{hint}</span>
+      </div>
+      <div className={`wk-prefs__chips wk-prefs__chips--${tone}`}>
+        {options.map((o) => {
+          const on = selected?.has(o) ?? false
+          return (
+            <button
+              key={o}
+              type="button"
+              className={`wk-pref${on ? " is-on" : ""}`}
+              onClick={() => onToggle(o)}
+              aria-pressed={on}
+            >
+              <span className="wk-pref__check" aria-hidden="true">
+                {on ? <Icon name="check" size={10} stroke={2.6} /> : null}
+              </span>
+              {o}
+            </button>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -2758,6 +2962,42 @@ const PROFILE_STYLES = `
   .wk-prof__live { display: none; }
   .wk-prof-row { grid-template-columns: 1fr; gap: 4px; }
 }
+
+/* v3 profile: top strip (completeness + visibility) + match-preference chips */
+.wk-prof__topstrip { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 0 0 28px; }
+.wk-prof__topstrip > * { margin: 0; }
+@media (max-width: 820px) { .wk-prof__topstrip { grid-template-columns: 1fr; } }
+
+.wkv2-card__h .wk-prof-card__src {
+  font-family: var(--wk-font-sans, 'Hanken Grotesk', sans-serif);
+  font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3);
+}
+
+.wk-prefs { display: grid; gap: 8px; padding-top: 12px; margin-top: 8px; border-top: 1px dashed var(--border); }
+.wk-prefs:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+.wk-prefs__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.wk-prefs__label { font-weight: 600; font-size: 13px; color: var(--ink); letter-spacing: -0.005em; }
+.wk-prefs__hint { font-size: 11.5px; color: var(--ink-3); font-style: italic; }
+.wk-prefs__chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.wk-pref {
+  appearance: none; border: 1px solid var(--border); background: var(--cream); color: var(--ink-2);
+  border-radius: var(--r-pill); padding: 4px 10px 4px 6px; font: inherit; font-size: 12px; font-weight: 500;
+  cursor: pointer; display: inline-flex; align-items: center; gap: 6px; letter-spacing: -0.005em;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.wk-pref:hover { border-color: var(--ink-3); color: var(--ink); }
+.wk-pref.is-on { background: var(--ink); color: var(--cream); border-color: var(--ink); font-weight: 600; }
+.wk-pref__check {
+  width: 14px; height: 14px; border-radius: 50%; background: var(--cream-2); border: 1px solid var(--border-strong);
+  display: inline-flex; align-items: center; justify-content: center; color: transparent; flex: none;
+}
+.wk-pref.is-on .wk-pref__check { background: var(--cream); border-color: var(--cream); color: var(--ink); }
+.wk-prefs__chips--warn .wk-pref.is-on { background: var(--danger); border-color: var(--danger); color: var(--cream); }
+.wk-prefs__chips--warn .wk-pref.is-on .wk-pref__check { color: var(--danger); }
+.wk-prefs__save {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding-top: 14px; margin-top: 10px; border-top: 1px dashed var(--border);
+}
 `
 
 
@@ -3183,4 +3423,5 @@ const MATCHES_STYLES = `
   .wkv3-match__primaries .wk-btn { flex: 1; justify-content: center; }
 }
 `
+
 
