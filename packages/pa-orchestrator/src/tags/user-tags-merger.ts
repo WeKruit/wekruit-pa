@@ -1021,6 +1021,20 @@ function reconcileCareerStage(
 function deriveCareerStageFromTitle(title: string | undefined): CareerStage | undefined {
   const t = title?.trim().toLowerCase()
   if (!t) return undefined
+  // 2026-05-28 fix: intern/student titles take precedence over seniority words.
+  // "Product Manager Intern", "Senior Software Engineer Intern", "Marketing
+  // Analyst Co-op" are INTERN roles — the function word (manager/senior) must
+  // not win. Previously the manager/senior branches below matched first and
+  // mis-tagged these (e.g. "Product Manager Intern" → manager). Guard: a role
+  // that MANAGES interns ("intern program manager", "manager of interns") is
+  // NOT itself an intern.
+  const managesInterns =
+    /\bintern(ship)?s?\s+(program\s+)?(manager|lead|director|coordinator|supervisor)\b/.test(t) ||
+    /\b(manager|director|head|lead)\s+of\s+intern/.test(t)
+  if (!managesInterns) {
+    if (/\bintern(ship)?\b/.test(t) || /\bco[-\s]?op\b/.test(t)) return "intern"
+    if (/\bstudent\b/.test(t)) return "student"
+  }
   if (/\bfounder\b/.test(t)) return "founder"
   if (/\b(c[-\s]?level|chief|cto|ceo|cfo|coo|cmo)\b/.test(t)) return "c_level"
   if (/\bvp|vice\s+president\b/.test(t)) return "vp"
