@@ -19,7 +19,7 @@
 // directly without writing audit events server-side.
 
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { collection, getDocs, limit, orderBy, query, where } from "firebase/firestore"
+import { collection, doc as firestoreDoc, getDoc, getDocs, limit, orderBy, query, where } from "firebase/firestore"
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { db } from "../lib/firebase.js"
@@ -38,11 +38,13 @@ import {
 import {
   classifyCandidateProfile,
   deriveCandidateSource,
+  firstCandidateDrawerText,
   isValidE164Phone,
   matchesPhoneSearch,
   normalizeCandidatePhoneLookup,
   phoneSearchDigits,
   previewCandidateDrawerText,
+  sortCandidateDrawerRows,
   type CandidateClass,
   type ExternalSource,
   type SourceKind,
@@ -226,6 +228,17 @@ type Row = {
   phoneReady: boolean
   phoneBound: boolean
   sendblueEligible: boolean
+}
+
+type DrawerDetailRow = Record<string, unknown> & { id: string }
+
+type CandidateDrawerDetail = {
+  resumes: DrawerDetailRow[]
+  prescreens: DrawerDetailRow[]
+  messages: DrawerDetailRow[]
+  turns: DrawerDetailRow[]
+  jobStates: DrawerDetailRow[]
+  jobLabels: Record<string, string>
 }
 
 function emptyIdentityIndex(): IdentityIndex {
@@ -1170,6 +1183,31 @@ function PctBar({ pct }: { pct: number }) {
 
 function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
   const doc = row.doc
+  const [detail, setDetail] = useState<CandidateDrawerDetail>(() => emptyCandidateDrawerDetail())
+  const [detailLoading, setDetailLoading] = useState(true)
+  const [detailErr, setDetailErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setDetail(emptyCandidateDrawerDetail())
+    setDetailLoading(true)
+    setDetailErr(null)
+    ;(async () => {
+      try {
+        const loaded = await loadCandidateDrawerDetail(doc.id)
+        if (cancelled) return
+        setDetail(loaded)
+      } catch (e: unknown) {
+        if (!cancelled) setDetailErr(e instanceof Error ? e.message : String(e))
+      } finally {
+        if (!cancelled) setDetailLoading(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [doc.id])
+
   return (
     <div
       onClick={onClose}
@@ -1185,14 +1223,14 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: "min(520px, 100%)",
+          width: "min(1180px, calc(100vw - 32px))",
           background: "var(--cream-3)",
           borderLeft: "1px solid var(--border)",
           overflowY: "auto",
-          padding: 24,
+          padding: 20,
           display: "flex",
           flexDirection: "column",
-          gap: 18,
+          gap: 14,
         }}
       >
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
@@ -1258,94 +1296,113 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
           {row.phoneReady && <StatusPill tone="live">Phone ready</StatusPill>}
           {row.phoneBound && <StatusPill tone="info">Phone-bound</StatusPill>}
           {row.sendblueEligible && <StatusPill tone="hitl">Sendblue eligible</StatusPill>}
+          <StatusPill tone="neutral">{detail.messages.length} messages</StatusPill>
+          <StatusPill tone="neutral">{detail.prescreens.length} prescreens</StatusPill>
         </div>
 
-        <Card title="Reachable handles">
-          <DrawerKV k="Display name" v={doc.displayName || "—"} />
-          <DrawerKV k="Email" v={doc.email || "—"} mono={!!doc.email} />
-          <DrawerKV k="Phone" v={doc.phoneE164 || "—"} mono={!!doc.phoneE164} />
-          <DrawerKV
-            k="LinkedIn"
-            v={
-              doc.linkedinUrl ? (
-                <a href={doc.linkedinUrl} target="_blank" rel="noreferrer">
-                  {row.linkedinHandle || doc.linkedinUrl}
-                </a>
-              ) : (
-                "—"
-              )
-            }
-          />
-        </Card>
-
-        <Card title="Profile">
-          <DrawerKV
-            k="Completeness"
-            v={<PctBar pct={row.profilePct} />}
-          />
-          <DrawerKV
-            k="Top tags"
-            v={
-              row.skills.length === 0
-                ? "—"
-                : (
-                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                    {row.skills.map((s, i) => (
-                      <span
-                        key={i}
-                        style={{
-                          fontSize: 11,
-                          padding: "2px 7px",
-                          borderRadius: 4,
-                          background: "var(--cream-2)",
-                          color: "var(--ink-2)",
-                        }}
-                      >
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                )
-            }
-          />
-          <DrawerKV k="Created" v={relTime(doc.createdAt)} />
-          <DrawerKV k="Updated" v={relTime(doc.updatedAt)} />
-        </Card>
-
-        <Card title="Profile details">
-          <DrawerProfileDetails doc={doc} />
-        </Card>
-
-        <Card title="Management actions">
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            <DrawerLink to={`/admin/candidates/${doc.id}/profile`} label="Full profile" icon="user_check" />
-            <DrawerLink to={`/admin/users/${doc.id}/tag-snapshots`} label="Tag snapshots" icon="tag" />
-            <DrawerLink to="/admin/identity-conflicts" label="Identity conflicts queue" icon="user_merge" />
-            <DrawerLink to="/admin/match-debug" label="Run in match debug" icon="zap" />
-            <DrawerLink to="/admin/outreach-ops" label="Outreach ops" icon="send" />
-          </div>
+        {detailErr && (
           <div
             style={{
-              marginTop: 12,
               padding: "8px 10px",
               borderRadius: 6,
-              background: "var(--hitl-bg)",
-              color: "var(--hitl)",
+              background: "var(--blocked-bg)",
+              color: "var(--blocked)",
               fontSize: 12,
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 6,
             }}
           >
-            <Icon name="alert" size={13} />
-            <span>
-              Lifecycle mutations (opt-out · delete · merge) need server-side
-              reducer CFs that don't exist yet. Tracked as a follow-up; the
-              v2 product lock requires audit-event writes, so this surface
-              stays read-only for now.
-            </span>
+            Detail load failed: {detailErr}
           </div>
-        </Card>
+        )}
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+            gap: 14,
+            alignItems: "start",
+          }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title="Identity">
+              <DrawerKV k="Display name" v={doc.displayName || "—"} />
+              <DrawerKV k="Email" v={doc.email || "—"} mono={!!doc.email} />
+              <DrawerKV k="Phone" v={doc.phoneE164 || "—"} mono={!!doc.phoneE164} />
+              <DrawerKV
+                k="LinkedIn"
+                v={
+                  doc.linkedinUrl ? (
+                    <a href={doc.linkedinUrl} target="_blank" rel="noreferrer">
+                      {row.linkedinHandle || doc.linkedinUrl}
+                    </a>
+                  ) : (
+                    "—"
+                  )
+                }
+              />
+              <DrawerKV k="Created" v={relTime(doc.createdAt)} />
+              <DrawerKV k="Updated" v={relTime(doc.updatedAt)} />
+            </Card>
+
+            <Card title="Profile">
+              <DrawerKV k="Completeness" v={<PctBar pct={row.profilePct} />} />
+              <DrawerKV
+                k="Top tags"
+                v={row.skills.length === 0 ? "—" : <DrawerChipList values={row.skills} />}
+              />
+              <DrawerProfileDetails doc={doc} compact />
+            </Card>
+
+            <Card title="Resume">
+              <DrawerResumeSummary
+                doc={doc}
+                resume={detail.resumes[0]}
+                loading={detailLoading}
+              />
+            </Card>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title="Experience">
+              <DrawerExperienceSummary
+                resume={detail.resumes[0]}
+                loading={detailLoading}
+              />
+            </Card>
+
+            <Card
+              title="Conversation"
+              action={<DrawerInlineLink to={`/users/${doc.id}`}>Open conversation</DrawerInlineLink>}
+            >
+              <DrawerConversationSummary
+                messages={detail.messages}
+                turns={detail.turns}
+                loading={detailLoading}
+              />
+            </Card>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <Card title="Prescreened jobs">
+              <DrawerPrescreenSummary
+                prescreens={detail.prescreens}
+                jobStates={detail.jobStates}
+                jobLabels={detail.jobLabels}
+                loading={detailLoading}
+              />
+            </Card>
+
+            <Card title="Management">
+              <div style={{ display: "grid", gap: 6 }}>
+                <DrawerLink to={`/admin/candidates/${doc.id}/profile`} label="Full profile" icon="user_check" />
+                <DrawerLink to={`/users/${doc.id}`} label="Conversation detail" icon="message" />
+                <DrawerLink to={`/admin/users/${doc.id}/tag-snapshots`} label="Tag snapshots" icon="tag" />
+                <DrawerLink to="/admin/identity-conflicts" label="Identity conflicts queue" icon="user_merge" />
+                <DrawerLink to="/admin/match-debug" label="Run in match debug" icon="zap" />
+                <DrawerLink to="/admin/outreach-ops" label="Outreach ops" icon="send" />
+              </div>
+            </Card>
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -1354,7 +1411,7 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
 // Inline expansion shown inside CandidateDrawer — same data the Full Profile
 // page surfaces, condensed for drawer width. Keeps the existing DrawerLink to
 // the full /admin/candidates/:id/profile route as a "view detached" affordance.
-function DrawerProfileDetails({ doc }: { doc: UserDoc }) {
+function DrawerProfileDetails({ doc, compact = false }: { doc: UserDoc; compact?: boolean }) {
   const d = doc as Record<string, unknown>
   const tags = (d.tags ?? {}) as {
     topTags?: string[]
@@ -1397,8 +1454,7 @@ function DrawerProfileDetails({ doc }: { doc: UserDoc }) {
     !skills.length &&
     !tags.targetRoleFunction?.length &&
     !tags.industrySector?.length &&
-    !postMatch?.state &&
-    !layoffCtx
+    (compact || (!postMatch?.state && !layoffCtx))
 
   if (noData) {
     return (
@@ -1477,6 +1533,8 @@ function DrawerProfileDetails({ doc }: { doc: UserDoc }) {
         </div>
       )}
 
+      {compact ? null : (
+        <>
       {postMatch?.state && (
         <div>
           <DrawerSectionLabel>Post-match retention</DrawerSectionLabel>
@@ -1505,14 +1563,353 @@ function DrawerProfileDetails({ doc }: { doc: UserDoc }) {
           </pre>
         </div>
       )}
+        </>
+      )}
     </div>
   )
 }
 
-function toIsoLike(v: string | { seconds?: number } | undefined): string | undefined {
+function DrawerResumeSummary({
+  doc,
+  resume,
+  loading,
+}: {
+  doc: UserDoc
+  resume?: DrawerDetailRow
+  loading: boolean
+}) {
+  if (loading) return <DrawerLoadingText />
+  const resumeId = doc.latestResumeArtifactId ?? firstCandidateDrawerText(resume?.id)
+  if (!resume && !resumeId) return <DrawerEmptyText>No resume record loaded.</DrawerEmptyText>
+  const fileName = firstCandidateDrawerText(
+    resume?.originalFileName,
+    resume?.fileName,
+    resume?.resumeFileName,
+    resume?.sourceFileName,
+    doc.latestResumeArtifactId
+  )
+  const parser = [
+    firstCandidateDrawerText(resume?.parserModel, resume?.model),
+    firstCandidateDrawerText(resume?.parserVersion, resume?.version),
+  ].filter(Boolean).join(" · ")
+  const skills = drawerStringList(resume?.topSkills ?? resume?.skills ?? readNested(resume, ["candidateProfile", "skills"])).slice(0, 8)
+  const industries = drawerStringList(resume?.industryTags ?? resume?.industries ?? readNested(resume, ["candidateProfile", "industries"])).slice(0, 4)
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <DrawerKV k="File" v={fileName || "—"} />
+      <DrawerKV k="Resume id" v={resumeId ? shortUid(String(resumeId)) : "—"} mono={!!resumeId} />
+      <DrawerKV k="Parsed" v={relTime(toIsoLike(resume?.updatedAt) ?? toIsoLike(resume?.createdAt) ?? toIsoLike(resume?.ingestedAt))} />
+      {parser && <DrawerKV k="Parser" v={parser} />}
+      {skills.length > 0 && <DrawerKV k="Skills" v={<DrawerChipList values={skills} />} />}
+      {industries.length > 0 && <DrawerKV k="Industries" v={<DrawerChipList values={industries} />} />}
+    </div>
+  )
+}
+
+function DrawerExperienceSummary({
+  resume,
+  loading,
+}: {
+  resume?: DrawerDetailRow
+  loading: boolean
+}) {
+  if (loading) return <DrawerLoadingText />
+  const experiences = drawerExperienceRows(resume).slice(0, 5)
+  if (experiences.length === 0) return <DrawerEmptyText>No parsed experience rows loaded.</DrawerEmptyText>
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {experiences.map((exp, index) => (
+        <div
+          key={`${exp.title}-${exp.company}-${index}`}
+          style={{
+            paddingBottom: index === experiences.length - 1 ? 0 : 10,
+            borderBottom: index === experiences.length - 1 ? undefined : "1px solid var(--border)",
+          }}
+        >
+          <div style={{ fontWeight: 600, color: "var(--ink)", fontSize: 13 }}>
+            {exp.title || "Untitled role"}
+          </div>
+          <div style={{ color: "var(--ink-3)", fontSize: 12, marginTop: 2 }}>
+            {[exp.company, exp.location, [exp.startDate, exp.endDate].filter(Boolean).join(" - ")].filter(Boolean).join(" · ")}
+          </div>
+          {exp.description && (
+            <div style={{ color: "var(--ink-2)", fontSize: 12, marginTop: 5, lineHeight: 1.45 }}>
+              {previewCandidateDrawerText(exp.description, 180)}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function DrawerConversationSummary({
+  messages,
+  turns,
+  loading,
+}: {
+  messages: DrawerDetailRow[]
+  turns: DrawerDetailRow[]
+  loading: boolean
+}) {
+  if (loading) return <DrawerLoadingText />
+  const snippets = messages.slice(0, 5).map((message) => ({
+    id: message.id,
+    role: firstCandidateDrawerText(message.role, message.direction, message.kind) ?? "message",
+    text: firstCandidateDrawerText(message.body, message.message, message.text, message.content) ?? previewCandidateDrawerText(message, 160) ?? "",
+    at: toIsoLike(message.createdAt) ?? toIsoLike(message.ts) ?? toIsoLike(message.updatedAt),
+  })).filter((snippet) => snippet.text)
+  if (snippets.length === 0 && turns.length === 0) return <DrawerEmptyText>No conversation rows loaded.</DrawerEmptyText>
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <StatusPill tone="neutral">{messages.length} messages loaded</StatusPill>
+        <StatusPill tone="neutral">{turns.length} turns loaded</StatusPill>
+      </div>
+      {snippets.length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {snippets.map((snippet) => (
+            <div key={snippet.id} style={{ fontSize: 12, color: "var(--ink-2)" }}>
+              <span style={{ color: "var(--ink-3)", textTransform: "uppercase", fontSize: 10.5, fontWeight: 600 }}>
+                {snippet.role}
+              </span>
+              <span style={{ color: "var(--ink-4)", marginLeft: 6 }}>{relTime(snippet.at)}</span>
+              <div style={{ marginTop: 2, lineHeight: 1.45 }}>{previewCandidateDrawerText(snippet.text, 220)}</div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <DrawerEmptyText>No message snippets loaded.</DrawerEmptyText>
+      )}
+    </div>
+  )
+}
+
+function DrawerPrescreenSummary({
+  prescreens,
+  jobStates,
+  jobLabels,
+  loading,
+}: {
+  prescreens: DrawerDetailRow[]
+  jobStates: DrawerDetailRow[]
+  jobLabels: Record<string, string>
+  loading: boolean
+}) {
+  if (loading) return <DrawerLoadingText />
+  if (prescreens.length === 0 && jobStates.length === 0) {
+    return <DrawerEmptyText>No prescreen or job-state rows loaded.</DrawerEmptyText>
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      {prescreens.slice(0, 6).map((session) => {
+        const jobId = firstCandidateDrawerText(session.jobId)
+        const terminal = firstCandidateDrawerText(session.terminal, session.review && typeof session.review === "object" ? (session.review as Record<string, unknown>).finalTerminal : undefined)
+        const score = drawerScoreLabel(session)
+        return (
+          <div key={session.id} style={{ borderBottom: "1px solid var(--border)", paddingBottom: 9 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
+              <Link to={`/admin/prescreen-sessions/${session.id}`} style={{ color: "var(--ink)", fontWeight: 600, fontSize: 13 }}>
+                {jobId ? jobLabels[jobId] ?? shortUid(jobId) : shortUid(session.id)}
+              </Link>
+              <StatusPill tone={terminal === "PASS" ? "live" : terminal ? "hitl" : "neutral"}>
+                {terminal || "in progress"}
+              </StatusPill>
+            </div>
+            <div style={{ marginTop: 4, color: "var(--ink-3)", fontSize: 12 }}>
+              {[score, relTime(toIsoLike(session.updatedAt) ?? toIsoLike(session.createdAt))].filter(Boolean).join(" · ")}
+            </div>
+            {session.terminalActionPendingReview === true && (
+              <div style={{ marginTop: 4 }}>
+                <StatusPill tone="hitl">Pending review</StatusPill>
+              </div>
+            )}
+          </div>
+        )
+      })}
+      {prescreens.length > 6 && <DrawerEmptyText>{prescreens.length - 6} more prescreen sessions on this candidate.</DrawerEmptyText>}
+      {prescreens.length === 0 && jobStates.slice(0, 5).map((state) => {
+        const jobId = firstCandidateDrawerText(state.jobId)
+        return (
+          <DrawerKV
+            key={state.id}
+            k={jobId ? jobLabels[jobId] ?? shortUid(jobId) : shortUid(state.id)}
+            v={firstCandidateDrawerText(state.state, state.lifecycleState, state.status) ?? "—"}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
+function emptyCandidateDrawerDetail(): CandidateDrawerDetail {
+  return {
+    resumes: [],
+    prescreens: [],
+    messages: [],
+    turns: [],
+    jobStates: [],
+    jobLabels: {},
+  }
+}
+
+async function loadCandidateDrawerDetail(candidateId: string): Promise<CandidateDrawerDetail> {
+  const [resumeSnap, prescreenSnap, messageSnap, turnSnap, jobStateSnap] = await Promise.all([
+    getDocs(query(collection(db(), "parsedCandidateResumes"), where("userId", "==", candidateId), limit(20))),
+    getDocs(query(collection(db(), "pa-prescreen-sessions"), where("userId", "==", candidateId), limit(40))),
+    getDocs(query(collection(db(), PA_COLLECTIONS.messages), where("userId", "==", candidateId), limit(80))),
+    getDocs(query(collection(db(), PA_COLLECTIONS.agentTurns), where("userId", "==", candidateId), limit(80))),
+    getDocs(query(collection(db(), PA_COLLECTIONS.candidateJobStates), where("candidateId", "==", candidateId), limit(60))),
+  ])
+  const resumes = sortCandidateDrawerRows(
+    resumeSnap.docs.map((snap) => ({ id: snap.id, ...snap.data() }) as DrawerDetailRow),
+    ["updatedAt", "createdAt", "ingestedAt", "parsedAt"]
+  )
+  const prescreens = sortCandidateDrawerRows(
+    prescreenSnap.docs.map((snap) => ({ id: snap.id, ...snap.data() }) as DrawerDetailRow),
+    ["updatedAt", "createdAt", "startedAt"]
+  )
+  const messages = sortCandidateDrawerRows(
+    messageSnap.docs.map((snap) => ({ id: snap.id, ...snap.data() }) as DrawerDetailRow),
+    ["createdAt", "ts", "updatedAt"]
+  )
+  const turns = sortCandidateDrawerRows(
+    turnSnap.docs.map((snap) => ({ id: snap.id, ...snap.data() }) as DrawerDetailRow),
+    ["createdAt", "updatedAt", "ts"]
+  )
+  const jobStates = sortCandidateDrawerRows(
+    jobStateSnap.docs.map((snap) => ({ id: snap.id, ...snap.data() }) as DrawerDetailRow),
+    ["updatedAt", "stateUpdatedAt", "createdAt"]
+  )
+  const jobIds = uniqueStrings([
+    ...prescreens.map((row) => firstCandidateDrawerText(row["jobId"])),
+    ...jobStates.map((row) => firstCandidateDrawerText(row["jobId"])),
+  ]).slice(0, 20)
+  const jobLabels = Object.fromEntries(await Promise.all(jobIds.map(loadJobLabel)))
+  return { resumes, prescreens, messages, turns, jobStates, jobLabels }
+}
+
+async function loadJobLabel(jobId: string): Promise<[string, string]> {
+  try {
+    const snap = await getDoc(firestoreDoc(db(), PA_COLLECTIONS.jobs, jobId))
+    if (!snap.exists()) return [jobId, shortUid(jobId)]
+    const data = snap.data() as Record<string, unknown>
+    const company = firstCandidateDrawerText(data.companyName, data.company, data.employerName)
+    const title = firstCandidateDrawerText(data.title, data.roleTitle, data.jobTitle, data.name) ?? shortUid(jobId)
+    return [jobId, company ? `${title} · ${company}` : title]
+  } catch {
+    return [jobId, shortUid(jobId)]
+  }
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))]
+}
+
+function readNested(value: unknown, path: string[]): unknown {
+  let current = value
+  for (const part of path) {
+    if (!current || typeof current !== "object") return undefined
+    current = (current as Record<string, unknown>)[part]
+  }
+  return current
+}
+
+function drawerStringList(value: unknown): string[] {
+  if (typeof value === "string") return value.trim() ? [value.trim()] : []
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      if (typeof item === "string") return item.trim() ? [item.trim()] : []
+      if (!item || typeof item !== "object") return []
+      const record = item as Record<string, unknown>
+      const label = firstCandidateDrawerText(record.value, record.label, record.name, record.title, record.canonical)
+      return label ? [label] : []
+    })
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .filter(([, enabled]) => Boolean(enabled))
+      .map(([key]) => key)
+  }
+  return []
+}
+
+type DrawerExperienceRow = {
+  title?: string
+  company?: string
+  location?: string
+  startDate?: string
+  endDate?: string
+  description?: string
+}
+
+function drawerExperienceRows(resume: DrawerDetailRow | undefined): DrawerExperienceRow[] {
+  const source =
+    (Array.isArray(resume?.experiences) && resume?.experiences) ||
+    (Array.isArray(resume?.workHistory) && resume?.workHistory) ||
+    (Array.isArray(readNested(resume, ["candidateProfile", "experiences"])) && readNested(resume, ["candidateProfile", "experiences"])) ||
+    (Array.isArray(readNested(resume, ["candidateProfile", "workHistory"])) && readNested(resume, ["candidateProfile", "workHistory"])) ||
+    []
+  return (source as unknown[]).filter((item) => item && typeof item === "object").map((item) => {
+    const record = item as Record<string, unknown>
+    return {
+      title: firstCandidateDrawerText(record.title, record.role, record.position),
+      company: firstCandidateDrawerText(record.company, record.companyName, record.employer),
+      location: firstCandidateDrawerText(record.location),
+      startDate: firstCandidateDrawerText(record.startDate, record.start, record.from),
+      endDate: firstCandidateDrawerText(record.endDate, record.end, record.to) ?? (record.currentRole === true ? "Present" : undefined),
+      description: firstCandidateDrawerText(record.description, record.summary) ?? drawerStringList(record.bullets).join(" "),
+    }
+  })
+}
+
+function drawerScoreLabel(session: DrawerDetailRow): string | undefined {
+  const score = typeof session.score === "number" ? session.score : undefined
+  const scoreMax = typeof session.scoreMax === "number" ? session.scoreMax : undefined
+  if (score === undefined || scoreMax === undefined || scoreMax === 0) return undefined
+  return `${Math.round((score / scoreMax) * 100)}% score`
+}
+
+function DrawerChipList({ values }: { values: string[] }) {
+  return (
+    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+      {values.map((value) => <TagChip key={value}>{value}</TagChip>)}
+    </div>
+  )
+}
+
+function DrawerLoadingText() {
+  return <div style={{ color: "var(--ink-3)", fontSize: 12.5 }}>Loading...</div>
+}
+
+function DrawerEmptyText({ children }: { children: React.ReactNode }) {
+  return <div style={{ color: "var(--ink-3)", fontSize: 12.5 }}>{children}</div>
+}
+
+function DrawerInlineLink({ to, children }: { to: string; children: React.ReactNode }) {
+  return (
+    <Link to={to} style={{ color: "var(--ink-2)", fontSize: 12, textDecoration: "none", fontWeight: 600 }}>
+      {children}
+    </Link>
+  )
+}
+
+function toIsoLike(v: unknown): string | undefined {
   if (!v) return undefined
   if (typeof v === "string") return v
-  if (typeof v.seconds === "number") return new Date(v.seconds * 1000).toISOString()
+  if (typeof v === "number" && Number.isFinite(v)) return new Date(v).toISOString()
+  if (typeof v === "object") {
+    const record = v as { seconds?: unknown; toDate?: unknown; toMillis?: unknown }
+    if (typeof record.toDate === "function") {
+      const date = record.toDate()
+      return date instanceof Date ? date.toISOString() : undefined
+    }
+    if (typeof record.toMillis === "function") {
+      const millis = record.toMillis()
+      return typeof millis === "number" ? new Date(millis).toISOString() : undefined
+    }
+    if (typeof record.seconds === "number") return new Date(record.seconds * 1000).toISOString()
+  }
   return undefined
 }
 

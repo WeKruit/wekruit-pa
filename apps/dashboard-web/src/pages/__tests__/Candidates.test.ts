@@ -3,12 +3,15 @@ import test from "node:test"
 
 import {
   classifyCandidateProfile,
+  candidateDrawerTimeMs,
   deriveCandidateSource,
+  firstCandidateDrawerText,
   isDemoPreviewProfile,
   isSyntheticTestProfile,
   matchesPhoneSearch,
   normalizeCandidatePhoneLookup,
   previewCandidateDrawerText,
+  sortCandidateDrawerRows,
 } from "../Candidates.helpers.js"
 
 test("Candidates classifies explicit testMode users as synthetic", () => {
@@ -158,4 +161,22 @@ test("Candidates drawer renders structured context as text", () => {
 test("Candidates drawer truncates long context previews", () => {
   const preview = previewCandidateDrawerText("x".repeat(12), 5)
   assert.equal(preview, "xxxxx...")
+})
+
+test("Candidates drawer picks the first non-empty text value", () => {
+  assert.equal(firstCandidateDrawerText(undefined, "", "  ", "Account Executive"), "Account Executive")
+})
+
+test("Candidates drawer sorts hydrated detail rows by known timestamps", () => {
+  const rows = sortCandidateDrawerRows(
+    [
+      { id: "old", updatedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "new", updatedAt: { seconds: 1_800_000_000 } },
+      { id: "missing" },
+    ],
+    ["updatedAt"]
+  )
+
+  assert.deepEqual(rows.map((row) => row.id), ["new", "old", "missing"])
+  assert.equal(candidateDrawerTimeMs({ seconds: 1_800_000_000 }), 1_800_000_000_000)
 })

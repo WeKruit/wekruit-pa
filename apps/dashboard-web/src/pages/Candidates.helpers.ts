@@ -56,3 +56,48 @@ export function previewCandidateDrawerText(value: unknown, max = 400): string | 
   if (!raw) return undefined
   return raw.length > max ? `${raw.slice(0, max)}...` : raw
 }
+
+export function firstCandidateDrawerText(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== "string") continue
+    const trimmed = value.trim()
+    if (trimmed) return trimmed
+  }
+  return undefined
+}
+
+export function candidateDrawerTimeMs(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string") {
+    const parsed = Date.parse(value)
+    return Number.isNaN(parsed) ? 0 : parsed
+  }
+  if (value && typeof value === "object") {
+    const record = value as { seconds?: unknown; toMillis?: unknown }
+    if (typeof record.toMillis === "function") {
+      const millis = record.toMillis()
+      return typeof millis === "number" && Number.isFinite(millis) ? millis : 0
+    }
+    if (typeof record.seconds === "number") return record.seconds * 1000
+  }
+  return 0
+}
+
+export function sortCandidateDrawerRows<T extends Record<string, unknown>>(
+  rows: T[],
+  timeFields: string[]
+): T[] {
+  return [...rows].sort((a, b) => {
+    const at = firstCandidateDrawerTime(a, timeFields)
+    const bt = firstCandidateDrawerTime(b, timeFields)
+    return bt - at
+  })
+}
+
+function firstCandidateDrawerTime(row: Record<string, unknown>, timeFields: string[]): number {
+  for (const field of timeFields) {
+    const value = candidateDrawerTimeMs(row[field])
+    if (value > 0) return value
+  }
+  return 0
+}
