@@ -37,7 +37,14 @@ import type * as Agents from "@openai/agents"
 // then build a require anchored at that path so @openai/agents + zod resolve from agent-runtime's
 // own (zod@4) subtree.
 const baseRequire = createRequire(import.meta.url)
-const req = createRequire(baseRequire.resolve("@pa/agent-runtime/package.json"))
+function agentSdkRequire(): NodeJS.Require {
+  try {
+    return createRequire(baseRequire.resolve("@pa/agent-runtime/package.json"))
+  } catch {
+    return baseRequire
+  }
+}
+const req = agentSdkRequire()
 const sdk = req("@openai/agents") as Record<string, unknown>
 
 /** zod@4 — the SAME instance @openai/agents-core uses. Use this for ALL tool param schemas. */
