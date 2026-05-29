@@ -87,7 +87,7 @@ function escapeHtml(s: string): string {
 
 const SLUG_RANDOM_SUFFIX_LEN = 4
 const SLUG_BASE_MAX = 32
-const REFERRAL_SLUG_RE = /^[a-z0-9][a-z0-9-]{0,79}$/
+const REFERRAL_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9-]{0,79}$/
 
 function slugify(input: string): string {
   return input
@@ -101,7 +101,7 @@ function slugify(input: string): string {
 
 function normalizeReferralSlug(input: unknown): string | null {
   if (typeof input !== "string") return null
-  const slug = input.trim().toLowerCase()
+  const slug = input.trim()
   if (!REFERRAL_SLUG_RE.test(slug)) return null
   return slug
 }

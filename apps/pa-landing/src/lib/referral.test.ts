@@ -27,10 +27,10 @@ function withStorage(fn: () => void): void {
 
 test("referral slug storage only persists normalized valid slugs", () => {
   withStorage(() => {
-    assert.equal(normalizeReferralSlug(" Maya-Chen "), "maya-chen")
+    assert.equal(normalizeReferralSlug(" Maya-Chen "), "Maya-Chen")
     assert.equal(normalizeReferralSlug("../bad"), null)
-    assert.equal(rememberReferralSlug(" Maya-Chen "), "maya-chen")
-    assert.equal(readReferralSlug(), "maya-chen")
+    assert.equal(rememberReferralSlug(" Maya-Chen "), "Maya-Chen")
+    assert.equal(readReferralSlug(), "Maya-Chen")
     clearReferralSlug("other-slug")
     assert.equal(readReferralSlug(), "maya-chen")
     clearReferralSlug("maya-chen")
