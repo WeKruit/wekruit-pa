@@ -45,6 +45,7 @@ import {
   CAREER_STAGE_VOCAB,
   JOB_TYPE_VOCAB,
   INDUSTRY_SECTOR_VOCAB,
+  PreferenceHardnessSchema,
 } from "@wekruit/shared-tags"
 import { roleToIndustryBuckets, type IndustryEnumBucket } from "../voice/role-to-industry.js"
 import type { CanonicalRole } from "../onboarding.js"
@@ -97,8 +98,15 @@ export type TagsPreferredLang = "zh" | "en"
  * Schema version. Bump on breaking changes (rename / drop fields). Reads
  * default to 1 when the field is absent so legacy `pa-users.tags` rows
  * (if any pre-iter34 lands) don't false-positive as "unparseable".
+ *
+ * v2 (2026-05-28) — additive `preferenceHardness` blob (SOFT-vs-HARD
+ * preference model). PURELY ADDITIVE: every v1 doc still parses (the field
+ * is optional), and a doc carrying no `preferenceHardness` is byte-identical
+ * to v1 behaviour because the matcher's `resolveHardness` reader falls back
+ * to `DEFAULT_HARDNESS` (which encodes current ranking). Bumped so backfills
+ * / dashboards can tell hardness-aware docs apart from legacy ones.
  */
-export const USER_TAGS_SCHEMA_VERSION = 1 as const
+export const USER_TAGS_SCHEMA_VERSION = 2 as const
 
 export const UserTagsSchema = z.object({
   // ---- CV-derived ------------------------------------------------------
@@ -280,6 +288,20 @@ export const UserTagsSchema = z.object({
    * names. Cap 30; +0.15 soft score when V16 scores a matching job.
    */
   companyPositiveList: z.array(z.string()).max(30).optional(),
+
+  // ---- SOFT-vs-HARD preference model (2026-05-28) ---------------------
+  /**
+   * Per-axis hardness annotations (`hard` = dealbreaker → drop; `soft` =
+   * buffer → penalize-but-keep). Annotates EXISTING matching axes (salary,
+   * industrySector, companyStage, companySize, location, jobType,
+   * careerStage, roleFunction) — NOT a parallel taxonomy. Optional: when
+   * absent (or an individual axis is unset) the V16 matcher's
+   * `resolveHardness` reader falls back to `DEFAULT_HARDNESS`, which encodes
+   * current ranking, so a doc with no `preferenceHardness` is byte-identical
+   * to today. Read by V16 only behind `paPreferenceHardnessEnabled` (default
+   * OFF). Shape: `PreferenceHardnessSchema` in `@wekruit/shared-tags`.
+   */
+  preferenceHardness: PreferenceHardnessSchema.optional(),
 
   // ---- bookkeeping -----------------------------------------------------
   lastUpdatedFromCv: z.string().optional(),
@@ -1129,6 +1151,20 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   // Phase B2 — company-tag pref. Cap=30 mirrors UserTagsSchema.max(30).
   const targetCompanyTags = dedupedStrings(statedPreferences?.targetCompanyTags, 30)
 
+  // ---- SOFT-vs-HARD preference model (2026-05-28) ---------------------
+  // Pass-through `preferenceHardness` from statedPreferences, validated
+  // through the canonical schema (drops non-vocab axes / malformed entries).
+  // Parse-fail (or absent) → undefined → field omitted (backward compat).
+  const preferenceHardnessRaw = (statedPreferences as { preferenceHardness?: unknown } | undefined)
+    ?.preferenceHardness
+  let preferenceHardness: UserTags["preferenceHardness"]
+  if (preferenceHardnessRaw && typeof preferenceHardnessRaw === "object") {
+    const parsed = PreferenceHardnessSchema.safeParse(preferenceHardnessRaw)
+    if (parsed.success && Object.keys(parsed.data).length > 0) {
+      preferenceHardness = parsed.data
+    }
+  }
+
   // ---- assemble + omit-undefined --------------------------------------
   // We deliberately avoid placing `undefined` keys on the output so the
   // shape round-trips through Firestore (Firestore drops `undefined` on
@@ -1163,6 +1199,7 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   if (proposedTags) out.proposedTags = proposedTags
   if (targetCompanyTags) out.targetCompanyTags = targetCompanyTags
   if (urgentlySeeking !== undefined) out.urgentlySeeking = urgentlySeeking
+  if (preferenceHardness) out.preferenceHardness = preferenceHardness
   if (cv && cvUpdatedAt) out.lastUpdatedFromCv = cvUpdatedAt
   if (statedPreferences && chatUpdatedAt) out.lastUpdatedFromChat = chatUpdatedAt
 

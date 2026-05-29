@@ -1,14 +1,21 @@
 import type { CandidateJobMatch, CandidateLifecycleState } from "@pa/core-types"
 import { createCandidateJobMatchId } from "@pa/core-types"
-import { acceptableCareerStages, CAREER_STAGE_VOCAB, type CareerStage } from "@wekruit/shared-tags"
-import { V16_SCORE_WEIGHTS } from "./match-weights.js"
+import {
+  acceptableCareerStages,
+  CAREER_STAGE_VOCAB,
+  type CareerStage,
+  type PreferenceHardness,
+} from "@wekruit/shared-tags"
+import { V16_SCORE_WEIGHTS, V16_SOFT_MISS_DEMERIT } from "./match-weights.js"
 import type { MatchingJob } from "./types.js"
 import {
   computeOverlap,
   computeSalaryFit,
   computeWeightedSkillJaccard,
   cosineSim,
+  resolveHardness,
 } from "./tools/query-matching-jobs-v16.js"
+import type { UserTags } from "@pa/pa-orchestrator"
 
 export type RecommendedMatchAction = "auto_outbound" | "hitl_review" | "do_not_contact"
 export type S5HardFilterResult = "pass" | "soft_block" | "hard_block" | "unknown"
@@ -27,6 +34,13 @@ export type MatchingCandidateTags = {
   minSalary?: number
   embedding?: number[]
   schemaVersion?: number
+  /**
+   * SOFT-vs-HARD (2026-05-28) — per-axis hardness annotations, read by the
+   * job→candidates scorer only when `options.preferenceHardnessEnabled` is
+   * true. Absent / flag OFF → the existing hard `blockedSignals` apply
+   * unchanged (byte-identical).
+   */
+  preferenceHardness?: PreferenceHardness
 }
 
 export type MatchingCandidateRow = {
@@ -76,6 +90,17 @@ export type ScoreCandidateForJobOptions = {
   freshnessWindowMs?: number
   autoOutboundThreshold?: number
   hitlThreshold?: number
+  /**
+   * SOFT-vs-HARD (2026-05-28) — when true, the candidate's
+   * `tags.preferenceHardness` governs the location / jobType / careerStage /
+   * salary / industry gates: a SOFT axis no longer emits a `blockedSignal`
+   * (so the candidate stays in the activatable pool) and instead takes a
+   * small soft-miss demerit on the final score. HARD axes (and the default
+   * when this flag is OFF) keep emitting the hard `blockedSignal`. Mirrors the
+   * candidate→jobs `paPreferenceHardnessEnabled` semantics so ONE hardness
+   * model governs both directions. Default false → byte-identical.
+   */
+  preferenceHardnessEnabled?: boolean
 }
 
 const DEFAULT_NOW_MS = Date.parse("2026-05-13T00:00:00.000Z")
@@ -176,16 +201,28 @@ export function scoreCandidateForJob(
   const missingInfo: string[] = []
   const risks: string[] = []
   const matchedSignals: string[] = []
+  // SOFT-vs-HARD (2026-05-28): when the flag is on, soft-axis misses go here
+  // (demerit) instead of blockedSignals (hard drop). `softMissSignals` is
+  // surfaced in `risks` for observability. Flag OFF → never populated.
+  const softMissSignals: string[] = []
+  const phEnabled = options.preferenceHardnessEnabled === true
+  // resolveHardness reads only `tags.preferenceHardness[axis]`; cast the
+  // candidate tags to the UserTags shape it expects.
+  const phTags = tags as unknown as UserTags
+  const axisIsSoft = (axis: Parameters<typeof resolveHardness>[1]): boolean =>
+    phEnabled && resolveHardness(phTags, axis).hardness === "soft"
 
   if (candidate.outreach?.doNotContact) blockedSignals.push("candidate_do_not_contact")
   if (candidate.outreach?.paused) blockedSignals.push("candidate_outreach_paused")
 
   const roleFunction = list(job.roleFunction)
   const candidateRoles = list(tags.targetRoleFunction)
+  // roleFunction stays auto-hard in both directions (no toggle).
   if (roleFunction.length > 0 && candidateRoles.length > 0 && !overlaps(candidateRoles, roleFunction)) {
     blockedSignals.push("role_mismatch")
   }
 
+  // visa stays hard (spec: do not change visa hard semantics).
   if (needsSponsorship(tags.visaStatus) && job.sponsorship === false) {
     blockedSignals.push("visa_sponsorship_unavailable")
   }
@@ -198,18 +235,21 @@ export function scoreCandidateForJob(
   if (candidateLocations.length === 0) {
     missingInfo.push("candidate_location")
   } else if (list(job.locationBuckets).length > 0 && !locationPasses(candidateLocations, job.locationBuckets)) {
-    blockedSignals.push("location_mismatch")
+    if (axisIsSoft("location")) softMissSignals.push("location_soft_miss")
+    else blockedSignals.push("location_mismatch")
   }
 
   if (!tags.careerStage) {
     missingInfo.push("candidate_career_stage")
   } else if (job.seniorityLevel && !careerStagePasses(tags.careerStage, job.seniorityLevel)) {
-    blockedSignals.push("career_stage_mismatch")
+    if (axisIsSoft("careerStage")) softMissSignals.push("career_stage_soft_miss")
+    else blockedSignals.push("career_stage_mismatch")
   }
 
   const targetJobTypes = list(tags.targetJobType ?? tags.targetJobTypes)
   if (targetJobTypes.length > 0 && job.jobType && !targetJobTypes.includes(job.jobType)) {
-    blockedSignals.push("job_type_mismatch")
+    if (axisIsSoft("jobType")) softMissSignals.push("job_type_soft_miss")
+    else blockedSignals.push("job_type_mismatch")
   }
 
   const firstSeenMs = timestampToMs(job.firstSeenAt)
@@ -231,18 +271,27 @@ export function scoreCandidateForJob(
   const industrySector = computeOverlap([...(tags.industrySector ?? []), ...(tags.relevantIndustry ?? [])], job.industrySector)
   const llmScore = clamp01(candidate.llmMatch) ?? 0
   const embedding = cosineSim(candidate.cvEmbedding ?? tags.embedding, job.embedding ?? undefined)
-  const salaryFit = computeSalaryFit(tags.minSalary, job.salaryMin)
+  // SOFT-vs-HARD: a SOFT salary axis uses the buffer-aware decay (accept down
+  // to floor at reduced score); flag OFF / hard → legacy curve.
+  const salaryBufferPct = axisIsSoft("salary") ? resolveHardness(phTags, "salary").bufferPct : undefined
+  const salaryFit = computeSalaryFit(tags.minSalary, job.salaryMin, salaryBufferPct)
+  // Soft-miss demerit: each soft axis the candidate misses subtracts a small
+  // amount so they rank below clean matches but stay in the pool. Flag OFF →
+  // `softMissSignals` is empty → demerit 0 → byte-identical.
+  const softMissDemerit = softMissSignals.length * V16_SOFT_MISS_DEMERIT
   const finalScore =
     llmScore * V16_SCORE_WEIGHTS.llmMatch +
     skill.score * V16_SCORE_WEIGHTS.skillJaccard +
     relevantTags * V16_SCORE_WEIGHTS.relevantTags +
     industrySector * V16_SCORE_WEIGHTS.industrySector +
     embedding * V16_SCORE_WEIGHTS.cvEmbCosine +
-    salaryFit * V16_SCORE_WEIGHTS.salaryFit
+    salaryFit * V16_SCORE_WEIGHTS.salaryFit -
+    softMissDemerit
 
   if (relevantTags > 0) matchedSignals.push("relevant_tags")
   if (industrySector > 0) matchedSignals.push("industry_sector")
   if (clamp01(candidate.llmMatch) === undefined) risks.push("llm_score_unavailable")
+  for (const s of softMissSignals) risks.push(s)
 
   const hardFilterResult: S5HardFilterResult =
     blockedSignals.length > 0 ? "hard_block" : missingInfo.length > 0 ? "soft_block" : "pass"
@@ -279,7 +328,9 @@ export function scoreCandidateForJob(
     softScore: finalScore,
     llmScore,
     embeddingScore: embedding,
-    finalScore: hardFilterResult === "hard_block" ? 0 : finalScore,
+    // Clamp the surfaced score to ≥ 0 so a soft-miss demerit can never push a
+    // surfaced (non-blocked) candidate below a hard-blocked one (which is 0).
+    finalScore: hardFilterResult === "hard_block" ? 0 : Math.max(0, finalScore),
     ...(candidate.tagsUpdatedAt ? { candidateTagsUpdatedAt: candidate.tagsUpdatedAt } : {}),
   }
 }

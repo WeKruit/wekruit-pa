@@ -31,6 +31,8 @@ import {
   INDUSTRY_SECTOR_VOCAB,
   CAREER_STAGE_VOCAB,
   JOB_TYPE_VOCAB,
+  HARDNESS_AXIS_VOCAB,
+  HardnessSchema,
   type RoleFunction,
   type IndustrySector,
   type CareerStage,
@@ -225,6 +227,26 @@ export const ConversationExtractResultSchema = z.object({
         (v) => v === undefined || v.length <= 12,
         { message: "relevantTags exceeds 12" },
       ),
+      /**
+       * SOFT-vs-HARD preference model (2026-05-28) — per-axis hardness the
+       * user signalled in chat. Keyed by `HARDNESS_AXIS_VOCAB`. Each entry is
+       * `{ hardness: "hard" | "soft" }` (the matcher fills buffer defaults).
+       * `.strict()` on the parent would otherwise reject this key; included
+       * here so the extractor can capture "must"/"only"/"dealbreaker" → hard
+       * and "prefer"/"ideally"/"open to" → soft. Emitted ONLY when the user
+       * clearly signals; absent = unset = matcher uses DEFAULT_HARDNESS.
+       */
+      preferenceHardness: z
+        .object(
+          Object.fromEntries(
+            HARDNESS_AXIS_VOCAB.map((a) => [
+              a,
+              z.object({ hardness: HardnessSchema }).strict().optional(),
+            ]),
+          ),
+        )
+        .strict()
+        .optional(),
     })
     .strict(),
   memoryEntities: z.array(
@@ -343,7 +365,18 @@ export function buildExtractorPrompt(req: ConversationExtractRequest): string {
     "  targetLocations (string[]):     free-form normalized location tokens, e.g. new_york, san_francisco_bay_area, remote",
     "  minSalaryUsd (integer):         minimum acceptable base salary in USD",
     "  relevantTags (string[], max 12): free-form lowercase skill/interest tokens",
+    `  preferenceHardness (object):    per-axis { hardness: "hard" | "soft" } keyed by: ${HARDNESS_AXIS_VOCAB.join(", ")}`,
     "Do NOT emit any key not in this list. A single-value field may be a scalar or a 1-element array.",
+    "",
+    "preferenceHardness — capture how STRICT the user is about an axis, ONLY when they clearly signal it:",
+    "  - HARD (dealbreaker): \"must\", \"only\", \"required\", \"need\", \"dealbreaker\", \"non-negotiable\", \"won't consider\".",
+    "    e.g. \"I ONLY want fintech\" → preferenceHardness.industrySector = { hardness: \"hard\" }.",
+    "    e.g. \"remote is a dealbreaker\" → preferenceHardness.location = { hardness: \"hard\" }.",
+    "    e.g. \"I need at least 140k, below that is a no\" → preferenceHardness.salary = { hardness: \"hard\" }.",
+    "  - SOFT (preference): \"prefer\", \"ideally\", \"would like\", \"open to\", \"flexible\", \"lean toward\", \"nice to have\".",
+    "    e.g. \"I'd prefer a startup but I'm open\" → preferenceHardness.companyStage = { hardness: \"soft\" }.",
+    "  - If the user is AMBIGUOUS about strictness, do NOT emit a preferenceHardness entry for that axis (leave it",
+    "    unset so the matcher defaults are used). Emit the axis VALUE field as usual.",
     "If the user asks to AVOID / exclude / is not interested in an industry (e.g. \"avoid crypto and adtech\"),",
     "emit that industry in negativeIndustrySector (canonical token, e.g. crypto_web3_blockchain) — do NOT put it",
     "in industrySector. industrySector is ONLY for PREFERRED industries the user wants more of.",
@@ -462,6 +495,25 @@ export async function runExtraction(
   // Dual-write with Promise.allSettled so a Qdrant outage never blocks the
   // Firestore write (or vice versa). Both are logged on failure.
   const tagPatch: PartialUserTags = parsed.tagPatch as PartialUserTags
+
+  // SOFT-vs-HARD (2026-05-28) — stamp provenance on captured hardness entries
+  // so each hard/soft signal is auditable (source + timestamp). The matcher
+  // fills buffer defaults from `DEFAULT_HARDNESS`, so we only carry hardness +
+  // provenance here. Pure decoration over the LLM-emitted entries.
+  if (parsed.tagPatch.preferenceHardness) {
+    const stampedAt = now().toISOString()
+    const stamped: Record<string, { hardness: "hard" | "soft"; source: "conversation"; updatedAt: string }> = {}
+    for (const [axis, entry] of Object.entries(parsed.tagPatch.preferenceHardness)) {
+      if (entry && (entry.hardness === "hard" || entry.hardness === "soft")) {
+        stamped[axis] = { hardness: entry.hardness, source: "conversation", updatedAt: stampedAt }
+      }
+    }
+    if (Object.keys(stamped).length > 0) {
+      ;(tagPatch as { preferenceHardness?: unknown }).preferenceHardness = stamped
+    } else {
+      delete (tagPatch as { preferenceHardness?: unknown }).preferenceHardness
+    }
+  }
   const [tagWrite, memWrite] = await Promise.allSettled([
     tagFields.length > 0
       ? deps.writeUserTags(req.userId, tagPatch)

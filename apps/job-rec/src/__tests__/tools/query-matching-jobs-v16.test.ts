@@ -29,8 +29,16 @@ import {
   queryMatchingJobsV16,
   V16_FRESHNESS_BOOST_MAX,
   V16_FRESHNESS_HALF_LIFE_MS,
+  resolveHardness,
+  computeCompanyStageFit,
+  PREFERENCE_HARDNESS_FLAG_KEY,
 } from "../../tools/query-matching-jobs-v16.js"
-import { V16_SCORE_WEIGHTS, V16_SCORE_WEIGHTS_SUM } from "../../match-weights.js"
+import {
+  V16_SCORE_WEIGHTS,
+  V16_SCORE_WEIGHTS_SUM,
+  V16_COMPANY_STAGE_WEIGHT,
+  V16_SOFT_MISS_DEMERIT,
+} from "../../match-weights.js"
 import type { MatchingJob } from "../../types.js"
 
 const NOW = Date.parse("2026-05-06T12:00:00Z")
@@ -2735,4 +2743,340 @@ test("W5 cleanup: queryMatchingJobsV16 runV16Query reads typed targetRoleFunctio
   assert.equal(r.needsOnboarding, undefined)
   assert.equal(r.jobs.length, 1)
   assert.equal(r.jobs[0]!.id, "swe")
+})
+
+// ===========================================================================
+// SOFT-vs-HARD preference model (2026-05-28)
+// ===========================================================================
+
+// Local helper: a flag-checker stub that returns `true` for the hardness flag.
+const flagOn = async (key: string) => key === PREFERENCE_HARDNESS_FLAG_KEY
+const flagOff = async () => false
+
+// ---------------------------------------------------------------------------
+// resolveHardness — pure reader + DEFAULT_HARDNESS fallback
+// ---------------------------------------------------------------------------
+
+test("resolveHardness: unset axis falls back to DEFAULT_HARDNESS (backward compat)", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 2 } as never
+  // location/jobType/careerStage/roleFunction default HARD
+  assert.equal(resolveHardness(tags, "location").hardness, "hard")
+  assert.equal(resolveHardness(tags, "jobType").hardness, "hard")
+  assert.equal(resolveHardness(tags, "careerStage").hardness, "hard")
+  assert.equal(resolveHardness(tags, "roleFunction").hardness, "hard")
+  // salary/industry/companyStage/companySize default SOFT
+  assert.equal(resolveHardness(tags, "salary").hardness, "soft")
+  assert.equal(resolveHardness(tags, "salary").bufferPct, 0.1)
+  assert.equal(resolveHardness(tags, "industrySector").hardness, "soft")
+  assert.equal(resolveHardness(tags, "companyStage").hardness, "soft")
+  assert.equal(resolveHardness(tags, "companyStage").bufferSteps, 1)
+})
+
+test("resolveHardness: explicit user entry overrides the default", () => {
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 2,
+    preferenceHardness: {
+      industrySector: { hardness: "hard" },
+      location: { hardness: "soft" },
+      salary: { hardness: "soft", bufferPct: 0.25 },
+    },
+  } as never
+  assert.equal(resolveHardness(tags, "industrySector").hardness, "hard")
+  assert.equal(resolveHardness(tags, "location").hardness, "soft")
+  assert.equal(resolveHardness(tags, "salary").bufferPct, 0.25)
+  // unset axis still defaults
+  assert.equal(resolveHardness(tags, "jobType").hardness, "hard")
+})
+
+// ---------------------------------------------------------------------------
+// computeSalaryFit — buffer-aware decay (§3.1)
+// ---------------------------------------------------------------------------
+
+test("computeSalaryFit: no bufferPct → legacy curve byte-identical", () => {
+  // These mirror the pre-2026-05-28 assertions.
+  assert.equal(computeSalaryFit(100_000, 150_000), 1.0)
+  assert.equal(computeSalaryFit(150_000, 100_000), 0) // -$50K → 0
+  assert.equal(computeSalaryFit(undefined, 100_000), 0.5)
+  assert.equal(computeSalaryFit(100_000, null), 0.5)
+})
+
+test("computeSalaryFit: bufferPct=0.10 — within band decays 0.7..1.0, below floor 0.7×decay", () => {
+  const userMin = 100_000
+  // at floor (90k) → 0.7
+  assert.ok(Math.abs(computeSalaryFit(userMin, 90_000, 0.1) - 0.7) < 1e-9)
+  // at userMin (100k) → 1.0
+  assert.equal(computeSalaryFit(userMin, 100_000, 0.1), 1.0)
+  // midway in band (95k) → 0.85
+  assert.ok(Math.abs(computeSalaryFit(userMin, 95_000, 0.1) - 0.85) < 1e-9)
+  // just above userMin → 1.0
+  assert.equal(computeSalaryFit(userMin, 120_000, 0.1), 1.0)
+  // below floor (80k, floor=90k) → 0.7 × (1 - 10000/50000) = 0.7 × 0.8 = 0.56
+  assert.ok(Math.abs(computeSalaryFit(userMin, 80_000, 0.1) - 0.56) < 1e-9)
+  // far below floor → 0 floor
+  assert.equal(computeSalaryFit(userMin, 10_000, 0.1), 0)
+})
+
+// ---------------------------------------------------------------------------
+// computeCompanyStageFit — ordinal band + buffer (§3.3)
+// ---------------------------------------------------------------------------
+
+test("computeCompanyStageFit: in-band → 1.0, buffer → 0.6, outside → 0.2, no-signal → 0.5", () => {
+  // user wants early_startup (pre_seed..series_a)
+  const tags = { skills: [], industryEnum: [], schemaVersion: 2, companySize: "early_startup" } as never
+  assert.equal(computeCompanyStageFit(tags, "seed", 1), 1.0) // in band
+  assert.equal(computeCompanyStageFit(tags, "series_a", 1), 1.0) // band edge
+  assert.equal(computeCompanyStageFit(tags, "series_b", 1), 0.6) // 1 step past series_a
+  assert.equal(computeCompanyStageFit(tags, "series_c", 1), 0.2) // 2 steps past → outside
+  assert.equal(computeCompanyStageFit(tags, "ipo_public", 1), 0.2)
+  // unknown / non-fundable → neutral 0.5
+  assert.equal(computeCompanyStageFit(tags, "unknown", 1), 0.5)
+  assert.equal(computeCompanyStageFit(tags, "bootstrapped", 1), 0.5)
+  assert.equal(computeCompanyStageFit(tags, undefined, 1), 0.5)
+})
+
+test("computeCompanyStageFit: no company preference → always 0.5 neutral", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 2, companySize: "open" } as never
+  assert.equal(computeCompanyStageFit(tags, "seed", 1), 0.5)
+  assert.equal(computeCompanyStageFit(tags, "ipo_public", 1), 0.5)
+})
+
+test("computeCompanyStageFit: prefersStartup=bigtech maps to ipo_public/private_mature band", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 2, prefersStartup: "bigtech" } as never
+  assert.equal(computeCompanyStageFit(tags, "ipo_public", 1), 1.0)
+  assert.equal(computeCompanyStageFit(tags, "private_mature", 1), 1.0)
+  assert.equal(computeCompanyStageFit(tags, "seed", 1), 0.2)
+})
+
+// ---------------------------------------------------------------------------
+// applyV16HardFilters — soft skips drop, hard adds drop (flag ON)
+// ---------------------------------------------------------------------------
+
+test("applyV16HardFilters: location SOFT keeps off-location jobs (flag ON)", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "sf", locationBuckets: ["san_francisco_bay_area"] }),
+    mkJob({ id: "ny", locationBuckets: ["new_york_metro"] }),
+  ]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 2,
+    targetLocations: ["san_francisco_bay_area"],
+    preferenceHardness: { location: { hardness: "soft" } },
+  } as never
+  const tagsNoPh = {
+    skills: [], industryEnum: [], schemaVersion: 2,
+    targetLocations: ["san_francisco_bay_area"],
+  } as never
+  // hard (default / flag OFF semantics): only sf survives
+  const hard = applyV16HardFilters(jobs, tagsNoPh, NOW)
+  assert.deepEqual(hard.kept.map((j) => j.id), ["sf"])
+  // soft + flag ON: BOTH survive (ny demerited later in scorer, not dropped)
+  const soft = applyV16HardFilters(jobs, tags, NOW, undefined, { preferenceHardnessEnabled: true })
+  assert.deepEqual(soft.kept.map((j) => j.id).sort(), ["ny", "sf"])
+  assert.equal(soft.counters.location, 0)
+})
+
+test("applyV16HardFilters: location stays HARD when flag is OFF even if user marked soft", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "sf", locationBuckets: ["san_francisco_bay_area"] }),
+    mkJob({ id: "ny", locationBuckets: ["new_york_metro"] }),
+  ]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 2,
+    targetLocations: ["san_francisco_bay_area"],
+    preferenceHardness: { location: { hardness: "soft" } },
+  } as never
+  // No options.preferenceHardnessEnabled → flag OFF → hard drop applies.
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["sf"])
+  assert.equal(r.counters.location, 1)
+})
+
+test("applyV16HardFilters: salary HARD drops known-below-min, keeps null salary (flag ON)", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "above", salaryMin: 160_000 }),
+    mkJob({ id: "below", salaryMin: 90_000 }),
+    mkJob({ id: "unknown", salaryMin: null }),
+  ]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 2,
+    minSalary: 140_000,
+    preferenceHardness: { salary: { hardness: "hard" } },
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW, undefined, { preferenceHardnessEnabled: true })
+  assert.deepEqual(r.kept.map((j) => j.id).sort(), ["above", "unknown"])
+  assert.equal(r.counters.salary, 1)
+  // flag OFF → salary is never a hard gate → all kept
+  const off = applyV16HardFilters(jobs, tags, NOW)
+  assert.equal(off.kept.length, 3)
+  assert.equal(off.counters.salary, 0)
+})
+
+test("applyV16HardFilters: industrySector HARD drops disjoint, keeps unenriched (flag ON)", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "match", industrySector: ["financial_technology"] }),
+    mkJob({ id: "miss", industrySector: ["healthcare_and_medical"] }),
+    mkJob({ id: "unenriched", industrySector: [] }),
+  ]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 2,
+    industrySector: ["financial_technology"],
+    preferenceHardness: { industrySector: { hardness: "hard" } },
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW, undefined, { preferenceHardnessEnabled: true })
+  assert.deepEqual(r.kept.map((j) => j.id).sort(), ["match", "unenriched"])
+  assert.equal(r.counters.industrySector, 1)
+  // flag OFF → industry never a hard gate → all kept
+  const off = applyV16HardFilters(jobs, tags, NOW)
+  assert.equal(off.kept.length, 3)
+  assert.equal(off.counters.industrySector, 0)
+})
+
+// ---------------------------------------------------------------------------
+// scoreV16Job — companyStageBoost + softMissDemerit (flag ON)
+// ---------------------------------------------------------------------------
+
+test("scoreV16Job: flag OFF omits companyStageBoost + softMissDemerit (byte-identical breakdown)", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 2, companySize: "early_startup" } as never
+  const job = mkJob({ requiredSkills: ["python"] })
+  const { breakdown } = scoreV16Job(tags, job, undefined, undefined, undefined, { stage: "seed", tags: [] }, NOW)
+  assert.equal(breakdown.companyStageBoost, undefined)
+  assert.equal(breakdown.softMissDemerit, undefined)
+})
+
+test("scoreV16Job: flag ON adds companyStageBoost from companyInfo.stage", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 2, companySize: "early_startup" } as never
+  const job = mkJob({ requiredSkills: ["python"] })
+  // in-band stage → fit 1.0 → boost = (1.0-0.5)*0.10 = +0.05
+  const inBand = scoreV16Job(tags, job, undefined, undefined, undefined, { stage: "seed", tags: [] }, NOW, { enabled: true })
+  assert.ok(Math.abs(inBand.breakdown.companyStageBoost! - (0.5 * V16_COMPANY_STAGE_WEIGHT)) < 1e-9)
+  // outside-band stage → fit 0.2 → boost = (0.2-0.5)*0.10 = -0.03
+  const outBand = scoreV16Job(tags, job, undefined, undefined, undefined, { stage: "ipo_public", tags: [] }, NOW, { enabled: true })
+  assert.ok(Math.abs(outBand.breakdown.companyStageBoost! - (-0.3 * V16_COMPANY_STAGE_WEIGHT)) < 1e-9)
+  // unknown stage → fit 0.5 → boost 0
+  const unk = scoreV16Job(tags, job, undefined, undefined, undefined, { stage: "unknown", tags: [] }, NOW, { enabled: true })
+  assert.equal(unk.breakdown.companyStageBoost, 0)
+})
+
+test("scoreV16Job: flag ON applies soft-miss demerit for off-location job", () => {
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 2,
+    targetLocations: ["san_francisco_bay_area"],
+    preferenceHardness: { location: { hardness: "soft" } },
+  } as never
+  const offLoc = mkJob({ requiredSkills: ["python"], locationBuckets: ["new_york_metro"] })
+  const onLoc = mkJob({ requiredSkills: ["python"], locationBuckets: ["san_francisco_bay_area"] })
+  const off = scoreV16Job(tags, offLoc, undefined, undefined, undefined, undefined, NOW, { enabled: true })
+  const on = scoreV16Job(tags, onLoc, undefined, undefined, undefined, undefined, NOW, { enabled: true })
+  assert.ok(Math.abs(off.breakdown.softMissDemerit! - (-V16_SOFT_MISS_DEMERIT)) < 1e-9)
+  assert.equal(on.breakdown.softMissDemerit, 0)
+  // demerit lowers total → off-loc ranks below on-loc
+  assert.ok(off.breakdown.total < on.breakdown.total)
+})
+
+// ---------------------------------------------------------------------------
+// End-to-end queryMatchingJobsV16 — flag OFF vs ON (candidate → jobs)
+// ---------------------------------------------------------------------------
+
+async function seedHardnessUser(mfs: MockFirestore, uid: string, extraTags: Record<string, unknown>) {
+  await mfs.collection("pa-users").doc(uid).set({
+    tags: {
+      skills: ["python"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 2,
+      targetRoleFunction: ["software_engineering"],
+      ...extraTags,
+    },
+  })
+}
+
+test("queryMatchingJobsV16: flag OFF — soft-marked location still hard-gates (recall unchanged)", async () => {
+  const mfs = new MockFirestore()
+  await seedHardnessUser(mfs, "u_off", {
+    targetLocations: ["san_francisco_bay_area"],
+    preferenceHardness: { location: { hardness: "soft" } },
+  })
+  await seedJob(mfs, "sf", { roleFunction: ["software_engineering"], requiredSkills: ["python"], companyName: "SfCo", jobTitle: "SWE", locationBuckets: ["san_francisco_bay_area"] })
+  await seedJob(mfs, "ny", { roleFunction: ["software_engineering"], requiredSkills: ["python"], companyName: "NyCo", jobTitle: "SWE", locationBuckets: ["new_york_metro"] })
+  // No getFlag dep + no flag doc → OFF → byte-identical hard location gate.
+  const r = await queryMatchingJobsV16({ userId: "u_off", nowMs: NOW }, { db: asFirestore(mfs) })
+  assert.deepEqual(r.jobs.map((j) => j.id), ["sf"])
+})
+
+test("queryMatchingJobsV16: flag ON — soft location WIDENS recall, off-loc surfaces ranked lower", async () => {
+  const mfs = new MockFirestore()
+  await seedHardnessUser(mfs, "u_on", {
+    targetLocations: ["san_francisco_bay_area"],
+    preferenceHardness: { location: { hardness: "soft" } },
+  })
+  await seedJob(mfs, "sf", { roleFunction: ["software_engineering"], requiredSkills: ["python"], companyName: "SfCo", jobTitle: "SWE", locationBuckets: ["san_francisco_bay_area"] })
+  await seedJob(mfs, "ny", { roleFunction: ["software_engineering"], requiredSkills: ["python"], companyName: "NyCo", jobTitle: "SWE", locationBuckets: ["new_york_metro"] })
+  const r = await queryMatchingJobsV16(
+    { userId: "u_on", nowMs: NOW },
+    { db: asFirestore(mfs), getFlag: flagOn },
+  )
+  // BOTH surface (recall widened) and sf (on-location) ranks above ny.
+  assert.equal(r.jobs.length, 2)
+  assert.deepEqual(r.jobs.map((j) => j.id), ["sf", "ny"])
+  assert.ok((r.jobs[0]!.v16Score.total) > (r.jobs[1]!.v16Score.total))
+})
+
+test("queryMatchingJobsV16: flag ON — HARD industry still gates (dealbreaker honored)", async () => {
+  const mfs = new MockFirestore()
+  await seedHardnessUser(mfs, "u_hard_ind", {
+    industrySector: ["financial_technology"],
+    preferenceHardness: { industrySector: { hardness: "hard" } },
+  })
+  await seedJob(mfs, "fin", { roleFunction: ["software_engineering"], requiredSkills: ["python"], companyName: "FinCo", jobTitle: "SWE", industrySector: ["financial_technology"] })
+  await seedJob(mfs, "health", { roleFunction: ["software_engineering"], requiredSkills: ["python"], companyName: "HealthCo", jobTitle: "SWE", industrySector: ["healthcare_and_medical"] })
+  await seedJob(mfs, "unenriched", { roleFunction: ["software_engineering"], requiredSkills: ["python"], companyName: "PlainCo", jobTitle: "SWE", industrySector: [] })
+  const r = await queryMatchingJobsV16(
+    { userId: "u_hard_ind", nowMs: NOW },
+    { db: asFirestore(mfs), getFlag: flagOn },
+  )
+  const ids = r.jobs.map((j) => j.id).sort()
+  // fintech + unenriched kept; disjoint healthcare dropped.
+  assert.deepEqual(ids, ["fin", "unenriched"])
+  assert.equal(r.hardFilter.industrySector, 1)
+})
+
+test("queryMatchingJobsV16: flag ON — company-stage SOFT does not drop, boosts in-band ranking", async () => {
+  const mfs = new MockFirestore()
+  await seedHardnessUser(mfs, "u_stage_soft", {
+    companySize: "early_startup",
+    preferenceHardness: { companyStage: { hardness: "soft" } },
+  })
+  await mfs.collection("pa-companies").doc("seedco").set({ companyStage: "seed", companyTags: [] })
+  await mfs.collection("pa-companies").doc("bigco").set({ companyStage: "ipo_public", companyTags: [] })
+  await seedJob(mfs, "atseed", { roleFunction: ["software_engineering"], requiredSkills: ["python"], companyName: "SeedCo" })
+  await seedJob(mfs, "atbig", { roleFunction: ["software_engineering"], requiredSkills: ["python"], companyName: "BigCo" })
+  const r = await queryMatchingJobsV16(
+    { userId: "u_stage_soft", nowMs: NOW },
+    { db: asFirestore(mfs), getFlag: flagOn },
+  )
+  // Both surface (soft → no drop); the in-band (seed) company ranks above the
+  // out-of-band (ipo) company via companyStageBoost.
+  assert.equal(r.jobs.length, 2)
+  assert.equal(r.jobs[0]!.id, "atseed")
+  assert.ok((r.jobs[0]!.v16Score.companyStageBoost ?? 0) > (r.jobs[1]!.v16Score.companyStageBoost ?? 0))
+})
+
+test("queryMatchingJobsV16: flag ON — company-stage HARD drops real out-of-band, keeps unknown", async () => {
+  const mfs = new MockFirestore()
+  await seedHardnessUser(mfs, "u_stage_hard", {
+    companySize: "early_startup",
+    preferenceHardness: { companyStage: { hardness: "hard" } },
+  })
+  await mfs.collection("pa-companies").doc("seedco").set({ companyStage: "seed", companyTags: [] })
+  await mfs.collection("pa-companies").doc("bigco").set({ companyStage: "ipo_public", companyTags: [] })
+  // "unknownco" intentionally has NO pa-companies doc → unknown stage.
+  await seedJob(mfs, "atseed", { roleFunction: ["software_engineering"], requiredSkills: ["python"], companyName: "SeedCo" })
+  await seedJob(mfs, "atbig", { roleFunction: ["software_engineering"], requiredSkills: ["python"], companyName: "BigCo" })
+  await seedJob(mfs, "atunknown", { roleFunction: ["software_engineering"], requiredSkills: ["python"], companyName: "UnknownCo" })
+  const r = await queryMatchingJobsV16(
+    { userId: "u_stage_hard", nowMs: NOW },
+    { db: asFirestore(mfs), getFlag: flagOn },
+  )
+  const ids = r.jobs.map((j) => j.id).sort()
+  // in-band seed kept, unknown kept, out-of-band ipo dropped.
+  assert.deepEqual(ids, ["atseed", "atunknown"])
+  assert.equal(r.hardFilter.companyStage, 1)
 })

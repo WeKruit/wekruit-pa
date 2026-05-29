@@ -419,6 +419,21 @@ export const V16ScoreBreakdownSchema = z.object({
   freshnessBoost: z.number(),
   /** Per-user/job repeat-rec penalty applied to ranking total. */
   previousRecommendationPenalty: z.number().optional(),
+  /**
+   * SOFT-vs-HARD (2026-05-28) — additive company-stage fit boost,
+   * `(companyStageFit - 0.5) * V16_COMPANY_STAGE_WEIGHT`. Centered on 0.5 so
+   * "no signal / unknown stage" → 0. Present ONLY when
+   * `paPreferenceHardnessEnabled` is ON (flag OFF → key omitted → byte-
+   * identical breakdown).
+   */
+  companyStageBoost: z.number().optional(),
+  /**
+   * SOFT-vs-HARD (2026-05-28) — total additive demerit (≤ 0) from soft-miss
+   * axes that, under a HARD policy, would have dropped the job (soft
+   * location / jobType / careerStage / industrySector / salary misses). Each
+   * miss subtracts ~0.10. Present ONLY when the flag is ON.
+   */
+  softMissDemerit: z.number().optional(),
   /** Weighted total per V16_SCORE_WEIGHTS + B4 additive boosts. */
   total: z.number(),
 })
@@ -453,6 +468,25 @@ export type V16HardFilterCounters = {
   negativeListDrop: number
   /** Dropped because job title is clearly outside the user's target role function. */
   roleTitleMismatch: number
+  /**
+   * SOFT-vs-HARD (2026-05-28) — dropped because the salary axis is HARD and
+   * job.salaryMin is a known floor below user.minSalary. Always 0 unless
+   * `paPreferenceHardnessEnabled` is ON AND the user marked salary hard.
+   */
+  salary: number
+  /**
+   * SOFT-vs-HARD (2026-05-28) — dropped because the industrySector axis is
+   * HARD and user+job sectors are both non-empty with empty intersection.
+   * Always 0 unless the flag is ON AND the user marked industry hard.
+   */
+  industrySector: number
+  /**
+   * SOFT-vs-HARD (2026-05-28) — dropped because the companyStage axis is
+   * HARD and the company's real (non-unknown) stage is outside the user's
+   * preferred band + buffer. Always 0 unless the flag is ON AND the user
+   * marked company stage hard.
+   */
+  companyStage: number
 }
 
 /**

@@ -295,3 +295,29 @@ export const V16_SCORE_WEIGHTS_SUM =
   V16_SCORE_WEIGHTS.cvEmbCosine +
   V16_SCORE_WEIGHTS.salaryFit
 
+// ---------------------------------------------------------------------------
+// SOFT-vs-HARD preference model (2026-05-28) — additive company-stage weight.
+//
+// The Adam-LOCKED V16_SCORE_WEIGHTS unit blend (sum=1.0) is NEVER
+// redistributed. The company-stage signal is an ADDITIVE boost, same family
+// as V16_TAG_OVERLAP_WEIGHT (0.15) / V16_POSITIVE_HIT_WEIGHT (0.15) in
+// query-matching-jobs-v16.ts. It is centered on 0.5:
+//
+//   companyStageBoost = (companyStageFit - 0.5) × V16_COMPANY_STAGE_WEIGHT
+//
+// so "no signal / unknown stage" (fit=0.5) → 0 contribution. Only active
+// behind `paPreferenceHardnessEnabled` (default OFF) — flag OFF leaves stage
+// entirely out of the formula (byte-identical to today, where stage is
+// loaded but ignored).
+// ---------------------------------------------------------------------------
+
+export const V16_COMPANY_STAGE_WEIGHT = 0.1
+
+/**
+ * SOFT-vs-HARD (2026-05-28) — per-axis additive demerit applied in the
+ * scorer when a SOFT axis would have dropped the job under a HARD policy.
+ * Small negative nudge so soft-miss jobs still surface but rank below clean
+ * matches. Magnitude mirrors the negative urgencyBoost (-0.10).
+ */
+export const V16_SOFT_MISS_DEMERIT = 0.1
+

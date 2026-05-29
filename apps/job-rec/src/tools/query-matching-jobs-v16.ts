@@ -40,7 +40,14 @@ import {
   acceptableCareerStages,
   type CareerStage,
   CAREER_STAGE_VOCAB,
+  CAREER_STAGE_INDEX,
   type RoleFunction,
+  type CompanyStage,
+  DEFAULT_HARDNESS,
+  type HardnessAxis,
+  type PreferenceHardnessEntry,
+  DEFAULT_SALARY_BUFFER_PCT,
+  DEFAULT_ORDINAL_BUFFER_STEPS,
 } from "@wekruit/shared-tags"
 import { z } from "zod"
 import {
@@ -51,9 +58,14 @@ import {
   type V16QueryResult,
   type MatchedSkillContribution,
 } from "../types.js"
-import { V16_SCORE_WEIGHTS } from "../match-weights.js"
+import {
+  V16_SCORE_WEIGHTS,
+  V16_COMPANY_STAGE_WEIGHT,
+  V16_SOFT_MISS_DEMERIT,
+} from "../match-weights.js"
 import { projectMatchingJobRow } from "./query-matching-jobs.js"
 import { normalizeCompanyName } from "@pa/core-types"
+import { getFlag, type FlagContext, type FlagValue } from "@pa/pa-persistence"
 import { loadCompaniesByName, type LoadedCompanyInfo } from "../lib/load-companies.js"
 import { loadRecommendedJobStates, type UserJobRecommendationState } from "../recommendation-state.js"
 
@@ -97,6 +109,22 @@ const LLM_RERANK_CACHE_STALE_MS = 36 * 3600 * 1000
 const RERANK_CACHE_COLLECTION = "pa-user-rerank-cache"
 const SKILL_JDREL_CACHE_COLLECTION = "pa-user-skill-jdrel-cache"
 const require = createRequire(import.meta.url)
+
+/**
+ * SOFT-vs-HARD preference model (2026-05-28) — per-user feature flag.
+ * Default OFF (perUser). When OFF the matcher is byte-identical to the
+ * pre-2026-05-28 V16: `resolveHardness` is never consulted in a
+ * behaviour-changing way, the company-stage component stays out of the
+ * formula, and no soft-miss demerits or new hard gates run.
+ */
+export const PREFERENCE_HARDNESS_FLAG_KEY = "paPreferenceHardnessEnabled"
+
+/** Signature of the injectable flag reader (mirrors `@pa/pa-persistence#getFlag`). */
+export type V16FlagChecker = (
+  key: string,
+  ctx?: FlagContext,
+  defaultValue?: FlagValue,
+) => Promise<FlagValue>
 
 // ---------------------------------------------------------------------------
 // Helpers — title fallback (2026-05-19 hotfix)
@@ -178,6 +206,26 @@ function firstWorkHistoryTitle(summary: unknown): string | undefined {
 function matchingCareerStageWindow(stage: CareerStage): CareerStage[] {
   if (stage !== "founder") return acceptableCareerStages(stage)
   return ["senior", "staff", "principal", "manager", "director", "vp", "c_level", "founder"]
+}
+
+/**
+ * SOFT-vs-HARD (2026-05-28) — careerStage window widened by `bufferSteps`
+ * extra ordinal tiers each side of the default ±1 window. `bufferSteps=0`
+ * reduces to the default `matchingCareerStageWindow`. Used only when the
+ * careerStage axis is SOFT under `paPreferenceHardnessEnabled`.
+ */
+function widenCareerStageWindow(stage: CareerStage, bufferSteps: number): CareerStage[] {
+  const extra = Math.max(0, Math.floor(bufferSteps))
+  if (extra === 0) return matchingCareerStageWindow(stage)
+  // founder is a parallel senior+ band — widen from its base window by ordinal.
+  const baseWindow = matchingCareerStageWindow(stage)
+  if (stage === "founder") return baseWindow // already a wide executive band
+  const userIdx = CAREER_STAGE_INDEX[stage]
+  const widened = new Set<CareerStage>(baseWindow)
+  for (const s of CAREER_STAGE_VOCAB) {
+    if (Math.abs(CAREER_STAGE_INDEX[s] - userIdx) <= 1 + extra) widened.add(s)
+  }
+  return [...widened]
 }
 
 function workHistoryTitleSignals(summary: unknown): string[] {
@@ -734,6 +782,207 @@ function isSponsorshipNeeded(visaStatus: string | undefined): boolean {
 /** Anywhere bypass tokens (location intersect skipped when present in user). */
 const ANYWHERE_LOCATION_TOKENS = new Set(["remote_anywhere", "remote_global", "anywhere", "any"])
 
+// ---------------------------------------------------------------------------
+// SOFT-vs-HARD preference model (2026-05-28)
+//
+// `resolveHardness` is the single pure reader: it returns the per-axis
+// hardness entry from `tags.preferenceHardness[axis]`, falling back to
+// `DEFAULT_HARDNESS` (which encodes CURRENT ranking). All hard/soft branching
+// in the filter + scorer flows through it. The whole subsystem is gated by
+// `paPreferenceHardnessEnabled` at the call site — when the flag is OFF the
+// matcher never calls these helpers in a behaviour-changing way (the company-
+// stage component stays out of the formula, the soft-miss demerits are never
+// computed, and every existing hard gate runs exactly as before).
+// ---------------------------------------------------------------------------
+
+/**
+ * Pure reader — resolve the effective hardness entry for an axis. Reads
+ * `tags.preferenceHardness[axis]`; falls back to `DEFAULT_HARDNESS[axis]`
+ * when unset. Backfills the spec-locked default buffers when the entry omits
+ * them (salary→0.10, ordinal→1) so downstream math always has a number.
+ */
+export function resolveHardness(
+  tags: UserTags,
+  axis: HardnessAxis,
+): { hardness: "hard" | "soft"; bufferPct: number; bufferSteps: number } {
+  const fallback = DEFAULT_HARDNESS[axis]
+  const ph = (tags as { preferenceHardness?: Record<string, PreferenceHardnessEntry | undefined> })
+    .preferenceHardness
+  const entry: PreferenceHardnessEntry = ph?.[axis] ?? fallback
+  const bufferPct =
+    typeof entry.bufferPct === "number" && Number.isFinite(entry.bufferPct)
+      ? entry.bufferPct
+      : (typeof fallback.bufferPct === "number" ? fallback.bufferPct : DEFAULT_SALARY_BUFFER_PCT)
+  const bufferSteps =
+    typeof entry.bufferSteps === "number" && Number.isFinite(entry.bufferSteps)
+      ? entry.bufferSteps
+      : (typeof fallback.bufferSteps === "number" ? fallback.bufferSteps : DEFAULT_ORDINAL_BUFFER_STEPS)
+  return { hardness: entry.hardness, bufferPct, bufferSteps }
+}
+
+/**
+ * §3.3 — ordinal company-stage scale (fundable stages only). Non-fundable
+ * stages (`bootstrapped`, `non_profit`, `unknown`) are intentionally absent
+ * → they have no ordinal position → treated as "no signal" (fit 0.5, never a
+ * hard drop). Order: pre_seed < seed < series_a < ... < private_mature.
+ */
+const COMPANY_STAGE_ORDINAL: ReadonlyArray<CompanyStage> = [
+  "pre_seed",
+  "seed",
+  "series_a",
+  "series_b",
+  "series_c",
+  "series_d_plus",
+  "ipo_public",
+  "private_mature",
+]
+
+function companyStageIndex(stage: CompanyStage | undefined | null): number | null {
+  if (!stage) return null
+  const i = COMPANY_STAGE_ORDINAL.indexOf(stage)
+  return i >= 0 ? i : null
+}
+
+/**
+ * §3.3 — map the user's company-size / startup preference into a target band
+ * of ordinal stage indices. Returns `null` when the user has no usable
+ * preference (→ companyStageFit = 0.5 neutral, never a drop). Mirrors the
+ * existing `companyMatchesStrictPreference` stage→preference mapping, but
+ * expressed as an index band so the buffer-steps tolerance is uniform.
+ */
+function userCompanyStageBand(tags: UserTags): { min: number; max: number } | null {
+  const size = tags.companySize
+  const idx = (s: CompanyStage): number => COMPANY_STAGE_ORDINAL.indexOf(s)
+  switch (size) {
+    case "seed":
+      return { min: idx("pre_seed"), max: idx("seed") }
+    case "early_startup":
+      return { min: idx("pre_seed"), max: idx("series_a") }
+    case "scale_up":
+      return { min: idx("series_b"), max: idx("series_d_plus") }
+    case "mid_market":
+      return { min: idx("series_c"), max: idx("private_mature") }
+    case "enterprise":
+      return { min: idx("ipo_public"), max: idx("private_mature") }
+    case "open":
+      return null
+    default:
+      break
+  }
+  // Fall back to the boolean startup/bigtech preference.
+  if (tags.prefersStartup === "startup") return { min: idx("pre_seed"), max: idx("series_b") }
+  if (tags.prefersStartup === "bigtech") return { min: idx("ipo_public"), max: idx("private_mature") }
+  return null
+}
+
+/**
+ * §3.3 — companyStageFit ∈ {1.0, 0.6, 0.2, 0.5}.
+ *   - in-band               → 1.0
+ *   - within `bufferSteps`  → 0.6
+ *   - outside band+buffer   → 0.2
+ *   - no preference / stage unknown / non-ordinal stage → 0.5 (neutral)
+ */
+export function computeCompanyStageFit(
+  tags: UserTags,
+  companyStage: CompanyStage | undefined | null,
+  bufferSteps: number,
+): number {
+  const band = userCompanyStageBand(tags)
+  if (!band) return 0.5
+  const stageIdx = companyStageIndex(companyStage)
+  if (stageIdx === null) return 0.5 // unknown / non-fundable stage → neutral
+  if (stageIdx >= band.min && stageIdx <= band.max) return 1.0
+  const dist = stageIdx < band.min ? band.min - stageIdx : stageIdx - band.max
+  if (dist <= Math.max(0, bufferSteps)) return 0.6
+  return 0.2
+}
+
+// ---------------------------------------------------------------------------
+// SOFT-vs-HARD soft-miss predicates (2026-05-28)
+//
+// Each returns true iff the axis is SOFT *and* the job misses the user's
+// constraint — i.e. a HARD policy would have dropped it. Mirrors the
+// corresponding `applyV16HardFilters` gate so the scorer's demerit lines up
+// 1:1 with what the filter would have dropped. Only ever called from inside
+// `scoreV16Job`'s `phEnabled` branch.
+// ---------------------------------------------------------------------------
+
+/** Does the job satisfy the user's location intersect? (mirrors filter §2 core). */
+function jobLocationHits(tags: UserTags, job: MatchingJob): boolean {
+  const targetLocations = Array.isArray(tags.targetLocations)
+    ? tags.targetLocations.filter((l): l is string => typeof l === "string")
+    : []
+  if (targetLocations.length === 0) return true // no constraint → always hits
+  if (targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()))) return true
+  const jobLocs = Array.isArray(job.locationBuckets) ? job.locationBuckets : []
+  if (jobLocs.some((l) => ANYWHERE_LOCATION_TOKENS.has(String(l).trim().toLowerCase()))) return true
+  const targetSet = new Set(targetLocations.map((l) => l.trim().toLowerCase()))
+  for (const l of jobLocs) if (targetSet.has(String(l).trim().toLowerCase())) return true
+  if (jobLocs.length === 0 || !job.locationBuckets) {
+    const raw = (job.locationRaw ?? "").toLowerCase()
+    for (const l of targetLocations) {
+      const key = l.trim().toLowerCase()
+      if (key.length >= 3 && raw.includes(key)) return true
+      if (key.startsWith("remote") && raw.includes("remote")) return true
+    }
+  }
+  return false
+}
+
+function jobMissesSoftLocation(tags: UserTags, job: MatchingJob): boolean {
+  if (resolveHardness(tags, "location").hardness !== "soft") return false
+  const targetLocations = Array.isArray(tags.targetLocations)
+    ? tags.targetLocations.filter((l): l is string => typeof l === "string")
+    : []
+  if (targetLocations.length === 0) return false
+  return !jobLocationHits(tags, job)
+}
+
+function jobMissesSoftJobType(tags: UserTags, job: MatchingJob): boolean {
+  if (resolveHardness(tags, "jobType").hardness !== "soft") return false
+  const targetJobType = Array.isArray(tags.targetJobType) ? tags.targetJobType : []
+  const legacy = (tags as { targetJobTypes?: string[] }).targetJobTypes
+  const raw = targetJobType.length > 0 ? targetJobType : Array.isArray(legacy) ? legacy : []
+  const set = new Set(raw.filter((t): t is string => typeof t === "string").map((t) => t.trim().toLowerCase()))
+  if (set.size === 0 || !job.jobType) return false
+  return !set.has(job.jobType.trim().toLowerCase())
+}
+
+function jobMissesSoftCareerStage(tags: UserTags, job: MatchingJob): boolean {
+  const h = resolveHardness(tags, "careerStage")
+  if (h.hardness !== "soft") return false
+  const stage = tags.careerStage
+  if (typeof stage !== "string" || !(CAREER_STAGE_VOCAB as readonly string[]).includes(stage)) return false
+  const jobStage = normalizeCareerStageToken(job.seniorityLevel)
+  if (!jobStage) return false
+  // Demerit only when the job is OUTSIDE the widened window (within-buffer →
+  // no demerit; the soft axis "widens window by bufferSteps").
+  const widened = new Set(widenCareerStageWindow(stage as CareerStage, h.bufferSteps))
+  return !widened.has(jobStage)
+}
+
+function jobMissesSoftIndustry(tags: UserTags, job: MatchingJob): boolean {
+  if (resolveHardness(tags, "industrySector").hardness !== "soft") return false
+  const userSectors = Array.isArray(tags.industrySector)
+    ? tags.industrySector.map((s) => String(s)).filter((s) => s.length > 0)
+    : []
+  const jobSectors = Array.isArray(job.industrySector)
+    ? job.industrySector.map((s) => String(s)).filter((s) => s.length > 0)
+    : []
+  if (userSectors.length === 0 || jobSectors.length === 0) return false // unenriched → no demerit
+  const jobSet = new Set(jobSectors.map((s) => s.trim().toLowerCase()))
+  return !userSectors.some((s) => jobSet.has(s.trim().toLowerCase()))
+}
+
+function jobMissesSoftSalary(tags: UserTags, job: MatchingJob): boolean {
+  if (resolveHardness(tags, "salary").hardness !== "soft") return false
+  const userMin = tags.minSalary
+  const jobMin = job.salaryMin
+  if (typeof userMin !== "number" || userMin <= 0) return false
+  if (typeof jobMin !== "number" || jobMin <= 0) return false // unknown → no demerit (kept)
+  return jobMin < userMin
+}
+
 /**
  * Apply the v1.6 hard filter chain (MATCH-04). Returns survivors + per-gate
  * drop counters. Each gate fails-closed only when the user signal is present
@@ -749,13 +998,24 @@ const ANYWHERE_LOCATION_TOKENS = new Set(["remote_anywhere", "remote_global", "a
  *   7. dead !== true
  *
  * Pure / deterministic. `nowMs` defaulted from `Date.now()` (override for tests).
+ *
+ * SOFT-vs-HARD (2026-05-28): when `options.preferenceHardnessEnabled` is true
+ * the location / jobType / careerStage gates become CONDITIONAL on
+ * `resolveHardness(...)`: a soft axis SKIPS its drop (the job is kept and a
+ * demerit is applied later in `scoreV16Job`), while a hard axis drops exactly
+ * as before. Two NEW hard gates also activate ONLY when the flag is on AND the
+ * axis is hard: salary (drop iff job has a known floor below the user min —
+ * null/unknown kept) and industrySector (drop iff user+job both non-empty with
+ * empty intersection — unenriched jobs kept). When the option is absent/false
+ * (the default, and the flag-OFF path) every branch is byte-identical to the
+ * pre-2026-05-28 behaviour.
  */
 export function applyV16HardFilters(
   jobs: MatchingJob[],
   userTags: UserTags,
   nowMs: number = Date.now(),
   freshnessWindowMs: number = FRESHNESS_WINDOW_MS,
-  options: { relaxSpecificLocation?: boolean } = {},
+  options: { relaxSpecificLocation?: boolean; preferenceHardnessEnabled?: boolean } = {},
 ): { kept: MatchingJob[]; counters: V16HardFilterCounters } {
   const counters: V16HardFilterCounters = {
     visa: 0,
@@ -767,10 +1027,23 @@ export function applyV16HardFilters(
     dead: 0,
     negativeListDrop: 0,
     roleTitleMismatch: 0,
+    salary: 0,
+    industrySector: 0,
+    companyStage: 0,
   }
   if (!Array.isArray(jobs) || jobs.length === 0) {
     return { kept: [], counters }
   }
+
+  // SOFT-vs-HARD: resolve per-axis hardness ONCE (cheap). Only consulted when
+  // the flag is on; otherwise `phEnabled` short-circuits every new branch so
+  // the legacy gates run unchanged.
+  const phEnabled = options.preferenceHardnessEnabled === true
+  const hLocation = phEnabled ? resolveHardness(userTags, "location") : null
+  const hJobType = phEnabled ? resolveHardness(userTags, "jobType") : null
+  const hCareerStage = phEnabled ? resolveHardness(userTags, "careerStage") : null
+  const hSalary = phEnabled ? resolveHardness(userTags, "salary") : null
+  const hIndustry = phEnabled ? resolveHardness(userTags, "industrySector") : null
 
   // Pre-compute user-side once.
   const sponsorshipNeeded = isSponsorshipNeeded(userTags.visaStatus)
@@ -820,7 +1093,17 @@ export function applyV16HardFilters(
   const careerStage = userTags.careerStage
   const careerStageValid =
     typeof careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(careerStage)
-  const acceptableStages = careerStageValid ? new Set(matchingCareerStageWindow(careerStage as CareerStage)) : null
+  // SOFT-vs-HARD: when careerStage is SOFT, widen the acceptable window by
+  // `bufferSteps` extra ordinal tiers each side (the default hard window stays
+  // exactly `matchingCareerStageWindow`). Flag OFF → `hCareerStage` is null →
+  // the original window is used unchanged.
+  const acceptableStages = careerStageValid
+    ? new Set(
+        hCareerStage && hCareerStage.hardness === "soft"
+          ? widenCareerStageWindow(careerStage as CareerStage, hCareerStage.bufferSteps)
+          : matchingCareerStageWindow(careerStage as CareerStage),
+      )
+    : null
   const targetJobType = userTags.targetJobType
   const legacyTargetJobTypes = (userTags as unknown as { targetJobTypes?: string[] }).targetJobTypes
   const targetJobTypesRaw = Array.isArray(targetJobType)
@@ -908,7 +1191,11 @@ export function applyV16HardFilters(
     // 2. location intersect (anywhere bypass — user side OR job side).
     // A job tagged remote_anywhere/anywhere is accessible from any location;
     // bypass the intersect check so SF-only users still receive global remote roles.
-    if (!options.relaxSpecificLocation && !isAnywhere && targetLocations.length > 0) {
+    // SOFT-vs-HARD: when location is SOFT (flag ON), skip the drop entirely —
+    // the scorer applies a soft-miss demerit instead so off-location jobs still
+    // surface, ranked lower. Default (flag OFF / hard) → drop as before.
+    const locationSoft = phEnabled && hLocation?.hardness === "soft"
+    if (!locationSoft && !options.relaxSpecificLocation && !isAnywhere && targetLocations.length > 0) {
       const jobLocs = Array.isArray(job.locationBuckets) ? job.locationBuckets : []
       const jobIsAnywhere = jobLocs.some((l) =>
         ANYWHERE_LOCATION_TOKENS.has(String(l).trim().toLowerCase())
@@ -950,7 +1237,13 @@ export function applyV16HardFilters(
     // causes recall collapse for marketing/BA users where the corpus skews
     // heavily toward senior titles. Explicit field is trustworthy; inferred
     // title stage feeds soft scoring only.
-    if (acceptableStages) {
+    // SOFT-vs-HARD: when careerStage is SOFT (flag ON), `acceptableStages` is
+    // already the WIDENED window (±1 + bufferSteps); we additionally skip the
+    // drop entirely so even out-of-window jobs survive (the scorer demerits
+    // those outside the widened window). Default (flag OFF / hard) → drop on
+    // the standard ±1 window as before.
+    const careerStageSoft = phEnabled && hCareerStage?.hardness === "soft"
+    if (!careerStageSoft && acceptableStages) {
       const jobStage = normalizeCareerStageToken(job.seniorityLevel)
       if (jobStage && !acceptableStages.has(jobStage)) {
         counters.careerStage++
@@ -959,7 +1252,10 @@ export function applyV16HardFilters(
     }
 
     // 4. jobType exact intersect — when user has targets AND job has type.
-    if (targetJobTypeSet.size > 0 && job.jobType) {
+    // SOFT-vs-HARD: when jobType is SOFT (flag ON), skip the drop; scorer
+    // demerits the mismatch instead. Default (flag OFF / hard) → drop.
+    const jobTypeSoft = phEnabled && hJobType?.hardness === "soft"
+    if (!jobTypeSoft && targetJobTypeSet.size > 0 && job.jobType) {
       const jt = job.jobType.trim().toLowerCase()
       if (!targetJobTypeSet.has(jt)) {
         counters.jobType++
@@ -1027,6 +1323,45 @@ export function applyV16HardFilters(
       ) {
         counters.negativeListDrop++
         continue
+      }
+    }
+
+    // 9. SOFT-vs-HARD (2026-05-28) — NEW hard gates. Active ONLY when the flag
+    //    is ON AND the user explicitly marked the axis HARD. Default
+    //    (flag OFF, or axis soft per DEFAULT_HARDNESS) → never runs → today's
+    //    behaviour (salary + industry are soft score signals, not gates).
+
+    // 9a. salary HARD: drop iff job has a KNOWN floor below the user min.
+    //     `null`/`undefined`/0 salaryMin (unknown) is KEPT — dropping unpriced
+    //     jobs would erase inventory (spec §3.1).
+    if (phEnabled && hSalary?.hardness === "hard") {
+      const userMin = userTags.minSalary
+      if (typeof userMin === "number" && userMin > 0) {
+        const jobMin = job.salaryMin
+        if (typeof jobMin === "number" && jobMin > 0 && jobMin < userMin) {
+          counters.salary++
+          continue
+        }
+      }
+    }
+
+    // 9b. industrySector HARD: drop iff user+job sectors are BOTH non-empty
+    //     AND the intersection is empty. Jobs with empty `industrySector`
+    //     (unenriched) are KEPT — don't punish missing enrichment (spec §3.2).
+    if (phEnabled && hIndustry?.hardness === "hard") {
+      const userSectors = Array.isArray(userTags.industrySector)
+        ? userTags.industrySector.map((s) => String(s)).filter((s) => s.length > 0)
+        : []
+      const jobSectors = Array.isArray(job.industrySector)
+        ? job.industrySector.map((s) => String(s)).filter((s) => s.length > 0)
+        : []
+      if (userSectors.length > 0 && jobSectors.length > 0) {
+        const jobSet = new Set(jobSectors.map((s) => s.trim().toLowerCase()))
+        const intersects = userSectors.some((s) => jobSet.has(s.trim().toLowerCase()))
+        if (!intersects) {
+          counters.industrySector++
+          continue
+        }
       }
     }
 
@@ -1194,11 +1529,35 @@ export function cosineSim(a: number[] | undefined, b: number[] | undefined): num
  *   user>0, job>0, job >= user → 1.0
  *   user>0, job>0, job < user  → max(0, 1 - (user - job) / 50000)  (-$50K → 0)
  *   either side missing → 0.5  (neutral)
+ *
+ * SOFT-vs-HARD (2026-05-28): when `bufferPct` is supplied (> 0), use the
+ * buffer-aware soft decay from spec §3.1 instead of the legacy linear curve:
+ *   - jobMin >= userMin                          → 1.0
+ *   - floor <= jobMin < userMin                  → 0.7..1.0 linear
+ *                                                  (floor = userMin × (1-bufferPct))
+ *   - jobMin < floor                             → max(0, 0.7 × (1 - (floor-jobMin)/50000))
+ *   - either side missing                        → 0.5 (neutral)
+ * `bufferPct` undefined → legacy curve (byte-identical to pre-2026-05-28).
  */
-export function computeSalaryFit(userMin: number | undefined, jobMin: number | null | undefined): number {
+export function computeSalaryFit(
+  userMin: number | undefined,
+  jobMin: number | null | undefined,
+  bufferPct?: number,
+): number {
   if (typeof userMin !== "number" || userMin <= 0) return 0.5
   if (typeof jobMin !== "number" || jobMin <= 0) return 0.5
   if (jobMin >= userMin) return 1.0
+  // Buffer-aware soft decay (only when an explicit bufferPct is provided).
+  if (typeof bufferPct === "number" && Number.isFinite(bufferPct) && bufferPct > 0) {
+    const floor = userMin * (1 - Math.max(0, Math.min(1, bufferPct)))
+    if (jobMin >= floor) {
+      // Within the buffer band: linear 0.7 (at floor) → 1.0 (at userMin).
+      const span = userMin - floor
+      const frac = span > 0 ? (jobMin - floor) / span : 1
+      return 0.7 + 0.3 * Math.max(0, Math.min(1, frac))
+    }
+    return Math.max(0, 0.7 * (1 - (floor - jobMin) / 50_000))
+  }
   const gap = userMin - jobMin
   return Math.max(0, 1 - gap / 50_000)
 }
@@ -1320,7 +1679,18 @@ export function scoreV16Job(
   companyInfo?: LoadedCompanyInfo | undefined,
   /** Phase B4 — pinned `now` for deterministic urgency age compute. */
   nowMs?: number,
+  /**
+   * SOFT-vs-HARD (2026-05-28) — when `preferenceHardnessEnabled` is true the
+   * scorer (a) uses the buffer-aware salary curve for a SOFT salary axis, (b)
+   * activates the additive `companyStageBoost` from `companyInfo.stage`, and
+   * (c) computes `softMissDemerit` for SOFT axes whose constraint the job
+   * misses (location / jobType / careerStage / industrySector / salary).
+   * Default (undefined / false) → none of this runs and the `companyStageBoost`
+   * + `softMissDemerit` breakdown keys are omitted → byte-identical to today.
+   */
+  preferenceHardness?: { enabled?: boolean },
 ): { breakdown: V16ScoreBreakdown; matched: MatchedSkillContribution[] } {
+  const phEnabled = preferenceHardness?.enabled === true
   const llm = typeof llmRerankScore === "number" && Number.isFinite(llmRerankScore)
     ? Math.max(0, Math.min(1, llmRerankScore))
     : 0
@@ -1345,7 +1715,13 @@ export function scoreV16Job(
   ]
   const indSector = computeOverlap(userIndustryUnion, job.industrySector)
   const cvEmb = cosineSim(user.embedding, job.embedding ?? undefined)
-  const salary = computeSalaryFit(user.minSalary, job.salaryMin)
+  // SOFT-vs-HARD: a SOFT salary axis uses the buffer-aware decay (accept down
+  // to `floor` at reduced score). HARD salary already dropped sub-floor jobs in
+  // the filter, so survivors score on the legacy curve. Flag OFF → legacy curve.
+  const salaryHardness = phEnabled ? resolveHardness(user, "salary") : null
+  const salaryBufferPct =
+    salaryHardness && salaryHardness.hardness === "soft" ? salaryHardness.bufferPct : undefined
+  const salary = computeSalaryFit(user.minSalary, job.salaryMin, salaryBufferPct)
 
   // Phase 70: resolve effective weights — overrides shadow canonical, missing
   // keys fall back. Each override clamped to [0, 1] for safety.
@@ -1416,8 +1792,38 @@ export function scoreV16Job(
     )
     freshnessBoost = decay * freshFactor
   }
+
+  // ---- SOFT-vs-HARD (2026-05-28) — additive company-stage boost + soft-miss
+  //      demerits. Computed ONLY when the flag is on; otherwise the keys are
+  //      omitted and `total` is byte-identical to the pre-2026-05-28 blend.
+  let companyStageBoost: number | undefined
+  let softMissDemerit: number | undefined
+  if (phEnabled) {
+    // §3.3 — company-stage fit boost, centered on 0.5 (no signal / unknown → 0).
+    const stageHardness = resolveHardness(user, "companyStage")
+    const fit = computeCompanyStageFit(user, companyInfo?.stage, stageHardness.bufferSteps)
+    companyStageBoost = (fit - 0.5) * V16_COMPANY_STAGE_WEIGHT
+
+    // §3.4 — soft-miss demerits. For each SOFT axis whose constraint the job
+    // misses (i.e. a HARD policy would have dropped it), subtract a small
+    // demerit so the surfaced-but-worse job ranks below clean matches.
+    let demerit = 0
+    if (jobMissesSoftLocation(user, job)) demerit -= V16_SOFT_MISS_DEMERIT
+    if (jobMissesSoftJobType(user, job)) demerit -= V16_SOFT_MISS_DEMERIT
+    if (jobMissesSoftCareerStage(user, job)) demerit -= V16_SOFT_MISS_DEMERIT
+    if (jobMissesSoftIndustry(user, job)) demerit -= V16_SOFT_MISS_DEMERIT
+    if (jobMissesSoftSalary(user, job)) demerit -= V16_SOFT_MISS_DEMERIT
+    softMissDemerit = demerit
+  }
+
   const total =
-    baseScore + tagOverlapScore + positiveHitBoost + urgencyBoost + freshnessBoost
+    baseScore +
+    tagOverlapScore +
+    positiveHitBoost +
+    urgencyBoost +
+    freshnessBoost +
+    (companyStageBoost ?? 0) +
+    (softMissDemerit ?? 0)
   return {
     breakdown: {
       llmMatch: llm,
@@ -1430,6 +1836,8 @@ export function scoreV16Job(
       positiveHit: positiveHitBoost,
       urgencyBoost,
       freshnessBoost,
+      ...(companyStageBoost !== undefined ? { companyStageBoost } : {}),
+      ...(softMissDemerit !== undefined ? { softMissDemerit } : {}),
       total,
     },
     matched: skill.matched,
@@ -1558,9 +1966,35 @@ export type QueryMatchingJobsV16Deps = {
     db: Firestore,
     names: string[],
   ) => Promise<Map<string, LoadedCompanyInfo>>
+  /**
+   * SOFT-vs-HARD (2026-05-28) — injectable feature-flag reader for
+   * `paPreferenceHardnessEnabled`. Production omits this and the default
+   * binds to `@pa/pa-persistence#getFlag`; tests inject a stub. When the
+   * resolved flag is not exactly `true`, the hardness subsystem stays OFF
+   * (byte-identical to today). `db` is closed over from `deps.db`.
+   */
+  getFlag?: V16FlagChecker
 }
 
 const DEFAULT_LIMIT = 10
+
+/** Fresh zeroed hard-filter counters (includes the SOFT-vs-HARD axes). */
+function zeroV16Counters(): V16HardFilterCounters {
+  return {
+    visa: 0,
+    location: 0,
+    careerStage: 0,
+    jobType: 0,
+    freshness: 0,
+    atsApplyUrl: 0,
+    dead: 0,
+    negativeListDrop: 0,
+    roleTitleMismatch: 0,
+    salary: 0,
+    industrySector: 0,
+    companyStage: 0,
+  }
+}
 const PREVIOUS_RECOMMENDATION_BASE_PENALTY = 0.16
 const PREVIOUS_RECOMMENDATION_REPEAT_PENALTY = 0.04
 const PREVIOUS_RECOMMENDATION_MAX_PENALTY = 0.32
@@ -1871,6 +2305,24 @@ export async function queryMatchingJobsV16(
   const limit = typeof args.limit === "number" && args.limit > 0 ? args.limit : DEFAULT_LIMIT
   const nowMs = typeof args.nowMs === "number" ? args.nowMs : Date.now()
 
+  // SOFT-vs-HARD (2026-05-28) — resolve the per-user feature flag ONCE. When
+  // not exactly `true` (default — no flag doc / no injected reader), the
+  // hardness subsystem is entirely OFF and the matcher is byte-identical to
+  // today. The reader is fail-open: any error → OFF.
+  let preferenceHardnessEnabled = false
+  try {
+    const flagRead = deps.getFlag
+      ? deps.getFlag(PREFERENCE_HARDNESS_FLAG_KEY, { userId: args.userId, env: process.env })
+      : getFlag(deps.db, PREFERENCE_HARDNESS_FLAG_KEY, { userId: args.userId, env: process.env })
+    preferenceHardnessEnabled = (await flagRead) === true
+  } catch (err) {
+    log("pa.match.preference_hardness_flag_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    preferenceHardnessEnabled = false
+  }
+
   // 1. loadUserTags — single source.
   const loadedUserTags = await loadUserTags(deps.db, args.userId, log)
   if (!loadedUserTags) {
@@ -1878,7 +2330,7 @@ export async function queryMatchingJobsV16(
       jobs: [],
       total: 0,
       dropped: 0,
-      hardFilter: { visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0, roleTitleMismatch: 0 },
+      hardFilter: zeroV16Counters(),
       noUserTags: true,
     }
   }
@@ -1890,7 +2342,7 @@ export async function queryMatchingJobsV16(
       jobs: [],
       total: 0,
       dropped: 0,
-      hardFilter: { visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0, roleTitleMismatch: 0 },
+      hardFilter: zeroV16Counters(),
       needsOnboarding: true,
       missingAxes: initialMissingAxes,
       userTags: userTags as unknown as Record<string, unknown>,
@@ -1910,19 +2362,18 @@ export async function queryMatchingJobsV16(
     90 * 24 * 3600 * 1000,                                // 90d
   ]
   let filteredJobs: MatchingJob[] = []
-  let counters: V16HardFilterCounters = {
-    visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0, roleTitleMismatch: 0,
-  }
+  let counters: V16HardFilterCounters = zeroV16Counters()
   let appliedFreshnessMs = FRESHNESS_RELAX_LADDER[0]!
   let relaxedHardFilters: string[] = []
   const runFreshnessLadder = (options: { relaxSpecificLocation?: boolean } = {}) => {
     let kept: MatchingJob[] = []
-    let lastCounters: V16HardFilterCounters = {
-      visa: 0, location: 0, careerStage: 0, jobType: 0, freshness: 0, atsApplyUrl: 0, dead: 0, negativeListDrop: 0, roleTitleMismatch: 0,
-    }
+    let lastCounters: V16HardFilterCounters = zeroV16Counters()
     let applied = FRESHNESS_RELAX_LADDER[0]!
     for (const win of FRESHNESS_RELAX_LADDER) {
-      const result = applyV16HardFilters(rawJobs, userTags, nowMs, win, options)
+      const result = applyV16HardFilters(rawJobs, userTags, nowMs, win, {
+        ...options,
+        preferenceHardnessEnabled,
+      })
       kept = result.kept
       lastCounters = result.counters
       applied = win
@@ -1993,19 +2444,58 @@ export async function queryMatchingJobsV16(
       error: err instanceof Error ? err.message : String(err),
     })
   }
+  // Company-stage / company-size preference. Two mutually-exclusive paths:
+  //
+  //   - Flag OFF (default): the legacy `companyMatchesStrictPreference` HARD
+  //     filter runs exactly as before (drops jobs whose company stage is
+  //     outside the preference, INCLUDING unknown / not-in-pa-companies). This
+  //     is byte-identical to the pre-2026-05-28 behaviour.
+  //
+  //   - Flag ON: governed by `resolveHardness(companyStage)`. SOFT (default)
+  //     → no drop here; the additive `companyStageBoost` in the scorer ranks
+  //     adjacent stages lower instead. HARD → drop ONLY when the company has a
+  //     REAL (non-unknown, in-pa-companies) stage outside band+buffer; unknown
+  //     / not-in-pa-companies jobs are KEPT (spec §3.3).
   const companyPreference = strictCompanyPreference(userTags)
-  if (companyPreference && filteredJobs.length > 0) {
-    const before = filteredJobs.length
-    filteredJobs = filteredJobs.filter((job) => {
-      const companyInfo = companyInfoMap.get(normalizeCompanyName(job.companyName ?? ""))
-      return companyMatchesStrictPreference(companyPreference, companyInfo)
-    })
-    log("pa.match.company_preference_filter_applied", {
-      preference: companyPreference,
-      before,
-      after: filteredJobs.length,
-      dropped: before - filteredJobs.length,
-    })
+  if (!preferenceHardnessEnabled) {
+    if (companyPreference && filteredJobs.length > 0) {
+      const before = filteredJobs.length
+      filteredJobs = filteredJobs.filter((job) => {
+        const companyInfo = companyInfoMap.get(normalizeCompanyName(job.companyName ?? ""))
+        return companyMatchesStrictPreference(companyPreference, companyInfo)
+      })
+      log("pa.match.company_preference_filter_applied", {
+        preference: companyPreference,
+        before,
+        after: filteredJobs.length,
+        dropped: before - filteredJobs.length,
+      })
+    }
+  } else {
+    const companyStageHardness = resolveHardness(userTags, "companyStage")
+    if (companyStageHardness.hardness === "hard" && filteredJobs.length > 0) {
+      const band = userCompanyStageBand(userTags)
+      if (band) {
+        const before = filteredJobs.length
+        filteredJobs = filteredJobs.filter((job) => {
+          const companyInfo = companyInfoMap.get(normalizeCompanyName(job.companyName ?? ""))
+          const stageIdx = companyStageIndex(companyInfo?.stage)
+          // KEEP unknown / not-in-pa-companies / non-fundable stage.
+          if (stageIdx === null) return true
+          if (stageIdx >= band.min && stageIdx <= band.max) return true
+          const dist = stageIdx < band.min ? band.min - stageIdx : stageIdx - band.max
+          if (dist <= Math.max(0, companyStageHardness.bufferSteps)) return true
+          counters.companyStage++
+          return false
+        })
+        log("pa.match.company_stage_hard_filter_applied", {
+          before,
+          after: filteredJobs.length,
+          dropped: before - filteredJobs.length,
+          bufferSteps: companyStageHardness.bufferSteps,
+        })
+      }
+    }
   }
   const dropped = rawJobs.length - filteredJobs.length
   log("pa.match.hard_filter_applied", {
@@ -2036,6 +2526,7 @@ export async function queryMatchingJobsV16(
       args.weightOverrides,
       companyInfo,
       nowMs,
+      { enabled: preferenceHardnessEnabled },
     )
     const recommendedState = recommendationStates.get(job.id)
     const repeatPenalty = previousRecommendationPenalty(recommendedState)

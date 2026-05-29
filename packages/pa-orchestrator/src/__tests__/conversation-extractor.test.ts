@@ -432,3 +432,111 @@ describe("buildExtractorPrompt", () => {
     assert.equal(prompt.includes("msg-39"), true)
   })
 })
+
+// ===========================================================================
+// SOFT-vs-HARD preference capture (2026-05-28)
+// ===========================================================================
+
+describe("SOFT-vs-HARD preference capture", () => {
+  it("schema accepts preferenceHardness with hard/soft per axis", () => {
+    const r = ConversationExtractResultSchema.parse({
+      tagPatch: {
+        industrySector: ["financial_technology"],
+        preferenceHardness: {
+          industrySector: { hardness: "hard" },
+          companyStage: { hardness: "soft" },
+        },
+      },
+      memoryEntities: [],
+      confidence: 0.9,
+      rationale: "",
+    })
+    assert.equal(r.tagPatch.preferenceHardness?.industrySector?.hardness, "hard")
+    assert.equal(r.tagPatch.preferenceHardness?.companyStage?.hardness, "soft")
+  })
+
+  it("schema rejects an unknown hardness axis (strict)", () => {
+    assert.throws(() =>
+      ConversationExtractResultSchema.parse({
+        tagPatch: { preferenceHardness: { madeUpAxis: { hardness: "hard" } } },
+        memoryEntities: [],
+        confidence: 0.9,
+        rationale: "",
+      }),
+    )
+  })
+
+  it("schema rejects an out-of-vocab hardness value", () => {
+    assert.throws(() =>
+      ConversationExtractResultSchema.parse({
+        tagPatch: { preferenceHardness: { location: { hardness: "kinda" } } },
+        memoryEntities: [],
+        confidence: 0.9,
+        rationale: "",
+      }),
+    )
+  })
+
+  it("prompt documents hard vs soft detection cues", () => {
+    const prompt = buildExtractorPrompt({
+      userId: "u",
+      recentMessages: [{ role: "user", body: "x", createdAt: "2026-05-18T20:00:00.000Z" }],
+      existingTags: {},
+      trigger: "turn_count",
+    })
+    assert.ok(prompt.includes("preferenceHardness"))
+    assert.ok(prompt.toLowerCase().includes("dealbreaker"))
+    assert.ok(prompt.toLowerCase().includes("prefer"))
+  })
+
+  it("runExtraction stamps source+updatedAt on captured hardness entries", async () => {
+    const result: ConversationExtractResult = {
+      tagPatch: {
+        industrySector: ["financial_technology"],
+        preferenceHardness: { industrySector: { hardness: "hard" } },
+      } as ConversationExtractResult["tagPatch"],
+      memoryEntities: [
+        { entityKind: "industrySector", value: "financial_technology", confidence: 0.9, evidence: "I only want fintech" },
+      ],
+      confidence: 0.9,
+      rationale: "user said only fintech",
+    }
+    const deps = makeDeps()
+    const { llm } = makeLlmStub(result)
+    deps.llm = llm
+    const out = await runExtraction(
+      makeReq({ recentMessages: [{ role: "user", body: "I ONLY want fintech", createdAt: "2026-05-18T20:00:00.000Z" }] }),
+      deps,
+    )
+    assert.equal(out.ran, true)
+    assert.equal(deps.__tagWrites.length, 1)
+    const written = deps.__tagWrites[0]!.patch as {
+      preferenceHardness?: Record<string, { hardness: string; source: string; updatedAt: string }>
+    }
+    assert.equal(written.preferenceHardness?.industrySector?.hardness, "hard")
+    assert.equal(written.preferenceHardness?.industrySector?.source, "conversation")
+    assert.equal(written.preferenceHardness?.industrySector?.updatedAt, "2026-05-18T20:01:23.000Z")
+  })
+
+  it("runExtraction drops preferenceHardness when no valid entries remain", async () => {
+    const result: ConversationExtractResult = {
+      // Empty hardness object → stamped object has no keys → field removed.
+      tagPatch: {
+        industrySector: ["financial_technology"],
+        preferenceHardness: {},
+      } as ConversationExtractResult["tagPatch"],
+      memoryEntities: [
+        { entityKind: "industrySector", value: "financial_technology", confidence: 0.9, evidence: "fintech" },
+      ],
+      confidence: 0.9,
+      rationale: "",
+    }
+    const deps = makeDeps()
+    const { llm } = makeLlmStub(result)
+    deps.llm = llm
+    const out = await runExtraction(makeReq(), deps)
+    assert.equal(out.ran, true)
+    const written = deps.__tagWrites[0]!.patch as { preferenceHardness?: unknown }
+    assert.equal("preferenceHardness" in written, false)
+  })
+})

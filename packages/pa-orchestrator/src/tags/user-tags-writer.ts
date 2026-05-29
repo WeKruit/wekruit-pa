@@ -244,6 +244,26 @@ export async function applyPartialUserTags(
   // Merge: partial wins on conflict (caller's authoritative for the keys
   // they pass). Schema version + timestamp bookkeeping.
   const merged: Record<string, unknown> = { ...existing, ...cleaned }
+
+  // SOFT-vs-HARD (2026-05-28) — `preferenceHardness` is the ONE field merged
+  // PER-AXIS rather than wholesale-replaced. The conversation extractor emits
+  // hardness deltas one axis at a time (e.g. turn 1 → salary, turn 5 →
+  // location); a shallow replace would drop earlier axes. Per-axis keys still
+  // let a new signal overwrite the SAME axis. Behaviour for every other field
+  // is unchanged (shallow replace).
+  if (
+    cleaned.preferenceHardness &&
+    typeof cleaned.preferenceHardness === "object" &&
+    !Array.isArray(cleaned.preferenceHardness) &&
+    existing.preferenceHardness &&
+    typeof existing.preferenceHardness === "object" &&
+    !Array.isArray(existing.preferenceHardness)
+  ) {
+    merged.preferenceHardness = {
+      ...(existing.preferenceHardness as Record<string, unknown>),
+      ...(cleaned.preferenceHardness as Record<string, unknown>),
+    }
+  }
   if (merged.schemaVersion == null) merged.schemaVersion = USER_TAGS_SCHEMA_VERSION
   if (source === "chat" || source === "migration") {
     merged.lastUpdatedFromChat = nowIso

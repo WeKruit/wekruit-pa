@@ -34,3 +34,6 @@ export * from "./canonical/registry.js"
 // ─── Phase A2 (post-v1.7) company axes ────────────────────────────
 export * from "./canonical/company-stage.js"
 export * from "./canonical/company-tag.js"
+
+// ─── SOFT-vs-HARD preference model (2026-05-28) ───────────────────
+export * from "./canonical/preference-hardness.js"
