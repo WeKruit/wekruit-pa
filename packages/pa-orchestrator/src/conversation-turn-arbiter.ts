@@ -472,9 +472,20 @@ function normalizeText(value: string): string {
 }
 
 function isControlOrPrivacyIntent(text: string): boolean {
+  if (isSystemControlString(text)) return true
   if (/\b(delete my data|privacy|export my data|erase me|unsubscribe)\b/i.test(text)) return true
   if (/^(stop|pause|cancel)\s*$/i.test(text)) return true
   return /\b(stop|pause|cancel)\b.{0,40}\b(job recommendations|messages|texts|sms|outreach|all)\b/i.test(text)
+}
+
+/**
+ * System-control sentinels like __PA_RESET__ / __PA_FIND_MATCH__ are dev/test
+ * trigger strings, never natural language. They must route to safety_control so
+ * they are handled deterministically and never get a tapback/reaction. Matched
+ * case-insensitively because the arbiter normalizes inbound text to lowercase.
+ */
+function isSystemControlString(text: string): boolean {
+  return /^__[a-z0-9_]+__$/i.test(text.trim())
 }
 
 function isMetaQuestion(text: string): boolean {

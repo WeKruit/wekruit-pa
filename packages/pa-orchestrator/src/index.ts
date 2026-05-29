@@ -4876,18 +4876,25 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       onboardingUser.onboardingState !== "complete" &&
       !sharedRuntimeSession
     )
+    // A (QA 2026-05-28) — out-of-slot facts mid-onboarding land on `fallback_claire`
+    // (the frame classifier doesn't recognize them as a slot answer or durable
+    // preference), which previously dropped them to a generic reply with NO capture
+    // and NO slot advance — the re-ask loop. During an active shared-onboarding
+    // session route those into the onboarding handler instead (extract-first captures
+    // the facts + the slot advances). FLAG-GATED on paAgenticOnboardingEnabled so
+    // flag-OFF is byte-identical to prior prod — an unclear answer mid-onboarding
+    // still goes to the generic fallback, NOT the handler (preserves the
+    // "don't mutate/complete on an unclear answer" invariant for non-canary users).
+    const agenticOnboardingReroute = Boolean(
+      sharedRuntimeSession &&
+      store.db &&
+      conversationOwnerDecision?.selectedOwner === "fallback_claire" &&
+      (await isAgenticOnboardingEnabled(store.db, event.userId)),
+    )
     const allowSharedOnboardingUserReply =
       !conversationOwnerDecision ||
       conversationOwnerDecision.selectedOwner === "shared_onboarding" ||
-      // A (QA 2026-05-28) — out-of-slot facts mid-onboarding land on `fallback_claire`
-      // (the frame classifier doesn't recognize them as a slot answer or durable
-      // preference), which previously dropped them to a generic reply with NO capture
-      // and NO slot advance — the re-ask loop. During an active shared-onboarding
-      // session, route those into the onboarding handler instead, where extract-first
-      // captures the facts and the slot advances. Higher-priority owners (job_search,
-      // durable_preference_update, explicit_explanation, prescreen) already returned
-      // above, so this only reclaims the generic-fallback case.
-      (sharedRuntimeSession && conversationOwnerDecision.selectedOwner === "fallback_claire") ||
+      agenticOnboardingReroute ||
       Boolean(
         sharedRuntimeSession &&
         sharedQuestionId &&

@@ -149,7 +149,7 @@ test("link question plus interest answers the explicit question first and stores
   assert.ok(writes.some((write) => write.kind === "job_interest" && write.operation === "append"))
 })
 
-test("yes after role fit gate stores a prescreen answer without inventing onboarding evidence", () => {
+test("yes after role fit gate advances the workflow and stores a prescreen answer without inventing onboarding evidence", () => {
   const context = baseContext({
     inbound: {
       text: "Yes",
@@ -173,9 +173,102 @@ test("yes after role fit gate stores a prescreen answer without inventing onboar
   const writes = buildConversationEvidenceWrites(context, ownerDecision, action)
 
   assert.equal(ownerDecision.selectedOwner, "active_workflow")
-  assert.equal(action.selectedAction, "micro_ack")
+  // F2: an affirmative to a pending question must ADVANCE, not micro_ack/re-ask.
+  assert.equal(action.selectedAction, "answer_then_continue")
+  assert.ok(
+    action.replyGuidance.some((line) => /do not (repeat|re-?ask)/i.test(line)),
+    "should instruct not to re-ask the pending question",
+  )
   assert.ok(writes.some((write) => write.kind === "prescreen_answer" && write.targetPath.includes("stack_fit")))
   assert.ok(!writes.some((write) => write.kind === "shared_onboarding_answer"))
+})
+
+test("F2: bare 'Yes' to a pending workflow question advances instead of re-asking via micro_ack", () => {
+  const affirmative = baseContext({
+    inbound: { text: "Yes", createdAt: "2026-05-26T23:14:30.000Z", channel: "imessage" },
+    activeWorkflow: { kind: "job_prescreen", status: "active", currentQuestionId: "stack_fit" },
+    recentOutbound: [
+      {
+        role: "assistant",
+        body: "Have you shipped production features in React/Next.js with TypeScript?",
+        createdAt: "2026-05-26T23:14:00.000Z",
+      },
+    ],
+  })
+  const affirmativeResult = decide(affirmative)
+  assert.equal(affirmativeResult.ownerDecision.selectedOwner, "active_workflow")
+  assert.equal(affirmativeResult.action.selectedAction, "answer_then_continue")
+  assert.ok(
+    affirmativeResult.action.rejectedActions.some((rej) => rej.action === "micro_ack"),
+    "micro_ack should be explicitly rejected for an affirmative to a pending question",
+  )
+
+  // Guard: a SUBSTANTIVE workflow answer (not a bare affirmative) still micro_acks.
+  const substantive = baseContext({
+    inbound: {
+      text: "Yes, I built the entire payments service end to end with retries and idempotency keys.",
+      createdAt: "2026-05-26T23:14:45.000Z",
+      channel: "imessage",
+    },
+    activeWorkflow: { kind: "job_prescreen", status: "active", currentQuestionId: "stack_fit" },
+    recentOutbound: [
+      {
+        role: "assistant",
+        body: "Have you shipped production features in React/Next.js with TypeScript?",
+        createdAt: "2026-05-26T23:14:00.000Z",
+      },
+    ],
+  })
+  assert.equal(decide(substantive).action.selectedAction, "micro_ack")
+})
+
+test("F1: short ack to a Claire statement (not a question) becomes tapback only, not a fresh question", () => {
+  const context = baseContext({
+    inbound: { text: "Ok", createdAt: "2026-05-26T23:20:00.000Z", channel: "imessage" },
+    recentOutbound: [
+      {
+        role: "assistant",
+        body: "That role is fully remote and the team is about 40 people right now.",
+        createdAt: "2026-05-26T23:19:30.000Z",
+      },
+    ],
+  })
+  const { ownerDecision, action } = decide(context)
+
+  assert.equal(ownerDecision.selectedOwner, "fallback_claire")
+  assert.equal(action.selectedAction, "tapback_only")
+  assert.equal(action.deliveryPlan.outboundTextRequired, false)
+  assert.equal(action.deliveryPlan.reaction, "like")
+  assert.equal(action.noOutboundReason, "low_information_ack_after_statement")
+})
+
+test("F1 guard: short ack to a Claire QUESTION is NOT suppressed to a tapback", () => {
+  const context = baseContext({
+    inbound: { text: "Yes", createdAt: "2026-05-26T23:21:00.000Z", channel: "imessage" },
+    recentOutbound: [
+      {
+        role: "assistant",
+        body: "Are you open to roles that are hybrid in NYC?",
+        createdAt: "2026-05-26T23:20:30.000Z",
+      },
+    ],
+  })
+  const { action } = decide(context)
+
+  assert.notEqual(action.selectedAction, "tapback_only")
+  assert.equal(action.deliveryPlan.outboundTextRequired, true)
+})
+
+test("F1 guard: cold-open short ack with no prior assistant turn still gets a real reply", () => {
+  const context = baseContext({
+    inbound: { text: "Ok", createdAt: "2026-05-26T23:22:00.000Z", channel: "imessage" },
+    recentOutbound: [],
+    recentMessages: [],
+  })
+  const { action } = decide(context)
+
+  assert.notEqual(action.selectedAction, "tapback_only")
+  assert.equal(action.deliveryPlan.outboundTextRequired, true)
 })
 
 test("job search request sends fast status before async matching tool result", () => {

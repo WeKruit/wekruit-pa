@@ -163,6 +163,20 @@ function isEmojiModeAllowed(profile: ResolvedVoiceProfile): boolean {
   return profile.resolvedEmoji !== "banned"
 }
 
+/**
+ * Short / low-information inbound predicate. Mirrors reaction-policy.ts
+ * isShortReply so the tapback suppression here stays consistent with the
+ * reaction gate. Used to strip tapback-bearing modes when the user only sent a
+ * terse ack ("ok", "yes", "k", "got it"), preventing a tapback from co-firing
+ * with a substantive text reply.
+ */
+function isShortInboundReply(inboundBody: string | null | undefined): boolean {
+  if (typeof inboundBody !== "string") return false
+  const t = inboundBody.trim()
+  if (!t) return false
+  return t.length <= 12 || /^(ok|okay|k|yeah|yep|yes|sure|got it|好|行|嗯|okok)$/i.test(t)
+}
+
 function isTapbackAllowed(profile: ResolvedVoiceProfile, hasMessageHandle: boolean | undefined): boolean {
   if (!profile.choreography.reactionsAllowed) return false
   if (!hasMessageHandle) return false
@@ -214,8 +228,14 @@ export function planOutboundDelivery(input: PlanOutboundDeliveryInput): Outbound
   const profile = input.profile
 
   const emojiAllowed = isEmojiModeAllowed(profile)
+  // INTERIM guard (Adam plan: this layer is slated for LLM-decided delivery, P2).
+  // A short / low-information inbound ("ok", "yes", "k", "got it") must not draw a
+  // tapback-bearing mode, otherwise a heart/like co-fires alongside a substantive
+  // text reply. Until delivery becomes LLM-decided, suppress the tapback modes on
+  // short inbound replies. Mirrors reaction-policy.ts isShortReply.
+  const shortInbound = isShortInboundReply(input.inboundBody)
   const tapbackAllowed =
-    !input.disableTapback && isTapbackAllowed(profile, input.hasMessageHandle)
+    !input.disableTapback && !shortInbound && isTapbackAllowed(profile, input.hasMessageHandle)
 
   // Sentence/length checks — short replies cannot honor 2-bubble modes.
   // We probe the splitter once; if it forces 1 (single sentence, hotline,
