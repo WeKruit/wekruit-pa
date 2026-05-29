@@ -20,17 +20,24 @@ import OpenAI from "openai"
 // TYPE-ONLY: erased at runtime — keeps the real generic signatures without a runtime import.
 import type * as Agents from "@openai/agents"
 
-// createRequire(import.meta.url) works in every ESM context: the deployed esm bundle
-// (require shimmed by build.mjs banner), tsx (eval), and plain node. Anchor SDK resolution
-// at @pa/agent-runtime so we always get the zod@4 copy regardless of which node_modules
-// the importing file sits next to.
-// Resolve @openai/agents + zod DIRECTLY from this module's location:
-//   - PROD: the deploy bundle's runtime package.json pins zod@^4.3.6 + @openai/agents@^0.8.5,
-//     so Cloud Run installs the zod@4 build at the function root → createRequire finds zod@4.
-//   - EVAL: the eval harness symlinks node_modules/{@openai,zod} → agent-runtime's zod@4 dist,
-//     and bundles via esbuild (NOT tsx) so the SDK's compiled .js (not .ts) is loaded.
-// (Anchoring at @pa/agent-runtime fails: its `exports` map exposes no require-resolvable main.)
-const req = createRequire(import.meta.url)
+// ONE consistent resolution anchor for ALL environments (prod bundle, esbuild evals, AND tsx unit
+// tests): resolve @openai/agents + zod from @pa/agent-runtime's node_modules, where zod@4 lives.
+// This is the SAME mechanism prescreen-agentic-turn.ts uses (the proven prod pattern).
+//
+// WHY anchor at @pa/agent-runtime and not import.meta.url: apps/functions pins zod@3, so a require
+// anchored at THIS module (functions graph) resolves zod@3 → @openai/agents-core@0.8.5's
+// z.discriminatedUnion crashes at load. That crash is invisible in prod (the deploy bundle's
+// runtime package.json pins zod@4) and in evals (symlinked zod@4), but it FIRES under tsx — which
+// is what the predeploy `npm test` gate uses — for every test whose imports reach this file
+// (webhook.test.ts → coalescer → cutover → agent → sdk, the reducer tests, etc). Anchoring at the
+// agent-runtime package gives zod@4 in tsx too → the gate is consistent with prod.
+//
+// We resolve agent-runtime's package.json FILE (always resolvable) rather than `req("@pa/agent-
+// runtime")` (its exports map exposes no require-resolvable main — the trap a prior attempt hit),
+// then build a require anchored at that path so @openai/agents + zod resolve from agent-runtime's
+// own (zod@4) subtree.
+const baseRequire = createRequire(import.meta.url)
+const req = createRequire(baseRequire.resolve("@pa/agent-runtime/package.json"))
 const sdk = req("@openai/agents") as Record<string, unknown>
 
 /** zod@4 — the SAME instance @openai/agents-core uses. Use this for ALL tool param schemas. */

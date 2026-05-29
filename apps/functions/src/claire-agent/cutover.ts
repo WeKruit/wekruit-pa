@@ -21,6 +21,12 @@ import type { ClaireLang } from "./types.js"
 
 export interface MaybeThinClaireDeps {
   log?: (event: string, payload?: Record<string, unknown>) => void
+  /**
+   * Test-only: when true, the Sendblue transport RECORDS bubbles instead of sending them, so the
+   * full cutover seam (doc parse → flag gate → transport → runClaireTurn → mark completed) can be
+   * driven in an integration eval with no real iMessage. Production callers omit it → real send.
+   */
+  dryRun?: boolean
 }
 
 export async function maybeRunThinClaire(
@@ -72,6 +78,7 @@ export async function maybeRunThinClaire(
       userId,
       sessionId,
       log,
+      ...(deps.dryRun ? { dryRun: true } : {}),
     })
     await runClaireTurn(
       {

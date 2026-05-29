@@ -33,10 +33,15 @@ const KEEP_ID = "LF8blURXyFBaeF7bhupu" // Adam Yang — active conversation, old
 const ORPHAN_ID = "8fEwIduUrzxZsblHHsNz" // Shixiang Yang — later resume orphan
 const TOMBSTONE_PHONE = `${PHONE}__merged_${ORPHAN_ID}`
 
-// Resume-derived tag fields to ADDITIVELY merge orphan -> keep.
-const MERGE_TAG_FIELDS = ["skills", "targetRoleFunction", "relevantTags", "relevantIndustry", "industrySector"]
-// Fields DELIBERATELY NOT merged because they conflict with the live 3yr-SWE chat.
-const CONFLICT_TAG_FIELDS = ["careerStage", "targetJobType"]
+// Resume-derived tag fields to ADDITIVELY merge orphan -> keep. SOFT-SCORE enrichment only
+// (background skills/industry signal) — safe to union into the live profile.
+const MERGE_TAG_FIELDS = ["skills", "relevantTags", "relevantIndustry", "industrySector"]
+// Fields DELIBERATELY NOT merged — they are deliberate USER CHOICES / hard-filter axes that the
+// orphan resume contradicts. targetRoleFunction is the HARD-FILTER role axis: the orphan resume
+// says software_engineering, but the live LF8 user explicitly states "done with pure SWE, only
+// product" — merging SWE back in would corrupt the hard filter AND the canary scenario. Likewise
+// careerStage=intern / targetJobType=internship contradict the live 3yr-SWE chat. SKIP + print.
+const CONFLICT_TAG_FIELDS = ["careerStage", "targetJobType", "targetRoleFunction"]
 
 // ---------- bootstrap (mirrors .ops/enable-canary.mjs) ----------
 const txt = readFileSync(process.env.PA_ENV_PATH, "utf8")

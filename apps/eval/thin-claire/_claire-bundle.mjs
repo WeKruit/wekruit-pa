@@ -72,6 +72,7 @@ export async function loadClaireBundle() {
       contents: [
         `export { runClaireTurn, buildClaireAgent, CLAIRE_MODEL } from ${JSON.stringify(join(claireDir, "agent.ts"))}`,
         `export { createSendblueTransport } from ${JSON.stringify(join(claireDir, "transport.ts"))}`,
+        `export { maybeRunThinClaire } from ${JSON.stringify(join(claireDir, "cutover.ts"))}`,
         `export { buildMatchingTools, makeV16FindMatch } from ${JSON.stringify(join(claireDir, "tools/matching-tools.ts"))}`,
         `export { buildDeliveryTools } from ${JSON.stringify(join(claireDir, "tools/delivery-tools.ts"))}`,
         `export { buildProcessTools } from ${JSON.stringify(join(claireDir, "tools/process-tools.ts"))}`,
