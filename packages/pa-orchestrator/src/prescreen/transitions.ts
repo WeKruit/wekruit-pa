@@ -108,29 +108,68 @@ export type ViabilityOutcome =
   | { action: "proceed" }
 
 /**
- * Viability check. If S + R_max < T·S_max → PAUSE: math says PASS is
- * unreachable. Hysteresis: only fire after ⌈N/3⌉ Qs answered to avoid
- * false PAUSE during early-Q score volatility.
+ * Continue-viability threshold T_continue (live failure fix 2026-05-28).
+ *
+ * The viability "should we keep asking" check MUST be decoupled from the
+ * PASS-proposal threshold. Production forces the PASS bar to
+ * PRESCREEN_REVIEW_PASS_THRESHOLD = 0.95 so a human reviewer only ever sees
+ * Claire propose PASS for ~top-5 evidence — that is a HUMAN-REVIEW policy,
+ * NOT a signal the automated FSM should use to early-terminate.
+ *
+ * If viability used the 0.95 bar, a single competent-but-not-top-5 answer
+ * makes 95% mathematically unreachable and the screen PAUSEs after one
+ * question (the GTM live failure: a STRONG answer → PAUSE after Q1). The
+ * continue bar is intentionally low: PAUSE should mean "even a mediocre PASS
+ * is now impossible" (a true hard-fail), not "a perfect score is impossible".
+ */
+export const PRESCREEN_CONTINUE_THRESHOLD = 0.5
+
+/**
+ * Minimum answered questions before viability can ever PAUSE. A single Q's
+ * score is too volatile to early-terminate on, and ⌈N/3⌉ collapses to 1 for
+ * any N ≤ 3 (the GTM job had a small question set, so it PAUSEd after Q1).
+ */
+export const VIABILITY_MIN_ANSWERED = 2
+
+/**
+ * Viability check. PAUSE iff S + R_max < T_continue·S_max — i.e. PASS is
+ * unreachable even at the LOWER continue bar (a genuine hard-fail), NOT when
+ * the top-heavy 0.95 PASS-proposal bar is unreachable.
+ *
+ * Hysteresis: only fire after max(VIABILITY_MIN_ANSWERED, ⌈N/3⌉) Qs answered
+ * to avoid false PAUSE during early-Q score volatility and to guarantee a
+ * single answered question can never trigger PAUSE.
  *
  *   R_max = sum of remaining-Q weights (NOT remaining-Q max scores;
  *           equivalent because each Q can return s_max = 1.0 with weight 1).
+ *   continueThreshold — the LOWER continue bar (defaults to
+ *           PRESCREEN_CONTINUE_THRESHOLD; the caller may pass the job's
+ *           configured threshold WITHOUT the 0.95 floor, clamped ≤ it).
  */
 export function evalViability(args: {
   score: number
   scoreMax: number
   remainingMaxScore: number
   threshold: number
+  /** Lower "keep going" bar. Falls back to PRESCREEN_CONTINUE_THRESHOLD. */
+  continueThreshold?: number
   questionsAnswered: number
   totalQuestions: number
 }): ViabilityOutcome {
-  const hysteresis = Math.ceil(args.totalQuestions / 3)
+  const hysteresis = Math.max(VIABILITY_MIN_ANSWERED, Math.ceil(args.totalQuestions / 3))
   if (args.questionsAnswered < hysteresis) return { action: "proceed" }
+  // The continue bar is ONLY the lower viability threshold — never the 0.95
+  // PASS-proposal bar. Clamp so it can never exceed the PASS threshold.
+  const continueBar = Math.min(
+    args.continueThreshold ?? PRESCREEN_CONTINUE_THRESHOLD,
+    args.threshold
+  )
   const upperBound = args.score + args.remainingMaxScore
-  const required = args.threshold * args.scoreMax
+  const required = continueBar * args.scoreMax
   if (upperBound < required) {
     return {
       action: "pause",
-      reason: `S+R_max=${upperBound.toFixed(2)} < T*S_max=${required.toFixed(2)}`,
+      reason: `S+R_max=${upperBound.toFixed(2)} < T_continue*S_max=${required.toFixed(2)}`,
     }
   }
   return { action: "proceed" }

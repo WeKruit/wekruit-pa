@@ -29,23 +29,80 @@ async function lookupUserByPhoneE164(db: Firestore, phoneE164: string): Promise<
   // non-E.164 string; never write a non-E.164 handle to candidate-handles.
   if (!isE164(phoneE164)) return null
   try {
-    const limit = phoneE164 === DEV_BYPASS_PHONE ? 25 : 1
+    // Identity hardening 2026-05-28 — the "1 phone = 1 pa-users" invariant is
+    // enforced on the write path, but legacy/orphan duplicates can still exist
+    // (e.g. a later resume upload that created a second doc on the dev phone).
+    // We must NEVER take `snap.docs[0]` blind: Firestore's implicit order is
+    // doc-name asc, so a newer orphan whose id sorts first would hijack the
+    // thread (latent flap). Fetch a bounded set and pick DETERMINISTICALLY.
+    const limit = phoneE164 === DEV_BYPASS_PHONE ? 25 : 10
     const snap = await db.collection(PA_COLLECTIONS.users).where("phoneE164", "==", phoneE164).limit(limit).get()
     if (!snap.empty) {
       const matches = snap.docs.map((doc) => ({
         id: doc.id,
         data: (doc.data() ?? {}) as Record<string, unknown>,
       }))
-      if (phoneE164 === DEV_BYPASS_PHONE && matches.length > 1) {
-        const handleOwner = await lookupPhoneHandleOwner(db, phoneE164)
-        return chooseDevBypassPhoneMatch(matches, handleOwner)
+      if (matches.length > 1) {
+        // Structured multi-match alert for ops — one phone resolving to >1
+        // pa-users is an identity-dup that should be deduped (see
+        // .ops/dedup-dev-phone.mjs). Greppable single-line warning.
+        warnPhoneMultiMatch(phoneE164, matches)
+        if (phoneE164 === DEV_BYPASS_PHONE) {
+          const handleOwner = await lookupPhoneHandleOwner(db, phoneE164)
+          return chooseDevBypassPhoneMatch(matches, handleOwner)
+        }
+        return choosePhoneMatchDeterministic(matches)
       }
-      return snap.docs[0]!.id
+      return matches[0]!.id
     }
   } catch {
     // Fall through to handle fallback.
   }
   return lookupPhoneHandleOwner(db, phoneE164)
+}
+
+/**
+ * Deterministic tiebreak for the production (non-dev) path when a phone
+ * resolves to more than one pa-users doc. Stable + observable, and chosen so
+ * it never silently flips an established thread to a newer orphan:
+ *
+ *   1. oldest `createdAt` ascending — the FIRST profile that owned this phone
+ *      wins. This is immutable, so resolution is stable across turns, and it
+ *      matches the established live thread (the original profile, not a later
+ *      duplicate created by a stray resume upload).
+ *   2. most-recent `updatedAt` descending — only a tiebreak when createdAt is
+ *      equal/absent; favors the genuinely active doc without the orphan-flip
+ *      risk that `claireConversationStartedAt` would introduce (a later
+ *      duplicate can have a newer conversation-start timestamp).
+ *   3. doc id ascending — final stable tiebreak so the result is fully
+ *      deterministic even with no timestamps at all.
+ */
+function choosePhoneMatchDeterministic(matches: CandidatePhoneMatch[]): string {
+  const ranked = [...matches]
+    .map((match) => ({
+      id: match.id,
+      createdAtMs: timestampMs(match.data.createdAt),
+      updatedAtMs: timestampMs(match.data.updatedAt),
+    }))
+    .sort((a, b) => {
+      // createdAt asc; missing createdAt (0) sorts LAST so a dated original
+      // always beats an undated orphan.
+      const aCreated = a.createdAtMs || Number.POSITIVE_INFINITY
+      const bCreated = b.createdAtMs || Number.POSITIVE_INFINITY
+      if (aCreated !== bCreated) return aCreated - bCreated
+      if (b.updatedAtMs !== a.updatedAtMs) return b.updatedAtMs - a.updatedAtMs
+      return a.id.localeCompare(b.id)
+    })
+  return ranked[0]!.id
+}
+
+function warnPhoneMultiMatch(phoneE164: string, matches: CandidatePhoneMatch[]): void {
+  const ids = matches.map((m) => m.id).join(",")
+  // Last 4 digits only — never log a full phone number.
+  const phoneTail = phoneE164.slice(-4)
+  console.warn(
+    `candidate-inbound-resolve phone_multi_match phone_tail=${phoneTail} count=${matches.length} ids=${ids}`,
+  )
 }
 
 async function lookupPhoneHandleOwner(db: Firestore, phoneE164: string): Promise<string | null> {

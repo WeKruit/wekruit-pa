@@ -1,0 +1,25 @@
+{
+  "name": "salary-memory-entity-parse-error",
+  "description": "CAUSE 2 of the mid-onboarding failure, ISOLATED (onboardingState=complete so the onboarding gate is OPEN and the real model IS called). This proves the second, independent production bug found 2026-05-28 on the real seam: when a message includes a minimum salary, gpt-5.4-nano emits a PERFECT tagPatch (visaStatus=sponsor_needed, minSalaryUsd=160000, targetLocations=[new_york,remote], industrySector=[financial_technology, artificial_intelligence_and_machine_learning]) AND a memoryEntities[] row for the salary whose `value` is the NUMBER 160000. But MemoryEntity.value is z.string() (conversation-extractor.ts:233), so the strict ConversationExtractResultSchema.parse() rejects the WHOLE object on that one field -> reason='parse_error' -> the entire correct tagPatch is silently dropped and pa-users.tags stays empty. This is the documented Adam-bug class (model right, schema rejects on a type mismatch, whole patch lost) but a NEW instance the coerceArray fix does NOT cover (coerceArray handles tagPatch arrays; it does not coerce memoryEntities[].value). Deterministic at temp 0 (reproduced twice). EXPECTED RED until the integrator coerces memoryEntities[].value to string (z.coerce.string() / z.preprocess). When fixed, this flips GREEN. Note: llm-fixtures/multi-value-visa-extraction.json passes because its phrasing happened not to trigger a numeric memory-entity value; a salary line reliably does.",
+  "user_id": "test_user_salary_parse_error",
+  "onboarding_state": "complete",
+  "initial_tags": {},
+  "turns": [
+    {
+      "inbound": "I need H1B sponsorship, open to NYC or remote, fintech or AI roles, and my minimum base is 160k",
+      "assistant": "got it."
+    }
+  ],
+  "expect": {
+    "baseline_red": false,
+    "final_tags": {
+      "visaStatus": "sponsor_needed",
+      "minSalary": 160000
+    },
+    "final_tags_includes": {
+      "targetLocations": ["new_york", "remote"],
+      "industrySector": ["financial_technology", "artificial_intelligence_and_machine_learning"]
+    },
+    "grade_criteria": "Candidate stated: needs H1B sponsorship, NYC or remote, fintech or AI, minimum base 160k. PASS only if the durable store captured visaStatus=sponsor_needed, minSalaryUsd≈160000, targetLocations includes NYC + remote, industrySector includes fintech + AI/ML. If the store is empty due to a parse_error on the numeric memoryEntities salary value, pass=false."
+  }
+}

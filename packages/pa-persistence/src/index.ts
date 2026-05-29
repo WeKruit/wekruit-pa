@@ -44,13 +44,67 @@ export async function findUserByParticipant(
 ): Promise<User | null> {
   const n = normalizeImessageParticipant(participant)
   if (!n) return null
-  const query = n.includes("@")
+  const isEmail = n.includes("@")
+  const query = isEmail
     ? db.collection(USERS).where("channels.imessageHandle", "==", n)
     : db.collection(USERS).where("phoneE164", "==", n)
-  const snap = await query.limit(1).get()
+  // Identity hardening 2026-05-28 — the "1 handle = 1 pa-users" invariant is
+  // enforced on the write path, but legacy/orphan duplicates can still exist.
+  // `snap.docs[0]` with Firestore's implicit doc-name-asc order is
+  // NON-DETERMINISTIC across duplicates (a newer orphan whose id sorts first
+  // would hijack the thread). Fetch a bounded set and pick deterministically:
+  // oldest createdAt (the original profile, stable + immutable) → most-recent
+  // updatedAt → doc id. Mirrors choosePhoneMatchDeterministic in
+  // apps/functions/src/candidate-inbound-resolve.ts.
+  const snap = await query.limit(10).get()
   if (snap.empty) return null
-  const d = snap.docs[0]!
-  return { id: d.id, ...d.data() } as User
+  if (snap.docs.length > 1) {
+    const ids = snap.docs.map((d) => d.id).join(",")
+    // Mask the handle: email local part / phone last 4 only — never log raw PII.
+    const masked = isEmail ? `email:${n.split("@")[0]!.slice(0, 3)}***` : `phone_tail:${n.slice(-4)}`
+    console.warn(
+      `findUserByParticipant participant_multi_match ${masked} count=${snap.docs.length} ids=${ids}`,
+    )
+  }
+  const chosen = pickDeterministicUserDoc(snap.docs)
+  return { id: chosen.id, ...chosen.data() } as User
+}
+
+/**
+ * Deterministic duplicate tiebreak shared by handle/phone resolution: oldest
+ * `createdAt` ascending (the first profile that owned the handle wins —
+ * immutable, so resolution is stable turn-to-turn and never flips to a later
+ * orphan), then most-recent `updatedAt` descending, then doc id ascending.
+ * A missing/unparseable createdAt sorts LAST so a dated original always beats
+ * an undated orphan.
+ */
+function pickDeterministicUserDoc<
+  T extends { id: string; data: () => Record<string, unknown> | undefined },
+>(docs: T[]): T {
+  return [...docs].sort((a, b) => {
+    const aCreated = userDocTimestampMs(a.data()?.createdAt) || Number.POSITIVE_INFINITY
+    const bCreated = userDocTimestampMs(b.data()?.createdAt) || Number.POSITIVE_INFINITY
+    if (aCreated !== bCreated) return aCreated - bCreated
+    const aUpdated = userDocTimestampMs(a.data()?.updatedAt)
+    const bUpdated = userDocTimestampMs(b.data()?.updatedAt)
+    if (bUpdated !== aUpdated) return bUpdated - aUpdated
+    return a.id.localeCompare(b.id)
+  })[0]!
+}
+
+/** ISO string / Firestore Timestamp / {_seconds|seconds} → epoch ms (0 if none). */
+function userDocTimestampMs(value: unknown): number {
+  if (typeof value === "string") {
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  if (value && typeof value === "object") {
+    const c = value as { toDate?: () => Date; _seconds?: number; seconds?: number }
+    if (typeof c.toDate === "function") return c.toDate().getTime()
+    if (typeof c._seconds === "number") return c._seconds * 1000
+    if (typeof c.seconds === "number") return c.seconds * 1000
+  }
+  return 0
 }
 
 export async function createProvisionalUser(db: Firestore, participant: string): Promise<User> {

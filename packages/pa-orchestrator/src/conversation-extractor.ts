@@ -230,7 +230,16 @@ export const ConversationExtractResultSchema = z.object({
   memoryEntities: z.array(
     z.object({
       entityKind: z.string().min(1).max(80),
-      value: z.string().min(1).max(240),
+      // QA 2026-05-28 (C2): the model sometimes emits a NUMBER for a numeric entity
+      // value (e.g. salary 160000). Strict z.string() rejected the WHOLE object →
+      // parse_error → the entire (otherwise-perfect) tagPatch was silently dropped —
+      // same class as the #245 scalar-vs-array bug, a NEW instance caught by the
+      // real-seam mid-onboarding canary (which #1's gate-fix alone left RED). Coerce
+      // number/boolean → string before validation.
+      value: z.preprocess(
+        (v) => (typeof v === "number" || typeof v === "boolean" ? String(v) : v),
+        z.string().min(1).max(240),
+      ),
       confidence: z.number().min(0).max(1),
       evidence: z.string().min(1).max(400),
     })

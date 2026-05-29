@@ -39,6 +39,7 @@ import {
   evalTypeGate,
   evalViability,
   mergeScored,
+  PRESCREEN_CONTINUE_THRESHOLD,
   questionsAnswered,
   remainingMaxScore,
   setTerminal,
@@ -365,7 +366,13 @@ export class PreScreenPipeline {
         score: state.score,
         scoreMax: state.scoreMax,
         remainingMaxScore: remaining,
+        // state.threshold is the human-review PASS-proposal bar (forced to
+        // PRESCREEN_REVIEW_PASS_THRESHOLD=0.95 by config.ts). The early-PAUSE
+        // decision MUST use the lower continue bar instead, so a
+        // competent-but-not-top-5 candidate keeps getting asked. PAUSE only
+        // fires when even the lower bar is unreachable (a true hard-fail).
         threshold: state.threshold,
+        continueThreshold: PRESCREEN_CONTINUE_THRESHOLD,
         questionsAnswered: questionsAnswered(state),
         totalQuestions: state.qOrder.length,
       })

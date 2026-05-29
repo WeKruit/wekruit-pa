@@ -745,6 +745,53 @@ export function resolveNextSharedOnboardingQuestionId(id: SharedOnboardingQuesti
   }
 }
 
+/**
+ * QA 2026-05-28 (#3) — which shared-onboarding slots are already satisfied by the
+ * unified user tags / statedPreferences. The extract-first capture (forceTrigger
+ * extractor on every onboarding turn) can fill `industrySector` + `targetLocations`
+ * from an out-of-slot message; only those two axes are emittable by the chat
+ * extractor (conversation-extractor.ts tagPatch). main_goal / culture_stage /
+ * special_context are onboarding-specific concepts the extractor can't produce, so
+ * they're never auto-satisfied (always asked in order).
+ */
+export function isSharedOnboardingSlotSatisfied(
+  slot: SharedOnboardingQuestionId,
+  tags: Record<string, unknown> | null | undefined,
+  statedPreferences: Record<string, unknown> | null | undefined,
+): boolean {
+  const t = tags ?? {}
+  const sp = statedPreferences ?? {}
+  const nonEmptyArr = (v: unknown): boolean => Array.isArray(v) && v.length > 0
+  if (slot === "industry_interest") {
+    return nonEmptyArr(t.industrySector) || nonEmptyArr(sp.industrySector)
+  }
+  if (slot === "location_relocation") {
+    return nonEmptyArr(t.targetLocations) || nonEmptyArr(sp.targetLocations)
+  }
+  return false
+}
+
+/**
+ * Like {@link resolveNextSharedOnboardingQuestionId} but SKIPS slots already
+ * satisfied by captured tags — so extract-first onboarding asks only what's still
+ * missing instead of re-asking a slot the user already volunteered out of order
+ * (the QA 2026-05-28 re-ask loop: location asked again after the user gave it).
+ */
+export function resolveNextMissingSharedOnboardingQuestionId(
+  fromId: SharedOnboardingQuestionId,
+  tags: Record<string, unknown> | null | undefined,
+  statedPreferences: Record<string, unknown> | null | undefined,
+): { nextQuestionId: SharedOnboardingQuestionId | null; completed: boolean; shouldRecommend: boolean } {
+  const startIdx = QUESTION_IDS.indexOf(fromId)
+  for (let i = startIdx + 1; i < QUESTION_IDS.length; i++) {
+    const candidate = QUESTION_IDS[i]!
+    if (!isSharedOnboardingSlotSatisfied(candidate, tags, statedPreferences)) {
+      return { nextQuestionId: candidate, completed: false, shouldRecommend: false }
+    }
+  }
+  return { nextQuestionId: null, completed: true, shouldRecommend: true }
+}
+
 export function buildSharedOnboardingStartedState(
   nowIso: string,
   source: WekruitSignupSource = WEKRUIT_LAYOFF_SOURCE,

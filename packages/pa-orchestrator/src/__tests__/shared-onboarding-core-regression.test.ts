@@ -20,8 +20,41 @@ import {
   buildSharedOnboardingPromptContext,
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
+  resolveNextMissingSharedOnboardingQuestionId,
   SHARED_ONBOARDING_QUESTIONS,
 } from "../shared-onboarding.js"
+
+describe("resolveNextMissingSharedOnboardingQuestionId (#3 ask-only-missing)", () => {
+  it("skips industry_interest + location_relocation when extract-first already captured them", () => {
+    // After culture_stage, the positional resolver would ask industry_interest next.
+    // But extract-first captured industrySector + targetLocations out-of-slot → skip
+    // both → next missing slot is special_context (the re-ask loop, eliminated).
+    const tags = {
+      industrySector: ["financial_technology", "artificial_intelligence_and_machine_learning"],
+      targetLocations: ["new_york", "remote"],
+    }
+    const positional = resolveNextSharedOnboardingQuestionId("culture_stage")
+    assert.equal(positional.nextQuestionId, "industry_interest") // old behavior re-asks
+    const missing = resolveNextMissingSharedOnboardingQuestionId("culture_stage", tags, null)
+    assert.equal(missing.nextQuestionId, "special_context") // skips both filled slots
+  })
+
+  it("does not skip slots the chat extractor cannot fill (main_goal / culture_stage always asked)", () => {
+    const tags = { industrySector: ["financial_technology"], targetLocations: ["remote"] }
+    // From main_goal, culture_stage is next — never auto-satisfied (not extractor-emittable).
+    const r = resolveNextMissingSharedOnboardingQuestionId("main_goal", tags, null)
+    assert.equal(r.nextQuestionId, "culture_stage")
+  })
+
+  it("falls back to positional order when no tags captured", () => {
+    for (const q of SHARED_ONBOARDING_QUESTIONS) {
+      const a = resolveNextSharedOnboardingQuestionId(q.id)
+      const b = resolveNextMissingSharedOnboardingQuestionId(q.id, null, null)
+      assert.equal(b.nextQuestionId, a.nextQuestionId)
+      assert.equal(b.completed, a.completed)
+    }
+  })
+})
 
 type FlagPermutation = {
   label: string

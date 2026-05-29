@@ -8,6 +8,29 @@ test("empty current → no strip", () => {
   assert.equal(r.text, "")
 })
 
+test("QA 2026-05-28 (E): mid-reply strip never welds two ASCII words at the join seam", () => {
+  // Live prod corruptions ("dig up matches"→"dig upmatches", "$160k and"→"$160kand",
+  // "send strongest"→"sendstrongest"): the matched repeated phrase carries away the
+  // surrounding spaces, so `before + after` glued two surviving words. These inputs
+  // are empirically chosen so the matched span includes its bordering spaces (e.g.
+  // phrase " dig up "), which is exactly when before loses its trailing space.
+  // Pre-fix these produced welded tokens "mematches" / "toadded" / "thatfor".
+  const cases: Array<[string, string[]]> = [
+    ["Let me dig up matches that fit your profile", ["earlier I said I would dig up some roles for you"]],
+    ["okay updated to 160k and added crypto web3", ["noted, 160k and your other prefs are saved"]],
+    ["that is a target for you fintech and AI now", ["it is a target list we will refine a target"]],
+  ]
+  for (const [current, priors] of cases) {
+    const r = stripPhraseRepeat(current, priors, { minRemaining: 3 })
+    assert.equal(r.stripped, true, `expected a strip for: ${current}`)
+    const inputWords = new Set((" " + current + " ").split(/\s+/))
+    const weldedTokens = r.text
+      .split(/\s+/)
+      .filter((t) => /^[A-Za-z0-9$]+$/.test(t) && !inputWords.has(t))
+    assert.deepEqual(weldedTokens, [], `welded/foreign ASCII token(s) in "${r.text}"`)
+  }
+})
+
 test("no priors → no strip", () => {
   const r = stripPhraseRepeat("要不要试试看看", [])
   assert.equal(r.stripped, false)

@@ -142,18 +142,68 @@ test("Phase 76: viability proceeds when upper bound clears threshold", () => {
   assert.equal(r.action, "proceed")
 })
 
-test("Phase 76: viability hysteresis uses ceil(N/3)", () => {
-  // N=4 → ⌈4/3⌉ = 2. At answered=2, viability fires (no longer skipped).
-  // S=0, R_max=2, S_max=4, T=0.65 → required=2.6; upper=2 < 2.6 → pause
+test("Phase 76: viability hysteresis uses max(2, ceil(N/3))", () => {
+  // N=4 → max(2, ⌈4/3⌉) = 2. At answered=2, viability fires (no longer
+  // skipped). Genuine hard-fail under the continue bar: S=0, R_max=1,
+  // S_max=4, continue=0.5 → required=2.0; upper=1 < 2.0 → pause.
   const r = evalViability({
     score: 0,
     scoreMax: 4,
-    remainingMaxScore: 2,
-    threshold: 0.65,
+    remainingMaxScore: 1,
+    threshold: 0.95,
+    continueThreshold: 0.5,
     questionsAnswered: 2,
     totalQuestions: 4,
   })
   assert.equal(r.action, "pause")
+})
+
+test("viability: continue bar is decoupled from the 0.95 PASS threshold", () => {
+  // Live failure shape: T(pass)=0.95, but a competent candidate's running
+  // score must NOT be paused just because 95% is unreachable. The continue
+  // bar (continueThreshold) is what gates PAUSE, not the PASS-proposal bar.
+  // S=1.55, R_max=2, S_max=4. PASS bar 0.95 → required 3.8 > upper 3.55, but
+  // continue bar 0.5 → required 2.0 ≤ upper 3.55 → proceed.
+  const r = evalViability({
+    score: 1.55,
+    scoreMax: 4,
+    remainingMaxScore: 2,
+    threshold: 0.95,
+    continueThreshold: 0.5,
+    questionsAnswered: 2,
+    totalQuestions: 4,
+  })
+  assert.equal(r.action, "proceed")
+})
+
+test("viability: still PAUSEs when even the lower continue bar is unreachable", () => {
+  // Genuine hard-fail: S=0, R_max=2, S_max=6. continue bar 0.5 → required 3.0
+  // > upper 2.0 → pause. The legitimate early-terminate path survives.
+  const r = evalViability({
+    score: 0,
+    scoreMax: 6,
+    remainingMaxScore: 2,
+    threshold: 0.95,
+    continueThreshold: 0.5,
+    questionsAnswered: 4,
+    totalQuestions: 6,
+  })
+  assert.equal(r.action, "pause")
+})
+
+test("viability: never fires on a single answered question (hysteresis floor ≥ 2)", () => {
+  // N=3 → ⌈3/3⌉=1 historically fired after Q1. A single answered Q must
+  // never trigger PAUSE regardless of score.
+  const r = evalViability({
+    score: 0,
+    scoreMax: 3,
+    remainingMaxScore: 2,
+    threshold: 0.95,
+    continueThreshold: 0.5,
+    questionsAnswered: 1,
+    totalQuestions: 3,
+  })
+  assert.equal(r.action, "proceed")
 })
 
 // ════════════════════════════════════════════════════════════════════════════
