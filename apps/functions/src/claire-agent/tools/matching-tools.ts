@@ -1,0 +1,616 @@
+/**
+ * tools/matching-tools.ts — WS-tools owns this file.
+ *
+ * Each tool's `execute` = a deterministic reducer wrapping an EXISTING backend
+ * module (no rebuild). Mirrors poc-v1/poc-v3 B tools:
+ *   set_matching_preferences → reduceMatchingPreferences (poc-v1, the KEYSTONE
+ *                              reducer) + applyPartialUserTags (the sole writer
+ *                              to pa-users.tags). RC1 fix.
+ *   find_match               → ctx.findMatch (queryMatchingJobsV16); reads
+ *                              post-reducer tags; NEVER hangs/throws. RC2 fix.
+ *   remember_fact            → mem0Add (@pa/memory), crisis-scrubbed, fail-open
+ *   schedule_interview       → pa-interview-bookings dedup store (same store +
+ *                              bookingId scheme as SCHEDULE_INTERVIEW_CONNECTOR)
+ *   privacy (export/delete/stop) → runCandidatePrivacyRequest (PII-website-lock:
+ *                              NO chat tool writes email/phone/legal-name)
+ *   save_job_profile / set_daily_subscription / match_collab / cv_parse →
+ *                              wrap existing backends (job profile store,
+ *                              parseResumeText). See per-tool notes.
+ *
+ * KEYSTONE (README §10): the LLM only PROPOSES the typed tool args; each
+ * `execute` is a deterministic REDUCER that commits state. set_matching_
+ * preferences calls `reduceMatchingPreferences` (reducers/matching-profile-
+ * reducer.ts) — it does NOT re-derive the only/avoid/replace semantics.
+ */
+import { tool, z } from "../sdk.js"
+import { ROLE_FUNCTION_VOCAB, JOB_TYPE_VOCAB } from "@wekruit/shared-tags"
+
+// Rebuild the closed enums on the SDK's zod@4 instance. shared-tags' RoleFunctionSchema /
+// JobTypeSchema are built with zod@3 (a different instance) and cannot be mixed into a zod@4
+// tool param schema — but the underlying VOCAB arrays are plain strings, instance-agnostic.
+const RoleFunctionEnum = z.enum(ROLE_FUNCTION_VOCAB)
+const JobTypeEnum = z.enum(JOB_TYPE_VOCAB)
+import { applyPartialUserTags, type PartialUserTags } from "@pa/pa-orchestrator"
+import { mem0Add, type Mem0Config } from "@pa/memory"
+import { parseResumeText } from "@pa/pa-resume-parser"
+import { queryMatchingJobsV16 } from "@pa/job-rec"
+import type { Firestore } from "firebase-admin/firestore"
+import {
+  reduceMatchingPreferences,
+  type MatchingTagsSlice,
+} from "../reducers/matching-profile-reducer.js"
+import type { ClaireToolContext, FindMatchResult } from "../types.js"
+import { runCandidatePrivacyRequest } from "../../production-hardening.js"
+
+const PA_USERS_COLLECTION = "pa-users"
+const JOB_PROFILES_COLLECTION = "pa-job-profiles"
+const INTERVIEW_BOOKINGS_COLLECTION = "pa-interview-bookings"
+
+/**
+ * Read the matching slice of `pa-users/{userId}.tags`. Fail-soft: a missing
+ * doc / read error degrades to an empty slice (the reducer treats this as a
+ * fresh baseline). This is a READ — the only WRITE path is `applyPartialUserTags`.
+ */
+async function readMatchingSlice(
+  db: Firestore,
+  userId: string,
+  log: ClaireToolContext["log"],
+): Promise<MatchingTagsSlice> {
+  try {
+    const snap = await db.collection(PA_USERS_COLLECTION).doc(userId).get()
+    const tags =
+      snap.exists && snap.data()?.tags && typeof snap.data()!.tags === "object"
+        ? (snap.data()!.tags as Record<string, unknown>)
+        : {}
+    const asArr = (v: unknown): string[] | undefined =>
+      Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined
+    return {
+      targetRoleFunction: asArr(tags.targetRoleFunction),
+      negativeRoleFunction: asArr(tags.negativeRoleFunction),
+      targetJobType: asArr(tags.targetJobType),
+      targetLocations: asArr(tags.targetLocations),
+    }
+  } catch (err) {
+    log("pa.claire.read_tags_error", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return {}
+  }
+}
+
+/** Read the post-reducer tags snapshot returned alongside find_match. */
+async function readSnapshotTags(
+  db: Firestore,
+  userId: string,
+  log: ClaireToolContext["log"],
+): Promise<Record<string, unknown>> {
+  const slice = await readMatchingSlice(db, userId, log)
+  const snap: Record<string, unknown> = {}
+  if (slice.targetRoleFunction) snap.targetRoleFunction = slice.targetRoleFunction
+  if (slice.negativeRoleFunction) snap.negativeRoleFunction = slice.negativeRoleFunction
+  if (slice.targetJobType) snap.targetJobType = slice.targetJobType
+  if (slice.targetLocations) snap.targetLocations = slice.targetLocations
+  return snap
+}
+
+/** Resolve mem0 config from env; null when not configured (tool no-ops fail-open). */
+function resolveMem0Config(): Mem0Config | null {
+  const apiKey = (process.env.PA_MEM0_API_KEY ?? process.env.MEM0_API_KEY ?? "").trim()
+  const qdrantUrl = (process.env.PA_QDRANT_URL ?? process.env.QDRANT_URL ?? "").trim()
+  const qdrantApiKey = (process.env.PA_QDRANT_API_KEY ?? process.env.QDRANT_API_KEY ?? "").trim()
+  if (!apiKey || !qdrantUrl || !qdrantApiKey) return null
+  return {
+    apiKey,
+    qdrantUrl,
+    qdrantApiKey,
+    baseUrl: process.env.PA_MEM0_BASE_URL || undefined,
+    qdrantCollection: process.env.PA_QDRANT_COLLECTION || undefined,
+  }
+}
+
+/**
+ * Production wiring for ctx.findMatch — wraps `queryMatchingJobsV16` (@pa/job-rec).
+ * Wave B injects this in prod; evals pass a fake catalog instead. Formats each
+ * ranked job as "Title @ Company\n<atsApplyUrl>" (the find-match line shape the
+ * LLM relays to the user). NEVER throws — returns a grounded ok:false on error.
+ */
+export function makeV16FindMatch(db: Firestore): ClaireToolContext["findMatch"] {
+  return async ({
+    userId,
+    requestedCount,
+  }: {
+    userId: string
+    requestedCount?: number | null
+  }): Promise<FindMatchResult> => {
+    try {
+      const limit =
+        typeof requestedCount === "number" && requestedCount > 0
+          ? Math.min(5, Math.floor(requestedCount))
+          : 3
+      const result = await queryMatchingJobsV16({ userId, limit }, { db })
+      const jobs = (result.jobs ?? []).map((j) => {
+        const title = (j.jobTitle || j.roleTitle || "Role").trim()
+        const company = (j.companyName || "Company").trim()
+        const url = (j.atsApplyUrl ?? "").trim()
+        return url ? `${title} @ ${company}\n${url}` : `${title} @ ${company}`
+      })
+      const total = typeof result.total === "number" ? result.total : jobs.length
+      const reason =
+        jobs.length === 0
+          ? result.needsOnboarding
+            ? "needs onboarding — missing core preferences"
+            : result.noUserTags
+              ? "no saved preferences yet"
+              : "no fresh roles fit those constraints"
+          : null
+      return {
+        ok: true,
+        recCount: total,
+        jobs,
+        reason,
+        snapshotTags: {
+          targetRoleFunction: result.userTags?.targetRoleFunction,
+          negativeRoleFunction: result.userTags?.negativeRoleFunction,
+          ...(result.missingAxes ? { missingAxes: result.missingAxes } : {}),
+        },
+      }
+    } catch (err) {
+      // RC2: find_match must ALWAYS return — degrade, never throw.
+      return {
+        ok: false,
+        recCount: 0,
+        jobs: [],
+        reason: `matcher error: ${err instanceof Error ? err.message : String(err)}`,
+      }
+    }
+  }
+}
+
+export function buildMatchingTools(ctx: ClaireToolContext) {
+  // ── 1. set_matching_preferences — THE RC1 FIX ────────────────────────────
+  // The LLM PROPOSES typed intent; `reduceMatchingPreferences` (the keystone
+  // reducer) DECIDES the resulting canonical slice; `applyPartialUserTags`
+  // (sole writer) commits it. The reducer emits the FULL final positive set in
+  // `changed.targetRoleFunction`, and the writer SHALLOW-REPLACES per key — so
+  // an avoided role (e.g. software_engineering) is GONE after the write, not
+  // unioned back in. That is the RC1 bug fix.
+  const setMatchingPreferences = tool({
+    name: "set_matching_preferences",
+    description:
+      "Persist the candidate's durable role/job-type/location preferences BEFORE matching. " +
+      "Map free text to the closed role vocab: 'PM'/'product strategy'/'product'→product_management, " +
+      "'SWE'/'software engineering'/'engineering'→software_engineering. " +
+      "If they say they want ONLY / want to SWITCH TO a kind of role → put it in onlyRoleFunctions (a REPLACE of the whole positive set). " +
+      "If they say they are DONE WITH / want to AVOID / are NOT INTERESTED IN a kind of role → put that role in avoidRoleFunctions " +
+      "(e.g. 'done with software engineering, only product' → onlyRoleFunctions:[product_management] AND avoidRoleFunctions:[software_engineering]). " +
+      "Also pass jobType (full_time/internship/...) and locations when stated. Pass null for anything not stated.",
+    parameters: z.object({
+      onlyRoleFunctions: z.array(RoleFunctionEnum).nullable(),
+      avoidRoleFunctions: z.array(RoleFunctionEnum).nullable(),
+      jobType: z.array(JobTypeEnum).nullable(),
+      locations: z.array(z.string()).nullable(),
+    }),
+    async execute({ onlyRoleFunctions, avoidRoleFunctions, jobType, locations }) {
+      const current = await readMatchingSlice(ctx.db, ctx.userId, ctx.log)
+      const { changed, removedFromPositive } = reduceMatchingPreferences(current, {
+        onlyRoleFunctions,
+        avoidRoleFunctions,
+        jobType,
+        locations,
+      })
+      if (Object.keys(changed).length === 0) {
+        return { ok: true, changed: {}, summary: "Nothing new to save." }
+      }
+      // Sole writer. Shallow-replaces each key in `changed`, so the full
+      // positive set REPLACES the prior one (SWE removed) — RC1 proof.
+      // The reducer widens role/job-type values to `string[]`; the tool's zod
+      // enum params guarantee they are canonical, so the cast to the narrowed
+      // `PartialUserTags` shape is sound.
+      const write = await applyPartialUserTags(ctx.db, ctx.userId, changed as PartialUserTags, {
+        source: "chat",
+        nowIso: ctx.nowIso(),
+        log: ctx.log,
+      })
+      const positive = changed.targetRoleFunction ?? current.targetRoleFunction ?? []
+      const negative = changed.negativeRoleFunction ?? current.negativeRoleFunction ?? []
+      const summary =
+        `Saved. Now matching ${positive.join(", ") || "—"}` +
+        (negative.length ? `, avoiding ${negative.join(", ")}` : "") +
+        (removedFromPositive.length ? ` (dropped ${removedFromPositive.join(", ")})` : "")
+      ctx.log("pa.claire.set_matching_preferences", {
+        userId: ctx.userId,
+        changedKeys: Object.keys(changed),
+        removedFromPositive,
+        writeOk: write.ok,
+      })
+      return { ok: write.ok, changed, summary }
+    },
+  })
+
+  // ── 2. find_match — RC2: must ALWAYS return, never hang/throw ─────────────
+  const findMatch = tool({
+    name: "find_match",
+    description:
+      "Find ranked job matches for the candidate from the WeKruit catalog. Use when they ask for roles / " +
+      "recommendations / 'what fits me'. Reads their SAVED preferences (call set_matching_preferences first " +
+      "if they just stated new ones). Returns concrete roles or a grounded reason none fit — never an excuse.",
+    parameters: z.object({
+      requestedCount: z.number().int().min(1).max(5).nullable(),
+    }),
+    async execute({ requestedCount }) {
+      const snapshotTags = await readSnapshotTags(ctx.db, ctx.userId, ctx.log)
+      if (!ctx.findMatch) {
+        return {
+          ok: false,
+          recCount: 0,
+          jobs: [] as string[],
+          reason: "matcher unavailable",
+          snapshotTags,
+        }
+      }
+      try {
+        const res = await ctx.findMatch({ userId: ctx.userId, requestedCount })
+        ctx.log("pa.claire.find_match", {
+          userId: ctx.userId,
+          ok: res.ok,
+          recCount: res.recCount,
+        })
+        return {
+          ok: res.ok,
+          recCount: res.recCount,
+          jobs: res.jobs,
+          reason: res.reason,
+          // prefer the matcher's own snapshot; fall back to the local read.
+          snapshotTags: res.snapshotTags ?? snapshotTags,
+        }
+      } catch (err) {
+        // RC2 guard — the find-match TOOL never throws to the agent loop.
+        return {
+          ok: false,
+          recCount: 0,
+          jobs: [] as string[],
+          reason: `matcher error: ${err instanceof Error ? err.message : String(err)}`,
+          snapshotTags,
+        }
+      }
+    },
+  })
+
+  // ── 3. remember_fact — mem0 enrich-only; crisis-scrubbed; fail-open ───────
+  const rememberFact = tool({
+    name: "remember_fact",
+    description:
+      "Store a durable, non-sensitive fact about the candidate for long-term memory " +
+      "(e.g. 'burned out at last job', 'wants to relocate to NYC in 2026'). " +
+      "Do NOT use this for email/phone/legal name — those are edited on the website.",
+    parameters: z.object({ fact: z.string() }),
+    async execute({ fact }) {
+      const trimmed = (fact ?? "").trim()
+      if (!trimmed) return { ok: true, stored: false, reason: "empty_fact" }
+      const config = resolveMem0Config()
+      if (!config) {
+        // Fail-open: memory is enrich-only and never gates the conversation.
+        ctx.log("pa.claire.remember_fact_noop", { userId: ctx.userId, reason: "mem0_not_configured" })
+        return { ok: true, stored: false, reason: "memory_not_configured" }
+      }
+      try {
+        // mem0Add scrubs crisis content internally (scrubCrisisFromMessages).
+        await mem0Add(config, [{ role: "user", content: trimmed }], ctx.userId, {
+          metadata: { source: "claire_chat", sessionId: ctx.sessionId },
+        })
+        ctx.log("pa.claire.remember_fact", { userId: ctx.userId, stored: true })
+        return { ok: true, stored: true }
+      } catch (err) {
+        ctx.log("pa.claire.remember_fact_error", {
+          userId: ctx.userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return { ok: true, stored: false, reason: "memory_write_failed" }
+      }
+    },
+  })
+
+  // ── 4. schedule_interview — dedup REDUCER over pa-interview-bookings ──────
+  // Reuses the SAME store + deterministic bookingId scheme as the existing
+  // SCHEDULE_INTERVIEW_CONNECTOR (pa-connectors/schedule-connector.ts): one
+  // booking per (user × job). Atomic dedup via a Firestore transaction so two
+  // concurrent same-turn calls can't double-book.
+  const scheduleInterview = tool({
+    name: "schedule_interview",
+    description:
+      "Book the candidate's interview / pre-screen time slot. DEDUP: if they already have a booking " +
+      "for this opportunity, do NOT rebook. Use when they want to schedule / book / set up an interview " +
+      "or offer their availability (e.g. 'book me in', 'when can I interview?', '帮我约个面试时间').",
+    parameters: z.object({ slotIso: z.string() }),
+    async execute({ slotIso }) {
+      const jobId = (ctx.jobId ?? "").trim() || "unknown_job"
+      const bookingId = `booking-${ctx.userId}__${jobId}`
+      const ref = ctx.db.collection(INTERVIEW_BOOKINGS_COLLECTION).doc(bookingId)
+      try {
+        const committed = await ctx.db.runTransaction(async (tx) => {
+          const snap = await tx.get(ref)
+          if (snap.exists) return false
+          tx.set(ref, {
+            bookingId,
+            userId: ctx.userId,
+            jobId,
+            slotIso: (slotIso ?? "").trim() || null,
+            status: "requested",
+            sessionId: ctx.sessionId,
+            createdAt: ctx.nowIso(),
+          })
+          return true
+        })
+        ctx.log("pa.claire.schedule_interview", {
+          userId: ctx.userId,
+          jobId,
+          action: committed ? "committed" : "deduped",
+        })
+        return committed
+          ? { ok: true, action: "committed", bookingId }
+          : { ok: true, action: "deduped", bookingId }
+      } catch (err) {
+        return {
+          ok: false,
+          action: "error",
+          reason: err instanceof Error ? err.message : String(err),
+        }
+      }
+    },
+  })
+
+  // ── 5. privacy — export/delete/stop via runCandidatePrivacyRequest ───────
+  // PII-website-lock: there is intentionally NO tool that writes email / phone /
+  // legal name from chat. If a candidate wants to change those, the LLM should
+  // tell them to edit on the website (a prompt behavior, not a write tool).
+  const privacy = tool({
+    name: "privacy",
+    description:
+      "Handle a privacy request the candidate makes in chat: export their data, delete their profile, " +
+      "or stop all outreach. Use ONLY for these three intents. " +
+      "NOTE: to CHANGE email / phone / legal name, the candidate must edit them on the website — there is no chat tool for that.",
+    parameters: z.object({
+      kind: z.enum(["export", "delete", "stop"]),
+      detailText: z.string().nullable(),
+    }),
+    async execute({ kind, detailText }) {
+      // Map the chat-facing 'stop' to the canonical 'stop_outreach' kind.
+      const canonicalKind = kind === "stop" ? "stop_outreach" : kind
+      try {
+        const result = await runCandidatePrivacyRequest(
+          {
+            kind: canonicalKind,
+            ...(detailText ? { detailText } : {}),
+            sourceSurface: "me_profile" as const,
+          },
+          { uid: ctx.userId },
+          { db: ctx.db, now: ctx.nowIso },
+        )
+        ctx.log("pa.claire.privacy", { userId: ctx.userId, kind: canonicalKind, status: result.status })
+        return { ok: true, kind: result.kind, status: result.status, requestId: result.requestId }
+      } catch (err) {
+        // Fail-open: a privacy request that can't be filed (e.g. no linked
+        // profile) must not crash the turn — surface a grounded ok:false so the
+        // LLM can direct the candidate to the website /me/privacy surface.
+        ctx.log("pa.claire.privacy_error", {
+          userId: ctx.userId,
+          kind: canonicalKind,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return {
+          ok: false,
+          kind: canonicalKind,
+          reason: "could not file the request here — direct the candidate to /me/privacy on the website",
+        }
+      }
+    },
+  })
+
+  // ── 6. save_job_profile — persist the daily-recommender profile ──────────
+  // Wraps the same pa-job-profiles/{userId} store the save-job-profile
+  // connector owns (idempotent upsert; preserves operator-paused status).
+  const saveJobProfile = tool({
+    name: "save_job_profile",
+    description:
+      "Persist the candidate's job-search profile (industry tags, sponsorship need, location, company size, " +
+      "optional salary floor) so the daily job recommender can deliver personalised matches. Use ONLY once they " +
+      "have volunteered all four: industryTags, sponsorshipNeeded, locationPreference, sizePreference. Safe to re-call.",
+    parameters: z.object({
+      industryTags: z
+        .array(
+          z.enum([
+            "tech_software",
+            "tech_hardware",
+            "fintech_finance",
+            "ai_ml",
+            "healthcare_biotech",
+            "consumer_retail",
+            "media_entertainment",
+            "manufacturing_industrial",
+            "education",
+            "other",
+          ]),
+        )
+        .min(1)
+        .max(3),
+      sponsorshipNeeded: z.enum(["H1B", "GC", "none"]),
+      locationPreference: z.string(),
+      sizePreference: z.enum(["big", "startup", "mid", "any"]),
+      salaryMin: z.number().int().nonnegative().nullable(),
+    }),
+    async execute(input) {
+      try {
+        const ts = ctx.nowIso()
+        const ref = ctx.db.collection(JOB_PROFILES_COLLECTION).doc(ctx.userId)
+        await ctx.db.runTransaction(async (tx) => {
+          const cur = await tx.get(ref)
+          const profilePayload = {
+            industryTags: input.industryTags,
+            sponsorshipNeeded: input.sponsorshipNeeded,
+            locationPreference: input.locationPreference,
+            sizePreference: input.sizePreference,
+            salaryMin: input.salaryMin,
+          }
+          if (cur.exists) {
+            const prev = cur.data() as { status?: unknown; createdAt?: unknown } | undefined
+            tx.set(
+              ref,
+              {
+                userId: ctx.userId,
+                profile: profilePayload,
+                status: prev?.status === "paused" ? "paused" : "active",
+                createdAt: typeof prev?.createdAt === "string" ? prev.createdAt : ts,
+                updatedAt: ts,
+              },
+              { merge: true },
+            )
+          } else {
+            tx.set(ref, {
+              userId: ctx.userId,
+              profile: profilePayload,
+              status: "active",
+              createdAt: ts,
+              updatedAt: ts,
+              cvParsedAt: ts,
+              lastJobBatchSentAt: null,
+            })
+          }
+        })
+        ctx.log("pa.claire.save_job_profile", { userId: ctx.userId })
+        return { ok: true }
+      } catch (err) {
+        return { ok: false, reason: err instanceof Error ? err.message.slice(0, 200) : "save_failed" }
+      }
+    },
+  })
+
+  // ── 7. set_daily_subscription — opt in/out of the daily recommender ──────
+  // Toggles pa-job-profiles/{userId}.status (active|paused) — the same field
+  // the set-daily-job-recommendation-subscription connector controls.
+  const setDailySubscription = tool({
+    name: "set_daily_subscription",
+    description:
+      "Opt the candidate IN or OUT of the daily job-recommendation text. Use when they say things like " +
+      "'send me daily roles' / 'yes keep them coming' (optedIn=true) or 'stop the daily texts' / 'pause those' (optedIn=false).",
+    parameters: z.object({ optedIn: z.boolean() }),
+    async execute({ optedIn }) {
+      try {
+        const ts = ctx.nowIso()
+        const ref = ctx.db.collection(JOB_PROFILES_COLLECTION).doc(ctx.userId)
+        await ctx.db.runTransaction(async (tx) => {
+          const cur = await tx.get(ref)
+          const status = optedIn ? "active" : "paused"
+          if (cur.exists) {
+            tx.set(ref, { status, updatedAt: ts }, { merge: true })
+          } else {
+            tx.set(ref, {
+              userId: ctx.userId,
+              status,
+              createdAt: ts,
+              updatedAt: ts,
+              lastJobBatchSentAt: null,
+            })
+          }
+        })
+        ctx.log("pa.claire.set_daily_subscription", { userId: ctx.userId, optedIn })
+        return { ok: true, optedIn, jobProfileStatus: optedIn ? "active" : "paused" }
+      } catch (err) {
+        return { ok: false, reason: err instanceof Error ? err.message.slice(0, 200) : "save_failed" }
+      }
+    },
+  })
+
+  // ── 8. match_collab — partner/collab-only ranked matches ─────────────────
+  // Wraps queryMatchingJobsV16 with collabPrescreenOnly=true (the same gate the
+  // match-against-collab-jobs connector applies). NEVER throws.
+  const matchCollab = tool({
+    name: "match_collab",
+    description:
+      "Find ranked matches restricted to WeKruit partner/collaborated roles that have a pre-screen configured. " +
+      "Use when the candidate asks specifically about partner roles or WeKruit-collaborated openings.",
+    parameters: z.object({
+      requestedCount: z.number().int().min(1).max(5).nullable(),
+    }),
+    async execute({ requestedCount }) {
+      try {
+        const limit =
+          typeof requestedCount === "number" && requestedCount > 0
+            ? Math.min(5, Math.floor(requestedCount))
+            : 3
+        const result = await queryMatchingJobsV16(
+          { userId: ctx.userId, limit, collabPrescreenOnly: true },
+          { db: ctx.db },
+        )
+        const jobs = (result.jobs ?? []).map((j) => {
+          const title = (j.jobTitle || j.roleTitle || "Role").trim()
+          const company = (j.companyName || "Company").trim()
+          const url = (j.atsApplyUrl ?? "").trim()
+          return url ? `${title} @ ${company}\n${url}` : `${title} @ ${company}`
+        })
+        const total = typeof result.total === "number" ? result.total : jobs.length
+        ctx.log("pa.claire.match_collab", { userId: ctx.userId, recCount: total })
+        return {
+          ok: true,
+          recCount: total,
+          jobs,
+          reason: jobs.length === 0 ? "no partner roles fit right now" : null,
+        }
+      } catch (err) {
+        return {
+          ok: false,
+          recCount: 0,
+          jobs: [] as string[],
+          reason: `matcher error: ${err instanceof Error ? err.message : String(err)}`,
+        }
+      }
+    },
+  })
+
+  // ── 9. cv_parse — parse pasted resume text via pa-resume-parser v2 ───────
+  // Returns the parsed structured summary to the LLM. Does NOT itself write
+  // tags — the conversation-confirm + applyPartialUserTags path (D12) owns
+  // persistence; this tool only extracts so Claire can confirm understanding.
+  const cvParse = tool({
+    name: "cv_parse",
+    description:
+      "Parse a block of resume / CV text the candidate pasted into the chat. Returns the extracted structured " +
+      "profile (skills, roles, companies) so you can confirm what you understood. Use when they paste a resume.",
+    parameters: z.object({ resumeText: z.string() }),
+    async execute({ resumeText }) {
+      const text = (resumeText ?? "").trim()
+      if (text.length < 40) {
+        return { ok: false, reason: "resume text too short to parse" }
+      }
+      try {
+        const result = await parseResumeText({
+          resumeText: text,
+          langHint: ctx.lang === "zh" ? "zh" : "en",
+        })
+        ctx.log("pa.claire.cv_parse", {
+          userId: ctx.userId,
+          usedTier: result.usedTier,
+          usedModel: result.usedModel,
+        })
+        return { ok: true, parsed: result.parsed, usedModel: result.usedModel }
+      } catch (err) {
+        return {
+          ok: false,
+          reason: `could not parse resume: ${err instanceof Error ? err.message : String(err)}`,
+        }
+      }
+    },
+  })
+
+  return [
+    setMatchingPreferences,
+    findMatch,
+    rememberFact,
+    scheduleInterview,
+    privacy,
+    saveJobProfile,
+    setDailySubscription,
+    matchCollab,
+    cvParse,
+  ]
+}

@@ -43,6 +43,9 @@ import type { Firestore } from "firebase-admin/firestore"
 import { createInboundEvent } from "@pa/pa-broker"
 import { claimAndProcessInboundEvent } from "@pa/pa-orchestrator"
 import { PA_COLLECTIONS } from "@pa/core-types"
+// Thin Claire cutover — flag-gated (paThinClaireEnabled, default OFF). Returns false for
+// everyone but the 424 canary → legacy claimAndProcessInboundEvent path stays unchanged.
+import { maybeRunThinClaire } from "../claire-agent/index.js"
 import { decidePreClaireTurnOwner } from "../lib/pre-claire-turn-owner.js"
 
 import {
@@ -775,9 +778,15 @@ export async function processCoalescedTurn(
   //
   //    Pass orchestratorDeps so buffered turns use the same runtime wiring
   //    as direct inbound turns.
-  const claimer = deps.claimAndProcessInboundEvent ?? claimAndProcessInboundEvent
   const orchLog = (...a: unknown[]) => log("[coalesce/orchestrator]", ...a)
-  await claimer(deps.db, created.id, orchLog, deps.orchestratorDeps ?? {})
+  // Thin Claire (flag-gated): canary users are handled here; otherwise fall through to legacy.
+  const thinHandled = await maybeRunThinClaire(deps.db, created.id, {
+    log: (e, p) => log("[coalesce/thin-claire]", e, p ?? {}),
+  })
+  if (!thinHandled) {
+    const claimer = deps.claimAndProcessInboundEvent ?? claimAndProcessInboundEvent
+    await claimer(deps.db, created.id, orchLog, deps.orchestratorDeps ?? {})
+  }
   await markSyntheticInboundCompleted(deps, created.id, {
     routedTo: "claire_orchestrator",
     userId,

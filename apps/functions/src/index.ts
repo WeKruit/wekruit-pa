@@ -56,6 +56,9 @@ import {
   compactJobRecContext,
   resolveJobRecVisibleCount,
 } from "./job-rec-copy.js"
+// Thin Claire cutover — flag-gated (paThinClaireEnabled, default OFF). Returns false for
+// everyone but the 424 canary → legacy claimAndProcessInboundEvent path stays unchanged.
+import { maybeRunThinClaire } from "./claire-agent/index.js"
 export {
   MAILGUN_API_KEY,
   MAILGUN_DOMAIN,
@@ -808,7 +811,17 @@ async function processBrokerImessageEvent(
     },
   }
   await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
-    { userId: user.id, sessionId: session.id, externalChatId, from: payload.participant, body: payload.text.trim() },
+    {
+      userId: user.id,
+      sessionId: session.id,
+      externalChatId,
+      from: payload.participant,
+      body: payload.text.trim(),
+      // Persist rawMeta (incl. messageHandle) so the thin-Claire cutover below can read the
+      // iMessage handle for tapbacks. Additive — legacy processInboundEvent uses the in-memory
+      // `event` object, not this doc, so this only enriches observability + the thin read path.
+      rawMeta: event.rawMeta,
+    },
     { merge: true }
   )
 
@@ -943,6 +956,28 @@ async function processBrokerImessageEvent(
     }
   } catch (err) {
     logger.warn("[prescreen+pii][onPaInbound] check FAILED — falling through to Claire", {
+      userId: user.id,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  // Thin Claire cutover — DIRECT broker path (real iMessage). Flag-gated + fail-safe.
+  // Every real Sendblue iMessage is a broker event (rawPayload.kind==='imessage'), so the
+  // top-level dispatch (onPaInbound) routes it here; without this block thin Claire would only
+  // ever be reachable via the coalescer (onboarding-complete users), and a normal triage text
+  // from the canary would silently fall through to legacy = false-green. We call thin ONLY after
+  // the prescreen-trigger (above), active-prescreen (runPrescreenTurnIfActive), layoff, and
+  // PII-confirm pre-routes have each had their chance to short-circuit — so thin only ever sees a
+  // free-conversation (triage) turn, matching its triage-only mode and leaving the reducer-owned
+  // FSMs to the legacy path. maybeRunThinClaire re-checks isThinClaireEnabled(userId) itself and
+  // returns false on flag-off / any error, so non-canary users hit legacy below, unchanged.
+  try {
+    const thinHandled = await maybeRunThinClaire(db, claimed.id, {
+      log: (e, p) => logger.info(`[thin-claire][onPaInbound] ${e}`, p ?? {}),
+    })
+    if (thinHandled) return 1
+  } catch (err) {
+    logger.warn("[thin-claire][onPaInbound] check FAILED — falling through to legacy Claire", {
       userId: user.id,
       err: err instanceof Error ? err.message : String(err),
     })
@@ -1117,9 +1152,17 @@ export const onPaInbound = onDocumentCreated(
     // default Claire orchestrator path UNCONDITIONALLY for every event.
     try {
       const orchestratorDeps = makeOrchestratorDeps()
+      // Thin Claire (flag-gated): for canary users, handle the turn and skip the legacy path.
+      const thinHandled = isBrokerImessageEvent(data)
+        ? false
+        : await maybeRunThinClaire(db, data.id, {
+            log: (e, p) => logger.info(`[thin-claire] ${e}`, p ?? {}),
+          })
       const processed = isBrokerImessageEvent(data)
         ? await processBrokerImessageEvent(db, data, orchestratorDeps)
-        : await claimAndProcessInboundEvent(db, data.id, undefined, orchestratorDeps)
+        : thinHandled
+          ? "thin_claire"
+          : await claimAndProcessInboundEvent(db, data.id, undefined, orchestratorDeps)
       logger.info("onPaInbound processed", { eventId: data.id, userId: "userId" in data ? data.userId : undefined, processed })
     } catch (err) {
       logger.error("onPaInbound failed", {
