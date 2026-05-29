@@ -5,6 +5,9 @@ import {
   emptyMarketplaceRows,
   formatPercent,
   formatScore,
+  marketplaceExternalHref,
+  marketplaceResumeArtifactFor,
+  marketplaceResumeOriginalSource,
   sortRowsByTime,
   summarizeMarketplace,
   type MarketplaceRow,
@@ -57,6 +60,7 @@ test("summarizeMarketplace keeps passed and not-passed job state counts separate
   rows.handles = [{ id: "handle-1" }, { id: "handle-2" }]
   rows.authMappings = [{ id: "firebase-uid", candidateId: "candidate-1" }]
   rows.identityEvents = [{ id: "event-1", type: "candidate_claimed" }]
+  rows.sourceLinks = [{ id: "source-1", candidateId: "candidate-1" }]
   rows.identityConflicts = [
     { id: "conflict-open", status: "open" },
     { id: "conflict-resolved", status: "resolved" },
@@ -74,5 +78,29 @@ test("summarizeMarketplace keeps passed and not-passed job state counts separate
     authMappings: 1,
     identityEvents: 1,
     openIdentityConflicts: 1,
+    sourceLinks: 1,
   })
+})
+
+test("marketplaceExternalHref opens web and Cloud Storage refs but ignores inline refs", () => {
+  assert.equal(marketplaceExternalHref("https://linkedin.com/in/test"), "https://linkedin.com/in/test")
+  assert.equal(marketplaceExternalHref("linkedin.com/in/test"), "https://linkedin.com/in/test")
+  assert.equal(
+    marketplaceExternalHref("gs://wekruit-resumes/bulk uploads/Adam Resume.pdf"),
+    "https://storage.cloud.google.com/wekruit-resumes/bulk%20uploads/Adam%20Resume.pdf"
+  )
+  assert.equal(marketplaceExternalHref("inline://candidate_upload/resume.pdf"), undefined)
+})
+
+test("marketplaceResumeOriginalSource prefers stored artifact source refs", () => {
+  const rows: MarketplaceRow[] = [
+    { id: "older", resumeId: "older", storageUri: "gs://bucket/old.pdf" },
+    { id: "artifact-1", resumeId: "artifact-1", storageUri: "gs://bucket/latest resume.pdf" },
+  ]
+  const artifact = marketplaceResumeArtifactFor(rows, "artifact-1")
+  const source = marketplaceResumeOriginalSource(artifact, { id: "parsed", mediaUrl: "inline://resume.pdf" })
+
+  assert.equal(artifact?.id, "artifact-1")
+  assert.equal(source.raw, "gs://bucket/latest resume.pdf")
+  assert.equal(source.href, "https://storage.cloud.google.com/bucket/latest%20resume.pdf")
 })
