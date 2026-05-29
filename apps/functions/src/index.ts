@@ -734,9 +734,43 @@ async function processBrokerImessageEvent(
   }
   let user: User | null = null
   const phoneE164 = normalizeImessageParticipant(payload.participant)
-  const resolvedId = phoneE164
-    ? await resolveInboundUserId(db, phoneE164, payload.text)
-    : null
+  // Never-silent-drop (Adam 2026-05-29): the opener-phone-wins + same-phone
+  // merge policy means resolveInboundUserId should no longer throw
+  // identity_conflict for the texted-from-a-new-number case. But ANY identity
+  // resolution error (legacy data, partial merge, schema) must NOT re-throw
+  // out of here — that leaves the inbound event stuck `running` until the
+  // 120s lease expires and silently never replies (the Yogesh bug). On an
+  // identity_conflict we finalize the event terminal (status=failed, observable
+  // in the dashboard + re-processable on the next inbound) and fall through to
+  // the unbound-user path so the candidate is not silently dropped.
+  let resolvedId: string | null = null
+  if (phoneE164) {
+    try {
+      resolvedId = await resolveInboundUserId(db, phoneE164, payload.text)
+    } catch (resolveErr) {
+      const msg = resolveErr instanceof Error ? resolveErr.message : String(resolveErr)
+      if (msg.startsWith("identity_conflict:")) {
+        logger.warn("[onPaInbound] identity conflict during resolve — finalizing event terminal (no silent drop)", {
+          eventId: claimed.id,
+          phoneTail: phoneE164.slice(-4),
+          err: msg,
+        })
+        await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+          {
+            status: "failed",
+            lastError: msg,
+            errorCode: "IDENTITY_CONFLICT",
+            completedAt: nowIso(),
+            updatedAt: nowIso(),
+            routedTo: "identity_conflict",
+          },
+          { merge: true },
+        )
+        return 1
+      }
+      throw resolveErr
+    }
+  }
   if (resolvedId) {
     const resolvedSnap = await db.collection(PA_COLLECTIONS.users).doc(resolvedId).get()
     if (resolvedSnap.exists) {

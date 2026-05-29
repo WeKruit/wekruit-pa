@@ -1,6 +1,6 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { hashCandidateHandle, linkCandidateHandle } from "@pa/pa-persistence"
+import { hashCandidateHandle, linkCandidateHandle, mergeCandidatesByPhone } from "@pa/pa-persistence"
 import { parseHelloWekruitOpener } from "@pa/pa-orchestrator"
 import { isE164 } from "./sendblue/handle-format.js"
 
@@ -172,35 +172,48 @@ function timestampMs(value: unknown): number {
   return 0
 }
 
+type BindOutcome =
+  | { bound: true; candidateId: string }
+  // The texted phone is a DIFFERENT entity than the opener-named profile (the
+  // named profile already owns a different valid phone, OR the texted phone is
+  // already owned by another entity). Do NOT bind/merge across two different
+  // numbers. Caller resolves by phone (the unique key).
+  | { bound: false; reason: "phone_mismatch_different_entity" | "texted_phone_owned_by_other_entity" }
+
 async function bindPhoneToCandidate(
   db: Firestore,
   candidateId: string,
   phoneE164: string,
   opts: { releaseCompetingUsers?: boolean; reassignConflictingHandle?: boolean } = {},
-): Promise<void> {
+): Promise<BindOutcome> {
   const isoNow = new Date().toISOString()
 
-  // Identity hardening 2026-05-21 — strict mode (default) enforces the
-  // "one pa-users = one phone" invariant Adam locked.
+  // PHONE = UNIQUE IDENTITY KEY (Adam 2026-05-29 policy refinement). The
+  // canonical entity is keyed by phone number — NOT email, NOT the userId in
+  // the opener. Strict mode (default, every phone except DEV_BYPASS_PHONE):
   //
-  // Two pre-flight checks run BEFORE any write, so a rejected bind cannot
-  // pollute pa-users (the previous bug — pa-users got the conflicting
-  // phone written even when linkCandidateHandle threw):
+  //   - Named profile has NO valid phone yet (website registration before
+  //     first text, or a malformed legacy value like "+081...") AND the texted
+  //     phone is not already owned by someone else → this is the candidate's
+  //     first deliverable number → BIND it. (Normal opener flow.)
+  //   - Named profile's existing valid phone == texted phone → re-text → no-op
+  //     bind (recognize the existing entity, keep all handles).
+  //   - Named profile's existing valid phone DIFFERS from the texted phone →
+  //     DIFFERENT entity. "Cannot take it." DO NOT bind.
+  //   - Texted phone is already owned by ANOTHER entity → the phone (the unique
+  //     key) belongs to that entity. The opener token is stale/wrong; DO NOT
+  //     hijack the phone for the named profile. Resolve by phone instead.
   //
-  //   (a) Same-candidate mismatch — `pa-users/{candidateId}.phoneE164`
-  //       differs from the opener phone → reject when the existing value is
-  //       itself a valid E.164 phone. Same person can't silently switch a
-  //       deliverable phone via a fresh opener. Malformed legacy/profile input
-  //       (for example "+081...") is not a real phone identity and must not
-  //       block a Sendblue-confirmed inbound number.
+  // In all "do not bind" cases we return {bound:false} so the caller resolves
+  // the texted phone to ITS OWN entity (or treats it as a fresh candidate).
+  // We NEVER throw → never leave the inbound event stuck `running`.
   //
-  //   (b) Cross-candidate handle reuse — the hashed phone handle
-  //       already points at a DIFFERENT candidateId → reject. One
-  //       phone can't be held by two pa-users.
+  // Same-phone signup-duplicate merging is handled upstream in
+  // resolveInboundUserId step 1 (mergeCandidatesByPhone) — strictly one phone.
   //
-  // `opts.releaseCompetingUsers` opts INTO the relaxed dev/admin
-  // behavior (DEV_BYPASS_PHONE only); both pre-flights are skipped and
-  // the existing release-and-reassign code path runs instead.
+  // `opts.releaseCompetingUsers` opts INTO the relaxed dev/admin behavior
+  // (DEV_BYPASS_PHONE only): the cross-entity guard is skipped and the existing
+  // release-and-reassign code path runs instead. UNCHANGED.
   if (!opts.releaseCompetingUsers) {
     const userRef = db.collection(PA_COLLECTIONS.users).doc(candidateId)
     const userSnap = await userRef.get()
@@ -209,40 +222,23 @@ async function bindPhoneToCandidate(
         ? (userSnap.data()!.phoneE164 as string)
         : null
     if (existingPhone && existingPhone !== phoneE164 && isE164(existingPhone)) {
-      throw new Error(
-        `identity_conflict:pa_users_phone_mismatch:${candidateId}:existing_${existingPhone}_attempted_${phoneE164}`,
-      )
+      // Different phone = different entity. Never cross-bind/merge.
+      return { bound: false, reason: "phone_mismatch_different_entity" }
     }
 
-    const { handleId } = hashCandidateHandle("phone", phoneE164)
-    const handleSnap = await db.collection(PA_COLLECTIONS.candidateHandles).doc(handleId).get()
-    if (handleSnap.exists) {
-      const owner = handleSnap.data()?.candidateId
-      if (typeof owner === "string" && owner && owner !== candidateId) {
-        throw new Error(
-          `identity_conflict:phone_handle_owner_mismatch:${owner}_holds_phone_attempted_${candidateId}`,
-        )
-      }
-    }
-
-    // Pre-flight (c) — `pa-users` may carry `phoneE164` without a matching
-    // `pa-candidate-handles` row (legacy/migrated data). Query pa-users
-    // directly so the invariant holds even when the handle index is sparse.
-    const competing = await db
-      .collection(PA_COLLECTIONS.users)
-      .where("phoneE164", "==", phoneE164)
-      .limit(1)
-      .get()
-    if (!competing.empty && competing.docs[0]!.id !== candidateId) {
-      throw new Error(
-        `identity_conflict:pa_users_phone_already_taken:${competing.docs[0]!.id}_holds_phone_attempted_${candidateId}`,
-      )
+    // Texted phone already owned by a DIFFERENT entity (handle or pa-users
+    // row) → phone is the unique key → resolve to that owner, never the opener
+    // token's named profile. (mergeCandidatesByPhone upstream already collapsed
+    // any genuine same-phone duplicates, so a survivor here is a real other
+    // entity, not a fold target.)
+    if (await isPhoneOwnedByOtherEntity(db, phoneE164, candidateId)) {
+      return { bound: false, reason: "texted_phone_owned_by_other_entity" }
     }
   }
 
-  // Relaxed mode only: release any OTHER pa-users that currently hold this
-  // phone so the opener can take ownership cleanly. Used exclusively for
-  // DEV_BYPASS_PHONE — never invoked in the production candidate-supply path.
+  // Relaxed mode only (DEV_BYPASS_PHONE): release any OTHER pa-users that
+  // currently hold this phone so the opener can take ownership cleanly. Never
+  // invoked in the production candidate-supply path.
   if (opts.releaseCompetingUsers) {
     const snap = await db.collection(PA_COLLECTIONS.users).where("phoneE164", "==", phoneE164).get()
     await Promise.all(
@@ -257,11 +253,15 @@ async function bindPhoneToCandidate(
     { merge: true },
   )
 
-  // linkCandidateHandle throws `identity_conflict:` when the phone hash
-  // already points at a different candidateId. In strict mode we let it
-  // propagate so the caller (resolveInboundUserId) surfaces the conflict.
-  // In relaxed mode (`reassignConflictingHandle`), overwrite the handle
-  // to point at the new candidate — the dev-bypass policy.
+  // linkCandidateHandle throws `identity_conflict:` when the phone hash already
+  // points at a different candidateId. In strict mode that can only happen for
+  // the SAME phone already owned elsewhere — but the cross-entity guard above
+  // only allows us here when the texted phone is this profile's own phone (or
+  // the profile had no valid phone). A conflict at this point means a sparse
+  // duplicate handle row; reassign it to this candidate rather than throw (which
+  // is what previously left the inbound event stuck `running`). The relaxed
+  // dev-bypass path also reassigns.
+  const reassignHandle = opts.reassignConflictingHandle || !opts.releaseCompetingUsers
   await linkCandidateHandle(db, {
     candidateId,
     kind: "phone",
@@ -272,7 +272,7 @@ async function bindPhoneToCandidate(
     evidence: [{ source: "system", summary: "Hello WeKruit opener phone bind" }],
   }).catch((err: unknown) => {
     if (err instanceof Error && err.message.startsWith("identity_conflict:")) {
-      if (opts.reassignConflictingHandle) {
+      if (reassignHandle) {
         const { handleId, handleHash, normalizedValue } = hashCandidateHandle("phone", phoneE164)
         return db.collection(PA_COLLECTIONS.candidateHandles).doc(handleId).set({
           handleId,
@@ -293,6 +293,39 @@ async function bindPhoneToCandidate(
     // swallow schema/parse/network failures.
     throw err
   })
+  return { bound: true, candidateId }
+}
+
+/**
+ * True when `phoneE164` is already a deliverable identity of a DIFFERENT
+ * candidate than `candidateId` — via the hashed phone handle index OR a direct
+ * `pa-users.phoneE164` row. Phone is the unique key: if it belongs to someone
+ * else, the opener token naming a different profile must not steal it.
+ */
+async function isPhoneOwnedByOtherEntity(
+  db: Firestore,
+  phoneE164: string,
+  candidateId: string,
+): Promise<boolean> {
+  try {
+    const { handleId } = hashCandidateHandle("phone", phoneE164)
+    const handleSnap = await db.collection(PA_COLLECTIONS.candidateHandles).doc(handleId).get()
+    const owner = handleSnap.exists ? handleSnap.data()?.candidateId : undefined
+    if (typeof owner === "string" && owner && owner !== candidateId) return true
+  } catch {
+    /* fall through to pa-users scan */
+  }
+  try {
+    const competing = await db
+      .collection(PA_COLLECTIONS.users)
+      .where("phoneE164", "==", phoneE164)
+      .limit(2)
+      .get()
+    if (competing.docs.some((d) => d.id !== candidateId)) return true
+  } catch {
+    /* ignore */
+  }
+  return false
 }
 
 async function releaseDevBypassPhoneOwner(
@@ -347,12 +380,24 @@ async function releaseDevBypassPhoneOwner(
  * phone to that candidate. Falls back to phoneE164 lookup when no opener
  * is found.
  *
- * Bind policy:
+ * Bind policy (Adam 2026-05-29 — PHONE IS THE UNIQUE IDENTITY KEY):
+ *   The canonical entity is keyed by the phone number — not email, not the
+ *   userId in the opener.
  *   - DEV_BYPASS_PHONE (+14243201960) → relaxed: release prior owner +
- *     reassign handle. Adam's test phone.
- *   - All other phones → strict: reject when the candidate already has a
- *     different phone, or when the phone is already linked to a different
- *     candidate. Enforces "1 email = 1 phone" (Adam 2026-05-21).
+ *     reassign handle. Adam's test phone. UNCHANGED.
+ *   - All other phones:
+ *       1. COLLAPSE same-phone signup duplicates — if the named profile's own
+ *          current phone is shared by >1 pa-users (the two-emails-one-phone
+ *          double signup), merge them (oldest createdAt canonical, keep both
+ *          emails + both userIds). Strictly one phone → one entity.
+ *       2. BIND the texted phone to the named profile ONLY when that profile
+ *          has no valid phone yet OR already owns the texted phone (re-text).
+ *          When the named profile's existing valid phone DIFFERS from the
+ *          texted phone → DIFFERENT entity → do NOT bind, do NOT cross-merge.
+ *          The texted phone resolves to ITS OWN entity by phone lookup (or
+ *          null → fresh candidate keyed by that phone).
+ *   Never throws identity_conflict → never leaves the inbound event stuck
+ *   `running`.
  */
 export async function resolveInboundUserId(
   db: Firestore,
@@ -370,15 +415,49 @@ export async function resolveInboundUserId(
   if (tokenCandidateId) {
     const userRef = db.collection(PA_COLLECTIONS.users).doc(tokenCandidateId)
     const userSnap = await userRef.get()
-    if (!userSnap.exists) return null
+    if (!userSnap.exists) {
+      // Opener names an unknown profile — resolve by the texted phone instead
+      // (phone is the unique key). Falls through below.
+    } else {
+      const isDevBypass = phoneE164 === DEV_BYPASS_PHONE
+      let candidateId = tokenCandidateId
 
-    const isDevBypass = phoneE164 === DEV_BYPASS_PHONE
-    await bindPhoneToCandidate(db, tokenCandidateId, phoneE164, isDevBypass
-      ? { releaseCompetingUsers: true, reassignConflictingHandle: true }
-      : {})
-    return tokenCandidateId
+      if (!isDevBypass) {
+        // Step 1 — collapse same-phone signup duplicates of the named profile.
+        // (Yogesh: Uu3Ze + ECyf both hold +18303265553 → merge into the older
+        //  one.) Best-effort: a merge failure must never block delivery.
+        const existingPhone =
+          typeof userSnap.data()?.phoneE164 === "string" ? (userSnap.data()!.phoneE164 as string) : null
+        if (existingPhone && isE164(existingPhone)) {
+          try {
+            const dupMerge = await mergeCandidatesByPhone(db, {
+              phoneE164: existingPhone,
+              canonicalCandidateIdHint: tokenCandidateId,
+              actor: "system",
+              reason: "Same-phone signup duplicate collapse (phone = unique key)",
+            })
+            if (dupMerge.merged && dupMerge.canonicalCandidateId) {
+              candidateId = dupMerge.canonicalCandidateId
+            }
+          } catch {
+            /* best-effort dedup — fall through to bind */
+          }
+        }
+      }
+
+      // Step 2 — bind the texted phone to the named profile, IFF it is the
+      // same entity (same/empty phone). Different phone → do NOT cross-bind.
+      const outcome = await bindPhoneToCandidate(db, candidateId, phoneE164, isDevBypass
+        ? { releaseCompetingUsers: true, reassignConflictingHandle: true }
+        : {})
+      if (outcome.bound) return outcome.candidateId
+      // bound:false → the texted phone is a DIFFERENT entity than the opener's
+      // named profile. Resolve by the texted phone (its own entity), never the
+      // opener-named one. Falls through to the phone lookup below.
+    }
   }
 
+  // Phone is the unique key: resolve the texted number to its own entity.
   const byPhone = await lookupUserByPhoneE164(db, phoneE164)
   if (byPhone) return byPhone
 

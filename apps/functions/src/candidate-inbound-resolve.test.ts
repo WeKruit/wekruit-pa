@@ -303,14 +303,14 @@ test("non-dev phone multi-match falls back to most-recent updatedAt when created
   assert.equal(resolved, "doc_fresh", "no createdAt on either → most-recent updatedAt wins")
 })
 
-test("non-dev phone: Hello, WeKruit! opener REJECTS when phone is already owned by another candidate", async () => {
-  // Adam invariant 2026-05-21 — every phone other than DEV_BYPASS_PHONE
-  // is strict 1:1. An opener pointing at a different candidate from a
-  // phone that already owns another pa-users must throw identity_conflict
-  // and leave both pa-users unchanged.
+test("non-dev phone: opener for B from a phone OWNED BY A resolves to A (phone = unique key), never cross-binds B", async () => {
+  // Adam policy 2026-05-29 — phone is the unique identity key. An opener that
+  // names candidate B but arrives from a phone already owned by entity A must
+  // resolve to A (the phone owner), NOT bind/steal the phone for B, and NOT
+  // throw (no stuck `running` event). B is left completely unchanged.
   const fakeDb = new FakeFirestore()
-  const ownerUserId = "phone_owner_strict_01"
-  const candidateId = "cand_opener_reject_01"
+  const ownerUserId = "phoneOwnerStrictAAAA"
+  const candidateId = "candOpenerRejectBBBB"
   const phoneE164 = "+14155550199"
   fakeDb.seed(PA_COLLECTIONS.users, ownerUserId, {
     id: ownerUserId,
@@ -322,17 +322,75 @@ test("non-dev phone: Hello, WeKruit! opener REJECTS when phone is already owned 
   const db = fakeDb as unknown as Firestore
 
   const opener = buildHelloWekruitOpenerBody(candidateId)
-  await assert.rejects(
-    async () => {
-      await resolveInboundUserId(db, phoneE164, opener)
-    },
-    /identity_conflict:(pa_users_phone_mismatch|phone_handle_owner_mismatch|pa_users_phone_already_taken)/,
-  )
+  const resolved = await resolveInboundUserId(db, phoneE164, opener)
+  assert.equal(resolved, ownerUserId, "phone owner wins — resolve to A, not the opener-named B")
 
-  // Both pa-users rows unchanged — the strict pre-flight checks ran
-  // before any write.
+  // A keeps the phone; B never received it.
   const ownerSnap = await db.collection(PA_COLLECTIONS.users).doc(ownerUserId).get()
   assert.equal(ownerSnap.data()?.phoneE164, phoneE164)
   const candidateSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
-  assert.equal(candidateSnap.data()?.phoneE164, undefined)
+  assert.equal(candidateSnap.data()?.phoneE164, undefined, "B never cross-bound to A's phone")
+})
+
+test("non-dev phone: opener for X from a DIFFERENT phone than X's existing phone does NOT cross-bind", async () => {
+  // X already owns +14155550100. An opener naming X arrives from +14155550999
+  // (a different number). Different phone = different entity → do NOT bind the
+  // new number to X, do NOT merge. The texted phone has no owner → resolve null
+  // (caller treats it as a fresh entity keyed by that phone). X is unchanged.
+  const fakeDb = new FakeFirestore()
+  const candidateId = "candDiffPhoneAAAAAAA"
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, {
+    id: candidateId,
+    source: "candidate",
+    phoneE164: "+14155550100",
+  })
+  const db = fakeDb as unknown as Firestore
+
+  const opener = buildHelloWekruitOpenerBody(candidateId)
+  const resolved = await resolveInboundUserId(db, "+14155550999", opener)
+  assert.equal(resolved, null, "different phone → no cross-bind, no owner for texted phone → null")
+
+  const snap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+  assert.equal(snap.data()?.phoneE164, "+14155550100", "X's existing phone untouched")
+})
+
+test("non-dev phone: opener collapses same-phone signup duplicates and recognizes the merged entity (Yogesh shape)", async () => {
+  // Two profiles signed up 2 min apart with different emails but the SAME phone
+  // (+18303265553). The candidate texts the opener FROM that same phone. The
+  // resolver merges the duplicates (oldest createdAt canonical) and recognizes
+  // the merged entity — keeping both emails + both userIds.
+  const fakeDb = new FakeFirestore()
+  const phone = "+18303265553"
+  // Real-world doc ids from the production incident (20-char Firestore ids).
+  const canonicalId = "Uu3ZeLnEMyyIMBFHV3uM"
+  const dupId = "ECyfCDNOCg2SEH8CzlRQ"
+  fakeDb.seed(PA_COLLECTIONS.users, canonicalId, {
+    id: canonicalId,
+    source: "candidate",
+    phoneE164: phone,
+    email: "yogeshsavirigana@gmail.com",
+    createdAt: "2026-05-29T17:44:22.000Z",
+    tags: { skills: ["python"] },
+  })
+  fakeDb.seed(PA_COLLECTIONS.users, dupId, {
+    id: dupId,
+    source: "candidate",
+    phoneE164: phone,
+    email: "yogi.savirigana1996@gmail.com",
+    createdAt: "2026-05-29T17:46:11.000Z",
+    tags: { skills: ["react"] },
+  })
+  const db = fakeDb as unknown as Firestore
+
+  const opener = buildHelloWekruitOpenerBody(canonicalId)
+  const resolved = await resolveInboundUserId(db, phone, opener)
+  assert.equal(resolved, canonicalId, "resolves to the oldest-createdAt canonical entity")
+
+  // Duplicate folded: tombstoned + emails + userId preserved on canonical.
+  const dupSnap = await db.collection(PA_COLLECTIONS.users).doc(dupId).get()
+  assert.equal(dupSnap.data()?.mergedInto, canonicalId)
+  const canonicalSnap = await db.collection(PA_COLLECTIONS.users).doc(canonicalId).get()
+  assert.deepEqual((canonicalSnap.data()?.tags as Record<string, unknown>).skills, ["python", "react"])
+  assert.deepEqual(canonicalSnap.data()?.altEmails, ["yogi.savirigana1996@gmail.com"])
+  assert.deepEqual(canonicalSnap.data()?.aliasUserIds, [dupId])
 })
