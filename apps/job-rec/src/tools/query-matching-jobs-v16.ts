@@ -1097,12 +1097,23 @@ export function applyV16HardFilters(
       ? userTags.companyNegativeList.filter((s): s is string => typeof s === "string")
       : []
   )
-  const negativeRoleFunctionSet = new Set<string>(
-    Array.isArray(userTags.roleFunctionNegativeList)
-      ? userTags.roleFunctionNegativeList
-          .map((s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
-          .filter(Boolean)
+  // Candidate-rejected role functions. `negativeRoleFunction` is the SINGLE
+  // canonical SUBTRACT field (mirrors `negativeIndustrySector`) written by BOTH
+  // the live conversation extractor ("avoid pure SWE, product only") and the
+  // agentic match-connector. The legacy `roleFunctionNegativeList` name is
+  // still read for back-compat with docs written before the 2026-05-28 rename
+  // (same legacy-fallback pattern as targetJobType ← targetJobTypes below).
+  const negativeRoleFunctionRaw = Array.isArray(
+    (userTags as { negativeRoleFunction?: unknown }).negativeRoleFunction,
+  )
+    ? ((userTags as { negativeRoleFunction?: unknown[] }).negativeRoleFunction as unknown[])
+    : Array.isArray((userTags as { roleFunctionNegativeList?: unknown }).roleFunctionNegativeList)
+      ? ((userTags as { roleFunctionNegativeList?: unknown[] }).roleFunctionNegativeList as unknown[])
       : []
+  const negativeRoleFunctionSet = new Set<string>(
+    negativeRoleFunctionRaw
+      .map((s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
+      .filter(Boolean),
   )
   // lock #5 (negative axis) — candidate-rejected industry sectors. Built from
   // `userTags.negativeIndustrySector` (canonical INDUSTRY_SECTOR_VOCAB). The

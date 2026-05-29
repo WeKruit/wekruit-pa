@@ -2073,7 +2073,7 @@ test("B4 hard filter: companyNegativeList drops matching company", () => {
   assert.equal(r.kept[0]!.id, "ok")
 })
 
-test("B4 hard filter: roleFunctionNegativeList drops rejected role functions", () => {
+test("B4 hard filter: negativeRoleFunction (canonical) drops rejected role functions", () => {
   const jobs: MatchingJob[] = [
     mkJob({ id: "hr", jobTitle: "HR Coordinator", roleFunction: ["human_resources"] }),
     mkJob({ id: "support", jobTitle: "Customer Service Rep", roleFunction: ["customer_service_and_support"] }),
@@ -2083,10 +2083,52 @@ test("B4 hard filter: roleFunctionNegativeList drops rejected role functions", (
     skills: [],
     industryEnum: [],
     schemaVersion: 1,
+    negativeRoleFunction: ["customer_service_and_support"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["hr"])
+  assert.equal(r.counters.negativeListDrop, 2)
+})
+
+test("B4 hard filter: legacy roleFunctionNegativeList still drops (back-compat fallback)", () => {
+  // Docs persisted before the 2026-05-28 rename carry `roleFunctionNegativeList`.
+  // The matcher reads the canonical `negativeRoleFunction` first, then falls back
+  // to the legacy name so no historical drop is lost.
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "hr", jobTitle: "HR Coordinator", roleFunction: ["human_resources"] }),
+    mkJob({ id: "support", jobTitle: "Customer Service Rep", roleFunction: ["customer_service_and_support"] }),
+  ]
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
     roleFunctionNegativeList: ["customer_service_and_support"],
   } as never
   const r = applyV16HardFilters(jobs, tags, NOW)
   assert.deepEqual(r.kept.map((j) => j.id), ["hr"])
+  assert.equal(r.counters.negativeListDrop, 1)
+})
+
+test("717 matcher: negativeRoleFunction=software_engineering drops SWE jobs, keeps product jobs", () => {
+  // CLAUDE.md canonical "avoid pure SWE, product only" — once the live extractor
+  // persists tags.negativeRoleFunction = ["software_engineering"], the V16 hard
+  // filter must DROP software_engineering jobs while keeping product_management.
+  // This is the matcher half of the 717 acceptance contract (the real-model
+  // extractor half asserts the DB tag in pa-orchestrator index.test.ts).
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "swe", jobTitle: "Software Engineer", roleFunction: ["software_engineering"] }),
+    mkJob({ id: "pm", jobTitle: "Product Manager", roleFunction: ["product_management"] }),
+    mkJob({ id: "swe-mixed", jobTitle: "Eng/PM hybrid", roleFunction: ["software_engineering", "product_management"] }),
+  ]
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    negativeRoleFunction: ["software_engineering"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  // Both SWE-tagged jobs dropped (any-intersect); only the pure product job kept.
+  assert.deepEqual(r.kept.map((j) => j.id), ["pm"])
   assert.equal(r.counters.negativeListDrop, 2)
 })
 

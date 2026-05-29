@@ -158,6 +158,21 @@ export async function applyPartialUserTags(
   }
   delete cleaned.minSalaryUsd
 
+  // Negative role function — `negativeRoleFunction` is the SINGLE canonical
+  // field (mirrors `negativeIndustrySector`). Older callers / persisted docs
+  // used `roleFunctionNegativeList`; fold any such legacy key into the
+  // canonical field at the sole-writer boundary so there is exactly one source
+  // of truth and the V16 matcher's `negativeRoleFunction` read always sees it.
+  if (Array.isArray((cleaned as Record<string, unknown>).roleFunctionNegativeList)) {
+    const legacy = (cleaned as Record<string, unknown>).roleFunctionNegativeList as unknown[]
+    const canonical = Array.isArray((cleaned as Record<string, unknown>).negativeRoleFunction)
+      ? ((cleaned as Record<string, unknown>).negativeRoleFunction as unknown[])
+      : []
+    const merged = [...canonical, ...legacy].filter((s): s is string => typeof s === "string")
+    ;(cleaned as Record<string, unknown>).negativeRoleFunction = Array.from(new Set(merged))
+  }
+  delete (cleaned as Record<string, unknown>).roleFunctionNegativeList
+
   // Phase 61 — canonicalize `skills` if the caller passed raw strings or a
   // mixed array. The Phase 56 V16 score reads `skills[].baseWeight`; if we
   // wrote raw strings the multiplier is undefined → score=0 for everyone.

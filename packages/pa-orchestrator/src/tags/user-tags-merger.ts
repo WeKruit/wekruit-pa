@@ -278,10 +278,18 @@ export const UserTagsSchema = z.object({
    */
   companyNegativeList: z.array(z.string()).max(30).optional(),
   /**
-   * Candidate-rejected role-function tokens. V16 hard-drops jobs whose
-   * `matching-jobs.roleFunction` intersects this list.
+   * Candidate-rejected role-function tokens (canonical 17-token
+   * `ROLE_FUNCTION_VOCAB`, same vocab as the positive `targetRoleFunction`
+   * axis). V16 hard-drops jobs whose `matching-jobs.roleFunction` intersects
+   * this list. SINGLE canonical SUBTRACT field for role function — mirrors
+   * `negativeIndustrySector`. Written by BOTH the live conversation extractor
+   * ("avoid pure SWE, product only" → ["software_engineering"]) and the
+   * agentic match-connector (`negativeRoleFunctions`). The legacy
+   * `roleFunctionNegativeList` name is still READ by V16 for back-compat with
+   * docs written before the 2026-05-28 rename, but all WRITERS now target this
+   * canonical field (no second source of truth).
    */
-  roleFunctionNegativeList: z.array(z.enum(ROLE_FUNCTION_VOCAB)).max(30).optional(),
+  negativeRoleFunction: z.array(z.enum(ROLE_FUNCTION_VOCAB)).max(30).optional(),
   /**
    * lock #5 (negative axis) — candidate-rejected industry-sector tokens
    * (canonical 42-token `INDUSTRY_SECTOR_VOCAB`, same vocab as the positive
