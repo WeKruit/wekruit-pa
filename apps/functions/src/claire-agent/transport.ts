@@ -107,24 +107,32 @@ export function createSendblueTransport(
   return {
     recordedEvents,
 
-    // Sendblue DOES support read receipts (POST /api/mark-read) — fire the REAL receipt so the
-    // candidate sees the blue "Read" label, then an immediate typing bubble so it feels live.
+    // Sendblue DOES support read receipts (POST /api/mark-read). Fire the REAL receipt (blue
+    // "Read" label) AND the typing bubble in PARALLEL — both are best-effort UX, and the caller
+    // runs this fire-and-forget so it never sits on the reply's critical path.
     async markRead(): Promise<void> {
       record("mark_read")
       if (dryRun) return
+      // Resolve the SAME pool line the reply uses (pickFromNumber(pool, userId)); the read receipt
+      // must come FROM that line or Sendblue can't match the thread → no "Read". Falls back to the
+      // env from_number (sendReadReceipt default) when no pool is configured → no regression.
+      let fromNumber: string | undefined
       try {
-        await sendReadReceipt({ to: deps.toE164 })
-      } catch (err) {
-        log("claire.transport.markRead.error", {
-          message: err instanceof Error ? err.message : String(err),
-        })
-      }
-      // Best-effort typing right after the read receipt (the "…" while Claire composes).
-      try {
-        await sendTypingIndicator({ to: deps.toE164 })
+        const { loadSendbluePool, pickFromNumber } = await import("../sendblue/pool.js")
+        fromNumber = pickFromNumber(await loadSendbluePool(deps.db), deps.userId) ?? undefined
       } catch {
-        /* typing is pure UX; never block on it */
+        /* pool resolution best-effort; sendReadReceipt falls back to creds.fromNumber */
       }
+      await Promise.allSettled([
+        sendReadReceipt({ to: deps.toE164, fromNumber }).catch((err) =>
+          log("claire.transport.markRead.error", {
+            message: err instanceof Error ? err.message : String(err),
+          }),
+        ),
+        sendTypingIndicator({ to: deps.toE164 }).catch(() => {
+          /* typing is pure UX; never block on it */
+        }),
+      ])
     },
 
     async typing(): Promise<void> {

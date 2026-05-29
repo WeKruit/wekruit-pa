@@ -151,8 +151,10 @@ export async function runClaireTurn(
     findMatch: deps.findMatch,
   }
 
-  // Tier-1 reflex: mark-read on EVERY inbound, before the model. Fail-open.
-  await markReadReflex(ctx).catch((e) => log("markReadReflex_failed", { err: String(e) }))
+  // Tier-1 reflex: mark-read (real read receipt) + typing on EVERY inbound. FIRE-AND-FORGET —
+  // these make network calls and awaiting them added seconds to the first reply. They run in
+  // parallel with loadGlobalContext + run(); run() outlives them so the handler flushes them.
+  void markReadReflex(ctx).catch((e) => log("markReadReflex_failed", { err: String(e) }))
 
   const globalContext = await loadGlobalContext(deps.db, input.userId)
   const agent = buildClaireAgent(ctx, {

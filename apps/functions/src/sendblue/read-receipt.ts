@@ -18,7 +18,7 @@ const MARK_READ_URLS = [
   "https://api.sendblue.com/api/mark-read",
   "https://api.sendblue.co/api/mark-read",
 ]
-const MARK_READ_TIMEOUT_MS = 5_000
+const MARK_READ_TIMEOUT_MS = 3_000
 
 export type ReadReceiptInput = {
   /** recipient (the candidate) E.164 — the person whose inbound message we mark read. */
@@ -37,33 +37,32 @@ export async function sendReadReceipt(
     number: input.to,
     ...(fromNumber ? { from_number: fromNumber } : {}),
   })
-  for (const url of MARK_READ_URLS) {
-    const ctrl = new AbortController()
-    const t = setTimeout(() => ctrl.abort(), MARK_READ_TIMEOUT_MS)
-    try {
-      const resp = await fetch(url, {
-        method: "POST",
-        headers: {
-          "sb-api-key-id": creds.apiKeyId,
-          "sb-api-secret-key": creds.apiSecretKey,
-          "content-type": "application/json",
-        },
-        body,
-        signal: ctrl.signal,
-      })
-      if (resp.ok) {
-        log("[sendblue][mark-read] ok", url)
-        return
+  // Hit both hosts in PARALLEL (one of .com/.co is right for this account) so the read receipt
+  // is fast — never on the reply's critical path. Best-effort: log per host, swallow failures.
+  await Promise.allSettled(
+    MARK_READ_URLS.map(async (url) => {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), MARK_READ_TIMEOUT_MS)
+      try {
+        const resp = await fetch(url, {
+          method: "POST",
+          headers: {
+            "sb-api-key-id": creds.apiKeyId,
+            "sb-api-secret-key": creds.apiSecretKey,
+            "content-type": "application/json",
+          },
+          body,
+          signal: ctrl.signal,
+        })
+        const txt = resp.ok ? "" : await resp.text().catch(() => "")
+        log(`[sendblue][mark-read] ${resp.ok ? "ok" : "non-2xx"}`, url, resp.status, txt.slice(0, 160))
+      } catch (err) {
+        log("[sendblue][mark-read] error", url, err instanceof Error ? err.message : String(err))
+      } finally {
+        clearTimeout(t)
       }
-      const txt = await resp.text().catch(() => "")
-      log("[sendblue][mark-read] non-2xx", url, resp.status, txt.slice(0, 160))
-      // 404 → wrong host, try the next; other non-2xx → auth/payload, next host won't help but cheap.
-    } catch (err) {
-      log("[sendblue][mark-read] error", url, err instanceof Error ? err.message : String(err))
-    } finally {
-      clearTimeout(t)
-    }
-  }
+    }),
+  )
 }
 
 export function isSendblueReadReceiptEnabled(): boolean {
