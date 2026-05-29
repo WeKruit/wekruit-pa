@@ -9,6 +9,8 @@ const COLLECTIONS = {
   outboundInvites: ["pa", "outbound-invites"].join("-"),
   prescreenSessions: "pa-prescreen-sessions",
   users: "pa-users",
+  matchingJobs: "matching-jobs",
+  userJobRecommendations: "pa-user-job-recommendations",
 } as const
 
 type CallableAuth = {
@@ -328,6 +330,88 @@ async function buildPublicRecommendedRows(args: {
   }))
 }
 
+// Surface the recommendations the matcher actually produced for this user.
+// generateJobRecs → recordRecommendedJobs writes the recommended jobIds to
+// pa-user-job-recommendations/{uid}/jobs; the job docs live in `matching-jobs`
+// (the scraped/ranked pool). This is the real "recommended" source — used
+// before the pa-jobs publicVisible (collab) last-resort fallback. Reasons are
+// re-derived cheaply (publicRecommendationScore) since the recorded state only
+// stores {jobId, count, lastRecommendedAt}.
+async function buildRecordedRecommendedRows(args: {
+  db: Firestore
+  candidateId: string
+  existingJobIds: Set<string>
+  limit: number
+  now: string
+}): Promise<CandidateMatchCard[]> {
+  const userSnap = await args.db.collection(COLLECTIONS.users).doc(args.candidateId).get()
+  const user = userSnap.data() as Record<string, unknown> | undefined
+  const candidateTags =
+    user?.tags && typeof user.tags === "object"
+      ? (user.tags as Record<string, unknown>)
+      : user?.globalTags && typeof user.globalTags === "object"
+        ? (user.globalTags as Record<string, unknown>)
+        : undefined
+  if (!candidateTags) return []
+
+  let recsSnap
+  try {
+    recsSnap = await args.db
+      .collection(COLLECTIONS.userJobRecommendations)
+      .doc(args.candidateId)
+      .collection("jobs")
+      .orderBy("lastRecommendedAt", "desc")
+      .limit(Math.max(args.limit * 3, 30))
+      .get()
+  } catch {
+    return []
+  }
+  const recById = new Map<string, string>()
+  for (const doc of recsSnap.docs) {
+    if (args.existingJobIds.has(doc.id)) continue
+    const data = doc.data() as Record<string, unknown>
+    recById.set(doc.id, cleanString(data.lastRecommendedAt, 80) ?? args.now)
+  }
+  if (recById.size === 0) return []
+  const nowMs = Date.parse(args.now)
+
+  const hydrated = await Promise.all(
+    [...recById.keys()].map(async (jobId) => {
+      const snap = await args.db.collection(COLLECTIONS.matchingJobs).doc(jobId).get()
+      if (!snap.exists) return null
+      const job = snap.data() as Record<string, unknown>
+      if (job.dead === true) return null
+      const statusStr = cleanString(job.status, 80)
+      if (statusStr && statusStr !== "active") return null
+      const scored = publicRecommendationScore({
+        candidateTags,
+        jobId,
+        job,
+        nowMs: Number.isFinite(nowMs) ? nowMs : Date.now(),
+      })
+      return { jobId, job, reasons: scored.reasons, lastAt: recById.get(jobId) ?? args.now }
+    })
+  )
+
+  const rows = hydrated
+    .filter(
+      (r): r is { jobId: string; job: Record<string, unknown>; reasons: string[]; lastAt: string } => r !== null
+    )
+    .sort((a, b) => b.lastAt.localeCompare(a.lastAt))
+    .slice(0, args.limit)
+
+  return rows.map((row, index) => ({
+    matchId: `${args.candidateId}__${row.jobId}__recorded_recommendation`,
+    jobId: row.jobId,
+    bucket: "recommended",
+    status: "recommended",
+    job: projectJobDisplay(row.jobId, row.job),
+    whyMatched: row.reasons,
+    rank: index + 1,
+    computedAt: row.lastAt,
+  }))
+}
+
 export async function runCandidateListMatches(
   data: unknown,
   auth: CallableAuth | undefined,
@@ -412,6 +496,20 @@ export async function runCandidateListMatches(
   )
 
   const visibleRows = rows.filter((row): row is CandidateMatchCard => row !== null)
+  // Real recommendations the matcher recorded for this user (matching-jobs pool).
+  if (visibleRows.length < limit) {
+    visibleRows.push(
+      ...(await buildRecordedRecommendedRows({
+        db: deps.db,
+        candidateId,
+        existingJobIds: new Set(visibleRows.map((row) => row.jobId)),
+        limit: limit - visibleRows.length,
+        now: generatedAt,
+      }))
+    )
+  }
+  // Last resort only: publicVisible collab jobs (pa-jobs) when the user has no
+  // recorded recommendations yet.
   if (visibleRows.length < limit) {
     visibleRows.push(
       ...(await buildPublicRecommendedRows({
