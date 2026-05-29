@@ -5,24 +5,15 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "skipLibCheck": true,
-    "types": [
-      "node"
-    ],
+    "types": ["node"],
     "declaration": true,
     "outDir": "dist",
     "rootDir": "src",
     "esModuleInterop": true,
     "paths": {
-      "@wekruit/shared-tags": [
-        "../../packages/shared-tags/dist/index.d.ts"
-      ],
-      "@wekruit/shared-tags/*": [
-        "../../packages/shared-tags/dist/*.d.ts"
-      ]
-    },
-    "incremental": true
+      "@wekruit/shared-tags": ["../../packages/shared-tags/dist/index.d.ts"],
+      "@wekruit/shared-tags/*": ["../../packages/shared-tags/dist/*.d.ts"]
+    }
   },
-  "include": [
-    "src/**/*.ts"
-  ]
+  "include": ["src/**/*.ts"]
 }

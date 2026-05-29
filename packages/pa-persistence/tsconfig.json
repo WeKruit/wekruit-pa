@@ -8,10 +8,7 @@
     "types": [],
     "declaration": true,
     "outDir": "dist",
-    "rootDir": "src",
-    "incremental": true
+    "rootDir": "src"
   },
-  "include": [
-    "src/**/*.ts"
-  ]
+  "include": ["src/**/*.ts"]
 }
