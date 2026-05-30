@@ -1817,8 +1817,15 @@ export const paMessageCoalescer = onRequest(
   {
     region: "us-central1",
     secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
-    memory: "512MiB",
+    // 512MiB → 1GiB (2026-05-30): this function hosts thin Claire for COALESCED inbounds (onPaInbound
+    // skips them), so a `recommend` turn runs find_match HERE. V16 pulls ~67MB of job docs (1536-float
+    // embeddings → ~150-300MB parsed) on top of the @openai/agents + mem0 + Sendblue SDK baseline,
+    // which OOM-killed the 512MiB instance mid-matcher → function died abruptly, event stuck `pending`,
+    // no reply, no graceful fallback (the 2026-05-30 "typing then nothing"). Matches onPaInbound's 1GiB.
+    // maxInstances pinned so the bigger allocation can't blow the us-central1 Cloud Run memory quota.
+    memory: "1GiB",
     timeoutSeconds: 120,
+    maxInstances: 4,
     cors: false,
     invoker: "private",
   },
