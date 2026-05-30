@@ -233,7 +233,9 @@ export function makeV16FindMatch(
         : undefined
       const collabHit = !!result && (result.jobs?.length ?? 0) > 0
       if (!result || (result.jobs?.length ?? 0) === 0) {
-        result = await queryMatchingJobsV16({ userId, limit }, { db })
+        // allowBroadFallback: a candidate whose specific city genuinely has 0 fresh roles still gets
+        // US matches (location-relax ladder) instead of a dead "no roles" — never a silent dead end.
+        result = await queryMatchingJobsV16({ userId, limit, allowBroadFallback: true }, { db })
       }
       log("pa.claire.find_match.routing", { userId, firstBatchDone, collabFirst: !firstBatchDone, collabHit })
 

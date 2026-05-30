@@ -2172,7 +2172,7 @@ test("B4 soft: targetCompanyTags ∩ companyInfo.tags adds tagOverlap*0.15", () 
   )
 })
 
-test("queryMatchingJobsV16: startup preference strictly keeps only startup-stage companies", async () => {
+test("queryMatchingJobsV16: company preference drops KNOWN-mismatched stages but KEEPS unknown/un-staged (soft recall)", async () => {
   const mfs = new MockFirestore()
   await mfs
     .collection("pa-users")
@@ -2210,7 +2210,10 @@ test("queryMatchingJobsV16: startup preference strictly keeps only startup-stage
     companyName: "SeriesCCo",
     jobTitle: "Backend Engineer 3",
   })
-  await seedJob(mfs, "unknown-drop", {
+  // UnknownCo is NOT in the loadCompaniesByName map → stage unknown. Recall fix (2026-05-30):
+  // companySize is a SOFT axis, so an un-staged company is KEPT (not zeroed); the soft
+  // companyStageBoost ranks true startup-stage roles higher. Only KNOWN mismatches drop.
+  await seedJob(mfs, "unknown-keep", {
     roleFunction: ["software_engineering"],
     requiredSkills: ["python"],
     companyName: "UnknownCo",
@@ -2231,7 +2234,12 @@ test("queryMatchingJobsV16: startup preference strictly keeps only startup-stage
     },
   )
 
-  assert.deepEqual(new Set(r.jobs.map((job) => job.id)), new Set(["startup-fit", "series-b-fit"]))
+  // enterprise-drop (ipo_public) + series-c-drop (series_c) are KNOWN stages outside the startup
+  // band → still dropped. unknown-keep (un-staged) is now KEPT (soft recall).
+  assert.deepEqual(
+    new Set(r.jobs.map((job) => job.id)),
+    new Set(["startup-fit", "series-b-fit", "unknown-keep"]),
+  )
 })
 
 test("queryMatchingJobsV16: open company preference does not stage-filter jobs", async () => {
@@ -3389,7 +3397,8 @@ test("queryMatchingJobsV16: US-target user still drops non-US-only jobs even whe
     mkJob({ id: "us", locationBuckets: ["san_francisco_bay_area"] }),
     mkJob({ id: "nonus", locationBuckets: ["london"], locationRaw: "London, UK" }),
   ]
-  // sponsor_needed → userWantsUsOnly, even though targetLocations is anywhere.
+  // US-only is the UNIVERSAL platform default (2026-05-30) — a region-locked foreign job (london)
+  // is dropped for ANY candidate via jobIsForeignNonUs, even with an anywhere target.
   const tags = {
     skills: [],
     industryEnum: [],

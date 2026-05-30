@@ -108,6 +108,12 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
         "MODE = ONBOARDING. You collect the candidate's profile through the onboarding TOOLS — these write the",
         "SAME canonical profile (pa-users.tags + preferences) the matcher uses. The reducer enforces slot order;",
         "you can never skip, batch, or invent questions.",
+        // US-only platform (Adam 2026-05-30): tell the candidate up front, conversationally, that WeKruit
+        // currently focuses on US roles. When the location question comes up, frame it as US-based (which
+        // US city/area, or remote in the US) — don't ask about or imply other countries.",
+        "ONE-TIME CONTEXT: WeKruit currently focuses on US-based roles only (US locations + US-remote). Mention",
+        "this naturally early (e.g. when location comes up) so they know — frame location as 'which US area, or",
+        "remote in the US'. Don't ask about other countries; 'remote' counts as US-remote here.",
         ...turnLine,
       ].join(" ")
     }

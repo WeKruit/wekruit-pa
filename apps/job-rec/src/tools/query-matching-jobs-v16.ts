@@ -840,9 +840,9 @@ function isSponsorshipNeeded(visaStatus: string | undefined): boolean {
  * Recall fix (2026-05-29): `remote` is added so a user who said "open to
  * remote" (captured as `targetLocations=['remote']`) bypasses the metro
  * intersect the same way an explicit `anywhere` token does. `remote_anywhere`
- * was already present (job-side anywhere bypass). The US-only country gate
- * (see `userWantsUsOnly` below) still runs even when a token here matches, so
- * a `sponsor_needed` / US-target user is never leaked a non-US-only role.
+ * was already present (job-side anywhere bypass). The US-only platform gate
+ * (`jobIsForeignNonUs`) still runs even when a token here matches, so a
+ * region-locked non-US role is never leaked regardless of the user's tokens.
  */
 const ANYWHERE_LOCATION_TOKENS = new Set([
   "remote_anywhere",
@@ -850,6 +850,18 @@ const ANYWHERE_LOCATION_TOKENS = new Set([
   "remote",
   "anywhere",
   "any",
+])
+
+/**
+ * Country-level US tokens. US-only is the universal platform default (Adam 2026-05-30), so a target
+ * made up ONLY of these (e.g. a candidate who said "anywhere in the US" → captured `["united_states"]`,
+ * or a capture that overwrote cities with a country token) carries NO metro sub-constraint — it must
+ * NOT zero a candidate via the metro intersect. Treated as anywhere-within-US in `isAnywhereLocation`.
+ * These are USER-side only (a JOB tagged "us" is still a concrete US location, not global-remote).
+ */
+const US_COUNTRY_LOCATION_TOKENS = new Set([
+  "us", "usa", "u.s.", "u.s", "united_states", "united states", "united_states_of_america",
+  "america", "remote_us", "remote_united_states",
 ])
 
 /**
@@ -864,7 +876,15 @@ function isAnywhereLocation(tags: UserTags): boolean {
     ? tags.targetLocations.filter((l): l is string => typeof l === "string")
     : []
   if (targetLocations.length === 0) return true
-  return targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()))
+  if (targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()))) return true
+  // US-only platform: a target composed ONLY of country-level US / anywhere tokens carries no metro
+  // sub-constraint → anywhere-within-US (don't run the metro intersect). A specific metro mixed in
+  // (e.g. "new_york_metro") is a real constraint and is respected.
+  return targetLocations.every(
+    (l) =>
+      US_COUNTRY_LOCATION_TOKENS.has(l.trim().toLowerCase()) ||
+      ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()),
+  )
 }
 
 /**
@@ -911,28 +931,43 @@ function isJobRegionLockedNonUs(job: MatchingJob): boolean {
 }
 
 /**
- * EXPLICIT US-only: a deliberate COUNTRY statement — `targetCountry` = usa/us/united_states, OR a
- * country-level US token in `targetLocations` ("united states"/"us"/"usa"/"remote_united_states"/
- * "remote_us"). A bare US-CITY pick (san_francisco_bay_area / new_york_metro / …) does NOT count —
- * picking SF doesn't mean "exclude remote-anywhere roles". Gates the remote_anywhere drop so
- * city-preference users keep global-remote recall, while an explicit "US only" drops not-confirmed-US
- * remote jobs (locked 2026-05-30). Sponsor-needed users are handled by the separate visa gate.
+ * US-ONLY PLATFORM (Adam 2026-05-30): "by default it will always be US only … any scope outside of US
+ * we don't consider right now … Remote anywhere is considered as within US too." WeKruit serves US
+ * roles only, so a job region-locked to a NON-US country is dropped for EVERY candidate — US-only is
+ * the universal default, no `targetCountry` signal required. `remote_anywhere` / global-remote COUNTS
+ * AS US-accessible and is NEVER dropped for being remote; only a job whose location clearly names a
+ * specific foreign region with no US presence is foreign (e.g. spate = remote_anywhere tagged but
+ * locationRaw "RS/RO/MD/BY/PL/CZ/HU/BG/SK" = Eastern Europe). Returns true ⇒ drop this job.
  */
-function isExplicitlyUsOnly(tags: UserTags): boolean {
-  const tc = Array.isArray(tags.targetCountry) ? tags.targetCountry : []
-  if (
-    tc.some((c) => {
-      const k = typeof c === "string" ? c.trim().toLowerCase().replace(/\s+/g, "_") : ""
-      return k === "usa" || k === "us" || k === "united_states"
-    })
-  ) {
-    return true
-  }
-  const tl = Array.isArray(tags.targetLocations) ? tags.targetLocations : []
-  return tl.some((l) => {
-    const k = typeof l === "string" ? l.trim().toLowerCase().replace(/\s+/g, "_") : ""
-    return k === "us" || k === "usa" || k === "united_states" || k === "remote_united_states" || k === "remote_us"
-  })
+const US_BUCKET_METROS = [
+  "san_francisco_bay_area", "new_york_metro", "new_york_city_metro",
+  "seattle_metro", "los_angeles_metro", "boston_metro", "chicago_metro",
+  "austin_metro", "denver_metro",
+] as const
+const US_BUCKET_EXACT = new Set(["us", "usa", "united_states", "remote_united_states", "remote_us"])
+const NON_US_BUCKET_HINTS = [
+  "bulgaria", "sofia", "london", "uk", "united_kingdom", "england", "ireland", "dublin",
+  "germany", "berlin", "munich", "france", "paris", "spain", "madrid",
+  "india", "bangalore", "hyderabad", "mumbai", "delhi", "pune",
+  "china", "beijing", "shanghai", "singapore", "japan", "tokyo", "korea", "seoul",
+  "australia", "sydney", "melbourne", "brazil", "mexico", "argentina",
+  "canada", "toronto", "vancouver", "montreal",
+  "ukraine", "poland", "warsaw", "netherlands", "amsterdam", "hong_kong",
+]
+function jobIsForeignNonUs(job: MatchingJob): boolean {
+  const buckets = Array.isArray(job.locationBuckets)
+    ? job.locationBuckets.map((b) => String(b).toLowerCase())
+    : []
+  const hasAnywhere = buckets.some((b) => ANYWHERE_LOCATION_TOKENS.has(b))
+  const hasUsBucket =
+    buckets.some((b) => US_BUCKET_EXACT.has(b) || US_BUCKET_METROS.some((u) => b.includes(u)))
+  const hasForeignBucket = buckets.some((b) => NON_US_BUCKET_HINTS.some((c) => b.includes(c)))
+  // Foreign-only bucket set (a non-US city/country, no US bucket, no global-remote escape) → foreign.
+  // remote_anywhere alone is NOT a foreign hint, so a globally-remote role survives (= US-accessible).
+  if (hasForeignBucket && !hasUsBucket && !hasAnywhere) return true
+  // remote_anywhere / US-looking buckets but a locationRaw region-locked to a specific foreign region.
+  if (isJobRegionLockedNonUs(job)) return true
+  return false
 }
 
 // ---------------------------------------------------------------------------
@@ -1067,6 +1102,15 @@ function jobLocationHits(tags: UserTags, job: MatchingJob): boolean {
     : []
   if (targetLocations.length === 0) return true // no constraint → always hits
   if (targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()))) return true
+  // US-only platform: country-level US tokens carry no metro sub-constraint → anywhere-within-US.
+  if (
+    targetLocations.every(
+      (l) =>
+        US_COUNTRY_LOCATION_TOKENS.has(l.trim().toLowerCase()) ||
+        ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()),
+    )
+  )
+    return true
   const jobLocs = Array.isArray(job.locationBuckets) ? job.locationBuckets : []
   // Job-side anywhere bypass — REVOKED when the job is region-locked non-US (locationRaw names a
   // specific foreign region). A mis-tagged "remote_anywhere" Eastern-Europe role must not hit a
@@ -1229,13 +1273,20 @@ export function applyV16HardFilters(
   // Recall fix (2026-05-29): an EMPTY targetLocations set ("open to anything"
   // that captured nothing) is treated as anywhere — the candidate has no
   // location constraint, so the metro intersect must not zero them out. This
-  // mirrors an explicit `anywhere`/`remote` token. The `userWantsUsOnly`
-  // country gate below is NOT bypassed by this (a sponsor_needed / US-target
-  // user still drops non-US-only roles); only the metro intersect + the
-  // careerStage relax ladder consult `isAnywhere`.
+  // mirrors an explicit `anywhere`/`remote` token. The US-only platform gate
+  // (`jobIsForeignNonUs`) is NOT bypassed by this (a region-locked non-US role
+  // is always dropped); only the metro intersect + the careerStage relax ladder
+  // consult `isAnywhere`.
   const isAnywhere =
     targetLocations.length === 0 ||
-    targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()))
+    targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase())) ||
+    // US-only platform: a target of only country-level US / anywhere tokens carries no metro
+    // sub-constraint → anywhere-within-US (skip the metro intersect). A specific metro is respected.
+    targetLocations.every(
+      (l) =>
+        US_COUNTRY_LOCATION_TOKENS.has(l.trim().toLowerCase()) ||
+        ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()),
+    )
   const targetLocationSet = new Set(targetLocations.map((l) => l.trim().toLowerCase()))
   // careerStage window — only enforce when both user + job sides present.
   // W5 — `careerStage`, `targetJobType`, `targetRoleFunction`, `relevantTags`,
@@ -1331,42 +1382,6 @@ export function applyV16HardFilters(
   // (no US bucket present). Job with both "remote_anywhere" AND
   // "san_francisco_bay_area" → keep. Job with only "sofia,bulgaria" or
   // "london,uk" → drop.
-  const NON_US_COUNTRY_HINTS = [
-    "bulgaria", "sofia", "london", "uk", "united_kingdom", "england", "ireland", "dublin",
-    "germany", "berlin", "munich", "france", "paris", "spain", "madrid",
-    "india", "bangalore", "hyderabad", "mumbai", "delhi", "pune",
-    "china", "beijing", "shanghai", "singapore", "japan", "tokyo", "korea", "seoul",
-    "australia", "sydney", "melbourne", "brazil", "mexico", "argentina",
-    "canada", "toronto", "vancouver", "montreal", // intentionally treat CA as non-US for sponsor_needed gate
-    "ukraine", "poland", "warsaw", "netherlands", "amsterdam", "hong_kong",
-  ]
-  const US_HINTS = [
-    "united_states", "us", "usa", "remote_united_states", "remote_us",
-    "san_francisco_bay_area", "new_york_metro", "new_york_city_metro",
-    "seattle_metro", "los_angeles_metro", "boston_metro", "chicago_metro",
-    "austin_metro", "denver_metro",
-    // NOTE (2026-05-30, Adam): `remote_anywhere` is NO LONGER an explicit US signal. A US-only
-    // candidate must not receive a job that's only "remote-anywhere" with no confirmed US eligibility
-    // (e.g. spate = remote_anywhere but locationRaw "RS/RO/MD/BY/PL/CZ/HU/BG/SK" = Eastern Europe).
-    // Bare remote_anywhere → not-confirmed-US → dropped below unless a real US hint is also present.
-  ]
-  const userWantsUsOnly =
-    sponsorshipNeeded ||
-    (Array.isArray(userTags.targetCountry) &&
-      userTags.targetCountry.some((c: unknown) => {
-        const k = typeof c === "string" ? c.trim().toLowerCase() : ""
-        return k === "usa" || k === "us" || k === "united_states"
-      })) ||
-    targetLocations.some((l) => {
-      const k = l.toLowerCase().replace(/\s+/g, "_") // "united states" → "united_states"
-      return k.includes("united_states") || k === "us" || k === "usa" ||
-        k.includes("san_francisco") || k.includes("new_york") ||
-        k.includes("seattle") || k.includes("los_angeles") ||
-        k.includes("boston") || k.includes("chicago") ||
-        k.includes("austin") || k.includes("denver") ||
-        k.includes("remote_us")
-    })
-
   const kept: MatchingJob[] = []
   for (const job of jobs) {
     // 1. visa intersect — candidate-visible sponsor-needed recommendations
@@ -1376,35 +1391,13 @@ export function applyV16HardFilters(
       continue
     }
 
-    // 1b. country hard filter — drop jobs that are clearly non-US-only
-    // when user wants US (sponsorshipNeeded OR targetLocations US-specific).
-    if (userWantsUsOnly) {
-      const buckets = Array.isArray(job.locationBuckets)
-        ? job.locationBuckets.map((b) => String(b).toLowerCase())
-        : []
-      const rawLoc = (job.locationRaw ?? "").toLowerCase()
-      const hasUsHint =
-        buckets.some((b) => US_HINTS.some((u) => b.includes(u))) ||
-        US_HINTS.some((u) => rawLoc.includes(u.replace(/_/g, " ")))
-      const hasNonUsHint =
-        buckets.some((b) => NON_US_COUNTRY_HINTS.some((c) => b.includes(c))) ||
-        NON_US_COUNTRY_HINTS.some((c) => rawLoc.includes(c.replace(/_/g, " ")))
-      // Drop only if non-US hint present AND no US hint. Jobs with both
-      // (e.g. "remote, US + UK") are kept since they're US-eligible.
-      const jobIsRemoteAnywhere = buckets.some((b) => ANYWHERE_LOCATION_TOKENS.has(b))
-      // Foreign job (clearly non-US hint, no US hint) — drop for ANY US-leaning user (incl US-city pick).
-      if (hasNonUsHint && !hasUsHint) {
-        counters.location++
-        continue
-      }
-      // Bare/foreign remote-anywhere — drop ONLY when the user EXPLICITLY wants US-only (a country
-      // constraint or sponsor-needed), NOT merely because they picked a US city. This preserves the
-      // global-remote recall for city-preference users (the recall-fix test) while honoring an explicit
-      // "US only" (spate = remote_anywhere + Eastern-Europe raw → not-confirmed-US). locked 2026-05-30.
-      if (isExplicitlyUsOnly(userTags) && jobIsRemoteAnywhere && !hasUsHint) {
-        counters.location++
-        continue
-      }
+    // 1b. US-only platform gate (Adam 2026-05-30 "by default it will always be US only") — drop a job
+    // region-locked to a NON-US country for EVERY candidate. US-only is the universal default (no
+    // targetCountry signal needed). remote_anywhere counts as US-accessible and is kept. See
+    // jobIsForeignNonUs. Counted under `location` (the country axis shares the location drop counter).
+    if (jobIsForeignNonUs(job)) {
+      counters.location++
+      continue
     }
 
     // 2. location intersect (anywhere bypass — user side OR job side).
@@ -1621,25 +1614,6 @@ export function applyFallbackHardFilters(
   if (!Array.isArray(jobs) || jobs.length === 0) return { kept: [], counters }
 
   const sponsorshipNeeded = isSponsorshipNeeded(userTags.visaStatus)
-  const targetLocations = Array.isArray(userTags.targetLocations)
-    ? userTags.targetLocations.filter((l): l is string => typeof l === "string")
-    : []
-  const userWantsUsOnly =
-    sponsorshipNeeded ||
-    (Array.isArray(userTags.targetCountry) &&
-      userTags.targetCountry.some((c: unknown) => {
-        const k = typeof c === "string" ? c.trim().toLowerCase() : ""
-        return k === "usa" || k === "us" || k === "united_states"
-      })) ||
-    targetLocations.some((l) => {
-      const k = l.toLowerCase().replace(/\s+/g, "_") // "united states" → "united_states"
-      return k.includes("united_states") || k === "us" || k === "usa" ||
-        k.includes("san_francisco") || k.includes("new_york") ||
-        k.includes("seattle") || k.includes("los_angeles") ||
-        k.includes("boston") || k.includes("chicago") ||
-        k.includes("austin") || k.includes("denver") ||
-        k.includes("remote_us")
-    })
 
   const negativeSet = new Set<string>(
     Array.isArray(userTags.companyNegativeList)
@@ -1666,47 +1640,11 @@ export function applyFallbackHardFilters(
       counters.visa++
       continue
     }
-    // US-only country gate
-    if (userWantsUsOnly) {
-      const buckets = Array.isArray(job.locationBuckets)
-        ? job.locationBuckets.map((b) => String(b).toLowerCase())
-        : []
-      const rawLoc = (job.locationRaw ?? "").toLowerCase()
-      const US_HINTS = [
-        "united_states", "us", "usa", "remote_united_states", "remote_us",
-        "san_francisco_bay_area", "new_york_metro", "new_york_city_metro",
-        "seattle_metro", "los_angeles_metro", "boston_metro", "chicago_metro",
-        "austin_metro", "denver_metro", "remote_anywhere",
-      ]
-      const NON_US_COUNTRY_HINTS = [
-        "bulgaria", "sofia", "london", "uk", "united_kingdom", "england", "ireland", "dublin",
-        "germany", "berlin", "munich", "france", "paris", "spain", "madrid",
-        "india", "bangalore", "hyderabad", "mumbai", "delhi", "pune",
-        "china", "beijing", "shanghai", "singapore", "japan", "tokyo", "korea", "seoul",
-        "australia", "sydney", "melbourne", "brazil", "mexico", "argentina",
-        "canada", "toronto", "vancouver", "montreal",
-        "ukraine", "poland", "warsaw", "netherlands", "amsterdam", "hong_kong",
-      ]
-      const hasUsHint =
-        buckets.some((b) => US_HINTS.some((u) => b.includes(u))) ||
-        US_HINTS.some((u) => rawLoc.includes(u.replace(/_/g, " ")))
-      const hasNonUsHint =
-        buckets.some((b) => NON_US_COUNTRY_HINTS.some((c) => b.includes(c))) ||
-        NON_US_COUNTRY_HINTS.some((c) => rawLoc.includes(c.replace(/_/g, " ")))
-      const jobIsRemoteAnywhere = buckets.some((b) => ANYWHERE_LOCATION_TOKENS.has(b))
-      // Foreign job (clearly non-US hint, no US hint) — drop for ANY US-leaning user (incl US-city pick).
-      if (hasNonUsHint && !hasUsHint) {
-        counters.location++
-        continue
-      }
-      // Bare/foreign remote-anywhere — drop ONLY when the user EXPLICITLY wants US-only (a country
-      // constraint or sponsor-needed), NOT merely because they picked a US city. This preserves the
-      // global-remote recall for city-preference users (the recall-fix test) while honoring an explicit
-      // "US only" (spate = remote_anywhere + Eastern-Europe raw → not-confirmed-US). locked 2026-05-30.
-      if (isExplicitlyUsOnly(userTags) && jobIsRemoteAnywhere && !hasUsHint) {
-        counters.location++
-        continue
-      }
+    // US-only platform gate — drop region-locked foreign jobs for EVERY candidate (US-only is the
+    // universal default; remote_anywhere counts as US-accessible). Same gate as the strict path.
+    if (jobIsForeignNonUs(job)) {
+      counters.location++
+      continue
     }
     // SKIP location intersect / careerStage window / jobType intersect.
 
@@ -2502,32 +2440,40 @@ function companyMatchesStrictPreference(
   preference: StrictCompanyPreference,
   info: LoadedCompanyInfo | undefined
 ): boolean {
-  if (!info) return false
+  // companySize is a SOFT preference (CLAUDE.md v1.6 locked match flow lists it under the additive
+  // companyStageBoost, NOT the hard-filter chain; v2.0 rule "match score never blocks the first
+  // interview"). This legacy HARD filter must therefore NEVER zero a candidate over company size:
+  // KEEP any company we cannot confidently place OUTSIDE the preferred band — not in pa-companies
+  // (`!info`) or unknown / un-staged. Only drop a company with a KNOWN, in-corpus stage that is
+  // clearly outside the preference. (Recall fix 2026-05-30: user 8fE `early_startup` had ALL 114
+  // hard-filter survivors dropped here because startups like Helium/VoiceCursor carry no stage →
+  // read as unknown → false. The soft companyStageBoost still ranks true early-stage roles higher.)
+  if (!info) return true
   const stage = info.stage
+  // KEEP unknown / un-staged: can't confidently exclude → soft-keep (the yc_active/unicorn tag
+  // signals folded here previously are now moot since unknown is always kept).
+  if (!stage || stage === "unknown") return true
   switch (preference) {
     case "seed":
-      return stage === "pre_seed" || stage === "seed" || (stage === "unknown" && hasCompanyTag(info, ["yc_active"]))
+      return stage === "pre_seed" || stage === "seed"
     case "startup":
       return (
         stage === "pre_seed" ||
         stage === "seed" ||
         stage === "series_a" ||
-        stage === "series_b" ||
-        (stage === "unknown" && hasCompanyTag(info, ["yc_active"]))
+        stage === "series_b"
       )
     case "early_startup":
       return (
         stage === "pre_seed" ||
         stage === "seed" ||
-        stage === "series_a" ||
-        (stage === "unknown" && hasCompanyTag(info, ["yc_active"]))
+        stage === "series_a"
       )
     case "scale_up":
       return (
         stage === "series_b" ||
         stage === "series_c" ||
-        stage === "series_d_plus" ||
-        (stage === "unknown" && hasCompanyTag(info, ["unicorn"]))
+        stage === "series_d_plus"
       )
     case "bigtech":
     case "enterprise":
