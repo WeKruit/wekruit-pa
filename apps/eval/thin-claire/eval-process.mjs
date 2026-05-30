@@ -240,8 +240,8 @@ function runL1() {
     assert.equal(stray.reason, "already_complete")
   })
 
-  add("onboarding: default slots = SHARED_ONBOARDING_QUESTIONS (5)", () => {
-    assert.equal(DEFAULT_ONBOARDING_SLOTS.length, 5)
+  add("onboarding: default slots = SHARED_ONBOARDING_QUESTIONS (6)", () => {
+    assert.equal(DEFAULT_ONBOARDING_SLOTS.length, 6)
     const s = { slots: [], answers: {}, complete: false }
     assert.equal(nextOnboardingSlot(s).pending, DEFAULT_ONBOARDING_SLOTS[0])
   })
