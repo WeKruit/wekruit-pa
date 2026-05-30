@@ -215,7 +215,28 @@ export function makeV16FindMatch(
         typeof requestedCount === "number" && requestedCount > 0
           ? Math.min(5, Math.floor(requestedCount))
           : 3
-      const result = await queryMatchingJobsV16({ userId, limit }, { db })
+
+      // COLLAB-FIRST (Adam 2026-05-30): a candidate's FIRST match batch surfaces WeKruit collab jobs
+      // only (curated, actually-matched) — `firstMatchBatchAt` absent → try collabPrescreenOnly. After
+      // the first delivered batch (flag set) → mixed open-market (collab still boosted inside V16). If
+      // the collab pass yields nothing, fall through to open-market so a first-timer is never left at 0
+      // just because no collab role fit.
+      let firstBatchDone = false
+      try {
+        firstBatchDone = !!(await db.collection("pa-users").doc(userId).get()).data()?.firstMatchBatchAt
+      } catch {
+        /* read failure → treat as not-first-batch (open-market); never block matching */
+        firstBatchDone = true
+      }
+      let result = !firstBatchDone
+        ? await queryMatchingJobsV16({ userId, limit, collabPrescreenOnly: true }, { db })
+        : undefined
+      const collabHit = !!result && (result.jobs?.length ?? 0) > 0
+      if (!result || (result.jobs?.length ?? 0) === 0) {
+        result = await queryMatchingJobsV16({ userId, limit }, { db })
+      }
+      log("pa.claire.find_match.routing", { userId, firstBatchDone, collabFirst: !firstBatchDone, collabHit })
+
       const rawJobs = result.jobs ?? []
       // Rec tracking (req #4/#5) — write the ledger + job_presented events for
       // the offered jobs. Fail-open: never breaks the never-throws contract.
@@ -227,6 +248,14 @@ export function makeV16FindMatch(
           log,
           nowIso: nowIso(),
         })
+        // Mark the first batch delivered so subsequent pulls mix open-market.
+        if (!firstBatchDone) {
+          await db
+            .collection("pa-users")
+            .doc(userId)
+            .set({ firstMatchBatchAt: nowIso() }, { merge: true })
+            .catch((e) => log("pa.claire.find_match.first_batch_mark_failed", { err: String(e) }))
+        }
       }
       const jobs = rawJobs.map((j) => {
         const title = (j.jobTitle || j.roleTitle || "Role").trim()
