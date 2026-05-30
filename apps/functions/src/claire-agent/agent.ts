@@ -21,7 +21,7 @@ import type {
   ClaireTurnInput,
 } from "./types.js"
 import { buildClaireTools } from "./tools/index.js"
-import { persistOnboardingAnswerThrough, type ProcessSessionStore, type ProcessToolContext } from "./tools/process-tools.js"
+import { type ProcessSessionStore, type ProcessToolContext } from "./tools/process-tools.js"
 import { buildClairePrompt } from "./prompt.js"
 import { buildClaireGuardrails, normalizeReply } from "./guardrails.js"
 import { markReadReflex, wireTypingReflex, deliverFinalText } from "./delivery.js"
@@ -48,6 +48,8 @@ export interface BuildClaireAgentOptions {
   mode: ClaireMode
   lang: ClaireLang
   pendingStep?: string
+  /** onboarding: the CURRENT question text — re-asked when the candidate didn't answer. */
+  currentStep?: string
   /** injected global read-context (canonical tags summary, prescreen history). */
   globalContext?: string
   /** onboarding: the slot the inbound answers (the agent records THIS slot via the tool). */
@@ -67,6 +69,7 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
       mode: opts.mode,
       lang: opts.lang,
       pendingStep: opts.pendingStep,
+      currentStep: opts.currentStep,
       globalContext: opts.globalContext,
       onboardingSlot: opts.onboardingSlot,
       awaitingAnswer: opts.awaitingAnswer,
@@ -169,6 +172,8 @@ export interface RunClaireTurnDeps {
   /** deterministic mode from durable process state (default "triage"). */
   mode?: ClaireMode
   pendingStep?: string
+  /** onboarding: the CURRENT question text — re-asked when the candidate didn't answer. */
+  currentStep?: string
   /** per-turn process store seeded from durable state (mode-selector); the FSM tools read/write it. */
   processStore?: ProcessSessionStore
   /** onboarding: the slot the inbound answers (the agent records it via record_onboarding_answer). */
@@ -214,6 +219,7 @@ export async function runClaireTurn(
     mode: deps.mode ?? "triage",
     lang,
     pendingStep: deps.pendingStep,
+    currentStep: deps.currentStep,
     globalContext,
     onboardingSlot: deps.onboardingSlot,
     awaitingAnswer: deps.awaitingAnswer,
@@ -275,34 +281,25 @@ export async function runClaireTurn(
   // (logged onboarding.ask_next) then ENDS the turn without emitting the question as text → finalText
   // is empty → nothing is delivered → the candidate sees a read receipt and silence (the live kickoff
   // bug, 2026-05-29). If we're in onboarding, NOTHING was delivered (no text, no delivery tool, not a
-  // guardrail block), and a pending question exists, send it deterministically. This is canonical
-  // PROCESS content (buildSharedOnboardingPrompt — the deterministic RAIL of the onboarding process),
-  // NOT fabricated conversational text, so sending it when the agent skips the turn is correct, not a
-  // hardcoded reply. Mirrors the record-net below: deterministic start, agentic within.
+  // guardrail block), surface the right question deterministically. This is canonical PROCESS content
+  // (buildSharedOnboardingPrompt — the deterministic RAIL of the onboarding flow), NOT a fabricated
+  // reply, so sending it when the agent skips the turn is correct.
+  //
+  // ADVANCE IS AGENT-OWNED (Adam 2026-05-30): the agent decides whether the candidate ANSWERED and
+  // calls record_onboarding_answer (which durably advances + extracts canonical tags). We do NOT
+  // force-record/force-advance whatever they typed — an irrelevant message or a question back must
+  // NOT consume a slot. So the ask-net only RE-SURFACES a question: the NEXT one if the tool already
+  // recorded this turn (slot advanced), otherwise the CURRENT one (slot unchanged → re-ask).
   if (deps.mode === "onboarding" && !sent && !deliveredViaTool && !blocked) {
-    const q = (deps.pendingStep ?? "").trim()
+    const recorded = !!deps.processStore?.onboarding.answers?.[deps.onboardingSlot ?? ""]
+    const q = ((recorded ? deps.pendingStep : deps.currentStep) ?? deps.pendingStep ?? "").trim()
     if (q) {
       await deps.transport
         .sendText(q)
         .catch((e) => log("onboarding.ask_net_failed", { slot: deps.onboardingSlot, err: String(e) }))
-      log("onboarding.ask_net_sent", { slot: deps.onboardingSlot })
+      log("onboarding.ask_net_sent", { slot: deps.onboardingSlot, recorded })
     } else {
       log("onboarding.ask_net_no_pending", { slot: deps.onboardingSlot })
-    }
-  }
-
-  // ONBOARDING NET — the agent normally records via the record_onboarding_answer TOOL (which writes
-  // the canonical pa-users.tags + sharedOnboarding interface). gpt-5.4-nano intermittently skips that
-  // call (live sim: ~1/5, esp. the completion turn → onboarding never completes). If we were awaiting
-  // an answer and the tool did NOT fire (the slot isn't in the seeded store's answers after the run),
-  // persist it deterministically via the SAME writer. Guarantees no dropped slot; never a 2nd write.
-  if (deps.mode === "onboarding" && deps.awaitingAnswer && deps.onboardingSlot) {
-    const recorded = !!deps.processStore?.onboarding.answers?.[deps.onboardingSlot]
-    if (!recorded && input.text.trim()) {
-      await persistOnboardingAnswerThrough(ctx, deps.onboardingSlot, input.text).catch((e) =>
-        log("onboarding.net_record_failed", { slot: deps.onboardingSlot, err: String(e) }),
-      )
-      log("onboarding.net_recorded", { slot: deps.onboardingSlot })
     }
   }
 

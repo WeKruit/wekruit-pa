@@ -112,6 +112,7 @@ export async function maybeRunThinClaire(
         log,
         mode: decision.mode,
         ...(decision.pendingStep ? { pendingStep: decision.pendingStep } : {}),
+        ...(decision.currentStep ? { currentStep: decision.currentStep } : {}),
         ...(decision.processStore ? { processStore: decision.processStore } : {}),
         ...(decision.onboardingSlot ? { onboardingSlot: decision.onboardingSlot } : {}),
         ...(decision.awaitingAnswer !== undefined ? { awaitingAnswer: decision.awaitingAnswer } : {}),

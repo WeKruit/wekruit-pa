@@ -42,8 +42,11 @@ export interface ModeDecision {
   deferToLegacy?: boolean
   /** active job id when deferring a prescreen turn (telemetry). */
   jobId?: string
-  /** the question Claire should ask THIS turn (current onboarding slot's natural-language prompt). */
+  /** the NEXT question to ask after the candidate answers the current slot (positional advance). */
   pendingStep?: string
+  /** the CURRENT onboarding question's text — what's on screen now; the agent RE-ASKS this when the
+   *  candidate didn't actually answer (asked something / went off-topic), instead of force-advancing. */
+  currentStep?: string
   /** the onboarding slot the inbound message answers (the agent records THIS slot). */
   onboardingSlot?: string
   /** false on the kickoff/bootstrap turn (ask only, do NOT record); true once a question was asked. */
@@ -160,6 +163,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
           awaitingAnswer: false,
           onboardingSlot: "main_goal",
           pendingStep: buildSharedOnboardingPrompt("main_goal", null),
+          currentStep: buildSharedOnboardingPrompt("main_goal", null),
           processStore: seedStore([]),
         }
       }
@@ -176,6 +180,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
         mode: "onboarding",
         awaitingAnswer: true,
         onboardingSlot: cur,
+        currentStep: buildSharedOnboardingPrompt(cur, null),
         ...(next.nextQuestionId ? { pendingStep: buildSharedOnboardingPrompt(next.nextQuestionId, null) } : {}),
         processStore: seedStore(answeredSlots),
       }

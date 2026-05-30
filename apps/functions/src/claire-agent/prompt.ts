@@ -14,8 +14,10 @@ import type { ClaireLang, ClaireMode } from "./types.js"
 export interface ClairePromptOptions {
   mode: ClaireMode
   lang: ClaireLang
-  /** the reducer's current pending step, surfaced so the LLM re-asks it after a tangent. */
+  /** the NEXT onboarding question to ask once the candidate has answered the current slot. */
   pendingStep?: string
+  /** the CURRENT onboarding question's text — re-asked when the candidate didn't actually answer. */
+  currentStep?: string
   /** injected global read-context (canonical tags summary, prescreen history). */
   globalContext?: string
   /** onboarding: the slot the inbound answers (the agent records THIS slot via the tool). */
@@ -98,14 +100,22 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
     case "onboarding": {
       const slot = opts?.onboardingSlot ?? ""
       const nextQ = opts?.pendingStep?.trim()
+      const curQ = opts?.currentStep?.trim()
       const turnLine = opts?.awaitingAnswer
         ? [
-            `The candidate's latest message ANSWERS the onboarding slot "${slot}". You MUST first call`,
-            `record_onboarding_answer(slot:"${slot}", answer:<their message, verbatim>) — this SAVES it to their`,
-            "durable profile (tags: where they want to work, expected company size, industry, status, etc.).",
-            nextQ
-              ? `THEN ask this next question, phrased warmly in your voice (exactly one question): ${nextQ}`
-              : "That was the LAST question — after recording, wrap up warmly and offer to find matches. Ask nothing more.",
+            `The current onboarding question (already asked, on screen now) is: "${curQ ?? slot}".`,
+            "YOU decide whether the candidate's latest message actually ANSWERS it — use your judgment,",
+            "a real answer can be partial, indirect, or casual ('idk, comp I guess' counts; 'eh whatever'",
+            "or 'open to anything' counts as no-strong-preference and still answers it).",
+            `• If it ANSWERS: call record_onboarding_answer(slot:"${slot}", answer:<their message, verbatim>,`,
+            "  + the canonical enum fields it supports) — this SAVES it to their durable profile AND advances",
+            "  the slot. " +
+              (nextQ
+                ? `THEN ask this next question, warmly in your voice (exactly one): ${nextQ}`
+                : "That was the LAST question — after recording, wrap up warmly and offer to find matches."),
+            "• If it does NOT answer (they asked YOU something, changed the subject, or it's off-topic/unclear):",
+            "  do NOT call record_onboarding_answer and do NOT invent an answer. Briefly reply to what they",
+            `  said, then warmly RE-ASK the current question (do not advance): "${curQ ?? nextQ ?? slot}".`,
           ]
         : [
             "This is the FIRST onboarding turn (a greeting/kickoff, not an answer) — do NOT record anything.",
