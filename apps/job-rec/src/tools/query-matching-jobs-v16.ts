@@ -867,6 +867,31 @@ function isAnywhereLocation(tags: UserTags): boolean {
   return targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()))
 }
 
+/**
+ * EXPLICIT US-only: a deliberate COUNTRY statement — `targetCountry` = usa/us/united_states, OR a
+ * country-level US token in `targetLocations` ("united states"/"us"/"usa"/"remote_united_states"/
+ * "remote_us"). A bare US-CITY pick (san_francisco_bay_area / new_york_metro / …) does NOT count —
+ * picking SF doesn't mean "exclude remote-anywhere roles". Gates the remote_anywhere drop so
+ * city-preference users keep global-remote recall, while an explicit "US only" drops not-confirmed-US
+ * remote jobs (locked 2026-05-30). Sponsor-needed users are handled by the separate visa gate.
+ */
+function isExplicitlyUsOnly(tags: UserTags): boolean {
+  const tc = Array.isArray(tags.targetCountry) ? tags.targetCountry : []
+  if (
+    tc.some((c) => {
+      const k = typeof c === "string" ? c.trim().toLowerCase().replace(/\s+/g, "_") : ""
+      return k === "usa" || k === "us" || k === "united_states"
+    })
+  ) {
+    return true
+  }
+  const tl = Array.isArray(tags.targetLocations) ? tags.targetLocations : []
+  return tl.some((l) => {
+    const k = typeof l === "string" ? l.trim().toLowerCase().replace(/\s+/g, "_") : ""
+    return k === "us" || k === "usa" || k === "united_states" || k === "remote_united_states" || k === "remote_us"
+  })
+}
+
 // ---------------------------------------------------------------------------
 // SOFT-vs-HARD preference model (2026-05-28)
 //
@@ -1269,7 +1294,11 @@ export function applyV16HardFilters(
     "united_states", "us", "usa", "remote_united_states", "remote_us",
     "san_francisco_bay_area", "new_york_metro", "new_york_city_metro",
     "seattle_metro", "los_angeles_metro", "boston_metro", "chicago_metro",
-    "austin_metro", "denver_metro", "remote_anywhere", // anywhere keeps US too
+    "austin_metro", "denver_metro",
+    // NOTE (2026-05-30, Adam): `remote_anywhere` is NO LONGER an explicit US signal. A US-only
+    // candidate must not receive a job that's only "remote-anywhere" with no confirmed US eligibility
+    // (e.g. spate = remote_anywhere but locationRaw "RS/RO/MD/BY/PL/CZ/HU/BG/SK" = Eastern Europe).
+    // Bare remote_anywhere → not-confirmed-US → dropped below unless a real US hint is also present.
   ]
   const userWantsUsOnly =
     sponsorshipNeeded ||
@@ -1279,7 +1308,7 @@ export function applyV16HardFilters(
         return k === "usa" || k === "us" || k === "united_states"
       })) ||
     targetLocations.some((l) => {
-      const k = l.toLowerCase()
+      const k = l.toLowerCase().replace(/\s+/g, "_") // "united states" → "united_states"
       return k.includes("united_states") || k === "us" || k === "usa" ||
         k.includes("san_francisco") || k.includes("new_york") ||
         k.includes("seattle") || k.includes("los_angeles") ||
@@ -1312,7 +1341,17 @@ export function applyV16HardFilters(
         NON_US_COUNTRY_HINTS.some((c) => rawLoc.includes(c.replace(/_/g, " ")))
       // Drop only if non-US hint present AND no US hint. Jobs with both
       // (e.g. "remote, US + UK") are kept since they're US-eligible.
+      const jobIsRemoteAnywhere = buckets.some((b) => ANYWHERE_LOCATION_TOKENS.has(b))
+      // Foreign job (clearly non-US hint, no US hint) — drop for ANY US-leaning user (incl US-city pick).
       if (hasNonUsHint && !hasUsHint) {
+        counters.location++
+        continue
+      }
+      // Bare/foreign remote-anywhere — drop ONLY when the user EXPLICITLY wants US-only (a country
+      // constraint or sponsor-needed), NOT merely because they picked a US city. This preserves the
+      // global-remote recall for city-preference users (the recall-fix test) while honoring an explicit
+      // "US only" (spate = remote_anywhere + Eastern-Europe raw → not-confirmed-US). locked 2026-05-30.
+      if (isExplicitlyUsOnly(userTags) && jobIsRemoteAnywhere && !hasUsHint) {
         counters.location++
         continue
       }
@@ -1540,7 +1579,7 @@ export function applyFallbackHardFilters(
         return k === "usa" || k === "us" || k === "united_states"
       })) ||
     targetLocations.some((l) => {
-      const k = l.toLowerCase()
+      const k = l.toLowerCase().replace(/\s+/g, "_") // "united states" → "united_states"
       return k.includes("united_states") || k === "us" || k === "usa" ||
         k.includes("san_francisco") || k.includes("new_york") ||
         k.includes("seattle") || k.includes("los_angeles") ||
@@ -1601,7 +1640,17 @@ export function applyFallbackHardFilters(
       const hasNonUsHint =
         buckets.some((b) => NON_US_COUNTRY_HINTS.some((c) => b.includes(c))) ||
         NON_US_COUNTRY_HINTS.some((c) => rawLoc.includes(c.replace(/_/g, " ")))
+      const jobIsRemoteAnywhere = buckets.some((b) => ANYWHERE_LOCATION_TOKENS.has(b))
+      // Foreign job (clearly non-US hint, no US hint) — drop for ANY US-leaning user (incl US-city pick).
       if (hasNonUsHint && !hasUsHint) {
+        counters.location++
+        continue
+      }
+      // Bare/foreign remote-anywhere — drop ONLY when the user EXPLICITLY wants US-only (a country
+      // constraint or sponsor-needed), NOT merely because they picked a US city. This preserves the
+      // global-remote recall for city-preference users (the recall-fix test) while honoring an explicit
+      // "US only" (spate = remote_anywhere + Eastern-Europe raw → not-confirmed-US). locked 2026-05-30.
+      if (isExplicitlyUsOnly(userTags) && jobIsRemoteAnywhere && !hasUsHint) {
         counters.location++
         continue
       }
