@@ -41,6 +41,19 @@ test("candidate profile classifier preserves public job as the initial signup so
   assert.equal(classifyCandidateProfile(source, doc), "candidate_account")
 })
 
+test("candidate profile classifier preserves layoffhedge partner source", () => {
+  const doc = {
+    id: "candidate-from-layoffhedge",
+    email: "candidate@gmail.com",
+    phoneE164: "+14243201960",
+    candidateLifecycleState: "claimed",
+    source: "layoffhedge",
+  }
+  const source = deriveCandidateSource(doc)
+  assert.equal(source, "layoffhedge")
+  assert.equal(classifyCandidateProfile(source, doc), "candidate_account")
+})
+
 test("candidate profile classifier excludes demo, synthetic, internal, external, and incomplete rows", () => {
   const cases = [
     {
