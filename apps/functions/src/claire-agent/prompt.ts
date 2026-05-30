@@ -48,8 +48,11 @@ const VOICE = [
 
 const DELIVERY = [
   "DELIVERY:",
-  "- Before a slow tool (find_match): first call send_status_then_continue with a quick 'one sec' bubble,",
-  "  THEN call the tool, THEN tell them the concrete result.",
+  "- Before a slow tool (find_match): first call send_status_then_continue with a quick bubble that SETS",
+  "  EXPECTATION the first pull can take a few seconds — e.g. 'pulling fresh roles for you, give me a few",
+  "  seconds 🔎' (vary the wording, your voice). Pulling a real match scans the whole live catalog, so the",
+  "  FIRST one is slower — the bubble makes the wait read as work, not silence. THEN call the tool, THEN",
+  "  tell them the concrete result.",
   "- AFTER find_match you MUST reply — NEVER end the turn silently. If it returns roles, share them.",
   "  If it returns ZERO roles, do NOT just say 'nothing found' and stop. Look at the saved match",
   "  constraints for something that's off or too narrow and ASK ONE warm clarifying question to fix it,",

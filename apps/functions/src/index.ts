@@ -673,7 +673,10 @@ async function claimBrokerEvent(db: Firestore, data: BrokerImessageEvent): Promi
   const ref = db.collection(PA_COLLECTIONS.inboundEvents).doc(data.id)
   const now = new Date()
   const claimedAt = now.toISOString()
-  const leaseUntil = new Date(now.getTime() + 120_000).toISOString()
+  // 180s (raised from 120s, 2026-05-30) so it stays AHEAD of the thin-Claire run ceiling
+  // (RUN_TIMEOUT_MS=100s) + per-turn overhead. A cold find_match (V16 ~80s) must finish before
+  // the lease expires, or a second worker re-claims the still-running event and double-fires.
+  const leaseUntil = new Date(now.getTime() + 180_000).toISOString()
   return db.runTransaction(async (t) => {
     const snap = await t.get(ref)
     if (!snap.exists) return null

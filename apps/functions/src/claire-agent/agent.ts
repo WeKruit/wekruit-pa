@@ -31,8 +31,18 @@ import { appendHotlineIfMissing } from "@pa/pa-safety"
 /** Main conversation model (the per-tool LLM judge model is configured separately). */
 export const CLAIRE_MODEL = "gpt-5.4-nano"
 
-/** Hard ceiling so the turn ALWAYS replies (RC2: the prod path hung at stage=llm running). */
-const RUN_TIMEOUT_MS = 60_000
+/**
+ * Hard ceiling so the turn ALWAYS replies (RC2: the prod path hung at stage=llm running).
+ *
+ * Raised 60s → 100s on 2026-05-30: the find_match turn calls V16, which fetches up to 3000 job
+ * docs (each with a 1536-dim embedding + full JD) — ~67MB, measured at 10s warm / 80s cold. The
+ * 60s ceiling killed the cold matcher mid-flight (claire_run_timeout) → stuck event, no roles.
+ * 100s clears the 80s cold call with margin while staying under the inbound-event lease so a slow
+ * turn can't double-fire. The real cure is the V16 `.select()` lean-fetch (drops the bulk embedding
+ * load → ~2-3s); until that lands, the agent sets a "this can take a few seconds" expectation
+ * before find_match (see prompt.ts) so the wait reads as work, not silence.
+ */
+const RUN_TIMEOUT_MS = 100_000
 
 export interface BuildClaireAgentOptions {
   mode: ClaireMode
