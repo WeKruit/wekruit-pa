@@ -778,3 +778,134 @@ test("runCandidateMagicLinkVerify does NOT overwrite an existing pa-users.source
     "returning user must keep first-stamped source",
   )
 })
+
+test("runCandidateMagicLinkVerify stamps first signup entry for public job sign-in", async () => {
+  const db = fakeDb()
+  const { status, result } = await runCandidateMagicLinkVerify(
+    {
+      firebaseIdToken: "token-job-entry",
+      source: "candidate",
+      registrationEntry: {
+        kind: "job_prescreen",
+        path: "/j/wekruit-37429d02-photon-macos-devops",
+        jobId: "wekruit-37429d02-photon-macos-devops",
+      },
+    },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "fb-job-entry",
+        email: "job.entry@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-job-entry",
+        authMapping: {
+          firebaseUid: "fb-job-entry",
+          candidateId: "cand-job-entry",
+          createdAt: "2026-05-30T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-job-entry",
+          kind: "email" as const,
+          handleHash: "h",
+          source: "candidate" as const,
+          createdAt: "2026-05-30T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: false,
+        selfProfile: {
+          candidateId: "cand-job-entry",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-30T00:00:00.000Z",
+        },
+      }),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+    },
+  )
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+
+  const snap = await db.collection(PA_COLLECTIONS.users).doc("cand-job-entry").get()
+  const data = snap.data() as { firstSignupEntry?: Record<string, unknown>; lastSignupEntry?: Record<string, unknown> } | undefined
+  assert.equal(data?.firstSignupEntry?.kind, "job_prescreen")
+  assert.equal(data?.firstSignupEntry?.path, "/j/wekruit-37429d02-photon-macos-devops")
+  assert.equal(data?.firstSignupEntry?.jobId, "wekruit-37429d02-photon-macos-devops")
+  assert.equal(data?.firstSignupEntry?.source, "candidate")
+  assert.equal(typeof data?.firstSignupEntry?.capturedAt, "string")
+  assert.deepEqual(data?.lastSignupEntry, data?.firstSignupEntry)
+})
+
+test("runCandidateMagicLinkVerify keeps original first signup entry on later sign-ins", async () => {
+  const db = fakeDb()
+  ;(db as unknown as FakeFirestore).seed(PA_COLLECTIONS.users, "cand-job-returning", {
+    firstSignupEntry: {
+      kind: "job_prescreen",
+      path: "/j/wekruit-original-job",
+      jobId: "wekruit-original-job",
+      source: "candidate",
+      capturedAt: "2026-05-01T00:00:00.000Z",
+    },
+  })
+
+  const { status, result } = await runCandidateMagicLinkVerify(
+    {
+      firebaseIdToken: "token-job-returning",
+      source: "candidate",
+      registrationEntry: {
+        kind: "job_prescreen",
+        path: "/j/wekruit-later-job",
+        jobId: "wekruit-later-job",
+      },
+    },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "fb-job-returning",
+        email: "job.returning@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-job-returning",
+        authMapping: {
+          firebaseUid: "fb-job-returning",
+          candidateId: "cand-job-returning",
+          createdAt: "2026-05-30T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-job-returning",
+          kind: "email" as const,
+          handleHash: "h",
+          source: "candidate" as const,
+          createdAt: "2026-05-30T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: true,
+        selfProfile: {
+          candidateId: "cand-job-returning",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-30T00:00:00.000Z",
+        },
+      }),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+    },
+  )
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+
+  const snap = await db.collection(PA_COLLECTIONS.users).doc("cand-job-returning").get()
+  const data = snap.data() as { firstSignupEntry?: Record<string, unknown>; lastSignupEntry?: Record<string, unknown> } | undefined
+  assert.equal(data?.firstSignupEntry?.path, "/j/wekruit-original-job")
+  assert.equal(data?.lastSignupEntry?.path, "/j/wekruit-later-job")
+  assert.equal(data?.lastSignupEntry?.jobId, "wekruit-later-job")
+})

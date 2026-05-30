@@ -5,6 +5,13 @@ export type CandidateListUserDoc = {
   linkedinUrl?: string
   signupSource?: string
   source?: string
+  firstSignupEntry?: {
+    kind?: string
+    path?: string
+    jobId?: string
+    source?: string
+    capturedAt?: string
+  }
   candidateLifecycleState?: string
   onboardingStatus?: string
   latestResumeArtifactId?: string
@@ -106,6 +113,7 @@ export function deriveCandidateSource(
   if (isDemoPreviewProfile(doc)) return doc.source === "WeKruit_Laid_Off" ? "layoff" : "unknown"
   if (isSyntheticTestProfile(doc)) return "synthetic_test"
   if (doc.source === "WeKruit_Laid_Off") return "layoff"
+  if (doc.firstSignupEntry?.kind === "job_prescreen") return "public_job"
   if (linkedSource) return linkedSource
   if (doc.signupSource?.startsWith("external_sourcing")) return "manual_csv"
   if (doc.latestResumeArtifactId && !doc.phoneE164 && !doc.linkedinUrl) return "bulk_resume"

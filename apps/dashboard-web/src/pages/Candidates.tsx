@@ -199,6 +199,13 @@ type UserDoc = {
   demoSourcePool?: string
   signupSource?: string
   source?: string
+  firstSignupEntry?: {
+    kind?: string
+    path?: string
+    jobId?: string
+    source?: string
+    capturedAt?: string
+  }
   createdAt?: string
   updatedAt?: string
   lifecycleUpdatedAt?: string
@@ -361,6 +368,16 @@ function relTime(iso?: string): string {
   const d = Math.floor(hr / 24)
   if (d < 14) return `${d}d`
   return `${Math.floor(d / 7)}w`
+}
+
+function signupEntryLabel(entry?: UserDoc["firstSignupEntry"]): string {
+  if (!entry?.kind) return "—"
+  if (entry.kind === "job_prescreen") {
+    return [entry.path, entry.capturedAt ? `first seen ${relTime(entry.capturedAt)}` : ""]
+      .filter(Boolean)
+      .join(" · ")
+  }
+  return [entry.kind, entry.path].filter(Boolean).join(" · ")
 }
 
 async function loadUserDocs(): Promise<UserDoc[]> {
@@ -1443,6 +1460,7 @@ function CandidateDrawer({ row, onClose }: { row: Row; onClose: () => void }) {
               <>
                 <DrawerKV k="Candidate id" v={doc.id} mono />
                 <DrawerKV k="Source" v={SOURCE_LABEL[row.source]} />
+                <DrawerKV k="First signup" v={signupEntryLabel(doc.firstSignupEntry)} mono={!!doc.firstSignupEntry?.path} />
                 <DrawerKV k="Lifecycle" v={LIFECYCLE_LABEL[row.lifecycle]} />
                 <DrawerKV k="mem0 id" v={doc.mem0UserId || "—"} mono={!!doc.mem0UserId} />
                 <DrawerKV k="Outreach" v={doc.outreach?.status || "allowed"} />
