@@ -1147,6 +1147,44 @@ test("candidate profile URL fields normalize bare LinkedIn URLs", () => {
   assert.equal(selfProfile.calcomUrl, "https://cal.com/sreya")
 })
 
+test("candidate self profile preserves OAuth connector metadata", () => {
+  const selfProfile = CandidateSelfProfileSchema.parse({
+    candidateId: "cand-1",
+    linkedinOauthProfile: {
+      connectedAt: now,
+      name: "Sreya Gopaladasu",
+      emailMasked: "s***@example.com",
+      pictureUrl: "media.licdn.com/profile.jpg",
+    },
+    githubOauthProfile: {
+      connectedAt: now,
+      login: "sreya",
+      name: "Sreya",
+      url: "github.com/sreya",
+      avatarUrl: "avatars.githubusercontent.com/u/1",
+      emailMasked: "s***@example.com",
+    },
+    githubPublicRepos: [
+      {
+        name: "compiler",
+        fullName: "sreya/compiler",
+        url: "github.com/sreya/compiler",
+        description: "Language tooling",
+        language: "TypeScript",
+        stars: 42,
+        forks: 3,
+        updatedAt: now,
+      },
+    ],
+    createdAt: now,
+  })
+
+  assert.equal(selfProfile.linkedinOauthProfile?.pictureUrl, "https://media.licdn.com/profile.jpg")
+  assert.equal(selfProfile.githubOauthProfile?.url, "https://github.com/sreya")
+  assert.equal(selfProfile.githubPublicRepos?.[0]?.url, "https://github.com/sreya/compiler")
+  assert.equal(selfProfile.githubPublicRepos?.[0]?.stars, 42)
+})
+
 test("bulk resume schemas parse S3 batch and item contracts", () => {
   assert.equal(PA_COLLECTIONS.bulkUploadBatches, "pa-bulk-upload-batches")
 

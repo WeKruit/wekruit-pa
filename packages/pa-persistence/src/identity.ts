@@ -91,6 +91,16 @@ function normalizeOptionalUrl(value: unknown): string | undefined {
   }
 }
 
+function isLinkedinOAuthMarker(value: unknown): boolean {
+  if (typeof value !== "string") return false
+  return value.includes("/oauth-linked/")
+}
+
+function normalizeLinkedinProfileUrl(value: unknown): string | undefined {
+  if (isLinkedinOAuthMarker(value)) return undefined
+  return normalizeOptionalUrl(value)
+}
+
 async function writeAppendOnlyDoc<T>(
   db: Firestore,
   collectionName: string,
@@ -484,8 +494,11 @@ export async function writeCandidateSelfProfile(
     latestResumeArtifactId: input.marketplaceFields?.latestResumeArtifactId,
     profileSummary: input.profileSummary || undefined,
     globalTags: input.marketplaceFields?.globalTags,
-    linkedinUrl: normalizeOptionalUrl(input.marketplaceFields?.linkedinUrl),
+    linkedinUrl: normalizeLinkedinProfileUrl(input.marketplaceFields?.linkedinUrl),
+    linkedinOauthProfile: input.marketplaceFields?.linkedinOauthProfile,
     githubUrl: normalizeOptionalUrl(input.marketplaceFields?.githubUrl),
+    githubOauthProfile: input.marketplaceFields?.githubOauthProfile,
+    githubPublicRepos: input.marketplaceFields?.githubPublicRepos,
     calcomUrl: normalizeOptionalUrl(input.marketplaceFields?.calcomUrl),
     createdAt: ts,
     updatedAt: ts,

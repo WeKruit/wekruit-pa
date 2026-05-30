@@ -30,3 +30,12 @@ test("CandidatePortal wires connector buttons through the account OAuth start ca
   assert.match(source, /wkv2-conn__btn--connect/)
   assert.match(source, />Connect</)
 })
+
+test("CandidatePortal renders honest connector data", () => {
+  assert.match(source, /linkedinOauthProfile/)
+  assert.match(source, /githubOauthProfile/)
+  assert.match(source, /githubPublicRepos/)
+  assert.match(source, /wkv2-conn__repos/)
+  assert.doesNotMatch(source, /Backfills experience/)
+  assert.doesNotMatch(source, /oauth-linked/)
+})

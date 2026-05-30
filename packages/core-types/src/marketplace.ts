@@ -150,6 +150,38 @@ export const CandidateGlobalTagsSchema = z.object({
 })
 export type CandidateGlobalTags = z.infer<typeof CandidateGlobalTagsSchema>
 
+export const CandidateLinkedinOAuthProfileSchema = z.object({
+  connectedAt: TimestampSchema.optional(),
+  name: z.string().min(1).max(200).optional(),
+  emailMasked: z.string().min(3).max(320).optional(),
+  pictureUrl: OptionalHttpUrlSchema,
+})
+export type CandidateLinkedinOAuthProfile = z.infer<
+  typeof CandidateLinkedinOAuthProfileSchema
+>
+
+export const CandidateGithubOAuthProfileSchema = z.object({
+  connectedAt: TimestampSchema.optional(),
+  login: z.string().min(1).max(200).optional(),
+  name: z.string().min(1).max(200).optional(),
+  url: OptionalHttpUrlSchema,
+  avatarUrl: OptionalHttpUrlSchema,
+  emailMasked: z.string().min(3).max(320).optional(),
+})
+export type CandidateGithubOAuthProfile = z.infer<typeof CandidateGithubOAuthProfileSchema>
+
+export const CandidateGithubPublicRepoSchema = z.object({
+  name: z.string().min(1).max(200),
+  fullName: z.string().min(1).max(300).optional(),
+  url: OptionalHttpUrlSchema,
+  description: z.string().min(1).max(500).optional(),
+  language: z.string().min(1).max(100).optional(),
+  stars: z.number().int().nonnegative().optional(),
+  forks: z.number().int().nonnegative().optional(),
+  updatedAt: TimestampSchema.optional(),
+})
+export type CandidateGithubPublicRepo = z.infer<typeof CandidateGithubPublicRepoSchema>
+
 export const CandidateProfileMarketplaceFieldsSchema = z.object({
   candidateLifecycleState: CandidateLifecycleStateSchema.default("prospect"),
   lifecycleUpdatedAt: TimestampSchema.optional(),
@@ -161,7 +193,10 @@ export const CandidateProfileMarketplaceFieldsSchema = z.object({
   mem0UserId: z.string().min(1).optional(),
   latestResumeArtifactId: z.string().min(1).optional(),
   linkedinUrl: OptionalHttpUrlSchema,
+  linkedinOauthProfile: CandidateLinkedinOAuthProfileSchema.optional(),
   githubUrl: OptionalHttpUrlSchema,
+  githubOauthProfile: CandidateGithubOAuthProfileSchema.optional(),
+  githubPublicRepos: z.array(CandidateGithubPublicRepoSchema).max(12).optional(),
   calcomUrl: OptionalHttpUrlSchema,
   outreach: z
     .object({
@@ -229,7 +264,10 @@ export const CandidateSelfProfileSchema = z.object({
   profileSummary: z.string().max(4_000).optional(),
   globalTags: CandidateGlobalTagsSchema.optional(),
   linkedinUrl: OptionalHttpUrlSchema,
+  linkedinOauthProfile: CandidateLinkedinOAuthProfileSchema.optional(),
   githubUrl: OptionalHttpUrlSchema,
+  githubOauthProfile: CandidateGithubOAuthProfileSchema.optional(),
+  githubPublicRepos: z.array(CandidateGithubPublicRepoSchema).max(12).optional(),
   calcomUrl: OptionalHttpUrlSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema.optional(),

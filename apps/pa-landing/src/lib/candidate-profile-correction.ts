@@ -11,7 +11,31 @@ export interface CandidateSelfProfile {
   latestResumeArtifactId?: string
   profileSummary?: string
   linkedinUrl?: string
+  linkedinOauthProfile?: {
+    connectedAt?: string
+    name?: string
+    emailMasked?: string
+    pictureUrl?: string
+  }
   githubUrl?: string
+  githubOauthProfile?: {
+    connectedAt?: string
+    login?: string
+    name?: string
+    url?: string
+    avatarUrl?: string
+    emailMasked?: string
+  }
+  githubPublicRepos?: Array<{
+    name: string
+    fullName?: string
+    url?: string
+    description?: string
+    language?: string
+    stars?: number
+    forks?: number
+    updatedAt?: string
+  }>
   calcomUrl?: string
   handles?: Array<{ kind: string; verifiedAt?: string | null; source?: string }>
   globalTags?: {

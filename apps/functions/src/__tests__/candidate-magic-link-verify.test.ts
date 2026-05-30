@@ -324,13 +324,14 @@ test("runCandidateMagicLinkVerify links LinkedIn OAuth identity for li_* uid", a
   if (result.ok) {
     assert.equal(result.candidateId, "cand-li")
     assert.equal(result.linkedinLinkedViaOauth, true)
-    assert.match(String(result.linkedinUrl), /oauth-linked\/sub-99/)
+    assert.equal(result.linkedinUrl, null)
   }
   assert.equal(linkCalls.length, 1)
   assert.equal(linkCalls[0]?.value, "https://www.linkedin.com/oauth-linked/sub-99")
 
   const userSnap = await db.collection(PA_COLLECTIONS.users).doc("cand-li").get()
   assert.equal(userSnap.data()?.linkedinOauthLinked, true)
+  assert.equal("linkedinUrl" in (userSnap.data() ?? {}), false)
 })
 
 test("runCandidateMagicLinkVerify allows wekruit.com workspace emails at public launch", async () => {
@@ -621,8 +622,7 @@ test("runCandidateMagicLinkVerify still passes allowCreate=true when LinkedIn cu
       ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "li_xyz789",
-        email: "person@linkedin.com",
-        email_verified: true,
+        linkedinEmail: "person@linkedin.com",
         linkedinSub: "sub-77",
       }),
       claimProfile: async (_db, input) => {
@@ -672,6 +672,7 @@ test("runCandidateMagicLinkVerify still passes allowCreate=true when LinkedIn cu
     undefined,
     "LinkedIn OAuth path passes through the default (allowCreate=true via the persistence layer)",
   )
+  assert.equal(calls[0]?.email, "person@linkedin.com")
 })
 
 test("runCandidateMagicLinkVerify stamps layoffhedge on first-time pa-users create", async () => {

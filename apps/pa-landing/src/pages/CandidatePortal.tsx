@@ -469,8 +469,9 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
     profile.handles?.some((h) => h.kind === kind && h.verifiedAt) ?? false
   const phoneVerified = !!profile.phoneMasked || hasHandle("phone")
   const emailVerified = !!profile.emailMasked || hasHandle("email")
-  const linkedinConnected = !!profile.linkedinUrl || hasHandle("linkedin")
-  const githubConnected = !!profile.githubUrl || hasHandle("github")
+  const linkedinConnected =
+    hasRealLinkedinUrl(profile.linkedinUrl) || !!profile.linkedinOauthProfile || hasHandle("linkedin")
+  const githubConnected = !!profile.githubUrl || !!profile.githubOauthProfile || hasHandle("github")
   const calcomConnected = !!profile.calcomUrl || hasHandle("calcom")
   return [
     {
@@ -484,7 +485,7 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
     {
       id: "linkedin",
       label: "LinkedIn",
-      meta: profile.linkedinUrl ? linkedinHandleFromUrl(profile.linkedinUrl) : linkedinConnected ? "Connected" : "Not connected",
+      meta: linkedinConnectorMeta(profile, linkedinConnected),
       connected: linkedinConnected,
       brand: "#0A66C2",
       letter: "in",
@@ -509,7 +510,7 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
     {
       id: "github",
       label: "GitHub",
-      meta: profile.githubUrl ? githubHandleFromUrl(profile.githubUrl) : githubConnected ? "Connected" : "Not connected",
+      meta: githubConnectorMeta(profile, githubConnected),
       connected: githubConnected,
       brand: "#0B0B0B",
       letter: "G",
@@ -525,6 +526,30 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
       provider: "calcom",
     },
   ]
+}
+
+function isLinkedinConnectorMarkerUrl(url: string | undefined): boolean {
+  return !!url && url.includes(`/oauth-${"linked"}/`)
+}
+
+function hasRealLinkedinUrl(url: string | undefined): boolean {
+  return !!url && !isLinkedinConnectorMarkerUrl(url)
+}
+
+function linkedinConnectorMeta(profile: CandidateSelfProfile, connected: boolean): string {
+  if (hasRealLinkedinUrl(profile.linkedinUrl)) return linkedinHandleFromUrl(profile.linkedinUrl!)
+  const name = profile.linkedinOauthProfile?.name
+  if (name) return `Connected as ${name}`
+  return connected ? "Connected" : "Not connected"
+}
+
+function githubConnectorMeta(profile: CandidateSelfProfile, connected: boolean): string {
+  const login = profile.githubOauthProfile?.login
+  const repoCount = profile.githubPublicRepos?.length ?? 0
+  if (login && repoCount > 0) return `@${login} · ${repoCount} public repos`
+  if (login) return `@${login}`
+  if (profile.githubUrl) return githubHandleFromUrl(profile.githubUrl)
+  return connected ? "Connected" : "Not connected"
 }
 
 function linkedinHandleFromUrl(url: string): string {
@@ -780,7 +805,12 @@ function deriveCompleteness(profile: CandidateSelfProfile): MeCompleteness {
     { id: "locations", label: "Location preferences", impact: "2× more roles", done: !!tags?.targetLocations?.length },
     { id: "industries", label: "Industry preferences", impact: "Sharper comp matching", done: !!tags?.industrySector?.length },
     { id: "skills", label: "Skills", impact: "Better role fit", done: !!tags?.skills?.length },
-    { id: "linkedin", label: "Connect LinkedIn", impact: "Backfills experience", done: !!profile.linkedinUrl },
+    {
+      id: "linkedin",
+      label: "Connect LinkedIn",
+      impact: "Confirms account",
+      done: !!profile.linkedinOauthProfile || hasRealLinkedinUrl(profile.linkedinUrl),
+    },
     { id: "story", label: "Career summary", impact: "Better pitch by Claire", done: !!profile.profileSummary },
   ]
   const done = checks.filter((c) => c.done).length
@@ -2295,6 +2325,7 @@ function ContactCard({ profile }: { profile: CandidateSelfProfile }) {
 
 function ConnectedAccountsCard({ profile }: { profile: CandidateSelfProfile }) {
   const items = deriveConnectors(profile)
+  const githubRepos = (profile.githubPublicRepos ?? []).slice(0, 3)
   return (
     <section className="wkv2-card wk-prof-card">
       <h3 className="wkv2-card__h">Connected accounts</h3>
@@ -2314,6 +2345,27 @@ function ConnectedAccountsCard({ profile }: { profile: CandidateSelfProfile }) {
             <ConnectorAction connector={c} />
           </div>
         ))}
+        {githubRepos.length > 0 ? (
+          <div className="wkv2-conn__repos" aria-label="GitHub public repositories">
+            {githubRepos.map((repo) => {
+              const label = repo.fullName ?? repo.name
+              const meta = [repo.language, typeof repo.stars === "number" ? `${repo.stars} stars` : ""]
+                .filter(Boolean)
+                .join(" · ")
+              return repo.url ? (
+                <a key={repo.url} href={repo.url} target="_blank" rel="noreferrer" className="wkv2-conn__repo">
+                  <span>{label}</span>
+                  {meta ? <em>{meta}</em> : null}
+                </a>
+              ) : (
+                <span key={label} className="wkv2-conn__repo">
+                  <span>{label}</span>
+                  {meta ? <em>{meta}</em> : null}
+                </span>
+              )
+            })}
+          </div>
+        ) : null}
       </div>
     </section>
   )
@@ -3117,6 +3169,32 @@ const ME_PORTAL_STYLES = `
   display: inline-flex; align-items: center; justify-content: center;
   flex: none;
 }
+.wkv2-conn__repos {
+  display: grid;
+  gap: 4px;
+  padding: 2px 4px 10px 40px;
+}
+.wkv2-conn__repo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  color: var(--wk-ink);
+  text-decoration: none;
+  font-size: 11.5px;
+  line-height: 1.25;
+}
+.wkv2-conn__repo span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wkv2-conn__repo em {
+  font-style: normal;
+  color: var(--wk-ink-3);
+  white-space: nowrap;
+}
 
 .wkv2-card--ink {
   background: var(--wk-ink);
@@ -3827,6 +3905,3 @@ const MATCHES_STYLES = `
   .wkv3-match__primaries .wk-btn { flex: 1; justify-content: center; }
 }
 `
-
-
-

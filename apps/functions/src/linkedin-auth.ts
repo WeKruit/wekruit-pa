@@ -1,6 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto"
 import { getAuth } from "firebase-admin/auth"
-import { getFirestore, type Firestore } from "firebase-admin/firestore"
+import { FieldValue, getFirestore, type Firestore } from "firebase-admin/firestore"
 import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
 import { HttpsError, onCall, onRequest } from "firebase-functions/v2/https"
@@ -30,6 +30,8 @@ const GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize"
 const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 const GITHUB_USER_URL = "https://api.github.com/user"
 const GITHUB_EMAILS_URL = "https://api.github.com/user/emails"
+const GITHUB_REPOS_URL = (login: string) =>
+  `https://api.github.com/users/${encodeURIComponent(login)}/repos?type=owner&sort=updated&per_page=6`
 const CALCOM_AUTH_URL = "https://app.cal.com/auth/oauth2/authorize"
 const CALCOM_TOKEN_URL = "https://api.cal.com/v2/auth/oauth2/token"
 const CALCOM_ME_URL = "https://api.cal.com/v2/me"
@@ -80,6 +82,17 @@ interface GithubEmailInfo {
   email?: string
   primary?: boolean
   verified?: boolean
+}
+
+interface GithubRepoInfo {
+  name?: string
+  full_name?: string
+  html_url?: string
+  description?: string | null
+  language?: string | null
+  stargazers_count?: number
+  forks_count?: number
+  updated_at?: string
 }
 
 interface CalcomUserInfo {
@@ -193,6 +206,16 @@ function cleanString(value: unknown, max: number): string | undefined {
   return trimmed
 }
 
+function maskEmail(value: unknown): string | undefined {
+  const email = cleanString(value, 320)?.toLowerCase()
+  if (!email) return undefined
+  const [localRaw, domainRaw] = email.split("@")
+  const local = localRaw ?? ""
+  const domain = domainRaw ?? ""
+  if (!local || !domain) return undefined
+  return `${local[0]}***@${domain}`
+}
+
 function parseCandidateConnectorProvider(value: unknown): CandidateConnectorProvider | null {
   const provider = cleanString(value, 24)?.toLowerCase()
   return provider === "linkedin" || provider === "github" || provider === "calcom"
@@ -224,6 +247,19 @@ function buildLinkedinOAuthMarker(sub: string): string {
   return `https://www.linkedin.com/oauth-linked/${sub}`
 }
 
+function isLinkedinOAuthMarker(value: unknown): boolean {
+  return typeof value === "string" && value.includes("/oauth-linked/")
+}
+
+function linkedinOauthProfile(info: LinkedinUserInfo, now: string): Record<string, unknown> {
+  return stripUndefined({
+    connectedAt: now,
+    name: cleanString(info.name, 200),
+    emailMasked: maskEmail(info.email),
+    pictureUrl: cleanString(info.picture, 2_000),
+  })
+}
+
 function buildGithubUrl(info: GithubUserInfo): string {
   const htmlUrl = cleanString(info.html_url, 2_000)
   if (htmlUrl) return htmlUrl
@@ -235,6 +271,37 @@ function buildGithubUrl(info: GithubUserInfo): string {
 function buildCalcomUrl(info: CalcomUserInfo): string | undefined {
   const username = cleanString(info.username, 200)
   return username ? `https://cal.com/${username}` : undefined
+}
+
+function githubOauthProfile(
+  info: GithubUserInfo,
+  githubUrl: string,
+  now: string,
+): Record<string, unknown> {
+  return stripUndefined({
+    connectedAt: now,
+    login: cleanString(info.login, 200),
+    name: cleanString(info.name, 200),
+    url: githubUrl,
+    avatarUrl: cleanString(info.avatar_url, 2_000),
+    emailMasked: maskEmail(info.email),
+  })
+}
+
+function toGithubPublicRepoSummary(repo: GithubRepoInfo): Record<string, unknown> | null {
+  const name = cleanString(repo.name, 200)
+  const url = cleanString(repo.html_url, 2_000)
+  if (!name || !url) return null
+  return stripUndefined({
+    name,
+    fullName: cleanString(repo.full_name, 300),
+    url,
+    description: cleanString(repo.description, 500),
+    language: cleanString(repo.language, 100),
+    stars: typeof repo.stargazers_count === "number" ? repo.stargazers_count : undefined,
+    forks: typeof repo.forks_count === "number" ? repo.forks_count : undefined,
+    updatedAt: cleanString(repo.updated_at, 64),
+  })
 }
 
 function buildCalcomHandleValue(info: CalcomUserInfo): string {
@@ -251,11 +318,15 @@ async function upsertSelfProfileConnector(args: {
   kind: CandidateConnectorProvider
   urlField?: "linkedinUrl" | "githubUrl" | "calcomUrl"
   url?: string
+  extraProfilePatch?: Record<string, unknown>
   now: string
 }): Promise<void> {
   const ref = args.db.collection(PA_COLLECTIONS.candidateSelfProfiles).doc(args.candidateId)
   const snap = await ref.get()
-  const raw = (snap.data() ?? {}) as Record<string, unknown>
+  const raw = { ...((snap.data() ?? {}) as Record<string, unknown>) }
+  const shouldDeleteLinkedinUrl =
+    args.kind === "linkedin" && isLinkedinOAuthMarker(raw.linkedinUrl)
+  if (shouldDeleteLinkedinUrl) delete raw.linkedinUrl
   const rawHandles = Array.isArray(raw.handles) ? raw.handles : []
   const handles = [
     ...rawHandles.filter(
@@ -277,10 +348,15 @@ async function upsertSelfProfileConnector(args: {
     lifecycleState: cleanString(raw.lifecycleState, 64) ?? "profile_created",
     handles,
     ...urlPatch,
+    ...(args.extraProfilePatch ?? {}),
     createdAt: cleanString(raw.createdAt, 64) ?? args.now,
     updatedAt: args.now,
   })
-  await ref.set(stripUndefined(profile as unknown as Record<string, unknown>), { merge: true })
+  const persisted = stripUndefined(profile as unknown as Record<string, unknown>)
+  if (shouldDeleteLinkedinUrl) {
+    persisted.linkedinUrl = FieldValue.delete()
+  }
+  await ref.set(persisted, { merge: true })
 }
 
 async function connectLinkedinToCandidate(args: {
@@ -296,23 +372,28 @@ async function connectLinkedinToCandidate(args: {
   const sub = args.info.sub?.trim()
   if (!sub) throw new Error("linkedin_userinfo_failed:missing_sub")
   const now = new Date().toISOString()
-  const linkedinUrl = buildLinkedinOAuthMarker(sub)
+  const linkedinHandleValue = buildLinkedinOAuthMarker(sub)
+  const oauthProfile = linkedinOauthProfile(args.info, now)
+  const userRef = args.db.collection(PA_COLLECTIONS.users).doc(args.candidateId)
+  const userSnap = await userRef.get()
+  const shouldDeleteLinkedinUrl = isLinkedinOAuthMarker(userSnap.data()?.linkedinUrl)
   await linkCandidateHandle(args.db, {
     candidateId: args.candidateId,
     kind: "linkedin",
-    value: linkedinUrl,
+    value: linkedinHandleValue,
     source: "candidate",
     verified: true,
     now,
     evidence: [{ source: "system", summary: "LinkedIn OAuth connector identity" }],
   })
-  await args.db.collection(PA_COLLECTIONS.users).doc(args.candidateId).set(
+  await userRef.set(
     stripUndefined({
-      linkedinUrl,
+      linkedinUrl: shouldDeleteLinkedinUrl ? FieldValue.delete() : undefined,
       linkedinOauthLinked: true,
       linkedinOauthConnectedAt: now,
       linkedinOauthName: cleanString(args.info.name, 200),
       linkedinOauthPicture: cleanString(args.info.picture, 2_000),
+      linkedinOauthProfile: oauthProfile,
       updatedAt: now,
     }),
     { merge: true },
@@ -321,8 +402,7 @@ async function connectLinkedinToCandidate(args: {
     db: args.db,
     candidateId: args.candidateId,
     kind: "linkedin",
-    urlField: "linkedinUrl",
-    url: linkedinUrl,
+    extraProfilePatch: { linkedinOauthProfile: oauthProfile },
     now,
   })
 }
@@ -332,6 +412,7 @@ async function connectGithubToCandidate(args: {
   firebaseUid: string
   candidateId: string
   info: GithubUserInfo
+  publicRepos: GithubRepoInfo[]
 }): Promise<void> {
   const mappedCandidateId = await getCandidateIdForFirebaseUid(args.db, args.firebaseUid)
   if (mappedCandidateId !== args.candidateId) {
@@ -341,6 +422,10 @@ async function connectGithubToCandidate(args: {
   if (!login) throw new Error("github_userinfo_failed:missing_login")
   const githubUrl = buildGithubUrl(args.info)
   const now = new Date().toISOString()
+  const oauthProfile = githubOauthProfile(args.info, githubUrl, now)
+  const publicRepos = args.publicRepos
+    .map((repo) => toGithubPublicRepoSummary(repo))
+    .filter((repo): repo is Record<string, unknown> => Boolean(repo))
   await linkCandidateHandle(args.db, {
     candidateId: args.candidateId,
     kind: "github",
@@ -359,6 +444,8 @@ async function connectGithubToCandidate(args: {
       githubOauthName: cleanString(args.info.name, 200),
       githubOauthAvatar: cleanString(args.info.avatar_url, 2_000),
       githubOauthEmail: cleanString(args.info.email, 320),
+      githubOauthProfile: oauthProfile,
+      githubPublicRepos: publicRepos,
       updatedAt: now,
     }),
     { merge: true },
@@ -369,6 +456,10 @@ async function connectGithubToCandidate(args: {
     kind: "github",
     urlField: "githubUrl",
     url: githubUrl,
+    extraProfilePatch: {
+      githubOauthProfile: oauthProfile,
+      githubPublicRepos: publicRepos,
+    },
     now,
   })
 }
@@ -540,6 +631,28 @@ async function fetchGithubUserInfo(accessToken: string): Promise<GithubUserInfo>
     }
   }
   return json
+}
+
+async function fetchGithubPublicRepos(
+  login: string,
+  accessToken: string,
+): Promise<GithubRepoInfo[]> {
+  const headers = {
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${accessToken}`,
+    "user-agent": "WeKruit",
+  }
+  const res = await fetch(GITHUB_REPOS_URL(login), { headers }).catch(() => null)
+  if (!res?.ok) {
+    logger.warn("[paGithubCallback] public repos fetch failed", {
+      login,
+      status: res?.status,
+      statusText: res?.statusText,
+    })
+    return []
+  }
+  const json = (await res.json().catch(() => null)) as GithubRepoInfo[] | null
+  return Array.isArray(json) ? json : []
 }
 
 async function fetchCalcomUserInfo(accessToken: string): Promise<CalcomUserInfo> {
@@ -832,11 +945,15 @@ export const paGithubCallback = onRequest(
     try {
       const accessToken = await exchangeGithubCodeForAccessToken({ code, clientId, clientSecret })
       const info = await fetchGithubUserInfo(accessToken)
+      const login = cleanString(info.login, 200)
+      if (!login) throw new Error("github_userinfo_failed:missing_login")
+      const publicRepos = await fetchGithubPublicRepos(login, accessToken)
       await connectGithubToCandidate({
         db: getFirestore(),
         firebaseUid: state.firebaseUid!,
         candidateId: state.candidateId!,
         info,
+        publicRepos,
       })
       finish({ ok: true, provider: "github", connected: true })
     } catch (err) {
