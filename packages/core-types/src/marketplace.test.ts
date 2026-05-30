@@ -1125,6 +1125,7 @@ test("candidate profile URL fields normalize bare LinkedIn URLs", () => {
     CandidateProfileMarketplaceFieldsSchema.parse({
       linkedinUrl: "www.linkedin.com/in/sreya-gopaladasu-b77540211",
       githubUrl: "github.com/sreya",
+      calcomUrl: "cal.com/sreya",
     }).linkedinUrl,
     "https://www.linkedin.com/in/sreya-gopaladasu-b77540211",
   )
@@ -1138,10 +1139,12 @@ test("candidate profile URL fields normalize bare LinkedIn URLs", () => {
     candidateId: "cand-1",
     linkedinUrl: "linkedin.com/in/sreya-gopaladasu-b77540211",
     githubUrl: "github.com/sreya",
+    calcomUrl: "cal.com/sreya",
     createdAt: now,
   })
   assert.equal(selfProfile.linkedinUrl, "https://linkedin.com/in/sreya-gopaladasu-b77540211")
   assert.equal(selfProfile.githubUrl, "https://github.com/sreya")
+  assert.equal(selfProfile.calcomUrl, "https://cal.com/sreya")
 })
 
 test("bulk resume schemas parse S3 batch and item contracts", () => {

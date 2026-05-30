@@ -308,7 +308,9 @@ export { paPublicLayoffPreview } from "./public-layoff-preview.js"
 // rejects token exchange without client_secret. These HTTP functions own the
 // OAuth exchange server-side and return a Firebase custom token.
 export {
+  paCalcomCallback,
   paCandidateConnectorOAuthStart,
+  paGithubCallback,
   paLinkedinAuthStart,
   paLinkedinCallback,
 } from "./linkedin-auth.js"

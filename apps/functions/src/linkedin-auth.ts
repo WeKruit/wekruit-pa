@@ -11,11 +11,28 @@ export const LINKEDIN_CLIENT_ID: ReturnType<typeof defineSecret> =
   defineSecret("LINKEDIN_CLIENT_ID")
 export const LINKEDIN_CLIENT_SECRET: ReturnType<typeof defineSecret> =
   defineSecret("LINKEDIN_CLIENT_SECRET")
+export const GITHUB_CLIENT_ID: ReturnType<typeof defineSecret> =
+  defineSecret("GITHUB_CLIENT_ID")
+export const GITHUB_CLIENT_SECRET: ReturnType<typeof defineSecret> =
+  defineSecret("GITHUB_CLIENT_SECRET")
+export const CALCOM_CLIENT_ID: ReturnType<typeof defineSecret> =
+  defineSecret("CALCOM_CLIENT_ID")
+export const CALCOM_CLIENT_SECRET: ReturnType<typeof defineSecret> =
+  defineSecret("CALCOM_CLIENT_SECRET")
 
-const CALLBACK_URL = "https://us-central1-wekruit-5f89b.cloudfunctions.net/paLinkedinCallback"
+const LINKEDIN_CALLBACK_URL = "https://us-central1-wekruit-5f89b.cloudfunctions.net/paLinkedinCallback"
+const GITHUB_CALLBACK_URL = "https://us-central1-wekruit-5f89b.cloudfunctions.net/paGithubCallback"
+const CALCOM_CALLBACK_URL = "https://us-central1-wekruit-5f89b.cloudfunctions.net/paCalcomCallback"
 const LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
 const LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
 const LINKEDIN_USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
+const GITHUB_AUTH_URL = "https://github.com/login/oauth/authorize"
+const GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
+const GITHUB_USER_URL = "https://api.github.com/user"
+const GITHUB_EMAILS_URL = "https://api.github.com/user/emails"
+const CALCOM_AUTH_URL = "https://app.cal.com/auth/oauth2/authorize"
+const CALCOM_TOKEN_URL = "https://api.cal.com/v2/auth/oauth2/token"
+const CALCOM_ME_URL = "https://api.cal.com/v2/me"
 const STATE_MAX_AGE_MS = 10 * 60 * 1000
 
 const ALLOWED_RETURN_TO_ORIGINS = new Set([
@@ -30,11 +47,13 @@ const ALLOWED_RETURN_TO_ORIGINS = new Set([
   "https://layoff-wekruit.firebaseapp.com",
 ])
 
+type CandidateConnectorProvider = "linkedin" | "github" | "calcom"
+
 interface LinkedinAuthState {
   returnTo: string
   ts: number
   mode?: "login" | "connect"
-  provider?: "linkedin"
+  provider?: CandidateConnectorProvider
   firebaseUid?: string
   candidateId?: string
 }
@@ -48,7 +67,34 @@ interface LinkedinUserInfo {
   picture?: string
 }
 
-type CandidateConnectorProvider = "linkedin" | "github" | "calcom"
+interface GithubUserInfo {
+  id?: number
+  login?: string
+  html_url?: string
+  name?: string | null
+  avatar_url?: string | null
+  email?: string | null
+}
+
+interface GithubEmailInfo {
+  email?: string
+  primary?: boolean
+  verified?: boolean
+}
+
+interface CalcomUserInfo {
+  id?: number | string
+  username?: string
+  email?: string
+  name?: string
+  avatarUrl?: string
+  timeZone?: string
+}
+
+interface CalcomMeResponse {
+  status?: string
+  data?: CalcomUserInfo
+}
 
 interface CandidateConnectorOAuthStartInput {
   provider?: unknown
@@ -57,7 +103,7 @@ interface CandidateConnectorOAuthStartInput {
 
 interface CandidateConnectorOAuthStartResult {
   ok: true
-  provider: "linkedin"
+  provider: CandidateConnectorProvider
   authUrl: string
 }
 
@@ -70,6 +116,7 @@ const SELF_PROFILE_HANDLE_KINDS = new Set([
   "imessage",
   "linkedin",
   "github",
+  "calcom",
 ])
 
 function base64UrlEncode(input: string | Buffer): string {
@@ -114,9 +161,9 @@ export function parseLinkedinState(
     if (parsed.mode !== undefined && parsed.mode !== "login" && parsed.mode !== "connect") {
       return null
     }
-    if (parsed.provider !== undefined && parsed.provider !== "linkedin") return null
+    if (parsed.provider !== undefined && !parseCandidateConnectorProvider(parsed.provider)) return null
     if (parsed.mode === "connect") {
-      if (parsed.provider !== "linkedin") return null
+      if (!parsed.provider) return null
       if (typeof parsed.firebaseUid !== "string" || !parsed.firebaseUid.trim()) return null
       if (typeof parsed.candidateId !== "string" || !parsed.candidateId.trim()) return null
     }
@@ -153,6 +200,11 @@ function parseCandidateConnectorProvider(value: unknown): CandidateConnectorProv
     : null
 }
 
+function isConfiguredSecret(value: string): boolean {
+  const normalized = value.trim().toLowerCase()
+  return Boolean(normalized) && normalized !== "pending"
+}
+
 function stripUndefined<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined),
@@ -172,10 +224,33 @@ function buildLinkedinOAuthMarker(sub: string): string {
   return `https://www.linkedin.com/oauth-linked/${sub}`
 }
 
-async function upsertSelfProfileLinkedinConnector(args: {
+function buildGithubUrl(info: GithubUserInfo): string {
+  const htmlUrl = cleanString(info.html_url, 2_000)
+  if (htmlUrl) return htmlUrl
+  const login = cleanString(info.login, 200)
+  if (!login) throw new Error("github_userinfo_failed:missing_login")
+  return `https://github.com/${login}`
+}
+
+function buildCalcomUrl(info: CalcomUserInfo): string | undefined {
+  const username = cleanString(info.username, 200)
+  return username ? `https://cal.com/${username}` : undefined
+}
+
+function buildCalcomHandleValue(info: CalcomUserInfo): string {
+  const url = buildCalcomUrl(info)
+  if (url) return url
+  const id = typeof info.id === "number" ? String(info.id) : cleanString(info.id, 200)
+  if (!id) throw new Error("calcom_userinfo_failed:missing_identity")
+  return `calcom:${id}`
+}
+
+async function upsertSelfProfileConnector(args: {
   db: Firestore
   candidateId: string
-  linkedinUrl: string
+  kind: CandidateConnectorProvider
+  urlField?: "linkedinUrl" | "githubUrl" | "calcomUrl"
+  url?: string
   now: string
 }): Promise<void> {
   const ref = args.db.collection(PA_COLLECTIONS.candidateSelfProfiles).doc(args.candidateId)
@@ -189,18 +264,19 @@ async function upsertSelfProfileLinkedinConnector(args: {
           handle &&
             typeof handle === "object" &&
             typeof (handle as { kind?: unknown }).kind === "string" &&
-            (handle as { kind: string }).kind !== "linkedin" &&
+            (handle as { kind: string }).kind !== args.kind &&
             SELF_PROFILE_HANDLE_KINDS.has((handle as { kind: string }).kind),
         ),
     ),
-    { kind: "linkedin", verifiedAt: args.now, source: "candidate" },
+    { kind: args.kind, verifiedAt: args.now, source: "candidate" },
   ]
+  const urlPatch = args.urlField && args.url ? { [args.urlField]: args.url } : {}
   const profile = CandidateSelfProfileSchema.parse({
     ...raw,
     candidateId: args.candidateId,
     lifecycleState: cleanString(raw.lifecycleState, 64) ?? "profile_created",
     handles,
-    linkedinUrl: args.linkedinUrl,
+    ...urlPatch,
     createdAt: cleanString(raw.createdAt, 64) ?? args.now,
     updatedAt: args.now,
   })
@@ -241,15 +317,111 @@ async function connectLinkedinToCandidate(args: {
     }),
     { merge: true },
   )
-  await upsertSelfProfileLinkedinConnector({
+  await upsertSelfProfileConnector({
     db: args.db,
     candidateId: args.candidateId,
-    linkedinUrl,
+    kind: "linkedin",
+    urlField: "linkedinUrl",
+    url: linkedinUrl,
     now,
   })
 }
 
-async function exchangeCodeForAccessToken(args: {
+async function connectGithubToCandidate(args: {
+  db: Firestore
+  firebaseUid: string
+  candidateId: string
+  info: GithubUserInfo
+}): Promise<void> {
+  const mappedCandidateId = await getCandidateIdForFirebaseUid(args.db, args.firebaseUid)
+  if (mappedCandidateId !== args.candidateId) {
+    throw new Error("github_connect_auth_mapping_changed")
+  }
+  const login = cleanString(args.info.login, 200)
+  if (!login) throw new Error("github_userinfo_failed:missing_login")
+  const githubUrl = buildGithubUrl(args.info)
+  const now = new Date().toISOString()
+  await linkCandidateHandle(args.db, {
+    candidateId: args.candidateId,
+    kind: "github",
+    value: githubUrl,
+    source: "candidate",
+    verified: true,
+    now,
+    evidence: [{ source: "system", summary: "GitHub OAuth connector identity" }],
+  })
+  await args.db.collection(PA_COLLECTIONS.users).doc(args.candidateId).set(
+    stripUndefined({
+      githubUrl,
+      githubHandle: login,
+      githubOauthLinked: true,
+      githubOauthConnectedAt: now,
+      githubOauthName: cleanString(args.info.name, 200),
+      githubOauthAvatar: cleanString(args.info.avatar_url, 2_000),
+      githubOauthEmail: cleanString(args.info.email, 320),
+      updatedAt: now,
+    }),
+    { merge: true },
+  )
+  await upsertSelfProfileConnector({
+    db: args.db,
+    candidateId: args.candidateId,
+    kind: "github",
+    urlField: "githubUrl",
+    url: githubUrl,
+    now,
+  })
+}
+
+async function connectCalcomToCandidate(args: {
+  db: Firestore
+  firebaseUid: string
+  candidateId: string
+  info: CalcomUserInfo
+}): Promise<void> {
+  const mappedCandidateId = await getCandidateIdForFirebaseUid(args.db, args.firebaseUid)
+  if (mappedCandidateId !== args.candidateId) {
+    throw new Error("calcom_connect_auth_mapping_changed")
+  }
+  const calcomUrl = buildCalcomUrl(args.info)
+  const handleValue = buildCalcomHandleValue(args.info)
+  const now = new Date().toISOString()
+  await linkCandidateHandle(args.db, {
+    candidateId: args.candidateId,
+    kind: "calcom",
+    value: handleValue,
+    source: "candidate",
+    verified: true,
+    now,
+    evidence: [{ source: "system", summary: "Cal.com OAuth connector identity" }],
+  })
+  await args.db.collection(PA_COLLECTIONS.users).doc(args.candidateId).set(
+    stripUndefined({
+      calcomUrl,
+      calcomHandle: cleanString(args.info.username, 200),
+      calcomOauthLinked: true,
+      calcomOauthConnectedAt: now,
+      calcomOauthUserId:
+        typeof args.info.id === "number" ? String(args.info.id) : cleanString(args.info.id, 200),
+      calcomOauthName: cleanString(args.info.name, 200),
+      calcomOauthAvatar: cleanString(args.info.avatarUrl, 2_000),
+      calcomOauthEmail: cleanString(args.info.email, 320),
+      calcomOauthTimeZone: cleanString(args.info.timeZone, 100),
+      updatedAt: now,
+    }),
+    { merge: true },
+  )
+  await upsertSelfProfileConnector({
+    db: args.db,
+    candidateId: args.candidateId,
+    kind: "calcom",
+    urlField: calcomUrl ? "calcomUrl" : undefined,
+    url: calcomUrl,
+    now,
+  })
+}
+
+async function exchangeLinkedinCodeForAccessToken(args: {
   code: string
   clientId: string
   clientSecret: string
@@ -257,7 +429,7 @@ async function exchangeCodeForAccessToken(args: {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code: args.code,
-    redirect_uri: CALLBACK_URL,
+    redirect_uri: LINKEDIN_CALLBACK_URL,
     client_id: args.clientId,
     client_secret: args.clientSecret,
   })
@@ -277,6 +449,64 @@ async function exchangeCodeForAccessToken(args: {
   return json.access_token
 }
 
+async function exchangeGithubCodeForAccessToken(args: {
+  code: string
+  clientId: string
+  clientSecret: string
+}): Promise<string> {
+  const body = new URLSearchParams({
+    client_id: args.clientId,
+    client_secret: args.clientSecret,
+    code: args.code,
+    redirect_uri: GITHUB_CALLBACK_URL,
+  })
+  const res = await fetch(GITHUB_TOKEN_URL, {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/x-www-form-urlencoded",
+      "user-agent": "WeKruit",
+    },
+    body: body.toString(),
+  })
+  const json = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !json || typeof json.access_token !== "string") {
+    const msg =
+      (typeof json?.error_description === "string" && json.error_description) ||
+      (typeof json?.error === "string" && json.error) ||
+      `${res.status} ${res.statusText}`
+    throw new Error(`github_token_exchange_failed:${msg}`)
+  }
+  return json.access_token
+}
+
+async function exchangeCalcomCodeForAccessToken(args: {
+  code: string
+  clientId: string
+  clientSecret: string
+}): Promise<string> {
+  const res = await fetch(CALCOM_TOKEN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_id: args.clientId,
+      client_secret: args.clientSecret,
+      grant_type: "authorization_code",
+      code: args.code,
+      redirect_uri: CALCOM_CALLBACK_URL,
+    }),
+  })
+  const json = (await res.json().catch(() => null)) as Record<string, unknown> | null
+  if (!res.ok || !json || typeof json.access_token !== "string") {
+    const msg =
+      (typeof json?.error_description === "string" && json.error_description) ||
+      (typeof json?.error === "string" && json.error) ||
+      `${res.status} ${res.statusText}`
+    throw new Error(`calcom_token_exchange_failed:${msg}`)
+  }
+  return json.access_token
+}
+
 async function fetchLinkedinUserInfo(accessToken: string): Promise<LinkedinUserInfo> {
   const res = await fetch(LINKEDIN_USERINFO_URL, {
     headers: { Authorization: `Bearer ${accessToken}` },
@@ -286,6 +516,44 @@ async function fetchLinkedinUserInfo(accessToken: string): Promise<LinkedinUserI
     throw new Error(`linkedin_userinfo_failed:${res.status} ${res.statusText}`)
   }
   return json
+}
+
+async function fetchGithubUserInfo(accessToken: string): Promise<GithubUserInfo> {
+  const headers = {
+    accept: "application/vnd.github+json",
+    authorization: `Bearer ${accessToken}`,
+    "user-agent": "WeKruit",
+  }
+  const res = await fetch(GITHUB_USER_URL, { headers })
+  const json = (await res.json().catch(() => null)) as GithubUserInfo | null
+  if (!res.ok || !json || !cleanString(json.login, 200)) {
+    throw new Error(`github_userinfo_failed:${res.status} ${res.statusText}`)
+  }
+  if (!cleanString(json.email, 320)) {
+    const emailsRes = await fetch(GITHUB_EMAILS_URL, { headers }).catch(() => null)
+    if (emailsRes?.ok) {
+      const emails = (await emailsRes.json().catch(() => null)) as GithubEmailInfo[] | null
+      const primary = Array.isArray(emails)
+        ? emails.find((email) => email.primary && email.verified && cleanString(email.email, 320))
+        : undefined
+      if (primary?.email) json.email = primary.email
+    }
+  }
+  return json
+}
+
+async function fetchCalcomUserInfo(accessToken: string): Promise<CalcomUserInfo> {
+  const res = await fetch(CALCOM_ME_URL, {
+    headers: { authorization: `Bearer ${accessToken}` },
+  })
+  const json = (await res.json().catch(() => null)) as CalcomMeResponse | null
+  if (!res.ok || !json || json.status !== "success" || !json.data) {
+    throw new Error(`calcom_userinfo_failed:${res.status} ${res.statusText}`)
+  }
+  if (!cleanString(json.data.username, 200) && json.data.id === undefined) {
+    throw new Error("calcom_userinfo_failed:missing_identity")
+  }
+  return json.data
 }
 
 async function ensureFirebaseUser(uid: string, info: LinkedinUserInfo): Promise<void> {
@@ -338,7 +606,14 @@ export const paCandidateConnectorOAuthStart = onCall(
     region: "us-central1",
     memory: "512MiB",
     timeoutSeconds: 30,
-    secrets: [LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET],
+    secrets: [
+      LINKEDIN_CLIENT_ID,
+      LINKEDIN_CLIENT_SECRET,
+      GITHUB_CLIENT_ID,
+      GITHUB_CLIENT_SECRET,
+      CALCOM_CLIENT_ID,
+      CALCOM_CLIENT_SECRET,
+    ],
   },
   async (req): Promise<CandidateConnectorOAuthStartResult> => {
     const firebaseUid = cleanString(req.auth?.uid, 128)
@@ -350,22 +625,29 @@ export const paCandidateConnectorOAuthStart = onCall(
     if (!provider) {
       throw new HttpsError("invalid-argument", "connector_provider_required")
     }
-    if (provider === "github") {
-      throw new HttpsError("failed-precondition", "github_oauth_config_missing")
-    }
-    if (provider === "calcom") {
-      throw new HttpsError("failed-precondition", "calcom_oauth_config_missing")
-    }
 
     const returnTo = cleanString(input.returnTo, 2_000) ?? "https://wekruit.com/me/profile"
     if (!isAllowedReturnTo(returnTo)) {
       throw new HttpsError("invalid-argument", "invalid_return_to")
     }
 
-    const clientId = LINKEDIN_CLIENT_ID.value().trim()
-    const clientSecret = LINKEDIN_CLIENT_SECRET.value().trim()
-    if (!clientId || !clientSecret) {
-      throw new HttpsError("failed-precondition", "linkedin_config_missing")
+    const clientId =
+      provider === "linkedin"
+        ? LINKEDIN_CLIENT_ID.value().trim()
+        : provider === "github"
+          ? GITHUB_CLIENT_ID.value().trim()
+          : CALCOM_CLIENT_ID.value().trim()
+    const clientSecret =
+      provider === "linkedin"
+        ? LINKEDIN_CLIENT_SECRET.value().trim()
+        : provider === "github"
+          ? GITHUB_CLIENT_SECRET.value().trim()
+          : CALCOM_CLIENT_SECRET.value().trim()
+    if (!isConfiguredSecret(clientId) || !isConfiguredSecret(clientSecret)) {
+      throw new HttpsError(
+        "failed-precondition",
+        provider === "linkedin" ? "linkedin_config_missing" : `${provider}_oauth_config_missing`,
+      )
     }
     const db = getFirestore()
     const candidateId = await getCandidateIdForFirebaseUid(db, firebaseUid)
@@ -374,19 +656,39 @@ export const paCandidateConnectorOAuthStart = onCall(
         returnTo,
         ts: Date.now(),
         mode: "connect",
-        provider: "linkedin",
+        provider,
         firebaseUid,
         candidateId,
       },
       clientSecret,
     )
-    const authUrl = new URL(LINKEDIN_AUTH_URL)
-    authUrl.searchParams.set("response_type", "code")
+    const authUrl = new URL(
+      provider === "linkedin"
+        ? LINKEDIN_AUTH_URL
+        : provider === "github"
+          ? GITHUB_AUTH_URL
+          : CALCOM_AUTH_URL,
+    )
+    if (provider === "linkedin") authUrl.searchParams.set("response_type", "code")
     authUrl.searchParams.set("client_id", clientId)
-    authUrl.searchParams.set("redirect_uri", CALLBACK_URL)
-    authUrl.searchParams.set("scope", "openid profile email")
+    authUrl.searchParams.set(
+      "redirect_uri",
+      provider === "linkedin"
+        ? LINKEDIN_CALLBACK_URL
+        : provider === "github"
+          ? GITHUB_CALLBACK_URL
+          : CALCOM_CALLBACK_URL,
+    )
+    authUrl.searchParams.set(
+      "scope",
+      provider === "linkedin"
+        ? "openid profile email"
+        : provider === "github"
+          ? "read:user user:email"
+          : "PROFILE_READ",
+    )
     authUrl.searchParams.set("state", state)
-    return { ok: true, provider: "linkedin", authUrl: authUrl.toString() }
+    return { ok: true, provider, authUrl: authUrl.toString() }
   },
 )
 
@@ -413,7 +715,7 @@ export const paLinkedinAuthStart = onRequest(
     const authUrl = new URL(LINKEDIN_AUTH_URL)
     authUrl.searchParams.set("response_type", "code")
     authUrl.searchParams.set("client_id", clientId)
-    authUrl.searchParams.set("redirect_uri", CALLBACK_URL)
+    authUrl.searchParams.set("redirect_uri", LINKEDIN_CALLBACK_URL)
     authUrl.searchParams.set("scope", "openid profile email")
     authUrl.searchParams.set("state", state)
     res.set("Cache-Control", "no-store")
@@ -455,7 +757,7 @@ export const paLinkedinCallback = onRequest(
       return
     }
     try {
-      const accessToken = await exchangeCodeForAccessToken({ code, clientId, clientSecret })
+      const accessToken = await exchangeLinkedinCodeForAccessToken({ code, clientId, clientSecret })
       const info = await fetchLinkedinUserInfo(accessToken)
       const sub = info.sub?.trim()
       if (!sub) throw new Error("linkedin_userinfo_failed:missing_sub")
@@ -483,6 +785,124 @@ export const paLinkedinCallback = onRequest(
         error: err instanceof Error ? err.message : String(err),
       })
       finish({ ok: false, error: err instanceof Error ? err.message : "linkedin_auth_failed" })
+    }
+  },
+)
+
+export const paGithubCallback = onRequest(
+  {
+    region: "us-central1",
+    memory: "512MiB",
+    timeoutSeconds: 30,
+    secrets: [GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET],
+  },
+  async (req, res) => {
+    const clientId = GITHUB_CLIENT_ID.value().trim()
+    const clientSecret = GITHUB_CLIENT_SECRET.value().trim()
+    const rawState = typeof req.query.state === "string" ? req.query.state : ""
+    const state = parseLinkedinState(rawState, clientSecret, Date.now())
+    if (
+      !state ||
+      state.mode !== "connect" ||
+      state.provider !== "github" ||
+      !isAllowedReturnTo(state.returnTo)
+    ) {
+      res.status(400).type("text/plain").send("invalid_state")
+      return
+    }
+    const finish = (payload: Record<string, unknown>) => {
+      res.set("Cache-Control", "no-store")
+      res
+        .status(200)
+        .type("html")
+        .send(renderCallbackHtml(payload, state.returnTo, "pa_connector_auth"))
+    }
+    const oauthError = typeof req.query.error === "string" ? req.query.error : ""
+    if (oauthError) {
+      const description =
+        typeof req.query.error_description === "string" ? req.query.error_description : oauthError
+      finish({ ok: false, error: `github_authorize_failed:${description}` })
+      return
+    }
+    const code = typeof req.query.code === "string" ? req.query.code : ""
+    if (!code) {
+      finish({ ok: false, error: "github_authorize_failed:missing_code" })
+      return
+    }
+    try {
+      const accessToken = await exchangeGithubCodeForAccessToken({ code, clientId, clientSecret })
+      const info = await fetchGithubUserInfo(accessToken)
+      await connectGithubToCandidate({
+        db: getFirestore(),
+        firebaseUid: state.firebaseUid!,
+        candidateId: state.candidateId!,
+        info,
+      })
+      finish({ ok: true, provider: "github", connected: true })
+    } catch (err) {
+      logger.error("[paGithubCallback] auth flow failed", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      finish({ ok: false, error: err instanceof Error ? err.message : "github_auth_failed" })
+    }
+  },
+)
+
+export const paCalcomCallback = onRequest(
+  {
+    region: "us-central1",
+    memory: "512MiB",
+    timeoutSeconds: 30,
+    secrets: [CALCOM_CLIENT_ID, CALCOM_CLIENT_SECRET],
+  },
+  async (req, res) => {
+    const clientId = CALCOM_CLIENT_ID.value().trim()
+    const clientSecret = CALCOM_CLIENT_SECRET.value().trim()
+    const rawState = typeof req.query.state === "string" ? req.query.state : ""
+    const state = parseLinkedinState(rawState, clientSecret, Date.now())
+    if (
+      !state ||
+      state.mode !== "connect" ||
+      state.provider !== "calcom" ||
+      !isAllowedReturnTo(state.returnTo)
+    ) {
+      res.status(400).type("text/plain").send("invalid_state")
+      return
+    }
+    const finish = (payload: Record<string, unknown>) => {
+      res.set("Cache-Control", "no-store")
+      res
+        .status(200)
+        .type("html")
+        .send(renderCallbackHtml(payload, state.returnTo, "pa_connector_auth"))
+    }
+    const oauthError = typeof req.query.error === "string" ? req.query.error : ""
+    if (oauthError) {
+      const description =
+        typeof req.query.error_description === "string" ? req.query.error_description : oauthError
+      finish({ ok: false, error: `calcom_authorize_failed:${description}` })
+      return
+    }
+    const code = typeof req.query.code === "string" ? req.query.code : ""
+    if (!code) {
+      finish({ ok: false, error: "calcom_authorize_failed:missing_code" })
+      return
+    }
+    try {
+      const accessToken = await exchangeCalcomCodeForAccessToken({ code, clientId, clientSecret })
+      const info = await fetchCalcomUserInfo(accessToken)
+      await connectCalcomToCandidate({
+        db: getFirestore(),
+        firebaseUid: state.firebaseUid!,
+        candidateId: state.candidateId!,
+        info,
+      })
+      finish({ ok: true, provider: "calcom", connected: true })
+    } catch (err) {
+      logger.error("[paCalcomCallback] auth flow failed", {
+        error: err instanceof Error ? err.message : String(err),
+      })
+      finish({ ok: false, error: err instanceof Error ? err.message : "calcom_auth_failed" })
     }
   },
 )
