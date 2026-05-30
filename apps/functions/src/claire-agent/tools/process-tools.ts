@@ -85,6 +85,51 @@ export type ProcessToolContext = ClaireToolContext & {
 /** A natural-language prompt per prescreen question id (config-supplied or id fallback). */
 export type PrescreenPrompts = Record<string, string>
 
+/**
+ * Deterministic onboarding net (regex-free). gpt-5.4-nano skips record_onboarding_answer ~1/5 of
+ * turns; without a net the slot never advances and onboarding stalls. This guarantees the slot
+ * advances + the raw answer is stored so onboarding ALWAYS completes. It does NOT extract canonical
+ * tags (no regex, no LLM) — that's the LLM tool's job on the ~4/5 turns it fires; the raw answer is
+ * retained for later re-extraction. Caller only invokes it when the LLM tool did NOT record the slot.
+ */
+export async function persistOnboardingAnswerThrough(
+  ctx: ClaireToolContext,
+  slot: string,
+  answer: string,
+): Promise<void> {
+  const slots = [...DEFAULT_ONBOARDING_SLOTS]
+  const idx = slots.indexOf(slot)
+  if (idx < 0) return
+  const now = ctx.nowIso()
+  const nextSlot = idx + 1 < slots.length ? slots[idx + 1]! : null
+  const completed = nextSlot === null
+  await ctx.db
+    .collection("pa-users")
+    .doc(ctx.userId)
+    .set(
+      {
+        onboardingState: completed ? "complete" : "pending",
+        onboardingStatus: completed ? "complete" : "invited",
+        updatedAt: now,
+        sharedOnboarding: {
+          status: completed ? "complete" : "active",
+          updatedAt: now,
+          currentQuestionId: nextSlot,
+          completed,
+          ...(completed ? { completedAt: now } : {}),
+          answers: { [slot]: { answer: answer.trim(), answeredAt: now, questionId: slot } },
+        },
+      },
+      { merge: true },
+    )
+    .catch((err: unknown) =>
+      ctx.log("onboarding.net_write_error", {
+        slot,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    )
+}
+
 /** Seed an empty store from the canonical onboarding slots + an empty prescreen. */
 export function emptyProcessStore(): ProcessSessionStore {
   return {
