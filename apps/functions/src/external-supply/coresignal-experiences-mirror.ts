@@ -77,6 +77,187 @@ function normalizeOptionalUrl(value: unknown): string | undefined {
   }
 }
 
+type ExistingParsedResumeForMirror = {
+  id?: string
+  coresignalEmployeeId?: number
+  source?: string
+  experiences?: Array<Record<string, unknown>>
+}
+
+type ResumeExperienceDescription = {
+  company: string
+  title: string
+  startDate?: string
+  endDate?: string
+  description: string
+}
+
+function cleanText(value: unknown, max = 4_000): string | undefined {
+  if (typeof value !== "string") return undefined
+  const normalized = value.replace(/\s+/g, " ").trim()
+  return normalized ? normalized.slice(0, max) : undefined
+}
+
+function normalizeForMatch(value: unknown): string {
+  return cleanText(value, 500)
+    ?.toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/\b(?:inc|incorporated|llc|ltd|corp|corporation|company|co)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim() ?? ""
+}
+
+function tokenSet(value: string): Set<string> {
+  return new Set(value.split(/\s+/).filter((token) => token.length >= 3))
+}
+
+function compactForMatch(value: string): string {
+  return value.replace(/\s+/g, "")
+}
+
+function overlapCount(a: Set<string>, b: Set<string>): number {
+  let count = 0
+  for (const token of a) {
+    if (b.has(token)) count += 1
+  }
+  return count
+}
+
+function parseMonthYear(value: unknown): { year?: number; month?: number } {
+  const text = cleanText(value, 64)?.toLowerCase()
+  if (!text) return {}
+  const yearMatch = text.match(/\b(19|20)\d{2}\b/)
+  const year = yearMatch ? Number.parseInt(yearMatch[0], 10) : undefined
+  const months = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+  ]
+  const monthIndex = months.findIndex((month) => text.includes(month) || text.includes(month.slice(0, 3)))
+  return { year, month: monthIndex >= 0 ? monthIndex + 1 : undefined }
+}
+
+function dateScore(
+  target: Pick<ResumeExperienceDescription, "startDate" | "endDate">,
+  candidate: Pick<ResumeExperienceDescription, "startDate" | "endDate">,
+): number {
+  const targetStart = parseMonthYear(target.startDate)
+  const candidateStart = parseMonthYear(candidate.startDate)
+  if (targetStart.year && candidateStart.year) {
+    if (targetStart.year === candidateStart.year && targetStart.month && candidateStart.month) {
+      return targetStart.month === candidateStart.month ? 2 : 1
+    }
+    if (targetStart.year === candidateStart.year) return 1
+  }
+  const targetEnd = parseMonthYear(target.endDate)
+  const candidateEnd = parseMonthYear(candidate.endDate)
+  const targetYears = [targetStart.year, targetEnd.year].filter((year): year is number => Boolean(year))
+  const candidateYears = [candidateStart.year, candidateEnd.year].filter((year): year is number => Boolean(year))
+  if (targetYears.length > 0 && candidateYears.some((year) => targetYears.includes(year))) return 1
+  return 0
+}
+
+function titlePenalty(targetTitle: string, candidateTitle: string, dates: number): number {
+  const targetTokens = tokenSet(targetTitle)
+  const candidateTokens = tokenSet(candidateTitle)
+  const targetSenior = ["senior", "staff", "principal", "manager", "director", "lead"].some((token) => targetTokens.has(token))
+  const candidateSenior = ["senior", "staff", "principal", "manager", "director", "lead"].some((token) => candidateTokens.has(token))
+  const targetIntern = targetTokens.has("intern") || targetTokens.has("internship")
+  const candidateIntern = candidateTokens.has("intern") || candidateTokens.has("internship")
+  if (dates > 0) return 0
+  if (targetSenior !== candidateSenior) return 3
+  if (targetIntern !== candidateIntern) return 2
+  return 0
+}
+
+function collectResumeDescriptions(existing: ExistingParsedResumeForMirror[]): ResumeExperienceDescription[] {
+  const out: ResumeExperienceDescription[] = []
+  for (const row of existing) {
+    if (row.source === "coresignal_collect_v2") continue
+    for (const experience of row.experiences ?? []) {
+      const company = cleanText(experience.company ?? experience.companyName, 200)
+      const title = cleanText(experience.title ?? experience.position, 200)
+      const description = cleanText(experience.description, 4_000)
+      if (!company || !title || !description) continue
+      out.push({
+        company,
+        title,
+        startDate: cleanText(experience.startDate ?? experience.start, 64),
+        endDate: cleanText(experience.endDate ?? experience.end, 64),
+        description,
+      })
+    }
+  }
+  return out
+}
+
+function bestResumeDescription(
+  target: NonNullable<ExternalCandidateRecord["experience"]>[number],
+  candidates: ResumeExperienceDescription[],
+): string | undefined {
+  const targetCompany = normalizeForMatch(target.company)
+  const targetTitle = normalizeForMatch(target.title)
+  if (!targetCompany || !targetTitle) return undefined
+  const targetCompanyTokens = tokenSet(targetCompany)
+  const targetTitleTokens = tokenSet(targetTitle)
+  let best: { score: number; description: string } | undefined
+  for (const candidate of candidates) {
+    const candidateCompany = normalizeForMatch(candidate.company)
+    const candidateTitle = normalizeForMatch(candidate.title)
+    if (!candidateCompany || !candidateTitle) continue
+    const companyEquivalent =
+      targetCompany === candidateCompany ||
+      compactForMatch(targetCompany) === compactForMatch(candidateCompany) ||
+      targetCompany.includes(candidateCompany) ||
+      candidateCompany.includes(targetCompany)
+    const companyOverlap = overlapCount(targetCompanyTokens, tokenSet(candidateCompany))
+    if (companyOverlap === 0 && !companyEquivalent) {
+      continue
+    }
+    const titleTokens = tokenSet(candidateTitle)
+    const titleOverlap = overlapCount(targetTitleTokens, titleTokens)
+    const dates = dateScore(target, candidate)
+    const companyScore = companyEquivalent ? 4 : Math.min(3, companyOverlap)
+    const titleScore =
+      targetTitle === candidateTitle || targetTitle.includes(candidateTitle) || candidateTitle.includes(targetTitle)
+        ? 3
+        : titleOverlap >= 2
+          ? 2
+          : titleOverlap
+    const score = companyScore + titleScore + dates - titlePenalty(targetTitle, candidateTitle, dates)
+    if (score < 6) continue
+    if (!best || score > best.score) {
+      best = { score, description: candidate.description }
+    }
+  }
+  return best?.description
+}
+
+function mergeResumeDescriptionsIntoRecord(
+  record: ExternalCandidateRecord,
+  existing: ExistingParsedResumeForMirror[],
+): ExternalCandidateRecord {
+  const candidates = collectResumeDescriptions(existing)
+  if (candidates.length === 0 || !record.experience?.length) return record
+  return {
+    ...record,
+    experience: record.experience.map((experience) => {
+      if (cleanText(experience.description)) return experience
+      const description = bestResumeDescription(experience, candidates)
+      return description ? { ...experience, description } : experience
+    }),
+  }
+}
+
 export function buildExperienceHighlightsFromRecord(record: ExternalCandidateRecord): Array<Record<string, unknown>> {
   return (record.experience ?? [])
     .filter((experience) => experience.company && experience.title)
@@ -186,7 +367,7 @@ export function buildParsedResumeDocFromRecord(
 
 export interface MirrorDeps {
   /** Query existing parsedCandidateResumes rows for this user. */
-  findExistingForUser?: (userId: string) => Promise<Array<{ id?: string; coresignalEmployeeId?: number; source?: string }>>
+  findExistingForUser?: (userId: string) => Promise<ExistingParsedResumeForMirror[]>
   /** Write the parsedCandidateResumes doc + the pa-users.coresignalEmployeeId field. */
   writeBoth?: (args: {
     parsedResumeDoc: Record<string, unknown>
@@ -225,8 +406,9 @@ export async function runCoresignalExperiencesMirror(
   }
 
   let existingParsedResumeDocId: string | undefined
+  let existing: ExistingParsedResumeForMirror[] = []
   if (deps.findExistingForUser) {
-    const existing = await deps.findExistingForUser(userId)
+    existing = await deps.findExistingForUser(userId)
     const dupe = existing.find(
       (r) =>
         r.source === "coresignal_collect_v2" &&
@@ -240,8 +422,9 @@ export async function runCoresignalExperiencesMirror(
     }
   }
 
-  const doc = buildParsedResumeDocFromRecord(record, userId, now, coresignalEmployeeId)
-  const experienceHighlights = buildExperienceHighlightsFromRecord(record)
+  const recordWithDescriptions = mergeResumeDescriptionsIntoRecord(record, existing)
+  const doc = buildParsedResumeDocFromRecord(recordWithDescriptions, userId, now, coresignalEmployeeId)
+  const experienceHighlights = buildExperienceHighlightsFromRecord(recordWithDescriptions)
 
   if (deps.writeBoth) {
     await deps.writeBoth({
@@ -273,16 +456,23 @@ export function makeFirestoreMirrorDeps(db: Firestore): Pick<MirrorDeps, "findEx
       const snap = await db
         .collection(PARSED_RESUMES_COLLECTION)
         .where("userId", "==", userId)
-        .where("source", "==", "coresignal_collect_v2")
-        .limit(10)
+        .limit(50)
         .get()
       return snap.docs.map((d) => {
         const data = d.data() as Record<string, unknown>
+        const experiences = Array.isArray(data.experiences)
+          ? data.experiences
+          : Array.isArray(data.workHistory)
+            ? data.workHistory
+            : undefined
         return {
           id: d.id,
           coresignalEmployeeId:
             typeof data.coresignalEmployeeId === "number" ? data.coresignalEmployeeId : undefined,
           source: typeof data.source === "string" ? data.source : undefined,
+          experiences: Array.isArray(experiences)
+            ? experiences.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+            : undefined,
         }
       })
     },

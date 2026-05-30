@@ -2302,6 +2302,9 @@ function ExperienceHighlightsCard({ profile }: { profile: CandidateSelfProfile }
                       alt=""
                       loading="lazy"
                       referrerPolicy="no-referrer"
+                      onError={(event) => {
+                        event.currentTarget.style.display = "none"
+                      }}
                     />
                   ) : null}
                   <span>

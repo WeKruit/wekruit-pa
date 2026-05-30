@@ -124,6 +124,148 @@ test("runCoresignalExperiencesMirror — happy path writes new parsedResume doc"
   assert.equal(w.experienceHighlights[0]?.company, "Confidential")
 })
 
+test("runCoresignalExperiencesMirror — fills missing LinkedIn descriptions from matching resume rows", async () => {
+  const writes: Array<unknown> = []
+  const result = await runCoresignalExperiencesMirror(
+    makeRecord({
+      experience: [
+        {
+          company: "Tesla",
+          title: "Software Engineer",
+          startDate: "May 2024",
+          endDate: "August 2024",
+          companyIndustry: "Motor Vehicle Manufacturing",
+        },
+      ],
+    }),
+    "uid-1",
+    {
+      findExistingForUser: async () => [
+        {
+          id: "resume-1",
+          source: "imessage-attachment",
+          experiences: [
+            {
+              company: "Tesla Inc.",
+              title: "Software Engineer Intern",
+              startDate: "May 2024",
+              endDate: "August 2024",
+              description: "Built CI/CD pipelines and migrated portfolio services onto Azure.",
+            },
+          ],
+        },
+      ],
+      writeBoth: async (args) => {
+        writes.push(args)
+      },
+      now: () => NOW,
+    },
+  )
+  assert.equal(result.status, "mirrored")
+  const write = writes[0] as {
+    parsedResumeDoc: { experiences: Array<{ description?: string | null }> }
+    experienceHighlights: Array<{ description?: string }>
+  }
+  assert.equal(
+    write.experienceHighlights[0]?.description,
+    "Built CI/CD pipelines and migrated portfolio services onto Azure.",
+  )
+  assert.equal(
+    write.parsedResumeDoc.experiences[0]?.description,
+    "Built CI/CD pipelines and migrated portfolio services onto Azure.",
+  )
+})
+
+test("runCoresignalExperiencesMirror — matches compact company spelling with title and date evidence", async () => {
+  const writes: Array<unknown> = []
+  const result = await runCoresignalExperiencesMirror(
+    makeRecord({
+      experience: [
+        {
+          company: "aiStudy",
+          title: "Founder National Reward Honoree",
+          startDate: "January 2024",
+          endDate: "May 2024",
+        },
+      ],
+    }),
+    "uid-1",
+    {
+      findExistingForUser: async () => [
+        {
+          id: "resume-1",
+          source: "imessage-attachment",
+          experiences: [
+            {
+              company: "AI Study",
+              title: "Founder, Software Engineer & Product Manager",
+              startDate: "Sep 2024",
+              endDate: "Apr 2024",
+              description: "Led research on dynamic knowledge tracing and managed the product build.",
+            },
+          ],
+        },
+      ],
+      writeBoth: async (args) => {
+        writes.push(args)
+      },
+      now: () => NOW,
+    },
+  )
+  assert.equal(result.status, "mirrored")
+  const write = writes[0] as {
+    experienceHighlights: Array<{ description?: string }>
+  }
+  assert.equal(
+    write.experienceHighlights[0]?.description,
+    "Led research on dynamic knowledge tracing and managed the product build.",
+  )
+})
+
+test("runCoresignalExperiencesMirror — does not copy unrelated resume descriptions by company only", async () => {
+  const writes: Array<unknown> = []
+  const result = await runCoresignalExperiencesMirror(
+    makeRecord({
+      experience: [
+        {
+          company: "Tesla",
+          title: "Senior Software Engineer",
+          startDate: "February 2026",
+        },
+      ],
+    }),
+    "uid-1",
+    {
+      findExistingForUser: async () => [
+        {
+          id: "resume-1",
+          source: "imessage-attachment",
+          experiences: [
+            {
+              company: "Tesla Inc.",
+              title: "Software Engineer Intern",
+              startDate: "May 2024",
+              endDate: "August 2024",
+              description: "Built CI/CD pipelines and migrated portfolio services onto Azure.",
+            },
+          ],
+        },
+      ],
+      writeBoth: async (args) => {
+        writes.push(args)
+      },
+      now: () => NOW,
+    },
+  )
+  assert.equal(result.status, "mirrored")
+  const write = writes[0] as {
+    parsedResumeDoc: { experiences: Array<{ description?: string | null }> }
+    experienceHighlights: Array<{ description?: string }>
+  }
+  assert.equal(write.experienceHighlights[0]?.description, undefined)
+  assert.equal(write.parsedResumeDoc.experiences[0]?.description, null)
+})
+
 test("runCoresignalExperiencesMirror — skips when source is not coresignal_collect_v2", async () => {
   const result = await runCoresignalExperiencesMirror(
     makeRecord({ source: "juicebox" }),
