@@ -716,9 +716,10 @@ export default function CandidateLogin() {
     setError(null)
     try {
       const verifySource = signupSourceForLoginNext(nextDest)
-      const verified = await verifyCandidateMagicLinkSession(
-        verifySource ? { source: verifySource } : undefined,
-      )
+      const verified = await verifyCandidateMagicLinkSession({
+        ...(verifySource ? { source: verifySource } : {}),
+        registrationEntryPath: nextDest.to,
+      })
       const destination = resolvePostLoginDestination(
         nextDest,
         verified.portalReady,
