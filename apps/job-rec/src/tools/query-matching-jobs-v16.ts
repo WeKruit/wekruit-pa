@@ -1038,9 +1038,24 @@ function companyStageIndex(stage: CompanyStage | undefined | null): number | nul
  * existing `companyMatchesStrictPreference` stage→preference mapping, but
  * expressed as an index band so the buffer-steps tolerance is uniform.
  */
-function userCompanyStageBand(tags: UserTags): { min: number; max: number } | null {
-  const size = tags.companySize
-  const idx = (s: CompanyStage): number => COMPANY_STAGE_ORDINAL.indexOf(s)
+/** Company-size tokens that mean "no constraint" (not a real band). */
+const COMPANY_SIZE_NO_CONSTRAINT = new Set(["open", "no_preference", "any", "unknown"])
+
+/**
+ * Normalize `tags.companySize` (scalar OR array — OR logic, Adam 2026-05-30) to a clean list of
+ * real size tokens. "small team or big tech" → ["early_startup","enterprise"]. Drops the
+ * no-constraint tokens (open/any). Back-compat: a legacy scalar companySize → single-element list.
+ */
+function companySizeList(tags: UserTags): string[] {
+  const cs = (tags as { companySize?: unknown }).companySize
+  const arr = Array.isArray(cs) ? cs : typeof cs === "string" ? [cs] : []
+  return arr
+    .filter((s): s is string => typeof s === "string")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s) => s.length > 0 && !COMPANY_SIZE_NO_CONSTRAINT.has(s))
+}
+
+function bandForSize(size: string, idx: (s: CompanyStage) => number): { min: number; max: number } | null {
   switch (size) {
     case "seed":
       return { min: idx("pre_seed"), max: idx("seed") }
@@ -1052,15 +1067,26 @@ function userCompanyStageBand(tags: UserTags): { min: number; max: number } | nu
       return { min: idx("series_c"), max: idx("private_mature") }
     case "enterprise":
       return { min: idx("ipo_public"), max: idx("private_mature") }
-    case "open":
-      return null
     default:
-      break
+      return null
   }
-  // Fall back to the boolean startup/bigtech preference.
-  if (tags.prefersStartup === "startup") return { min: idx("pre_seed"), max: idx("series_b") }
-  if (tags.prefersStartup === "bigtech") return { min: idx("ipo_public"), max: idx("private_mature") }
-  return null
+}
+
+/**
+ * §3.3 — the user's company-size preference as a SET of ordinal bands (OR logic). A candidate who
+ * said "small team or big tech" has two disjoint bands; a job's stage matches if it falls in ANY of
+ * them (never a single spanning band, which would wrongly include the gap). Empty → no preference
+ * (companyStageFit = 0.5 neutral, never a drop). Falls back to the boolean startup/bigtech pref.
+ */
+function userCompanyStageBands(tags: UserTags): Array<{ min: number; max: number }> {
+  const idx = (s: CompanyStage): number => COMPANY_STAGE_ORDINAL.indexOf(s)
+  const bands = companySizeList(tags)
+    .map((s) => bandForSize(s, idx))
+    .filter((b): b is { min: number; max: number } => b !== null)
+  if (bands.length > 0) return bands
+  if (tags.prefersStartup === "startup") return [{ min: idx("pre_seed"), max: idx("series_b") }]
+  if (tags.prefersStartup === "bigtech") return [{ min: idx("ipo_public"), max: idx("private_mature") }]
+  return []
 }
 
 /**
@@ -1075,14 +1101,18 @@ export function computeCompanyStageFit(
   companyStage: CompanyStage | undefined | null,
   bufferSteps: number,
 ): number {
-  const band = userCompanyStageBand(tags)
-  if (!band) return 0.5
+  const bands = userCompanyStageBands(tags)
+  if (bands.length === 0) return 0.5
   const stageIdx = companyStageIndex(companyStage)
   if (stageIdx === null) return 0.5 // unknown / non-fundable stage → neutral
-  if (stageIdx >= band.min && stageIdx <= band.max) return 1.0
-  const dist = stageIdx < band.min ? band.min - stageIdx : stageIdx - band.max
-  if (dist <= Math.max(0, bufferSteps)) return 0.6
-  return 0.2
+  // OR over the user's size bands — take the BEST fit (a job in ANY preferred band scores 1.0).
+  let best = 0.2
+  for (const band of bands) {
+    if (stageIdx >= band.min && stageIdx <= band.max) return 1.0
+    const dist = stageIdx < band.min ? band.min - stageIdx : stageIdx - band.max
+    if (dist <= Math.max(0, bufferSteps)) best = Math.max(best, 0.6)
+  }
+  return best
 }
 
 // ---------------------------------------------------------------------------
@@ -2415,20 +2445,35 @@ type StrictCompanyPreference =
   | "mid_market"
   | "enterprise"
 
-function strictCompanyPreference(userTags: UserTags): StrictCompanyPreference | null {
-  if (userTags.companySize === "open") return null
-  if (
-    userTags.companySize === "seed" ||
-    userTags.companySize === "early_startup" ||
-    userTags.companySize === "scale_up" ||
-    userTags.companySize === "mid_market" ||
-    userTags.companySize === "enterprise"
-  ) {
-    return userTags.companySize
+/**
+ * The user's company-size preferences as a SET (OR logic, Adam 2026-05-30) — normalizes the
+ * scalar-or-array `companySize` + the boolean `prefersStartup`. Empty → no constraint.
+ */
+function strictCompanyPreferences(userTags: UserTags): StrictCompanyPreference[] {
+  const out: StrictCompanyPreference[] = []
+  for (const s of companySizeList(userTags)) {
+    if (
+      s === "seed" || s === "early_startup" || s === "scale_up" || s === "mid_market" || s === "enterprise"
+    ) {
+      out.push(s)
+    }
   }
-  if (userTags.prefersStartup === "startup") return "startup"
-  if (userTags.prefersStartup === "bigtech") return "bigtech"
-  return null
+  // Explicit companySize wins (an OR set of real sizes); only fall back to the coarse boolean
+  // prefersStartup when no real size was named — mirrors userCompanyStageBands' precedence.
+  if (out.length > 0) return [...new Set(out)]
+  if (userTags.prefersStartup === "startup") return ["startup"]
+  if (userTags.prefersStartup === "bigtech") return ["bigtech"]
+  return []
+}
+
+/** OR: keep a job if it matches ANY of the user's size prefs (companyMatchesStrictPreference already
+ *  keeps not-in-corpus / unknown-stage companies, so this stays recall-safe). */
+function companyMatchesAnyPreference(
+  prefs: StrictCompanyPreference[],
+  info: LoadedCompanyInfo | undefined,
+): boolean {
+  if (prefs.length === 0) return true
+  return prefs.some((p) => companyMatchesStrictPreference(p, info))
 }
 
 function hasCompanyTag(info: LoadedCompanyInfo, tags: readonly string[]): boolean {
@@ -2990,16 +3035,16 @@ export async function queryMatchingJobsV16(
   //     adjacent stages lower instead. HARD → drop ONLY when the company has a
   //     REAL (non-unknown, in-pa-companies) stage outside band+buffer; unknown
   //     / not-in-pa-companies jobs are KEPT (spec §3.3).
-  const companyPreference = strictCompanyPreference(userTags)
+  const companyPreferences = strictCompanyPreferences(userTags)
   if (!preferenceHardnessEnabled) {
-    if (companyPreference && filteredJobs.length > 0) {
+    if (companyPreferences.length > 0 && filteredJobs.length > 0) {
       const before = filteredJobs.length
       filteredJobs = filteredJobs.filter((job) => {
         const companyInfo = companyInfoMap.get(normalizeCompanyName(job.companyName ?? ""))
-        return companyMatchesStrictPreference(companyPreference, companyInfo)
+        return companyMatchesAnyPreference(companyPreferences, companyInfo)
       })
       log("pa.match.company_preference_filter_applied", {
-        preference: companyPreference,
+        preference: companyPreferences,
         before,
         after: filteredJobs.length,
         dropped: before - filteredJobs.length,
@@ -3008,17 +3053,20 @@ export async function queryMatchingJobsV16(
   } else {
     const companyStageHardness = resolveHardness(userTags, "companyStage")
     if (companyStageHardness.hardness === "hard" && filteredJobs.length > 0) {
-      const band = userCompanyStageBand(userTags)
-      if (band) {
+      const bands = userCompanyStageBands(userTags)
+      if (bands.length > 0) {
         const before = filteredJobs.length
         filteredJobs = filteredJobs.filter((job) => {
           const companyInfo = companyInfoMap.get(normalizeCompanyName(job.companyName ?? ""))
           const stageIdx = companyStageIndex(companyInfo?.stage)
           // KEEP unknown / not-in-pa-companies / non-fundable stage.
           if (stageIdx === null) return true
-          if (stageIdx >= band.min && stageIdx <= band.max) return true
-          const dist = stageIdx < band.min ? band.min - stageIdx : stageIdx - band.max
-          if (dist <= Math.max(0, companyStageHardness.bufferSteps)) return true
+          // OR: keep if the stage is in ANY preferred band (+buffer).
+          for (const band of bands) {
+            if (stageIdx >= band.min && stageIdx <= band.max) return true
+            const dist = stageIdx < band.min ? band.min - stageIdx : stageIdx - band.max
+            if (dist <= Math.max(0, companyStageHardness.bufferSteps)) return true
+          }
           counters.companyStage++
           return false
         })

@@ -240,8 +240,18 @@ export const UserTagsSchema = z.object({
   preferredLang: z.enum(["zh", "en"]).optional(),
   /** Minimum acceptable salary collected from Level 1 follow-up; read by V16 salary fit. */
   minSalary: z.number().int().nonnegative().optional(),
-  /** Company-size preference collected from Level 1 follow-up. */
-  companySize: z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"]).optional(),
+  /**
+   * Company-size preference. OR logic (Adam 2026-05-30): a candidate can prefer MULTIPLE stages
+   * ("small team or big tech" → ["early_startup","enterprise"]), so this accepts an ARRAY as well as
+   * a legacy scalar. Readers normalize via `companySizeList` (matcher) — a scalar stays a 1-element
+   * preference, an array is matched OR.
+   */
+  companySize: z
+    .union([
+      z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"]),
+      z.array(z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"])),
+    ])
+    .optional(),
   /**
    * Workstream W3 (pre-launch matching hardening) — Phase 52 canonical
    * job-type tokens (10 enum). Promoted from a shadow field that V16 was
