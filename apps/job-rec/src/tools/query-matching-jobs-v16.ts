@@ -868,6 +868,49 @@ function isAnywhereLocation(tags: UserTags): boolean {
 }
 
 /**
+ * UNAMBIGUOUS non-US 2-letter country codes (the form scraped `locationRaw` uses, e.g. spate:
+ * "RS / RO / MD / BY / PL / CZ / HU / BG / SK / Remote"). Deliberately EXCLUDES codes that collide
+ * with US state abbreviations — CA (California≠Canada), MD (Maryland), DE (Delaware), IN (Indiana),
+ * GA, LA, MA, MO, OR, OK, etc. — so a US locationRaw is never mis-read as foreign. Canada/those
+ * countries are still caught by the full-name hints in isJobRegionLockedNonUs.
+ */
+const NON_US_COUNTRY_CODES_2 = new Set([
+  "rs", "ro", "by", "pl", "cz", "hu", "bg", "sk", "ua", "gb", "uk", "fr", "es", "it", "nl", "ie",
+  "cn", "jp", "kr", "sg", "au", "br", "mx", "ar", "hk", "pt", "gr", "lt", "lv", "ee", "si", "hr",
+  "ng", "ke", "za", "ae", "il", "tr", "ph", "vn", "th", "my", "rs", "cl", "co", "pe", "uy",
+])
+
+/**
+ * A job tagged remote_anywhere whose `locationRaw` clearly names a specific NON-US region (and no US
+ * signal) is region-LOCKED, not globally remote — its anywhere-bypass must be revoked so a US/city
+ * candidate doesn't match it (locked 2026-05-30: "matcher cross-checks locationRaw"; spate is
+ * remote_anywhere but RS/RO/MD/BY/PL/CZ/HU/BG/SK = Eastern Europe only). Conservative: fires only
+ * when a non-US signal is present AND no US signal — a generic "Remote"/"Worldwide" raw stays global.
+ */
+function isJobRegionLockedNonUs(job: MatchingJob): boolean {
+  const raw = (job.locationRaw ?? "").toLowerCase()
+  if (!raw) return false
+  const tokens = raw.split(/[/,;|]+/).map((t) => t.trim()).filter(Boolean)
+  let nonUs = false
+  let us = false
+  const US_NAME_HINTS = ["united states", "u.s.", "usa", "u.s.a"]
+  const US_REGION_HINTS = ["san francisco", "new york", "seattle", "los angeles", "boston", "chicago", "austin", "denver", "remote us", "remote united states"]
+  const NON_US_NAME_HINTS = [
+    "bulgaria", "serbia", "romania", "moldova", "belarus", "poland", "czech", "hungary", "slovakia",
+    "ukraine", "london", "united kingdom", "england", "ireland", "germany", "france", "spain", "india",
+    "china", "singapore", "japan", "korea", "australia", "brazil", "mexico", "argentina", "canada",
+    "netherlands", "amsterdam", "hong kong", "philippines", "vietnam", "thailand", "turkey", "israel",
+  ]
+  for (const tok of tokens) {
+    if (tok === "us" || tok === "usa" || US_NAME_HINTS.some((h) => tok.includes(h))) us = true
+    if (US_REGION_HINTS.some((h) => tok.includes(h))) us = true
+    if (NON_US_COUNTRY_CODES_2.has(tok)) nonUs = true
+    if (NON_US_NAME_HINTS.some((h) => tok.includes(h))) nonUs = true
+  }
+  return nonUs && !us
+}
+
+/**
  * EXPLICIT US-only: a deliberate COUNTRY statement — `targetCountry` = usa/us/united_states, OR a
  * country-level US token in `targetLocations` ("united states"/"us"/"usa"/"remote_united_states"/
  * "remote_us"). A bare US-CITY pick (san_francisco_bay_area / new_york_metro / …) does NOT count —
@@ -1025,7 +1068,14 @@ function jobLocationHits(tags: UserTags, job: MatchingJob): boolean {
   if (targetLocations.length === 0) return true // no constraint → always hits
   if (targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()))) return true
   const jobLocs = Array.isArray(job.locationBuckets) ? job.locationBuckets : []
-  if (jobLocs.some((l) => ANYWHERE_LOCATION_TOKENS.has(String(l).trim().toLowerCase()))) return true
+  // Job-side anywhere bypass — REVOKED when the job is region-locked non-US (locationRaw names a
+  // specific foreign region). A mis-tagged "remote_anywhere" Eastern-Europe role must not hit a
+  // ny/sf candidate (locked 2026-05-30).
+  if (
+    jobLocs.some((l) => ANYWHERE_LOCATION_TOKENS.has(String(l).trim().toLowerCase())) &&
+    !isJobRegionLockedNonUs(job)
+  )
+    return true
   const targetSet = new Set(targetLocations.map((l) => l.trim().toLowerCase()))
   for (const l of jobLocs) if (targetSet.has(String(l).trim().toLowerCase())) return true
   if (jobLocs.length === 0 || !job.locationBuckets) {
@@ -1366,9 +1416,12 @@ export function applyV16HardFilters(
     const locationSoft = phEnabled && hLocation?.hardness === "soft"
     if (!locationSoft && !options.relaxSpecificLocation && !isAnywhere && targetLocations.length > 0) {
       const jobLocs = Array.isArray(job.locationBuckets) ? job.locationBuckets : []
-      const jobIsAnywhere = jobLocs.some((l) =>
-        ANYWHERE_LOCATION_TOKENS.has(String(l).trim().toLowerCase())
-      )
+      // Region-locked non-US jobs (locationRaw cross-check) DON'T get the anywhere bypass — a
+      // mis-tagged remote_anywhere Eastern-Europe role must intersect the user's real locations,
+      // so a ny/sf candidate doesn't match it (locked 2026-05-30).
+      const jobIsAnywhere =
+        jobLocs.some((l) => ANYWHERE_LOCATION_TOKENS.has(String(l).trim().toLowerCase())) &&
+        !isJobRegionLockedNonUs(job)
       if (!jobIsAnywhere) {
         let hit = false
         for (const l of jobLocs) {
