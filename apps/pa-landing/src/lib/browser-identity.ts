@@ -129,6 +129,12 @@ export type OnboardingIntentState = {
   returnPath: string | null
 }
 
+export type RegistrationEntry = {
+  kind: "job_prescreen"
+  path: string
+  jobId: string
+}
+
 function splitAppPath(path: string): { pathname: string; search: string; to: string } {
   const q = path.indexOf("?")
   const pathname = (q >= 0 ? path.slice(0, q) : path) || "/onboarding"
@@ -240,6 +246,20 @@ export function deriveOnboardingIntentFromPath(
   return {
     intent: "generic_onboarding",
     returnPath: null,
+  }
+}
+
+export function deriveRegistrationEntryFromPath(
+  path: string | null | undefined,
+): RegistrationEntry | null {
+  const dest = parseLoginNextPath(path, onboardingDestination("candidate"))
+  if (!isPublicJobPath(dest.pathname)) return null
+  const jobId = dest.pathname.split("/")[2]?.trim()
+  if (!jobId) return null
+  return {
+    kind: "job_prescreen",
+    path: dest.to,
+    jobId,
   }
 }
 

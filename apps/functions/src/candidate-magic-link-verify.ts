@@ -13,6 +13,11 @@ export interface CandidateMagicLinkVerifyInput {
   firebaseIdToken?: string
   source?: string
   referralSlug?: string | null
+  registrationEntry?: {
+    kind?: unknown
+    path?: unknown
+    jobId?: unknown
+  } | null
   linkedinUrl?: string | null
   /** True when the Firebase session is from LinkedIn OAuth (custom token / li_* uid). */
   linkedinSignIn?: boolean
@@ -59,6 +64,49 @@ function cleanString(value: unknown, max: number): string | undefined {
   const trimmed = value.trim()
   if (!trimmed || trimmed.length > max) return undefined
   return trimmed
+}
+
+function cleanPublicJobPath(value: unknown): string | undefined {
+  const raw = cleanString(value, 512)
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return undefined
+  const pathname = raw.split("?")[0] ?? ""
+  if (!/^\/j\/[^/?#]+(?:\/cv)?$/.test(pathname)) return undefined
+  return raw
+}
+
+function jobIdFromPublicJobPath(path: string): string | undefined {
+  const pathname = path.split("?")[0] ?? ""
+  const match = /^\/j\/([^/?#]+)(?:\/cv)?$/.exec(pathname)
+  return cleanString(match?.[1], 240)
+}
+
+function hasSignupEntry(value: unknown): boolean {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      typeof (value as { kind?: unknown }).kind === "string" &&
+      typeof (value as { path?: unknown }).path === "string",
+  )
+}
+
+function parseSignupEntry(
+  input: CandidateMagicLinkVerifyInput["registrationEntry"],
+  source: string | undefined,
+  capturedAt: string,
+): Record<string, unknown> | null {
+  if (!input || typeof input !== "object") return null
+  if (cleanString(input.kind, 64) !== "job_prescreen") return null
+  const path = cleanPublicJobPath(input.path)
+  if (!path) return null
+  const jobId = jobIdFromPublicJobPath(path)
+  if (!jobId) return null
+  return {
+    kind: "job_prescreen",
+    path,
+    jobId,
+    ...(source ? { source } : {}),
+    capturedAt,
+  }
 }
 
 function bearerToken(authHeader: string | undefined): string | undefined {
@@ -223,17 +271,26 @@ export async function runCandidateMagicLinkVerify(
       })
     }
 
-    const mergeFields: Record<string, unknown> = { updatedAt: new Date().toISOString() }
+    const now = new Date().toISOString()
+    const existingUserSnap = await userRef.get()
+    const existingUserData = existingUserSnap.data() as Record<string, unknown> | undefined
+    const mergeFields: Record<string, unknown> = { updatedAt: now }
     if (source) {
       // First-write-sticky attribution: only stamp `source` if the pa-users
       // doc does not already carry a valid PaUserSource. Mirrors the
       // existingUserSource guard in public-cv-ingest.ts. Without this,
       // a returning user who magic-links via a different partner URL
       // would have their original attribution silently overwritten.
-      const existingUserSnap = await userRef.get()
-      const existingUserSource = (existingUserSnap.data() as { source?: unknown } | undefined)?.source
+      const existingUserSource = existingUserData?.source
       if (!isPaUserSource(existingUserSource)) {
         mergeFields.source = source
+      }
+    }
+    const signupEntry = parseSignupEntry(input.registrationEntry, source, now)
+    if (signupEntry) {
+      mergeFields.lastSignupEntry = signupEntry
+      if (!hasSignupEntry(existingUserData?.firstSignupEntry)) {
+        mergeFields.firstSignupEntry = signupEntry
       }
     }
     if (linkedinUrl) mergeFields.linkedinUrl = linkedinUrl

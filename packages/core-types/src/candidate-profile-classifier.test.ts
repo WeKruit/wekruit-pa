@@ -22,6 +22,25 @@ test("candidate profile classifier keeps real claimed iMessage candidates in sco
   assert.equal(isRealCandidateAccount(doc), true)
 })
 
+test("candidate profile classifier preserves public job as the initial signup source", () => {
+  const doc = {
+    id: "candidate-from-job",
+    email: "candidate@gmail.com",
+    phoneE164: "+14243201960",
+    candidateLifecycleState: "claimed",
+    firstSignupEntry: {
+      kind: "job_prescreen",
+      path: "/j/wekruit-37429d02-photon-macos-devops",
+      jobId: "wekruit-37429d02-photon-macos-devops",
+      source: "candidate",
+      capturedAt: "2026-05-30T00:00:00.000Z",
+    },
+  }
+  const source = deriveCandidateSource(doc)
+  assert.equal(source, "public_job")
+  assert.equal(classifyCandidateProfile(source, doc), "candidate_account")
+})
+
 test("candidate profile classifier excludes demo, synthetic, internal, external, and incomplete rows", () => {
   const cases = [
     {

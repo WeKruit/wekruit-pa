@@ -1,5 +1,9 @@
 import { auth } from "./firebase.js"
-import { getBrowserUid, rememberStoredValue } from "./browser-identity.js"
+import {
+  deriveRegistrationEntryFromPath,
+  getBrowserUid,
+  rememberStoredValue,
+} from "./browser-identity.js"
 import { isLinkedInSignIn } from "./candidate-auth-provider.js"
 import { clearReferralSlug, readReferralSlug } from "./referral.js"
 import { resolveSource } from "./source.js"
@@ -44,6 +48,7 @@ export async function verifyCandidateMagicLinkSession(options?: {
   source?: string
   referralSlug?: string | null
   linkedinUrl?: string | null
+  registrationEntryPath?: string | null
 }): Promise<{
   candidateId: string
   idempotent: boolean
@@ -61,6 +66,7 @@ export async function verifyCandidateMagicLinkSession(options?: {
   const idToken = await user.getIdToken(true)
   const linkedinSignIn = isLinkedInSignIn(user)
   const referralSlug = options?.referralSlug ?? readReferralSlug()
+  const registrationEntry = deriveRegistrationEntryFromPath(options?.registrationEntryPath)
   const res = await fetch(VERIFY_URL, {
     method: "POST",
     headers: {
@@ -75,6 +81,7 @@ export async function verifyCandidateMagicLinkSession(options?: {
       linkedinUrl: options?.linkedinUrl ?? null,
       linkedinSignIn,
       displayName: user.displayName ?? null,
+      registrationEntry,
     }),
   })
   const data = (await res.json().catch(() => ({}))) as {
