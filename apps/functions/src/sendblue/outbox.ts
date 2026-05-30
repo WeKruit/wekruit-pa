@@ -509,11 +509,17 @@ export async function paSendblueOutboxHandler(
         ? user.senderNumber.trim()
         : undefined
     const explicitFromNumber = outboundFromNumber ?? userSenderNumber
+    // Rec-card path — when the row carries a media_url, deliver as an iMessage
+    // image attachment with `body` as the caption. Text-only rows omit it and
+    // the send is byte-identical to the pre-card path.
+    const mediaUrl =
+      typeof data.mediaUrl === "string" && data.mediaUrl.trim() ? data.mediaUrl.trim() : undefined
     const response: SendblueSendResponse = await deps.sendblueClient.sendImessage({
       to: toPeer,
       content: body,
       userId,
       db: deps.db,
+      ...(mediaUrl ? { mediaUrl } : {}),
       ...(explicitFromNumber ? { fromNumber: explicitFromNumber } : {}),
       allowEnvFromNumberFallback: Boolean(explicitFromNumber),
     })

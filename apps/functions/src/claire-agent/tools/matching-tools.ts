@@ -55,6 +55,10 @@ import { parseResumeText } from "@pa/pa-resume-parser"
 import { queryMatchingJobsV16, recordRecommendedJobs } from "@pa/job-rec"
 import type { FeedbackEvent } from "@pa/core-types"
 import type { Firestore } from "firebase-admin/firestore"
+// Rec-card render→host→send side-channel (flag-gated, fail-open). maybeSendRecCard
+// internally no-ops when PA_JOB_REC_CARD_ENABLED is off and NEVER throws.
+import { maybeSendRecCard } from "../../job-rec-card/send-rec-card.js"
+import type { CardStorage } from "../../job-rec-card/upload-card.js"
 import {
   reduceMatchingPreferences,
   type MatchingTagsSlice,
@@ -215,9 +219,22 @@ export async function recordAgentPresentation(
  * ranked job as "Title @ Company\n<atsApplyUrl>" (the find-match line shape the
  * LLM relays to the user). NEVER throws — returns a grounded ok:false on error.
  */
+/**
+ * Optional injected deps for the rec-card render→host→send side-channel. Passed
+ * by cutover.ts ONLY when PA_JOB_REC_CARD_ENABLED is on and we are NOT in dryRun.
+ * Absent → makeV16FindMatch behaves exactly as before (text-only recs).
+ */
+export type V16FindMatchCardDeps = {
+  storage: CardStorage
+  getPhoneE164: (db: Firestore, userId: string) => Promise<string | null>
+  fromNumber?: string
+  log?: (event: string, payload?: Record<string, unknown>) => void
+}
+
 export function makeV16FindMatch(
   db: Firestore,
   opts?: { log?: ClaireToolContext["log"]; nowIso?: () => string },
+  cardDeps?: V16FindMatchCardDeps,
 ): ClaireToolContext["findMatch"] {
   const log: ClaireToolContext["log"] = opts?.log ?? (() => {})
   const nowIso = opts?.nowIso ?? (() => new Date().toISOString())
@@ -277,11 +294,59 @@ export function makeV16FindMatch(
             .catch((e) => log("pa.claire.find_match.first_batch_mark_failed", { err: String(e) }))
         }
       }
+
+      // Rec-card render→host→send side-channel (flag-gated, fail-open). Sends the
+      // TOP ranked job — which, on a first batch, is a curated WeKruit collab role
+      // — as a designed iMessage image attachment alongside Claire's text reply.
+      // maybeSendRecCard internally no-ops when PA_JOB_REC_CARD_ENABLED is off and
+      // NEVER throws — so a render/upload/enqueue hiccup can never break the
+      // find_match return contract (RC2): the text rec already covers the user.
+      if (cardDeps && rawJobs.length > 0) {
+        // `rawJobs` elements are the V16 `MatchingJob & { reason, ... }` projection;
+        // every field read below exists on that shape. CardJobSource fields are all
+        // optional, so any null/absent value just omits its card section.
+        const top = rawJobs[0]!
+        try {
+          await maybeSendRecCard({
+            userId,
+            jobId: top.id,
+            job: {
+              companyName: top.companyName,
+              jobTitle: top.jobTitle,
+              roleTitle: top.roleTitle,
+              seniorityLevel: top.seniorityLevel,
+              salaryMin: top.salaryMin,
+              salaryMax: top.salaryMax,
+              locationRaw: top.locationRaw,
+              jobType: top.jobType,
+              atsApplyUrl: top.atsApplyUrl,
+              primaryUrl: top.primaryUrl,
+              reason: top.reason,
+            },
+            deps: {
+              db,
+              storage: cardDeps.storage,
+              getPhoneE164: cardDeps.getPhoneE164,
+              ...(cardDeps.fromNumber ? { fromNumber: cardDeps.fromNumber } : {}),
+              log: cardDeps.log ?? log,
+            },
+          })
+        } catch {
+          /* fail-open — the text rec already covers the user */
+        }
+      }
+
+      // COLLAB MARKER (Adam 2026-05-30): on the FIRST batch a successful collab pass means EVERY
+      // returned role is a curated WeKruit partner role → tag each line so the agent fires the
+      // collab pitch (prescreen now → direct to the hiring manager). The prompt keys off this exact
+      // "[WeKruit partner role]" marker; open-market lines carry no marker (no fast-track promise).
+      const collabBatch = collabHit && !firstBatchDone
       const jobs = rawJobs.map((j) => {
         const title = (j.jobTitle || j.roleTitle || "Role").trim()
         const company = (j.companyName || "Company").trim()
         const url = (j.atsApplyUrl ?? "").trim()
-        return url ? `${title} @ ${company}\n${url}` : `${title} @ ${company}`
+        const head = collabBatch ? `${title} @ ${company} [WeKruit partner role]` : `${title} @ ${company}`
+        return url ? `${head}\n${url}` : head
       })
       const total = typeof result.total === "number" ? result.total : jobs.length
       const reason =

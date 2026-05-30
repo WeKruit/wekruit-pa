@@ -10,6 +10,12 @@ export type EnqueueOutboundInput = {
   fromNumber?: string
   imessageChatId?: string
   body: string
+  /**
+   * Optional image attachment URL. When present the Sendblue outbox sends the
+   * row as an iMessage image attachment (rec-card path) with `body` as the
+   * caption. Omitted → text-only send, unchanged.
+   */
+  mediaUrl?: string
   idempotencyKey: string
   runtimeApproved?: true
   runtimeSource?: string
@@ -56,6 +62,7 @@ export async function enqueueOutbound(
     ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}),
     ...(input.imessageChatId ? { imessageChatId: input.imessageChatId } : {}),
     body: input.body,
+    ...(input.mediaUrl ? { mediaUrl: input.mediaUrl } : {}),
     status: "pending",
     createdAt: now,
     idempotencyKey: input.idempotencyKey,

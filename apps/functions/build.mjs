@@ -10,7 +10,7 @@
 import { build } from "esbuild"
 import { fileURLToPath } from "node:url"
 import { dirname, resolve } from "node:path"
-import { mkdirSync, writeFileSync, existsSync, rmSync, copyFileSync } from "node:fs"
+import { mkdirSync, writeFileSync, existsSync, rmSync, copyFileSync, readdirSync } from "node:fs"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const outDir = resolve(__dirname, "lib")
@@ -21,6 +21,7 @@ const localPaOrchestratorEntry = resolve(
 )
 
 const mem0OptionalPeerModules = new Set([
+  "@azure/identity",
   "@azure/search-documents",
   "@google/genai",
   "@langchain/core/documents",
@@ -32,6 +33,7 @@ const mem0OptionalPeerModules = new Set([
   "cloudflare",
   "groq-sdk",
   "ollama",
+  "pg",
   "redis",
 ])
 
@@ -55,6 +57,8 @@ export const Document = MissingOptionalMem0Peer
 export const SearchClient = MissingOptionalMem0Peer
 export const SearchIndexClient = MissingOptionalMem0Peer
 export const AzureKeyCredential = MissingOptionalMem0Peer
+export const DefaultAzureCredential = MissingOptionalMem0Peer
+export const Pool = MissingOptionalMem0Peer
 export function createClient() {
   throw new Error("mem0 optional peer provider is not bundled in pa-functions-runtime")
 }
@@ -129,6 +133,13 @@ await build({
     // bundle <16MB.
     "@google-cloud/tasks",
     "@google-cloud/tasks/*",
+    // Rec-card renderer (2026-05-30) — @resvg/resvg-wasm ships an
+    // `index_bg.wasm` binary that esbuild cannot inline as a JS module; the
+    // render path resolves the .wasm at runtime via createRequire. Keep the
+    // package external so Cloud Build npm-installs it (and its .wasm) at
+    // deploy time, matching the pdf-parse / openai externalization pattern.
+    "@resvg/resvg-wasm",
+    "@resvg/resvg-wasm/*",
   ],
   legalComments: "none",
   logLevel: "info",
@@ -162,6 +173,9 @@ const runtimePackage = {
     "@openai/agents": "^0.8.5",
     // v1.5 Stream-D — Cloud Tasks SDK (externalized for bundle size).
     "@google-cloud/tasks": "^5.5.0",
+    // Rec-card renderer (2026-05-30) — externalized .wasm dep; Cloud Build
+    // installs it at deploy time. `satori` (pure JS) is bundled, not listed.
+    "@resvg/resvg-wasm": "^2.6.2",
   },
 }
 writeFileSync(
@@ -175,6 +189,22 @@ writeFileSync(resolve(outDir, ".npmrc"), "legacy-peer-deps=true\n")
 // it when the function cold-starts an empty Firestore.
 const seedSrc = resolve(repoRoot, "packages/agent-registry/src/seed.json")
 copyFileSync(seedSrc, resolve(outDir, "seed.json"))
+
+// Copy the rec-card font assets into the deploy bundle. render-card.ts
+// resolves them relative to its bundled module dir (`lib/`), probing
+// `lib/job-rec-card/assets/fonts`. Without this copy, satori has no fonts and
+// the card render fails (fail-open → text rec), so we ship them explicitly.
+const fontsSrc = resolve(__dirname, "src/job-rec-card/assets/fonts")
+if (existsSync(fontsSrc)) {
+  const fontsDest = resolve(outDir, "job-rec-card/assets/fonts")
+  mkdirSync(fontsDest, { recursive: true })
+  for (const f of readdirSync(fontsSrc)) {
+    if (f.endsWith(".ttf")) copyFileSync(resolve(fontsSrc, f), resolve(fontsDest, f))
+  }
+  console.log("[functions] copied rec-card fonts into deploy bundle")
+} else {
+  console.log("[functions] no rec-card fonts found at", fontsSrc, "(skipping)")
+}
 
 // Copy `.env` into the deploy bundle so Firebase Gen2 picks up
 // non-secret runtime env vars (PA_ADMIN_USER_IDS, etc). `.env` lives in

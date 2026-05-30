@@ -198,8 +198,57 @@ test("runCandidateListMatches recommends published jobs from parsed candidate ta
   assert.equal(result.matches[0]!.job.title, "Backend Engineer")
   assert.equal(result.matches[0]!.job.href, "/j/job-fit")
   assert.equal(result.matches[0]!.job.salaryRange, "$150k-$220k")
-  assert.match(result.matches[0]!.whyMatched.join(" "), /python|sql|software_engineering|financial_technology/)
+  // Adam directive 2026-05-30: the recommended reason is now the GROUNDED rich
+  // pitch (buildRichMatchReason over the live job + candidate tags), NOT the old
+  // weak `publicRecommendationScore` template. It cites the role at the company
+  // and the humanized industry — never raw snake_case, never "Matches your
+  // resume skills:".
+  const whyFit = result.matches[0]!.whyMatched.join(" ")
+  assert.match(whyFit, /Backend Engineer at Rain/)
+  assert.match(whyFit, /software engineering|financial technology/)
+  assert.doesNotMatch(whyFit, /Matches your resume skills:/i)
+  assert.doesNotMatch(whyFit, /Aligned with your target role area:/i)
+  assert.doesNotMatch(whyFit, /financial_technology/)
   assert.equal(result.matches.some((match) => match.jobId === "job-hidden"), false)
+})
+
+test("runCandidateListMatches surfaces the STORED grounded matchReason on a match card", async () => {
+  // Adam directive 2026-05-30: when the matcher persisted a grounded pitch on
+  // the candidate-job-match doc, /me surfaces it verbatim — preferred over the
+  // legacy `reasons` array, never the weak templates.
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
+    firebaseUid: "firebase-1",
+    candidateId: "cand-1",
+  })
+  await mfs.collection("pa-candidate-job-matches").doc("cand-1__job-helium").set({
+    matchId: "cand-1__job-helium",
+    candidateId: "cand-1",
+    jobId: "job-helium",
+    finalRank: 1,
+    // The legacy weak reasons co-exist on the doc — the STORED grounded pitch
+    // must win.
+    reasons: ["Matches your resume skills: react, typescript."],
+    matchReason:
+      "Full-Stack Engineer at Helium — your React/TS background fits the stack, and it leans into the comp + early equity you said matter most.",
+  })
+  await mfs.collection("pa-jobs").doc("job-helium").set({
+    publicVisible: true,
+    prescreenConfig: { jobTitle: "Full-Stack Engineer", company: "Helium" },
+  })
+
+  const result = await runCandidateListMatches(
+    { limit: 10 },
+    { uid: "firebase-1" },
+    { db: asFirestore(mfs) }
+  )
+
+  assert.equal(result.matches.length, 1)
+  assert.deepEqual(result.matches[0]!.whyMatched, [
+    "Full-Stack Engineer at Helium — your React/TS background fits the stack, and it leans into the comp + early equity you said matter most.",
+  ])
+  // The legacy weak template on the same doc is never surfaced.
+  assert.doesNotMatch(JSON.stringify(result), /Matches your resume skills:/i)
 })
 
 test("runCandidateListMatches maps employer visible state to candidate passed", async () => {

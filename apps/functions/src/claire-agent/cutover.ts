@@ -81,6 +81,32 @@ export async function maybeRunThinClaire(
   }
 
   try {
+    // Rec-card render→host→send side-channel deps (flag-gated, fail-open).
+    // Built ONLY when PA_JOB_REC_CARD_ENABLED is on AND we are NOT in dryRun
+    // (evals must not touch real Storage). makeV16FindMatch no-ops without these
+    // deps, and maybeSendRecCard re-checks the flag internally — so on any
+    // init failure we fall through to text-only recs, never blocking delivery.
+    let cardDeps: import("./tools/matching-tools.js").V16FindMatchCardDeps | undefined
+    if (!deps.dryRun && toE164) {
+      try {
+        const { isJobRecCardEnabled } = await import("../job-rec-card/job-rec-card.js")
+        if (isJobRecCardEnabled()) {
+          const { getStorage } = await import("firebase-admin/storage")
+          const resolvedPhone = String(toE164)
+          cardDeps = {
+            storage: getStorage() as unknown as import("../job-rec-card/upload-card.js").CardStorage,
+            getPhoneE164: async () => resolvedPhone,
+            log,
+          }
+        }
+      } catch (cardErr) {
+        // Non-fatal — fall through to text-only recs.
+        log("rec_card.deps_init_failed", {
+          error: cardErr instanceof Error ? cardErr.message : String(cardErr),
+        })
+      }
+    }
+
     const transport = createSendblueTransport({
       db,
       toE164: String(toE164),
@@ -108,7 +134,8 @@ export async function maybeRunThinClaire(
       {
         db,
         transport,
-        findMatch: makeV16FindMatch(db),
+        // 3rd arg = rec-card deps (undefined unless the flag is on + not dryRun).
+        findMatch: makeV16FindMatch(db, undefined, cardDeps),
         log,
         mode: decision.mode,
         ...(decision.pendingStep ? { pendingStep: decision.pendingStep } : {}),

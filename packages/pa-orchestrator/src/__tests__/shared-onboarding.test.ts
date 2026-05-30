@@ -37,16 +37,22 @@ test("job interview opener binds the inbound phone to the candidate id", () => {
   )
 })
 
-test("shared onboarding asks the five conversational questions in launch order", () => {
+test("shared onboarding asks the six conversational questions in launch order", () => {
   assert.deepEqual(SHARED_ONBOARDING_QUESTIONS.map((q) => q.id), [
     "main_goal",
     "culture_stage",
     "industry_interest",
     "location_relocation",
+    "seniority_comp",
     "special_context",
   ])
   assert.match(getSharedOnboardingQuestion("main_goal").prompt, /career growth, compensation, stability, mission, learning/i)
   assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote, onsite, or relocating/i)
+  // seniority_comp (Adam 2026-05-30): one warm question covering intern-vs-full-time +
+  // seniority + expected salary + whether those are negotiable or firm.
+  assert.match(getSharedOnboardingQuestion("seniority_comp").prompt, /internships or full-time/i)
+  assert.match(getSharedOnboardingQuestion("seniority_comp").prompt, /salary/i)
+  assert.match(getSharedOnboardingQuestion("seniority_comp").prompt, /flexible\/negotiable or pretty firm/i)
   assert.match(getSharedOnboardingQuestion("special_context").prompt, /non-negotiables/i)
   assert.doesNotMatch(
     getSharedOnboardingQuestion("special_context").prompt,
@@ -261,12 +267,20 @@ test("live-bug capture fix: Q4 open-to-anything → anywhere bypass on both axes
   assert.equal(salary.tags.minSalary, 120000)
 })
 
-test("recommendations become eligible only after Q5 is collected", () => {
+test("recommendations become eligible only after the final slot is collected", () => {
+  // main_goal still hands off to culture_stage (indices 0→1 unchanged).
   assert.deepEqual(resolveNextSharedOnboardingQuestionId("main_goal"), {
     nextQuestionId: "culture_stage",
     completed: false,
     shouldRecommend: false,
   })
+  // location_relocation now hands off to the new seniority_comp slot (Adam 2026-05-30).
+  assert.deepEqual(resolveNextSharedOnboardingQuestionId("location_relocation"), {
+    nextQuestionId: "seniority_comp",
+    completed: false,
+    shouldRecommend: false,
+  })
+  // special_context remains the terminal slot — completing it unlocks recs.
   assert.deepEqual(resolveNextSharedOnboardingQuestionId("special_context"), {
     nextQuestionId: null,
     completed: true,

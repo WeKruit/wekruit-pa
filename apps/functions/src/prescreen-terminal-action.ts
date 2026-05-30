@@ -254,11 +254,36 @@ async function defaultGenerateJobRecs(args: {
     { db, log: () => undefined }
   )
   if (sendRes.ok) {
+    const { buildRichMatchReason } = await import("@pa/job-rec")
+    const candidateTagsForReason =
+      userTagsForJobRec && typeof userTagsForJobRec === "object"
+        ? (userTagsForJobRec as Record<string, unknown>)
+        : undefined
     await recordRecommendedJobs(
       db,
       {
         userId: args.userId,
-        jobs: items.map((item) => item.sourceJob),
+        // Persist the grounded "why matched" pitch so /me/matches reads the GOOD
+        // reason rather than recomputing weak templates.
+        jobs: items.map((item) => {
+          const sourceJob = item.sourceJob as Record<string, unknown>
+          let matchReason: string | undefined
+          if (candidateTagsForReason) {
+            try {
+              matchReason = buildRichMatchReason({
+                candidate: candidateTagsForReason,
+                job: sourceJob,
+                matchedSkills:
+                  (sourceJob.matchedSkills as Array<{ name?: string }> | undefined) ?? [],
+                breakdown: sourceJob.v16Score as Record<string, unknown> | undefined,
+                lang: "en",
+              })
+            } catch {
+              matchReason = undefined
+            }
+          }
+          return { ...sourceJob, ...(matchReason ? { matchReason } : {}) }
+        }),
         source: "prescreen_terminal_action",
       },
       () => undefined,

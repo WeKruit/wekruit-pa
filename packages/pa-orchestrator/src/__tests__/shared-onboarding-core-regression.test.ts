@@ -28,7 +28,8 @@ describe("resolveNextMissingSharedOnboardingQuestionId (#3 ask-only-missing)", (
   it("skips industry_interest + location_relocation when extract-first already captured them", () => {
     // After culture_stage, the positional resolver would ask industry_interest next.
     // But extract-first captured industrySector + targetLocations out-of-slot → skip
-    // both → next missing slot is special_context (the re-ask loop, eliminated).
+    // both → next missing slot is seniority_comp (the new dedicated seniority/comp slot,
+    // which the chat extractor can't auto-satisfy), then special_context.
     const tags = {
       industrySector: ["financial_technology", "artificial_intelligence_and_machine_learning"],
       targetLocations: ["new_york", "remote"],
@@ -36,7 +37,7 @@ describe("resolveNextMissingSharedOnboardingQuestionId (#3 ask-only-missing)", (
     const positional = resolveNextSharedOnboardingQuestionId("culture_stage")
     assert.equal(positional.nextQuestionId, "industry_interest") // old behavior re-asks
     const missing = resolveNextMissingSharedOnboardingQuestionId("culture_stage", tags, null)
-    assert.equal(missing.nextQuestionId, "special_context") // skips both filled slots
+    assert.equal(missing.nextQuestionId, "seniority_comp") // skips both filled slots → next unfilled
   })
 
   it("does not skip slots the chat extractor cannot fill (main_goal / culture_stage always asked)", () => {
@@ -234,7 +235,8 @@ describe("shared onboarding core (router / state / judges) — flag-invariant", 
       { from: "main_goal", next: "culture_stage" },
       { from: "culture_stage", next: "industry_interest" },
       { from: "industry_interest", next: "location_relocation" },
-      { from: "location_relocation", next: "special_context" },
+      { from: "location_relocation", next: "seniority_comp" },
+      { from: "seniority_comp", next: "special_context" },
       { from: "special_context", next: null },
     ]
     for (const step of expected) {

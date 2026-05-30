@@ -411,6 +411,20 @@ function makeGenerateJobRecs(): NonNullable<
               keyPrefix: rawKey.slice(0, 5),
             })
           }
+          // Stated-priority + seniority signals from the candidate's tags so the
+          // nuanced reason can land the "leans into the comp + equity you said
+          // matter most" angle Adam flagged as missing (2026-05-30).
+          const tagsForReason =
+            userTagsForJobRec && typeof userTagsForJobRec === "object"
+              ? (userTagsForJobRec as Record<string, unknown>)
+              : undefined
+          const candidatePriorities = Array.isArray(tagsForReason?.targetCompanyTags)
+            ? (tagsForReason!.targetCompanyTags as unknown[]).filter(
+                (t): t is string => typeof t === "string" && t.trim().length > 0,
+              )
+            : []
+          const candidateSeniority =
+            typeof tagsForReason?.careerStage === "string" ? tagsForReason!.careerStage : null
           const reasons = await Promise.all(
             visibleItems.map((item) =>
               composeNuancedReason(
@@ -427,9 +441,24 @@ function makeGenerateJobRecs(): NonNullable<
                       : null,
                     seniorityLevel: (item.sourceJob as { seniorityLevel?: string | null }).seniorityLevel ?? null,
                     jobDescription: (item.sourceJob as { jobDescription?: string | null }).jobDescription ?? null,
+                    companyStage:
+                      (item.sourceJob as { companySize?: string | null; companyStage?: string | null }).companyStage ??
+                      (item.sourceJob as { companySize?: string | null }).companySize ??
+                      null,
+                    industry: Array.isArray((item.sourceJob as { industrySector?: string[] }).industrySector)
+                      ? (item.sourceJob as { industrySector?: string[] }).industrySector!
+                      : Array.isArray((item.sourceJob as { industryEnum?: string[] }).industryEnum)
+                        ? (item.sourceJob as { industryEnum?: string[] }).industryEnum!
+                        : null,
+                    location:
+                      (item.sourceJob as { locationRaw?: string | null; location?: string | null }).locationRaw ??
+                      (item.sourceJob as { location?: string | null }).location ??
+                      null,
                   },
                   matchedSkills:
                     (item.sourceJob as { matchedSkills?: Array<{ name: string; proficiency?: string }> }).matchedSkills ?? [],
+                  candidatePriorities,
+                  candidateSeniority,
                 },
                 {
                   openaiApiKey: openaiKey,
@@ -558,7 +587,16 @@ function makeGenerateJobRecs(): NonNullable<
         db,
         {
           userId,
-          jobs: messageItems.map((item) => item.sourceJob),
+          // Persist the grounded "why matched" pitch alongside each rec so the
+          // /me/matches API reads the GOOD reason rather than recomputing weak
+          // templates. messageItems[i].reason is the LLM nuanced reason
+          // ("why: …") or the V16 fallback; recordRecommendedJobs strips the
+          // "why:" prefix + length-caps. (The per-job `matchReason` field is
+          // distinct from the args-level `reason` ledger label below.)
+          jobs: messageItems.map((item) => ({
+            ...item.sourceJob,
+            ...(item.reason ? { matchReason: item.reason } : {}),
+          })),
           source: "runtime_job_search_reply",
           reason: recommendationReason,
         },

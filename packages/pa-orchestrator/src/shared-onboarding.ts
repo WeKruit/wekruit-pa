@@ -23,6 +23,7 @@ export type SharedOnboardingQuestionId =
   | "culture_stage"
   | "industry_interest"
   | "location_relocation"
+  | "seniority_comp"
   | "special_context"
 
 export type SharedOnboardingQuestion = {
@@ -97,6 +98,18 @@ export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = 
     label: "location and relocation",
     prompt:
       "Where do you want to work, and are you open to remote, onsite, or relocating to another city?",
+  },
+  {
+    // Adam 2026-05-30: one warm question covering target level (intern vs
+    // full-time + entry/junior/mid/senior) AND expected/target salary, AND
+    // whether each is flexible/negotiable or firm. The record_onboarding_answer
+    // tool extracts careerStage / targetJobType / minSalary + per-axis
+    // preferenceHardness (hard vs soft + buffer) from this free-text reply — we
+    // only define the slot + prompt here (no extraction logic in this file).
+    id: "seniority_comp",
+    label: "seniority level and expected salary",
+    prompt:
+      "Are you targeting internships or full-time roles (and roughly what level — entry, junior, mid, or senior), and what salary are you aiming for? Also, are those flexible/negotiable or pretty firm?",
   },
   {
     id: "special_context",
@@ -208,6 +221,9 @@ function sharedJudgeHints(questionId: SharedOnboardingQuestionId): string[] {
   if (questionId === "location_relocation") {
     return ["remote", "onsite", "hybrid", "new_york", "san_francisco", "seattle", "relocation_open", "no_relocation"]
   }
+  if (questionId === "seniority_comp") {
+    return ["internship", "full_time", "entry", "junior", "mid", "senior", "salary_target", "negotiable", "firm"]
+  }
   return ["constraints", "strengths", "dealbreakers", "timing", "visa", "none"]
 }
 
@@ -234,6 +250,12 @@ function sharedJudgeExamples(questionId: SharedOnboardingQuestionId): Array<{ re
     return [
       { reply: "NYC or remote, open to Seattle", value: "NYC, remote, open to Seattle", confidence: 0.95 },
       { reply: "Bay Area onsite is fine, not relocating", value: "Bay Area onsite, not relocating", confidence: 0.95 },
+    ]
+  }
+  if (questionId === "seniority_comp") {
+    return [
+      { reply: "full-time mid-level, aiming for ~160k but flexible", value: "full-time mid-level, ~160k target, flexible", confidence: 0.95 },
+      { reply: "summer internship, 40/hr is firm for me", value: "internship, 40/hr, firm", confidence: 0.95 },
     ]
   }
   return [

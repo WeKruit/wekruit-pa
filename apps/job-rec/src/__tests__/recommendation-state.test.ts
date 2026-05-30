@@ -103,3 +103,99 @@ test("recordRecommendedJobs: no-op for blank userId / empty job list", async () 
   await recordRecommendedJobs(asFirestore(mfs), { userId: "u", jobs: [{ id: "" }], source: "s" })
   assert.equal(mfs.writeLog.length, 0)
 })
+
+// ── matchReason persistence (2026-05-30) — the grounded "why matched" pitch ──
+
+test("recordRecommendedJobs persists the per-job matchReason on the rec ledger", async () => {
+  const mfs = new MockFirestore()
+  await recordRecommendedJobs(asFirestore(mfs), {
+    userId: "cand-1",
+    jobs: [
+      {
+        id: "job-1",
+        matchReason:
+          "Full-stack role at an early-stage SF startup — your React/TS background fits the stack.",
+      },
+      { id: "job-2", reason: "why: Your Tesla backend maps to this Stripe full-stack scale." },
+      { id: "job-3" }, // no reason at all
+    ],
+    source: "runtime_job_search_reply",
+    nowIso: "2026-05-30T12:00:00.000Z",
+  })
+
+  const d1 = ledgerDoc(mfs, "cand-1", "job-1")!
+  const d2 = ledgerDoc(mfs, "cand-1", "job-2")!
+  const d3 = ledgerDoc(mfs, "cand-1", "job-3")!
+
+  // Explicit matchReason persisted verbatim.
+  assert.equal(
+    d1.matchReason,
+    "Full-stack role at an early-stage SF startup — your React/TS background fits the stack.",
+  )
+  // V16 `reason` field used as fallback, with the legacy "why: " prefix stripped.
+  assert.equal(d2.matchReason, "Your Tesla backend maps to this Stripe full-stack scale.")
+  // No reason → field omitted (not written as empty / undefined).
+  assert.equal("matchReason" in d3, false)
+
+  // Bookkeeping still works.
+  assert.equal(d1.recommendationCount, 1)
+  assert.equal(d1.lastRecommendedSource, "runtime_job_search_reply")
+})
+
+test("recordRecommendedJobs does not overwrite a stored reason with nothing on re-record", async () => {
+  const mfs = new MockFirestore()
+  // First record carries the reason.
+  await recordRecommendedJobs(asFirestore(mfs), {
+    userId: "cand-1",
+    jobs: [{ id: "job-1", matchReason: "Senior backend role in fintech — your Python + SQL fit." }],
+    source: "job_rec_daily_batch",
+    nowIso: "2026-05-30T08:00:00.000Z",
+  })
+  // Second record (e.g. a later push that lost the reason) must keep the old one.
+  await recordRecommendedJobs(asFirestore(mfs), {
+    userId: "cand-1",
+    jobs: [{ id: "job-1" }],
+    source: "job_rec_daily_batch",
+    nowIso: "2026-05-31T08:00:00.000Z",
+  })
+
+  const d1 = ledgerDoc(mfs, "cand-1", "job-1")!
+  assert.equal(d1.matchReason, "Senior backend role in fintech — your Python + SQL fit.")
+  assert.equal(d1.recommendationCount, 2)
+})
+
+test("loadRecommendedJobStates surfaces the stored matchReason", async () => {
+  const mfs = new MockFirestore()
+  await recordRecommendedJobs(asFirestore(mfs), {
+    userId: "cand-1",
+    jobs: [
+      {
+        id: "job-1",
+        matchReason: "Early-stage product role — your stack + the equity you want both line up.",
+      },
+    ],
+    source: "runtime_job_search_reply",
+    nowIso: "2026-05-30T12:00:00.000Z",
+  })
+  const states = await loadRecommendedJobStates(asFirestore(mfs), "cand-1", ["job-1"])
+  assert.equal(
+    states.get("job-1")?.matchReason,
+    "Early-stage product role — your stack + the equity you want both line up.",
+  )
+})
+
+test("recordRecommendedJobs rejects too-short / non-string reasons", async () => {
+  const mfs = new MockFirestore()
+  await recordRecommendedJobs(asFirestore(mfs), {
+    userId: "cand-1",
+    jobs: [
+      { id: "job-1", matchReason: "ok" }, // < 8 chars → dropped
+      { id: "job-2", matchReason: 12345 as unknown as string }, // non-string → dropped
+    ],
+    source: "runtime_job_search_reply",
+  })
+  const d1 = ledgerDoc(mfs, "cand-1", "job-1")!
+  const d2 = ledgerDoc(mfs, "cand-1", "job-2")!
+  assert.equal("matchReason" in d1, false)
+  assert.equal("matchReason" in d2, false)
+})

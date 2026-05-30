@@ -394,6 +394,13 @@ export const OutboundMessageSchema = z.object({
   /** Optional iMessage chat id for transport routing. */
   imessageChatId: z.string().optional(),
   body: z.string(),
+  /**
+   * Optional image attachment URL. When present, the Sendblue outbox delivers
+   * the row as an iMessage image attachment (the rec-card render→host→send
+   * path) with `body` as the caption. Text-only rows omit this field and the
+   * send is byte-identical to the pre-card path.
+   */
+  mediaUrl: z.string().optional(),
   status: OutboundStatusSchema,
   createdAt: z.string(),
   createdBy: z.string().optional(),
