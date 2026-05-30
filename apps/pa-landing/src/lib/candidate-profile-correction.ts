@@ -62,7 +62,7 @@ export interface CandidateSelfProfile {
   handles?: Array<{ kind: string; verifiedAt?: string | null; source?: string }>
   globalTags?: {
     roleFunction?: string[]
-    skills?: string[]
+    skills?: Array<string | { name?: string; label?: string; token?: string; value?: string }>
     industrySector?: string[]
     targetLocations?: string[]
     targetJobType?: string[]

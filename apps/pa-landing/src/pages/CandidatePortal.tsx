@@ -414,10 +414,24 @@ const TAG_ACRONYMS = new Set([
   "ceo", "cto", "cfo", "b2b", "b2c", "sdk", "ar", "vr", "iot", "ev", "gtm",
 ])
 
-export function formatProfileValue(value: string): string {
-  const key = value.trim().toLowerCase()
+function profileValueText(value: unknown): string {
+  if (typeof value === "string") return value
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>
+    for (const key of ["name", "label", "token", "value"]) {
+      const candidate = record[key]
+      if (typeof candidate === "string" && candidate.trim()) return candidate
+    }
+  }
+  return ""
+}
+
+export function formatProfileValue(value: unknown): string {
+  const raw = profileValueText(value)
+  const key = raw.trim().toLowerCase()
+  if (!key) return ""
   if (TAG_LABEL_OVERRIDES[key]) return TAG_LABEL_OVERRIDES[key]
-  return value
+  return raw
     .replace(/_and_/g, " & ")
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
@@ -449,9 +463,9 @@ function deriveHeadline(profile: CandidateSelfProfile): string | null {
   return null
 }
 
-function joinTags(values: string[] | undefined, max = 3, sep = " · "): string {
+function joinTags(values: readonly unknown[] | undefined, max = 3, sep = " · "): string {
   if (!values || values.length === 0) return ""
-  return values.slice(0, max).map(formatProfileValue).join(sep)
+  return values.map(formatProfileValue).filter(Boolean).slice(0, max).join(sep)
 }
 
 type ConnectorRow = {
@@ -2348,7 +2362,7 @@ function experienceMeta(experience: NonNullable<CandidateSelfProfile["experience
 }
 
 function SkillsCard({ profile, editing }: { profile: CandidateSelfProfile; editing: boolean }) {
-  const skills = profile.globalTags?.skills ?? []
+  const skills = (profile.globalTags?.skills ?? []).map(formatProfileValue).filter(Boolean)
   if (skills.length === 0 && !editing) {
     return (
       <section className="wkv2-card wk-prof-card">
@@ -2366,7 +2380,7 @@ function SkillsCard({ profile, editing }: { profile: CandidateSelfProfile; editi
       <div className="wkv2-prof__skills wk-prof-skills">
         {skills.map((s) => (
           <span key={s} className="wkv2-prof__skill wk-prof-skill">
-            {formatProfileValue(s)}
+            {s}
           </span>
         ))}
         {editing ? (
