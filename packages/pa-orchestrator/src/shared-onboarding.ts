@@ -111,7 +111,7 @@ export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = 
     id: "location_relocation",
     label: "location and relocation",
     prompt:
-      "Where do you want to work, and are you open to remote, onsite, or relocating to another city?",
+      "We're US-only right now — where in the US do you want to work, and are you open to remote within the US, onsite, or relocating to another US city?",
   },
   {
     // Adam 2026-05-30: one warm question covering target level (intern vs
@@ -718,7 +718,9 @@ export function buildSharedOnboardingPrompt(
   if (id === "location_relocation") {
     const location = locationSummary(ctx)
     const lead = location ? `I see ${location}. ` : ""
-    return `${lead}Where should I look next: specific cities, remote, onsite, or open to relocating?`
+    // US-only scope stated ON the question (Adam 2026-05-30): WeKruit operates only in the US, so the
+    // location ASK itself must say so — don't make the candidate volunteer a city we can't serve.
+    return `${lead}We're US-only right now — where in the US should I look: specific cities, remote within the US, onsite, or open to relocating?`
   }
   return question.prompt
 }

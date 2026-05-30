@@ -623,7 +623,8 @@ test("shared onboarding answer writes memory/tags and waits until Q5 before job 
   )
   assert.equal(recCalls.length, 0, "job recs must wait until Q5 is collected")
   assert.match(captures.outboundBodies[0] ?? "", /New York, NY/i)
-  assert.match(captures.outboundBodies[0] ?? "", /Where should I look next/i)
+  // US-only scope now stated ON the location question (Adam 2026-05-30).
+  assert.match(captures.outboundBodies[0] ?? "", /where in the US should I look/i)
 
   docs.set("pa-users/u-onb", {
     ...(docs.get("pa-users/u-onb") ?? {}),
