@@ -101,6 +101,64 @@ function normalizeLinkedinProfileUrl(value: unknown): string | undefined {
   return normalizeOptionalUrl(value)
 }
 
+function legacyLinkedinOauthProfile(
+  marketplaceFields: CandidateProfileMarketplaceFields | undefined,
+  ts: string
+): Record<string, unknown> | undefined {
+  if (marketplaceFields?.linkedinOauthProfile) return marketplaceFields.linkedinOauthProfile
+  const raw = (marketplaceFields ?? {}) as Record<string, unknown>
+  if (raw.linkedinOauthLinked !== true) return undefined
+  const email = typeof raw.linkedinOauthEmail === "string" ? raw.linkedinOauthEmail : undefined
+  return stripUndefined({
+    connectedAt: typeof raw.linkedinOauthConnectedAt === "string" ? raw.linkedinOauthConnectedAt : ts,
+    name: typeof raw.linkedinOauthName === "string" ? raw.linkedinOauthName : undefined,
+    pictureUrl: normalizeOptionalUrl(raw.linkedinOauthPicture),
+    emailMasked: email ? maskEmail(email.trim().toLowerCase()) : undefined,
+  })
+}
+
+function githubLoginFromUrl(value: unknown): string | undefined {
+  const url = normalizeOptionalUrl(value)
+  if (!url) return undefined
+  try {
+    const parsed = new URL(url)
+    if (!/github\.com$/i.test(parsed.hostname)) return undefined
+    const login = parsed.pathname.split("/").filter(Boolean)[0]
+    return login || undefined
+  } catch {
+    return undefined
+  }
+}
+
+function legacyGithubOauthProfile(
+  marketplaceFields: CandidateProfileMarketplaceFields | undefined,
+  ts: string
+): Record<string, unknown> | undefined {
+  if (marketplaceFields?.githubOauthProfile) return marketplaceFields.githubOauthProfile
+  const raw = (marketplaceFields ?? {}) as Record<string, unknown>
+  if (raw.githubOauthLinked !== true && !raw.githubHandle && !raw.githubUrl) return undefined
+  const email = typeof raw.githubOauthEmail === "string" ? raw.githubOauthEmail : undefined
+  return stripUndefined({
+    connectedAt: typeof raw.githubOauthConnectedAt === "string" ? raw.githubOauthConnectedAt : ts,
+    login:
+      typeof raw.githubHandle === "string" && raw.githubHandle.trim()
+        ? raw.githubHandle.trim()
+        : githubLoginFromUrl(raw.githubUrl),
+    name: typeof raw.githubOauthName === "string" ? raw.githubOauthName : undefined,
+    url: normalizeOptionalUrl(raw.githubUrl),
+    avatarUrl: normalizeOptionalUrl(raw.githubOauthAvatar),
+    emailMasked: email ? maskEmail(email.trim().toLowerCase()) : undefined,
+  })
+}
+
+function githubPublicReposFromMarketplace(
+  marketplaceFields: CandidateProfileMarketplaceFields | undefined
+): unknown {
+  if (marketplaceFields?.githubPublicRepos?.length) return marketplaceFields.githubPublicRepos
+  const raw = (marketplaceFields ?? {}) as Record<string, unknown>
+  return Array.isArray(raw.githubPublicRepos) ? raw.githubPublicRepos : undefined
+}
+
 async function writeAppendOnlyDoc<T>(
   db: Firestore,
   collectionName: string,
@@ -495,10 +553,10 @@ export async function writeCandidateSelfProfile(
     profileSummary: input.profileSummary || undefined,
     globalTags: input.marketplaceFields?.globalTags,
     linkedinUrl: normalizeLinkedinProfileUrl(input.marketplaceFields?.linkedinUrl),
-    linkedinOauthProfile: input.marketplaceFields?.linkedinOauthProfile,
+    linkedinOauthProfile: legacyLinkedinOauthProfile(input.marketplaceFields, ts),
     githubUrl: normalizeOptionalUrl(input.marketplaceFields?.githubUrl),
-    githubOauthProfile: input.marketplaceFields?.githubOauthProfile,
-    githubPublicRepos: input.marketplaceFields?.githubPublicRepos,
+    githubOauthProfile: legacyGithubOauthProfile(input.marketplaceFields, ts),
+    githubPublicRepos: githubPublicReposFromMarketplace(input.marketplaceFields),
     calcomUrl: normalizeOptionalUrl(input.marketplaceFields?.calcomUrl),
     createdAt: ts,
     updatedAt: ts,
@@ -508,6 +566,41 @@ export async function writeCandidateSelfProfile(
     .doc(input.candidateId)
     .set(stripUndefined(profile as unknown as Record<string, unknown>), { merge: true })
   return profile
+}
+
+async function loadCandidateSelfProfileHandles(
+  db: Firestore,
+  candidateId: string
+): Promise<Array<Pick<CandidateHandle, "kind" | "verifiedAt" | "source">>> {
+  const snap = await db
+    .collection(PA_COLLECTIONS.candidateHandles)
+    .where("candidateId", "==", candidateId)
+    .limit(100)
+    .get()
+  const byKind = new Map<CandidateHandleKind, Pick<CandidateHandle, "kind" | "verifiedAt" | "source">>()
+  for (const doc of snap.docs) {
+    const handle = CandidateHandleSchema.parse(doc.data())
+    byKind.set(handle.kind, {
+      kind: handle.kind,
+      verifiedAt: handle.verifiedAt,
+      source: handle.source,
+    })
+  }
+  const order: CandidateHandleKind[] = [
+    "email",
+    "phone",
+    "linkedin",
+    "github",
+    "calcom",
+    "browser_uid",
+    "ats_applicant",
+    "sendblue_thread",
+    "imessage",
+  ]
+  return order.flatMap((kind) => {
+    const handle = byKind.get(kind)
+    return handle ? [handle] : []
+  })
 }
 
 export interface ClaimCandidateProfileInput {
@@ -661,7 +754,7 @@ export async function claimCandidateProfile(
     phoneE164: typeof user.phoneE164 === "string" ? user.phoneE164 : null,
     displayName,
     marketplaceFields: user as CandidateProfileMarketplaceFields,
-    handles: [{ kind: "email", verifiedAt: ts, source: "candidate" }],
+    handles: await loadCandidateSelfProfileHandles(db, candidateId),
     now: ts,
   })
   const claimedEventId = deterministicId("ident", ["candidate_claimed", input.firebaseUid, candidateId])

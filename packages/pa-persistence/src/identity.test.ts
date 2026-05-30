@@ -251,6 +251,83 @@ test("claimCandidateProfile normalizes bare LinkedIn URL before self profile val
   )
 })
 
+test("claimCandidateProfile preserves already connected OAuth handles on self profile refresh", async () => {
+  const { db, store } = makeFakeFirestore()
+  const resolved = await resolveCandidateIdentity(db, {
+    extractedEmail: "connected@example.com",
+    source: "resume",
+    now,
+  })
+  assert.equal(resolved.outcome, "created")
+  if (resolved.outcome !== "created") return
+
+  await linkCandidateHandle(db, {
+    candidateId: resolved.candidateId,
+    kind: "linkedin",
+    value: "https://www.linkedin.com/oauth-linked/sub-1",
+    source: "candidate",
+    verified: true,
+    now,
+  })
+  await linkCandidateHandle(db, {
+    candidateId: resolved.candidateId,
+    kind: "github",
+    value: "https://github.com/connected-dev",
+    source: "candidate",
+    verified: true,
+    now,
+  })
+  await db.collection(PA_COLLECTIONS.users).doc(resolved.candidateId).set(
+    {
+      linkedinUrl: "https://www.linkedin.com/oauth-linked/sub-1",
+      linkedinOauthLinked: true,
+      linkedinOauthConnectedAt: now,
+      linkedinOauthName: "Connected Dev",
+      linkedinOauthPicture: "https://media.licdn.com/profile.jpg",
+      githubUrl: "https://github.com/connected-dev",
+      githubHandle: "connected-dev",
+      githubOauthLinked: true,
+      githubOauthConnectedAt: now,
+      githubOauthName: "Connected Dev",
+      githubOauthAvatar: "https://avatars.githubusercontent.com/u/1",
+      githubOauthEmail: "connected@example.com",
+      githubPublicRepos: [
+        {
+          name: "portfolio",
+          fullName: "connected-dev/portfolio",
+          url: "https://github.com/connected-dev/portfolio",
+          language: "TypeScript",
+          stars: 7,
+          updatedAt: now,
+        },
+      ],
+    },
+    { merge: true },
+  )
+
+  const claimed = await claimCandidateProfile(db, {
+    firebaseUid: "firebase-connected",
+    email: "connected@example.com",
+    browserUid: "browser-connected",
+    now,
+  })
+
+  const handleKinds = new Set(claimed.selfProfile.handles.map((handle) => handle.kind))
+  assert.equal(handleKinds.has("email"), true)
+  assert.equal(handleKinds.has("linkedin"), true)
+  assert.equal(handleKinds.has("github"), true)
+  assert.equal(claimed.selfProfile.linkedinUrl, undefined)
+  assert.equal(claimed.selfProfile.linkedinOauthProfile?.name, "Connected Dev")
+  assert.equal(claimed.selfProfile.githubOauthProfile?.login, "connected-dev")
+  assert.equal(claimed.selfProfile.githubPublicRepos?.[0]?.fullName, "connected-dev/portfolio")
+
+  const stored = store.get(PA_COLLECTIONS.candidateSelfProfiles)!.get(resolved.candidateId)!
+  assert.deepEqual(
+    (stored.handles as Array<{ kind: string }>).map((handle) => handle.kind).sort(),
+    ["email", "github", "linkedin"].sort(),
+  )
+})
+
 test("claimCandidateProfile adopts a prelinked layoff candidate instead of creating a second profile", async () => {
   const { db, store } = makeFakeFirestore()
   store.get(PA_COLLECTIONS.users)!.set("layoff-cand-1", {
