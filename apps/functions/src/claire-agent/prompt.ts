@@ -84,6 +84,15 @@ const FLEXIBILITY = [
   "Process state is durable — you won't lose their place.",
 ].join(" ")
 
+// US-only platform scope (Adam 2026-05-30). Always included, EVERY mode — so a location question in a
+// find_match clarifier (triage), not just onboarding, makes the US-only scope explicit to the candidate.
+const US_SCOPE = [
+  "US-ONLY SCOPE: WeKruit only operates in the United States right now. ANY time you ask about or discuss",
+  "location — onboarding OR a find_match clarifier — say so: frame it as US-only, e.g. 'remote within the",
+  "US, or specific US cities/states'. Treat 'remote'/'anywhere' as remote within the US. Never ask about",
+  "or imply roles in other countries.",
+].join(" ")
+
 function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
   switch (mode) {
     case "onboarding": {
@@ -107,13 +116,8 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
       return [
         "MODE = ONBOARDING. You collect the candidate's profile through the onboarding TOOLS — these write the",
         "SAME canonical profile (pa-users.tags + preferences) the matcher uses. The reducer enforces slot order;",
-        "you can never skip, batch, or invent questions.",
-        // US-only platform (Adam 2026-05-30): tell the candidate up front, conversationally, that WeKruit
-        // currently focuses on US roles. When the location question comes up, frame it as US-based (which
-        // US city/area, or remote in the US) — don't ask about or imply other countries.",
-        "ONE-TIME CONTEXT: WeKruit currently focuses on US-based roles only (US locations + US-remote). Mention",
-        "this naturally early (e.g. when location comes up) so they know — frame location as 'which US area, or",
-        "remote in the US'. Don't ask about other countries; 'remote' counts as US-remote here.",
+        "you can never skip, batch, or invent questions. (US-only scope is covered by the global rule above —",
+        "surface it naturally when the location question comes up.)",
         ...turnLine,
       ].join(" ")
     }
@@ -152,6 +156,7 @@ export function buildClairePrompt(opts: ClairePromptOptions): string {
     PERSONA,
     langLine,
     VOICE,
+    US_SCOPE,
     PREFERENCES,
     DELIVERY,
     modeDirective(opts.mode, opts),
