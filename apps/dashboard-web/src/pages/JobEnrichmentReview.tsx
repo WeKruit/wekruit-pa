@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { collectionGroup, limit, onSnapshot, orderBy, query } from "firebase/firestore"
 import { httpsCallable } from "firebase/functions"
 import { CheckCircle, RefreshCw, Save, XCircle } from "lucide-react"
+import { AdminJobLink } from "../components/AdminEntityLink.js"
 import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { db, functions } from "../lib/firebase.js"
 import {
@@ -221,6 +222,7 @@ export function JobEnrichmentReview() {
               eyebrow={`${companyName(selectedDraft)} · ${selectedDraft.jobId}`}
               actions={
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", justifyContent: "flex-end" }}>
+                    <AdminJobLink jobId={selectedDraft.jobId}>Open job</AdminJobLink>
 	                  <button
 	                    type="button"
 	                    onClick={() => void saveCorrections()}
@@ -361,7 +363,7 @@ function DraftList({
             <Badge tone={enrichmentStatusTone(draft.status)}>{draft.status ?? "unknown"}</Badge>
           </div>
           <div className="muted-copy" style={{ marginTop: "0.25rem", overflowWrap: "anywhere" }}>
-            {companyName(draft)} · {draft.jobId}
+            {companyName(draft)} · <AdminJobLink jobId={draft.jobId}>{draft.jobId}</AdminJobLink>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem", marginTop: "0.45rem" }}>
             <Badge tone={draft.approvalReady ? "ok" : "info"}>{draft.approvalReady ? "ready" : "draft"}</Badge>

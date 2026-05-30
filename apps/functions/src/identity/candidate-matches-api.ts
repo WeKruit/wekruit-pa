@@ -25,6 +25,14 @@ type CandidateMatchJobDisplay = {
   href: string
 }
 
+type CandidateReviewDecision = {
+  candidateMessageBody: string
+  decisionReason: string
+  recommendedActions: string[]
+  finalTerminal: "PASS" | "FAIL" | "HARD_STOP"
+  reviewedAt: string
+}
+
 export type CandidateMatchCard = {
   matchId: string
   jobId: string
@@ -36,6 +44,7 @@ export type CandidateMatchCard = {
   whyMatched: string[]
   rank?: number
   computedAt: string
+  reviewDecision?: CandidateReviewDecision
 }
 
 export type CandidateListMatchesResult = {
@@ -139,6 +148,10 @@ function projectStatus(
   prescreenReviewPending?: boolean,
 ): CandidateMatchCard["status"] {
   if (stateValue === "prescreen_review_pending" || prescreenReviewPending) return "review_pending"
+  if (stateValue === "passed") return "passed"
+  if (stateValue === "employer_visible") return "passed"
+  if (stateValue === "not_passed") return "not_passed"
+  if (stateValue === "paused") return "paused"
   if (prescreenTerminal === "PASS") return "passed"
   if (prescreenTerminal === "FAIL" || prescreenTerminal === "HARD_STOP") return "not_passed"
   if (prescreenTerminal === "PAUSE") return "paused"
@@ -147,12 +160,37 @@ function projectStatus(
   if (stateValue === "outbound_sent") return "invited"
   if (stateValue === "candidate_interested") return "invited"
   if (stateValue === "prescreen_started") return "interview_started"
-  if (stateValue === "prescreen_review_pending") return "review_pending"
-  if (stateValue === "passed") return "passed"
-  if (stateValue === "employer_visible") return "passed"
-  if (stateValue === "not_passed") return "not_passed"
-  if (stateValue === "paused") return "paused"
   return hasInvite ? "invited" : "recommended"
+}
+
+function cleanReviewTerminal(value: unknown): CandidateReviewDecision["finalTerminal"] | undefined {
+  return value === "PASS" || value === "FAIL" || value === "HARD_STOP" ? value : undefined
+}
+
+function projectCandidateReviewDecision(
+  status: CandidateMatchCard["status"],
+  prescreenSession?: Record<string, unknown>,
+): CandidateReviewDecision | undefined {
+  if (status !== "passed" && status !== "not_passed") return undefined
+  const review = prescreenSession?.review
+  if (!review || typeof review !== "object") return undefined
+  const decision = (review as Record<string, unknown>).candidateDecision
+  if (!decision || typeof decision !== "object") return undefined
+  const record = decision as Record<string, unknown>
+  const candidateMessageBody = cleanString(record.candidateMessageBody, 2_000)
+  const decisionReason = cleanString(record.decisionReason, 1_000)
+  const finalTerminal = cleanReviewTerminal(record.finalTerminal)
+  const reviewedAt = cleanString(record.reviewedAt, 80)
+  if (!candidateMessageBody || !decisionReason || !finalTerminal || !reviewedAt) return undefined
+  if (status === "passed" && finalTerminal !== "PASS") return undefined
+  if (status === "not_passed" && finalTerminal === "PASS") return undefined
+  return {
+    candidateMessageBody,
+    decisionReason,
+    recommendedActions: cleanStringArray(record.recommendedActions, 5, 240),
+    finalTerminal,
+    reviewedAt,
+  }
 }
 
 function projectMatchCard(args: {
@@ -164,23 +202,27 @@ function projectMatchCard(args: {
   invite?: Record<string, unknown>
   prescreenTerminal?: string
   prescreenReviewPending?: boolean
+  prescreenSession?: Record<string, unknown>
 }): CandidateMatchCard {
   const match = args.match
   const state = cleanString(args.state?.state, 80)
   const hasInvite = args.invite !== undefined
   const bucket = hasInvite || (state !== undefined && state !== "candidate_matched") ? "invited" : "recommended"
   const whyMatched = cleanStringArray(match?.reasons, 4, 240)
+  const status = projectStatus(state, hasInvite, args.prescreenTerminal, args.prescreenReviewPending)
+  const reviewDecision = projectCandidateReviewDecision(status, args.prescreenSession)
   return {
     matchId: args.matchId,
     jobId: args.jobId,
     bucket,
     // Pipeline matches live in pa-jobs (WeKruit-driven engagement) → pre-screenable.
     collab: true,
-    status: projectStatus(state, hasInvite, args.prescreenTerminal, args.prescreenReviewPending),
+    status,
     job: projectJobDisplay(args.jobId, args.job),
     whyMatched: whyMatched.length > 0 ? whyMatched : ["This role matches your saved profile."],
     ...(typeof match?.finalRank === "number" && Number.isInteger(match.finalRank) ? { rank: match.finalRank } : {}),
     computedAt: cleanString(match?.computedAt, 80) ?? cleanString(match?.updatedAt, 80) ?? new Date(0).toISOString(),
+    ...(reviewDecision ? { reviewDecision } : {}),
   }
 }
 
@@ -489,6 +531,7 @@ export async function runCandidateListMatches(
         state,
         prescreenTerminal,
         prescreenReviewPending,
+        prescreenSession,
       })
     })
   )

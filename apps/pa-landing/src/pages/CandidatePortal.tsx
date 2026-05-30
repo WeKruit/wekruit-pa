@@ -198,6 +198,14 @@ function profileLoadErrorMessage(err: unknown): string {
 // useCandidateMatches — paCandidateListMatches callable wrapper
 // ────────────────────────────────────────────────────────────────────────────
 
+export type CandidateReviewDecision = {
+  candidateMessageBody: string
+  decisionReason: string
+  recommendedActions: string[]
+  finalTerminal: "PASS" | "FAIL" | "HARD_STOP"
+  reviewedAt: string
+}
+
 export type CandidateMatchCard = {
   matchId: string
   jobId: string
@@ -215,6 +223,7 @@ export type CandidateMatchCard = {
   whyMatched: string[]
   rank?: number
   computedAt: string
+  reviewDecision?: CandidateReviewDecision
 }
 
 type CandidateMatchesResult = {
@@ -450,6 +459,7 @@ type ConnectorRow = {
   connected: boolean
   brand: string
   letter: string
+  provider?: "linkedin" | "github" | "calcom"
 }
 
 function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
@@ -457,6 +467,9 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
     profile.handles?.some((h) => h.kind === kind && h.verifiedAt) ?? false
   const phoneVerified = !!profile.phoneMasked || hasHandle("phone")
   const emailVerified = !!profile.emailMasked || hasHandle("email")
+  const linkedinConnected = !!profile.linkedinUrl || hasHandle("linkedin")
+  const githubConnected = !!profile.githubUrl || hasHandle("github")
+  const calcomConnected = !!profile.calcomUrl || hasHandle("calcom")
   return [
     {
       id: "resume",
@@ -469,10 +482,11 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
     {
       id: "linkedin",
       label: "LinkedIn",
-      meta: profile.linkedinUrl ? linkedinHandleFromUrl(profile.linkedinUrl) : "Not connected",
-      connected: !!profile.linkedinUrl,
+      meta: profile.linkedinUrl ? linkedinHandleFromUrl(profile.linkedinUrl) : linkedinConnected ? "Connected" : "Not connected",
+      connected: linkedinConnected,
       brand: "#0A66C2",
       letter: "in",
+      provider: "linkedin",
     },
     {
       id: "email",
@@ -493,18 +507,20 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
     {
       id: "github",
       label: "GitHub",
-      meta: hasHandle("github") ? "Connected" : "Not connected",
-      connected: hasHandle("github"),
+      meta: profile.githubUrl ? githubHandleFromUrl(profile.githubUrl) : githubConnected ? "Connected" : "Not connected",
+      connected: githubConnected,
       brand: "#0B0B0B",
       letter: "G",
+      provider: "github",
     },
     {
       id: "calcom",
       label: "Cal.com",
-      meta: hasHandle("calcom") ? "Connected" : "Not connected",
-      connected: hasHandle("calcom"),
+      meta: profile.calcomUrl ? profile.calcomUrl.replace(/^https?:\/\//, "") : calcomConnected ? "Connected" : "Not connected",
+      connected: calcomConnected,
       brand: "#0E1217",
       letter: "✱",
+      provider: "calcom",
     },
   ]
 }
@@ -518,6 +534,78 @@ function linkedinHandleFromUrl(url: string): string {
   } catch {
     return url.replace(/^https?:\/\//, "")
   }
+}
+
+function githubHandleFromUrl(url: string): string {
+  try {
+    const u = new URL(url)
+    const m = u.pathname.match(/^\/([^/]+)\/?/)
+    if (m && m[1]) return `@${m[1]}`
+    return u.host.replace(/^www\./, "")
+  } catch {
+    return url.replace(/^https?:\/\//, "")
+  }
+}
+
+async function startCandidateConnectorOAuth(provider: "linkedin" | "github" | "calcom"): Promise<void> {
+  const call = httpsCallable<
+    { provider: "linkedin" | "github" | "calcom"; returnTo: string },
+    { ok: true; provider: "linkedin" | "github" | "calcom"; authUrl: string }
+  >(functions(), "paCandidateConnectorOAuthStart")
+  const result = await call({ provider, returnTo: window.location.href })
+  if (!result.data.authUrl) {
+    throw new Error("connector_auth_url_missing")
+  }
+  window.location.assign(result.data.authUrl)
+}
+
+function connectorErrorMessage(err: unknown, provider: ConnectorRow["provider"]): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (raw.includes("github_oauth_config_missing")) {
+    return "GitHub OAuth is not configured yet. Add the GitHub OAuth app secrets first."
+  }
+  if (raw.includes("calcom_oauth_config_missing")) {
+    return "Cal.com OAuth is not configured yet. Add the Cal.com OAuth app secrets first."
+  }
+  if (raw.includes("linkedin_config_missing")) {
+    return "LinkedIn OAuth is not configured yet."
+  }
+  if (raw.includes("not linked to a candidate profile")) {
+    return "Open the profile once it finishes loading, then try connecting again."
+  }
+  return `Could not connect ${provider ?? "account"}. Try again.`
+}
+
+function ConnectorAction({ connector, withCheck = false }: { connector: ConnectorRow; withCheck?: boolean }) {
+  const [busy, setBusy] = useState(false)
+  if (connector.connected) {
+    return (
+      <span className="wkv2-conn__btn">
+        {withCheck ? <span className="wkv2-conn__check"><Icon name="check" size={9} stroke={3} /></span> : null}
+        Manage
+      </span>
+    )
+  }
+  if (!connector.provider) {
+    return <Link to="/me/profile" className="wkv2-conn__btn wkv2-conn__btn--connect">Connect</Link>
+  }
+  return (
+    <button
+      type="button"
+      className="wkv2-conn__btn wkv2-conn__btn--connect"
+      disabled={busy}
+      onClick={() => {
+        setBusy(true)
+        void startCandidateConnectorOAuth(connector.provider!)
+          .catch((err) => {
+            window.alert(connectorErrorMessage(err, connector.provider))
+          })
+          .finally(() => setBusy(false))
+      }}
+    >
+      Connect
+    </button>
+  )
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1068,6 +1156,7 @@ function MePipelineRow({ match }: { match: CandidateMatchCard }) {
   const logo = (match.job.company[0] ?? "?").toUpperCase()
   const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
   const when = meWhen(match.computedAt)
+  const showDecision = shouldShowReviewDecision(match)
   return (
     <article className="wkv3-row">
       <CompanyMark logo={logo} bg={logoBg} size={48} />
@@ -1081,6 +1170,7 @@ function MePipelineRow({ match }: { match: CandidateMatchCard }) {
           {match.job.location ? ` · ${match.job.location}` : ""}
         </p>
         <p className="wkv3-row__next">{display.nextStep}</p>
+        {showDecision ? <ReviewDecisionBlock match={match} /> : null}
       </div>
       <div className="wkv3-row__right">
         <Link to={match.job.href} className="wk-btn wk-btn--secondary wk-btn--sm">
@@ -1093,9 +1183,73 @@ function MePipelineRow({ match }: { match: CandidateMatchCard }) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Prescreen review-decision surfacing (from origin/main) — shown on terminal
+// pipeline rows so the candidate sees Claire's PASS/NOT_PASS message + reasons.
+// ────────────────────────────────────────────────────────────────────────────
+function shouldShowReviewDecision(match: CandidateMatchCard): boolean {
+  if (!match.reviewDecision) return false
+  return match.status === "passed" || match.status === "not_passed"
+}
+
+function ReviewDecisionBlock({ match }: { match: CandidateMatchCard }) {
+  const decision = match.reviewDecision
+  if (!decision) return null
+  const isNotPassed = match.status === "not_passed"
+  return (
+    <div className="wkv2-decision">
+      <p className="wkv2-decision__msg">{decision.candidateMessageBody}</p>
+      <div className="wkv2-decision__reason">
+        <span>{isNotPassed ? "Why this role closed" : "Next-step note"}</span>
+        <p>{decision.decisionReason}</p>
+        {isNotPassed ? <p>Your profile stays active for stronger WeKruit matches.</p> : null}
+      </div>
+      {decision.recommendedActions.length > 0 ? (
+        <ul className="wkv2-decision__actions">
+          {decision.recommendedActions.slice(0, 5).map((action, index) => (
+            <li key={`${match.matchId}-action-${index}`}>
+              <Icon name="check" size={12} stroke={2.4} />
+              <span>{action}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  )
+}
+
+function StageChip({ status }: { status: CandidateJobStatus }) {
+  if (status === "invited")
+    return (
+      <span className="wkv2-chip wkv2-chip--live">
+        <PulseDot size={6} /> Invited
+      </span>
+    )
+  if (status === "interview_started")
+    return (
+      <span className="wkv2-chip wkv2-chip--blue">
+        <PulseDot size={6} color="#1f6feb" /> Screening
+      </span>
+    )
+  if (status === "review_pending")
+    return (
+      <span className="wkv2-chip wkv2-chip--warm">
+        <Icon name="clock" size={11} stroke={2.4} /> Reviewing
+      </span>
+    )
+  if (status === "passed")
+    return (
+      <span className="wkv2-chip wkv2-chip--warm">
+        <Icon name="check" size={11} stroke={2.4} /> Passed
+      </span>
+    )
+  if (status === "not_passed") return <span className="wkv2-chip wkv2-chip--muted">Not passed</span>
+  if (status === "paused") return <span className="wkv2-chip wkv2-chip--muted">Paused</span>
+  return <span className="wkv2-chip wkv2-chip--muted">New match</span>
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // /me — New matches (digest peeks; full inbox lives on /me/matches)
 // ────────────────────────────────────────────────────────────────────────────
-
 function MeNewMatches({
   matches,
   loading,
@@ -2141,11 +2295,7 @@ function ConnectedAccountsCard({ profile }: { profile: CandidateSelfProfile }) {
               {c.label}
               <span className="wkv2-conn__meta">{c.meta}</span>
             </span>
-            {c.connected ? (
-              <span className="wkv2-conn__btn">Manage</span>
-            ) : (
-              <Link to="/me/profile" className="wkv2-conn__btn wkv2-conn__btn--connect">Connect</Link>
-            )}
+            <ConnectorAction connector={c} />
           </div>
         ))}
       </div>
@@ -2664,6 +2814,51 @@ const ME_PORTAL_STYLES = `
   color: var(--wk-ink-2); line-height: 1.4;
 }
 .wkv2-row__right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; white-space: nowrap; }
+.wkv2-decision {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--wk-border);
+  border-radius: var(--wk-r-sm);
+  background: #fff;
+  display: grid;
+  gap: 8px;
+}
+.wkv2-decision__msg,
+.wkv2-decision__reason p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--wk-ink-2);
+}
+.wkv2-decision__reason {
+  display: grid;
+  gap: 4px;
+}
+.wkv2-decision__reason span {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--wk-ink);
+}
+.wkv2-decision__actions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.wkv2-decision__actions li {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--wk-ink-2);
+}
+.wkv2-decision__actions svg {
+  color: var(--wk-live);
+  margin-top: 2px;
+}
 
 .wkv2-chip {
   display: inline-flex; align-items: center; gap: 6px;
@@ -2896,6 +3091,10 @@ const ME_PORTAL_STYLES = `
   background: var(--wk-live-soft);
 }
 .wkv2-conn__btn--connect:hover { background: var(--wk-cream); color: var(--wk-live-2); }
+.wkv2-conn__btn--connect:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
 .wkv2-conn__check {
   width: 14px; height: 14px; border-radius: 50%;
   background: var(--wk-live); color: var(--wk-cream);

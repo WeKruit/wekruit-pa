@@ -68,6 +68,8 @@ type JobsState =
 
 const LOGO_BG_POOL = ["#2A1812", "#0F1B2D", "#5E6AD2", "#635BFF", "#0D0D0D", "#1A1A1A", "#374151", "#7C2D12"]
 const TONE_POOL: Array<"warm" | "moss" | "slate"> = ["warm", "slate", "moss"]
+const ALLIANCE_LOGO_URL =
+  "https://images.prismic.io/alliance/fe454d0e-2b43-41ff-b606-133e6465cd9b_alliance-logo-animated-white.gif?auto=false&fit=max&w=128&q=75"
 
 function djb2(s: string): number {
   let h = 5381 >>> 0
@@ -197,6 +199,7 @@ export default function Landing() {
       <section className="wk-hero">
         <div className="wk-container wk-hero__grid">
           <div className="wk-hero__copy">
+            <AllianceBackedBadge />
             <p className="wk-eyebrow">
               <PulseDot size={7} /> Skip the application. Interview.
             </p>
@@ -334,6 +337,25 @@ export default function Landing() {
   )
 }
 
+function AllianceBackedBadge() {
+  return (
+    <a
+      className="wk-alliance-badge"
+      href="https://alliance.xyz/"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="Backed by Alliance"
+    >
+      <span className="wk-alliance-badge__mark" aria-hidden="true">
+        <img src={ALLIANCE_LOGO_URL} alt="" decoding="async" />
+      </span>
+      <span className="wk-alliance-badge__copy">
+        <span className="wk-alliance-badge__label">Backed by <strong>Alliance</strong></span>
+      </span>
+    </a>
+  )
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // StepCard
 // ────────────────────────────────────────────────────────────────────────────
@@ -463,6 +485,77 @@ const LANDING_STYLES = `
 }
 .wk-hero__proof strong { color: var(--wk-ink-2); font-weight: 600; }
 .wk-hero__proof > .wk-avatar { margin-right: -10px; box-shadow: inset 0 0 0 1px rgba(45,26,10,.08), 0 0 0 2px var(--wk-cream-3); }
+.wk-alliance-badge {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  max-width: 100%;
+  width: fit-content;
+  margin-bottom: 14px;
+  padding: 5px 10px 5px 5px;
+  border-radius: var(--wk-r-pill);
+  border: 1px solid rgba(45, 26, 10, 0.09);
+  background: rgba(255, 252, 246, 0.48);
+  color: inherit;
+  text-decoration: none;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.52),
+    0 10px 24px -22px rgba(45, 26, 10, 0.30);
+  transition:
+    border-color 180ms var(--wk-ease),
+    background 180ms var(--wk-ease),
+    box-shadow 220ms var(--wk-ease),
+    transform 220ms var(--wk-ease);
+}
+.wk-alliance-badge:hover,
+.wk-alliance-badge:focus-visible {
+  border-color: rgba(45, 26, 10, 0.16);
+  background: rgba(255, 252, 246, 0.72);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.66),
+    0 12px 26px -22px rgba(45, 26, 10, 0.36);
+  transform: translateY(-1px);
+  outline: none;
+}
+.wk-alliance-badge:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--wk-cream),
+    0 0 0 4px var(--wk-ink),
+    0 12px 26px -22px rgba(45, 26, 10, 0.36);
+}
+.wk-alliance-badge__mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: #19120B;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+.wk-alliance-badge__mark img {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.wk-alliance-badge__copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  line-height: 1.05;
+}
+.wk-alliance-badge__label {
+  color: var(--wk-ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+.wk-alliance-badge__label strong {
+  color: var(--wk-ink);
+  font-weight: 650;
+}
 .wk-hero__visual { display: flex; flex-direction: column; align-items: center; gap: 16px; }
 .wk-hero__caption {
   display: inline-flex; align-items: center; gap: 8px;
@@ -658,10 +751,25 @@ const LANDING_STYLES = `
 /* Mobile ---------------------------------------------------------------- */
 @media (max-width: 980px) {
   .wk-hero { padding: 36px 0 64px; }
-  .wk-hero__grid { grid-template-columns: 1fr; gap: 40px; }
+  .wk-hero__grid {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 0.78fr);
+    gap: 36px;
+    align-items: start;
+  }
+  .wk-hero__h1 { font-size: clamp(54px, 6.7vw, 68px); }
+  .wk-hero__visual { padding-top: 32px; }
+  .wk-hero__visual .wk-imsg-phone { max-width: 320px; }
   .wk-steps { grid-template-columns: 1fr; }
   .wk-joblist { grid-template-columns: 1fr; }
   .wk-trust-logos { grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 48px; }
+}
+@media (max-width: 760px) {
+  .wk-hero__grid { grid-template-columns: 1fr; gap: 40px; }
+  .wk-hero__visual {
+    padding-top: 0;
+    align-items: center;
+  }
+  .wk-hero__visual .wk-imsg-phone { max-width: 360px; }
 }
 @media (max-width: 600px) {
   .wk-section { padding: 56px 0; }

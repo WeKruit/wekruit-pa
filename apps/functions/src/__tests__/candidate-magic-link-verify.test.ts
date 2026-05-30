@@ -2,7 +2,10 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { runCandidateMagicLinkVerify } from "../candidate-magic-link-verify.js"
+import {
+  runCandidateMagicLinkVerify,
+  type CandidateMagicLinkVerifyDeps,
+} from "../candidate-magic-link-verify.js"
 
 type DocData = Record<string, unknown>
 type Store = Map<string, Map<string, DocData>>
@@ -54,6 +57,10 @@ function fakeDb(): Firestore {
   return new FakeFirestore() as unknown as Firestore
 }
 
+const REFERRAL_TEST_DEPS = {
+  attachReferralOnSignup: async () => ({}),
+} satisfies Pick<CandidateMagicLinkVerifyDeps, "attachReferralOnSignup">
+
 test("runCandidateMagicLinkVerify claims profile for verified email", async () => {
   const calls: Array<Record<string, unknown>> = []
   const db = fakeDb()
@@ -66,6 +73,7 @@ test("runCandidateMagicLinkVerify claims profile for verified email", async () =
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-1",
         email: "Person@Example.COM",
@@ -126,6 +134,68 @@ test("runCandidateMagicLinkVerify claims profile for verified email", async () =
   })
 })
 
+test("runCandidateMagicLinkVerify forwards stored referral slug after verified signup", async () => {
+  const referralCalls: Array<Record<string, unknown>> = []
+  const db = fakeDb()
+  const { result, status } = await runCandidateMagicLinkVerify(
+    {
+      firebaseIdToken: "token-ref",
+      referralSlug: "Maya-Chen",
+    },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "firebase-ref",
+        email: "ReferralUser@Example.COM",
+        email_verified: true,
+        name: "Referral User",
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-ref",
+        authMapping: {
+          firebaseUid: "firebase-ref",
+          candidateId: "cand-ref",
+          createdAt: "2026-05-29T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-ref",
+          kind: "email" as const,
+          handleHash: "hashhashhashhash",
+          source: "candidate" as const,
+          createdAt: "2026-05-29T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: false,
+        selfProfile: {
+          candidateId: "cand-ref",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-29T00:00:00.000Z",
+        },
+      }),
+      attachReferralOnSignup: async (args) => {
+        referralCalls.push({ ...args })
+        return { matchedReferralId: "link_maya-chen_test" }
+      },
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+    }
+  )
+
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  assert.deepEqual(referralCalls, [
+    {
+      uid: "cand-ref",
+      email: "referraluser@example.com",
+      referralSlug: "Maya-Chen",
+    },
+  ])
+})
+
 test("runCandidateMagicLinkVerify returns sticky sender number for the canonical candidate", async () => {
   const calls: Array<{ candidateId: string; userData: Record<string, unknown> | null }> = []
   const db = fakeDb()
@@ -137,6 +207,7 @@ test("runCandidateMagicLinkVerify returns sticky sender number for the canonical
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-1",
         email: "person@example.com",
@@ -197,6 +268,7 @@ test("runCandidateMagicLinkVerify links LinkedIn OAuth identity for li_* uid", a
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "li_abc123",
         email: "person@example.com",
@@ -268,6 +340,7 @@ test("runCandidateMagicLinkVerify allows wekruit.com workspace emails at public 
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-admin",
         email: "admin1@wekruit.com",
@@ -322,6 +395,7 @@ test("runCandidateMagicLinkVerify reports portalReady when Claire inbound exists
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-claire",
         email: "claire@example.com",
@@ -373,6 +447,7 @@ test("runCandidateMagicLinkVerify keeps portalReady false without Claire inbound
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-claire",
         email: "claire@example.com",
@@ -427,6 +502,7 @@ test("runCandidateMagicLinkVerify reports claireConversationStarted from Claire 
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-claire",
         email: "claire@example.com",
@@ -488,6 +564,7 @@ test("runCandidateMagicLinkVerify creates account for unknown email (magic-link 
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-newuser-1",
         email: "freshperson@example.com",
@@ -541,6 +618,7 @@ test("runCandidateMagicLinkVerify still passes allowCreate=true when LinkedIn cu
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "li_xyz789",
         email: "person@linkedin.com",
@@ -603,6 +681,7 @@ test("runCandidateMagicLinkVerify stamps layoffhedge on first-time pa-users crea
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "fb-1",
         email: "new.layoffhedge@example.com",
@@ -655,6 +734,7 @@ test("runCandidateMagicLinkVerify does NOT overwrite an existing pa-users.source
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "fb-2",
         email: "returning@example.com",

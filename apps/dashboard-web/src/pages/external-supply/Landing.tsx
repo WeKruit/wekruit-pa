@@ -7,6 +7,7 @@
  */
 import { Link } from "react-router-dom"
 import { useEffect, useState } from "react"
+import { AdminJobLink } from "../../components/AdminEntityLink.js"
 import { EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
 import {
   listBatches,
@@ -149,15 +150,20 @@ export function Landing() {
               <ul style={cardListStyle}>
                 {summary.runs.map((r) => (
                   <li key={r.runId} style={cardItemStyle}>
-                    <Link to={`/admin/external-supply/evaluations/${r.runId}`} style={cardLinkStyle}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                        <strong>{r.jobId}</strong>
+                    <div style={cardLinkStyle}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                        <AdminJobLink jobId={r.jobId}>
+                          <strong>{r.jobId}</strong>
+                        </AdminJobLink>
+                        <Link to={`/admin/external-supply/evaluations/${r.runId}`}>
+                          evaluation {r.runId.slice(0, 8)}...
+                        </Link>
                         <span className={`status-badge ${runTone(r.status)}`}>{r.status}</span>
                       </div>
                       <div style={{ fontSize: "0.85em" }}>
                         {r.completedCount}/{r.candidateCount} · {fmtTime(r.createdAt)} · {r.rubricVersion}
                       </div>
-                    </Link>
+                    </div>
                   </li>
                 ))}
               </ul>

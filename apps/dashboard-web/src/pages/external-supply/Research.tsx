@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import type { AgentResearchTask } from "@pa/core-types"
+import { AdminUserLink } from "../../components/AdminEntityLink.js"
 import { EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
 import {
   approveAgentResearchFinding,
@@ -288,7 +289,7 @@ export function Research() {
                       {selectedTask.parsedFindings.map((f) => (
                         <tr key={f.findingId} style={{ borderBottom: "1px solid #f1f5f9" }}>
                           <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.8em" }}>
-                            {f.candidateId.slice(0, 8)}…
+                            <AdminUserLink userId={f.candidateId}>{f.candidateId.slice(0, 8)}…</AdminUserLink>
                           </td>
                           <td style={tdStyle}>{f.field}</td>
                           <td style={{ ...tdStyle, fontSize: "0.8em", maxWidth: 240 }}>

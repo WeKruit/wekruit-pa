@@ -1,0 +1,32 @@
+// @ts-nocheck - landing app typecheck only includes Vite/browser types; this file runs with node --test via tsx.
+import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import { dirname, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
+import test from "node:test"
+
+const here = dirname(fileURLToPath(import.meta.url))
+const source = readFileSync(resolve(here, "CandidatePortal.tsx"), "utf8")
+
+test("CandidatePortal renders review decisions only inside committed pipeline rows", () => {
+  assert.match(source, /reviewDecision/)
+  assert.match(source, /CandidateReviewDecision/)
+  assert.match(source, /shouldShowReviewDecision/)
+  assert.match(source, /profile stays active/i)
+  assert.match(source, /decisionReason/)
+  assert.match(source, /recommendedActions/)
+  assert.doesNotMatch(source, /employer_visible/)
+})
+
+test("CandidatePortal wires connector buttons through the account OAuth start callable", () => {
+  assert.match(source, /label: "LinkedIn"/)
+  assert.match(source, /label: "GitHub"/)
+  assert.match(source, /label: "Cal\.com"/)
+  assert.match(source, /paCandidateConnectorOAuthStart/)
+  assert.match(source, /provider: "linkedin"/)
+  assert.match(source, /provider: "github"/)
+  assert.match(source, /github_oauth_config_missing/)
+  assert.match(source, /calcom_oauth_config_missing/)
+  assert.match(source, /wkv2-conn__btn--connect/)
+  assert.match(source, />Connect</)
+})

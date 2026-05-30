@@ -11,8 +11,9 @@
  * operator-only read; candidates blocked.
  */
 import { useEffect, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { useParams } from "react-router-dom"
 import { collection, doc, getDoc, getDocs, orderBy, query } from "firebase/firestore"
+import { AdminJobLink, AdminPrescreenSessionLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import { ErrorState, LoadingState, PageHeader, Panel, Badge } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
 import { reviewEvaluationAttempt } from "../lib/external-supply-client.js"
@@ -65,6 +66,14 @@ type SessionDoc = {
     decisionOutboundId?: string
     pendingAt?: string
     reviewedAt?: string
+    candidateDecision?: {
+      candidateMessageBody?: string
+      decisionReason?: string
+      recommendedActions?: string[]
+      finalTerminal?: ReviewTerminal
+      reviewedAt?: string
+      decisionOutboundId?: string
+    }
   }
   qOrder: string[]
   questions: Record<
@@ -85,6 +94,7 @@ type SessionDoc = {
 
 function terminalTone(t: string | null): "ok" | "warn" | "info" {
   if (t === "PASS") return "ok"
+  if (t === "PAUSE") return "info"
   if (t === null) return "info"
   return "warn"
 }
@@ -99,6 +109,24 @@ function finalOutcomeKind(terminal: ReviewTerminal): "pass" | "reject" {
   return terminal === "PASS" ? "pass" : "reject"
 }
 
+function parseRecommendedActions(value: string): string[] {
+  return value
+    .split(/\n+/)
+    .map((line) => line.replace(/^[-*]\s*/, "").trim())
+    .filter(Boolean)
+    .slice(0, 5)
+}
+
+function defaultRecommendedActions(terminal: ReviewTerminal): string {
+  if (terminal === "PASS") {
+    return ["Watch for the next WeKruit message.", "Keep your profile details current."].join("\n")
+  }
+  return [
+    "Keep your WeKruit profile active for stronger matches.",
+    "Add a concrete example that shows the target experience.",
+  ].join("\n")
+}
+
 export default function PrescreenSession() {
   const { sessionId } = useParams<{ sessionId: string }>()
   const [loading, setLoading] = useState(true)
@@ -109,6 +137,8 @@ export default function PrescreenSession() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [selectedTerminal, setSelectedTerminal] = useState<ReviewTerminal>("PASS")
   const [candidateMessageBody, setCandidateMessageBody] = useState("")
+  const [decisionReason, setDecisionReason] = useState("")
+  const [recommendedActionsText, setRecommendedActionsText] = useState("")
   const [reviewBusy, setReviewBusy] = useState(false)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [reviewSaved, setReviewSaved] = useState<string | null>(null)
@@ -132,6 +162,8 @@ export default function PrescreenSession() {
         }
         const sessionData = { ...(sessSnap.data() as SessionDoc), sessionId }
         setSession(sessionData)
+        setCandidateMessageBody(sessionData.review?.candidateDecision?.candidateMessageBody ?? "")
+        setDecisionReason(sessionData.review?.candidateDecision?.decisionReason ?? "")
         const attemptId = sessionData.evaluationAttemptId ?? sessionData.review?.evaluationAttemptId
         if (attemptId) {
           const attemptSnap = await getDoc(doc(db(), "pa-evaluation-attempts", attemptId))
@@ -140,13 +172,17 @@ export default function PrescreenSession() {
             const attemptData = attemptSnap.data() as EvaluationAttempt
             setAttempt(attemptData)
             const proposedTerminal = cleanReviewTerminal(attemptData.proposedOutcome?.prescreenTerminal)
-            setSelectedTerminal(proposedTerminal ?? cleanReviewTerminal(sessionData.terminal) ?? "PASS")
+            const terminal = proposedTerminal ?? cleanReviewTerminal(sessionData.terminal) ?? "PASS"
+            setSelectedTerminal(terminal)
+            setRecommendedActionsText((sessionData.review?.candidateDecision?.recommendedActions ?? []).join("\n") || defaultRecommendedActions(terminal))
           } else {
             setAttempt(null)
           }
         } else {
           setAttempt(null)
-          setSelectedTerminal(cleanReviewTerminal(sessionData.terminal) ?? "PASS")
+          const terminal = cleanReviewTerminal(sessionData.terminal) ?? "PASS"
+          setSelectedTerminal(terminal)
+          setRecommendedActionsText((sessionData.review?.candidateDecision?.recommendedActions ?? []).join("\n") || defaultRecommendedActions(terminal))
         }
         const turnsSnap = await getDocs(
           query(
@@ -178,7 +214,9 @@ export default function PrescreenSession() {
     pendingReview &&
       attempt?.attemptId &&
       selectedTerminal &&
-      candidateMessageBody.trim().length > 0
+      candidateMessageBody.trim().length > 0 &&
+      decisionReason.trim().length > 0 &&
+      parseRecommendedActions(recommendedActionsText).length > 0
   )
 
   async function approveReview() {
@@ -186,6 +224,12 @@ export default function PrescreenSession() {
     const body = candidateMessageBody.trim()
     if (!body) {
       setReviewError("Final candidate message is required.")
+      return
+    }
+    const reason = decisionReason.trim()
+    const recommendedActions = parseRecommendedActions(recommendedActionsText)
+    if (!reason || recommendedActions.length === 0) {
+      setReviewError("Decision reason and at least one recommended action are required.")
       return
     }
     setReviewBusy(true)
@@ -201,6 +245,8 @@ export default function PrescreenSession() {
           prescreenTerminal: selectedTerminal,
         },
         candidateMessageBody: body,
+        decisionReason: reason,
+        recommendedActions,
         ...(status === "overridden" ? { correctionReason: "operator_changed_prescreen_terminal" } : {}),
       })
       setReviewSaved(result.candidateOutboundId ? `Queued outbound ${result.candidateOutboundId}` : "Review approved.")
@@ -222,7 +268,7 @@ export default function PrescreenSession() {
       <Panel title="Summary">
         <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginBottom: "1rem" }}>
           <Badge tone={terminalTone(session.terminal)}>
-            {session.terminal ?? "IN_PROGRESS"}
+            Claire {session.terminal ?? "IN_PROGRESS"}
           </Badge>
           {pendingReview && <Badge tone="warn">Review pending</Badge>}
           {session.review?.status && !pendingReview && <Badge tone="info">Review {session.review.status}</Badge>}
@@ -232,7 +278,9 @@ export default function PrescreenSession() {
           <Badge tone="info">threshold = {(session.threshold * 100).toFixed(0)}%</Badge>
         </div>
         <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginBottom: "1rem", fontSize: "0.9em" }}>
-          <Link to={`/admin/candidates/${session.userId}/profile`}>Open candidate marketplace profile</Link>
+          <AdminPrescreenSessionLink sessionId={session.sessionId}>Session {session.sessionId}</AdminPrescreenSessionLink>
+          <AdminJobLink jobId={session.jobId}>Job {session.jobId}</AdminJobLink>
+          <AdminUserLink userId={session.userId}>Candidate {session.userId}</AdminUserLink>
         </div>
         {session.terminalReason && (
           <div
@@ -330,6 +378,26 @@ export default function PrescreenSession() {
                     style={{ width: "100%", padding: "0.5rem", fontFamily: "inherit" }}
                   />
                 </label>
+                <label style={{ display: "grid", gap: "0.25rem", fontSize: "0.9em" }}>
+                  Candidate-visible decision reason
+                  <textarea
+                    value={decisionReason}
+                    onChange={(e) => setDecisionReason(e.target.value)}
+                    rows={3}
+                    placeholder="One evidence-backed reason candidates can see."
+                    style={{ width: "100%", padding: "0.5rem", fontFamily: "inherit" }}
+                  />
+                </label>
+                <label style={{ display: "grid", gap: "0.25rem", fontSize: "0.9em" }}>
+                  Candidate-visible recommended actions
+                  <textarea
+                    value={recommendedActionsText}
+                    onChange={(e) => setRecommendedActionsText(e.target.value)}
+                    rows={4}
+                    placeholder="One action per line."
+                    style={{ width: "100%", padding: "0.5rem", fontFamily: "inherit" }}
+                  />
+                </label>
                 <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
                   <button
                     type="button"
@@ -345,6 +413,11 @@ export default function PrescreenSession() {
             ) : session.review?.decisionOutboundId ? (
               <div style={{ fontSize: "0.9em", color: "#334155" }}>
                 Approved outbound: <code>{session.review.decisionOutboundId}</code>
+                {session.review.candidateDecision?.decisionReason ? (
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <strong>Candidate decision:</strong> {session.review.candidateDecision.decisionReason}
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

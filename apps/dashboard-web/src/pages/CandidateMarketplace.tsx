@@ -1,6 +1,6 @@
 import { collection, getDocs, limit, query, where } from "firebase/firestore"
 import { useEffect, useMemo, useState } from "react"
-import { Link } from "react-router-dom"
+import { AdminJobLink, AdminPrescreenSessionLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import { DataTable, EmptyState, ErrorState, LoadingState, Panel, StatusBadge, type DataTableColumn } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
 import {
@@ -9,6 +9,9 @@ import {
   emptyMarketplaceRows,
   formatPercent,
   formatScore,
+  marketplaceExternalHref,
+  marketplaceResumeArtifactFor,
+  marketplaceResumeOriginalSource,
   sortRowsByTime,
   summarizeMarketplace,
   type MarketplaceRow,
@@ -93,6 +96,14 @@ export function CandidateMarketplace({
   }, [candidateId])
 
   const summary = useMemo(() => summarizeMarketplace(rows), [rows])
+  const latestResumeArtifact = useMemo(
+    () => marketplaceResumeArtifactFor(rows.resumes, profile.latestResumeArtifactId),
+    [profile.latestResumeArtifactId, rows.resumes]
+  )
+  const latestResumeSource = useMemo(
+    () => marketplaceResumeOriginalSource(latestResumeArtifact, latestResume),
+    [latestResumeArtifact, latestResume]
+  )
 
   if (err) {
     return <ErrorState message={err} />
@@ -109,18 +120,19 @@ export function CandidateMarketplace({
           <Metric label="Active" value={String(summary.activeJobs)} />
           <Metric label="Retained" value={String(summary.notPassedJobs)} />
           <Metric label="Auth mappings" value={String(summary.authMappings)} />
+          <Metric label="Source links" value={String(summary.sourceLinks)} />
           <Metric label="Identity events" value={String(summary.identityEvents)} />
           <Metric label="Open conflicts" value={String(summary.openIdentityConflicts)} />
         </div>
         <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", marginTop: 14 }}>
           <ProfileFact label="mem0 user" value={profile.mem0UserId} />
-          <ProfileFact label="Latest resume" value={profile.latestResumeArtifactId} />
-          <ProfileFact label="LinkedIn" value={profile.linkedinUrl} />
+          <ProfileFact label="Latest resume" value={profile.latestResumeArtifactId} href={latestResumeSource.href} />
+          <ProfileFact label="LinkedIn" value={profile.linkedinUrl} href={marketplaceExternalHref(profile.linkedinUrl)} />
           <ProfileFact label="PII consent" value={profile.piiConsentAt} />
           <ProfileFact label="Level 1" value={profile.level1CollectedAt} />
           <ProfileFact label="Outreach" value={profile.outreach?.status} />
           <TagSummary tags={profile.tags ?? profile.globalTags} />
-          <ExperienceSummary resume={latestResume} />
+          <ExperienceSummary resume={latestResume} source={latestResumeSource} />
           <ProfileFact label="Chat preferences" value={profile.conversationDerivedPreferences} />
         </div>
       </Panel>
@@ -149,6 +161,7 @@ export function CandidateMarketplace({
             columns={identityConflictColumns}
             tableKey="identityConflicts"
           />
+          <MarketplaceTable title="Source links" rows={rows.sourceLinks} columns={sourceLinkColumns} tableKey="sourceLinks" />
           <MarketplaceTable
             title="Candidate job states"
             rows={rows.jobStates}
@@ -217,12 +230,29 @@ function Metric({ label, value }: { label: string; value: string }) {
   )
 }
 
-function ProfileFact({ label, value }: { label: string; value: unknown }) {
+function ProfileFact({ label, value, href }: { label: string; value: unknown; href?: string }) {
+  const content = compactValue(value, 140)
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ color: "#64748b", fontSize: "0.76em", textTransform: "uppercase" }}>{label}</div>
-      <div style={{ color: "#0f172a", fontSize: "0.9em", overflowWrap: "anywhere" }}>{compactValue(value, 140)}</div>
+      <div style={{ color: "#0f172a", fontSize: "0.9em", overflowWrap: "anywhere" }}>
+        {href ? <ExternalTextLink href={href}>{content}</ExternalTextLink> : content}
+      </div>
     </div>
+  )
+}
+
+function ExternalTextLink({ href, children }: { href: string; children: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(event) => event.stopPropagation()}
+      style={{ color: "#2563eb", overflowWrap: "anywhere" }}
+    >
+      {children}
+    </a>
   )
 }
 
@@ -327,7 +357,7 @@ function TagSection({ label, values, limit = 18 }: { label: string; values: stri
   )
 }
 
-function ExperienceSummary({ resume }: { resume: ParsedResume | null }) {
+function ExperienceSummary({ resume, source }: { resume: ParsedResume | null; source: { raw?: string; href?: string } }) {
   const experiences = resume ? resumeExperiences(resume) : []
 
   return (
@@ -342,7 +372,11 @@ function ExperienceSummary({ resume }: { resume: ParsedResume | null }) {
       ) : (
         <div style={{ display: "grid", gap: 10, marginTop: 8 }}>
           <div style={{ color: "#64748b", fontSize: "0.82em" }}>
-            Source: {resume.originalFileName || resume.id}
+            Source: {source.href ? (
+              <ExternalTextLink href={source.href}>{resume.originalFileName || String(source.raw ?? resume.id)}</ExternalTextLink>
+            ) : (
+              resume.originalFileName || resume.id
+            )}
             {resume.parserModel ? ` · ${resume.parserModel}` : ""}
           </div>
           {experiences.map((experience, index) => (
@@ -411,30 +445,83 @@ function valueCell(field: string, max = 180) {
   return (row: MarketplaceRow) => compactValue(row[field], max)
 }
 
+function jobLinkCell(field = "jobId", max = 180) {
+  return (row: MarketplaceRow) => {
+    const jobId = linkableId(row[field])
+    return jobId ? <AdminJobLink jobId={jobId}>{compactValue(jobId, max)}</AdminJobLink> : "-"
+  }
+}
+
+function userLinkCell(field: string, max = 180) {
+  return (row: MarketplaceRow) => {
+    const userId = linkableId(row[field])
+    return userId ? <AdminUserLink userId={userId}>{compactValue(userId, max)}</AdminUserLink> : "-"
+  }
+}
+
+function prescreenSessionLinkCell(field = "prescreenSessionId", max = 180) {
+  return (row: MarketplaceRow) => {
+    const sessionId = linkableId(row[field])
+    return sessionId ? <AdminPrescreenSessionLink sessionId={sessionId}>{compactValue(sessionId, max)}</AdminPrescreenSessionLink> : "-"
+  }
+}
+
+function externalLinkCell(field: string, max = 180) {
+  return (row: MarketplaceRow) => {
+    const raw = linkableId(row[field])
+    const href = marketplaceExternalHref(raw)
+    return raw && href ? <ExternalTextLink href={href}>{compactValue(raw, max)}</ExternalTextLink> : compactValue(raw, max)
+  }
+}
+
+function resumeFileCell(row: MarketplaceRow) {
+  const source = marketplaceResumeOriginalSource(row)
+  const label = firstDisplayText(
+    row.fileName,
+    row.originalFileName,
+    row.resumeFileName,
+    row.sourceFileName,
+    row.resumeId,
+    row.id
+  )
+  return source.href ? <ExternalTextLink href={source.href}>{compactValue(label, 260)}</ExternalTextLink> : compactValue(label, 260)
+}
+
+function handleConnectorCell(row: MarketplaceRow) {
+  const value = firstDisplayText(row.normalizedValue, row.canonicalLinkedInUrl, row.url, row.sourceUrl)
+  const href = String(row.kind ?? "").toLowerCase() === "linkedin" ? marketplaceExternalHref(value) : undefined
+  if (href) return <ExternalTextLink href={href}>{compactValue(value, 220)}</ExternalTextLink>
+  return compactValue(value, 220)
+}
+
+function linkableId(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null
+}
+
+function firstDisplayText(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value !== "string") continue
+    const trimmed = value.trim()
+    if (trimmed) return trimmed
+  }
+  return "-"
+}
+
 function statusCell(field: string) {
   return (row: MarketplaceRow) => <StatusBadge value={String(row[field] ?? "")} />
 }
 
 const jobStateColumns: DataTableColumn<MarketplaceRow>[] = [
-  { key: "jobId", header: "Job", render: valueCell("jobId") },
+  { key: "jobId", header: "Job", render: jobLinkCell() },
   { key: "state", header: "State", render: statusCell("state") },
   { key: "stateUpdatedAt", header: "Updated", render: valueCell("stateUpdatedAt") },
   { key: "reason", header: "Reason", render: valueCell("reason", 260) },
-  {
-    key: "prescreenSessionId",
-    header: "Prescreen",
-    render: (row) =>
-      typeof row.prescreenSessionId === "string" && row.prescreenSessionId ? (
-        <Link to={`/admin/prescreen-sessions/${row.prescreenSessionId}`}>{compactValue(row.prescreenSessionId, 160)}</Link>
-      ) : (
-        "-"
-      ),
-  },
+  { key: "prescreenSessionId", header: "Prescreen", render: prescreenSessionLinkCell("prescreenSessionId", 160) },
   { key: "latestMatchId", header: "Latest match", render: valueCell("latestMatchId") },
 ]
 
 const matchColumns: DataTableColumn<MarketplaceRow>[] = [
-  { key: "jobId", header: "Job", render: valueCell("jobId") },
+  { key: "jobId", header: "Job", render: jobLinkCell() },
   { key: "finalScore", header: "Score", render: (row) => formatScore(row.finalScore) },
   { key: "recommendedAction", header: "Action", render: statusCell("recommendedAction") },
   { key: "hardFilterResult", header: "Hard filter", render: statusCell("hardFilterResult") },
@@ -442,7 +529,7 @@ const matchColumns: DataTableColumn<MarketplaceRow>[] = [
 ]
 
 const inviteColumns: DataTableColumn<MarketplaceRow>[] = [
-  { key: "jobId", header: "Job", render: valueCell("jobId") },
+  { key: "jobId", header: "Job", render: jobLinkCell() },
   { key: "status", header: "Status", render: statusCell("status") },
   { key: "policyDecision", header: "Policy", render: statusCell("policyDecision") },
   { key: "updatedAt", header: "Updated", render: valueCell("updatedAt") },
@@ -450,7 +537,7 @@ const inviteColumns: DataTableColumn<MarketplaceRow>[] = [
 ]
 
 const employerSnapshotColumns: DataTableColumn<MarketplaceRow>[] = [
-  { key: "jobId", header: "Job", render: valueCell("jobId") },
+  { key: "jobId", header: "Job", render: jobLinkCell() },
   { key: "createdAt", header: "Created", render: valueCell("createdAt") },
   { key: "createdBy", header: "By", render: statusCell("createdBy") },
   { key: "passReason", header: "Pass reason", render: valueCell("passReason", 280) },
@@ -460,14 +547,15 @@ const employerSnapshotColumns: DataTableColumn<MarketplaceRow>[] = [
 const handleColumns: DataTableColumn<MarketplaceRow>[] = [
   { key: "kind", header: "Kind", render: statusCell("kind") },
   { key: "source", header: "Source", render: statusCell("source") },
+  { key: "normalizedValue", header: "Connector", render: handleConnectorCell },
   { key: "verifiedAt", header: "Verified", render: valueCell("verifiedAt") },
   { key: "deliverable", header: "Deliverable", render: (row) => compactValue(row.deliverable) },
   { key: "createdAt", header: "Created", render: valueCell("createdAt") },
 ]
 
 const authMappingColumns: DataTableColumn<MarketplaceRow>[] = [
-  { key: "id", header: "Firebase uid", render: valueCell("id") },
-  { key: "candidateId", header: "Candidate", render: valueCell("candidateId") },
+  { key: "id", header: "Firebase uid", render: userLinkCell("id") },
+  { key: "candidateId", header: "Candidate", render: userLinkCell("candidateId") },
   { key: "emailNormalized", header: "Email", render: valueCell("emailNormalized") },
   { key: "provider", header: "Provider", render: statusCell("provider") },
   { key: "claimedAt", header: "Claimed", render: valueCell("claimedAt") },
@@ -492,10 +580,20 @@ const identityConflictColumns: DataTableColumn<MarketplaceRow>[] = [
   { key: "summary", header: "Summary", render: (row) => compactValue(row.summary ?? row.reason ?? row.payloadRedacted, 360) },
 ]
 
+const sourceLinkColumns: DataTableColumn<MarketplaceRow>[] = [
+  { key: "source", header: "Source", render: statusCell("source") },
+  { key: "status", header: "Status", render: statusCell("status") },
+  { key: "canonicalLinkedInUrl", header: "LinkedIn", render: externalLinkCell("canonicalLinkedInUrl", 260) },
+  { key: "batchId", header: "Batch", render: (row) => compactValue(row.batchId, 180) },
+  { key: "recordId", header: "Record", render: (row) => compactValue(row.recordId, 180) },
+  { key: "createdAt", header: "Created", render: valueCell("createdAt") },
+]
+
 const resumeColumns: DataTableColumn<MarketplaceRow>[] = [
   { key: "status", header: "Status", render: statusCell("status") },
   { key: "source", header: "Source", render: statusCell("source") },
-  { key: "fileName", header: "File", render: valueCell("fileName", 260) },
+  { key: "fileName", header: "File", render: resumeFileCell },
+  { key: "storageUri", header: "Original", render: externalLinkCell("storageUri", 260) },
   { key: "parsedCandidateResumeId", header: "Parsed resume", render: valueCell("parsedCandidateResumeId") },
   { key: "updatedAt", header: "Updated", render: valueCell("updatedAt") },
 ]
@@ -504,7 +602,7 @@ const feedbackColumns: DataTableColumn<MarketplaceRow>[] = [
   { key: "createdAt", header: "Created", render: valueCell("createdAt") },
   { key: "kind", header: "Kind", render: statusCell("kind") },
   { key: "actor", header: "Actor", render: statusCell("actor") },
-  { key: "jobId", header: "Job", render: valueCell("jobId") },
+  { key: "jobId", header: "Job", render: jobLinkCell() },
   { key: "outcome", header: "Outcome", render: valueCell("outcome", 260) },
 ]
 
@@ -512,7 +610,7 @@ const correctionColumns: DataTableColumn<MarketplaceRow>[] = [
   { key: "createdAt", header: "Created", render: valueCell("createdAt") },
   { key: "targetType", header: "Target", render: statusCell("targetType") },
   { key: "actor", header: "Actor", render: statusCell("actor") },
-  { key: "jobId", header: "Job", render: valueCell("jobId") },
+  { key: "jobId", header: "Job", render: jobLinkCell() },
   { key: "reason", header: "Reason", render: valueCell("reason", 320) },
 ]
 

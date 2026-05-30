@@ -485,6 +485,8 @@ export async function writeCandidateSelfProfile(
     profileSummary: input.profileSummary || undefined,
     globalTags: input.marketplaceFields?.globalTags,
     linkedinUrl: normalizeOptionalUrl(input.marketplaceFields?.linkedinUrl),
+    githubUrl: normalizeOptionalUrl(input.marketplaceFields?.githubUrl),
+    calcomUrl: normalizeOptionalUrl(input.marketplaceFields?.calcomUrl),
     createdAt: ts,
     updatedAt: ts,
   })

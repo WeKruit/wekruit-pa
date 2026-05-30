@@ -7,6 +7,7 @@ import {
   PageHeader,
   Panel,
 } from "../components/ui.js"
+import { AdminJobLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import {
   OUTREACH_OPS_CALLABLE_NAME,
   OUTREACH_OPS_DEFAULT_LIMIT,
@@ -213,7 +214,10 @@ export function OutreachOpsSnapshotView({ snapshot }: { snapshot: OutreachOpsSna
           <Metric label="Opt-Out Block" value={formatCount(snapshot.summary.optOutBlocked)} tone="warn" />
         </div>
         <div style={filterSummaryStyle}>
-          <Fact label="job" value={snapshot.filters.jobId ?? "all"} />
+          <Fact
+            label="job"
+            value={snapshot.filters.jobId ? <AdminJobLink jobId={snapshot.filters.jobId} /> : "all"}
+          />
           <Fact label="status" value={snapshot.filters.status ?? "any"} />
           <Fact label="approval" value={snapshot.filters.approvalState ?? "any"} />
           <Fact label="limit" value={snapshot.filters.limit} />
@@ -299,7 +303,9 @@ function InviteCard({ row, showLastError }: { row: OutreachOpsInviteRow; showLas
             {formatSafeText(row.candidateDisplayName || row.candidateId)} - {formatSafeText(row.jobTitle)} @ {formatSafeText(row.companyName)}
           </strong>
           <div style={mutedStyle}>
-            invite {formatSafeText(row.inviteId)} - candidate {formatSafeText(row.candidateId)} - job {formatSafeText(row.jobId)}
+            invite {formatSafeText(row.inviteId)} - candidate{" "}
+            <AdminUserLink userId={row.candidateId}>{formatSafeText(row.candidateId)}</AdminUserLink> - job{" "}
+            <AdminJobLink jobId={row.jobId}>{formatSafeText(row.jobId)}</AdminJobLink>
           </div>
         </div>
         <div style={badgeRowStyle}>
@@ -378,7 +384,7 @@ type JobTableRow = OutreachOpsJobRow & { id: string }
 const jobColumns: Array<{ key: string; header: string; render: (row: JobTableRow) => ReactNode }> = [
   { key: "job", header: "Job", render: (row) => formatSafeText(row.jobTitle) },
   { key: "company", header: "Company", render: (row) => formatSafeText(row.companyName) },
-  { key: "jobId", header: "Job ID", render: (row) => formatSafeText(row.jobId) },
+  { key: "jobId", header: "Job ID", render: (row) => <AdminJobLink jobId={row.jobId}>{formatSafeText(row.jobId)}</AdminJobLink> },
   { key: "pending", header: "Pending", render: (row) => formatCount(row.pendingInvites) },
   { key: "blocked", header: "Blocked", render: (row) => formatCount(row.blockedInvites) },
   { key: "queued", header: "Queued", render: (row) => formatCount(row.queuedInvites) },
@@ -442,11 +448,12 @@ function StatusPill({ value }: { value?: string }) {
   return <ViewBadge tone={statusTone(value)}>{formatSafeText(value)}</ViewBadge>
 }
 
-function Fact({ label, value }: { label: string; value: unknown }) {
+function Fact({ label, value }: { label: string; value: ReactNode }) {
+  const renderedValue = typeof value === "string" || typeof value === "number" ? formatSafeText(value, 180) : value
   return (
     <div style={{ minWidth: 0 }}>
       <div style={factLabelStyle}>{label}</div>
-      <div style={factValueStyle}>{formatSafeText(value, 180)}</div>
+      <div style={factValueStyle}>{renderedValue}</div>
     </div>
   )
 }

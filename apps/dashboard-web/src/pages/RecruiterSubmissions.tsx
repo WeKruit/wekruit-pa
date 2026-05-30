@@ -7,6 +7,7 @@
  */
 import { Fragment, useEffect, useMemo, useState } from "react"
 import { collection, getDocs, limit, orderBy, query } from "firebase/firestore"
+import { AdminJobLink } from "../components/AdminEntityLink.js"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { DataTable, type Column } from "../components/console/primitives.js"
 import { useTable } from "../components/console/useTable.js"
@@ -186,7 +187,9 @@ export default function RecruiterSubmissions() {
       sortable: true,
       render: (r) => (
         <>
-          <div style={{ fontWeight: 500 }}>{r.jobTitleSnapshot ?? r.jobId}</div>
+          <div style={{ fontWeight: 500 }}>
+            {r.jobId ? <AdminJobLink jobId={r.jobId}>{r.jobTitleSnapshot ?? r.jobId}</AdminJobLink> : r.jobTitleSnapshot ?? "-"}
+          </div>
           <div style={{ color: "#777", fontSize: 11 }}>{r.companyLabelSnapshot ?? ""}</div>
         </>
       ),

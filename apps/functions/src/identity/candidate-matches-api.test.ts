@@ -326,6 +326,99 @@ test("runCandidateListMatches maps pending terminal review to candidate reviewin
   assert.doesNotMatch(JSON.stringify(result), /terminalActionPendingReview|ps-pass/)
 })
 
+test("runCandidateListMatches lets committed state win over stale proposed terminal and exposes approved decision", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
+    firebaseUid: "firebase-1",
+    candidateId: "cand-1",
+  })
+  await mfs.collection("pa-candidate-job-states").doc("cand-1__job-pass").set({
+    id: "cand-1__job-pass",
+    candidateId: "cand-1",
+    jobId: "job-pass",
+    state: "not_passed",
+    prescreenSessionId: "ps-pass",
+  })
+  await mfs.collection("pa-prescreen-sessions").doc("ps-pass").set({
+    sessionId: "ps-pass",
+    userId: "cand-1",
+    jobId: "job-pass",
+    terminal: "PASS",
+    terminalActionPendingReview: false,
+    review: {
+      status: "overridden",
+      finalTerminal: "FAIL",
+      candidateDecision: {
+        candidateMessageBody: "Thanks for completing the screen. This role is not the right next step.",
+        decisionReason: "The role needs direct enterprise GTM ownership, which was not clear in this screen.",
+        recommendedActions: ["Add a GTM launch example to your profile.", "Keep your WeKruit profile active for stronger matches."],
+        finalTerminal: "FAIL",
+        reviewedAt: "2026-05-20T00:00:00.000Z",
+        decisionOutboundId: "out-internal",
+      },
+    },
+  })
+  await mfs.collection("pa-jobs").doc("job-pass").set({
+    publicVisible: true,
+    prescreenConfig: { jobTitle: "GTM & Growth Marketing Manager", company: "Paradigm" },
+  })
+
+  const result = await runCandidateListMatches({}, { uid: "firebase-1" }, { db: asFirestore(mfs) })
+
+  assert.equal(result.matches.length, 1)
+  assert.equal(result.matches[0]!.status, "not_passed")
+  assert.deepEqual(result.matches[0]!.reviewDecision, {
+    candidateMessageBody: "Thanks for completing the screen. This role is not the right next step.",
+    decisionReason: "The role needs direct enterprise GTM ownership, which was not clear in this screen.",
+    recommendedActions: ["Add a GTM launch example to your profile.", "Keep your WeKruit profile active for stronger matches."],
+    finalTerminal: "FAIL",
+    reviewedAt: "2026-05-20T00:00:00.000Z",
+  })
+  assert.doesNotMatch(JSON.stringify(result), /out-internal|decisionOutboundId|terminalActionPendingReview|ps-pass/)
+})
+
+test("runCandidateListMatches never exposes candidate decision while review is pending", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
+    firebaseUid: "firebase-1",
+    candidateId: "cand-1",
+  })
+  await mfs.collection("pa-candidate-job-states").doc("cand-1__job-review").set({
+    id: "cand-1__job-review",
+    candidateId: "cand-1",
+    jobId: "job-review",
+    state: "prescreen_review_pending",
+    prescreenSessionId: "ps-review",
+  })
+  await mfs.collection("pa-prescreen-sessions").doc("ps-review").set({
+    sessionId: "ps-review",
+    userId: "cand-1",
+    jobId: "job-review",
+    terminal: "FAIL",
+    terminalActionPendingReview: true,
+    review: {
+      candidateDecision: {
+        candidateMessageBody: "This should not show yet.",
+        decisionReason: "Draft only.",
+        recommendedActions: ["Draft action"],
+        finalTerminal: "FAIL",
+        reviewedAt: "2026-05-20T00:00:00.000Z",
+      },
+    },
+  })
+  await mfs.collection("pa-jobs").doc("job-review").set({
+    publicVisible: true,
+    prescreenConfig: { jobTitle: "Frontend Engineer", company: "Review Co" },
+  })
+
+  const result = await runCandidateListMatches({}, { uid: "firebase-1" }, { db: asFirestore(mfs) })
+
+  assert.equal(result.matches.length, 1)
+  assert.equal(result.matches[0]!.status, "review_pending")
+  assert.equal(result.matches[0]!.reviewDecision, undefined)
+  assert.doesNotMatch(JSON.stringify(result), /This should not show yet|Draft action/)
+})
+
 test("runCandidateListMatches suppresses non-public jobs", async () => {
   const mfs = new MockFirestore()
   await mfs.collection("pa-candidate-auth").doc("firebase-1").set({

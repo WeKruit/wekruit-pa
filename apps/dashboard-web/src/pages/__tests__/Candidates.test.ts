@@ -3,12 +3,19 @@ import test from "node:test"
 
 import {
   classifyCandidateProfile,
+  candidateDrawerExternalHref,
+  candidateDrawerPreviewMax,
+  candidateDrawerRegionCount,
+  candidateDrawerTimeMs,
+  candidateDrawerVisibleCount,
   deriveCandidateSource,
+  firstCandidateDrawerText,
   isDemoPreviewProfile,
   isSyntheticTestProfile,
   matchesPhoneSearch,
   normalizeCandidatePhoneLookup,
   previewCandidateDrawerText,
+  sortCandidateDrawerRows,
 } from "../Candidates.helpers.js"
 
 test("Candidates classifies explicit testMode users as synthetic", () => {
@@ -158,4 +165,44 @@ test("Candidates drawer renders structured context as text", () => {
 test("Candidates drawer truncates long context previews", () => {
   const preview = previewCandidateDrawerText("x".repeat(12), 5)
   assert.equal(preview, "xxxxx...")
+})
+
+test("Candidates drawer picks the first non-empty text value", () => {
+  assert.equal(firstCandidateDrawerText(undefined, "", "  ", "Account Executive"), "Account Executive")
+})
+
+test("Candidates drawer sorts hydrated detail rows by known timestamps", () => {
+  const rows = sortCandidateDrawerRows(
+    [
+      { id: "old", updatedAt: "2026-01-01T00:00:00.000Z" },
+      { id: "new", updatedAt: { seconds: 1_800_000_000 } },
+      { id: "missing" },
+    ],
+    ["updatedAt"]
+  )
+
+  assert.deepEqual(rows.map((row) => row.id), ["new", "old", "missing"])
+  assert.equal(candidateDrawerTimeMs({ seconds: 1_800_000_000 }), 1_800_000_000_000)
+})
+
+test("Candidates drawer shows bounded previews until a card is expanded", () => {
+  assert.equal(candidateDrawerVisibleCount(12, false, 5), 5)
+  assert.equal(candidateDrawerVisibleCount(12, true, 5), 12)
+  assert.equal(candidateDrawerPreviewMax(false, 220, 1200), 220)
+  assert.equal(candidateDrawerPreviewMax(true, 220, 1200), 1200)
+})
+
+test("Candidates drawer formats clear section count labels", () => {
+  assert.equal(candidateDrawerRegionCount(1, "resume"), "1 resume")
+  assert.equal(candidateDrawerRegionCount(3, "message"), "3 messages")
+  assert.equal(candidateDrawerRegionCount(Number.NaN, "session"), "0 sessions")
+})
+
+test("Candidates drawer builds original resume file links from stored source refs", () => {
+  assert.equal(candidateDrawerExternalHref("https://storage.example/resume.pdf"), "https://storage.example/resume.pdf")
+  assert.equal(
+    candidateDrawerExternalHref("gs://wekruit-resumes/bulk uploads/Adam Resume.pdf"),
+    "https://storage.cloud.google.com/wekruit-resumes/bulk%20uploads/Adam%20Resume.pdf"
+  )
+  assert.equal(candidateDrawerExternalHref("inline://public-profile-upload.pdf"), undefined)
 })

@@ -2,9 +2,14 @@ export const PRESCREEN_TOP_FIVE_PASS_RATIO = 0.95
 export const PRESCREEN_TOP_FIVE_MIN_MUST_HAVE_SCORE = 0.95
 export const PRESCREEN_TOP_FIVE_MIN_CONFIDENCE = 0.85
 
-export type PrescreenTerminal = "PASS" | "FAIL" | "HARD_STOP"
-export type StrictReviewBucket = "all" | "batch_reject" | "individual_review" | "hard_stop" | "top_five_pass"
+export type PrescreenTerminal = "PASS" | "FAIL" | "HARD_STOP" | "PAUSE"
+export type ReviewActionTerminal = Exclude<PrescreenTerminal, "PAUSE">
+export type StrictReviewBucket = "all" | "batch_reject" | "individual_review" | "hard_stop" | "top_five_pass" | "paused"
 export type StrictReviewSort = "strict_priority" | "score_desc" | "oldest" | "newest"
+export type StrictReviewQueueFilter = "all" | "pending" | "committed"
+export type StrictReviewTerminalFilter = "all" | PrescreenTerminal | "IN_PROGRESS"
+export type StrictReviewActionFilter = "all" | ReviewActionTerminal
+export type StrictReviewDraftFilter = "all" | "has_decision" | "missing_decision"
 
 export type PrescreenReviewQuestion = {
   qId?: string
@@ -29,6 +34,11 @@ export type PrescreenReviewRowLike = {
   createdAt?: string
   updatedAt?: string
   questions?: Record<string, PrescreenReviewQuestion>
+  terminalActionPendingReview?: boolean
+  review?: {
+    finalTerminal?: string
+    candidateDecision?: unknown
+  }
 }
 
 export type PrescreenReviewClassification = {
@@ -49,6 +59,7 @@ export type PrescreenReviewSummary = {
   batchReject: number
   individualReview: number
   hardStop: number
+  paused: number
 }
 
 const OWNERSHIP_RE = /\b(owned|led|drove|built|shipped|launched|created|designed|implemented|managed|founded|ran|authored)\b/i
@@ -60,8 +71,9 @@ const GROWTH_Q_RE = /(growth|marketing|campaign|gtm|business|revenue|acquisition
 const BUCKET_RANK: Record<Exclude<StrictReviewBucket, "all">, number> = {
   batch_reject: 0,
   individual_review: 1,
-  hard_stop: 2,
-  top_five_pass: 3,
+  paused: 2,
+  hard_stop: 3,
+  top_five_pass: 4,
 }
 
 export function classifyPrescreenReviewRow(row: PrescreenReviewRowLike): PrescreenReviewClassification {
@@ -84,6 +96,19 @@ export function classifyPrescreenReviewRow(row: PrescreenReviewRowLike): Prescre
       minMustHaveScore,
       minMustHaveConfidence,
       reasons: ["AI found a hard-stop mismatch; human should verify and close."],
+    })
+  }
+
+  if (terminal === "PAUSE") {
+    return buildClassification({
+      recommendation: "PAUSE",
+      bucket: "paused",
+      label: "Paused - low confidence",
+      tone: "muted",
+      ratio,
+      minMustHaveScore,
+      minMustHaveConfidence,
+      reasons: ["Claire paused because confidence stayed too low to proceed for this role."],
     })
   }
 
@@ -148,12 +173,26 @@ export function classifyPrescreenReviewRow(row: PrescreenReviewRowLike): Prescre
 
 export function filterAndSortPrescreenRows<T extends PrescreenReviewRowLike>(
   rows: T[],
-  controls: { bucket: StrictReviewBucket; sort: StrictReviewSort; search: string },
+  controls: {
+    bucket: StrictReviewBucket
+    sort: StrictReviewSort
+    search: string
+    queue?: StrictReviewQueueFilter
+    terminal?: StrictReviewTerminalFilter
+    action?: StrictReviewActionFilter
+    draft?: StrictReviewDraftFilter
+  },
 ): T[] {
   const search = controls.search.trim().toLowerCase()
   const withClassification = rows
     .map((row) => ({ row, classification: classifyPrescreenReviewRow(row) }))
     .filter(({ row, classification }) => {
+      if (controls.queue === "pending" && row.terminalActionPendingReview !== true) return false
+      if (controls.queue === "committed" && row.terminalActionPendingReview === true) return false
+      if (controls.terminal && controls.terminal !== "all" && effectiveTerminal(row.terminal) !== controls.terminal) return false
+      if (controls.action && controls.action !== "all" && classification.recommendation !== controls.action) return false
+      if (controls.draft === "has_decision" && !hasCandidateDecision(row)) return false
+      if (controls.draft === "missing_decision" && hasCandidateDecision(row)) return false
       if (controls.bucket !== "all" && classification.bucket !== controls.bucket) return false
       if (!search) return true
       return [
@@ -189,6 +228,7 @@ export function summarizePrescreenReviewRows(rows: PrescreenReviewRowLike[]): Pr
     batchReject: 0,
     individualReview: 0,
     hardStop: 0,
+    paused: 0,
   }
   for (const row of rows) {
     const classification = classifyPrescreenReviewRow(row)
@@ -196,6 +236,7 @@ export function summarizePrescreenReviewRows(rows: PrescreenReviewRowLike[]): Pr
     if (classification.bucket === "batch_reject") summary.batchReject += 1
     if (classification.bucket === "individual_review") summary.individualReview += 1
     if (classification.bucket === "hard_stop") summary.hardStop += 1
+    if (classification.bucket === "paused") summary.paused += 1
   }
   return summary
 }
@@ -229,7 +270,18 @@ function normalizeQuestion(qId: string, raw: PrescreenReviewQuestion) {
 }
 
 function cleanTerminal(value: unknown): PrescreenTerminal | null {
-  return value === "PASS" || value === "FAIL" || value === "HARD_STOP" ? value : null
+  return value === "PASS" || value === "FAIL" || value === "HARD_STOP" || value === "PAUSE" ? value : null
+}
+
+function effectiveTerminal(value: unknown): StrictReviewTerminalFilter {
+  return cleanTerminal(value) ?? "IN_PROGRESS"
+}
+
+function hasCandidateDecision(row: PrescreenReviewRowLike): boolean {
+  const decision = row.review?.candidateDecision
+  if (!decision || typeof decision !== "object") return false
+  const record = decision as Record<string, unknown>
+  return typeof record.candidateMessageBody === "string" || typeof record.decisionReason === "string"
 }
 
 function finiteNumber(value: unknown): number {

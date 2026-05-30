@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import type { EvaluationTier } from "@pa/core-types"
+import { AdminJobLink } from "../../components/AdminEntityLink.js"
 import {
   EmptyState,
   ErrorState,
@@ -225,11 +226,14 @@ export function EvaluationAgentRanking() {
             : "Loading run…"
         }
         actions={
-          <Link to={`/admin/external-supply/evaluations/${runId}`}>
-            <button type="button" style={secondaryBtnStyle}>
-              ← Back to run
-            </button>
-          </Link>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {run?.jobId ? <AdminJobLink jobId={run.jobId}>Open job</AdminJobLink> : null}
+            <Link to={`/admin/external-supply/evaluations/${runId}`}>
+              <button type="button" style={secondaryBtnStyle}>
+                ← Back to run
+              </button>
+            </Link>
+          </div>
         }
       />
 

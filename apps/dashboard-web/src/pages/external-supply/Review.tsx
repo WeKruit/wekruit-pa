@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import type { ExternalCandidateRecord } from "@pa/core-types"
+import { AdminUserLink } from "../../components/AdminEntityLink.js"
 import { EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
 import {
   listIdentityConflicts,
@@ -144,18 +145,14 @@ export function Review() {
                   </td>
                   <td style={tdStyle}>
                     {c.primaryCandidateId ? (
-                      <Link to={`/admin/candidates/${encodeURIComponent(c.primaryCandidateId)}/profile`}>
-                        {c.primaryCandidateId.slice(0, 8)}…
-                      </Link>
+                      <AdminUserLink userId={c.primaryCandidateId}>{c.primaryCandidateId.slice(0, 8)}…</AdminUserLink>
                     ) : (
                       "—"
                     )}
                   </td>
                   <td style={tdStyle}>
                     {c.competingCandidateId ? (
-                      <Link to={`/admin/candidates/${encodeURIComponent(c.competingCandidateId)}/profile`}>
-                        {c.competingCandidateId.slice(0, 8)}…
-                      </Link>
+                      <AdminUserLink userId={c.competingCandidateId}>{c.competingCandidateId.slice(0, 8)}…</AdminUserLink>
                     ) : (
                       "—"
                     )}

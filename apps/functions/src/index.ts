@@ -311,7 +311,13 @@ export { paPublicLayoffPreview } from "./public-layoff-preview.js"
 // Candidate LinkedIn auth cannot use Firebase generic OIDC because LinkedIn
 // rejects token exchange without client_secret. These HTTP functions own the
 // OAuth exchange server-side and return a Firebase custom token.
-export { paLinkedinAuthStart, paLinkedinCallback } from "./linkedin-auth.js"
+export {
+  paCalcomCallback,
+  paCandidateConnectorOAuthStart,
+  paGithubCallback,
+  paLinkedinAuthStart,
+  paLinkedinCallback,
+} from "./linkedin-auth.js"
 export { paSsoLogin, paSsoBootstrap, paSsoLogout } from "./cross-domain-sso.js"
 // v2.0 S2 — candidate email-link claim callable. Authenticated candidates
 // receive only the redacted candidate self-profile projection.

@@ -1,6 +1,7 @@
 import * as React from "react"
-import type { CSSProperties } from "react"
+import type { CSSProperties, ReactNode } from "react"
 
+import { AdminUserLink } from "../components/AdminEntityLink.js"
 import { Badge, EmptyState, Panel } from "../components/ui.js"
 import type { LaunchReadinessSnapshot, LaunchReadinessStatus } from "../lib/launch-readiness-api.js"
 
@@ -41,7 +42,7 @@ export function LaunchReadinessSnapshotView({ snapshot }: { snapshot: LaunchRead
                   <Badge tone={privacyTone(row.status)}>{row.status}</Badge>
                 </div>
                 <div style={factGridStyle}>
-                  <Fact label="candidate" value={row.candidateId ?? "-"} />
+                  <Fact label="candidate" value={row.candidateId ? <AdminUserLink userId={row.candidateId} /> : "-"} />
                   <Fact label="surface" value={row.sourceSurface ?? "-"} />
                   <Fact label="updated" value={formatTimestamp(row.updatedAt)} />
                 </div>
@@ -78,7 +79,7 @@ export function LaunchReadinessSnapshotView({ snapshot }: { snapshot: LaunchRead
   )
 }
 
-export function Fact({ label, value }: { label: string; value: string | number }) {
+export function Fact({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div style={factStyle}>
       <span>{label}</span>

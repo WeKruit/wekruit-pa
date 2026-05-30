@@ -20,6 +20,7 @@ import {
   Panel,
   type DataTableColumn,
 } from "../components/ui.js"
+import { AdminUserLink } from "../components/AdminEntityLink.js"
 import {
   INDUSTRY_OPTIONS,
   filterOptedInOnly,
@@ -211,7 +212,7 @@ export function MatchCandidates() {
         <span style={{ fontSize: "0.85em" }}>
           <strong>{r.displayName}</strong>
           <br />
-          <span style={{ color: "#64748b" }}>{r.userId}</span>
+          <AdminUserLink userId={r.userId} style={{ color: "#64748b" }}>{r.userId}</AdminUserLink>
         </span>
       ),
     },

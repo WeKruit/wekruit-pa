@@ -45,13 +45,20 @@ import type * as Agents from "@openai/agents"
 // (the same pattern prescreen-agentic-turn.ts uses) means importing claire-agent is
 // inert; the SDK loads only when claire-agent actually runs (flag-gated) or in tests,
 // where @pa/agent-runtime (zod@4) IS resolvable. Wave C still needs agent-runtime
-// resolvable in the deploy bundle before the flag goes ON in prod.
+// resolvable in the deploy bundle before the flag goes ON in prod. The try/catch
+// fallback to baseRequire (from origin/main) keeps it resolvable in the deploy
+// bundle even when agent-runtime's package.json isn't (graceful, still lazy).
 let _sdk: Record<string, unknown> | null = null
 let _z: unknown = null
 function loadSdk(): Record<string, unknown> {
   if (_sdk) return _sdk
   const baseRequire = createRequire(import.meta.url)
-  const req = createRequire(baseRequire.resolve("@pa/agent-runtime/package.json"))
+  let req: NodeJS.Require
+  try {
+    req = createRequire(baseRequire.resolve("@pa/agent-runtime/package.json"))
+  } catch {
+    req = baseRequire
+  }
   _sdk = req("@openai/agents") as Record<string, unknown>
   _z = req("zod")
   return _sdk

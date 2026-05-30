@@ -56,3 +56,89 @@ export function previewCandidateDrawerText(value: unknown, max = 400): string | 
   if (!raw) return undefined
   return raw.length > max ? `${raw.slice(0, max)}...` : raw
 }
+
+export function firstCandidateDrawerText(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== "string") continue
+    const trimmed = value.trim()
+    if (trimmed) return trimmed
+  }
+  return undefined
+}
+
+export function candidateDrawerTimeMs(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value === "string") {
+    const parsed = Date.parse(value)
+    return Number.isNaN(parsed) ? 0 : parsed
+  }
+  if (value && typeof value === "object") {
+    const record = value as { seconds?: unknown; toMillis?: unknown }
+    if (typeof record.toMillis === "function") {
+      const millis = record.toMillis()
+      return typeof millis === "number" && Number.isFinite(millis) ? millis : 0
+    }
+    if (typeof record.seconds === "number") return record.seconds * 1000
+  }
+  return 0
+}
+
+export function sortCandidateDrawerRows<T extends Record<string, unknown>>(
+  rows: T[],
+  timeFields: string[]
+): T[] {
+  return [...rows].sort((a, b) => {
+    const at = firstCandidateDrawerTime(a, timeFields)
+    const bt = firstCandidateDrawerTime(b, timeFields)
+    return bt - at
+  })
+}
+
+function firstCandidateDrawerTime(row: Record<string, unknown>, timeFields: string[]): number {
+  for (const field of timeFields) {
+    const value = candidateDrawerTimeMs(row[field])
+    if (value > 0) return value
+  }
+  return 0
+}
+
+export function candidateDrawerVisibleCount(total: number, expanded: boolean, collapsedCount: number): number {
+  if (!Number.isFinite(total) || total <= 0) return 0
+  if (expanded) return total
+  return Math.min(total, collapsedCount)
+}
+
+export function candidateDrawerPreviewMax(
+  expanded: boolean,
+  collapsedMax: number,
+  expandedMax: number
+): number {
+  return expanded ? expandedMax : collapsedMax
+}
+
+export function candidateDrawerRegionCount(
+  total: number,
+  singular: string,
+  plural = `${singular}s`
+): string {
+  const count = Number.isFinite(total) && total > 0 ? Math.trunc(total) : 0
+  return `${count} ${count === 1 ? singular : plural}`
+}
+
+export function candidateDrawerExternalHref(value?: string): string | undefined {
+  const raw = firstCandidateDrawerText(value)
+  if (!raw) return undefined
+  if (/^https?:\/\//i.test(raw)) return raw
+  return candidateDrawerStorageHref(raw)
+}
+
+function candidateDrawerStorageHref(value: string): string | undefined {
+  const match = /^gs:\/\/([^/]+)\/(.+)$/i.exec(value.trim())
+  if (!match) return undefined
+  const bucket = encodeURIComponent(match[1]!)
+  const objectPath = match[2]!
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/")
+  return `https://storage.cloud.google.com/${bucket}/${objectPath}`
+}
