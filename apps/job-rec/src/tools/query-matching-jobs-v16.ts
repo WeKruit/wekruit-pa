@@ -865,6 +865,27 @@ const US_COUNTRY_LOCATION_TOKENS = new Set([
 ])
 
 /**
+ * A USER-side location token that imposes NO metro constraint → anywhere within the US. Robust to the
+ * LLM extractor's free-form `targetLocations`: the explicit anywhere / US-country sets PLUS any
+ * "anywhere" / "any US location" / "open to anywhere"-style synonym the model may emit (Adam
+ * 2026-05-30: "anywhere means any tags should work" — a candidate open to anywhere must never be
+ * zeroed by an unrecognized token like `any_us_location`). Used by every USER-side anywhere check.
+ */
+function isUserAnywhereUsToken(raw: string): boolean {
+  const t = raw.trim().toLowerCase()
+  if (ANYWHERE_LOCATION_TOKENS.has(t) || US_COUNTRY_LOCATION_TOKENS.has(t)) return true
+  return (
+    t.includes("anywhere") ||
+    t.includes("any_us") ||
+    t.includes("open_to_any") ||
+    t === "any_location" ||
+    t === "any" ||
+    t === "no_preference" ||
+    t === "flexible"
+  )
+}
+
+/**
  * True when the user has NO location constraint that would block roles: an
  * empty `targetLocations` ("open to anything") OR an explicit anywhere/remote
  * token. Mirrors the `isAnywhere` computation inside `applyV16HardFilters` so
@@ -880,11 +901,7 @@ function isAnywhereLocation(tags: UserTags): boolean {
   // US-only platform: a target composed ONLY of country-level US / anywhere tokens carries no metro
   // sub-constraint → anywhere-within-US (don't run the metro intersect). A specific metro mixed in
   // (e.g. "new_york_metro") is a real constraint and is respected.
-  return targetLocations.every(
-    (l) =>
-      US_COUNTRY_LOCATION_TOKENS.has(l.trim().toLowerCase()) ||
-      ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()),
-  )
+  return targetLocations.every(isUserAnywhereUsToken)
 }
 
 /**
@@ -1133,14 +1150,7 @@ function jobLocationHits(tags: UserTags, job: MatchingJob): boolean {
   if (targetLocations.length === 0) return true // no constraint → always hits
   if (targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()))) return true
   // US-only platform: country-level US tokens carry no metro sub-constraint → anywhere-within-US.
-  if (
-    targetLocations.every(
-      (l) =>
-        US_COUNTRY_LOCATION_TOKENS.has(l.trim().toLowerCase()) ||
-        ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()),
-    )
-  )
-    return true
+  if (targetLocations.every(isUserAnywhereUsToken)) return true
   const jobLocs = Array.isArray(job.locationBuckets) ? job.locationBuckets : []
   // Job-side anywhere bypass — REVOKED when the job is region-locked non-US (locationRaw names a
   // specific foreign region). A mis-tagged "remote_anywhere" Eastern-Europe role must not hit a
@@ -1312,11 +1322,7 @@ export function applyV16HardFilters(
     targetLocations.some((l) => ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase())) ||
     // US-only platform: a target of only country-level US / anywhere tokens carries no metro
     // sub-constraint → anywhere-within-US (skip the metro intersect). A specific metro is respected.
-    targetLocations.every(
-      (l) =>
-        US_COUNTRY_LOCATION_TOKENS.has(l.trim().toLowerCase()) ||
-        ANYWHERE_LOCATION_TOKENS.has(l.trim().toLowerCase()),
-    )
+    targetLocations.every(isUserAnywhereUsToken)
   const targetLocationSet = new Set(targetLocations.map((l) => l.trim().toLowerCase()))
   // careerStage window — only enforce when both user + job sides present.
   // W5 — `careerStage`, `targetJobType`, `targetRoleFunction`, `relevantTags`,

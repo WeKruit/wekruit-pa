@@ -304,6 +304,28 @@ test("applyV16HardFilters: location intersect bypasses for remote_anywhere (job 
   assert.equal(r.counters.location, 1)
 })
 
+test("applyV16HardFilters: 'open to anywhere' → any_us_location token bypasses metro intersect (live bug 2026-05-30)", () => {
+  // LIVE: 8fE said "Open to anywhere"; the LLM extractor wrote targetLocations
+  // ['remote_united_states','any_us_location']. 'any_us_location' was an unrecognized token, so the
+  // anywhere-bypass failed and EVERY SF-only collab job (Helium etc.) was dropped at the metro
+  // intersect. Adam: "anywhere means any tags should work." isUserAnywhereUsToken now recognizes it.
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "sf", locationBuckets: ["san_francisco_bay_area"] }),
+    mkJob({ id: "ny", locationBuckets: ["new_york_city"] }),
+    mkJob({ id: "remote", locationBuckets: ["remote_united_states"] }),
+  ]
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetLocations: ["remote_united_states", "any_us_location"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  // anywhere-in-US → nothing dropped on location (SF collab job survives).
+  assert.deepEqual(new Set(r.kept.map((j) => j.id)), new Set(["sf", "ny", "remote"]))
+  assert.equal(r.counters.location, 0)
+})
+
 test("applyV16HardFilters: location intersect drops non-overlap", () => {
   const jobs: MatchingJob[] = [
     mkJob({ id: "x", locationBuckets: ["new_york_city"] }),
