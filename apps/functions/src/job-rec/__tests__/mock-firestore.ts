@@ -72,8 +72,11 @@ class DocRef {
     }
   }
 
-  collection(_subPath: string): Coll {
-    throw new Error("MockFirestore: subcollections not supported in tests")
+  // Subcollection → a distinct collection keyed by the composite Firestore path
+  // `${parentCollection}/${docId}/${subPath}`, mirroring real Firestore so
+  // pa-user-job-recommendations/{uid}/jobs is isolated per-user.
+  collection(subPath: string): Coll {
+    return new Coll(this.mfs, `${this.collectionPath}/${this.id}/${subPath}`)
   }
 }
 

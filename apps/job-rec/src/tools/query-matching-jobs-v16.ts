@@ -102,6 +102,18 @@ const ACTIVE_STATUS = "active"
 const V16_FETCH_CAP = 3000
 
 /**
+ * Push threshold for WeKruit-collab jobs (Adam 2026-05-29: "only push on
+ * threshold meets"). A collab row must clear the hard filters AND score at least
+ * this much to be returned — so a collab job that passes the fit gates but has
+ * ~zero skill/industry overlap is NOT pushed. Calibrated against prod 2026-05-29
+ * (no llm/emb cache for a fresh candidate → scoreV16Job.total runs ~0–0.10):
+ * genuine collab matches scored 0.075–0.100 and the general push bar was ~0.065,
+ * so 0.03 keeps real role+some-overlap matches while dropping zero-overlap ones.
+ * Scraped jobs are unaffected (curated by top-N + dedup).
+ */
+const COLLAB_PUSH_SCORE_FLOOR = 0.03
+
+/**
  * D10 freshness window: drop jobs whose `firstSeenAt` is more than this old.
  * `lastSeenAt` is intentionally NOT consulted — jobright re-scrape pattern
  * makes that field noise; the daily liveness sweep handles real death.
@@ -468,11 +480,19 @@ function inferTargetJobTypeFromProfile(tags: UserTags, careerStage: CareerStage 
     .filter((part): part is string => Boolean(part))
     .join(" ")
     .toLowerCase()
-  if (/\bintern(ship)?\b/.test(title) || careerStage === "intern" || careerStage === "student") {
-    return ["internship"]
+  // Gate internship on the candidate's ACTUAL careerStage, never on a résumé
+  // title alone — a past/current "Intern" title for someone already classified
+  // junior+ (e.g. "Software Engineer Intern → junior") must NOT lock them to
+  // internship-only, which hard-drops the entire full-time pool (the 2026-05-29
+  // recall-zero bug). Even true students stay open to new-grad/full-time so the
+  // jobType gate never zeroes a student's recall.
+  if (careerStage === "intern" || careerStage === "student") {
+    return ["internship", "new_graduate", "full_time"]
   }
-  if (/\b(new\s+grad|graduate)\b/.test(title)) return ["new_graduate"]
+  if (/\b(new\s+grad|graduate)\b/.test(title)) return ["new_graduate", "full_time"]
   if (careerStage === "entry_level") return ["full_time", "new_graduate"]
+  // junior and above: leave targetJobType unset → the jobType hard gate bypasses
+  // (fires only when a target set exists), so it can't over-filter.
   return undefined
 }
 
@@ -1311,23 +1331,34 @@ export function applyV16HardFilters(
       continue
     }
 
+    // WeKruit-collaborated jobs are EXEMPT from gates 5–7 (freshness / atsApplyUrl
+    // / dead). These three exist for the scraped corpus: WeKruit's pre-screen IS
+    // the apply path (no external ATS URL), and curated partnerships don't expire
+    // on a scrape cycle or get liveness-swept. They still obey every fit gate
+    // above (visa / location / careerStage / jobType) + below (negatives).
+    const isCollabJob = (job as { isWekruitCollab?: boolean }).isWekruitCollab === true
+
     // 5. firstSeenAt < freshness window (D10 default 20d, adaptive relaxation
     //    handled by caller — see `queryMatchingJobsV16`).
-    const firstSeenMs = timestampToMs(job.firstSeenAt)
-    if (firstSeenMs === 0 || nowMs - firstSeenMs > freshnessWindowMs) {
-      counters.freshness++
-      continue
+    if (!isCollabJob) {
+      const firstSeenMs = timestampToMs(job.firstSeenAt)
+      if (firstSeenMs === 0 || nowMs - firstSeenMs > freshnessWindowMs) {
+        counters.freshness++
+        continue
+      }
     }
 
     // 6. atsApplyUrl present + not jobright.ai.
-    const url = job.atsApplyUrl ?? ""
-    if (!url || /jobright\.ai/i.test(url)) {
-      counters.atsApplyUrl++
-      continue
+    if (!isCollabJob) {
+      const url = job.atsApplyUrl ?? ""
+      if (!url || /jobright\.ai/i.test(url)) {
+        counters.atsApplyUrl++
+        continue
+      }
     }
 
     // 7. dead !== true.
-    if (job.dead === true) {
+    if (!isCollabJob && job.dead === true) {
       counters.dead++
       continue
     }
@@ -2273,6 +2304,123 @@ function hasActivePrescreenConfig(data: Record<string, unknown> | undefined): bo
   return Array.isArray(questions) && questions.length > 0
 }
 
+/**
+ * Load the WeKruit-collaborated pool (pa-jobs · wekruitCollaborationStatus ===
+ * "collaborated") as MatchingJob rows so it flows through the SAME hard-filter +
+ * score path as the scraped matching-jobs corpus (Adam 2026-05-29: "share the
+ * same matching system; match the collab pool; push on threshold").
+ *
+ * Rows are tagged isWekruitCollab=true → applyV16HardFilters skips the
+ * scraped-only gates (freshness / atsApplyUrl / dead); WeKruit's pre-screen is
+ * the apply path. They STILL obey visa / location / careerStage / jobType there.
+ *
+ * Two gates are enforced HERE because the collab pool bypasses the Firestore
+ * query layer the scraped corpus uses:
+ *   - roleFunction ∩ targetRoleFunction (the scraped side gets this via
+ *     `where('roleFunction','array-contains-any', …)`),
+ *   - eligibility: publicVisible + an active prescreenConfig (a collab job with
+ *     no questions can't run a first interview, so it isn't pushable).
+ */
+async function loadCollabPoolJobs(
+  db: Firestore,
+  userTags: UserTags,
+  log: (event: string, payload?: Record<string, unknown>) => void,
+): Promise<Array<MatchingJob & { embedding?: number[] | null }>> {
+  const targetRoles = new Set(
+    (Array.isArray(userTags.targetRoleFunction) ? userTags.targetRoleFunction : [])
+      .map((r) => String(r).trim().toLowerCase())
+      .filter((r) => r.length > 0),
+  )
+  if (targetRoles.size === 0) return []
+
+  let snap
+  try {
+    // Single-field query (no composite index needed); publicVisible filtered
+    // in-memory. The collab pool is small (≤ low hundreds ever).
+    snap = await db
+      .collection(PA_JOBS_COLLECTION)
+      .where("wekruitCollaborationStatus", "==", "collaborated")
+      .limit(200)
+      .get()
+  } catch (err) {
+    log("pa.match.collab_pool_query_failed", { error: err instanceof Error ? err.message : String(err) })
+    return []
+  }
+
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
+  const str = (v: unknown): string => (typeof v === "string" ? v : "")
+  const bool = (v: unknown): boolean | null => (typeof v === "boolean" ? v : null)
+  const strArr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : []
+  const skillNames = (v: unknown): string[] =>
+    Array.isArray(v)
+      ? v
+          .map((s): string | null =>
+            typeof s === "string"
+              ? s
+              : s && typeof s === "object" && typeof (s as { name?: unknown }).name === "string"
+                ? (s as { name: string }).name
+                : null,
+          )
+          .filter((s): s is string => s !== null)
+      : []
+
+  const out: Array<MatchingJob & { embedding?: number[] | null }> = []
+  for (const doc of snap.docs) {
+    try {
+      const raw = doc.data() as Record<string, unknown>
+      if (raw.publicVisible !== true) continue
+      if (!hasActivePrescreenConfig(raw)) continue
+      const roleFunction = strArr(raw.roleFunction)
+      if (!roleFunction.some((r) => targetRoles.has(r.trim().toLowerCase()))) continue
+
+      const cfg =
+        raw.prescreenConfig && typeof raw.prescreenConfig === "object"
+          ? (raw.prescreenConfig as Record<string, unknown>)
+          : {}
+      const requiredSkills = skillNames(raw.requiredSkills)
+      const industrySector = strArr(raw.industrySector)
+      const relevantTags = strArr(raw.relevantTags)
+      const locationBuckets = strArr(raw.locationBuckets)
+      const seniorityLevel =
+        typeof raw.seniorityLevel === "string"
+          ? (normalizeCareerStageToken(raw.seniorityLevel) ?? raw.seniorityLevel)
+          : undefined
+
+      const candidate = MatchingJobSchema.parse({
+        id: doc.id,
+        companyName: str(raw.companyName) || str(cfg.company),
+        jobTitle: str(raw.title) || str(raw.roleTitle) || str(cfg.jobTitle) || "",
+        salaryMax: num(raw.salaryMax),
+        salaryMin: num(raw.salaryMin),
+        locationRaw: str(raw.location) || str(raw.locationRaw),
+        primaryUrl: str(raw.atsApplyUrl) || str(raw.primaryUrl),
+        atsApplyUrl: typeof raw.atsApplyUrl === "string" ? raw.atsApplyUrl : undefined,
+        industry: str(raw.industry),
+        sponsorship: bool(raw.sponsorship),
+        jobType: typeof raw.jobType === "string" ? raw.jobType : undefined,
+        ...(requiredSkills.length > 0 ? { requiredSkills } : {}),
+        ...(roleFunction.length > 0 ? { roleFunction } : {}),
+        ...(industrySector.length > 0 ? { industrySector } : {}),
+        ...(relevantTags.length > 0 ? { relevantTags } : {}),
+        ...(locationBuckets.length > 0 ? { locationBuckets } : {}),
+        ...(seniorityLevel ? { seniorityLevel } : {}),
+        isWekruitCollab: true,
+      }) as MatchingJob & { embedding?: number[] | null }
+      const e = raw.embedding
+      candidate.embedding = Array.isArray(e) && e.every((n) => typeof n === "number") ? (e as number[]) : null
+      out.push(candidate)
+    } catch (err) {
+      log("pa.match.collab_pool_row_dropped", {
+        id: doc.id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+  log("pa.match.collab_pool_loaded", { eligible: out.length, scanned: snap.docs.length })
+  return out
+}
+
 async function loadCollabPrescreenEligibleJobIds(
   db: Firestore,
   jobIds: string[],
@@ -2389,8 +2537,19 @@ export async function queryMatchingJobsV16(
     }
   }
 
-  // 2. Run query (push role to query layer).
-  const { jobs: rawJobs } = await runV16Query(deps.db, userTags, log)
+  // 2. Run query (push role to query layer) + fold in the WeKruit-collab pool so
+  //    BOTH pools go through one matcher (Adam 2026-05-29). Collab rows win on id
+  //    collision (the few collab jobs mirrored into matching-jobs also come back
+  //    from runV16Query; prefer the isWekruitCollab-tagged copy so it gets the
+  //    apply-path gate exemptions).
+  const [{ jobs: scrapedJobs }, collabPoolJobs] = await Promise.all([
+    runV16Query(deps.db, userTags, log),
+    loadCollabPoolJobs(deps.db, userTags, log),
+  ])
+  const rawById = new Map<string, MatchingJob & { embedding?: number[] | null }>()
+  for (const j of collabPoolJobs) rawById.set(j.id, j)
+  for (const j of scrapedJobs) if (!rawById.has(j.id)) rawById.set(j.id, j)
+  const rawJobs = [...rawById.values()]
 
   // 3. Hard-filter chain — adaptive freshness cascade for thin corpora.
   // Try strict 20d (D10) first. When zero jobs survive AND freshness was the
@@ -2577,6 +2736,25 @@ export async function queryMatchingJobsV16(
     }
     return { job, breakdown: adjustedBreakdown, matched, companyInfo, recommendedState }
   })
+
+  // Push threshold (Adam 2026-05-29): a collab job is returned only when it
+  // clears the hard filters AND COLLAB_PUSH_SCORE_FLOOR — never a marginal
+  // overlap. Scraped jobs are untouched (their top-N is curated by ranking +
+  // dedup below).
+  {
+    const before = scored.length
+    scored = scored.filter(
+      (s) =>
+        (s.job as { isWekruitCollab?: boolean }).isWekruitCollab !== true ||
+        s.breakdown.total >= COLLAB_PUSH_SCORE_FLOOR,
+    )
+    if (scored.length !== before) {
+      log("pa.match.collab_score_floor_applied", {
+        floor: COLLAB_PUSH_SCORE_FLOOR,
+        dropped: before - scored.length,
+      })
+    }
+  }
 
   // Sort by total score desc; tie-break by firstSeenAt newer first.
   scored.sort((a, b) => {

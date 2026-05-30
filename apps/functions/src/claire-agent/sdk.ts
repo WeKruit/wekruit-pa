@@ -36,32 +36,76 @@ import type * as Agents from "@openai/agents"
 // runtime")` (its exports map exposes no require-resolvable main — the trap a prior attempt hit),
 // then build a require anchored at that path so @openai/agents + zod resolve from agent-runtime's
 // own (zod@4) subtree.
-const baseRequire = createRequire(import.meta.url)
-function agentSdkRequire(): NodeJS.Require {
+// LAZY, memoized SDK acquisition. The resolve below MUST NOT run at module load:
+// apps/functions pins zod@3 and the zod@4 source (@pa/agent-runtime) is NOT present
+// in the deployed Cloud Run bundle, so a top-level `require.resolve(@pa/agent-
+// runtime/package.json)` threw at import → crashed the WHOLE functions container at
+// boot (every function, since the codebase bundles to one index.js — even with
+// paThinClaireEnabled OFF, because the crash was at import, not call). Deferring it
+// (the same pattern prescreen-agentic-turn.ts uses) means importing claire-agent is
+// inert; the SDK loads only when claire-agent actually runs (flag-gated) or in tests,
+// where @pa/agent-runtime (zod@4) IS resolvable. Wave C still needs agent-runtime
+// resolvable in the deploy bundle before the flag goes ON in prod. The try/catch
+// fallback to baseRequire (from origin/main) keeps it resolvable in the deploy
+// bundle even when agent-runtime's package.json isn't (graceful, still lazy).
+let _sdk: Record<string, unknown> | null = null
+let _z: unknown = null
+function loadSdk(): Record<string, unknown> {
+  if (_sdk) return _sdk
+  const baseRequire = createRequire(import.meta.url)
+  let req: NodeJS.Require
   try {
-    return createRequire(baseRequire.resolve("@pa/agent-runtime/package.json"))
+    req = createRequire(baseRequire.resolve("@pa/agent-runtime/package.json"))
   } catch {
-    return baseRequire
+    req = baseRequire
+  }
+  _sdk = req("@openai/agents") as Record<string, unknown>
+  _z = req("zod")
+  return _sdk
+}
+
+/** zod@4 — lazy. First property touch (z.object, z.string, …) resolves the SDK. */
+export const z = new Proxy({} as Record<PropertyKey, unknown>, {
+  get(_t, prop) {
+    if (!_z) loadSdk()
+    return (_z as Record<PropertyKey, unknown>)[prop]
+  },
+}) as unknown as typeof import("zod").z
+
+class LazyAgent {
+  constructor(...args: unknown[]) {
+    const Real = loadSdk().Agent as new (...a: unknown[]) => unknown
+    return new Real(...args) as object
   }
 }
-const req = agentSdkRequire()
-const sdk = req("@openai/agents") as Record<string, unknown>
+export const Agent = LazyAgent as unknown as typeof Agents.Agent
 
-/** zod@4 — the SAME instance @openai/agents-core uses. Use this for ALL tool param schemas. */
-export const z = req("zod") as typeof import("zod").z
+export const run = ((...args: unknown[]) =>
+  (loadSdk().run as (...a: unknown[]) => unknown)(...args)) as unknown as typeof Agents.run
 
-export const Agent = sdk.Agent as typeof Agents.Agent
-export const run = sdk.run as typeof Agents.run
-export const tool = sdk.tool as typeof Agents.tool
-export const InputGuardrailTripwireTriggered =
-  sdk.InputGuardrailTripwireTriggered as typeof Agents.InputGuardrailTripwireTriggered
+export const tool = ((...args: unknown[]) =>
+  (loadSdk().tool as (...a: unknown[]) => unknown)(...args)) as unknown as typeof Agents.tool
+
+/** instanceof works lazily via Symbol.hasInstance against the real class. */
+export const InputGuardrailTripwireTriggered = {
+  [Symbol.hasInstance](inst: unknown): boolean {
+    const Real = loadSdk().InputGuardrailTripwireTriggered as (new (...a: unknown[]) => unknown) | undefined
+    return Real ? inst instanceof Real : false
+  },
+} as unknown as typeof Agents.InputGuardrailTripwireTriggered
+
 /** in-memory Session (eval/test stand-in for FirestoreSession). */
-export const MemorySession = sdk.MemorySession as typeof Agents.MemorySession
+export const MemorySession = new Proxy(function () {} as unknown as object, {
+  construct(_t, args) {
+    const Real = loadSdk().MemorySession as new (...a: unknown[]) => unknown
+    return new Real(...args) as object
+  },
+}) as unknown as typeof Agents.MemorySession
 
 let configured = false
 /**
- * Point the SDK at the PA OpenAI client (responses API). Idempotent. No-op if the
- * SDK build lacks the setters (older shapes). Call once before run().
+ * Point the SDK at the PA OpenAI client (responses API). Idempotent. Lazily loads
+ * the SDK (first call). No-op if the SDK build lacks the setters. Call before run().
  */
 export function configureClaireSdk(): void {
   if (configured) return
@@ -69,6 +113,7 @@ export function configureClaireSdk(): void {
     process.env.PA_OPENAI_AGENT_API_KEY?.trim() || process.env.OPENAI_API_KEY?.trim() || ""
   const baseURL = process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || "https://api.openai.com/v1"
   try {
+    const sdk = loadSdk()
     const client = new OpenAI({ apiKey, baseURL })
     ;(sdk.setDefaultOpenAIClient as ((c: unknown) => void) | undefined)?.(client)
     ;(sdk.setOpenAIAPI as ((api: string) => void) | undefined)?.("responses")
