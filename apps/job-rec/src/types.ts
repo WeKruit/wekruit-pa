@@ -251,6 +251,15 @@ export const MatchingJobSchema = z.object({
    * a general match.
    */
   matchSourceLabel: z.enum(["WeKruit collaborated", "general match"]).optional(),
+  /**
+   * Transient (not persisted): set true when this row was loaded from the
+   * WeKruit-collaborated pool (pa-jobs · wekruitCollaborationStatus ===
+   * "collaborated") rather than the scraped matching-jobs corpus. Exempts the
+   * row from the scraped-only hard gates (freshness / atsApplyUrl / dead) in
+   * applyV16HardFilters — WeKruit's pre-screen is the apply path. See
+   * loadCollabPoolJobs.
+   */
+  isWekruitCollab: z.boolean().optional(),
   /** Per-candidate recommendation memory. Used to lower repeat priority. */
   previouslyRecommended: z.boolean().optional(),
   recommendationCount: z.number().int().nonnegative().optional(),

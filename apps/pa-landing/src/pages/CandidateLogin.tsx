@@ -12,7 +12,7 @@
  * a warm terracotta confidence accent for live / match / interview signals.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type CSSProperties } from "react"
-import { Link, useNavigate, useSearchParams } from "react-router-dom"
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
 import {
   GoogleAuthProvider,
   isSignInWithEmailLink,
@@ -21,9 +21,11 @@ import {
   signInWithCustomToken,
   signInWithEmailLink,
   signInWithPopup,
+  signOut,
   type User,
 } from "firebase/auth"
 import { auth } from "../lib/firebase.js"
+import { clearSsoCookie } from "../lib/cross-domain-sso.js"
 import { redirectResultPromise, ssoBootstrapPromise } from "../lib/auth-redirect-bootstrap.js"
 import {
   CLAIM_EMAIL_KEY,
@@ -365,35 +367,63 @@ export function CandidateShell({
   children: ReactNode
   hero?: boolean
   signedIn?: boolean
-  signedInUser?: { name?: string; src?: string }
+  signedInUser?: { name?: string; src?: string; email?: string }
 }) {
+  // Hooks must run unconditionally — used only by the signed-in rail branch.
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [drawerOpen, setDrawerOpen] = useState(false)
+
+  // Marketing header is auth-aware: once a session resolves, drop the
+  // "Sign in" link and swap the CTA for a single "My WeKruit" entry. Stays
+  // "unknown" until onAuthStateChanged fires so signed-in users don't flash
+  // the signed-out chrome on first paint where a session already exists.
+  const [authState, setAuthState] = useState<User | null | "unknown">("unknown")
+  useEffect(() => {
+    let unsub = () => {}
+    try {
+      unsub = onAuthStateChanged(auth(), (u) => setAuthState(u))
+    } catch {
+      setAuthState(null)
+    }
+    return () => unsub()
+  }, [])
+  const isAuthed = authState !== "unknown" && authState !== null
+
   if (signedIn) {
+    // v3 candidate operating-center chrome: a left navigation rail (desktop)
+    // that collapses to a slide-in drawer + compact top bar under 900px.
     return (
-      <div className="wk-shell wk-shell--app">
+      <div className={`wk-shell wk-shell--app${drawerOpen ? " is-drawer-open" : ""}`}>
         <style>{CANDIDATE_STYLES}</style>
         <style>{APP_SHELL_STYLES}</style>
-        <header className="wk-appbar">
-          <div className="wk-appbar__inner">
-            <Link to="/me" className="wk-header__brand" aria-label="WeKruit home">
-              <WekruitLogo size={22} />
-            </Link>
-            <nav className="wk-appnav" aria-label="App navigation">
-              <AppNavLink to="/me">My WeKruit</AppNavLink>
-              <AppNavLink to="/me/profile">Profile</AppNavLink>
-              <AppNavLink to="/me/refer">Refer · $4k</AppNavLink>
-              <AppNavLink to="/market">Market</AppNavLink>
-            </nav>
-            <div className="wk-appbar__right">
-              <button type="button" className="wk-appbar__icon" aria-label="Notifications">
-                <Icon name="message" size={18} stroke={1.7} />
-                <span className="wk-appbar__dot" />
-              </button>
-              <button type="button" className="wk-appbar__user" aria-label="Account menu">
-                <Avatar name={signedInUser?.name ?? "You"} src={signedInUser?.src} size={32} tone="warm" />
-              </button>
-            </div>
-          </div>
+        <header className="wk-apptopbar">
+          <button
+            type="button"
+            className="wk-apptopbar__menu"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Open menu"
+          >
+            <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" aria-hidden="true">
+              <path d="M3 6h18M3 12h18M3 18h18" />
+            </svg>
+          </button>
+          <Link to="/me" className="wk-apptopbar__brand" aria-label="WeKruit home">
+            <WekruitLogo size={18} />
+          </Link>
+          <a href={CLAIRE_IMESSAGE_HREF} className="wk-apptopbar__claire" aria-label="Message Claire">
+            <PulseDot size={6} />
+          </a>
         </header>
+
+        <CandidateAppNav
+          user={signedInUser}
+          pathname={location.pathname}
+          onNavigate={(to) => { navigate(to); setDrawerOpen(false) }}
+          onClose={() => setDrawerOpen(false)}
+        />
+        {drawerOpen ? <div className="wk-sidenav__scrim" onClick={() => setDrawerOpen(false)} /> : null}
+
         <main className="wk-main">{children}</main>
       </div>
     )
@@ -414,8 +444,14 @@ export function CandidateShell({
             <Link to="/me" className="wk-nav__link">My WeKruit</Link>
           </nav>
           <div className="wk-header__cta">
-            <Link to="/login" className="wk-header__signin">Sign in</Link>
-            <Link to="/login" className="wk-btn wk-btn--ink wk-btn--sm">Start with Claire</Link>
+            {isAuthed ? (
+              <Link to="/me" className="wk-btn wk-btn--ink wk-btn--sm">My WeKruit</Link>
+            ) : (
+              <>
+                <Link to="/login" className="wk-header__signin">Sign in</Link>
+                <Link to="/login" className="wk-btn wk-btn--ink wk-btn--sm">Start with Claire</Link>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -438,18 +474,168 @@ export function CandidateShell({
   )
 }
 
-// Sticky-aware nav link for the signed-in app bar. Pathname match so
-// /me/profile lights "Profile" without also lighting "Pipeline".
-function AppNavLink({ to, children }: { to: string; children: ReactNode }) {
-  const here = typeof window !== "undefined" ? window.location.pathname : "/"
-  const active =
-    here === to ||
-    (to === "/me" && here === "/me") ||
-    (to !== "/me" && to !== "/" && (here === to || here.startsWith(to + "/")))
+// Claire lives on iMessage — the rail's "Claire" item and the mobile top-bar
+// dot both open the Messages handoff rather than a placeholder web route.
+export const CLAIRE_IMESSAGE_HREF = "sms:+18004448888&body=Hi%20Claire"
+
+type AppNavItem = { to: string; icon: AppNavIconName; label: string; external?: boolean }
+
+const APP_NAV_ITEMS: AppNavItem[] = [
+  { to: "/me", icon: "pipeline", label: "Home" },
+  { to: "/me/matches", icon: "match", label: "Matches" },
+  { to: CLAIRE_IMESSAGE_HREF, icon: "claire", label: "Claire", external: true },
+  { to: "/me/profile", icon: "profile", label: "Profile" },
+  { to: "/me/refer", icon: "refer", label: "Refer · $4k" },
+  { to: "/market", icon: "market", label: "Market" },
+]
+
+type AppNavIconName = "pipeline" | "match" | "claire" | "profile" | "refer" | "market"
+
+// Rail glyphs — kept local so the shared Icon set stays lean.
+function AppNavIcon({ name, size = 17 }: { name: AppNavIconName; size?: number }) {
+  const p = {
+    width: size, height: size, viewBox: "0 0 24 24", fill: "none",
+    stroke: "currentColor", strokeWidth: 1.7,
+    strokeLinecap: "round" as const, strokeLinejoin: "round" as const,
+    style: { display: "block", flex: "none" } as CSSProperties,
+  }
+  switch (name) {
+    case "pipeline": return (<svg {...p}><path d="M3 6h18M3 12h18M3 18h18" /><circle cx="6" cy="6" r="2" fill="currentColor" stroke="none" /><circle cx="14" cy="12" r="2" fill="currentColor" stroke="none" /><circle cx="9" cy="18" r="2" fill="currentColor" stroke="none" /></svg>)
+    case "match": return (<svg {...p}><path d="M12 3v6M12 15v6M3 12h6M15 12h6M6 6l4 4M14 14l4 4M6 18l4-4M14 10l4-4" /></svg>)
+    case "claire": return (<svg {...p}><path d="M21 12c0 4.4-4 8-9 8-1.4 0-2.7-.3-3.8-.7L3 21l1.5-4.2C3.6 15.5 3 13.8 3 12c0-4.4 4-8 9-8s9 3.6 9 8z" /></svg>)
+    case "profile": return (<svg {...p}><circle cx="12" cy="9" r="4" /><path d="M4 21c0-4 4-7 8-7s8 3 8 7" /></svg>)
+    case "refer": return (<svg {...p}><rect x="3" y="8" width="18" height="13" rx="2" /><path d="M3 12h18M12 8v13M12 8s-3-5-5-3 0 5 5 3M12 8s3-5 5-3 0 5-5 3" /></svg>)
+    case "market": return (<svg {...p}><circle cx="12" cy="12" r="9" /><path d="M16 8l-2 6-6 2 2-6z" /></svg>)
+  }
+}
+
+function isNavItemActive(pathname: string, to: string, external?: boolean): boolean {
+  if (external) return false
+  if (to === "/me") return pathname === "/me"
+  if (to === "/me/matches") return pathname === "/me/matches" || pathname.startsWith("/me/match")
+  return pathname === to || pathname.startsWith(to + "/")
+}
+
+function CandidateAppNav({
+  user,
+  pathname,
+  onNavigate,
+  onClose,
+}: {
+  user?: { name?: string; src?: string; email?: string }
+  pathname: string
+  onNavigate: (to: string) => void
+  onClose: () => void
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const name = user?.name ?? "You"
+
+  async function handleSignOut() {
+    setMenuOpen(false)
+    try {
+      await clearSsoCookie()
+    } catch {
+      // Non-fatal — sign out of Firebase regardless.
+    }
+    await signOut(auth())
+  }
+
   return (
-    <Link to={to} className={`wk-nav__link${active ? " is-active" : ""}`}>
-      {children}
-    </Link>
+    <aside className="wk-sidenav">
+      <div className="wk-sidenav__top">
+        <Link
+          to="/me"
+          className="wk-sidenav__brand"
+          onClick={(e) => { e.preventDefault(); onNavigate("/me") }}
+          aria-label="WeKruit home"
+        >
+          <WekruitLogo size={20} />
+        </Link>
+        <button type="button" className="wk-sidenav__close" onClick={onClose} aria-label="Close menu">
+          <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
+      </div>
+
+      <nav className="wk-sidenav__nav" aria-label="App navigation">
+        {APP_NAV_ITEMS.map((item) => {
+          const active = isNavItemActive(pathname, item.to, item.external)
+          const content = (
+            <>
+              <span className="wk-sidenav__ico" aria-hidden="true">
+                <AppNavIcon name={item.icon} size={17} />
+              </span>
+              <span className="wk-sidenav__lbl">{item.label}</span>
+            </>
+          )
+          if (item.external) {
+            return (
+              <a key={item.to} href={item.to} className="wk-sidenav__link" onClick={onClose}>
+                {content}
+              </a>
+            )
+          }
+          return (
+            <Link
+              key={item.to}
+              to={item.to}
+              className={`wk-sidenav__link${active ? " is-active" : ""}`}
+              onClick={(e) => { e.preventDefault(); onNavigate(item.to) }}
+            >
+              {content}
+            </Link>
+          )
+        })}
+      </nav>
+
+      <div className="wk-sidenav__bottom">
+        <a href={CLAIRE_IMESSAGE_HREF} className="wk-sidenav__claire" onClick={onClose}>
+          <span className="wk-sidenav__claire-dot" aria-hidden="true">
+            <PulseDot size={6} />
+          </span>
+          <span className="wk-sidenav__claire-body">
+            <strong>Claire is active</strong>
+            <em>On iMessage</em>
+          </span>
+        </a>
+
+        <div className="wk-sidenav__account">
+          <button
+            type="button"
+            className="wk-sidenav__user"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+          >
+            <Avatar name={name} src={user?.src} size={28} tone="warm" />
+            <span className="wk-sidenav__user-name">
+              <strong>{name}</strong>
+              {user?.email ? <em>{user.email}</em> : null}
+            </span>
+            <Icon name="arrow-down" size={12} stroke={2} />
+          </button>
+          {menuOpen ? (
+            <>
+              <div className="wk-sidenav__menu-scrim" onClick={() => setMenuOpen(false)} />
+              <div className="wk-sidenav__menu" role="menu">
+                <Link
+                  to="/me/profile"
+                  role="menuitem"
+                  className="wk-sidenav__menu-item"
+                  onClick={(e) => { e.preventDefault(); setMenuOpen(false); onNavigate("/me/profile") }}
+                >
+                  <Icon name="lock" size={13} stroke={1.8} /> Profile &amp; privacy
+                </Link>
+                <button type="button" role="menuitem" className="wk-sidenav__menu-item" onClick={handleSignOut}>
+                  <Icon name="arrow-left" size={13} stroke={1.8} /> Sign out
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </aside>
   )
 }
 
@@ -1508,5 +1694,213 @@ const APP_SHELL_STYLES = `
 @media (max-width: 760px) {
   .wk-appnav { display: none; }
   .wk-appbar__inner { gap: 16px; padding: 12px 16px; }
+}
+
+/* ─── v3 left navigation rail (overrides the legacy top app bar above) ───── */
+/* Alias the design-bundle's unprefixed tokens onto the production --wk-* set,
+   so the ported v3 CSS below (and the /me page styles) read verbatim. */
+.wk-shell--app {
+  --cream: var(--wk-cream); --cream-2: var(--wk-cream-2); --cream-3: var(--wk-cream-3);
+  --ink: var(--wk-ink); --ink-2: var(--wk-ink-2); --ink-3: var(--wk-ink-3); --ink-4: var(--wk-ink-4);
+  --border: var(--wk-border); --border-strong: var(--wk-border-strong);
+  --peach-50: var(--wk-peach-50); --peach-100: var(--wk-peach-100);
+  --peach-200: var(--wk-peach-200); --peach-300: var(--wk-peach-300);
+  --live: var(--wk-live); --live-2: var(--wk-live-2); --live-soft: var(--wk-live-soft);
+  --live-border: var(--wk-live-border); --live-pulse: var(--wk-live-pulse);
+  --r-sm: var(--wk-r-sm); --r-md: var(--wk-r-md); --r-lg: var(--wk-r-lg); --r-pill: var(--wk-r-pill);
+  --ease: var(--wk-ease); --dur-fast: 200ms; --dur-base: 240ms;
+  --success: #3a8a5a; --success-bg: rgba(58,138,90,.12); --danger: #b3402e;
+  --candidate-card: var(--wk-cream-3); --candidate-card-hover: #FFF8EB; --candidate-page: var(--wk-cream);
+  --font-serif: 'Newsreader', 'Tiempos Headline', Georgia, serif;
+  --font-sans: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --z-sticky: 50;
+
+  display: grid;
+  grid-template-columns: 232px 1fr;
+  min-height: 100vh;
+  background: var(--cream);
+}
+.wk-shell--app .wk-main { padding-top: 0; min-width: 0; }
+.wk-shell--app .wk-appbar { display: none; }
+
+.wk-apptopbar { display: none; }
+
+.wk-sidenav {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--cream-3);
+  border-right: 1px solid var(--border);
+  padding: 18px 12px 14px;
+  gap: 14px;
+  z-index: var(--z-sticky);
+}
+.wk-sidenav__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.wk-sidenav__brand { display: inline-flex; align-items: center; text-decoration: none; color: var(--ink); }
+.wk-sidenav__close {
+  display: none;
+  appearance: none; border: 0; background: transparent;
+  color: var(--ink-2); padding: 4px; border-radius: var(--r-sm); cursor: pointer;
+}
+.wk-sidenav__nav {
+  display: grid; gap: 2px; align-content: start;
+  flex: 1; min-height: 0; overflow-y: auto;
+}
+.wk-sidenav__link {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: var(--r-sm);
+  color: var(--ink-2);
+  font-size: 13.5px;
+  font-weight: 500;
+  text-decoration: none;
+  letter-spacing: -0.005em;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.wk-sidenav__link:hover { background: rgba(45, 26, 10, 0.05); color: var(--ink); }
+.wk-sidenav__link.is-active { background: var(--ink); color: var(--cream); }
+.wk-sidenav__link.is-active .wk-sidenav__ico { color: var(--cream); }
+.wk-sidenav__ico {
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--ink-3);
+}
+.wk-sidenav__link:hover .wk-sidenav__ico { color: var(--ink); }
+.wk-sidenav__lbl { min-width: 0; }
+.wk-sidenav__bottom {
+  display: grid; gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.wk-sidenav__claire {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--cream);
+  border: 1px solid var(--live-border);
+  border-radius: var(--r-sm);
+  text-decoration: none;
+  color: var(--ink);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+.wk-sidenav__claire:hover { border-color: var(--live); }
+.wk-sidenav__claire-dot {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--live-soft); border: 1px solid var(--live-border);
+}
+.wk-sidenav__claire-body { min-width: 0; display: grid; gap: 1px; }
+.wk-sidenav__claire-body strong { font-size: 12.5px; font-weight: 600; color: var(--ink); letter-spacing: -0.005em; }
+.wk-sidenav__claire-body em { font-style: normal; font-size: 11px; color: var(--ink-3); }
+.wk-sidenav__account { position: relative; }
+.wk-sidenav__user {
+  appearance: none; border: 0; background: transparent;
+  display: grid; grid-template-columns: auto 1fr auto;
+  gap: 10px; align-items: center;
+  padding: 8px 10px; border-radius: var(--r-sm);
+  cursor: pointer; width: 100%; text-align: left;
+  font: inherit; color: var(--ink);
+  transition: background var(--dur-fast) var(--ease);
+}
+.wk-sidenav__user:hover { background: rgba(45,26,10,.05); }
+.wk-sidenav__user-name { display: grid; gap: 1px; min-width: 0; }
+.wk-sidenav__user-name strong {
+  font-size: 12.5px; font-weight: 600; color: var(--ink); letter-spacing: -0.005em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wk-sidenav__user-name em {
+  font-style: normal; font-size: 11px; color: var(--ink-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wk-sidenav__user svg { color: var(--ink-3); }
+.wk-sidenav__menu-scrim { position: fixed; inset: 0; z-index: 60; }
+.wk-sidenav__menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0; right: 0;
+  z-index: 61;
+  background: var(--cream-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: 0 12px 28px -12px rgba(45,26,10,.34);
+  padding: 6px;
+  display: grid;
+  gap: 2px;
+}
+.wk-sidenav__menu-item {
+  appearance: none; border: 0; background: transparent;
+  width: 100%; text-align: left;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 10px; border-radius: var(--r-sm);
+  font: inherit; font-size: 13px; font-weight: 500;
+  color: var(--ink-2); cursor: pointer; text-decoration: none;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.wk-sidenav__menu-item:hover { background: rgba(45,26,10,.06); color: var(--ink); }
+.wk-sidenav__menu-item svg { color: var(--ink-3); flex: none; }
+.wk-sidenav__scrim {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(45,26,10,.45);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  z-index: 40;
+}
+
+@media (max-width: 900px) {
+  .wk-shell--app { grid-template-columns: 1fr; }
+  .wk-apptopbar {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 16px;
+    background: rgba(245,237,227,.92);
+    -webkit-backdrop-filter: blur(12px) saturate(160%);
+    backdrop-filter: blur(12px) saturate(160%);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 30;
+  }
+  .wk-apptopbar__menu {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--cream-3);
+    color: var(--ink);
+    padding: 6px 10px;
+    border-radius: var(--r-sm);
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .wk-apptopbar__brand { justify-self: center; color: var(--ink); display: inline-flex; }
+  .wk-apptopbar__claire {
+    width: 36px; height: 36px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    background: var(--live-soft); border: 1px solid var(--live-border);
+    color: var(--live);
+  }
+  .wk-sidenav {
+    position: fixed; top: 0; left: 0;
+    width: 280px;
+    transform: translateX(-100%);
+    transition: transform var(--dur-base) cubic-bezier(.2,.7,.1,1);
+    z-index: 50;
+    box-shadow: 12px 0 32px -16px rgba(45,26,10,.28);
+  }
+  .wk-shell--app.is-drawer-open .wk-sidenav { transform: translateX(0); }
+  .wk-shell--app.is-drawer-open .wk-sidenav__scrim { display: block; }
+  .wk-sidenav__close { display: inline-flex; }
 }
 `

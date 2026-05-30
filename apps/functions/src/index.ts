@@ -58,7 +58,11 @@ import {
 } from "./job-rec-copy.js"
 // Thin Claire cutover — flag-gated (paThinClaireEnabled, default OFF). Returns false for
 // everyone but the 424 canary → legacy claimAndProcessInboundEvent path stays unchanged.
-import { maybeRunThinClaire } from "./claire-agent/index.js"
+// Import the cutover seam DIRECTLY (not the claire-agent barrel) — the barrel
+// statically re-exports agent.js + tools, which pulls the @pa/agent-runtime SDK
+// into the boot graph and crashed the container at startup. cutover.js loads the
+// heavy agent/tools lazily, only behind the flag gate.
+import { maybeRunThinClaire } from "./claire-agent/cutover.js"
 export {
   MAILGUN_API_KEY,
   MAILGUN_DOMAIN,

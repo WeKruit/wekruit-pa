@@ -9,6 +9,8 @@ const COLLECTIONS = {
   outboundInvites: ["pa", "outbound-invites"].join("-"),
   prescreenSessions: "pa-prescreen-sessions",
   users: "pa-users",
+  matchingJobs: "matching-jobs",
+  userJobRecommendations: "pa-user-job-recommendations",
 } as const
 
 type CallableAuth = {
@@ -36,6 +38,8 @@ export type CandidateMatchCard = {
   jobId: string
   bucket: "recommended" | "invited"
   status: "recommended" | "invited" | "interview_started" | "review_pending" | "passed" | "not_passed" | "paused"
+  /** WeKruit-collaborated job → candidate can pre-screen (CTA + session + status). */
+  collab: boolean
   job: CandidateMatchJobDisplay
   whyMatched: string[]
   rank?: number
@@ -112,6 +116,17 @@ function projectJobDisplay(jobId: string, job: Record<string, unknown>): Candida
       : {}),
     href: `/j/${jobId}`,
   }
+}
+
+// A pa-jobs doc is pre-screenable only when it carries a non-empty
+// prescreenConfig.questions[]. Mirrors loadCollabPrescreenEligibleJobIds in
+// the V16 matcher so the candidate-facing collab flag matches what the
+// pre-screen runtime will actually accept.
+function hasActivePrescreenConfig(job: Record<string, unknown> | undefined): boolean {
+  const cfg = job?.prescreenConfig
+  if (!cfg || typeof cfg !== "object") return false
+  const questions = (cfg as { questions?: unknown }).questions
+  return Array.isArray(questions) && questions.length > 0
 }
 
 async function getCandidateIdForAuth(db: Firestore, firebaseUid: string): Promise<string> {
@@ -200,6 +215,8 @@ function projectMatchCard(args: {
     matchId: args.matchId,
     jobId: args.jobId,
     bucket,
+    // Pipeline matches live in pa-jobs (WeKruit-driven engagement) → pre-screenable.
+    collab: true,
     status,
     job: projectJobDisplay(args.jobId, args.job),
     whyMatched: whyMatched.length > 0 ? whyMatched : ["This role matches your saved profile."],
@@ -317,17 +334,28 @@ function publicRecommendationScore(args: {
   return { score, reasons }
 }
 
-async function buildPublicRecommendedRows(args: {
+// Surface the recommendations the matcher actually produced for this user — the
+// SOLE recommendation source (the old wholesale "show every collaborated pa-job
+// to everyone" fallback is gone). generateJobRecs → recordRecommendedJobs writes
+// recommended jobIds to pa-user-job-recommendations/{uid}/jobs. Job docs live in
+// `matching-jobs` (the scraped/ranked pool); WeKruit-collaborated jobs are ALSO
+// mirrored into `matching-jobs`, so they flow through the same hard-filtered
+// matcher and land here only when they genuinely match this candidate.
+//
+// collab is derived per-rec from pa-jobs/{jobId}.wekruitCollaborationStatus +
+// an active prescreenConfig — NOT from being shown wholesale. A collab rec is
+// hydrated from its pa-jobs doc (employer-authoritative: title, salary reveal,
+// prescreen) so the pre-screen CTA + Level-1 reveal render correctly. Reasons
+// are re-derived cheaply (publicRecommendationScore) since the recorded state
+// only stores {jobId, count, lastRecommendedAt}.
+async function buildRecordedRecommendedRows(args: {
   db: Firestore
   candidateId: string
   existingJobIds: Set<string>
   limit: number
   now: string
 }): Promise<CandidateMatchCard[]> {
-  const [userSnap, publicJobsSnap] = await Promise.all([
-    args.db.collection(COLLECTIONS.users).doc(args.candidateId).get(),
-    args.db.collection(COLLECTIONS.jobs).where("publicVisible", "==", true).limit(100).get(),
-  ])
+  const userSnap = await args.db.collection(COLLECTIONS.users).doc(args.candidateId).get()
   const user = userSnap.data() as Record<string, unknown> | undefined
   const candidateTags =
     user?.tags && typeof user.tags === "object"
@@ -336,37 +364,91 @@ async function buildPublicRecommendedRows(args: {
         ? (user.globalTags as Record<string, unknown>)
         : undefined
   if (!candidateTags) return []
+
+  let recsSnap
+  try {
+    recsSnap = await args.db
+      .collection(COLLECTIONS.userJobRecommendations)
+      .doc(args.candidateId)
+      .collection("jobs")
+      .orderBy("lastRecommendedAt", "desc")
+      .limit(Math.max(args.limit * 3, 30))
+      .get()
+  } catch {
+    return []
+  }
+  const recById = new Map<string, string>()
+  for (const doc of recsSnap.docs) {
+    if (args.existingJobIds.has(doc.id)) continue
+    const data = doc.data() as Record<string, unknown>
+    recById.set(doc.id, cleanString(data.lastRecommendedAt, 80) ?? args.now)
+  }
+  if (recById.size === 0) return []
   const nowMs = Date.parse(args.now)
 
-  const ranked = publicJobsSnap.docs
-    .map((doc) => {
-      const job = doc.data() as Record<string, unknown>
-      if (args.existingJobIds.has(doc.id)) return null
-      if (job.publicVisible !== true) return null
-      if (job.status && cleanString(job.status, 80) !== "active") return null
-      if (job.dead === true) return null
+  const hydrated = await Promise.all(
+    [...recById.keys()].map(async (jobId) => {
+      // A recommended job may live in matching-jobs (general), pa-jobs (collab),
+      // or both (collab jobs are mirrored into matching-jobs). Read both, then
+      // pick the authoritative display source by collab status.
+      const [mjSnap, paSnap] = await Promise.all([
+        args.db.collection(COLLECTIONS.matchingJobs).doc(jobId).get(),
+        args.db.collection(COLLECTIONS.jobs).doc(jobId).get(),
+      ])
+      const paJob = paSnap.exists ? (paSnap.data() as Record<string, unknown>) : undefined
+      const isCollab =
+        !!paJob &&
+        cleanString(paJob.wekruitCollaborationStatus, 80) === "collaborated" &&
+        hasActivePrescreenConfig(paJob)
+
+      let job: Record<string, unknown>
+      if (isCollab) {
+        // Collab: pa-jobs is authoritative (carries prescreenConfig + reveal).
+        if (paJob!.publicVisible !== true) return null
+        if (paJob!.dead === true) return null
+        job = paJob!
+      } else {
+        // General: matching-jobs is authoritative. Drop dead/inactive rows.
+        if (!mjSnap.exists) return null
+        job = mjSnap.data() as Record<string, unknown>
+        if (job.dead === true) return null
+        const statusStr = cleanString(job.status, 80)
+        if (statusStr && statusStr !== "active") return null
+      }
       const scored = publicRecommendationScore({
         candidateTags,
-        jobId: doc.id,
+        jobId,
         job,
         nowMs: Number.isFinite(nowMs) ? nowMs : Date.now(),
       })
-      if (scored.score <= 0) return null
-      return { docId: doc.id, job, ...scored }
+      return { jobId, job, reasons: scored.reasons, lastAt: recById.get(jobId) ?? args.now, collab: isCollab }
     })
-    .filter((row): row is { docId: string; job: Record<string, unknown>; score: number; reasons: string[] } => row !== null)
-    .sort((a, b) => b.score - a.score || a.docId.localeCompare(b.docId))
+  )
+
+  const rows = hydrated
+    .filter(
+      (r): r is { jobId: string; job: Record<string, unknown>; reasons: string[]; lastAt: string; collab: boolean } =>
+        r !== null
+    )
+    .sort((a, b) => b.lastAt.localeCompare(a.lastAt))
     .slice(0, args.limit)
 
-  return ranked.map((row, index) => ({
-    matchId: `${args.candidateId}__${row.docId}__public_recommendation`,
-    jobId: row.docId,
+  return rows.map((row, index) => ({
+    matchId: `${args.candidateId}__${row.jobId}__${row.collab ? "collab" : "recorded_recommendation"}`,
+    jobId: row.jobId,
     bucket: "recommended",
+    // collab → pre-screen CTA + session + status; general → "See role" only.
+    collab: row.collab,
     status: "recommended",
-    job: projectJobDisplay(row.docId, row.job),
-    whyMatched: row.reasons,
+    job: projectJobDisplay(row.jobId, row.job),
+    whyMatched:
+      row.reasons.length > 0
+        ? row.reasons
+        : row.collab
+          ? ["WeKruit-collaborated role — Claire can run your first screen."]
+          : ["This role matches your saved profile."],
     rank: index + 1,
-    computedAt: args.now,
+    computedAt: row.lastAt,
   }))
 }
 
@@ -454,20 +536,35 @@ export async function runCandidateListMatches(
     })
   )
 
-  const visibleRows = rows.filter((row): row is CandidateMatchCard => row !== null)
-  if (visibleRows.length < limit) {
-    visibleRows.push(
-      ...(await buildPublicRecommendedRows({
-        db: deps.db,
-        candidateId,
-        existingJobIds: new Set(visibleRows.map((row) => row.jobId)),
-        limit: limit - visibleRows.length,
-        now: generatedAt,
-      }))
-    )
+  const pipelineRows = rows.filter((row): row is CandidateMatchCard => row !== null)
+
+  // Two sources, merged + DEDUPED by jobId:
+  //   1. pipeline (candidate already engaged)      — collab, full status
+  //   2. recorded daily-recommend recs             — the matcher's actual output
+  //      for THIS user; collab flag derived per-rec from pa-jobs collaboration
+  //      status (NOT shown wholesale). A collab job appears here only when it
+  //      passed the hard-filtered matcher and was recorded for this candidate.
+  // No generic publicVisible / wholesale-collab fallback — directive 2026-05-29.
+  const recRows = await buildRecordedRecommendedRows({
+    db: deps.db,
+    candidateId,
+    existingJobIds: new Set(pipelineRows.map((row) => row.jobId)),
+    limit,
+    now: generatedAt,
+  })
+
+  const mergedById = new Map<string, CandidateMatchCard>()
+  for (const row of [...pipelineRows, ...recRows]) {
+    if (!mergedById.has(row.jobId)) mergedById.set(row.jobId, row)
   }
-  visibleRows.sort((a, b) => {
-    if (a.bucket !== b.bucket) return a.bucket === "invited" ? -1 : 1
+  const merged = Array.from(mergedById.values())
+  // Order: active pipeline (invited) → WeKruit collab → general recommendations,
+  // then by rank, then recency.
+  const tier = (m: CandidateMatchCard): number => (m.bucket === "invited" ? 0 : m.collab ? 1 : 2)
+  merged.sort((a, b) => {
+    const ta = tier(a)
+    const tb = tier(b)
+    if (ta !== tb) return ta - tb
     const aRank = a.rank ?? Number.MAX_SAFE_INTEGER
     const bRank = b.rank ?? Number.MAX_SAFE_INTEGER
     if (aRank !== bRank) return aRank - bRank
@@ -478,7 +575,7 @@ export async function runCandidateListMatches(
     ok: true,
     candidateId,
     generatedAt,
-    matches: visibleRows,
+    matches: merged.slice(0, limit),
   }
 }
 

@@ -16,9 +16,10 @@
  * CandidateShell's CANDIDATE_STYLES.
  */
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
+import { onAuthStateChanged, type User } from "firebase/auth"
 import { collection, getDocs, limit as fsLimit, query, where } from "firebase/firestore"
 import { useInfiniteQuery, useQuery, type InfiniteData } from "@tanstack/react-query"
-import { db } from "../lib/firebase.js"
+import { auth, db } from "../lib/firebase.js"
 import {
   Avatar,
   CandidateShell,
@@ -621,6 +622,26 @@ export default function Market(): ReactNode {
   const [locSel, setLocSel] = useState<Set<string>>(new Set())
   const remoteOnly = locSel.has("Remote") && locSel.size === 1
 
+  // Auth-aware shell: signed-in candidates keep the dashboard rail; anonymous
+  // visitors get the marketing chrome. Seed from currentUser to avoid a flash.
+  const [authUser, setAuthUser] = useState<User | null>(() => {
+    try {
+      return auth().currentUser
+    } catch {
+      return null
+    }
+  })
+  useEffect(() => {
+    let unsub = () => {}
+    try {
+      unsub = onAuthStateChanged(auth(), (u) => setAuthUser(u))
+    } catch {
+      /* no firebase config (dev) — stay anonymous */
+    }
+    return () => unsub()
+  }, [])
+  const isAuthed = authUser !== null
+
   const hunting = useHuntingInfinite({ fn: fnSel, level: levelSel, loc: locSel, search: searchQ, remoteOnly })
   const direct = useDirectLine()
 
@@ -643,7 +664,10 @@ export default function Market(): ReactNode {
   }, [])
 
   return (
-    <CandidateShell>
+    <CandidateShell
+      signedIn={isAuthed}
+      signedInUser={isAuthed ? { name: authUser?.displayName ?? "You", email: authUser?.email ?? undefined } : undefined}
+    >
       <style>{MARKET_STYLES}</style>
       <div className="wk-market">
         <div className="wk-container">
