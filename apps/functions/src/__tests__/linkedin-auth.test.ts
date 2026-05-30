@@ -6,14 +6,14 @@ import {
   parseLinkedinState,
 } from "../linkedin-auth.js"
 
-test("LinkedIn OAuth state accepts signed candidate connector state", () => {
+test("OAuth state accepts signed candidate connector state", () => {
   const now = Date.now()
   const raw = buildLinkedinState(
     {
       returnTo: "https://wekruit.com/me/profile",
       ts: now,
       mode: "connect",
-      provider: "linkedin",
+      provider: "github",
       firebaseUid: "firebase-1",
       candidateId: "cand-1",
     },
@@ -25,7 +25,7 @@ test("LinkedIn OAuth state accepts signed candidate connector state", () => {
     returnTo: "https://wekruit.com/me/profile",
     ts: now,
     mode: "connect",
-    provider: "linkedin",
+    provider: "github",
     firebaseUid: "firebase-1",
     candidateId: "cand-1",
   })

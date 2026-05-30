@@ -375,6 +375,7 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
   const emailVerified = !!profile.emailMasked || hasHandle("email")
   const linkedinConnected = !!profile.linkedinUrl || hasHandle("linkedin")
   const githubConnected = !!profile.githubUrl || hasHandle("github")
+  const calcomConnected = !!profile.calcomUrl || hasHandle("calcom")
   return [
     {
       id: "resume",
@@ -421,8 +422,8 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
     {
       id: "calcom",
       label: "Cal.com",
-      meta: hasHandle("calcom") ? "Connected" : "Not connected",
-      connected: hasHandle("calcom"),
+      meta: profile.calcomUrl ? profile.calcomUrl.replace(/^https?:\/\//, "") : calcomConnected ? "Connected" : "Not connected",
+      connected: calcomConnected,
       brand: "#0E1217",
       letter: "✱",
       provider: "calcom",
@@ -455,7 +456,7 @@ function githubHandleFromUrl(url: string): string {
 async function startCandidateConnectorOAuth(provider: "linkedin" | "github" | "calcom"): Promise<void> {
   const call = httpsCallable<
     { provider: "linkedin" | "github" | "calcom"; returnTo: string },
-    { ok: true; provider: "linkedin"; authUrl: string }
+    { ok: true; provider: "linkedin" | "github" | "calcom"; authUrl: string }
   >(functions(), "paCandidateConnectorOAuthStart")
   const result = await call({ provider, returnTo: window.location.href })
   if (!result.data.authUrl) {

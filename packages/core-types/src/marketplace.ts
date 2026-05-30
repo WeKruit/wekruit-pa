@@ -88,6 +88,7 @@ export const CandidateHandleKindSchema = z.enum([
   "imessage",
   "linkedin",
   "github",
+  "calcom",
 ])
 export type CandidateHandleKind = z.infer<typeof CandidateHandleKindSchema>
 
@@ -161,6 +162,7 @@ export const CandidateProfileMarketplaceFieldsSchema = z.object({
   latestResumeArtifactId: z.string().min(1).optional(),
   linkedinUrl: OptionalHttpUrlSchema,
   githubUrl: OptionalHttpUrlSchema,
+  calcomUrl: OptionalHttpUrlSchema,
   outreach: z
     .object({
       status: z.enum(["allowed", "cooldown", "paused", "opted_out"]).default("allowed"),
@@ -228,6 +230,7 @@ export const CandidateSelfProfileSchema = z.object({
   globalTags: CandidateGlobalTagsSchema.optional(),
   linkedinUrl: OptionalHttpUrlSchema,
   githubUrl: OptionalHttpUrlSchema,
+  calcomUrl: OptionalHttpUrlSchema,
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema.optional(),
 })
@@ -1876,6 +1879,7 @@ export function normalizeCandidateHandleValue(
     case "imessage":
     case "linkedin":
     case "github":
+    case "calcom":
       return trimmed.toLowerCase()
   }
 }
