@@ -379,14 +379,39 @@ export function makeV16FindMatch(
       // marker; open-market lines carry no marker (no fast-track promise). `collabBatch` is now true
       // whenever the collab pass produced surfaced jobs — no longer gated on the first batch.
       const collabBatch = collabHit
+
+      // PRESCREEN COPY-PASTE TRIGGER (Adam 2026-05-30): for collab/partner roles that ACTUALLY have a
+      // prescreen config, append the deterministic kickoff string the candidate copies + sends back to
+      // START A REAL prescreen session (router PrescreenTrigger → runPreScreenForUser). This is the
+      // simple, reliable path — independent of the agentic flow (which can't yet create a real session).
+      // It's the SAME `WeKruit_<jobId>_<userId>_Job` token the public job page uses; for collab roles
+      // matching-jobs.id == pa-jobs.id (enrich-collab-jobs uses doc.id), so j.id IS the trigger jobId.
+      // Only emit for roles WITH a config (≤5 collab ids → one getAll); else the trigger config_missings.
+      const prescreenReady = new Set<string>()
+      if (collabIds.size > 0) {
+        try {
+          const snaps = await db.getAll(...[...collabIds].map((id) => db.collection("pa-jobs").doc(id)))
+          for (const s of snaps) {
+            const cfg = (s.data()?.prescreenConfig ?? null) as { questions?: unknown[] } | null
+            if (cfg && Array.isArray(cfg.questions) && cfg.questions.length > 0) prescreenReady.add(s.id)
+          }
+        } catch (e) {
+          log("pa.claire.find_match.prescreen_ready_lookup_failed", { err: String(e) })
+        }
+      }
+
       const jobs = rawJobs.map((j) => {
         const title = (j.jobTitle || j.roleTitle || "Role").trim()
         const company = (j.companyName || "Company").trim()
         const url = (j.atsApplyUrl ?? "").trim()
-        const head = collabIds.has(j.id)
-          ? `${title} @ ${company} [WeKruit partner role]`
-          : `${title} @ ${company}`
-        return url ? `${head}\n${url}` : head
+        const isCollab = collabIds.has(j.id)
+        const head = isCollab ? `${title} @ ${company} [WeKruit partner role]` : `${title} @ ${company}`
+        const base = url ? `${head}\n${url}` : head
+        // The trigger line is RELAYED VERBATIM by the agent (prompt rule) so the candidate can copy it.
+        if (isCollab && prescreenReady.has(j.id)) {
+          return `${base}\n[start prescreen — copy & reply this exact line] WeKruit_${j.id}_${userId}_Job`
+        }
+        return base
       })
       // `total` reflects the size of the offered set when collab contributed (the collab funnel `total`
       // counts only collab jobs, which would understate a mixed batch); otherwise use the open-market
