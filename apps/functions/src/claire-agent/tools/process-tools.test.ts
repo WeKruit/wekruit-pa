@@ -86,7 +86,7 @@ function seededUser() {
 test("record_onboarding_answer DURABLY advances sharedOnboarding.currentQuestionId on a tool-fired turn", async () => {
   const { db, store } = makeDb(seededUser())
   const [, recordOnboarding] = buildProcessTools(makeCtx(db))
-  await recordOnboarding.invoke({}, JSON.stringify({ slot: "main_goal", answer: "career growth", ...NULLS }))
+  await recordOnboarding.invoke({} as never, JSON.stringify({ slot: "main_goal", answer: "career growth", ...NULLS }))
   const so = (store.get(`pa-users/${UID}`) as { sharedOnboarding: Record<string, unknown> }).sharedOnboarding
   // Before the fix this stayed "main_goal" → Claire re-asked main_goal every turn.
   assert.equal(so.currentQuestionId, "culture_stage", "durable slot must advance to the NEXT slot")
@@ -98,7 +98,7 @@ test("record_onboarding_answer walks all slots and completes onboarding durably"
   const { db, store } = makeDb(seededUser())
   const [, recordOnboarding] = buildProcessTools(makeCtx(db))
   for (const slot of DEFAULT_ONBOARDING_SLOTS) {
-    await recordOnboarding.invoke({}, JSON.stringify({ slot, answer: `ans-${slot}`, ...NULLS }))
+    await recordOnboarding.invoke({} as never, JSON.stringify({ slot, answer: `ans-${slot}`, ...NULLS }))
   }
   const doc = store.get(`pa-users/${UID}`) as {
     onboardingState: string
