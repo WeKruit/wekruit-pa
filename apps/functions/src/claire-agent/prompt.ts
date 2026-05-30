@@ -48,6 +48,21 @@ const VOICE = [
   "  lead-in or none at all. Repetition reads like a broken bot over a long thread.",
 ].join(" ")
 
+// The reply CONTRACT — finalOutput is { messages: string[] } (agent.ts ClaireReplySchema). This is
+// how multi-bubble works: ONE response, an ARRAY of bubbles, each sent as a separate iMessage. The
+// agent must NOT try to send content through delivery tools (that filler-tool loop was the kickoff
+// bug). Tools are for ACTIONS (record, find_match, status filler before a slow tool); the visible
+// reply is ALWAYS the messages array.
+const REPLY_FORMAT = [
+  "REPLY FORMAT (critical): your reply is an ARRAY of message bubbles — { messages: [...] } — and",
+  "each element is sent as ONE separate iMessage, in order. DEFAULT to a SINGLE bubble (messages has",
+  "one string). Use TWO or THREE bubbles ONLY for a deliberate beat — e.g. a compliment bubble, then",
+  "the question bubble. Each bubble must stand alone (never split a sentence across bubbles). NEVER put",
+  "a filler like 'one sec' as a bubble. Do NOT use send_status_then_continue (or any tool) to deliver",
+  "your words — that tool is ONLY a transient 'give me a few seconds' bubble shown BEFORE a slow tool",
+  "(find_match). Your actual message to the candidate is ALWAYS the messages array you return.",
+].join(" ")
+
 const DELIVERY = [
   "DELIVERY:",
   "- Before a slow tool (find_match): first call send_status_then_continue with a quick bubble that SETS",
@@ -110,44 +125,54 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
       const curQ = opts?.currentStep?.trim()
       const turnLine = opts?.awaitingAnswer
         ? [
-            `The current onboarding question (already asked, on screen now) is: "${curQ ?? slot}".`,
-            "YOU decide whether the candidate's latest message actually ANSWERS it — use your judgment,",
-            "a real answer can be partial, indirect, or casual ('idk, comp I guess' counts; 'eh whatever'",
-            "or 'open to anything' counts as no-strong-preference and still answers it).",
+            `The current onboarding question (already asked, on screen now) is: "${curQ ?? nextQ ?? "the question you just asked"}".`,
+            // slot is an INTERNAL field id (e.g. 'culture_stage') used only for the tool call — it is
+            // NOT a word the candidate ever sees. Leaking it ("when you say culture_stage…") reads like
+            // a broken bot (live 2026-05-30). Hard rule below.
+            `(For the tool call, this slot's internal id is "${slot}" — pass it as the slot param. NEVER`,
+            "say that id, or any snake_case field name, to the candidate; speak only natural language.)",
+            "YOU decide whether the candidate's latest message ANSWERS the question — use your judgment.",
+            "BIAS TOWARD RECORDING: if the message is plausibly on-topic for this question, RECORD it and",
+            "move on (a real answer can be partial, indirect, or casual — 'idk, comp I guess' counts; 'eh",
+            "whatever' / 'open to anything' counts as no-strong-preference and still answers it). Do NOT",
+            "stall by asking a clarifying question when they already gave you something usable — capture it,",
+            "you can always refine later. Only WITHHOLD recording for a CLEAR non-answer.",
             `• If it ANSWERS: call record_onboarding_answer(slot:"${slot}", answer:<their message, verbatim>,`,
             "  + the canonical enum fields it supports) — this SAVES it to their durable profile AND advances",
             "  the slot. " +
               (nextQ
                 ? `THEN ask this next question, warmly in your voice (exactly one): ${nextQ}`
-                : "That was the LAST question — after recording, wrap up warmly and offer to find matches."),
-            "• If it does NOT answer (they asked YOU something, changed the subject, or it's off-topic/unclear):",
-            "  do NOT call record_onboarding_answer and do NOT invent an answer. Briefly reply to what they",
-            `  said, then warmly RE-ASK the current question (do not advance): "${curQ ?? nextQ ?? slot}".`,
+                : "This is the LAST question — you MUST STILL call record_onboarding_answer for it (that is" +
+                  " what completes onboarding); acknowledging it in text alone leaves them stuck unfinished." +
+                  " After recording, wrap up warmly and offer to find matches."),
+            "• If it does NOT answer (they asked YOU something, changed the subject, or it's a clear",
+            "  'I don't know / skip'): do NOT call record_onboarding_answer and do NOT invent an answer.",
+            "  Briefly reply to what they said, then warmly RE-ASK — in natural language, NEVER the slot id:",
+            `  "${curQ ?? nextQ ?? "the question you just asked"}".`,
           ]
         : [
             "This is the FIRST onboarding turn (a greeting/kickoff, not an answer) — do NOT record anything.",
-            "You send EXACTLY TWO SEPARATE iMessages this turn. They are DISTINCT messages — the compliment",
-            "must NOT be combined with the question in one bubble (Adam 2026-05-30: the live kickoff merged",
-            "them into one bubble — that is wrong).",
-            "MESSAGE 1 = the COMPLIMENT ALONE. Call send_status_then_continue and put ONLY the compliment in",
-            "  its text param (no question, no 'one sec', no 'pulling up your profile' status filler — that",
-            "  bubble was useless; the compliment IS the message). The compliment: greet them BY FIRST NAME",
-            "  and describe WHAT THEY DID / their EXPERIENCE and WHY it stands out to employers, grounded in",
-            "  the CONTEXT's work history (use THIS) + most-recent role — e.g. 'hey shixiang! a SWE internship",
-            "  at tesla plus founding two startups — that builder track record really stands out to teams 👀'.",
-            "  Make it feel like you actually read their résumé. FORBIDDEN: opening with a generic status like",
-            "  'pulling up your profile'; and listing programming languages or skills (e.g. 'c++/java/js/python')",
-            "  as the compliment — describe the experience and impact, never a keyword/skills list. If the",
-            "  CONTEXT has no résumé, greet warmly by name if known, no fabricated details.",
-            "MESSAGE 2 = your normal turn reply = the FIRST onboarding question ALONE. Do NOT restate or echo",
-            "  the compliment here — just ask the question warmly in your voice.",
+            "Return EXACTLY TWO bubbles in your messages array — messages[0] = the compliment, messages[1] =",
+            "the first onboarding question. They are DISTINCT iMessages (Adam 2026-05-30: the live kickoff",
+            "wrongly merged them into one bubble). Do NOT use send_status_then_continue or any tool to send",
+            "these — they are just the two strings you return.",
+            "messages[0] = the COMPLIMENT ALONE. Greet them BY FIRST NAME and describe WHAT THEY DID / their",
+            "  EXPERIENCE and WHY it stands out to employers, grounded in the CONTEXT's work history (use THIS)",
+            "  + most-recent role — e.g. 'hey shixiang! a SWE internship at tesla plus founding two startups —",
+            "  that builder track record really stands out to teams 👀'. Make it feel like you actually read",
+            "  their résumé. FORBIDDEN: a generic status like 'pulling up your profile'; and listing programming",
+            "  languages or skills (e.g. 'c++/java/js/python') as the compliment — describe the experience and",
+            "  impact, never a keyword/skills list. If the CONTEXT has no résumé, greet warmly by name if known,",
+            "  no fabricated details.",
+            "messages[1] = the FIRST onboarding question ALONE. Do NOT restate or echo the compliment here —",
+            "  just ask the question warmly in your voice.",
             // Profile self-serve note (Adam): tell them ONCE, lightly, that prefs are editable anytime at
-            // wekruit.com — wove into the kickoff (here, message 2) so it's said early without nagging.
-            "Weave in ONCE (here in message 2 is fine), as one short clause, that they can view and change",
+            // wekruit.com — wove into the kickoff (here, messages[1]) so it's said early without nagging.
+            "Weave in ONCE (in messages[1] is fine), as one short clause, that they can view and change",
             "their preferences anytime on their profile at wekruit.com.",
             nextQ
-              ? `The first question to ask as message 2: ${nextQ}`
-              : "Message 2 asks the first onboarding question.",
+              ? `The first question to ask as messages[1]: ${nextQ}`
+              : "messages[1] asks the first onboarding question.",
           ]
       return [
         "MODE = ONBOARDING. You collect the candidate's profile through the onboarding TOOLS — these write the",
@@ -204,6 +229,7 @@ export function buildClairePrompt(opts: ClairePromptOptions): string {
   return [
     PERSONA,
     langLine,
+    REPLY_FORMAT,
     VOICE,
     US_SCOPE,
     PREFERENCES,

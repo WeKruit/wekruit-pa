@@ -13,9 +13,16 @@
  * (tapback/no_reply) already handled it, send it as text.
  */
 import type { ClaireToolContext } from "./types.js"
+import { normalizeReply } from "./guardrails.js"
 
 /** Slow tools that should trigger the typing reflex. */
 export const SLOW_TOOLS = ["find_match", "match_collab", "cv_parse"] as const
+
+/**
+ * Hard cap on bubbles per turn — a runaway `messages` array can never flood the thread. Overflow
+ * is MERGED into the last bubble (never dropped), so content is preserved, just compacted.
+ */
+const MAX_BUBBLES = 4
 
 /** Fire the mark-read reflex (immediate, every inbound, pre-run). */
 export async function markReadReflex(ctx: ClaireToolContext): Promise<void> {
@@ -68,4 +75,36 @@ export async function deliverFinalText(
   if (!out || deliveredViaTool) return false
   await ctx.transport.sendText(out)
   return true
+}
+
+/**
+ * Deliver the agent's structured reply as N iMessage bubbles — ONE Sendblue send per element, in
+ * order. This is the SDK-native multi-bubble path (the agent's `outputType.messages` array): the
+ * agent emits ALL bubbles in ONE response, and we POST each. It REPLACES the old "send each bubble
+ * via a tool" approach, whose `send_status_then_continue` loop spammed "one sec" and timed out (the
+ * 2026-05-30 kickoff bug): a status/filler tool is NOT a message-sender, and calling it never ends
+ * the turn, so the model looped until claire_run_timeout → "hiccupped" fallback.
+ *
+ * Each bubble is normalized (markdown strip + length cap) independently. Bubbles beyond MAX_BUBBLES
+ * are merged into the last. Returns the count actually sent (0 when a delivery TOOL already handled
+ * the turn — tapback/no_reply — or the array is empty).
+ */
+export async function deliverBubbles(
+  ctx: ClaireToolContext,
+  messages: readonly string[],
+  deliveredViaTool = false,
+): Promise<number> {
+  if (deliveredViaTool) return 0
+  const clean = (Array.isArray(messages) ? messages : [])
+    .map((m) => normalizeReply(String(m ?? "")).trim())
+    .filter(Boolean)
+  if (clean.length === 0) return 0
+  const bubbles =
+    clean.length > MAX_BUBBLES
+      ? [...clean.slice(0, MAX_BUBBLES - 1), clean.slice(MAX_BUBBLES - 1).join(" ")]
+      : clean
+  for (const b of bubbles) {
+    await ctx.transport.sendText(b)
+  }
+  return bubbles.length
 }

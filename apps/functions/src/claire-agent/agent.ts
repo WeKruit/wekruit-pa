@@ -11,7 +11,7 @@
  * Global read-context (canonical tags) is injected so "what's saved" reads tags (RC3).
  */
 import type { Firestore } from "firebase-admin/firestore"
-import { Agent, run, InputGuardrailTripwireTriggered, configureClaireSdk } from "./sdk.js"
+import { Agent, run, InputGuardrailTripwireTriggered, configureClaireSdk, z } from "./sdk.js"
 import type {
   ClaireLang,
   ClaireMode,
@@ -23,13 +23,51 @@ import type {
 import { buildClaireTools } from "./tools/index.js"
 import { type ProcessSessionStore, type ProcessToolContext } from "./tools/process-tools.js"
 import { buildClairePrompt } from "./prompt.js"
-import { buildClaireGuardrails, normalizeReply } from "./guardrails.js"
-import { markReadReflex, wireTypingReflex, deliverFinalText } from "./delivery.js"
+import { buildClaireGuardrails } from "./guardrails.js"
+import { markReadReflex, wireTypingReflex, deliverBubbles } from "./delivery.js"
 import { makeClaireSession } from "./session.js"
 import { appendHotlineIfMissing } from "@pa/pa-safety"
 
 /** Main conversation model (the per-tool LLM judge model is configured separately). */
 export const CLAIRE_MODEL = "gpt-5.4-nano"
+
+/**
+ * Structured reply contract (Adam 2026-05-30) — the agent returns its user-facing reply as an
+ * ARRAY of iMessage bubbles, each sent in order via one Sendblue POST. This is the SDK-native way
+ * to do multi-bubble (e.g. a compliment bubble THEN the question bubble): ONE model response, an
+ * array of strings — NOT N tool calls. It directly fixes the kickoff loop, where the prompt routed
+ * the compliment through `send_status_then_continue` (a filler tool that never ends the turn), so
+ * the model spammed "one sec" until claire_run_timeout → "hiccupped" fallback.
+ *
+ * @openai/agents 0.8.5: `outputType` accepts a Zod object; `run().finalOutput` is then the parsed
+ * object (result.d.ts `ResolvedAgentOutput`). Tools still loop normally; the final step emits this.
+ * Built from the SDK's own zod@4 `z` (sdk.ts) so it matches the tool-param schema instance.
+ */
+const ClaireReplySchema = z.object({
+  messages: z
+    .array(z.string())
+    .describe(
+      "Your reply, split into iMessage bubbles SENT IN ORDER (one text each). Default to ONE " +
+        "bubble. Use 2-3 ONLY for an intentional beat — e.g. a compliment bubble, THEN the question " +
+        "bubble. Each element is a complete standalone message; never split mid-sentence, never put " +
+        "a filler like 'one sec' here. Empty array ONLY when you delivered via a tapback/no_reply " +
+        "tool and intend to send no text.",
+    ),
+})
+
+/** Coerce the SDK's resolved final output into the ordered bubble array (defensive vs shape drift). */
+function extractBubbles(finalOutput: unknown): string[] {
+  const fromArray = (arr: unknown[]): string[] =>
+    arr.map((m) => String(m ?? "").trim()).filter(Boolean)
+  if (Array.isArray(finalOutput)) return fromArray(finalOutput)
+  if (finalOutput && typeof finalOutput === "object") {
+    const msgs = (finalOutput as { messages?: unknown }).messages
+    if (Array.isArray(msgs)) return fromArray(msgs)
+  }
+  // Back-compat: a plain string (if a model/SDK build ever returns text instead of the schema).
+  const s = String(finalOutput ?? "").trim()
+  return s ? [s] : []
+}
 
 /**
  * Hard ceiling so the turn ALWAYS replies (RC2: the prod path hung at stage=llm running).
@@ -62,7 +100,12 @@ export interface BuildClaireAgentOptions {
 export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentOptions) {
   configureClaireSdk()
   const guardrails = buildClaireGuardrails()
-  const agent = new Agent({
+  // outputType is cast through `unknown`: apps/functions's graph types `z` as zod@3 (BLOCKER #1 in
+  // sdk.ts), so the locally-typed `z.object(...)` is NOT recognized as the SDK's zod@4 `ZodObjectLike`
+  // and `outputType` inference would fall back to TextOutput ("text") and reject the schema. At RUNTIME
+  // this IS the real zod@4 SDK instance (sdk.ts dynamic require), so the schema is enforced correctly —
+  // only the compile-time type is the known lie. Same casting philosophy as sdk.ts's value exports.
+  const agentConfig = {
     name: "Claire",
     model: CLAIRE_MODEL,
     instructions: buildClairePrompt({
@@ -75,9 +118,12 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
       awaitingAnswer: opts.awaitingAnswer,
     }),
     tools: buildClaireTools(ctx),
+    // Multi-bubble reply contract — finalOutput is { messages: string[] }, delivered one send each.
+    outputType: ClaireReplySchema,
     inputGuardrails: guardrails.input,
     outputGuardrails: guardrails.output,
-  })
+  }
+  const agent = new Agent(agentConfig as unknown as ConstructorParameters<typeof Agent>[0])
   // typing-before-slow-tool reflex (event-emitter API, not AgentHooks — see poc README).
   wireTypingReflex(agent, ctx)
   return agent
@@ -237,7 +283,7 @@ export async function runClaireTurn(
     userId: input.userId,
   })
 
-  let finalText = ""
+  let bubbles: string[] = []
   let blocked = false
   try {
     const res = (await Promise.race([
@@ -246,7 +292,9 @@ export async function runClaireTurn(
         setTimeout(() => reject(new Error("claire_run_timeout")), RUN_TIMEOUT_MS),
       ),
     ])) as { finalOutput?: unknown }
-    finalText = String(res?.finalOutput ?? "").trim()
+    // finalOutput is the resolved ClaireReplySchema → { messages: string[] }. Each element is one
+    // iMessage bubble; deliverBubbles POSTs them in order. extractBubbles is defensive vs shape drift.
+    bubbles = extractBubbles(res?.finalOutput)
   } catch (e) {
     if (e instanceof InputGuardrailTripwireTriggered) {
       blocked = true
@@ -269,20 +317,22 @@ export async function runClaireTurn(
       userId: input.userId,
       err: e instanceof Error ? e.message : String(e),
     })
-    finalText =
+    bubbles = [
       lang === "zh"
         ? "抱歉，刚刚卡了一下 — 能再说一遍吗？"
-        : "sorry, that one hiccupped on my end — mind sending that again?"
+        : "sorry, that one hiccupped on my end — mind sending that again?",
+    ]
   }
 
   const deliveredViaTool = tracked.handledViaTool()
-  if (finalText && !deliveredViaTool) {
-    finalText = normalizeReply(finalText)
-  }
-  const sent = await deliverFinalText(ctx, finalText, deliveredViaTool).catch((e) => {
-    log("deliverFinalText_failed", { err: String(e) })
-    return false
+  // deliverBubbles normalizes each bubble (markdown/length) + caps count; one Sendblue send each.
+  const sentCount = await deliverBubbles(ctx, bubbles, deliveredViaTool).catch((e) => {
+    log("deliverBubbles_failed", { err: String(e) })
+    return 0
   })
+  const sent = sentCount > 0
+  // Telemetry/test-only joined form (callers deliver via transport; eval reads recordedEvents).
+  const finalText = bubbles.join("\n\n")
 
   // ONBOARDING ASK NET — gpt-5.4-nano intermittently calls the ask_next_onboarding_question TOOL
   // (logged onboarding.ask_next) then ENDS the turn without emitting the question as text → finalText

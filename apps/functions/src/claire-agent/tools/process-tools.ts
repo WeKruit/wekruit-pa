@@ -214,7 +214,23 @@ export function buildProcessTools(
       negativeIndustrySector: z.array(IndustrySectorEnum).nullable(),
       companySize: z.array(CompanySizeEnum).nullable(),
       targetJobType: z.array(JobTypeEnum).nullable(),
-      targetLocations: z.array(z.string()).nullable(),
+      // targetLocations is a closed canonical vocab, but too large to inline as a zod enum, so it's a
+      // string array gated by validateOnboardingCanonicalTags (off-vocab tokens are DROPPED). The model
+      // can't pick a token it can't see — without this mapping it guessed 'new_york'/'remote' (both
+      // off-vocab) and the location silently vanished (2026-05-30 capture gap). Surface the common-US
+      // mapping so the LLM emits the EXACT canonical token (still LLM-picks-enum, no regex).
+      targetLocations: z
+        .array(z.string())
+        .nullable()
+        .describe(
+          "Canonical US location tokens — pick the EXACT token (off-vocab is dropped). City → its metro " +
+            "token: NYC/New York → 'new_york_metro'; SF/Bay Area → 'san_francisco_bay_area'; LA → " +
+            "'los_angeles_metro'; Seattle → 'seattle_metro'; Boston → 'boston_metro'; Chicago → " +
+            "'chicago_metro'; Austin → 'austin_metro'; DC → 'washington_dc_metro'. Remote: US-remote / " +
+            "work-from-home → 'remote_united_states'; fully remote / anywhere / no preference / open to " +
+            "any location → 'remote_anywhere'. Capture EVERY location they mention (e.g. 'NYC or remote' → " +
+            "['new_york_metro','remote_united_states']). Only use a metro token for a city, never the bare city name.",
+        ),
       careerStage: CareerStageEnum.nullable(),
       visaStatus: VisaEnum.nullable(),
       minSalary: z.number().int().nonnegative().nullable(),
