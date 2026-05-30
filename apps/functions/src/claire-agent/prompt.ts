@@ -109,9 +109,15 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
           ]
         : [
             "This is the FIRST onboarding turn (a greeting/kickoff, not an answer) — do NOT record anything.",
+            "OPEN PERSONALIZED, NOT GENERIC: the CONTEXT below has the candidate's résumé on file (first",
+            "name + most-recent role/company + top skills). Greet them BY FIRST NAME and name something",
+            "concrete you see on their résumé (their recent role @ company, or a skill or two) so it reads",
+            "like you actually looked — e.g. 'hey Shixiang! saw you were a SWE intern at Tesla 👀'. Never",
+            "open with a generic 'welcome to wekruit'. If the CONTEXT has no résumé, greet warmly by name",
+            "if known. THEN, in the same message, ask the first question.",
             nextQ
-              ? `Just ask this question, phrased warmly (a short résumé-aware lead-in is great): ${nextQ}`
-              : "Ask the first onboarding question warmly.",
+              ? `The first question to fold in after the personalized opener: ${nextQ}`
+              : "Then ask the first onboarding question.",
           ]
       return [
         "MODE = ONBOARDING. You collect the candidate's profile through the onboarding TOOLS — these write the",

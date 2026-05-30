@@ -223,6 +223,21 @@ export function buildProcessTools(
     async execute({ slot, answer, preferenceHardness, ...canonical }) {
       // 1) Reducer owns ORDER — record the raw answer for the current slot only.
       const result = recordOnboardingAnswer(store.onboarding, slot, answer)
+      // 1b) DURABLE ADVANCE — recordOnboardingAnswer only mutates the in-memory `store`; the
+      //     mode-selector re-reads sharedOnboarding.currentQuestionId from Firestore on the NEXT
+      //     inbound. Without persisting the advance here, durable currentQuestionId never moves on a
+      //     tool-fired turn, so the agent re-derives the SAME pendingStep and re-asks the same
+      //     question forever (live stall 2026-05-30: Claire stuck on the culture/team slot). The
+      //     net (persistOnboardingAnswerThrough) is skipped precisely when this tool fires, so this
+      //     is the single durable write — same writer, same positional slot order.
+      if (result.ok && ctx.db && ctx.userId) {
+        await persistOnboardingAnswerThrough(ctx, slot, answer).catch((err: unknown) =>
+          ctx.log("onboarding.tool_advance_error", {
+            slot,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        )
+      }
       // 2) Persist the AGENT-extracted canonical tags via the D8 sole writer.
       //    Validated against shared-tags enums (off-vocab dropped). Best-effort;
       //    a tag-write failure never blocks the slot advance. No regex anywhere.

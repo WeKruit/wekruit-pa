@@ -107,24 +107,51 @@ function trackTransport(inner: ClaireTransport): {
 async function loadGlobalContext(db: Firestore, userId: string): Promise<string> {
   try {
     const snap = await db.collection("pa-users").doc(userId).get()
-    const tags = (snap.data()?.tags ?? {}) as Record<string, unknown>
-    const arr = (k: string) => (Array.isArray(tags[k]) ? (tags[k] as string[]) : [])
-    const roles = arr("targetRoleFunction")
-    const avoid = arr("negativeRoleFunction")
-    const jobType = arr("targetJobType")
-    const locations = arr("targetLocations")
-    if (!roles.length && !avoid.length && !jobType.length && !locations.length) {
-      return "Saved matcher preferences (canonical pa-users.tags): none set yet."
-    }
-    return [
-      "Saved matcher preferences — READ THESE when asked what's saved (this IS the matcher input):",
-      roles.length ? `roles: ${roles.join(", ")}` : "",
-      avoid.length ? `avoiding: ${avoid.join(", ")}` : "",
-      jobType.length ? `job type: ${jobType.join(", ")}` : "",
-      locations.length ? `locations: ${locations.join(", ")}` : "",
-    ]
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    const tags = (data.tags ?? {}) as Record<string, unknown>
+    const arr = (k: string) => (Array.isArray(tags[k]) ? (tags[k] as unknown[]) : [])
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "")
+
+    // RÉSUMÉ ON FILE — the candidate's name + most-recent role + skills, so Claire can open with a
+    // personalized, résumé-aware greeting ("hey Shixiang, saw you were a SWE intern at Tesla…")
+    // instead of a generic "welcome" (Adam 2026-05-30). skills are objects ({name,…}) → map .name.
+    const displayName = str(data.displayName)
+    const firstName = displayName ? displayName.split(/\s+/)[0]! : ""
+    const recentRoleTitle = str(tags.recentRoleTitle)
+    const recentCompany = str(tags.recentCompany)
+    const skillNames = arr("skills")
+      .map((s) => (typeof s === "string" ? s : str((s as Record<string, unknown> | null)?.name)))
       .filter(Boolean)
-      .join("; ")
+      .slice(0, 5)
+    const resumeBits = [
+      firstName ? `first name: ${firstName}` : "",
+      recentRoleTitle || recentCompany
+        ? `most recent: ${[recentRoleTitle, recentCompany].filter(Boolean).join(" @ ")}`
+        : "",
+      skillNames.length ? `top skills: ${skillNames.join(", ")}` : "",
+    ].filter(Boolean)
+    const resumeLine = resumeBits.length
+      ? `Candidate résumé on file (use it to personalize — greet by first name, reference their background): ${resumeBits.join("; ")}`
+      : ""
+
+    const roles = arr("targetRoleFunction").map(str).filter(Boolean)
+    const avoid = arr("negativeRoleFunction").map(str).filter(Boolean)
+    const jobType = arr("targetJobType").map(str).filter(Boolean)
+    const locations = arr("targetLocations").map(str).filter(Boolean)
+    const prefsLine =
+      !roles.length && !avoid.length && !jobType.length && !locations.length
+        ? "Saved matcher preferences (canonical pa-users.tags): none set yet."
+        : [
+            "Saved matcher preferences — READ THESE when asked what's saved (this IS the matcher input):",
+            roles.length ? `roles: ${roles.join(", ")}` : "",
+            avoid.length ? `avoiding: ${avoid.join(", ")}` : "",
+            jobType.length ? `job type: ${jobType.join(", ")}` : "",
+            locations.length ? `locations: ${locations.join(", ")}` : "",
+          ]
+            .filter(Boolean)
+            .join("; ")
+
+    return [resumeLine, prefsLine].filter(Boolean).join("\n")
   } catch {
     return ""
   }
