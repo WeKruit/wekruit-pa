@@ -26,9 +26,14 @@ const u = q.docs[0].data()
 const tags = u.tags || {}
 
 // 2. Chat-derived INTENT tags to CLEAR (onboarding/chat re-captures these canonically).
-const CLEAR_INTENT = ["targetRoleFunction","negativeRoleFunction","roleFunctionNegativeList","targetLocations",
+// IMPORTANT: targetRoleFunction + careerStage are RÉSUMÉ-derived (cv-ingest mergeUserTags from the
+// parsed résumé title/skills), NOT chat-intent. They are the matcher's hard-filter SEED — clearing
+// them blanks the role filter (0 candidates) and empties careerStage (V16 over-drops). The dev test
+// that wiped them is what made the matcher return 0 on 2026-05-29. Keep them (like skills). Production
+// reinitializeCandidate re-enriches them from the résumé; this script preserves them outright.
+const CLEAR_INTENT = ["negativeRoleFunction","roleFunctionNegativeList","targetLocations",
   "targetCountry","industrySector","negativeIndustrySector","visaStatus","minSalary","companySize","prefersStartup",
-  "targetJobType","targetCompanyTags","companyNegativeList","companyPositiveList","urgentlySeeking","careerStage","relevantTags"]
+  "targetJobType","targetCompanyTags","companyNegativeList","companyPositiveList","urgentlySeeking","relevantTags"]
 const keptTagKeys = Object.keys(tags).filter(k => !CLEAR_INTENT.includes(k))
 const newTags = {}; for (const k of keptTagKeys) newTags[k] = tags[k]
 newTags.schemaVersion = 2
