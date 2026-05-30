@@ -111,17 +111,44 @@ function normalizeExperienceHighlights(value: unknown): Array<Record<string, unk
     const company = typeof raw.company === "string" ? raw.company.trim() : ""
     if (!title || !company) continue
     const location = typeof raw.location === "string" ? raw.location.trim() : ""
+    const description = typeof raw.description === "string" ? raw.description.trim() : ""
     const startDate = typeof raw.startDate === "string" ? raw.startDate.trim() : ""
     const endDate = typeof raw.endDate === "string" ? raw.endDate.trim() : ""
+    const department = typeof raw.department === "string" ? raw.department.trim() : ""
+    const managementLevel = typeof raw.managementLevel === "string" ? raw.managementLevel.trim() : ""
+    const companyIndustry = typeof raw.companyIndustry === "string" ? raw.companyIndustry.trim() : ""
+    const companySizeRange = typeof raw.companySizeRange === "string" ? raw.companySizeRange.trim() : ""
+    const companyHqCity = typeof raw.companyHqCity === "string" ? raw.companyHqCity.trim() : ""
+    const companyHqCountry = typeof raw.companyHqCountry === "string" ? raw.companyHqCountry.trim() : ""
     const source = typeof raw.source === "string" ? raw.source.trim() : ""
     const sourceLabel = typeof raw.sourceLabel === "string" ? raw.sourceLabel.trim() : ""
+    const durationMonths =
+      typeof raw.durationMonths === "number" && Number.isFinite(raw.durationMonths) && raw.durationMonths >= 0
+        ? raw.durationMonths
+        : undefined
+    const companyId =
+      typeof raw.companyId === "number" && Number.isInteger(raw.companyId) && raw.companyId > 0
+        ? raw.companyId
+        : undefined
     out.push(stripUndefined({
       title: title.slice(0, 200),
       company: company.slice(0, 200),
       location: location ? location.slice(0, 200) : undefined,
+      description: description ? description.slice(0, 4_000) : undefined,
       startDate: startDate ? startDate.slice(0, 64) : undefined,
       endDate: endDate ? endDate.slice(0, 64) : undefined,
+      durationMonths,
       currentRole: raw.currentRole === true ? true : undefined,
+      department: department ? department.slice(0, 120) : undefined,
+      managementLevel: managementLevel ? managementLevel.slice(0, 120) : undefined,
+      companyId,
+      companyIndustry: companyIndustry ? companyIndustry.slice(0, 200) : undefined,
+      companySizeRange: companySizeRange ? companySizeRange.slice(0, 120) : undefined,
+      companyWebsite: normalizeOptionalUrl(raw.companyWebsite),
+      companyLinkedinUrl: normalizeOptionalUrl(raw.companyLinkedinUrl),
+      companyHqCity: companyHqCity ? companyHqCity.slice(0, 120) : undefined,
+      companyHqCountry: companyHqCountry ? companyHqCountry.slice(0, 120) : undefined,
+      companyLogoUrl: normalizeOptionalUrl(raw.companyLogoUrl),
       source: source ? source.slice(0, 80) : undefined,
       sourceLabel: sourceLabel ? sourceLabel.slice(0, 120) : undefined,
     }))

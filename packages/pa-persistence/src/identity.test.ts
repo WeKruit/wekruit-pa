@@ -439,8 +439,20 @@ test("writeCandidateSelfProfile redacts phone and preserves candidate-facing sta
         {
           title: "Software Engineer",
           company: "Tesla",
+          location: "Fremont, California, United States",
+          description: "Built vehicle telemetry tools and improved release diagnostics.",
           startDate: "May 2024",
           endDate: "August 2024",
+          durationMonths: 4,
+          department: "Engineering",
+          managementLevel: "Individual Contributor",
+          companyIndustry: "Automotive",
+          companySizeRange: "10,001+ employees",
+          companyWebsite: "tesla.com",
+          companyLinkedinUrl: "linkedin.com/company/tesla-motors",
+          companyHqCity: "Austin",
+          companyHqCountry: "United States",
+          companyLogoUrl: "https://static.licdn.com/tesla.png",
           source: "coresignal_collect_v2",
           sourceLabel: "LinkedIn",
         },
@@ -453,6 +465,11 @@ test("writeCandidateSelfProfile redacts phone and preserves candidate-facing sta
   assert.equal(profile.phoneMasked, "+14***00")
   assert.equal(profile.lifecycleState, "reachable")
   assert.equal((profile.experienceHighlights as Array<{ company: string }>)[0]?.company, "Tesla")
+  const experience = (profile.experienceHighlights as Array<Record<string, unknown>>)[0]
+  assert.equal(experience.description, "Built vehicle telemetry tools and improved release diagnostics.")
+  assert.equal(experience.companyWebsite, "https://tesla.com/")
+  assert.equal(experience.companyLinkedinUrl, "https://linkedin.com/company/tesla-motors")
+  assert.equal(experience.companyLogoUrl, "https://static.licdn.com/tesla.png")
 })
 
 // ---------- Identity hardening 2026-05-21 (L1-entry gate) -----------------

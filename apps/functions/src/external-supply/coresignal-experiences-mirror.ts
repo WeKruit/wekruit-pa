@@ -33,6 +33,7 @@ export interface CoresignalExperiencesMirrorResult {
     | "skipped_no_experience"
     | "skipped_already_mirrored"
     | "skipped_no_coresignal_id"
+    | "refreshed_existing"
 }
 
 /**
@@ -60,21 +61,58 @@ function stripUndefined(value: Record<string, unknown>): Record<string, unknown>
   return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined))
 }
 
+function normalizeOptionalUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`
+  try {
+    const parsed = new URL(withProtocol)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined
+    return parsed.toString()
+  } catch {
+    return undefined
+  }
+}
+
 export function buildExperienceHighlightsFromRecord(record: ExternalCandidateRecord): Array<Record<string, unknown>> {
   return (record.experience ?? [])
     .filter((experience) => experience.company && experience.title)
     .slice(0, 8)
-    .map((experience, index) =>
-      stripUndefined({
+    .map((experience, index) => {
+      const inferredCurrent =
+        experience.currentRole === true
+          ? true
+          : experience.currentRole === false
+            ? undefined
+            : index === 0 && !experience.endDate
+              ? true
+              : undefined
+      return stripUndefined({
         title: experience.title,
         company: experience.company,
+        location: experience.location ?? undefined,
+        description: experience.description ?? undefined,
         startDate: experience.startDate ?? undefined,
         endDate: experience.endDate ?? undefined,
-        currentRole: index === 0 && !experience.endDate ? true : undefined,
+        durationMonths: experience.durationMonths ?? undefined,
+        currentRole: inferredCurrent,
+        department: experience.department ?? undefined,
+        managementLevel: experience.managementLevel ?? undefined,
+        companyId: experience.companyId ?? undefined,
+        companyIndustry: experience.companyIndustry ?? undefined,
+        companySizeRange: experience.companySizeRange ?? undefined,
+        companyWebsite: normalizeOptionalUrl(experience.companyWebsite),
+        companyLinkedinUrl: normalizeOptionalUrl(experience.companyLinkedinUrl),
+        companyHqCity: experience.companyHqCity ?? undefined,
+        companyHqCountry: experience.companyHqCountry ?? undefined,
+        companyLogoUrl: normalizeOptionalUrl(experience.companyLogoUrl),
         source: "coresignal_collect_v2",
         sourceLabel: "LinkedIn",
-      }),
-    )
+      })
+    })
 }
 
 /**
@@ -92,9 +130,22 @@ export function buildParsedResumeDocFromRecord(
   const experiences = (record.experience ?? []).map((e) => ({
     title: e.title,
     company: e.company,
+    location: e.location ?? null,
+    description: e.description ?? null,
     startDate: e.startDate ?? null,
     endDate: e.endDate ?? null,
     durationMonths: e.durationMonths ?? null,
+    currentRole: e.currentRole ?? null,
+    department: e.department ?? null,
+    managementLevel: e.managementLevel ?? null,
+    companyId: e.companyId ?? null,
+    companyIndustry: e.companyIndustry ?? null,
+    companySizeRange: e.companySizeRange ?? null,
+    companyWebsite: normalizeOptionalUrl(e.companyWebsite) ?? null,
+    companyLinkedinUrl: normalizeOptionalUrl(e.companyLinkedinUrl) ?? null,
+    companyHqCity: e.companyHqCity ?? null,
+    companyHqCountry: e.companyHqCountry ?? null,
+    companyLogoUrl: normalizeOptionalUrl(e.companyLogoUrl) ?? null,
   }))
   const education = (record.education ?? []).map((e) => ({
     school: e.school,
@@ -135,7 +186,7 @@ export function buildParsedResumeDocFromRecord(
 
 export interface MirrorDeps {
   /** Query existing parsedCandidateResumes rows for this user. */
-  findExistingForUser?: (userId: string) => Promise<Array<{ coresignalEmployeeId?: number; source?: string }>>
+  findExistingForUser?: (userId: string) => Promise<Array<{ id?: string; coresignalEmployeeId?: number; source?: string }>>
   /** Write the parsedCandidateResumes doc + the pa-users.coresignalEmployeeId field. */
   writeBoth?: (args: {
     parsedResumeDoc: Record<string, unknown>
@@ -143,6 +194,7 @@ export interface MirrorDeps {
     coresignalEmployeeId: number
     canonicalLinkedInUrl?: string
     experienceHighlights: Array<Record<string, unknown>>
+    existingParsedResumeDocId?: string
   }) => Promise<void>
   now?: () => string
   log?: (event: string, fields?: Record<string, unknown>) => void
@@ -172,15 +224,19 @@ export async function runCoresignalExperiencesMirror(
     return { status: "skipped_no_coresignal_id" }
   }
 
+  let existingParsedResumeDocId: string | undefined
   if (deps.findExistingForUser) {
     const existing = await deps.findExistingForUser(userId)
-    const dupe = existing.some(
+    const dupe = existing.find(
       (r) =>
         r.source === "coresignal_collect_v2" &&
         r.coresignalEmployeeId === coresignalEmployeeId,
     )
     if (dupe) {
-      return { status: "skipped_already_mirrored" }
+      if (!dupe.id) {
+        return { status: "skipped_already_mirrored" }
+      }
+      existingParsedResumeDocId = dupe.id
     }
   }
 
@@ -194,6 +250,7 @@ export async function runCoresignalExperiencesMirror(
       coresignalEmployeeId,
       canonicalLinkedInUrl: record.canonicalLinkedInUrl,
       experienceHighlights,
+      existingParsedResumeDocId,
     })
   }
 
@@ -203,7 +260,7 @@ export async function runCoresignalExperiencesMirror(
     experienceCount: (doc.experiences as unknown[]).length,
   })
 
-  return { status: "mirrored" }
+  return { status: existingParsedResumeDocId ? "refreshed_existing" : "mirrored" }
 }
 
 // ---------------------------------------------------------------------------
@@ -222,6 +279,7 @@ export function makeFirestoreMirrorDeps(db: Firestore): Pick<MirrorDeps, "findEx
       return snap.docs.map((d) => {
         const data = d.data() as Record<string, unknown>
         return {
+          id: d.id,
           coresignalEmployeeId:
             typeof data.coresignalEmployeeId === "number" ? data.coresignalEmployeeId : undefined,
           source: typeof data.source === "string" ? data.source : undefined,
@@ -234,6 +292,7 @@ export function makeFirestoreMirrorDeps(db: Firestore): Pick<MirrorDeps, "findEx
       coresignalEmployeeId,
       canonicalLinkedInUrl,
       experienceHighlights,
+      existingParsedResumeDocId,
     }) => {
       const batch = db.batch()
       const userRef = db.collection(PA_USERS_COLLECTION).doc(userId)
@@ -247,8 +306,15 @@ export function makeFirestoreMirrorDeps(db: Firestore): Pick<MirrorDeps, "findEx
         (typeof existingLinkedinUrl !== "string" ||
           existingLinkedinUrl.trim().length === 0 ||
           isLinkedinOAuthMarker(existingLinkedinUrl))
-      const newRef = db.collection(PARSED_RESUMES_COLLECTION).doc()
-      batch.set(newRef, parsedResumeDoc)
+      if (existingParsedResumeDocId) {
+        const existingRef = db.collection(PARSED_RESUMES_COLLECTION).doc(existingParsedResumeDocId)
+        const parsedResumePatch: Record<string, unknown> = { ...parsedResumeDoc, updatedAt: new Date().toISOString() }
+        delete parsedResumePatch.createdAt
+        batch.set(existingRef, parsedResumePatch, { merge: true })
+      } else {
+        const newRef = db.collection(PARSED_RESUMES_COLLECTION).doc()
+        batch.set(newRef, parsedResumeDoc)
+      }
       const userPatch: Record<string, unknown> = {
         coresignalEmployeeId,
         coresignalEmployeeIdUpdatedAt: new Date().toISOString(),

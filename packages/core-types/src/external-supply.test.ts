@@ -232,6 +232,43 @@ test("ExternalCandidateRecordSchema parses a minimal valid record", () => {
   assert.deepEqual(parsed.evidence, [])
 })
 
+test("ExternalCandidateRecordSchema preserves rich LinkedIn experience fields for profile rendering", () => {
+  const parsed = ExternalCandidateRecordSchema.parse({
+    recordId: "record-1",
+    batchId: "batch-1",
+    source: "coresignal_collect_v2",
+    normalizationStatus: "ok",
+    identityResolutionStatus: "pending",
+    createdAt: now,
+    experience: [
+      {
+        company: "Tesla",
+        title: "Senior Software Engineer",
+        location: "Fremont, California, United States",
+        description: "Built vehicle telemetry tools and improved release diagnostics.",
+        startDate: "2024-05",
+        durationMonths: 24,
+        department: "Engineering",
+        managementLevel: "Individual Contributor",
+        companyId: 12345,
+        companyIndustry: "Automotive",
+        companySizeRange: "10,001+ employees",
+        companyWebsite: "tesla.com",
+        companyLinkedinUrl: "linkedin.com/company/tesla-motors",
+        companyHqCity: "Austin",
+        companyHqCountry: "United States",
+        companyLogoUrl: "https://static.licdn.com/tesla.png",
+      },
+    ],
+  })
+
+  assert.equal(parsed.experience[0]?.description, "Built vehicle telemetry tools and improved release diagnostics.")
+  assert.equal(parsed.experience[0]?.location, "Fremont, California, United States")
+  assert.equal(parsed.experience[0]?.companyWebsite, "https://tesla.com")
+  assert.equal(parsed.experience[0]?.companyLinkedinUrl, "https://linkedin.com/company/tesla-motors")
+  assert.equal(parsed.experience[0]?.companyLogoUrl, "https://static.licdn.com/tesla.png")
+})
+
 test("ExternalCandidateRecordSchema rejects missing required normalizationStatus", () => {
   const r = ExternalCandidateRecordSchema.safeParse({
     recordId: "record-1",

@@ -2282,24 +2282,47 @@ function ExperienceHighlightsCard({ profile }: { profile: CandidateSelfProfile }
       <h3 className="wkv2-card__h">Experience</h3>
       {sourceLabel ? <p className="wk-prof-card__hint">From {sourceLabel}</p> : null}
       <div className="wk-prof-exp">
-        {experiences.map((experience, index) => (
-          <div
-            key={`${experience.company}-${experience.title}-${experience.startDate ?? index}`}
-            className="wk-prof-exp__item"
-          >
-            <span className="wk-prof-exp__dot" aria-hidden="true" />
-            <div className="wk-prof-exp__body">
-              <div className="wk-prof-exp__top">
-                <strong>{experience.title}</strong>
-                <span>{formatExperienceRange(experience)}</span>
+        {experiences.map((experience, index) => {
+          const meta = experienceMeta(experience)
+          return (
+            <div
+              key={`${experience.company}-${experience.title}-${experience.startDate ?? index}`}
+              className="wk-prof-exp__item"
+            >
+              <span className="wk-prof-exp__dot" aria-hidden="true" />
+              <div className="wk-prof-exp__body">
+                <div className="wk-prof-exp__top">
+                  <strong>{experience.title}</strong>
+                  <span>{formatExperienceRange(experience)}</span>
+                </div>
+                <div className="wk-prof-exp__company">
+                  {experience.companyLogoUrl ? (
+                    <img
+                      src={experience.companyLogoUrl}
+                      alt=""
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : null}
+                  <span>
+                    {experience.company}
+                    {experience.location ? ` · ${experience.location}` : ""}
+                  </span>
+                </div>
+                {experience.description ? (
+                  <p className="wk-prof-exp__desc">{experience.description}</p>
+                ) : null}
+                {meta.length > 0 ? (
+                  <div className="wk-prof-exp__meta">
+                    {meta.map((item) => (
+                      <span key={item}>{item}</span>
+                    ))}
+                  </div>
+                ) : null}
               </div>
-              <p>
-                {experience.company}
-                {experience.location ? ` · ${experience.location}` : ""}
-              </p>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </section>
   )
@@ -2308,6 +2331,17 @@ function ExperienceHighlightsCard({ profile }: { profile: CandidateSelfProfile }
 function formatExperienceRange(experience: NonNullable<CandidateSelfProfile["experienceHighlights"]>[number]): string {
   const end = experience.currentRole ? "Present" : experience.endDate
   return [experience.startDate, end].filter(Boolean).join(" - ")
+}
+
+function experienceMeta(experience: NonNullable<CandidateSelfProfile["experienceHighlights"]>[number]): string[] {
+  const meta = [
+    experience.department,
+    experience.managementLevel,
+    experience.companyIndustry,
+    experience.companySizeRange,
+    [experience.companyHqCity, experience.companyHqCountry].filter(Boolean).join(", "),
+  ]
+  return meta.filter((item): item is string => Boolean(item))
 }
 
 function SkillsCard({ profile, editing }: { profile: CandidateSelfProfile; editing: boolean }) {
@@ -3420,6 +3454,45 @@ const PROFILE_STYLES = `
   color: var(--wk-ink-2);
   font-size: 13px;
   line-height: 1.4;
+}
+.wk-prof-exp__company {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+  color: var(--wk-ink-2);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.wk-prof-exp__company img {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: 4px;
+  object-fit: cover;
+  border: 1px solid var(--wk-border);
+  background: var(--wk-cream-2);
+}
+.wk-prof-exp__desc {
+  color: var(--wk-ink-2);
+  max-width: 82ch;
+}
+.wk-prof-exp__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.wk-prof-exp__meta span {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--wk-border);
+  background: var(--wk-cream-2);
+  color: var(--wk-ink-3);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11.5px;
+  line-height: 1.2;
 }
 
 .wk-prof-skills { gap: 6px; margin-top: 6px; }

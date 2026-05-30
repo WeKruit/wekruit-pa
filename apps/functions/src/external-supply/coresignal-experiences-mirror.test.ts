@@ -22,7 +22,23 @@ function makeRecord(over: Partial<ExternalCandidateRecord> = {}): ExternalCandid
     currentTitle: "Software Engineer",
     currentCompany: "Confidential",
     experience: [
-      { company: "Confidential", title: "Software Engineer", startDate: "August 2024", durationMonths: 21 },
+      {
+        company: "Confidential",
+        title: "Software Engineer",
+        location: "Remote",
+        description: "Built realtime collaboration features for hotel operators.",
+        startDate: "August 2024",
+        durationMonths: 21,
+        department: "Engineering",
+        managementLevel: "Individual Contributor",
+        companyIndustry: "Hospitality",
+        companySizeRange: "501-1,000 employees",
+        companyWebsite: "mews.com",
+        companyLinkedinUrl: "linkedin.com/company/mews",
+        companyHqCity: "Prague",
+        companyHqCountry: "Czechia",
+        companyLogoUrl: "https://static.licdn.com/mews.png",
+      },
       { company: "Mews", title: "Senior Frontend Engineer", startDate: "September 2023", endDate: "July 2024", durationMonths: 10 },
     ],
     education: [
@@ -48,6 +64,11 @@ test("buildParsedResumeDocFromRecord — produces canonical shape", () => {
   assert.deepEqual((doc.candidateProfile as { skills: string[] }).skills, ["react", "typescript", "node"])
   assert.equal((doc.experiences as unknown[]).length, 2)
   assert.equal((doc.experiences as Array<{ company: string }>)[0].company, "Confidential")
+  assert.equal(
+    (doc.experiences as Array<{ description?: string }>)[0].description,
+    "Built realtime collaboration features for hotel operators.",
+  )
+  assert.equal((doc.experiences as Array<{ companyWebsite?: string }>)[0].companyWebsite, "https://mews.com/")
   assert.equal((doc.topSkills as string[]).length, 3)
   assert.equal(doc.sourceRecordId, "rec-1")
   assert.equal(doc.sourceBatchId, "batch-1")
@@ -59,7 +80,19 @@ test("buildExperienceHighlightsFromRecord — produces candidate-facing LinkedIn
   assert.deepEqual(highlights[0], {
     title: "Software Engineer",
     company: "Confidential",
+    location: "Remote",
+    description: "Built realtime collaboration features for hotel operators.",
     startDate: "August 2024",
+    durationMonths: 21,
+    department: "Engineering",
+    managementLevel: "Individual Contributor",
+    companyIndustry: "Hospitality",
+    companySizeRange: "501-1,000 employees",
+    companyWebsite: "https://mews.com/",
+    companyLinkedinUrl: "https://linkedin.com/company/mews",
+    companyHqCity: "Prague",
+    companyHqCountry: "Czechia",
+    companyLogoUrl: "https://static.licdn.com/mews.png",
     currentRole: true,
     source: "coresignal_collect_v2",
     sourceLabel: "LinkedIn",
@@ -118,19 +151,20 @@ test("runCoresignalExperiencesMirror — skips when no coresignal id in rawPaylo
   assert.equal(result.status, "skipped_no_coresignal_id")
 })
 
-test("runCoresignalExperiencesMirror — skips when same coresignal_id already mirrored", async () => {
-  let wroteCalled = false
+test("runCoresignalExperiencesMirror — refreshes candidate profile when same coresignal_id already exists", async () => {
+  const writes: Array<unknown> = []
   const result = await runCoresignalExperiencesMirror(makeRecord(), "uid-1", {
     findExistingForUser: async () => [
-      { coresignalEmployeeId: 395094789, source: "coresignal_collect_v2" },
+      { id: "parsed-1", coresignalEmployeeId: 395094789, source: "coresignal_collect_v2" },
     ],
-    writeBoth: async () => {
-      wroteCalled = true
+    writeBoth: async (args) => {
+      writes.push(args)
     },
     now: () => NOW,
   })
-  assert.equal(result.status, "skipped_already_mirrored")
-  assert.equal(wroteCalled, false)
+  assert.equal(result.status, "refreshed_existing")
+  assert.equal(writes.length, 1)
+  assert.equal((writes[0] as { existingParsedResumeDocId?: string }).existingParsedResumeDocId, "parsed-1")
 })
 
 test("runCoresignalExperiencesMirror — does NOT dedup against different coresignal_id (different id = different person)", async () => {

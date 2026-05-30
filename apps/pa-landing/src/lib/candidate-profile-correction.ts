@@ -41,9 +41,21 @@ export interface CandidateSelfProfile {
     title: string
     company: string
     location?: string
+    description?: string
     startDate?: string
     endDate?: string | null
+    durationMonths?: number
     currentRole?: boolean
+    department?: string
+    managementLevel?: string
+    companyId?: number
+    companyIndustry?: string
+    companySizeRange?: string
+    companyWebsite?: string
+    companyLinkedinUrl?: string
+    companyHqCity?: string
+    companyHqCountry?: string
+    companyLogoUrl?: string
     source?: string
     sourceLabel?: string
   }>

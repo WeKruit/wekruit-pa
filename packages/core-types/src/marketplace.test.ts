@@ -1185,6 +1185,41 @@ test("candidate self profile preserves OAuth connector metadata", () => {
   assert.equal(selfProfile.githubPublicRepos?.[0]?.stars, 42)
 })
 
+test("candidate self profile preserves enriched LinkedIn experience details", () => {
+  const selfProfile = CandidateSelfProfileSchema.parse({
+    candidateId: "cand-1",
+    experienceHighlights: [
+      {
+        title: "Senior Software Engineer",
+        company: "Tesla",
+        location: "Fremont, California, United States",
+        description: "Built vehicle telemetry tools and improved release diagnostics.",
+        department: "Engineering",
+        managementLevel: "Individual Contributor",
+        durationMonths: 24,
+        companyId: 12345,
+        companyIndustry: "Automotive",
+        companySizeRange: "10,001+ employees",
+        companyWebsite: "tesla.com",
+        companyLinkedinUrl: "linkedin.com/company/tesla-motors",
+        companyHqCity: "Austin",
+        companyHqCountry: "United States",
+        companyLogoUrl: "https://static.licdn.com/tesla.png",
+        source: "coresignal_collect_v2",
+        sourceLabel: "LinkedIn",
+      },
+    ],
+    createdAt: now,
+  })
+
+  const experience = selfProfile.experienceHighlights?.[0]
+  assert.equal(experience?.description, "Built vehicle telemetry tools and improved release diagnostics.")
+  assert.equal(experience?.companyWebsite, "https://tesla.com")
+  assert.equal(experience?.companyLinkedinUrl, "https://linkedin.com/company/tesla-motors")
+  assert.equal(experience?.companyLogoUrl, "https://static.licdn.com/tesla.png")
+  assert.equal(experience?.companyIndustry, "Automotive")
+})
+
 test("bulk resume schemas parse S3 batch and item contracts", () => {
   assert.equal(PA_COLLECTIONS.bulkUploadBatches, "pa-bulk-upload-batches")
 
