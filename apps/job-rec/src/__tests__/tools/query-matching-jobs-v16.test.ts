@@ -2397,6 +2397,72 @@ test("queryMatchingJobsV16: early-startup company size rejects late-stage and pu
   assert.deepEqual(r.jobs.map((job) => job.id), ["series-a-fit"])
 })
 
+test("queryMatchingJobsV16: companySize OR — 'small team or big tech' keeps BOTH an early-stage and a big-tech job, drops the mid-stage gap, keeps unknown (Adam 2026-05-30)", async () => {
+  // The user's #1 ask: "small team or big tech" must capture BOTH, not collapse to one band.
+  // companySize=["early_startup","enterprise"] → two DISJOINT ordinal bands (pre_seed..series_a
+  // and ipo_public..private_mature). A job's company stage matches if it's in ANY band (OR), so a
+  // seed/series_a startup AND a public big-tech BOTH survive, while a series_c company in the GAP
+  // between the bands is dropped, and an unknown/not-in-corpus company is recall-kept.
+  const mfs = new MockFirestore()
+  await mfs
+    .collection("pa-users")
+    .doc("u_small_or_big")
+    .set({
+      tags: {
+        skills: ["python"],
+        industryEnum: ["tech_software"],
+        schemaVersion: 1,
+        targetRoleFunction: ["software_engineering"],
+        companySize: ["early_startup", "enterprise"], // OR — no prefersStartup, so exactly these two bands
+      },
+    })
+  await seedJob(mfs, "early-keep", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "SeedStartup",
+    jobTitle: "Backend Engineer A",
+  })
+  await seedJob(mfs, "bigtech-keep", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "MegaCorp",
+    jobTitle: "Backend Engineer B",
+  })
+  await seedJob(mfs, "gap-drop", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "MidCo",
+    jobTitle: "Backend Engineer C",
+  })
+  await seedJob(mfs, "unknown-keep", {
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    companyName: "NotInCorpusCo",
+    jobTitle: "Backend Engineer D",
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_small_or_big", nowMs: NOW },
+    {
+      db: asFirestore(mfs),
+      loadCompaniesByNameImpl: async () =>
+        new Map([
+          ["seedstartup", { stage: "series_a", tags: [] }], // early_startup band → KEEP
+          ["megacorp", { stage: "ipo_public", tags: ["big_tech"] }], // enterprise band → KEEP
+          ["midco", { stage: "series_c", tags: [] }], // in the gap between bands → DROP
+          // NotInCorpusCo deliberately absent → !info → recall-safe KEEP
+        ]),
+    },
+  )
+
+  // OR proves itself: early AND bigtech both survive (not collapsed); the series_c gap is dropped;
+  // the unknown company is kept. If OR were a single spanning band, gap-drop would wrongly survive.
+  assert.deepEqual(
+    new Set(r.jobs.map((job) => job.id)),
+    new Set(["early-keep", "bigtech-keep", "unknown-keep"]),
+  )
+})
+
 test("queryMatchingJobsV16: resume 'Intern' title alone does NOT set targetJobType (live-bug fix 2026-05-29)", async () => {
   // LIVE BUG: a candidate whose résumé says "Software Engineer Intern" had
   // targetJobType=['internship'] WRONGLY inferred from the title (target !=
