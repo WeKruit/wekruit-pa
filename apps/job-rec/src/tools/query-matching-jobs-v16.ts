@@ -103,6 +103,27 @@ const ACTIVE_STATUS = "active"
 const V16_FETCH_CAP = 3000
 
 /**
+ * Lean Firestore field projection for the bulk candidate scan (2026-05-30).
+ *
+ * The bulk fetch pulls up to V16_FETCH_CAP docs; the only field that's heavy is the 1536-float
+ * `embedding` (~12KB/doc) — and the JD/quals/searchTokens text. Hard filters (location, careerStage,
+ * freshness, …) + the cheap soft-score (skill jaccard, industry, tags, salary) need NONE of those.
+ * `.select()`-ing only these light fields drops the scan from ~67MB to ~5MB (measured 3.9x faster,
+ * and the difference between a 512MiB OOM and ~20MB). The embedding cosine still runs — but only on
+ * the handful of HARD-FILTER SURVIVORS, whose embeddings are loaded afterward via a fieldMask getAll
+ * (loadSurvivorEmbeddings). Every field below is read by projectMatchingJobRow / the v1.6 augment /
+ * a hard filter / a cheap score component; missing one would silently change scoring, so the
+ * select-vs-full comparison test (query-matching-jobs-v16.lean-fetch.test.ts) pins the list.
+ */
+const MATCH_LEAN_FIELDS = [
+  "status", "roleFunction", "firstSeenAt", "lastSeenAt", "dead", "deadCheckedAt", "deadReason",
+  "roleTitle", "jobTitle", "title", "companyName", "companySize",
+  "salaryMax", "salaryMin", "locationRaw", "locationBuckets", "primaryUrl", "atsApplyUrl",
+  "sponsorship", "jobType", "seniorityLevel",
+  "requiredSkills", "industry", "industryKey", "industryEnum", "industrySector", "relevantTags",
+] as const
+
+/**
  * D10 freshness window: drop jobs whose `firstSeenAt` is more than this old.
  * `lastSeenAt` is intentionally NOT consulted — jobright re-scrape pattern
  * makes that field noise; the daily liveness sweep handles real death.
@@ -2448,7 +2469,10 @@ async function runV16Query(
     log("pa.match.role_function_filter_skipped", { reason: "empty_target_role_function" })
   }
 
-  q = q.orderBy("firstSeenAt", "desc").limit(V16_FETCH_CAP)
+  // .select() the LEAN fields only — drops the 1536-float embedding + JD/quals text from the bulk
+  // scan (~67MB → ~5MB). Embeddings for the few hard-filter survivors are loaded afterward
+  // (loadSurvivorEmbeddings). See MATCH_LEAN_FIELDS.
+  q = q.orderBy("firstSeenAt", "desc").limit(V16_FETCH_CAP).select(...MATCH_LEAN_FIELDS)
 
   let snap
   try {
@@ -2462,6 +2486,7 @@ async function runV16Query(
       .collection(MATCHING_JOBS_COLLECTION)
       .where("status", "==", ACTIVE_STATUS)
       .limit(V16_FETCH_CAP)
+      .select(...MATCH_LEAN_FIELDS)
       .get()
   }
 
@@ -2513,6 +2538,42 @@ async function runV16Query(
     }
   }
   return { jobs: projected, rawCount: snap.docs.length }
+}
+
+/**
+ * Load the `embedding` field for ONLY the hard-filter survivors (2026-05-30).
+ *
+ * The bulk scan is lean (no embeddings — MATCH_LEAN_FIELDS); the cvEmbCosine score component needs
+ * the 1536-float vector, but only for the ≤N jobs that pass hard filters. `getAll` with a
+ * `fieldMask` transfers ONLY the embedding field for those docs — so a 2-survivor turn loads ~24KB,
+ * not the 67MB the old full scan hauled. Fail-graceful: any read error leaves embeddings null
+ * (cvEmbCosine contributes 0, same as a job with no embedding on file) and never throws.
+ */
+async function loadSurvivorEmbeddings(
+  db: Firestore,
+  jobIds: string[],
+  log: (event: string, payload?: Record<string, unknown>) => void
+): Promise<Map<string, number[]>> {
+  const out = new Map<string, number[]>()
+  const ids = [...new Set(jobIds.filter((id) => typeof id === "string" && id.length > 0))]
+  if (ids.length === 0) return out
+  try {
+    const refs = ids.map((id) => db.collection(MATCHING_JOBS_COLLECTION).doc(id))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const snaps = await (db as any).getAll(...refs, { fieldMask: ["embedding"] })
+    for (const s of snaps) {
+      const e = s.get?.("embedding") ?? s.data?.()?.embedding
+      if (Array.isArray(e) && e.every((n: unknown) => typeof n === "number")) {
+        out.set(s.id, e as number[])
+      }
+    }
+  } catch (err) {
+    log("pa.match.survivor_embedding_load_failed", {
+      count: ids.length,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  return out
 }
 
 function hasActivePrescreenConfig(data: Record<string, unknown> | undefined): boolean {
@@ -2937,14 +2998,26 @@ export async function queryMatchingJobsV16(
   // second pa-jobs read). On the general-market fallback path the survivors
   // are general market by selection — skip the read and treat the set as empty
   // so neither collabBoost nor a collab label can apply.
-  const [jdRelCache, rerankCache, recommendationStates, collabJobIds] = await Promise.all([
+  const [jdRelCache, rerankCache, recommendationStates, collabJobIds, survivorEmbeddings] = await Promise.all([
     loadJdRelCache(deps.db, args.userId, log),
     loadLlmRerankCache(deps.db, args.userId, log),
     loadRecommendedJobStates(deps.db, args.userId, filteredJobs.map((job) => job.id), log),
     fallbackApplied
       ? Promise.resolve(new Set<string>())
       : loadCollabJobIds(deps.db, filteredJobs.map((job) => job.id), log),
+    // The bulk scan was lean (no embeddings); load them ONLY for the hard-filter survivors so
+    // cvEmbCosine still scores. includeEmbedding:false (tests w/o embeddings) skips it.
+    deps.includeEmbedding === false
+      ? Promise.resolve(new Map<string, number[]>())
+      : loadSurvivorEmbeddings(deps.db, filteredJobs.map((job) => job.id), log),
   ])
+
+  // Attach survivor embeddings so scoreV16Job's cvEmbCosine reads job.embedding (the bulk fetch
+  // dropped it to keep the scan at ~5MB instead of ~67MB).
+  for (const job of filteredJobs) {
+    const e = survivorEmbeddings.get(job.id)
+    if (e) (job as MatchingJob & { embedding?: number[] | null }).embedding = e
+  }
 
   // 4. Soft score (Phase 70 weightOverrides + Phase B4 companyInfo/nowMs).
   let scored = filteredJobs.map((job) => {
