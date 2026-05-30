@@ -22,7 +22,11 @@ type CandidateMatchJobDisplay = {
   company: string
   location?: string
   salaryRange?: string
+  /** Internal WeKruit page (`/j/:jobId`) — used by collab jobs (our page + pre-screen). */
   href: string
+  /** External apply URL (ATS posting). Present for scraped/recommended jobs whose
+   *  "apply path" is the real listing, not a WeKruit page. Frontend: non-collab → open this. */
+  applyUrl?: string
 }
 
 type CandidateReviewDecision = {
@@ -115,6 +119,13 @@ function projectJobDisplay(jobId: string, job: Record<string, unknown>): Candida
       ? { salaryRange: cleanString(level1Reveal.salaryRange, 120) ?? cleanString(job.salaryRange, 120) }
       : {}),
     href: `/j/${jobId}`,
+    ...(() => {
+      // External apply URL for scraped/recommended jobs (atsApplyUrl is a V16 hard
+      // filter → always present on recorded matching-jobs recs). Non-collab "See role"
+      // opens this real listing; collab jobs ignore it and use href (our page).
+      const applyUrl = cleanString(job.atsApplyUrl, 1000) ?? cleanString(job.primaryUrl, 1000)
+      return applyUrl && /^https?:\/\//i.test(applyUrl) ? { applyUrl } : {}
+    })(),
   }
 }
 

@@ -219,6 +219,8 @@ export type CandidateMatchCard = {
     location?: string
     salaryRange?: string
     href: string
+    /** External ATS listing — non-collab "See role" opens this (collab uses href). */
+    applyUrl?: string
   }
   whyMatched: string[]
   rank?: number
@@ -1305,12 +1307,26 @@ function MeNewMatches({
   )
 }
 
+// Where a match card's primary action points:
+//  - collab     → our internal page (/j/:jobId): WeKruit listing + pre-screen.
+//  - non-collab → the real external ATS listing (you apply there). Falls back to
+//    the internal page only when applyUrl is absent (atsApplyUrl is a V16 hard
+//    filter, so recommended recs effectively always carry it).
+function matchPrimaryTarget(match: CandidateMatchCard): { external: boolean; url: string } {
+  if (!match.collab && match.job.applyUrl) return { external: true, url: match.job.applyUrl }
+  return { external: false, url: match.job.href }
+}
+
 function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
   const navigate = useNavigate()
   const logo = (match.job.company[0] ?? "?").toUpperCase()
   const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
   const isCollab = !!match.collab
-  const go = () => navigate(match.job.href)
+  const target = matchPrimaryTarget(match)
+  const go = () => {
+    if (target.external) window.open(target.url, "_blank", "noopener,noreferrer")
+    else navigate(target.url)
+  }
   return (
     <article
       className="wkv3-peek"
@@ -3634,6 +3650,15 @@ function MeMatchFull({ match }: { match: CandidateMatchCard }) {
                 {statusDisplay.ctaLabel} <Icon name="arrow-right" size={13} stroke={2} />
               </Link>
             </>
+          ) : match.job.applyUrl ? (
+            <a
+              href={match.job.applyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="wk-btn wk-btn--primary wk-btn--sm"
+            >
+              See role <Icon name="arrow-right" size={13} stroke={2} />
+            </a>
           ) : (
             <Link to={match.job.href} className="wk-btn wk-btn--primary wk-btn--sm">
               See role <Icon name="arrow-right" size={13} stroke={2} />
