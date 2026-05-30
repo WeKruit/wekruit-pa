@@ -296,6 +296,58 @@ test("claimCandidateProfile normalizes bare LinkedIn URL before self profile val
   )
 })
 
+test("claimCandidateProfile preserves rich LinkedIn experience details on self profile refresh", async () => {
+  const { db, store } = makeFakeFirestore()
+  const resolved = await resolveCandidateIdentity(db, {
+    extractedEmail: "linkedin-rich@example.com",
+    source: "resume",
+    now,
+  })
+  assert.equal(resolved.outcome, "created")
+  if (resolved.outcome !== "created") return
+
+  await db.collection(PA_COLLECTIONS.users).doc(resolved.candidateId).set(
+    {
+      experienceHighlights: [
+        {
+          title: "Software Engineer",
+          company: "Tesla",
+          location: "Austin, Texas, US",
+          description: "Built CI/CD pipelines and migrated portfolio services onto Azure.",
+          startDate: "May 2024",
+          endDate: "August 2024",
+          department: "Engineering and Technical",
+          companyIndustry: "Motor Vehicle Manufacturing",
+          companySizeRange: "10,001+ employees",
+          companyWebsite: "https://www.tesla.com",
+          companyLinkedinUrl: "https://www.linkedin.com/company/tesla-motors",
+          companyHqCity: "Austin",
+          companyHqCountry: "United States",
+          companyLogoUrl: "https://media.licdn.com/tesla.png",
+          source: "coresignal_collect_v2",
+          sourceLabel: "LinkedIn",
+        },
+      ],
+    },
+    { merge: true },
+  )
+
+  const claimed = await claimCandidateProfile(db, {
+    firebaseUid: "firebase-linkedin-rich",
+    email: "linkedin-rich@example.com",
+    browserUid: "browser-linkedin-rich",
+    now,
+  })
+
+  assert.equal(claimed.candidateId, resolved.candidateId)
+  const stored = store.get(PA_COLLECTIONS.candidateSelfProfiles)!.get(resolved.candidateId)!
+  const experience = (stored.experienceHighlights as Array<Record<string, unknown>>)[0]
+  assert.equal(experience.description, "Built CI/CD pipelines and migrated portfolio services onto Azure.")
+  assert.equal(experience.department, "Engineering and Technical")
+  assert.equal(experience.companyIndustry, "Motor Vehicle Manufacturing")
+  assert.equal(experience.companyLogoUrl, "https://media.licdn.com/tesla.png")
+})
+
 test("claimCandidateProfile preserves already connected OAuth handles on self profile refresh", async () => {
   const { db, store } = makeFakeFirestore()
   const resolved = await resolveCandidateIdentity(db, {
