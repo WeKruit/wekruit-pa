@@ -361,6 +361,7 @@ import {
   handlePostMatchRetentionReply,
   startPostMatchRetentionAfterJobRecs,
 } from "./post-match-retention.js"
+import type { FeedbackLlmCall } from "./match-feedback-extractor.js"
 // iter30 WS6 — guardrail chain (Wave 2 day 3 wire-in). Shadow-mode
 // telemetry by default (`PA_GUARDRAIL_CHAIN_SHADOW=true` flag); the
 // scattered patches at lines 1623-1976 stay in charge of mutating the
@@ -463,6 +464,33 @@ export {
   type PartialUserTags,
   type WriteUserTagsOpts,
 } from "./tags/user-tags-writer.js"
+// No-regex (2026-05-30) — LLM-driven canonical-enum VALIDATION shared by every
+// conversation→tags tool (record_onboarding_answer, capture_match_feedback,
+// set_matching_preferences). The agent fills canonical enums; this validates +
+// the writer persists. ONE validation core, no per-tool bespoke regex.
+export {
+  validateOnboardingCanonicalTags,
+  type OnboardingCanonicalTagInput,
+  type HardnessProvenance,
+} from "./tags/onboarding-canonical-tags.js"
+// No-regex (2026-05-30) — unified conversational tagging interface + the
+// match-feedback validation core (used by the legacy FSM seam + the agentic
+// capture_match_feedback tool).
+export {
+  extractFromConversation,
+  type ConversationContext,
+  type ConversationPurpose,
+  type ConversationExtractionResult,
+  type ConversationFeedbackEvent,
+  CONVERSATION_PURPOSE_VOCAB,
+} from "./conversation-tagging.js"
+export {
+  validateFeedbackResult,
+  AMBIGUOUS_FEEDBACK,
+  type MatchFeedbackResult,
+  type FeedbackLlmCall,
+  type FeedbackQuestionKind,
+} from "./match-feedback-extractor.js"
 // Phase 54 — onboarding chat-answer → canonical Phase 52 vocab mappers.
 export {
   mapAnswerToRoleFunction,
@@ -824,6 +852,15 @@ export type OrchestratorStore = {
       collabPrescreenOnly?: boolean
     }
   } | null>
+
+  /**
+   * No-regex (2026-05-30) — LLM seam for match-FEEDBACK classification used by
+   * the post-match retention FSM. Maps a free-form reply to structured feedback
+   * (sentiment / intent / reason category / canonical tag deltas) instead of
+   * regex/keyword lists. Wired by the apps/functions layer; absent in unit
+   * tests (the FSM then fails OPEN to `ambiguous` and re-asks).
+   */
+  classifyFeedback?: FeedbackLlmCall
 
   /** Collab funnel — start prescreen after candidate accepts invite. */
   startPrescreenForJob?: (input: {
@@ -3337,10 +3374,15 @@ async function handleSharedOnboardingUserReply(
   // bypasses the passive flag + the onboarding-incomplete gate. Without this,
   // out-of-slot facts sent mid-onboarding ("$160k", "need H1B", "React/TS/Python",
   // "fintech/AI", "NYC or remote") were dropped to fallback and never persisted —
-  // the live QA failure (stuck pending → matcher starved, recall empty). Flag-gated
-  // (paAgenticOnboardingEnabled, default OFF → flag-off is byte-identical to prior
-  // prod). Best-effort: never blocks the reply.
-  if (store.db && (await isAgenticOnboardingEnabled(store.db, event.userId))) {
+  // the live QA failure (stuck pending → matcher starved, recall empty).
+  //
+  // NO-REGEX (2026-05-30, Adam directive): the LLM extractor is now the SOLE
+  // canonical-tag source for onboarding answers — the old regex projector
+  // (`projectSharedOnboardingAnswer`) no longer classifies tags. So this runs
+  // UNCONDITIONALLY (no longer flag-gated) for every onboarding turn; the slot
+  // FSM still owns order and the projection only carries memory/statedPrefs.
+  // Best-effort: never blocks the reply.
+  if (store.db) {
     try {
       const priorForExtract = (await store.loadHistory(event.sessionId, 8).catch(() => [])) as Array<{
         role?: string
@@ -6423,6 +6465,11 @@ export type OrchestratorStoreDeps = {
    */
   generateJobRecs?: NonNullable<OrchestratorStore["generateJobRecs"]>
   /**
+   * No-regex (2026-05-30) — LLM match-feedback classifier for the post-match
+   * retention FSM. Wired from apps/functions; tests omit it.
+   */
+  classifyFeedback?: NonNullable<OrchestratorStore["classifyFeedback"]>
+  /**
    * iter34 P0.2 — generic LLM-fallback for q_role / q_yoe / q_visa /
    * q_startup_pref / q_location. Wired from apps/functions.
    */
@@ -7210,6 +7257,10 @@ export function createFirestoreOrchestratorStore(
     ...(deps.startPrescreenForJob
       ? { startPrescreenForJob: deps.startPrescreenForJob }
       : {}),
+    // No-regex (2026-05-30) — LLM match-feedback classifier for the post-match
+    // retention FSM. Wired from apps/functions; tests omit it and the FSM fails
+    // OPEN to `ambiguous` (re-asks) rather than regex-classifying the reply.
+    ...(deps.classifyFeedback ? { classifyFeedback: deps.classifyFeedback } : {}),
     ...(deps.sendReaction ? { sendReaction: deps.sendReaction } : {}),
     // iter34 P0.2 — generic LLM-fallback for q_role / q_yoe / q_visa /
     // q_startup_pref / q_location. Wired from apps/functions; tests omit

@@ -23,18 +23,36 @@
  * reducer.ts) — it does NOT re-derive the only/avoid/replace semantics.
  */
 import { tool, z } from "../sdk.js"
-import { ROLE_FUNCTION_VOCAB, JOB_TYPE_VOCAB } from "@wekruit/shared-tags"
+import {
+  ROLE_FUNCTION_VOCAB,
+  JOB_TYPE_VOCAB,
+  INDUSTRY_SECTOR_VOCAB,
+  CAREER_STAGE_VOCAB,
+  COMPANY_SIZE_VOCAB,
+  FEEDBACK_SENTIMENT_VOCAB,
+  FEEDBACK_REASON_CATEGORY_VOCAB,
+} from "@wekruit/shared-tags"
 
 // Rebuild the closed enums on the SDK's zod@4 instance. shared-tags' RoleFunctionSchema /
 // JobTypeSchema are built with zod@3 (a different instance) and cannot be mixed into a zod@4
 // tool param schema — but the underlying VOCAB arrays are plain strings, instance-agnostic.
 const RoleFunctionEnum = z.enum(ROLE_FUNCTION_VOCAB)
 const JobTypeEnum = z.enum(JOB_TYPE_VOCAB)
-import { applyPartialUserTags, type PartialUserTags } from "@pa/pa-orchestrator"
+const IndustrySectorEnum = z.enum(INDUSTRY_SECTOR_VOCAB)
+const CareerStageEnum = z.enum(CAREER_STAGE_VOCAB)
+const CompanySizeEnum = z.enum(COMPANY_SIZE_VOCAB)
+const FeedbackSentimentEnum = z.enum(FEEDBACK_SENTIMENT_VOCAB)
+const FeedbackReasonCategoryEnum = z.enum(FEEDBACK_REASON_CATEGORY_VOCAB)
+import {
+  applyPartialUserTags,
+  validateOnboardingCanonicalTags,
+  type OnboardingCanonicalTagInput,
+  type PartialUserTags,
+} from "@pa/pa-orchestrator"
+import { writeFeedbackEvent } from "@pa/pa-persistence"
 import { mem0Add, type Mem0Config } from "@pa/memory"
 import { parseResumeText } from "@pa/pa-resume-parser"
 import { queryMatchingJobsV16, recordRecommendedJobs } from "@pa/job-rec"
-import { writeFeedbackEvent } from "@pa/pa-persistence"
 import type { FeedbackEvent } from "@pa/core-types"
 import type { Firestore } from "firebase-admin/firestore"
 import {
@@ -732,9 +750,110 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     },
   })
 
+  // ── 10. capture_match_feedback — the "are you happy with these? why?" path ─
+  // SAME shape as set_matching_preferences (Adam 顶层设计 2026-05-30): the AGENT
+  // maps the candidate's free text to closed-enum sentiment + reasonCategory and
+  // canonical pref/tag DELTAS; the tool validates vs shared-tags + writes a
+  // structured feedback event (the flywheel) AND any durable tag deltas via the
+  // D8 sole writer. NO regex. This is the candidate-SENTIMENT capture the agentic
+  // runtime previously lacked (only an automatic job-presented event existed —
+  // no "are you happy? why?" signal).
+  const captureMatchFeedback = tool({
+    name: "capture_match_feedback",
+    description:
+      "Capture the candidate's reaction to the jobs you just recommended (the 'are you happy with these? why or " +
+      "why not?' signal). YOU map their reply to: sentiment (positive/negative/ambiguous), reasonCategory (closed " +
+      "enum — why a NEGATIVE batch was off, e.g. wrong_seniority / wrong_industry / salary_too_low; use 'none' if no " +
+      "reason, 'other' if unclear), and tagDeltas (canonical preference changes the reason implies — e.g. 'too junior' " +
+      "→ careerStage:senior; 'all fintech, I want healthcare' → industrySector:[healthcare_and_life_sciences], " +
+      "negativeIndustrySector:[financial_technology]). Multi-value = OR. The tool persists a feedback event + any tag " +
+      "deltas. Use right after find_match when the candidate reacts to the roles.",
+    parameters: z.object({
+      sentiment: FeedbackSentimentEnum,
+      reasonCategory: FeedbackReasonCategoryEnum,
+      reasonText: z.string().nullable(),
+      tagDeltas: z
+        .object({
+          targetRoleFunction: z.array(RoleFunctionEnum).nullable(),
+          negativeRoleFunction: z.array(RoleFunctionEnum).nullable(),
+          industrySector: z.array(IndustrySectorEnum).nullable(),
+          negativeIndustrySector: z.array(IndustrySectorEnum).nullable(),
+          companySize: z.array(CompanySizeEnum).nullable(),
+          targetJobType: z.array(JobTypeEnum).nullable(),
+          targetLocations: z.array(z.string()).nullable(),
+          careerStage: CareerStageEnum.nullable(),
+          minSalary: z.number().int().nonnegative().nullable(),
+        })
+        .nullable(),
+    }),
+    async execute({ sentiment, reasonCategory, reasonText, tagDeltas }) {
+      const jobId = (ctx.jobId ?? "").trim() || undefined
+      const nowIso = ctx.nowIso()
+      // 1) Validate + persist any canonical tag deltas via the D8 sole writer.
+      const tags = validateOnboardingCanonicalTags(
+        (tagDeltas ?? {}) as OnboardingCanonicalTagInput,
+        { source: "conversation" },
+      )
+      let tagWriteOk = false
+      const writtenKeys = Object.keys(tags)
+      if (writtenKeys.length > 0) {
+        const w = await applyPartialUserTags(ctx.db, ctx.userId, tags as PartialUserTags, {
+          source: "chat",
+          nowIso,
+          log: ctx.log,
+        }).catch((err) => ({ ok: false, error: err instanceof Error ? err.message : String(err) }))
+        tagWriteOk = w.ok
+      }
+      // 2) Write a structured feedback event (the flywheel). Best-effort.
+      let feedbackWritten = false
+      try {
+        await writeFeedbackEvent(ctx.db, {
+          eventId: `match-feedback-${ctx.userId}-${jobId ?? "batch"}-${nowIso}`,
+          kind: sentiment === "negative" ? "candidate_decline" : "candidate_behavior",
+          actor: "candidate",
+          candidateId: ctx.userId,
+          ...(jobId ? { jobId } : {}),
+          outcome:
+            sentiment === "negative"
+              ? "batch_not_relevant"
+              : sentiment === "positive"
+                ? "batch_relevant"
+                : "batch_ambiguous",
+          evidence: [
+            {
+              source: "conversation",
+              summary: (reasonText ?? "").slice(0, 240) || `sentiment=${sentiment}`,
+              confidence: 0.85,
+              meta: { reasonCategory, sentiment },
+            },
+          ],
+          payloadRedacted: { channel: "imessage", flow: "claire_match_feedback", reasonCategory },
+          createdAt: nowIso,
+        })
+        feedbackWritten = true
+      } catch (err) {
+        ctx.log("pa.claire.capture_match_feedback_event_error", {
+          userId: ctx.userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+      ctx.log("pa.claire.capture_match_feedback", {
+        userId: ctx.userId,
+        jobId,
+        sentiment,
+        reasonCategory,
+        tagWriteOk,
+        writtenKeys,
+        feedbackWritten,
+      })
+      return { ok: true, sentiment, reasonCategory, tagWriteOk, writtenKeys, feedbackWritten }
+    },
+  })
+
   return [
     setMatchingPreferences,
     findMatch,
+    captureMatchFeedback,
     rememberFact,
     scheduleInterview,
     privacy,

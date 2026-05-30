@@ -46,6 +46,8 @@ import {
   CAREER_STAGE_INDEX,
   JOB_TYPE_VOCAB,
   INDUSTRY_SECTOR_VOCAB,
+  COMPANY_SIZE_VOCAB,
+  type CompanySize,
   PreferenceHardnessSchema,
 } from "@wekruit/shared-tags"
 import { roleToIndustryBuckets, type IndustryEnumBucket } from "../voice/role-to-industry.js"
@@ -241,16 +243,14 @@ export const UserTagsSchema = z.object({
   /** Minimum acceptable salary collected from Level 1 follow-up; read by V16 salary fit. */
   minSalary: z.number().int().nonnegative().optional(),
   /**
-   * Company-size preference. OR logic (Adam 2026-05-30): a candidate can prefer MULTIPLE stages
-   * ("small team or big tech" → ["early_startup","enterprise"]), so this accepts an ARRAY as well as
-   * a legacy scalar. Readers normalize via `companySizeList` (matcher) — a scalar stays a 1-element
-   * preference, an array is matched OR.
+   * Company-size preference. MULTI-PICK / OR (2026-05-30): a candidate may want
+   * "an early-stage startup OR big tech" → `["early_startup", "enterprise"]`.
+   * Accepts a single canonical token OR an array of them (back-compat with the
+   * older scalar writes). Vocab is the shared `COMPANY_SIZE_VOCAB` (no inline
+   * duplication). The LLM extractor emits the canonical token(s); no regex.
    */
   companySize: z
-    .union([
-      z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"]),
-      z.array(z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"])),
-    ])
+    .union([z.enum(COMPANY_SIZE_VOCAB), z.array(z.enum(COMPANY_SIZE_VOCAB))])
     .optional(),
   /**
    * Workstream W3 (pre-launch matching hardening) — Phase 52 canonical
@@ -1090,18 +1090,25 @@ function deriveCareerStageFromTitle(title: string | undefined): CareerStage | un
 // history title (→ `["internship"]`) was the live recall bug. Do NOT
 // reintroduce a résumé→targetJobType derivation.
 
+const COMPANY_SIZE_SET = new Set<string>(COMPANY_SIZE_VOCAB)
+
+function isCompanySize(value: unknown): value is CompanySize {
+  return typeof value === "string" && COMPANY_SIZE_SET.has(value)
+}
+
+/**
+ * Normalize a stated company-size preference to the canonical schema shape.
+ * Accepts a single token or an OR array (2026-05-30). Off-vocab values are
+ * dropped. Returns a scalar for a single value (back-compat) and an array for
+ * a multi-pick OR; `undefined` when nothing valid was provided.
+ */
 function mapCompanySizePreference(value: unknown): UserTags["companySize"] {
-  if (
-    value === "seed" ||
-    value === "early_startup" ||
-    value === "scale_up" ||
-    value === "mid_market" ||
-    value === "enterprise" ||
-    value === "open"
-  ) {
-    return value
+  if (Array.isArray(value)) {
+    const valid = Array.from(new Set(value.filter(isCompanySize)))
+    if (valid.length === 0) return undefined
+    return valid.length === 1 ? valid[0] : valid
   }
-  return undefined
+  return isCompanySize(value) ? value : undefined
 }
 
 /**

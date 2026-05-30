@@ -3697,9 +3697,15 @@ test("A#2+A#3 (REAL MODEL): flag ON extract-first fills the industry slot and th
   assert.equal(persisted?.currentQuestionId, "location_relocation", "A#3: persisted onboarding cursor must skip to location_relocation")
 })
 
-test("A#3 SAFETY: flag OFF asks the next onboarding question POSITIONALLY — no slot skip, no extractor", async (t) => {
+test("A#3 SAFETY: flag OFF still CAPTURES tags via the LLM extractor but asks the next question POSITIONALLY (no slot skip)", async (t) => {
   if (!realOpenAiKeyOrSkip(t)) return
 
+  // NO-REGEX (2026-05-30): the regex projector was removed, so the LLM extractor
+  // is the SOLE tag source and now runs UNCONDITIONALLY (it always captures
+  // volunteered facts). The `paAgenticOnboardingEnabled` flag no longer gates
+  // tag CAPTURE — it only gates the slot-SKIP UX. So flag OFF: industrySector
+  // IS captured, but the next ask is still POSITIONAL (industry_interest), not
+  // skip-aware.
   const docs = new Map<string, Record<string, unknown>>([
     ["pa-feature-flags/paAgenticOnboardingEnabled", { key: "paAgenticOnboardingEnabled", value: false, type: "bool", scope: "global" }],
     ["pa-users/u1", {
@@ -3718,9 +3724,13 @@ test("A#3 SAFETY: flag OFF asks the next onboarding question POSITIONALLY — no
 
   await processInboundEvent({ ...baseEvent, body: "I like early-stage startups working on fintech and AI" }, store)
 
-  // Flag OFF → extractor did not run → industry slot stays empty → positional next.
+  // Tags ARE captured by the unconditional LLM extractor (no regex fallback).
   const tags = (docs.get("pa-users/u1") as { tags?: Record<string, unknown> } | undefined)?.tags ?? {}
-  assert.equal(tags.industrySector, undefined, `A#3 safety: extractor must not run flag-off, got ${JSON.stringify(tags)}`)
+  assert.ok(
+    Array.isArray(tags.industrySector) && (tags.industrySector as string[]).length > 0,
+    `A#3 safety: LLM extractor must still CAPTURE industrySector flag-off, got ${JSON.stringify(tags)}`,
+  )
+  // …but the slot-SKIP UX stays flag-gated → next ask is POSITIONAL.
   assert.equal(
     turnUpdates.some((p) => p.sharedOnboardingQuestionId === "industry_interest"),
     true,

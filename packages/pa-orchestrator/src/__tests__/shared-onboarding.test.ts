@@ -160,54 +160,69 @@ test("post-prescreen opening prompt thanks for the role screen and avoids first-
   assert.doesNotMatch(opener, /Saw your resume come through/i)
 })
 
-test("free-form answers produce memory evidence and confident tag patches", () => {
-  const mainGoalRole = projectSharedOnboardingAnswer(
-    "main_goal",
-    "Growth and operations",
-  )
-  assert.deepEqual(mainGoalRole.tags.targetRoleFunction, ["marketing"])
-
-  const industry = projectSharedOnboardingAnswer(
+test("NO-REGEX: projector carries ONLY the LLM's validated canonical tags (no text classification)", () => {
+  // Without LLM-provided tags, the projector classifies NOTHING from free text —
+  // it only produces the memory fact + raw-answer bookkeeping. (Regex projector removed 2026-05-30.)
+  const noTags = projectSharedOnboardingAnswer(
     "industry_interest",
     "Fintech, AI infrastructure, and maybe crypto infra are the sectors I keep coming back to.",
   )
-  assert.match(industry.memoryFact, /Fintech, AI infrastructure/)
+  assert.match(noTags.memoryFact, /Fintech, AI infrastructure/)
+  assert.deepEqual(noTags.tags, {}, "no LLM tags → no tags classified from text")
+
+  // WITH LLM-provided canonical picks, the projector validates them against the
+  // shared-tags vocab and passes them through. Multi-value = OR.
+  const industry = projectSharedOnboardingAnswer(
+    "industry_interest",
+    "Fintech, AI infrastructure, and maybe crypto infra.",
+    {
+      industrySector: [
+        "artificial_intelligence_and_machine_learning",
+        "financial_technology",
+        "crypto_web3_blockchain",
+      ],
+    },
+  )
   assert.deepEqual(industry.tags.industrySector, [
     "artificial_intelligence_and_machine_learning",
     "financial_technology",
     "crypto_web3_blockchain",
   ])
+  assert.deepEqual(industry.statedPreferences.industrySector, industry.tags.industrySector)
 
-  const roleLikeIndustry = projectSharedOnboardingAnswer(
-    "industry_interest",
-    "I would say marketing and product management.",
+  // OR multi-pick on companySize: "a small startup or big tech".
+  const culture = projectSharedOnboardingAnswer(
+    "culture_stage",
+    "I'd take a small startup or big tech.",
+    { companySize: ["early_startup", "enterprise"] },
   )
-  assert.deepEqual(roleLikeIndustry.tags.targetRoleFunction, [
-    "product_management",
-    "marketing",
-  ])
+  assert.deepEqual(culture.tags.companySize, ["early_startup", "enterprise"])
 
+  // Off-vocab LLM picks are DROPPED (never coerced/pattern-matched).
+  const offVocab = projectSharedOnboardingAnswer(
+    "industry_interest",
+    "robots and stuff",
+    { industrySector: ["not_a_real_sector", "financial_technology"] },
+  )
+  assert.deepEqual(offVocab.tags.industrySector, ["financial_technology"])
+
+  // Locations are free-form normalized tokens (OR), no regex ordering.
   const location = projectSharedOnboardingAnswer(
     "location_relocation",
-    "NYC or remote would be best, but I can relocate to Seattle for the right team.",
+    "NYC or remote, could do Seattle.",
+    { targetLocations: ["new_york", "remote", "seattle"] },
   )
-  assert.deepEqual(location.tags.targetLocations, [
-    "new_york_metro",
-    "remote_united_states",
-    "seattle_metro",
-  ])
-  assert.equal(location.evidence.relocationOpen, true)
+  assert.deepEqual(location.tags.targetLocations, ["new_york", "remote", "seattle"])
 
-  const misplacedIndustry = projectSharedOnboardingAnswer(
-    "location_relocation",
-    "I’m especially drawn to fashion/lifestyle, entertainment, gaming, media, and consumer brands.",
+  // visaStatus single canonical enum passes through.
+  const special = projectSharedOnboardingAnswer(
+    "special_context",
+    "I need H1B sponsorship and want at least 140k.",
+    { visaStatus: "sponsor_needed", minSalary: 140000 },
   )
-  assert.deepEqual(misplacedIndustry.tags.industrySector, [
-    "gaming_and_esports",
-    "media_and_entertainment",
-    "fashion_and_apparel",
-    "consumer_goods",
-  ])
+  assert.equal((special.tags as { visaStatus?: string }).visaStatus, "sponsor_needed")
+  assert.equal(special.tags.minSalary, 140000)
+  assert.equal(special.statedPreferences.specialContext, "I need H1B sponsorship and want at least 140k.")
 })
 
 test("live-bug capture fix: Q4 open-to-anything → anywhere bypass on both axes; Q5 visa + salary floor", () => {
@@ -271,22 +286,45 @@ test("shared onboarding never re-asks — judge rejections still advance except 
   )
 })
 
-test("special_context accepts realtime-communication answer without waiting on LLM", async () => {
+test("special_context accepts a substantive answer via the LLM judge", async () => {
+  // NO-REGEX (2026-05-30): the bloom-filter accept shortcut was removed, so the
+  // judge is LLM-only. The LLM returns a `provided` intent here; the raw answer
+  // is preserved as the value.
   let llmCalls = 0
+  const answer = "I've done a lot of realtime communication handling. Maybe worthy?"
   const result = await judgeSharedOnboardingAnswer({
     questionId: "special_context",
-    answer: "I've done a lot of realtime communication handling. Maybe worthy?",
+    answer,
     lang: "en",
     llmCallFactory: () => async () => {
       llmCalls += 1
-      throw new Error("LLM should not be needed for this answer")
+      return JSON.stringify({ intent: "provided", value: answer, confidence: 0.95 })
     },
   })
 
-  assert.equal(llmCalls, 0)
+  assert.equal(llmCalls, 1)
   assert.equal(result.accept, true)
   if (result.accept) {
-    assert.equal(result.value, "I've done a lot of realtime communication handling. Maybe worthy?")
+    assert.equal(result.value, answer)
+  }
+})
+
+test("special_context fail-opens to accept a substantive answer when the LLM is unavailable", async () => {
+  // failOpenOnLlmError keeps the FSM from stalling: an LLM error still accepts a
+  // substantive reply so the slot advances (no re-ask loop).
+  const answer = "I've done a lot of realtime communication handling. Maybe worthy?"
+  const result = await judgeSharedOnboardingAnswer({
+    questionId: "special_context",
+    answer,
+    lang: "en",
+    llmCallFactory: () => async () => {
+      throw new Error("LLM unavailable")
+    },
+  })
+
+  assert.equal(result.accept, true)
+  if (result.accept) {
+    assert.equal(result.value, answer)
   }
 })
 

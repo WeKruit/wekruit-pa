@@ -18,6 +18,21 @@
  * reducers/prescreen-fsm.ts are the sole authority on every transition.
  */
 import { Agent, run, tool, z } from "../sdk.js"
+import {
+  ROLE_FUNCTION_VOCAB,
+  INDUSTRY_SECTOR_VOCAB,
+  JOB_TYPE_VOCAB,
+  CAREER_STAGE_VOCAB,
+  VISA_VOCAB,
+  COMPANY_SIZE_VOCAB,
+  HARDNESS_AXIS_VOCAB,
+} from "@wekruit/shared-tags"
+import {
+  applyPartialUserTags,
+  validateOnboardingCanonicalTags,
+  type OnboardingCanonicalTagInput,
+  type PartialUserTags,
+} from "@pa/pa-orchestrator"
 import type { ClaireToolContext } from "../types.js"
 import {
   DEFAULT_ONBOARDING_SLOTS,
@@ -26,23 +41,25 @@ import {
   recordOnboardingAnswer,
   type OnboardingState,
 } from "../reducers/onboarding-fsm.js"
-import {
-  projectSharedOnboardingAnswer,
-  resolveNextSharedOnboardingQuestionId,
-  applyPartialUserTags,
-  buildSharedOnboardingPrompt,
-  getSharedOnboardingQuestion,
-  SHARED_ONBOARDING_WORK_SESSION_KIND,
-  type SharedOnboardingQuestionId,
-} from "@pa/pa-orchestrator"
 
-/** Narrow a free-string slot id to a canonical shared-onboarding slot (the reducer + projector
- *  only accept these 5). Returns null for anything off-vocab so we never mis-call the projector. */
-function asSharedSlot(slot: string): SharedOnboardingQuestionId | null {
-  return (DEFAULT_ONBOARDING_SLOTS as readonly string[]).includes(slot)
-    ? (slot as SharedOnboardingQuestionId)
-    : null
-}
+// Rebuild the closed enums on the SDK's zod instance (shared-tags schemas are a
+// different zod instance and can't be mixed into a tool param schema — the VOCAB
+// arrays are plain strings, instance-agnostic). Mirrors matching-tools.ts.
+const RoleFunctionEnum = z.enum(ROLE_FUNCTION_VOCAB)
+const IndustrySectorEnum = z.enum(INDUSTRY_SECTOR_VOCAB)
+const JobTypeEnum = z.enum(JOB_TYPE_VOCAB)
+const CareerStageEnum = z.enum(CAREER_STAGE_VOCAB)
+const VisaEnum = z.enum(VISA_VOCAB)
+const CompanySizeEnum = z.enum(COMPANY_SIZE_VOCAB)
+const HardnessAxisEnum = z.enum(HARDNESS_AXIS_VOCAB)
+
+/** Per-axis hardness/negotiability the agent can attach to a slot answer. */
+const HardnessEntryParam = z.object({
+  axis: HardnessAxisEnum,
+  hardness: z.enum(["hard", "soft"]),
+  bufferPct: z.number().min(0).max(1).nullable(),
+  bufferSteps: z.number().int().min(0).max(4).nullable(),
+})
 import {
   DEFAULT_PRESCREEN_THRESHOLD,
   nextPrescreenQuestion,
@@ -82,78 +99,6 @@ export function emptyProcessStore(): ProcessSessionStore {
   }
 }
 
-function hasKeys(o: unknown): boolean {
-  return !!o && typeof o === "object" && Object.keys(o as Record<string, unknown>).length > 0
-}
-
-/**
- * Persist one onboarding answer to the CANONICAL durable interface — identical to the legacy
- * `writeSharedOnboardingAnswer` (pa-orchestrator) so thin/legacy share one state + one tag writer:
- *   - applyPartialUserTags → pa-users.tags  (slot-aware via projectSharedOnboardingAnswer:
- *     location → targetLocations, culture → companySize/prefersStartup, industry → industrySector, …)
- *   - statedPreferences (merge)
- *   - sharedOnboarding.answers[slot] + currentQuestionId advance + completed/workSession
- * Best-effort tags (never block the slot write); the doc write is the source of truth for progress.
- */
-export async function persistOnboardingAnswerThrough(
-  ctx: ClaireToolContext,
-  slot: string,
-  answer: string,
-): Promise<void> {
-  const sp = asSharedSlot(slot)
-  if (!sp) return
-  const now = ctx.nowIso()
-  const projection = projectSharedOnboardingAnswer(sp, answer)
-  const next = resolveNextSharedOnboardingQuestionId(sp)
-
-  if (hasKeys(projection.tags as Record<string, unknown>)) {
-    await applyPartialUserTags(ctx.db, ctx.userId, projection.tags, {
-      source: "chat",
-      nowIso: now,
-      log: (name: string, payload?: Record<string, unknown>) => ctx.log(name, payload ?? {}),
-    }).catch((err) =>
-      ctx.log("onboarding.tags_error", { slot, error: err instanceof Error ? err.message : String(err) }),
-    )
-  }
-
-  await ctx.db
-    .collection("pa-users")
-    .doc(ctx.userId)
-    .set(
-      {
-        onboardingState: next.completed ? "complete" : "pending",
-        onboardingStatus: next.completed ? "complete" : "invited",
-        updatedAt: now,
-        ...(hasKeys(projection.statedPreferences)
-          ? { statedPreferences: projection.statedPreferences }
-          : {}),
-        sharedOnboarding: {
-          status: next.completed ? "complete" : "active",
-          updatedAt: now,
-          currentQuestionId: next.nextQuestionId,
-          completed: next.completed,
-          ...(next.completed ? { completedAt: now } : {}),
-          answers: {
-            [sp]: {
-              answer: answer.trim(),
-              answeredAt: now,
-              questionId: sp,
-              questionLabel: getSharedOnboardingQuestion(sp).label,
-              evidence: projection.evidence,
-            },
-          },
-        },
-        workSession: {
-          kind: SHARED_ONBOARDING_WORK_SESSION_KIND,
-          status: next.completed ? "ended" : "active",
-          currentQuestionId: next.nextQuestionId,
-          ...(next.completed ? { endedAt: now, boundary: "completed" } : {}),
-        },
-      },
-      { merge: true },
-    )
-}
-
 /**
  * The in-tool LLM JUDGE. A small @openai/agents Agent that PROPOSES a score for
  * a single competency answer (poc-v3 C judge verbatim). The reducer consumes the
@@ -188,52 +133,105 @@ export function buildProcessTools(
   if (!ctx.processStore) ctx.processStore = store
   const judge = makeJudge(ctx.judgeModel)
 
-  // ── C: onboarding FSM (reducer-owned order; tool WRITES THROUGH to the canonical interface) ──
-  // The reducer (in-memory store) decides order/advance; record_onboarding_answer then persists to
-  // the SAME durable state + tag interface the legacy path + triage use: pa-users.tags via
-  // applyPartialUserTags (slot-aware via projectSharedOnboardingAnswer) + statedPreferences +
-  // the sharedOnboarding/workSession doc. One interface, one source of truth (v2.0 rule #8).
+  // ── C: onboarding FSM (reducer-owned; LLM only phrases) ──
   const askNextOnboarding = tool({
     name: "ask_next_onboarding_question",
     description:
-      "Get the next onboarding question to ask. Returns the pending slot id + the natural-language prompt to phrase, or done.",
+      "Get the next onboarding slot to ask. Returns the pending slot id + prompt, or done.",
     parameters: z.object({}),
     async execute() {
       const next = nextOnboardingSlot(store.onboarding)
       ctx.log("onboarding.ask_next", { pending: next.pending, complete: next.complete })
-      if (!next.pending) return { pending: null, complete: true }
-      // Prefer the résumé-aware canonical phrasing; fall back to the reducer's slot prompt.
-      const sp = asSharedSlot(next.pending)
-      const prompt = sp ? buildSharedOnboardingPrompt(sp, null) : next.prompt
-      return { pending: next.pending, prompt }
+      return next.pending
+        ? { pending: next.pending, prompt: next.prompt }
+        : { pending: null, complete: true }
     },
   })
   const recordOnboarding = tool({
     name: "record_onboarding_answer",
     description:
-      "Record the candidate's answer to the CURRENT onboarding slot. The reducer advances (you cannot " +
-      "skip slots) AND this persists their answer into their durable profile: tags (where they want to " +
-      "work, expected company size, industry, etc.), stated preferences, and onboarding progress.",
-    parameters: z.object({ slot: z.string(), answer: z.string() }),
-    async execute({ slot, answer }) {
+      "Record the candidate's answer to the CURRENT onboarding slot. Reducer advances; you cannot skip slots. " +
+      "NO REGEX: YOU (the agent) map the candidate's free text to the canonical enum fields the answer supports — " +
+      "fill ONLY what the answer clearly states, leave the rest null, and capture ALL values they mention (arrays = OR, " +
+      "e.g. 'a small startup or big tech' → companySize:['early_startup','enterprise']). " +
+      "Attach per-axis hardness when they signal strictness/flexibility ('must be NYC'→location hard; " +
+      "'need 140k but could flex to 130'→salary soft + bufferPct ~0.07; 'ideally senior, open to mid'→careerStage soft + bufferSteps 1). " +
+      "The tool validates your picks against the canonical vocab and writes durable tags to the candidate profile; " +
+      "the reducer still owns slot order.",
+    parameters: z.object({
+      slot: z.string(),
+      // Raw answer text — kept for the memory fact / transcript bookkeeping.
+      answer: z.string(),
+      // Canonical enum fields the agent fills (the set_matching_preferences shape).
+      targetRoleFunction: z.array(RoleFunctionEnum).nullable(),
+      negativeRoleFunction: z.array(RoleFunctionEnum).nullable(),
+      industrySector: z.array(IndustrySectorEnum).nullable(),
+      negativeIndustrySector: z.array(IndustrySectorEnum).nullable(),
+      companySize: z.array(CompanySizeEnum).nullable(),
+      targetJobType: z.array(JobTypeEnum).nullable(),
+      targetLocations: z.array(z.string()).nullable(),
+      careerStage: CareerStageEnum.nullable(),
+      visaStatus: VisaEnum.nullable(),
+      minSalary: z.number().int().nonnegative().nullable(),
+      preferenceHardness: z.array(HardnessEntryParam).nullable(),
+    }),
+    async execute({ slot, answer, preferenceHardness, ...canonical }) {
+      // 1) Reducer owns ORDER — record the raw answer for the current slot only.
       const result = recordOnboardingAnswer(store.onboarding, slot, answer)
-      // reducer rejects skip / out-of-order / already-complete → surface verdict, write nothing.
-      if (!result.ok) {
-        ctx.log("onboarding.record.rejected", { slot, reason: result.reason, pending: result.pending })
-        return result
+      // 2) Persist the AGENT-extracted canonical tags via the D8 sole writer.
+      //    Validated against shared-tags enums (off-vocab dropped). Best-effort;
+      //    a tag-write failure never blocks the slot advance. No regex anywhere.
+      let tagWriteOk = false
+      let writtenKeys: string[] = []
+      if (result.ok && ctx.db && ctx.userId) {
+        const llmTags: OnboardingCanonicalTagInput = {
+          targetRoleFunction: canonical.targetRoleFunction,
+          negativeRoleFunction: canonical.negativeRoleFunction,
+          industrySector: canonical.industrySector,
+          negativeIndustrySector: canonical.negativeIndustrySector,
+          companySize: canonical.companySize,
+          targetJobType: canonical.targetJobType,
+          targetLocations: canonical.targetLocations,
+          careerStage: canonical.careerStage,
+          visaStatus: canonical.visaStatus,
+          minSalary: canonical.minSalary,
+          ...(preferenceHardness && preferenceHardness.length > 0
+            ? {
+                preferenceHardness: Object.fromEntries(
+                  preferenceHardness.map((h) => [
+                    h.axis,
+                    {
+                      hardness: h.hardness,
+                      ...(h.bufferPct != null ? { bufferPct: h.bufferPct } : {}),
+                      ...(h.bufferSteps != null ? { bufferSteps: h.bufferSteps } : {}),
+                    },
+                  ]),
+                ),
+              }
+            : {}),
+        }
+        const tags = validateOnboardingCanonicalTags(llmTags, { source: "onboarding" })
+        writtenKeys = Object.keys(tags)
+        if (writtenKeys.length > 0) {
+          const w = await applyPartialUserTags(ctx.db, ctx.userId, tags as PartialUserTags, {
+            source: "chat",
+            nowIso: ctx.nowIso(),
+            log: ctx.log,
+          }).catch((err) => ({ ok: false, error: err instanceof Error ? err.message : String(err) }))
+          tagWriteOk = w.ok
+        }
       }
-      // WRITE THROUGH to the canonical durable interface (same writer as legacy onboarding + triage).
-      await persistOnboardingAnswerThrough(ctx, slot, answer).catch((err) =>
-        ctx.log("onboarding.record.persist_error", {
-          slot,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      )
-      ctx.log("onboarding.record", { slot, pending: result.pending, complete: result.complete })
-      // Hand back the next question to phrase (or completion).
-      const nextSlot = result.pending ? asSharedSlot(result.pending) : null
-      const nextPrompt = nextSlot ? buildSharedOnboardingPrompt(nextSlot, null) : undefined
-      return { ...result, ...(nextPrompt ? { nextPrompt } : {}) }
+      ctx.log("onboarding.record", {
+        slot,
+        ok: result.ok,
+        reason: result.reason,
+        pending: result.pending,
+        complete: result.complete,
+        tagWriteOk,
+        writtenKeys,
+      })
+      // reducer rejects skip / out-of-order; pass its verdict straight to the LLM.
+      return { ...result, tagWriteOk, writtenKeys }
     },
   })
 

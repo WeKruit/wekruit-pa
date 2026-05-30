@@ -115,10 +115,15 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
           ]
       return [
         "MODE = ONBOARDING. You collect the candidate's profile through the onboarding TOOLS — these write the",
-        "SAME canonical profile (pa-users.tags + preferences) the matcher uses. The reducer enforces slot order;",
-        "you can never skip, batch, or invent questions. (US-only scope is covered by the global rule above —",
-        "surface it naturally when the location question comes up.)",
+        "SAME canonical profile (pa-users.tags + preferences) the matcher uses; the reducer enforces slot order",
+        "(you can never skip, batch, or invent questions). US-only scope is covered by the global rule above —",
+        "surface it naturally when location comes up.",
         ...turnLine,
+        "When you call record_onboarding_answer, pass their answer verbatim AND the canonical enum fields it",
+        "supports (companySize/industrySector/targetLocations/targetRoleFunction/careerStage/visaStatus/minSalary…,",
+        "arrays = OR — capture EVERY value they mention; attach per-axis preferenceHardness when they signal",
+        "strictness or a flex degree). Fill ONLY what the answer states; leave the rest null. No regex — your",
+        "judgment maps free text to the closed vocab.",
       ].join(" ")
     }
     case "prescreen":
@@ -132,7 +137,9 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
       return [
         "MODE = TRIAGE. Free conversation. Route by tool description: recommendations → find_match (after a status",
         "bubble); durable prefs → set_matching_preferences; memory → remember_fact; scheduling → schedule_interview;",
-        "privacy (export/delete/stop) → privacy. If nothing fits, just reply warmly.",
+        "privacy (export/delete/stop) → privacy. When the candidate REACTS to roles you recommended ('these are off',",
+        "'love these', 'too junior', 'all fintech') → call capture_match_feedback (fill sentiment + reasonCategory +",
+        "any tagDeltas); it records the feedback + updates their preferences. If nothing fits, just reply warmly.",
       ].join(" ")
   }
 }

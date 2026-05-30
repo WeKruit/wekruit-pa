@@ -1,7 +1,9 @@
 import type { PartialUserTags } from "./tags/user-tags-writer.js"
-import { mapAnswerToLocations, mapAnswerToRoleFunction, mapAnswerToVisa } from "./tags/onboarding-mappers.js"
+import {
+  validateOnboardingCanonicalTags,
+  type OnboardingCanonicalTagInput,
+} from "./tags/onboarding-canonical-tags.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import type { IndustrySector, Visa } from "@wekruit/shared-tags"
 import type { JudgeResult, Lang } from "./onboarding/question.js"
 import { GuidedOpenJudge, type LlmCallFn } from "./onboarding/judges/guided-open.js"
 import {
@@ -240,56 +242,22 @@ function sharedJudgeExamples(questionId: SharedOnboardingQuestionId): Array<{ re
   ]
 }
 
-function sharedJudgeBloom(questionId: SharedOnboardingQuestionId): Array<{ pattern: RegExp; value: string }> {
-  // Shared onboarding blooms are accept signals; preserve the candidate's raw
-  // answer instead of storing an internal label.
-  const preserveRawAnswer = ""
-  if (questionId === "main_goal") {
-    return [
-      { pattern: /\b(career\s+growth|growth|learning|mentor|compensation|salary|pay|equity|stability|stable|mission|impact|ownership|work[-\s]?life)\b/i, value: preserveRawAnswer },
-    ]
-  }
-  if (questionId === "culture_stage") {
-    return [
-      { pattern: /\b(startup|early[-\s]?stage|seed|founding|scale[-\s]?up|larger|large\s+company|big\s*tech|enterprise|ownership|autonomy|calm|collaborative|open|no\s+preference)\b/i, value: preserveRawAnswer },
-    ]
-  }
-  if (questionId === "industry_interest") {
-    return [
-      { pattern: /\b(fintech|finance|ai|machine\s+learning|ml|crypto|web3|blockchain|saas|software|developer\s+tools?|security|healthcare|edtech|gaming|climate|open|anything)\b/i, value: preserveRawAnswer },
-    ]
-  }
-  if (questionId === "location_relocation") {
-    return [
-      { pattern: /\b(remote|onsite|hybrid|relocat|move|nyc|new\s+york|sf|san\s+francisco|bay\s+area|seattle|los\s+angeles|la|austin|boston|chicago|miami|canada|united\s+states|u\.?s\.?)\b/i, value: preserveRawAnswer },
-    ]
-  }
-  return [
-    {
-      pattern:
-        /\b(none|nothing|nope|no\s+special|visa|sponsor|h[-\s]?1b|opt|cpt|urgent|asap|timing|dealbreaker|constraint|strength|backend|frontend|full[-\s]?stack|systems?|real[-\s]?time|communication|webrtc|infrastructure|distributed|worthy|experience|built|handl\w*)\b/i,
-      value: preserveRawAnswer,
-    },
-  ]
-}
-
 export async function judgeSharedOnboardingAnswer(
   args: SharedOnboardingAnswerJudgeArgs,
 ): Promise<JudgeResult<string>> {
+  // No-regex (2026-05-30): the bloom-filter accept-shortcut was the last
+  // regex in this path. Answer acceptance is now LLM-only (GuidedOpenJudge),
+  // with `failOpenOnLlmError` accepting any substantive reply when the LLM is
+  // unavailable so the FSM never stalls re-asking a slot.
   const answer = args.answer.trim()
   if (isSharedOnboardingGreetingOrKickoff(answer)) {
     return { accept: false, reason: "irrelevant" }
   }
   const question = getSharedOnboardingQuestion(args.questionId)
-  const bloomRegex = sharedJudgeBloom(args.questionId)
-  if (bloomRegex.some((bloom) => bloom.pattern.test(answer))) {
-    return { accept: true, value: answer, confidence: 1.0 }
-  }
   const judge = new GuidedOpenJudge<string>({
     questionLabel: question.label,
     hints: sharedJudgeHints(args.questionId),
     examples: sharedJudgeExamples(args.questionId),
-    bloomRegex,
     parseValue: parseSharedJudgeValue,
     confidenceThreshold: 0.62,
     minMeaningfulChars: 2,
@@ -873,183 +841,28 @@ export function currentSharedOnboardingQuestionId(user: unknown): SharedOnboardi
   return "main_goal"
 }
 
-function tagToken(raw: string): string {
-  return raw.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80)
-}
-
-function industryTags(text: string): IndustrySector[] {
-  const rules: Array<{ token: IndustrySector; pattern: RegExp }> = [
-    {
-      token: "artificial_intelligence_and_machine_learning",
-      pattern: /\b(ai|ml|machine\s+learning|artificial\s+intelligence|llm|deep\s+learning)\b/i,
-    },
-    { token: "financial_technology", pattern: /\b(fintech|financial\s+technology|payments?|banking)\b/i },
-    { token: "crypto_web3_blockchain", pattern: /\b(crypto|web3|blockchain|defi)\b/i },
-    { token: "software_and_saas", pattern: /\b(saas|software|developer\s+tools?)\b/i },
-    { token: "cybersecurity", pattern: /\b(cyber\s*security|security)\b/i },
-    { token: "healthcare_and_life_sciences", pattern: /\b(healthcare|health\s+tech|life\s+sciences?)\b/i },
-    { token: "education_technology", pattern: /\b(edtech|education\s+technology)\b/i },
-    { token: "gaming_and_esports", pattern: /\b(gaming|esports?)\b/i },
-    { token: "media_and_entertainment", pattern: /\b(media|entertainment|film|movie|youtube|creator|streaming)\b/i },
-    { token: "fashion_and_apparel", pattern: /\b(fashion|apparel|clothing|lifestyle)\b/i },
-    { token: "consumer_goods", pattern: /\bconsumer\s+(brand|brands|goods|products?)\b/i },
-    { token: "advertising_and_marketing", pattern: /\b(advertising|marketing|brand)\b/i },
-    { token: "clean_energy_and_climate_tech", pattern: /\b(climate|clean\s+energy|energy)\b/i },
-  ]
-  return rules.filter((rule) => rule.pattern.test(text)).map((rule) => rule.token)
-}
-
-function locationMentionIndex(text: string, token: string): number {
-  const rules: Record<string, RegExp[]> = {
-    new_york_metro: [/\bnyc\b/i, /new\s*york/i, /纽约/i],
-    remote_united_states: [/\bremote\b/i, /在家/i],
-    remote_anywhere: [/\banywhere\b/i, /\bremote\b/i],
-    remote_global: [/\bremote\b/i],
-    san_francisco_bay_area: [/\bsf\b/i, /san\s*francisco/i, /bay\s*area/i, /湾区/i],
-    seattle_metro: [/seattle/i, /西雅图/i],
-    los_angeles_metro: [/\bla\b/i, /los\s*angeles/i, /洛杉矶/i],
-  }
-  let best = Number.POSITIVE_INFINITY
-  for (const rule of rules[token] ?? [new RegExp(token.replace(/_/g, "\\s+"), "i")]) {
-    const hit = text.match(rule)
-    if (hit?.index !== undefined && hit.index < best) best = hit.index
-  }
-  return best
-}
-
-function orderedLocations(text: string): string[] {
-  return [...mapAnswerToLocations(text)].sort((a, b) => locationMentionIndex(text, a) - locationMentionIndex(text, b))
-}
-
-function relocationOpen(text: string): boolean | undefined {
-  if (/\b(not|can't|cannot|won't|no)\b.{0,24}\b(relocat|move|moving)\b/i.test(text)) return false
-  if (/\b(open|willing|can|would|able)\b.{0,32}\b(relocat|move|moving)\b/i.test(text)) return true
-  if (/\brelocat(?:e|ing|ion)\b/i.test(text)) return true
-  return undefined
-}
-
 /**
- * Live-bug fix (2026-05-29): "open to anything" / "open to relocation" /
- * "flexible" / "anywhere" with no concrete place captured NOTHING — the
- * candidate ended up with empty `targetLocations`, and V16's location hard
- * filter over-filtered to recCount=0. Detect the open-ended signal so the
- * projector can emit the V16 anywhere-bypass token on BOTH `targetLocations`
- * and `targetCountry`. Deliberately broad: a generic "I'm flexible" / "wherever"
- * / "no preference" is a real open-to-anything signal in the location slot.
+ * Project a shared-onboarding answer into a memory fact + canonical tags +
+ * stated-preferences bookkeeping.
+ *
+ * NO-REGEX (2026-05-30, Adam directive): this function does ZERO classification
+ * of free-form text into canonical tags. The ONLY source of canonical tags is
+ * the LLM-driven extraction (`llmTags`), validated against the
+ * `@wekruit/shared-tags` closed enums by {@link validateOnboardingCanonicalTags}
+ * (off-vocab values dropped). The deterministic FSM still owns slot ORDER; this
+ * projector only carries the LLM's validated picks + the durable
+ * memoryFact / statedPreferences / evidence the downstream relies on.
+ *
+ * `llmTags` is the agent's STRUCTURED canonical proposal for THIS answer (any
+ * subset of axes the answer supports, multi-value = OR). When omitted (e.g. a
+ * fail-open path with no model output), tags are empty — the unified-tags
+ * extractor (conversation-extractor) remains the authoritative tag writer and
+ * the slot still advances on the raw answer.
  */
-function isOpenToAnywhere(text: string): boolean {
-  return /\b(open\s+to\s+(anything|anywhere|relocat(?:e|ing|ion)|moving)|anywhere|wherever|no\s+(location\s+)?preference|flexible(?:\s+on\s+location)?|i'?m\s+flexible|location\s+(?:is\s+)?(?:not\s+important|doesn'?t\s+matter|isn'?t\s+a\s+(?:big\s+)?(?:deal|issue))|don'?t\s+care\s+(?:where|about\s+location))\b/i.test(
-    text,
-  ) || /(哪都行|哪儿都行|都行|无所谓|随便|哪里都(?:行|可以))/i.test(text)
-}
-
-/**
- * Country / region extractor for Q4 (location). V16 reads `targetCountry` and
- * treats `["anywhere"]` as a country-level bypass. Maps the common spelled-out
- * country signals + the open-ended "anywhere" token. Returns canonical
- * lowercase region tokens (NOT abbrev — D5). Empty → caller emits nothing.
- */
-function extractCountries(text: string): string[] {
-  const out: string[] = []
-  const push = (token: string) => {
-    if (!out.includes(token)) out.push(token)
-  }
-  if (isOpenToAnywhere(text)) push("anywhere")
-  if (/\b(usa|u\.?s\.?a?\.?|united\s+states|america|stateside)\b/i.test(text) || /(美国|美國)/.test(text)) {
-    push("usa")
-  }
-  if (/\bcanada\b/i.test(text) || /加拿大/.test(text)) push("canada")
-  if (/\b(uk|united\s+kingdom|england|britain|gb)\b/i.test(text) || /(英国|英國)/.test(text)) push("uk")
-  if (/\b(china|prc|mainland\s+china)\b/i.test(text) || /(中国|中國)/.test(text)) push("china")
-  if (/\b(india)\b/i.test(text) || /印度/.test(text)) push("india")
-  if (/\b(germany)\b/i.test(text) || /德国/.test(text)) push("germany")
-  if (/\b(singapore)\b/i.test(text) || /新加坡/.test(text)) push("singapore")
-  if (/\b(australia)\b/i.test(text) || /澳大利亚/.test(text)) push("australia")
-  return out
-}
-
-/**
- * Q5 visa-intent → canonical 4-enum `visaStatus` (D4). Live-bug fix: the
- * candidate said "I need H1B sponsorship" and we only emitted a
- * `targetCompanyTags=['visa_context']` label — V16's visa hard filter reads
- * `tags.visaStatus`, so the sponsorship intent never reached the matcher. Now
- * we ALSO emit the canonical enum (reusing the writer-side `mapAnswerToVisa`
- * which collapses OPT/CPT/H1B/F1 → `sponsor_needed`). Returns undefined when
- * the answer carries no visa signal so a weaker "other" never overwrites a
- * value captured elsewhere.
- */
-function extractVisaStatus(text: string): Visa | undefined {
-  if (!/\b(visa|sponsor|sponsorship|h[-\s]?1\s*b|h1\b|\bh4\b|\bopt\b|stem\s*opt|\bcpt\b|f[-\s]?1\b|green\s*card|permanent\s+resident|\bpr\b|citizen|tn\s*visa|j[-\s]?1\b|work\s+authoriz)\b/i.test(
-    text,
-  ) && !/(签证|绿卡|公民|永久居民|身份)/.test(text)) {
-    return undefined
-  }
-  const mapped = mapAnswerToVisa(text)
-  return mapped === "other" ? undefined : mapped
-}
-
-/**
- * Salary-floor extractor. Pulls a minimum acceptable USD figure from an
- * explicit floor phrase only ("at least 100k", "minimum 140k", "starting at
- * 120000", "120k+", "no less than 90k"). Returns the integer USD value, or
- * undefined when the answer carries no explicit floor. NEVER infer salary from
- * résumé/history pay — onboarding answers are intent. Exported for reuse.
- */
-export function extractSalaryFloorUsd(text: string): number | undefined {
-  if (!text || typeof text !== "string") return undefined
-  const floorContext =
-    /\b(at\s+least|minimum|min\b|no\s+less\s+than|starting\s+at|floor\s+(?:of|is)|>=|north\s+of|above)\b/i.test(
-      text,
-    ) || /\+\s*$/.test(text.trim())
-  // Match "100k", "100 k", "100,000", "$120000", optionally trailed by "+".
-  const matches = [
-    ...text.matchAll(/\$?\s*(\d{1,3}(?:,\d{3})+|\d{2,7})\s*(k\b|thousand|\+)?/gi),
-  ]
-  let best: number | undefined
-  for (const m of matches) {
-    const rawNum = m[1].replace(/,/g, "")
-    const unit = (m[2] ?? "").toLowerCase()
-    let value = parseInt(rawNum, 10)
-    if (!Number.isFinite(value)) continue
-    if (unit.startsWith("k") || unit === "thousand") value *= 1000
-    const hasPlus = unit === "+" || /\+\s*$/.test(text.slice(m.index ?? 0))
-    if (!floorContext && !hasPlus && !(unit.startsWith("k") || unit === "thousand")) continue
-    // Plausible annual USD salary window — reject ages, years, tiny counts.
-    if (value < 20_000 || value > 2_000_000) continue
-    if (best === undefined || value < best) best = value
-  }
-  return best
-}
-
-function companySize(text: string): PartialUserTags["companySize"] | undefined {
-  if (/\b(seed|pre[-\s]?seed|founding|early[-\s]?stage|startup)\b/i.test(text)) return "early_startup"
-  if (/\b(series\s+[bcde]|scale[-\s]?up|growth[-\s]?stage)\b/i.test(text)) return "scale_up"
-  if (/\b(mid[-\s]?market|medium[-\s]?sized)\b/i.test(text)) return "mid_market"
-  if (/\b(enterprise|big\s*tech|large\s+company|public\s+company)\b/i.test(text)) return "enterprise"
-  if (/\b(open|no\s+preference|either|any)\b/i.test(text)) return "open"
-  return undefined
-}
-
-function companyGoalTags(text: string): string[] {
-  const tags: string[] = []
-  if (/\b(growth|career|promot|level\s*up|leadership)\b/i.test(text)) tags.push("career_growth")
-  if (/\b(comp|compensation|pay|salary|tc|equity|money)\b/i.test(text)) tags.push("high_compensation")
-  if (/\b(stability|stable|secure|security)\b/i.test(text)) tags.push("stability")
-  if (/\b(mission|impact|purpose|meaningful)\b/i.test(text)) tags.push("mission_driven")
-  if (/\b(learning|learn|mentor|mentorship)\b/i.test(text)) tags.push("learning")
-  return tags
-}
-
-function mainGoalRoleFunction(text: string): ReturnType<typeof mapAnswerToRoleFunction> {
-  if (!/\b(growth\s+(and\s+)?(ops|operations|marketing|role|roles)|growth\s+marketing|gtm|go[-\s]?to[-\s]?market)\b/i.test(text)) {
-    return []
-  }
-  return mapAnswerToRoleFunction(text)
-}
-
 export function projectSharedOnboardingAnswer(
   questionId: SharedOnboardingQuestionId,
   answer: string,
+  llmTags?: OnboardingCanonicalTagInput | null,
 ): {
   memoryFact: string
   tags: PartialUserTags
@@ -1058,116 +871,29 @@ export function projectSharedOnboardingAnswer(
 } {
   const trimmed = answer.trim()
   const question = getSharedOnboardingQuestion(questionId)
-  const tags: PartialUserTags = {}
+  const tags = validateOnboardingCanonicalTags(llmTags)
   const statedPreferences: Record<string, unknown> = {}
   const evidence: Record<string, unknown> = { questionId, answer: trimmed }
-  const opportunisticLocations = orderedLocations(trimmed)
 
-  if (questionId === "main_goal") {
-    const targetCompanyTags = companyGoalTags(trimmed)
-    const targetRoleFunction = mainGoalRoleFunction(trimmed)
-    if (targetCompanyTags.length > 0) tags.targetCompanyTags = targetCompanyTags
-    if (targetCompanyTags.length > 0) statedPreferences.nextCompanyGoals = targetCompanyTags
-    if (targetRoleFunction.length > 0) {
-      tags.targetRoleFunction = targetRoleFunction
-      statedPreferences.targetRoleFunction = targetRoleFunction
-    }
-    if (opportunisticLocations.length > 0) {
-      tags.targetLocations = opportunisticLocations
-      statedPreferences.targetLocations = opportunisticLocations
-    }
+  // Mirror the validated canonical tags into statedPreferences (the legacy
+  // bag downstream readers still consult). Purely structural — no classification.
+  if (tags.targetRoleFunction) statedPreferences.targetRoleFunction = tags.targetRoleFunction
+  if (tags.negativeRoleFunction) statedPreferences.negativeRoleFunction = tags.negativeRoleFunction
+  if (tags.industrySector) statedPreferences.industrySector = tags.industrySector
+  if (tags.negativeIndustrySector) statedPreferences.negativeIndustrySector = tags.negativeIndustrySector
+  if (tags.companySize) statedPreferences.companySize = tags.companySize
+  if (tags.targetLocations) statedPreferences.targetLocations = tags.targetLocations
+  if (tags.targetCountry) statedPreferences.targetCountry = tags.targetCountry
+  if (tags.targetJobType) statedPreferences.targetJobType = tags.targetJobType
+  if (tags.careerStage) statedPreferences.careerStage = tags.careerStage
+  if ((tags as { visaStatus?: unknown }).visaStatus) {
+    statedPreferences.visaStatus = (tags as { visaStatus?: unknown }).visaStatus
   }
+  if (typeof tags.minSalary === "number") statedPreferences.minSalary = tags.minSalary
 
-  if (questionId === "culture_stage") {
-    const size = companySize(trimmed)
-    const stageTags = [
-      ...(/\b(high\s+ownership|ownership|autonomy)\b/i.test(trimmed) ? ["high_ownership"] : []),
-      ...(/\b(calm|low\s+ego|collaborative|kind)\b/i.test(trimmed) ? ["calm_collaborative_culture"] : []),
-    ]
-    if (size) tags.companySize = size
-    if (/\b(startup|early[-\s]?stage|seed|founding)\b/i.test(trimmed)) tags.prefersStartup = "startup"
-    else if (/\b(big\s*tech|enterprise|large\s+company)\b/i.test(trimmed)) tags.prefersStartup = "bigtech"
-    else if (/\b(either|open|no\s+preference)\b/i.test(trimmed)) tags.prefersStartup = "either"
-    if (stageTags.length > 0) tags.targetCompanyTags = stageTags.map(tagToken)
-    if (size) statedPreferences.companySize = size
-  }
-
-  if (questionId === "industry_interest") {
-    const industries = industryTags(trimmed)
-    const targetRoleFunction = mapAnswerToRoleFunction(trimmed)
-    if (industries.length > 0) tags.industrySector = industries
-    if (industries.length > 0) statedPreferences.industrySector = industries
-    if (targetRoleFunction.length > 0) {
-      tags.targetRoleFunction = targetRoleFunction
-      statedPreferences.targetRoleFunction = targetRoleFunction
-    }
-  }
-
-  if (questionId === "location_relocation") {
-    const concreteLocations = orderedLocations(trimmed)
-    const openToAnywhere = isOpenToAnywhere(trimmed)
-    const countries = extractCountries(trimmed)
-    const industries = industryTags(trimmed)
-    const relocate = relocationOpen(trimmed)
-    // Live-bug fix: "open to anything" with no concrete place → emit the V16
-    // anywhere-bypass token on BOTH axes so the location hard filter does not
-    // over-filter to recCount=0. Concrete places are APPENDED, not dropped.
-    const targetLocations: string[] = [...concreteLocations]
-    if (openToAnywhere && !targetLocations.includes("anywhere")) targetLocations.push("anywhere")
-    if (targetLocations.length > 0) {
-      tags.targetLocations = targetLocations
-      statedPreferences.targetLocations = targetLocations
-    }
-    if (countries.length > 0) {
-      tags.targetCountry = countries
-      statedPreferences.targetCountry = countries
-    }
-    if (industries.length > 0) {
-      tags.industrySector = industries
-      statedPreferences.industrySector = industries
-    }
-    if (relocate !== undefined) {
-      statedPreferences.relocationOpen = relocate
-      evidence.relocationOpen = relocate
-    }
-  }
-
+  // Q5 keeps the raw free-text around so downstream readers and HITL can see
+  // the candidate's verbatim non-negotiables.
   if (questionId === "special_context") {
-    const targetRoleFunction = mapAnswerToRoleFunction(trimmed)
-    const industries = industryTags(trimmed)
-    const visaStatus = extractVisaStatus(trimmed)
-    const minSalaryUsd = extractSalaryFloorUsd(trimmed)
-    const urgent = /\b(laid\s*off|layoff|severance|urgent|asap)\b/i.test(trimmed)
-    const specialTags = []
-    if (/\b(visa|sponsor|h[-\s]?1b|opt|cpt)\b/i.test(trimmed)) specialTags.push("visa_context")
-    if (urgent) specialTags.push("urgent_search_context")
-    if (/\b(parent|caregiver|health|family)\b/i.test(trimmed)) specialTags.push("personal_constraint")
-    if (specialTags.length > 0) tags.targetCompanyTags = specialTags
-    // D4 canonical visa enum — V16's visa hard filter reads `tags.visaStatus`,
-    // not the `visa_context` label. Keep BOTH (label for context, enum for the
-    // matcher). UserTags.visaStatus accepts the 4-token Visa (it's a superset).
-    if (visaStatus) {
-      tags.visaStatus = visaStatus
-      statedPreferences.visaStatus = visaStatus
-    }
-    if (urgent) tags.urgentlySeeking = true
-    // Salary floor (intent only). V16 reads `tags.minSalary`. NEVER from résumé.
-    if (minSalaryUsd !== undefined) {
-      tags.minSalary = minSalaryUsd
-      statedPreferences.minSalaryUsd = minSalaryUsd
-    }
-    if (targetRoleFunction.length > 0) {
-      tags.targetRoleFunction = targetRoleFunction
-      statedPreferences.targetRoleFunction = targetRoleFunction
-    }
-    if (industries.length > 0) {
-      tags.industrySector = industries
-      statedPreferences.industrySector = industries
-    }
-    if (opportunisticLocations.length > 0) {
-      tags.targetLocations = opportunisticLocations
-      statedPreferences.targetLocations = opportunisticLocations
-    }
     statedPreferences.specialContext = trimmed
   }
 

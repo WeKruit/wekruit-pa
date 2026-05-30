@@ -68,6 +68,7 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
     generateCvAnalysis: makeGenerateCvAnalysis(),
     generateJobRecs: makeGenerateJobRecs(),
     extractAnswerIntent: makeExtractAnswerIntent(),
+    classifyFeedback: makeClassifyFeedback(),
     startPrescreenForJob: async ({ userId, jobId, toE164 }) => {
       if (!getApps().length) initializeApp()
       const db = getFirestore()
@@ -1134,5 +1135,52 @@ ${def.examples.map((e) => `  ${e}`).join("\n")}`
       })
       return null
     }
+  }
+}
+
+/**
+ * No-regex (2026-05-30) — LLM match-FEEDBACK classifier for the post-match
+ * retention FSM. Returns the parsed JSON (the orchestrator's
+ * `validateFeedbackResult` validates it against the shared-tags closed enums).
+ * THROWS on any provider/parse failure so the FSM fails OPEN to `ambiguous`
+ * (re-asks) instead of regex-classifying the reply.
+ */
+function makeClassifyFeedback(): NonNullable<
+  import("@pa/pa-orchestrator").OrchestratorStoreDeps["classifyFeedback"]
+> {
+  return async ({ prompt }) => {
+    let apiKey = ""
+    try {
+      apiKey = SILICONFLOW_API_KEY.value().trim()
+    } catch {
+      // not bound
+    }
+    if (!apiKey) throw new Error("siliconflow_unbound")
+    const res = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "Qwen/Qwen2.5-7B-Instruct",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You classify match-feedback replies into structured JSON. Output JSON only — no prose.",
+          },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0,
+        max_tokens: 300,
+        response_format: { type: "json_object" },
+      }),
+      signal: AbortSignal.timeout(6000),
+    })
+    if (!res.ok) throw new Error(`siliconflow non-200 status=${res.status}`)
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] }
+    const raw = data.choices?.[0]?.message?.content?.trim() ?? "{}"
+    return { json: JSON.parse(raw) }
   }
 }

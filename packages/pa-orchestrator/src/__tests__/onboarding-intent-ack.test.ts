@@ -609,10 +609,18 @@ test("shared onboarding answer writes memory/tags and waits until Q5 before job 
   )
 
   assert.match(memoryFacts[0] ?? "", /industry interests.*Fintech and AI infrastructure/i)
-  assert.deepEqual((docs.get("pa-users/u-onb")?.tags as { industrySector?: string[] }).industrySector, [
-    "artificial_intelligence_and_machine_learning",
-    "financial_technology",
-  ])
+  // NO-REGEX (2026-05-30): the deterministic regex projector was removed; canonical
+  // tags now come from the LLM extractor (`maybeRunExtractor`), which has no
+  // injected model in this fake-store unit test. So `projectSharedOnboardingAnswer`
+  // writes NO regex-classified tags here. The LLM extraction → canonical-enum
+  // validation is covered by conversation-extractor.test.ts +
+  // onboarding-canonical-tags.test.ts. This test's subject is the Q5 recs-timing.
+  const onbTags = (docs.get("pa-users/u-onb")?.tags as { industrySector?: unknown }) ?? {}
+  assert.equal(
+    onbTags.industrySector,
+    undefined,
+    "regex projector removed → no text-classified industrySector",
+  )
   assert.equal(recCalls.length, 0, "job recs must wait until Q5 is collected")
   assert.match(captures.outboundBodies[0] ?? "", /New York, NY/i)
   assert.match(captures.outboundBodies[0] ?? "", /Where should I look next/i)
