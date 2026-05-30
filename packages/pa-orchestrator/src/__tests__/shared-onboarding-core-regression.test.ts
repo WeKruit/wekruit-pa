@@ -26,17 +26,23 @@ import {
 
 describe("resolveNextMissingSharedOnboardingQuestionId (#3 ask-only-missing)", () => {
   it("skips industry_interest + location_relocation when extract-first already captured them", () => {
-    // After culture_stage, the positional resolver would ask industry_interest next.
-    // But extract-first captured industrySector + targetLocations out-of-slot → skip
-    // both → next missing slot is seniority_comp (the new dedicated seniority/comp slot,
-    // which the chat extractor can't auto-satisfy), then special_context.
+    // target_role inserted at index 2 (Adam 2026-05-30): after culture_stage the
+    // positional resolver now asks target_role (NOT industry_interest). target_role
+    // is onboarding-specific (the chat extractor can't auto-satisfy it), so the
+    // ask-only-missing resolver also stops there — only industry_interest and
+    // location_relocation are extractor-satisfiable. From target_role, with both of
+    // those captured out-of-slot, the skip lands on seniority_comp, then special_context.
     const tags = {
       industrySector: ["financial_technology", "artificial_intelligence_and_machine_learning"],
       targetLocations: ["new_york", "remote"],
     }
     const positional = resolveNextSharedOnboardingQuestionId("culture_stage")
-    assert.equal(positional.nextQuestionId, "industry_interest") // old behavior re-asks
-    const missing = resolveNextMissingSharedOnboardingQuestionId("culture_stage", tags, null)
+    assert.equal(positional.nextQuestionId, "target_role") // positional next is the new slot
+    // target_role is never auto-satisfied → ask-only-missing stops there too.
+    const missingFromCulture = resolveNextMissingSharedOnboardingQuestionId("culture_stage", tags, null)
+    assert.equal(missingFromCulture.nextQuestionId, "target_role")
+    // Once past target_role, both captured slots are skipped → seniority_comp.
+    const missing = resolveNextMissingSharedOnboardingQuestionId("target_role", tags, null)
     assert.equal(missing.nextQuestionId, "seniority_comp") // skips both filled slots → next unfilled
   })
 
@@ -233,7 +239,10 @@ describe("shared onboarding core (router / state / judges) — flag-invariant", 
       next: (typeof SHARED_ONBOARDING_QUESTIONS)[number]["id"] | null
     }> = [
       { from: "main_goal", next: "culture_stage" },
-      { from: "culture_stage", next: "industry_interest" },
+      // target_role inserted at index 2 (Adam 2026-05-30) — confirm forward role
+      // intent right after culture_stage, before industry_interest.
+      { from: "culture_stage", next: "target_role" },
+      { from: "target_role", next: "industry_interest" },
       { from: "industry_interest", next: "location_relocation" },
       { from: "location_relocation", next: "seniority_comp" },
       { from: "seniority_comp", next: "special_context" },

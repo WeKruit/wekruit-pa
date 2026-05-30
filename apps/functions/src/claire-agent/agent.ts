@@ -122,19 +122,26 @@ async function loadGlobalContext(db: Firestore, userId: string): Promise<string>
     const firstName = displayName ? displayName.split(/\s+/)[0]! : ""
     const recentRoleTitle = str(tags.recentRoleTitle)
     const recentCompany = str(tags.recentCompany)
+    // workHistorySummary is the prose career arc ("SWE Intern @ Tesla; Founder @ AI Study;
+    // Co-founder @ OFO") — the compliment must describe what they DID, not list skills (Adam
+    // 2026-05-30: the live kickoff complimented "c++/java/js/python", which reads like a keyword
+    // dump). Surface it FIRST + labelled so the agent grounds the compliment on experience.
+    const workHistorySummary = str(tags.workHistorySummary)
     const skillNames = arr("skills")
       .map((s) => (typeof s === "string" ? s : str((s as Record<string, unknown> | null)?.name)))
       .filter(Boolean)
       .slice(0, 5)
     const resumeBits = [
       firstName ? `first name: ${firstName}` : "",
+      // Label work history as the compliment source so the agent describes impact, not a skill list.
+      workHistorySummary ? `work history (use THIS for the compliment): ${workHistorySummary}` : "",
       recentRoleTitle || recentCompany
         ? `most recent: ${[recentRoleTitle, recentCompany].filter(Boolean).join(" @ ")}`
         : "",
-      skillNames.length ? `top skills: ${skillNames.join(", ")}` : "",
+      skillNames.length ? `top skills (reference, NOT the compliment): ${skillNames.join(", ")}` : "",
     ].filter(Boolean)
     const resumeLine = resumeBits.length
-      ? `Candidate résumé on file (use it to personalize — greet by first name, reference their background): ${resumeBits.join("; ")}`
+      ? `Candidate résumé on file (use it to personalize — greet by first name, compliment what they DID from work history): ${resumeBits.join("; ")}`
       : ""
 
     const roles = arr("targetRoleFunction").map(str).filter(Boolean)

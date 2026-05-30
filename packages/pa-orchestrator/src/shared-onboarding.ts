@@ -21,6 +21,7 @@ export const CANDIDATE_PROFILE_URL = "https://wekruit.com/me/profile"
 export type SharedOnboardingQuestionId =
   | "main_goal"
   | "culture_stage"
+  | "target_role"
   | "industry_interest"
   | "location_relocation"
   | "seniority_comp"
@@ -86,6 +87,19 @@ export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = 
     label: "company culture and stage",
     prompt:
       "What kind of company culture and size or stage tends to work best for you: early startup, scale-up, larger company, high ownership, calm team, or something else?",
+  },
+  {
+    // Adam 2026-05-30: today targetRoleFunction is only seeded from the résumé;
+    // onboarding never confirms what role the candidate actually wants NEXT (a
+    // SWE may be pivoting to PM/data/design). One warm question to capture
+    // forward intent. The record_onboarding_answer tool extracts
+    // targetRoleFunction (canonical roleFunction enum, multi-pick) from this
+    // free-text reply — we only define the slot + prompt here (no extraction
+    // logic, no regex in this file).
+    id: "target_role",
+    label: "target role function",
+    prompt:
+      "What kind of roles are you going for next — same lane (e.g. software engineering), or shifting toward something like product, data, or design?",
   },
   {
     id: "industry_interest",
@@ -215,6 +229,9 @@ function sharedJudgeHints(questionId: SharedOnboardingQuestionId): string[] {
   if (questionId === "culture_stage") {
     return ["early_startup", "scale_up", "larger_company", "high_ownership", "calm_team", "collaborative", "open"]
   }
+  if (questionId === "target_role") {
+    return ["software_engineering", "product_management", "data_analytics", "design", "marketing", "sales", "same_lane", "open"]
+  }
   if (questionId === "industry_interest") {
     return ["financial_technology", "artificial_intelligence", "crypto_web3_blockchain", "software_saas", "healthcare", "developer_tools", "open"]
   }
@@ -238,6 +255,12 @@ function sharedJudgeExamples(questionId: SharedOnboardingQuestionId): Array<{ re
     return [
       { reply: "early startup with high ownership", value: "early startup with high ownership", confidence: 0.95 },
       { reply: "larger calm team, less chaos", value: "larger calm team", confidence: 0.9 },
+    ]
+  }
+  if (questionId === "target_role") {
+    return [
+      { reply: "staying in software engineering", value: "software engineering", confidence: 0.95 },
+      { reply: "I'm a SWE but want to move into product management", value: "product management", confidence: 0.95 },
     ]
   }
   if (questionId === "industry_interest") {

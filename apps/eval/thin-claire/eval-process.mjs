@@ -241,7 +241,7 @@ function runL1() {
   })
 
   add("onboarding: default slots = SHARED_ONBOARDING_QUESTIONS (6)", () => {
-    assert.equal(DEFAULT_ONBOARDING_SLOTS.length, 6)
+    assert.equal(DEFAULT_ONBOARDING_SLOTS.length, 7)
     const s = { slots: [], answers: {}, complete: false }
     assert.equal(nextOnboardingSlot(s).pending, DEFAULT_ONBOARDING_SLOTS[0])
   })

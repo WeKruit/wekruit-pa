@@ -251,37 +251,73 @@ export function makeV16FindMatch(
           ? Math.min(5, Math.floor(requestedCount))
           : 3
 
-      // COLLAB-FIRST (Adam 2026-05-30): a candidate's FIRST match batch surfaces WeKruit collab jobs
-      // only (curated, actually-matched) — `firstMatchBatchAt` absent → try collabPrescreenOnly. After
-      // the first delivered batch (flag set) → mixed open-market (collab still boosted inside V16). If
-      // the collab pass yields nothing, fall through to open-market so a first-timer is never left at 0
-      // just because no collab role fit.
+      // COLLAB-ALWAYS-FIRST (Adam 2026-05-30): WeKruit collab/partner roles are the priority inventory —
+      // they must ALWAYS surface first when they match, on EVERY find_match, not just the candidate's
+      // first batch. So we ALWAYS run the collab pass (collabPrescreenOnly) up front, regardless of
+      // `firstMatchBatchAt`. Whatever collab roles it returns go FIRST, then we FILL the remaining slots
+      // up to `limit` with the open-market pass (deduped against the collab ids). If the collab pass
+      // returns 0 → pure open-market, exactly as before. `firstMatchBatchAt` survives ONLY as telemetry
+      // (set after a delivered batch, for the log) — it no longer gates whether the collab pass runs.
       let firstBatchDone = false
       try {
         firstBatchDone = !!(await db.collection("pa-users").doc(userId).get()).data()?.firstMatchBatchAt
       } catch {
-        /* read failure → treat as not-first-batch (open-market); never block matching */
+        /* read failure → still run both passes; this flag is telemetry-only now, never a gate */
         firstBatchDone = true
       }
-      let result = !firstBatchDone
-        ? await queryMatchingJobsV16({ userId, limit, collabPrescreenOnly: true }, { db })
-        : undefined
-      const collabHit = !!result && (result.jobs?.length ?? 0) > 0
-      if (!result || (result.jobs?.length ?? 0) === 0) {
-        // allowBroadFallback: a candidate whose specific city genuinely has 0 fresh roles still gets
-        // US matches (location-relax ladder) instead of a dead "no roles" — never a silent dead end.
-        result = await queryMatchingJobsV16({ userId, limit, allowBroadFallback: true }, { db })
-      }
-      log("pa.claire.find_match.routing", { userId, firstBatchDone, collabFirst: !firstBatchDone, collabHit })
 
-      const rawJobs = result.jobs ?? []
+      // Pass 1 — collab roles (curated, actually-matched WeKruit partner inventory). Fail-open: a
+      // collab-pass error must never block the open-market fill, so degrade to an empty collab set.
+      let collabResult: Awaited<ReturnType<typeof queryMatchingJobsV16>> | undefined
+      try {
+        collabResult = await queryMatchingJobsV16({ userId, limit, collabPrescreenOnly: true }, { db })
+      } catch (e) {
+        log("pa.claire.find_match.collab_pass_failed", { userId, err: String(e) })
+      }
+      const collabJobs = collabResult?.jobs ?? []
+      const collabHit = collabJobs.length > 0
+      const collabIds = new Set(collabJobs.map((j) => j.id))
+
+      // Pass 2 — open-market fill for the slots collab did not fill. allowBroadFallback: a candidate
+      // whose specific city genuinely has 0 fresh roles still gets US matches (location-relax ladder)
+      // instead of a dead "no roles" — never a silent dead end. Skip the pass entirely when collab
+      // already filled `limit`. The open-market `result` is also the source of the snapshotTags /
+      // needsOnboarding / total signals when there are no collab jobs (pure open-market path).
+      const remaining = Math.max(0, limit - collabJobs.length)
+      let result = collabResult
+      let openJobs: typeof collabJobs = []
+      if (remaining > 0 || !collabHit) {
+        result = await queryMatchingJobsV16({ userId, limit, allowBroadFallback: true }, { db })
+        // Dedup the open-market set against collab ids so a collab role never repeats as open-market,
+        // then take only enough to fill the remaining slots after collab.
+        openJobs = (result.jobs ?? []).filter((j) => !collabIds.has(j.id)).slice(0, remaining)
+      }
+      // When BOTH passes ran, prefer the open-market `result` for the snapshotTags/needsOnboarding
+      // metadata (it reflects the full catalog, not the collab-only funnel); fall back to collab.
+      // `result` is guaranteed defined here: with limit>0 either `remaining>0` or `!collabHit` runs the
+      // open-market pass, or `collabHit` is true and `result === collabResult` (defined). Assert it so
+      // the metadata reads below stay non-optional without re-querying.
+      if (!result) result = collabResult
+      const meta = result!
+      log("pa.claire.find_match.routing", {
+        userId,
+        firstBatchDone,
+        collabHit,
+        collabCount: collabJobs.length,
+        openCount: openJobs.length,
+      })
+
+      // Final merged set: collab roles FIRST, then open-market fill. recordAgentPresentation, the
+      // rec-card fire (TOP job → reliably the top collab role when present), and the formatted lines
+      // all operate over THIS array, so every downstream consumer sees the same ordered, deduped set.
+      const rawJobs = [...collabJobs, ...openJobs]
       // Rec tracking (req #4/#5) — write the ledger + job_presented events for
       // the offered jobs. Fail-open: never breaks the never-throws contract.
       if (rawJobs.length > 0) {
         await recordAgentPresentation(db, {
           userId,
           jobs: rawJobs,
-          fallbackApplied: result.fallbackApplied,
+          fallbackApplied: meta.fallbackApplied,
           log,
           nowIso: nowIso(),
         })
@@ -336,24 +372,35 @@ export function makeV16FindMatch(
         }
       }
 
-      // COLLAB MARKER (Adam 2026-05-30): on the FIRST batch a successful collab pass means EVERY
-      // returned role is a curated WeKruit partner role → tag each line so the agent fires the
-      // collab pitch (prescreen now → direct to the hiring manager). The prompt keys off this exact
-      // "[WeKruit partner role]" marker; open-market lines carry no marker (no fast-track promise).
-      const collabBatch = collabHit && !firstBatchDone
+      // COLLAB MARKER (Adam 2026-05-30): the merged set is now MIXED (collab roles first, then
+      // open-market fill), so the marker is per-job — tag ONLY the lines that came from the collab
+      // pass (by id) so the agent fires the collab pitch (prescreen now → direct to the hiring
+      // manager) on exactly those roles. The prompt keys off this exact "[WeKruit partner role]"
+      // marker; open-market lines carry no marker (no fast-track promise). `collabBatch` is now true
+      // whenever the collab pass produced surfaced jobs — no longer gated on the first batch.
+      const collabBatch = collabHit
       const jobs = rawJobs.map((j) => {
         const title = (j.jobTitle || j.roleTitle || "Role").trim()
         const company = (j.companyName || "Company").trim()
         const url = (j.atsApplyUrl ?? "").trim()
-        const head = collabBatch ? `${title} @ ${company} [WeKruit partner role]` : `${title} @ ${company}`
+        const head = collabIds.has(j.id)
+          ? `${title} @ ${company} [WeKruit partner role]`
+          : `${title} @ ${company}`
         return url ? `${head}\n${url}` : head
       })
-      const total = typeof result.total === "number" ? result.total : jobs.length
+      // `total` reflects the size of the offered set when collab contributed (the collab funnel `total`
+      // counts only collab jobs, which would understate a mixed batch); otherwise use the open-market
+      // catalog total so a zero-result batch still reports a meaningful count for the clarifier.
+      const total = collabBatch
+        ? rawJobs.length
+        : typeof meta.total === "number"
+          ? meta.total
+          : jobs.length
       const reason =
         jobs.length === 0
-          ? result.needsOnboarding
+          ? meta.needsOnboarding
             ? "needs onboarding — missing core preferences"
-            : result.noUserTags
+            : meta.noUserTags
               ? "no saved preferences yet"
               : "no fresh roles fit those constraints"
           : null
@@ -363,9 +410,9 @@ export function makeV16FindMatch(
         jobs,
         reason,
         snapshotTags: {
-          targetRoleFunction: result.userTags?.targetRoleFunction,
-          negativeRoleFunction: result.userTags?.negativeRoleFunction,
-          ...(result.missingAxes ? { missingAxes: result.missingAxes } : {}),
+          targetRoleFunction: meta.userTags?.targetRoleFunction,
+          negativeRoleFunction: meta.userTags?.negativeRoleFunction,
+          ...(meta.missingAxes ? { missingAxes: meta.missingAxes } : {}),
         },
       }
     } catch (err) {

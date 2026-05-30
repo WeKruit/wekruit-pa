@@ -28,19 +28,21 @@ test("nextOnboardingSlot hands the earliest pending slot + a prompt", () => {
   assert.ok(typeof next.prompt === "string" && next.prompt.length > 0, "prompt provided")
 })
 
-test("default slots fall back to SHARED_ONBOARDING_QUESTIONS ids (6 slots)", () => {
+test("default slots fall back to SHARED_ONBOARDING_QUESTIONS ids (7 slots)", () => {
   // empty slots[] → reducer uses the canonical default set.
-  // 6 slots after adding seniority_comp (intern/seniority + expected salary +
-  // negotiable-or-firm) before special_context — Adam 2026-05-30.
+  // 7 slots: target_role (forward role intent) inserted at index 2 after
+  // culture_stage (Adam 2026-05-30), plus seniority_comp (intern/seniority +
+  // expected salary + negotiable-or-firm) before special_context.
   const s: OnboardingState = { slots: [], answers: {}, complete: false }
   const next = nextOnboardingSlot(s)
   assert.equal(next.pending, DEFAULT_ONBOARDING_SLOTS[0])
-  assert.equal(DEFAULT_ONBOARDING_SLOTS.length, 6, "6 canonical onboarding slots")
+  assert.equal(DEFAULT_ONBOARDING_SLOTS.length, 7, "7 canonical onboarding slots")
   assert.deepEqual(
     [...DEFAULT_ONBOARDING_SLOTS],
     [
       "main_goal",
       "culture_stage",
+      "target_role",
       "industry_interest",
       "location_relocation",
       "seniority_comp",

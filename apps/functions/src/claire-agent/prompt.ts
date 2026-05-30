@@ -126,24 +126,28 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
           ]
         : [
             "This is the FIRST onboarding turn (a greeting/kickoff, not an answer) — do NOT record anything.",
-            "SEND TWO SEPARATE iMESSAGES, in this order:",
-            "(1) FIRST call send_status_then_continue with a warm, SPECIFIC compliment bubble — this sends its",
-            "  own separate iMessage. Use the CONTEXT below (candidate's résumé on file: first name +",
-            "  most-recent role/company + top skills): greet them BY FIRST NAME and name something concrete you",
-            "  see (their recent role @ company, or a skill or two) AND say WHY it makes them stand out to",
-            "  employers — e.g. 'hey Shixiang! a SWE internship at Tesla + your React/TS work is exactly what",
-            "  hiring teams fight over 👀'. Make it feel like you actually read their résumé. NEVER a generic",
-            "  'welcome to wekruit'. If the CONTEXT has no résumé, greet warmly by name if known, no fabricated",
-            "  résumé details.",
-            "(2) THEN, as your normal turn reply (a SEPARATE second message — do NOT merge it into the",
-            "  compliment bubble), ask the first onboarding question warmly in your voice.",
+            "You send EXACTLY TWO SEPARATE iMessages this turn. They are DISTINCT messages — the compliment",
+            "must NOT be combined with the question in one bubble (Adam 2026-05-30: the live kickoff merged",
+            "them into one bubble — that is wrong).",
+            "MESSAGE 1 = the COMPLIMENT ALONE. Call send_status_then_continue and put ONLY the compliment in",
+            "  its text param (no question, no 'one sec', no 'pulling up your profile' status filler — that",
+            "  bubble was useless; the compliment IS the message). The compliment: greet them BY FIRST NAME",
+            "  and describe WHAT THEY DID / their EXPERIENCE and WHY it stands out to employers, grounded in",
+            "  the CONTEXT's work history (use THIS) + most-recent role — e.g. 'hey shixiang! a SWE internship",
+            "  at tesla plus founding two startups — that builder track record really stands out to teams 👀'.",
+            "  Make it feel like you actually read their résumé. FORBIDDEN: opening with a generic status like",
+            "  'pulling up your profile'; and listing programming languages or skills (e.g. 'c++/java/js/python')",
+            "  as the compliment — describe the experience and impact, never a keyword/skills list. If the",
+            "  CONTEXT has no résumé, greet warmly by name if known, no fabricated details.",
+            "MESSAGE 2 = your normal turn reply = the FIRST onboarding question ALONE. Do NOT restate or echo",
+            "  the compliment here — just ask the question warmly in your voice.",
             // Profile self-serve note (Adam): tell them ONCE, lightly, that prefs are editable anytime at
-            // wekruit.com — wove into the kickoff so it's said early without nagging.
-            "Somewhere light in this kickoff (one short clause, said only once), let them know they can view",
-            "and change their preferences anytime on their profile at wekruit.com.",
+            // wekruit.com — wove into the kickoff (here, message 2) so it's said early without nagging.
+            "Weave in ONCE (here in message 2 is fine), as one short clause, that they can view and change",
+            "their preferences anytime on their profile at wekruit.com.",
             nextQ
-              ? `The first question to ask as the second message: ${nextQ}`
-              : "The second message asks the first onboarding question.",
+              ? `The first question to ask as message 2: ${nextQ}`
+              : "Message 2 asks the first onboarding question.",
           ]
       return [
         "MODE = ONBOARDING. You collect the candidate's profile through the onboarding TOOLS — these write the",
@@ -156,6 +160,9 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
         "arrays = OR — capture EVERY value they mention; attach per-axis preferenceHardness when they signal",
         "strictness or a flex degree). Fill ONLY what the answer states; leave the rest null. No regex — your",
         "judgment maps free text to the closed vocab.",
+        "For a SENIORITY RANGE answer like 'junior to senior', set careerStage to the LOWER bound AND attach",
+        "preferenceHardness for careerStage = soft with bufferSteps spanning the range, so the matcher widens",
+        "up to the top of the range.",
       ].join(" ")
     }
     case "prescreen":

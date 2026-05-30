@@ -37,16 +37,21 @@ test("job interview opener binds the inbound phone to the candidate id", () => {
   )
 })
 
-test("shared onboarding asks the six conversational questions in launch order", () => {
+test("shared onboarding asks the seven conversational questions in launch order", () => {
   assert.deepEqual(SHARED_ONBOARDING_QUESTIONS.map((q) => q.id), [
     "main_goal",
     "culture_stage",
+    "target_role",
     "industry_interest",
     "location_relocation",
     "seniority_comp",
     "special_context",
   ])
   assert.match(getSharedOnboardingQuestion("main_goal").prompt, /career growth, compensation, stability, mission, learning/i)
+  // target_role (Adam 2026-05-30): confirm forward role intent (résumé only
+  // seeds targetRoleFunction from history; this asks what they want NEXT).
+  assert.match(getSharedOnboardingQuestion("target_role").prompt, /what kind of roles are you going for next/i)
+  assert.match(getSharedOnboardingQuestion("target_role").prompt, /product, data, or design/i)
   assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote, onsite, or relocating/i)
   // seniority_comp (Adam 2026-05-30): one warm question covering intern-vs-full-time +
   // seniority + expected salary + whether those are negotiable or firm.
