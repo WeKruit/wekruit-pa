@@ -2,6 +2,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import type { ExternalCandidateRecord } from "@pa/core-types"
 import {
+  buildExperienceHighlightsFromRecord,
   buildParsedResumeDocFromRecord,
   runCoresignalExperiencesMirror,
 } from "./coresignal-experiences-mirror.js"
@@ -52,6 +53,19 @@ test("buildParsedResumeDocFromRecord — produces canonical shape", () => {
   assert.equal(doc.sourceBatchId, "batch-1")
 })
 
+test("buildExperienceHighlightsFromRecord — produces candidate-facing LinkedIn highlights", () => {
+  const highlights = buildExperienceHighlightsFromRecord(makeRecord())
+  assert.equal(highlights.length, 2)
+  assert.deepEqual(highlights[0], {
+    title: "Software Engineer",
+    company: "Confidential",
+    startDate: "August 2024",
+    currentRole: true,
+    source: "coresignal_collect_v2",
+    sourceLabel: "LinkedIn",
+  })
+})
+
 test("runCoresignalExperiencesMirror — happy path writes new parsedResume doc", async () => {
   const writes: Array<unknown> = []
   const result = await runCoresignalExperiencesMirror(makeRecord(), "uid-1", {
@@ -63,10 +77,18 @@ test("runCoresignalExperiencesMirror — happy path writes new parsedResume doc"
   })
   assert.equal(result.status, "mirrored")
   assert.equal(writes.length, 1)
-  const w = writes[0] as { parsedResumeDoc: Record<string, unknown>; userId: string; coresignalEmployeeId: number }
+  const w = writes[0] as {
+    parsedResumeDoc: Record<string, unknown>
+    userId: string
+    coresignalEmployeeId: number
+    canonicalLinkedInUrl?: string
+    experienceHighlights: Array<{ company: string }>
+  }
   assert.equal(w.userId, "uid-1")
   assert.equal(w.coresignalEmployeeId, 395094789)
   assert.equal(w.parsedResumeDoc.source, "coresignal_collect_v2")
+  assert.equal(w.canonicalLinkedInUrl, "https://linkedin.com/in/nicreichert")
+  assert.equal(w.experienceHighlights[0]?.company, "Confidential")
 })
 
 test("runCoresignalExperiencesMirror — skips when source is not coresignal_collect_v2", async () => {

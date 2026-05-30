@@ -37,6 +37,16 @@ export interface CandidateSelfProfile {
     updatedAt?: string
   }>
   calcomUrl?: string
+  experienceHighlights?: Array<{
+    title: string
+    company: string
+    location?: string
+    startDate?: string
+    endDate?: string | null
+    currentRole?: boolean
+    source?: string
+    sourceLabel?: string
+  }>
   handles?: Array<{ kind: string; verifiedAt?: string | null; source?: string }>
   globalTags?: {
     roleFunction?: string[]

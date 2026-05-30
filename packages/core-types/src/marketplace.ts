@@ -182,6 +182,18 @@ export const CandidateGithubPublicRepoSchema = z.object({
 })
 export type CandidateGithubPublicRepo = z.infer<typeof CandidateGithubPublicRepoSchema>
 
+export const CandidateExperienceHighlightSchema = z.object({
+  title: z.string().min(1).max(200),
+  company: z.string().min(1).max(200),
+  location: z.string().min(1).max(200).optional(),
+  startDate: z.string().min(1).max(64).optional(),
+  endDate: z.string().min(1).max(64).nullable().optional(),
+  currentRole: z.boolean().optional(),
+  source: z.string().min(1).max(80).optional(),
+  sourceLabel: z.string().min(1).max(120).optional(),
+})
+export type CandidateExperienceHighlight = z.infer<typeof CandidateExperienceHighlightSchema>
+
 export const CandidateProfileMarketplaceFieldsSchema = z.object({
   candidateLifecycleState: CandidateLifecycleStateSchema.default("prospect"),
   lifecycleUpdatedAt: TimestampSchema.optional(),
@@ -198,6 +210,7 @@ export const CandidateProfileMarketplaceFieldsSchema = z.object({
   githubOauthProfile: CandidateGithubOAuthProfileSchema.optional(),
   githubPublicRepos: z.array(CandidateGithubPublicRepoSchema).max(12).optional(),
   calcomUrl: OptionalHttpUrlSchema,
+  experienceHighlights: z.array(CandidateExperienceHighlightSchema).max(12).optional(),
   outreach: z
     .object({
       status: z.enum(["allowed", "cooldown", "paused", "opted_out"]).default("allowed"),
@@ -269,6 +282,7 @@ export const CandidateSelfProfileSchema = z.object({
   githubOauthProfile: CandidateGithubOAuthProfileSchema.optional(),
   githubPublicRepos: z.array(CandidateGithubPublicRepoSchema).max(12).optional(),
   calcomUrl: OptionalHttpUrlSchema,
+  experienceHighlights: z.array(CandidateExperienceHighlightSchema).max(12).optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema.optional(),
 })

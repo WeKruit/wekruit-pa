@@ -1922,6 +1922,7 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
               <IdentityCard profile={profile} />
               <MatchPreferencesCard profile={profile} onSaved={setProfile} />
               <WhatClairePitchesCard profile={profile} />
+              <ExperienceHighlightsCard profile={profile} />
               <SkillsCard profile={profile} editing={editing} />
               <UpdatePreferencesPanel onProfileUpdated={setProfile} />
             </div>
@@ -2270,6 +2271,43 @@ function WhatClairePitchesCard({ profile }: { profile: CandidateSelfProfile }) {
       ) : null}
     </section>
   )
+}
+
+function ExperienceHighlightsCard({ profile }: { profile: CandidateSelfProfile }) {
+  const experiences = (profile.experienceHighlights ?? []).slice(0, 8)
+  if (experiences.length === 0) return null
+  const sourceLabel = experiences.find((experience) => experience.sourceLabel)?.sourceLabel
+  return (
+    <section className="wkv2-card wk-prof-card">
+      <h3 className="wkv2-card__h">Experience</h3>
+      {sourceLabel ? <p className="wk-prof-card__hint">From {sourceLabel}</p> : null}
+      <div className="wk-prof-exp">
+        {experiences.map((experience, index) => (
+          <div
+            key={`${experience.company}-${experience.title}-${experience.startDate ?? index}`}
+            className="wk-prof-exp__item"
+          >
+            <span className="wk-prof-exp__dot" aria-hidden="true" />
+            <div className="wk-prof-exp__body">
+              <div className="wk-prof-exp__top">
+                <strong>{experience.title}</strong>
+                <span>{formatExperienceRange(experience)}</span>
+              </div>
+              <p>
+                {experience.company}
+                {experience.location ? ` · ${experience.location}` : ""}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function formatExperienceRange(experience: NonNullable<CandidateSelfProfile["experienceHighlights"]>[number]): string {
+  const end = experience.currentRole ? "Present" : experience.endDate
+  return [experience.startDate, end].filter(Boolean).join(" - ")
 }
 
 function SkillsCard({ profile, editing }: { profile: CandidateSelfProfile; editing: boolean }) {
@@ -3339,6 +3377,51 @@ const PROFILE_STYLES = `
   border-radius: var(--wk-r-sm);
 }
 
+.wk-prof-exp {
+  display: grid;
+  gap: 0;
+  margin-top: 8px;
+}
+.wk-prof-exp__item {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 12px;
+  padding: 10px 0;
+}
+.wk-prof-exp__item + .wk-prof-exp__item {
+  border-top: 1px solid var(--wk-border);
+}
+.wk-prof-exp__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wk-ink);
+  margin-top: 7px;
+}
+.wk-prof-exp__body { min-width: 0; }
+.wk-prof-exp__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+.wk-prof-exp__top strong {
+  color: var(--wk-ink);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.wk-prof-exp__top span {
+  color: var(--wk-ink-3);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.wk-prof-exp__body p {
+  margin: 3px 0 0;
+  color: var(--wk-ink-2);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .wk-prof-skills { gap: 6px; margin-top: 6px; }
 .wk-prof-skill {
   display: inline-flex; align-items: center; gap: 6px;
@@ -3424,6 +3507,8 @@ const PROFILE_STYLES = `
   .wk-prof__h1 { font-size: 28px; }
   .wk-prof__live { display: none; }
   .wk-prof-row { grid-template-columns: 1fr; gap: 4px; }
+  .wk-prof-exp__top { display: grid; gap: 3px; }
+  .wk-prof-exp__top span { white-space: normal; }
 }
 
 /* v3 profile: top strip (completeness + visibility) + match-preference chips */

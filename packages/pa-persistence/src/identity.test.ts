@@ -24,6 +24,23 @@ function makeFakeFirestore(store: Store = makeStore()): { db: Firestore; store: 
     return store.get(name)!
   }
 
+  function applySet(
+    collectionName: string,
+    docId: string,
+    data: Record<string, unknown>,
+    opts?: { merge?: boolean },
+  ) {
+    const current = opts?.merge ? { ...(col(collectionName).get(docId) ?? {}) } : {}
+    for (const [key, value] of Object.entries(data)) {
+      if (value && typeof value === "object" && value.constructor?.name === "DeleteTransform") {
+        delete current[key]
+      } else {
+        current[key] = value
+      }
+    }
+    col(collectionName).set(docId, current)
+  }
+
   let auto = 1
   function docRef(collectionName: string, id?: string) {
     const docId = id ?? `auto_${auto++}`
@@ -36,8 +53,7 @@ function makeFakeFirestore(store: Store = makeStore()): { db: Firestore; store: 
         return { exists: data !== undefined, id: docId, data: () => data }
       },
       async set(data: Record<string, unknown>, opts?: { merge?: boolean }) {
-        const current = col(collectionName).get(docId)
-        col(collectionName).set(docId, opts?.merge && current ? { ...current, ...data } : { ...data })
+        applySet(collectionName, docId, data, opts)
       },
     }
   }
@@ -82,11 +98,7 @@ function makeFakeFirestore(store: Store = makeStore()): { db: Firestore; store: 
       }
       const result = await fn(tx)
       for (const write of writes) {
-        const current = col(write.ref._collectionName).get(write.ref._id)
-        col(write.ref._collectionName).set(
-          write.ref._id,
-          write.opts?.merge && current ? { ...current, ...write.data } : { ...write.data }
-        )
+        applySet(write.ref._collectionName, write.ref._id, write.data, write.opts)
       }
       return result
     },
@@ -102,6 +114,39 @@ test("hashCandidateHandle normalizes and never places raw PII in the handle id",
   assert.equal(a.handleHash, b.handleHash)
   assert.equal(a.handleId.includes("alice@example.com"), false)
   assert.match(a.handleId, /^email__[0-9a-f]{64}$/)
+})
+
+test("linkCandidateHandle omits undefined deliverable for connector handles", async () => {
+  const { db, store } = makeFakeFirestore()
+  const result = await linkCandidateHandle(db, {
+    candidateId: "cand-linkedin",
+    kind: "linkedin",
+    value: "https://www.linkedin.com/in/cand-linkedin",
+    source: "candidate",
+    verified: true,
+    now,
+  })
+  assert.equal(result.created, true)
+  const stored = store.get(PA_COLLECTIONS.candidateHandles)!.get(result.handle.handleId)!
+  assert.equal("deliverable" in stored, false)
+})
+
+test("linkCandidateHandle validates identity event before writing the handle", async () => {
+  const { db, store } = makeFakeFirestore()
+  await assert.rejects(
+    () =>
+      linkCandidateHandle(db, {
+        candidateId: "cand-invalid-evidence",
+        kind: "linkedin",
+        value: "https://www.linkedin.com/in/cand-invalid-evidence",
+        source: "candidate",
+        verified: true,
+        evidence: [{ source: "coresignal", summary: "invalid source" }] as never,
+        now,
+      }),
+    /Invalid enum value/,
+  )
+  assert.equal(store.get(PA_COLLECTIONS.candidateHandles)!.size, 0)
 })
 
 test("same extracted email across browser ids resolves to one candidate", async () => {
@@ -304,6 +349,16 @@ test("claimCandidateProfile preserves already connected OAuth handles on self pr
     },
     { merge: true },
   )
+  await db.collection(PA_COLLECTIONS.candidateSelfProfiles).doc(resolved.candidateId).set(
+    {
+      candidateId: resolved.candidateId,
+      lifecycleState: "claimed",
+      linkedinUrl: "https://www.linkedin.com/oauth-linked/sub-1",
+      createdAt: now,
+      updatedAt: now,
+    },
+    { merge: true },
+  )
 
   const claimed = await claimCandidateProfile(db, {
     firebaseUid: "firebase-connected",
@@ -326,6 +381,7 @@ test("claimCandidateProfile preserves already connected OAuth handles on self pr
     (stored.handles as Array<{ kind: string }>).map((handle) => handle.kind).sort(),
     ["email", "github", "linkedin"].sort(),
   )
+  assert.equal("linkedinUrl" in stored, false)
 })
 
 test("claimCandidateProfile adopts a prelinked layoff candidate instead of creating a second profile", async () => {
@@ -377,13 +433,26 @@ test("writeCandidateSelfProfile redacts phone and preserves candidate-facing sta
     candidateId: "cand-1",
     email: "person@example.com",
     phoneE164: "+14155550100",
-    marketplaceFields: { candidateLifecycleState: "reachable" },
+    marketplaceFields: {
+      candidateLifecycleState: "reachable",
+      experienceHighlights: [
+        {
+          title: "Software Engineer",
+          company: "Tesla",
+          startDate: "May 2024",
+          endDate: "August 2024",
+          source: "coresignal_collect_v2",
+          sourceLabel: "LinkedIn",
+        },
+      ],
+    },
     now,
   })
   const profile = store.get(PA_COLLECTIONS.candidateSelfProfiles)!.get("cand-1")!
   assert.equal(profile.emailMasked, "p***@example.com")
   assert.equal(profile.phoneMasked, "+14***00")
   assert.equal(profile.lifecycleState, "reachable")
+  assert.equal((profile.experienceHighlights as Array<{ company: string }>)[0]?.company, "Tesla")
 })
 
 // ---------- Identity hardening 2026-05-21 (L1-entry gate) -----------------

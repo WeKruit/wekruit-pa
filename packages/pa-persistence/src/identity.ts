@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import type { Firestore } from "firebase-admin/firestore"
+import { FieldValue, type Firestore } from "firebase-admin/firestore"
 import {
   CandidateAuthMappingSchema,
   CandidateHandleSchema,
@@ -99,6 +99,35 @@ function isLinkedinOAuthMarker(value: unknown): boolean {
 function normalizeLinkedinProfileUrl(value: unknown): string | undefined {
   if (isLinkedinOAuthMarker(value)) return undefined
   return normalizeOptionalUrl(value)
+}
+
+function normalizeExperienceHighlights(value: unknown): Array<Record<string, unknown>> | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: Array<Record<string, unknown>> = []
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue
+    const raw = item as Record<string, unknown>
+    const title = typeof raw.title === "string" ? raw.title.trim() : ""
+    const company = typeof raw.company === "string" ? raw.company.trim() : ""
+    if (!title || !company) continue
+    const location = typeof raw.location === "string" ? raw.location.trim() : ""
+    const startDate = typeof raw.startDate === "string" ? raw.startDate.trim() : ""
+    const endDate = typeof raw.endDate === "string" ? raw.endDate.trim() : ""
+    const source = typeof raw.source === "string" ? raw.source.trim() : ""
+    const sourceLabel = typeof raw.sourceLabel === "string" ? raw.sourceLabel.trim() : ""
+    out.push(stripUndefined({
+      title: title.slice(0, 200),
+      company: company.slice(0, 200),
+      location: location ? location.slice(0, 200) : undefined,
+      startDate: startDate ? startDate.slice(0, 64) : undefined,
+      endDate: endDate ? endDate.slice(0, 64) : undefined,
+      currentRole: raw.currentRole === true ? true : undefined,
+      source: source ? source.slice(0, 80) : undefined,
+      sourceLabel: sourceLabel ? sourceLabel.slice(0, 120) : undefined,
+    }))
+    if (out.length >= 12) break
+  }
+  return out.length > 0 ? out : undefined
 }
 
 function legacyLinkedinOauthProfile(
@@ -294,7 +323,7 @@ export async function linkCandidateHandle(
         deliverable: shouldPromoteDeliverable ? true : data.deliverable,
         updatedAt: ts,
       })
-      await ref.set(next, { merge: true })
+      await ref.set(stripUndefined(next as unknown as Record<string, unknown>), { merge: true })
       return { handle: next, created: false }
     }
     return { handle: data, created: false }
@@ -311,8 +340,7 @@ export async function linkCandidateHandle(
     deliverable: input.deliverable,
     createdAt: ts,
   })
-  await ref.set(handle)
-  await writeIdentityEvent(db, {
+  const identityEvent = CandidateIdentityEventSchema.parse({
     eventId: deterministicId("ident", ["handle_linked", handle.handleId, input.candidateId]),
     type: "handle_linked",
     actor: "system",
@@ -328,6 +356,8 @@ export async function linkCandidateHandle(
     },
     createdAt: ts,
   })
+  await ref.set(stripUndefined(handle as unknown as Record<string, unknown>))
+  await writeIdentityEvent(db, identityEvent)
   return { handle, created: true }
 }
 
@@ -558,13 +588,20 @@ export async function writeCandidateSelfProfile(
     githubOauthProfile: legacyGithubOauthProfile(input.marketplaceFields, ts),
     githubPublicRepos: githubPublicReposFromMarketplace(input.marketplaceFields),
     calcomUrl: normalizeOptionalUrl(input.marketplaceFields?.calcomUrl),
+    experienceHighlights: normalizeExperienceHighlights(
+      (input.marketplaceFields as Record<string, unknown> | undefined)?.experienceHighlights,
+    ),
     createdAt: ts,
     updatedAt: ts,
   })
+  const persisted = stripUndefined(profile as unknown as Record<string, unknown>)
+  if (!profile.linkedinUrl) {
+    persisted.linkedinUrl = FieldValue.delete()
+  }
   await db
     .collection(PA_COLLECTIONS.candidateSelfProfiles)
     .doc(input.candidateId)
-    .set(stripUndefined(profile as unknown as Record<string, unknown>), { merge: true })
+    .set(persisted, { merge: true })
   return profile
 }
 

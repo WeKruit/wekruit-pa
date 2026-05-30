@@ -52,6 +52,31 @@ function extractCoresignalEmployeeId(record: ExternalCandidateRecord): number | 
   return null
 }
 
+function isLinkedinOAuthMarker(value: unknown): boolean {
+  return typeof value === "string" && value.includes("/oauth-linked/")
+}
+
+function stripUndefined(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined))
+}
+
+export function buildExperienceHighlightsFromRecord(record: ExternalCandidateRecord): Array<Record<string, unknown>> {
+  return (record.experience ?? [])
+    .filter((experience) => experience.company && experience.title)
+    .slice(0, 8)
+    .map((experience, index) =>
+      stripUndefined({
+        title: experience.title,
+        company: experience.company,
+        startDate: experience.startDate ?? undefined,
+        endDate: experience.endDate ?? undefined,
+        currentRole: index === 0 && !experience.endDate ? true : undefined,
+        source: "coresignal_collect_v2",
+        sourceLabel: "LinkedIn",
+      }),
+    )
+}
+
 /**
  * Translate ExternalCandidateRecord into a parsedCandidateResumes baseDoc
  * shape. Mirrors the canonical write site in
@@ -116,6 +141,8 @@ export interface MirrorDeps {
     parsedResumeDoc: Record<string, unknown>
     userId: string
     coresignalEmployeeId: number
+    canonicalLinkedInUrl?: string
+    experienceHighlights: Array<Record<string, unknown>>
   }) => Promise<void>
   now?: () => string
   log?: (event: string, fields?: Record<string, unknown>) => void
@@ -158,12 +185,15 @@ export async function runCoresignalExperiencesMirror(
   }
 
   const doc = buildParsedResumeDocFromRecord(record, userId, now, coresignalEmployeeId)
+  const experienceHighlights = buildExperienceHighlightsFromRecord(record)
 
   if (deps.writeBoth) {
     await deps.writeBoth({
       parsedResumeDoc: doc,
       userId,
       coresignalEmployeeId,
+      canonicalLinkedInUrl: record.canonicalLinkedInUrl,
+      experienceHighlights,
     })
   }
 
@@ -198,18 +228,50 @@ export function makeFirestoreMirrorDeps(db: Firestore): Pick<MirrorDeps, "findEx
         }
       })
     },
-    writeBoth: async ({ parsedResumeDoc, userId, coresignalEmployeeId }) => {
+    writeBoth: async ({
+      parsedResumeDoc,
+      userId,
+      coresignalEmployeeId,
+      canonicalLinkedInUrl,
+      experienceHighlights,
+    }) => {
       const batch = db.batch()
+      const userRef = db.collection(PA_USERS_COLLECTION).doc(userId)
+      const selfProfileRef = db.collection("pa-candidate-self-profiles").doc(userId)
+      const [userSnap, selfProfileSnap] = await Promise.all([userRef.get(), selfProfileRef.get()])
+      const userData = (userSnap.data() ?? {}) as Record<string, unknown>
+      const existingLinkedinUrl = userData.linkedinUrl
+      const shouldWriteLinkedinUrl =
+        typeof canonicalLinkedInUrl === "string" &&
+        canonicalLinkedInUrl.trim().length > 0 &&
+        (typeof existingLinkedinUrl !== "string" ||
+          existingLinkedinUrl.trim().length === 0 ||
+          isLinkedinOAuthMarker(existingLinkedinUrl))
       const newRef = db.collection(PARSED_RESUMES_COLLECTION).doc()
       batch.set(newRef, parsedResumeDoc)
-      batch.set(
-        db.collection(PA_USERS_COLLECTION).doc(userId),
-        {
-          coresignalEmployeeId,
-          coresignalEmployeeIdUpdatedAt: new Date().toISOString(),
-        },
-        { merge: true },
-      )
+      const userPatch: Record<string, unknown> = {
+        coresignalEmployeeId,
+        coresignalEmployeeIdUpdatedAt: new Date().toISOString(),
+      }
+      if (shouldWriteLinkedinUrl) {
+        userPatch.linkedinUrl = canonicalLinkedInUrl
+      }
+      if (experienceHighlights.length > 0) {
+        userPatch.experienceHighlights = experienceHighlights
+        userPatch.experienceHighlightsUpdatedAt = new Date().toISOString()
+      }
+      batch.set(userRef, userPatch, { merge: true })
+      if (selfProfileSnap.exists && experienceHighlights.length > 0) {
+        batch.set(
+          selfProfileRef,
+          {
+            ...(shouldWriteLinkedinUrl ? { linkedinUrl: canonicalLinkedInUrl } : {}),
+            experienceHighlights,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true },
+        )
+      }
       await batch.commit()
     },
   }
