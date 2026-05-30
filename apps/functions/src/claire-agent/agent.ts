@@ -139,7 +139,7 @@ function trackTransport(inner: ClaireTransport): {
     markRead: () => inner.markRead(),
     typing: () => inner.typing(),
     sendStatus: (t) => inner.sendStatus(t),
-    sendText: (t) => inner.sendText(t),
+    sendText: (t, opts) => inner.sendText(t, opts),
     tapback: (r) => {
       viaTool = true
       return inner.tapback(r)

@@ -483,7 +483,13 @@ export async function paSendblueOutboxHandler(
   // PA_TYPING_DWELL_MS env override still honored if set (operator escape hatch).
   // 2026-05-19 — default-on per Adam directive (was opt-in via
   // PA_TYPING_INDICATOR=1). Opt out via PA_TYPING_INDICATOR=0.
-  if (isTypingIndicatorEnabled()) {
+  // PACED multi-bubble rows (data.paced) were ALREADY spaced with a typing+delay beat at the emit
+  // seam (deliverBubbles). Re-running this length-based dwell here would (a) double-pace them and
+  // (b) REORDER them — the dwell scales with body.length, so a longer bubble waits longer and lands
+  // after a shorter later one (the 2026-05-30 reversed-greeting bug). So for paced rows, POST
+  // immediately (no extra dwell). Single-bubble / legacy rows keep the human dwell unchanged.
+  const rowPaced = (data as { paced?: unknown }).paced === true
+  if (!rowPaced && isTypingIndicatorEnabled()) {
     try {
       await deps.sendblueClient.sendTypingIndicator({ to: toPeer })
       const overrideRaw = process.env.PA_TYPING_DWELL_MS

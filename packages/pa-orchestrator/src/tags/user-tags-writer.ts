@@ -37,6 +37,44 @@ import { canonicalizeLocationTokens } from "./onboarding-mappers.js"
 const PA_USERS_COLLECTION = "pa-users"
 
 /**
+ * Project the matching tag store (`pa-users.tags`, UserTags) onto the candidate-facing
+ * `pa-users.globalTags` (CandidateGlobalTags) surface that the /me portal reads.
+ *
+ * WHY (Adam 2026-05-30 — the /me-renders-nothing gap): the conversation/onboarding path writes ONLY
+ * `pa-users.tags`. The /me portal + admin marketplace read `candidateSelfProfiles.globalTags`, which
+ * `claimCandidateProfile` populates from `pa-users.globalTags` — a field that only the external-supply
+ * path ever wrote. So a phone-onboarded candidate had a complete, canonical `tags` blob that was
+ * INVISIBLE to /me. Projecting here, in the D8 sole writer, closes the split with zero new sync job:
+ * every tag write lands both surfaces atomically. Field renames per CandidateGlobalTagsSchema:
+ * targetRoleFunction→roleFunction, minSalary→minSalaryUsd, companySize→companySizePreference; the rest
+ * are 1:1. Values are already canonical (validated upstream), so the /me read-schema parse is safe.
+ * Only keys present in `tags` are emitted → set({merge:true}) preserves any globalTags subfields this
+ * path doesn't own (e.g. external-supply-set fields).
+ */
+export function projectTagsToGlobalTags(tags: Record<string, unknown>): Record<string, unknown> {
+  const g: Record<string, unknown> = {}
+  const arr = (k: string): unknown[] | undefined => (Array.isArray(tags[k]) ? (tags[k] as unknown[]) : undefined)
+  const role = arr("targetRoleFunction")
+  if (role) g.roleFunction = role
+  if (Array.isArray(tags.skills)) g.skills = tags.skills
+  if (typeof tags.careerStage === "string") g.careerStage = tags.careerStage
+  if (Array.isArray(tags.yoeRange)) g.yoeRange = tags.yoeRange
+  const ind = arr("industrySector")
+  if (ind) g.industrySector = ind
+  const loc = arr("targetLocations")
+  if (loc) g.targetLocations = loc
+  if (typeof tags.visaStatus === "string") g.visaStatus = tags.visaStatus
+  const jt = arr("targetJobType")
+  if (jt) g.targetJobType = jt
+  const rt = arr("relevantTags")
+  if (rt) g.relevantTags = rt
+  if (typeof tags.minSalary === "number" && Number.isFinite(tags.minSalary)) g.minSalaryUsd = tags.minSalary
+  const cs = arr("companySize")
+  if (cs) g.companySizePreference = cs
+  return g
+}
+
+/**
  * Partial-update shape — any subset of `UserTags` keys plus optional
  * bookkeeping. Numeric fields, arrays, scalars all pass through untouched.
  */
@@ -92,7 +130,7 @@ export async function writeUserTagsFull(
     await db
       .collection(PA_USERS_COLLECTION)
       .doc(userId)
-      .set({ tags }, { merge: true })
+      .set({ tags, globalTags: projectTagsToGlobalTags(tags) }, { merge: true })
     log("pa.user_tags.write_full_ok", {
       userId,
       source: opts.source ?? "cv",
@@ -319,7 +357,7 @@ export async function applyPartialUserTags(
     await db
       .collection(PA_USERS_COLLECTION)
       .doc(userId)
-      .set({ tags: merged }, { merge: true })
+      .set({ tags: merged, globalTags: projectTagsToGlobalTags(merged) }, { merge: true })
     log("pa.user_tags.apply_partial_ok", {
       userId,
       source,

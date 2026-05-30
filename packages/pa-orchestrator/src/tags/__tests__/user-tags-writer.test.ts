@@ -69,14 +69,19 @@ function makeDb(initialDocs: Record<string, Record<string, unknown>> = {}) {
 // writeUserTagsFull
 // ---------------------------------------------------------------------------
 
-test("writeUserTagsFull: happy path writes {tags} merge:true", async () => {
+test("writeUserTagsFull: happy path writes {tags, globalTags} merge:true", async () => {
   const ctx = makeDb()
   const tags = { skills: ["python"], industryEnum: ["tech_software"], schemaVersion: 1 }
   const res = await writeUserTagsFull(ctx.db, "u-1", tags, { source: "cv" })
   assert.equal(res.ok, true)
   assert.equal(ctx.writes.length, 1)
   assert.equal(ctx.writes[0]!.id, "u-1")
-  assert.deepEqual(ctx.writes[0]!.data, { tags })
+  // Writes BOTH the matching store (tags) AND the /me-facing projection (globalTags) atomically
+  // (2026-05-30 — closes the tags↔globalTags split so phone-onboarded users render on /me).
+  const written = ctx.writes[0]!.data as { tags: unknown; globalTags: Record<string, unknown> }
+  assert.deepEqual(written.tags, tags)
+  // Only mappable axes project; skills is 1:1, industryEnum/schemaVersion do not map.
+  assert.deepEqual(written.globalTags, { skills: ["python"] })
   assert.equal(ctx.writes[0]!.merge, true)
 })
 

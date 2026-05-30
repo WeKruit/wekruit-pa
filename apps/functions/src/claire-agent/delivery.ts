@@ -103,8 +103,26 @@ export async function deliverBubbles(
     clean.length > MAX_BUBBLES
       ? [...clean.slice(0, MAX_BUBBLES - 1), clean.slice(MAX_BUBBLES - 1).join(" ")]
       : clean
-  for (const b of bubbles) {
-    await ctx.transport.sendText(b)
+
+  // SINGLE interface for ALL multi-bubble outbound (onboarding, recs, proactive) — ordered + human.
+  // WHY (Adam 2026-05-30, the reversed-greeting bug): two bubbles enqueue two independent pa-outbound
+  // rows, each delivered by a SEPARATE concurrent outbox CF instance whose typing dwell is LENGTH-
+  // based — the longer compliment dwelled longer and arrived AFTER the shorter question. Fix here, at
+  // the single emit seam:
+  //   1. send SEQUENTIALLY, and for every bubble after the first, fire a typing indicator + a small
+  //      RANDOMIZED human delay BEFORE it. That spaces the `createdAt` timestamps ≥600ms apart (so
+  //      create order is unambiguous) AND reads like a person typing the next message.
+  //   2. tag each row { seq, paced } so the outbox SKIPS its own length-based dwell for these rows
+  //      (delivery.ts already paced them) — no double-pacing, no length-skew reorder.
+  // Single bubble (the common case) keeps the legacy path: no emit delay, forwarder dwell as before.
+  const multi = bubbles.length > 1
+  for (let i = 0; i < bubbles.length; i++) {
+    if (i > 0) {
+      await ctx.transport.typing().catch(() => {})
+      const ms = 600 + Math.floor(Math.random() * 900) // 600–1500ms human inter-bubble beat
+      await new Promise((r) => setTimeout(r, ms))
+    }
+    await ctx.transport.sendText(bubbles[i]!, multi ? { seq: i, paced: true } : undefined)
   }
   return bubbles.length
 }

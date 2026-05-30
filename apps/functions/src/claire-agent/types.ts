@@ -51,7 +51,8 @@ export interface ClaireTransport {
   markRead(): Promise<void>
   typing(): Promise<void>
   sendStatus(text: string): Promise<void>
-  sendText(text: string): Promise<void>
+  /** opts carries multi-bubble ordering: seq (0-based position) + paced (emit already spaced it). */
+  sendText(text: string, opts?: { seq?: number; paced?: boolean }): Promise<void>
   tapback(reaction: ClaireReaction): Promise<void>
   noReply(reason: string): Promise<void>
 }

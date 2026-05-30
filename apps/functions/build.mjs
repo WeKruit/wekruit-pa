@@ -218,4 +218,18 @@ if (existsSync(envSrc)) {
   console.log("[functions] no .env file found at", envSrc, "(skipping admin allowlist)")
 }
 
+// ALSO copy the project-scoped dotenv `.env.wekruit-5f89b` into the bundle. firebase-tools loads
+// BOTH `.env` and `.env.<projectId>` from the functions SOURCE dir (= lib/), with the project file
+// overriding. Without this copy, the project-scoped PA_ flags (PA_JOB_REC_CARD_ENABLED,
+// PA_TCPA_GATE_ENFORCED, PA_VOICE_PRESCREEN_ENABLED) live ONLY at apps/functions/.env.wekruit-5f89b
+// and never reach lib/ → process.env at runtime (the 2026-05-30 missing-rec-card bug: the card flag
+// was set but invisible to the deployed function). Copy it so the deploy loads it for this project.
+const envProjSrc = resolve(__dirname, ".env.wekruit-5f89b")
+if (existsSync(envProjSrc)) {
+  copyFileSync(envProjSrc, resolve(outDir, ".env.wekruit-5f89b"))
+  console.log("[functions] copied .env.wekruit-5f89b into deploy bundle")
+} else {
+  console.log("[functions] no .env.wekruit-5f89b found at", envProjSrc, "(skipping project flags)")
+}
+
 console.log("[functions] bundled to", outDir)

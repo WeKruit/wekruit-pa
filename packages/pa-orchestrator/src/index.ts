@@ -461,6 +461,7 @@ export {
   writeUserTagsFull,
   applyPartialUserTags,
   auditUsersWithoutTags,
+  projectTagsToGlobalTags,
   type PartialUserTags,
   type WriteUserTagsOpts,
 } from "./tags/user-tags-writer.js"

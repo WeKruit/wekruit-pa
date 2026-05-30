@@ -16,6 +16,10 @@ export type EnqueueOutboundInput = {
    * caption. Omitted → text-only send, unchanged.
    */
   mediaUrl?: string
+  /** Multi-bubble ordering: 0-based position of this bubble within the turn (see OutboundMessageSchema). */
+  seq?: number
+  /** Emit side already paced this bubble (typing+delay) → outbox skips its length-based dwell. */
+  paced?: boolean
   idempotencyKey: string
   runtimeApproved?: true
   runtimeSource?: string
@@ -63,6 +67,8 @@ export async function enqueueOutbound(
     ...(input.imessageChatId ? { imessageChatId: input.imessageChatId } : {}),
     body: input.body,
     ...(input.mediaUrl ? { mediaUrl: input.mediaUrl } : {}),
+    ...(typeof input.seq === "number" ? { seq: input.seq } : {}),
+    ...(input.paced ? { paced: true } : {}),
     status: "pending",
     createdAt: now,
     idempotencyKey: input.idempotencyKey,

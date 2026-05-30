@@ -191,7 +191,7 @@ export function createSendblueTransport(
     },
 
     // User-facing reply — durable, idempotent, retried via the pa-outbound outbox.
-    async sendText(text: string): Promise<void> {
+    async sendText(text: string, opts?: { seq?: number; paced?: boolean }): Promise<void> {
       record("text", text)
       if (dryRun) return
       const body = String(text ?? "").trim()
@@ -202,6 +202,8 @@ export function createSendblueTransport(
           toE164: deps.toE164,
           body,
           idempotencyKey: textIdempotencyKey(deps, body),
+          ...(typeof opts?.seq === "number" ? { seq: opts.seq } : {}),
+          ...(opts?.paced ? { paced: true } : {}),
           runtimeApproved: true,
           runtimeSource: "pa_orchestrator",
         })
