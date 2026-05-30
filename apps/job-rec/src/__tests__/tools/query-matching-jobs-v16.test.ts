@@ -2422,9 +2422,91 @@ test("queryMatchingJobsV16: resume-derived SWE intern profile rejects senior ful
 
   assert.deepEqual(r.jobs.map((job) => job.id), ["intern-fit"])
   assert.equal(r.userTags?.careerStage, "intern")
-  assert.deepEqual(r.userTags?.targetJobType, ["internship"])
+  // Intern/student infers a widened jobType set (internship + new_graduate +
+  // full_time) so new-grads also see entry full-time roles (fix 106f199d). The
+  // senior/staff full-time jobs are still dropped — by the careerStage gate, not
+  // jobType — which is what this test guards (only intern-fit survives above).
+  assert.deepEqual(r.userTags?.targetJobType, ["internship", "new_graduate", "full_time"])
   assert.ok(!r.missingAxes?.includes("careerStage"))
   assert.ok(!r.missingAxes?.includes("targetJobType"))
+})
+
+// ── WeKruit-collab pool (Adam 2026-05-29: "share the same matching system; match
+//    the collab pool; push on threshold") ────────────────────────────────────
+async function seedCollabJob(mfs: MockFirestore, id: string, over: Record<string, unknown>): Promise<void> {
+  await mfs
+    .collection("pa-jobs")
+    .doc(id)
+    .set({
+      wekruitCollaborationStatus: "collaborated",
+      publicVisible: true,
+      companyName: "CollabCo",
+      title: "Collab Backend Engineer",
+      roleFunction: ["software_engineering"],
+      seniorityLevel: "mid_level",
+      locationBuckets: ["san_francisco_bay_area"],
+      sponsorship: true,
+      jobType: "full_time",
+      requiredSkills: ["python", "typescript"],
+      // NOTE: intentionally NO atsApplyUrl and NO firstSeenAt — the collab
+      // exemptions must let it through (WeKruit pre-screen is the apply path).
+      prescreenConfig: { jobTitle: "Collab Backend Engineer", company: "CollabCo", questions: [{ id: "q1", prompt: "?" }] },
+      ...over,
+    })
+}
+
+async function seedMidSweUser(mfs: MockFirestore, id: string, over: Record<string, unknown> = {}): Promise<void> {
+  await mfs
+    .collection("pa-users")
+    .doc(id)
+    .set({
+      tags: {
+        skills: ["python", "typescript"],
+        targetRoleFunction: ["software_engineering"],
+        roleFunction: ["software_engineering"],
+        careerStage: "mid_level",
+        targetJobType: ["full_time"],
+        targetLocations: ["san_francisco_bay_area"],
+        visaStatus: "citizen",
+        schemaVersion: 1,
+        ...over,
+      },
+    })
+}
+
+test("queryMatchingJobsV16: collab pool surfaces a matching collab job despite no atsApplyUrl/freshness", async () => {
+  const mfs = new MockFirestore()
+  await seedMidSweUser(mfs, "u_mid_swe")
+  await seedCollabJob(mfs, "collab-fit", {})
+
+  const r = await queryMatchingJobsV16({ userId: "u_mid_swe", nowMs: NOW }, { db: asFirestore(mfs) })
+
+  const collab = r.jobs.find((j) => j.id === "collab-fit")
+  assert.ok(collab, "collab job should surface through the shared matcher")
+  assert.equal(collab!.matchSourceLabel, "WeKruit collaborated")
+})
+
+test("queryMatchingJobsV16: collab pool still obeys careerStage + roleFunction + prescreen gates", async () => {
+  // Wrong seniority: a mid_level collab job must drop for an intern candidate.
+  const internMfs = new MockFirestore()
+  await seedMidSweUser(internMfs, "u_intern", { careerStage: "intern", targetJobType: ["internship"] })
+  await seedCollabJob(internMfs, "collab-mid", {})
+  const internR = await queryMatchingJobsV16({ userId: "u_intern", nowMs: NOW }, { db: asFirestore(internMfs) })
+  assert.equal(internR.jobs.some((j) => j.id === "collab-mid"), false)
+
+  // No prescreen questions → not pushable (can't run the first interview).
+  const noQMfs = new MockFirestore()
+  await seedMidSweUser(noQMfs, "u_mid_swe")
+  await seedCollabJob(noQMfs, "collab-noq", { prescreenConfig: { jobTitle: "X", company: "Y" } })
+  const noQR = await queryMatchingJobsV16({ userId: "u_mid_swe", nowMs: NOW }, { db: asFirestore(noQMfs) })
+  assert.equal(noQR.jobs.some((j) => j.id === "collab-noq"), false)
+
+  // Wrong roleFunction → not in the candidate's pool.
+  const roleMfs = new MockFirestore()
+  await seedMidSweUser(roleMfs, "u_mid_swe")
+  await seedCollabJob(roleMfs, "collab-marketing", { roleFunction: ["marketing"] })
+  const roleR = await queryMatchingJobsV16({ userId: "u_mid_swe", nowMs: NOW }, { db: asFirestore(roleMfs) })
+  assert.equal(roleR.jobs.some((j) => j.id === "collab-marketing"), false)
 })
 
 test("queryMatchingJobsV16: founder resume profile can match senior product and software roles", async () => {
