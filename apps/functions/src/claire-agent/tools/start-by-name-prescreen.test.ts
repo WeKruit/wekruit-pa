@@ -1,82 +1,105 @@
 /**
- * start-by-name-prescreen.test.ts — the ADDITIVE by-name prescreen path (task #13 follow-on).
+ * start-by-name-prescreen.test.ts — CANONICAL role/company resolution (Adam 2026-05-31).
  *
- * Locks the two friendly-path primitives that sit ALONGSIDE the copy-paste WeKruit_<jobId>_<userId>_Job
- * trigger (which is untouched):
+ * Replaces literal string-overlap matching: a fuzzy reference ("some product role", "the design role
+ * at the voice company", "the fintech one") is resolved on the SAME canonical @wekruit/shared-tags
+ * vocab the tag extractor uses (roleFunction / industrySector / company) — NOT title token overlap.
  *
- *   resolveCollabRole          — free-form role name → exactly-one jobId, with no_match / ambiguous /
- *                                exact-1 outcomes (NEVER a silent wrong-role pick on a tie). NO regex.
- *   prescreenStatusFromTerminal — PASS→passed, FAIL→not_passed, null→in_progress.
- *   check_prescreen_progress    — userId-only query + in-memory company/title filter + status mapping.
+ *   scoreRoleAgainstQuery / rankRoles — pure canonical scorer: no_match / one / ambiguous (a tie is
+ *                                       ALWAYS ambiguous → the agent clarifies, never a silent pick).
+ *   loadCandidateRoles                — matched (lastCollabRoles) ∪ prescreened (sessions), enriched
+ *                                       with the job's canonical tags (matching-jobs back-fill).
+ *   find_my_role tool                 — the agent composes the canonical query; the tool ranks.
+ *   begin_collab_prescreen({jobId})   — starts the RESOLVED jobId; a non-matched jobId → not_matched.
+ *   prescreenStatusFromTerminal / check_prescreen_progress — unchanged.
  *
- * Pure/offline: the resolver + status map are pure; the progress tool is driven against a tiny
- * Firestore-faithful fake (mirrors process-tools.test.ts / prescreen-context.test.ts fake-db style).
- * No SDK/LLM/network — deterministic.
+ * Pure/offline against a Firestore-faithful fake. No SDK/LLM/network — deterministic.
  */
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
-  resolveCollabRole,
+  scoreRoleAgainstQuery,
+  rankRoles,
   prescreenStatusFromTerminal,
   buildMatchingTools,
   type CollabRole,
+  type RoleQuery,
 } from "./matching-tools.js"
 import type { ClaireToolContext } from "../types.js"
 
-// ── resolveCollabRole — no_match / ambiguous / exact-1 ───────────────────────
+// Enriched roles mirroring the LIVE collab inventory (matching-jobs canonical tags).
+const DESIGNER: CollabRole = { jobId: "job-invoko-designer", company: "invoko.ai", title: "Product Designer", roleFunction: ["creatives_and_design", "product_management"], industrySector: ["technology_general", "software_and_saas"], status: "matched" }
+const PM: CollabRole = { jobId: "job-invoko-pm", company: "invoko.ai", title: "Product Manager", roleFunction: ["product_management"], industrySector: ["technology_general", "software_and_saas"], status: "matched" }
+const HELIUM: CollabRole = { jobId: "job-helium", company: "Helium", title: "Backend Engineer", roleFunction: ["software_engineering", "engineering_and_development"], industrySector: ["technology_general"], status: "matched" }
+const METAVOICE: CollabRole = { jobId: "job-metavoice", company: "MetaVoice", title: "Research Scientist", roleFunction: ["data_analysis", "software_engineering"], industrySector: ["artificial_intelligence_and_machine_learning"], status: "matched" }
+const ROLES = [DESIGNER, PM, HELIUM, METAVOICE]
 
-const ROLES: CollabRole[] = [
-  { jobId: "job-helium", company: "Helium", title: "Backend Engineer" },
-  { jobId: "job-invoko", company: "Invoko", title: "Product Manager" },
-  { jobId: "job-rain", company: "Rain", title: "Technical Account Manager" },
-]
+// ── scoreRoleAgainstQuery / rankRoles — CANONICAL matching ───────────────────
 
-test("resolveCollabRole: company name → exact-1 match", () => {
-  const r = resolveCollabRole("let's do the Helium one", ROLES)
-  assert.equal(r.kind, "match")
-  assert.equal(r.kind === "match" && r.role.jobId, "job-helium")
+test("'some product role' (roleFunction:product_management) → BOTH the Designer and PM → ambiguous", () => {
+  // The Designer's roleFunction INCLUDES product_management, so a product reference hits both.
+  const q: RoleQuery = { roleFunction: ["product_management"] }
+  const r = rankRoles(ROLES, q)
+  assert.equal(r.kind, "ambiguous")
+  const ids = r.kind === "ambiguous" ? r.candidates.map((c) => c.jobId).sort() : []
+  assert.deepEqual(ids, ["job-invoko-designer", "job-invoko-pm"].sort())
 })
 
-test("resolveCollabRole: company + role abbreviation ('invoko PM') → exact-1 match", () => {
-  const r = resolveCollabRole("start the invoko PM screen", ROLES)
-  assert.equal(r.kind, "match")
-  assert.equal(r.kind === "match" && r.role.jobId, "job-invoko")
+test("'the design role' (roleFunction:creatives_and_design) → ONLY the Designer → one", () => {
+  const r = rankRoles(ROLES, { roleFunction: ["creatives_and_design"] })
+  assert.equal(r.kind, "one")
+  assert.equal(r.kind === "one" && r.best.jobId, "job-invoko-designer")
 })
 
-test("resolveCollabRole: title words → exact-1 match", () => {
-  const r = resolveCollabRole("the technical account manager role", ROLES)
-  assert.equal(r.kind, "match")
-  assert.equal(r.kind === "match" && r.role.jobId, "job-rain")
-})
-
-test("resolveCollabRole: no signal → no_match", () => {
-  const r = resolveCollabRole("the marketing gig at Google", ROLES)
-  assert.equal(r.kind, "no_match")
-})
-
-test("resolveCollabRole: empty query / empty roles → no_match", () => {
-  assert.equal(resolveCollabRole("", ROLES).kind, "no_match")
-  assert.equal(resolveCollabRole("Helium", []).kind, "no_match")
-})
-
-test("resolveCollabRole: a tie at the top is AMBIGUOUS — never a silent wrong pick", () => {
-  const dupes: CollabRole[] = [
-    { jobId: "job-a", company: "Acme", title: "Software Engineer" },
-    { jobId: "job-b", company: "Acme", title: "Software Engineer" },
-  ]
-  const r = resolveCollabRole("the Acme software engineer one", dupes)
+test("'the invoko one' (company only) → all invoko roles tie → ambiguous (which invoko)", () => {
+  const r = rankRoles(ROLES, { company: "invoko" })
   assert.equal(r.kind, "ambiguous")
   assert.equal(r.kind === "ambiguous" && r.candidates.length, 2)
 })
 
-test("resolveCollabRole: shared token does NOT defeat a stronger company-substring match", () => {
-  // Both have "engineer", but only one is the Helium company the query names → Helium wins outright.
-  const r = resolveCollabRole("helium engineer", ROLES)
-  assert.equal(r.kind, "match")
-  assert.equal(r.kind === "match" && r.role.jobId, "job-helium")
+test("'the invoko design role' (company + roleFunction) → Designer wins over PM", () => {
+  const r = rankRoles(ROLES, { company: "invoko", roleFunction: ["creatives_and_design"] })
+  assert.equal(r.kind, "one")
+  assert.equal(r.kind === "one" && r.best.jobId, "job-invoko-designer")
 })
 
-// ── prescreenStatusFromTerminal — PASS / FAIL / null mapping ─────────────────
+test("'the AI/ML research one' (industrySector) → MetaVoice via canonical industry overlap", () => {
+  const r = rankRoles(ROLES, { industrySector: ["artificial_intelligence_and_machine_learning"] })
+  assert.equal(r.kind, "one")
+  assert.equal(r.kind === "one" && r.best.jobId, "job-metavoice")
+})
+
+test("'the engineering role' (roleFunction:software_engineering) → Helium + MetaVoice → ambiguous", () => {
+  const r = rankRoles(ROLES, { roleFunction: ["software_engineering"] })
+  assert.equal(r.kind, "ambiguous")
+  const ids = r.kind === "ambiguous" ? r.candidates.map((c) => c.jobId).sort() : []
+  assert.deepEqual(ids, ["job-helium", "job-metavoice"].sort())
+})
+
+test("no canonical signal matches → no_match (must guide them to the website)", () => {
+  // legal_and_compliance — no role has it; company that isn't theirs.
+  assert.equal(rankRoles(ROLES, { roleFunction: ["legal_and_compliance"] }).kind, "no_match")
+  assert.equal(rankRoles(ROLES, { company: "Google" }).kind, "no_match")
+  assert.equal(rankRoles([], { roleFunction: ["product_management"] }).kind, "no_match")
+})
+
+test("company normalization ignores tld/suffix: 'invoko' matches company 'invoko.ai'", () => {
+  // 'invoko' normalizes-equal to 'invoko.ai' (the .ai tld is stripped) → the invoko role matches,
+  // Helium does not → exactly one. Proves the suffix didn't block the company match.
+  const r = rankRoles([DESIGNER, HELIUM], { company: "invoko" })
+  assert.equal(r.kind, "one")
+  assert.equal(r.kind === "one" && r.best.jobId, "job-invoko-designer")
+})
+
+test("scoreRoleAgainstQuery: canonical roleFunction outweighs a raw-text token tiebreak", () => {
+  // raw query token 'engineer' overlaps Helium's title, but the canonical product_management signal
+  // for the PM scores higher (5 vs 1) → ranking favors the canonical match.
+  const pmScore = scoreRoleAgainstQuery(PM, { roleFunction: ["product_management"], query: "engineer" })
+  const heliumScore = scoreRoleAgainstQuery(HELIUM, { roleFunction: ["product_management"], query: "engineer" })
+  assert.ok(pmScore > heliumScore, `canonical PM (${pmScore}) must beat token-only Helium (${heliumScore})`)
+})
+
+// ── prescreenStatusFromTerminal ──────────────────────────────────────────────
 
 test("prescreenStatusFromTerminal maps PASS→passed, FAIL→not_passed, null/other→in_progress", () => {
   assert.equal(prescreenStatusFromTerminal("PASS"), "passed")
@@ -87,7 +110,7 @@ test("prescreenStatusFromTerminal maps PASS→passed, FAIL→not_passed, null/ot
   assert.equal(prescreenStatusFromTerminal("PAUSE"), "in_progress")
 })
 
-// ── check_prescreen_progress — query + filter + status (fake db) ─────────────
+// ── fake Firestore ───────────────────────────────────────────────────────────
 
 function makeFakeDb(seed: Record<string, Record<string, unknown>> = {}) {
   const store = new Map<string, Record<string, unknown>>(Object.entries(seed))
@@ -95,37 +118,21 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>> = {}) {
     const docs: Array<{ id: string; data: () => Record<string, unknown> }> = []
     for (const [key, val] of store.entries()) {
       if (!key.startsWith(`${col}/`)) continue
-      const data = val
-      if (predicates.every(([f, v]) => data[f] === v)) {
-        docs.push({ id: key.slice(col.length + 1), data: () => data })
-      }
+      if (predicates.every(([f, v]) => val[f] === v)) docs.push({ id: key.slice(col.length + 1), data: () => val })
     }
     return docs
   }
   const collection = (col: string) => {
     const predicates: Array<[string, unknown]> = []
     const q: Record<string, unknown> = {
-      where(f: string, _op: string, v: unknown) {
-        predicates.push([f, v])
-        return q
-      },
-      limit() {
-        return q
-      },
-      async get() {
-        const docs = matchDocs(col, predicates)
-        return { docs, empty: docs.length === 0, size: docs.length }
-      },
+      where(f: string, _op: string, v: unknown) { predicates.push([f, v]); return q },
+      limit() { return q },
+      async get() { const docs = matchDocs(col, predicates); return { docs, empty: docs.length === 0, size: docs.length } },
     }
     return {
       doc: (id: string) => ({
-        async get() {
-          const key = `${col}/${id}`
-          return { exists: store.has(key), id, data: () => store.get(key) }
-        },
-        async set(data: Record<string, unknown>) {
-          store.set(`${col}/${id}`, { ...(store.get(`${col}/${id}`) ?? {}), ...data })
-        },
+        async get() { const key = `${col}/${id}`; return { exists: store.has(key), id, data: () => store.get(key) } },
+        async set(data: Record<string, unknown>) { store.set(`${col}/${id}`, { ...(store.get(`${col}/${id}`) ?? {}), ...data }) },
       }),
       ...q,
     }
@@ -135,85 +142,143 @@ function makeFakeDb(seed: Record<string, Record<string, unknown>> = {}) {
 
 function makeCtx(db: never, overrides: Partial<ClaireToolContext> = {}): ClaireToolContext {
   return {
-    db,
-    userId: "u1",
-    sessionId: "s1",
-    lang: "en",
-    transport: {
-      markRead: async () => {},
-      typing: async () => {},
-      sendStatus: async () => {},
-      sendText: async () => {},
-      tapback: async () => {},
-      noReply: async () => {},
-    },
-    judgeModel: "gpt-4.1-mini",
-    log: () => {},
-    nowIso: () => "2026-05-31T00:00:00.000Z",
+    db, userId: "u1", sessionId: "s1", lang: "en",
+    transport: { markRead: async () => {}, typing: async () => {}, sendStatus: async () => {}, sendText: async () => {}, tapback: async () => {}, noReply: async () => {} },
+    judgeModel: "gpt-4.1-mini", log: () => {}, nowIso: () => "2026-05-31T00:00:00.000Z",
     ...overrides,
   } as ClaireToolContext
 }
 
-/** Pull a tool out of buildMatchingTools by name (the array order is an internal detail). */
 function tool(ctx: ClaireToolContext, name: string) {
   const t = buildMatchingTools(ctx).find((x) => (x as { name?: string }).name === name)
   assert.ok(t, `tool ${name} must be registered`)
   return t as { invoke: (a: never, raw: string) => Promise<unknown> }
 }
-
 async function call(t: { invoke: (a: never, raw: string) => Promise<unknown> }, args: unknown) {
   const raw = await t.invoke({} as never, JSON.stringify(args))
   return (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, unknown>
 }
 
+// lastCollabRoles seed (enriched, as find_match now persists it).
+const LAST_COLLAB = [
+  { jobId: "job-invoko-designer", company: "invoko.ai", title: "Product Designer", roleFunction: ["creatives_and_design", "product_management"], industrySector: ["technology_general"] },
+  { jobId: "job-invoko-pm", company: "invoko.ai", title: "Product Manager", roleFunction: ["product_management"], industrySector: ["technology_general"] },
+  { jobId: "job-helium", company: "Helium", title: "Backend Engineer", roleFunction: ["software_engineering"], industrySector: ["technology_general"] },
+]
+
+// ── find_my_role tool ────────────────────────────────────────────────────────
+
+test("find_my_role: agent composes roleFunction:product_management → ambiguous designer+PM", async () => {
+  const { db } = makeFakeDb({ "pa-users/u1": { lastCollabRoles: LAST_COLLAB } })
+  const out = await call(tool(makeCtx(db), "find_my_role"), { roleFunction: ["product_management"], company: null, industrySector: null, query: "how'd the product role go?" })
+  assert.equal(out.ok, true)
+  assert.equal(out.kind, "ambiguous")
+  assert.equal((out.candidates as unknown[]).length, 2)
+})
+
+test("find_my_role: roleFunction:creatives_and_design → one (the Designer), with status", async () => {
+  const { db } = makeFakeDb({ "pa-users/u1": { lastCollabRoles: LAST_COLLAB } })
+  const out = await call(tool(makeCtx(db), "find_my_role"), { roleFunction: ["creatives_and_design"], company: null, industrySector: null, query: null })
+  assert.equal(out.kind, "one")
+  const best = out.best as Record<string, string>
+  assert.equal(best.jobId, "job-invoko-designer")
+  assert.equal(best.status, "matched")
+})
+
+test("find_my_role: prescreened session status OVERRIDES 'matched' + back-fills tags from matching-jobs", async () => {
+  const { db } = makeFakeDb({
+    // lastCollabRoles WITHOUT tags (old write) → back-fill from matching-jobs.
+    "pa-users/u1": { lastCollabRoles: [{ jobId: "job-invoko-designer", company: "invoko.ai", title: "Product Designer" }] },
+    "matching-jobs/job-invoko-designer": { roleFunction: ["creatives_and_design", "product_management"], industrySector: ["technology_general"], companyName: "invoko.ai", jobTitle: "Product Designer" },
+    // a prescreen session for that job, PASS → status should be 'passed'.
+    "pa-prescreen-sessions/sX": { userId: "u1", jobId: "job-invoko-designer", terminal: "PASS", createdAt: "2026-05-30", cfgSnapshot: { company: "invoko.ai", jobTitle: "Product Designer" } },
+  })
+  const out = await call(tool(makeCtx(db), "find_my_role"), { roleFunction: ["creatives_and_design"], company: null, industrySector: null, query: null })
+  assert.equal(out.kind, "one", `expected one, got ${JSON.stringify(out)}`)
+  const best = out.best as Record<string, string>
+  assert.equal(best.jobId, "job-invoko-designer")
+  assert.equal(best.status, "passed", "session terminal PASS overrides 'matched' (proves back-fill + merge)")
+})
+
+test("find_my_role: no canonical match → no_match (lists their roles so the agent can guide them)", async () => {
+  const { db } = makeFakeDb({ "pa-users/u1": { lastCollabRoles: LAST_COLLAB } })
+  const out = await call(tool(makeCtx(db), "find_my_role"), { roleFunction: ["legal_and_compliance"], company: null, industrySector: null, query: null })
+  assert.equal(out.kind, "no_match")
+})
+
+// ── begin_collab_prescreen({ jobId }) — matched-gate + start ─────────────────
+
+test("begin_collab_prescreen: a matched jobId starts the RIGHT session via the legacy seam", async () => {
+  const { db } = makeFakeDb({ "pa-users/u1": { lastCollabRoles: LAST_COLLAB } })
+  const calls: Array<{ jobId: string; userId: string; toE164: string }> = []
+  const ctx = makeCtx(db, { toE164: "+13054507715", beginPrescreen: async (a) => { calls.push(a); return { ok: true, sessionId: `ps_${a.jobId}` } } })
+  const out = await call(tool(ctx, "begin_collab_prescreen"), { jobId: "job-invoko-pm" })
+  assert.equal(out.ok, true, JSON.stringify(out))
+  assert.equal(out.jobId, "job-invoko-pm")
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]!.jobId, "job-invoko-pm", "started the resolved role, never another")
+  assert.equal(calls[0]!.toE164, "+13054507715")
+})
+
+test("begin_collab_prescreen: a FOREIGN jobId (not in the matched set) → not_matched, NO start", async () => {
+  const { db } = makeFakeDb({ "pa-users/u1": { lastCollabRoles: LAST_COLLAB } })
+  let started = false
+  const ctx = makeCtx(db, { toE164: "+13054507715", beginPrescreen: async () => { started = true; return { ok: true, sessionId: "ps_x" } } })
+  const out = await call(tool(ctx, "begin_collab_prescreen"), { jobId: "job-foreign-harvested-from-url" })
+  assert.equal(out.ok, false)
+  assert.equal(out.reason, "not_matched")
+  assert.equal(started, false, "a foreign jobId must NOT start a session")
+})
+
+test("begin_collab_prescreen: phone falls back to pa-users.phoneE164 when ctx.toE164 absent", async () => {
+  const { db } = makeFakeDb({ "pa-users/u1": { phoneE164: "+14243201960", lastCollabRoles: LAST_COLLAB } })
+  const calls: Array<{ toE164: string }> = []
+  const ctx = makeCtx(db, { beginPrescreen: async (a) => { calls.push({ toE164: a.toE164 }); return { ok: true, sessionId: "ps_x" } } })
+  const out = await call(tool(ctx, "begin_collab_prescreen"), { jobId: "job-invoko-pm" })
+  assert.equal(out.ok, true)
+  assert.equal(calls[0]!.toE164, "+14243201960")
+})
+
+test("begin_collab_prescreen: session-start not-ok → surfaced reason, ok:false", async () => {
+  const { db } = makeFakeDb({ "pa-users/u1": { phoneE164: "+13054507715", lastCollabRoles: LAST_COLLAB } })
+  const ctx = makeCtx(db, { beginPrescreen: async () => ({ ok: false, reason: "config_missing", sessionId: "ps_x" }) })
+  const out = await call(tool(ctx, "begin_collab_prescreen"), { jobId: "job-invoko-pm" })
+  assert.equal(out.ok, false)
+  assert.equal(out.reason, "config_missing")
+  assert.equal(out.jobId, "job-invoko-pm")
+})
+
+test("begin_collab_prescreen: no phone available → no_phone, session-start NOT invoked", async () => {
+  const { db } = makeFakeDb({ "pa-users/u1": { lastCollabRoles: LAST_COLLAB } })
+  let started = false
+  const ctx = makeCtx(db, { beginPrescreen: async () => { started = true; return { ok: true, sessionId: "ps_x" } } })
+  const out = await call(tool(ctx, "begin_collab_prescreen"), { jobId: "job-invoko-pm" })
+  assert.equal(out.ok, false)
+  assert.equal(out.reason, "no_phone")
+  assert.equal(started, false)
+})
+
+// ── check_prescreen_progress (unchanged) ─────────────────────────────────────
+
 test("check_prescreen_progress: lists all sessions with mapped status, most-recent first", async () => {
   const { db } = makeFakeDb({
-    "pa-prescreen-sessions/sA": {
-      userId: "u1",
-      jobId: "job-invoko",
-      terminal: "PASS",
-      createdAt: "2026-05-20",
-      cfgSnapshot: { jobTitle: "Product Manager", company: "Invoko" },
-    },
-    "pa-prescreen-sessions/sB": {
-      userId: "u1",
-      jobId: "job-rain",
-      terminal: null,
-      createdAt: "2026-05-25",
-      cfgSnapshot: { jobTitle: "Technical Account Manager", company: "Rain" },
-    },
-    "pa-prescreen-sessions/sOther": {
-      userId: "u2", // different candidate — must be excluded
-      jobId: "job-x",
-      terminal: "FAIL",
-      createdAt: "2026-05-26",
-      cfgSnapshot: { jobTitle: "X", company: "Y" },
-    },
+    "pa-prescreen-sessions/sA": { userId: "u1", jobId: "job-invoko-pm", terminal: "PASS", createdAt: "2026-05-20", cfgSnapshot: { jobTitle: "Product Manager", company: "Invoko" } },
+    "pa-prescreen-sessions/sB": { userId: "u1", jobId: "job-helium", terminal: null, createdAt: "2026-05-25", cfgSnapshot: { jobTitle: "Backend Engineer", company: "Helium" } },
+    "pa-prescreen-sessions/sOther": { userId: "u2", jobId: "job-x", terminal: "FAIL", createdAt: "2026-05-26", cfgSnapshot: { jobTitle: "X", company: "Y" } },
   })
   const out = await call(tool(makeCtx(db), "check_prescreen_progress"), { query: null })
   assert.equal(out.ok, true)
   const sessions = out.sessions as Array<Record<string, string>>
-  assert.equal(sessions.length, 2, "only u1's sessions")
-  assert.equal(sessions[0]!.company, "Rain", "most-recent (2026-05-25) first")
+  assert.equal(sessions.length, 2)
+  assert.equal(sessions[0]!.company, "Helium")
   assert.equal(sessions[0]!.status, "in_progress")
-  assert.equal(sessions[1]!.company, "Invoko")
   assert.equal(sessions[1]!.status, "passed")
 })
 
 test("check_prescreen_progress: query filters by company/title (in-memory contains)", async () => {
   const { db } = makeFakeDb({
-    "pa-prescreen-sessions/sA": {
-      userId: "u1",
-      terminal: "PASS",
-      createdAt: "2026-05-20",
-      cfgSnapshot: { jobTitle: "Product Manager", company: "Invoko" },
-    },
-    "pa-prescreen-sessions/sB": {
-      userId: "u1",
-      terminal: "FAIL",
-      createdAt: "2026-05-25",
-      cfgSnapshot: { jobTitle: "Technical Account Manager", company: "Rain" },
-    },
+    "pa-prescreen-sessions/sA": { userId: "u1", terminal: "PASS", createdAt: "2026-05-20", cfgSnapshot: { jobTitle: "Product Manager", company: "Invoko" } },
+    "pa-prescreen-sessions/sB": { userId: "u1", terminal: "FAIL", createdAt: "2026-05-25", cfgSnapshot: { jobTitle: "Backend Engineer", company: "Helium" } },
   })
   const out = await call(tool(makeCtx(db), "check_prescreen_progress"), { query: "invoko" })
   const sessions = out.sessions as Array<Record<string, string>>
@@ -223,141 +288,8 @@ test("check_prescreen_progress: query filters by company/title (in-memory contai
 })
 
 test("check_prescreen_progress: fail-soft — db throws → ok:false, empty sessions, no throw", async () => {
-  const throwingDb = {
-    collection() {
-      return {
-        where() {
-          return this
-        },
-        limit() {
-          return this
-        },
-        async get(): Promise<never> {
-          throw new Error("boom")
-        },
-      }
-    },
-  } as never
+  const throwingDb = { collection() { return { where() { return this }, limit() { return this }, async get(): Promise<never> { throw new Error("boom") } } } } as never
   const out = await call(tool(makeCtx(throwingDb), "check_prescreen_progress"), { query: null })
   assert.equal(out.ok, false)
   assert.deepEqual(out.sessions, [])
-})
-
-// ── begin_collab_prescreen — resolve + start via the SAME legacy session-start ──
-
-test("begin_collab_prescreen: no_match returns the roles for re-offer (no session started)", async () => {
-  const { db, store } = makeFakeDb({
-    "pa-users/u1": {
-      phoneE164: "+13054507715",
-      lastCollabRoles: [{ jobId: "job-helium", company: "Helium", title: "Backend Engineer" }],
-    },
-  })
-  const out = await call(tool(makeCtx(db), "begin_collab_prescreen"), { roleQuery: "the marketing gig" })
-  assert.equal(out.ok, false)
-  assert.equal(out.reason, "no_match")
-  assert.equal((out.roles as unknown[]).length, 1)
-  // no session doc created
-  const created = [...store.keys()].some((k) => k.startsWith("pa-prescreen-sessions/"))
-  assert.equal(created, false, "no_match must NOT start any prescreen session")
-})
-
-test("begin_collab_prescreen: ambiguous returns candidates (no wrong-role start)", async () => {
-  const { db } = makeFakeDb({
-    "pa-users/u1": {
-      phoneE164: "+13054507715",
-      lastCollabRoles: [
-        { jobId: "job-a", company: "Acme", title: "Software Engineer" },
-        { jobId: "job-b", company: "Acme", title: "Software Engineer" },
-      ],
-    },
-  })
-  const out = await call(tool(makeCtx(db), "begin_collab_prescreen"), {
-    roleQuery: "the acme software engineer one",
-  })
-  assert.equal(out.ok, false)
-  assert.equal(out.reason, "ambiguous")
-  assert.equal((out.candidates as unknown[]).length, 2)
-})
-
-test("begin_collab_prescreen: exact-1 starts the session via the legacy session-start seam (right role)", async () => {
-  const { db } = makeFakeDb({
-    "pa-users/u1": {
-      lastCollabRoles: [
-        { jobId: "job-invoko", company: "Invoko", title: "Product Manager" },
-        { jobId: "job-helium", company: "Helium", title: "Backend Engineer" },
-      ],
-    },
-  })
-  // beginPrescreen is the eval seam for the REAL runPreScreenForUser — we assert it is called with
-  // EXACTLY the resolved role (never the other one) and the threaded phone, then returns ok.
-  const calls: Array<{ jobId: string; userId: string; toE164: string }> = []
-  const ctx = makeCtx(db, {
-    toE164: "+13054507715",
-    beginPrescreen: async (a) => {
-      calls.push(a)
-      return { ok: true, sessionId: `ps_${a.jobId}_${a.userId}_x` }
-    },
-  })
-  const out = await call(tool(ctx, "begin_collab_prescreen"), { roleQuery: "start the invoko PM screen" })
-  assert.equal(out.ok, true, `expected ok:true, got ${JSON.stringify(out)}`)
-  assert.equal(out.jobId, "job-invoko")
-  assert.equal(out.company, "Invoko")
-  assert.equal(calls.length, 1, "session-start invoked exactly once")
-  assert.equal(calls[0]!.jobId, "job-invoko", "started the NAMED role, never the other collab role")
-  assert.equal(calls[0]!.userId, "u1")
-  assert.equal(calls[0]!.toE164, "+13054507715", "phone threaded from ctx.toE164")
-})
-
-test("begin_collab_prescreen: phone falls back to pa-users.phoneE164 when ctx.toE164 absent", async () => {
-  const { db } = makeFakeDb({
-    "pa-users/u1": {
-      phoneE164: "+14243201960",
-      lastCollabRoles: [{ jobId: "job-invoko", company: "Invoko", title: "Product Manager" }],
-    },
-  })
-  const calls: Array<{ toE164: string }> = []
-  const ctx = makeCtx(db, {
-    beginPrescreen: async (a) => {
-      calls.push({ toE164: a.toE164 })
-      return { ok: true, sessionId: "ps_x" }
-    },
-  })
-  const out = await call(tool(ctx, "begin_collab_prescreen"), { roleQuery: "the invoko one" })
-  assert.equal(out.ok, true)
-  assert.equal(calls[0]!.toE164, "+14243201960", "phone read from pa-users.phoneE164 when ctx has none")
-})
-
-test("begin_collab_prescreen: session-start returns not-ok → surfaced reason, ok:false", async () => {
-  const { db } = makeFakeDb({
-    "pa-users/u1": {
-      phoneE164: "+13054507715",
-      lastCollabRoles: [{ jobId: "job-invoko", company: "Invoko", title: "Product Manager" }],
-    },
-  })
-  const ctx = makeCtx(db, {
-    beginPrescreen: async () => ({ ok: false, reason: "config_missing", sessionId: "ps_x" }),
-  })
-  const out = await call(tool(ctx, "begin_collab_prescreen"), { roleQuery: "the invoko one" })
-  assert.equal(out.ok, false)
-  assert.equal(out.reason, "config_missing")
-  assert.equal(out.jobId, "job-invoko")
-})
-
-test("begin_collab_prescreen: no phone available → no_phone, session-start NOT invoked", async () => {
-  const { db } = makeFakeDb({
-    "pa-users/u1": {
-      lastCollabRoles: [{ jobId: "job-invoko", company: "Invoko", title: "Product Manager" }],
-    },
-  })
-  let started = false
-  const ctx = makeCtx(db, {
-    beginPrescreen: async () => {
-      started = true
-      return { ok: true, sessionId: "ps_x" }
-    },
-  })
-  const out = await call(tool(ctx, "begin_collab_prescreen"), { roleQuery: "the invoko one" })
-  assert.equal(out.ok, false)
-  assert.equal(out.reason, "no_phone")
-  assert.equal(started, false, "must NOT start a session with no phone")
 })

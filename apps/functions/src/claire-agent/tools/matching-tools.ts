@@ -119,14 +119,40 @@ async function readSnapshotTags(
   return snap
 }
 
-/** A pushed collab/partner role persisted by find_match for start-by-name resolution. */
+/**
+ * A candidate's matched/prescreened role, ENRICHED with the job's canonical tags so a fuzzy reference
+ * is resolved on canonical signals (roleFunction/industry/company), NOT literal string overlap. The
+ * canonical tags come from the job's `matching-jobs` doc (find_match enriches lastCollabRoles; the
+ * matcher back-fills any role missing them at resolve time).
+ */
 export interface CollabRole {
   jobId: string
   company: string
   title: string
+  /** Canonical roleFunction tokens (ROLE_FUNCTION_VOCAB) — the primary semantic match axis. */
+  roleFunction?: string[]
+  /** Canonical industrySector tokens (INDUSTRY_SECTOR_VOCAB). */
+  industrySector?: string[]
+  /** Where this role is in the candidate's journey. `matched` = recommended, no screen yet. */
+  status?: "passed" | "not_passed" | "in_progress" | "matched"
 }
 
-/** Lower-cased word tokens (len ≥ 2) for the role-name overlap match (NO enum-classification regex). */
+/**
+ * A CANONICAL query the AGENT composes from the user's free text (Adam 2026-05-31): the agent maps
+ * "some product role" → roleFunction:[product_management] / "the design role at the voice company" →
+ * roleFunction:[creatives_and_design] + company:"voice…" using the SAME @wekruit/shared-tags vocab the
+ * tag extractor uses. The tool then matches the candidate's enriched roles on these signals — no
+ * literal token matching, no enum-classification regex.
+ */
+export interface RoleQuery {
+  roleFunction?: string[]
+  company?: string | null
+  industrySector?: string[]
+  /** Raw text — used ONLY as a weak title/company token tiebreak + for logging. Never the primary signal. */
+  query?: string | null
+}
+
+/** Lower-cased word tokens (len ≥ 2) for the weak title/company tiebreak (NOT enum classification). */
 function roleTokens(s: string): string[] {
   return (s ?? "")
     .toLowerCase()
@@ -134,50 +160,65 @@ function roleTokens(s: string): string[] {
     .filter((t) => t.length >= 2)
 }
 
+/** Normalize a company name for matching — drop punctuation + common suffixes/tlds (inc/llc/ai/io…). */
+function normCompany(s: string): string {
+  return (s ?? "")
+    .toLowerCase()
+    .replace(/\b(inc|llc|ltd|limited|corp|corporation|co|company|technologies|labs|ai|io|app|com)\b/g, "")
+    .replace(/[^a-z0-9]+/g, "")
+    .trim()
+}
+
 /**
- * Resolve a free-form role name ("the Helium one" / "invoko PM") to AT MOST ONE pushed collab role.
- *
- * SIMPLE matching only (Adam: NO enum-classification regex): for each saved role, score it on
- *   (a) whether the query, case-insensitively, CONTAINS the company or title (or vice-versa), and
- *   (b) token overlap between the query and the "company title" string.
- * Roles with zero signal are dropped. The best non-zero score wins ONLY when it is strictly the
- * single best — a tie (≥2 roles share the top score) is AMBIGUOUS, never a silent pick of the wrong
- * role. Pure + deterministic so it is unit-testable offline.
- *
- *   0 roles match  → { kind: "no_match" }
- *   >1 tie at top  → { kind: "ambiguous", candidates }
- *   exactly 1 best → { kind: "match", role }
+ * Score ONE enriched role against the agent-composed canonical query. Canonical signals dominate;
+ * raw-text token overlap is only a weak tiebreak. 0 = no signal (dropped). Pure + unit-testable.
  */
-export function resolveCollabRole(
-  roleQuery: string,
+export function scoreRoleAgainstQuery(role: CollabRole, q: RoleQuery): number {
+  let score = 0
+  // roleFunction intersection — the PRIMARY canonical signal. "product role" → product_management
+  // hits BOTH the PM role and a Product Designer whose roleFunction includes product_management.
+  if (q.roleFunction?.length && role.roleFunction?.length) {
+    const set = new Set(role.roleFunction.map((x) => String(x).toLowerCase()))
+    for (const rf of q.roleFunction) if (set.has(String(rf).toLowerCase())) score += 5
+  }
+  // company — normalized containment in either direction (strong).
+  if (q.company && role.company) {
+    const a = normCompany(q.company)
+    const b = normCompany(role.company)
+    if (a && b && (a === b || a.includes(b) || b.includes(a))) score += 6
+  }
+  // industrySector intersection (medium) — "the fintech one" → financial_technology.
+  if (q.industrySector?.length && role.industrySector?.length) {
+    const set = new Set(role.industrySector.map((x) => String(x).toLowerCase()))
+    for (const s of q.industrySector) if (set.has(String(s).toLowerCase())) score += 2
+  }
+  // raw-text token overlap vs company+title — WEAK tiebreak only.
+  if (q.query) {
+    const qt = new Set(roleTokens(q.query))
+    for (const t of new Set(roleTokens(`${role.company} ${role.title}`))) if (qt.has(t)) score += 1
+  }
+  return score
+}
+
+/**
+ * Rank the candidate's enriched roles against the canonical query.
+ *   no roles score > 0      → { kind: "no_match" }
+ *   unique top score        → { kind: "one", best, ranked }   (the agent starts / reports it)
+ *   ≥2 tie at the top score → { kind: "ambiguous", candidates } (the agent ASKS which — never a silent pick)
+ */
+export function rankRoles(
   roles: CollabRole[],
-): { kind: "no_match" } | { kind: "ambiguous"; candidates: CollabRole[] } | { kind: "match"; role: CollabRole } {
-  const q = (roleQuery ?? "").trim().toLowerCase()
+  q: RoleQuery,
+): { kind: "no_match"; ranked: [] } | { kind: "one"; best: CollabRole; ranked: CollabRole[] } | { kind: "ambiguous"; candidates: CollabRole[]; ranked: CollabRole[] } {
   const valid = (roles ?? []).filter((r) => r && typeof r.jobId === "string" && r.jobId.trim().length > 0)
-  if (!q || valid.length === 0) return { kind: "no_match" }
-  const qTokens = new Set(roleTokens(q))
-
-  const scored = valid.map((role) => {
-    const company = (role.company ?? "").toLowerCase().trim()
-    const title = (role.title ?? "").toLowerCase().trim()
-    const haystack = [company, title].filter(Boolean).join(" ")
-    let score = 0
-    // (a) substring containment in EITHER direction → strong signal.
-    if (company && (q.includes(company) || company.includes(q))) score += 5
-    if (title && (q.includes(title) || title.includes(q))) score += 5
-    if (haystack && (q.includes(haystack) || haystack.includes(q))) score += 3
-    // (b) per-token overlap — "invoko pm" hits the company token + a title token.
-    for (const t of new Set(roleTokens(haystack))) {
-      if (qTokens.has(t)) score += 1
-    }
-    return { role, score }
-  })
-
-  const best = Math.max(...scored.map((s) => s.score))
-  if (best <= 0) return { kind: "no_match" }
-  const top = scored.filter((s) => s.score === best).map((s) => s.role)
-  if (top.length > 1) return { kind: "ambiguous", candidates: top }
-  return { kind: "match", role: top[0]! }
+  const scored = valid.map((role) => ({ role, score: scoreRoleAgainstQuery(role, q) })).filter((x) => x.score > 0)
+  if (scored.length === 0) return { kind: "no_match", ranked: [] }
+  scored.sort((a, b) => b.score - a.score)
+  const ranked = scored.map((x) => x.role)
+  const max = scored[0]!.score
+  const top = scored.filter((x) => x.score === max).map((x) => x.role)
+  if (top.length === 1) return { kind: "one", best: top[0]!, ranked }
+  return { kind: "ambiguous", candidates: top, ranked }
 }
 
 /** Read the candidate's pushed collab roles from pa-users/{userId}.lastCollabRoles. Fail-soft → []. */
@@ -190,14 +231,19 @@ async function readLastCollabRoles(
     const snap = await db.collection(PA_USERS_COLLECTION).doc(userId).get()
     const raw = snap.exists ? (snap.data()?.lastCollabRoles as unknown) : null
     if (!Array.isArray(raw)) return []
+    const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])
     return raw
       .map((r) => {
         const o = (r ?? {}) as Record<string, unknown>
-        return {
+        const role: CollabRole = {
           jobId: typeof o.jobId === "string" ? o.jobId : "",
           company: typeof o.company === "string" ? o.company : "",
           title: typeof o.title === "string" ? o.title : "",
+          roleFunction: arr(o.roleFunction),
+          industrySector: arr(o.industrySector),
+          status: "matched",
         }
+        return role
       })
       .filter((r) => r.jobId.trim().length > 0)
   } catch (err) {
@@ -207,6 +253,70 @@ async function readLastCollabRoles(
     })
     return []
   }
+}
+
+/**
+ * Load the candidate's FULL set of matched + prescreened roles, enriched with canonical tags, for
+ * find_my_role. Sources, deduped by jobId (a session's status wins over "matched"):
+ *   - pa-users.lastCollabRoles  → roles find_match recommended (status "matched", tags from enrichment)
+ *   - pa-prescreen-sessions     → roles the candidate STARTED/finished (status from terminal)
+ * Any role still missing roleFunction (old lastCollabRoles writes, or a prescreened-only role) is
+ * back-filled from its matching-jobs/{jobId} doc (the canonical-tag source). Fail-soft → best effort.
+ */
+export async function loadCandidateRoles(
+  db: Firestore,
+  userId: string,
+  log: ClaireToolContext["log"],
+): Promise<CollabRole[]> {
+  const byJob = new Map<string, CollabRole>()
+  // 1. matched roles (recommended).
+  for (const r of await readLastCollabRoles(db, userId, log)) byJob.set(r.jobId, r)
+  // 2. prescreened roles (started/finished) — status overrides "matched".
+  try {
+    const snap = await db.collection("pa-prescreen-sessions").where("userId", "==", userId).limit(50).get()
+    for (const doc of snap.docs) {
+      const d = doc.data() as Record<string, unknown>
+      const jobId = typeof d.jobId === "string" ? d.jobId : ""
+      if (!jobId) continue
+      const cfg = (d.cfgSnapshot ?? {}) as Record<string, unknown>
+      const existing = byJob.get(jobId)
+      byJob.set(jobId, {
+        jobId,
+        company: existing?.company || (typeof cfg.company === "string" ? cfg.company : ""),
+        title: existing?.title || (typeof cfg.jobTitle === "string" ? cfg.jobTitle : ""),
+        roleFunction: existing?.roleFunction ?? [],
+        industrySector: existing?.industrySector ?? [],
+        status: prescreenStatusFromTerminal(d.terminal),
+      })
+    }
+  } catch (err) {
+    log("pa.claire.load_candidate_roles.sessions_error", { userId, error: err instanceof Error ? err.message : String(err) })
+  }
+  // 3. back-fill canonical tags from matching-jobs for any role missing roleFunction.
+  const needTags = [...byJob.values()].filter((r) => !r.roleFunction || r.roleFunction.length === 0)
+  if (needTags.length > 0) {
+    await Promise.all(
+      needTags.map(async (r) => {
+        try {
+          const mj = await db.collection("matching-jobs").doc(r.jobId).get()
+          if (!mj.exists) return
+          const data = mj.data() as Record<string, unknown>
+          const rf = Array.isArray(data.roleFunction) ? data.roleFunction.filter((x): x is string => typeof x === "string") : []
+          const ind = Array.isArray(data.industrySector) ? data.industrySector.filter((x): x is string => typeof x === "string") : []
+          const cur = byJob.get(r.jobId)
+          if (cur) {
+            cur.roleFunction = rf
+            cur.industrySector = ind
+            if (!cur.company && typeof data.companyName === "string") cur.company = data.companyName
+            if (!cur.title && typeof data.jobTitle === "string") cur.title = data.jobTitle
+          }
+        } catch {
+          /* best effort */
+        }
+      }),
+    )
+  }
+  return [...byJob.values()]
 }
 
 /** Resolve the candidate's phone (E.164): ctx.toE164 first, else pa-users.phoneE164. "" when unknown. */
@@ -440,11 +550,21 @@ export function makeV16FindMatch(
       // partner inventory) go here — open-market fill is not a start-by-name target. Best-effort,
       // fail-soft: a write failure must NEVER break find_match's never-throws contract (RC2).
       if (collabJobs.length > 0) {
-        const lastCollabRoles = collabJobs.map((j) => ({
-          jobId: j.id,
-          company: (j.companyName || "").trim(),
-          title: (j.jobTitle || j.roleTitle || "").trim(),
-        }))
+        // Enrich with the job's CANONICAL tags (roleFunction/industrySector) so a later
+        // begin_collab_prescreen / find_my_role can resolve a fuzzy reference ("the product role")
+        // on canonical signals, not literal title overlap. loadCandidateRoles back-fills from
+        // matching-jobs for any role missing these, so this is best-effort.
+        const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])
+        const lastCollabRoles = collabJobs.map((j) => {
+          const jj = j as unknown as Record<string, unknown>
+          return {
+            jobId: j.id,
+            company: (j.companyName || "").trim(),
+            title: (j.jobTitle || j.roleTitle || "").trim(),
+            roleFunction: arr(jj.roleFunction),
+            industrySector: arr(jj.industrySector),
+          }
+        })
         await db
           .collection("pa-users")
           .doc(userId)
@@ -992,43 +1112,79 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     },
   })
 
-  // ── 9. begin_collab_prescreen — START a prescreen by NAMING the role ─────
-  // The FRIENDLY second path alongside the copy-paste WeKruit_<jobId>_<userId>_Job trigger: the
-  // candidate names a collab role in free text ("the Helium one" / "invoko PM") and we resolve it to
-  // EXACTLY ONE jobId from the roles find_match pushed (pa-users.lastCollabRoles), then create the
-  // session via the SAME legacy runPreScreenForUser the copy-paste trigger uses — so the existing
-  // thin-prescreen mode-selector + terminal flow pick it up UNCHANGED. We NEVER start the wrong role:
-  // 0 matches → no_match (re-offer); >1 → ambiguous (clarify). Deterministic resolver, NO regex.
+  // ── 9. find_my_role — CANONICAL resolution of a fuzzy role/company reference ──
+  // Adam 2026-05-31: stop literal string matching. YOU (the agent) map the candidate's free text to
+  // the SAME canonical @wekruit/shared-tags vocab the tag extractor uses — "some product role" →
+  // roleFunction:["product_management"], "the design role at the voice company" →
+  // roleFunction:["creatives_and_design"] + company:"voice…", "the fintech one" →
+  // industrySector:["financial_technology"] — and pass those signals. The tool matches them against
+  // the candidate's matched + prescreened roles (each enriched with the job's canonical roleFunction /
+  // industrySector) and returns them RANKED with status. NO literal token matching, NO regex.
+  const findMyRole = tool({
+    name: "find_my_role",
+    description:
+      "Resolve which of the candidate's matched / pre-screened WeKruit collab roles they mean when they " +
+      "refer to one in plain text ('how'd the product role go?', 'start the design role at the voice " +
+      "company', 'did I pass the fintech one?'). Compose a CANONICAL query from their words: roleFunction " +
+      "(closed enum), company (free text), industrySector (closed enum) — map their meaning the same way " +
+      "you'd tag a preference. Returns matched+prescreened roles RANKED by canonical fit, each with its " +
+      "status (passed / not_passed / in_progress / matched). kind='one' → the single best is theirs; " +
+      "kind='ambiguous' → ASK which of the candidates they mean (never guess); kind='no_match' → they " +
+      "haven't been matched to such a role, so guide them to the website to start a new one. Then use " +
+      "begin_collab_prescreen with the chosen jobId to START, or just report the status.",
+    parameters: z.object({
+      roleFunction: z.array(RoleFunctionEnum).nullable(),
+      company: z.string().nullable(),
+      industrySector: z.array(IndustrySectorEnum).nullable(),
+      query: z.string().nullable(),
+    }),
+    async execute({ roleFunction, company, industrySector, query }) {
+      const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
+      const q: RoleQuery = {
+        roleFunction: roleFunction ?? undefined,
+        company: company ?? undefined,
+        industrySector: industrySector ?? undefined,
+        query: query ?? undefined,
+      }
+      const ranked = rankRoles(roles, q)
+      const slim = (r: CollabRole) => ({ jobId: r.jobId, company: r.company, title: r.title, status: r.status ?? "matched" })
+      ctx.log("pa.claire.find_my_role", {
+        userId: ctx.userId,
+        roleFunction: roleFunction ?? null,
+        company: company ?? null,
+        roleCount: roles.length,
+        kind: ranked.kind,
+      })
+      if (ranked.kind === "no_match") return { ok: true, kind: "no_match", roles: roles.map(slim) }
+      if (ranked.kind === "ambiguous") return { ok: true, kind: "ambiguous", candidates: ranked.candidates.map(slim) }
+      return { ok: true, kind: "one", best: slim(ranked.best), ranked: ranked.ranked.map(slim) }
+    },
+  })
+
+  // ── 9b. begin_collab_prescreen — START the screen for a RESOLVED jobId ─────
+  // The candidate named a collab role; you resolved it to ONE jobId via find_my_role (or they pasted
+  // the trigger). Pass that jobId. SAFETY (Adam: never start the wrong / an unmatched one): the jobId
+  // MUST be in the candidate's matched/prescreened set — a foreign jobId returns reason 'not_matched'
+  // and starts nothing. Starts via the SAME runPreScreenForUser the copy-paste trigger uses, so the
+  // existing thin-prescreen mode-selector + terminal flow are UNCHANGED.
   const beginCollabPrescreen = tool({
     name: "begin_collab_prescreen",
     description:
-      "START the pre-screen for a WeKruit collab/partner role the candidate NAMED in plain text (instead " +
-      "of copy-pasting the trigger line) — e.g. 'let's do the Helium one', 'start the invoko PM screen'. " +
-      "Pass roleQuery = the role they named, verbatim. It resolves against the collab roles you just " +
-      "recommended and starts the real interview session for the ONE matching role. If it returns " +
-      "reason 'no_match' or 'ambiguous', DO NOT start anything — re-offer the roles or ask which one " +
-      "they mean. Use ONLY when they clearly want to begin a specific collab role's prescreen.",
-    parameters: z.object({ roleQuery: z.string() }),
-    async execute({ roleQuery }) {
-      const roles = await readLastCollabRoles(ctx.db, ctx.userId, ctx.log)
-      const resolved = resolveCollabRole(roleQuery, roles)
-      if (resolved.kind === "no_match") {
-        ctx.log("pa.claire.begin_collab_prescreen.no_match", {
-          userId: ctx.userId,
-          roleQuery,
-          roleCount: roles.length,
-        })
-        return { ok: false, reason: "no_match", roles }
+      "START the pre-screen for a specific WeKruit collab/partner role, identified by its jobId — which " +
+      "you get from find_my_role (kind='one' → best.jobId, or the candidate's chosen one after you " +
+      "clarified an 'ambiguous' result). Do NOT call this with a guessed or ambiguous jobId; resolve " +
+      "first. If it returns reason 'not_matched', the candidate was never matched to that role — guide " +
+      "them to the website instead. Use ONLY when they clearly want to begin that role's screen.",
+    parameters: z.object({ jobId: z.string() }),
+    async execute({ jobId }) {
+      const cleanJobId = (jobId ?? "").trim()
+      const roles = await loadCandidateRoles(ctx.db, ctx.userId, ctx.log)
+      const role = roles.find((r) => r.jobId === cleanJobId)
+      if (!role) {
+        // Matched-gate (by-name path): only a job in the candidate's matched/prescreened set is startable.
+        ctx.log("pa.claire.begin_collab_prescreen.not_matched", { userId: ctx.userId, jobId: cleanJobId, roleCount: roles.length })
+        return { ok: false, reason: "not_matched", roles: roles.map((r) => ({ jobId: r.jobId, company: r.company, title: r.title })) }
       }
-      if (resolved.kind === "ambiguous") {
-        ctx.log("pa.claire.begin_collab_prescreen.ambiguous", {
-          userId: ctx.userId,
-          roleQuery,
-          candidateCount: resolved.candidates.length,
-        })
-        return { ok: false, reason: "ambiguous", candidates: resolved.candidates }
-      }
-      const { role } = resolved
       const toE164 = await resolveCandidatePhone(ctx.db, ctx.userId, ctx.toE164, ctx.log)
       if (!toE164) {
         ctx.log("pa.claire.begin_collab_prescreen.no_phone", { userId: ctx.userId, jobId: role.jobId })
@@ -1274,6 +1430,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     saveJobProfile,
     setDailySubscription,
     matchCollab,
+    findMyRole,
     beginCollabPrescreen,
     checkPrescreenProgress,
     cvParse,
