@@ -353,17 +353,17 @@ function RecruiterAccessGate({ onAuthed }: { onAuthed: (session: RecruiterSessio
             <>
               <label>
                 <span>Access code</span>
-                <input value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} placeholder="WK-XXXX-XXXX" required />
+                <input value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} placeholder="WK-XXXX-XXXX" autoComplete="one-time-code" required />
               </label>
               <label>
                 <span>Your name</span>
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Sloane Whitfield" required />
+                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Sloane Whitfield" autoComplete="name" required />
               </label>
             </>
           )}
           <label>
             <span>Work email</span>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@agency.com" required />
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@agency.com" autoComplete="username" required />
           </label>
           <label>
             <span>Password</span>
@@ -461,7 +461,7 @@ function RolesTab({ jobs, loading }: { jobs: CollabJob[]; loading: boolean }) {
         <div><h2>Role marketplace</h2><p>These are the live WeKruit collab `pa-jobs` open to recruiter submissions.</p></div>
         <label className="rb-search">
           <span>Search roles</span>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Title, location, tag..." />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Title, location, tag..." autoComplete="off" />
         </label>
       </header>
       {loading && <div className="rb-state">Loading open roles...</div>}

@@ -5,7 +5,7 @@
  * sortable columns, pagination, row drill-down. Backed by the unified DataTable
  * primitive + useTable hook.
  */
-import { Fragment, useEffect, useMemo, useState, type FormEvent } from "react"
+import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
 import { arrayUnion, collection, doc, getDocs, limit, orderBy, query, serverTimestamp, updateDoc } from "firebase/firestore"
 import { AdminJobLink } from "../components/AdminEntityLink.js"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
@@ -87,6 +87,9 @@ interface RecruiterInviteCodeDoc {
   maxUses?: number
   usedCount?: number
   expiresAt?: string | null
+  createdAt?: { seconds?: number } | string | null
+  createdByEmail?: string | null
+  lastUsedByEmail?: string | null
 }
 
 interface RecruiterNotificationDoc {
@@ -117,6 +120,24 @@ function defaultRecruiterCodeExpiryLocal(): string {
   const date = new Date()
   date.setFullYear(date.getFullYear() + 1)
   return toDatetimeLocalValue(date)
+}
+
+function formatOpsDate(raw: unknown): string {
+  const ms = timestampToMs(raw)
+  return ms ? new Date(ms).toLocaleString() : "—"
+}
+
+function formatCodeExpiry(raw?: string | null): string {
+  if (!raw) return "—"
+  const ms = Date.parse(raw)
+  return Number.isNaN(ms) ? raw : new Date(ms).toLocaleString()
+}
+
+function codeStatus(code: RecruiterInviteCodeDoc): { label: string; tone: Parameters<typeof Badge>[0]["tone"] } {
+  if (code.active === false) return { label: "disabled", tone: "muted" }
+  if ((code.usedCount ?? 0) >= 1) return { label: "used", tone: "info" }
+  if (code.expiresAt && Date.parse(code.expiresAt) <= Date.now()) return { label: "expired", tone: "warn" }
+  return { label: "usable", tone: "ok" }
 }
 
 export default function RecruiterSubmissions() {
@@ -440,25 +461,15 @@ function RecruiterOpsPanel() {
   const activeCodes = codes.filter((c) => c.active !== false && (c.usedCount ?? 0) < 1).length
   const sentNotifications = notifications.filter((n) => n.status === "sent").length
   const failedNotifications = notifications.filter((n) => n.status === "failed").length
-  const focusCodeForm = () => {
-    document.getElementById("recruiter-code-form")?.scrollIntoView({ behavior: "smooth", block: "start" })
-  }
+  const sortedCodes = [...codes].sort((a, b) => timestampToMs(b.createdAt) - timestampToMs(a.createdAt))
+  const sortedProfiles = [...profiles].sort((a, b) => (a.email ?? "").localeCompare(b.email ?? ""))
 
   return (
     <Panel
       title="Recruiter access"
       eyebrow="Codes, accounts, notifications"
       actions={
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
-            type="button"
-            onClick={focusCodeForm}
-            style={{ padding: "8px 12px", border: "1px solid #222", background: "#222", color: "#fff", borderRadius: 6 }}
-          >
-            Create access code
-          </button>
-          <button type="button" onClick={() => void reload()} disabled={loading}>Refresh</button>
-        </div>
+        <button type="button" onClick={() => void reload()} disabled={loading}>Refresh</button>
       }
     >
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
@@ -467,12 +478,14 @@ function RecruiterOpsPanel() {
         <OpsMetric label="Usable codes" value={activeCodes} />
         <OpsMetric label="Notifications sent" value={sentNotifications} meta={failedNotifications ? `${failedNotifications} failed` : undefined} />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 360px) 1fr", gap: 18 }}>
-        <form id="recruiter-code-form" onSubmit={createCode} style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontWeight: 600 }}>Create recruiter access code</div>
-          <p style={{ color: "#666", margin: 0, fontSize: 13, lineHeight: 1.5 }}>
-            Every code can only be used once. The first successful signup binds it to one Firebase recruiter account.
-          </p>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
+        <form id="recruiter-code-form" onSubmit={createCode} style={{ display: "grid", gap: 10, border: "1px solid #eee", borderRadius: 8, padding: 14, background: "#fff" }}>
+          <div>
+            <div style={{ fontWeight: 700 }}>Issue access code</div>
+            <p style={{ color: "#666", margin: "4px 0 0", fontSize: 13, lineHeight: 1.45 }}>
+              One code creates one Firebase recruiter account. Default expiry is one year.
+            </p>
+          </div>
           <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#666" }}>
             Label
             <input
@@ -490,7 +503,6 @@ function RecruiterOpsPanel() {
               onChange={(e) => setExpiresAtLocal(e.target.value)}
               style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6 }}
             />
-            <span style={{ color: "#888", fontSize: 11 }}>Defaults to 1 year from creation.</span>
           </label>
           <button
             disabled={creating}
@@ -503,6 +515,7 @@ function RecruiterOpsPanel() {
             <div style={{ background: "#f7f3ed", border: "1px solid #e1d8cc", borderRadius: 8, padding: 12 }}>
               <div style={{ fontSize: 11, color: "#666", textTransform: "uppercase", letterSpacing: ".08em" }}>Give this code to the recruiter</div>
               <code style={{ display: "block", marginTop: 6, fontSize: 18, fontWeight: 700 }}>{generated.inviteCode}</code>
+              <div style={{ color: "#777", fontSize: 12, marginTop: 4 }}>Expires {formatCodeExpiry(generated.expiresAt)}</div>
               <button
                 type="button"
                 onClick={() => void navigator.clipboard?.writeText(generated.inviteCode)}
@@ -513,32 +526,94 @@ function RecruiterOpsPanel() {
             </div>
           )}
         </form>
-        <div style={{ display: "grid", gap: 12 }}>
-          <div>
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>How new role notifications work</div>
-            <p style={{ color: "#666", margin: 0, fontSize: 13, lineHeight: 1.5 }}>
-              When a `pa-jobs` document becomes `wekruitCollaborationStatus=collaborated` with `recruiterBoard.active=true`,
-              the recruiter-board function creates one idempotent notification per active recruiter and emails anyone with new-role notifications enabled.
-            </p>
-          </div>
-          <div>
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>Recent notifications</div>
-            {notifications.slice(0, 5).map((n) => (
-              <div key={n.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, padding: "8px 0", borderTop: "1px solid #eee", fontSize: 12 }}>
-                <span>
-                  <b>{n.roleTitle ?? "Role"}</b>
-                  <br />
-                  <span style={{ color: "#777" }}>{n.recruiterEmail ?? "unknown recruiter"}</span>
-                </span>
-                <Badge tone={n.status === "sent" ? "ok" : n.status === "failed" ? "warn" : "muted"}>{n.status ?? "queued"}</Badge>
-              </div>
-            ))}
-            {!notifications.length && <p style={{ color: "#777", fontSize: 12, margin: 0 }}>No role notifications yet.</p>}
-          </div>
-        </div>
+        <OpsSection title="Access codes" subtitle="Codes are masked after creation; copy the raw code immediately.">
+          {sortedCodes.length ? (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ color: "#777", textAlign: "left", borderBottom: "1px solid #eee" }}>
+                    <th style={{ padding: "8px 6px" }}>Code</th>
+                    <th style={{ padding: "8px 6px" }}>Label</th>
+                    <th style={{ padding: "8px 6px" }}>Status</th>
+                    <th style={{ padding: "8px 6px" }}>Expires</th>
+                    <th style={{ padding: "8px 6px" }}>Bound to</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedCodes.slice(0, 8).map((code) => {
+                    const status = codeStatus(code)
+                    return (
+                      <tr key={code.id} style={{ borderBottom: "1px solid #f1f1f1" }}>
+                        <td style={{ padding: "9px 6px", fontFamily: "monospace", fontWeight: 700 }}>{code.codePreview ?? code.id.slice(0, 10)}</td>
+                        <td style={{ padding: "9px 6px" }}>{code.label || "—"}</td>
+                        <td style={{ padding: "9px 6px" }}><Badge tone={status.tone}>{status.label}</Badge></td>
+                        <td style={{ padding: "9px 6px", color: "#666" }}>{formatCodeExpiry(code.expiresAt)}</td>
+                        <td style={{ padding: "9px 6px", color: "#666" }}>{code.lastUsedByEmail ?? "—"}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyOpsText>Create an access code to invite the first recruiter.</EmptyOpsText>
+          )}
+        </OpsSection>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 18, marginTop: 18 }}>
+        <OpsSection title="Recruiter accounts" subtitle="Firebase-bound recruiter users who can submit candidates.">
+          {sortedProfiles.length ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {sortedProfiles.slice(0, 8).map((profile) => (
+                <div key={profile.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, borderTop: "1px solid #eee", paddingTop: 8, fontSize: 12 }}>
+                  <span>
+                    <b>{profile.name || profile.email || "Recruiter"}</b>
+                    <br />
+                    <span style={{ color: "#777" }}>{profile.email ?? profile.firebaseUid ?? profile.id}</span>
+                  </span>
+                  <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <Badge tone={profile.status === "disabled" ? "warn" : "ok"}>{profile.status ?? "active"}</Badge>
+                    <Badge tone={profile.notificationPreferences?.newRolesEmail === false ? "muted" : "info"}>{profile.notificationPreferences?.newRolesEmail === false ? "email off" : "email on"}</Badge>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyOpsText>No recruiter accounts yet. A recruiter appears here after signup.</EmptyOpsText>
+          )}
+        </OpsSection>
+        <OpsSection title="Role alerts" subtitle="One alert is created per active recruiter when a recruiter-board role is released.">
+          {notifications.slice(0, 6).map((n) => (
+            <div key={n.id} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, padding: "8px 0", borderTop: "1px solid #eee", fontSize: 12 }}>
+              <span>
+                <b>{n.roleTitle ?? "Role"}</b>
+                <br />
+                <span style={{ color: "#777" }}>{n.recruiterEmail ?? "unknown recruiter"} · {formatOpsDate(n.createdAt)}</span>
+              </span>
+              <Badge tone={n.status === "sent" ? "ok" : n.status === "failed" ? "warn" : "muted"}>{n.status ?? "queued"}</Badge>
+            </div>
+          ))}
+          {!notifications.length && <EmptyOpsText>No role notifications yet.</EmptyOpsText>}
+        </OpsSection>
       </div>
     </Panel>
   )
+}
+
+function OpsSection({ title, subtitle, children }: { title: string; subtitle?: string; children: ReactNode }) {
+  return (
+    <section style={{ border: "1px solid #eee", borderRadius: 8, padding: 14, background: "#fff", minHeight: 168 }}>
+      <div style={{ display: "grid", gap: 3, marginBottom: 8 }}>
+        <div style={{ fontWeight: 700 }}>{title}</div>
+        {subtitle && <div style={{ color: "#777", fontSize: 12, lineHeight: 1.4 }}>{subtitle}</div>}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function EmptyOpsText({ children }: { children: ReactNode }) {
+  return <p style={{ color: "#777", fontSize: 12, margin: 0 }}>{children}</p>
 }
 
 function OpsMetric({ label, value, meta }: { label: string; value: number; meta?: string }) {
