@@ -123,6 +123,9 @@ export const CandidateGlobalTagsSchema = z.object({
   roleFunction: z.array(RoleFunctionSchema).default([]),
   skills: SkillsListSchema.default([]),
   careerStage: CareerStageSchema.optional(),
+  // Seniority RANGE the candidate is open to: [anchor, upper] in CAREER_STAGE_VOCAB order, derived from
+  // careerStage + preferenceHardness.careerStage.bufferSteps. Lets /me show "junior–senior" not just "junior".
+  careerStageRange: z.tuple([CareerStageSchema, CareerStageSchema]).optional(),
   yoeRange: z.tuple([z.number().nonnegative(), z.number().nonnegative()]).optional(),
   industrySector: z.array(IndustrySectorSchema).default([]),
   targetLocations: z.array(LocationSchema).default([]),

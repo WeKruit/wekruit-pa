@@ -31,10 +31,40 @@ import {
   canonicalizeSkillName,
   type UserTags,
 } from "./user-tags-merger.js"
-import { SkillSchema, type Skill } from "@wekruit/shared-tags"
+import { SkillSchema, CAREER_STAGE_VOCAB, type Skill } from "@wekruit/shared-tags"
 import { canonicalizeLocationTokens } from "./onboarding-mappers.js"
 
 const PA_USERS_COLLECTION = "pa-users"
+
+/**
+ * Seniority RANGE for /me: [anchor, anchor+bufferSteps] in CAREER_STAGE_VOCAB order, clamped to the
+ * vocab bounds. `bufferSteps` lives on `tags.preferenceHardness.careerStage.bufferSteps` (how far up the
+ * candidate is open, set at onboarding). Returns undefined when the anchor is off-vocab or buffer ≤ 0 —
+ * the caller then emits only the scalar `careerStage` and /me shows the single stage.
+ */
+function deriveCareerStageRange(
+  anchor: string,
+  preferenceHardness: unknown,
+): [string, string] | undefined {
+  const vocab = CAREER_STAGE_VOCAB as readonly string[]
+  const idx = vocab.indexOf(anchor)
+  if (idx < 0) return undefined
+  const ph =
+    preferenceHardness && typeof preferenceHardness === "object" && !Array.isArray(preferenceHardness)
+      ? (preferenceHardness as Record<string, unknown>)
+      : undefined
+  const csPref =
+    ph?.careerStage && typeof ph.careerStage === "object" && !Array.isArray(ph.careerStage)
+      ? (ph.careerStage as Record<string, unknown>)
+      : undefined
+  const rawBuffer = csPref?.bufferSteps
+  const buffer =
+    typeof rawBuffer === "number" && Number.isFinite(rawBuffer) ? Math.max(0, Math.floor(rawBuffer)) : 0
+  if (buffer <= 0) return undefined
+  const upperIdx = Math.min(idx + buffer, vocab.length - 1)
+  if (upperIdx <= idx) return undefined
+  return [vocab[idx]!, vocab[upperIdx]!]
+}
 
 /**
  * Project the matching tag store (`pa-users.tags`, UserTags) onto the candidate-facing
@@ -57,7 +87,13 @@ export function projectTagsToGlobalTags(tags: Record<string, unknown>): Record<s
   const role = arr("targetRoleFunction")
   if (role) g.roleFunction = role
   if (Array.isArray(tags.skills)) g.skills = tags.skills
-  if (typeof tags.careerStage === "string") g.careerStage = tags.careerStage
+  if (typeof tags.careerStage === "string") {
+    g.careerStage = tags.careerStage
+    // Seniority RANGE — anchor + how far up the candidate is open (preferenceHardness.careerStage.bufferSteps)
+    // → [anchor, anchor+buffer] in CAREER_STAGE_VOCAB order. Lets /me render "junior–senior", not "junior".
+    const range = deriveCareerStageRange(tags.careerStage, tags.preferenceHardness)
+    if (range) g.careerStageRange = range
+  }
   if (Array.isArray(tags.yoeRange)) g.yoeRange = tags.yoeRange
   const ind = arr("industrySector")
   if (ind) g.industrySector = ind

@@ -13,6 +13,7 @@ import {
   writeUserTagsFull,
   applyPartialUserTags,
   auditUsersWithoutTags,
+  projectTagsToGlobalTags,
 } from "../user-tags-writer.js"
 import { USER_TAGS_SCHEMA_VERSION } from "../user-tags-merger.js"
 
@@ -427,4 +428,29 @@ test("applyPartialUserTags: preferenceHardness on a doc with none writes it whol
   const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
   const ph = written.tags.preferenceHardness as Record<string, { hardness: string }>
   assert.equal(ph.salary?.hardness, "hard")
+})
+
+test("projectTagsToGlobalTags: careerStage + bufferSteps → careerStageRange (seniority range for /me)", () => {
+  // 8fE's real shape: anchor junior + soft careerStage with bufferSteps 3 → junior..staff.
+  const g = projectTagsToGlobalTags({
+    careerStage: "junior",
+    preferenceHardness: { careerStage: { hardness: "soft", bufferSteps: 3, source: "onboarding" } },
+  })
+  assert.equal(g.careerStage, "junior")
+  assert.deepEqual(g.careerStageRange, ["junior", "staff"])
+})
+
+test("projectTagsToGlobalTags: no bufferSteps → scalar careerStage only, no range", () => {
+  const g = projectTagsToGlobalTags({ careerStage: "senior" })
+  assert.equal(g.careerStage, "senior")
+  assert.equal(g.careerStageRange, undefined)
+})
+
+test("projectTagsToGlobalTags: bufferSteps clamps at the top of the vocab", () => {
+  const g = projectTagsToGlobalTags({
+    careerStage: "director",
+    preferenceHardness: { careerStage: { hardness: "soft", bufferSteps: 99 } },
+  })
+  // director + 99 → clamps to the last stage (founder), never out of bounds.
+  assert.deepEqual(g.careerStageRange, ["director", "founder"])
 })
