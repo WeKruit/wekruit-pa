@@ -1069,6 +1069,23 @@ interface RecruiterSourcedCandidateListItem {
   updatedAt?: unknown
 }
 
+export function normalizeRecruiterCandidateLink(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed) return ""
+  try {
+    const url = new URL(trimmed)
+    const host = url.hostname.toLowerCase().replace(/^www\./, "")
+    const path = url.pathname.replace(/\/+$/, "").toLowerCase()
+    return `${host}${path}`
+  } catch {
+    return trimmed.toLowerCase().replace(/\s+/g, "")
+  }
+}
+
+export function hashRecruiterCandidateLink(raw: string): string {
+  return createHash("sha256").update(normalizeRecruiterCandidateLink(raw)).digest("hex")
+}
+
 function sanitizeOptionalString(v: unknown, max: number): string | undefined {
   if (v === undefined || v === null) return undefined
   if (typeof v !== "string") return undefined
@@ -1221,9 +1238,37 @@ export const paRecruiterSourcedCandidateSave = onRequest(
         return
       }
 
-      const candidateId = payload.candidateId || randomUUID()
-      const ref = db.collection(RECRUITER_SOURCED_CANDIDATES_COLLECTION).doc(candidateId)
-      const existing = await ref.get()
+      const candidateLinkKey = hashRecruiterCandidateLink(payload.candidate.link)
+      let candidateId = payload.candidateId
+      let ref = candidateId
+        ? db.collection(RECRUITER_SOURCED_CANDIDATES_COLLECTION).doc(candidateId)
+        : null
+      let existing = ref ? await ref.get() : null
+
+      const candidateMatches = await db
+        .collection(RECRUITER_SOURCED_CANDIDATES_COLLECTION)
+        .where("candidateLinkKey", "==", candidateLinkKey)
+        .limit(25)
+        .get()
+
+      for (const match of candidateMatches.docs) {
+        const data = match.data()
+        if (data.jobId !== realJobId) continue
+        if (data.recruiterId !== recruiter.recruiterId) {
+          res.status(409).json({ ok: false, reason: "candidate_already_sourced_for_role" })
+          return
+        }
+        if (!candidateId) {
+          candidateId = match.id
+          ref = match.ref
+          existing = match
+          break
+        }
+      }
+
+      candidateId = candidateId || randomUUID()
+      ref = ref || db.collection(RECRUITER_SOURCED_CANDIDATES_COLLECTION).doc(candidateId)
+      existing = existing || await ref.get()
       if (existing.exists) {
         const existingRecruiterId = existing.data()?.recruiterId
         if (existingRecruiterId !== recruiter.recruiterId) {
@@ -1238,6 +1283,7 @@ export const paRecruiterSourcedCandidateSave = onRequest(
         recruiterEmail: recruiter.email,
         jobId: realJobId,
         inboundJobId: payload.jobId,
+        candidateLinkKey,
         jobTitleSnapshot: String(jobData.title ?? ""),
         companyLabelSnapshot: rb.label.company,
         stage: payload.stage,

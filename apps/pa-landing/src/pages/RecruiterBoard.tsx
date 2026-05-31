@@ -683,7 +683,7 @@ function sourceToPipelineItem(c: RecruiterSourcedCandidateItem): PipelineItem {
     company: c.jobTitleSnapshot || c.companyLabelSnapshot || "Saved prospect",
     age: formatCandidateAge(c.updatedAt ?? c.createdAt),
     kind: "source",
-    href: c.inboundJobId ? `/recruiters/job/${encodeURIComponent(c.inboundJobId)}` : undefined,
+    href: c.inboundJobId ? `/recruiters/job/${encodeURIComponent(c.inboundJobId)}?candidateId=${encodeURIComponent(c.id)}` : undefined,
   }
 }
 
@@ -1042,7 +1042,7 @@ function SourcedCandidateCard({
             <option key={option.id} value={option.id}>{option.label}</option>
           ))}
         </select>
-        {candidate.inboundJobId ? <Link to={`/recruiters/job/${candidate.inboundJobId}`}>Open brief</Link> : null}
+        {candidate.inboundJobId ? <Link to={`/recruiters/job/${candidate.inboundJobId}?candidateId=${encodeURIComponent(candidate.id)}`}>Submit</Link> : null}
       </footer>
     </article>
   )

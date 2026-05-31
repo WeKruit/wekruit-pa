@@ -248,6 +248,9 @@ export async function saveRecruiterSourcedCandidate(
     candidate?: RecruiterSourcedCandidateItem
   }
   if (!res.ok || !body.ok || !body.candidate) {
+    if (body.reason === "candidate_already_sourced_for_role") {
+      throw new Error("This candidate is already sourced for this role by another recruiter.")
+    }
     throw new Error(body.reason ?? `paRecruiterSourcedCandidateSave HTTP ${res.status}`)
   }
   return body.candidate

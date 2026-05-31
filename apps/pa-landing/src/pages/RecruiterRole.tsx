@@ -7,19 +7,25 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { onAuthStateChanged } from "firebase/auth"
-import { Link, useNavigate, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import "../styles/recruiter-board.css"
 import {
   fetchCollabJobs,
+  fetchRecruiterSourcedCandidates,
+  fetchRecruiterSubmissions,
   getRecruiterProfile,
+  saveRecruiterSourcedCandidate,
   submitRecruiterCandidate,
   type CollabJob,
   type RecruiterSession,
+  type RecruiterSourcedCandidateItem,
+  type RecruiterSubmissionItem,
   type SubmissionResponse,
 } from "../lib/recruiter-board-api.js"
 import { auth } from "../lib/firebase.js"
 
 const STORAGE_KEY_PREFIX = "rb-state-v1:"
+const ROLE_PENDING_SUBMISSION_LIMIT = 5
 
 interface FormState {
   submitterName: string
@@ -71,6 +77,43 @@ function withRecruiterDefaults(state: FormState, session: RecruiterSession | nul
     ...state,
     submitterName: state.submitterName || session.recruiter.name,
     submitterEmail: state.submitterEmail || session.recruiter.email,
+  }
+}
+
+function timestampMs(raw: RecruiterSubmissionItem["createdAt"] | RecruiterSourcedCandidateItem["createdAt"]): number {
+  if (!raw) return 0
+  if (typeof raw === "string") return Date.parse(raw) || 0
+  if (typeof raw === "object" && typeof raw.seconds === "number") return raw.seconds * 1000
+  return 0
+}
+
+function roleMatches(job: CollabJob, row: { jobId?: string; inboundJobId?: string }): boolean {
+  return row.inboundJobId === job.jobId || row.jobId === job.jobId
+}
+
+function roleSubmissionStatusLabel(status?: string): string {
+  switch (status) {
+    case "reviewing": return "WeKruit review"
+    case "advanced": return "Sent to team"
+    case "interviewing": return "Interviewing"
+    case "hired": return "Hired"
+    case "rejected": return "Rejected"
+    case "duplicate": return "Duplicate"
+    case "submitted":
+    case "new":
+    default:
+      return "Submitted"
+  }
+}
+
+function sourcedStageLabel(stage?: string): string {
+  switch (stage) {
+    case "contacted": return "Contacted"
+    case "screened": return "Screened"
+    case "ready": return "Ready"
+    case "submitted": return "Submitted"
+    case "archived": return "Archived"
+    default: return "Sourced"
   }
 }
 
@@ -130,14 +173,19 @@ function renderInline(text: string): ReactNode[] {
 export default function RecruiterRole() {
   const { jobId } = useParams<{ jobId: string }>()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [session, setSession] = useState<RecruiterSession | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
+  const [sourcedCandidates, setSourcedCandidates] = useState<RecruiterSourcedCandidateItem[]>([])
+  const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [trackerError, setTrackerError] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
   const [submitting, setSubmitting] = useState(false)
   const [submission, setSubmission] = useState<SubmissionResponse | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [prefilledCandidateId, setPrefilledCandidateId] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -177,12 +225,46 @@ export default function RecruiterRole() {
       .catch((e) => setError(String(e?.message ?? e)))
   }, [])
 
+  useEffect(() => {
+    if (!session) return
+    let active = true
+    Promise.all([fetchRecruiterSourcedCandidates(), fetchRecruiterSubmissions()])
+      .then(([candidates, rows]) => {
+        if (!active) return
+        setSourcedCandidates(candidates)
+        setSubmissions(rows)
+        setTrackerError(null)
+      })
+      .catch((e) => {
+        if (active) setTrackerError(e instanceof Error ? e.message : String(e))
+      })
+    return () => {
+      active = false
+    }
+  }, [session?.recruiterId])
+
   // Persist form on every change.
   useEffect(() => {
     if (jobId) saveFormState(jobId, form)
   }, [jobId, form])
 
   const job = useMemo(() => jobs?.find((j) => j.jobId === jobId) ?? null, [jobs, jobId])
+
+  useEffect(() => {
+    const candidateParam = searchParams.get("candidateId")
+    if (!candidateParam || prefilledCandidateId === candidateParam) return
+    const candidate = sourcedCandidates.find((c) => c.id === candidateParam || c.candidateId === candidateParam)
+    if (!candidate) return
+    setForm((next) => withRecruiterDefaults({
+      ...next,
+      candidateName: candidate.candidate?.name || "",
+      candidateLink: candidate.candidate?.link || "",
+      candidateCurrentRole: candidate.candidate?.currentRole || "",
+      candidateYoe: candidate.candidate?.yoe || "",
+      candidateNotes: candidate.candidate?.notes || "",
+    }, session))
+    setPrefilledCandidateId(candidateParam)
+  }, [prefilledCandidateId, searchParams, session, sourcedCandidates])
 
   if (error) return <div className="rb-page"><div className="rb-state error">Could not load: {error}</div></div>
   if (!authReady) return <div className="rb-page"><div className="rb-state">Loading recruiter account...</div></div>
@@ -230,6 +312,31 @@ export default function RecruiterRole() {
   }
   const totalChecked = Object.values(checkedCounts).reduce((s, n) => s + n, 0)
   const totalItems = Object.values(totals).reduce((s, n) => s + n, 0)
+  const roleCandidates = sourcedCandidates
+    .filter((candidate) => roleMatches(job, candidate))
+    .sort((a, b) => timestampMs(b.updatedAt ?? b.createdAt) - timestampMs(a.updatedAt ?? a.createdAt))
+  const roleSubmissions = submissions
+    .filter((row) => roleMatches(job, row))
+    .sort((a, b) => timestampMs(b.createdAt) - timestampMs(a.createdAt))
+  const pendingCount = roleSubmissions.filter((row) => ["submitted", "new", "reviewing"].includes(row.status ?? "submitted")).length
+  const pendingSlots = Math.max(0, ROLE_PENDING_SUBMISSION_LIMIT - pendingCount)
+  const selectedCandidate = prefilledCandidateId
+    ? roleCandidates.find((candidate) => candidate.id === prefilledCandidateId || candidate.candidateId === prefilledCandidateId)
+    : null
+
+  const useSourcedCandidate = (candidate: RecruiterSourcedCandidateItem) => {
+    setForm((next) => withRecruiterDefaults({
+      ...next,
+      candidateName: candidate.candidate?.name || "",
+      candidateLink: candidate.candidate?.link || "",
+      candidateCurrentRole: candidate.candidate?.currentRole || "",
+      candidateYoe: candidate.candidate?.yoe || "",
+      candidateNotes: candidate.candidate?.notes || "",
+    }, session))
+    setPrefilledCandidateId(candidate.id)
+    setSearchParams({ candidateId: candidate.id })
+    requestAnimationFrame(() => document.getElementById("submit-candidate")?.scrollIntoView({ behavior: "smooth", block: "start" }))
+  }
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -239,6 +346,10 @@ export default function RecruiterRole() {
     }
     if (!form.candidateConsent) {
       setSubmitError("candidate_consent_required")
+      return
+    }
+    if (pendingSlots <= 0) {
+      setSubmitError("This role already has 5 pending submissions from your account. Wait for review feedback before submitting more.")
       return
     }
     setSubmitError(null)
@@ -262,6 +373,22 @@ export default function RecruiterRole() {
     setSubmitting(false)
     if (result.ok) {
       setSubmission(result)
+      if (selectedCandidate) {
+        saveRecruiterSourcedCandidate({
+          candidateId: selectedCandidate.candidateId || selectedCandidate.id,
+          jobId: selectedCandidate.inboundJobId || job.jobId,
+          stage: "submitted",
+          candidate: {
+            name: form.candidateName.trim(),
+            link: form.candidateLink.trim(),
+            currentRole: form.candidateCurrentRole.trim() || undefined,
+            yoe: form.candidateYoe.trim() || undefined,
+            notes: form.candidateNotes.trim() || undefined,
+          },
+        })
+          .then((saved) => setSourcedCandidates((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)]))
+          .catch(() => undefined)
+      }
       saveFormState(job.jobId, withRecruiterDefaults(emptyForm(), session))
       window.scrollTo({ top: 0, behavior: "smooth" })
     } else {
@@ -298,6 +425,29 @@ export default function RecruiterRole() {
           </div>
         </div>
 
+        <section className="rb-role-cockpit" aria-label="Role recruiting cockpit">
+          <article>
+            <span>Reward</span>
+            <strong>{job.compSummary || "$10K+ placement fee"}</strong>
+            <em>Paid on successful hire.</em>
+          </article>
+          <article>
+            <span>Pending slots</span>
+            <strong>{pendingSlots}/{ROLE_PENDING_SUBMISSION_LIMIT}</strong>
+            <em>Wait for feedback when full.</em>
+          </article>
+          <article>
+            <span>My role pipeline</span>
+            <strong>{roleCandidates.length} sourced</strong>
+            <em>{roleSubmissions.length} submitted.</em>
+          </article>
+          <article>
+            <span>Scorecard</span>
+            <strong>{totals.hard} hard / {totals.fit} fit</strong>
+            <em>{totals.anti} anti-signal checks.</em>
+          </article>
+        </section>
+
         {submission && submission.ok && (
           <div className="rb-success">
             <strong>Candidate submitted.</strong> We&apos;ll review and update your tracker.
@@ -316,44 +466,53 @@ export default function RecruiterRole() {
           </div>
         )}
 
-        <div className="rb-jd">
-          {job.compSummary && <div className="rb-comp"><strong>Comp:</strong> {job.compSummary}</div>}
-          {job.jdBlocks.map((block, i) => (
-            <section className="block" key={i}>
-              <h3>{block.heading}</h3>
-              {renderMarkdown(block.body)}
-            </section>
-          ))}
-          {job.recruiterBoard.interviewProcess && (
-            <section className="block">
-              <h3>Interview process</h3>
-              <p>{job.recruiterBoard.interviewProcess}</p>
-            </section>
-          )}
-        </div>
+        {trackerError && <div className="rb-error">Could not load role tracker: {trackerError}</div>}
 
-        <div className="rb-culture">
-          <h3>Culture &amp; what they're building</h3>
-          <p><strong>The bet:</strong> {job.recruiterBoard.culture.bet}</p>
-          <ul>
-            {job.recruiterBoard.culture.bullets.map((b, i) => (
-              <li key={i}>{renderInline(b)}</li>
-            ))}
-          </ul>
-        </div>
+        <div className="rb-role-dashboard">
+          <section className="rb-role-main">
+            <div className="rb-jd">
+              {job.compSummary && <div className="rb-comp"><strong>Comp:</strong> {job.compSummary}</div>}
+              {job.jdBlocks.map((block, i) => (
+                <section className="block" key={i}>
+                  <h3>{block.heading}</h3>
+                  {renderMarkdown(block.body)}
+                </section>
+              ))}
+              {job.recruiterBoard.interviewProcess && (
+                <section className="block">
+                  <h3>Interview process</h3>
+                  <p>{job.recruiterBoard.interviewProcess}</p>
+                </section>
+              )}
+            </div>
 
-        <div className="rb-banner">
-          <strong>Recruiters: please return this checklist with each candidate.</strong>
-          <span className="small">
-            Fill in your contact + the candidate fields, tick every box the candidate satisfies, then hit
-            <em> Submit candidate</em> below. Saved in your browser; you can come back later.
-          </span>
-          <span className="chip">$10K+ placement fee on successful hire</span>
-        </div>
+            <div className="rb-culture">
+              <h3>Culture &amp; what they're building</h3>
+              <p><strong>The bet:</strong> {job.recruiterBoard.culture.bet}</p>
+              <ul>
+                {job.recruiterBoard.culture.bullets.map((b, i) => (
+                  <li key={i}>{renderInline(b)}</li>
+                ))}
+              </ul>
+            </div>
 
-        <form className="rb-form-section rb-form" onSubmit={onSubmit}>
+            <div className="rb-banner">
+              <strong>Recruiters: source first, submit only after consent.</strong>
+              <span className="small">
+                Use the role queue to prefill a sourced candidate, tick every verified requirement, then submit.
+                The role allows up to {ROLE_PENDING_SUBMISSION_LIMIT} pending submissions before waiting for feedback.
+              </span>
+              <span className="chip">{pendingSlots} pending slots open</span>
+            </div>
+
+        <form id="submit-candidate" className="rb-form-section rb-form" onSubmit={onSubmit}>
           <h3 className="section-title">Your contact (for follow-up)</h3>
           <p className="rb-form-note">Submitting as {session.recruiter.email}. WeKruit status updates will appear in your recruiter tracker.</p>
+          {selectedCandidate && (
+            <p className="rb-form-note rb-form-note--active">
+              Prefilled from your sourced candidate queue: {selectedCandidate.candidate?.name || "Candidate"}.
+            </p>
+          )}
           <div className="field">
             <label>Your name *</label>
             <input
@@ -460,7 +619,7 @@ export default function RecruiterRole() {
           {submitError && <div className="rb-error">Submission failed: {submitError}</div>}
 
           <div className="rb-actions">
-            <button type="submit" className="rb-btn primary" disabled={submitting}>
+            <button type="submit" className="rb-btn primary" disabled={submitting || pendingSlots <= 0}>
               {submitting ? "Submitting…" : "Submit candidate"}
             </button>
             <button type="button" className="rb-btn" onClick={resetChecklist} disabled={submitting}>
@@ -471,6 +630,63 @@ export default function RecruiterRole() {
             </div>
           </div>
         </form>
+          </section>
+
+          <aside className="rb-role-side">
+            <section className="rb-side-panel">
+              <h3>Candidate queue</h3>
+              <p>Prospects saved in your CRM for this role. Use one to prefill the submit form.</p>
+              <div className="rb-role-candidate-list">
+                {roleCandidates.slice(0, 8).map((candidate) => (
+                  <article key={candidate.id}>
+                    <span>
+                      <strong>{candidate.candidate?.name || "Candidate"}</strong>
+                      <em>{candidate.candidate?.currentRole || sourcedStageLabel(candidate.stage)}</em>
+                    </span>
+                    <small>{sourcedStageLabel(candidate.stage)}</small>
+                    <button type="button" className="rb-btn" onClick={() => useSourcedCandidate(candidate)}>
+                      Use
+                    </button>
+                  </article>
+                ))}
+                {roleCandidates.length === 0 && <p className="rb-side-empty">No sourced candidates for this role yet.</p>}
+              </div>
+              <button type="button" className="rb-btn rb-btn--block" onClick={() => navigate("/recruiters?tab=candidates")}>
+                Add sourced candidate
+              </button>
+            </section>
+
+            <section className="rb-side-panel">
+              <h3>Calibration</h3>
+              <div className="rb-calibration-stack">
+                {groups.filter((group) => group.kind === "hard" || group.kind === "anti").map((group) => (
+                  <div key={group.kind}>
+                    <strong>{group.heading}</strong>
+                    <ul>
+                      {group.items.slice(0, 4).map((item) => <li key={item.id}>{item.text}</li>)}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="rb-side-panel">
+              <h3>My submissions</h3>
+              <div className="rb-role-submission-list">
+                {roleSubmissions.slice(0, 6).map((row) => (
+                  <article key={row.id}>
+                    <span>
+                      <strong>{row.candidate?.name || "Candidate"}</strong>
+                      <em>{roleSubmissionStatusLabel(row.status)}</em>
+                    </span>
+                    <small>{timestampMs(row.createdAt) ? new Date(timestampMs(row.createdAt)).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Today"}</small>
+                  </article>
+                ))}
+                {roleSubmissions.length === 0 && <p className="rb-side-empty">No submitted candidates yet.</p>}
+              </div>
+            </section>
+          </aside>
+        </div>
       </main>
     </div>
   )

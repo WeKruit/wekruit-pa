@@ -94,6 +94,161 @@
 }
 .rb-back:hover { background: #f0efea; }
 
+.rb-role-cockpit {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.rb-role-cockpit article {
+  display: grid;
+  gap: 4px;
+  background: #fff;
+  border: 1px solid #e6e6e2;
+  border-radius: 10px;
+  padding: 13px 14px;
+}
+
+.rb-role-cockpit span,
+.rb-role-cockpit em {
+  color: #6a6a64;
+  font-size: 11.5px;
+  font-style: normal;
+}
+
+.rb-role-cockpit span {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.rb-role-cockpit strong {
+  color: #1a1a1a;
+  font-size: 17px;
+  line-height: 1.15;
+}
+
+.rb-role-dashboard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 18px;
+  align-items: start;
+}
+
+.rb-role-main {
+  min-width: 0;
+}
+
+.rb-role-side {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.rb-side-panel {
+  display: grid;
+  gap: 10px;
+  background: #fff;
+  border: 1px solid #e6e6e2;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.rb-side-panel h3 {
+  margin: 0;
+  color: #2a2a26;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rb-side-panel p {
+  margin: 0;
+  color: #6a6a64;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-role-candidate-list,
+.rb-role-submission-list,
+.rb-calibration-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.rb-role-candidate-list article,
+.rb-role-submission-list article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  border-top: 1px solid #eee;
+  padding-top: 8px;
+}
+
+.rb-role-candidate-list article {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.rb-role-candidate-list strong,
+.rb-role-candidate-list em,
+.rb-role-submission-list strong,
+.rb-role-submission-list em {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-role-candidate-list strong,
+.rb-role-submission-list strong {
+  color: #1a1a1a;
+  font-size: 13px;
+}
+
+.rb-role-candidate-list em,
+.rb-role-submission-list em,
+.rb-role-candidate-list small,
+.rb-role-submission-list small {
+  color: #6a6a64;
+  font-size: 11.5px;
+  font-style: normal;
+}
+
+.rb-role-candidate-list .rb-btn {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.rb-calibration-stack div {
+  border-top: 1px solid #eee;
+  padding-top: 9px;
+}
+
+.rb-calibration-stack strong {
+  display: block;
+  color: #2a2a26;
+  font-size: 12.5px;
+  margin-bottom: 5px;
+}
+
+.rb-calibration-stack ul {
+  margin: 0;
+  padding-left: 16px;
+  color: #5a5a54;
+  font-size: 12px;
+}
+
+.rb-side-empty {
+  padding: 12px;
+  background: #fafaf6;
+  border-radius: 8px;
+  text-align: center;
+}
+
 .rb-jd, .rb-culture, .rb-form-section {
   background: #ffffff;
   border: 1px solid #e6e6e2;
@@ -314,6 +469,13 @@
   padding: 12px 16px;
   margin-bottom: 16px;
   font-size: 13px;
+}
+
+.rb-form-note--active {
+  background: #eef6ef;
+  border: 1px solid #c7dfcc;
+  border-radius: 8px;
+  padding: 9px 10px;
 }
 
 .rb-state {
@@ -1607,8 +1769,15 @@
   .rb-workspace__grid,
   .rb-workbench-grid,
   .rb-feedback-grid,
-  .rb-candidate-crm {
+  .rb-candidate-crm,
+  .rb-role-dashboard {
     grid-template-columns: 1fr;
+  }
+  .rb-role-cockpit {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rb-role-side {
+    position: static;
   }
   .rb-stats {
     grid-template-columns: repeat(2, 1fr);
@@ -1676,7 +1845,8 @@
   .rb-pipeline,
   .rb-candidate-board,
   .rb-source-form__split,
-  .rb-feedback-line {
+  .rb-feedback-line,
+  .rb-role-cockpit {
     grid-template-columns: 1fr;
   }
   .rb-role-row__action,

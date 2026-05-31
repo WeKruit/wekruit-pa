@@ -21,8 +21,10 @@ import {
   defaultRecruiterInviteCodeExpiresAt,
   fetchCollabJobs,
   generateRecruiterInviteCode,
+  hashRecruiterCandidateLink,
   hashRecruiterInviteCode,
   isHiringBoardAdmin,
+  normalizeRecruiterCandidateLink,
   inviteCodeUsable,
   normalizeRecruiterInviteCode,
   recruiterInviteCodeMatchesBoundUser,
@@ -213,6 +215,17 @@ describe("recruiter role notifications", () => {
 })
 
 describe("recruiter sourced candidates", () => {
+  it("normalizes candidate profile links before duplicate checks", () => {
+    assert.equal(
+      normalizeRecruiterCandidateLink(" HTTPS://www.LinkedIn.com/in/Ada-Lovelace/?trk=public_profile "),
+      "linkedin.com/in/ada-lovelace",
+    )
+    assert.equal(
+      hashRecruiterCandidateLink("https://linkedin.com/in/ada-lovelace").length,
+      64,
+    )
+  })
+
   it("accepts a recruiter-sourced candidate and trims optional fields", () => {
     const result = validateRecruiterSourcedCandidateInput({
       jobId: " public-job-1 ",
