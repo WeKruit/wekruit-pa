@@ -866,7 +866,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     description:
       "Book the candidate's interview / pre-screen time slot. DEDUP: if they already have a booking " +
       "for this opportunity, do NOT rebook. Use when they want to schedule / book / set up an interview " +
-      "or offer their availability (e.g. 'book me in', 'when can I interview?', '帮我约个面试时间').",
+      "or offer their availability (e.g. 'book me in', 'when can I interview?', 'set up a time').",
     parameters: z.object({ slotIso: z.string() }),
     async execute({ slotIso }) {
       const jobId = (ctx.jobId ?? "").trim() || "unknown_job"
@@ -1321,7 +1321,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
   })
 
   // ── 10. capture_match_feedback — the "are you happy with these? why?" path ─
-  // SAME shape as set_matching_preferences (Adam 顶层设计 2026-05-30): the AGENT
+  // SAME shape as set_matching_preferences (Adam top-level design 2026-05-30): the AGENT
   // maps the candidate's free text to closed-enum sentiment + reasonCategory and
   // canonical pref/tag DELTAS; the tool validates vs shared-tags + writes a
   // structured feedback event (the flywheel) AND any durable tag deltas via the

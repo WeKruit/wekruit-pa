@@ -148,7 +148,7 @@ export const DEFAULT_SKILL_CATALOG: Array<{
   {
     key: "headhunter",
     intentDescription:
-      "Activate when user signals job search / role change / 在看工作 / on the market. NOT for emotional distress.",
+      "Activate when user signals job search / role change / on the market. NOT for emotional distress.",
     llmInvokable: true,
   },
   {
@@ -166,7 +166,7 @@ export const DEFAULT_SKILL_CATALOG: Array<{
   {
     key: "jd_roast",
     intentDescription:
-      "Activate when user shares a job description / asks for thoughts on a role / 帮我看 this JD. NOT general career chat.",
+      "Activate when user shares a job description / asks for thoughts on a role / asks you to look at this JD. NOT general career chat.",
     llmInvokable: true,
   },
   {
@@ -178,7 +178,7 @@ export const DEFAULT_SKILL_CATALOG: Array<{
   {
     key: "negotiation",
     intentDescription:
-      "Activate when user is comparing offers, asking how much to ask, counter-offer, 谈薪.",
+      "Activate when user is comparing offers, asking how much to ask, counter-offer, salary negotiation.",
     llmInvokable: true,
   },
 ]
@@ -188,7 +188,6 @@ const RULES_SUFFIX = `Rules:
 - Max 3 skills. Confidence below 0.6 → exclude.
 - If message is ambiguous / casual / out-of-scope → return {"skills":[],"reason":"ambiguous"}.
 - NEVER invent skill keys. Use only the listed above.
-- Bilingual zh+en — respect both.
 - Crisis signals (suicide / self-harm) → DO NOT route here; regex floor handles those upstream.`
 
 export function buildSystemPrompt(
@@ -196,7 +195,7 @@ export function buildSystemPrompt(
 ): string {
   const filtered = catalog.filter((c) => c.llmInvokable)
   const lines = [
-    "You are a skill-intent classifier for Claire, a bilingual zh+en companion agent.",
+    "You are a skill-intent classifier for Claire, an English companion agent.",
     "Given a user message, return a JSON object listing the top-K=3 skills (by relevance)",
     "the message should activate, with confidence 0.0-1.0 each.",
     "",

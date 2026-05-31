@@ -77,15 +77,6 @@ const AXIS_PHRASING_EN: Readonly<Record<string, string>> = {
   industrySector: "the industries you care about",
 }
 
-const AXIS_PHRASING_ZH: Readonly<Record<string, string>> = {
-  targetRoleFunction: "想做什么类型的岗位",
-  targetLocations: "想在哪儿工作",
-  visaStatus: "签证 / 工作授权状态",
-  careerStage: "资历水平",
-  targetJobType: "岗位类型（全职 / 实习 / 合同）",
-  industrySector: "感兴趣的行业",
-}
-
 /**
  * Human-readable phrasing for each hardFilter gate, per language. Same
  * concision rule as above.
@@ -101,17 +92,6 @@ const GATE_PHRASING_EN: Readonly<Record<string, string>> = {
   roleFunction: "I didn't find roles in your target role family today",
 }
 
-const GATE_PHRASING_ZH: Readonly<Record<string, string>> = {
-  visa: "现在的新岗位都需要工作授权，你的签证情况对不上",
-  location: "新岗位的地点都不在你的偏好范围内",
-  careerStage: "新岗位的资历层级跟你不在一个段位",
-  jobType: "新岗位的工作类型不是你想要的",
-  freshness: "我能看到的岗位都超过 20 天没更新了",
-  atsApplyUrl: "新岗位都没有可用的申请链接",
-  dead: "原来的匹配岗位已经下架或过期了",
-  roleFunction: "今天没找到你目标角色家族的新岗位",
-}
-
 /**
  * Concrete next-step question per dominant gate. Caller can append.
  */
@@ -124,17 +104,6 @@ const GATE_FOLLOWUP_EN: Readonly<Record<string, string>> = {
   atsApplyUrl: "Want me to surface roles where I'll need to find the link myself?",
   dead: "Want me to look at fresh roles in the same role family instead?",
   roleFunction: "Want me to look at adjacent role families?",
-}
-
-const GATE_FOLLOWUP_ZH: Readonly<Record<string, string>> = {
-  visa: "要不要放宽到不要求 sponsor 的岗位？",
-  location: "要不要把地点放宽一些？",
-  careerStage: "要不要看看相邻资历的岗位？",
-  jobType: "要不要包含其他工作类型？",
-  freshness: "要不要放宽 freshness 窗口，再看一遍昨天的批次？",
-  atsApplyUrl: "要不要看一些需要我自己去找申请链接的岗位？",
-  dead: "要不要看看同一角色家族的新岗位？",
-  roleFunction: "要不要看看相邻角色家族的岗位？",
 }
 
 /**
@@ -156,19 +125,16 @@ function dominantGate(hardFilter: Readonly<Record<string, number>> | undefined):
   return bestKey
 }
 
-function axisLabel(axis: string, lang: NarrationLang): string {
-  const map = lang === "zh" ? AXIS_PHRASING_ZH : AXIS_PHRASING_EN
-  return map[axis] ?? axis
+function axisLabel(axis: string, _lang: NarrationLang): string {
+  return AXIS_PHRASING_EN[axis] ?? axis
 }
 
-function gateLabel(gate: string, lang: NarrationLang): string {
-  const map = lang === "zh" ? GATE_PHRASING_ZH : GATE_PHRASING_EN
-  return map[gate] ?? gate
+function gateLabel(gate: string, _lang: NarrationLang): string {
+  return GATE_PHRASING_EN[gate] ?? gate
 }
 
-function gateFollowup(gate: string, lang: NarrationLang): string {
-  const map = lang === "zh" ? GATE_FOLLOWUP_ZH : GATE_FOLLOWUP_EN
-  return map[gate] ?? (lang === "zh" ? "要不要换个方向？" : "Want me to broaden the search?")
+function gateFollowup(gate: string, _lang: NarrationLang): string {
+  return GATE_FOLLOWUP_EN[gate] ?? "Want me to broaden the search?"
 }
 
 /**
@@ -185,9 +151,7 @@ export function composeNoMatchReply(
 ): string {
   // 1. No user tags at all — direct ask, no apology.
   if (counters.noUserTags) {
-    return lang === "zh"
-      ? "我这边还没拿到你的偏好资料 — 想从哪儿开始？目标角色 / 地点 / 工作授权状态 任选一个我们就能跑起来。"
-      : "I don't have your preference profile on file yet — where do you want to start? Tell me one of: target role, location, or work-authorization status, and I can run the search."
+    return "I don't have your preference profile on file yet — where do you want to start? Tell me one of: target role, location, or work-authorization status, and I can run the search."
   }
 
   // 2. Onboarding gap — name the most-load-bearing missing axis.
@@ -195,21 +159,14 @@ export function composeNoMatchReply(
     const axes = (counters.missingAxes ?? []).slice(0, 2)
     if (axes.length > 0) {
       const labels = axes.map((a) => axisLabel(a, lang))
-      if (lang === "zh") {
-        return `我没法跑匹配，因为 ${labels.join(" 和 ")} 还没填 — 你跟我说一下，下次拉的就准了。`
-      }
       return `I can't run a clean match yet because I don't have ${labels.join(" or ")} on file — tell me and the next pull will be sharp.`
     }
-    return lang === "zh"
-      ? "我的偏好资料还有一两个轴是空的 — 跟我说一下目标角色、地点、签证、资历，下次匹配就能精准了。"
-      : "Your preference profile has a couple of axes still empty — give me target role, location, visa, or seniority, and the next pull will be sharp."
+    return "Your preference profile has a couple of axes still empty — give me target role, location, visa, or seniority, and the next pull will be sharp."
   }
 
   // 3. Partner/collab pool empty — different framing.
   if (counters.collabPrescreenOnly) {
-    return lang === "zh"
-      ? "今天的合作岗里没看到跟你匹配的 — 我可以扩到整个开放市场再扫一轮吗？"
-      : "I didn't find a partner role that fits today — want me to widen to the open market and scan again?"
+    return "I didn't find a partner role that fits today — want me to widen to the open market and scan again?"
   }
 
   // 4. Hard-filter wipeout — name the dominant gate.
@@ -217,31 +174,21 @@ export function composeNoMatchReply(
   const dropped = counters.dropped ?? 0
   const gate = dominantGate(counters.hardFilter)
   if (total > 0 && dropped >= total && gate) {
-    if (lang === "zh") {
-      return `我扫了 ${total} 个新岗位，全被 hard filter 拦了 — ${gateLabel(gate, lang)}。${gateFollowup(gate, lang)}`
-    }
     return `I scanned ${total} fresh roles and the hard filter dropped all of them — ${gateLabel(gate, lang)}. ${gateFollowup(gate, lang)}`
   }
 
   // 5. Empty corpus — no jobs to evaluate at all.
   if (total === 0) {
-    return lang === "zh"
-      ? "今天的新岗位池暂时空了。我标记了这次请求，等下批进来我再扫一遍。"
-      : "The fresh-role pool is empty for now. I've marked your request and will scan again when the next batch lands."
+    return "The fresh-role pool is empty for now. I've marked your request and will scan again when the next batch lands."
   }
 
   // 6. Soft-score wipeout (rare — V16 had survivors but ranker dropped all).
   if (total > 0) {
-    if (lang === "zh") {
-      return `我扫了 ${total} 个岗位，但没一个的匹配分够高。要不要稍微放宽一下偏好？`
-    }
     return `I scanned ${total} roles but none scored high enough to send. Want to loosen one preference and let me try again?`
   }
 
   // Fallback — should be unreachable; kept as a never-empty terminal.
-  return lang === "zh"
-    ? "这次没匹到合适的。要不要换个方向我再试试？"
-    : "Nothing fit this round. Want me to try a different angle?"
+  return "Nothing fit this round. Want me to try a different angle?"
 }
 
 /**

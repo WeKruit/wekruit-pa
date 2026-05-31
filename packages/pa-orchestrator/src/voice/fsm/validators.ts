@@ -17,17 +17,20 @@ import type {
 import { ESCONV_STRATEGIES, allowedStrategies, stageForTurn } from "./transitions.js"
 
 // ---------------------------------------------------------------------------
-// Keyword banks — verbatim port of Phase 33 STRATEGY_KEYWORDS_ZH/_EN
-// (voice-axes.mjs:443/454). Parity asserted in validators.test.ts.
+// Keyword banks — EN port of Phase 33 STRATEGY_KEYWORDS_EN
+// (voice-axes.mjs:454). Parity asserted in validators.test.ts.
+//
+// The legacy zh bank is retained as an empty map (product is English-only) so
+// the zh-priority walk below is a no-op and the en bank decides everything.
 // ---------------------------------------------------------------------------
 
 const STRATEGY_KEYWORDS_ZH: Record<Strategy, readonly string[]> = {
-  Question: ["？", "怎么", "什么", "为什么", "吗", "呢"],
-  Restatement: ["你是说", "你的意思", "所以你"],
-  Reflection: ["听起来", "感觉", "肯定", "一定", "看上去"],
-  SelfDisclosure: ["我以前", "我也", "我之前", "我当年", "我也是"],
-  Affirmation: ["这是合理的", "没事的", "这很正常", "你已经", "已经做得"],
-  Suggestion: ["可以试", "不妨", "要不", "建议", "试试"],
+  Question: [],
+  Restatement: [],
+  Reflection: [],
+  SelfDisclosure: [],
+  Affirmation: [],
+  Suggestion: [],
   Information: [],
   Other: [],
 }
@@ -49,7 +52,7 @@ const STRATEGY_KEYWORDS_EN: Record<Strategy, readonly string[]> = {
 
 /**
  * Infer the ESConv strategy from a Claire reply. Mirrors Phase 33
- * `inferStrategy` exactly — keyword-priority walk, zh first then en, first
+ * `inferStrategy` — keyword-priority walk (legacy zh bank is empty), first
  * hit wins.
  *
  * @param reply Claire's draft / final text
@@ -66,7 +69,7 @@ export function inferStrategy(reply: string): {
   const text = reply.trim()
   const lower = text.toLowerCase()
 
-  // zh first (per Phase 33 priority)
+  // zh first (per Phase 33 priority) — legacy zh bank is empty (English-only).
   for (const strat of ESCONV_STRATEGIES) {
     const kws = STRATEGY_KEYWORDS_ZH[strat] ?? []
     for (const kw of kws) {

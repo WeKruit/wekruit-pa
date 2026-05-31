@@ -2,8 +2,8 @@
  * Phase 19 Adaptive Mirror — positive-framing mirror snippet builder.
  *
  * D-03 (LOAD-BEARING): positive framing ONLY. No "don't", "never",
- * "avoid", "do not", "不要", "别", "禁止", "严禁". Negative tokens are
- * regex-asserted absent in the unit test (D-03 enforcement).
+ * "avoid", "do not". Negative tokens are regex-asserted absent in the unit
+ * test (D-03 enforcement).
  *
  * D-04: this snippet is consumed by the orchestrator AFTER the Phase 18
  * voice reminder, BEFORE the user turn. Order:
@@ -56,13 +56,13 @@ const REGISTER_MATCH: Record<RegisterBucket, string> = {
 }
 
 const LANG_OBSERVED: Record<LangBucket, string> = {
-  zh: "primarily 中文",
+  zh: "primarily Chinese",
   en: "primarily English",
   mix: "natural zh-en code-switch",
 }
 
 const LANG_MATCH: Record<LangBucket, string> = {
-  zh: "primary language: 中文",
+  zh: "primary language: Chinese",
   en: "primary language: English",
   mix: "natural zh-en code-switch ok",
 }

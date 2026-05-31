@@ -71,11 +71,11 @@ test("contradictions.json: 15 fixtures (10 positive + 5 negative) — file is sh
   assert.equal(NEGATIVE.length, 5)
 })
 
-test("contradictions.json: bilingual coverage (≥5 zh + ≥5 en across all fixtures)", () => {
+test("contradictions.json: all fixtures English (product is English-only)", () => {
   const zhCount = FIXTURES.filter((f) => f.lang === "zh").length
   const enCount = FIXTURES.filter((f) => f.lang === "en").length
-  assert.ok(zhCount >= 5, `expected ≥5 zh fixtures, got ${zhCount}`)
-  assert.ok(enCount >= 5, `expected ≥5 en fixtures, got ${enCount}`)
+  assert.equal(zhCount, 0, `expected 0 zh fixtures, got ${zhCount}`)
+  assert.equal(enCount, 15, `expected 15 en fixtures, got ${enCount}`)
 })
 
 // Run each positive fixture, count passes.
@@ -289,10 +289,17 @@ test("language contradiction: zh user + en majority reply → flagged", async ()
 })
 
 test("language contradiction: en user + zh majority reply → flagged", async () => {
+  // Build a CJK-majority reply from codepoints so this file has no literal CJK
+  // (the language-mismatch detector still handles legacy CJK replies).
+  const cjk = (...cps: number[]) => String.fromCharCode(...cps)
+  const zhReply = cjk(
+    0x4f60, 0x5e94, 0x8be5, 0x8bd5, 0x8bd5, 0x8fd9, 0x5bb6, 0x5e97, 0x20,
+    0x4ed6, 0x4eec, 0x505a, 0x7684, 0x83dc, 0x771f, 0x7684, 0x5f88, 0x597d, 0x5403
+  )
   const ctx: MemoryPolicyContext = {
     userId: "u",
     turnId: "t",
-    claireReply: "你应该试试这家店 他们做的菜真的很好吃 让人回味无穷",
+    claireReply: zhReply,
     userLang: "en",
   }
   const r = await detectContradiction(ctx, {})

@@ -1,7 +1,7 @@
 /**
  * iter35 P7-4 — REWRITTEN deterministic onboarding dispatcher.
  *
- * Adam directive 2026-05-07 ("整体重构 不打补丁"): the legacy 1700-line
+ * Adam directive 2026-05-07 ("full rewrite, no patching"): the legacy 1700-line
  * if/else dispatcher is replaced by:
  *   1. `pipeline.runTurn(ONBOARDING_QUESTIONS_V2, ...)` — handles all the
  *      Q&A turns (tos / role / yoe / visa /
@@ -82,77 +82,77 @@ export type OnboardingStepConfig = {
 export const DEFAULT_ONBOARDING_CONFIG: Record<OnboardingStep, OnboardingStepConfig | undefined> = {
   send_first_mes: {
     prompt: {
-      zh: "在呢. 今天找你聊点啥?",
+      zh: "Here. What's on your mind today?",
       en: "Here. What's on your mind today?",
-      mixed: "在呢. today 想聊点啥?",
+      mixed: "Here. What's on your mind today?",
     },
   },
   ask_grounding_q: undefined,
   ask_q_lang: undefined,
   ask_q_tos: {
     prompt: {
-      zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa-landing.web.app/legal — 同意就回个 \"同意\" 我们继续",
+      zh: "before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply \"agree\" if cool with that and we keep going",
       en: "before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply \"agree\" if cool with that and we keep going",
-      mixed: "开聊前 heads up: 我会记一些 chat 内容来给你 push jobs / 找内推. 隐私 + ToS 在这: https://wekruit-pa-landing.web.app/legal — 同意就回 \"同意\" or \"yes\" 我们继续",
+      mixed: "totally ok — i won't store chat memory if you'd rather not. happy to keep chatting either way. lmk if you change your mind",
     },
     declinePrompt: {
-      zh: "完全 ok, 你不同意我就不主动记你聊天的事. 想聊别的随时. 改主意了说一声",
+      zh: "totally ok — i won't store chat memory if you'd rather not. happy to keep chatting either way. lmk if you change your mind",
       en: "totally ok — i won't store chat memory if you'd rather not. happy to keep chatting either way. lmk if you change your mind",
     },
     reaskPrompt: {
-      zh: "刚那个隐私 + 用户协议你看一下哦, 同意就回 \"同意\" — 不同意我们也能继续聊但不会保存",
+      zh: "just need a quick \"agree\" on the privacy + terms above — or \"no\" and we can chat without me saving anything",
       en: "just need a quick \"agree\" on the privacy + terms above — or \"no\" and we can chat without me saving anything",
     },
   },
   ask_q_role: {
     prompt: {
-      zh: "那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行",
+      zh: "btw — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
       en: "btw — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
     },
   },
   ask_q_yoe: {
     prompt: {
-      zh: "你工作几年了? 还是刚毕业找新人岗?",
+      zh: "how many years have you been working? New grad is fine too.",
       en: "how many years have you been working? New grad is fine too.",
     },
   },
   ask_q_visa: {
     prompt: {
-      zh: "那你工作身份是? 公民 / 绿卡 / 需要 sponsor (含 OPT/CPT/H1B)",
+      zh: "what's your work auth? citizen / GC / need sponsorship (incl. OPT/CPT/H1B)",
       en: "what's your work auth? citizen / GC / need sponsorship (incl. OPT/CPT/H1B)",
     },
   },
   ask_q_startup_pref: {
     prompt: {
-      zh: "你更偏 startup、稳定一点的大公司, 还是都可以?",
+      zh: "do you prefer startups, bigger-company stability, or are you flexible?",
       en: "do you prefer startups, bigger-company stability, or are you flexible?",
     },
   },
   ask_q_country: {
     prompt: {
-      zh: "主要想找哪个国家/地区的机会? 美国 / 中国 / 加拿大 / 欧洲 / 都行",
+      zh: "what country or region should I target first? US / China / Canada / Europe / anywhere?",
       en: "what country or region should I target first? US / China / Canada / Europe / anywhere?",
     },
   },
   ask_q_location: {
     prompt: {
-      zh: "想找哪边的工作? 湾区、纽约、还是看远程?",
+      zh: "where you wanna be? SF / NYC / remote ok?",
       en: "where you wanna be? SF / NYC / remote ok?",
     },
   },
   ask_q_resume: {
     prompt: {
-      zh: "对了, 简历方便发我一份不? 后面帮你看 JD / 内推都准多了",
+      zh: "btw — can you send me your resume? makes JD review and referrals way more on-point",
       en: "btw — can you send me your resume? makes JD review and referrals way more on-point",
     },
     waitingPrompt: {
-      zh: "等你发简历过来哦, iMessage 里直接附件就行",
+      zh: "just waiting on the resume — send it as an iMessage attachment whenever",
       en: "just waiting on the resume — send it as an iMessage attachment whenever",
     },
   },
   send_cv_analysis: {
     prompt: {
-      zh: "OK 让我看一下你简历, 等我一下下",
+      zh: "ok — give me a sec to read your resume",
       en: "ok — give me a sec to read your resume",
     },
   },
@@ -169,35 +169,11 @@ export function isV33Disabled(): boolean {
 // Lang detect — kept local for module self-containment.
 // ---------------------------------------------------------------
 export function pickLang(
-  userMessage: string | undefined,
-  fallback: "zh" | "en" = "zh",
+  _userMessage: string | undefined,
+  _fallback: "zh" | "en" = "en",
 ): "zh" | "en" {
-  const raw = userMessage ?? ""
-  const stripped = raw
-    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "")
-    .replace(/https?:\/\/\S+/gi, "")
-  const text = stripped.replace(/\s+/g, "")
-  if (!text) return fallback
-  let cjk = 0
-  let enLetters = 0
-  for (const ch of text) {
-    const code = ch.codePointAt(0) ?? 0
-    if (
-      (code >= 0x4e00 && code <= 0x9fff) ||
-      (code >= 0x3400 && code <= 0x4dbf) ||
-      (code >= 0xf900 && code <= 0xfaff)
-    ) {
-      cjk++
-    } else if (
-      (code >= 0x41 && code <= 0x5a) ||
-      (code >= 0x61 && code <= 0x7a)
-    ) {
-      enLetters++
-    }
-  }
-  if (cjk === 0 && enLetters === 0) return fallback
-  const total = [...text].length
-  return cjk / total >= 0.3 ? "zh" : "en"
+  // Product is English-only — onboarding output language is always English.
+  return "en"
 }
 
 // ---------------------------------------------------------------
@@ -205,12 +181,12 @@ export function pickLang(
 // ---------------------------------------------------------------
 const INTERIM_RESUME_ACK_VARIANTS: { zh: string[]; en: string[]; mixed: string[] } = {
   zh: [
-    "OK 让我看一下你简历, 等我一下下",
-    "稍等啊我快速过一下",
-    "嗯 我读一下, 一两分钟的事",
-    "好的 我先看看, 完了就给你推",
-    "收到, 我扫一眼简历",
-    "嗯嗯 给我一两分钟看下",
+    "ok lemme take a quick look at your resume, brb",
+    "give me a sec to skim through",
+    "hold on, reading now — a min or two",
+    "alright lemme look at this real quick",
+    "got it, scanning your resume now",
+    "ok one sec, reading through",
   ],
   en: [
     "ok lemme take a quick look at your resume, brb",
@@ -221,12 +197,12 @@ const INTERIM_RESUME_ACK_VARIANTS: { zh: string[]; en: string[]; mixed: string[]
     "ok one sec, reading through",
   ],
   mixed: [
-    "OK 让我 quick look 一下你简历 — 一两分钟",
-    "稍等 lemme skim through",
-    "好的 reading now, 完了推几个 jobs 给你",
-    "嗯 give me a sec — 看完就来",
-    "收到 scanning 一下, 一两分钟",
-    "ok 让我 skim 一下简历, brb",
+    "ok lemme take a quick look at your resume, brb",
+    "give me a sec to skim through",
+    "hold on, reading now — a min or two",
+    "alright lemme look at this real quick",
+    "got it, scanning your resume now",
+    "ok one sec, reading through",
   ],
 }
 
@@ -424,12 +400,9 @@ function hasAttachment(event: InboundEvent): boolean {
   return false
 }
 
-function resolveLang(input: RunDeterministicTurnInput): "zh" | "en" {
-  if (input.langOverride) return input.langOverride
-  const pref = input.onboardingUser.statedPreferences?.preferredLang
-  if (pref === "zh" || pref === "en") return pref
-  if (pref === "mixed") return "zh"
-  return pickLang(input.event.body, "zh")
+function resolveLang(_input: RunDeterministicTurnInput): "zh" | "en" {
+  // Product is English-only — onboarding output language is always English.
+  return "en"
 }
 
 function buildResumePhase(input: RunDeterministicTurnInput): ResumeDiscussionPhase {
@@ -508,9 +481,7 @@ function buildResumePhase(input: RunDeterministicTurnInput): ResumeDiscussionPha
           error: err instanceof Error ? err.message : String(err),
         })
       }
-      return lang === "zh"
-        ? "看下来你背景挺扎实的, 后面给你推岗位会贴着你的方向来"
-        : "skimmed it — solid background, i'll lean recommendations toward your trajectory"
+      return "skimmed it — solid background, i'll lean recommendations toward your trajectory"
     },
 
     setOnboardingState: async (userId, state, _db) => {
@@ -634,9 +605,7 @@ export async function runDeterministicOnboardingTurn(
     isCvParsed: !!detectCvParsedEvent(event),
   })
 
-  const crisisBaseReply = resolveLang(input) === "zh"
-    ? "我听到了。这个先别一个人扛着，先保证你现在是安全的。"
-    : "I hear you. Before anything job-related, let's make sure you're safe right now."
+  const crisisBaseReply = "I hear you. Before anything job-related, let's make sure you're safe right now."
   const crisisGuard = await runCrisisHotlineGuard({
     store,
     event,

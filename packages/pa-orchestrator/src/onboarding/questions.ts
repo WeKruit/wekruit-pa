@@ -41,7 +41,7 @@ export interface DefaultQuestionsDeps {
   /** Deprecated beta hook retained only for historical callers. Active onboarding no longer asks q_lang. */
   onLangAccepted?: (lang: LangPref, ctx: AcceptedCtx) => Promise<void>
   /**
-   * iter34 hotfix 2026-05-05 — Adam directive "为什么还在用 regex??".
+   * iter34 hotfix 2026-05-05 — Adam directive "why still using regex??".
    * Hooks fired when each probe Q accepts. The judge produces canonical
    * values (e.g. "h1b" / "either"); the runtime hook persists them via
    * `parsedAnswer` (no regex re-parse).
@@ -62,7 +62,7 @@ export interface ClosedQuestionsDeps {
 }
 
 const HALT_DEFAULT: BilingualText = {
-  zh: "请联系 admin1@wekruit.com 解决问题. 你现在连续失败了五次, 请不要继续",
+  zh: "please contact admin1@wekruit.com — you've failed 5 times in a row, please stop",
   en: "please contact admin1@wekruit.com — you've failed 5 times in a row, please stop",
 }
 
@@ -73,25 +73,25 @@ function makeClosedQuestions(deps: ClosedQuestionsDeps): {
   const tosQ: Question<boolean> = makeQuestion({
     id: "q_tos",
     prompt: {
-      zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa-landing.web.app/legal — 同意就回个 \"同意\" 我们继续",
+      zh: 'before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply "agree" if cool with that and we keep going',
       en: 'before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply "agree" if cool with that and we keep going',
     },
     judge: new YesNoJudge(),
     rephraser: new StaticVariantsRephraser([
       {
-        zh: '刚那个隐私 + 用户协议你看一下哦, 同意就回 "同意" — 不同意我们也能继续聊但不会保存',
+        zh: 'just need a quick "agree" on the privacy + terms above — or "no" and we can chat without me saving anything',
         en: 'just need a quick "agree" on the privacy + terms above — or "no" and we can chat without me saving anything',
       },
       {
-        zh: "回 '同意' 或者 '不同意' 都行 — 看你",
+        zh: "either 'agree' or 'no' works — your call",
         en: "either 'agree' or 'no' works — your call",
       },
       {
-        zh: "同意保存咱聊天的事 → 回 '同意'. 不想保存 → 回 '不'",
+        zh: "agree to save chat memory → 'agree'. don't want it → 'no'",
         en: "agree to save chat memory → 'agree'. don't want it → 'no'",
       },
       {
-        zh: "需要你的明确回复 — '同意' or '不'",
+        zh: "need a yes/no — 'agree' or 'no'",
         en: "need a yes/no — 'agree' or 'no'",
       },
     ]),
@@ -105,30 +105,30 @@ function makeClosedQuestions(deps: ClosedQuestionsDeps): {
   const resumeQ: Question<ResumeAttachment[]> = makeQuestion({
     id: "q_resume",
     prompt: {
-      zh: "对了, 简历方便发我一份不? 后面帮你看 JD / 内推都准多了",
+      zh: "btw — can you send me your resume? makes JD review and referrals way more on-point",
       en: "btw — can you send me your resume? makes JD review and referrals way more on-point",
     },
     judge: new ResumeJudge(),
     rephraser: new StaticVariantsRephraser([
       {
-        zh: "等你发简历过来哦, iMessage 里直接附件就行",
+        zh: "just waiting on the resume — send it as an iMessage attachment whenever",
         en: "just waiting on the resume — send it as an iMessage attachment whenever",
       },
       {
-        zh: "把简历当附件发到 iMessage 这里就行 — pdf / docx 都行",
+        zh: "drop the resume as an iMessage attachment — pdf / docx, either works",
         en: "drop the resume as an iMessage attachment — pdf / docx, either works",
       },
       {
-        zh: "实在没简历回 'no resume' 也行, 我们靠对话也能帮你",
+        zh: "no resume? reply 'no resume' and we'll work with chat alone",
         en: "no resume? reply 'no resume' and we'll work with chat alone",
       },
       {
-        zh: "再发一次 — iMessage 附件, pdf 最好",
+        zh: "try again — iMessage attachment, pdf preferred",
         en: "try again — iMessage attachment, pdf preferred",
       },
     ]),
     haltMessage: {
-      zh: "暂时跳过简历, 后面想发再说就行",
+      zh: "skipping resume for now — drop it whenever",
       en: "skipping resume for now — drop it whenever",
     },
     onEnter: async (ctx) => {
@@ -153,25 +153,25 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
   const tosQ: Question<boolean> = makeQuestion({
     id: "q_tos",
     prompt: {
-      zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa-landing.web.app/legal — 同意就回个 \"同意\" 我们继续",
+      zh: 'before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply "agree" if cool with that and we keep going',
       en: 'before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply "agree" if cool with that and we keep going',
     },
     judge: new YesNoJudge(),
     rephraser: new StaticVariantsRephraser([
       {
-        zh: '刚那个隐私 + 用户协议你看一下哦, 同意就回 "同意" — 不同意我们也能继续聊但不会保存',
+        zh: 'just need a quick "agree" on the privacy + terms above — or "no" and we can chat without me saving anything',
         en: 'just need a quick "agree" on the privacy + terms above — or "no" and we can chat without me saving anything',
       },
       {
-        zh: "回 '同意' 或者 '不同意' 都行 — 看你",
+        zh: "either 'agree' or 'no' works — your call",
         en: "either 'agree' or 'no' works — your call",
       },
       {
-        zh: "同意保存咱聊天的事 → 回 '同意'. 不想保存 → 回 '不'",
+        zh: "agree to save chat memory → 'agree'. don't want it → 'no'",
         en: "agree to save chat memory → 'agree'. don't want it → 'no'",
       },
       {
-        zh: "需要你的明确回复 — '同意' or '不'",
+        zh: "need a yes/no — 'agree' or 'no'",
         en: "need a yes/no — 'agree' or 'no'",
       },
     ]),
@@ -189,7 +189,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
   const roleQ: Question<unknown> = makeQuestion({
     id: "q_role",
     prompt: {
-      zh: "下面这几个是我必须了解清楚的, 不然不好帮你 — 那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行",
+      zh: "heads up — i need to nail down these next few before I can actually help you — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
       en: "heads up — i need to nail down these next few before I can actually help you — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
     },
     judge: new LLMRelevanceJudge({
@@ -199,24 +199,24 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
     rephraser: probeRephraserOpts(
       [
         {
-          zh: "我没太 get 到 — 你具体是做啥的? swe / pm / 研究 / 设计 都行, 一两个词就行",
+          zh: "didn't quite catch that — what role specifically? eng / pm / research / design — one or two words works",
           en: "didn't quite catch that — what role specifically? eng / pm / research / design — one or two words works",
         },
         {
-          zh: "那大致偏哪个方向? 工程 / 产品 / 研究 / 设计 — 选一个就行",
+          zh: "roughly which direction — eng / pm / research / design? just pick one",
           en: "roughly which direction — eng / pm / research / design? just pick one",
         },
         {
-          zh: "再换个角度问 — 你之前/现在做的是啥岗? 比如 '前端' / '数据' / 'PM' 这种",
+          zh: "let me try again — what's your role been? like 'frontend' / 'data' / 'pm' style",
           en: "let me try again — what's your role been? like 'frontend' / 'data' / 'pm' style",
         },
         {
-          zh: "一个词概括一下你做的活就行, 比如 'swe' / 'pm' / 'designer' / 'researcher'",
+          zh: "one word for what you do is fine — 'swe' / 'pm' / 'designer' / 'researcher'",
           en: "one word for what you do is fine — 'swe' / 'pm' / 'designer' / 'researcher'",
         },
       ],
       {
-        zh: "swe / pm / 研究 / 设计 — 给我一个就行",
+        zh: "swe / pm / research / design — one works",
         en: "swe / pm / research / design — one works",
       }
     ),
@@ -227,7 +227,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
   const yoeQ: Question<unknown> = makeQuestion({
     id: "q_yoe",
     prompt: {
-      zh: "你工作几年了? 还是刚毕业找新人岗?",
+      zh: "how many years have you been working? New grad is fine too.",
       en: "how many years have you been working? New grad is fine too.",
     },
     judge: new LLMRelevanceJudge({
@@ -237,24 +237,24 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
     rephraser: probeRephraserOpts(
       [
         {
-          zh: "数字大概多少年就行 — 比如 '3年' / '8年' / 或者 '刚毕业'",
+          zh: "roughly a number works — '3 years' / '8 years' / or 'fresh grad'",
           en: "roughly a number works — '3 years' / '8 years' / or 'fresh grad'",
         },
         {
-          zh: "几年就好啦, 不用很精确 — 0 / 1 / 3 / 5 / 10 哪个差不多?",
+          zh: "ballpark is fine — 0 / 1 / 3 / 5 / 10 — closest one?",
           en: "ballpark is fine — 0 / 1 / 3 / 5 / 10 — closest one?",
         },
         {
-          zh: "工作经验大概几年? 还是说还在读书 / 应届?",
+          zh: "roughly how many years working? or still in school / new grad?",
           en: "roughly how many years working? or still in school / new grad?",
         },
         {
-          zh: "给个数字就行哦, 比如 '2年' 或者 'fresh grad'",
+          zh: "just need a number, like '2 years' or 'fresh grad'",
           en: "just need a number, like '2 years' or 'fresh grad'",
         },
       ],
       {
-        zh: "几年? 数字就行",
+        zh: "how many years? a number works",
         en: "how many years? a number works",
       }
     ),
@@ -265,7 +265,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
   const visaQ: Question<unknown> = makeQuestion({
     id: "q_visa",
     prompt: {
-      zh: "那你有身份不? 公民/绿卡/OPT/还是要 sponsor?",
+      zh: "got work auth sorted? citizen / GC / OPT / need sponsorship?",
       en: "got work auth sorted? citizen / GC / OPT / need sponsorship?",
     },
     judge: new LLMRelevanceJudge({
@@ -275,24 +275,24 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
     rephraser: probeRephraserOpts(
       [
         {
-          zh: "选一个就行: 公民 / 绿卡 / OPT / H1B / 需要 sponsor",
+          zh: "pick one: citizen / GC / OPT / H1B / need sponsorship",
           en: "pick one: citizen / GC / OPT / H1B / need sponsorship",
         },
         {
-          zh: "签证状态大概是哪种? 我列下: 公民、绿卡、OPT、H1B、要 sponsor",
+          zh: "what's your status — citizen, GC, OPT, H1B, or need sponsorship?",
           en: "what's your status — citizen, GC, OPT, H1B, or need sponsorship?",
         },
         {
-          zh: "你能在美国合法工作吗? 是哪种身份? OPT / H1B / 绿卡 / 公民",
+          zh: "are you eligible to work in the US? which one — OPT / H1B / GC / citizen?",
           en: "are you eligible to work in the US? which one — OPT / H1B / GC / citizen?",
         },
         {
-          zh: "一个词答下身份吧, 比如 'citizen' / 'opt' / 'h1b' / 'need sponsor'",
+          zh: "one word on your auth — 'citizen' / 'opt' / 'h1b' / 'need sponsor'",
           en: "one word on your auth — 'citizen' / 'opt' / 'h1b' / 'need sponsor'",
         },
       ],
       {
-        zh: "citizen / opt / h1b / sponsor — 选一个",
+        zh: "citizen / opt / h1b / sponsor — pick one",
         en: "citizen / opt / h1b / sponsor — pick one",
       }
     ),
@@ -303,7 +303,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
   const startupPrefQ: Question<unknown> = makeQuestion({
     id: "q_startup_pref",
     prompt: {
-      zh: "你更偏 startup、稳定一点的大公司, 还是都可以?",
+      zh: "do you prefer startups, bigger-company stability, or are you flexible?",
       en: "do you prefer startups, bigger-company stability, or are you flexible?",
     },
     judge: new LLMRelevanceJudge({
@@ -313,20 +313,20 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
     rephraser: probeRephraserOpts(
       [
         {
-          zh: "startup / 大厂 / 都行 三选一",
+          zh: "startup / bigtech / either — pick one",
           en: "startup / bigtech / either — pick one",
         },
         {
           // iter34 hotfix 2026-05-05 — mirror legacy fix; was off-theme drift.
-          zh: "硬要选一个? startup / 大厂 / 都行 — 都可以的话回'都行'就好",
+          zh: "if you had to pick — startup / bigtech / either? 'either' is fine",
           en: "if you had to pick — startup / bigtech / either? 'either' is fine",
         },
         {
-          zh: "你更想要 startup 的节奏, 还是更看重大公司的稳定性?",
+          zh: "do you prefer startup pace or the stability of a bigger company?",
           en: "do you prefer startup pace or the stability of a bigger company?",
         },
         {
-          zh: "一个词就行: 'startup' / 'bigtech' / 'either'",
+          zh: "one word works: 'startup' / 'bigtech' / 'either'",
           en: "one word works: 'startup' / 'bigtech' / 'either'",
         },
       ],
@@ -342,7 +342,7 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
   const locationQ: Question<unknown> = makeQuestion({
     id: "q_location",
     prompt: {
-      zh: "想找哪边的工作? 湾区、纽约、还是看远程?",
+      zh: "where you wanna be? SF / NYC / remote ok?",
       en: "where you wanna be? SF / NYC / remote ok?",
     },
     judge: new LLMRelevanceJudge({
@@ -352,24 +352,24 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
     rephraser: probeRephraserOpts(
       [
         {
-          zh: "城市/地区或者 '远程' 都行",
+          zh: "city / region / or just 'remote' is fine",
           en: "city / region / or just 'remote' is fine",
         },
         {
-          zh: "想在哪工作哦? 湾区 / NYC / Seattle / 上海 / 北京 / remote — 任选",
+          zh: "where you wanna be — SF / NYC / Seattle / China / remote? any of those",
           en: "where you wanna be — SF / NYC / Seattle / China / remote? any of those",
         },
         {
-          zh: "再问一遍: 城市 + remote 偏好 — 比如 'sf' / 'nyc' / 'remote'",
+          zh: "let me ask again — city + remote pref, like 'sf' / 'nyc' / 'remote'",
           en: "let me ask again — city + remote pref, like 'sf' / 'nyc' / 'remote'",
         },
         {
-          zh: "一个地点就行, 比如 'bay area' / '上海' / 'remote'",
+          zh: "one location is fine — 'bay area' / 'shanghai' / 'remote'",
           en: "one location is fine — 'bay area' / 'shanghai' / 'remote'",
         },
       ],
       {
-        zh: "城市或 'remote' 就行",
+        zh: "city or 'remote' is fine",
         en: "city or 'remote' is fine",
       }
     ),
@@ -380,30 +380,30 @@ export function defaultQuestions(deps: DefaultQuestionsDeps): Question<unknown>[
   const resumeQ: Question<ResumeAttachment[]> = makeQuestion({
     id: "q_resume",
     prompt: {
-      zh: "对了, 简历方便发我一份不? 后面帮你看 JD / 内推都准多了",
+      zh: "btw — can you send me your resume? makes JD review and referrals way more on-point",
       en: "btw — can you send me your resume? makes JD review and referrals way more on-point",
     },
     judge: new ResumeJudge(),
     rephraser: new StaticVariantsRephraser([
       {
-        zh: "等你发简历过来哦, iMessage 里直接附件就行",
+        zh: "just waiting on the resume — send it as an iMessage attachment whenever",
         en: "just waiting on the resume — send it as an iMessage attachment whenever",
       },
       {
-        zh: "把简历当附件发到 iMessage 这里就行 — pdf / docx 都行",
+        zh: "drop the resume as an iMessage attachment — pdf / docx, either works",
         en: "drop the resume as an iMessage attachment — pdf / docx, either works",
       },
       {
-        zh: "实在没简历回 'no resume' 也行, 我们靠对话也能帮你",
+        zh: "no resume? reply 'no resume' and we'll work with chat alone",
         en: "no resume? reply 'no resume' and we'll work with chat alone",
       },
       {
-        zh: "再发一次 — iMessage 附件, pdf 最好",
+        zh: "try again — iMessage attachment, pdf preferred",
         en: "try again — iMessage attachment, pdf preferred",
       },
     ]),
     haltMessage: {
-      zh: "暂时跳过简历, 后面想发再说就行",
+      zh: "skipping resume for now — drop it whenever",
       en: "skipping resume for now — drop it whenever",
     },
     onEnter: async (ctx) => {
@@ -505,19 +505,19 @@ function parseRoleReply(reply: string): RoleAnswer | null {
     if (pattern.test(t) && !matched.includes(token)) matched.push(token)
   }
 
-  add("fullstack", /\bfull[-\s]?stack\b|\bfullstack\b|全栈/)
-  add("frontend", /\bfront[-\s]?end\b|\bfrontend\b|\bfe\b|前端/)
-  add("backend", /\bback[-\s]?end\b|\bbackend\b|\bbe\b|后端/)
-  add("data", /\bdata\s+(scientist|analyst|engineer|science|analytics)\b|数据(科学|分析|工程)/)
-  add("ml", /\b(ml|ai)\s+engineer\b|machine\s+learning|deep\s+learning|算法/)
+  add("fullstack", /\bfull[-\s]?stack\b|\bfullstack\b/)
+  add("frontend", /\bfront[-\s]?end\b|\bfrontend\b|\bfe\b/)
+  add("backend", /\bback[-\s]?end\b|\bbackend\b|\bbe\b/)
+  add("data", /\bdata\s+(scientist|analyst|engineer|science|analytics)\b/)
+  add("ml", /\b(ml|ai)\s+engineer\b|machine\s+learning|deep\s+learning/)
   add("infra", /\b(platform|infra|infrastructure|devops|sre)\b/)
   add(
     "swe",
-    /\b(swe|software\s+(engineer|engineering|developer|development)|product\s+engineer|product\s+engineering|engineer|engineering|developer|web\s+developer|mobile\s+developer|coder|cs)\b|工程师|开发/,
+    /\b(swe|software\s+(engineer|engineering|developer|development)|product\s+engineer|product\s+engineering|engineer|engineering|developer|web\s+developer|mobile\s+developer|coder|cs)\b/,
   )
-  add("pm", /\b(pm|product\s+manager|product\s+management|tpm)\b|产品经理/)
-  add("research", /\b(research|researcher|scientist)\b|研究/)
-  add("design", /\b(designer|product\s+designer|design\s+role|ux\s+designer|ui\s+designer)\b|设计/)
+  add("pm", /\b(pm|product\s+manager|product\s+management|tpm)\b/)
+  add("research", /\b(research|researcher|scientist)\b/)
+  add("design", /\b(designer|product\s+designer|design\s+role|ux\s+designer|ui\s+designer)\b/)
 
   if (matched.length === 0) return null
   if (
@@ -562,7 +562,7 @@ export function makeRoleQuestion(
   return makeQuestion<RoleAnswer>({
     id: "q_role",
     prompt: {
-      zh: "下面这几个是我必须了解清楚的, 不然不好帮你 — 那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行",
+      zh: "heads up — i need to nail down these next few before I can actually help you — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
       en: "heads up — i need to nail down these next few before I can actually help you — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
     },
     judge: new GuidedOpenJudge<RoleAnswer>({
@@ -572,7 +572,7 @@ export function makeRoleQuestion(
         { reply: "Software Engineer", value: ["swe"], confidence: 0.95 },
         { reply: "Swe / pm", value: ["swe", "pm"], confidence: 0.9 },
         { reply: "PM for fintech", value: ["pm"], confidence: 0.9 },
-        { reply: "我做 ml infra 的", value: ["ml"], confidence: 0.9 },
+        { reply: "i do ml infra", value: ["ml"], confidence: 0.9 },
         { reply: "designer", value: ["design"], confidence: 0.95 },
       ],
       parseValue: parseRoleValue,
@@ -582,24 +582,24 @@ export function makeRoleQuestion(
     rephraser: new HybridRephraser({
       variants: [
         {
-          zh: "我没太 get 到 — 你具体是做啥的? swe / pm / 研究 / 设计 都行, 一两个词就行",
+          zh: "didn't quite catch that — what role specifically? eng / pm / research / design — one or two words works",
           en: "didn't quite catch that — what role specifically? eng / pm / research / design — one or two words works",
         },
         {
-          zh: "那大致偏哪个方向? 工程 / 产品 / 研究 / 设计 — 选一个就行",
+          zh: "roughly which direction — eng / pm / research / design? just pick one",
           en: "roughly which direction — eng / pm / research / design? just pick one",
         },
         {
-          zh: "再换个角度问 — 你之前/现在做的是啥岗? 比如 '前端' / '数据' / 'PM' 这种",
+          zh: "let me try again — what's your role been? like 'frontend' / 'data' / 'pm' style",
           en: "let me try again — what's your role been? like 'frontend' / 'data' / 'pm' style",
         },
         {
-          zh: "一个词概括一下你做的活就行, 比如 'swe' / 'pm' / 'designer' / 'researcher'",
+          zh: "one word for what you do is fine — 'swe' / 'pm' / 'designer' / 'researcher'",
           en: "one word for what you do is fine — 'swe' / 'pm' / 'designer' / 'researcher'",
         },
       ],
       fallback: {
-        zh: "swe / pm / 研究 / 设计 — 给我一个就行",
+        zh: "swe / pm / research / design — one works",
         en: "swe / pm / research / design — one works",
       },
     }),
@@ -621,8 +621,7 @@ function parseYoeValue(raw: unknown): YoeAnswer | null {
     t.includes("fresh") ||
     t.includes("new grad") ||
     t.includes("new_grad") ||
-    t.includes("刚毕业") ||
-    t.includes("应届")
+    false
   ) {
     return "fresh"
   }
@@ -647,7 +646,7 @@ export function makeYoeQuestion(
   return makeQuestion<YoeAnswer>({
     id: "q_yoe",
     prompt: {
-      zh: "你工作几年了? 还是刚毕业找新人岗?",
+      zh: "how many years have you been working? New grad is fine too.",
       en: "how many years have you been working? New grad is fine too.",
     },
     judge: new GuidedOpenJudge<YoeAnswer>({
@@ -657,10 +656,10 @@ export function makeYoeQuestion(
         { reply: "2years", value: 2, confidence: 1.0 },
         { reply: "2 years", value: 2, confidence: 1.0 },
         { reply: "5y", value: 5, confidence: 0.95 },
-        { reply: "三年", value: 3, confidence: 0.95 },
+        { reply: "3 years", value: 3, confidence: 0.95 },
         { reply: "3-5 years", value: 4, confidence: 0.9 },
         { reply: "fresh grad", value: "fresh", confidence: 1.0 },
-        { reply: "刚毕业", value: "fresh", confidence: 1.0 },
+        { reply: "just graduated", value: "fresh", confidence: 1.0 },
       ],
       parseValue: parseYoeValue,
       parseReply: parseYoeValue,
@@ -669,24 +668,24 @@ export function makeYoeQuestion(
     rephraser: new HybridRephraser({
       variants: [
         {
-          zh: "数字大概多少年就行 — 比如 '3年' / '8年' / 或者 '刚毕业'",
+          zh: "roughly a number works — '3 years' / '8 years' / or 'fresh grad'",
           en: "roughly a number works — '3 years' / '8 years' / or 'fresh grad'",
         },
         {
-          zh: "几年就好啦, 不用很精确 — 0 / 1 / 3 / 5 / 10 哪个差不多?",
+          zh: "ballpark is fine — 0 / 1 / 3 / 5 / 10 — closest one?",
           en: "ballpark is fine — 0 / 1 / 3 / 5 / 10 — closest one?",
         },
         {
-          zh: "工作经验大概几年? 还是说还在读书 / 应届?",
+          zh: "roughly how many years working? or still in school / new grad?",
           en: "roughly how many years working? or still in school / new grad?",
         },
         {
-          zh: "给个数字就行哦, 比如 '2年' 或者 'fresh grad'",
+          zh: "just need a number, like '2 years' or 'fresh grad'",
           en: "just need a number, like '2 years' or 'fresh grad'",
         },
       ],
       fallback: {
-        zh: "几年? 数字就行",
+        zh: "how many years? a number works",
         en: "how many years? a number works",
       },
     }),
@@ -707,10 +706,7 @@ function parseStartupPrefValue(raw: unknown): StartupPrefAnswer | null {
     t.includes("flexible") ||
     t.includes("open to either") ||
     (t.includes("startup") && (t.includes("bigtech") || t.includes("big tech") || t.includes("big-co"))) ||
-    t.includes("都行") ||
-    t.includes("都可以") ||
-    t.includes("无所谓") ||
-    t.includes("看具体")
+    false
   ) return "either"
   if (t === "startup") return "startup"
   if (
@@ -720,7 +716,7 @@ function parseStartupPrefValue(raw: unknown): StartupPrefAnswer | null {
     t.includes("early stage") ||
     t.includes("fast-moving") ||
     t.includes("fast moving") ||
-    t.includes("创业")
+    false
   ) return "startup"
   if (
     t === "bigtech" ||
@@ -731,7 +727,7 @@ function parseStartupPrefValue(raw: unknown): StartupPrefAnswer | null {
     t.includes("large company") ||
     t.includes("enterprise") ||
     t.includes("stable") ||
-    t.includes("大厂")
+    false
   ) return "bigtech"
   return null
 }
@@ -743,7 +739,7 @@ export function makeStartupPrefQuestion(
   return makeQuestion<StartupPrefAnswer>({
     id: "q_startup_pref",
     prompt: {
-      zh: "你更偏 startup、稳定一点的大公司, 还是都可以?",
+      zh: "do you prefer startups, bigger-company stability, or are you flexible?",
       en: "do you prefer startups, bigger-company stability, or are you flexible?",
     },
     judge: new GuidedOpenJudge<StartupPrefAnswer>({
@@ -757,21 +753,21 @@ export function makeStartupPrefQuestion(
           confidence: 0.95,
         },
         { reply: "big company stable", value: "bigtech", confidence: 0.9 },
-        { reply: "都行", value: "either", confidence: 0.95 },
+        { reply: "either is fine", value: "either", confidence: 0.95 },
         { reply: "Either", value: "either", confidence: 1.0 },
-        { reply: "看具体团队", value: "either", confidence: 0.8 },
+        { reply: "depends on the team", value: "either", confidence: 0.8 },
       ],
       bloomRegex: [
         {
-          pattern: /\b(either|both|any|flexible|open to either|depends|team-dependent)\b|(\bstartup\b|\bstart-up\b|\bearly[-\s]?stage\b|\bfast[-\s]?moving\b|创业).*(\bbigtech\b|\bbig tech\b|\bbig[-\s]?company\b|\blarge company\b|\benterprise\b|\bstable\b|大厂)|(\bbigtech\b|\bbig tech\b|\bbig[-\s]?company\b|\blarge company\b|\benterprise\b|\bstable\b|大厂).*(\bstartup\b|\bstart-up\b|\bearly[-\s]?stage\b|\bfast[-\s]?moving\b|创业)|都行|都可以|无所谓|看具体/i,
+          pattern: /\b(either|both|any|flexible|open to either|depends|team-dependent)\b|(\bstartup\b|\bstart-up\b|\bearly[-\s]?stage\b|\bfast[-\s]?moving\b|founding).*(\bbigtech\b|\bbig tech\b|\bbig[-\s]?company\b|\blarge company\b|\benterprise\b|\bstable\b)|(\bbigtech\b|\bbig tech\b|\bbig[-\s]?company\b|\blarge company\b|\benterprise\b|\bstable\b).*(\bstartup\b|\bstart-up\b|\bearly[-\s]?stage\b|\bfast[-\s]?moving\b)/i,
           value: "either",
         },
         {
-          pattern: /\bstartup\b|\bstart-up\b|\bearly[-\s]?stage\b|\bfast[-\s]?moving\b|\bfounding\b|创业/i,
+          pattern: /\bstartup\b|\bstart-up\b|\bearly[-\s]?stage\b|\bfast[-\s]?moving\b|\bfounding\b/i,
           value: "startup",
         },
         {
-          pattern: /\bbigtech\b|\bbig tech\b|\bbig[-\s]?company\b|\blarge company\b|\benterprise\b|\bstable\b|大厂/i,
+          pattern: /\bbigtech\b|\bbig tech\b|\bbig[-\s]?company\b|\blarge company\b|\benterprise\b|\bstable\b/i,
           value: "bigtech",
         },
       ],
@@ -781,19 +777,19 @@ export function makeStartupPrefQuestion(
     rephraser: new HybridRephraser({
       variants: [
         {
-          zh: "我想给你打个偏好标签: 更偏 startup, 大厂, 还是都可以?",
+          zh: "I just need the preference tag: more startup, big-company, or flexible?",
           en: "I just need the preference tag: more startup, big-company, or flexible?",
         },
         {
-          zh: "可以讲细一点, 但结论帮我带上: startup / 大厂 / 都行 哪个更接近?",
+          zh: "You can add nuance, just include the closest label: startup / big-company / flexible.",
           en: "You can add nuance, just include the closest label: startup / big-company / flexible.",
         },
         {
-          zh: "你更想要 startup 的节奏, 还是更看重大公司的稳定性?",
+          zh: "do you prefer startup pace or the stability of a bigger company?",
           en: "do you prefer startup pace or the stability of a bigger company?",
         },
         {
-          zh: "一个词就行: 'startup' / 'bigtech' / 'either'",
+          zh: "one word works: 'startup' / 'bigtech' / 'either'",
           en: "one word works: 'startup' / 'bigtech' / 'either'",
         },
       ],
@@ -819,19 +815,19 @@ const COUNTRY_HINTS = ["usa", "china", "canada", "europe", "anywhere"] as const
 
 /**
  * Few-shot table covering Adam-verified cases:
- *   - "USA" / "美国"           → "usa"
- *   - "中国" / "PRC"          → "china"
- *   - "Anywhere" / "无所谓"   → "anywhere"
+ *   - "USA"                   -> "usa"
+ *   - "PRC"                   -> "china"
+ *   - "Anywhere"              -> "anywhere"
  *   - "in north america"      → ["usa", "canada"] (multi)
  *   - "either USA or China"   → ["usa", "china"] (multi)
  *   - "based in europe but ok with us" (multi-country)
  */
 const COUNTRY_EXAMPLES: GuidedOpenJudgeSpec<CountryAnswer>["examples"] = [
   { reply: "USA", value: ["usa"], confidence: 1.0 },
-  { reply: "美国", value: ["usa"], confidence: 1.0 },
-  { reply: "中国", value: ["china"], confidence: 1.0 },
+  { reply: "America", value: ["usa"], confidence: 1.0 },
+  { reply: "China", value: ["china"], confidence: 1.0 },
   { reply: "Anywhere is fine", value: ["anywhere"], confidence: 1.0 },
-  { reply: "无所谓", value: ["anywhere"], confidence: 0.95 },
+  { reply: "doesn't matter", value: ["anywhere"], confidence: 0.95 },
   { reply: "in north america", value: ["usa", "canada"], confidence: 0.9 },
   { reply: "either USA or China", value: ["usa", "china"], confidence: 0.9 },
   { reply: "based in europe", value: ["europe"], confidence: 0.95 },
@@ -873,7 +869,7 @@ function parseCountryValue(raw: unknown): CountryAnswer | null {
 export const Q_COUNTRY: Question<CountryAnswer> = makeQuestion<CountryAnswer>({
   id: "q_country",
   prompt: {
-    zh: "想找哪个国家/地区的工作? 美国 / 中国 / 加拿大 / 欧洲 / 都行 — 多选也行",
+    zh: "which country/region you targeting? USA / China / Canada / Europe / anywhere — multi is fine",
     en: "which country/region you targeting? USA / China / Canada / Europe / anywhere — multi is fine",
   },
   judge: new GuidedOpenJudge<CountryAnswer>({
@@ -885,24 +881,24 @@ export const Q_COUNTRY: Question<CountryAnswer> = makeQuestion<CountryAnswer>({
   rephraser: new HybridRephraser({
     variants: [
       {
-        zh: "国家选一下哦: 美国 / 中国 / 加拿大 / 欧洲 / 都行",
+        zh: "pick a country: USA / China / Canada / Europe / anywhere",
         en: "pick a country: USA / China / Canada / Europe / anywhere",
       },
       {
-        zh: "再问一遍 — 主要看哪个国家? 一个或多个都行",
+        zh: "let me ask again — which country are you targeting? one or multiple is fine",
         en: "let me ask again — which country are you targeting? one or multiple is fine",
       },
       {
-        zh: "美国 / 中国 / 都行 — 给我一个就行",
+        zh: "USA / China / anywhere — pick one and we move on",
         en: "USA / China / anywhere — pick one and we move on",
       },
       {
-        zh: "你想去哪个国家工作? 写一两个就行",
+        zh: "what country do you wanna work in? one or two is plenty",
         en: "what country do you wanna work in? one or two is plenty",
       },
     ],
     fallback: {
-      zh: "国家就行: 美国 / 中国 / 都行",
+      zh: "country only: USA / China / anywhere",
       en: "country only: USA / China / anywhere",
     },
   }),
@@ -949,17 +945,17 @@ const ANYWHERE_LOCATION_HINTS = [
 
 /**
  * Few-shot fixtures — includes Adam-verified pain points
- * ("Bay Area", "sfran or nYC works", "Everywhere is fine", "都行").
+ * ("Bay Area", "sfran or nYC works", "Everywhere is fine").
  */
 const LOCATION_EXAMPLES: GuidedOpenJudgeSpec<LocationAnswer>["examples"] = [
   { reply: "Bay Area", value: ["sf", "bay_area"], confidence: 0.95 },
   { reply: "sfran or nYC works", value: ["sf", "nyc"], confidence: 0.9 },
   { reply: "Everywhere is fine", value: ["anywhere"], confidence: 1.0 },
-  { reply: "都行", value: ["anywhere"], confidence: 1.0 },
+  { reply: "anywhere works", value: ["anywhere"], confidence: 1.0 },
   { reply: "remote", value: ["remote"], confidence: 1.0 },
-  { reply: "上海或北京", value: ["shanghai", "beijing"], confidence: 0.95 },
+  { reply: "Shanghai or Beijing", value: ["shanghai", "beijing"], confidence: 0.95 },
   { reply: "NYC, Boston, or remote", value: ["nyc", "boston", "remote"], confidence: 0.9 },
-  { reply: "杭州", value: ["hangzhou"], confidence: 1.0 },
+  { reply: "Hangzhou", value: ["hangzhou"], confidence: 1.0 },
 ]
 
 /**
@@ -996,11 +992,11 @@ const LOCATION_REPLY_PATTERNS: { value: string; patterns: RegExp[] }[] = [
   },
   {
     value: "remote",
-    patterns: [/\bremote\b/i, /\bwork\s+from\s+home\b/i, /远程|远端|线上/i],
+    patterns: [/\bremote\b/i, /\bwork\s+from\s+home\b/i],
   },
   {
     value: "anywhere",
-    patterns: [/\banywhere\b/i, /\beverywhere\b/i, /\bopen\s+to\s+any\b/i, /都行|哪都行|无所谓|都可以/i],
+    patterns: [/\banywhere\b/i, /\beverywhere\b/i, /\bopen\s+to\s+any\b/i, /\bany\s+location\b/i],
   },
   { value: "seattle", patterns: [/\bseattle\b/i] },
   {
@@ -1016,11 +1012,11 @@ const LOCATION_REPLY_PATTERNS: { value: string; patterns: RegExp[] }[] = [
   { value: "berlin", patterns: [/\bberlin\b/i] },
   { value: "paris", patterns: [/\bparis\b/i] },
   { value: "amsterdam", patterns: [/\bamsterdam\b/i] },
-  { value: "shanghai", patterns: [/\bshanghai\b/i, /上海/i] },
-  { value: "beijing", patterns: [/\bbeijing\b/i, /北京/i] },
-  { value: "hangzhou", patterns: [/\bhangzhou\b/i, /杭州/i] },
-  { value: "shenzhen", patterns: [/\bshenzhen\b/i, /深圳/i] },
-  { value: "guangzhou", patterns: [/\bguangzhou\b/i, /广州/i] },
+  { value: "shanghai", patterns: [/\bshanghai\b/i] },
+  { value: "beijing", patterns: [/\bbeijing\b/i] },
+  { value: "hangzhou", patterns: [/\bhangzhou\b/i] },
+  { value: "shenzhen", patterns: [/\bshenzhen\b/i] },
+  { value: "guangzhou", patterns: [/\bguangzhou\b/i] },
 ]
 
 function parseLocationReply(reply: string): LocationAnswer | null {
@@ -1095,20 +1091,20 @@ export function makeLocationQuestion(
     Array.isArray(country) && country.length === 1 && country[0] === "china"
       ? {
           prompt: {
-            zh: "OK, 在中国的话, 有具体城市或 remote 偏好吗? 上海 / 北京 / 杭州 / 深圳 / 广州 / 都行",
+            zh: "ok, in China, any city or remote preference? Shanghai / Beijing / Hangzhou / Shenzhen / Guangzhou / anywhere",
             en: "ok, in China, any city or remote preference? Shanghai / Beijing / Hangzhou / Shenzhen / Guangzhou / anywhere",
           },
           reAsks: [
             {
-              zh: "城市说一下: 上海 / 北京 / 杭州 / 深圳 — 一个或多个",
+              zh: "city please: Shanghai / Beijing / Hangzhou / Shenzhen — one or more",
               en: "city please: Shanghai / Beijing / Hangzhou / Shenzhen — one or more",
             },
             {
-              zh: "再问一遍 — 哪个城市? '都行' 也可以",
+              zh: "let me ask again — which city? 'anywhere' works too",
               en: "let me ask again — which city? 'anywhere' works too",
             },
             {
-              zh: "一个城市就行, 比如 '上海' / '北京' / '都行'",
+              zh: "one city is fine, like 'Shanghai' / 'Beijing' / 'anywhere'",
               en: "one city is fine, like 'Shanghai' / 'Beijing' / 'anywhere'",
             },
           ],
@@ -1116,40 +1112,40 @@ export function makeLocationQuestion(
       : Array.isArray(country) && country.length === 1 && country[0] === "usa"
       ? {
           prompt: {
-            zh: "OK, 在美国的话, 有具体城市或 remote 偏好吗? 湾区 / NYC / Seattle / LA / Boston / Chicago / Austin / 都行",
+            zh: "ok, in the US, any city or remote preference? Bay Area / NYC / Seattle / LA / Boston / Chicago / Austin / anywhere",
             en: "ok, in the US, any city or remote preference? Bay Area / NYC / Seattle / LA / Boston / Chicago / Austin / anywhere",
           },
           reAsks: [
             {
-              zh: "城市说一下: 湾区 / NYC / Seattle / Boston — 一个或多个都行",
+              zh: "city please: Bay Area / NYC / Seattle / Boston — one or more",
               en: "city please: Bay Area / NYC / Seattle / Boston — one or more",
             },
             {
-              zh: "再问一遍 — 美国哪边? remote 或 'anywhere' 也行",
+              zh: "let me ask again — where in the US? remote or 'anywhere' is fine",
               en: "let me ask again — where in the US? remote or 'anywhere' is fine",
             },
             {
-              zh: "一个城市就行, 比如 'sf' / 'nyc' / 'remote'",
+              zh: "one city works, like 'sf' / 'nyc' / 'remote'",
               en: "one city works, like 'sf' / 'nyc' / 'remote'",
             },
           ],
         }
       : {
           prompt: {
-            zh: "OK, 这些国家/地区里有具体城市或 remote 偏好吗? 城市/地区或者 'remote' / '都行' 都行",
+            zh: "ok, within that country/region, any city or remote preference? a city / region / 'remote' / 'anywhere' all work",
             en: "ok, within that country/region, any city or remote preference? a city / region / 'remote' / 'anywhere' all work",
           },
           reAsks: [
             {
-              zh: "城市/地区或者 'remote' 都行",
+              zh: "city / region / or just 'remote' is fine",
               en: "city / region / or just 'remote' is fine",
             },
             {
-              zh: "再问一遍 — 城市 + remote 偏好, 比如 'sf' / '上海' / 'remote'",
+              zh: "let me ask again — city + remote pref, like 'sf' / 'shanghai' / 'remote'",
               en: "let me ask again — city + remote pref, like 'sf' / 'shanghai' / 'remote'",
             },
             {
-              zh: "一个地点就行: 'bay area' / '上海' / 'remote' / 'anywhere'",
+              zh: "one location is fine: 'bay area' / 'shanghai' / 'remote' / 'anywhere'",
               en: "one location is fine: 'bay area' / 'shanghai' / 'remote' / 'anywhere'",
             },
           ],
@@ -1168,7 +1164,7 @@ export function makeLocationQuestion(
     rephraser: new HybridRephraser({
       variants: promptVariants.reAsks,
       fallback: {
-        zh: "城市或 'remote' 就行",
+        zh: "city or 'remote' is fine",
         en: "city or 'remote' is fine",
       },
     }),
@@ -1199,22 +1195,22 @@ const VISA_HINTS = [
 
 /**
  * Few-shot includes the Adam-verified collapse:
- *   OPT / CPT / H1B / "需要签证" → sponsorship_needed (per D4)
- *   green card / GC / 绿卡           → permanent_resident
- *   citizen / 公民                   → citizen
- *   "我在美国但身份特殊"             → other
+ *   OPT / CPT / H1B / "need a visa" -> sponsorship_needed (per D4)
+ *   green card / GC               -> permanent_resident
+ *   citizen                       -> citizen
+ *   "in the US but special status" -> other
  */
 const VISA_EXAMPLES: GuidedOpenJudgeSpec<VisaAnswer>["examples"] = [
   { reply: "citizen", value: "citizen", confidence: 1.0 },
-  { reply: "公民", value: "citizen", confidence: 1.0 },
+  { reply: "citizen", value: "citizen", confidence: 1.0 },
   { reply: "GC", value: "permanent_resident", confidence: 1.0 },
-  { reply: "绿卡", value: "permanent_resident", confidence: 1.0 },
+  { reply: "green card holder", value: "permanent_resident", confidence: 1.0 },
   { reply: "I have OPT", value: "sponsorship_needed", confidence: 0.95 },
   { reply: "on H1B", value: "sponsorship_needed", confidence: 0.95 },
   { reply: "CPT student", value: "sponsorship_needed", confidence: 0.9 },
-  { reply: "需要 sponsor", value: "sponsorship_needed", confidence: 1.0 },
+  { reply: "i need sponsor", value: "sponsorship_needed", confidence: 1.0 },
   { reply: "need sponsorship", value: "sponsorship_needed", confidence: 1.0 },
-  { reply: "其他特殊情况", value: "other", confidence: 0.8 },
+  { reply: "other special case", value: "other", confidence: 0.8 },
 ]
 
 function parseVisaValue(raw: unknown): VisaAnswer | null {
@@ -1251,17 +1247,17 @@ function parseVisaReply(reply: string): VisaAnswer | null {
     .trim()
   if (!t) return null
 
-  if (/\b(us|u\.s\.|american)?\s*citizen\b/.test(t) || /公民/.test(t)) {
+  if (/\b(us|u\.s\.|american)?\s*citizen\b/.test(t)) {
     return "citizen"
   }
-  if (/\b(gc|green card|permanent resident)\b/.test(t) || /绿卡|永久居民/.test(t)) {
+  if (/\b(gc|green card|permanent resident)\b/.test(t)) {
     return "permanent_resident"
   }
   if (
     /\b(f-?1|opt|cpt|h-?1b)\b/.test(t) ||
     /\b(would|will|do|does|did|i|we)?\s*(need|require|requires|required|needing)\b.{0,60}\b(sponsor|sponsorship)\b/.test(t) ||
     /\b(sponsor|sponsorship)\b.{0,60}\b(needed|required|future|h-?1b|transfer)\b/.test(t) ||
-    /需要.{0,20}(sponsor|赞助|签证|h-?1b)/i.test(t)
+    false
   ) {
     return "sponsorship_needed"
   }
@@ -1278,7 +1274,7 @@ function parseVisaReply(reply: string): VisaAnswer | null {
 export const Q_VISA: Question<VisaAnswer> = makeQuestion<VisaAnswer>({
   id: "q_visa",
   prompt: {
-    zh: "那你工作身份是? 公民 / 绿卡 / 需要 sponsor (含 OPT/CPT/H1B)",
+    zh: "what's your work auth? citizen / GC / need sponsorship (incl. OPT/CPT/H1B)",
     en: "what's your work auth? citizen / GC / need sponsorship (incl. OPT/CPT/H1B)",
   },
   judge: new GuidedOpenJudge<VisaAnswer>({
@@ -1291,24 +1287,24 @@ export const Q_VISA: Question<VisaAnswer> = makeQuestion<VisaAnswer>({
   rephraser: new HybridRephraser({
     variants: [
       {
-        zh: "选一个就行: 公民 / 绿卡 / 需要 sponsor",
+        zh: "pick one: citizen / GC / need sponsorship",
         en: "pick one: citizen / GC / need sponsorship",
       },
       {
-        zh: "签证状态大概是哪种? 我列下: 公民、绿卡、要 sponsor (OPT/CPT/H1B 都算这种)",
+        zh: "what's your status — citizen, GC, or need sponsorship? (OPT/CPT/H1B all count as need sponsorship)",
         en: "what's your status — citizen, GC, or need sponsorship? (OPT/CPT/H1B all count as need sponsorship)",
       },
       {
-        zh: "你能在美国合法工作吗? 是哪种身份 — 公民 / 绿卡 / 还是要 sponsor?",
+        zh: "are you eligible to work in the US? citizen / GC / or need sponsorship?",
         en: "are you eligible to work in the US? citizen / GC / or need sponsorship?",
       },
       {
-        zh: "一个词答下身份吧, 比如 'citizen' / 'gc' / 'need sponsor'",
+        zh: "one word on your auth — 'citizen' / 'gc' / 'need sponsor'",
         en: "one word on your auth — 'citizen' / 'gc' / 'need sponsor'",
       },
     ],
     fallback: {
-      zh: "citizen / gc / sponsor — 选一个",
+      zh: "citizen / gc / sponsor — pick one",
       en: "citizen / gc / sponsor — pick one",
     },
   }),

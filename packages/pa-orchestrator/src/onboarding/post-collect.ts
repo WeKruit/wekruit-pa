@@ -1,7 +1,7 @@
 /**
  * Post-collect hook — fired by OnboardingPipeline after the LAST question
- * is accepted. Adam directive 2026-05-05: "收集完信息, enrich完简历后
- * trigger一个job match的信息".
+ * is accepted. Adam directive 2026-05-05: after collecting info and
+ * enriching the resume, trigger a job match.
  *
  * Pipeline:
  *   1. Enrich resume (cv-ingest worker turns the attachment into structured

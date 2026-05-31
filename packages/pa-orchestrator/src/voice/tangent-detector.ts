@@ -15,11 +15,11 @@
  * false positive could pull the LLM into a multi-paragraph derailment.
  *
  * Heuristics (en + zh):
- *   1. message contains a question mark (?, ？) — and is short enough that
+ *   1. message contains a question mark (?, full-width ?) — and is short enough that
  *      it's not just a long answer with a trailing rhetorical "?";
  *   2. message starts with a wh-word / modal in en (what, when, where, who,
  *      why, how, can, could, would, should, do, does, did, is, are, were)
- *      OR a zh interrogative opener (你/有/能/可以/为什么/怎么/什么/谁/哪/几);
+ *      OR a legacy zh interrogative opener (detected via codepoint set);
  *   3. message is short (<= 220 chars). Long monologues that happen to
  *      include a question are usually still answers (Adam often types
  *      "I want X, Y, and Z — make sense?").
@@ -32,7 +32,7 @@
  */
 
 const ALPHA_RE = /[a-zA-Z\u4e00-\u9fff]/
-const QUESTION_MARK_RE = /[?？]/
+const QUESTION_MARK_RE = /[?\uff1f]/
 
 const EN_INTERROGATIVE_OPENERS = new Set([
   "what",
@@ -63,7 +63,10 @@ const EN_INTERROGATIVE_OPENERS = new Set([
 
 // Common zh interrogative leading characters — we only need to look at the
 // first non-whitespace char(s) since Chinese sentences don't space-delimit.
-const ZH_INTERROGATIVE_CHARS = ["你", "有", "能", "可", "为", "怎", "什", "谁", "哪", "几", "吗", "呢"]
+const ZH_INTERROGATIVE_CHARS = [
+  "\u4f60", "\u6709", "\u80fd", "\u53ef", "\u4e3a", "\u600e",
+  "\u4ec0", "\u8c01", "\u54ea", "\u51e0", "\u5417", "\u5462",
+]
 
 const MAX_TANGENT_LENGTH = 220
 
@@ -91,8 +94,8 @@ export function detectOnboardingTangent(input: {
   if (input.lang === "zh") {
     const firstChar = raw[0] ?? ""
     const opensWithInterrogative = ZH_INTERROGATIVE_CHARS.includes(firstChar)
-    // 吗/呢 commonly appear at end-of-sentence for yes/no questions.
-    const endsWithYesNo = /[吗呢][?？]?$/.test(raw)
+    // Legacy zh yes/no particles commonly appear at end-of-sentence.
+    const endsWithYesNo = /[\u5417\u5462][?\uff1f]?$/.test(raw)
     if (hasQuestionMark && (opensWithInterrogative || endsWithYesNo)) {
       return { isTangent: true, reason: "zh_question_mark+interrogative" }
     }
@@ -121,7 +124,7 @@ export function detectOnboardingTangent(input: {
  * comply, not to drown.
  */
 export function buildTangentSurfaceDirective(lang: "en" | "zh"): string {
-  return lang === "zh"
-    ? "用户问了一个题外话——先用一句话简短回答他们（不要长篇大论），然后温柔把话题带回当前的 onboarding 问题。"
-    : "User asked an off-topic question. First, briefly answer them in ONE short sentence (no essay). Then gently bring the conversation back to the current onboarding question."
+  // Product is English-only — same directive regardless of legacy lang value.
+  void lang
+  return "User asked an off-topic question. First, briefly answer them in ONE short sentence (no essay). Then gently bring the conversation back to the current onboarding question."
 }

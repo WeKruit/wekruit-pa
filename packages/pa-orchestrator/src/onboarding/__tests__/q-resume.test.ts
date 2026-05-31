@@ -3,7 +3,7 @@
  *
  * Logic:
  *   - rawPayload.attachments[] non-empty → accept value=attachments
- *   - decline phrases ('no resume', '不发', 'skip', 'later', ...) → declined
+ *   - decline phrases ('no resume', 'skip', 'later', ...) → declined
  *   - else → irrelevant (re-ask)
  */
 import test from "node:test"
@@ -63,8 +63,8 @@ test("q-resume: empty attachments + 'skip' → declined", async () => {
   if (!r.accept) assert.equal(r.reason, "declined")
 })
 
-test("q-resume: empty attachments + '没简历' → declined", async () => {
-  const r = await J.judge("没简历", "zh", ctxWith())
+test("q-resume: empty attachments + 'no resume' → declined", async () => {
+  const r = await J.judge("no resume", "en", ctxWith())
   assert.equal(r.accept, false)
   if (!r.accept) assert.equal(r.reason, "declined")
 })

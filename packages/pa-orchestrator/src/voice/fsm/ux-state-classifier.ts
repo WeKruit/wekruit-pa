@@ -2,11 +2,11 @@
  * Phase 37 T1 — Rule-based 5-class UX state classifier.
  *
  * NO LLM (D6 — FiSMiness baseline). Pure regex + lexicon scan.
- * Bilingual zh + en + mixed code-switch.
+ * English-only (legacy zh/mixed lexicons removed; product is English-only).
  *
  * Algorithm:
  * 1. Normalize input (lowercase, strip extra whitespace)
- * 2. For each of 5 UX states, walk its zh + en + symbol lexicons
+ * 2. For each of 5 UX states, walk its en + symbol lexicons
  *    counting hits. Each hit contributes a per-class weight.
  * 3. Apply structural signals (question density, sentence count,
  *    punctuation density) as multiplicative bumps.
@@ -29,7 +29,7 @@ import { UX_STATE_GRAVITY_ORDER, UX_STATES } from "./types.js"
 // ---------------------------------------------------------------------------
 
 interface LexiconEntry {
-  /** Substring (case-insensitive for en, raw for zh). */
+  /** Substring (case-insensitive). */
   term: string
   /** Per-hit score contribution. */
   weight: number
@@ -37,16 +37,7 @@ interface LexiconEntry {
 
 const LEXICON: Record<UxState, { zh: LexiconEntry[]; en: LexiconEntry[]; symbols: LexiconEntry[] }> = {
   WarmCurious: {
-    zh: [
-      { term: "你好", weight: 2 },
-      { term: "嗨", weight: 2 },
-      { term: "在吗", weight: 2 },
-      { term: "想问", weight: 1.5 },
-      { term: "请问", weight: 1.5 },
-      { term: "好奇", weight: 1.5 },
-      { term: "怎么样", weight: 1 },
-      { term: "可以吗", weight: 1 },
-    ],
+    zh: [],
     en: [
       { term: "hi ", weight: 2 },
       { term: "hey ", weight: 2 },
@@ -59,16 +50,7 @@ const LEXICON: Record<UxState, { zh: LexiconEntry[]; en: LexiconEntry[]; symbols
     symbols: [],
   },
   PlayfulTease: {
-    zh: [
-      { term: "哈哈", weight: 2 },
-      { term: "笑死", weight: 3 },
-      { term: "你逗", weight: 2 },
-      { term: "666", weight: 2 },
-      { term: "梗", weight: 1.5 },
-      { term: "皮一下", weight: 2 },
-      { term: "开玩笑", weight: 2 },
-      { term: "扯", weight: 1 },
-    ],
+    zh: [],
     en: [
       { term: " lol", weight: 2 },
       { term: "lol ", weight: 2 },
@@ -86,20 +68,7 @@ const LEXICON: Record<UxState, { zh: LexiconEntry[]; en: LexiconEntry[]; symbols
     ],
   },
   SoftConcerned: {
-    zh: [
-      { term: "累", weight: 2 },
-      { term: "难", weight: 1.5 },
-      { term: "不知道", weight: 1.5 },
-      { term: "怀疑", weight: 2 },
-      { term: "焦虑", weight: 2.5 },
-      { term: "心慌", weight: 2.5 },
-      { term: "委屈", weight: 2.5 },
-      { term: "担心", weight: 2 },
-      { term: "怎么办", weight: 2 },
-      { term: "唉", weight: 1.5 },
-      { term: "心累", weight: 2.5 },
-      { term: "压力", weight: 2 },
-    ],
+    zh: [],
     en: [
       { term: "tired", weight: 2 },
       { term: "stressed", weight: 2.5 },
@@ -119,18 +88,7 @@ const LEXICON: Record<UxState, { zh: LexiconEntry[]; en: LexiconEntry[]; symbols
     ],
   },
   FirmDirect: {
-    zh: [
-      { term: "怎么做", weight: 2.5 },
-      { term: "该不该", weight: 2.5 },
-      { term: "帮我决定", weight: 3 },
-      { term: "必须", weight: 2 },
-      { term: "要不要", weight: 2 },
-      { term: "建议", weight: 1.5 },
-      { term: "给我", weight: 1.5 },
-      { term: "告诉我", weight: 2 },
-      { term: "需要", weight: 1 },
-      { term: "立刻", weight: 2 },
-    ],
+    zh: [],
     en: [
       { term: "should i", weight: 2.5 },
       { term: "what do i do", weight: 3 },
@@ -144,18 +102,7 @@ const LEXICON: Record<UxState, { zh: LexiconEntry[]; en: LexiconEntry[]; symbols
     symbols: [],
   },
   QuietWitness: {
-    zh: [
-      { term: "想死", weight: 4 },
-      { term: "不想活", weight: 4 },
-      { term: "撑不住", weight: 3 },
-      { term: "想消失", weight: 3.5 },
-      { term: "没意义", weight: 3 },
-      { term: "绝望", weight: 3 },
-      { term: "崩溃", weight: 3 },
-      { term: "哭", weight: 2 },
-      { term: "走不下去", weight: 3 },
-      { term: "撑不下去", weight: 3 },
-    ],
+    zh: [],
     en: [
       { term: "cant go on", weight: 4 },
       { term: "can't go on", weight: 4 },
@@ -197,12 +144,13 @@ function detectLang(text: string): "zh" | "en" {
 }
 
 /**
- * Count "sentences" via a coarse split — both zh terminators (。！？) and
- * en terminators (.!?). Sufficient for question-density + length signals.
+ * Count "sentences" via a coarse split — both full-width terminators
+ * (U+3002/FF01/FF1F) and en terminators (.!?). Sufficient for question-
+ * density + length signals.
  */
 function countSentences(text: string): number {
   if (!text || !text.trim()) return 0
-  const matches = text.match(/[^。！？.!?]+[。！？.!?]+/g)
+  const matches = text.match(/[^\u3002\uff01\uff1f.!?]+[\u3002\uff01\uff1f.!?]+/g)
   if (matches && matches.length > 0) return matches.length
   // No terminator at all → 1 sentence.
   return 1
@@ -210,7 +158,7 @@ function countSentences(text: string): number {
 
 function countQuestions(text: string): number {
   if (!text) return 0
-  const matches = text.match(/[?？]/g)
+  const matches = text.match(/[?\uff1f]/g)
   return matches ? matches.length : 0
 }
 
@@ -287,7 +235,7 @@ export function classifyUxState(
   // 1. Lexicon scoring per state.
   for (const state of UX_STATES) {
     const bank = LEXICON[state]
-    // zh side — case-sensitive (CJK); en side — lowercase; symbols — raw.
+    // en side — lowercase; symbols — raw. (legacy zh bank is empty)
     scores[state] += scoreLexiconBank(text, bank.zh, matched, false)
     scores[state] += scoreLexiconBank(text, bank.en, matched, true)
     scores[state] += scoreLexiconBank(text, bank.symbols, matched, false)
@@ -306,7 +254,7 @@ export function classifyUxState(
   }
 
   // 2b. Exclamation density + positive lexicon → PlayfulTease.
-  const exclamCount = (text.match(/[!！]/g) || []).length
+  const exclamCount = (text.match(/[!\uff01]/g) || []).length
   if (exclamCount >= 1 && (scores.PlayfulTease > 0 || scores.WarmCurious > 0)) {
     scores.PlayfulTease += 0.5 * Math.min(exclamCount, 3)
   }
@@ -318,7 +266,7 @@ export function classifyUxState(
     scores.QuietWitness += 3.0
   }
 
-  // 2d. Imperative density → FirmDirect (zh: 帮我/告诉我; en: tell me/show me already in lexicon)
+  // 2d. Imperative density → FirmDirect (en: tell me/show me already in lexicon)
   // Already covered by lexicon; structural signal redundant.
 
   // 3. Pick winner with gravity tie-break.

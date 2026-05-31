@@ -18,12 +18,9 @@ export const FILLER_BLACKLIST_EN = [
   "I would be happy to",
 ] as const
 
-export const FILLER_BLACKLIST_ZH = [
-  "在我帮你匹配",
-  "在我推荐",
-  "为了帮你匹配",
-  "为了推荐",
-  "好问题",
-  "当然",
-  "没问题",
-] as const
+/**
+ * Legacy zh coach-phrase blacklist. The product is English-only, so the
+ * Chinese entries were removed. The export is retained (empty) for back-compat
+ * with importers that still spread it.
+ */
+export const FILLER_BLACKLIST_ZH = [] as const

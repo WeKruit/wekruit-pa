@@ -16,26 +16,13 @@ import { createHash } from "node:crypto"
 
 const PA_USERS_COLLECTION = "pa-users"
 
-// Helper-only regex bank. Adam directive 2026-05-03 ("不要一直用这些 fking
-// regex, 可以有但是只能是 helper"): the PRIMARY gate-open path for the
-// onboarding `ask_q_resume` step is now deterministic — `applyOnboardingStep`
+// Helper-only regex bank. Adam directive 2026-05-03 (regex is allowed only as
+// a fallback helper, never the primary path): the PRIMARY gate-open path for
+// the onboarding `ask_q_resume` step is now deterministic — `applyOnboardingStep`
 // in onboarding.ts writes `resumeAccepted` directly when it dispatches the
 // step. This regex bank stays as a *fallback helper* for OTHER skills
 // (cv_followup, headhunter mid-conversation, etc) where the orchestrator
 // doesn't have first-class signal that Claire just asked for a CV.
-const GATE_REGEX_ZH = [
-  /发[简我][历给]我/,
-  /发简历给我/,
-  /把简历发给我/,
-  /把你?简历发[给]?我/,
-  /发份简历/,
-  /你可以发我简历/,
-  /把你的简历发[给]?我/,
-  /简历发[给]?我看[一下]?/,
-  /把简历[甩贴]给我/,
-  /简历(?:方便)?发(?:我|给我)/,
-]
-
 const GATE_REGEX_EN = [
   /\bsend\s+(?:me\s+)?your\s+(?:resume|cv)\b/i,
   /\bshare\s+(?:your\s+)?(?:resume|cv)\b/i,
@@ -52,7 +39,6 @@ export const GATE_TTL_MS = (() => {
 
 export function detectsCvAsk(assistantText: string): boolean {
   if (typeof assistantText !== "string" || assistantText.length === 0) return false
-  for (const re of GATE_REGEX_ZH) if (re.test(assistantText)) return true
   for (const re of GATE_REGEX_EN) if (re.test(assistantText)) return true
   return false
 }

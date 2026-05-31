@@ -335,7 +335,7 @@ export async function runClaireTurn(
         e as unknown as { result?: { output?: { outputInfo?: { kind?: string } } } }
       )?.result?.output?.outputInfo
       if (info?.kind === "crisis") {
-        const base = lang === "zh" ? "我在这儿，你不是一个人。" : "i'm here for you — you're not alone."
+        const base = "i'm here for you — you're not alone."
         const safe = appendHotlineIfMissing({ reply: base, language: lang }).text.trim()
         if (safe) await deps.transport.sendText(safe).catch(() => {})
       } else {
@@ -348,11 +348,7 @@ export async function runClaireTurn(
       userId: input.userId,
       err: e instanceof Error ? e.message : String(e),
     })
-    bubbles = [
-      lang === "zh"
-        ? "抱歉，刚刚卡了一下 — 能再说一遍吗？"
-        : "sorry, that one hiccupped on my end — mind sending that again?",
-    ]
+    bubbles = ["sorry, that one hiccupped on my end — mind sending that again?"]
   }
 
   const deliveredViaTool = tracked.handledViaTool()

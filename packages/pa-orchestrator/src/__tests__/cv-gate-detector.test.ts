@@ -5,23 +5,7 @@ import {
   maybeOpenResumeGate,
 } from "../post-turn-hooks/cv-gate-detector.js"
 
-describe("detectsCvAsk (zh + en bank)", () => {
-  it("matches zh send-resume phrasings", () => {
-    assert.equal(detectsCvAsk("把简历发给我看一下"), true)
-    assert.equal(detectsCvAsk("发份简历过来呗"), true)
-    assert.equal(detectsCvAsk("你可以发我简历吗"), true)
-    assert.equal(detectsCvAsk("把你简历发我"), true)
-  })
-  it("helper-only: matches iter30 ask_q_resume Adam-locked phrase as fallback", () => {
-    // Helper-only regex per Adam directive 2026-05-03 — the PRIMARY gate-open
-    // path for ask_q_resume is now deterministic in `applyOnboardingStep`.
-    // Regex stays as a fallback for OTHER skills that may ask for a CV.
-    assert.equal(
-      detectsCvAsk("对了, 简历方便发我一份不? 后面帮你看 JD / 内推都准多了"),
-      true
-    )
-    assert.equal(detectsCvAsk("简历方便发给我吗"), true)
-  })
+describe("detectsCvAsk (en bank)", () => {
   it("matches en send-resume phrasings", () => {
     assert.equal(detectsCvAsk("send me your resume"), true)
     assert.equal(detectsCvAsk("Can you send your CV?"), true)
@@ -30,7 +14,7 @@ describe("detectsCvAsk (zh + en bank)", () => {
   })
   it("returns false for unrelated phrasing", () => {
     assert.equal(detectsCvAsk("Hi how's it going?"), false)
-    assert.equal(detectsCvAsk("聊聊你最近的项目"), false)
+    assert.equal(detectsCvAsk("tell me about your recent project"), false)
   })
   it("returns false for empty / non-string", () => {
     assert.equal(detectsCvAsk(""), false)
@@ -63,7 +47,7 @@ describe("maybeOpenResumeGate", () => {
     const r = await maybeOpenResumeGate({
       db,
       userId: "u1",
-      assistantText: "把简历发给我",
+      assistantText: "send me your resume",
       nowIso: "2026-05-03T12:00:00.000Z",
     })
     assert.equal(r.opened, true)

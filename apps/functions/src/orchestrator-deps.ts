@@ -354,7 +354,7 @@ function makeGenerateJobRecs(): NonNullable<
       }
 
       // v1.7 hotfix — LLM-composed nuanced reasoning for top-2.
-      // Replaces V16 template "为啥推: skill X+Y 跟 JD 核心技能对得上"
+      // Replaces the generic V16 skill-overlap template
       // with reason citing specific work-history bridge.
       // Pulls user's parsedCandidateResumes for work-history + projects.
       // Fail-graceful: if LLM errors, falls back to V16 template `j.reason`.
@@ -787,7 +787,7 @@ export function buildCvAnalysisFallback(
     recentRoleTitle?: string
     recentCompany?: string
   },
-  lang: "zh" | "en"
+  _lang: "zh" | "en"
 ): string {
   const skillsArr = (fields.topSkills ?? [])
     .filter((s): s is string => typeof s === "string" && s.length > 0)
@@ -802,14 +802,6 @@ export function buildCvAnalysisFallback(
     : company
       ? company
       : ""
-  if (lang === "zh") {
-    if (skills && trajectory) {
-      return `看下来你: ${skills} + ${trajectory} — 我会把这些作为你的资料证据`
-    }
-    if (skills) return `看下来你 hands-on: ${skills} — 我会把这些作为你的资料证据`
-    if (trajectory) return `看下来你最近: ${trajectory} — 我会把这个作为你的资料证据`
-    return "我先把 CV 里的信息作为你的资料证据"
-  }
   if (skills && trajectory) {
     return `From your CV, I see ${skills} + ${trajectory}; I’ll use that as profile evidence.`
   }
@@ -920,9 +912,7 @@ function makeGenerateCvAnalysis(): NonNullable<
     }
 
     const langDirective =
-      lang === "zh"
-        ? "用中文回，1 句话，朋友语气，不要列表，不要客套，不要重复同一个 token。"
-        : "Reply in English, 1 sentence, friend-tone casual, no bullets, no fluff, do NOT repeat the same token."
+      "Reply in English, 1 sentence, friend-tone casual, no bullets, no fluff, do NOT repeat the same token."
     // iter34 H.2 / CR1 — diversity rule. Adam G5 sim showed Qwen-7B picking
     // Azure + Docker only out of 12 distinct CV skills then degenerating into
     // "Docker, Docker, Docker..." x60. Force at least 3 distinct skills
@@ -1003,8 +993,8 @@ function makeGenerateCvAnalysis(): NonNullable<
 
 /**
  * iter34 P0.2 — generic LLM intent extractor for the 5 non-email
- * deterministic Q's. Adam directive 2026-05-05: "不只是 email, 包括所有
- * 一开始的 deterministic 的 question 都需要加这个".
+ * deterministic Q's. Adam directive 2026-05-05: not just email — every
+ * deterministic question at the start needs this intent extractor.
  *
  * Per-step prompts live inline so each Q has its own canonical value
  * space + clarifying-question style. Returns null on any error so the
@@ -1021,8 +1011,8 @@ function makeExtractAnswerIntent(): NonNullable<
       examples: [
         '"engineer at a startup" → {"intent":"provided","value":"swe","confidence":0.85}',
         '"PM for fintech" → {"intent":"provided","value":"pm","confidence":0.9}',
-        '"我做 ml infra 的" → {"intent":"provided","value":"ml","confidence":0.9}',
-        '"我什么都行" → {"intent":"unclear","clarifyingQuestion":"那大致偏哪个方向? 工程 / 产品 / 研究 / 设计?"}',
+        '"i do ml infra" → {"intent":"provided","value":"ml","confidence":0.9}',
+        '"anything works for me" → {"intent":"unclear","clarifyingQuestion":"roughly which direction? engineering / product / research / design?"}',
       ],
     },
     ask_q_yoe: {
@@ -1031,9 +1021,9 @@ function makeExtractAnswerIntent(): NonNullable<
         '"value":<integer years OR "fresh" for fresh-grad / 0 yrs>',
       examples: [
         '"about 5 years" → {"intent":"provided","value":5,"confidence":0.95}',
-        '"两年多" → {"intent":"provided","value":2,"confidence":0.85}',
-        '"刚毕业" → {"intent":"provided","value":"fresh","confidence":0.95}',
-        '"还没工作过" → {"intent":"provided","value":"fresh","confidence":0.9}',
+        '"a little over two years" → {"intent":"provided","value":2,"confidence":0.85}',
+        '"just graduated" → {"intent":"provided","value":"fresh","confidence":0.95}',
+        '"haven\'t worked yet" → {"intent":"provided","value":"fresh","confidence":0.9}',
         '"a while" → {"intent":"unclear","clarifyingQuestion":"a while is like... 2 years? 5? a number is fine"}',
       ],
     },
@@ -1043,11 +1033,11 @@ function makeExtractAnswerIntent(): NonNullable<
         '"value":"citizen" | "gc" | "opt" | "cpt" | "h1b" | "tn" | "sponsorship" | "other"',
       examples: [
         '"i\'m a US citizen" → {"intent":"provided","value":"citizen","confidence":0.95}',
-        '"绿卡" → {"intent":"provided","value":"gc","confidence":0.95}',
+        '"green card" → {"intent":"provided","value":"gc","confidence":0.95}',
         '"need h1b" → {"intent":"provided","value":"h1b","confidence":0.9}',
         '"opt extension" → {"intent":"provided","value":"opt","confidence":0.9}',
         '"i need sponsorship" → {"intent":"provided","value":"sponsorship","confidence":0.85}',
-        '"i\'m on a visa" → {"intent":"unclear","clarifyingQuestion":"哪种签证? 比如 H1B / OPT / 其他?"}',
+        '"i\'m on a visa" → {"intent":"unclear","clarifyingQuestion":"which visa? e.g. H1B / OPT / other?"}',
       ],
     },
     ask_q_startup_pref: {
@@ -1055,27 +1045,27 @@ function makeExtractAnswerIntent(): NonNullable<
       valueSchema:
         '"value":"startup" | "bigtech" | "either"',
       examples: [
-        '"想去创业公司" → {"intent":"provided","value":"startup","confidence":0.95}',
+        '"i want to join a startup" → {"intent":"provided","value":"startup","confidence":0.95}',
         '"big company stable" → {"intent":"provided","value":"bigtech","confidence":0.9}',
-        '"都行" → {"intent":"provided","value":"either","confidence":0.9}',
-        '"看具体团队" → {"intent":"provided","value":"either","confidence":0.7}',
+        '"either is fine" → {"intent":"provided","value":"either","confidence":0.9}',
+        '"depends on the team" → {"intent":"provided","value":"either","confidence":0.7}',
       ],
     },
     ask_q_location: {
       label: "target work location",
       valueSchema:
-        '"value":<location string, e.g. "sf" | "nyc" | "bay area" | "remote" | "boston" | "seattle" | "la" | "china" | "shanghai" | "beijing" | "hangzhou" | <free-form>>',
+        '"value":<location string, e.g. "sf" | "nyc" | "bay area" | "remote" | "boston" | "seattle" | "la" | "austin" | "chicago" | <free-form>>',
       examples: [
         '"Bay Area" → {"intent":"provided","value":"sf","confidence":0.9}',
-        '"想做远程" → {"intent":"provided","value":"remote","confidence":0.95}',
+        '"i want remote" → {"intent":"provided","value":"remote","confidence":0.95}',
         '"NYC or remote" → {"intent":"provided","value":"nyc or remote","confidence":0.85}',
-        '"上海" → {"intent":"provided","value":"shanghai","confidence":0.95}',
-        '"看机会" → {"intent":"unclear","clarifyingQuestion":"大致哪个城市/地区方便? 或者只看远程?"}',
+        '"Seattle" → {"intent":"provided","value":"seattle","confidence":0.95}',
+        '"open to opportunities" → {"intent":"unclear","clarifyingQuestion":"roughly which US city/area works? or remote only?"}',
       ],
     },
   } as const
 
-  return async (step, reply, lang) => {
+  return async (step, reply, _lang) => {
     let apiKey = ""
     try {
       apiKey = SILICONFLOW_API_KEY.value().trim()
@@ -1089,9 +1079,7 @@ function makeExtractAnswerIntent(): NonNullable<
     const def = stepDefs[step]
     if (!def) return null
     const langDirective =
-      lang === "zh"
-        ? "If the question warrants a clarifying question, ask in Chinese."
-        : "If the question warrants a clarifying question, ask in English."
+      "If the question warrants a clarifying question, ask in English."
     const systemPrompt = `You extract structured intent from a user's reply during onboarding.
 
 Question topic: ${def.label}.

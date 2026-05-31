@@ -177,31 +177,9 @@ const agent: AgentDef = {
 // 1) detectFirstTurnIntent — bilingual regex coverage
 // ============================================================================
 
-test("detect: zh job_search — '帮我找软件工程师工作'", () => {
-  const r = detectFirstTurnIntent("帮我找软件工程师工作")
-  assert.equal(r.intent, "job_search")
-  assert.equal(r.confidence, "high")
-  assert.ok(r.signals.length > 0)
-})
-
-test("detect: zh job_search — '帮我找一些 SWE 的 internship，我是 OPT 应届' (real fixture turn-0)", () => {
-  // This is the actual zh fixture user message that produced "在呢. 今天找你聊点啥? 🍋"
-  // before the fix — must classify as job_search now.
-  const r = detectFirstTurnIntent("帮我找一些 SWE 的 internship，我是 OPT 应届")
-  assert.equal(r.intent, "job_search")
-  assert.equal(r.confidence, "high")
-})
-
 test("detect: en job_search — 'find me SWE internships, I'm a senior on OPT' (real fixture turn-0)", () => {
   const r = detectFirstTurnIntent("find me SWE internships, I'm a senior on OPT")
   assert.equal(r.intent, "job_search")
-  assert.equal(r.confidence, "high")
-})
-
-test("detect: zh visa_check — '我有 OPT, 可以找工作吗'", () => {
-  const r = detectFirstTurnIntent("我有 OPT, 可以做 sponsor 的工作吗")
-  // Either visa_check or job_search is acceptable here — both are actionable.
-  assert.ok(r.intent === "visa_check" || r.intent === "job_search", `got ${r.intent}`)
   assert.equal(r.confidence, "high")
 })
 
@@ -209,11 +187,6 @@ test("detect: en visa_check — 'I'm on OPT'", () => {
   const r = detectFirstTurnIntent("I'm on OPT, looking for work")
   assert.ok(r.intent === "visa_check" || r.intent === "job_search", `got ${r.intent}`)
   assert.equal(r.confidence, "high")
-})
-
-test("detect: zh casual — '你好' falls to casual_chat (NOT actionable)", () => {
-  const r = detectFirstTurnIntent("你好")
-  assert.equal(r.intent, "casual_chat")
 })
 
 test("detect: en casual — 'hey' falls to casual_chat", () => {
@@ -241,20 +214,6 @@ test("detect: empty/null input → null intent", () => {
 // 2) composeOnboardingInput — intent-aware first_mes path
 // ============================================================================
 
-test("compose: zh job_search ack — directive contains zh ack template + ask_q_role zh phrase", () => {
-  const input = composeOnboardingInput("send_first_mes", agent, {
-    userMessage: "帮我找软件工程师工作",
-    detectedIntent: { intent: "job_search", confidence: "high", signals: ["job_search_zh_find"] },
-  })
-  // Adam-locked ask_q_role zh phrase MUST be present (we chain it inline).
-  assert.ok(input.includes("那你大概想找啥方向的活"), "missing ask_q_role zh phrase: " + input)
-  // Intent ack directive marker must mark this as the intent-ack path, not the bare greeting.
-  assert.ok(input.includes("send_first_mes_with_intent_ack"), "missing intent-ack tag: " + input)
-  assert.ok(input.includes("intent=job_search"), "missing intent label: " + input)
-  // Bare Adam-locked first_mes ("在呢. 今天找你聊点啥? 🍋") must NOT be the entire reply directive.
-  assert.ok(!input.includes('Reply EXACTLY with Claire\'s first_mes'), "should not regurgitate Adam-locked greeting")
-})
-
 test("compose: en job_search ack — directive contains en ack + ask_q_role en phrase", () => {
   const input = composeOnboardingInput("send_first_mes", agent, {
     userMessage: "find me SWE internships, I'm a senior on OPT",
@@ -264,16 +223,6 @@ test("compose: en job_search ack — directive contains en ack + ask_q_role en p
   assert.ok(input.includes("what kinda role you eyeing"), "missing en role phrase: " + input)
   assert.ok(input.includes("send_first_mes_with_intent_ack"))
   assert.ok(!input.includes('Reply EXACTLY with Claire\'s first_mes'))
-})
-
-test("compose: zh visa_check ack — directive contains visa-ack zh template", () => {
-  const input = composeOnboardingInput("send_first_mes", agent, {
-    userMessage: "我有 OPT, 想找工作",
-    detectedIntent: { intent: "visa_check", confidence: "high", signals: ["visa_check_zh"] },
-  })
-  // Visa ack still chains ask_q_role (not q_visa) — verified directive shape.
-  assert.ok(input.includes("那你大概想找啥方向的活"))
-  assert.ok(input.includes("intent=visa_check"))
 })
 
 test("compose: casual_chat → chains ask_q_role on T0 (iter30 closure: probe starts immediately)", () => {
@@ -286,7 +235,7 @@ test("compose: casual_chat → chains ask_q_role on T0 (iter30 closure: probe st
     "casual_chat must chain role-Q on T0 (iter30 closure), got: " + input
   )
   // Adam-locked role phrase verbatim
-  assert.ok(input.includes("想找啥方向的活"), "missing zh role-Q phrase")
+  assert.ok(input.includes("what kinda role you eyeing"), "missing zh role-Q phrase")
 })
 
 test("compose: abuse intent → falls back to Adam-locked greeting (defense-in-depth)", () => {
@@ -308,7 +257,7 @@ test("compose: null intent (no detection passed) → chains ask_q_role on T0", (
     input.includes("send_first_mes_with_casual_chain"),
     "null intent must chain role-Q on T0 (iter30 closure), got: " + input
   )
-  assert.ok(input.includes("想找啥方向的活"), "missing zh role-Q phrase")
+  assert.ok(input.includes("what kinda role you eyeing"), "missing zh role-Q phrase")
 })
 
 test("compose: low-confidence intent → falls back to greeting (only high fires ack)", () => {
@@ -431,7 +380,7 @@ function makeOnboardingCapturesStore(
     runAgentTurn: async ({ systemInputs }) => {
       captures.llmCalls++
       captures.systemInputs.push(systemInputs ?? [])
-      return { text: "好咧! 帮你看看 SWE 的活. 那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行" }
+      return { text: "got you, let's get you sorted on SWE. btw — what kinda role you eyeing? eng / pm / research / design? roughly is fine" }
     },
     afterAssistantTurn: async () => ({ writebackRan: false, writebackSkipReason: "memory_mode" }),
     maybeHandleResetCommand: async () => ({ handled: false }),
@@ -1151,12 +1100,6 @@ test("integration: intent-ack flag cannot bypass website-start redirect", async 
 // iter23 — interview_prep / negotiation / motivation_nudge intent coverage
 // ============================================================================
 
-test("detect: zh interview_prep — '明天 system design 面试紧张'", () => {
-  const r = detectFirstTurnIntent("明天 system design 面试紧张 不知道怎么准备")
-  assert.equal(r.intent, "interview_prep")
-  assert.equal(r.confidence, "high")
-})
-
 test("detect: en interview_prep — 'nervous about my system design interview tomorrow'", () => {
   const r = detectFirstTurnIntent("nervous about my system design interview tomorrow")
   assert.equal(r.intent, "interview_prep")
@@ -1173,11 +1116,6 @@ test("detect: en negotiation — 'I just got 2 offers and need to negotiate'", (
   assert.equal(r.intent, "negotiation")
 })
 
-test("detect: zh motivation_nudge — '我没动力 拖延症犯了 不想做事'", () => {
-  const r = detectFirstTurnIntent("我没动力 拖延症犯了 不想做事")
-  assert.equal(r.intent, "motivation_nudge")
-})
-
 test("detect: en motivation_nudge — 'no motivation, can't start anything'", () => {
   const r = detectFirstTurnIntent("no motivation, can't start anything")
   assert.equal(r.intent, "motivation_nudge")
@@ -1189,7 +1127,7 @@ test("compose: interview_prep zh ack — directive contains interview-specific c
     detectedIntent: { intent: "interview_prep", confidence: "high", signals: ["interview_prep_zh"] },
   })
   // No ask_q_role chained for interview_prep — playbook directive carries its own probe.
-  assert.ok(!input.includes("那你大概想找啥方向的活"), "MUST NOT chain ask_q_role for interview_prep")
+  assert.ok(!input.includes("what kinda role you eyeing"), "MUST NOT chain ask_q_role for interview_prep")
   assert.ok(!input.includes("intent=job_search"))
   assert.ok(input.includes("send_first_mes_with_interview_prep_ack"), "missing interview_prep ack tag: " + input)
   assert.ok(input.includes("intent=interview_prep"))
@@ -1210,7 +1148,7 @@ test("compose: motivation_nudge zh ack — directive contains nudge, NO ask_q_ro
     userMessage: "我没动力 拖延症犯了 不想做事",
     detectedIntent: { intent: "motivation_nudge", confidence: "high", signals: ["motivation_zh"] },
   })
-  assert.ok(!input.includes("那你大概想找啥方向的活"))
+  assert.ok(!input.includes("what kinda role you eyeing"))
   assert.ok(input.includes("send_first_mes_with_motivation_nudge_ack"))
   assert.ok(input.includes("intent=motivation_nudge"))
 })
@@ -1262,7 +1200,7 @@ test("V4 P0: compose with priorAskedStep advances when user answered prior Q (of
     !input.includes("suspended"),
     "user-answered role-Q via priorAskedStep must NOT suspend, got: " + input
   )
-  assert.ok(input.includes("工作几年了"), "should ask q_yoe normally, got: " + input)
+  assert.ok(input.includes("how many years have you been working"), "should ask q_yoe normally, got: " + input)
 })
 
 test("V4 P0: compose with priorAskedStep — non-answer falls through (iter35 P7-4)", () => {
@@ -1316,26 +1254,6 @@ test("compose: ask_q_role + valid role answer → bare q_role question (iter24 b
 })
 
 // iter24 — broader vent vocab
-test("detect: vent zh — '我又焦虑了, 睡不着' (iter24 broadened)", () => {
-  assert.equal(detectFirstTurnIntent("我又焦虑了, 睡不着").intent, "vent")
-})
-
-test("detect: vent zh — '感觉自己快撑不住了' (iter24)", () => {
-  assert.equal(detectFirstTurnIntent("感觉自己快撑不住了").intent, "vent")
-})
-
-test("detect: vent zh — '今天面试又翻车了' (iter24)", () => {
-  assert.equal(detectFirstTurnIntent("今天面试又翻车了").intent, "vent")
-})
-
-test("detect: vent zh — '我又开始自我怀疑了' (iter24)", () => {
-  assert.equal(detectFirstTurnIntent("我又开始自我怀疑了").intent, "vent")
-})
-
-test("detect: vent zh — '压力大得喘不过气' (iter24)", () => {
-  assert.equal(detectFirstTurnIntent("压力大得喘不过气").intent, "vent")
-})
-
 test("detect: vent en — 'I'm so anxious, can't sleep' (iter24)", () => {
   assert.equal(detectFirstTurnIntent("I'm so anxious, can't sleep").intent, "vent")
 })
@@ -1344,7 +1262,3 @@ test("detect: vent en — 'totally bombed my interview' (iter24)", () => {
   assert.equal(detectFirstTurnIntent("totally bombed my interview").intent, "vent")
 })
 
-test("detect: NOT vent zh — '帮我找软件工程师工作' (job_search wins)", () => {
-  // Make sure broadened vent regex doesn't false-trigger on job_search
-  assert.equal(detectFirstTurnIntent("帮我找软件工程师工作").intent, "job_search")
-})

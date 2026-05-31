@@ -48,13 +48,13 @@ test("buildAdviceInjection: directive contains MEMORY-POLICY block markers + hea
   assert.match(out, /already_given_advice \(do NOT repeat or paraphrase\):/)
 })
 
-test("buildAdviceInjection: zh user lang → 已经给过的建议 note", () => {
+test("buildAdviceInjection: legacy zh user lang → back-compat note variant", () => {
   const out = buildAdviceInjection(
-    [makeEntry("你应该多休息", "2026-04-29T00:00:00.000Z", "zh")],
+    [makeEntry("you should rest more", "2026-04-29T00:00:00.000Z", "zh")],
     { userLang: "zh" }
   )
-  assert.ok(out.includes(MEMORY_POLICY_NOTE_ZH), `expected zh note in output. got:\n${out}`)
-  assert.ok(!out.includes(MEMORY_POLICY_NOTE_EN), "should NOT contain en note when lang=zh")
+  assert.ok(out.includes(MEMORY_POLICY_NOTE_ZH), `expected back-compat note in output. got:\n${out}`)
+  assert.ok(!out.includes(MEMORY_POLICY_NOTE_EN), "should NOT contain default en note when lang=zh")
 })
 
 test("buildAdviceInjection: en user lang → Already-given advice note", () => {
@@ -68,7 +68,7 @@ test("buildAdviceInjection: en user lang → Already-given advice note", () => {
 
 test("buildAdviceInjection: mixed lang defaults to en note", () => {
   const out = buildAdviceInjection(
-    [makeEntry("你应该 try yoga", "2026-04-29T00:00:00.000Z", "mixed")],
+    [makeEntry("you should try yoga", "2026-04-29T00:00:00.000Z", "mixed")],
     { userLang: "mixed" }
   )
   assert.ok(out.includes(MEMORY_POLICY_NOTE_EN))

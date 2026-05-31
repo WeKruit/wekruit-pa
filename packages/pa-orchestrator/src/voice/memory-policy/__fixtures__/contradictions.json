@@ -1,50 +1,5 @@
 [
   {
-    "id": "pos-zh-dietary-01",
-    "lang": "zh",
-    "user_fact": "我吃素",
-    "claire_reply": "试试这家牛排馆，他们的肋眼牛排超级嫩",
-    "expected_contradiction": true,
-    "expected_type": "dietary",
-    "expected_violated_term_synonyms": ["牛排", "牛肉", "肋眼", "steak"]
-  },
-  {
-    "id": "pos-zh-allergy-01",
-    "lang": "zh",
-    "user_fact": "我对花生过敏",
-    "claire_reply": "花生酱拌面是个好选择，简单又香",
-    "expected_contradiction": true,
-    "expected_type": "allergy",
-    "expected_violated_term_synonyms": ["花生", "花生酱", "peanut"]
-  },
-  {
-    "id": "pos-zh-pet-01",
-    "lang": "zh",
-    "user_fact": "我家养猫",
-    "claire_reply": "你家狗狗一定喜欢这个新玩具",
-    "expected_contradiction": true,
-    "expected_type": "pet",
-    "expected_violated_term_synonyms": ["狗", "狗狗", "犬", "dog"]
-  },
-  {
-    "id": "pos-zh-pref-neg-01",
-    "lang": "zh",
-    "user_fact": "我从不喝咖啡",
-    "claire_reply": "试试这家咖啡店，拿铁特别浓",
-    "expected_contradiction": true,
-    "expected_type": "preference_negation",
-    "expected_violated_term_synonyms": ["咖啡", "拿铁", "coffee"]
-  },
-  {
-    "id": "pos-zh-health-01",
-    "lang": "zh",
-    "user_fact": "我有糖尿病",
-    "claire_reply": "甜点放开吃，蛋糕和糖果都来一份",
-    "expected_contradiction": true,
-    "expected_type": "health",
-    "expected_violated_term_synonyms": ["甜", "甜点", "糖", "蛋糕", "糖果", "sugar", "dessert"]
-  },
-  {
     "id": "pos-en-dietary-01",
     "lang": "en",
     "user_fact": "I'm vegan",
@@ -52,6 +7,15 @@
     "expected_contradiction": true,
     "expected_type": "dietary",
     "expected_violated_term_synonyms": ["steak", "steakhouse", "ribeye", "beef"]
+  },
+  {
+    "id": "pos-en-dietary-02",
+    "lang": "en",
+    "user_fact": "I'm vegetarian, no meat for me",
+    "claire_reply": "the bacon and chicken plate here is incredible",
+    "expected_contradiction": true,
+    "expected_type": "dietary",
+    "expected_violated_term_synonyms": ["bacon", "chicken"]
   },
   {
     "id": "pos-en-allergy-01",
@@ -63,6 +27,15 @@
     "expected_violated_term_synonyms": ["peanut", "peanut butter"]
   },
   {
+    "id": "pos-en-allergy-02",
+    "lang": "en",
+    "user_fact": "I have a shellfish allergy",
+    "claire_reply": "you should try the shrimp pad thai, it's the best",
+    "expected_contradiction": true,
+    "expected_type": "allergy",
+    "expected_violated_term_synonyms": ["shrimp", "shellfish"]
+  },
+  {
     "id": "pos-en-pet-01",
     "lang": "en",
     "user_fact": "I have a cat at home",
@@ -70,6 +43,33 @@
     "expected_contradiction": true,
     "expected_type": "pet",
     "expected_violated_term_synonyms": ["dog", "puppy"]
+  },
+  {
+    "id": "pos-en-pref-neg-01",
+    "lang": "en",
+    "user_fact": "I never drink coffee",
+    "claire_reply": "try this coffee shop, the latte is amazing",
+    "expected_contradiction": true,
+    "expected_type": "preference_negation",
+    "expected_violated_term_synonyms": ["coffee", "latte"]
+  },
+  {
+    "id": "pos-en-health-01",
+    "lang": "en",
+    "user_fact": "I'm diabetic",
+    "claire_reply": "go all in on dessert, grab some cake and candy too",
+    "expected_contradiction": true,
+    "expected_type": "health",
+    "expected_violated_term_synonyms": ["dessert", "cake", "candy", "sugar"]
+  },
+  {
+    "id": "pos-en-health-02",
+    "lang": "en",
+    "user_fact": "I have diabetes, watching my sugar",
+    "claire_reply": "this chocolate soda is so good, you should grab one",
+    "expected_contradiction": true,
+    "expected_type": "health",
+    "expected_violated_term_synonyms": ["chocolate", "soda", "sugar"]
   },
   {
     "id": "pos-en-location-01",
@@ -90,25 +90,7 @@
     "expected_violated_term_synonyms": ["engineer"]
   },
   {
-    "id": "neg-zh-dietary-ok",
-    "lang": "zh",
-    "user_fact": "我吃素",
-    "claire_reply": "试试这家素菜馆，豆腐做得超好吃",
-    "expected_contradiction": false,
-    "expected_type": null,
-    "expected_violated_term_synonyms": []
-  },
-  {
-    "id": "neg-zh-pet-ok",
-    "lang": "zh",
-    "user_fact": "我家养猫",
-    "claire_reply": "你家小猫一定喜欢这个新玩具",
-    "expected_contradiction": false,
-    "expected_type": null,
-    "expected_violated_term_synonyms": []
-  },
-  {
-    "id": "neg-en-vegan-salad",
+    "id": "neg-en-dietary-ok",
     "lang": "en",
     "user_fact": "I'm vegetarian",
     "claire_reply": "great salad spot near you, they have amazing tofu bowls",
@@ -117,10 +99,28 @@
     "expected_violated_term_synonyms": []
   },
   {
-    "id": "neg-en-cat-ok",
+    "id": "neg-en-pet-ok",
     "lang": "en",
     "user_fact": "I have a cat",
     "claire_reply": "your cat would love this new feather toy",
+    "expected_contradiction": false,
+    "expected_type": null,
+    "expected_violated_term_synonyms": []
+  },
+  {
+    "id": "neg-en-vegan-salad",
+    "lang": "en",
+    "user_fact": "I'm vegan",
+    "claire_reply": "great salad spot near you, they have amazing veggie bowls",
+    "expected_contradiction": false,
+    "expected_type": null,
+    "expected_violated_term_synonyms": []
+  },
+  {
+    "id": "neg-en-coffee-ok",
+    "lang": "en",
+    "user_fact": "I never drink coffee",
+    "claire_reply": "there's a cozy tea house nearby with great oolong",
     "expected_contradiction": false,
     "expected_type": null,
     "expected_violated_term_synonyms": []

@@ -215,32 +215,31 @@ describe("Stream H5 — CV grounding hardened directive", () => {
     // Bad-replies list must explicitly call out the offending pattern.
     assert.match(block!, /Bad replies \(NEVER do these\)/)
     assert.match(block!, /send me your CV/i)
-    assert.match(block!, /把简历发我/)
   })
 
-  it("directive is bilingual — both 简历 and CV substrings present", () => {
+  it("directive is English-only — CV substring present, no Chinese", () => {
     const block = renderCvBlock({
       candidateProfile: { name: "Mike", skills: ["Python"] },
       experiences: [],
       education: [],
     })
     assert.ok(block)
-    assert.match(block!, /简历/, "Chinese 简历 must appear in directive")
     assert.match(block!, /\bCV\b/, "Latin-script CV must appear in directive")
+    assert.doesNotMatch(block!, /[\u4e00-\u9fff]/, "directive must be English-only")
   })
 
-  it("directive references the example good-reply pattern '看到你在 ... 做 ...'", () => {
+  it("directive references the example good-reply pattern 'Saw your ... gig'", () => {
     const block = renderCvBlock({
       candidateProfile: { name: "Mike", skills: ["Python"] },
       experiences: [{ company: "NEUROVA", title: "Data Analyst" }],
       education: [],
     })
     assert.ok(block)
-    // The literal example in the directive uses 看到你在 ... 做 ... shape.
+    // The literal example in the directive uses "Saw your X Y gig" shape.
     assert.match(
       block!,
-      /看到你在.+?做/,
-      "example zh good-reply pattern '看到你在 X 做 Y' must be present"
+      /Saw your .+? gig/,
+      "example good-reply pattern 'Saw your X Y gig' must be present"
     )
   })
 

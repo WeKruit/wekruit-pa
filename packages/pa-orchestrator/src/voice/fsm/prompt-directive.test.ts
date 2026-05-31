@@ -26,7 +26,7 @@ test("buildFsmDirective — basic shape contains all 6 lines", () => {
   assert.match(out, /note: /)
 })
 
-test("buildFsmDirective — bilingual gloss zh", () => {
+test("buildFsmDirective — gloss is English even when legacy zh lang passed", () => {
   const out = buildFsmDirective(
     {
       uxState: "QuietWitness",
@@ -36,8 +36,8 @@ test("buildFsmDirective — bilingual gloss zh", () => {
     },
     { userLang: "zh" }
   )
-  // zh gloss uses Chinese characters
-  assert.ok(/[一-鿿]/.test(out), `expected zh chars in: ${out}`)
+  // Product is English-only — output must never contain Chinese.
+  assert.ok(!/[一-鿿]/.test(out), `did not expect zh chars in: ${out}`)
 })
 
 test("buildFsmDirective — bilingual gloss en (default)", () => {
@@ -87,7 +87,7 @@ test("STAGE_GLOSS_EN — every (uxState × stage) has gloss", () => {
   }
 })
 
-test("STAGE_GLOSS_ZH — every (uxState × stage) has gloss", () => {
+test("STAGE_GLOSS_ZH — legacy alias still has a gloss for every (uxState × stage)", () => {
   for (const ux of [
     "WarmCurious",
     "PlayfulTease",
@@ -97,8 +97,9 @@ test("STAGE_GLOSS_ZH — every (uxState × stage) has gloss", () => {
   ] as const) {
     for (const st of ["Exploration", "Comforting", "Action"] as const) {
       const g = STAGE_GLOSS_ZH[ux][st]
-      assert.ok(typeof g === "string" && g.length > 0, `missing zh gloss ${ux}/${st}`)
-      assert.ok(/[一-鿿]/.test(g), `zh gloss not chinese: ${g}`)
+      assert.ok(typeof g === "string" && g.length > 0, `missing gloss ${ux}/${st}`)
+      // Product is English-only — the legacy alias resolves to English glosses.
+      assert.ok(!/[一-鿿]/.test(g), `gloss should be English: ${g}`)
     }
   }
 })

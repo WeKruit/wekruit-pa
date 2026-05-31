@@ -259,8 +259,8 @@ export async function sweepStaleOutbound(
 // If the body carries ANY CJK it is a defect: translate to English via SiliconFlow Qwen; if that is
 // unavailable/fails, strip the CJK and, if nothing usable remains, send a safe English line. NEVER
 // ships Chinese. Fail-open to the deterministic fallback — never throws, never blocks a send.
-const CJK_DETECT_RE = /[㐀-䶿一-鿿豈-﫿぀-ヿｦ-ﾟ]/
-const CJK_STRIP_RE = /[　-〿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/g
+const CJK_DETECT_RE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uff66-\uff9f]/
+const CJK_STRIP_RE = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]/g
 export async function forceEnglishOnly(
   text: string,
   log: (event: string, payload?: Record<string, unknown>) => void,

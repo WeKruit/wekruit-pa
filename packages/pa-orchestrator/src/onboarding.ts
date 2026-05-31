@@ -2,7 +2,7 @@
  * Phase 23 — Onboarding state machine for closed-beta first-contact flow.
  * Phase 44 (v1.5 Stream-B / D5+D13) — extended to 8-state rich JOB-PREF
  * probe (role / yoe / visa / startup-pref / location). One question per turn,
- * bilingual, friend-tone (Adam-locked: "那你有身份不" not "What is your visa
+ * bilingual, friend-tone (Adam-locked: a casual friend-tone phrasing not "What is your visa
  * status"). Synthetic system inputs only — ZERO new LLM calls per probe step.
  *
  * D-03: Onboarding state lives on pa_users (onboardingState field).
@@ -163,27 +163,11 @@ export function shouldRunOnboardingProbe(
 }
 
 /**
- * Detect zh vs en from user input. Returns "zh" when ≥30% of non-whitespace
- * characters are CJK; otherwise "en". Empty input defaults to "zh" (Claire's
- * first_mes is Chinese — keep the opener consistent).
+ * Resolve the output language for onboarding. Product is English-only, so this
+ * always returns "en".
  */
-function pickLang(userMessage: string | undefined): "zh" | "en" {
-  const text = (userMessage ?? "").replace(/\s+/g, "")
-  if (!text) return "zh"
-  let cjk = 0
-  for (const ch of text) {
-    const code = ch.codePointAt(0) ?? 0
-    // CJK Unified Ideographs + extensions (rough but sufficient for routing)
-    if (
-      (code >= 0x4e00 && code <= 0x9fff) ||
-      (code >= 0x3400 && code <= 0x4dbf) ||
-      (code >= 0xf900 && code <= 0xfaff)
-    ) {
-      cjk++
-    }
-  }
-  const total = [...text].length
-  return cjk / total >= 0.3 ? "zh" : "en"
+function pickLang(_userMessage: string | undefined): "zh" | "en" {
+  return "en"
 }
 
 /** Friend-tone bilingual prompts — Adam-locked tone, do NOT paraphrase. */
@@ -199,43 +183,43 @@ const Q_PROMPTS: Record<
   { zh: string; en: string }
 > = {
   // iter31 — ToS + privacy gate. Friend-tone but explicit; the user must
-  // affirmatively reply "yes/同意/agree" for state to advance. Link points at
+  // affirmatively reply "yes/agree" for state to advance. Link points at
   // the public hosting page; copy line is short enough to fit the iMessage
   // chunker. Adam-locked: do NOT paraphrase or remove the link.
   ask_q_tos: {
-    zh: "开聊前先说一下: 我会记一些咱聊天的事来给你推工作 / 找内推. 隐私 + 用户协议在这: https://wekruit-pa-landing.web.app/legal — 同意就回个 \"同意\" 我们继续",
+    zh: "before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply \"agree\" if cool with that and we keep going",
     en: "before we get into it — heads up i remember bits of our chat to surface jobs + referrals for you. privacy + terms here: https://wekruit-pa-landing.web.app/legal — reply \"agree\" if cool with that and we keep going",
   },
   ask_q_role: {
-    zh: "那你大概想找啥方向的活? 比如做产品、做工程、还是做研究 — 给我个大致就行",
+    zh: "btw — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
     en: "btw — what kinda role you eyeing? eng / pm / research / design? roughly is fine",
   },
   ask_q_yoe: {
-    zh: "你工作几年了? 还是刚毕业找新人岗?",
+    zh: "how many years have you been working? New grad is fine too.",
     en: "how many years have you been working? New grad is fine too.",
   },
   ask_q_visa: {
-    zh: "那你有身份不? 公民/绿卡/OPT/还是要 sponsor?",
+    zh: "got work auth sorted? citizen / GC / OPT / need sponsorship?",
     en: "got work auth sorted? citizen / GC / OPT / need sponsorship?",
   },
   ask_q_startup_pref: {
-    zh: "你更偏 startup、稳定一点的大公司, 还是都可以?",
+    zh: "do you prefer startups, bigger-company stability, or are you flexible?",
     en: "do you prefer startups, bigger-company stability, or are you flexible?",
   },
   ask_q_country: {
-    zh: "想找哪个国家/地区的工作? 美国 / 中国 / 加拿大 / 欧洲 / 都行 — 多选也行",
+    zh: "which country/region you targeting? USA / China / Canada / Europe / anywhere — multi is fine",
     en: "which country/region you targeting? USA / China / Canada / Europe / anywhere — multi is fine",
   },
   ask_q_location: {
-    zh: "想找哪边的工作? 湾区、纽约、还是看远程?",
+    zh: "where you wanna be? SF / NYC / remote ok?",
     en: "where you wanna be? SF / NYC / remote ok?",
   },
   // iter30 closure — proactive resume request. Friend-tone, low-friction;
   // signals "for matching, not gatekeeping". cv-gate-detector regex
-  // (`/发简历给我/`, `/send.*your\s+resume/i`) catches this phrasing and
+  // (`/send.*your\s+resume/i`) catches this phrasing and
   // opens the 24h upload gate automatically.
   ask_q_resume: {
-    zh: "对了, 简历方便发我一份不? 后面帮你看 JD / 内推都准多了",
+    zh: "btw — can you send me your resume? makes JD review and referrals way more on-point",
     en: "btw — can you send me your resume? makes JD review and referrals way more on-point",
   },
 }
@@ -307,8 +291,8 @@ export function composeOnboardingInput(
     userMessage?: string
     detectedIntent?: FirstTurnDetection
     /**
-     * iter30 closure (Adam directive 2026-05-04 "我说完 hello 之后, 为什么
-     * 不开始??"): when true (default), casual_chat / null intents on T0
+     * iter30 closure (Adam directive 2026-05-04 "why not start right after
+     * hello??"): when true (default), casual_chat / null intents on T0
      * chain ask_q_role so the 6Q probe visibly starts on T0 instead of T1.
      * Set false to honor the `PA_ONBOARDING_INTENT_ACK_DISABLED=true`
      * emergency kill switch — restores the old bare-greeting behavior.
@@ -320,7 +304,7 @@ export function composeOnboardingInput(
      * asked (priorAskedStep), NOT the question we're about to ask
      * (`step`). For state=q_role_asked → step=ask_q_yoe, priorAskedStep is
      * "ask_q_role". Pre-fix used `step` directly, which checked YOE regex
-     * against a ROLE answer "工程" → false → off-by-one chain stall (T1
+     * against a ROLE answer like "engineering" -> false -> off-by-one chain stall (T1
      * ack-only, T2 advance-and-ask).
      *
      * Pass undefined to fall back to legacy behavior (used by tests that
@@ -332,11 +316,11 @@ export function composeOnboardingInput(
   if (step === "send_first_mes") {
     const match = agent.systemPrompt.match(/[Ff]irst\s+message:\s*(.+?)(?:\n|$)/)
     // iter30 closure — bilingual fallback per user lang. Adam directive
-    // 2026-05-04 ("这个柠檬哪里来的? 你没测试英文吗???"): the lemon emoji
+    // 2026-05-04 ("where did this lemon come from? did you not test English???"): the lemon emoji
     // 🍋 was hardcoded zh-only and bled into English replies via LLM
     // translation. Split by language; remove emoji from default greetings.
     const fbLang = pickLang(ctx.userMessage)
-    const fallback = fbLang === "zh" ? "在呢. 今天找你聊点啥?" : "Here. What's on your mind today?"
+    const fallback = "Here. What's on your mind today?"
     const firstMes = match?.[1]?.trim() ?? fallback
     // Phase 52 — F1 fix: intent-aware first message. When the user's opening
     // message expressed a high-confidence actionable intent (job_search /
@@ -392,10 +376,10 @@ export function composeOnboardingInput(
       const lang = pickLang(ctx.userMessage)
       const ackDirective = INTENT_ACK_DIRECTIVES[ackKey][lang]
       const rolePhrase = Q_PROMPTS.ask_q_role[lang]
-      return `[onboarding_step: send_first_mes_with_intent_ack | intent=${detected.intent}] ${ackDirective} The role-direction question to chain (Adam-locked, do not paraphrase): "${rolePhrase}". Total reply: ≤ 2 sentences. No "好的" / "OK" preface. No numbering. No A/B framework like "X 还是 Y?" — the role question already enumerates options. Friend-tone, ${lang === "zh" ? "Mandarin" : "English"} register matching the user's input.`
+      return `[onboarding_step: send_first_mes_with_intent_ack | intent=${detected.intent}] ${ackDirective} The role-direction question to chain (Adam-locked, do not paraphrase): "${rolePhrase}". Total reply: ≤ 2 sentences. No "OK" preface. No numbering. No A/B framework like "X or Y?" — the role question already enumerates options. Friend-tone, English register matching the user's input.`
     }
-    // iter30 closure — Adam directive 2026-05-04 ("我说完 hello 之后, 为什么
-    // 不开始??"): casual_chat / null / unrecognized intent on a fresh user
+    // iter30 closure — Adam directive 2026-05-04 ("why not start right after
+    // hello??"): casual_chat / null / unrecognized intent on a fresh user
     // should ALSO chain ask_q_role. Previously these fell through to a bare
     // greeting, which felt passive — Claire said hi, then user had to send
     // ANOTHER message before the probe started. Now: friendly opener +
@@ -410,13 +394,13 @@ export function composeOnboardingInput(
     ) {
       const lang = pickLang(ctx.userMessage)
       const rolePhrase = Q_PROMPTS.ask_q_role[lang]
-      const opener = lang === "zh" ? "嗨, 我在." : "hey, i'm here."
-      return `[onboarding_step: send_first_mes_with_casual_chain] User opened with a casual greeting / ambiguous intent. Reply with a friend-tone short opener like "${opener}" (1 short clause), then chain the role-direction question (Adam-locked, do not paraphrase): "${rolePhrase}". Total reply: ≤ 2 sentences. No emoji. No "好的" / "OK" preface. Friend-tone, ${lang === "zh" ? "Mandarin" : "English"} register matching the user's input.`
+      const opener = "hey, i'm here."
+      return `[onboarding_step: send_first_mes_with_casual_chain] User opened with a casual greeting / ambiguous intent. Reply with a friend-tone short opener like "${opener}" (1 short clause), then chain the role-direction question (Adam-locked, do not paraphrase): "${rolePhrase}". Total reply: ≤ 2 sentences. No emoji. No "OK" preface. Friend-tone, English register matching the user's input.`
     }
     return `[onboarding_step: send_first_mes] Reply EXACTLY with Claire's first_mes: "${firstMes}". Nothing else. No greeting. No explanation.`
   }
   if (step === "ask_grounding_q") {
-    return `[onboarding_step: ask_grounding_q] Ask ONE casual question to understand what's going on with the user right now. Roommate register: short, genuine, no "欢迎", no formal opener. Example: "你最近怎么了, 找我有什么事吗" or "今天有什么事?" — Claude picks naturally from Character Bible v1 voice.`
+    return `[onboarding_step: ask_grounding_q] Ask ONE casual question to understand what's going on with the user right now. Roommate register: short, genuine, no formal welcome, no formal opener. Example: "what's going on lately, anything you need?" or "what's up today?" — Claude picks naturally from Character Bible v1 voice.`
   }
   // iter31 — ToS gate. Distinct from the q_X probe steps: no "suspended"
   // empathy branch (the user EITHER accepts, declines, or stays mute), and
@@ -435,7 +419,7 @@ export function composeOnboardingInput(
         // acknowledges and offers to be there if the user changes mind.
         const declineMsg =
           lang === "zh"
-            ? "完全 ok, 你不同意我就不主动记你聊天的事. 想聊别的随时. 改主意了说一声"
+            ? "totally ok — i won't store chat memory if you'd rather not. happy to keep chatting either way. lmk if you change your mind"
             : "totally ok — i won't store chat memory if you'd rather not. happy to keep chatting either way. lmk if you change your mind"
         return `[onboarding_step: ask_q_tos_declined | reason=user_declined_tos] Reply EXACTLY: "${declineMsg}". 1-2 sentences. No emoji. No follow-up question. No legal language. Friend-tone, ${lang === "zh" ? "Mandarin" : "English"} register.`
       }
@@ -443,12 +427,12 @@ export function composeOnboardingInput(
         // Unclear: gentle re-ask, do NOT escalate.
         const reaskMsg =
           lang === "zh"
-            ? "刚那个隐私 + 用户协议你看一下哦, 同意就回 \"同意\" — 不同意我们也能继续聊但不会保存"
+            ? "just need a quick \"agree\" on the privacy + terms above — or \"no\" and we can chat without me saving anything"
             : "just need a quick \"agree\" on the privacy + terms above — or \"no\" and we can chat without me saving anything"
         return `[onboarding_step: ask_q_tos_reask | reason=ambiguous_reply] Reply EXACTLY: "${reaskMsg}". 1 sentence. No emoji. ${lang === "zh" ? "Mandarin" : "English"} register.`
       }
     }
-    return `[onboarding_step: ask_q_tos] Reply EXACTLY this ToS+privacy line (Adam-locked, do not paraphrase, do not chain a follow-up question, do not preface with greeting): "${phrase}". 1-2 short sentences. No emoji. No "好的" / "OK" preface. ${lang === "zh" ? "Mandarin" : "English"} register matching the user's input.`
+    return `[onboarding_step: ask_q_tos] Reply EXACTLY this ToS+privacy line (Adam-locked, do not paraphrase, do not chain a follow-up question, do not preface with greeting): "${phrase}". 1-2 short sentences. No emoji. No "OK" preface. English register matching the user's input.`
   }
   if (
     step === "ask_q_role" ||
@@ -463,7 +447,7 @@ export function composeOnboardingInput(
     //   (A) noChainIntent fired (vent / interview_prep / negotiation /
     //       motivation_nudge) — user is in distress / off-topic
     //   (B) user's message does NOT contain a recognizable answer keyword
-    //       for the current step (e.g. user says "再帮我想想" while we asked
+    //       for the current step (e.g. user says "let me think more" while we asked
     //       q_visa) — they're not answering
     // The orchestrator ALSO sees the suspension via the same checks and skips
     // applyOnboardingStep so the state stays where it was.
@@ -493,17 +477,17 @@ export function composeOnboardingInput(
       }
       // iter26 — Non-answer path. Adam observed iter24's "ONE clarifier
       // specific to {step}" directive induced LLM to emit AB-framework
-      // ("X 还是 Y") on 18/30 turns of long-context test. NEVER PROBE rule
+      // ("X or Y") on 18/30 turns of long-context test. NEVER PROBE rule
       // (Bible v7.5) violated. Rewrite: NO clarifier question, just
       // empathy + presence. The state already stays at q_X; if user comes
       // back with an actual answer next turn, parser advances. Until then,
       // Claire stays present, no leading questions.
       const langCue = lang === "zh" ? "Mandarin" : "English"
-      return `[onboarding_step: ${step}_suspended_no_answer | reason=user_did_not_answer_question] User didn't answer the ${step} question yet. They may be venting, asking meta-questions, or just continuing the thread. Reply with ONE short friend-tone acknowledgement only — no question, no probe, no "A 还是 B / A or B" framework. Examples (do NOT echo verbatim, pick register from history): "嗯, 我在." / "听着挺累的." / "卧槽, 那确实." / "yeah, i hear you." / "fr, that's a lot." STRICTLY: ≤ 1 short sentence, ≤ 12 字 / ≤ 8 words. NEVER append a clarifier question. NEVER list options. Let the user keep talking. ${langCue} register.`
+      return `[onboarding_step: ${step}_suspended_no_answer | reason=user_did_not_answer_question] User didn't answer the ${step} question yet. They may be venting, asking meta-questions, or just continuing the thread. Reply with ONE short friend-tone acknowledgement only — no question, no probe, no "A or B" framework. Examples (do NOT echo verbatim, pick register from history): "yeah, i hear you." / "fr, that's a lot." STRICTLY: ≤ 1 short sentence, ≤ 8 words. NEVER append a clarifier question. NEVER list options. Let the user keep talking. ${langCue} register.`
     }
     const lang = pickLang(ctx.userMessage)
     const phrase = Q_PROMPTS[step][lang]
-    return `[onboarding_step: ${step}] Ask EXACTLY this ONE friend-tone question (Adam-locked phrasing — do not paraphrase, do not add greeting, do not chain a second question): "${phrase}". 1 sentence. No "好的" / "OK" preface. No "btw" if zh. No follow-up clauses.`
+    return `[onboarding_step: ${step}] Ask EXACTLY this ONE friend-tone question (Adam-locked phrasing — do not paraphrase, do not add greeting, do not chain a second question): "${phrase}". 1 sentence. No "OK" preface. No follow-up clauses.`
   }
   // complete / skip don't need synthetic inputs
   return ""
@@ -559,7 +543,7 @@ const STATE_ORDER: Array<OnboardingState | undefined> = [
 // ============================================================================
 // iter35 P7-4 (2026-05-07) — REMOVED: legacy regex parsers + canon-token maps.
 //
-// Adam directive: 整体重构 不打补丁. The functions below were the 4 parallel
+// Adam directive: full rewrite, no patching. The functions below were the 4 parallel
 // regex paths (the legacy parsers) doing the same job: parse a free-form user reply
 // into a canonical statedPreferences value. They are SUPERSEDED by
 // `GuidedOpenJudge` in `onboarding/judges/guided-open.ts` (LLM-first +
@@ -590,22 +574,22 @@ export type CanonicalLocation =
 
 /**
  * iter31 — bilingual ToS accept tokens. Word-boundary checked so casual
- * mentions inside longer text still count ("ok 同意" / "yeah, agree"). NOT
+ * mentions inside longer text still count ("ok agree" / "yeah, agree"). NOT
  * matched on negation context like "i don't agree" — that's caught by the
  * decline regex which we test FIRST in parseTosAnswer.
  */
 export const TOS_ACCEPT_REGEX =
-  /(^|[\s,，.。])(同意|接受|可以|没问题|好的|好|行|ok\b|okay\b|sure\b|yes\b|yep\b|yeah\b|yup\b|agree(d)?|i\s*agree|accept(ed)?|deal\b|sounds\s*good)(\b|[\s,，.。!！?？]|$)/i
+  /(^|[\s,.])(ok\b|okay\b|sure\b|yes\b|yep\b|yeah\b|yup\b|agree(d)?|i\s*agree|accept(ed)?|deal\b|sounds\s*good)(\b|[\s,.!?]|$)/i
 /** iter31 — bilingual ToS decline tokens. Tested BEFORE accept. */
 export const TOS_DECLINE_REGEX =
-  /(^|[\s,，.。])(不同意|拒绝|不行|不要|不可以|算了|no\b|nope\b|nah\b|don'?t\s*agree|do\s*not\s*agree|decline(d)?|disagree(d)?|reject(ed)?|不接受|hard\s*pass)(\b|[\s,，.。!！?？]|$)/i
+  /(^|[\s,.])(no\b|nope\b|nah\b|don'?t\s*agree|do\s*not\s*agree|decline(d)?|disagree(d)?|reject(ed)?|hard\s*pass)(\b|[\s,.!?]|$)/i
 
 /**
  * iter33 Bug 15 fix 2026-05-05 — common-typo detector for email domains.
  * Adam reported typing `indolencorlol@gmal.com` (gmal not gmail) → Mailgun
  * accepted the API call (domain not validated client-side) but SMTP
  * delivery permanently bounced ("No MX for gmal.com"). User got no code
- * but Claire said "已发码". Now we catch the typo before the send and
+ * but Claire said the code was sent. Now we catch the typo before the send and
  * surface a confirm-prompt back to the user.
  *
  * Map kept conservative — only HIGH-confidence typos that are vanishingly
@@ -649,54 +633,17 @@ export function parseUserAnswerForStep(
 }
 
 /**
- * iter33 — parse zh/en/mixed reply to ask_q_lang. Bilingual + permissive:
- * "中文" / "zh" / "chinese" → zh; "english" / "en" / "英文" → en; explicit
- * "mixed" / "混" / "中英" / "both" / "都行" / "either" → mixed. NEVER throws.
- *
- * iter33 Bug 6 fix (sim-walkthrough A/C/D/E exposed): ambiguous reply (e.g.
- * "同意" / "agree" / "yo" — user thinks they're answering a different Q)
- * USED to silently default to "mixed", polluting downstream lang selection.
- * Now uses CJK-ratio tiebreak: ≥30% CJK chars → zh, else → en. Matches
- * pickLang() detection so the stored preferredLang lines up with what
- * Claire was already replying in. Empty/whitespace still returns {}.
+ * Historical ask_q_lang parser. Beta onboarding no longer asks a language
+ * question, and the product is English-only, so any meaningful reply resolves
+ * to "en". Empty/whitespace returns {}. Kept for back-compat callers.
  */
 export function parseLangAnswer(reply: string): Partial<StatedPreferences> {
   const t = reply.trim().toLowerCase()
   if (!t) return {}
-  // Explicit mixed first — phrases like "中英文" contain "中" and "英" and
-  // would otherwise be miscategorized.
-  if (/混|中英|both|either|都行|都可以|whatever|mix/.test(t)) {
+  if (/\bmixed\b|both/.test(t)) {
     return { preferredLang: "mixed" }
   }
-  // English signals next — "英文" contains 文 (CJK) but is an EN selection.
-  // Check before the pure-CJK fallback so "英文" → en (not zh).
-  if (/english|英文|engl|\ben\b/.test(t)) {
-    return { preferredLang: "en" }
-  }
-  // Chinese signals
-  if (/中文|chinese|\bzh\b|汉语|普通话|国语/.test(t) || /^[一-鿿]+$/.test(reply.trim())) {
-    return { preferredLang: "zh" }
-  }
-  // Bug 6 fix: ambiguous → CJK-ratio tiebreak (mirrors pickLang). Pure CJK
-  // glyph reply ("同意" / "好") → zh; ASCII-only reply ("agree" / "yo" /
-  // "okok") → en. Removes silent-mixed pollution that masked real lang
-  // signal from downstream verify-start template selection.
-  let cjk = 0
-  let total = 0
-  for (const ch of reply) {
-    if (/\s/.test(ch)) continue
-    total++
-    const code = ch.codePointAt(0) ?? 0
-    if (
-      (code >= 0x4e00 && code <= 0x9fff) ||
-      (code >= 0x3400 && code <= 0x4dbf) ||
-      (code >= 0xf900 && code <= 0xfaff)
-    ) {
-      cjk++
-    }
-  }
-  if (total === 0) return {}
-  return { preferredLang: cjk / total >= 0.3 ? "zh" : "en" }
+  return { preferredLang: "en" }
 }
 
 /**
@@ -931,7 +878,7 @@ export async function applyOnboardingStep(
      */
     tosAcceptedVersion?: string
     /**
-     * iter34 hotfix 2026-05-05 — Adam directive "为什么还在用regex??". When
+     * iter34 hotfix 2026-05-05 — Adam directive "why still using regex??". When
      * provided, this CANONICAL StatedPreferences patch REPLACES the
      * regex-based `parseUserAnswerForStep(priorAskedStep, priorUserReply)`
      * extraction. Pipeline (Q-as-class) hooks pass Judge canonical output
@@ -1070,8 +1017,8 @@ export async function applyOnboardingStep(
       workSession: onboardingWorkSession(user, nextState, now),
     }
     if (statedPreferencesWrite) payload.statedPreferences = statedPreferencesWrite
-    // iter30 closure (Adam directive 2026-05-03 "不要一直用这些 fking regex,
-    // 可以有但是只能是 helper"): when the orchestrator dispatches
+    // iter30 closure (Adam directive 2026-05-03 "stop using all these fking
+    // regexes — they can exist but only as helpers"): when the orchestrator dispatches
     // ask_q_resume, we KNOW Claire is proactively asking for the CV — open
     // the 24h upload gate deterministically here instead of pattern-matching
     // her reply post-turn. cv-gate-detector regex remains as a fallback for

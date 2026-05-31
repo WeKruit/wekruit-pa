@@ -1,15 +1,15 @@
 /**
  * v1.7 Phase 70 hotfix — LLM-composed nuanced match reasoning.
  *
- * Replaces V16's template "为啥推: skill X+Y 跟 JD 核心技能对得上" with a
+ * Replaces V16's generic skill-overlap template with a
  * personalized 1-sentence reason citing WHICH past experience bridges to
  * THIS job. Pulls work history + projects from parsedCandidateResumes,
  * matched skills from V16 score breakdown, JD body from matching-jobs.
  *
- * Pattern: "你在 [companyA] 用 [skillX] 做 [projectY], 跟这岗位的
- * [JD-requirement] 对得上"
+ * Pattern: "your [skillX] work at [companyA] on [projectY] lines up with this
+ * role's [JD-requirement]"
  *
- * NOT: "你的 javascript+python 跟 JD 核心技能对得上" (the v1.6 template).
+ * NOT: a bare "your javascript+python matches the JD" template (the v1.6 form).
  *
  * Cost: gpt-5.4-nano ~30 tokens per call × 2 jobs = ~$0.0001 per match
  *       email. Negligible.
@@ -73,24 +73,6 @@ export interface NuancedReasonInput {
   candidateSeniority?: string | null
 }
 
-const SYSTEM_PROMPT_ZH = `你是一个 Career Advisor / 招聘 broker。看候选人的简历经历 + 这个岗位 + 候选人最看重什么, 写一段有说服力、具体的中文推荐理由。
-
-规则:
-- 1-2 句话, 共 40-70 字
-- 必须引用候选人的具体公司/项目/技能栈 (e.g., "你在 Tesla 做的 V&C 后台 300+ 门店", "你的 React/TS + 后端底子")
-- 引用 1-2 个跟岗位需求对得上的具体技能 (从他真用过的技能里选)
-- 如果级别对得上 (junior/senior 等)、公司阶段对 (早期/扩张期)、行业对、地点对 — 自然带一句
-- 如果给了候选人「最看重的东西」(comp/equity/growth/mission 等), 必须有一句点出这岗位踩中了这些点 (e.g. "而且它正好踩中你最看重的薪资 + 早期股权")
-- 中文口语化, 不写"具备""掌握"这种简历腔, 不写"完美契合"这种空话
-- 不要前缀"为啥推"或类似 — 只写理由本身
-- 只能用给你的真实信息, 不要编造公司细节
-
-格式: 返回 JSON: { "reason": "<理由>" }
-
-例:
-- "你在 Tesla 用 Node.js + React 撑过 300+ 门店的 V&C 后台, 这个早期 SF 创业公司的全栈岗规模 + 栈都对得上, 而且它正好踩中你最看重的薪资 + 早期股权。"
-- "你 ESL 那个 Dynamic Knowledge Tracing 的 PyTorch 模型, 跟这家做的 LLM 微调方向能直接迁移, 级别也是你现在的 mid 级。"`
-
 const SYSTEM_PROMPT_EN = `You are a recruiter / career broker. Look at the candidate's resume experience + this specific job + what the candidate said matters most, and write a compelling, specific rec reason in English.
 
 Rules:
@@ -109,7 +91,7 @@ Examples:
 - "Full-stack product role at an early-stage SF startup — your React/TS + backend background fits the stack, the junior level lines up, and it leans into the comp + early equity you said matter most."
 - "Your ESL Dynamic Knowledge Tracing model in PyTorch transfers cleanly to their LLM fine-tuning work, and the mid-level seniority matches where you are now."`
 
-// 2026-05-07 Bug D true root cause v3 (Adam: "为什么不是同一个 interface")
+// 2026-05-07 Bug D true root cause v3 (Adam: "why isn't it the same interface")
 // — composeNuancedReason was a SDK-level OpenAI island: imported `openai`
 // directly, hardcoded model strings, manual fallback chain, manual key
 // resolution. CV parse + sponsorship inference + industry-second-pass all
@@ -180,21 +162,21 @@ export async function composeNuancedReason(
     .slice(0, 3)
     .join(", ")
 
-  const userText = `## 候选人最近经历 / Recent Experience
+  const userText = `## Recent Experience
 ${wh}
 
-${projects ? `## 项目 / Projects\n${projects}\n` : ""}
-## 候选人技能 / Skills
+${projects ? `## Projects\n${projects}\n` : ""}
+## Skills
 ${skills}
 
-## V16 已匹配的技能 / V16-Matched Skills
+## V16-Matched Skills
 ${matched}
-${input.candidateSeniority ? `\n## 候选人级别 / Candidate Seniority\n${input.candidateSeniority}\n` : ""}${priorities ? `\n## 候选人最看重 / Candidate Stated Priorities\n${priorities}\n` : ""}
-## 这个岗位 / Job
+${input.candidateSeniority ? `\n## Candidate Seniority\n${input.candidateSeniority}\n` : ""}${priorities ? `\n## Candidate Stated Priorities\n${priorities}\n` : ""}
+## Job
 ${input.job.title}${input.job.company ? ` @ ${input.job.company}` : ""}
 ${input.job.seniorityLevel ? `Seniority: ${input.job.seniorityLevel}\n` : ""}${input.job.companyStage ? `Company stage: ${input.job.companyStage}\n` : ""}${jobIndustry ? `Industry: ${jobIndustry}\n` : ""}${input.job.location ? `Location: ${input.job.location}\n` : ""}${reqSkills ? `Required: ${reqSkills}\n` : ""}${input.job.jobDescription ? `JD: ${input.job.jobDescription.slice(0, 600)}` : ""}
 
-返回 JSON: { "reason": "<1-2 句有说服力的推荐理由, 引用具体经历 + 对得上的技能 + 如果有就点出候选人最看重的东西>" }`
+Return JSON: { "reason": "<1-2 sentence compelling rec reason citing specific experience + bridging skills + the candidate's stated priorities if any>" }`
 
   try {
     // 2026-05-07 Bug D root cause v4 — production CF env has
@@ -209,7 +191,7 @@ ${input.job.seniorityLevel ? `Seniority: ${input.job.seniorityLevel}\n` : ""}${i
       apiKey: config.openaiApiKey,
       baseURL: "https://api.openai.com/v1",
       anthropicApiKey: config.anthropicApiKey,
-      systemPrompt: input.lang === "zh" ? SYSTEM_PROMPT_ZH : SYSTEM_PROMPT_EN,
+      systemPrompt: SYSTEM_PROMPT_EN,
       userText,
       schemaName: "NuancedMatchReason",
       schema: NUANCED_REASON_SCHEMA as unknown as Record<string, unknown>,
@@ -237,7 +219,7 @@ ${input.job.seniorityLevel ? `Seniority: ${input.job.seniorityLevel}\n` : ""}${i
       return null
     }
     const cleaned = reason
-      .replace(/^("|")?\s*(为啥推|Why match|Reason)\s*[:：]?\s*/i, "")
+      .replace(/^("|")?\s*(Why match|Reason)\s*:?\s*/i, "")
       .replace(/^["']|["']$/g, "")
       .trim()
     logger.info("pa.match.nuanced_reason_ok", {

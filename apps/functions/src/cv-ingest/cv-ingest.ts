@@ -503,7 +503,7 @@ const SYSTEM_PROMPT =
   // iter34 H.3a — concrete tagging examples. The LLM was repeatedly emitting\n" +
   // ['other'] for SWE / AI-engineer CVs heavy on tools but light on industry words.\n" +
   "Examples (apply when the corresponding signals are present in the CV):\n" +
-  "- Skills/companies include Software Engineer / SWE / 工程师 / 程序员 / Python / Java / JavaScript / TypeScript / Go / C++ / Tesla / AWS / GCP / Azure / Docker / Kubernetes → industryTags MUST include 'tech_software'.\n" +
+  "- Skills/companies include Software Engineer / SWE / Python / Java / JavaScript / TypeScript / Go / C++ / Tesla / AWS / GCP / Azure / Docker / Kubernetes → industryTags MUST include 'tech_software'.\n" +
   "- Skills/companies include ML / AI / TensorFlow / PyTorch / OpenAI / Anthropic / LangChain / LlamaIndex / CUDA → ALSO add 'ai_ml'.\n" +
   "- Skills/companies include semiconductor / firmware / FPGA / ASIC / chip design → add 'tech_hardware'.\n" +
   "- Use 'other' ONLY when none of the 9 specific buckets fit at all."
@@ -1124,13 +1124,11 @@ export async function runUserTagsMerge(args: {
 // ---------------------------------------------------------------------------
 
 /**
- * Build a one-line "user CV summary" fact body. Bilingual: zh template when
- * the CV is mostly Chinese, English otherwise. The body is fed to mem0Add
- * as a USER message; mem0's own LLM extraction layer condenses + dedupes
- * against existing Qdrant vectors.
+ * Build a one-line "user CV summary" fact body (English). The body is fed to
+ * mem0Add as a USER message; mem0's own LLM extraction layer condenses +
+ * dedupes against existing Qdrant vectors.
  */
 export function buildCvFactBody(parsed: StructuredCv): string {
-  const lang = detectCvLang(parsed)
   const name = parsed.candidateProfile.name ?? "Unknown"
   const top = parsed.experiences[0]
   const skills = parsed.candidateProfile.skills.slice(0, 8)
@@ -1143,16 +1141,6 @@ export function buildCvFactBody(parsed: StructuredCv): string {
     .filter(Boolean)
     .join("; ")
 
-  if (lang === "zh") {
-    const role = top
-      ? `${top.title} at ${top.company} (${top.startDate || "?"}–${top.endDate || "present"})`
-      : "(无工作经历)"
-    return (
-      `用户简历摘要: ${name} — currently/last ${role}. ` +
-      `主要技能: ${skills.length ? skills.join(", ") : "(未列出)"}. ` +
-      `教育: ${eduList || "(未列出)"}.`
-    )
-  }
   const role = top
     ? `${top.title} at ${top.company} (${top.startDate || "?"}–${top.endDate || "present"})`
     : "(no listed experience)"

@@ -4,7 +4,7 @@
  * Rationale: deterministic rotation. User sees a different phrasing every
  * retry without LLM cost. Falls back through the chain when variants run out.
  *
- * Adam directive 2026-05-05: "如果重新问, 可以换一种问法" — variants are
+ * Adam directive 2026-05-05: "when re-asking, vary the phrasing" — variants are
  * the cheapest, most predictable way to comply.
  */
 import type { BilingualText, RephraseArgs, Rephraser } from "../question.js"

@@ -77,10 +77,12 @@ describe("composeNoMatchReply", () => {
     assert.match(reply, /loosen|broaden|preference/i)
   })
 
-  it("zh: returns Mandarin copy when lang=zh", () => {
+  it("lang=zh still returns English-only copy (product is English-only)", () => {
     const reply = composeNoMatchReply({ noUserTags: true }, "zh")
-    assert.match(reply, /偏好资料|目标角色/)
-    assert.doesNotMatch(reply, /[a-z]{4,}/i, "no Latin words")
+    assert.match(reply, /preference profile/i)
+    // CJK Unified Ideographs range, built from char codes to avoid CJK literals.
+    const cjk = new RegExp(`[\\u${(0x4e00).toString(16)}-\\u${(0x9fff).toString(16)}]`)
+    assert.doesNotMatch(reply, cjk, "no Chinese characters")
   })
 
   it("always returns non-empty string", () => {

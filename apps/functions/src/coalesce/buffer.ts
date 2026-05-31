@@ -55,16 +55,17 @@ export const COALESCE_USER_FIELD = "coalesceTurnSeq"
 export const FORCE_FIRE_MESSAGE_COUNT = 5
 /** Hard cap: total wait from firstReceivedAt before force-fire, regardless of cancel/re-enqueue.
  *
- *  Adam 2026-05-03 01:22 spec ("我们的 typing window 8s 没问题, 但是不能一条对应
- *  一个, 肯定要稍微 merge 一下" + amendment "可以消息间隔 < 5s 自动延长 …
- *  然后长一点, 我觉得可以"): 4 zh msgs across ~01:22:00–01:22:38 still wave-split
- *  into 3 turns under the 12s hard cap. Bumped 12s → 20s → 30s.
+ *  Adam 2026-05-03 01:22 spec (an 8s typing window is fine, but one inbound
+ *  shouldn't map to one outbound — they need to merge a bit; amendment: when
+ *  gaps are < 5s, auto-extend and lengthen the window): 4 msgs across
+ *  ~01:22:00–01:22:38 still wave-split into 3 turns under the 12s hard cap.
+ *  Bumped 12s → 20s → 30s.
  *
- *  Adam 2026-05-03 02:01 (3 zh msgs "算了/还是/或者" → 4 outbounds): 20s still
- *  too short — Adam打字间隔 > 5s yet third msg "或者是pm" was clearly a
+ *  Adam 2026-05-03 02:01 (3 msgs → 4 outbounds): 20s still
+ *  too short — the typing gaps were > 5s yet the third msg was clearly a
  *  continuation (semantic marker). 30s pairs with (a) the tightened 8s
  *  rapid-gap threshold and (b) the new continuation-marker heuristic so 3-4
- *  zh msgs across a natural thinking-pause coalesce into ONE turn.
+ *  msgs across a natural thinking-pause coalesce into ONE turn.
  *
  *  Anti-troll guard preserved: the cap is still bounded — continuous typing
  *  past 30s force-fires; both the gap-heuristic bump and the continuation-
@@ -80,7 +81,7 @@ export const FORCE_FIRE_MESSAGE_COUNT = 5
  *  PRIMARY merge-driving signals. */
 export const HARD_CAP_MS = 30_000
 /** Default coalesce delay window.
- *  Bug 4 (2026-05-03): bumped 4s→8s — Adam实测 4 msg in 12s 触发 wave-split 3 turns.
+ *  Bug 4 (2026-05-03): bumped 4s→8s — Adam observed 4 msgs in 12s triggering a wave-split into 3 turns.
  *  2026-05-15 prescreen smoke: Apple Messages sent two answer fragments with
  *  delay 1s locally, but Sendblue delivered them 8.25s apart, so the first
  *  8s task fired before the second webhook arrived. 12s keeps real multi-text
@@ -106,8 +107,8 @@ export const PRESCREEN_DELAY_MS = 25_000
  */
 export const PRESCREEN_HARD_CAP_MS = 75_000
 
-/** Rapid-message gap heuristic — Adam 2026-05-03 amendment ("可以消息间隔 < 5s
- *  自动延长 (heuristic — 连发就是同 thought)").
+/** Rapid-message gap heuristic — Adam 2026-05-03 amendment (when message gaps
+ *  are < 5s, auto-extend the window — a rapid burst is the same thought).
  *
  *  When a new inbound arrives within RAPID_MESSAGE_THRESHOLD_MS of the previous
  *  one, treat it as the SAME thought and extend the coalesce window by an
@@ -115,8 +116,8 @@ export const PRESCREEN_HARD_CAP_MS = 75_000
  *  still clamped to `firstReceivedAt + HARD_CAP_MS` so adversarial inputs
  *  cannot keep the buffer pending forever.
  *
- *  Adam 2026-05-03 02:01 amendment — bumped 5s → 8s threshold: Adam实测
- *  ("算了/还是/或者") 3 zh msgs across natural thinking-pauses had gaps > 5s
+ *  Adam 2026-05-03 02:01 amendment — bumped 5s → 8s threshold: Adam observed
+ *  3 msgs across natural thinking-pauses had gaps > 5s
  *  yet were clearly the same thought. 8s captures slow-typing-but-still-
  *  continuing cadence; the continuation-marker heuristic below catches the
  *  semantic-continuation case INDEPENDENT of gap timing.
@@ -128,12 +129,12 @@ export const RAPID_BUMP_MS = 6_000
 
 /** Continuation-marker heuristic — Adam 2026-05-03 02:01 spec.
  *
- *  When a new inbound's body STARTS with a continuation marker (e.g. "还是",
- *  "或者", "另外", "or", "and also"), treat it as the SAME thought REGARDLESS
- *  of timing — Adam 实测 spec: "或者是pm" arriving > 5s after "还是找点ai的"
- *  is still semantically a continuation (same brainstorm, just with a thinking
- *  pause). The rapid-gap heuristic alone cannot catch this because it relies
- *  on timing only.
+ *  When a new inbound's body STARTS with a continuation marker (e.g. "or",
+ *  "and also"), treat it as the SAME thought REGARDLESS
+ *  of timing — Adam observed: a "or maybe pm" message arriving > 5s after the
+ *  prior one is still semantically a continuation (same brainstorm, just with a
+ *  thinking pause). The rapid-gap heuristic alone cannot catch this because it
+ *  relies on timing only.
  *
  *  Behavior: if `isContinuationMessage(body) === true`, bump firesAt by
  *  RAPID_BUMP_MS (same magnitude as rapid-gap; we deliberately reuse the
@@ -145,25 +146,17 @@ export const RAPID_BUMP_MS = 6_000
  *  matters is "is this message a follow-up". HARD_CAP_MS clamp still applies.
  *
  *  Marker list — CONSERVATIVE BY DESIGN to minimize false positives:
- *    - zh: only unambiguous continuation/listing connectives. Excludes
- *      "对了" (topic shift), "另" (single-char ambiguous), and contrast
- *      conjunctions like "不过/但是/可是" (those negate-then-add — a separate
- *      design question; deferred until measured).
- *    - en: "or"/"and"/"also" require trailing word boundary so "order"
+ *    - "or"/"and"/"also" require trailing word boundary so "order"
  *      (starts with "or" but is not a continuation marker) is not misread.
  *
  *  False-positive risk assessment (2026-05-03):
- *    - "和" (zh "and"): low risk; unlikely user opens an independent message
- *      with bare "和". Even if they do, merging it with prior message is
- *      ALMOST always correct.
  *    - "but" (en): medium risk if user genuinely starts a contrast utterance;
- *      OUTSIDE the current zh-marker scope (en list excludes "but" by design).
- *    - Bilingual mixed "or 我觉得": handled — first letter "o" matches the
- *      en `or ` boundary. Conservative match keeps en short list. */
+ *      OUTSIDE the current marker scope (en list excludes "but" by design).
+ *    - Conservative match keeps the en list short. */
 export const CONTINUATION_BUMP_MS = RAPID_BUMP_MS
 
 /**
- * Event-driven coalesce — Adam 顶层设计 (2026-05-03):
+ * Event-driven coalesce — Adam top-level design (2026-05-03):
  *
  * Sendblue's `typing_indicator` inbound webhook gives us a real-time signal
  * that the user is still composing. We use it to BUMP the active buffer's
@@ -212,8 +205,8 @@ export type IncomingMessage = {
   /** ISO; defaults to now() if omitted (tests inject deterministic clocks). */
   receivedAt?: string
   /**
-   * iter33 Bug 12 fix 2026-05-05 (Adam: "deterministic 阶段消息可以恢复
-   * 的快一点"). When user is mid-onboarding (onboardingState !== complete),
+   * iter33 Bug 12 fix 2026-05-05 (Adam: deterministic-stage messages can
+   * recover a bit faster). When user is mid-onboarding (onboardingState !== complete),
    * messages are short identifier strings (email, code, "agree") with no
    * typing-gap absorption need. Set true to use ONBOARDING_DELAY_MS (3s)
    * instead of DEFAULT_DELAY_MS (8s). Webhook caller looks up user state
@@ -260,40 +253,10 @@ function nowIso(now: () => Date): string {
 /**
  * Continuation markers — message-leading tokens that signal "this is a follow-up
  * to the prior message". Conservative list (Adam 2026-05-03 02:01 spec): only
- * unambiguous continuation/listing/addition connectives. Anything ambiguous
- * (single-char "另", topic-shift "对了", contrast "不过") is intentionally
- * EXCLUDED to keep false-positive rate low.
+ * unambiguous continuation/listing/addition connectives.
  *
- * Sourced from Adam draft list, then trimmed:
- *   - removed "对了" (topic shift, NOT continuation)
- *   - removed "另" (single-char ambiguous; "另" alone could begin many phrases)
- *   - removed "不过 / 但是 / 可是" (contrast — semantically negates + adds, a
- *     separate design question; deferred until measured false-positive data)
- *   - de-duplicated "另外" (Adam draft listed it twice)
- *   - lowercase normalization is done by caller (`isContinuationMessage`).
- *
- * Match rule: input.trim() startsWith(marker). For zh that's a literal prefix.
- * For en we additionally require a trailing word-boundary (space/punct) so
+ * Match rule: we require a trailing word-boundary (space/punct) so
  * "order" doesn't match "or". */
-const ZH_CONTINUATION_MARKERS: readonly string[] = [
-  // Listing / alternatives
-  "或者", "或是", "或",
-  "还是说", "还是",
-  "另外",     // NOTE: bare "另" excluded — too ambiguous ("另请高明" is not a
-              // continuation). "另外" is the unambiguous continuation form.
-  "和",       // "和我说" risk noted — low frequency as a sentence opener.
-  // Sequencing
-  "然后",
-  "再或", "再不", "要不",
-  // Topical addition
-  "其实",
-  "还有",
-  "其次",
-  "顺便",
-  "甚至",
-  "而且",
-]
-
 const EN_CONTINUATION_MARKERS: readonly string[] = [
   "or",
   "and",
@@ -313,8 +276,6 @@ const EN_CONTINUATION_MARKERS: readonly string[] = [
  * to bump the fire deadline INDEPENDENT of message timing.
  *
  * False-positive minimization:
- *   - zh markers match as raw prefixes (no boundary needed — Chinese has no
- *     word breaks, and the markers are short distinctive bigrams/trigrams).
  *   - en markers require trailing space/punct/end so "order"≠"or", "android"
  *     ≠"and".
  *
@@ -324,10 +285,6 @@ export function isContinuationMessage(body: string): boolean {
   if (typeof body !== "string") return false
   const trimmed = body.trim()
   if (trimmed.length === 0) return false
-  // zh: raw prefix (no word boundaries in Chinese)
-  for (const marker of ZH_CONTINUATION_MARKERS) {
-    if (trimmed.startsWith(marker)) return true
-  }
   // en: case-insensitive + trailing word boundary
   const lower = trimmed.toLowerCase()
   for (const marker of EN_CONTINUATION_MARKERS) {
@@ -468,11 +425,11 @@ export async function coalesceTransaction(
     //
     // bump = (gap < RAPID_MESSAGE_THRESHOLD_MS) OR isContinuationMessage(body)
     //   - gap < threshold → user is still typing within the same burst
-    //     ("连发就是同 thought").
-    //   - body starts with continuation marker ("还是", "或者", "or", "and",
+    //     (a rapid burst is the same thought).
+    //   - body starts with continuation marker ("or", "and",
     //     ...) → user is semantically continuing the prior message even if
-    //     they paused to think (Adam 02:01 实测: "或者是pm" came > 5s after
-    //     the prior msg yet was clearly the same brainstorm).
+    //     they paused to think (Adam 02:01 observed: a "or maybe pm" message
+    //     came > 5s after the prior msg yet was clearly the same brainstorm).
     //   - bumped delay = default + RAPID_BUMP_MS (signals do NOT compound;
     //     either signal alone is sufficient and the magnitude is identical).
     //   - else → use default delay (no signal → treat as pause/topic-shift).

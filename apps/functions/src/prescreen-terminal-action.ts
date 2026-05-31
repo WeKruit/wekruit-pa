@@ -116,7 +116,7 @@ interface PaJobLevel1Fields {
 function isUserExitLikePrescreenReply(reply: string): boolean {
   const normalized = reply.trim().toLowerCase()
   if (!normalized) return false
-  if (/^(stop|cancel|pause|quit|exit|end|not now|later|nevermind|never mind|退出|停止|暂停|先不|不用了|算了)[.!。！\s]*$/i.test(normalized)) {
+  if (/^(stop|cancel|pause|quit|exit|end|not now|later|nevermind|never mind)[.!\s]*$/i.test(normalized)) {
     return true
   }
   return /^(please\s+)?(stop|cancel|pause|quit|exit|end)\b(?=.*\b(this|screen|role|interview|prescreen|pre-screen|for now|now|please)\b)[a-z0-9\s'’.-]*[.!?。！？\s]*$/i.test(normalized)

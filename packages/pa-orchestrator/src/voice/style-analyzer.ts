@@ -13,7 +13,7 @@
  *       0.40 * text_sentence_len_norm // longer prose sentences read formal
  *     + 0.25 * (1 - slang_density)    // slang hits subtract from formality
  *     + 0.20 * (1 - emoji_density)    // emoji subtract from formality
- *     + 0.15 * formal_punct_density   // 。 . , 、 ; signal complete clauses
+ *     + 0.15 * formal_punct_density   // full-width + ascii punct signal complete clauses
  *
  * Where:
  *   - text_sentence_len_norm = clamp(avg_text_sentence_len / 40, 0, 1)
@@ -43,7 +43,7 @@ export interface StyleSnapshot {
   zh_char_ratio: number
   /** Emojis per 100 non-whitespace chars (averaged over window). */
   emoji_freq: number
-  /** Avg sentence length in chars (sentences split on [。.!?！？\n]+). */
+  /** Avg sentence length in chars (sentences split on full-width + ascii terminators). */
   avg_sentence_len: number
   /** Lexicon match count from Phase 18 VOICE-07 list across window. */
   slang_hits: number
@@ -54,12 +54,12 @@ export interface StyleSnapshot {
 const WINDOW_SIZE = 5
 
 // CJK Unified Ideographs main block. Suggestion in CONTEXT.md.
-const CJK_RE = /[一-鿿]/gu
+const CJK_RE = /[\u4e00-\u9fff]/gu
 // Extended_Pictographic covers most emoji; not skin-tone modifiers, but
 // fine for frequency signal.
 const EMOJI_RE = /\p{Extended_Pictographic}/gu
-const FORMAL_PUNCT_RE = /[，。、；：,.;:]/gu
-const SENTENCE_SPLIT_RE = /[。.!?！？\n]+/u
+const FORMAL_PUNCT_RE = /[\uff0c\u3002\u3001\uff1b\uff1a,.;:]/gu
+const SENTENCE_SPLIT_RE = /[\u3002.!?\uff01\uff1f\n]+/u
 
 function emptySnapshot(): StyleSnapshot {
   return {

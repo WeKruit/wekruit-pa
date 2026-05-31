@@ -14,11 +14,12 @@ const POSITIVE_MARKERS_EN = [
   /\bappreciate\b/i,
   /\blfg\b/i,
 ]
-const POSITIVE_MARKERS_ZH = [/谢谢/, /感谢/, /太好了/, /牛/, /爱了/]
+// Legacy zh positive markers removed (product is English-only).
+const POSITIVE_MARKERS_ZH: RegExp[] = []
 
 function isShortReply(body: string): boolean {
   const t = body.trim()
-  return t.length <= 12 || /^(ok|okay|k|yeah|yep|yes|好|行|嗯|okok)$/i.test(t)
+  return t.length <= 12 || /^(ok|okay|k|yeah|yep|yes|okok)$/i.test(t)
 }
 
 function emotionalWeight(body: string): number {
@@ -26,8 +27,8 @@ function emotionalWeight(body: string): number {
   if (!t) return 0
   let score = 0
   if (POSITIVE_MARKERS_EN.some((p) => p.test(t)) || POSITIVE_MARKERS_ZH.some((p) => p.test(t))) score += 2
-  if (/!{2,}/.test(t) || /！{2,}/.test(t)) score += 1
-  if (/\b(lol|lmao|haha|哈哈哈|笑死)\b/i.test(t)) score += 1
+  if (/!{2,}/.test(t)) score += 1
+  if (/\b(lol|lmao|haha)\b/i.test(t)) score += 1
   return score
 }
 
@@ -56,7 +57,7 @@ export function planReaction(input: {
   const reactedRecently = recentAssistant.some((m) => m.rawMeta?.reactionSent === true)
   if (reactedRecently) return { shouldReact: false, reason: "cap_per_n_turns" }
 
-  const reaction: ReactionPlan["reaction"] = /\b(lol|haha|哈哈哈)\b/i.test(input.userMessage)
+  const reaction: ReactionPlan["reaction"] = /\b(lol|haha)\b/i.test(input.userMessage)
     ? "laugh"
     : "like"
   return { shouldReact: true, reaction, reason: "positive_weighted" }

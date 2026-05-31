@@ -12,5 +12,4 @@ test("frameConnectorResult uses find-match narration templates", () => {
 
 test("find-match pre-call pool has multiple friend-tone variants", () => {
   assert.ok(FIND_MATCH_PRE_CALL_VARIANTS.en.length >= 6)
-  assert.ok(FIND_MATCH_PRE_CALL_VARIANTS.zh.length >= 6)
 })

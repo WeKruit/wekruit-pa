@@ -18,8 +18,8 @@ type PiiType = "ssn" | "creditcard" | "passport" | "idcard" | "bankcard"
 
 const SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/
 const PASSPORT_RE = /\b[A-Z]\d{8}\b/
-const IDCARD_RE = /\b\d{17}[\dXx]\b/ // 中国身份证
-const NEAR_BANK_TOKEN_RE = /(?:卡号|银行卡|账号|account|bank\s*card)[^\d]{0,8}\b\d{16,19}\b/i
+const IDCARD_RE = /\b\d{17}[\dXx]\b/ // national id card (18-digit)
+const NEAR_BANK_TOKEN_RE = /(?:account|bank\s*card)[^\d]{0,8}\b\d{16,19}\b/i
 
 function luhnValid(num: string): boolean {
   if (!/^\d{13,19}$/.test(num)) return false
@@ -41,23 +41,23 @@ const CARD_NUM_RE = /\b\d{13,19}\b/g
 
 const CANNED_REPLIES: Record<PiiType, { zh: string; en: string }> = {
   creditcard: {
-    zh: "我不能处理银行卡号等敏感信息哈，咱换个话题。",
+    zh: "i can't handle credit card numbers — let's switch topics.",
     en: "i can't handle credit card numbers — let's switch topics.",
   },
   bankcard: {
-    zh: "我不能处理银行卡号等敏感信息哈，咱换个话题。",
+    zh: "i can't handle bank card numbers — let's switch topics.",
     en: "i can't handle bank card numbers — let's switch topics.",
   },
   ssn: {
-    zh: "我不能处理 SSN 等敏感信息，咱换个话题。",
+    zh: "i can't handle SSN-like data. let's switch topics.",
     en: "i can't handle SSN-like data. let's switch topics.",
   },
   passport: {
-    zh: "护照号这种敏感信息我不能处理，咱聊别的。",
+    zh: "i can't handle passport numbers. let's switch topics.",
     en: "i can't handle passport numbers. let's switch topics.",
   },
   idcard: {
-    zh: "身份证号这种敏感信息我不能处理，咱聊别的。",
+    zh: "i can't handle id-card numbers. let's switch topics.",
     en: "i can't handle id-card numbers. let's switch topics.",
   },
 }

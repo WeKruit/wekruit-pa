@@ -2,8 +2,8 @@
  * iter34 P3 — production bridge between OnboardingPipeline and the
  * orchestrator's processInboundEvent call site.
  *
- * Adam directive 2026-05-05 ("接近去啊要不然我们做他干嘛?? ... 现在状态
- * 是什么?? 为什么要说下一个回合做而不是直接做"). Bridge IS wired now.
+ * Adam directive 2026-05-05 (wire it now, do not defer to a later turn).
+ * Bridge IS wired now.
  *
  * Function `runOnboardingPipelineTurn` is the onboarding runtime used by
  * `runDeterministicOnboardingTurn`. The caller does not flag-gate it or
@@ -377,7 +377,7 @@ export async function runOnboardingPipelineTurn(
   })
 
   const haltMessageDefault = {
-    zh: "请联系 admin1@wekruit.com 解决问题. 你现在连续失败了五次, 请不要继续",
+    zh: "please contact admin1@wekruit.com — you've failed 5 times in a row, please stop",
     en: "please contact admin1@wekruit.com — you've failed 5 times in a row, please stop",
   }
 
@@ -421,7 +421,7 @@ export async function runOnboardingPipelineTurn(
  * iter34 Sprint A.6 — exported for testability + reuse from any path
  * that fires "user just sent a resume". Does the full sequence:
  *   1. Resolve user lang (from statedPreferences.preferredLang).
- *   2. Emit interim ack ("OK 让我看一下你简历, 等我一下下" + variants).
+ *   2. Emit interim ack ("ok — give me a sec to read your resume" + variants).
  *   3. Poll parsedCandidateResumes up to 90s.
  *   4. Emit either:
  *        - tag-summary line (formatCvSummaryForUser) when poll succeeded
@@ -491,23 +491,13 @@ export async function runResumeAcceptedFlow(
   // Step 4 — tag-summary message.
   let summaryMsg: string
   if (pollResult.timedOut) {
-    summaryMsg =
-      userLang === "zh"
-        ? "简历还在分析, 我先按你聊的方向找; 等我搞完会再调"
-        : userLang === "en"
-          ? "resume still parsing — going by what you told me for now, i'll retune once it lands"
-          : "简历还在 parsing, 我先按你聊的方向找; 等 done 了再调"
+    summaryMsg = "resume still parsing — going by what you told me for now, i'll retune once it lands"
   } else if (pollResult.cv) {
     summaryMsg = formatCvSummaryForUser(pollResult.cv, userLang)
   } else {
     // Defensive — pollResult was non-timeout but cv null. Shouldn't
     // happen; treat as "couldn't extract much" fallback.
-    summaryMsg =
-      userLang === "zh"
-        ? "简历看了一下, 信息不多, 我按你聊的方向先推"
-        : userLang === "en"
-          ? "skimmed your resume — not much in there, going by chat for now"
-          : "看了一下 CV, 信息不多, 我按你聊的方向先推"
+    summaryMsg = "skimmed your resume — not much in there, going by chat for now"
   }
   await emit(summaryMsg, { qId: "q_resume", kind: "cv_summary_tag" })
 

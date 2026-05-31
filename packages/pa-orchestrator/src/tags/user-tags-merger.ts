@@ -1,8 +1,8 @@
 /**
  * iter34 H.1 — Unified user tag schema + merger.
  *
- * Adam directive (2026-05-05): "聊天有tag，resume有tag，太多地方了" — the
- * candidate signal currently lives in 4+ disjoint places:
+ * Adam directive (2026-05-05): chat has tags, resume has tags — too many
+ * places — the candidate signal currently lives in 4+ disjoint places:
  *   1. `pa-users.statedPreferences` (chat-derived: role / yoe / visa / loc)
  *   2. `parsedCandidateResumes.industryTags` (CV-derived industry buckets)
  *   3. `parsedCandidateResumes.topSkills` (CV-derived ranked skills)
@@ -118,7 +118,7 @@ export const UserTagsSchema = z.object({
   /**
    * ALL skills from CV — Phase 52 canonical SkillEntry shape (name + bucket
    * + proficiency + evidenceCount + baseWeight). NOT truncated. Adam spec:
-   * "skills 全量". topSkills (top-12 ranked) lives separately on
+   * "full skills list". topSkills (top-12 ranked) lives separately on
    * parsedCandidateResumes; this is the unranked bag for embedding /
    * cross-rerank consumers.
    *

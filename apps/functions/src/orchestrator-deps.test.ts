@@ -120,7 +120,7 @@ describe("orchestrator-deps targetRole → industryEnum wire-through", () => {
 // ---------------------------------------------------------------------------
 // iter34 sprint B.11 — generateJobRecs compose integration. The production
 // closure reads Firestore + iterates jobs; we lock down the per-job line
-// composition shape (title, url, "为啥推:" reason) by mirroring the inline
+// composition shape (title, url, "why:" reason) by mirroring the inline
 // `lines.push(...)` block here. If the compose contract changes (e.g. someone
 // drops the URL line or moves the reason ABOVE the URL), these tests fail.
 // ---------------------------------------------------------------------------
@@ -185,16 +185,14 @@ function composeJobLine(
       visaStatus: ctx.visa,
     }
   )
-  const reasonLine = reasonText
-    ? `\n${lang === "zh" ? "为啥推" : "why"}: ${reasonText}`
-    : ""
+  const reasonLine = reasonText ? `\nwhy: ${reasonText}` : ""
   const formattedRequirements = formatJobRequirementsLine(lang, j.requiredSkills)
   const requirementsLine = formattedRequirements ? `\n${formattedRequirements}` : ""
   return `• ${j.jobTitle}${tag}${url}${requirementsLine}${reasonLine}`
 }
 
 describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
-  it("includes 为啥推 line when matchScore present + signal strong (zh)", () => {
+  it("includes why line when matchScore present + signal strong", () => {
     const j: MockJob = {
       jobTitle: "Senior SWE",
       companyName: "Acme",
@@ -202,7 +200,7 @@ describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
       matchScore: { breakdown: makeBreakdown({ skill: 1.0, embedding: 0.6 }) },
       requiredSkills: ["Node.js", "React"],
     }
-    const out = composeJobLine(j, "zh", {
+    const out = composeJobLine(j, "en", {
       topSkills: ["Node.js", "React"],
       targetRole: ["swe"],
     })
@@ -211,8 +209,8 @@ describe("generateJobRecs compose: per-job line shape (iter34 B.11)", () => {
     assert.equal(parts.length, 4, `expected 4 lines, got ${parts.length}: ${JSON.stringify(out)}`)
     assert.match(parts[0]!, /Senior SWE @ Acme/)
     assert.match(parts[1]!, /^https:\/\//)
-    assert.equal(parts[2]!, "要求: Node.js, React")
-    assert.match(parts[3]!, /^为啥推: /)
+    assert.equal(parts[2]!, "requirements: Node.js, React")
+    assert.match(parts[3]!, /^why: /)
     assert.match(parts[3]!, /Node\.js/)
   })
 
@@ -266,7 +264,7 @@ describe("generateJobRecs visible count", () => {
       formatJobRecIntro("en", 2),
       "Based on the profile details you've shared so far, I found two roles that line up:",
     )
-    assert.equal(formatJobRecIntro("zh", 2), "我根据你已经分享的资料, 这里先给你两个对得上的岗位:")
+    assert.equal(formatJobRecIntro("zh", 2), "Based on the profile details you've shared so far, I found two roles that line up:")
     assert.equal(
       formatJobRecIntro("en", 2, { skills: ["React", "SQL"] }),
       "I remember you mentioned React / SQL experience; I found two roles that line up:",
@@ -280,7 +278,7 @@ describe("generateJobRecs visible count", () => {
       formatJobRecIntro("en", 3),
       "Based on the profile details you've shared so far, I found three roles that line up:",
     )
-    assert.equal(formatJobRecIntro("zh", 3), "我根据你已经分享的资料, 这里先给你三个对得上的岗位:")
+    assert.equal(formatJobRecIntro("zh", 3), "Based on the profile details you've shared so far, I found three roles that line up:")
   })
 
   it("rejects job recs without a candidate-usable link", () => {
@@ -371,7 +369,7 @@ describe("isDegenerateLLMOutput (iter34 H.2 CR1)", () => {
 })
 
 describe("buildCvAnalysisFallback (iter34 H.2 CR1)", () => {
-  it("composes top-5 skills + recent role@company in zh", () => {
+  it("composes top-5 skills + recent role@company (English-only)", () => {
     const out = buildCvAnalysisFallback(
       {
         topSkills: ["Node", "React", "Python", "AWS", "Docker", "Stripe", "OpenAI"],
@@ -382,7 +380,7 @@ describe("buildCvAnalysisFallback (iter34 H.2 CR1)", () => {
     )
     assert.match(out, /Node, React, Python, AWS, Docker/)
     assert.match(out, /Founder@WeKruit/)
-    assert.match(out, /资料证据/)
+    assert.match(out, /profile evidence/)
   })
 
   it("composes top-5 skills + recent role@company in en", () => {

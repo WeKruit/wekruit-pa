@@ -67,12 +67,6 @@ export function formatJobRecIntro(
   visibleCount: number,
   context?: JobRecIntroContext,
 ): string {
-  if (lang === "zh") {
-    const count = visibleCount === 3 ? "三个" : visibleCount === 1 ? "一个" : "两个"
-    if (context?.role) return `我记得你之前说过想看${context.role}方向, 这里先给你${count}对得上的岗位:`
-    if (context?.skills?.length) return `我记得你提到过${context.skills.slice(0, 3).join(" / ")}经验, 这里先给你${count}对得上的岗位:`
-    return `我根据你已经分享的资料, 这里先给你${count}对得上的岗位:`
-  }
   const count = visibleCount === 3 ? "three" : visibleCount === 1 ? "one" : "two"
   const plural = visibleCount === 1 ? "role" : "roles"
   const verb = visibleCount === 1 ? "lines" : "line"
@@ -84,7 +78,7 @@ export function formatJobRecIntro(
 export function formatJobRequirementsLine(lang: JobRecLang, requiredSkills: unknown): string {
   const skills = cleanRequiredSkills(requiredSkills)
   if (skills.length === 0) return ""
-  return `${lang === "zh" ? "要求" : "requirements"}: ${skills.join(", ")}`
+  return `requirements: ${skills.join(", ")}`
 }
 
 function cleanDisplayString(value: unknown): string | undefined {

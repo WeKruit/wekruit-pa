@@ -860,10 +860,8 @@ export function terminalText(
   }
 }
 
-export function prescreenReviewPendingAckText(lang: Lang): string {
-  return lang === "zh"
-    ? "已收到，你这次岗位 screen 已完成。WeKruit 正在审核结果；审核完后我们会在这里发你下一步。"
-    : "Received — your role screen is complete. WeKruit is reviewing the result now, and we’ll text you the next step here."
+export function prescreenReviewPendingAckText(_lang: Lang): string {
+  return "Received — your role screen is complete. WeKruit is reviewing the result now, and we’ll text you the next step here."
 }
 
 function clarifyText(
@@ -887,23 +885,17 @@ function clarifyText(
   return probingClarifyText(lang)
 }
 
-export function hardFilterClarifyText(qId: string, lang: Lang): string | null {
+export function hardFilterClarifyText(qId: string, _lang: Lang): string | null {
   if (qId === "location_alignment") {
-    return lang === "zh"
-      ? "我先确认这个硬条件：这份工作的地点/远程安排你能接受吗？如果需要远程、搬迁或其他城市，请直接说清楚。"
-      : "Got it. I need to confirm the hard location setup for this role: can you work with the listed location/remote arrangement, or would you need remote, relocation, or a different city?"
+    return "Got it. I need to confirm the hard location setup for this role: can you work with the listed location/remote arrangement, or would you need remote, relocation, or a different city?"
   }
 
   if (qId === "compensation_alignment") {
-    return lang === "zh"
-      ? "我先确认薪资目标：这份工作的薪资范围对你来说可行吗？如果不行，你目标的大概范围是多少？"
-      : "Got it. Quick compensation check: is this role's posted range workable for you? If not, what range are you targeting?"
+    return "Got it. Quick compensation check: is this role's posted range workable for you? If not, what range are you targeting?"
   }
 
   if (qId === "sponsorship_status") {
-    return lang === "zh"
-      ? "我先确认签证情况：你现在或未来会需要公司提供 visa sponsorship 吗？如果情况有细节，可以直接说明。"
-      : "Got it. Quick visa check: will you need current or future sponsorship for this role? If there is nuance, tell me the status directly."
+    return "Got it. Quick visa check: will you need current or future sponsorship for this role? If there is nuance, tell me the status directly."
   }
 
   return null
@@ -914,15 +906,13 @@ function isPlaceholderClarify(text: string): boolean {
   return normalized === "please add one concrete example tied to this job."
 }
 
-function probingClarifyText(lang: Lang): string {
-  return lang === "zh"
-    ? "没关系，不一定要完全同名经验。我想先理解你最接近的经历：你做过哪个相关项目、你具体负责什么、最后有什么结果？粗略讲也可以。"
-    : "No worries if it was not exactly that. I am trying to understand the closest overlap. Can you share the nearest project you owned: the context, what you personally did, and what changed because of it? A rough example is fine."
+function probingClarifyText(_lang: Lang): string {
+  return "No worries if it was not exactly that. I am trying to understand the closest overlap. Can you share the nearest project you owned: the context, what you personally did, and what changed because of it? A rough example is fine."
 }
 
 function followUpClarifyText(
   question: PreScreenQuestion,
-  lang: Lang,
+  _lang: Lang,
   ctx: {
     scored: ScoredJudgeResult
     merged: ScoredJudgeResult
@@ -931,15 +921,6 @@ function followUpClarifyText(
   }
 ): string {
   const weak = weakestKeywords(ctx.merged).slice(0, 2)
-  if (lang === "zh") {
-    if (weak.length > 0) {
-      return clampClarifyText(
-        `这段有帮助。还差一点是 ${weak.join("、")}。你能补一个最接近的例子吗：你亲自做了什么、涉及哪些系统或流程、最后带来什么变化？`
-      )
-    }
-    return "这段有帮助。我再确认一个具体点：这个项目里最难、最能代表你能力的部分是什么？你具体做了什么，结果怎样？"
-  }
-
   if (weak.length > 0) {
     return clampClarifyText(
       `That helps. The remaining gap is ${weak.join(" + ")}. Can you give the closest example: what you personally built or owned, what systems it touched, and what changed after it shipped?`
@@ -975,8 +956,6 @@ function clampClarifyText(text: string): string {
   return `${normalized.slice(0, 317).trimEnd()}...`
 }
 
-function terminalPauseText(lang: Lang): string {
-  return lang === "zh"
-    ? "谢谢，这些信息有帮助。目前这个岗位的综合匹配度不够高，我先暂停这次 screen，并继续用你补充的经历找更合适的机会。"
-    : "Thanks, that helps. Overall fit for this role still looks low, so I will pause this screen and keep using what you shared for better-aligned roles."
+function terminalPauseText(_lang: Lang): string {
+  return "Thanks, that helps. Overall fit for this role still looks low, so I will pause this screen and keep using what you shared for better-aligned roles."
 }

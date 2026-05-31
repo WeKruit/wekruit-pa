@@ -24,19 +24,19 @@ describe("composeLevel1Reveal", () => {
     assert.match(text, /5 business days/)
   })
 
-  it("emits all fields when present (zh)", () => {
+  it("emits English fields regardless of lang argument", () => {
     const text = composeLevel1Reveal(
       {
-        jobTitle: "高级前端工程师",
+        jobTitle: "Senior Frontend Engineer",
         company: "Acme Robotics",
-        salaryRange: "100-160万",
+        salaryRange: "$100k-$160k",
       },
       "zh"
     )
-    assert.match(text, /高级前端工程师/)
-    assert.match(text, /招聘方: Acme Robotics/)
-    assert.match(text, /薪资范围: 100-160万/)
-    assert.match(text, /2-3 个工作日内/)
+    assert.match(text, /Senior Frontend Engineer/)
+    assert.match(text, /Employer: Acme Robotics/)
+    assert.match(text, /Salary range: \$100k-\$160k/)
+    assert.match(text, /within 2-3 business days/)
   })
 
   it("falls back gracefully when optional fields missing (en)", () => {
@@ -72,10 +72,10 @@ describe("composeLevel1Reveal", () => {
 })
 
 describe("composeFailJobRecsPreamble", () => {
-  it("emits bridging line in both langs", () => {
+  it("emits bridging line in English regardless of lang", () => {
     assert.match(composeFailJobRecsPreamble("en"), /what you shared in this screen/i)
     assert.match(composeFailJobRecsPreamble("en"), /job link and clear requirements/i)
-    assert.match(composeFailJobRecsPreamble("zh"), /刚才这段 screen/)
-    assert.match(composeFailJobRecsPreamble("zh"), /岗位链接和核心要求/)
+    assert.match(composeFailJobRecsPreamble("zh"), /what you shared in this screen/i)
+    assert.match(composeFailJobRecsPreamble("zh"), /job link and clear requirements/i)
   })
 })

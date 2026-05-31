@@ -1,8 +1,9 @@
 /**
  * iter33 P5 — Onboarding workflow as introspectable graph data.
  *
- * Adam directive 2026-05-04 ("之前都得是 deterministic 的 workflow, 你可以
- * 用 openai 的 workflow 做这个事情. 但必须是 workflow 搞清楚了吗"): the
+ * Adam directive 2026-05-04 (the onboarding flow must stay a deterministic
+ * workflow; you may model it like an OpenAI workflow but it must be an
+ * explicit workflow): the
  * deterministic onboarding sequence is now expressed as a declarative
  * graph (`ONBOARDING_WORKFLOW`), separate from the imperative dispatcher
  * in `onboarding-deterministic.ts`. The dispatcher remains the executor

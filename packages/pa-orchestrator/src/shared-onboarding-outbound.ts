@@ -1,7 +1,6 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS, type AgentDef, type InboundEvent } from "@pa/core-types"
 import { getFlag } from "@pa/pa-persistence"
-import { detectLang } from "./voice/imperfection-injector/index.js"
 import type { ConnectorName } from "@pa/pa-connectors"
 import { buildMatchConnectorHooks, type GenerateJobRecsFn } from "./match-connector-hooks.js"
 import { startPostMatchRetentionAfterJobRecs } from "./post-match-retention.js"
@@ -304,12 +303,8 @@ export function buildSharedOnboardingComposeContext(input: {
   userMessage?: string
   postPrescreenContext?: SharedOnboardingPostPrescreenContext | null
 }): SharedOnboardingComposeContext {
-  const lang =
-    input.inboundKind === "greeting_kickoff" || input.inboundKind === "post_prescreen_kickoff" || input.inboundKind === "runtime_event"
-      ? "en"
-      : detectLang(input.userMessage ?? "") === "zh"
-        ? "zh"
-        : "en"
+  // Product is English-only — shared onboarding output language is always English.
+  const lang = "en" as const
   return {
     inboundKind: input.inboundKind,
     routerResult: input.routerResult,
@@ -668,9 +663,7 @@ export async function composeSharedOnboardingReply(
     // the active language and follows the existing slangDirective register.
     const emojiHintCandidate =
       choreoOn && profile.resolvedEmoji !== "banned"
-        ? lang === "zh"
-          ? "用户可能先收到一个独立的 👍 表情消息——你的正文不要再以 👍 / 大拇指 / 点赞 开头，直接进入问题或确认。"
-          : "User may receive a separate 👍 bubble first — do NOT open your SMS with 👍 / thumbs-up. Lead with the question or a one-beat ack instead."
+        ? "User may receive a separate 👍 bubble first — do NOT open your SMS with 👍 / thumbs-up. Lead with the question or a one-beat ack instead."
         : null
 
     // Shared onboarding needs to feel human, not performatively casual. Random
@@ -839,8 +832,8 @@ export async function deliverSharedOnboardingJobRecs(input: {
   agent: AgentDef
   userMessage: string
 }): Promise<{ recCount: number; reply: string }> {
-  const lang =
-    detectLang(`${input.userMessage}\n${input.event.body}`) === "zh" ? "zh" : "en"
+  // Product is English-only — job-rec delivery language is always English.
+  const lang: "en" | "zh" = "en"
   const gen = input.store.generateJobRecs
   if (!gen) {
     return {
@@ -897,9 +890,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
       const body =
         jobCount > 0 && parsed.message
           ? [frame, parsed.message].filter(Boolean).join("\n")
-          : lang === "zh"
-            ? "收到。我这边还在捞更合适的岗，有匹配的第一时间发你。"
-            : sharedOnboardingNoRecReply(lang, input.userMessage)
+          : sharedOnboardingNoRecReply(lang, input.userMessage)
       const { text } = await applyTemplateOutboundHumanize({
         body,
         userId: input.event.userId,
@@ -929,9 +920,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
   const reply =
     recs && recCount > 0
       ? recs.message
-      : lang === "zh"
-        ? "收到。我会尽快给你推两个具体岗位。"
-        : sharedOnboardingNoRecReply(lang, input.userMessage)
+      : sharedOnboardingNoRecReply(lang, input.userMessage)
   const { text } = await applyTemplateOutboundHumanize({
     body: reply,
     userId: input.event.userId,
@@ -951,7 +940,7 @@ export async function deliverSharedOnboardingJobRecs(input: {
 }
 
 function sharedOnboardingNoRecReply(lang: "en" | "zh", userMessage: string): string {
-  if (lang === "zh") return "收到。我会尽快给你推两个具体岗位。"
+  void lang
   const context = summarizeSharedOnboardingFinalContext(userMessage)
   if (context) {
     return `Got it: ${context}. I saved that and will keep matching against it.`

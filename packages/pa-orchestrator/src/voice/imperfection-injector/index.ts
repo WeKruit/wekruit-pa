@@ -42,7 +42,6 @@ export {
 export type { InjectAtTurnOnsetResult } from "./position-constraint.js"
 
 export { POLICIES_EN } from "./policies-en.js"
-export { POLICIES_ZH } from "./policies-zh.js"
 
 export type {
   ArmBucketRatios,

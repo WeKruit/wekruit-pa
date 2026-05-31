@@ -179,7 +179,7 @@ export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>
  *
  * Returns the first organic hit whose URL is acceptable (parseable +
  * hostname does not contain "jobright"). No allowlist filtering. Adam
- * directive 2026-05-18: "filter是干什么？" — the old allowlist rejected
+ * directive 2026-05-18: "what is the filter for?" — the old allowlist rejected
  * 100% of valid hits (anthropic.com/careers, etc). Trust Serper's top-1
  * organic result for the same query a candidate would type.
  */

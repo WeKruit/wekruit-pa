@@ -287,7 +287,8 @@ import { buildSlangInjection } from "./voice/slang-injector.js"
 import { checkAcademicIntegrity } from "@pa/pa-safety"
 // Adam iter 19 — real-time tag write-back (mid-conversation profile update).
 // Pure regex (sub-1ms), fire-and-forget Firestore merge-write to pa_users.
-// Spec: "边聊天我们要给用户边打标，这个标记应该是实时变化的但是cost不能高"
+// Spec: tag the user mid-conversation; the tag updates in real time but cost
+// must stay low.
 import { applyRealtimeTagWriteback } from "./voice/realtime-tagger.js"
 // 2026-05-18 — chat → tag + memory extractor (post-onboarding free-form
 // preference deltas mirror into pa-users.tags + Qdrant pa_memory_entities).
@@ -300,7 +301,7 @@ import type { ConversationExtractMessage } from "./conversation-extractor.js"
 // and gave the user no way to broaden a filter.
 import { composeNoMatchReply, noMatchReasonTag } from "./no-match-narration.js"
 // Adam iter 20 — phrase-repeat stripper. iter-19 10-turn sim found 5
-// consecutive replies opening with "要不要试" — F1 detects user-mirror
+// consecutive replies opening with the same "want to try" phrase — F1 detects user-mirror
 // not Claire-self-mirror; stripRepeatOpener only checks last-2 + first
 // clause. This module checks last-5 + 4+ char substrings in first 30c.
 import { stripPhraseRepeat } from "./voice/phrase-repeat-stripper.js"
@@ -321,8 +322,9 @@ import { normalizeForIMessage, stripABProbeFromTail } from "./output-normalizer.
 // — see ab-framework-detector.ts module docstring.
 import { stripABFramework } from "./voice/ab-framework-detector.js"
 // iter30 Wave 3 — am_i_ai post-gen flat-deny re-roll. V2 QA Agent-B
-// observed Claire occasionally replying "嗯，我是真人朋友。" when asked
-// "你是 AI 吗?" — the addendum forbids flat-deny ("deceptive"). This
+// observed Claire occasionally replying with a flat "yeah, I'm a real
+// friend" when asked "are you an AI?" — the addendum forbids flat-deny
+// ("deceptive"). This
 // module deterministically substitutes a friend-tone deflection that
 // doesn't lie. Gated by paHumanizeRuntimeEnabled umbrella + env kill
 // switch PA_AM_I_AI_REROLL_DISABLED=true.
@@ -386,7 +388,7 @@ const HEADHUNTER_PLAYBOOK_ID = "headhunter"
  * Once `seedDefaultPlaybooks` has run the regex set comes from the
  * dashboard-editable `pa-playbooks/headhunter.regexTriggers` array.
  */
-const HEADHUNTER_TRIGGER_RE = /帮我|想换|在看工作|在面|简历|offer/i
+const HEADHUNTER_TRIGGER_RE = /resume|cv|offer|new\s+job|job\s+search|interview/i
 // Phase 22 — proactive cancellation NLU (D-07, PROACTIVE-06)
 import { detectProactiveCancellation } from "./cancellation-nlu.js"
 // Phase 30 T2 — Downstream Eval Connector hook (P9-Connectors).
@@ -880,8 +882,8 @@ export type OrchestratorStore = {
   /**
    * iter34 P0.2 — generic LLM-fallback intent extractor for the
    * non-email deterministic Q's (q_role / q_yoe / q_visa /
-   * q_startup_pref / q_location). Adam directive 2026-05-05 ("不只是
-   * email, 包括所有一开始的 deterministic 的 question 都需要加这个").
+   * q_startup_pref / q_location). Adam directive 2026-05-05 (not just
+   * email — every initial deterministic question needs this extractor too).
    *
    * Called when the regex/keyword parser failed AND the user msg has
    * step-relevant signal (heuristic per-step). Returns structured intent
@@ -931,14 +933,12 @@ export function isInboundLeaseExpired(leaseUntil: string | undefined, now = new 
   return !Number.isFinite(t) || t <= now.getTime()
 }
 
-function memoryReplyForList(facts: { content: string }[], lang: "zh" | "en" = "zh") {
+function memoryReplyForList(facts: { content: string }[], _lang: "zh" | "en" = "en") {
   const unique = uniqueFactsByContent(facts)
   if (unique.length === 0) {
-    return lang === "zh"
-      ? "我现在还没有保存你的长期记忆。你可以说：记住 我喜欢..."
-      : "I do not have saved long-term notes for you yet. You can say: remember I like..."
+    return "I do not have saved long-term notes for you yet. You can say: remember I like..."
   }
-  const heading = lang === "zh" ? "我记得这些：" : "Here is what I remember:"
+  const heading = "Here is what I remember:"
   return `${heading}\n${unique.map((f, i) => `${i + 1}. ${f.content}`).join("\n")}`
 }
 
@@ -952,27 +952,27 @@ function memoryReplyForList(facts: { content: string }[], lang: "zh" | "en" = "z
  */
 export function summarizeDurableTagsForRecall(
   tags: Record<string, unknown> | null | undefined,
-  lang: "zh" | "en",
+  _lang: "zh" | "en",
 ): string | null {
   const t = tags ?? {}
   const lines: string[] = []
   const arr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])
   const human = (s: string): string => s.replace(/_/g, " ")
   const role = arr(t.targetRoleFunction)
-  if (role.length) lines.push((lang === "zh" ? "目标方向: " : "Target roles: ") + role.map(human).join(", "))
-  if (typeof t.careerStage === "string") lines.push((lang === "zh" ? "阶段: " : "Level: ") + human(t.careerStage))
+  if (role.length) lines.push("Target roles: " + role.map(human).join(", "))
+  if (typeof t.careerStage === "string") lines.push("Level: " + human(t.careerStage))
   const ind = [...new Set([...arr(t.industrySector), ...arr(t.relevantIndustry)])]
-  if (ind.length) lines.push((lang === "zh" ? "行业: " : "Industries: ") + ind.map(human).join(", "))
+  if (ind.length) lines.push("Industries: " + ind.map(human).join(", "))
   const loc = arr(t.targetLocations)
-  if (loc.length) lines.push((lang === "zh" ? "地点: " : "Locations: ") + loc.map(human).join(", "))
-  if (typeof t.visaStatus === "string") lines.push((lang === "zh" ? "签证: " : "Work authorization: ") + human(t.visaStatus))
+  if (loc.length) lines.push("Locations: " + loc.map(human).join(", "))
+  if (typeof t.visaStatus === "string") lines.push("Work authorization: " + human(t.visaStatus))
   if (typeof t.minSalary === "number" && t.minSalary > 0) {
-    lines.push((lang === "zh" ? "最低薪资: " : "Min salary: ") + `$${Math.round(t.minSalary / 1000)}k`)
+    lines.push("Min salary: " + `$${Math.round(t.minSalary / 1000)}k`)
   }
   const skillCount = Array.isArray(t.skills) ? t.skills.length : 0
-  if (skillCount > 0) lines.push(lang === "zh" ? `技能: 已记录 ${skillCount} 项` : `Skills on file: ${skillCount}`)
+  if (skillCount > 0) lines.push(`Skills on file: ${skillCount}`)
   if (lines.length === 0) return null
-  const heading = lang === "zh" ? "你的求职偏好（我已记下）：" : "Your preferences on file:"
+  const heading = "Your preferences on file:"
   return `${heading}\n${lines.map((l) => `· ${l}`).join("\n")}`
 }
 
@@ -1164,8 +1164,7 @@ function detectRequestedYoeRange(text: string): {
   if (!body) return undefined
   const lower = body.toLowerCase()
   const hasExperienceContext =
-    /\b(?:years?\s+of\s+experience|years?|yrs?|yoe|exp|experience|entry[-\s]?level|junior|new\s+grad|fresh\s+grad)\b/i.test(body) ||
-    /(?:年经验|工作年限|经验|初级|应届)/.test(body)
+    /\b(?:years?\s+of\s+experience|years?|yrs?|yoe|exp|experience|entry[-\s]?level|junior|new\s+grad|fresh\s+grad)\b/i.test(body)
   const ranges = [...lower.matchAll(/\b(\d{1,2})\s*[-–]\s*(\d{1,2})\b/g)]
     .map((match) => [Number(match[1]), Number(match[2])] as [number, number])
     .filter(([min, max]) => Number.isFinite(min) && Number.isFinite(max) && min >= 0 && max >= min && max <= 50)
@@ -1183,7 +1182,7 @@ function detectRequestedYoeRange(text: string): {
     return { range: [min, max], careerStage, label: `${min}-${max} years experience` }
   }
 
-  if (/\b(?:new\s+grad|fresh\s+grad|entry[-\s]?level|junior)\b/i.test(body) || /(?:应届|初级)/.test(body)) {
+  if (/\b(?:new\s+grad|fresh\s+grad|entry[-\s]?level|junior)\b/i.test(body)) {
     return { range: [0, 3], careerStage: "entry_level", label: "0-3 years experience" }
   }
   return undefined
@@ -1239,13 +1238,13 @@ function labelLocationToken(token: string): string {
 function locationTokenMentionIndex(text: string, token: string): number {
   const lower = text.toLowerCase()
   const rules: Record<string, RegExp[]> = {
-    new_york_metro: [/\bnyc\b/i, /new\s*york/i, /纽约/i],
-    remote_united_states: [/remote/i, /在家/i],
+    new_york_metro: [/\bnyc\b/i, /new\s*york/i],
+    remote_united_states: [/remote/i],
     remote_anywhere: [/anywhere/i, /remote/i],
     remote_global: [/remote/i],
-    san_francisco_bay_area: [/\bsf\b/i, /san\s*francisco/i, /bay\s*area/i, /湾区/i],
-    los_angeles_metro: [/\bla\b/i, /los\s*angeles/i, /洛杉矶/i],
-    seattle_metro: [/seattle/i, /西雅图/i],
+    san_francisco_bay_area: [/\bsf\b/i, /san\s*francisco/i, /bay\s*area/i],
+    los_angeles_metro: [/\bla\b/i, /los\s*angeles/i],
+    seattle_metro: [/seattle/i],
   }
   const matches = rules[token] ?? [new RegExp(token.replace(/_/g, "\\s+"), "i")]
   let best = Number.POSITIVE_INFINITY
@@ -1925,9 +1924,6 @@ function isExplicitJobSearchRequest(text: string | undefined | null): boolean {
     return true
   }
   const normalized = body.toLowerCase()
-  if (/(?:找|推荐|匹配|看看|发)(?:一些|几个|点)?\s*(?:工作|岗位|机会|职位|内推)/.test(normalized)) {
-    return true
-  }
   if (/\b(?:need|want|looking\s+for|look\s+for|prefer)\b[^.!?]{0,90}\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches)\b/i.test(normalized)) {
     return true
   }
@@ -1937,7 +1933,6 @@ function isExplicitJobSearchRequest(text: string | undefined | null): boolean {
 function isMoreJobSearchFollowupRequest(text: string | undefined | null): boolean {
   const body = (text ?? "").trim().toLowerCase()
   if (!body) return false
-  if (/(?:还有|更多|再来|换一批|多发)(?:一些|几个|点)?\s*(?:公司|工作|岗位|机会|职位|内推)/.test(body)) return true
   return (
     /\bdo\s+(?:u|you)\s+have\s+more\b/i.test(body) ||
     /\b(?:got|have|show|send|pull)\s+(?:me\s+)?more\b/i.test(body) ||
@@ -2027,13 +2022,13 @@ function requestedJobRecCount(text: string | undefined | null): number | undefin
   const body = (text ?? "").trim()
   if (!body) return undefined
   const jobNoun = String.raw`(?:jobs?|roles?|positions?|opportunities|openings|listings|matches|swe|software\s+engineering|software\s+engineer)`
-  if (new RegExp(String.raw`\b(?:3|three)\b[^.!?]{0,60}\b${jobNoun}\b`, "i").test(body) || /(?:三个|三份|三条|3个|3份|3条)/.test(body)) {
+  if (new RegExp(String.raw`\b(?:3|three)\b[^.!?]{0,60}\b${jobNoun}\b`, "i").test(body)) {
     return 3
   }
-  if (new RegExp(String.raw`\b(?:2|two)\b[^.!?]{0,60}\b${jobNoun}\b`, "i").test(body) || /(?:两个|两份|两条|二个|二份|二条|2个|2份|2条)/.test(body)) {
+  if (new RegExp(String.raw`\b(?:2|two)\b[^.!?]{0,60}\b${jobNoun}\b`, "i").test(body)) {
     return 2
   }
-  if (new RegExp(String.raw`\b(?:1|one)\b[^.!?]{0,60}\b${jobNoun}\b`, "i").test(body) || /(?:一个|一份|一条|1个|1份|1条)/.test(body)) {
+  if (new RegExp(String.raw`\b(?:1|one)\b[^.!?]{0,60}\b${jobNoun}\b`, "i").test(body)) {
     return 1
   }
   return undefined
@@ -2044,13 +2039,11 @@ function isJobRecommendationExplanationRequest(text: string | undefined | null):
   if (!body) return false
   const lower = body.toLowerCase()
   const asksQuestion =
-    /[?？]/.test(body) ||
-    /\b(?:why|what|which|how|can\s+you|tell\s+me|explain|answer)\b/i.test(body) ||
-    /(?:为什么|为啥|哪里|哪点|怎么|解释|推荐理由|匹配原因)/.test(body)
+    /[?]/.test(body) ||
+    /\b(?:why|what|which|how|can\s+you|tell\s+me|explain|answer)\b/i.test(body)
   if (!asksQuestion) return false
   const hasJobContext =
-    /\b(?:recommend(?:ed)?|matching?|matched|jobs?|roles?|positions?|opportunities|openings|internships?|co-?ops?|company|rain|constant\s+contact|fullstack)\b/i.test(body) ||
-    /(?:推荐|匹配|岗位|职位|工作|机会|实习|公司)/.test(body)
+    /\b(?:recommend(?:ed)?|matching?|matched|jobs?|roles?|positions?|opportunities|openings|internships?|co-?ops?|company|rain|constant\s+contact|fullstack)\b/i.test(body)
   if (!hasJobContext) return false
   return (
     /\bwhich\s+(?:jobs?|roles?|positions?|opportunities|matches)\b[\s\S]{0,120}\b(?:fit|fits|match|matches|best|make\s+sense)\b/i.test(body) ||
@@ -2061,8 +2054,7 @@ function isJobRecommendationExplanationRequest(text: string | undefined | null):
     /\bwhy\s+(?:did\s+you\s+)?recommend\b/i.test(body) ||
     /\bwhat\s+part\b[\s\S]{0,120}\bmatch(?:ed|es)?\b/i.test(body) ||
     /\bwhy\s+(?:is|was|did|does)?\s*.*\bmatch(?:ed|es|ing)?\b/i.test(body) ||
-    /\b(?:prefer|rather|instead\s+of)\b[\s\S]{0,120}\b(?:jobs?|roles?|internships?|co-?ops?|startups?|fullstack)\b/i.test(lower) ||
-    /(?:推荐理由|匹配原因|为什么推荐|为什么匹配)/.test(body)
+    /\b(?:prefer|rather|instead\s+of)\b[\s\S]{0,120}\b(?:jobs?|roles?|internships?|co-?ops?|startups?|fullstack)\b/i.test(lower)
   )
 }
 
@@ -2799,7 +2791,7 @@ async function handleExplicitExplanationTurn(
   if (ownerDecision.selectedOwner !== "explicit_explanation") return false
   if (!isSavedPreferenceSummaryQuestion(event.body)) return false
 
-  const lang = detectUserLang(event.body) === "zh" ? "zh" : "en"
+  const lang = "en" as "en" | "zh"
   const reply = composeSavedJobPreferencesReply(onboardingUser, lang)
   await sendMemoryReply(store, event, turnId, reply)
   await store.updateTurn(turnId, {
@@ -3342,7 +3334,7 @@ async function handleSharedOnboardingUserReply(
   const answerJudge = await judgeSharedOnboardingAnswer({
     questionId,
     answer: event.body,
-    lang: detectLang([event.body]) === "zh" ? "zh" : "en",
+    lang: "en" as "en" | "zh",
     userId: event.userId,
     turnId,
     log: (name, payload) => store.log(name, payload ?? {}),
@@ -3653,9 +3645,7 @@ async function handleSharedOnboardingBootstrap(
     turnId,
     userInput: event.body,
     reply:
-      pickLangForSafety(event.body) === "zh"
-        ? "先保证你现在是安全的。如果你可能会伤害自己，请立刻联系当地紧急服务或身边可信的人。"
-        : "First, are you safe right now? If you might hurt yourself, contact local emergency services or someone you trust right now.",
+      "First, are you safe right now? If you might hurt yourself, contact local emergency services or someone you trust right now.",
     callSite: "onboarding",
   })
   if (crisisGuard.detected) {
@@ -3830,7 +3820,7 @@ async function handleCompletedUserJobSearchRequest(
     : false
   if (!explicitJobSearch && !(recentRecommendationContext && (moreFollowup || profileUpdate))) return false
 
-  const lang: "en" | "zh" = detectLang([event.body]) === "zh" ? "zh" : "en"
+  const lang: "en" | "zh" = "en"
   const requestedCount = requestedJobRecCount(event.body)
   const roleFocus = detectLifecycleRoleFocus(event.body)
   const excludeInternships = shouldExcludeInternshipsForExplicitJobSearch(event.body)
@@ -4003,26 +3993,21 @@ function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | n
   if (!body) return null
   const lower = body.toLowerCase()
   const asksMemory =
-    /\b(?:what\s+do\s+you\s+remember|what\s+you\s+remember|see\s+what\s+you\s+remember|show\s+me\s+(?:my\s+)?memory|my\s+memory)\b/i.test(body) ||
-    /(?:你记得我|我的记忆|你保存了什么|你存了什么)/.test(body)
+    /\b(?:what\s+do\s+you\s+remember|what\s+you\s+remember|see\s+what\s+you\s+remember|show\s+me\s+(?:my\s+)?memory|my\s+memory)\b/i.test(body)
   const asksData =
-    /\b(?:what\s+data|which\s+data|what\s+info|what\s+information|data\s+do\s+you\s+store|store\s+about\s+me|saved\s+about\s+me)\b/i.test(body) ||
-    /(?:什么数据|哪些数据|保存.*我|存.*我)/.test(body)
+    /\b(?:what\s+data|which\s+data|what\s+info|what\s+information|data\s+do\s+you\s+store|store\s+about\s+me|saved\s+about\s+me)\b/i.test(body)
   if (
-    /\b(?:delete|erase|remove)\s+(?:all\s+)?(?:my\s+)?(?:data|profile|information|account)\b/i.test(body) ||
-    /(?:删除|清除|抹掉).*(?:数据|资料|档案|账号|账户)/.test(body)
+    /\b(?:delete|erase|remove)\s+(?:all\s+)?(?:my\s+)?(?:data|profile|information|account)\b/i.test(body)
   ) {
     return { kind: "request", requestKind: "delete" }
   }
   if (
-    /\b(?:export|download|send|give)\s+(?:me\s+)?(?:a\s+copy\s+of\s+)?(?:my\s+)?(?:data|profile|information)\b/i.test(body) ||
-    /(?:导出|下载|发给我).*(?:数据|资料|档案)/.test(body)
+    /\b(?:export|download|send|give)\s+(?:me\s+)?(?:a\s+copy\s+of\s+)?(?:my\s+)?(?:data|profile|information)\b/i.test(body)
   ) {
     return { kind: "request", requestKind: "export" }
   }
   if (
-    /\b(?:stop|pause)\s+(?:texting|outreach|messages|reaching\s+out)\b/i.test(body) ||
-    /(?:停止|暂停).*(?:短信|联系|触达|外呼)/.test(body)
+    /\b(?:stop|pause)\s+(?:texting|outreach|messages|reaching\s+out)\b/i.test(body)
   ) {
     return { kind: "request", requestKind: "stop_outreach" }
   }
@@ -4038,20 +4023,14 @@ async function handlePrivacyIntent(
   turnId: string,
   intent: PrivacyIntent
 ): Promise<boolean> {
-  const lang = detectUserLang(event.body) === "zh" ? "zh" : "en"
+  const lang = "en" as "en" | "zh"
   await store.updateTurn(turnId, { stage: "privacy_intent", updatedAt: store.nowIso() })
 
   if (intent.kind === "summary") {
-    const lines =
-      lang === "zh"
-        ? [
-            "我会保存几类和求职有关的信息：你的简历解析结果、联系方式、工作偏好、签证/授权、地点/薪资偏好、对话里你确认过的经历，以及每次岗位 screen 的结果。",
-            "你可以回 “我的记忆” 看我保存的长期记忆；要导出或删除资料，直接回 “export my data” 或 “delete my data”。",
-          ]
-        : [
-            "I store job-search info you have shared with WeKruit: parsed resume details, contact info, work preferences, visa/work authorization, location and comp preferences, confirmed experience notes, and role-screen outcomes.",
-            "Reply “my memory” to see saved long-term notes. Reply “export my data” or “delete my data” and I will file that privacy request for review.",
-          ]
+    const lines = [
+      "I store job-search info you have shared with WeKruit: parsed resume details, contact info, work preferences, visa/work authorization, location and comp preferences, confirmed experience notes, and role-screen outcomes.",
+      "Reply “my memory” to see saved long-term notes. Reply “export my data” or “delete my data” and I will file that privacy request for review.",
+    ]
     if (intent.includeMemory) {
       const facts = await store.listMemoryFacts(event.userId)
       lines.push(memoryReplyForList(facts, lang))
@@ -4069,9 +4048,7 @@ async function handlePrivacyIntent(
       store,
       event,
       turnId,
-      lang === "zh"
-        ? "我知道了。现在短信里不能直接提交这个隐私请求，请从你的 WeKruit 个人资料页提交，我会避免继续展开敏感信息。"
-        : "Got it. I cannot submit that privacy request from this channel right now, so please use your WeKruit profile page. I will avoid expanding sensitive details here."
+      "Got it. I cannot submit that privacy request from this channel right now, so please use your WeKruit profile page. I will avoid expanding sensitive details here."
     )
     return true
   }
@@ -4089,9 +4066,7 @@ async function handlePrivacyIntent(
     privacy_question: "privacy",
   }
   const reply =
-    lang === "zh"
-      ? `收到，我已经提交了${kindCopy[result.kind]}请求。${result.existingOpen ? "你已经有一个同类型请求在处理中，我不会重复创建。" : "我们会从后台处理并保留审计记录。"}`
-      : `Got it. I submitted a ${kindCopy[result.kind]} request.${result.existingOpen ? " You already had one open, so I did not create a duplicate." : " We will review it from the privacy queue and keep an audit trail."}`
+    `Got it. I submitted a ${kindCopy[result.kind]} request.${result.existingOpen ? " You already had one open, so I did not create a duplicate." : " We will review it from the privacy queue and keep an audit trail."}`
   await sendMemoryReply(store, event, turnId, reply)
   return true
 }
@@ -4134,20 +4109,16 @@ function composeSavedJobPreferencesReply(
   }
 
   if (snippets.length === 0) {
-    return lang === "zh"
-      ? "我现在还没有足够明确的求职偏好。你可以直接告诉我目标角色、地点、行业、薪资或不能接受的点。"
-      : "I do not have much saved yet: tell me target roles, locations, industries, comp, or dealbreakers and I will use that for matching."
+    return "I do not have much saved yet: tell me target roles, locations, industries, comp, or dealbreakers and I will use that for matching."
   }
 
   const summary = joinSavedPreferenceSnippets(snippets, 330)
-  return lang === "zh"
-    ? `我现在会按这些匹配：${summary}。`
-    : `I have this saved: ${summary}. I'll use that for matching.`
+  return `I have this saved: ${summary}. I'll use that for matching.`
 }
 
 function composeSharedSavedPreferenceReply(
   shared: Record<string, { answer?: unknown }>,
-  lang: "en" | "zh",
+  _lang: "en" | "zh",
 ): string | null {
   const textFor = (key: string) => {
     const value = shared[key]?.answer
@@ -4195,16 +4166,6 @@ function composeSharedSavedPreferenceReply(
   const timingEn = timing
     ? `${timing.charAt(0).toUpperCase()}${timing.slice(1)}`
     : null
-  const timingZh = timing ? "2-4周可以开始" : null
-  if (lang === "zh") {
-    const parts = [
-      `我会按这些匹配：${headlineList}。`,
-      extraPrimary[0] ? `也会偏向${extraPrimary[0]}。` : null,
-      constraintList ? `会避开${constraintList}。` : null,
-      timingZh ? `时间上${timingZh}。` : null,
-    ].filter((value): value is string => Boolean(value))
-    return parts.join(" ")
-  }
   const parts = [
     `Yep — I'm using ${headlineList}.`,
     extraPrimary[0] ? `Also biasing toward ${extraPrimary[0]}.` : null,
@@ -4305,7 +4266,7 @@ async function handleMemoryCommand(
   command: NonNullable<ReturnType<typeof parseMemoryCommand>>
 ): Promise<boolean> {
   await store.updateTurn(turnId, { stage: "memory_command", updatedAt: store.nowIso() })
-  const lang = detectUserLang(event.body) === "zh" ? "zh" : "en"
+  const lang = "en" as "en" | "zh"
   if (command.kind === "list") {
     const facts = await store.listMemoryFacts(event.userId)
     await store.recordMemoryAction({ userId: event.userId, eventId: event.id, action: "list", status: "succeeded" })
@@ -4321,13 +4282,11 @@ async function handleMemoryCommand(
     const facts = await store.listMemoryFacts(event.userId)
     const matches = findMatchingFacts(facts, command.query)
     if (matches.length === 0) {
-      await sendMemoryReply(store, event, turnId, "我没有找到匹配的长期记忆。你可以说：我的记忆。")
+      await sendMemoryReply(store, event, turnId, "I did not find a matching long-term note. You can say: my memory.")
       return true
     }
     if (matches.length > 1) {
-      const prefix = lang === "zh"
-        ? "我找到多条匹配记忆，请说得更具体："
-        : "I found multiple matching memories. Be more specific:"
+      const prefix = "I found multiple matching memories. Be more specific:"
       await sendMemoryReply(store, event, turnId, `${prefix}\n${memoryReplyForList(matches, lang)}`)
       return true
     }
@@ -4340,13 +4299,13 @@ async function handleMemoryCommand(
       content: command.query,
       factIds: [matches[0]!.id],
     })
-    await sendMemoryReply(store, event, turnId, `已忘记：${matches[0]!.content}`)
+    await sendMemoryReply(store, event, turnId, `Forgotten: ${matches[0]!.content}`)
     return true
   }
 
   if (command.kind === "clear_request") {
     await store.recordMemoryAction({ userId: event.userId, eventId: event.id, action: "clear_request", status: "succeeded" })
-    await sendMemoryReply(store, event, turnId, "这会删除我保存的所有长期记忆。请回复：确认清空记忆")
+    await sendMemoryReply(store, event, turnId, "This will delete all of your saved long-term memory. Reply: confirm clear memory")
     return true
   }
 
@@ -4360,7 +4319,7 @@ async function handleMemoryCommand(
       status: "succeeded",
       factIds: facts.map((f) => f.id),
     })
-    await sendMemoryReply(store, event, turnId, `已清空 ${facts.length} 条长期记忆。`)
+    await sendMemoryReply(store, event, turnId, `Cleared ${facts.length} long-term memories.`)
     return true
   }
 
@@ -4656,7 +4615,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         // Phase 46 (v1.5 Stream-E) — action-aware safety branch with bilingual canned replies.
         // Backward-compat: if `action` is undefined (legacy callers / test mocks), fall
         // through to the legacy reason-based message selection.
-        const lang = pickLangForSafety(event.body)
+        const lang = "en" as ReturnType<typeof pickLangForSafety>
         let msg: string | null
         if (safety.action === "silent_drop") {
           msg = null // no reply at all (cooldown)
@@ -4742,7 +4701,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     }
 
     // Phase 22 — proactive cancellation NLU pre-LLM hook (D-07, PROACTIVE-06).
-    // Must run before memory commands so "停止提醒" short-circuits cleanly.
+    // Must run before memory commands so a "stop reminders" request short-circuits cleanly.
     if (userAuthoredEvent && detectProactiveCancellation(event.body)) {
       const cancelledCount = await store.cancelAllPendingProactiveJobs(event.userId)
       await store.writeProactiveCancelAudit({
@@ -4752,7 +4711,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         cancelledCount,
       })
       // Voice v1-toned confirmation reply — concise, natural (D-07)
-      const cancelReply = cancelledCount > 0 ? "好的，全停了 ✋" : "没有待发送的提醒了哦。"
+      const cancelReply = cancelledCount > 0 ? "ok, all stopped ✋" : "no pending reminders to stop."
       await sendMemoryReply(store, event, turnId, cancelReply)
       await store.updateTurn(turnId, { status: "succeeded", stage: "succeeded", completedAt: store.nowIso() })
       await store.markEventSucceeded(event.id)
@@ -5321,19 +5280,19 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
         })
       }
     }
-    // iter34 hotfix 2026-05-05 — Adam directive: "匹配挂了" hallucination
+    // iter34 hotfix 2026-05-05 — Adam directive: "matching failed" hallucination
     // bug. LLM saw context where matching pipeline returned no recs and
-    // narrated "我这边刚才拉匹配挂了". Forbidden: NEVER expose internal
-    // system failures. Friend-tone alternative: "让我再帮你找找看" /
+    // narrated that the match pull had failed. Forbidden: NEVER expose internal
+    // system failures. Friend-tone alternative: "let me look again for you" /
     // "still pulling fresh matches".
     const matchingPrivacyDirective =
       "[NEVER expose internal system status to the user] " +
       "Never tell the user that matching/job-rec/pipeline/system/database/API " +
-      "failed, errored, broke, crashed, was down, hung, or '挂了/坏了/出错了/失败了'. " +
+      "failed, errored, broke, crashed, was down, or hung. " +
       "If matches aren't ready or recs are empty, say something natural like " +
-      "'让我再帮你找找看' / '我多看几条更准的再发你' / 'still pulling fresher matches' / " +
-      "'lemme dig up a couple more before sending'. Apologize like a friend would " +
-      "('稍等下哈'), never like a system status page."
+      "'still pulling fresher matches' / " +
+      "'lemme dig up a couple more before sending'. Apologize like a friend would, " +
+      "never like a system status page."
     const jobRecommendationExplanationDirective =
       await buildJobRecommendationExplanationDirective(store, event)
     // P1 agentic job-search (DEFAULT OFF). When ON, tell the agent to use the
@@ -5446,7 +5405,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // No-op for casual chat — system prompt unchanged. NEVER throws (defensive).
     if (composedSystemPrompt !== null) {
       try {
-        const harnessLang: "zh" | "en" = detectUserLang(event.body) === "en" ? "en" : "zh"
+        const harnessLang: "zh" | "en" = "en"
         const detectedRole = detectJobMarketRole(event.body)
         const before = composedSystemPrompt
         composedSystemPrompt = appendJobMarketKnowledgeToSystemPrompt(
@@ -5482,7 +5441,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // runLangLockGuard short-circuits — letting the reply mirror the user's
     // zh-frame + en-token register naturally instead of hard-locking single
     // language. Pure-zh / pure-en still get the lock as before.
-    // 2026-05-07 Bug B fix v2 — Adam: "应该用统一的语音". Per CLAUDE.md D8
+    // 2026-05-07 Bug B fix v2 — Adam: use one unified voice. Per CLAUDE.md D8
     // tags is the single canonical source. Read tags.preferredLang FIRST
     // (set by writeOnboardingTags after q_lang answered + by cv-ingest after
     // mergeUserTags), statedPreferences.preferredLang SECOND (legacy mirror,
@@ -5492,15 +5451,8 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // deterministic.langFor() which already prioritizes prefLang.
     // `getOnboardingUser` may legitimately return null (tests + rare store
     // seams). Optional-chain — do not dereference `null` (throws before LLM).
-    const tagsPref = onboardingUser?.tags?.preferredLang
-    const onboardingPref = onboardingUser?.statedPreferences?.preferredLang
-    const declaredPref = tagsPref || onboardingPref
-    let userLang: "zh" | "en" | "mixed"
-    if (declaredPref === "en" || declaredPref === "zh" || declaredPref === "mixed") {
-      userLang = declaredPref
-    } else {
-      userLang = detectUserLang(event.body)
-    }
+    // English-only product (Adam 2026-05-31): output language is always English.
+    const userLang = "en" as "zh" | "en" | "mixed"
     const { open: langLockOpen, close: langLockClose } = buildLangLockSandwich(userLang)
     const baseSystemPrompt = isVoiceV1Disabled()
       ? LEGACY_V0_SYSTEM_PROMPT
@@ -5563,7 +5515,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // Defense-in-depth: even if the model echoes a [ISO] prefix, strip it
     // before persisting + sending. Root cause is upstream in
     // `toOpenAIMessages` (was prefixing history bodies); this catches stragglers.
-    let reply = stripLeadingIsoTimestamp(text.trim()) || "我暂时没有生成有效回复，请稍后再试。"
+    let reply = stripLeadingIsoTimestamp(text.trim()) || "I could not generate a valid reply just now, please try again in a moment."
     // v1.5 hotfix v4 — post-gen language correction. Pre-gen directives (v1
     // prepend, v2 sandwich, v3 user-message inject) all leaked: agent's
     // systemPrompt has heavy ZH examples in NEVER rules that prime Qwen-7B
@@ -5598,7 +5550,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // PA_LLM_REWRITE_DISABLED=true. Telemetry sinks into pa_turns.usage
     // alongside token counts (rewriteApplied + rewriteReason).
     // Phase 33 — pass last 2 assistant replies as context so rewriter can
-    // detect + fix opener repetition (嗯/哎/草) across turns.
+    // detect + fix opener repetition (filler interjections) across turns.
     const priorAssistantReplies = (history ?? [])
       .filter((m) => m.role === "assistant")
       .slice(-2)
@@ -5637,7 +5589,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     })
     // Phase 33b — deterministic opener strip, applied unconditionally so that
     // rewrite_unsafe / circuit_open / timeout fallbacks still get de-tic'd.
-    // Phase 33e — also strip 我懂/我懂那种 validation tic (Qwen ignores DROP rule).
+    // Phase 33e — also strip the "I get it / I totally get that" validation tic (Qwen ignores DROP rule).
     const afterOpenerStrip =
       priorAssistantReplies.length > 0
         ? stripRepeatOpener(rewritten.text, priorAssistantReplies)
@@ -5647,7 +5599,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // Adam iter 20 — phrase-repeat stripper (Claire self-mirror).
     //
     // iter-19 10-turn anxious_grad sim showed 5 consecutive replies
-    // opening with "要不要试 / 要不要试试". stripRepeatOpener catches
+    // opening with the same "want to try / wanna try" phrase. stripRepeatOpener catches
     // identical first-clause-before-terminator only and only checks
     // last-2; F1 verb-mirror checks user→Claire not Claire→Claire.
     //
@@ -5696,10 +5648,8 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
           // next turn lets the LLM produce a non-AB reply.
           const MIN_KEEP = 4
           const trimmed = abResult.stripped.trim()
-          // pick lang via input message's CJK majority — same heuristic
-          // as onboarding pickLang. Inline simple check to avoid coupling.
-          const isZh = /[一-鿿]/.test(event.body ?? "")
-          const fallback = isZh ? "嗯，我在听。" : "yeah, i'm here."
+          // English-only product: friend-tone holding ack fallback.
+          const fallback = "yeah, i'm here."
           const safeStripped = trimmed.length >= MIN_KEEP ? abResult.stripped : fallback
           store.log("pa.voice.ab_probe_strip.applied", {
             userId: event.userId,
@@ -5721,7 +5671,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       })
     }
     // Phase 53 (v1.6 voice-quality closure) — conditional A/B framework
-    // head strip ("如果你想 X，那可以 Y" / "If you want X, you could Y").
+    // head strip ("If you want X, you could Y").
     // Distinct from the X-or-Y tail probe stripped above. Conservative:
     // only removes the if-clause head, preserves the then-clause verbatim.
     // Gated by paHumanizeRuntimeEnabled umbrella + paABFrameworkStrippingEnabled.
@@ -6040,7 +5990,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     // -------------------------------------------------------------------
     // Adam iter 17 (2026-05-03) — F2 hard-cap enforcement.
     //
-    // Spec: "需要缩短一下reply，如果一个reply太长我们可以分好几句话说"
+    // Spec: shorten the reply; if a reply is too long we can split it into several sentences.
     //
     // Detector at line ~1486 already flags `suggested_action: "strip"` when
     // count > 3 sentences (Bible v7.5 directive), but no caller ever acted
@@ -6114,7 +6064,7 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
     }
     const rawVisible =
       mem.mem0Degraded && agent.memoryMode !== "firestore_only"
-        ? `${replyAfterRewrite}\n\n（长期语义记忆暂时不可用；我仍使用已确认事实和最近对话。）`
+        ? `${replyAfterRewrite}\n\n(Long-term semantic memory is temporarily unavailable; I'm still using confirmed facts and recent conversation.)`
         : replyAfterRewrite
     // iter30 WS6 — shadow-mode guardrail chain. We feed `rawVisible` (the
     // post-strip / post-rewrite / post-trailer text) through the locked

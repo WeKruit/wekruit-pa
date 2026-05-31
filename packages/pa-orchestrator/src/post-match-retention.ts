@@ -8,7 +8,6 @@ import type { Firestore } from "firebase-admin/firestore"
 import type { InboundEvent } from "@pa/core-types"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { getFlag, writeFeedbackEvent } from "@pa/pa-persistence"
-import { detectLang } from "./voice/imperfection-injector/index.js"
 import type { GenerateJobRecsFn } from "./match-connector-hooks.js"
 import {
   AMBIGUOUS_FEEDBACK,
@@ -102,7 +101,7 @@ export async function writePostMatchRetention(
 /**
  * Classify a retention reply through the UNIFIED conversational tagging
  * interface (`extractFromConversation`, purpose=post_rec_feedback) — the same
- * entry point onboarding + every Q→A path shares (Adam 顶层设计 2026-05-30).
+ * entry point onboarding + every Q→A path shares (Adam top-level design 2026-05-30).
  * No-regex; fails OPEN to `ambiguous` (FSM re-asks) when no classifier is wired
  * or the LLM errors.
  */
@@ -137,22 +136,16 @@ async function classifyRetentionReply(
 
 type CurrentPromptStage = Exclude<PostMatchRetentionStage, "await_prescreen" | "complete">
 
-function copyForStage(stage: CurrentPromptStage, lang: "zh" | "en"): string {
+function copyForStage(stage: CurrentPromptStage, _lang: "zh" | "en"): string {
   switch (stage) {
     case "await_liked":
-      return lang === "zh"
-        ? "刚才那几条岗位感觉怎么样？有用还是差点意思？随便说～"
-        : "How did those roles feel — useful, meh, or totally off? Be honest."
+      return "How did those roles feel — useful, meh, or totally off? Be honest."
     case "await_dislike_reason":
-      return lang === "zh"
-        ? "懂，哪块最不对？方向/级别/公司/地点/薪资都行，一句话就行。"
-        : "Got it — what was off? role level, company, location, pay… one line is enough."
+      return "Got it — what was off? role level, company, location, pay… one line is enough."
     case "await_subscribe":
-      return lang === "zh"
-        ? "要不要我每天给你推最新匹配的岗？有合适的直接发你，想停随时跟我说。"
-        : "Want me to text you fresh matched roles daily? I'll only send good fits — say stop anytime."
+      return "Want me to text you fresh matched roles daily? I'll only send good fits — say stop anytime."
     default:
-      return lang === "zh" ? "收到，我们继续聊。" : "Sounds good — keep chatting anytime."
+      return "Sounds good — keep chatting anytime."
   }
 }
 
@@ -436,7 +429,7 @@ export async function handlePostMatchRetentionReply(
     return false
   }
 
-  const lang = detectLang(event.body) === "zh" ? "zh" : "en"
+  const lang = "en" as const
   const at = store.nowIso()
   let next: PostMatchRetentionState = { ...state, updatedAt: at }
   let reply = ""
@@ -445,10 +438,7 @@ export async function handlePostMatchRetentionReply(
     case "await_liked": {
       const sentiment = feedback.sentiment
       if (sentiment === "ambiguous") {
-        reply =
-          lang === "zh"
-            ? "我指的是刚才那几条岗～整体偏有用还是偏离谱？随便一句就行。"
-            : "I mean those roles I just sent — overall useful or mostly off?"
+        reply = "I mean those roles I just sent — overall useful or mostly off?"
         break
       }
       next.sentiment = sentiment
@@ -484,19 +474,13 @@ export async function handlePostMatchRetentionReply(
         nowIso: at,
       })
       next.stage = "await_subscribe"
-      reply =
-        lang === "zh"
-          ? "记下了，我下次会避开这类。要不要我每天给你推更贴的新岗？想停随时说。"
-          : "Noted — I'll avoid that vibe next time. Want daily texts when something tighter shows up?"
+      reply = "Noted — I'll avoid that vibe next time. Want daily texts when something tighter shows up?"
       break
     }
     case "await_subscribe": {
       const yn = feedback.intent
       if (yn === "ambiguous") {
-        reply =
-          lang === "zh"
-            ? "每天推匹配岗这件事 — 要还是暂时不用？回「要」或「不用」就行。"
-            : "Daily matched roles — want that or pass for now? Just say yes or no."
+        reply = "Daily matched roles — want that or pass for now? Just say yes or no."
         break
       }
       next.subscribeOptIn = yn === "yes"
@@ -516,20 +500,13 @@ export async function handlePostMatchRetentionReply(
       next.stage = "complete"
       reply =
         yn === "yes"
-          ? lang === "zh"
-            ? "收到，我会继续在这里给你发强匹配岗位；想停随时说。"
-            : "Got it — I'll keep texting strong matches here. Say stop anytime."
-          : lang === "zh"
-            ? "没问题，我先不每天推送。你想看新岗位时随时跟我说。"
-            : "All good — I won't send daily matches. Ask anytime when you want a fresh batch."
+          ? "Got it — I'll keep texting strong matches here. Say stop anytime."
+          : "All good — I won't send daily matches. Ask anytime when you want a fresh batch."
       break
     }
     case "await_prescreen": {
       next.stage = "complete"
-      reply =
-        lang === "zh"
-          ? "收到，我会继续在这里给你推匹配岗位；不用再额外确认。"
-          : "Got it — I'll keep sending matched roles here. No extra confirmation needed."
+      reply = "Got it — I'll keep sending matched roles here. No extra confirmation needed."
       break
     }
     default:

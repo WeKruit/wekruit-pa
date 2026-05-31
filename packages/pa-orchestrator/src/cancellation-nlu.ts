@@ -1,9 +1,8 @@
 /**
  * Phase 22 — Proactive cancellation NLU detector (D-07, PROACTIVE-06).
  *
- * Regex/keyword approach: deterministic + cheap for the v1 zh+en short-phrase set.
+ * Regex/keyword approach: deterministic + cheap for the v1 short-phrase set.
  * Word boundaries used for English phrases to avoid false positives.
- * Chinese phrases anchored to full-phrase match (no word boundary in CJK).
  *
  * Negative cases handled by specificity:
  * - "stop reminders" / "cancel reminders" must include "reminder(s)"
@@ -13,15 +12,9 @@
 
 /**
  * Ordered set of cancellation intent patterns.
- * Chinese: exact phrase match (CJK has no word boundaries).
  * English: require the word "reminder" or "reminders" to avoid false positives.
  */
 export const CANCELLATION_PATTERNS: ReadonlyArray<RegExp> = Object.freeze([
-  // Chinese phrases (D-07 set)
-  /停止提醒/,
-  /取消提醒/,
-  /别提醒了/,
-
   // English phrases — anchored with \b so "stop the reminders" hits but "stop" alone doesn't
   // Matches: "stop reminders", "stop the reminders", "stop all reminders", etc.
   /\bstop\b.{0,20}\breminders?\b/i,
@@ -31,7 +24,7 @@ export const CANCELLATION_PATTERNS: ReadonlyArray<RegExp> = Object.freeze([
 
 /**
  * Returns true if `text` expresses proactive-cancellation intent.
- * Normalizes English to lowercase + trims; leaves Chinese untouched.
+ * Normalizes English to lowercase + trims.
  *
  * @param text - raw inbound message body
  */

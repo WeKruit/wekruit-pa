@@ -33,8 +33,8 @@ export interface ClairePromptOptions {
 const PERSONA = [
   "You are Claire, a warm, concise recruiter friend texting a candidate on iMessage.",
   "Text like a real friend: short (1-2 sentences), lowercase-ok, contractions, use 2025 slang naturally",
-  "(lfg, cooked, lock in, 卷, 摆烂) only when it matches their register. Never say you're an AI or a bot.",
-  "Mirror their language (English or Mandarin).",
+  "(lfg, cooked, lock in) only when it matches their register. Never say you're an AI or a bot.",
+  "Respond in English only, never Chinese.",
 ].join(" ")
 
 // Concrete, enforceable voice rules — gpt-5.4-nano ignores soft 'be concise' nudges, so these are
@@ -299,10 +299,7 @@ const FEWSHOT = [
 ].join(" ")
 
 export function buildClairePrompt(opts: ClairePromptOptions): string {
-  const langLine =
-    opts.lang === "zh"
-      ? "Reply in natural Mandarin (Claire's voice)."
-      : "Reply in natural English (Claire's voice)."
+  const langLine = "Reply in natural English (Claire's voice). Respond in English only, never Chinese."
   return [
     PERSONA,
     langLine,

@@ -1,6 +1,6 @@
 /**
  * conversation-tagging.ts — THE unified, context-aware, conversational tagging
- * interface (Adam 顶层设计, 2026-05-30).
+ * interface (Adam top-level design, 2026-05-30).
  *
  * ONE entry point that EVERY conversation→tags path shares:
  *

@@ -34,9 +34,10 @@ test("runFsm — WarmCurious zh → Exploration → Question allowed", () => {
   assert.ok(!r.allowedStrategies.includes("Suggestion"))
 })
 
-test("runFsm — SoftConcerned zh → Comforting → Reflection preferred", () => {
+// zh tone-lexicon removed (English-only product); English equivalent covers this state.
+test("runFsm — SoftConcerned en → Comforting → Reflection preferred", () => {
   const ctx: FsmContext = {
-    turn: { user: "今天好累，不知道该怎么办" },
+    turn: { user: "i'm so stressed and overwhelmed, not sure what to do" },
     history: baseHistory,
     turnNumber: 5,
   }
@@ -58,9 +59,12 @@ test("runFsm — FirmDirect en → Action → Suggestion allowed + preferred", (
   assert.ok(r.allowedStrategies.includes("Suggestion"))
 })
 
-test("runFsm — QuietWitness zh → Comforting → NEVER Suggestion", () => {
+// zh tone-lexicon removed (English-only product); QuietWitness coverage preserved in English.
+// Crisis-adjacent invariant: even with English input, heavy distress must classify as QuietWitness
+// and must NEVER allow Suggestion/Information/Question strategies.
+test("runFsm — QuietWitness en → Comforting → NEVER Suggestion", () => {
   const ctx: FsmContext = {
-    turn: { user: "我撑不住了。一切都没意义。想消失。" },
+    turn: { user: "i cant go on like this. theres no point. i want to die." },
     history: baseHistory,
     turnNumber: 5,
   }
@@ -141,14 +145,16 @@ test("runFsm — directive contains all required fields", () => {
   assert.match(r.directive, /note:/)
 })
 
-test("runFsm — userLang=zh produces Chinese gloss", () => {
+// P0 guarantee: English-only product. Even when userLang="zh" is passed, the directive
+// must contain NO Chinese characters. The note gloss is always English.
+test("runFsm — userLang=zh STILL produces English gloss (English-only product)", () => {
   const ctx: FsmContext = {
     turn: { user: "好累" },
     history: baseHistory,
     turnNumber: 5,
   }
   const r = runFsm(ctx, { userLang: "zh" })
-  assert.ok(/[一-鿿]/.test(r.directive), `expected zh chars in directive: ${r.directive}`)
+  assert.ok(!/[一-鿿]/.test(r.directive), `expected NO zh chars in directive (English-only): ${r.directive}`)
 })
 
 test("runFsm — userLang=en (default) produces English gloss", () => {

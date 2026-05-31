@@ -282,11 +282,14 @@ test("coldstart-langlock: 'yoe1年的' → website start gate, no LLM lang-lock 
 // Test 5 — Main-path regression: onboardingState=complete + ZH user → main
 // path lang-lock still fires (helper extraction did not break main path).
 // ============================================================================
-test("main-path-regression: onboardingState=complete + ZH user → main path langLock pre-gen still fires", async () => {
+// English-only product: for a ZH user the main path now injects English-only langLock
+// (not ZH-specific "用中文回复"). The pre-gen sandwich and FINAL-REMINDER are still
+// required — just in English form. Mirrors the coldstart-no-translate sibling style.
+test("main-path-regression: onboardingState=complete + ZH user → main path English-only langLock fires (English-only product)", async () => {
   const captures = emptyCaptures()
   const store = makeStore(captures, {
     onboardingState: "complete",
-    llmReplyBody: "好的，给你看看 SWE 岗位",
+    llmReplyBody: "Good news — here are some SWE roles for you",
   })
   await processInboundEvent(
     {
@@ -299,18 +302,20 @@ test("main-path-regression: onboardingState=complete + ZH user → main path lan
   // Main path also calls runAgentTurn — captures.systemPrompts[0] is from main.
   assert.ok(captures.systemPrompts.length >= 1)
   const sp = captures.systemPrompts[0]
+  // English-only product: lang lock header is English regardless of user input language
   assert.ok(
-    sp.includes("user_input_language: zh"),
-    `main path must still inject ZH langLock (no regression from helper extraction). systemPrompt: ${sp.slice(0, 300)}`
+    sp.includes("[LANGUAGE-LOCK"),
+    `main path must still inject LANGUAGE-LOCK header (no regression from helper extraction). systemPrompt: ${sp.slice(0, 300)}`
   )
   assert.ok(
     sp.includes("[FINAL-REMINDER]"),
     "main path must still close with FINAL-REMINDER"
   )
   const um = captures.userMessages[0]
+  // English-only: directive is always English (Reply in English only), not 用中文回复
   assert.ok(
-    um.includes("[SYSTEM-DIRECTIVE: 用中文回复"),
-    `main path userMessage must still get ZH directive, got: ${um}`
+    um.includes("[SYSTEM-DIRECTIVE: Reply in English only"),
+    `main path userMessage must get English directive, got: ${um}`
   )
 })
 

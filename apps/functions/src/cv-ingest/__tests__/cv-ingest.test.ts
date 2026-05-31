@@ -6,7 +6,6 @@ import {
   ingestCv,
   buildCvFactBody,
   computeTopSkills,
-  detectCvLang,
   runUserTagsMerge,
   type IngestCvDeps,
   type StructuredCv,
@@ -412,8 +411,8 @@ describe("ingestCv", () => {
     assert.equal(call.userId, "user_x")
     assert.equal(call.partitionKey, "mem0_partition_42")
     assert.ok(call.factBody.length > 0)
-    // Default English template (tests use ASCII-only fixture)
-    assert.ok(/User resume summary|用户简历摘要/.test(call.factBody))
+    // English template (English-only product)
+    assert.ok(/User resume summary/.test(call.factBody))
     assert.ok(call.factBody.includes("WeKruit"))
   })
 
@@ -518,41 +517,40 @@ describe("buildCvFactBody / detectCvLang", () => {
     assert.ok(body.includes("TypeScript"))
   })
 
-  it("Chinese-heavy CV → Chinese fact body", () => {
-    const zh: StructuredCv = {
+  it("any CV → English fact body (English-only product)", () => {
+    const cv: StructuredCv = {
       candidateProfile: {
-        name: "张伟",
+        name: "Wei Zhang",
         email: null,
         phone: null,
         linkedIn: null,
-        location: "北京",
-        skills: ["量化交易", "数据分析", "机器学习"],
+        location: "Beijing",
+        skills: ["Quant Trading", "Data Analysis", "Machine Learning"],
       },
       experiences: [
         {
-          company: "瑞银集团",
-          title: "暑期分析师",
+          company: "UBS Group",
+          title: "Summer Analyst",
           startDate: "2024",
           endDate: null,
-          location: "上海",
-          description: "金融科技研究项目，负责量化模型搭建与回测",
+          location: "Shanghai",
+          description: "Fintech research project: quant model build + backtesting",
         },
       ],
       education: [
         {
-          school: "清华大学",
-          degree: "金融学学士",
-          field: "金融",
+          school: "Tsinghua University",
+          degree: "BSc Finance",
+          field: "Finance",
           startDate: "2020",
           endDate: "2024",
         },
       ],
       industryTags: ["fintech_finance"],
     }
-    assert.equal(detectCvLang(zh), "zh")
-    const body = buildCvFactBody(zh)
-    assert.ok(body.startsWith("用户简历摘要:"))
-    assert.ok(body.includes("瑞银集团"))
+    const body = buildCvFactBody(cv)
+    assert.ok(body.startsWith("User resume summary:"))
+    assert.ok(body.includes("UBS Group"))
   })
 })
 

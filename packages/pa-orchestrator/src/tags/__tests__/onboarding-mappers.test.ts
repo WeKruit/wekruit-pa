@@ -36,10 +36,7 @@ test("mapAnswerToRoleFunction: SWE keywords → software_engineering", () => {
   assert.deepEqual(mapAnswerToRoleFunction("fullstack"), [
     "software_engineering",
   ])
-  // Chinese
-  assert.deepEqual(mapAnswerToRoleFunction("我是后端工程师"), [
-    "software_engineering",
-  ])
+  // (Chinese-input case removed — product is English-only)
 })
 
 test("mapAnswerToRoleFunction: PM keywords → product_management", () => {
@@ -47,7 +44,6 @@ test("mapAnswerToRoleFunction: PM keywords → product_management", () => {
   assert.deepEqual(mapAnswerToRoleFunction("Product Manager"), [
     "product_management",
   ])
-  assert.deepEqual(mapAnswerToRoleFunction("产品经理"), ["product_management"])
 })
 
 test("mapAnswerToRoleFunction: business analysis → business_analyst", () => {
@@ -68,7 +64,6 @@ test("mapAnswerToRoleFunction: data role → data_analysis", () => {
   assert.deepEqual(mapAnswerToRoleFunction("data analytics & insights extern"), [
     "data_analysis",
   ])
-  assert.deepEqual(mapAnswerToRoleFunction("数据分析师"), ["data_analysis"])
 })
 
 test("mapAnswerToRoleFunction: empty / null / non-string → []", () => {
@@ -107,13 +102,11 @@ test("mapAnswerToRoleFunction: multi-pick when multiple keywords", () => {
 test("mapAnswerToVisa: citizen detection", () => {
   assert.equal(mapAnswerToVisa("US citizen"), "citizen")
   assert.equal(mapAnswerToVisa("USC"), "citizen")
-  assert.equal(mapAnswerToVisa("我是美国公民"), "citizen")
 })
 
 test("mapAnswerToVisa: green card → permanent_resident", () => {
   assert.equal(mapAnswerToVisa("green card"), "permanent_resident")
   assert.equal(mapAnswerToVisa("GC holder"), "permanent_resident")
-  assert.equal(mapAnswerToVisa("绿卡"), "permanent_resident")
   assert.equal(mapAnswerToVisa("permanent resident"), "permanent_resident")
 })
 
@@ -142,13 +135,11 @@ test("mapAnswerToLocations: SF → san_francisco_bay_area", () => {
   assert.deepEqual(mapAnswerToLocations("Bay Area"), [
     "san_francisco_bay_area",
   ])
-  assert.deepEqual(mapAnswerToLocations("湾区"), ["san_francisco_bay_area"])
 })
 
 test("mapAnswerToLocations: NYC → new_york_metro", () => {
   assert.deepEqual(mapAnswerToLocations("NYC"), ["new_york_metro"])
   assert.deepEqual(mapAnswerToLocations("New York"), ["new_york_metro"])
-  assert.deepEqual(mapAnswerToLocations("纽约"), ["new_york_metro"])
 })
 
 test("mapAnswerToLocations: remote keyword → remote_united_states", () => {
@@ -157,7 +148,6 @@ test("mapAnswerToLocations: remote keyword → remote_united_states", () => {
 
 test("mapAnswerToLocations: anywhere → remote_anywhere", () => {
   assert.deepEqual(mapAnswerToLocations("anywhere"), ["remote_anywhere"])
-  assert.deepEqual(mapAnswerToLocations("都行"), ["remote_anywhere"])
 })
 
 test("mapAnswerToLocations: multi-city pick", () => {
@@ -174,7 +164,6 @@ test("mapAnswerToLocations: empty / unknown → []", () => {
 
 test("mapAnswerToLocations: china cities", () => {
   assert.deepEqual(mapAnswerToLocations("Shanghai"), ["shanghai"])
-  assert.deepEqual(mapAnswerToLocations("北京"), ["beijing"])
 })
 
 // ---------------------------------------------------------------------------
@@ -208,18 +197,15 @@ test("bucketYoe: invalid input → null", () => {
 test("mapAnswerToYoeBucket: new-grad signals → 0-1", () => {
   assert.equal(mapAnswerToYoeBucket("new grad"), "0-1")
   assert.equal(mapAnswerToYoeBucket("just graduated"), "0-1")
-  assert.equal(mapAnswerToYoeBucket("应届"), "0-1")
 })
 
 test("mapAnswerToYoeBucket: numeric strings", () => {
   assert.equal(mapAnswerToYoeBucket("3 years"), "2-3")
   assert.equal(mapAnswerToYoeBucket("5 yrs"), "4-6")
-  assert.equal(mapAnswerToYoeBucket("8年"), "7-10")
 })
 
 test("mapAnswerToYoeBucket: 10+ explicit", () => {
   assert.equal(mapAnswerToYoeBucket("10+"), "10+")
-  assert.equal(mapAnswerToYoeBucket("10年以上"), "10+")
 })
 
 test("mapAnswerToYoeBucket: empty / unrecognized → null", () => {
