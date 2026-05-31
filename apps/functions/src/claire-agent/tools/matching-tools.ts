@@ -58,7 +58,6 @@ import type { Firestore } from "firebase-admin/firestore"
 // Rec-card render→host→send side-channel (flag-gated, fail-open). maybeSendRecCard
 // internally no-ops when PA_JOB_REC_CARD_ENABLED is off and NEVER throws.
 import { maybeSendRecCard } from "../../job-rec-card/send-rec-card.js"
-import type { CardStorage } from "../../job-rec-card/upload-card.js"
 import {
   reduceMatchingPreferences,
   type MatchingTagsSlice,
@@ -456,8 +455,9 @@ export async function recordAgentPresentation(
  * Absent → makeV16FindMatch behaves exactly as before (text-only recs).
  */
 export type V16FindMatchCardDeps = {
-  storage: CardStorage
   getPhoneE164: (db: Firestore, userId: string) => Promise<string | null>
+  /** Sendblue media-upload creds for the lazy-gen fallback (absent → cache-read only). */
+  sendblueCreds?: { apiKeyId: string; apiSecretKey: string }
   fromNumber?: string
   log?: (event: string, payload?: Record<string, unknown>) => void
 }
@@ -621,8 +621,8 @@ export function makeV16FindMatch(
             },
             deps: {
               db,
-              storage: cardDeps.storage,
               getPhoneE164: cardDeps.getPhoneE164,
+              ...(cardDeps.sendblueCreds ? { sendblueCreds: cardDeps.sendblueCreds } : {}),
               ...(cardDeps.fromNumber ? { fromNumber: cardDeps.fromNumber } : {}),
               log: cardDeps.log ?? log,
             },

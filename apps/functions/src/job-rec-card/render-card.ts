@@ -203,36 +203,58 @@ export function buildCardTree(payload: RecCardPayload): El {
       : payload.workMode
   const metaLine = [salary, payload.location, workMode].filter(Boolean).join("  ·  ")
 
-  // Top-left: logo monogram + In Network badge.
+  // Top-left: logo chip + In Network badge.
   //
-  // v1 NOTE: we render a serif MONOGRAM chip rather than fetching the remote
-  // Clearbit logo. satori must fetch a remote <img> at render time to size it,
-  // which is fragile in Cloud Functions (network egress, 404s, latency) and
-  // would break the render → trip the fail-open path → no card. The monogram
-  // is deterministic + offline. `payload.logoUrl` is preserved in the contract
-  // for a future iteration that pre-fetches the logo into a data: URI.
+  // The chip prefers a PRE-FETCHED logo (`payload.logoDataUri`, a `data:` URI the
+  // orchestrator resolved before render — satori must NOT egress at render time)
+  // and FAILS OPEN to a deterministic serif MONOGRAM when no logo is present.
+  // This keeps the render pure/offline: a missing/failed logo never breaks the
+  // PNG, it just shows initials.
+  const logoChip =
+    payload.logoDataUri && /^data:image\//.test(payload.logoDataUri)
+      ? // satori reads `src`/`width`/`height` as TOP-LEVEL props on <img> (not in
+        // style), so build the element directly rather than via h().
+        ({
+          type: "img",
+          props: {
+            src: payload.logoDataUri,
+            width: 52,
+            height: 52,
+            style: {
+              width: 52,
+              height: 52,
+              borderRadius: 12,
+              marginRight: 14,
+              // contain keeps non-square favicons from stretching.
+              objectFit: "contain",
+              backgroundColor: COLORS.card,
+              border: `1px solid ${COLORS.line}`,
+            },
+          },
+        } as El)
+      : h(
+          "div",
+          {
+            width: 52,
+            height: 52,
+            borderRadius: 12,
+            backgroundColor: COLORS.ink,
+            color: COLORS.bg,
+            fontFamily: FONT_FAMILY_SERIF,
+            fontWeight: 700,
+            fontSize: 24,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            marginRight: 14,
+          },
+          txt(monogram(payload.company)),
+        )
   const topLeft = h(
     "div",
     { display: "flex", flexDirection: "row", alignItems: "center" },
     [
-      h(
-        "div",
-        {
-          width: 52,
-          height: 52,
-          borderRadius: 12,
-          backgroundColor: COLORS.ink,
-          color: COLORS.bg,
-          fontFamily: FONT_FAMILY_SERIF,
-          fontWeight: 700,
-          fontSize: 24,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          marginRight: 14,
-        },
-        txt(monogram(payload.company)),
-      ),
+      logoChip,
       payload.inNetwork
         ? h(
             "div",

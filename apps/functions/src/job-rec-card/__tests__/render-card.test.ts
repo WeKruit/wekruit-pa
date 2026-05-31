@@ -25,6 +25,53 @@ test("buildCardTree: pure tree has no Team node (team source removed)", () => {
   assert.match(tree, /51-200 people/)
 })
 
+test("buildCardTree: emits an <img> logo chip when logoDataUri present", () => {
+  const payload = buildRecCardPayload({
+    job: { companyName: "MetaVoice", jobTitle: "Research Scientist" },
+  })!
+  const dataUri =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+  payload.logoDataUri = dataUri
+  const tree = JSON.stringify(buildCardTree(payload))
+  // an <img> with the data URI src — NOT a monogram chip.
+  assert.match(tree, /"type":"img"/)
+  assert.match(tree, /data:image\/png;base64,/)
+})
+
+test("buildCardTree: FAIL-OPEN — no logoDataUri → monogram chip, no <img>", () => {
+  const payload = buildRecCardPayload({
+    job: { companyName: "VoiceCursor", jobTitle: "Founding Engineer" },
+  })!
+  // No logoDataUri (logo fetch failed/absent) — must NOT emit an <img>.
+  assert.equal(payload.logoDataUri, undefined)
+  const tree = JSON.stringify(buildCardTree(payload))
+  assert.ok(!/"type":"img"/.test(tree), "must not emit <img> without a data URI")
+  // monogram from company initials.
+  assert.match(tree, /VO/)
+})
+
+test("renderRecCardPng: FAIL-OPEN — no logo still produces a valid PNG (monogram)", async () => {
+  const payload = buildRecCardPayload({
+    job: { companyName: "Helium", jobTitle: "Product Engineer", locationRaw: "Remote" },
+  })!
+  assert.equal(payload.logoDataUri, undefined)
+  const png = await renderRecCardPng(payload)
+  assert.ok(png.subarray(0, 4).equals(PNG_MAGIC), "not a PNG")
+  assert.ok(png.length > 1000)
+})
+
+test("renderRecCardPng: with logoDataUri → valid PNG (logo embedded, no egress)", async () => {
+  const payload = buildRecCardPayload({
+    job: { companyName: "MetaVoice", jobTitle: "Research Scientist", locationRaw: "Remote" },
+  })!
+  // A real 1x1 PNG data URI — satori embeds it without any network fetch.
+  payload.logoDataUri =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+  const png = await renderRecCardPng(payload)
+  assert.ok(png.subarray(0, 4).equals(PNG_MAGIC), "not a PNG")
+  assert.ok(png.length > 1000)
+})
+
 test("renderRecCardPng: full payload → valid PNG buffer", async () => {
   const payload = buildRecCardPayload({
     job: {

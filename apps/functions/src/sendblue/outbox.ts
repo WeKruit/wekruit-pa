@@ -253,6 +253,60 @@ export async function sweepStaleOutbound(
   return { swept, deadLettered }
 }
 
+// ── English-only outbound guard (Adam 2026-05-31 P0: NO Chinese, EVER, ALL paths) ──
+// EVERY outbound iMessage (thin Claire, legacy orchestrator, prescreen, system) funnels through
+// paSendblueOutbox, so this is the single UNIVERSAL choke that guarantees the product is English-only.
+// If the body carries ANY CJK it is a defect: translate to English via SiliconFlow Qwen; if that is
+// unavailable/fails, strip the CJK and, if nothing usable remains, send a safe English line. NEVER
+// ships Chinese. Fail-open to the deterministic fallback — never throws, never blocks a send.
+const CJK_DETECT_RE = /[㐀-䶿一-鿿豈-﫿぀-ヿｦ-ﾟ]/
+const CJK_STRIP_RE = /[　-〿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/g
+export async function forceEnglishOnly(
+  text: string,
+  log: (event: string, payload?: Record<string, unknown>) => void,
+): Promise<string> {
+  if (!text || !CJK_DETECT_RE.test(text)) return text
+  log("pa.lang.cjk_outbound_blocked", { len: text.length, sample: text.slice(0, 48) })
+  const key = process.env.SILICONFLOW_API_KEY?.trim()
+  if (key) {
+    try {
+      const ac = new AbortController()
+      const timer = setTimeout(() => ac.abort(), 4000)
+      try {
+        const resp = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+          body: JSON.stringify({
+            model: "Qwen/Qwen2.5-7B-Instruct",
+            messages: [
+              {
+                role: "user",
+                content:
+                  "Rewrite the following SMS in English only. Keep the casual texting tone, brevity, and meaning EXACT. " +
+                  "Do NOT add or remove content. Output ONLY the rewritten message, no preface, and absolutely NO Chinese characters.\n\n" +
+                  text,
+              },
+            ],
+            temperature: 0.2,
+            max_tokens: 320,
+          }),
+          signal: ac.signal,
+        })
+        if (resp.ok) {
+          const j = (await resp.json()) as { choices?: Array<{ message?: { content?: string } }> }
+          const out = String(j?.choices?.[0]?.message?.content ?? "").trim()
+          if (out && !CJK_DETECT_RE.test(out)) return out
+        }
+      } finally {
+        clearTimeout(timer)
+      }
+    } catch {
+      /* fall through to deterministic fallback */
+    }
+  }
+  const stripped = text.replace(CJK_STRIP_RE, " ").replace(/\s+/g, " ").trim()
+  return stripped.length >= 12 ? stripped : "Got it — give me a moment and I'll follow up."
+}
 
 export async function paSendblueOutboxHandler(
   event: OutboundEvent,
@@ -530,6 +584,25 @@ export async function paSendblueOutboxHandler(
       allowEnvFromNumberFallback: Boolean(explicitFromNumber),
     })
     const messageHandle = response.message_handle ?? response.uuid ?? null
+    // ATTACHMENT-DELIVERY OBSERVABILITY (2026-05-31): Sendblue echoes the
+    // accepted `media_url` back in the send response — and DROPS it (null/absent)
+    // when the URL is signed or not extension-terminated. We requested an image
+    // when `mediaUrl` was set; record both the requested URL and the echoed URL
+    // so a SILENTLY-DROPPED attachment (requested non-null, echo null) is
+    // detectable on the pa-outbound row instead of being invisible.
+    const mediaEcho =
+      typeof (response as { media_url?: unknown }).media_url === "string"
+        ? (response as { media_url?: string }).media_url
+        : null
+    const mediaRequested = mediaUrl ?? null
+    const mediaDropped = Boolean(mediaRequested) && !mediaEcho
+    if (mediaDropped) {
+      log("[sendblue][outbox] media attachment DROPPED by Sendblue", {
+        docId,
+        toPeer,
+        mediaRequested,
+      })
+    }
     await ref.set(
       {
         status: "sent",
@@ -538,11 +611,14 @@ export async function paSendblueOutboxHandler(
         expiresAtTs: outboundExpiresAtTs(now()),
         ...(messageHandle ? { messageHandle, sendblueUuid: response.uuid ?? messageHandle } : {}),
         sendblueStatus: response.status,
+        ...(mediaRequested
+          ? { mediaRequestedUrl: mediaRequested, mediaEchoUrl: mediaEcho, mediaDropped }
+          : {}),
       },
       { merge: true }
     )
     try { await incrementDailyOutbound(deps.db, now()) } catch {}
-    log("[sendblue][outbox] sent", { docId, toPeer, messageHandle })
+    log("[sendblue][outbox] sent", { docId, toPeer, messageHandle, mediaDropped })
     return
   } catch (err) {
     if (err instanceof SendblueClientError) {

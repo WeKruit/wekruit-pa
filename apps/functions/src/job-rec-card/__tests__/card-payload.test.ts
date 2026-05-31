@@ -6,6 +6,8 @@ import {
   formatSalaryRange,
   humanizeToken,
   normalizeCompanyStage,
+  deriveCompanyDomain,
+  googleFaviconUrl,
 } from "../card-payload.js"
 
 test("buildRecCardPayload: full job + REAL pa-company shape + reasons → complete payload", () => {
@@ -117,13 +119,59 @@ test("buildRecCardPayload: structured whyFits wins over reason-string fallback",
   assert.deepEqual(payload!.whyFits, ["structured bullet"])
 })
 
-test("buildRecCardPayload: rejects non-https logo url", () => {
+test("buildRecCardPayload: rejects non-https logo url (no domain → no favicon)", () => {
   const payload = buildRecCardPayload({
     job: { companyName: "Co", jobTitle: "Role" },
     company: { logoUrl: "http://insecure/logo.png" },
   })
   assert.ok(payload)
+  // Non-https logo dropped; company name "Co" is not a domain → no favicon either.
   assert.equal(payload!.logoUrl, undefined)
+})
+
+// ── logo source: domain → Google favicon (Clearbit-dead replacement, D5) ──────
+
+test("deriveCompanyDomain: from explicit domain / websiteUrl / domain-shaped name", () => {
+  assert.equal(deriveCompanyDomain({ domain: "metavoice.io" }), "metavoice.io")
+  assert.equal(deriveCompanyDomain({ websiteUrl: "https://www.photon.codes/careers" }), "photon.codes")
+  assert.equal(deriveCompanyDomain({ companyName: "invoko.ai" }), "invoko.ai")
+  // Non-domain company names → undefined (renderer falls back to monogram).
+  assert.equal(deriveCompanyDomain({ companyName: "Helium" }), undefined)
+  assert.equal(deriveCompanyDomain({ companyName: "VoiceCursor" }), undefined)
+  assert.equal(deriveCompanyDomain({}), undefined)
+})
+
+test("googleFaviconUrl: 128px PNG endpoint for a domain", () => {
+  assert.equal(
+    googleFaviconUrl("metavoice.io"),
+    "https://www.google.com/s2/favicons?domain=metavoice.io&sz=128",
+  )
+  assert.equal(googleFaviconUrl(undefined), undefined)
+})
+
+test("buildRecCardPayload: derives Google favicon logoUrl from company domain when no logoUrl", () => {
+  const payload = buildRecCardPayload({
+    job: { companyName: "MetaVoice", jobTitle: "Research Scientist" },
+    company: { logoUrl: null, domain: "metavoice.io" },
+  })
+  assert.ok(payload)
+  assert.equal(payload!.logoUrl, "https://www.google.com/s2/favicons?domain=metavoice.io&sz=128")
+})
+
+test("buildRecCardPayload: derives favicon from domain-shaped company name with NO company doc", () => {
+  const payload = buildRecCardPayload({
+    job: { companyName: "invoko.ai", jobTitle: "Product Designer" },
+  })
+  assert.ok(payload)
+  assert.equal(payload!.logoUrl, "https://www.google.com/s2/favicons?domain=invoko.ai&sz=128")
+})
+
+test("buildRecCardPayload: explicit https logoUrl wins over favicon", () => {
+  const payload = buildRecCardPayload({
+    job: { companyName: "metavoice.io", jobTitle: "Role" },
+    company: { logoUrl: "https://cdn.example.com/logo.png", domain: "metavoice.io" },
+  })
+  assert.equal(payload!.logoUrl, "https://cdn.example.com/logo.png")
 })
 
 test("buildRecCardPayload: raise amount over $1B renders in B", () => {

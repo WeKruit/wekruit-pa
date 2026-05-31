@@ -91,11 +91,16 @@ export async function maybeRunThinClaire(
       try {
         const { isJobRecCardEnabled } = await import("../job-rec-card/job-rec-card.js")
         if (isJobRecCardEnabled()) {
-          const { getStorage } = await import("firebase-admin/storage")
           const resolvedPhone = String(toE164)
+          // CACHED-IMAGE model: the runtime reads matching-jobs.recCardMediaUrl
+          // (no render/upload). Sendblue media creds are passed ONLY for the
+          // lazy-gen fallback (a job with no cached card yet); absent → cache-read
+          // only, fail-open to text. Creds are in process.env during onPaInbound.
+          const apiKeyId = process.env.SENDBLUE_API_KEY_ID?.trim()
+          const apiSecretKey = process.env.SENDBLUE_API_SECRET_KEY?.trim()
           cardDeps = {
-            storage: getStorage() as unknown as import("../job-rec-card/upload-card.js").CardStorage,
             getPhoneE164: async () => resolvedPhone,
+            ...(apiKeyId && apiSecretKey ? { sendblueCreds: { apiKeyId, apiSecretKey } } : {}),
             log,
           }
         }

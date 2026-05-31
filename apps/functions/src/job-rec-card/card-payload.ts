@@ -67,8 +67,20 @@ export type RecCardPayload = {
   workMode?: string
   /** WeKruit-collab company → "In Network" badge. */
   inNetwork?: boolean
-  /** Company logo image URL (https, Clearbit). Omitted → monogram chip. */
+  /**
+   * Company logo image URL (https). Sourced from pa-company.logoUrl, else
+   * derived from the company domain via Google favicon. NOT fetched by the
+   * renderer (satori never fetches a remote <img>) — the orchestrator
+   * pre-fetches it into `logoDataUri` before render.
+   */
   logoUrl?: string
+  /**
+   * Pre-fetched logo as a `data:image/...;base64,...` URI. Set by the
+   * orchestrator (job-rec-card.ts) when the remote logo fetch succeeds; the
+   * renderer draws an <img> from it. Absent → renderer draws the monogram chip
+   * (fail-open). Never a remote URL — satori must not egress at render time.
+   */
+  logoDataUri?: string
   /** "WHY THIS FITS YOU" bullets (from the match-reason work / reason split). */
   whyFits?: string[]
   /** "WHY <COMPANY>" bullets. Omitted when the reason work produced none. */
@@ -117,12 +129,59 @@ export type CardCompanySource = {
   employeeRange?: string | null
   /** Free-form industry label. */
   industry?: string | null
-  /** Clearbit logo URL. */
+  /** Logo URL (https). When absent, derived from domain via Google favicon. */
   logoUrl?: string | null
+  /** Company domain (e.g. "metavoice.io") — favicon-logo source when logoUrl absent. */
+  domain?: string | null
+  /** Company website URL (e.g. "https://photon.codes/") — domain fallback source. */
+  websiteUrl?: string | null
   hqLocation?: string | null
   /** WeKruit partnership flag → "In Network" badge. */
   wekruitCollab?: boolean | null
   fundingRounds?: CardFundingRound[] | null
+}
+
+/**
+ * Extract a bare hostname ("metavoice.io") from a company domain, website URL,
+ * or domain-shaped company name ("invoko.ai"). Strips scheme / www / path /
+ * port. Returns undefined when no plausible domain is present.
+ */
+export function deriveCompanyDomain(input: {
+  domain?: string | null
+  websiteUrl?: string | null
+  companyName?: string | null
+}): string | undefined {
+  const candidates = [input.domain, input.websiteUrl, input.companyName]
+  for (const raw of candidates) {
+    const s = cleanStr(raw)
+    if (!s) continue
+    let host = s.trim().toLowerCase()
+    // Strip scheme.
+    host = host.replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
+    // Strip path / query / fragment.
+    host = host.split(/[/?#]/)[0] ?? ""
+    // Strip credentials + port.
+    host = host.split("@").pop() ?? host
+    host = host.split(":")[0] ?? host
+    // Strip leading www.
+    host = host.replace(/^www\./, "")
+    // Must look like a domain: at least one dot, valid label chars.
+    if (/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/.test(host)) {
+      return host
+    }
+  }
+  return undefined
+}
+
+/**
+ * Build the Google favicon logo URL for a domain. 128px PNG, public, no auth.
+ * Live-verified 200 image/png (after a 301). Used as the logo source when a
+ * company has no explicit logoUrl. Returns undefined for an empty domain.
+ */
+export function googleFaviconUrl(domain: string | undefined): string | undefined {
+  const d = cleanStr(domain)
+  if (!d) return undefined
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=128`
 }
 
 /** Rich match reasons produced by the sibling reason agent. */
@@ -261,14 +320,34 @@ export function buildRecCardPayload(input: {
     if (headcount) payload.headcount = headcount
     const industry = cleanStr(company.industry)
     if (industry) payload.industry = humanizeToken(industry)
-    const logoUrl = cleanStr(company.logoUrl)
-    if (logoUrl && /^https:\/\//.test(logoUrl)) payload.logoUrl = logoUrl
+    // Logo source: explicit https logoUrl wins; else derive a Google favicon URL
+    // from the company domain (D5 fix — Clearbit is dead). The renderer never
+    // fetches this — the orchestrator pre-fetches it into `logoDataUri`.
+    const explicitLogo = cleanStr(company.logoUrl)
+    if (explicitLogo && /^https:\/\//.test(explicitLogo)) {
+      payload.logoUrl = explicitLogo
+    } else {
+      const domain = deriveCompanyDomain({
+        domain: company.domain,
+        websiteUrl: company.websiteUrl,
+        companyName: job.companyName,
+      })
+      const favicon = googleFaviconUrl(domain)
+      if (favicon) payload.logoUrl = favicon
+    }
     const hq = cleanStr(company.hqLocation)
     if (hq) location = hq
     const { raiseAmount, backers } = deriveFunding(company.fundingRounds)
     if (raiseAmount) payload.raiseAmount = raiseAmount
     if (backers) payload.backers = backers
     if (company.wekruitCollab === true) payload.inNetwork = true
+  }
+  // No company doc (or company doc had no logo source): still try a favicon from
+  // a domain-shaped company name (e.g. "invoko.ai"). Fail-open — the renderer
+  // shows a monogram when this stays unset.
+  if (!payload.logoUrl) {
+    const favicon = googleFaviconUrl(deriveCompanyDomain({ companyName: job.companyName }))
+    if (favicon) payload.logoUrl = favicon
   }
   if (location) payload.location = location
 

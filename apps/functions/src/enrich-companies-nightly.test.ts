@@ -155,7 +155,8 @@ describe("ycResultFor", () => {
     )
     assert.equal(r.source, "yc")
     assert.equal(r.patch?.domain, "anthropic.com")
-    assert.equal(r.patch?.logoUrl, "https://logo.clearbit.com/anthropic.com")
+    // 2026-05-31: Clearbit logo CDN is dead → Google favicon by domain.
+    assert.equal(r.patch?.logoUrl, "https://www.google.com/s2/favicons?domain=anthropic.com&sz=128")
   })
   it("includes yc_active tag for active batch", () => {
     const r = ycResultFor({ name: "X", batch: "W25", status: "active" }, new Date(FIXED_NOW))
