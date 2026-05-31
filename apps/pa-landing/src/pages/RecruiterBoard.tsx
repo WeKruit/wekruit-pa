@@ -64,8 +64,20 @@ const STATUS_LABELS: Record<string, { label: string; tone: "live" | "info" | "su
   duplicate: { label: "Duplicate", tone: "mute" },
 }
 
+const CALIBRATION_LABELS: Record<string, { label: string; tone: "live" | "info" | "success" | "warn" | "mute" }> = {
+  not_rated: { label: "Not rated", tone: "mute" },
+  calibration_requested: { label: "Needs adjustment", tone: "info" },
+  good_fit: { label: "Good fit", tone: "success" },
+  bad_fit: { label: "Not a fit", tone: "warn" },
+  suggested: { label: "Suggested direction", tone: "info" },
+}
+
 function statusMeta(status?: string) {
   return STATUS_LABELS[status ?? "submitted"] ?? { label: status ?? "Submitted", tone: "mute" as const }
+}
+
+function calibrationMeta(status?: string) {
+  return CALIBRATION_LABELS[status ?? "not_rated"] ?? { label: status?.replace(/_/g, " ") ?? "Not rated", tone: "mute" as const }
 }
 
 function createdAtMs(s: RecruiterSubmissionItem): number {
@@ -1020,6 +1032,7 @@ function SourcedCandidateCard({
   onStageChange: (stage: RecruiterSourcedCandidateStage) => void
 }) {
   const stage = sourceStageMeta(candidate.stage)
+  const calibration = calibrationMeta(candidate.calibrationStatus)
   return (
     <article className="rb-source-card">
       <div>
@@ -1030,6 +1043,12 @@ function SourcedCandidateCard({
         </span>
       </div>
       <p>{shortText(candidate.candidate?.notes, "No note yet", 96)}</p>
+      {(candidate.calibrationStatus || candidate.calibrationNote) && (
+        <div className="rb-source-card__calibration">
+          <span className={`rb-status is-${calibration.tone}`}>{calibration.label}</span>
+          {candidate.calibrationNote && <p>{shortText(candidate.calibrationNote, "", 120)}</p>}
+        </div>
+      )}
       <footer>
         <span className={`rb-status is-${stage.tone}`}>{stage.label}</span>
         <select

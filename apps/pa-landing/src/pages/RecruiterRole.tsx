@@ -117,6 +117,16 @@ function sourcedStageLabel(stage?: string): string {
   }
 }
 
+function sourcedCalibrationLabel(status?: string): string {
+  switch (status) {
+    case "calibration_requested": return "Needs adjustment"
+    case "good_fit": return "Good fit"
+    case "bad_fit": return "Not a fit"
+    case "suggested": return "Suggested direction"
+    default: return "Not rated"
+  }
+}
+
 // Minimal Markdown → React renderer for jdBlocks.body. Supports `-` bullet
 // lists, blank-line paragraphs, and inline `**bold**` / `*em*` / `` `code` ``.
 function renderMarkdown(text: string): ReactNode[] {
@@ -642,6 +652,12 @@ export default function RecruiterRole() {
                     <span>
                       <strong>{candidate.candidate?.name || "Candidate"}</strong>
                       <em>{candidate.candidate?.currentRole || sourcedStageLabel(candidate.stage)}</em>
+                      {(candidate.calibrationStatus || candidate.calibrationNote) && (
+                        <em>
+                          {sourcedCalibrationLabel(candidate.calibrationStatus)}
+                          {candidate.calibrationNote ? ` - ${candidate.calibrationNote}` : ""}
+                        </em>
+                      )}
                     </span>
                     <small>{sourcedStageLabel(candidate.stage)}</small>
                     <button type="button" className="rb-btn" onClick={() => useSourcedCandidate(candidate)}>

@@ -6,7 +6,7 @@
  * primitive + useTable hook.
  */
 import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
-import { arrayUnion, collection, doc, getDocs, limit, orderBy, query, serverTimestamp, updateDoc } from "firebase/firestore"
+import { arrayUnion, collection, doc, getDocs, getDocsFromServer, limit, orderBy, query, serverTimestamp, updateDoc } from "firebase/firestore"
 import { AdminJobLink } from "../components/AdminEntityLink.js"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { DataTable, type Column } from "../components/console/primitives.js"
@@ -69,6 +69,33 @@ function statusBadge(s: string | undefined): "ok" | "warn" | "info" | "muted" {
 }
 
 const STATUS_VALUES = ["submitted", "new", "reviewing", "advanced", "interviewing", "hired", "rejected", "duplicate"]
+const SOURCE_STAGE_VALUES = ["sourced", "contacted", "screened", "ready", "submitted", "archived"]
+const CALIBRATION_VALUES = ["not_rated", "calibration_requested", "good_fit", "bad_fit", "suggested"]
+
+interface SourcedCandidateDoc {
+  id: string
+  candidateId?: string
+  recruiterId?: string
+  recruiterEmail?: string
+  jobId?: string
+  inboundJobId?: string
+  jobTitleSnapshot?: string
+  companyLabelSnapshot?: string
+  stage?: string
+  candidate?: {
+    name?: string
+    link?: string
+    currentRole?: string
+    yoe?: string
+    notes?: string
+  }
+  calibrationStatus?: string
+  calibrationNote?: string | null
+  calibrationUpdatedAt?: { seconds?: number } | string | null
+  createdAt?: { seconds?: number } | string | null
+  updatedAt?: { seconds?: number } | string | null
+  updatedAtMs?: number
+}
 
 interface RecruiterProfileDoc {
   id: string
@@ -134,7 +161,7 @@ function formatCodeExpiry(raw?: string | null): string {
   return Number.isNaN(ms) ? raw : new Date(ms).toLocaleString()
 }
 
-type RecruiterAdminSection = "codes" | "submissions"
+type RecruiterAdminSection = "codes" | "sourced" | "submissions"
 
 function codeStatus(code: RecruiterInviteCodeDoc): { label: string; tone: Parameters<typeof Badge>[0]["tone"] } {
   if (code.active === false) return { label: "disabled", tone: "muted" }
@@ -266,6 +293,8 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
         description={
           section === "codes"
             ? "Create one-use recruiter access codes, review recruiter accounts, and monitor new-role alerts."
+            : section === "sourced"
+              ? "Review sourced prospects before formal submission, calibrate recruiters, and monitor role-level supply."
             : "Review recruiter-submitted candidates and move each submission through the hiring-board pipeline."
         }
       />
@@ -278,6 +307,15 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
       <div>
         {header}
         <RecruiterOpsPanel />
+      </div>
+    )
+  }
+
+  if (section === "sourced") {
+    return (
+      <div>
+        {header}
+        <RecruiterSourcedCandidatesPanel />
       </div>
     )
   }
@@ -444,6 +482,12 @@ function RecruiterSectionTabs({ active }: { active: RecruiterAdminSection }) {
       detail: "Invite codes, accounts, role alerts",
     },
     {
+      key: "sourced",
+      label: "Sourced candidates",
+      to: "/admin/recruiter-sourced",
+      detail: "Calibration queue",
+    },
+    {
       key: "submissions",
       label: "Submissions",
       to: "/admin/recruiter-submissions",
@@ -456,7 +500,7 @@ function RecruiterSectionTabs({ active }: { active: RecruiterAdminSection }) {
       aria-label="Recruiter admin sections"
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
         gap: 12,
         margin: "0 0 16px",
       }}
@@ -505,7 +549,7 @@ function RecruiterOpsPanel() {
     try {
       const [profileSnap, codeSnap, notificationSnap] = await Promise.all([
         getDocs(collection(db(), "pa-recruiter-users")),
-        getDocs(collection(db(), "pa-recruiter-invite-codes")),
+        getDocsFromServer(collection(db(), "pa-recruiter-invite-codes")),
         getDocs(query(collection(db(), "pa-recruiter-notifications"), limit(100))),
       ])
       setProfiles(profileSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterProfileDoc, "id">) })))
@@ -702,6 +746,369 @@ function RecruiterOpsPanel() {
           ))}
           {!notifications.length && <EmptyOpsText>No role notifications yet.</EmptyOpsText>}
         </OpsSection>
+      </div>
+    </Panel>
+  )
+}
+
+function calibrationTone(status?: string): Parameters<typeof Badge>[0]["tone"] {
+  switch (status) {
+    case "good_fit": return "ok"
+    case "bad_fit": return "warn"
+    case "calibration_requested": return "info"
+    case "suggested": return "info"
+    default: return "muted"
+  }
+}
+
+function stageTone(stage?: string): Parameters<typeof Badge>[0]["tone"] {
+  switch (stage) {
+    case "ready": return "ok"
+    case "submitted": return "info"
+    case "archived": return "muted"
+    case "screened": return "info"
+    case "contacted": return "info"
+    default: return "muted"
+  }
+}
+
+function prettyKey(value?: string | null): string {
+  return value ? value.replace(/_/g, " ") : "not rated"
+}
+
+function RecruiterSourcedCandidatesPanel() {
+  const [rows, setRows] = useState<SourcedCandidateDoc[]>([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  const reload = async () => {
+    setLoading(true)
+    setErr(null)
+    try {
+      const snap = await getDocs(query(
+        collection(db(), "pa-recruiter-sourced-candidates"),
+        orderBy("updatedAt", "desc"),
+        limit(500),
+      ))
+      setRows(snap.docs.map((d) => {
+        const data = d.data() as Omit<SourcedCandidateDoc, "id">
+        return { id: d.id, ...data, updatedAtMs: timestampToMs(data.updatedAt ?? data.createdAt) }
+      }))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void reload()
+  }, [])
+
+  const jobOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const r of rows) {
+      const id = r.inboundJobId ?? r.jobId
+      if (id && !seen.has(id)) seen.set(id, r.jobTitleSnapshot ?? id)
+    }
+    return [...seen.entries()].map(([jobId, label]) => ({
+      key: jobId,
+      label,
+      title: jobId,
+      test: (r: SourcedCandidateDoc) => r.inboundJobId === jobId || r.jobId === jobId,
+    }))
+  }, [rows])
+
+  const table = useTable<SourcedCandidateDoc>(rows, {
+    defaultSort: { key: "updatedAtMs", dir: "desc" },
+    pageSize: 50,
+    search: (r, q) =>
+      (r.recruiterEmail?.toLowerCase().includes(q) ?? false) ||
+      (r.candidate?.name?.toLowerCase().includes(q) ?? false) ||
+      (r.candidate?.link?.toLowerCase().includes(q) ?? false) ||
+      (r.jobTitleSnapshot?.toLowerCase().includes(q) ?? false) ||
+      (r.companyLabelSnapshot?.toLowerCase().includes(q) ?? false),
+    chips: [
+      { id: "job", label: "Job", multi: false, options: jobOptions },
+      {
+        id: "stage",
+        label: "Stage",
+        multi: true,
+        options: SOURCE_STAGE_VALUES.map((s) => ({
+          key: s,
+          label: s,
+          test: (r: SourcedCandidateDoc) => (r.stage ?? "sourced") === s,
+        })),
+      },
+      {
+        id: "calibration",
+        label: "Calibration",
+        multi: true,
+        options: CALIBRATION_VALUES.map((s) => ({
+          key: s,
+          label: prettyKey(s),
+          test: (r: SourcedCandidateDoc) => (r.calibrationStatus ?? "not_rated") === s,
+        })),
+      },
+    ],
+  })
+
+  const metrics = {
+    total: rows.length,
+    ready: rows.filter((r) => r.stage === "ready").length,
+    submitted: rows.filter((r) => r.stage === "submitted").length,
+    needsReview: rows.filter((r) => !r.calibrationStatus || r.calibrationStatus === "not_rated" || r.calibrationStatus === "calibration_requested").length,
+  }
+
+  if (loading) return <LoadingState label="Loading sourced candidates..." />
+  if (err) return <ErrorState message={err} />
+
+  const columns: Column<SourcedCandidateDoc>[] = [
+    {
+      key: "updatedAtMs",
+      label: "Updated",
+      sortable: true,
+      width: 160,
+      render: (r) => <span style={{ whiteSpace: "nowrap" }}>{formatOpsDate(r.updatedAt ?? r.createdAt)}</span>,
+    },
+    {
+      key: "jobTitleSnapshot",
+      label: "Role",
+      sortable: true,
+      render: (r) => (
+        <>
+          <div style={{ fontWeight: 500 }}>
+            {r.jobId ? <AdminJobLink jobId={r.jobId}>{r.jobTitleSnapshot ?? r.jobId}</AdminJobLink> : r.jobTitleSnapshot ?? "—"}
+          </div>
+          <div style={{ color: "#777", fontSize: 11 }}>{r.companyLabelSnapshot ?? ""}</div>
+        </>
+      ),
+    },
+    {
+      key: "recruiterEmail",
+      label: "Recruiter",
+      sortable: true,
+      render: (r) => r.recruiterEmail ?? r.recruiterId ?? "—",
+    },
+    {
+      key: "candidate",
+      label: "Candidate",
+      render: (r) => (
+        <>
+          <div>{r.candidate?.name ?? "—"}</div>
+          {r.candidate?.link && (
+            <a
+              href={r.candidate.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              style={{ fontSize: 11, color: "#2a5fb8" }}
+            >
+              {r.candidate.link.length > 42 ? r.candidate.link.slice(0, 42) + "..." : r.candidate.link}
+            </a>
+          )}
+        </>
+      ),
+    },
+    {
+      key: "stage",
+      label: "Stage",
+      sortable: true,
+      width: 120,
+      render: (r) => <Badge tone={stageTone(r.stage)}>{r.stage ?? "sourced"}</Badge>,
+    },
+    {
+      key: "calibrationStatus",
+      label: "Calibration",
+      sortable: true,
+      width: 140,
+      render: (r) => <Badge tone={calibrationTone(r.calibrationStatus)}>{prettyKey(r.calibrationStatus)}</Badge>,
+    },
+    {
+      key: "calibrationNote",
+      label: "Feedback",
+      width: 180,
+      render: (r) => r.calibrationNote ? (r.calibrationNote.length > 44 ? r.calibrationNote.slice(0, 44) + "..." : r.calibrationNote) : "—",
+    },
+  ]
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+        <OpsMetric label="Sourced" value={metrics.total} />
+        <OpsMetric label="Ready" value={metrics.ready} />
+        <OpsMetric label="Submitted" value={metrics.submitted} />
+        <OpsMetric label="Needs calibration" value={metrics.needsReview} />
+      </div>
+      <Panel>
+        <DataTable<SourcedCandidateDoc>
+          columns={columns}
+          rows={table.visibleRows}
+          chips={table.chipsForRender}
+          search={table.search}
+          onSearch={table.setSearch}
+          searchPlaceholder="Search recruiter / candidate / role..."
+          sort={table.sort}
+          onSort={table.toggleSort}
+          page={table.page}
+          pageCount={table.pageCount}
+          onPageChange={table.setPage}
+          onResetFilters={table.reset}
+          count={table.filteredCount}
+          totalCount={table.totalRows}
+          onRowClick={(r) => setExpandedId(expandedId === r.id ? null : r.id ?? null)}
+          empty={
+            <div style={{ padding: 40, textAlign: "center", color: "#777" }}>
+              No sourced candidates match the current filters.
+            </div>
+          }
+        />
+      </Panel>
+      {expandedId && (() => {
+        const row = rows.find((r) => r.id === expandedId)
+        if (!row) return null
+        return (
+          <SourcedCandidateDetailPanel
+            row={row}
+            onClose={() => setExpandedId(null)}
+            onUpdated={(next) => {
+              setRows((prev) => prev.map((r) => r.id === next.id ? { ...r, ...next, updatedAtMs: Date.now() } : r))
+            }}
+          />
+        )
+      })()}
+    </div>
+  )
+}
+
+function SourcedCandidateDetailPanel({
+  row,
+  onClose,
+  onUpdated,
+}: {
+  row: SourcedCandidateDoc
+  onClose: () => void
+  onUpdated: (row: Partial<SourcedCandidateDoc> & { id: string }) => void
+}) {
+  const [draftStage, setDraftStage] = useState(row.stage ?? "sourced")
+  const [draftCalibration, setDraftCalibration] = useState(row.calibrationStatus ?? "not_rated")
+  const [draftNote, setDraftNote] = useState(row.calibrationNote ?? "")
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const save = async () => {
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await updateDoc(doc(db(), "pa-recruiter-sourced-candidates", row.id), {
+        stage: draftStage,
+        calibrationStatus: draftCalibration,
+        calibrationNote: draftNote.trim() || null,
+        calibrationUpdatedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        calibrationHistory: arrayUnion({
+          stage: draftStage,
+          calibrationStatus: draftCalibration,
+          note: draftNote.trim() || null,
+          by: "admin",
+          atIso: new Date().toISOString(),
+        }),
+      })
+      onUpdated({
+        id: row.id,
+        stage: draftStage,
+        calibrationStatus: draftCalibration,
+        calibrationNote: draftNote.trim() || null,
+        calibrationUpdatedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Panel
+      title="Sourced candidate calibration"
+      actions={
+        <button
+          onClick={onClose}
+          style={{ border: "none", background: "none", cursor: "pointer", color: "#888", fontSize: 16 }}
+          aria-label="Close"
+        >
+          x
+        </button>
+      }
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div>
+          <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>Candidate</h4>
+          <p style={{ margin: 0, fontSize: 13 }}>
+            <strong>{row.candidate?.name ?? "Candidate"}</strong>
+            {row.candidate?.currentRole && <> - {row.candidate.currentRole}</>}
+            {row.candidate?.yoe && <> - {row.candidate.yoe} YOE</>}
+          </p>
+          {row.candidate?.link && (
+            <p style={{ margin: "4px 0 0", fontSize: 12 }}>
+              <a href={row.candidate.link} target="_blank" rel="noopener noreferrer">{row.candidate.link}</a>
+            </p>
+          )}
+          {row.candidate?.notes && (
+            <>
+              <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>Recruiter note</h4>
+              <p style={{ margin: 0, fontSize: 13, whiteSpace: "pre-wrap" }}>{row.candidate.notes}</p>
+            </>
+          )}
+        </div>
+        <div>
+          <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>Role</h4>
+          <p style={{ margin: 0, fontSize: 13 }}>
+            <strong>{row.jobTitleSnapshot ?? row.jobId ?? "Role"}</strong>
+            <br />
+            <span style={{ color: "#777" }}>{row.companyLabelSnapshot ?? ""}</span>
+          </p>
+          <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>Recruiter</h4>
+          <p style={{ margin: 0, fontSize: 13 }}>{row.recruiterEmail ?? row.recruiterId ?? "—"}</p>
+        </div>
+      </div>
+      <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid #eee" }}>
+        <h4 style={{ margin: "0 0 8px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+          Recruiter-visible calibration
+        </h4>
+        <div style={{ display: "grid", gridTemplateColumns: "160px 190px 1fr auto", gap: 10, alignItems: "start" }}>
+          <select
+            value={draftStage}
+            onChange={(e) => setDraftStage(e.target.value)}
+            style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}
+          >
+            {SOURCE_STAGE_VALUES.map((s) => <option value={s} key={s}>{s}</option>)}
+          </select>
+          <select
+            value={draftCalibration}
+            onChange={(e) => setDraftCalibration(e.target.value)}
+            style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}
+          >
+            {CALIBRATION_VALUES.map((s) => <option value={s} key={s}>{prettyKey(s)}</option>)}
+          </select>
+          <textarea
+            value={draftNote}
+            onChange={(e) => setDraftNote(e.target.value)}
+            placeholder="Feedback visible to recruiter, e.g. why good fit or what to adjust..."
+            rows={3}
+            style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, resize: "vertical" }}
+          />
+          <button
+            onClick={save}
+            disabled={saving}
+            style={{ padding: "8px 12px", border: "1px solid #222", background: "#222", color: "#fff", borderRadius: 6, cursor: saving ? "default" : "pointer" }}
+          >
+            {saving ? "Saving..." : "Save"}
+          </button>
+        </div>
+        {saveError && <p style={{ color: "#a00", fontSize: 12, margin: "8px 0 0" }}>{saveError}</p>}
       </div>
     </Panel>
   )

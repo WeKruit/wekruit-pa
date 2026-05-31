@@ -1065,6 +1065,9 @@ interface RecruiterSourcedCandidateListItem {
   companyLabelSnapshot?: string
   stage: RecruiterSourcedCandidateStage
   candidate?: RecruiterSourcedCandidateInput["candidate"]
+  calibrationStatus?: string
+  calibrationNote?: string | null
+  calibrationUpdatedAt?: unknown
   createdAt?: unknown
   updatedAt?: unknown
 }
@@ -1154,6 +1157,9 @@ function publicRecruiterSourcedCandidate(
     candidate: typeof data.candidate === "object" && data.candidate !== null
       ? data.candidate as RecruiterSourcedCandidateInput["candidate"]
       : undefined,
+    calibrationStatus: typeof data.calibrationStatus === "string" ? data.calibrationStatus : undefined,
+    calibrationNote: typeof data.calibrationNote === "string" ? data.calibrationNote : null,
+    calibrationUpdatedAt: data.calibrationUpdatedAt,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   }

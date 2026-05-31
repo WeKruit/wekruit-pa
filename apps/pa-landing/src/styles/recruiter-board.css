@@ -1633,6 +1633,21 @@
   line-height: 1.4;
 }
 
+.rb-source-card__calibration {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: start;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+}
+
+.rb-source-card__calibration p {
+  color: var(--ink);
+}
+
 .rb-source-card footer {
   display: flex;
   align-items: center;

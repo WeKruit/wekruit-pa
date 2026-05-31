@@ -125,6 +125,9 @@ export interface RecruiterSourcedCandidateItem {
     yoe?: string
     notes?: string
   }
+  calibrationStatus?: string
+  calibrationNote?: string | null
+  calibrationUpdatedAt?: { seconds?: number } | string | null
   createdAt?: { seconds?: number } | string | null
   updatedAt?: { seconds?: number } | string | null
 }
