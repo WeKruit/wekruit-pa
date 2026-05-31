@@ -8,9 +8,11 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 import {
   createUserWithEmailAndPassword,
+  GoogleAuthProvider,
   onAuthStateChanged,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
+  signInWithPopup,
   signOut,
 } from "firebase/auth"
 import { Link, useSearchParams } from "react-router-dom"
@@ -77,6 +79,59 @@ function sortSubmissions(rows: RecruiterSubmissionItem[]): RecruiterSubmissionIt
 function submissionScore(s: RecruiterSubmissionItem): string {
   if (!s.score) return "Score pending"
   return `Hard ${s.score.hardChecked}/${s.score.hardTotal} · Fit ${s.score.fitChecked}/${s.score.fitTotal}`
+}
+
+function cleanRecruiterEmail(value: string): string {
+  return value.trim().toLowerCase()
+}
+
+function createRecruiterGoogleProvider(): GoogleAuthProvider {
+  const provider = new GoogleAuthProvider()
+  provider.setCustomParameters({ prompt: "select_account" })
+  return provider
+}
+
+function authErrorCode(error: unknown): string {
+  return error && typeof error === "object" && "code" in error
+    ? String((error as { code?: unknown }).code ?? "")
+    : ""
+}
+
+function formatRecruiterAuthError(error: unknown, mode: "signup" | "signin"): string {
+  const code = authErrorCode(error)
+  switch (code) {
+    case "auth/email-already-in-use":
+      return "That email already has a Firebase account. Use the existing password, or continue with Google if that account uses Google sign-in."
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+      return mode === "signup"
+        ? "That email already has a Firebase account, but the password did not match. Use the existing password, or continue with Google if that account uses Google sign-in."
+        : "The email/password did not match an existing Firebase account."
+    case "auth/account-exists-with-different-credential":
+      return "That email already uses another Firebase sign-in method. Continue with Google or sign in with the existing method first."
+    case "auth/popup-closed-by-user":
+      return "Google sign-in was cancelled."
+    case "auth/popup-blocked":
+      return "The browser blocked the Google sign-in popup. Allow popups and try again."
+    case "auth/cancelled-popup-request":
+      return "Google sign-in was interrupted. Try again."
+    case "auth/unauthorized-domain":
+      return "This domain is not authorized for Google sign-in in Firebase yet."
+    default:
+      if (error instanceof Error) {
+        if (error.message === "unauthorized") {
+          return "This Firebase account does not have recruiter access yet. Use Create account with an access code first."
+        }
+        if (error.message === "email_mismatch") {
+          return "The signed-in Firebase account email must match the email used to claim this access code."
+        }
+        if (error.message === "invalid_or_expired_invite_code") {
+          return "That access code is invalid, expired, or already used."
+        }
+        if (error.message) return error.message
+      }
+      return code ? code.replace(/^auth\//, "").replace(/-/g, " ") : "Recruiter sign-in failed."
+  }
 }
 
 export default function RecruiterBoard() {
@@ -262,6 +317,26 @@ function RecruiterAccessGate({ onAuthed }: { onAuthed: (session: RecruiterSessio
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
+  const requireInviteFields = () => {
+    const trimmedName = name.trim()
+    const trimmedInviteCode = inviteCode.trim()
+    if (!trimmedInviteCode) throw new Error("Enter your access code.")
+    if (!trimmedName) throw new Error("Enter your name.")
+    return { trimmedName, trimmedInviteCode }
+  }
+
+  const registerSignedInRecruiter = async (input: {
+    name: string
+    email: string
+    inviteCode: string
+  }) => {
+    const user = auth().currentUser
+    const userEmail = user?.email ? cleanRecruiterEmail(user.email) : ""
+    if (!userEmail) throw new Error("firebase_auth_required")
+    if (userEmail !== input.email) throw new Error("email_mismatch")
+    return registerRecruiterAccess(input)
+  }
+
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setBusy(true)
@@ -269,24 +344,72 @@ function RecruiterAccessGate({ onAuthed }: { onAuthed: (session: RecruiterSessio
     setNotice(null)
     try {
       if (mode === "signup") {
-        const normalizedEmail = email.trim().toLowerCase()
+        const { trimmedName, trimmedInviteCode } = requireInviteFields()
+        const normalizedEmail = cleanRecruiterEmail(email)
+        if (!normalizedEmail) throw new Error("Enter your work email.")
         const currentUser = auth().currentUser
-        if (currentUser?.email?.toLowerCase() === normalizedEmail) {
+        if (currentUser?.email && cleanRecruiterEmail(currentUser.email) === normalizedEmail) {
           // This lets a recruiter retry a code after Firebase account creation
           // succeeded but the invite-code binding failed.
         } else {
           if (currentUser) await signOut(auth())
-          await createUserWithEmailAndPassword(auth(), normalizedEmail, password)
+          try {
+            await createUserWithEmailAndPassword(auth(), normalizedEmail, password)
+          } catch (createError) {
+            if (authErrorCode(createError) !== "auth/email-already-in-use") throw createError
+            try {
+              await signInWithEmailAndPassword(auth(), normalizedEmail, password)
+            } catch (signInError) {
+              throw new Error(formatRecruiterAuthError(signInError, "signup"))
+            }
+          }
         }
-        const session = await registerRecruiterAccess({ name, email, inviteCode })
+        const session = await registerSignedInRecruiter({
+          name: trimmedName,
+          email: normalizedEmail,
+          inviteCode: trimmedInviteCode,
+        })
         onAuthed(session)
       } else {
-        await signInWithEmailAndPassword(auth(), email.trim(), password)
+        await signInWithEmailAndPassword(auth(), cleanRecruiterEmail(email), password)
         const session = await getRecruiterProfile()
         onAuthed(session)
       }
     } catch (error) {
-      setErr(error instanceof Error ? error.message : String(error))
+      setErr(formatRecruiterAuthError(error, mode))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const continueWithGoogle = async () => {
+    setBusy(true)
+    setErr(null)
+    setNotice(null)
+    try {
+      if (auth().currentUser) await signOut(auth())
+      const credential = await signInWithPopup(auth(), createRecruiterGoogleProvider())
+      const googleEmail = cleanRecruiterEmail(credential.user.email ?? "")
+      if (!googleEmail) throw new Error("Google did not return an email for this account.")
+
+      if (mode === "signup") {
+        const { trimmedName, trimmedInviteCode } = requireInviteFields()
+        const typedEmail = cleanRecruiterEmail(email)
+        if (typedEmail && typedEmail !== googleEmail) {
+          throw new Error("The selected Google account must match the email on this form.")
+        }
+        const session = await registerSignedInRecruiter({
+          name: trimmedName,
+          email: googleEmail,
+          inviteCode: trimmedInviteCode,
+        })
+        onAuthed(session)
+      } else {
+        const session = await getRecruiterProfile()
+        onAuthed(session)
+      }
+    } catch (error) {
+      setErr(formatRecruiterAuthError(error, mode))
     } finally {
       setBusy(false)
     }
@@ -301,10 +424,10 @@ function RecruiterAccessGate({ onAuthed }: { onAuthed: (session: RecruiterSessio
     setErr(null)
     setNotice(null)
     try {
-      await sendPasswordResetEmail(auth(), email.trim())
+      await sendPasswordResetEmail(auth(), cleanRecruiterEmail(email))
       setNotice("Password reset email sent.")
     } catch (error) {
-      setErr(error instanceof Error ? error.message : String(error))
+      setErr(formatRecruiterAuthError(error, mode))
     } finally {
       setBusy(false)
     }
@@ -316,8 +439,8 @@ function RecruiterAccessGate({ onAuthed }: { onAuthed: (session: RecruiterSessio
     setNotice(null)
   }
 
-  const title = mode === "signup" ? "Create recruiter account" : "Sign in"
-  const cta = mode === "signup" ? "Create account" : "Sign in"
+  const title = mode === "signup" ? "Create or claim recruiter account" : "Sign in"
+  const cta = mode === "signup" ? "Continue with email/password" : "Sign in with email/password"
 
   return (
     <div className="rb-access">
@@ -380,6 +503,9 @@ function RecruiterAccessGate({ onAuthed }: { onAuthed: (session: RecruiterSessio
           {notice && <p className="rb-access__notice">{notice}</p>}
           <button className="rb-btn primary rb-btn--block" disabled={busy}>
             {busy ? "Working..." : cta}
+          </button>
+          <button type="button" className="rb-btn rb-btn--block" disabled={busy} onClick={() => void continueWithGoogle()}>
+            Continue with Google
           </button>
           {mode === "signin" && (
             <button type="button" className="rb-access__reset" disabled={busy} onClick={() => void resetPassword()}>
