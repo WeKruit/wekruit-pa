@@ -113,11 +113,24 @@ export function projectTagsToGlobalTags(tags: Record<string, unknown>): Record<s
   if (Array.isArray(tags.skills)) g.skills = tags.skills
   if (typeof tags.careerStage === "string") {
     g.careerStage = tags.careerStage
-    // Seniority RANGE — anchor + how far up the candidate is open (preferenceHardness.careerStage.bufferSteps)
-    // → [anchor, anchor+buffer] in CAREER_STAGE_VOCAB order. Lets /me render "junior–senior", not "junior".
-    const range = deriveCareerStageRange(tags.careerStage, tags.preferenceHardness)
-    if (range) g.careerStageRange = range
   }
+  // Seniority RANGE. An EXPLICIT candidate-authored range (`tags.careerStageRange`, from the /me editor
+  // or conversation) DRIVES /me + matching and wins over the derived one (Adam-locked 2026-05-31). When
+  // absent, derive a display range from the scalar anchor + how far up the candidate is open
+  // (preferenceHardness.careerStage.bufferSteps) so /me still renders "junior–senior", not "junior".
+  const explicitRange =
+    Array.isArray(tags.careerStageRange) &&
+    tags.careerStageRange.length === 2 &&
+    typeof tags.careerStageRange[0] === "string" &&
+    typeof tags.careerStageRange[1] === "string"
+      ? ([tags.careerStageRange[0], tags.careerStageRange[1]] as [string, string])
+      : undefined
+  const range =
+    explicitRange ??
+    (typeof tags.careerStage === "string"
+      ? deriveCareerStageRange(tags.careerStage, tags.preferenceHardness)
+      : undefined)
+  if (range) g.careerStageRange = range
   if (Array.isArray(tags.yoeRange)) g.yoeRange = tags.yoeRange
   const ind = arr("industrySector")
   if (ind) g.industrySector = ind

@@ -413,6 +413,24 @@ test("projectTagsToGlobalTags: careerStageRange derived from careerStage + buffe
   assert.equal(g2.careerStageRange, undefined)
 })
 
+test("projectTagsToGlobalTags: EXPLICIT careerStageRange wins over the derived one", () => {
+  // Candidate authored an explicit range via the /me editor — it must DRIVE the
+  // projection (and matching), overriding the scalar+bufferSteps derivation.
+  const g = projectTagsToGlobalTags({
+    careerStage: "junior",
+    careerStageRange: ["entry_level", "senior"],
+    preferenceHardness: { careerStage: { hardness: "soft", bufferSteps: 2 } },
+  })
+  assert.equal(g.careerStage, "junior")
+  assert.deepEqual(g.careerStageRange, ["entry_level", "senior"])
+})
+
+test("projectTagsToGlobalTags: explicit careerStageRange projects even with no scalar careerStage", () => {
+  const g = projectTagsToGlobalTags({ careerStageRange: ["mid_level", "staff"] })
+  assert.equal(g.careerStage, undefined)
+  assert.deepEqual(g.careerStageRange, ["mid_level", "staff"])
+})
+
 test("projectTagsToGlobalTags: companyStage projected as array (scalar or array on tags)", () => {
   assert.deepEqual(
     projectTagsToGlobalTags({ companyStage: "seed" }).companyStage,

@@ -59,3 +59,24 @@ export function acceptableCareerStages(stage: CareerStage): CareerStage[] {
   const userIdx = CAREER_STAGE_INDEX[stage]
   return stages.filter((s) => Math.abs(CAREER_STAGE_INDEX[s] - userIdx) <= 1)
 }
+
+/**
+ * careerStageRange DRIVES matching (Adam-locked 2026-05-31). When a candidate
+ * declares an explicit seniority RANGE `[a, b]` (e.g. "entry_level to senior"),
+ * the acceptable hard-filter window is the full INCLUSIVE ordinal band between
+ * the two endpoints — NOT the ±1 window of a single scalar `careerStage`.
+ *
+ * Endpoint order is normalized (`[senior, intern]` == `[intern, senior]`).
+ * Membership is by `CAREER_STAGE_INDEX`, so parallel-band stages (`manager`≡5,
+ * `director`≡7, `founder`≡9) are included whenever their index falls inside the
+ * span — consistent with `acceptableCareerStages` / the match-window helpers.
+ * The two endpoints are always present (their own index equals lo or hi).
+ */
+export function careerStageRangeWindow(a: CareerStage, b: CareerStage): CareerStage[] {
+  const lo = Math.min(CAREER_STAGE_INDEX[a], CAREER_STAGE_INDEX[b])
+  const hi = Math.max(CAREER_STAGE_INDEX[a], CAREER_STAGE_INDEX[b])
+  return CAREER_STAGE_VOCAB.filter((s) => {
+    const idx = CAREER_STAGE_INDEX[s]
+    return idx >= lo && idx <= hi
+  })
+}

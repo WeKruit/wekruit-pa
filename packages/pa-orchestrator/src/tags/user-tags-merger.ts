@@ -223,6 +223,18 @@ export const UserTagsSchema = z.object({
    */
   careerStage: z.enum(CAREER_STAGE_VOCAB).optional(),
   /**
+   * Explicit candidate-authored seniority RANGE `[lo, hi]` (canonical 13-token
+   * vocab). DRIVES the V16 hard-filter seniority window when present (Adam-locked
+   * 2026-05-31: "careerStageRange DRIVES matching, not display-only"). Overrides
+   * the ±1 `acceptableCareerStages(careerStage)` window — the candidate is saying
+   * "I'm open to anything from lo to hi". Written by the /me seniority editor
+   * (multi-select) and by conversation extraction ("entry to senior is fine").
+   * When ABSENT, the matcher falls back to the scalar `careerStage` window and the
+   * projector derives a display range from `careerStage` + bufferSteps. Endpoint
+   * order is not significant (`careerStageRangeWindow` normalizes it).
+   */
+  careerStageRange: z.tuple([z.enum(CAREER_STAGE_VOCAB), z.enum(CAREER_STAGE_VOCAB)]).optional(),
+  /**
    * Canonical D4 4-enum (`citizen` / `permanent_resident` / `sponsor_needed` /
    * `other`) is what new writes commit to. Legacy `gc` / `opt` / `h1b` tokens
    * remain accepted so pre-existing `pa-users.tags` rows (and the

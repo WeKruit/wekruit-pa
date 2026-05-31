@@ -24,6 +24,7 @@ import {
   CAREER_STAGE_VOCAB,
   CareerStageSchema,
   acceptableCareerStages,
+  careerStageRangeWindow,
 } from "../canonical/career-stage.js"
 import {
   LOCATION_VOCAB,
@@ -251,6 +252,35 @@ describe("TAG-06: careerStage vocab", () => {
     const r = acceptableCareerStages("entry_level")
     assert.ok(r.includes("entry_level"))
     assert.ok(r.includes("junior"))
+  })
+
+  it("careerStageRangeWindow spans the full inclusive band, endpoints included", () => {
+    const r = careerStageRangeWindow("entry_level", "senior")
+    assert.ok(r.includes("entry_level"), "lower endpoint included")
+    assert.ok(r.includes("junior"))
+    assert.ok(r.includes("mid_level"))
+    assert.ok(r.includes("senior"), "upper endpoint included")
+    assert.ok(!r.includes("student"), "below the band is excluded")
+    assert.ok(!r.includes("staff"), "above the band is excluded")
+  })
+
+  it("careerStageRangeWindow is endpoint-order independent", () => {
+    const a = careerStageRangeWindow("intern", "mid_level")
+    const b = careerStageRangeWindow("mid_level", "intern")
+    assert.deepEqual(a, b)
+  })
+
+  it("careerStageRangeWindow includes parallel-band stages by ordinal index", () => {
+    // manager≡5 (≡senior), so a band reaching senior also admits manager.
+    const r = careerStageRangeWindow("mid_level", "senior")
+    assert.ok(r.includes("manager"), "people-manager parallel band admitted at idx 5")
+  })
+
+  it("careerStageRangeWindow of a single point is that stage (+ its parallel twin)", () => {
+    const r = careerStageRangeWindow("senior", "senior")
+    assert.ok(r.includes("senior"))
+    // degenerate range still admits the parallel twin at the same index; harmless.
+    assert.ok(r.every((s) => CAREER_STAGE_VOCAB.includes(s)))
   })
 })
 

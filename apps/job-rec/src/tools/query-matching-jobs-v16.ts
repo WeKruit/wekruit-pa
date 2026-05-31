@@ -38,6 +38,7 @@ import { createRequire } from "node:module"
 import type { UserTags } from "@pa/pa-orchestrator"
 import {
   acceptableCareerStages,
+  careerStageRangeWindow,
   type CareerStage,
   CAREER_STAGE_VOCAB,
   CAREER_STAGE_INDEX,
@@ -253,6 +254,38 @@ function widenCareerStageWindow(stage: CareerStage, bufferSteps: number): Career
     if (Math.abs(CAREER_STAGE_INDEX[s] - userIdx) <= 1 + extra) widened.add(s)
   }
   return [...widened]
+}
+
+/**
+ * Resolve a candidate-authored seniority range `[lo, hi]` (canonical or
+ * normalizable tokens) to its two `CareerStage` endpoints, or `null` when the
+ * tuple is missing / either endpoint is off-vocab. Endpoint order is preserved
+ * (the window helper normalizes it).
+ */
+function resolveCareerStageRange(value: unknown): [CareerStage, CareerStage] | null {
+  if (!Array.isArray(value) || value.length !== 2) return null
+  const lo = normalizeCareerStageToken(value[0])
+  const hi = normalizeCareerStageToken(value[1])
+  return lo && hi ? [lo, hi] : null
+}
+
+/**
+ * SOFT-mode widening of an explicit careerStage RANGE — extend the inclusive
+ * ordinal band by `bufferSteps` extra tiers on each side, mirroring
+ * `widenCareerStageWindow` for the scalar case. `bufferSteps=0` → exact range.
+ */
+function widenCareerStageRangeWindow(
+  lo: CareerStage,
+  hi: CareerStage,
+  bufferSteps: number,
+): CareerStage[] {
+  const extra = Math.max(0, Math.floor(bufferSteps))
+  const loIdx = Math.min(CAREER_STAGE_INDEX[lo], CAREER_STAGE_INDEX[hi]) - extra
+  const hiIdx = Math.max(CAREER_STAGE_INDEX[lo], CAREER_STAGE_INDEX[hi]) + extra
+  return CAREER_STAGE_VOCAB.filter((s) => {
+    const idx = CAREER_STAGE_INDEX[s]
+    return idx >= loIdx && idx <= hiIdx
+  })
 }
 
 function workHistoryTitleSignals(summary: unknown): string[] {
@@ -1017,10 +1050,17 @@ function jobMissesSoftJobType(tags: UserTags, job: MatchingJob): boolean {
 function jobMissesSoftCareerStage(tags: UserTags, job: MatchingJob): boolean {
   const h = resolveHardness(tags, "careerStage")
   if (h.hardness !== "soft") return false
-  const stage = tags.careerStage
-  if (typeof stage !== "string" || !(CAREER_STAGE_VOCAB as readonly string[]).includes(stage)) return false
   const jobStage = normalizeCareerStageToken(job.seniorityLevel)
   if (!jobStage) return false
+  // careerStageRange DRIVES the soft demerit too — an explicit range defines the
+  // (buffer-widened) acceptable band; demerit only when the job is OUTSIDE it.
+  const range = resolveCareerStageRange((tags as { careerStageRange?: unknown }).careerStageRange)
+  if (range) {
+    const widened = new Set(widenCareerStageRangeWindow(range[0], range[1], h.bufferSteps))
+    return !widened.has(jobStage)
+  }
+  const stage = tags.careerStage
+  if (typeof stage !== "string" || !(CAREER_STAGE_VOCAB as readonly string[]).includes(stage)) return false
   // Demerit only when the job is OUTSIDE the widened window (within-buffer →
   // no demerit; the soft axis "widens window by bufferSteps").
   const widened = new Set(widenCareerStageWindow(stage as CareerStage, h.bufferSteps))
@@ -1170,17 +1210,30 @@ export function applyV16HardFilters(
   const careerStage = userTags.careerStage
   const careerStageValid =
     typeof careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(careerStage)
+  // careerStageRange DRIVES matching (Adam-locked 2026-05-31): an EXPLICIT
+  // candidate-authored range `[lo, hi]` defines the acceptable seniority window
+  // directly — the full inclusive ordinal band — and OVERRIDES the ±1 scalar
+  // window. Only the scalar window is used when no explicit range is present.
+  const careerStageRange = resolveCareerStageRange(
+    (userTags as { careerStageRange?: unknown }).careerStageRange,
+  )
   // SOFT-vs-HARD: when careerStage is SOFT, widen the acceptable window by
   // `bufferSteps` extra ordinal tiers each side (the default hard window stays
-  // exactly `matchingCareerStageWindow`). Flag OFF → `hCareerStage` is null →
-  // the original window is used unchanged.
-  const acceptableStages = careerStageValid
+  // exactly `matchingCareerStageWindow` / `careerStageRangeWindow`). Flag OFF →
+  // `hCareerStage` is null → the base window is used unchanged.
+  const acceptableStages = careerStageRange
     ? new Set(
         hCareerStage && hCareerStage.hardness === "soft"
-          ? widenCareerStageWindow(careerStage as CareerStage, hCareerStage.bufferSteps)
-          : matchingCareerStageWindow(careerStage as CareerStage),
+          ? widenCareerStageRangeWindow(careerStageRange[0], careerStageRange[1], hCareerStage.bufferSteps)
+          : careerStageRangeWindow(careerStageRange[0], careerStageRange[1]),
       )
-    : null
+    : careerStageValid
+      ? new Set(
+          hCareerStage && hCareerStage.hardness === "soft"
+            ? widenCareerStageWindow(careerStage as CareerStage, hCareerStage.bufferSteps)
+            : matchingCareerStageWindow(careerStage as CareerStage),
+        )
+      : null
   const targetJobType = userTags.targetJobType
   const legacyTargetJobTypes = (userTags as unknown as { targetJobTypes?: string[] }).targetJobTypes
   const targetJobTypesRaw = Array.isArray(targetJobType)

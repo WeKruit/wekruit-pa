@@ -395,6 +395,74 @@ test("applyV16HardFilters: founder careerStage is senior-plus for job search, no
   assert.equal(r.counters.careerStage, 2)
 })
 
+// careerStageRange DRIVES matching (Adam-locked 2026-05-31) — an explicit range
+// defines the seniority window directly and OVERRIDES the ±1 scalar window.
+test("applyV16HardFilters: careerStageRange spans the full band (entry→senior keeps mid, drops staff)", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "intern", seniorityLevel: "intern" }),
+    mkJob({ id: "entry", seniorityLevel: "entry_level" }),
+    mkJob({ id: "junior", seniorityLevel: "junior" }),
+    mkJob({ id: "mid", seniorityLevel: "mid_level" }),
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "staff", seniorityLevel: "staff" }),
+  ]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStage: "entry_level", // scalar would keep only intern/entry/junior…
+    careerStageRange: ["entry_level", "senior"], // …but the range drives the window
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id).sort(), ["entry", "junior", "mid", "senior"])
+  assert.ok(!r.kept.map((j) => j.id).includes("intern"), "below the band dropped")
+  assert.ok(!r.kept.map((j) => j.id).includes("staff"), "above the band dropped")
+  assert.equal(r.counters.careerStage, 2)
+})
+
+test("applyV16HardFilters: careerStageRange OVERRIDES a narrower scalar careerStage", () => {
+  // Scalar `entry_level` alone would drop `senior` (counters.careerStage=1);
+  // the explicit range opens the window up to senior so it is KEPT.
+  const jobs: MatchingJob[] = [mkJob({ id: "senior", seniorityLevel: "senior" })]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStage: "entry_level",
+    careerStageRange: ["junior", "staff"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["senior"])
+  assert.equal(r.counters.careerStage, 0)
+})
+
+test("applyV16HardFilters: careerStageRange is endpoint-order independent", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "junior", seniorityLevel: "junior" }),
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "vp", seniorityLevel: "vp" }),
+  ]
+  const reversed = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStageRange: ["senior", "junior"], // hi,lo order
+  } as never
+  const r = applyV16HardFilters(jobs, reversed, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id).sort(), ["junior", "senior"])
+  assert.ok(!r.kept.map((j) => j.id).includes("vp"), "vp above the band dropped")
+})
+
+test("applyV16HardFilters: malformed careerStageRange falls back to scalar window", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "entry", seniorityLevel: "entry_level" }),
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+  ]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStage: "entry_level",
+    careerStageRange: ["entry_level", "not_a_stage"], // bad endpoint → ignored
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  // Range ignored → scalar entry_level window keeps entry, drops senior.
+  assert.deepEqual(r.kept.map((j) => j.id), ["entry"])
+  assert.equal(r.counters.careerStage, 1)
+})
+
 test("applyV16HardFilters: jobType exact intersect", () => {
   const jobs: MatchingJob[] = [
     mkJob({ id: "ft", jobType: "full_time" }),
