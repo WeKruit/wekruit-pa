@@ -74,7 +74,7 @@ import type {
 // stays in sync with the latest CV. H.4 worker reads this; H.3a's industry
 // fallback already runs on parsed.industryTags before we hand it to the
 // merger, so the merger sees the corrected tags.
-import { mergeUserTags, type UserTagsInput } from "@pa/pa-orchestrator"
+import { mergeUserTags, projectTagsToGlobalTags, type UserTagsInput } from "@pa/pa-orchestrator"
 import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
 import { computeResumeBaselineTagPatch } from "../lib/resume-baseline-tags.js"
 import {
@@ -799,7 +799,11 @@ async function defaultWriteUserTags(
   userId: string,
   tags: Record<string, unknown>
 ): Promise<void> {
-  await db.collection(PA_USERS_COLLECTION).doc(userId).set({ tags }, { merge: true })
+  // Also project the canonical CV-derived tags → globalTags (the v2.0 /me surface reads
+  // candidateSelfProfiles/pa-users.globalTags). Without this, a CV skills update lands in tags.skills
+  // but never reaches the candidate portal. merge:true so chat-derived globalTags fields survive.
+  const globalTags = projectTagsToGlobalTags(tags as Parameters<typeof projectTagsToGlobalTags>[0])
+  await db.collection(PA_USERS_COLLECTION).doc(userId).set({ tags, globalTags }, { merge: true })
 }
 
 type ResumeMatchingTagSignals = {
@@ -942,7 +946,7 @@ function applyResumeMatchingTagProjection(args: {
  * parsedCandidateResumes write already succeeded; tag-store coherence
  * issues must NOT cascade and break the user-facing CV ingestion path.
  */
-async function runUserTagsMerge(args: {
+export async function runUserTagsMerge(args: {
   db: Firestore
   userId: string
   parsed: StructuredCv
@@ -1074,6 +1078,26 @@ async function runUserTagsMerge(args: {
     existingTags: objectRecord(userData?.tags),
     signals: args.resumeMatchingTagSignals,
   })
+
+  // DURABLE SKILLS-REGRESSION GUARD (2026-05-31) — a degraded re-parse (e.g. a reinit that fell to a
+  // weak/no-tier parser) must NOT erase a richer technical skill set already on file. 8fE regressed
+  // 63 real skills (c++/java/react/node/docker/k8s/aws…) → 11 prose skills (communication_skills /
+  // trilingual / reward_management…) when a parserTier=undefined re-parse overwrote tags.skills.
+  // Numeric, NO-REGEX: if the freshly-merged skill set is SMALLER than the one already stored, keep the
+  // existing skills (a genuinely richer new résumé — MORE skills — still wins and overwrites).
+  const existingSkillsForGuard = (() => {
+    const t = objectRecord(userData?.tags)
+    return Array.isArray(t?.skills) ? (t!.skills as unknown[]) : []
+  })()
+  const mergedSkills = Array.isArray(merged.skills) ? (merged.skills as unknown[]) : []
+  if (existingSkillsForGuard.length > mergedSkills.length) {
+    args.log("pa.cv_user_tags.skills_regression_guarded", {
+      userId: args.userId,
+      keptExisting: existingSkillsForGuard.length,
+      rejectedNew: mergedSkills.length,
+    })
+    merged = { ...merged, skills: existingSkillsForGuard }
+  }
 
   // 3. Write `pa-users/{userId}.tags`. Merge:true preserves any tag
   //    fields the chat-answers worker may have populated (we own the

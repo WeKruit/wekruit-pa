@@ -7,6 +7,7 @@ import {
   buildCvFactBody,
   computeTopSkills,
   detectCvLang,
+  runUserTagsMerge,
   type IngestCvDeps,
   type StructuredCv,
 } from "../cv-ingest.js"
@@ -1662,5 +1663,51 @@ describe("ingestCv post-parse runtime handoff (Phase 53 PARSE-07, D12)", () => {
     assert.equal(directSkipped?.payload?.reason, "delivery_none")
     const syntheticSkipped = events.find((e) => e.event === "pa.cv_followup.synthetic_trigger_skipped")
     assert.equal(syntheticSkipped?.payload?.reason, "delivery_none")
+  })
+})
+
+describe("runUserTagsMerge — durable skills-regression guard (2026-05-31)", () => {
+  const weakReparse = () => ({
+    skills: [{ name: "communication_skills" }, { name: "trilingual" }],
+    targetRoleFunction: ["software_engineering"],
+  })
+  it("a degraded re-parse with FEWER skills does NOT erase a richer existing skill set", async () => {
+    const existingSkills = Array.from({ length: 60 }, (_, i) => ({ name: `s${i}`, bucket: "domain_specific", baseWeight: 1 }))
+    const { db } = makeFakeDb({ users: { u_reparse: { tags: { skills: existingSkills } } } })
+    let captured: Record<string, unknown> | undefined
+    await runUserTagsMerge({
+      db,
+      userId: "u_reparse",
+      parsed: happyParsed(),
+      workHistory: undefined,
+      embedding: null,
+      mergeUserTagsFn: weakReparse,
+      writeUserTags: async (_db, _uid, tags) => { captured = tags },
+      nowIso: () => "2026-05-31T00:00:00.000Z",
+      log: () => {},
+    })
+    assert.ok(captured, "writeUserTags was called")
+    assert.equal((captured!.skills as unknown[]).length, 60, "richer existing 60 skills preserved, not clobbered by the 2-skill weak re-parse")
+  })
+  it("a genuinely richer re-parse with MORE skills DOES overwrite the existing set", async () => {
+    const existingSkills = [{ name: "react" }, { name: "node" }]
+    const richReparse = () => ({
+      skills: Array.from({ length: 20 }, (_, i) => ({ name: `tech_${i}` })),
+      targetRoleFunction: ["software_engineering"],
+    })
+    const { db } = makeFakeDb({ users: { u_rich: { tags: { skills: existingSkills } } } })
+    let captured: Record<string, unknown> | undefined
+    await runUserTagsMerge({
+      db,
+      userId: "u_rich",
+      parsed: happyParsed(),
+      workHistory: undefined,
+      embedding: null,
+      mergeUserTagsFn: richReparse,
+      writeUserTags: async (_db, _uid, tags) => { captured = tags },
+      nowIso: () => "2026-05-31T00:00:00.000Z",
+      log: () => {},
+    })
+    assert.equal((captured!.skills as unknown[]).length, 20, "the richer 20-skill re-parse wins")
   })
 })
