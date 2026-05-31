@@ -32,6 +32,9 @@ import {
 import type { ClaireMode } from "./types.js"
 import { DEFAULT_ONBOARDING_SLOTS } from "./reducers/onboarding-fsm.js"
 import { emptyProcessStore, type ProcessSessionStore } from "./tools/process-tools.js"
+import { isThinPrescreenEnabled } from "./flags.js"
+import { buildThinPrescreenSeed } from "./prescreen-config.js"
+import { loadPrescreenContext } from "./prescreen-context.js"
 
 const USERS = "pa-users"
 const PRESCREEN_SESSIONS = "pa-prescreen-sessions"
@@ -53,6 +56,16 @@ export interface ModeDecision {
   awaitingAnswer?: boolean
   /** per-turn process store seeded from durable state; injected as ctx.processStore. */
   processStore?: ProcessSessionStore
+  /** prescreen (thin): qId → DIRECTION question text (from the job's prescreenConfig). */
+  prescreenPrompts?: Record<string, string>
+  /** prescreen (thin): qId → judge rubric (keyword hints + clarify cue). */
+  judgeContext?: Record<string, string>
+  /** prescreen (thin): résumé + prior-session context for grounded probing. */
+  prescreenContext?: string
+  /** prescreen (thin): bare résumé snippet fed to the JUDGE (credits concrete, résumé-consistent answers). */
+  prescreenResumeSnippet?: string
+  /** prescreen (thin): the REAL pa-prescreen-sessions doc id (score write-back + terminal fire). */
+  prescreenSessionId?: string
 }
 
 export interface SelectModeArgs {
@@ -63,11 +76,15 @@ export interface SelectModeArgs {
   nowIso?: () => string
 }
 
-/** Is there a non-terminal prescreen session for this user? (active job interview → defer to legacy.) */
+/**
+ * Is there a non-terminal prescreen session for this user? (active job interview.) Returns the session
+ * doc + its id too, so the thin path can seed buildThinPrescreenSeed (resume = prior scores) + thread
+ * the REAL sessionId for score write-back / the terminal fire — without a second read.
+ */
 async function hasActivePrescreen(
   db: Firestore,
   userId: string,
-): Promise<{ active: boolean; jobId?: string }> {
+): Promise<{ active: boolean; jobId?: string; sessionId?: string; session?: Record<string, unknown> }> {
   try {
     const snap = await db
       .collection(PRESCREEN_SESSIONS)
@@ -76,8 +93,14 @@ async function hasActivePrescreen(
       .limit(1)
       .get()
     if (snap.empty) return { active: false }
-    const d = snap.docs[0]!.data() as Record<string, unknown>
-    return { active: true, jobId: typeof d.jobId === "string" ? d.jobId : undefined }
+    const doc = snap.docs[0]!
+    const d = doc.data() as Record<string, unknown>
+    return {
+      active: true,
+      jobId: typeof d.jobId === "string" ? d.jobId : undefined,
+      sessionId: doc.id,
+      session: d,
+    }
   } catch {
     return { active: false } // stub db (evals) / query error → fail-safe
   }
@@ -133,11 +156,64 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   const log = args.log ?? (() => {})
   const now = (args.nowIso ?? (() => new Date().toISOString()))()
 
-  // 1. ACTIVE PRESCREEN → defer to the legacy runner (prescreen-on-thin is the next slice).
+  // 1. ACTIVE PRESCREEN.
   const ps = await hasActivePrescreen(args.db, args.userId)
   if (ps.active) {
-    log("mode.prescreen_defer_legacy", { userId: args.userId, jobId: ps.jobId })
-    return { mode: "prescreen", deferToLegacy: true, jobId: ps.jobId }
+    // Flag OFF (default) → defer this turn to the proven legacy prescreen runner (UNCHANGED).
+    let thinOn = false
+    try {
+      thinOn = await isThinPrescreenEnabled(args.db, args.userId)
+    } catch {
+      thinOn = false
+    }
+    if (!thinOn || !ps.jobId) {
+      log("mode.prescreen_defer_legacy", { userId: args.userId, jobId: ps.jobId, thinOn })
+      return { mode: "prescreen", deferToLegacy: true, jobId: ps.jobId }
+    }
+    // Flag ON → the THIN agent runs this prescreen turn. Seed from the job's real config + the
+    // in-progress session (resume keeps prior scores). All reads fail-safe → defer on any miss.
+    try {
+      const jobSnap = await args.db.collection("pa-jobs").doc(ps.jobId).get()
+      const config = (jobSnap.exists ? jobSnap.data()?.prescreenConfig : null) as
+        | Record<string, unknown>
+        | null
+        | undefined
+      const seed = buildThinPrescreenSeed(config, ps.session ?? null)
+      if (seed.questionIds.length === 0) {
+        // No usable questions → don't strand the candidate on a thin engine with nothing to ask.
+        log("mode.prescreen_thin_no_questions", { userId: args.userId, jobId: ps.jobId })
+        return { mode: "prescreen", deferToLegacy: true, jobId: ps.jobId }
+      }
+      const store = emptyProcessStore()
+      store.prescreen = seed.prescreen
+      // résumé arc + prior-session callbacks (extra reads paid ONLY on a thin prescreen turn).
+      const pc = await loadPrescreenContext(args.db, args.userId, ps.jobId, seed.prompts)
+      log("mode.prescreen_thin", {
+        userId: args.userId,
+        jobId: ps.jobId,
+        questions: seed.questionIds.length,
+        priorScored: Object.keys(seed.prescreen.scores).length,
+      })
+      return {
+        mode: "prescreen",
+        deferToLegacy: false,
+        jobId: ps.jobId,
+        processStore: store,
+        prescreenPrompts: seed.prompts,
+        judgeContext: seed.judgeContext,
+        prescreenContext: pc.contextText,
+        prescreenResumeSnippet: pc.resumeSnippet,
+        prescreenSessionId: ps.sessionId,
+      }
+    } catch (err) {
+      // Any seeding failure → fall back to the legacy runner so the candidate still gets a reply.
+      log("mode.prescreen_thin_error", {
+        userId: args.userId,
+        jobId: ps.jobId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return { mode: "prescreen", deferToLegacy: true, jobId: ps.jobId }
+    }
   }
 
   // 2. ONBOARDING (reuse the legacy sharedOnboarding durable state; the AGENT records via the tool).

@@ -143,6 +143,14 @@ export async function maybeRunThinClaire(
         ...(decision.processStore ? { processStore: decision.processStore } : {}),
         ...(decision.onboardingSlot ? { onboardingSlot: decision.onboardingSlot } : {}),
         ...(decision.awaitingAnswer !== undefined ? { awaitingAnswer: decision.awaitingAnswer } : {}),
+        // prescreen-on-thin: DIRECTION prompts + judge rubric + résumé/prior-session context + the
+        // REAL prescreen sessionId (score write-back + terminal fire) + jobId (ctx.jobId for the turn).
+        ...(decision.jobId ? { jobId: decision.jobId } : {}),
+        ...(decision.prescreenPrompts ? { prescreenPrompts: decision.prescreenPrompts } : {}),
+        ...(decision.judgeContext ? { judgeContext: decision.judgeContext } : {}),
+        ...(decision.prescreenContext ? { prescreenContext: decision.prescreenContext } : {}),
+        ...(decision.prescreenResumeSnippet ? { prescreenResumeSnippet: decision.prescreenResumeSnippet } : {}),
+        ...(decision.prescreenSessionId ? { prescreenSessionId: decision.prescreenSessionId } : {}),
       },
     )
     await db

@@ -1972,13 +1972,13 @@ var require_parse = __commonJS({
     var plus = "+".charCodeAt(0);
     var isUnicodeRange = /^[a-f0-9?-]+$/i;
     module.exports = function(input) {
-      var tokens = [];
+      var tokens2 = [];
       var value = input;
       var next, quote, prev, token, escape, escapePos, whitespacePos, parenthesesOpenPos;
       var pos = 0;
       var code = value.charCodeAt(pos);
       var max = value.length;
-      var stack = [{ nodes: tokens }];
+      var stack = [{ nodes: tokens2 }];
       var balanced = 0;
       var parent;
       var name = "";
@@ -1992,7 +1992,7 @@ var require_parse = __commonJS({
             code = value.charCodeAt(next);
           } while (code <= 32);
           token = value.slice(pos, next);
-          prev = tokens[tokens.length - 1];
+          prev = tokens2[tokens2.length - 1];
           if (code === closeParentheses && balanced) {
             after = token;
           } else if (prev && prev.type === "div") {
@@ -2001,7 +2001,7 @@ var require_parse = __commonJS({
           } else if (code === comma || code === colon || code === slash && value.charCodeAt(next + 1) !== star && (!parent || parent && parent.type === "function" && parent.value !== "calc")) {
             before = token;
           } else {
-            tokens.push({
+            tokens2.push({
               type: "space",
               sourceIndex: pos,
               sourceEndIndex: next,
@@ -2034,7 +2034,7 @@ var require_parse = __commonJS({
           } while (escape);
           token.value = value.slice(pos + 1, next);
           token.sourceEndIndex = token.unclosed ? next : next + 1;
-          tokens.push(token);
+          tokens2.push(token);
           pos = next + 1;
           code = value.charCodeAt(pos);
         } else if (code === slash && value.charCodeAt(pos + 1) === star) {
@@ -2050,12 +2050,12 @@ var require_parse = __commonJS({
             token.sourceEndIndex = next;
           }
           token.value = value.slice(pos + 2, next);
-          tokens.push(token);
+          tokens2.push(token);
           pos = next + 2;
           code = value.charCodeAt(pos);
         } else if ((code === slash || code === star) && parent && parent.type === "function" && parent.value === "calc") {
           token = value[pos];
-          tokens.push({
+          tokens2.push({
             type: "word",
             sourceIndex: pos - before.length,
             sourceEndIndex: pos + token.length,
@@ -2065,7 +2065,7 @@ var require_parse = __commonJS({
           code = value.charCodeAt(pos);
         } else if (code === slash || code === comma || code === colon) {
           token = value[pos];
-          tokens.push({
+          tokens2.push({
             type: "div",
             sourceIndex: pos - before.length,
             sourceEndIndex: pos + token.length,
@@ -2144,14 +2144,14 @@ var require_parse = __commonJS({
             pos = next + 1;
             token.sourceEndIndex = token.unclosed ? next : pos;
             code = value.charCodeAt(pos);
-            tokens.push(token);
+            tokens2.push(token);
           } else {
             balanced += 1;
             token.after = "";
             token.sourceEndIndex = pos + 1;
-            tokens.push(token);
+            tokens2.push(token);
             stack.push(token);
-            tokens = token.nodes = [];
+            tokens2 = token.nodes = [];
             parent = token;
           }
           name = "";
@@ -2165,7 +2165,7 @@ var require_parse = __commonJS({
           stack[stack.length - 1].sourceEndIndex = pos;
           stack.pop();
           parent = stack[balanced];
-          tokens = parent.nodes;
+          tokens2 = parent.nodes;
         } else {
           next = pos;
           do {
@@ -2179,14 +2179,14 @@ var require_parse = __commonJS({
           if (openParentheses === code) {
             name = token;
           } else if ((uLower === token.charCodeAt(0) || uUpper === token.charCodeAt(0)) && plus === token.charCodeAt(1) && isUnicodeRange.test(token.slice(2))) {
-            tokens.push({
+            tokens2.push({
               type: "unicode-range",
               sourceIndex: pos,
               sourceEndIndex: next,
               value: token
             });
           } else {
-            tokens.push({
+            tokens2.push({
               type: "word",
               sourceIndex: pos,
               sourceEndIndex: next,
@@ -2409,8 +2409,8 @@ var require_camelize = __commonJS({
         return acc;
       }, {});
     }
-    function camelCase(str) {
-      return str.replace(/[_.-](\w|$)/g, function(_, x) {
+    function camelCase(str2) {
+      return str2.replace(/[_.-](\w|$)/g, function(_, x) {
         return x.toUpperCase();
       });
     }
@@ -3379,14 +3379,14 @@ var require_css_background_parser = __commonJS({
       exports2.Background = Background;
       function parseImages(cssText) {
         var images = [];
-        var tokens = /[,\(\)]/;
+        var tokens2 = /[,\(\)]/;
         var parens = 0;
         var buffer = "";
         if (cssText == null) {
           return images;
         }
         while (cssText.length) {
-          var match = tokens.exec(cssText);
+          var match = tokens2.exec(cssText);
           if (!match) {
             break;
           }
@@ -3416,8 +3416,8 @@ var require_css_background_parser = __commonJS({
         }
         return images;
       }
-      function trim(str) {
-        return str.trim();
+      function trim(str2) {
+        return str2.trim();
       }
       function parseSimpleList(cssText) {
         return (cssText || "").split(",").map(trim);
@@ -3466,8 +3466,8 @@ var require_css_box_shadow = __commonJS({
     var VALUES_REG = /,(?![^\(]*\))/;
     var PARTS_REG = /\s(?![^(]*\))/;
     var LENGTH_REG = /^[0-9]+[a-zA-Z%]+?$/;
-    var parseValue = (str) => {
-      const parts = str.split(PARTS_REG);
+    var parseValue = (str2) => {
+      const parts = str2.split(PARTS_REG);
       const inset = parts.includes("inset");
       const last = parts.slice(-1)[0];
       const color = !isLength(last) ? last : void 0;
@@ -3507,7 +3507,7 @@ var require_css_box_shadow = __commonJS({
       return !isNaN(n) ? n : v;
     };
     var toPx = (n) => typeof n === "number" && n !== 0 ? n + "px" : n;
-    var parse = (str) => str.split(VALUES_REG).map((s) => s.trim()).map(parseValue);
+    var parse = (str2) => str2.split(VALUES_REG).map((s) => s.trim()).map(parseValue);
     var stringify = (arr) => arr.map(stringifyValue).join(", ");
     module.exports = {
       parse,
@@ -3831,16 +3831,16 @@ $
         alpha: parseAlpha(a === null ? 1 : a)
       };
     }
-    var parseCSSColor = (str) => {
-      if (typeof str !== "string") return null;
-      const hex = hexRe.exec(str);
+    var parseCSSColor = (str2) => {
+      if (typeof str2 !== "string") return null;
+      const hex = hexRe.exec(str2);
       if (hex) return getHEX(hex[0]);
-      const hsl = hsl4Re.exec(str) || hsl3Re.exec(str);
+      const hsl = hsl4Re.exec(str2) || hsl3Re.exec(str2);
       if (hsl) return getHSL(hsl);
-      const rgb = rgb4NumberRe.exec(str) || rgb4PercentageRe.exec(str) || rgb3NumberRe.exec(str) || rgb3PercentageRe.exec(str);
+      const rgb = rgb4NumberRe.exec(str2) || rgb4PercentageRe.exec(str2) || rgb3NumberRe.exec(str2) || rgb3PercentageRe.exec(str2);
       if (rgb) return getRGB(rgb);
-      if (transparentRe.exec(str)) return getRGB([null, 0, 0, 0, 0]);
-      const cn = colorName[str.toLowerCase()];
+      if (transparentRe.exec(str2)) return getRGB([null, 0, 0, 0, 0]);
+      const cn = colorName[str2.toLowerCase()];
       if (cn) return getRGB([null, cn[0], cn[1], cn[2], 1]);
       return null;
     };
@@ -3855,17 +3855,17 @@ var require_escape_html = __commonJS({
     var matchHtmlRegExp = /["'&<>]/;
     module.exports = escapeHtml;
     function escapeHtml(string) {
-      var str = "" + string;
-      var match = matchHtmlRegExp.exec(str);
+      var str2 = "" + string;
+      var match = matchHtmlRegExp.exec(str2);
       if (!match) {
-        return str;
+        return str2;
       }
       var escape;
       var html = "";
       var index = 0;
       var lastIndex = 0;
-      for (index = match.index; index < str.length; index++) {
-        switch (str.charCodeAt(index)) {
+      for (index = match.index; index < str2.length; index++) {
+        switch (str2.charCodeAt(index)) {
           case 34:
             escape = "&quot;";
             break;
@@ -3885,12 +3885,12 @@ var require_escape_html = __commonJS({
             continue;
         }
         if (lastIndex !== index) {
-          html += str.substring(lastIndex, index);
+          html += str2.substring(lastIndex, index);
         }
         lastIndex = index + 1;
         html += escape;
       }
-      return lastIndex !== index ? html + str.substring(lastIndex, index) : html;
+      return lastIndex !== index ? html + str2.substring(lastIndex, index) : html;
     }
   }
 });
@@ -9543,20 +9543,20 @@ var require_opentype = __commonJS({
           return !hasFAILObject(op);
         })]);
       };
-      Tokenizer.prototype.replaceRange = function(startIndex, offset, tokens, silent) {
+      Tokenizer.prototype.replaceRange = function(startIndex, offset, tokens2, silent) {
         offset = offset !== null ? offset : this.tokens.length;
-        var isTokenType = tokens.every(function(token) {
+        var isTokenType = tokens2.every(function(token) {
           return token instanceof Token;
         });
         if (!isNaN(startIndex) && this.inboundIndex(startIndex) && isTokenType) {
           var replaced = this.tokens.splice.apply(
             this.tokens,
-            [startIndex, offset].concat(tokens)
+            [startIndex, offset].concat(tokens2)
           );
           if (!silent) {
-            this.dispatch("replaceToken", [startIndex, offset, tokens]);
+            this.dispatch("replaceToken", [startIndex, offset, tokens2]);
           }
-          return [replaced, tokens];
+          return [replaced, tokens2];
         } else {
           return { FAIL: "replaceRange: invalid tokens or startIndex." };
         }
@@ -9574,11 +9574,11 @@ var require_opentype = __commonJS({
       };
       Tokenizer.prototype.removeRange = function(startIndex, offset, silent) {
         offset = !isNaN(offset) ? offset : this.tokens.length;
-        var tokens = this.tokens.splice(startIndex, offset);
+        var tokens2 = this.tokens.splice(startIndex, offset);
         if (!silent) {
-          this.dispatch("removeRange", [tokens, startIndex, offset]);
+          this.dispatch("removeRange", [tokens2, startIndex, offset]);
         }
-        return tokens;
+        return tokens2;
       };
       Tokenizer.prototype.removeToken = function(index, silent) {
         if (!isNaN(index) && this.inboundIndex(index)) {
@@ -9591,8 +9591,8 @@ var require_opentype = __commonJS({
           return { FAIL: "removeToken: invalid token index." };
         }
       };
-      Tokenizer.prototype.insertToken = function(tokens, index, silent) {
-        var tokenType = tokens.every(
+      Tokenizer.prototype.insertToken = function(tokens2, index, silent) {
+        var tokenType = tokens2.every(
           function(token) {
             return token instanceof Token;
           }
@@ -9600,12 +9600,12 @@ var require_opentype = __commonJS({
         if (tokenType) {
           this.tokens.splice.apply(
             this.tokens,
-            [index, 0].concat(tokens)
+            [index, 0].concat(tokens2)
           );
           if (!silent) {
-            this.dispatch("insertToken", [tokens, index]);
+            this.dispatch("insertToken", [tokens2, index]);
           }
-          return tokens;
+          return tokens2;
         } else {
           return { FAIL: "insertToken: invalid token(s)." };
         }
@@ -10251,24 +10251,24 @@ var require_opentype = __commonJS({
         startCheck: arabicSentenceStartCheck,
         endCheck: arabicSentenceEndCheck
       };
-      function singleSubstitutionFormat1$1(action, tokens, index) {
-        tokens[index].setState(action.tag, action.substitution);
+      function singleSubstitutionFormat1$1(action, tokens2, index) {
+        tokens2[index].setState(action.tag, action.substitution);
       }
-      function singleSubstitutionFormat2$1(action, tokens, index) {
-        tokens[index].setState(action.tag, action.substitution);
+      function singleSubstitutionFormat2$1(action, tokens2, index) {
+        tokens2[index].setState(action.tag, action.substitution);
       }
-      function chainingSubstitutionFormat3$1(action, tokens, index) {
+      function chainingSubstitutionFormat3$1(action, tokens2, index) {
         action.substitution.forEach(function(subst, offset) {
-          var token = tokens[index + offset];
+          var token = tokens2[index + offset];
           token.setState(action.tag, subst);
         });
       }
-      function ligatureSubstitutionFormat1$1(action, tokens, index) {
-        var token = tokens[index];
+      function ligatureSubstitutionFormat1$1(action, tokens2, index) {
+        var token = tokens2[index];
         token.setState(action.tag, action.substitution.ligGlyph);
         var compsCount = action.substitution.components.length;
         for (var i2 = 0; i2 < compsCount; i2++) {
-          token = tokens[index + i2 + 1];
+          token = tokens2[index + i2 + 1];
           token.setState("deleted", true);
         }
       }
@@ -10278,9 +10278,9 @@ var require_opentype = __commonJS({
         63: chainingSubstitutionFormat3$1,
         41: ligatureSubstitutionFormat1$1
       };
-      function applySubstitution(action, tokens, index) {
+      function applySubstitution(action, tokens2, index) {
         if (action instanceof SubstitutionAction && SUBSTITUTIONS[action.id]) {
-          SUBSTITUTIONS[action.id](action, tokens, index);
+          SUBSTITUTIONS[action.id](action, tokens2, index);
         }
       }
       function willConnectPrev(charContextParams) {
@@ -10315,12 +10315,12 @@ var require_opentype = __commonJS({
         var this$1 = this;
         var script = "arab";
         var tags = this.featuresTags[script];
-        var tokens = this.tokenizer.getRangeTokens(range);
-        if (tokens.length === 1) {
+        var tokens2 = this.tokenizer.getRangeTokens(range);
+        if (tokens2.length === 1) {
           return;
         }
         var contextParams = new ContextParams(
-          tokens.map(
+          tokens2.map(
             function(token) {
               return token.getState("glyphIndex");
             }
@@ -10328,14 +10328,14 @@ var require_opentype = __commonJS({
           0
         );
         var charContextParams = new ContextParams(
-          tokens.map(
+          tokens2.map(
             function(token) {
               return token.char;
             }
           ),
           0
         );
-        tokens.forEach(function(token, index) {
+        tokens2.forEach(function(token, index) {
           if (isTashkeelArabicChar(token.char)) {
             return;
           }
@@ -10373,14 +10373,14 @@ var require_opentype = __commonJS({
           }
           substitutions.forEach(function(action, index2) {
             if (action instanceof SubstitutionAction) {
-              applySubstitution(action, tokens, index2);
+              applySubstitution(action, tokens2, index2);
               contextParams.context[index2] = action.substitution;
             }
           });
         });
       }
-      function getContextParams(tokens, index) {
-        var context = tokens.map(function(token) {
+      function getContextParams(tokens2, index) {
+        var context = tokens2.map(function(token) {
           return token.activeState.value;
         });
         return new ContextParams(context, index || 0);
@@ -10388,8 +10388,8 @@ var require_opentype = __commonJS({
       function arabicRequiredLigatures(range) {
         var this$1 = this;
         var script = "arab";
-        var tokens = this.tokenizer.getRangeTokens(range);
-        var contextParams = getContextParams(tokens);
+        var tokens2 = this.tokenizer.getRangeTokens(range);
+        var contextParams = getContextParams(tokens2);
         contextParams.context.forEach(function(glyphIndex, index) {
           contextParams.setCurrentIndex(index);
           var substitutions = this$1.query.lookupFeature({
@@ -10400,10 +10400,10 @@ var require_opentype = __commonJS({
           if (substitutions.length) {
             substitutions.forEach(
               function(action) {
-                return applySubstitution(action, tokens, index);
+                return applySubstitution(action, tokens2, index);
               }
             );
-            contextParams = getContextParams(tokens);
+            contextParams = getContextParams(tokens2);
           }
         });
       }
@@ -10428,8 +10428,8 @@ var require_opentype = __commonJS({
         startCheck: latinWordStartCheck,
         endCheck: latinWordEndCheck
       };
-      function getContextParams$1(tokens, index) {
-        var context = tokens.map(function(token) {
+      function getContextParams$1(tokens2, index) {
+        var context = tokens2.map(function(token) {
           return token.activeState.value;
         });
         return new ContextParams(context, index || 0);
@@ -10437,8 +10437,8 @@ var require_opentype = __commonJS({
       function latinLigature(range) {
         var this$1 = this;
         var script = "latn";
-        var tokens = this.tokenizer.getRangeTokens(range);
-        var contextParams = getContextParams$1(tokens);
+        var tokens2 = this.tokenizer.getRangeTokens(range);
+        var contextParams = getContextParams$1(tokens2);
         contextParams.context.forEach(function(glyphIndex, index) {
           contextParams.setCurrentIndex(index);
           var substitutions = this$1.query.lookupFeature({
@@ -10449,10 +10449,10 @@ var require_opentype = __commonJS({
           if (substitutions.length) {
             substitutions.forEach(
               function(action) {
-                return applySubstitution(action, tokens, index);
+                return applySubstitution(action, tokens2, index);
               }
             );
-            contextParams = getContextParams$1(tokens);
+            contextParams = getContextParams$1(tokens2);
           }
         });
       }
@@ -25034,6 +25034,1222 @@ var init_job_rec_card = __esm({
   }
 });
 
+// apps/functions/src/runtime-approved-outbox.ts
+import { createHash as createHash3 } from "node:crypto";
+import { enqueueOutbound as enqueueOutbound2 } from "@pa/pa-broker";
+function fallbackIdempotencyKey(input) {
+  const hash = createHash3("sha256").update(`${input.runtimeSource}|${input.userId}|${input.to}|${input.content}`, "utf8").digest("hex");
+  return `${input.runtimeSource}:${input.userId}:${hash.slice(0, 32)}`;
+}
+async function enqueueRuntimeApprovedIMessage(input) {
+  const idempotencyKey = input.idempotencyKey?.trim() || fallbackIdempotencyKey(input);
+  const result = await enqueueOutbound2(input.db, {
+    userId: input.userId,
+    toE164: input.to,
+    body: input.content,
+    idempotencyKey,
+    runtimeApproved: true,
+    runtimeSource: input.runtimeSource
+  });
+  return { outboundId: result.id, created: result.created };
+}
+async function sendRuntimeApprovedIMessage(args) {
+  if (!args.db) throw new Error("runtime-approved send requires Firestore db");
+  if (!args.userId) throw new Error("runtime-approved send requires userId");
+  if (!args.runtimeSource) throw new Error("runtime-approved send requires runtimeSource");
+  return enqueueRuntimeApprovedIMessage({
+    db: args.db,
+    userId: args.userId,
+    to: args.to,
+    content: args.content,
+    runtimeSource: args.runtimeSource,
+    idempotencyKey: args.idempotencyKey
+  });
+}
+var init_runtime_approved_outbox = __esm({
+  "apps/functions/src/runtime-approved-outbox.ts"() {
+    "use strict";
+  }
+});
+
+// apps/functions/src/job-rec-copy.ts
+function cleanRequiredSkills(requiredSkills) {
+  return Array.isArray(requiredSkills) ? requiredSkills.filter((skill) => typeof skill === "string" && skill.trim().length > 0).map((skill) => skill.trim().replace(/[_-]+/g, " ")).slice(0, 5) : [];
+}
+function resolveJobRecVisibleCount(requestedCount) {
+  const requested = typeof requestedCount === "number" && Number.isFinite(requestedCount) ? Math.trunc(requestedCount) : 2;
+  return Math.max(1, Math.min(3, requested || 2));
+}
+function formatJobRecIntro(lang, visibleCount, context) {
+  if (lang === "zh") {
+    const count2 = visibleCount === 3 ? "\u4E09\u4E2A" : visibleCount === 1 ? "\u4E00\u4E2A" : "\u4E24\u4E2A";
+    if (context?.role) return `\u6211\u8BB0\u5F97\u4F60\u4E4B\u524D\u8BF4\u8FC7\u60F3\u770B${context.role}\u65B9\u5411, \u8FD9\u91CC\u5148\u7ED9\u4F60${count2}\u5BF9\u5F97\u4E0A\u7684\u5C97\u4F4D:`;
+    if (context?.skills?.length) return `\u6211\u8BB0\u5F97\u4F60\u63D0\u5230\u8FC7${context.skills.slice(0, 3).join(" / ")}\u7ECF\u9A8C, \u8FD9\u91CC\u5148\u7ED9\u4F60${count2}\u5BF9\u5F97\u4E0A\u7684\u5C97\u4F4D:`;
+    return `\u6211\u6839\u636E\u4F60\u5DF2\u7ECF\u5206\u4EAB\u7684\u8D44\u6599, \u8FD9\u91CC\u5148\u7ED9\u4F60${count2}\u5BF9\u5F97\u4E0A\u7684\u5C97\u4F4D:`;
+  }
+  const count = visibleCount === 3 ? "three" : visibleCount === 1 ? "one" : "two";
+  const plural = visibleCount === 1 ? "role" : "roles";
+  const verb = visibleCount === 1 ? "lines" : "line";
+  if (context?.role) return `I remember you mentioned the ${context.role} direction; I found ${count} ${plural} that ${verb} up:`;
+  if (context?.skills?.length) return `I remember you mentioned ${context.skills.slice(0, 3).join(" / ")} experience; I found ${count} ${plural} that ${verb} up:`;
+  return `Based on the profile details you've shared so far, I found ${count} ${plural} that ${verb} up:`;
+}
+function formatJobRequirementsLine(lang, requiredSkills) {
+  const skills = cleanRequiredSkills(requiredSkills);
+  if (skills.length === 0) return "";
+  return `${lang === "zh" ? "\u8981\u6C42" : "requirements"}: ${skills.join(", ")}`;
+}
+function cleanDisplayString(value) {
+  if (typeof value !== "string") return void 0;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : void 0;
+}
+function cleanMatchSourceLabel(value) {
+  return value === "WeKruit collaborated" ? "WeKruit collaborated" : "general match";
+}
+function cleanPositiveInt(value) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : void 0;
+}
+function cleanReason(value, lang) {
+  const reason = cleanDisplayString(value);
+  if (!reason) return void 0;
+  let cleaned = reason.replace(/\bmatchSourceLabel\s*:\s*(?:general match|WeKruit collaborated)\b\.?/gi, "").replace(/\b(general match|WeKruit collaborated)\b\.?/gi, "").replace(
+    /\b([A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*[A-Za-z0-9])\b/g,
+    (token) => token.replace(/_/g, " ")
+  ).replace(/[ \t]{2,}/g, " ").trim();
+  if (!cleaned) return void 0;
+  if (lang === "en") cleaned = cleaned.replace(/^why\s+match\s*:/i, "why:");
+  if (isWeakCandidateVisibleReason(cleaned)) return void 0;
+  return cleaned;
+}
+function isWeakCandidateVisibleReason(reason) {
+  const lower = reason.toLowerCase();
+  return [
+    /\bsame lane as your\b/,
+    /\blines up directly\b/,
+    /\bindustry\s*(?:\+|and)\s*experience align\b/,
+    /\boverall fit\b/,
+    /\baligns? with your (?:resume|background|experience)\b/,
+    /\bmatches your experience\b/,
+    /\bgood fit for your background\b/
+  ].some((re) => re.test(lower));
+}
+function normalizeYoeRange(value) {
+  if (!Array.isArray(value) || value.length < 2) return void 0;
+  const min = Number(value[0]);
+  const max = Number(value[1]);
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return void 0;
+  return [min, max];
+}
+function candidateWantsEarlyCareer(candidateTags) {
+  if (!candidateTags || typeof candidateTags !== "object") return false;
+  const tags = candidateTags;
+  const stage = typeof tags.careerStage === "string" ? tags.careerStage.toLowerCase().trim() : "";
+  if (["student", "intern", "entry_level", "entry", "junior", "new_grad"].includes(stage)) return true;
+  const yoe = normalizeYoeRange(tags.yoeRange);
+  return !!yoe && yoe[1] <= 3;
+}
+function isSeniorOrManagementJob(job) {
+  const title = cleanDisplayString(job.jobTitle) ?? cleanDisplayString(job.title) ?? "";
+  const seniority = cleanDisplayString(job.seniorityLevel) ?? "";
+  const haystack = `${title} ${seniority}`.toLowerCase();
+  return /\b(?:senior|sr\.?|staff|principal|lead|manager|director|head|vp|vice\s+president|c[-\s]?level|chief)\b/.test(haystack);
+}
+function passesCandidateVisibleSeniorityGate(job, candidateTags) {
+  if (!candidateWantsEarlyCareer(candidateTags)) return true;
+  return !isSeniorOrManagementJob(job);
+}
+function toJobRecommendationMessageItem(job, lang, options) {
+  const url = cleanJobRecUrl(job);
+  if (!url) return null;
+  const requirementsLine = formatJobRequirementsLine(lang, job.requiredSkills);
+  if (!requirementsLine) return null;
+  const title = cleanDisplayString(job.jobTitle) ?? cleanDisplayString(job.title) ?? "Open role";
+  const companyName = cleanDisplayString(job.companyName);
+  const reason = cleanReason(options?.reason, lang) ?? cleanReason(job.reason, lang);
+  const matchSourceLabel = cleanMatchSourceLabel(job.matchSourceLabel);
+  const recommendationCount = cleanPositiveInt(job.recommendationCount);
+  const lastRecommendedAt = cleanDisplayString(job.lastRecommendedAt);
+  return {
+    title,
+    ...companyName ? { companyName } : {},
+    url,
+    requirementsLine,
+    matchSourceLabel,
+    previouslyRecommended: job.previouslyRecommended === true || !!recommendationCount,
+    ...recommendationCount ? { recommendationCount } : {},
+    ...lastRecommendedAt ? { lastRecommendedAt } : {},
+    ...reason ? { reason } : {},
+    sourceJob: job
+  };
+}
+function collectJobRecommendationMessageItems(jobs, lang, options) {
+  const limit = resolveJobRecVisibleCount(options?.limit);
+  const items = [];
+  for (let i = 0; i < (jobs?.length ?? 0); i++) {
+    const job = jobs[i];
+    if (!passesCandidateVisibleSeniorityGate(job, options?.candidateTags)) continue;
+    const item = toJobRecommendationMessageItem(job, lang, { reason: options?.reasons?.[i] ?? void 0 });
+    if (!item) continue;
+    items.push(item);
+    if (items.length >= limit) break;
+  }
+  return items;
+}
+async function checkJobRecUrlLiveness(url, options) {
+  const fetchImpl = options?.fetchImpl ?? globalThis.fetch;
+  if (!fetchImpl) return { alive: false, reason: "fetch_unavailable" };
+  const timeoutMs = options?.timeoutMs ?? 2500;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetchImpl(url, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: ctrl.signal
+    });
+    if (res.status >= 200 && res.status < 400 || res.status === 405) {
+      return { alive: true };
+    }
+    return { alive: false, reason: `http_${res.status}` };
+  } catch (err) {
+    const e = err;
+    if (e?.name === "AbortError" || (e?.message ?? "").toLowerCase().includes("aborted")) {
+      return { alive: false, reason: "timeout" };
+    }
+    return { alive: false, reason: `network_error:${(e?.message ?? "unknown").slice(0, 80)}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function collectLiveJobRecommendationMessageItems(jobs, lang, options) {
+  const limit = resolveJobRecVisibleCount(options?.limit);
+  const maxCandidates = Math.max(limit, Math.min(options?.maxCandidates ?? Math.max(8, limit * 4), jobs?.length ?? 0));
+  const candidates = [];
+  for (let i = 0; i < (jobs?.length ?? 0) && candidates.length < maxCandidates; i++) {
+    const job = jobs[i];
+    if (!passesCandidateVisibleSeniorityGate(job, options?.candidateTags)) continue;
+    const item = toJobRecommendationMessageItem(job, lang, { reason: options?.reasons?.[i] ?? void 0 });
+    if (item) candidates.push(item);
+  }
+  if (candidates.length === 0) return [];
+  const checked = await Promise.all(
+    candidates.map(async (item) => ({
+      item,
+      verdict: await checkJobRecUrlLiveness(item.url, {
+        ...options?.fetchImpl ? { fetchImpl: options.fetchImpl } : {},
+        ...options?.timeoutMs ? { timeoutMs: options.timeoutMs } : {}
+      })
+    }))
+  );
+  const items = [];
+  for (const { item, verdict } of checked) {
+    if (verdict.alive) {
+      items.push(item);
+      if (items.length >= limit) break;
+      continue;
+    }
+    options?.log?.("pa.job_rec.visible_url_dead", {
+      jobId: cleanDisplayString(item.sourceJob.id),
+      companyName: item.companyName ?? null,
+      url: item.url,
+      reason: verdict.reason
+    });
+    await options?.onDeadJob?.(item.sourceJob, verdict, item.url);
+  }
+  return items;
+}
+async function markDeadJobRecommendationSource(db, job, reason) {
+  if (typeof job.id !== "string" || job.id.trim().length === 0) return;
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  await db.collection("matching-jobs").doc(job.id).set(
+    {
+      dead: true,
+      deadCheckedAt: now,
+      deadReason: `runtime_${reason}`,
+      updatedAt: now
+    },
+    { merge: true }
+  );
+}
+async function collectLiveFirestoreJobRecommendationMessageItems(db, jobs, lang, options) {
+  return collectLiveJobRecommendationMessageItems(jobs, lang, {
+    ...options,
+    onDeadJob: async (job, verdict) => {
+      await markDeadJobRecommendationSource(db, job, verdict.reason);
+    }
+  });
+}
+function composeJobRecommendationMessage(items, lang, context, options) {
+  const lines = [formatJobRecIntro(lang, items.length, context)];
+  for (const item of items) {
+    const tag = item.companyName ? ` @ ${item.companyName}` : "";
+    const reason = item.reason ? `
+${item.reason}` : "";
+    const repeat = item.previouslyRecommended ? "\nI may have shared this before, but it is worth another look because it still lines up." : "";
+    lines.push(`\u2022 ${item.title}${tag}${repeat}
+${item.url}
+${item.requirementsLine}${reason}`);
+  }
+  if (options?.footer) lines.push(options.footer);
+  return lines.join("\n\n");
+}
+function buildJobRecommendationRuntimeContext(items, context, options) {
+  const trustedOutboundBody = composeJobRecommendationMessage(items, "en", context, {
+    ...options?.footer ? { footer: options.footer } : {}
+  });
+  return {
+    eventKind: options?.eventKind ?? "job_recommendations_requested",
+    source: options?.source ?? "job_rec",
+    preferredLanguage: "en",
+    requestedCount: options?.requestedCount ?? items.length,
+    candidateContext: context ?? null,
+    trustedOutboundBody,
+    jobs: items.map((item) => ({
+      id: cleanDisplayString(item.sourceJob.id),
+      title: item.title,
+      companyName: item.companyName ?? null,
+      url: item.url,
+      requirements: item.requirementsLine,
+      reason: item.reason ?? null,
+      previouslyRecommended: item.previouslyRecommended,
+      recommendationCount: item.recommendationCount ?? 0,
+      lastRecommendedAt: item.lastRecommendedAt ?? null,
+      // Collab/partner jobs are the ONLY ones WeKruit can screen + forward. Surface
+      // a neutral boolean (never the internal "matchSourceLabel" string, which must
+      // stay out of the runtime/LLM-visible context) so downstream copy can gate the
+      // "quick screen / move it forward" framing to collab jobs only.
+      collab: item.matchSourceLabel === "WeKruit collaborated"
+    })),
+    instructions: [
+      "Write candidate-visible copy in English only.",
+      "Use exactly the number of roles requested unless the user asked for a different count.",
+      "For every role include title, company, URL, requirements, and reason.",
+      "Do not expose internal labels, field names, ids, or scoring metadata.",
+      "If a role has previouslyRecommended=true, say briefly that it may be a repeat and why it is still worth another look.",
+      "Only offer a WeKruit screen or to move a candidate forward when collab=true; for collab=false roles the candidate applies via the link themselves, so never imply WeKruit screens or forwards them.",
+      "If timing is awkward or the request should not send, respond __NO_SEND__."
+    ]
+  };
+}
+function compactJobRecContext(tags) {
+  if (!tags || typeof tags !== "object") return void 0;
+  const data = tags;
+  const roleSource = Array.isArray(data.targetRole) && typeof data.targetRole[0] === "string" ? data.targetRole[0] : Array.isArray(data.targetRoleFunction) && typeof data.targetRoleFunction[0] === "string" ? data.targetRoleFunction[0] : void 0;
+  const role = roleSource?.replace(/_/g, " ").trim();
+  const skills = Array.isArray(data.skills) ? data.skills.map((skill) => {
+    if (typeof skill === "string") return skill.trim();
+    if (skill && typeof skill === "object" && typeof skill.name === "string") {
+      return skill.name.trim();
+    }
+    return "";
+  }).filter(Boolean).slice(0, 3) : void 0;
+  return role || skills?.length ? { ...role ? { role } : {}, ...skills?.length ? { skills } : {} } : void 0;
+}
+function cleanJobRecUrl(job) {
+  const ats = typeof job.atsApplyUrl === "string" ? job.atsApplyUrl.trim() : "";
+  if (ats) return normalizeJobRecUrl(ats);
+  const primary = typeof job.primaryUrl === "string" ? job.primaryUrl.trim() : "";
+  if (!primary) return null;
+  try {
+    const host = new URL(primary).hostname.toLowerCase();
+    if (host === "jobright.ai" || host.endsWith(".jobright.ai")) return null;
+  } catch {
+    return null;
+  }
+  return normalizeJobRecUrl(primary);
+}
+function normalizeJobRecUrl(url) {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if ((host === "workatastartup.com" || host === "www.workatastartup.com") && /^\/companies\/[^/]+\/jobs\/?$/.test(parsed.pathname)) {
+      parsed.pathname = parsed.pathname.replace(/\/jobs\/?$/, "");
+      return parsed.toString();
+    }
+  } catch {
+    return url;
+  }
+  return url;
+}
+var init_job_rec_copy = __esm({
+  "apps/functions/src/job-rec-copy.ts"() {
+    "use strict";
+  }
+});
+
+// apps/functions/src/pii-confirm-start.ts
+import { FieldValue } from "firebase-admin/firestore";
+import {
+  applyPartialUserTags as applyPartialUserTags3,
+  createPiiConfirmPipeline
+} from "@pa/pa-orchestrator";
+import { INDUSTRY_SECTOR_VOCAB as INDUSTRY_SECTOR_VOCAB4 } from "@wekruit/shared-tags";
+function betaEnglishPiiState(state) {
+  return { ...state, lang: BETA_CANDIDATE_VISIBLE_LANG };
+}
+function composePiiSkipExistingText(source) {
+  return "We already have your contact details on file \u2014 I\u2019ll text you when a stronger fit comes through.";
+}
+function buildLevel1TagPatch(level1) {
+  if (!level1) return {};
+  const tagPatch = {};
+  if (level1.yoeRange) tagPatch.yoeRange = level1.yoeRange;
+  if (level1.visaStatus) {
+    tagPatch.visaStatus = level1.visaStatus;
+  }
+  if (level1.targetLocations) tagPatch.targetLocations = level1.targetLocations;
+  if (level1.minSalaryUsd !== void 0) tagPatch.minSalary = level1.minSalaryUsd;
+  if (level1.industrySector) {
+    const filtered = level1.industrySector.filter(
+      (t) => typeof t === "string" && INDUSTRY_SECTOR_VOCAB4.includes(t)
+    );
+    if (filtered.length > 0) tagPatch.industrySector = filtered;
+  }
+  if (level1.companySize) tagPatch.companySize = level1.companySize;
+  return tagPatch;
+}
+async function runPiiConfirmForUser(args) {
+  const log = args.log ?? (() => void 0);
+  const userSnap = await args.db.collection("pa-users").doc(args.userId).get();
+  const existing = userSnap.data()?.contactPII;
+  if (existing?.consentedAt) {
+    const source = args.source ?? "pass";
+    log("pii_confirm.skip_existing", {
+      userId: args.userId,
+      consentedAt: existing.consentedAt,
+      source
+    });
+    if (source === "fail") {
+      try {
+        await sendRuntimeApprovedIMessage({
+          to: args.toE164,
+          content: composePiiSkipExistingText("fail"),
+          userId: args.userId,
+          db: args.db,
+          runtimeSource: "pa_pii_runtime",
+          idempotencyKey: `pii_skip_existing:${args.userId}:${args.jobId}:${args.sourceSessionId}`
+        });
+      } catch (err) {
+        log("pii_confirm.skip_send_failed", { error: String(err) });
+      }
+    }
+    return { ok: true, skipped: true, reason: "already_consented" };
+  }
+  await args.db.collection(PII_META_COLL).doc(args.userId).set({
+    source: args.source ?? "pass",
+    jobId: args.jobId,
+    sourceSessionId: args.sourceSessionId,
+    toE164: args.toE164,
+    lang: BETA_CANDIDATE_VISIBLE_LANG,
+    startedAt: (/* @__PURE__ */ new Date()).toISOString()
+  });
+  const pipeline = buildPipeline({
+    db: args.db,
+    userId: args.userId,
+    toE164: args.toE164,
+    jobId: args.jobId,
+    sourceSessionId: args.sourceSessionId,
+    source: args.source ?? "pass",
+    onComplete: args.onComplete,
+    log
+  });
+  const result = await pipeline.startTurn({
+    userId: args.userId,
+    turnId: `pii_start_${Date.now()}`,
+    reply: ""
+  });
+  log("pii_confirm.started", {
+    userId: args.userId,
+    currentQId: result.currentQId,
+    emitted: result.emitted?.slice(0, 80)
+  });
+  return { ok: true, skipped: false };
+}
+function buildPipeline(args) {
+  const state = new FirestorePiiState(args.db);
+  return createPiiConfirmPipeline({
+    state,
+    source: args.source,
+    // v1.9 Adam directive — always chain Level 1 onboarding Qs after PII.
+    // Writes go to pa-users.tags so generateJobRecs matching uses them.
+    includeLevel1: true,
+    emit: async (text) => {
+      try {
+        await sendRuntimeApprovedIMessage({
+          to: args.toE164,
+          content: text,
+          userId: args.userId,
+          db: args.db,
+          runtimeSource: "pa_pii_runtime",
+          idempotencyKey: `pii_emit:${args.userId}:${args.sourceSessionId}:${text}`
+        });
+      } catch (err) {
+        args.log("pii_confirm.emit_failed", { error: String(err) });
+      }
+    },
+    hooks: {
+      onAllCollected: async (answers) => {
+        const consentedAt = (/* @__PURE__ */ new Date()).toISOString();
+        const userDoc = {
+          contactPII: {
+            legalName: answers.legalName,
+            email: answers.email,
+            phone: answers.phone,
+            consentedAt,
+            source: args.source === "fail" ? "prescreen_fail_followup" : "prescreen_pass",
+            sourceSessionId: args.sourceSessionId
+          },
+          level1CollectedAt: consentedAt,
+          level1CompletedAt: consentedAt,
+          level1Status: "complete",
+          level1Source: args.source ?? "pass",
+          updatedAt: FieldValue.serverTimestamp()
+        };
+        let tagPatch = {};
+        if (answers.level1) {
+          tagPatch = buildLevel1TagPatch(answers.level1);
+        }
+        await args.db.collection("pa-users").doc(args.userId).set(userDoc, { merge: true });
+        if (Object.keys(tagPatch).length > 0) {
+          await applyPartialUserTags3(args.db, args.userId, tagPatch, {
+            source: "chat",
+            nowIso: consentedAt,
+            log: (event, payload) => args.log(event, payload ?? {})
+          });
+        }
+        await args.db.collection("pa-audit-events").add({
+          kind: "pii_confirm.collected",
+          userId: args.userId,
+          jobId: args.jobId,
+          sourceSessionId: args.sourceSessionId,
+          source: args.source,
+          consentedAt,
+          ts: consentedAt
+        });
+        args.log("pii_confirm.collected", { userId: args.userId, source: args.source });
+        try {
+          await args.db.collection("pa-pii-confirm-state").doc(args.userId).set({ completedAt: consentedAt }, { merge: true });
+        } catch {
+        }
+        if (args.onComplete) {
+          try {
+            await args.onComplete({
+              userId: args.userId,
+              toE164: args.toE164,
+              jobId: args.jobId
+            });
+          } catch (err) {
+            args.log("pii_confirm.onComplete_failed", { error: String(err) });
+          }
+        }
+      }
+    },
+    log: args.log
+  });
+}
+var PII_META_COLL, PII_STATE_COLL, BETA_CANDIDATE_VISIBLE_LANG, FirestorePiiState;
+var init_pii_confirm_start = __esm({
+  "apps/functions/src/pii-confirm-start.ts"() {
+    "use strict";
+    init_runtime_approved_outbox();
+    init_job_rec_copy();
+    PII_META_COLL = "pa-pii-confirm-meta";
+    PII_STATE_COLL = "pa-pii-confirm-state";
+    BETA_CANDIDATE_VISIBLE_LANG = "en";
+    FirestorePiiState = class {
+      constructor(db) {
+        this.db = db;
+      }
+      db;
+      async load(userId) {
+        const snap = await this.db.collection(PII_STATE_COLL).doc(userId).get();
+        if (!snap.exists) {
+          return {
+            currentQId: null,
+            collected: {},
+            attempts: {},
+            halted: null,
+            lang: BETA_CANDIDATE_VISIBLE_LANG,
+            completed: false
+          };
+        }
+        return betaEnglishPiiState(snap.data());
+      }
+      async save(userId, state) {
+        await this.db.collection(PII_STATE_COLL).doc(userId).set(betaEnglishPiiState(state), { merge: false });
+      }
+    };
+  }
+});
+
+// apps/functions/src/prescreen-outcome-service.ts
+import {
+  PA_COLLECTIONS as PA_COLLECTIONS3,
+  createCandidateJobMatchId,
+  createCandidateJobStateId,
+  createEmployerVisibleProfileId
+} from "@pa/core-types";
+import {
+  applyCandidateJobEvent,
+  applyPassedCandidateSnapshot
+} from "@pa/pa-persistence";
+function cleanString2(value, max) {
+  if (typeof value !== "string") return void 0;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > max) return void 0;
+  return trimmed;
+}
+function cleanStringArray(value, maxItems, maxLength) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const item of value) {
+    const cleaned = cleanString2(item, maxLength);
+    if (cleaned) out.push(cleaned);
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
+function redactRawContact(value) {
+  return value.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[redacted email]").replace(/(?:\+?\d[\s().-]*){9,}/g, "[redacted phone]").replace(/https?:\/\/[^\s]*(?:linkedin\.com|firebasestorage\.googleapis\.com|storage\.googleapis\.com)[^\s]*/gi, "[redacted link]").replace(/gs:\/\/\S+/gi, "[redacted storage]");
+}
+function readNestedRecord(value) {
+  return value && typeof value === "object" ? value : {};
+}
+function consentAtFromUser(user) {
+  const direct = cleanString2(user.piiConsentAt, 80);
+  if (direct) return direct;
+  const contactPII = readNestedRecord(user.contactPII);
+  return cleanString2(contactPII.consentedAt, 80);
+}
+function summarizeSession(session, terminal) {
+  const terminalReason = cleanString2(session.terminalReason, 1e3);
+  const score = typeof session.score === "number" ? session.score : void 0;
+  const scoreMax = typeof session.scoreMax === "number" ? session.scoreMax : void 0;
+  const scoreText = score !== void 0 && scoreMax !== void 0 && scoreMax > 0 ? ` Score ${score.toFixed(2)}/${scoreMax.toFixed(2)}.` : "";
+  return redactRawContact(
+    terminalReason ? `${terminal}: ${terminalReason}.${scoreText}` : `${terminal}: first interview reached a terminal outcome.${scoreText}`
+  ).slice(0, 2e3);
+}
+async function readDoc(db, collectionName, id) {
+  const snap = await db.collection(collectionName).doc(id).get();
+  return snap.exists ? snap.data() ?? {} : {};
+}
+function buildPrescreenTerminalEvent(args) {
+  const eventType = args.terminal === "PASS" ? "prescreen_passed" : args.terminal === "PAUSE" ? "manual_pause" : "prescreen_not_passed";
+  return {
+    eventId: `prescreen-terminal-${args.sessionId}-${args.terminal.toLowerCase()}`,
+    type: eventType,
+    candidateId: args.userId,
+    jobId: args.jobId,
+    actor: "orchestrator",
+    occurredAt: args.occurredAt,
+    evidence: [{ source: "prescreen", summary: `First interview terminal: ${args.terminal}`, refId: args.sessionId }],
+    prescreenSessionId: args.sessionId
+  };
+}
+async function buildEmployerVisibleSnapshot(args) {
+  const stateId = createCandidateJobStateId(args.userId, args.jobId);
+  const [session, stateDoc, user, selfProfile] = await Promise.all([
+    readDoc(args.db, PRESCREEN_SESSIONS, args.sessionId),
+    readDoc(args.db, PA_COLLECTIONS3.candidateJobStates, stateId),
+    readDoc(args.db, PA_COLLECTIONS3.users, args.userId),
+    readDoc(args.db, PA_COLLECTIONS3.candidateSelfProfiles, args.userId)
+  ]);
+  const latestMatchId = cleanString2(stateDoc.latestMatchId, 240) ?? createCandidateJobMatchId(args.userId, args.jobId);
+  const match = await readDoc(args.db, PA_COLLECTIONS3.candidateJobMatches, latestMatchId);
+  const consentAt = consentAtFromUser(user);
+  const displayName = consentAt ? cleanString2(selfProfile.displayName, 200) ?? cleanString2(user.displayName, 200) : void 0;
+  const profileSummary = cleanString2(selfProfile.profileSummary, 4e3) ?? cleanString2(user.profileSummary, 4e3);
+  const resumeSummary = cleanString2(selfProfile.resumeSummary, 4e3) ?? cleanString2(user.resumeSummary, 4e3) ?? cleanString2(user.candidateProfileSummary, 4e3);
+  const matchReasons = cleanStringArray(match.reasons, 3, 400);
+  const matchReason = matchReasons.length > 0 ? matchReasons.join("; ") : cleanString2(match.reason, 2e3) ?? cleanString2(match.summary, 2e3);
+  const latestResumeArtifactId = cleanString2(selfProfile.latestResumeArtifactId, 240) ?? cleanString2(user.latestResumeArtifactId, 240);
+  const snapshot = {
+    snapshotId: createEmployerVisibleProfileId(args.jobId, args.userId),
+    candidateId: args.userId,
+    jobId: args.jobId,
+    candidateJobStateId: stateId,
+    createdFromState: "passed",
+    sourcePrescreenSessionId: args.sessionId,
+    ...latestMatchId ? { sourceMatchId: latestMatchId } : {},
+    ...latestResumeArtifactId ? { sourceResumeArtifactId: latestResumeArtifactId } : {},
+    ...displayName ? { displayName: redactRawContact(displayName).slice(0, 200) } : {},
+    ...profileSummary ? { profileSummary: redactRawContact(profileSummary).slice(0, 4e3) } : {},
+    ...resumeSummary ? { resumeSummary: redactRawContact(resumeSummary).slice(0, 4e3) } : {},
+    ...selfProfile.globalTags && typeof selfProfile.globalTags === "object" ? { tagsSnapshot: selfProfile.globalTags } : {},
+    transcriptSummary: summarizeSession(session, args.terminal),
+    passReason: summarizeSession(session, args.terminal),
+    ...matchReason ? { matchReason: redactRawContact(matchReason).slice(0, 2e3) } : {},
+    ...consentAt ? { consentAt, piiConsentAt: consentAt } : {},
+    createdAt: args.occurredAt,
+    createdBy: "system"
+  };
+  return {
+    snapshot,
+    evidence: [{ source: "prescreen", summary: "Candidate passed first interview", refId: args.sessionId }]
+  };
+}
+async function markPrescreenTerminalOutcome(args) {
+  if (args.terminal === "PASS") {
+    const { snapshot, evidence } = await buildEmployerVisibleSnapshot(args);
+    return applyPassedCandidateSnapshot(args.db, {
+      eventId: `prescreen-terminal-${args.sessionId}-pass`,
+      candidateId: args.userId,
+      jobId: args.jobId,
+      prescreenSessionId: args.sessionId,
+      occurredAt: args.occurredAt,
+      actor: "orchestrator",
+      evidence,
+      snapshot
+    });
+  }
+  return applyCandidateJobEvent(args.db, buildPrescreenTerminalEvent(args));
+}
+var PRESCREEN_SESSIONS;
+var init_prescreen_outcome_service = __esm({
+  "apps/functions/src/prescreen-outcome-service.ts"() {
+    "use strict";
+    PRESCREEN_SESSIONS = "pa-prescreen-sessions";
+  }
+});
+
+// apps/functions/src/prescreen-terminal-action.ts
+var prescreen_terminal_action_exports = {};
+__export(prescreen_terminal_action_exports, {
+  composeJobRecsMessage: () => composeJobRecsMessage,
+  runPrescreenTerminalAction: () => runPrescreenTerminalAction,
+  writePrescreenMemoryUpdate: () => writePrescreenMemoryUpdate
+});
+import {
+  applyPartialUserTags as applyPartialUserTags4,
+  composeLevel1Reveal,
+  composeFailJobRecsPreamble
+} from "@pa/pa-orchestrator";
+function isUserExitLikePrescreenReply(reply) {
+  const normalized = reply.trim().toLowerCase();
+  if (!normalized) return false;
+  if (/^(stop|cancel|pause|quit|exit|end|not now|later|nevermind|never mind|退出|停止|暂停|先不|不用了|算了)[.!。！\s]*$/i.test(normalized)) {
+    return true;
+  }
+  return /^(please\s+)?(stop|cancel|pause|quit|exit|end)\b(?=.*\b(this|screen|role|interview|prescreen|pre-screen|for now|now|please)\b)[a-z0-9\s'’.-]*[.!?。！？\s]*$/i.test(normalized);
+}
+function isMemoryEligiblePrescreenScore(q) {
+  if (q.abortHintKind === "off_topic" || q.abortHintKind === "decline") return false;
+  if (q.answered === false && !q.summary.trim()) return false;
+  return q.summary.trim().length > 0 || q.s !== null;
+}
+function deriveWeakPrescreenTags(args) {
+  const tags = /* @__PURE__ */ new Set(["job_prescreen"]);
+  const positiveScored = args.scored.filter((q) => typeof q.s === "number" && q.s >= 0.5);
+  const haystackParts = [
+    ...positiveScored.map((q) => `${q.qId} ${q.summary}`),
+    ...args.terminal === "PASS" || positiveScored.length > 0 ? args.recentReplies : []
+  ];
+  const haystack = haystackParts.join(" ").toLowerCase();
+  if (haystack.includes("javascript") || haystack.includes("react") || haystack.includes("ui")) tags.add("frontend_development");
+  if (haystack.includes("sql") || haystack.includes("database") || haystack.includes("db")) tags.add("data_workflows");
+  if (haystack.includes("debug") || haystack.includes("failure") || haystack.includes("triage")) tags.add("debugging_workflows");
+  if (haystack.includes("operator") || haystack.includes("ops") || haystack.includes("dashboard")) tags.add("operator_tools");
+  if (haystack.includes("san francisco")) tags.add("san_francisco");
+  if (haystack.includes("no current or future visa sponsorship") || haystack.includes("do not need current or future visa")) {
+    tags.add("no_visa_sponsorship");
+  }
+  return Array.from(tags).slice(0, 10);
+}
+function mergeStringTags(existing, next, maxItems) {
+  const existingValues = [];
+  if (Array.isArray(existing)) {
+    for (const value of existing) {
+      if (typeof value !== "string") continue;
+      const normalized = value.trim();
+      if (normalized && !existingValues.includes(normalized)) existingValues.push(normalized);
+    }
+  }
+  const nextValues = [];
+  for (const value of next) {
+    const normalized = value.trim();
+    if (normalized && !nextValues.includes(normalized)) nextValues.push(normalized);
+  }
+  const merged = Array.from(/* @__PURE__ */ new Set([...existingValues, ...nextValues]));
+  if (merged.length <= maxItems) return merged;
+  const nextSet = new Set(nextValues);
+  const existingSlots = Math.max(0, maxItems - nextValues.length);
+  return [
+    ...merged.filter((value) => !nextSet.has(value)).slice(0, existingSlots),
+    ...nextValues
+  ].slice(0, maxItems);
+}
+async function readLevel1Fields(db, jobId) {
+  if (!jobId) return null;
+  const snap = await db.collection("pa-jobs").doc(jobId).get();
+  if (!snap.exists) return null;
+  const data = snap.data() ?? {};
+  const cfg = data.prescreenConfig ?? {};
+  const level1 = cfg.level1Reveal ?? {};
+  return {
+    jobTitle: typeof cfg.jobTitle === "string" ? cfg.jobTitle : void 0,
+    company: typeof cfg.company === "string" ? cfg.company : void 0,
+    applyUrl: typeof level1.applyUrl === "string" ? level1.applyUrl : void 0,
+    salaryRange: typeof level1.salaryRange === "string" ? level1.salaryRange : void 0,
+    nextStepEta: typeof level1.nextStepEta === "string" ? level1.nextStepEta : void 0
+  };
+}
+async function defaultGenerateJobRecs(args) {
+  const { getFirestore: getFirestore4 } = await import("firebase-admin/firestore");
+  const { queryMatchingJobsV16: queryMatchingJobsV162, sendImessage: send, recordRecommendedJobs: recordRecommendedJobs2 } = await import("@pa/job-rec");
+  const db = getFirestore4();
+  const result = await queryMatchingJobsV162(
+    { userId: args.userId, limit: 5, lang: "en", allowBroadFallback: true },
+    { db, log: () => void 0 }
+  );
+  if (result.noUserTags) return { ok: false, jobCount: 0, reason: "no_user_tags" };
+  if (!result.jobs || result.jobs.length === 0) {
+    return { ok: false, jobCount: 0, reason: "no_matches" };
+  }
+  let userTagsForJobRec;
+  let introContext;
+  try {
+    const userDoc = await db.collection("pa-users").doc(args.userId).get();
+    userTagsForJobRec = userDoc.exists ? userDoc.data()?.tags : void 0;
+    introContext = compactJobRecContext(userTagsForJobRec);
+  } catch {
+    userTagsForJobRec = void 0;
+    introContext = void 0;
+  }
+  const items = await collectLiveFirestoreJobRecommendationMessageItems(db, result.jobs, "en", {
+    limit: 3,
+    candidateTags: userTagsForJobRec
+  });
+  if (items.length === 0) {
+    return { ok: false, jobCount: 0, reason: "no_linkable_matches" };
+  }
+  const sendRes = await send(
+    {
+      userId: args.userId,
+      context: buildJobRecommendationRuntimeContext(items, introContext, {
+        requestedCount: 3,
+        source: "prescreen_terminal_action",
+        eventKind: "prescreen_terminal_job_recommendations"
+      }),
+      idempotencyKey: `${args.userId}-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 16)}-prescreen-term`
+    },
+    { db, log: () => void 0 }
+  );
+  if (sendRes.ok) {
+    const { buildRichMatchReason } = await import("@pa/job-rec");
+    const candidateTagsForReason = userTagsForJobRec && typeof userTagsForJobRec === "object" ? userTagsForJobRec : void 0;
+    await recordRecommendedJobs2(
+      db,
+      {
+        userId: args.userId,
+        // Persist the grounded "why matched" pitch so /me/matches reads the GOOD
+        // reason rather than recomputing weak templates.
+        jobs: items.map((item) => {
+          const sourceJob = item.sourceJob;
+          let matchReason;
+          if (candidateTagsForReason) {
+            try {
+              matchReason = buildRichMatchReason({
+                candidate: candidateTagsForReason,
+                job: sourceJob,
+                matchedSkills: sourceJob.matchedSkills ?? [],
+                breakdown: sourceJob.v16Score,
+                lang: "en"
+              });
+            } catch {
+              matchReason = void 0;
+            }
+          }
+          return { ...sourceJob, ...matchReason ? { matchReason } : {} };
+        }),
+        source: "prescreen_terminal_action"
+      },
+      () => void 0
+    );
+    const lastJobBatchSentAt = (/* @__PURE__ */ new Date()).toISOString();
+    await db.collection("pa-job-profiles").doc(args.userId).set(
+      {
+        lastJobBatchSentAt,
+        updatedAt: lastJobBatchSentAt
+      },
+      { merge: true }
+    );
+  }
+  return {
+    ok: sendRes.ok,
+    jobCount: items.length,
+    ...sendRes.ok ? {} : { reason: "send_failed" }
+  };
+}
+function composeJobRecsMessage(jobs, lang, context) {
+  return composeJobRecommendationMessage(
+    collectJobRecommendationMessageItems(jobs, lang, { limit: 3 }),
+    lang,
+    context
+  );
+}
+async function defaultSendSms(args) {
+  await sendRuntimeApprovedIMessage({
+    to: args.to,
+    content: args.content,
+    userId: args.userId,
+    db: args.db,
+    runtimeSource: args.runtimeSource ?? "pa_prescreen_runtime",
+    idempotencyKey: args.idempotencyKey
+  });
+}
+async function writePrescreenMemoryUpdate(args) {
+  try {
+    const sessionSnap = await args.db.collection("pa-prescreen-sessions").doc(args.sessionId).get();
+    const session = sessionSnap.data() ?? {};
+    const questions = session.questions ?? {};
+    const qIds = Object.keys(questions);
+    const scored = qIds.map((qId) => {
+      const q = questions[qId] ?? {};
+      return {
+        qId,
+        s: typeof q.finalS === "number" ? q.finalS : null,
+        c: typeof q.finalC === "number" ? q.finalC : null,
+        summary: typeof q.scored?.aggregate?.summary === "string" ? q.scored.aggregate.summary : "",
+        answered: typeof q.scored?.answered === "boolean" ? q.scored.answered : void 0,
+        abortHintKind: typeof q.scored?.abortHint?.kind === "string" ? q.scored.abortHint.kind : void 0
+      };
+    }).filter(isMemoryEligiblePrescreenScore).map(({ answered: _answered, abortHintKind: _abortHintKind, ...q }) => q);
+    let lastReplies = [];
+    try {
+      const turns = await args.db.collection("pa-prescreen-sessions").doc(args.sessionId).collection("turns").orderBy("ts", "desc").limit(6).get();
+      lastReplies = turns.docs.map((d) => {
+        const data = d.data();
+        return typeof data.reply === "string" ? data.reply.trim() : "";
+      }).filter(Boolean).filter((reply) => !isUserExitLikePrescreenReply(reply)).reverse();
+    } catch {
+      lastReplies = [];
+    }
+    const bestSummary = scored.map((q) => q.summary).filter(Boolean).join(" | ").slice(0, 800);
+    const replySummary = lastReplies.join(" / ").slice(0, 800);
+    const summary = bestSummary || replySummary || (args.terminal === "PAUSE" ? "Prescreen paused by candidate" : `Prescreen ended with ${args.terminal}`);
+    const evidenceTags = deriveWeakPrescreenTags({
+      terminal: args.terminal,
+      scored,
+      recentReplies: lastReplies
+    });
+    const profileEvidence = {
+      kind: "job_prescreen",
+      sessionId: args.sessionId,
+      jobId: args.jobId,
+      terminal: args.terminal,
+      summary,
+      scored,
+      recentReplies: lastReplies,
+      evidenceTags,
+      updatedAt: args.occurredAt
+    };
+    await args.db.collection("pa-prescreen-memory-events").doc(args.sessionId).set({
+      userId: args.userId,
+      jobId: args.jobId,
+      terminal: args.terminal,
+      summary,
+      scored,
+      recentReplies: lastReplies,
+      createdAt: args.occurredAt
+    });
+    if (args.terminal === "PAUSE") {
+      args.log("prescreen.terminal_action.memory_archived", {
+        sessionId: args.sessionId,
+        userId: args.userId,
+        terminal: args.terminal
+      });
+      return;
+    }
+    const userSnap = await args.db.collection("pa-users").doc(args.userId).get();
+    const existingTags = (userSnap.data()?.tags ?? {}) || {};
+    const proposedTags = mergeStringTags(existingTags.proposedTags, evidenceTags, 12);
+    const update = {
+      lastPrescreenMemoryUpdate: profileEvidence,
+      conversationDerivedPreferences: {
+        prescreenEvidenceByJob: {
+          [args.jobId]: profileEvidence
+        },
+        updatedAt: args.occurredAt
+      },
+      updatedAt: args.occurredAt
+    };
+    await args.db.collection("pa-users").doc(args.userId).set(update, { merge: true });
+    await applyPartialUserTags4(
+      args.db,
+      args.userId,
+      { proposedTags },
+      {
+        source: "chat",
+        nowIso: args.occurredAt,
+        log: (event, payload) => args.log(event, payload ?? {})
+      }
+    );
+    args.log("prescreen.terminal_action.memory_updated", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      terminal: args.terminal
+    });
+  } catch (err) {
+    args.log("prescreen.terminal_action.memory_update_failed", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
+}
+async function endMatchingUserPrescreenWorkSession(args) {
+  try {
+    const userRef = args.db.collection("pa-users").doc(args.userId);
+    const userSnap = await userRef.get();
+    const userData = userSnap.data() ?? {};
+    const current = userData.workSession && typeof userData.workSession === "object" ? userData.workSession : null;
+    if (current?.kind === "job_prescreen" && current.status === "active" && current.sessionId && current.sessionId !== args.sessionId) {
+      args.log("prescreen.terminal_action.user_work_session_skip", {
+        sessionId: args.sessionId,
+        userId: args.userId,
+        currentKind: current?.kind ?? null,
+        currentStatus: current?.status ?? null,
+        currentSessionId: current?.sessionId ?? null
+      });
+      return;
+    }
+    const sessionWorkSession = args.sessionWorkSession && typeof args.sessionWorkSession === "object" ? args.sessionWorkSession : null;
+    const baseWorkSession = current?.sessionId === args.sessionId ? current : sessionWorkSession ?? {};
+    const boundary = args.terminal === "PAUSE" ? typeof sessionWorkSession?.boundary === "string" && sessionWorkSession.boundary !== "trigger" ? sessionWorkSession.boundary : "user_exit" : "terminal";
+    await userRef.set(
+      {
+        workSession: {
+          ...baseWorkSession,
+          kind: "job_prescreen",
+          status: "ended",
+          boundary,
+          endedAt: args.occurredAt,
+          sessionId: args.sessionId,
+          jobId: args.jobId,
+          terminal: args.terminal
+        },
+        updatedAt: args.occurredAt
+      },
+      { merge: true }
+    );
+    args.log("prescreen.terminal_action.user_work_session_ended", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      terminal: args.terminal,
+      boundary
+    });
+  } catch (err) {
+    args.log("prescreen.terminal_action.user_work_session_end_failed", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      terminal: args.terminal,
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
+}
+async function startPiiWithRecsChain(args, source, genJobRecs, log, opts = { fireJobRecs: true }) {
+  const startFn = args.startPii ?? runPiiConfirmForUser;
+  try {
+    const startResult = await startFn({
+      db: args.db,
+      userId: args.userId,
+      toE164: args.toE164,
+      jobId: args.jobId,
+      sourceSessionId: args.sessionId,
+      source,
+      lang: BETA_CANDIDATE_VISIBLE_LANG2,
+      onComplete: async ({ userId, toE164 }) => {
+        if (!opts.fireJobRecs) return;
+        try {
+          await genJobRecs({ userId, toE164, lang: BETA_CANDIDATE_VISIBLE_LANG2 });
+        } catch (err) {
+          log("prescreen.terminal_action.pii_recs_failed", {
+            sessionId: args.sessionId,
+            error: err instanceof Error ? err.message : String(err)
+          });
+        }
+      },
+      log: (event, payload) => log(`pii.${event}`, payload)
+    });
+    if (startResult.skipped && opts.fireJobRecs) {
+      log("prescreen.terminal_action.pii_skipped_firing_recs_directly", {
+        sessionId: args.sessionId
+      });
+      try {
+        await genJobRecs({ userId: args.userId, toE164: args.toE164, lang: BETA_CANDIDATE_VISIBLE_LANG2 });
+      } catch (err) {
+        log("prescreen.terminal_action.recs_direct_failed", {
+          sessionId: args.sessionId,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+    return true;
+  } catch (err) {
+    log("prescreen.terminal_action.pii_start_failed", {
+      sessionId: args.sessionId,
+      error: err instanceof Error ? err.message : String(err)
+    });
+    return false;
+  }
+}
+async function runPrescreenTerminalAction(args) {
+  const log = args.log ?? (() => {
+  });
+  const now = args.now ?? (() => /* @__PURE__ */ new Date());
+  const send = args.sendSms ?? defaultSendSms;
+  const genJobRecs = args.generateJobRecs ?? defaultGenerateJobRecs;
+  const markOutcome = args.markOutcome ?? ((input) => markPrescreenTerminalOutcome(input));
+  const sessRef = args.db.collection("pa-prescreen-sessions").doc(args.sessionId);
+  const sessSnap = await sessRef.get();
+  const sessData = sessSnap.data() ?? {};
+  const firedAt = sessData.terminalActionFiredAt;
+  if (firedAt) {
+    log("prescreen.terminal_action.already_fired", {
+      sessionId: args.sessionId,
+      terminal: args.terminal
+    });
+    return { alreadyFired: true, level1Sent: false, jobRecsFired: false };
+  }
+  let level1Sent = false;
+  let jobRecsFired = false;
+  let jobRecsResult;
+  const outcomeAt = now().toISOString();
+  try {
+    await markOutcome({
+      db: args.db,
+      sessionId: args.sessionId,
+      userId: args.userId,
+      jobId: args.jobId,
+      terminal: args.terminal,
+      occurredAt: outcomeAt
+    });
+  } catch (err) {
+    log("prescreen.terminal_action.outcome_mark_failed", {
+      sessionId: args.sessionId,
+      userId: args.userId,
+      jobId: args.jobId,
+      terminal: args.terminal,
+      error: err instanceof Error ? err.message : String(err)
+    });
+  }
+  await writePrescreenMemoryUpdate({
+    db: args.db,
+    sessionId: args.sessionId,
+    userId: args.userId,
+    jobId: args.jobId,
+    terminal: args.terminal,
+    occurredAt: outcomeAt,
+    log
+  });
+  await endMatchingUserPrescreenWorkSession({
+    db: args.db,
+    sessionId: args.sessionId,
+    userId: args.userId,
+    jobId: args.jobId,
+    terminal: args.terminal,
+    occurredAt: outcomeAt,
+    sessionWorkSession: sessData.workSession,
+    log
+  });
+  let piiStarted = false;
+  if (args.terminal === "PASS") {
+    const fields = await readLevel1Fields(args.db, args.jobId);
+    if (fields && fields.jobTitle) {
+      const level1Fields = {
+        jobTitle: fields.jobTitle,
+        company: fields.company,
+        applyUrl: fields.applyUrl,
+        salaryRange: fields.salaryRange,
+        nextStepEta: fields.nextStepEta
+      };
+      const text = composeLevel1Reveal(level1Fields, BETA_CANDIDATE_VISIBLE_LANG2);
+      try {
+        await send({
+          to: args.toE164,
+          content: text,
+          userId: args.userId,
+          db: args.db,
+          runtimeSource: "pa_prescreen_runtime",
+          idempotencyKey: `prescreen_terminal_level1:${args.sessionId}`
+        });
+        level1Sent = true;
+      } catch (err) {
+        log("prescreen.terminal_action.level1_send_failed", {
+          sessionId: args.sessionId,
+          error: err instanceof Error ? err.message : String(err)
+        });
+      }
+    }
+    piiStarted = await startPiiWithRecsChain(args, "pass", genJobRecs, log, { fireJobRecs: false });
+  } else if (args.terminal === "FAIL") {
+    try {
+      await send({
+        to: args.toE164,
+        content: composeFailJobRecsPreamble(BETA_CANDIDATE_VISIBLE_LANG2),
+        userId: args.userId,
+        db: args.db,
+        runtimeSource: "pa_prescreen_runtime",
+        idempotencyKey: `prescreen_terminal_fail_preamble:${args.sessionId}`
+      });
+    } catch (err) {
+      log("prescreen.terminal_action.preamble_send_failed", {
+        sessionId: args.sessionId,
+        error: err instanceof Error ? err.message : String(err)
+      });
+    }
+    piiStarted = await startPiiWithRecsChain(args, "fail", genJobRecs, log);
+  } else if (args.terminal === "HARD_STOP") {
+    piiStarted = await startPiiWithRecsChain(args, "fail", genJobRecs, log, { fireJobRecs: false });
+  } else if (args.terminal === "PAUSE") {
+    await sessRef.update({ pausedAt: now().toISOString() });
+  }
+  jobRecsFired = piiStarted && args.terminal === "FAIL";
+  const stampIso = now().toISOString();
+  await sessRef.update({
+    terminalActionFiredAt: stampIso,
+    terminalActionResult: {
+      level1Sent,
+      jobRecsFired,
+      jobRecsOk: jobRecsResult?.ok ?? null,
+      jobRecsCount: jobRecsResult?.jobCount ?? 0,
+      jobRecsReason: jobRecsResult?.reason ?? null
+    }
+  });
+  await args.db.collection("pa-audit-events").add({
+    kind: "prescreen.terminal_action",
+    sessionId: args.sessionId,
+    userId: args.userId,
+    jobId: args.jobId,
+    terminal: args.terminal,
+    level1Sent,
+    jobRecsFired,
+    jobRecsResult: jobRecsResult ?? null,
+    ts: stampIso
+  });
+  log("prescreen.terminal_action.fired", {
+    sessionId: args.sessionId,
+    terminal: args.terminal,
+    level1Sent,
+    jobRecsFired,
+    jobRecsOk: jobRecsResult?.ok
+  });
+  return { alreadyFired: false, level1Sent, jobRecsFired, jobRecsResult };
+}
+var BETA_CANDIDATE_VISIBLE_LANG2;
+var init_prescreen_terminal_action = __esm({
+  "apps/functions/src/prescreen-terminal-action.ts"() {
+    "use strict";
+    init_runtime_approved_outbox();
+    init_pii_confirm_start();
+    init_prescreen_outcome_service();
+    init_job_rec_copy();
+    BETA_CANDIDATE_VISIBLE_LANG2 = "en";
+  }
+});
+
 // apps/functions/src/sendblue/pool.ts
 var pool_exports = {};
 __export(pool_exports, {
@@ -26309,13 +27525,31 @@ function makeV16FindMatch(db, opts, cardDeps) {
         }
       }
       const collabBatch = collabHit;
+      const prescreenReady = /* @__PURE__ */ new Set();
+      if (collabIds.size > 0) {
+        try {
+          const snaps = await db.getAll(...[...collabIds].map((id) => db.collection("pa-jobs").doc(id)));
+          for (const s of snaps) {
+            const cfg = s.data()?.prescreenConfig ?? null;
+            if (cfg && Array.isArray(cfg.questions) && cfg.questions.length > 0) prescreenReady.add(s.id);
+          }
+        } catch (e) {
+          log("pa.claire.find_match.prescreen_ready_lookup_failed", { err: String(e) });
+        }
+      }
       const jobs = rawJobs.map((j) => {
         const title = (j.jobTitle || j.roleTitle || "Role").trim();
         const company = (j.companyName || "Company").trim();
         const url = (j.atsApplyUrl ?? "").trim();
-        const head = collabIds.has(j.id) ? `${title} @ ${company} [WeKruit partner role]` : `${title} @ ${company}`;
-        return url ? `${head}
+        const isCollab = collabIds.has(j.id);
+        const head = isCollab ? `${title} @ ${company} [WeKruit partner role]` : `${title} @ ${company}`;
+        const base = url ? `${head}
 ${url}` : head;
+        if (isCollab && prescreenReady.has(j.id)) {
+          return `${base}
+[start prescreen \u2014 copy & reply this exact line] WeKruit_${j.id}_${userId}_Job`;
+        }
+        return base;
       });
       const total = collabBatch ? rawJobs.length : typeof meta.total === "number" ? meta.total : jobs.length;
       const reason = jobs.length === 0 ? meta.needsOnboarding ? "needs onboarding \u2014 missing core preferences" : meta.noUserTags ? "no saved preferences yet" : "no fresh roles fit those constraints" : null;
@@ -26976,11 +28210,19 @@ function emptyProcessStore() {
     }
   };
 }
-function makeJudge(model) {
+function makeJudge(model, opts = {}) {
+  const rubricBlock = opts.rubric ? `
+
+SCORE THIS ANSWER AGAINST THIS RUBRIC (the must-haves this question really tests). Reward answers that concretely demonstrate these signals; do not require the candidate to echo the exact words \u2014 judge the substance:
+${opts.rubric}` : "";
+  const resumeBlock = opts.resumeSnippet ? `
+
+CANDIDATE RESUME ON FILE (use ONLY to verify the answer is concrete, owned, and consistent with real experience \u2014 a specific, resume-grounded answer scores higher than a vague or contradictory one; do NOT score the resume itself, score the answer):
+${opts.resumeSnippet}` : "";
   return new Agent({
     name: "prescreen-judge",
     model,
-    instructions: "You grade a candidate's interview answer for the given competency. Return score 0-1 (1=strong, concrete, owned), evidence (quote), reasoning.",
+    instructions: "You grade a candidate's interview answer for the given competency. Return score 0-1 (1=strong, concrete, owned, first-person specifics; 0=evasive, generic, or off-topic), evidence (a short quote from the answer), and reasoning. You only PROPOSE a number \u2014 you never decide pass/fail." + rubricBlock + resumeBlock,
     outputType: z.object({
       score: z.number().min(0).max(1),
       evidence: z.string(),
@@ -26988,10 +28230,9 @@ function makeJudge(model) {
     })
   });
 }
-function buildProcessTools(ctx, prescreenPrompts = {}) {
+function buildProcessTools(ctx, prescreenPrompts = {}, judgeContext = {}) {
   const store = ctx.processStore ?? emptyProcessStore();
   if (!ctx.processStore) ctx.processStore = store;
-  const judge = makeJudge(ctx.judgeModel);
   const askNextOnboarding = tool({
     name: "ask_next_onboarding_question",
     description: "Get the next onboarding slot to ask. Returns the pending slot id + prompt, or done.",
@@ -27110,22 +28351,57 @@ function buildProcessTools(ctx, prescreenPrompts = {}) {
         ctx.log("prescreen.score.rejected", { reason: "already_terminal", terminal: p.terminal });
         return { ok: false, reason: "already_terminal", terminal: p.terminal };
       }
+      if (ctx.prescreenScoredThisTurn) {
+        const stillPending = p.questions.find((q) => !(q in p.scores)) ?? null;
+        ctx.log("prescreen.score.rejected", { reason: "already_scored_this_turn", pending: stillPending });
+        return {
+          ok: false,
+          reason: "already_scored_this_turn: ask this pending question and wait for the candidate's reply",
+          pending: stillPending
+        };
+      }
       const expected = p.questions.find((q) => !(q in p.scores)) ?? null;
       if (question !== expected) {
         ctx.log("prescreen.score.rejected", { reason: "out_of_order", expected, got: question });
         return { ok: false, reason: `out_of_order: expected ${expected}`, pending: expected };
       }
-      const jr2 = await run(judge, `Competency: ${question}
-Candidate answer: ${answer}`);
+      const rubric = judgeContext[question] ?? ctx.prescreenJudgeContext?.[question];
+      const resumeSnippet = ctx.prescreenResumeSnippet;
+      const judge = makeJudge(ctx.judgeModel, { rubric, resumeSnippet });
+      const judgePrompt = rubric ? `Competency (interview question asked): ${prescreenPrompts[question] ?? question}
+What a strong answer must demonstrate (rubric): ${rubric}
+Candidate answer: ${answer}
+Score how well the answer demonstrates the rubric.` : `Competency: ${prescreenPrompts[question] ?? question}
+Candidate answer: ${answer}`;
+      const jr2 = await run(judge, judgePrompt);
       const proposed = jr2.finalOutput?.score ?? 0;
       const evidence = jr2.finalOutput?.evidence ?? "";
       const result = recordPrescreenScore(p, question, { score: proposed, evidence });
+      ctx.prescreenScoredThisTurn = true;
+      if (ctx.prescreenSessionId && ctx.db) {
+        await ctx.db.collection("pa-prescreen-sessions").doc(ctx.prescreenSessionId).set(
+          {
+            scored: { [question]: { score: result.score ?? proposed, evidence } },
+            ...result.terminal ? { terminal: result.terminal } : {},
+            updatedAt: ctx.nowIso()
+          },
+          { merge: true }
+        ).catch(
+          (err) => ctx.log("prescreen.score.writeback_error", {
+            question,
+            error: err instanceof Error ? err.message : String(err)
+          })
+        );
+      }
       ctx.log("prescreen.score.recorded", {
         question,
         score: result.score,
         pending: result.pending,
         terminal: result.terminal,
-        terminalCommits: p.terminalCommits
+        terminalCommits: p.terminalCommits,
+        rubricApplied: Boolean(rubric),
+        resumeApplied: Boolean(resumeSnippet),
+        wroteBack: Boolean(ctx.prescreenSessionId)
       });
       return result;
     }
@@ -27150,10 +28426,10 @@ Candidate answer: ${answer}`);
 }
 
 // apps/functions/src/claire-agent/tools/index.ts
-function buildClaireTools(ctx) {
+function buildClaireTools(ctx, opts = {}) {
   return [
     ...buildMatchingTools(ctx),
-    ...buildProcessTools(ctx),
+    ...buildProcessTools(ctx, opts.prescreenPrompts ?? {}, opts.judgeContext ?? {}),
     ...buildDeliveryTools(ctx)
   ];
 }
@@ -27195,9 +28471,18 @@ var DELIVERY = [
   "- AFTER find_match you MUST reply \u2014 NEVER end the turn silently. If it returns roles, share them.",
   "- COLLAB / PARTNER PITCH: find_match marks some roles as a WeKruit collab/partner role (the tool",
   "  flags the source as collab/partner). For a role that's marked collab/partner \u2014 and ONLY those \u2014",
-  "  pitch it specially in your voice: tell them this one's a WeKruit partner role, so they can start",
-  "  the prescreen with me right here right now, and once they pass, WeKruit puts them straight in front",
-  "  of the hiring manager for a fast-track / direct interview \u2014 they skip the cold application pile.",
+  "  pitch it specially in your voice: tell them this one's a WeKruit partner role \u2014 they can do a quick",
+  "  prescreen with WeKruit, and once they pass, WeKruit puts them straight in front of the hiring",
+  "  manager for a fast-track / direct interview \u2014 they skip the cold application pile.",
+  "- PRESCREEN KICKOFF (deterministic, copy-paste): when find_match returns a collab/partner role, its",
+  "  line may include a token like '[start prescreen \u2014 copy & reply this exact line] WeKruit_<jobId>_<userId>_Job'.",
+  "  That token is the REAL way to start the prescreen. RELAY IT VERBATIM \u2014 never alter, shorten, wrap in",
+  "  markdown, or paraphrase it (it's a copy-paste trigger; one changed character breaks it). When the",
+  "  candidate says they want to prescreen that role, tell them to just copy that exact line and send it",
+  "  back to start \u2014 that's all it takes. Do NOT claim YOU are 'starting the prescreen now' or ask for",
+  "  their email yourself (that's the prescreen session's job once the trigger fires); your job is to hand",
+  "  them the line and tell them to send it. If a collab role's line has NO such token, it's not yet",
+  "  prescreen-ready \u2014 pitch the fast-track but don't fabricate a trigger string.",
   "  Keep it warm and short. Do NOT claim every role is collab \u2014 only pitch this for roles the tool",
   "  actually marked collab/partner; share any unmarked (open-market) roles normally with no such promise.",
   "  If it returns ZERO roles, NEVER make it feel buggy or like a dead end. ALWAYS frame it as a",
@@ -27297,20 +28582,57 @@ function modeDirective(mode, opts) {
         "up to the top of the range."
       ].join(" ");
     }
-    case "prescreen":
+    case "prescreen": {
+      const dir = opts?.prescreenPrompts ?? {};
+      const dirLines = Object.entries(dir).map(([qId, text]) => `  \u2022 [${qId}] ${text}`).join("\n");
       return [
-        "MODE = PRESCREEN (job interview). On EACH candidate reply you MUST: (1) call ask_next_prescreen_question",
-        "to get the pending question, (2) call score_prescreen_answer with that exact question id + their answer",
-        "(an LLM judge scores it; the reducer advances). Then ask the next pending question. You do NOT decide",
-        "pass/fail and NEVER tell them they passed/failed \u2014 the reducer decides; read it via explain_prescreen_outcome."
-      ].join(" ");
+        "MODE = PRESCREEN \u2014 you ARE running this job's first interview yourself, live, right now. This is",
+        "NOT roleplay and NOT a handoff: do NOT say 'let's get you started', do NOT ask for their email or",
+        "phone, do NOT tell them to copy a trigger line \u2014 the session is already OPEN (the trigger fired and",
+        "created it). You simply conduct the interview, one question at a time, in your warm texting voice.",
+        "",
+        "GROUND EVERY QUESTION, ONE COMPETENCY AT A TIME, IN ORDER. The reducer owns the order \u2014 you always",
+        "ask the SINGLE pending competency that ask_next_prescreen_question returns, never a later one and",
+        "never two at once. The directions below are DIRECTION ONLY \u2014 the competency to probe, not a script to",
+        "read verbatim. Before you ask, look at the PRESCREEN CONTEXT (their r\xE9sum\xE9 + any PRIOR prescreen",
+        "sessions, above) and ask a SPECIFIC, probing question that ties THAT pending competency to something",
+        "they actually did \u2014 e.g. instead of 'walk me through a feature you shipped', ask 'you led the checkout",
+        "rebuild at Stripe \u2014 walk me through how you took that from design to ship'. If a prior session is in",
+        "CONTEXT, you may call back to it ('last time you screened for the Helium role you mentioned X \u2014 how did",
+        "that play out?'). Never read the canned text word-for-word.",
+        dirLines ? `QUESTION DIRECTION (competency \u2192 probe target \u2014 ask these IN THIS ORDER, one per turn):
+${dirLines}` : "",
+        "",
+        "EACH CANDIDATE REPLY, do EXACTLY this, in order \u2014 and SCORE ONLY ONE QUESTION PER REPLY:",
+        "  (1) call ask_next_prescreen_question \u2192 it returns the pending question id (the reducer owns ordering;",
+        "      you can never skip or re-ask a scored one). If it returns a terminal, the screen is OVER \u2014 do NOT",
+        "      ask more; call explain_prescreen_outcome and wrap up warmly.",
+        "  (2) call score_prescreen_answer EXACTLY ONCE, with that pending question id + ONLY the words the",
+        "      candidate ACTUALLY just sent. An LLM judge scores it against the job's rubric; the reducer advances.",
+        "      NEVER score a question the candidate has not yet answered, and NEVER invent or guess an answer for",
+        "      a later question \u2014 you score one real answer, then you STOP scoring for this turn.",
+        "  (3) THEN ask the NEXT pending competency (ask_next now points to it), grounded + probing as above, and",
+        "      WAIT for their reply. One question out, one answer in, one score. If none pending, wrap up.",
+        "  If the tool replies 'already_scored_this_turn' or 'out_of_order', you tried to score ahead \u2014 just ask",
+        "  the pending question it names and end your turn.",
+        "",
+        "YOU NEVER DECIDE OR ANNOUNCE PASS/FAIL. The reducer decides. NEVER tell them they passed, failed, are a",
+        "great fit, or 'moving forward' \u2014 that is the terminal action's job, not yours. If they ask how they did,",
+        "call explain_prescreen_outcome and relay only what the reducer committed (or, if no terminal yet, tell",
+        "them you'll have the full picture once you've covered everything \u2014 keep going).",
+        "If the candidate goes off-topic mid-screen, answer briefly then steer back to the pending question \u2014 do",
+        "NOT score a tangent as an answer. Reply via the messages[] array (default ONE bubble = the question)."
+      ].filter(Boolean).join("\n");
+    }
     default:
       return [
         "MODE = TRIAGE. Free conversation. Route by tool description: recommendations \u2192 find_match (after a status",
         "bubble); durable prefs \u2192 set_matching_preferences; memory \u2192 remember_fact; scheduling \u2192 schedule_interview;",
         "privacy (export/delete/stop) \u2192 privacy. When find_match returns a role it marks as a WeKruit collab/partner",
-        "role, pitch THAT role specially (see DELIVERY's collab/partner pitch): partner role \u2192 start the prescreen",
-        "with me now, pass \u2192 fast-tracked straight to the hiring manager, skipping the cold application pile. Only the",
+        "role, pitch THAT role specially (see DELIVERY's collab/partner pitch): partner role \u2192 quick prescreen \u2192",
+        "pass \u2192 fast-tracked straight to the hiring manager, skipping the cold application pile. To START that",
+        "prescreen, hand the candidate the role's '[start prescreen \u2014 copy & reply this exact line] WeKruit_..._Job'",
+        "token VERBATIM and tell them to copy+send it (do NOT roleplay starting it or ask for their email). Only the",
         "marked collab/partner roles get this pitch; share open-market roles normally. When the candidate REACTS to roles you recommended ('these are off',",
         "'love these', 'too junior', 'all fintech') \u2192 call capture_match_feedback (fill sentiment + reasonCategory +",
         "any tagDeltas); it records the feedback + updates their preferences. If nothing fits, just reply warmly."
@@ -27339,6 +28661,9 @@ function buildClairePrompt(opts) {
     modeDirective(opts.mode, opts),
     FLEXIBILITY,
     opts.globalContext ? `CONTEXT \u2014 ${opts.globalContext}` : "",
+    // prescreen: résumé arc + prior-session callbacks (loadPrescreenContext). Self-labeled
+    // "PRESCREEN CONTEXT: …" so no extra prefix; only non-empty on a prescreen turn.
+    opts.mode === "prescreen" && opts.prescreenContext ? opts.prescreenContext : "",
     // onboarding folds pendingStep into its directive (the next question to ask); other modes
     // surface it as a resume-after-tangent reminder.
     opts.pendingStep && opts.mode !== "onboarding" ? `PENDING STEP to resume after any tangent: ${opts.pendingStep}.` : "",
@@ -27473,8 +28798,15 @@ async function deliverBubbles(ctx, messages, deliveredViaTool = false) {
   const clean = (Array.isArray(messages) ? messages : []).map((m) => normalizeReply(String(m ?? "")).trim()).filter(Boolean);
   if (clean.length === 0) return 0;
   const bubbles = clean.length > MAX_BUBBLES ? [...clean.slice(0, MAX_BUBBLES - 1), clean.slice(MAX_BUBBLES - 1).join(" ")] : clean;
-  for (const b of bubbles) {
-    await ctx.transport.sendText(b);
+  const multi = bubbles.length > 1;
+  for (let i = 0; i < bubbles.length; i++) {
+    if (i > 0) {
+      await ctx.transport.typing().catch(() => {
+      });
+      const ms2 = 600 + Math.floor(Math.random() * 900);
+      await new Promise((r) => setTimeout(r, ms2));
+    }
+    await ctx.transport.sendText(bubbles[i], multi ? { seq: i, paced: true } : void 0);
   }
   return bubbles.length;
 }
@@ -27521,9 +28853,14 @@ function buildClaireAgent(ctx, opts) {
       currentStep: opts.currentStep,
       globalContext: opts.globalContext,
       onboardingSlot: opts.onboardingSlot,
-      awaitingAnswer: opts.awaitingAnswer
+      awaitingAnswer: opts.awaitingAnswer,
+      prescreenContext: opts.prescreenContext,
+      prescreenPrompts: opts.prescreenPrompts
     }),
-    tools: buildClaireTools(ctx),
+    tools: buildClaireTools(ctx, {
+      prescreenPrompts: opts.prescreenPrompts,
+      judgeContext: opts.judgeContext
+    }),
     // Multi-bubble reply contract — finalOutput is { messages: string[] }, delivered one send each.
     outputType: ClaireReplySchema,
     inputGuardrails: guardrails.input,
@@ -27539,7 +28876,7 @@ function trackTransport(inner) {
     markRead: () => inner.markRead(),
     typing: () => inner.typing(),
     sendStatus: (t) => inner.sendStatus(t),
-    sendText: (t) => inner.sendText(t),
+    sendText: (t, opts) => inner.sendText(t, opts),
     tapback: (r) => {
       viaTool = true;
       return inner.tapback(r);
@@ -27557,13 +28894,13 @@ async function loadGlobalContext(db, userId) {
     const data = snap.data() ?? {};
     const tags = data.tags ?? {};
     const arr = (k) => Array.isArray(tags[k]) ? tags[k] : [];
-    const str = (v) => typeof v === "string" ? v.trim() : "";
-    const displayName = str(data.displayName);
+    const str2 = (v) => typeof v === "string" ? v.trim() : "";
+    const displayName = str2(data.displayName);
     const firstName = displayName ? displayName.split(/\s+/)[0] : "";
-    const recentRoleTitle = str(tags.recentRoleTitle);
-    const recentCompany = str(tags.recentCompany);
-    const workHistorySummary = str(tags.workHistorySummary);
-    const skillNames = arr("skills").map((s) => typeof s === "string" ? s : str(s?.name)).filter(Boolean).slice(0, 5);
+    const recentRoleTitle = str2(tags.recentRoleTitle);
+    const recentCompany = str2(tags.recentCompany);
+    const workHistorySummary = str2(tags.workHistorySummary);
+    const skillNames = arr("skills").map((s) => typeof s === "string" ? s : str2(s?.name)).filter(Boolean).slice(0, 5);
     const resumeBits = [
       firstName ? `first name: ${firstName}` : "",
       // Label work history as the compliment source so the agent describes impact, not a skill list.
@@ -27572,10 +28909,10 @@ async function loadGlobalContext(db, userId) {
       skillNames.length ? `top skills (reference, NOT the compliment): ${skillNames.join(", ")}` : ""
     ].filter(Boolean);
     const resumeLine = resumeBits.length ? `Candidate r\xE9sum\xE9 on file (use it to personalize \u2014 greet by first name, compliment what they DID from work history): ${resumeBits.join("; ")}` : "";
-    const roles = arr("targetRoleFunction").map(str).filter(Boolean);
-    const avoid = arr("negativeRoleFunction").map(str).filter(Boolean);
-    const jobType = arr("targetJobType").map(str).filter(Boolean);
-    const locations = arr("targetLocations").map(str).filter(Boolean);
+    const roles = arr("targetRoleFunction").map(str2).filter(Boolean);
+    const avoid = arr("negativeRoleFunction").map(str2).filter(Boolean);
+    const jobType = arr("targetJobType").map(str2).filter(Boolean);
+    const locations = arr("targetLocations").map(str2).filter(Boolean);
     const prefsLine = !roles.length && !avoid.length && !jobType.length && !locations.length ? "Saved matcher preferences (canonical pa-users.tags): none set yet." : [
       "Saved matcher preferences \u2014 READ THESE when asked what's saved (this IS the matcher input):",
       roles.length ? `roles: ${roles.join(", ")}` : "",
@@ -27606,6 +28943,9 @@ async function runClaireTurn(input, deps) {
     findMatch: deps.findMatch
   };
   if (deps.processStore) ctx.processStore = deps.processStore;
+  if (deps.judgeContext) ctx.prescreenJudgeContext = deps.judgeContext;
+  if (deps.prescreenResumeSnippet) ctx.prescreenResumeSnippet = deps.prescreenResumeSnippet;
+  if (deps.prescreenSessionId) ctx.prescreenSessionId = deps.prescreenSessionId;
   void markReadReflex(ctx).catch((e) => log("markReadReflex_failed", { err: String(e) }));
   const globalContext = await loadGlobalContext(deps.db, input.userId);
   const agent = buildClaireAgent(ctx, {
@@ -27615,7 +28955,10 @@ async function runClaireTurn(input, deps) {
     currentStep: deps.currentStep,
     globalContext,
     onboardingSlot: deps.onboardingSlot,
-    awaitingAnswer: deps.awaitingAnswer
+    awaitingAnswer: deps.awaitingAnswer,
+    prescreenPrompts: deps.prescreenPrompts,
+    judgeContext: deps.judgeContext,
+    prescreenContext: deps.prescreenContext
   });
   const session = makeClaireSession({
     db: deps.db,
@@ -27673,11 +29016,36 @@ async function runClaireTurn(input, deps) {
       log("onboarding.ask_net_no_pending", { slot: deps.onboardingSlot });
     }
   }
+  if (deps.mode === "prescreen" && deps.prescreenSessionId && deps.jobId) {
+    const ps2 = ctx.processStore?.prescreen;
+    if (ps2?.terminal && ps2.terminalCommits >= 1) {
+      try {
+        const { runPrescreenTerminalAction: runPrescreenTerminalAction2 } = await Promise.resolve().then(() => (init_prescreen_terminal_action(), prescreen_terminal_action_exports));
+        await runPrescreenTerminalAction2({
+          db: deps.db,
+          sessionId: deps.prescreenSessionId,
+          terminal: ps2.terminal,
+          // "PASS" | "FAIL"
+          userId: input.userId,
+          jobId: deps.jobId,
+          toE164: input.toE164 ?? "",
+          lang,
+          log
+        });
+        log("thin_prescreen.terminal_fired", { sessionId: deps.prescreenSessionId, terminal: ps2.terminal });
+      } catch (e) {
+        log("thin_prescreen.terminal_fire_failed", {
+          sessionId: deps.prescreenSessionId,
+          err: e instanceof Error ? e.message : String(e)
+        });
+      }
+    }
+  }
   return { finalText, toolCalls: [], deliveredViaTool: deliveredViaTool || blocked };
 }
 
 // apps/functions/src/claire-agent/transport.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 
 // apps/functions/src/sendblue/circuit-breaker.ts
 var FAILURE_THRESHOLD = 5;
@@ -28004,7 +29372,7 @@ var noopLog = (_event, _payload) => {
 };
 function textIdempotencyKey(deps, body) {
   const scope = deps.inboundEventId?.trim() || deps.sessionId;
-  const bodyHash = createHash3("sha256").update(body, "utf8").digest("hex").slice(0, 16);
+  const bodyHash = createHash4("sha256").update(body, "utf8").digest("hex").slice(0, 16);
   return `claire-reply-${scope}:${bodyHash}`;
 }
 function createSendblueTransport(deps) {
@@ -28015,7 +29383,7 @@ function createSendblueTransport(deps) {
   const sendTypingIndicator2 = deps.sendTypingIndicator ?? sendTypingIndicator;
   const sendReadReceipt2 = deps.sendReadReceipt ?? sendReadReceipt;
   const sendReaction2 = deps.sendReaction ?? sendReaction;
-  const enqueueOutbound2 = deps.enqueueOutbound ?? defaultEnqueueOutbound;
+  const enqueueOutbound3 = deps.enqueueOutbound ?? defaultEnqueueOutbound;
   const record = (kind, value) => {
     recordedEvents.push(value === void 0 ? { kind } : { kind, value });
   };
@@ -28079,17 +29447,19 @@ function createSendblueTransport(deps) {
       }
     },
     // User-facing reply — durable, idempotent, retried via the pa-outbound outbox.
-    async sendText(text) {
+    async sendText(text, opts) {
       record("text", text);
       if (dryRun) return;
       const body = String(text ?? "").trim();
       if (!body) return;
       try {
-        await enqueueOutbound2(deps.db, {
+        await enqueueOutbound3(deps.db, {
           userId: deps.userId,
           toE164: deps.toE164,
           body,
           idempotencyKey: textIdempotencyKey(deps, body),
+          ...typeof opts?.seq === "number" ? { seq: opts.seq } : {},
+          ...opts?.paced ? { paced: true } : {},
           runtimeApproved: true,
           runtimeSource: "pa_orchestrator"
         });
@@ -28129,7 +29499,7 @@ function createSendblueTransport(deps) {
 }
 
 // apps/functions/src/claire-agent/cutover.ts
-import { PA_COLLECTIONS as PA_COLLECTIONS3 } from "@pa/core-types";
+import { PA_COLLECTIONS as PA_COLLECTIONS4 } from "@pa/core-types";
 
 // apps/functions/src/claire-agent/flags.ts
 import { getFlag } from "@pa/pa-persistence";
@@ -28150,6 +29520,20 @@ async function isThinClaireEnabled(db, userId) {
   const value = await getFlag(db, THIN_CLAIRE_FLAG_KEY, { userId }, false);
   return value === true;
 }
+var THIN_PRESCREEN_FLAG_KEY = "paThinPrescreenEnabled";
+var THIN_PRESCREEN_CANARY_UIDS = ["8fEwIduUrzxZsblHHsNz"];
+var THIN_PRESCREEN_FLAG_SEED = {
+  key: THIN_PRESCREEN_FLAG_KEY,
+  value: false,
+  type: "bool",
+  scope: "perUser",
+  allowlist: [...THIN_PRESCREEN_CANARY_UIDS],
+  blocklist: []
+};
+async function isThinPrescreenEnabled(db, userId) {
+  const value = await getFlag(db, THIN_PRESCREEN_FLAG_KEY, { userId, env: process.env }, false);
+  return value === true;
+}
 
 // apps/functions/src/claire-agent/mode-selector.ts
 import {
@@ -28159,20 +29543,228 @@ import {
   buildSharedOnboardingPrompt,
   SHARED_ONBOARDING_WORK_SESSION_KIND
 } from "@pa/pa-orchestrator";
+
+// apps/functions/src/claire-agent/prescreen-config.ts
+function pickText(v, lang = "en") {
+  if (typeof v === "string") return v.trim();
+  if (v && typeof v === "object") {
+    const o = v;
+    const primary = typeof o[lang] === "string" ? o[lang] : "";
+    const other = typeof o.en === "string" ? o.en : typeof o.zh === "string" ? o.zh : "";
+    return (primary || other).trim();
+  }
+  return "";
+}
+function judgeContextForQuestion(q, lang) {
+  const parts = [];
+  if (Array.isArray(q.keywords)) {
+    for (const k of q.keywords) {
+      const hint = typeof k?.hint === "string" ? k.hint.trim() : "";
+      const kw = typeof k?.keyword === "string" ? k.keyword.trim() : "";
+      if (hint) parts.push(hint);
+      else if (kw) parts.push(kw);
+    }
+  }
+  const clarify = pickText(q.clarifyPrompt, lang);
+  if (clarify) parts.push(`Probe for: ${clarify}`);
+  return parts.join(" \u2022 ");
+}
+function buildThinPrescreenSeed(config, session, lang = "en") {
+  const rawQs = Array.isArray(config?.questions) ? config.questions : [];
+  const questionIds = [];
+  const prompts = {};
+  const judgeContext = {};
+  for (const q of rawQs) {
+    const qId = typeof q?.qId === "string" ? q.qId.trim() : "";
+    if (!qId || questionIds.includes(qId)) continue;
+    questionIds.push(qId);
+    const prompt = pickText(q.prompt, lang);
+    if (prompt) prompts[qId] = prompt;
+    const jc = judgeContextForQuestion(q, lang);
+    if (jc) judgeContext[qId] = jc;
+  }
+  const cfgThreshold = typeof config?.threshold === "number" && Number.isFinite(config.threshold) ? config.threshold : DEFAULT_PRESCREEN_THRESHOLD;
+  const scores = {};
+  const rawScored = session?.scored ?? session?.scores;
+  if (rawScored && typeof rawScored === "object") {
+    for (const [qId, v] of Object.entries(rawScored)) {
+      if (!questionIds.includes(qId)) continue;
+      const sc = typeof v === "number" ? v : v && typeof v === "object" && typeof v.score === "number" ? v.score : null;
+      if (sc !== null && Number.isFinite(sc)) {
+        const evidence = v && typeof v === "object" && typeof v.evidence === "string" ? v.evidence : void 0;
+        scores[qId] = evidence ? { score: sc, evidence } : { score: sc };
+      }
+    }
+  }
+  const sessionTerminal = session?.terminal;
+  const terminal = sessionTerminal === "PASS" || sessionTerminal === "FAIL" ? sessionTerminal : null;
+  const prescreen = {
+    questions: questionIds,
+    scores,
+    threshold: cfgThreshold,
+    terminal,
+    terminalCommits: terminal ? 1 : 0
+  };
+  return { questionIds, prescreen, prompts, judgeContext };
+}
+
+// apps/functions/src/claire-agent/prescreen-context.ts
 var USERS = "pa-users";
-var PRESCREEN_SESSIONS = "pa-prescreen-sessions";
+var PRESCREEN_SESSIONS2 = "pa-prescreen-sessions";
+var PARSED_RESUMES = "parsedCandidateResumes";
+function str(v) {
+  return typeof v === "string" ? v.trim() : "";
+}
+function tokens(s) {
+  return s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 3);
+}
+async function loadResumeArc(db, userId) {
+  let firstName = "";
+  let arc = "";
+  let skills = [];
+  const experiences = [];
+  try {
+    const snap = await db.collection(USERS).doc(userId).get();
+    const data = snap.data() ?? {};
+    const tags = data.tags ?? {};
+    const displayName = str(data.displayName);
+    firstName = displayName ? displayName.split(/\s+/)[0] : "";
+    arc = str(tags.workHistorySummary);
+    const recentRoleTitle = str(tags.recentRoleTitle);
+    const recentCompany = str(tags.recentCompany);
+    if (recentRoleTitle || recentCompany) {
+      experiences.push([recentRoleTitle, recentCompany].filter(Boolean).join(" @ "));
+    }
+    skills = (Array.isArray(tags.skills) ? tags.skills : []).map((s) => typeof s === "string" ? s : str(s?.name)).filter(Boolean).slice(0, 6);
+  } catch {
+  }
+  if (!arc) {
+    try {
+      const snap = await db.collection(PARSED_RESUMES).where("userId", "==", userId).limit(1).get();
+      if (!snap.empty) {
+        const d = snap.docs[0].data();
+        const exps = Array.isArray(d.experiences) ? d.experiences : [];
+        const arcParts = exps.slice(0, 3).map((e) => [str(e.title), str(e.company)].filter(Boolean).join(" @ ")).filter(Boolean);
+        if (arcParts.length) {
+          arc = arcParts.join("; ");
+          experiences.push(...arcParts);
+        }
+        const summary = str(d.summary);
+        if (summary && !arc) arc = summary;
+        if (!skills.length) {
+          skills = (Array.isArray(d.topSkills) ? d.topSkills : []).map(str).filter(Boolean).slice(0, 6);
+        }
+      }
+    } catch {
+    }
+  }
+  return { firstName, arc, skills, experiences };
+}
+async function loadPriorScreens(db, userId, jobId) {
+  const lines = [];
+  try {
+    const snap = await db.collection(PRESCREEN_SESSIONS2).where("userId", "==", userId).limit(20).get();
+    const docs = snap.docs.map((doc) => ({ id: doc.id, d: doc.data() })).filter((x) => x.d.terminal != null).sort((a, b) => str(b.d.createdAt).localeCompare(str(a.d.createdAt))).slice(0, 3);
+    for (const { d } of docs) {
+      if (str(d.jobId) === jobId) continue;
+      const cfg = d.cfgSnapshot ?? {};
+      const title = str(cfg.jobTitle);
+      const company = str(cfg.company);
+      const role = [title, company].filter(Boolean).join(" @ ") || str(d.jobId) || "a role";
+      const term = str(d.terminal) || "?";
+      let said = "";
+      const questions = d.questions ?? {};
+      let bestFinal = -Infinity;
+      for (const q of Object.values(questions)) {
+        const qd = q ?? {};
+        const scored = qd.scored ?? {};
+        const agg = typeof scored.aggregate === "number" ? scored.aggregate : -Infinity;
+        const replies = Array.isArray(qd.evidenceReplies) ? qd.evidenceReplies : [];
+        const last = str(replies[replies.length - 1]);
+        if (last && agg > bestFinal) {
+          bestFinal = agg;
+          said = last;
+        }
+      }
+      const saidClause = said ? ` \u2014 you said "${said.slice(0, 120)}"` : "";
+      lines.push(`${role} (${term})${saidClause}`);
+      if (lines.length >= 3) break;
+    }
+  } catch {
+  }
+  return lines;
+}
+async function loadPrescreenContext(db, userId, jobId, questionDirections) {
+  try {
+    const { firstName, arc, skills, experiences } = await loadResumeArc(db, userId);
+    const priorLines = await loadPriorScreens(db, userId, jobId);
+    const lines = [];
+    let resumeSnippet = "";
+    if (arc || skills.length || firstName) {
+      resumeSnippet = [
+        firstName ? `${firstName} \u2014` : "",
+        arc,
+        skills.length ? `Skills: ${skills.join(", ")}.` : ""
+      ].filter(Boolean).join(" ").trim();
+      if (resumeSnippet) lines.push(`R\xE9sum\xE9: ${resumeSnippet}`);
+    }
+    if (priorLines.length) {
+      lines.push(`Prior screens: ${priorLines.join("; ")}.`);
+    }
+    let contextText = "";
+    if (lines.length) {
+      contextText = [
+        "PRESCREEN CONTEXT (ground your questions in this; don't read canned text):",
+        ...lines,
+        "Use the r\xE9sum\xE9 to ask GROUNDED, probing follow-ups (e.g. tie a question to their actual work);" + (priorLines.length ? ' when relevant, CALL BACK to a prior screen ("you mentioned X in your last screen\u2026").' : "")
+      ].join("\n");
+    }
+    const resumeHintByQId = {};
+    if (questionDirections) {
+      const corpus = [...experiences, ...skills];
+      for (const [qId, direction] of Object.entries(questionDirections)) {
+        const dirTokens = new Set(tokens(direction));
+        let best = "";
+        let bestOverlap = 0;
+        for (const exp of corpus) {
+          const overlap = tokens(exp).filter((t) => dirTokens.has(t)).length;
+          if (overlap > bestOverlap) {
+            bestOverlap = overlap;
+            best = exp;
+          }
+        }
+        if (bestOverlap > 0 && best) {
+          resumeHintByQId[qId] = `Ground this in their experience: ${best}`;
+        }
+      }
+    }
+    return { contextText, resumeHintByQId, resumeSnippet };
+  } catch {
+    return { contextText: "", resumeHintByQId: {}, resumeSnippet: "" };
+  }
+}
+
+// apps/functions/src/claire-agent/mode-selector.ts
+var USERS2 = "pa-users";
+var PRESCREEN_SESSIONS3 = "pa-prescreen-sessions";
 async function hasActivePrescreen(db, userId) {
   try {
-    const snap = await db.collection(PRESCREEN_SESSIONS).where("userId", "==", userId).where("terminal", "==", null).limit(1).get();
+    const snap = await db.collection(PRESCREEN_SESSIONS3).where("userId", "==", userId).where("terminal", "==", null).limit(1).get();
     if (snap.empty) return { active: false };
-    const d = snap.docs[0].data();
-    return { active: true, jobId: typeof d.jobId === "string" ? d.jobId : void 0 };
+    const doc = snap.docs[0];
+    const d = doc.data();
+    return {
+      active: true,
+      jobId: typeof d.jobId === "string" ? d.jobId : void 0,
+      sessionId: doc.id,
+      session: d
+    };
   } catch {
     return { active: false };
   }
 }
 async function bootstrapOnboarding(db, userId, now) {
-  await db.collection(USERS).doc(userId).set(
+  await db.collection(USERS2).doc(userId).set(
     {
       onboardingState: "pending",
       onboardingStatus: "invited",
@@ -28212,12 +29804,56 @@ async function selectClaireMode(args) {
   const now = (args.nowIso ?? (() => (/* @__PURE__ */ new Date()).toISOString()))();
   const ps2 = await hasActivePrescreen(args.db, args.userId);
   if (ps2.active) {
-    log("mode.prescreen_defer_legacy", { userId: args.userId, jobId: ps2.jobId });
-    return { mode: "prescreen", deferToLegacy: true, jobId: ps2.jobId };
+    let thinOn = false;
+    try {
+      thinOn = await isThinPrescreenEnabled(args.db, args.userId);
+    } catch {
+      thinOn = false;
+    }
+    if (!thinOn || !ps2.jobId) {
+      log("mode.prescreen_defer_legacy", { userId: args.userId, jobId: ps2.jobId, thinOn });
+      return { mode: "prescreen", deferToLegacy: true, jobId: ps2.jobId };
+    }
+    try {
+      const jobSnap = await args.db.collection("pa-jobs").doc(ps2.jobId).get();
+      const config = jobSnap.exists ? jobSnap.data()?.prescreenConfig : null;
+      const seed = buildThinPrescreenSeed(config, ps2.session ?? null);
+      if (seed.questionIds.length === 0) {
+        log("mode.prescreen_thin_no_questions", { userId: args.userId, jobId: ps2.jobId });
+        return { mode: "prescreen", deferToLegacy: true, jobId: ps2.jobId };
+      }
+      const store = emptyProcessStore();
+      store.prescreen = seed.prescreen;
+      const pc = await loadPrescreenContext(args.db, args.userId, ps2.jobId, seed.prompts);
+      log("mode.prescreen_thin", {
+        userId: args.userId,
+        jobId: ps2.jobId,
+        questions: seed.questionIds.length,
+        priorScored: Object.keys(seed.prescreen.scores).length
+      });
+      return {
+        mode: "prescreen",
+        deferToLegacy: false,
+        jobId: ps2.jobId,
+        processStore: store,
+        prescreenPrompts: seed.prompts,
+        judgeContext: seed.judgeContext,
+        prescreenContext: pc.contextText,
+        prescreenResumeSnippet: pc.resumeSnippet,
+        prescreenSessionId: ps2.sessionId
+      };
+    } catch (err) {
+      log("mode.prescreen_thin_error", {
+        userId: args.userId,
+        jobId: ps2.jobId,
+        error: err instanceof Error ? err.message : String(err)
+      });
+      return { mode: "prescreen", deferToLegacy: true, jobId: ps2.jobId };
+    }
   }
   let user = {};
   try {
-    const snap = await args.db.collection(USERS).doc(args.userId).get();
+    const snap = await args.db.collection(USERS2).doc(args.userId).get();
     user = (snap.exists ? snap.data() : {}) ?? {};
   } catch {
     return { mode: "triage" };
@@ -28267,7 +29903,7 @@ async function maybeRunThinClaire(db, eventId, deps = {}) {
   });
   let data;
   try {
-    const snap = await db.collection(PA_COLLECTIONS3.inboundEvents).doc(eventId).get();
+    const snap = await db.collection(PA_COLLECTIONS4.inboundEvents).doc(eventId).get();
     if (!snap.exists) return false;
     data = snap.data() ?? {};
   } catch {
@@ -28348,10 +29984,18 @@ async function maybeRunThinClaire(db, eventId, deps = {}) {
         ...decision.currentStep ? { currentStep: decision.currentStep } : {},
         ...decision.processStore ? { processStore: decision.processStore } : {},
         ...decision.onboardingSlot ? { onboardingSlot: decision.onboardingSlot } : {},
-        ...decision.awaitingAnswer !== void 0 ? { awaitingAnswer: decision.awaitingAnswer } : {}
+        ...decision.awaitingAnswer !== void 0 ? { awaitingAnswer: decision.awaitingAnswer } : {},
+        // prescreen-on-thin: DIRECTION prompts + judge rubric + résumé/prior-session context + the
+        // REAL prescreen sessionId (score write-back + terminal fire) + jobId (ctx.jobId for the turn).
+        ...decision.jobId ? { jobId: decision.jobId } : {},
+        ...decision.prescreenPrompts ? { prescreenPrompts: decision.prescreenPrompts } : {},
+        ...decision.judgeContext ? { judgeContext: decision.judgeContext } : {},
+        ...decision.prescreenContext ? { prescreenContext: decision.prescreenContext } : {},
+        ...decision.prescreenResumeSnippet ? { prescreenResumeSnippet: decision.prescreenResumeSnippet } : {},
+        ...decision.prescreenSessionId ? { prescreenSessionId: decision.prescreenSessionId } : {}
       }
     );
-    await db.collection(PA_COLLECTIONS3.inboundEvents).doc(eventId).set({ status: "completed", handledBy: "thin_claire" }, { merge: true });
+    await db.collection(PA_COLLECTIONS4.inboundEvents).doc(eventId).set({ status: "completed", handledBy: "thin_claire" }, { merge: true });
     log("thin_claire_handled", { eventId, userId });
     return true;
   } catch (e) {
@@ -28374,8 +30018,10 @@ export {
   buildDeliveryTools,
   buildMatchingTools,
   buildProcessTools,
+  buildThinPrescreenSeed,
   createSendblueTransport,
   deliverFinalText,
+  loadPrescreenContext,
   makeV16FindMatch,
   markReadReflex,
   maybeRunThinClaire,

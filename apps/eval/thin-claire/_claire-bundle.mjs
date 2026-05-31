@@ -77,6 +77,8 @@ export async function loadClaireBundle() {
         `export { buildMatchingTools, makeV16FindMatch } from ${JSON.stringify(join(claireDir, "tools/matching-tools.ts"))}`,
         `export { buildDeliveryTools } from ${JSON.stringify(join(claireDir, "tools/delivery-tools.ts"))}`,
         `export { buildProcessTools } from ${JSON.stringify(join(claireDir, "tools/process-tools.ts"))}`,
+        `export { buildThinPrescreenSeed } from ${JSON.stringify(join(claireDir, "prescreen-config.ts"))}`,
+        `export { loadPrescreenContext } from ${JSON.stringify(join(claireDir, "prescreen-context.ts"))}`,
         `export { markReadReflex, wireTypingReflex, deliverFinalText, SLOW_TOOLS } from ${JSON.stringify(join(claireDir, "delivery.ts"))}`,
         `export { buildClaireGuardrails, normalizeReply } from ${JSON.stringify(join(claireDir, "guardrails.ts"))}`,
         `export { Agent, run, tool, z, MemorySession, InputGuardrailTripwireTriggered } from ${JSON.stringify(join(claireDir, "sdk.ts"))}`,

@@ -94,6 +94,12 @@ export interface BuildClaireAgentOptions {
   onboardingSlot?: string
   /** onboarding: false on the kickoff turn (ask only, don't record); true once a question was asked. */
   awaitingAnswer?: boolean
+  /** prescreen: qId → DIRECTION question text (passed to the FSM tools as natural-language prompts). */
+  prescreenPrompts?: Record<string, string>
+  /** prescreen: qId → judge rubric (keyword hints + clarify cue) the score tool grades against. */
+  judgeContext?: Record<string, string>
+  /** prescreen: résumé + prior-session context the prompt grounds probing questions in. */
+  prescreenContext?: string
 }
 
 /** Construct the single Claire agent (tools + guardrails + persona). */
@@ -116,8 +122,13 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
       globalContext: opts.globalContext,
       onboardingSlot: opts.onboardingSlot,
       awaitingAnswer: opts.awaitingAnswer,
+      prescreenContext: opts.prescreenContext,
+      prescreenPrompts: opts.prescreenPrompts,
     }),
-    tools: buildClaireTools(ctx),
+    tools: buildClaireTools(ctx, {
+      prescreenPrompts: opts.prescreenPrompts,
+      judgeContext: opts.judgeContext,
+    }),
     // Multi-bubble reply contract — finalOutput is { messages: string[] }, delivered one send each.
     outputType: ClaireReplySchema,
     inputGuardrails: guardrails.input,
@@ -233,6 +244,16 @@ export interface RunClaireTurnDeps {
   onboardingSlot?: string
   /** onboarding: false on the kickoff turn (ask only); true once a question was asked. */
   awaitingAnswer?: boolean
+  /** prescreen: qId → DIRECTION question text (mode-selector seeds from config). */
+  prescreenPrompts?: Record<string, string>
+  /** prescreen: qId → judge rubric the score tool grades against (mode-selector seeds from config). */
+  judgeContext?: Record<string, string>
+  /** prescreen: résumé + prior-session context for grounded probing (mode-selector builds it). */
+  prescreenContext?: string
+  /** prescreen: bare résumé snippet handed to the JUDGE (credits concrete, résumé-consistent answers). */
+  prescreenResumeSnippet?: string
+  /** prescreen: the REAL pa-prescreen-sessions doc id (for score write-back + the terminal-action fire). */
+  prescreenSessionId?: string
 }
 
 /**
@@ -261,6 +282,12 @@ export async function runClaireTurn(
   // Inject the per-turn process store seeded from durable state (mode-selector) so the onboarding/
   // prescreen FSM tools enforce order + write through to the canonical interface.
   if (deps.processStore) (ctx as ProcessToolContext).processStore = deps.processStore
+  // prescreen: the judge rubric + résumé snippet ride on ctx (mirrors processStore), and the REAL
+  // pa-prescreen-sessions doc id is threaded so the score tool writes the per-question score back to
+  // the live session (resume + memory read it) — ctx.sessionId is the iMessage session, NOT this id.
+  if (deps.judgeContext) (ctx as ProcessToolContext).prescreenJudgeContext = deps.judgeContext
+  if (deps.prescreenResumeSnippet) (ctx as ProcessToolContext).prescreenResumeSnippet = deps.prescreenResumeSnippet
+  if (deps.prescreenSessionId) (ctx as ProcessToolContext).prescreenSessionId = deps.prescreenSessionId
 
   // Tier-1 reflex: mark-read (real read receipt) + typing on EVERY inbound. FIRE-AND-FORGET —
   // these make network calls and awaiting them added seconds to the first reply. They run in
@@ -276,6 +303,9 @@ export async function runClaireTurn(
     globalContext,
     onboardingSlot: deps.onboardingSlot,
     awaitingAnswer: deps.awaitingAnswer,
+    prescreenPrompts: deps.prescreenPrompts,
+    judgeContext: deps.judgeContext,
+    prescreenContext: deps.prescreenContext,
   })
   const session = makeClaireSession({
     db: deps.db,
@@ -357,6 +387,39 @@ export async function runClaireTurn(
       log("onboarding.ask_net_sent", { slot: deps.onboardingSlot, recorded })
     } else {
       log("onboarding.ask_net_no_pending", { slot: deps.onboardingSlot })
+    }
+  }
+
+  // PRESCREEN TERMINAL FIRE — when the reducer committed a terminal THIS turn (score_prescreen_answer's
+  // rollup set store.prescreen.terminal + terminalCommits>=1), fire the PROVEN legacy terminal lifecycle
+  // on the REAL pa-prescreen-sessions doc: session END/workSession, candidate-job outcome, prescreen
+  // memory, and on PASS the Level1 reveal + PII confirm (employer reveal). We REUSE it, not reinvent it.
+  // runPrescreenTerminalAction is idempotent on `terminalActionFiredAt`, so a re-fire (a later turn, or
+  // a legacy double) is a safe no-op. The thin reducer only emits PASS|FAIL — passed straight through.
+  // Needs the REAL prescreen sessionId + jobId (input.userId/toE164 flow already). The score tool already
+  // wrote the per-question scores + terminal back to the session doc (resume + memory read them).
+  if (deps.mode === "prescreen" && deps.prescreenSessionId && deps.jobId) {
+    const ps = (ctx as ProcessToolContext).processStore?.prescreen
+    if (ps?.terminal && ps.terminalCommits >= 1) {
+      try {
+        const { runPrescreenTerminalAction } = await import("../prescreen-terminal-action.js")
+        await runPrescreenTerminalAction({
+          db: deps.db,
+          sessionId: deps.prescreenSessionId,
+          terminal: ps.terminal, // "PASS" | "FAIL"
+          userId: input.userId,
+          jobId: deps.jobId,
+          toE164: input.toE164 ?? "",
+          lang,
+          log,
+        })
+        log("thin_prescreen.terminal_fired", { sessionId: deps.prescreenSessionId, terminal: ps.terminal })
+      } catch (e) {
+        log("thin_prescreen.terminal_fire_failed", {
+          sessionId: deps.prescreenSessionId,
+          err: e instanceof Error ? e.message : String(e),
+        })
+      }
     }
   }
 

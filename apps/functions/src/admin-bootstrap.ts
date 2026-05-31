@@ -461,6 +461,10 @@ const SEED_FLAGS: FlagSpec[] = [
   // Thin Claire (@openai/agents rebuild) cutover — perUser, default OFF, seeded with the 424
   // canary allowlist. Flip per-user to route the inbound turn through claire-agent/runClaireTurn.
   { key: "paThinClaireEnabled", value: false, type: "bool", scope: "perUser", allowlist: ["8fEwIduUrzxZsblHHsNz", "LF8blURXyFBaeF7bhupu"], blocklist: [] },
+  // Thin prescreen-on-thin cutover — perUser, default OFF, canary allowlist. When ON for a user, an
+  // active pa-prescreen-sessions turn routes to the thin agent (mode-selector seeds the store from the
+  // job's prescreenConfig); OFF → defer to the proven legacy prescreen runner (byte-identical today).
+  { key: "paThinPrescreenEnabled", value: false, type: "bool", scope: "perUser", allowlist: ["8fEwIduUrzxZsblHHsNz"], blocklist: [] },
   // Collab prescreen invite: match/copy helpers only; SMS requires HITL approve on dashboard (no ingest hook).
   { key: "paCollabMatchInviteEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paResumeUploadAutoInvite", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },

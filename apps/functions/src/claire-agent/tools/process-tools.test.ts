@@ -94,6 +94,23 @@ test("record_onboarding_answer DURABLY advances sharedOnboarding.currentQuestion
   assert.equal((store.get(`pa-users/${UID}`) as { onboardingState: string }).onboardingState, "pending")
 })
 
+test("score_prescreen_answer: one-score-per-turn latch rejects a 2nd score in the same turn (no judge call, no record)", async () => {
+  // Latch ON simulates "a question was already scored THIS turn" — the guard short-circuits BEFORE the
+  // LLM judge runs, so this is fully offline + deterministic. Proves the agent can't score q2/q3 with a
+  // fabricated answer the candidate never gave (the live FAIL cause: premature terminal on bogus scores).
+  const { db } = makeDb()
+  const ctx = makeCtx(db)
+  ctx.processStore!.prescreen = { questions: ["q1", "q2"], scores: {}, threshold: 0.6, terminal: null, terminalCommits: 0 }
+  ctx.prescreenScoredThisTurn = true
+  const scorePrescreen = buildProcessTools(ctx)[3]!
+  const raw = await scorePrescreen.invoke({} as never, JSON.stringify({ question: "q1", answer: "anything" }))
+  const out = (typeof raw === "string" ? JSON.parse(raw) : raw) as { ok: boolean; reason: string; pending: string }
+  assert.equal(out.ok, false, "2nd score in a turn must be rejected")
+  assert.match(out.reason, /already_scored_this_turn/, "rejection names the per-turn latch")
+  assert.equal(out.pending, "q1", "still-pending question is surfaced so the agent asks it next")
+  assert.deepEqual(ctx.processStore!.prescreen.scores, {}, "no score recorded on the rejected call")
+})
+
 test("record_onboarding_answer walks all slots and completes onboarding durably", async () => {
   const { db, store } = makeDb(seededUser())
   const [, recordOnboarding] = buildProcessTools(makeCtx(db))

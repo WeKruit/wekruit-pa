@@ -59,5 +59,10 @@ ok = run("poc-v1-core.mjs") && ok
 ok = bestOf("poc-v2-delivery --eval", "poc-v2-delivery.mjs", ["--eval"]) && ok
 ok = bestOf("poc-v3-full", "poc-v3-full.mjs", []) && ok
 
+// L5 production-seam sims (real gpt-5.4-nano, best-of-3 for model variance). These drive the EXACT
+// live cutover seam (selectClaireMode → runClaireTurn): onboarding write-through + prescreen-on-thin.
+ok = bestOf("eval-sim-onboarding", "eval-sim-onboarding.mjs", [], 3) && ok
+ok = bestOf("eval-sim-prescreen", "eval-sim-prescreen.mjs", [], 3) && ok
+
 console.log(`\n${ok ? "THIN-CLAIRE CONTRACT: GREEN ✅" : "THIN-CLAIRE CONTRACT: RED ❌"}`)
 process.exit(ok ? 0 : 1)

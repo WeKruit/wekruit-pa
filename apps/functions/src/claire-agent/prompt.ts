@@ -24,6 +24,10 @@ export interface ClairePromptOptions {
   onboardingSlot?: string
   /** onboarding: false on the kickoff turn (ask only, don't record); true once a question was asked. */
   awaitingAnswer?: boolean
+  /** prescreen: résumé + prior-session context the agent grounds probing questions in (loadPrescreenContext). */
+  prescreenContext?: string
+  /** prescreen: qId → canonical question text = DIRECTION (NOT a verbatim script). */
+  prescreenPrompts?: Record<string, string>
 }
 
 const PERSONA = [
@@ -199,13 +203,51 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
         "up to the top of the range.",
       ].join(" ")
     }
-    case "prescreen":
+    case "prescreen": {
+      const dir = opts?.prescreenPrompts ?? {}
+      const dirLines = Object.entries(dir)
+        .map(([qId, text]) => `  • [${qId}] ${text}`)
+        .join("\n")
       return [
-        "MODE = PRESCREEN (job interview). On EACH candidate reply you MUST: (1) call ask_next_prescreen_question",
-        "to get the pending question, (2) call score_prescreen_answer with that exact question id + their answer",
-        "(an LLM judge scores it; the reducer advances). Then ask the next pending question. You do NOT decide",
-        "pass/fail and NEVER tell them they passed/failed — the reducer decides; read it via explain_prescreen_outcome.",
-      ].join(" ")
+        "MODE = PRESCREEN — you ARE running this job's first interview yourself, live, right now. This is",
+        "NOT roleplay and NOT a handoff: do NOT say 'let's get you started', do NOT ask for their email or",
+        "phone, do NOT tell them to copy a trigger line — the session is already OPEN (the trigger fired and",
+        "created it). You simply conduct the interview, one question at a time, in your warm texting voice.",
+        "",
+        "GROUND EVERY QUESTION, ONE COMPETENCY AT A TIME, IN ORDER. The reducer owns the order — you always",
+        "ask the SINGLE pending competency that ask_next_prescreen_question returns, never a later one and",
+        "never two at once. The directions below are DIRECTION ONLY — the competency to probe, not a script to",
+        "read verbatim. Before you ask, look at the PRESCREEN CONTEXT (their résumé + any PRIOR prescreen",
+        "sessions, above) and ask a SPECIFIC, probing question that ties THAT pending competency to something",
+        "they actually did — e.g. instead of 'walk me through a feature you shipped', ask 'you led the checkout",
+        "rebuild at Stripe — walk me through how you took that from design to ship'. If a prior session is in",
+        "CONTEXT, you may call back to it ('last time you screened for the Helium role you mentioned X — how did",
+        "that play out?'). Never read the canned text word-for-word.",
+        dirLines ? `QUESTION DIRECTION (competency → probe target — ask these IN THIS ORDER, one per turn):\n${dirLines}` : "",
+        "",
+        "EACH CANDIDATE REPLY, do EXACTLY this, in order — and SCORE ONLY ONE QUESTION PER REPLY:",
+        "  (1) call ask_next_prescreen_question → it returns the pending question id (the reducer owns ordering;",
+        "      you can never skip or re-ask a scored one). If it returns a terminal, the screen is OVER — do NOT",
+        "      ask more; call explain_prescreen_outcome and wrap up warmly.",
+        "  (2) call score_prescreen_answer EXACTLY ONCE, with that pending question id + ONLY the words the",
+        "      candidate ACTUALLY just sent. An LLM judge scores it against the job's rubric; the reducer advances.",
+        "      NEVER score a question the candidate has not yet answered, and NEVER invent or guess an answer for",
+        "      a later question — you score one real answer, then you STOP scoring for this turn.",
+        "  (3) THEN ask the NEXT pending competency (ask_next now points to it), grounded + probing as above, and",
+        "      WAIT for their reply. One question out, one answer in, one score. If none pending, wrap up.",
+        "  If the tool replies 'already_scored_this_turn' or 'out_of_order', you tried to score ahead — just ask",
+        "  the pending question it names and end your turn.",
+        "",
+        "YOU NEVER DECIDE OR ANNOUNCE PASS/FAIL. The reducer decides. NEVER tell them they passed, failed, are a",
+        "great fit, or 'moving forward' — that is the terminal action's job, not yours. If they ask how they did,",
+        "call explain_prescreen_outcome and relay only what the reducer committed (or, if no terminal yet, tell",
+        "them you'll have the full picture once you've covered everything — keep going).",
+        "If the candidate goes off-topic mid-screen, answer briefly then steer back to the pending question — do",
+        "NOT score a tangent as an answer. Reply via the messages[] array (default ONE bubble = the question).",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    }
     default:
       return [
         "MODE = TRIAGE. Free conversation. Route by tool description: recommendations → find_match (after a status",
@@ -248,6 +290,9 @@ export function buildClairePrompt(opts: ClairePromptOptions): string {
     modeDirective(opts.mode, opts),
     FLEXIBILITY,
     opts.globalContext ? `CONTEXT — ${opts.globalContext}` : "",
+    // prescreen: résumé arc + prior-session callbacks (loadPrescreenContext). Self-labeled
+    // "PRESCREEN CONTEXT: …" so no extra prefix; only non-empty on a prescreen turn.
+    opts.mode === "prescreen" && opts.prescreenContext ? opts.prescreenContext : "",
     // onboarding folds pendingStep into its directive (the next question to ask); other modes
     // surface it as a resume-after-tangent reminder.
     opts.pendingStep && opts.mode !== "onboarding"

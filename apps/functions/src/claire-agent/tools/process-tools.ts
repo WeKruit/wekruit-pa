@@ -80,6 +80,39 @@ export interface ProcessSessionStore {
 export type ProcessToolContext = ClaireToolContext & {
   /** Injected by evals + the production turn handler; default seeded from config. */
   processStore?: ProcessSessionStore
+  /**
+   * qId → the per-question RUBRIC the judge scores against (== buildThinPrescreenSeed().judgeContext:
+   * the config's keyword hints + clarify cue). Injected alongside processStore by the same seeder.
+   * The judge uses rubric[question] so a resume-grounded probing answer still maps to the job's real
+   * must-haves. Absent → judge falls back to the generic competency grade (legacy behavior). NO REGEX:
+   * passed as natural-language guidance to the LLM judge, never token-matched.
+   *
+   * (Also threaded as the 3rd positional arg to buildProcessTools so the live wiring + eval can pass
+   * it next to prescreenPrompts; ctx is the fallback when the positional arg is absent.)
+   */
+  prescreenJudgeContext?: Record<string, string>
+  /**
+   * Short candidate resume blurb (work history + recent role + top skills) so the judge can credit
+   * concrete, owned, resume-consistent answers and discount vague/contradictory ones. Built from the
+   * SAME pa-users.tags fields loadGlobalContext reads (workHistorySummary, recentRoleTitle,
+   * recentCompany, skills). Absent → judge scores on the answer alone.
+   */
+  prescreenResumeSnippet?: string
+  /**
+   * REAL pa-prescreen-sessions doc id of the active session (NOT ctx.sessionId, which is the iMessage
+   * session). Threaded so the score tool can write the per-question score back to the live session doc
+   * (resume + memory read it) and the post-turn terminal hook can fire the legacy terminal action on
+   * the correct doc. Absent (e.g. onboarding-only ctx) → no write-back (eval reuses one in-memory store).
+   */
+  prescreenSessionId?: string
+  /**
+   * Per-turn latch (set on ctx, which is fresh each inbound turn). score_prescreen_answer flips it true
+   * after the FIRST successful score, and rejects any further score call IN THE SAME TURN. This is the
+   * deterministic guard against the agent SCORING AHEAD — judging q2/q3 with fabricated answers the
+   * candidate never gave (the reducer's out_of_order guard only blocks SKIPS, not ahead-of-turn scores).
+   * One candidate message → at most one scored question. Resets every turn (ctx is rebuilt). NO REGEX.
+   */
+  prescreenScoredThisTurn?: boolean
 }
 
 /** A natural-language prompt per prescreen question id (config-supplied or id fallback). */
@@ -148,14 +181,34 @@ export function emptyProcessStore(): ProcessSessionStore {
  * The in-tool LLM JUDGE. A small @openai/agents Agent that PROPOSES a score for
  * a single competency answer (poc-v3 C judge verbatim). The reducer consumes the
  * number; this agent never decides PASS/FAIL.
+ *
+ * The optional `rubric` (the job's per-question must-haves, from buildThinPrescreenSeed.judgeContext)
+ * and `resumeSnippet` (the candidate's résumé on file) go in the JUDGE INSTRUCTIONS (system-level), not
+ * the user turn, so they FRAME grading rather than being treated as answer content. Empty opts →
+ * byte-for-byte the legacy generic grade, so any path that doesn't set them is unchanged. NO REGEX:
+ * rubric/resume are natural-language LLM guidance, never token-matched.
  */
-function makeJudge(model: string) {
+function makeJudge(model: string, opts: { rubric?: string; resumeSnippet?: string } = {}) {
+  const rubricBlock = opts.rubric
+    ? `\n\nSCORE THIS ANSWER AGAINST THIS RUBRIC (the must-haves this question really tests). ` +
+      `Reward answers that concretely demonstrate these signals; do not require the candidate to ` +
+      `echo the exact words — judge the substance:\n${opts.rubric}`
+    : ""
+  const resumeBlock = opts.resumeSnippet
+    ? `\n\nCANDIDATE RESUME ON FILE (use ONLY to verify the answer is concrete, owned, and consistent ` +
+      `with real experience — a specific, resume-grounded answer scores higher than a vague or ` +
+      `contradictory one; do NOT score the resume itself, score the answer):\n${opts.resumeSnippet}`
+    : ""
   return new Agent({
     name: "prescreen-judge",
     model,
     instructions:
       "You grade a candidate's interview answer for the given competency. " +
-      "Return score 0-1 (1=strong, concrete, owned), evidence (quote), reasoning.",
+      "Return score 0-1 (1=strong, concrete, owned, first-person specifics; " +
+      "0=evasive, generic, or off-topic), evidence (a short quote from the answer), and reasoning. " +
+      "You only PROPOSE a number — you never decide pass/fail." +
+      rubricBlock +
+      resumeBlock,
     outputType: z.object({
       score: z.number().min(0).max(1),
       evidence: z.string(),
@@ -165,18 +218,27 @@ function makeJudge(model: string) {
 }
 
 /**
- * Build the onboarding + prescreen FSM tools. `prescreenPrompts` lets the
- * production wiring pass the config's natural-language question text; the eval
- * passes its own. Falls back to the question id when no prompt is supplied.
+ * Build the onboarding + prescreen FSM tools.
+ *
+ * `prescreenPrompts` (qId → DIRECTION text) lets the production wiring pass the config's
+ * natural-language question text; the eval passes its own; falls back to the question id when absent.
+ *
+ * `judgeContext` (qId → RUBRIC = keyword hints + clarify cue from buildThinPrescreenSeed.judgeContext)
+ * is the per-question rubric the score tool's judge grades against. Optional 3rd positional arg so the
+ * existing 2-arg eval call (eval-process.mjs) stays valid; defaults to {} (legacy generic grade). When
+ * absent here the score tool falls back to ctx.prescreenJudgeContext, then to the bare competency grade.
+ * NO REGEX — the rubric is natural-language guidance handed to the LLM judge, never token-matched.
  */
 export function buildProcessTools(
   ctx: ProcessToolContext,
   prescreenPrompts: PrescreenPrompts = {},
+  judgeContext: Record<string, string> = {},
 ) {
   // The store is the single mutable seam: injected for evals, default for prod.
   const store: ProcessSessionStore = ctx.processStore ?? emptyProcessStore()
   if (!ctx.processStore) ctx.processStore = store
-  const judge = makeJudge(ctx.judgeModel)
+  // The judge now VARIES per question (rubric is qId-keyed) + per session (resume), so it's
+  // constructed inside score_prescreen_answer.execute, not once here. Onboarding tools never used it.
 
   // ── C: onboarding FSM (reducer-owned; LLM only phrases) ──
   const askNextOnboarding = tool({
@@ -340,6 +402,18 @@ export function buildProcessTools(
         ctx.log("prescreen.score.rejected", { reason: "already_terminal", terminal: p.terminal })
         return { ok: false, reason: "already_terminal", terminal: p.terminal }
       }
+      // ONE-SCORE-PER-TURN: the candidate gave exactly one message this turn → at most one question may
+      // be scored. Reject a 2nd score call in the same turn so the agent can't grade q2/q3 with answers
+      // the candidate never gave (the cause of premature FAIL). Deterministic, not a judge/regex call.
+      if (ctx.prescreenScoredThisTurn) {
+        const stillPending = p.questions.find((q) => !(q in p.scores)) ?? null
+        ctx.log("prescreen.score.rejected", { reason: "already_scored_this_turn", pending: stillPending })
+        return {
+          ok: false,
+          reason: "already_scored_this_turn: ask this pending question and wait for the candidate's reply",
+          pending: stillPending,
+        }
+      }
       // no-skip: reject before spending a judge call on an out-of-order question.
       const expected = p.questions.find((q) => !(q in p.scores)) ?? null
       if (question !== expected) {
@@ -347,17 +421,62 @@ export function buildProcessTools(
         return { ok: false, reason: `out_of_order: expected ${expected}`, pending: expected }
       }
       // ── LLM JUDGE proposes the score (side-effect = evidence); reducer consumes it ──
-      const jr = await run(judge, `Competency: ${question}\nCandidate answer: ${answer}`)
+      // Rubric is keyed by the SAME qId the reducer gates on; resume is per-session. Both optional →
+      // absent = legacy generic grade. The 3rd positional `judgeContext` arg wins; ctx is the fallback
+      // (the live wiring sets the positional arg; older callers may set ctx only). NO REGEX: rubric is
+      // natural-language judge guidance only.
+      const rubric = judgeContext[question] ?? ctx.prescreenJudgeContext?.[question]
+      const resumeSnippet = ctx.prescreenResumeSnippet
+      const judge = makeJudge(ctx.judgeModel, { rubric, resumeSnippet })
+      // Use the human DIRECTION question text when available so the judge grades against the actual
+      // asked competency, not a bare slot id (strict improvement; harmless when prompts is {}).
+      const judgePrompt = rubric
+        ? `Competency (interview question asked): ${prescreenPrompts[question] ?? question}\n` +
+          `What a strong answer must demonstrate (rubric): ${rubric}\n` +
+          `Candidate answer: ${answer}\n` +
+          `Score how well the answer demonstrates the rubric.`
+        : `Competency: ${prescreenPrompts[question] ?? question}\nCandidate answer: ${answer}`
+      const jr = await run(judge, judgePrompt)
       const proposed = jr.finalOutput?.score ?? 0
       const evidence = jr.finalOutput?.evidence ?? ""
       // reducer records + (when last) does the DETERMINISTIC PASS/FAIL rollup, commit-once.
       const result = recordPrescreenScore(p, question, { score: proposed, evidence })
+      // latch the per-turn guard the moment a question is actually recorded → any further score call
+      // this turn is rejected (the agent must ask the next question and wait for the next message).
+      ctx.prescreenScoredThisTurn = true
+      // PERSIST the score back to the live pa-prescreen-sessions doc (resume + memory read it). The
+      // store is re-seeded fresh each inbound turn from the session doc (buildThinPrescreenSeed reads
+      // session.scored); without this write-back, turn 2 re-seeds with NO scores and the FSM thinks
+      // q1 is still pending → the screen never advances in prod. Best-effort; never blocks the verdict.
+      // Mirrors onboarding's persistOnboardingAnswerThrough. Only when a real session id is threaded.
+      if (ctx.prescreenSessionId && ctx.db) {
+        await ctx.db
+          .collection("pa-prescreen-sessions")
+          .doc(ctx.prescreenSessionId)
+          .set(
+            {
+              scored: { [question]: { score: result.score ?? proposed, evidence } },
+              ...(result.terminal ? { terminal: result.terminal } : {}),
+              updatedAt: ctx.nowIso(),
+            },
+            { merge: true },
+          )
+          .catch((err: unknown) =>
+            ctx.log("prescreen.score.writeback_error", {
+              question,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          )
+      }
       ctx.log("prescreen.score.recorded", {
         question,
         score: result.score,
         pending: result.pending,
         terminal: result.terminal,
         terminalCommits: p.terminalCommits,
+        rubricApplied: Boolean(rubric),
+        resumeApplied: Boolean(resumeSnippet),
+        wroteBack: Boolean(ctx.prescreenSessionId),
       })
       // return the REDUCER's verdict — never declare pass/fail here.
       return result
