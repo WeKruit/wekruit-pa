@@ -133,6 +133,8 @@ function formatCodeExpiry(raw?: string | null): string {
   return Number.isNaN(ms) ? raw : new Date(ms).toLocaleString()
 }
 
+type RecruiterAdminSection = "codes" | "submissions"
+
 function codeStatus(code: RecruiterInviteCodeDoc): { label: string; tone: Parameters<typeof Badge>[0]["tone"] } {
   if (code.active === false) return { label: "disabled", tone: "muted" }
   if ((code.usedCount ?? 0) >= 1) return { label: "used", tone: "info" }
@@ -140,13 +142,20 @@ function codeStatus(code: RecruiterInviteCodeDoc): { label: string; tone: Parame
   return { label: "usable", tone: "ok" }
 }
 
-export default function RecruiterSubmissions() {
-  const [loading, setLoading] = useState(true)
+export default function RecruiterSubmissions({ section = "submissions" }: { section?: RecruiterAdminSection }) {
+  const isSubmissions = section === "submissions"
+  const [loading, setLoading] = useState(isSubmissions)
   const [err, setErr] = useState<string | null>(null)
   const [rows, setRows] = useState<SubmissionDoc[]>([])
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!isSubmissions) {
+      setLoading(false)
+      setErr(null)
+      setExpandedId(null)
+      return
+    }
     let cancelled = false
     void (async () => {
       try {
@@ -176,7 +185,7 @@ export default function RecruiterSubmissions() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [isSubmissions])
 
   const jobOptions = useMemo(() => {
     const seen = new Map<string, string>()
@@ -249,8 +258,45 @@ export default function RecruiterSubmissions() {
     ],
   })
 
-  if (loading) return <LoadingState label="Loading submissions..." />
-  if (err) return <ErrorState message={err} />
+  const header = (
+    <>
+      <PageHeader
+        title={section === "codes" ? "Recruiter Access" : "Recruiter Submissions"}
+        description={
+          section === "codes"
+            ? "Create one-use recruiter access codes, review recruiter accounts, and monitor new-role alerts."
+            : "Review recruiter-submitted candidates and move each submission through the hiring-board pipeline."
+        }
+      />
+      <RecruiterSectionTabs active={section} />
+    </>
+  )
+
+  if (section === "codes") {
+    return (
+      <div>
+        {header}
+        <RecruiterOpsPanel />
+      </div>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div>
+        {header}
+        <LoadingState label="Loading submissions..." />
+      </div>
+    )
+  }
+  if (err) {
+    return (
+      <div>
+        {header}
+        <ErrorState message={err} />
+      </div>
+    )
+  }
 
   const columns: Column<SubmissionDoc>[] = [
     {
@@ -345,19 +391,7 @@ export default function RecruiterSubmissions() {
 
   return (
     <div>
-      <PageHeader
-        title="Recruiter Submissions"
-        description="Create recruiter access codes and review recruiter-submitted candidates."
-        actions={
-          <a
-            href="#recruiter-code-form"
-            style={{ padding: "9px 12px", border: "1px solid #222", background: "#222", color: "#fff", borderRadius: 6, textDecoration: "none", fontSize: 13, fontWeight: 600 }}
-          >
-            Create access code
-          </a>
-        }
-      />
-      <RecruiterOpsPanel />
+      {header}
       <Panel>
         <DataTable<SubmissionDoc>
           columns={columns}
@@ -397,6 +431,60 @@ export default function RecruiterSubmissions() {
         )
       })()}
     </div>
+  )
+}
+
+function RecruiterSectionTabs({ active }: { active: RecruiterAdminSection }) {
+  const tabs: Array<{ key: RecruiterAdminSection; label: string; to: string; detail: string }> = [
+    {
+      key: "codes",
+      label: "Access codes",
+      to: "/admin/recruiter-access",
+      detail: "Invite codes, accounts, role alerts",
+    },
+    {
+      key: "submissions",
+      label: "Submissions",
+      to: "/admin/recruiter-submissions",
+      detail: "Candidate review queue",
+    },
+  ]
+
+  return (
+    <nav
+      aria-label="Recruiter admin sections"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+        gap: 12,
+        margin: "0 0 16px",
+      }}
+    >
+      {tabs.map((tab) => {
+        const selected = active === tab.key
+        return (
+          <a
+            key={tab.key}
+            href={tab.to}
+            aria-current={selected ? "page" : undefined}
+            style={{
+              display: "grid",
+              gap: 4,
+              padding: "14px 16px",
+              border: selected ? "1px solid #2a1a10" : "1px solid #e6ded4",
+              borderRadius: 8,
+              background: selected ? "#fff" : "#f8f5ef",
+              color: "#2a1a10",
+              textDecoration: "none",
+              boxShadow: selected ? "0 1px 0 rgba(42, 26, 16, 0.08)" : "none",
+            }}
+          >
+            <span style={{ fontSize: 13, fontWeight: 700 }}>{tab.label}</span>
+            <span style={{ color: "#777", fontSize: 12 }}>{tab.detail}</span>
+          </a>
+        )
+      })}
+    </nav>
   )
 }
 

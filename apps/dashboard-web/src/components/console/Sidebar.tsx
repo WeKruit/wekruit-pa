@@ -62,7 +62,8 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     icon: "user_check",
     defaultOpen: true,
     items: [
-      { to: "/admin/recruiter-submissions", label: "Submissions & codes", hitl: true },
+      { to: "/admin/recruiter-access", label: "Access codes" },
+      { to: "/admin/recruiter-submissions", label: "Submissions", hitl: true },
     ],
   },
   {
