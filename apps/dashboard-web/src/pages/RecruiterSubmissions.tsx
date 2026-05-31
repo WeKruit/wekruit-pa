@@ -82,6 +82,7 @@ interface RecruiterProfileDoc {
 interface RecruiterInviteCodeDoc {
   id: string
   active?: boolean
+  inviteCode?: string
   codePreview?: string
   label?: string | null
   maxUses?: number
@@ -614,13 +615,14 @@ function RecruiterOpsPanel() {
             </div>
           )}
         </form>
-        <OpsSection title="Access codes" subtitle="Codes are masked after creation; copy the raw code immediately.">
+        <OpsSection title="Access codes" subtitle="Admins can view and copy one-use recruiter codes.">
           {sortedCodes.length ? (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr style={{ color: "#777", textAlign: "left", borderBottom: "1px solid #eee" }}>
                     <th style={{ padding: "8px 6px" }}>Code</th>
+                    <th style={{ padding: "8px 6px" }}>Copy</th>
                     <th style={{ padding: "8px 6px" }}>Label</th>
                     <th style={{ padding: "8px 6px" }}>Status</th>
                     <th style={{ padding: "8px 6px" }}>Expires</th>
@@ -630,9 +632,26 @@ function RecruiterOpsPanel() {
                 <tbody>
                   {sortedCodes.slice(0, 8).map((code) => {
                     const status = codeStatus(code)
+                    const visibleCode = code.inviteCode ?? code.codePreview ?? code.id.slice(0, 10)
                     return (
                       <tr key={code.id} style={{ borderBottom: "1px solid #f1f1f1" }}>
-                        <td style={{ padding: "9px 6px", fontFamily: "monospace", fontWeight: 700 }}>{code.codePreview ?? code.id.slice(0, 10)}</td>
+                        <td style={{ padding: "9px 6px", fontFamily: "monospace", fontWeight: 700 }}>{visibleCode}</td>
+                        <td style={{ padding: "9px 6px" }}>
+                          {code.inviteCode ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                void navigator.clipboard?.writeText(code.inviteCode ?? "")
+                              }}
+                              style={{ padding: "5px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff", fontSize: 12 }}
+                            >
+                              Copy
+                            </button>
+                          ) : (
+                            <span style={{ color: "#999" }}>—</span>
+                          )}
+                        </td>
                         <td style={{ padding: "9px 6px" }}>{code.label || "—"}</td>
                         <td style={{ padding: "9px 6px" }}><Badge tone={status.tone}>{status.label}</Badge></td>
                         <td style={{ padding: "9px 6px", color: "#666" }}>{formatCodeExpiry(code.expiresAt)}</td>

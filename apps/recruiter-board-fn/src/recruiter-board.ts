@@ -883,6 +883,7 @@ export const paRecruiterInviteCodeCreate = onRequest(
       try {
         await ref.create({
           inviteCodeId: codeHash,
+          inviteCode: normalizedCode,
           active: true,
           label: validated.value.label ?? null,
           codePreview: maskRecruiterInviteCode(normalizedCode),
