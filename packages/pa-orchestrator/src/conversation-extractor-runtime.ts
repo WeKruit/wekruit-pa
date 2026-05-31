@@ -125,6 +125,7 @@ const SYSTEM_PROMPT =
   "memoryEntities, confidence, rationale). No prose. tagPatch may include any of: " +
   "targetRoleFunction, negativeRoleFunction, industrySector, negativeIndustrySector, visaStatus, " +
   "careerStage, targetJobType, targetLocations, targetCountry, minSalaryUsd, companySize, " +
+  "companyStage (funding stage pre_seed/seed/series_a/.../ipo_public — ORTHOGONAL to companySize), " +
   "prefersStartup, companyNegativeList, companyPositiveList, targetCompanyTags, urgentlySeeking, " +
   "relevantTags, preferenceHardness. Capture INTENT not résumé history: targetJobType/" +
   "targetRoleFunction describe the user's NEXT role, never inferred from past titles. Salary " +

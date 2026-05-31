@@ -52,7 +52,7 @@ test("shared onboarding asks the seven conversational questions in launch order"
   // seeds targetRoleFunction from history; this asks what they want NEXT).
   assert.match(getSharedOnboardingQuestion("target_role").prompt, /what kind of roles are you going for next/i)
   assert.match(getSharedOnboardingQuestion("target_role").prompt, /product, data, or design/i)
-  assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote, onsite, or relocating/i)
+  assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote within the US, onsite, or relocating/i)
   // seniority_comp (Adam 2026-05-30): one warm question covering intern-vs-full-time +
   // seniority + expected salary + whether those are negotiable or firm.
   assert.match(getSharedOnboardingQuestion("seniority_comp").prompt, /internships or full-time/i)
@@ -112,7 +112,7 @@ test("shared onboarding prompts ground Q1 and Q4 in resume/profile context when 
 
   const q4 = buildSharedOnboardingPrompt("location_relocation", promptContext)
   assert.match(q4, /New York, NY/i)
-  assert.match(q4, /remote, onsite, or open to relocating/i)
+  assert.match(q4, /remote within the US, onsite, or open to relocating/i)
 })
 
 test("shared onboarding opening prompt carries Claire persona guidance without changing the opener token", () => {

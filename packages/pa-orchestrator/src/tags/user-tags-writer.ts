@@ -105,8 +105,16 @@ export function projectTagsToGlobalTags(tags: Record<string, unknown>): Record<s
   const rt = arr("relevantTags")
   if (rt) g.relevantTags = rt
   if (typeof tags.minSalary === "number" && Number.isFinite(tags.minSalary)) g.minSalaryUsd = tags.minSalary
-  const cs = arr("companySize")
-  if (cs) g.companySizePreference = cs
+  // companySize is scalar-OR-array on tags (UserTags union) — lift a scalar to a 1-elem array so a
+  // single-pick ("enterprise") still reaches globalTags (was dropped: arr() only handled arrays).
+  const csRaw = tags.companySize
+  if (Array.isArray(csRaw) && csRaw.length) g.companySizePreference = csRaw
+  else if (typeof csRaw === "string" && csRaw) g.companySizePreference = [csRaw]
+  // companyStage — funding-stage preference, orthogonal to companySize. Scalar OR array on tags; always
+  // emit as an array on globalTags (the /me schema + UI treat it multi-pick).
+  const stage = tags.companyStage
+  if (Array.isArray(stage) && stage.length) g.companyStage = stage
+  else if (typeof stage === "string" && stage) g.companyStage = [stage]
   return g
 }
 

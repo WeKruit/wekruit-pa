@@ -1,6 +1,7 @@
 import { z } from "zod"
 import {
   CareerStageSchema,
+  CompanyStageSchema,
   IndustrySectorSchema,
   JobTypeSchema,
   LocationSchema,
@@ -147,6 +148,9 @@ export const CandidateGlobalTagsSchema = z.object({
       ])
     )
     .default([]),
+  // Company-STAGE preference (funding stage) — orthogonal to companySizePreference (headcount). Lets /me
+  // show "Company stage: Seed · Series A" distinct from "Company size". Multi-pick, COMPANY_STAGE_VOCAB.
+  companyStage: z.array(CompanyStageSchema).optional(),
   updatedAt: TimestampSchema.optional(),
 })
 export type CandidateGlobalTags = z.infer<typeof CandidateGlobalTagsSchema>

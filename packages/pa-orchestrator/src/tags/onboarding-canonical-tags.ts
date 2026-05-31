@@ -28,6 +28,7 @@ import {
   CAREER_STAGE_VOCAB,
   VISA_VOCAB,
   COMPANY_SIZE_VOCAB,
+  COMPANY_STAGE_VOCAB,
   HARDNESS_AXIS_VOCAB,
   type RoleFunction,
   type IndustrySector,
@@ -35,6 +36,7 @@ import {
   type CareerStage,
   type Visa,
   type CompanySize,
+  type CompanyStage,
   type HardnessAxis,
   type PreferenceHardnessEntry,
 } from "@wekruit/shared-tags"
@@ -59,8 +61,10 @@ export interface OnboardingCanonicalTagInput {
   industrySector?: string[] | string | null
   /** Industries to AVOID — INDUSTRY_SECTOR_VOCAB (OR). */
   negativeIndustrySector?: string[] | string | null
-  /** Company-size preference — COMPANY_SIZE_VOCAB (OR). */
+  /** Company-size preference (headcount/maturity bucket) — COMPANY_SIZE_VOCAB (OR). */
   companySize?: string[] | string | null
+  /** Company-STAGE preference (funding stage — orthogonal to size) — COMPANY_STAGE_VOCAB (OR). */
+  companyStage?: string[] | string | null
   /** Where the candidate wants to work — free-form normalized location tokens (OR). */
   targetLocations?: string[] | string | null
   /** Country/region targets, e.g. ["usa"], ["anywhere"] (OR). */
@@ -99,6 +103,7 @@ const JOB_TYPE_SET = new Set<string>(JOB_TYPE_VOCAB)
 const CAREER_STAGE_SET = new Set<string>(CAREER_STAGE_VOCAB)
 const VISA_SET = new Set<string>(VISA_VOCAB)
 const COMPANY_SIZE_SET = new Set<string>(COMPANY_SIZE_VOCAB)
+const COMPANY_STAGE_SET = new Set<string>(COMPANY_STAGE_VOCAB)
 const HARDNESS_AXIS_SET = new Set<string>(HARDNESS_AXIS_VOCAB)
 
 /** Trivial mechanical normalize (NOT classification): trim + lowercase. */
@@ -230,6 +235,15 @@ export function validateOnboardingCanonicalTags(
   if (companySizeList) {
     // OR: keep the array for multi-pick; collapse a single pick to a scalar.
     tags.companySize = companySizeList.length === 1 ? companySizeList[0] : companySizeList
+  }
+
+  // companyStage — funding-stage preference, ORTHOGONAL to companySize (headcount). Same OR/multi-pick
+  // shape; COMPANY_STAGE_VOCAB (pre_seed…ipo_public). Distinct axis so "seed-stage startup OR big public
+  // co" captures stage=[seed,ipo_public] without conflating it into the size bucket.
+  const companyStageList = validateEnumList<CompanyStage>(input.companyStage, COMPANY_STAGE_SET)
+  if (companyStageList) {
+    ;(tags as PartialUserTags & { companyStage?: string[] | string }).companyStage =
+      companyStageList.length === 1 ? companyStageList[0] : companyStageList
   }
 
   const targetJobType = validateEnumList<JobType>(input.targetJobType, JOB_TYPE_SET)

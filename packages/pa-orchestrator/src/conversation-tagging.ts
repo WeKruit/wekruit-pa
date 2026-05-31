@@ -258,6 +258,7 @@ export function buildCanonicalTagPrompt(context: ConversationContext, message: s
     framing[context.purpose],
     "Canonical fields (closed enums from @wekruit/shared-tags; multi-value = OR; emit ONLY what's clearly stated):",
     "  targetRoleFunction[], negativeRoleFunction[], industrySector[], negativeIndustrySector[], companySize[],",
+    "  companyStage[] (funding stage — ORTHOGONAL to companySize: pre_seed/seed/series_a/.../ipo_public),",
     "  targetLocations[], targetCountry[], targetJobType[], careerStage, visaStatus, minSalary,",
     "  preferenceHardness { <axis>: { hardness: 'hard'|'soft', bufferPct?, bufferSteps? } } keyed by:",
     "    salary, industrySector, companyStage, companySize, location, jobType, careerStage, roleFunction.",

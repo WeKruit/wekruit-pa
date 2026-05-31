@@ -32,6 +32,7 @@ import {
   CAREER_STAGE_VOCAB,
   JOB_TYPE_VOCAB,
   COMPANY_SIZE_VOCAB,
+  COMPANY_STAGE_VOCAB,
   HARDNESS_AXIS_VOCAB,
   HardnessSchema,
   type RoleFunction,
@@ -231,6 +232,13 @@ export const ConversationExtractResultSchema = z.object({
        * lone scalar from the model and lifts it to a 1-element array.
        */
       companySize: coerceArray(z.enum(COMPANY_SIZE_VOCAB)).optional(),
+      /**
+       * Company-STAGE preference — funding stage, ORTHOGONAL to companySize (headcount). MULTI-PICK /
+       * OR. The model maps the free-form answer to the canonical token(s) (no regex). E.g. "early
+       * startups or a big public company" → ["seed", "ipo_public"]. Distinct from companySize so stage
+       * intent isn't conflated into the size bucket.
+       */
+      companyStage: coerceArray(z.enum(COMPANY_STAGE_VOCAB)).optional(),
       targetLocations: coerceArray(z.string().min(1).max(80)),
       minSalaryUsd: z.number().int().nonnegative().optional(),
       relevantTags: coerceArray(z.string().min(1).max(40)).refine(
@@ -395,7 +403,8 @@ export function buildExtractorPrompt(req: ConversationExtractRequest): string {
     `  visaStatus (string):            ${VISA_STATUS_VOCAB.join(", ")}`,
     `  careerStage (string):           ${CAREER_STAGE_VOCAB.join(", ")}`,
     `  targetJobType (string[]):       ${JOB_TYPE_VOCAB.join(", ")}`,
-    `  companySize (string[]):         ${COMPANY_SIZE_VOCAB.join(", ")} (MULTI-PICK / OR — capture EVERY size the user is open to, e.g. "small startup or big tech" → [early_startup, enterprise]; "open" = no preference)`,
+    `  companySize (string[]):         ${COMPANY_SIZE_VOCAB.join(", ")} (MULTI-PICK / OR — headcount/maturity; capture EVERY size the user is open to, e.g. "small startup or big tech" → [early_startup, enterprise]; "open" = no preference)`,
+    `  companyStage (string[]):        ${COMPANY_STAGE_VOCAB.join(", ")} (MULTI-PICK / OR — FUNDING stage, ORTHOGONAL to companySize; e.g. "early-stage startup or a public company" → [seed, ipo_public]; omit if not signalled)`,
     "  targetLocations (string[]):     free-form normalized location tokens, e.g. new_york, san_francisco_bay_area, remote",
     "  minSalaryUsd (integer):         minimum acceptable base salary in USD",
     "  relevantTags (string[], max 12): free-form lowercase skill/interest tokens",

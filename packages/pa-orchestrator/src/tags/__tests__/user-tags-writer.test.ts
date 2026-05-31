@@ -454,3 +454,17 @@ test("projectTagsToGlobalTags: bufferSteps clamps at the top of the vocab", () =
   // director + 99 → clamps to the last stage (founder), never out of bounds.
   assert.deepEqual(g.careerStageRange, ["director", "founder"])
 })
+
+test("projectTagsToGlobalTags: companyStage projects as a multi-pick array (orthogonal to companySize)", () => {
+  const g = projectTagsToGlobalTags({ companyStage: ["seed", "series_a"], companySize: ["enterprise"] })
+  assert.deepEqual(g.companyStage, ["seed", "series_a"])
+  assert.deepEqual(g.companySizePreference, ["enterprise"]) // size axis projects independently
+  // a scalar companyStage lifts to a 1-element array on globalTags.
+  assert.deepEqual(projectTagsToGlobalTags({ companyStage: "seed" }).companyStage, ["seed"])
+})
+
+test("projectTagsToGlobalTags: scalar companySize lifts to a 1-elem globalTags array (was dropped)", () => {
+  // tags.companySize can be a scalar (single pick) — must still reach globalTags.companySizePreference.
+  assert.deepEqual(projectTagsToGlobalTags({ companySize: "enterprise" }).companySizePreference, ["enterprise"])
+  assert.deepEqual(projectTagsToGlobalTags({ companySize: ["seed", "enterprise"] }).companySizePreference, ["seed", "enterprise"])
+})

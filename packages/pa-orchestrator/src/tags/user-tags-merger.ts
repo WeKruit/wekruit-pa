@@ -47,6 +47,7 @@ import {
   JOB_TYPE_VOCAB,
   INDUSTRY_SECTOR_VOCAB,
   COMPANY_SIZE_VOCAB,
+  COMPANY_STAGE_VOCAB,
   type CompanySize,
   PreferenceHardnessSchema,
 } from "@wekruit/shared-tags"
@@ -251,6 +252,14 @@ export const UserTagsSchema = z.object({
    */
   companySize: z
     .union([z.enum(COMPANY_SIZE_VOCAB), z.array(z.enum(COMPANY_SIZE_VOCAB))])
+    .optional(),
+  /**
+   * Company-STAGE preference (funding stage) — ORTHOGONAL to companySize (headcount/maturity). Shared
+   * `COMPANY_STAGE_VOCAB`. Scalar OR array (same back-compat shape as companySize). LLM extractor emits
+   * the canonical token(s); no regex. Projected to globalTags.companyStage for the /me surface.
+   */
+  companyStage: z
+    .union([z.enum(COMPANY_STAGE_VOCAB), z.array(z.enum(COMPANY_STAGE_VOCAB))])
     .optional(),
   /**
    * Workstream W3 (pre-launch matching hardening) — Phase 52 canonical
@@ -1111,6 +1120,22 @@ function mapCompanySizePreference(value: unknown): UserTags["companySize"] {
   return isCompanySize(value) ? value : undefined
 }
 
+const COMPANY_STAGE_SET = new Set<string>(COMPANY_STAGE_VOCAB)
+
+function isCompanyStage(value: unknown): value is (typeof COMPANY_STAGE_VOCAB)[number] {
+  return typeof value === "string" && COMPANY_STAGE_SET.has(value)
+}
+
+/** Company-STAGE (funding) preference — same OR/scalar shape as companySize. Off-vocab dropped. */
+function mapCompanyStagePreference(value: unknown): UserTags["companyStage"] {
+  if (Array.isArray(value)) {
+    const valid = Array.from(new Set(value.filter(isCompanyStage)))
+    if (valid.length === 0) return undefined
+    return valid.length === 1 ? valid[0] : valid
+  }
+  return isCompanyStage(value) ? value : undefined
+}
+
 /**
  * Map StatedPreferences.visaStatus → tag-schema visa token.
  *
@@ -1225,6 +1250,7 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
     | (StatedPreferences & {
         careerStage?: unknown
         companySize?: unknown
+        companyStage?: unknown
         minSalary?: unknown
         minSalaryUsd?: unknown
         targetJobType?: unknown
@@ -1271,6 +1297,7 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
           ? Math.max(0, Math.floor(statedPreferences.salaryFloor))
           : undefined
   const companySize = mapCompanySizePreference(statedPreferencesExt?.companySize)
+  const companyStage = mapCompanyStagePreference(statedPreferencesExt?.companyStage)
   // targetJobType is INTENT-ONLY (capture-merger-writer contract, 2026-05-29).
   // THE LIVE BUG: this previously had a
   //   `?? deriveTargetJobTypeFromProfile(recentRoleTitle, careerStage)`
@@ -1390,6 +1417,7 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   if (preferredLang) out.preferredLang = preferredLang
   if (minSalary !== undefined) out.minSalary = minSalary
   if (companySize) out.companySize = companySize
+  if (companyStage) out.companyStage = companyStage
   if (targetJobType) out.targetJobType = targetJobType
   if (industrySector && industrySector.length > 0) out.industrySector = industrySector
   if (relevantIndustry) out.relevantIndustry = relevantIndustry

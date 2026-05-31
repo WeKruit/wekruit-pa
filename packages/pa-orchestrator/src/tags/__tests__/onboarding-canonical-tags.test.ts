@@ -49,6 +49,21 @@ test("OR multi-pick: companySize array is preserved end-to-end", () => {
   assert.equal(dropped.companySize, undefined)
 })
 
+test("companyStage (funding) is captured ORTHOGONALLY to companySize", () => {
+  // "early-stage startup OR a public company" → funding-stage OR, distinct from headcount.
+  const multi = validateOnboardingCanonicalTags({
+    companyStage: ["seed", "ipo_public"],
+    companySize: ["early_startup", "enterprise"],
+  })
+  assert.deepEqual((multi as { companyStage?: unknown }).companyStage, ["seed", "ipo_public"])
+  assert.deepEqual(multi.companySize, ["early_startup", "enterprise"]) // size axis untouched
+
+  // single → scalar; bare scalar accepted; off-vocab dropped.
+  assert.equal((validateOnboardingCanonicalTags({ companyStage: ["series_a"] }) as { companyStage?: unknown }).companyStage, "series_a")
+  assert.equal((validateOnboardingCanonicalTags({ companyStage: "seed" }) as { companyStage?: unknown }).companyStage, "seed")
+  assert.equal((validateOnboardingCanonicalTags({ companyStage: ["megacorp"] }) as { companyStage?: unknown }).companyStage, undefined)
+})
+
 test("OR multi-pick: industries + role functions capture every value the candidate mentioned", () => {
   const tags = validateOnboardingCanonicalTags({
     industrySector: [
