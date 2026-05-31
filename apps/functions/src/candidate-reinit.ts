@@ -20,7 +20,11 @@
  * Idempotent + fail-soft per step; returns a structured summary for operator/eval visibility.
  */
 import type { Firestore } from "firebase-admin/firestore"
-import { mergeUserTags as defaultMergeUserTags, type UserTagsInput } from "@pa/pa-orchestrator"
+import {
+  mergeUserTags as defaultMergeUserTags,
+  projectTagsToGlobalTags,
+  type UserTagsInput,
+} from "@pa/pa-orchestrator"
 
 const PA_USERS = "pa-users"
 const PA_MESSAGES = "pa-messages"
@@ -81,11 +85,38 @@ async function restoreDocs(
   return docs.length
 }
 
+/**
+ * Pick the BEST parse among multiple `parsedCandidateResumes` docs (a degraded re-parse can coexist
+ * with the good one — 8fE had a parserTier=undefined doc with 11 prose "skills" alongside the
+ * parserTier=primary doc with 64 real technical skills). Without this, reinit's `resumeDocs[0]` grabbed
+ * whichever Firestore returned first → could re-enrich from the junk parse. Rank: primary tier ≫ more
+ * candidateProfile.skills ≫ more topSkills ≫ higher parseConfidence.
+ */
+function parseQualityScore(d: Record<string, unknown>): number {
+  let s = 0
+  if (d.parserTier === "primary") s += 100000
+  const cp = (d.candidateProfile as { skills?: unknown[] } | undefined)?.skills
+  s += (Array.isArray(cp) ? cp.length : 0) * 100
+  s += (Array.isArray(d.topSkills) ? d.topSkills.length : 0) * 10
+  if (typeof d.parseConfidence === "number" && Number.isFinite(d.parseConfidence)) s += d.parseConfidence
+  return s
+}
+function pickBestParse(
+  docs: Array<{ id: string; data: Record<string, unknown> }>,
+): Record<string, unknown> | undefined {
+  if (docs.length === 0) return undefined
+  return [...docs].sort((a, b) => parseQualityScore(b.data) - parseQualityScore(a.data))[0]!.data
+}
+
 /** Compose mergeUserTags input from a stored parsed-résumé doc (best-effort over its fields). */
 function tagsInputFromParsedResume(parsed: Record<string, unknown>): UserTagsInput {
-  const skills = Array.isArray(parsed.topSkills)
-    ? (parsed.topSkills as unknown[]).map((s) => (typeof s === "string" ? s : (s as { name?: string })?.name)).filter((s): s is string => !!s)
-    : []
+  // Prefer the RICH candidateProfile.skills (full technical bag, ~64) over topSkills (top-12) so reinit
+  // restores the full skill set, not a truncated one. mergeUserTags reads cv.candidateProfile.skills.
+  const cpSkills = (parsed.candidateProfile as { skills?: unknown[] } | undefined)?.skills
+  const skillSource = Array.isArray(cpSkills) && cpSkills.length > 0 ? cpSkills : (Array.isArray(parsed.topSkills) ? parsed.topSkills : [])
+  const skills = (skillSource as unknown[])
+    .map((s) => (typeof s === "string" ? s : (s as { name?: string })?.name))
+    .filter((s): s is string => !!s)
   const experiences = Array.isArray(parsed.experiences)
     ? (parsed.experiences as Array<Record<string, unknown>>).map((e) => ({
         title: typeof e.title === "string" ? e.title : "",
@@ -137,13 +168,16 @@ export async function reinitializeCandidate(
   // 5. RE-ENRICH tags from the (restored) parsed résumé.
   let reEnriched = false
   let tagKeys: string[] = []
-  const parsed = resumeDocs[0]?.data
+  const parsed = pickBestParse(resumeDocs)
   if (parsed) {
     try {
       const tags = mergeUserTagsFn(tagsInputFromParsedResume(parsed))
       tags.schemaVersion = 2
       tags.lastUpdatedFromCv = now
-      await db.collection(PA_USERS).doc(userId).set({ tags, updatedAt: now, reinitializedAt: now }, { merge: true })
+      // Project to globalTags so /me reflects the re-enriched profile (reinit wiped the user doc; without
+      // this the candidate portal reads stale/empty globalTags after a reinit).
+      const globalTags = projectTagsToGlobalTags(tags as Parameters<typeof projectTagsToGlobalTags>[0])
+      await db.collection(PA_USERS).doc(userId).set({ tags, globalTags, updatedAt: now, reinitializedAt: now }, { merge: true })
       tagKeys = Object.keys(tags)
       reEnriched = true
     } catch (err) {
