@@ -849,6 +849,9 @@ async function processBrokerImessageEvent(
         jobId: triggerDecision.jobId,
         userId: triggerDecision.userId,
         toE164: payload.participant,
+        // Broker control-plane trigger (decideBrokerPrescreenTrigger already gates on
+        // self) — operator-authorized, not the candidate copy-paste threat surface.
+        allowMatchedBypass: true,
         log: (event, payload) => logger.info(`[prescreen][onPaInbound][trigger] ${event}`, payload ?? {}),
       })
       await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
@@ -2096,6 +2099,9 @@ export const paConversationRecoverySweep = onSchedule(
           jobId,
           userId,
           toE164,
+          // Recovery-agent replays inbound events that were ALREADY authorized when first
+          // received — re-gating here would wrongly refuse a legit in-flight start.
+          allowMatchedBypass: true,
           log: (event, payload) => logger.info(`[prescreen][recovery-agent] ${event}`, payload ?? {}),
         }),
       })

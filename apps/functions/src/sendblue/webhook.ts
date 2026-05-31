@@ -817,10 +817,12 @@ export async function handleSendblueWebhook(
               .doc(prescreenTriggerIdempotencyDocId(jobId, userId, messageHandle))
               .delete()
           },
-          runPreScreen: async ({ jobId, userId, toE164, initialReplyText, sourceRequestedUserId }) => {
+          runPreScreen: async ({ jobId, userId, toE164, initialReplyText, sourceRequestedUserId, allowMatchedBypass }) => {
             // Phase 77.3 — real handler: load config, build state, send 1st Q.
             // v1.9 hotfix 2026-05-13 — sourceRequestedUserId passed through
             // for attribution when bound via public-page pending-invite.
+            // 2026-05-31 — allowMatchedBypass forwarded (admin sender only) so the
+            // bootstrap matched-gate runs for the candidate self copy-paste path.
             const initialReply = initialReplyText?.trim()
             const result = await runPreScreenForUser({
               db: deps.db,
@@ -828,6 +830,7 @@ export async function handleSendblueWebhook(
               userId,
               toE164,
               sourceRequestedUserId,
+              allowMatchedBypass,
               suppressFirstQuestion: Boolean(initialReply),
               log: (event, payload) => log(`pa.prescreen.${event}`, payload),
             })

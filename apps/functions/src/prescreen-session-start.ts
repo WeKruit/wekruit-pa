@@ -57,6 +57,24 @@ export interface RunPreScreenArgs {
    * this returns ok=true.
    */
   suppressFirstQuestion?: boolean
+  /**
+   * MATCHED-GATE bypass (2026-05-31). When true, skip the "was this job ever
+   * matched/pushed to this candidate" check. Set by callers whose jobId is NOT
+   * candidate-supplied free text and is therefore not the injection threat:
+   * admin test-drives, the broker control plane, the recovery-agent replay, the
+   * orchestrator's own collab-prescreen hook, and the post-PASS Apply flow.
+   * The candidate copy-paste `WeKruit_<jobId>_<userId>_Job` SELF path leaves this
+   * false so the gate runs. (Public-page first-timers bypass via
+   * `sourceRequestedUserId` — their pending-invite is the match evidence.)
+   */
+  allowMatchedBypass?: boolean
+  /**
+   * Injectable matched-set check (tests stub it). Default reads the rec ledger
+   * (`pa-user-job-recommendations/{userId}/jobs/{jobId}.recommendationCount > 0`)
+   * ∪ a pending-invite for this job. Point-reads only — never the live V16 query
+   * (protects the chat fn from the catalog-OOM; fail-open on read error).
+   */
+  isJobMatchedToUser?: (db: Firestore, userId: string, jobId: string) => Promise<boolean>
   markStarted?: (args: {
     db: Firestore
     sessionId: string
@@ -70,9 +88,64 @@ export interface RunPreScreenArgs {
 
 export interface RunPreScreenResult {
   ok: boolean
-  reason?: "config_missing" | "config_invalid" | "send_failed" | "started" | "resumed"
+  reason?: "config_missing" | "config_invalid" | "send_failed" | "started" | "resumed" | "not_matched"
   sessionId: string
   firstQuestionSent?: boolean
+}
+
+const USER_JOB_RECOMMENDATIONS_COLLECTION = "pa-user-job-recommendations"
+const PENDING_INVITES_COLLECTION = "pa-prescreen-pending-invites"
+
+/**
+ * Default matched-set check for the prescreen MATCHED-GATE. A candidate may only
+ * start a prescreen for a job they've been MATCHED to OR have already DONE (Adam
+ * 2026-05-31: "only able to start/query collab jobs if they've done it or
+ * matched; else if new, go to the website and send the exact formatted text").
+ * A config-bearing jobId harvested from a /j/:jobId URL or another candidate is
+ * NOT startable by verbal/paste alone — the new candidate must go through the
+ * website, which mints the pending-invite (→ `sourceRequestedUserId` bypass).
+ * "Matched" = ever recommended, NOT match score (Rule 4: score never blocks).
+ *
+ * Three point-read arms (no live V16 query → protects the chat fn from the
+ * catalog-OOM): (1) rec ledger recommendationCount>0, (2) an existing prescreen
+ * session for this (user, job) = "done it", (3) a pending-invite for this job.
+ * Fail-OPEN on read error: availability beats blocking every legit start during
+ * a transient Firestore blip.
+ */
+export async function defaultIsJobMatchedToUser(
+  db: Firestore,
+  userId: string,
+  jobId: string,
+): Promise<boolean> {
+  if (!userId || !jobId) return false
+  try {
+    // (1) MATCHED — ever recommended/pushed to this candidate.
+    const recSnap = await db
+      .collection(USER_JOB_RECOMMENDATIONS_COLLECTION)
+      .doc(userId)
+      .collection("jobs")
+      .doc(jobId)
+      .get()
+    if (recSnap.exists) {
+      const count = recSnap.data()?.recommendationCount
+      if (typeof count === "number" && Number.isFinite(count) && count > 0) return true
+    }
+    // (2) DONE IT — already has a prescreen session for this job (resume/continue).
+    const sessionSnap = await db
+      .collection("pa-prescreen-sessions")
+      .where("userId", "==", userId)
+      .where("jobId", "==", jobId)
+      .limit(1)
+      .get()
+    if (!sessionSnap.empty) return true
+    // (3) PENDING-INVITE — the website public-page flow stamped one for this job.
+    const inviteSnap = await db.collection(PENDING_INVITES_COLLECTION).doc(userId).get()
+    if (inviteSnap.exists && inviteSnap.data()?.jobId === jobId) return true
+    return false
+  } catch {
+    // Fail-open: a rec-ledger read error must not block legitimate starts.
+    return true
+  }
 }
 
 function deriveSessionId(jobId: string, userId: string, nowIso: string): string {
@@ -167,6 +240,21 @@ export async function runPreScreenForUser(args: RunPreScreenArgs): Promise<RunPr
   const sendSms = args.sendSms ?? sendRuntimeApprovedIMessage
   const nowIso = new Date().toISOString()
   const sessionId = deriveSessionId(args.jobId, args.userId, nowIso)
+
+  // 0. MATCHED-GATE (2026-05-31) — refuse a prescreen for a job never matched/
+  // pushed to this candidate, BEFORE config load + BEFORE supersede (so a foreign
+  // jobId can neither create a session nor PAUSE a legit in-progress screen).
+  // Bypassed for admin/broker/recovery/orchestrator/Apply (non-candidate-supplied
+  // jobId) and public-page first-timers (pending-invite = match evidence).
+  const matchedBypass = args.allowMatchedBypass === true || !!args.sourceRequestedUserId
+  if (!matchedBypass) {
+    const isMatched = args.isJobMatchedToUser ?? defaultIsJobMatchedToUser
+    const matched = await isMatched(args.db, args.userId, args.jobId)
+    if (!matched) {
+      log("prescreen.not_matched", { jobId: args.jobId, userId: args.userId })
+      return { ok: false, reason: "not_matched", sessionId }
+    }
+  }
 
   // 1. Load config
   const jobSnap = await args.db.collection("pa-jobs").doc(args.jobId).get()
