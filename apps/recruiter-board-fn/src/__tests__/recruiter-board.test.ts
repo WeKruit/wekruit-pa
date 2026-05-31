@@ -18,6 +18,7 @@ import assert from "node:assert/strict"
 import {
   computeSubmissionScore,
   composeRecruiterRoleNotificationEmail,
+  defaultRecruiterInviteCodeExpiresAt,
   fetchCollabJobs,
   generateRecruiterInviteCode,
   hashRecruiterInviteCode,
@@ -103,6 +104,27 @@ describe("recruiter access helpers", () => {
 
   it("generates visible invite codes in the WeKruit format", () => {
     assert.match(generateRecruiterInviteCode(), /^WK-[A-Z0-9]{4}-[A-Z0-9]{4}$/)
+  })
+
+  it("defaults recruiter invite codes to expire one year from creation", () => {
+    assert.equal(
+      defaultRecruiterInviteCodeExpiresAt(Date.parse("2026-05-31T12:00:00.000Z")),
+      "2027-05-31T12:00:00.000Z",
+    )
+    const before = Date.now()
+    const defaultCode = validateInviteCodeCreate({})
+    const after = Date.now()
+    assert.equal(defaultCode.ok, true)
+    if (!defaultCode.ok) return
+    const expiresAt = defaultCode.value.expiresAt
+    assert.ok(expiresAt)
+    const expiresAtMs = Date.parse(expiresAt)
+    const min = new Date(before)
+    min.setFullYear(min.getFullYear() + 1)
+    const max = new Date(after)
+    max.setFullYear(max.getFullYear() + 1)
+    assert.ok(expiresAtMs >= min.getTime())
+    assert.ok(expiresAtMs <= max.getTime())
   })
 
   it("forces recruiter invite codes to be single-use", () => {

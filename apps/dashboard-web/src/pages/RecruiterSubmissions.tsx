@@ -108,6 +108,17 @@ function timestampToMs(raw: unknown): number {
   return 0
 }
 
+function toDatetimeLocalValue(date: Date): string {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+  return local.toISOString().slice(0, 16)
+}
+
+function defaultRecruiterCodeExpiryLocal(): string {
+  const date = new Date()
+  date.setFullYear(date.getFullYear() + 1)
+  return toDatetimeLocalValue(date)
+}
+
 export default function RecruiterSubmissions() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
@@ -315,13 +326,13 @@ export default function RecruiterSubmissions() {
     <div>
       <PageHeader
         title="Recruiter Submissions"
-        description="Create one-time recruiter access codes and review recruiter-submitted candidates."
+        description="Create recruiter access codes and review recruiter-submitted candidates."
         actions={
           <a
             href="#recruiter-code-form"
             style={{ padding: "9px 12px", border: "1px solid #222", background: "#222", color: "#fff", borderRadius: 6, textDecoration: "none", fontSize: 13, fontWeight: 600 }}
           >
-            Create single-use code
+            Create access code
           </a>
         }
       />
@@ -374,7 +385,7 @@ function RecruiterOpsPanel() {
   const [notifications, setNotifications] = useState<RecruiterNotificationDoc[]>([])
   const [loading, setLoading] = useState(true)
   const [label, setLabel] = useState("")
-  const [expiresAtLocal, setExpiresAtLocal] = useState("")
+  const [expiresAtLocal, setExpiresAtLocal] = useState(() => defaultRecruiterCodeExpiryLocal())
   const [generated, setGenerated] = useState<CreateRecruiterInviteCodeResult | null>(null)
   const [creating, setCreating] = useState(false)
   const [err, setErr] = useState<string | null>(null)
@@ -415,7 +426,7 @@ function RecruiterOpsPanel() {
       })
       setGenerated(result)
       setLabel("")
-      setExpiresAtLocal("")
+      setExpiresAtLocal(defaultRecruiterCodeExpiryLocal())
       await reload()
     } catch (error) {
       setErr(error instanceof Error ? error.message : String(error))
@@ -444,7 +455,7 @@ function RecruiterOpsPanel() {
             onClick={focusCodeForm}
             style={{ padding: "8px 12px", border: "1px solid #222", background: "#222", color: "#fff", borderRadius: 6 }}
           >
-            Create single-use code
+            Create access code
           </button>
           <button type="button" onClick={() => void reload()} disabled={loading}>Refresh</button>
         </div>
@@ -458,9 +469,9 @@ function RecruiterOpsPanel() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 360px) 1fr", gap: 18 }}>
         <form id="recruiter-code-form" onSubmit={createCode} style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontWeight: 600 }}>Create single-use recruiter code</div>
+          <div style={{ fontWeight: 600 }}>Create recruiter access code</div>
           <p style={{ color: "#666", margin: 0, fontSize: 13, lineHeight: 1.5 }}>
-            Each code is single-use. The first successful signup binds it to one Firebase recruiter account.
+            Every code can only be used once. The first successful signup binds it to one Firebase recruiter account.
           </p>
           <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#666" }}>
             Label
@@ -479,6 +490,7 @@ function RecruiterOpsPanel() {
               onChange={(e) => setExpiresAtLocal(e.target.value)}
               style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6 }}
             />
+            <span style={{ color: "#888", fontSize: 11 }}>Defaults to 1 year from creation.</span>
           </label>
           <button
             disabled={creating}

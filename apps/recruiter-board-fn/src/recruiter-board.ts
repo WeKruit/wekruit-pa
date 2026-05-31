@@ -266,6 +266,12 @@ export function generateRecruiterInviteCode(): string {
   return `WK-${suffix.slice(0, 4)}-${suffix.slice(4)}`
 }
 
+export function defaultRecruiterInviteCodeExpiresAt(nowMs = Date.now()): string {
+  const expiresAt = new Date(nowMs)
+  expiresAt.setUTCFullYear(expiresAt.getUTCFullYear() + 1)
+  return expiresAt.toISOString()
+}
+
 function maskRecruiterInviteCode(normalizedCode: string): string {
   return `${normalizedCode.slice(0, 5)}••••${normalizedCode.slice(-2)}`
 }
@@ -336,7 +342,7 @@ export function validateInviteCodeCreate(input: unknown):
     if (typeof b.label !== "string" || b.label.length > 200) return { ok: false, reason: "invalid_label" }
     label = b.label.trim() || undefined
   }
-  let expiresAt: string | undefined
+  let expiresAt = defaultRecruiterInviteCodeExpiresAt()
   if (b.expiresAt !== undefined) {
     if (typeof b.expiresAt !== "string") return { ok: false, reason: "invalid_expires_at" }
     const ms = Date.parse(b.expiresAt)

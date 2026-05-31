@@ -200,7 +200,7 @@ type RecruiterSubmissionDoc = {
 
 ### `pa-recruiter-invite-codes` Firestore collection
 
-Invite code docs are created only by `paRecruiterInviteCodeCreate`. The doc id is the SHA-256 hash of the normalized visible code. The visible code is returned once to the admin and is not stored raw. Codes are always single-use: `maxUses` is fixed at `1`, and the first successful signup stamps the Firebase uid/email that consumed it.
+Invite code docs are created only by `paRecruiterInviteCodeCreate`. The doc id is the SHA-256 hash of the normalized visible code. The visible code is returned once to the admin and is not stored raw. Codes are always single-use: `maxUses` is fixed at `1`, the first successful signup stamps the Firebase uid/email that consumed it, and the default expiry is one year from creation.
 
 ```ts
 type RecruiterInviteCodeDoc = {
