@@ -31,6 +31,8 @@ import {
   V16_FRESHNESS_HALF_LIFE_MS,
   resolveHardness,
   computeCompanyStageFit,
+  strictCompanyPreference,
+  userCompanyStageBand,
   PREFERENCE_HARDNESS_FLAG_KEY,
 } from "../../tools/query-matching-jobs-v16.js"
 import {
@@ -3109,6 +3111,54 @@ test("computeCompanyStageFit: prefersStartup=bigtech maps to ipo_public/private_
   assert.equal(computeCompanyStageFit(tags, "ipo_public", 1), 1.0)
   assert.equal(computeCompanyStageFit(tags, "private_mature", 1), 1.0)
   assert.equal(computeCompanyStageFit(tags, "seed", 1), 0.2)
+})
+
+// ---------------------------------------------------------------------------
+// companySize MULTI-PICK (scalar-OR-array, 2026-05-31) — recall-safety:
+// a multi-element array must NEVER trigger the strict HARD filter (would
+// reintroduce the company-stage recall gap); the soft band unions instead.
+// ---------------------------------------------------------------------------
+
+test("strictCompanyPreference: scalar pick unchanged (legacy hard filter)", () => {
+  assert.equal(strictCompanyPreference({ companySize: "seed" } as never), "seed")
+  assert.equal(strictCompanyPreference({ companySize: "enterprise" } as never), "enterprise")
+  assert.equal(strictCompanyPreference({ companySize: "open" } as never), null)
+  assert.equal(strictCompanyPreference({ prefersStartup: "bigtech" } as never), "bigtech")
+  assert.equal(strictCompanyPreference({} as never), null)
+})
+
+test("strictCompanyPreference: single-element array behaves like the scalar", () => {
+  assert.equal(strictCompanyPreference({ companySize: ["seed"] } as never), "seed")
+  assert.equal(strictCompanyPreference({ companySize: ["enterprise"] } as never), "enterprise")
+})
+
+test("strictCompanyPreference: MULTI-element array → null (NO hard drop, recall-safe)", () => {
+  // open to several sizes must not hard-drop any job — the recall gap guard.
+  assert.equal(strictCompanyPreference({ companySize: ["seed", "enterprise"] } as never), null)
+  assert.equal(strictCompanyPreference({ companySize: ["seed", "scale_up", "mid_market"] } as never), null)
+  // 'open' present anywhere → null
+  assert.equal(strictCompanyPreference({ companySize: ["seed", "open"] } as never), null)
+})
+
+test("userCompanyStageBand: array unions the per-token bands (soft)", () => {
+  const seedBand = userCompanyStageBand({ companySize: "seed" } as never)!
+  const scaleBand = userCompanyStageBand({ companySize: "scale_up" } as never)!
+  const unionBand = userCompanyStageBand({ companySize: ["seed", "scale_up"] } as never)!
+  assert.ok(unionBand, "multi-pick must yield a soft band")
+  // union = [min of mins, max of maxs] across the per-token bands
+  assert.equal(unionBand.min, Math.min(seedBand.min, scaleBand.min))
+  assert.equal(unionBand.max, Math.max(seedBand.max, scaleBand.max))
+  // single-element array == scalar band
+  assert.deepEqual(userCompanyStageBand({ companySize: ["seed"] } as never), seedBand)
+  // 'open' anywhere → null (no band)
+  assert.equal(userCompanyStageBand({ companySize: ["seed", "open"] } as never), null)
+})
+
+test("computeCompanyStageFit: multi-pick array scores in-band across the union", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 2, companySize: ["seed", "scale_up"] } as never
+  assert.equal(computeCompanyStageFit(tags, "seed", 1), 1.0) // in seed sub-band
+  assert.equal(computeCompanyStageFit(tags, "series_b", 1), 1.0) // in scale_up sub-band
+  assert.equal(computeCompanyStageFit(tags, "series_c", 1), 1.0) // inside the union span
 })
 
 // ---------------------------------------------------------------------------

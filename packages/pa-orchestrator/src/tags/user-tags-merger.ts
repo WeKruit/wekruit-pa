@@ -46,6 +46,7 @@ import {
   CAREER_STAGE_INDEX,
   JOB_TYPE_VOCAB,
   INDUSTRY_SECTOR_VOCAB,
+  COMPANY_STAGE_VOCAB,
   PreferenceHardnessSchema,
 } from "@wekruit/shared-tags"
 import { roleToIndustryBuckets, type IndustryEnumBucket } from "../voice/role-to-industry.js"
@@ -240,8 +241,30 @@ export const UserTagsSchema = z.object({
   preferredLang: z.enum(["zh", "en"]).optional(),
   /** Minimum acceptable salary collected from Level 1 follow-up; read by V16 salary fit. */
   minSalary: z.number().int().nonnegative().optional(),
-  /** Company-size preference collected from Level 1 follow-up. */
-  companySize: z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"]).optional(),
+  /**
+   * Company-SIZE preference (headcount/maturity) collected from Level 1 follow-up.
+   * Multi-pick OR: a candidate open to seed AND enterprise stores both. Accepts a
+   * scalar (single pick, back-compat with pre-2026-05-31 docs) OR an array; the
+   * projector lifts a scalar to a 1-elem array on the /me surface. `open` is the
+   * "no preference" token (normalized to the `no_preference` sentinel at projection).
+   * ORTHOGONAL to `companyStage` (funding stage) — do not conflate.
+   */
+  companySize: z
+    .union([
+      z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"]),
+      z.array(z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"])),
+    ])
+    .optional(),
+  /**
+   * Company-STAGE preference (funding stage: pre_seed…ipo_public) — ORTHOGONAL to
+   * `companySize` (headcount). Adam 2026-05-31: "company stage and company size are
+   * different." Multi-pick OR (scalar or array). Captured no-regex (LLM picks the
+   * COMPANY_STAGE_VOCAB enum). Projected to globalTags.companyStage[] for /me.
+   * Matching weight is informational only (Adam-locked weight 0) — capture+display axis.
+   */
+  companyStage: z
+    .union([z.enum(COMPANY_STAGE_VOCAB), z.array(z.enum(COMPANY_STAGE_VOCAB))])
+    .optional(),
   /**
    * Workstream W3 (pre-launch matching hardening) — Phase 52 canonical
    * job-type tokens (10 enum). Promoted from a shadow field that V16 was
@@ -1064,16 +1087,43 @@ function deriveTargetJobTypeFromProfile(
   return undefined
 }
 
+const COMPANY_SIZE_TOKENS = new Set([
+  "seed",
+  "early_startup",
+  "scale_up",
+  "mid_market",
+  "enterprise",
+  "open",
+])
 function mapCompanySizePreference(value: unknown): UserTags["companySize"] {
-  if (
-    value === "seed" ||
-    value === "early_startup" ||
-    value === "scale_up" ||
-    value === "mid_market" ||
-    value === "enterprise" ||
-    value === "open"
-  ) {
-    return value
+  // Scalar (back-compat) OR array (multi-pick OR). Validates each token against the
+  // closed enum; drops off-vocab; returns scalar for a single pick, array for many.
+  if (typeof value === "string") {
+    return COMPANY_SIZE_TOKENS.has(value) ? (value as UserTags["companySize"]) : undefined
+  }
+  if (Array.isArray(value)) {
+    const tokens = value.filter(
+      (v): v is string => typeof v === "string" && COMPANY_SIZE_TOKENS.has(v)
+    )
+    if (tokens.length === 0) return undefined
+    return (tokens.length === 1 ? tokens[0] : tokens) as UserTags["companySize"]
+  }
+  return undefined
+}
+
+const COMPANY_STAGE_TOKENS = new Set<string>(COMPANY_STAGE_VOCAB)
+// companyStage (funding stage) — ORTHOGONAL to companySize. Scalar OR array; validated vs
+// COMPANY_STAGE_VOCAB closed enum, no regex. Carried so a chat-set stage survives a CV re-merge.
+function mapCompanyStagePreference(value: unknown): UserTags["companyStage"] {
+  if (typeof value === "string") {
+    return COMPANY_STAGE_TOKENS.has(value) ? (value as UserTags["companyStage"]) : undefined
+  }
+  if (Array.isArray(value)) {
+    const tokens = value.filter(
+      (v): v is string => typeof v === "string" && COMPANY_STAGE_TOKENS.has(v)
+    )
+    if (tokens.length === 0) return undefined
+    return (tokens.length === 1 ? tokens[0] : tokens) as UserTags["companyStage"]
   }
   return undefined
 }
@@ -1179,6 +1229,7 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
     | (StatedPreferences & {
         careerStage?: unknown
         companySize?: unknown
+        companyStage?: unknown
         minSalary?: unknown
         minSalaryUsd?: unknown
         targetJobType?: unknown
@@ -1225,6 +1276,7 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
           ? Math.max(0, Math.floor(statedPreferences.salaryFloor))
           : undefined
   const companySize = mapCompanySizePreference(statedPreferencesExt?.companySize)
+  const companyStage = mapCompanyStagePreference(statedPreferencesExt?.companyStage)
   const targetJobType = deriveTargetJobTypeFromStatedPreferences(
     statedPreferencesExt?.targetJobType,
     statedPreferencesExt?.targetJobTypes
@@ -1332,6 +1384,7 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   if (preferredLang) out.preferredLang = preferredLang
   if (minSalary !== undefined) out.minSalary = minSalary
   if (companySize) out.companySize = companySize
+  if (companyStage) out.companyStage = companyStage
   if (targetJobType) out.targetJobType = targetJobType
   if (industrySector && industrySector.length > 0) out.industrySector = industrySector
   if (relevantIndustry) out.relevantIndustry = relevantIndustry

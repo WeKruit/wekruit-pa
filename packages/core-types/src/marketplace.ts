@@ -1,6 +1,7 @@
 import { z } from "zod"
 import {
   CareerStageSchema,
+  CompanyStageSchema,
   IndustrySectorSchema,
   JobTypeSchema,
   LocationSchema,
@@ -125,6 +126,10 @@ export const CandidateGlobalTagsSchema = z.object({
   roleFunction: z.array(RoleFunctionSchema).default([]),
   skills: SkillsListSchema.default([]),
   careerStage: CareerStageSchema.optional(),
+  // Seniority RANGE for /me — [anchor, anchor+bufferSteps] in CAREER_STAGE_VOCAB order. Derived
+  // by the projector from careerStage + preferenceHardness.careerStage.bufferSteps so the portal can
+  // render "junior–senior" instead of a single stage. Optional: absent when no buffer was stated.
+  careerStageRange: z.tuple([CareerStageSchema, CareerStageSchema]).optional(),
   yoeRange: z.tuple([z.number().nonnegative(), z.number().nonnegative()]).optional(),
   industrySector: z.array(IndustrySectorSchema).default([]),
   targetLocations: z.array(LocationSchema).default([]),
@@ -146,6 +151,9 @@ export const CandidateGlobalTagsSchema = z.object({
       ])
     )
     .default([]),
+  // Company-STAGE preference (funding stage) — ORTHOGONAL to companySizePreference (headcount).
+  // Projected from tags.companyStage. Multi-pick. Informational/display axis (matching weight 0).
+  companyStage: z.array(CompanyStageSchema).default([]),
   updatedAt: TimestampSchema.optional(),
 })
 export type CandidateGlobalTags = z.infer<typeof CandidateGlobalTagsSchema>

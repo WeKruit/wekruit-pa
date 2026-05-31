@@ -899,9 +899,13 @@ function companyStageIndex(stage: CompanyStage | undefined | null): number | nul
  * existing `companyMatchesStrictPreference` stage→preference mapping, but
  * expressed as an index band so the buffer-steps tolerance is uniform.
  */
-function userCompanyStageBand(tags: UserTags): { min: number; max: number } | null {
-  const size = tags.companySize
-  const idx = (s: CompanyStage): number => COMPANY_STAGE_ORDINAL.indexOf(s)
+/** companySize is scalar-OR-array (multi-pick OR, 2026-05-31). Normalize to a token list. */
+function companySizeTokens(size: UserTags["companySize"]): string[] {
+  if (typeof size === "string") return [size]
+  if (Array.isArray(size)) return size.filter((s) => typeof s === "string" && !!s)
+  return []
+}
+function bandForCompanySize(size: string, idx: (s: CompanyStage) => number): { min: number; max: number } | null {
   switch (size) {
     case "seed":
       return { min: idx("pre_seed"), max: idx("seed") }
@@ -913,11 +917,24 @@ function userCompanyStageBand(tags: UserTags): { min: number; max: number } | nu
       return { min: idx("series_c"), max: idx("private_mature") }
     case "enterprise":
       return { min: idx("ipo_public"), max: idx("private_mature") }
-    case "open":
-      return null
     default:
-      break
+      return null
   }
+}
+export function userCompanyStageBand(tags: UserTags): { min: number; max: number } | null {
+  const idx = (s: CompanyStage): number => COMPANY_STAGE_ORDINAL.indexOf(s)
+  const tokens = companySizeTokens(tags.companySize)
+  // `open` anywhere = explicit "no size preference" → no band (neutral 0.5 fit, never a drop).
+  if (tokens.includes("open")) return null
+  // Multi-pick OR: union the per-token bands so a candidate open to e.g. seed+scale_up scores
+  // 1.0 across both sub-bands (soft axis; never a hard drop here).
+  let band: { min: number; max: number } | null = null
+  for (const t of tokens) {
+    const b = bandForCompanySize(t, idx)
+    if (!b) continue
+    band = band ? { min: Math.min(band.min, b.min), max: Math.max(band.max, b.max) } : b
+  }
+  if (band) return band
   // Fall back to the boolean startup/bigtech preference.
   if (tags.prefersStartup === "startup") return { min: idx("pre_seed"), max: idx("series_b") }
   if (tags.prefersStartup === "bigtech") return { min: idx("ipo_public"), max: idx("private_mature") }
@@ -2136,17 +2153,26 @@ type StrictCompanyPreference =
   | "mid_market"
   | "enterprise"
 
-function strictCompanyPreference(userTags: UserTags): StrictCompanyPreference | null {
-  if (userTags.companySize === "open") return null
-  if (
-    userTags.companySize === "seed" ||
-    userTags.companySize === "early_startup" ||
-    userTags.companySize === "scale_up" ||
-    userTags.companySize === "mid_market" ||
-    userTags.companySize === "enterprise"
-  ) {
-    return userTags.companySize
-  }
+const STRICT_COMPANY_SIZE_TOKENS = new Set<StrictCompanyPreference>([
+  "seed",
+  "early_startup",
+  "scale_up",
+  "mid_market",
+  "enterprise",
+])
+export function strictCompanyPreference(userTags: UserTags): StrictCompanyPreference | null {
+  // This drives a HARD filter when paPreferenceHardnessEnabled is OFF (default). companySize is
+  // scalar-OR-array (2026-05-31). A SINGLE strict pick → that token (legacy hard filter, unchanged).
+  // `open`, or MULTIPLE distinct picks ("open to several sizes"), → null = NO strict hard drop
+  // (recall-safe; the soft companyStageBoost still ranks). Never hard-drop on a multi-pick — that
+  // would reintroduce the company-stage recall gap.
+  const tokens = companySizeTokens(userTags.companySize)
+  if (tokens.includes("open")) return null
+  const strict = Array.from(new Set(tokens.filter((t): t is StrictCompanyPreference =>
+    STRICT_COMPANY_SIZE_TOKENS.has(t as StrictCompanyPreference)
+  )))
+  if (strict.length === 1) return strict[0]!
+  if (strict.length > 1) return null
   if (userTags.prefersStartup === "startup") return "startup"
   if (userTags.prefersStartup === "bigtech") return "bigtech"
   return null
