@@ -1676,7 +1676,7 @@ describe("runUserTagsMerge — durable skills-regression guard (2026-05-31)", ()
     const { db } = makeFakeDb({ users: { u_reparse: { tags: { skills: existingSkills } } } })
     let captured: Record<string, unknown> | undefined
     await runUserTagsMerge({
-      db,
+      db: db as Parameters<typeof runUserTagsMerge>[0]["db"],
       userId: "u_reparse",
       parsed: happyParsed(),
       workHistory: undefined,
@@ -1698,7 +1698,7 @@ describe("runUserTagsMerge — durable skills-regression guard (2026-05-31)", ()
     const { db } = makeFakeDb({ users: { u_rich: { tags: { skills: existingSkills } } } })
     let captured: Record<string, unknown> | undefined
     await runUserTagsMerge({
-      db,
+      db: db as Parameters<typeof runUserTagsMerge>[0]["db"],
       userId: "u_rich",
       parsed: happyParsed(),
       workHistory: undefined,
