@@ -6,26 +6,30 @@
  * localStorage so a recruiter can come back later.
  */
 import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { onAuthStateChanged } from "firebase/auth"
 import { Link, useNavigate, useParams } from "react-router-dom"
 import "../styles/recruiter-board.css"
 import {
   fetchCollabJobs,
+  getRecruiterProfile,
   submitRecruiterCandidate,
   type CollabJob,
+  type RecruiterSession,
   type SubmissionResponse,
 } from "../lib/recruiter-board-api.js"
+import { auth } from "../lib/firebase.js"
 
 const STORAGE_KEY_PREFIX = "rb-state-v1:"
 
 interface FormState {
   submitterName: string
   submitterEmail: string
-  submitterCompany: string
   candidateName: string
   candidateLink: string
   candidateCurrentRole: string
   candidateYoe: string
   candidateNotes: string
+  candidateConsent: boolean
   checklist: Record<string, boolean>
 }
 
@@ -33,12 +37,12 @@ function emptyForm(): FormState {
   return {
     submitterName: "",
     submitterEmail: "",
-    submitterCompany: "",
     candidateName: "",
     candidateLink: "",
     candidateCurrentRole: "",
     candidateYoe: "",
     candidateNotes: "",
+    candidateConsent: false,
     checklist: {},
   }
 }
@@ -58,6 +62,15 @@ function saveFormState(jobId: string, state: FormState): void {
     localStorage.setItem(STORAGE_KEY_PREFIX + jobId, JSON.stringify(state))
   } catch (e) {
     // ignore
+  }
+}
+
+function withRecruiterDefaults(state: FormState, session: RecruiterSession | null): FormState {
+  if (!session) return state
+  return {
+    ...state,
+    submitterName: state.submitterName || session.recruiter.name,
+    submitterEmail: state.submitterEmail || session.recruiter.email,
   }
 }
 
@@ -117,6 +130,8 @@ function renderInline(text: string): ReactNode[] {
 export default function RecruiterRole() {
   const { jobId } = useParams<{ jobId: string }>()
   const navigate = useNavigate()
+  const [session, setSession] = useState<RecruiterSession | null>(null)
+  const [authReady, setAuthReady] = useState(false)
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
@@ -124,10 +139,36 @@ export default function RecruiterRole() {
   const [submission, setSubmission] = useState<SubmissionResponse | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
+  useEffect(() => {
+    let active = true
+    const unsubscribe = onAuthStateChanged(auth(), (user) => {
+      void (async () => {
+        if (!user) {
+          if (!active) return
+          setSession(null)
+          setAuthReady(true)
+          return
+        }
+        try {
+          const next = await getRecruiterProfile()
+          if (active) setSession(next)
+        } catch {
+          if (active) setSession(null)
+        } finally {
+          if (active) setAuthReady(true)
+        }
+      })()
+    })
+    return () => {
+      active = false
+      unsubscribe()
+    }
+  }, [])
+
   // Restore persisted form once we know the jobId.
   useEffect(() => {
-    if (jobId) setForm(loadFormState(jobId))
-  }, [jobId])
+    if (jobId) setForm(withRecruiterDefaults(loadFormState(jobId), session))
+  }, [jobId, session])
 
   // Fetch list once; pull out the role this page renders.
   useEffect(() => {
@@ -144,6 +185,22 @@ export default function RecruiterRole() {
   const job = useMemo(() => jobs?.find((j) => j.jobId === jobId) ?? null, [jobs, jobId])
 
   if (error) return <div className="rb-page"><div className="rb-state error">Could not load: {error}</div></div>
+  if (!authReady) return <div className="rb-page"><div className="rb-state">Loading recruiter account...</div></div>
+  if (!session) {
+    return (
+      <div className="rb-page rb-page--access-required">
+        <main className="rb-main">
+          <Link to="/recruiters" className="rb-back">Back to recruiter access</Link>
+          <div className="rb-access-required">
+            <p className="rb-overline">Invite required</p>
+            <h1>Recruiter access is required before submitting candidates.</h1>
+            <p>Enter your WeKruit recruiter code first. After that, role pages can submit and track candidates under your account.</p>
+            <Link to="/recruiters" className="rb-btn primary">Enter access code</Link>
+          </div>
+        </main>
+      </div>
+    )
+  }
   if (!jobs) return <div className="rb-page"><div className="rb-state">Loading…</div></div>
   if (!job) {
     return (
@@ -176,6 +233,14 @@ export default function RecruiterRole() {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!session) {
+      setSubmitError("recruiter_access_required")
+      return
+    }
+    if (!form.candidateConsent) {
+      setSubmitError("candidate_consent_required")
+      return
+    }
     setSubmitError(null)
     setSubmitting(true)
     const result = await submitRecruiterCandidate({
@@ -183,7 +248,6 @@ export default function RecruiterRole() {
       submitter: {
         name: form.submitterName.trim(),
         email: form.submitterEmail.trim(),
-        company: form.submitterCompany.trim() || undefined,
       },
       candidate: {
         name: form.candidateName.trim(),
@@ -193,11 +257,12 @@ export default function RecruiterRole() {
         notes: form.candidateNotes.trim() || undefined,
       },
       checklist: form.checklist,
+      candidateConsent: true,
     })
     setSubmitting(false)
     if (result.ok) {
       setSubmission(result)
-      saveFormState(job.jobId, emptyForm())
+      saveFormState(job.jobId, withRecruiterDefaults(emptyForm(), session))
       window.scrollTo({ top: 0, behavior: "smooth" })
     } else {
       setSubmitError(result.reason ?? "submission_failed")
@@ -206,7 +271,7 @@ export default function RecruiterRole() {
 
   const resetChecklist = () => {
     if (!confirm("Clear this role's checklist and candidate fields?")) return
-    setForm(emptyForm())
+    setForm(withRecruiterDefaults(emptyForm(), session))
   }
 
   const submitAnother = () => {
@@ -235,7 +300,7 @@ export default function RecruiterRole() {
 
         {submission && submission.ok && (
           <div className="rb-success">
-            <strong>Candidate submitted.</strong> We'll review and circle back within ~5 business days.
+            <strong>Candidate submitted.</strong> We&apos;ll review and update your tracker.
             {submission.score && (
               <div style={{ marginTop: 6, color: "#1a1a1a" }}>
                 Score: Hard {submission.score.hardChecked}/{submission.score.hardTotal}{" "}
@@ -246,7 +311,7 @@ export default function RecruiterRole() {
             )}
             <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
               <button className="rb-btn" onClick={submitAnother}>Submit another for this role</button>
-              <button className="rb-btn" onClick={() => navigate("/recruiters")}>Back to all roles</button>
+              <button className="rb-btn" onClick={() => navigate("/recruiters?tab=submissions")}>Track status</button>
             </div>
           </div>
         )}
@@ -288,6 +353,7 @@ export default function RecruiterRole() {
 
         <form className="rb-form-section rb-form" onSubmit={onSubmit}>
           <h3 className="section-title">Your contact (for follow-up)</h3>
+          <p className="rb-form-note">Submitting as {session.recruiter.email}. WeKruit status updates will appear in your recruiter tracker.</p>
           <div className="field">
             <label>Your name *</label>
             <input
@@ -304,15 +370,6 @@ export default function RecruiterRole() {
               required
               value={form.submitterEmail}
               onChange={(e) => setForm({ ...form, submitterEmail: e.target.value })}
-            />
-          </div>
-          <div className="field">
-            <label>Your company</label>
-            <input
-              type="text"
-              placeholder="Acme Recruiting (optional)"
-              value={form.submitterCompany}
-              onChange={(e) => setForm({ ...form, submitterCompany: e.target.value })}
             />
           </div>
 
@@ -359,6 +416,15 @@ export default function RecruiterRole() {
               onChange={(e) => setForm({ ...form, candidateNotes: e.target.value })}
             />
           </div>
+          <label className="rb-consent">
+            <input
+              type="checkbox"
+              required
+              checked={form.candidateConsent}
+              onChange={(e) => setForm({ ...form, candidateConsent: e.target.checked })}
+            />
+            <span>I confirm this candidate gave consent to be submitted to WeKruit for this role.</span>
+          </label>
 
           <h3 className="section-title" style={{ marginTop: 24 }}>Fit checklist</h3>
           {groups.map((group) => (

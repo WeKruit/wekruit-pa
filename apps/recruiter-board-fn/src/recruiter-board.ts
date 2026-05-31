@@ -8,18 +8,26 @@
  *
  *   GET  paCollabJobsList          -> sanitized list of WeKruit collab jobs
  *                                     (supports ?limit, ?offset, ?since, ?status)
+ *   POST paRecruiterInviteCodeCreate -> admin creates hashed recruiter invite code
+ *   GET  paRecruiterMe             -> returns the Firebase Auth-bound recruiter profile
+ *   POST paRecruiterAccess         -> validates invite code + binds Firebase Auth uid
+ *   POST paRecruiterPreferencesUpdate -> recruiter updates notification settings
  *   POST paRecruiterSubmission     -> writes pa-recruiter-submissions doc
  *                                     (honors Idempotency-Key header)
+ *   GET  paRecruiterSubmissionsList -> recruiter-authenticated status tracker
+ *   TRG  paRecruiterRoleReleasedNotify -> emails recruiters when a role is released
  *   GET  paCollabJobsListSchema    -> JSON Schema for the list response shape
  *
  * Companion docs:
  *   .planning/INITIATIVE-recruiter-board.md
  */
 import { onRequest } from "firebase-functions/v2/https"
+import { onDocumentWritten } from "firebase-functions/v2/firestore"
+import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
-import { getFirestore, FieldValue, type Firestore, type Timestamp } from "firebase-admin/firestore"
+import { getFirestore, FieldValue, type DocumentReference, type Firestore, type Timestamp } from "firebase-admin/firestore"
 import { getAuth } from "firebase-admin/auth"
-import { createHash, randomUUID } from "node:crypto"
+import { createHash, randomBytes, randomUUID } from "node:crypto"
 import { appendSubmissionToSheet } from "./recruiter-board-sheet.js"
 
 // Memory floor for these endpoints. They serve small JSON payloads (11 docs
@@ -36,6 +44,13 @@ const RECRUITER_BOARD_MEMORY = "256MiB"
 // on the sheet, each submission is appended to a per-jobId tab. If unset, the
 // Firestore write still happens and sheet sync is skipped.
 const RECRUITER_BOARD_SHEET_ID_ENV = "RECRUITER_BOARD_SHEET_ID"
+
+const MAILGUN_API_KEY = defineSecret("MAILGUN_API_KEY")
+const MAILGUN_DOMAIN = defineSecret("MAILGUN_DOMAIN")
+const MAILGUN_FROM = defineSecret("MAILGUN_FROM")
+const MAILGUN_REGION = defineSecret("MAILGUN_REGION")
+const MAILGUN_SECRETS = [MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION]
+const RECRUITER_PUBLIC_BASE_URL = "https://candidate.wekruit.com"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hiring-board admin gating
@@ -57,14 +72,14 @@ const HIRING_BOARD_ADMIN_EMAIL_DOMAIN = "@wekruit.com"
  * `verifyIdToken` is dependency-injected so unit tests can run without
  * Firebase Auth wired up.
  */
-export async function isHiringBoardAdmin(
+async function hiringBoardAdminEmail(
   req: { headers: { authorization?: string } },
   verifyIdToken?: (token: string) => Promise<{ email?: string }>,
-): Promise<boolean> {
+): Promise<string | null> {
   const auth = req.headers.authorization
-  if (!auth || !auth.startsWith("Bearer ")) return false
+  if (!auth || !auth.startsWith("Bearer ")) return null
   const token = auth.slice("Bearer ".length).trim()
-  if (!token) return false
+  if (!token) return null
   const verify =
     verifyIdToken ??
     (async (t: string) => {
@@ -73,10 +88,18 @@ export async function isHiringBoardAdmin(
     })
   try {
     const decoded = await verify(token)
-    return (decoded.email ?? "").toLowerCase().endsWith(HIRING_BOARD_ADMIN_EMAIL_DOMAIN)
+    const email = (decoded.email ?? "").toLowerCase()
+    return email.endsWith(HIRING_BOARD_ADMIN_EMAIL_DOMAIN) ? email : null
   } catch {
-    return false
+    return null
   }
+}
+
+export async function isHiringBoardAdmin(
+  req: { headers: { authorization?: string } },
+  verifyIdToken?: (token: string) => Promise<{ email?: string }>,
+): Promise<boolean> {
+  return (await hiringBoardAdminEmail(req, verifyIdToken)) !== null
 }
 
 /**
@@ -184,8 +207,263 @@ export interface CollabJobsListResponse {
 function setCors(res: { set: (k: string, v: string) => unknown }): void {
   res.set("Access-Control-Allow-Origin", "*")
   res.set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-  res.set("Access-Control-Allow-Headers", "Content-Type,Authorization")
+  res.set("Access-Control-Allow-Headers", "Content-Type,Authorization,Idempotency-Key")
   res.set("Access-Control-Max-Age", "3600")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recruiter access — invite-code gated Firebase Auth registration
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RECRUITER_INVITE_CODES_COLLECTION = "pa-recruiter-invite-codes"
+const RECRUITER_USERS_COLLECTION = "pa-recruiter-users"
+const RECRUITER_SUBMISSIONS_COLLECTION = "pa-recruiter-submissions"
+const RECRUITER_NOTIFICATIONS_COLLECTION = "pa-recruiter-notifications"
+
+export interface RecruiterNotificationPreferences {
+  newRolesEmail: boolean
+}
+
+export interface RecruiterProfilePublic {
+  recruiterId: string
+  firebaseUid: string
+  name: string
+  email: string
+  notificationPreferences: RecruiterNotificationPreferences
+}
+
+interface RecruiterAccessRegistrationInput {
+  name: string
+  email: string
+  inviteCode: string
+}
+
+interface RecruiterFirebaseIdentity {
+  uid: string
+  email: string
+}
+
+interface RecruiterInviteCodeCreateInput {
+  label?: string
+  code?: string
+  maxUses: number
+  expiresAt?: string
+}
+
+export function normalizeRecruiterInviteCode(raw: string): string {
+  return raw.trim().toUpperCase().replace(/\s+/g, "")
+}
+
+export function hashRecruiterInviteCode(normalizedCode: string): string {
+  return createHash("sha256").update(normalizedCode).digest("hex")
+}
+
+export function generateRecruiterInviteCode(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+  const bytes = randomBytes(8)
+  let suffix = ""
+  for (let i = 0; i < 8; i++) suffix += alphabet[bytes[i]! % alphabet.length]
+  return `WK-${suffix.slice(0, 4)}-${suffix.slice(4)}`
+}
+
+function maskRecruiterInviteCode(normalizedCode: string): string {
+  return `${normalizedCode.slice(0, 5)}••••${normalizedCode.slice(-2)}`
+}
+
+export async function recruiterIdentityFromFirebaseBearer(
+  req: { headers?: { authorization?: string }; get?: (name: string) => string | undefined },
+  verifyIdToken?: (token: string) => Promise<{ uid?: string; email?: string }>,
+): Promise<RecruiterFirebaseIdentity | null> {
+  const auth = req.headers?.authorization ?? req.get?.("authorization") ?? req.get?.("Authorization")
+  if (!auth || !auth.startsWith("Bearer ")) return null
+  const token = auth.slice("Bearer ".length).trim()
+  if (!token || token.includes(":")) return null
+  const verify =
+    verifyIdToken ??
+    (async (t: string) => {
+      const decoded = await getAuth().verifyIdToken(t)
+      return { uid: decoded.uid, email: decoded.email }
+    })
+  try {
+    const decoded = await verify(token)
+    const uid = typeof decoded.uid === "string" ? decoded.uid.trim() : ""
+    const email = typeof decoded.email === "string" ? decoded.email.trim().toLowerCase() : ""
+    if (!uid || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null
+    return { uid, email }
+  } catch {
+    return null
+  }
+}
+
+function validateRecruiterRegistration(input: unknown):
+  | { ok: true; value: RecruiterAccessRegistrationInput }
+  | { ok: false; reason: string } {
+  if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
+  const b = input as Record<string, unknown>
+  if (!isNonEmptyString(b.name)) return { ok: false, reason: "missing_name" }
+  if (!isNonEmptyString(b.email)) return { ok: false, reason: "missing_email" }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email)) return { ok: false, reason: "invalid_email" }
+  if (!isNonEmptyString(b.inviteCode)) return { ok: false, reason: "missing_invite_code" }
+  if (b.name.length > 200 || b.email.length > 320 || b.inviteCode.length > 80) {
+    return { ok: false, reason: "input_too_long" }
+  }
+  return {
+    ok: true,
+    value: {
+      name: b.name.trim(),
+      email: (b.email as string).trim().toLowerCase(),
+      inviteCode: normalizeRecruiterInviteCode(b.inviteCode),
+    },
+  }
+}
+
+export function validateInviteCodeCreate(input: unknown):
+  | { ok: true; value: RecruiterInviteCodeCreateInput }
+  | { ok: false; reason: string } {
+  const b = input && typeof input === "object" ? input as Record<string, unknown> : {}
+  const maxUsesRaw = b.maxUses === undefined ? 1 : Number(b.maxUses)
+  if (maxUsesRaw !== 1) {
+    return { ok: false, reason: "invalid_max_uses" }
+  }
+  let code: string | undefined
+  if (b.code !== undefined) {
+    if (!isNonEmptyString(b.code) || b.code.length > 80) return { ok: false, reason: "invalid_code" }
+    code = normalizeRecruiterInviteCode(b.code)
+    if (!/^WK-[A-Z0-9-]{4,40}$/.test(code)) return { ok: false, reason: "invalid_code" }
+  }
+  let label: string | undefined
+  if (b.label !== undefined) {
+    if (typeof b.label !== "string" || b.label.length > 200) return { ok: false, reason: "invalid_label" }
+    label = b.label.trim() || undefined
+  }
+  let expiresAt: string | undefined
+  if (b.expiresAt !== undefined) {
+    if (typeof b.expiresAt !== "string") return { ok: false, reason: "invalid_expires_at" }
+    const ms = Date.parse(b.expiresAt)
+    if (Number.isNaN(ms) || ms <= Date.now()) return { ok: false, reason: "invalid_expires_at" }
+    expiresAt = new Date(ms).toISOString()
+  }
+  return { ok: true, value: { code, label, maxUses: 1, expiresAt } }
+}
+
+function readNotificationPreferences(data: Record<string, unknown> | null | undefined): RecruiterNotificationPreferences {
+  const raw = data?.notificationPreferences
+  const prefs = raw && typeof raw === "object" ? raw as Record<string, unknown> : {}
+  return { newRolesEmail: prefs.newRolesEmail !== false }
+}
+
+function inviteCodeExpired(data: Record<string, unknown>, nowMs: number): boolean {
+  const expiresAtIso = coerceToIso(data.expiresAt)
+  if (!expiresAtIso) return false
+  const expiresAtMs = Date.parse(expiresAtIso)
+  return Number.isNaN(expiresAtMs) ? false : expiresAtMs <= nowMs
+}
+
+function candidateInviteCodeIds(normalizedCode: string): string[] {
+  const hashedId = hashRecruiterInviteCode(normalizedCode)
+  return hashedId === normalizedCode ? [hashedId] : [hashedId, normalizedCode]
+}
+
+export function inviteCodeUsable(data: Record<string, unknown>, nowMs: number): boolean {
+  if (data.active === false) return false
+  if (inviteCodeExpired(data, nowMs)) return false
+  const usedCount = typeof data.usedCount === "number" ? data.usedCount : 0
+  return usedCount < 1
+}
+
+export async function registerRecruiterAccess(
+  db: Firestore,
+  identity: RecruiterFirebaseIdentity,
+  input: RecruiterAccessRegistrationInput,
+): Promise<RecruiterProfilePublic | null> {
+  if (identity.email !== input.email) {
+    throw new Error("email_mismatch")
+  }
+  const recruiterId = identity.uid
+  const recruiterBase: RecruiterProfilePublic = {
+    recruiterId,
+    firebaseUid: identity.uid,
+    name: input.name,
+    email: identity.email,
+    notificationPreferences: { newRolesEmail: true },
+  }
+
+  const result = await db.runTransaction(async (tx) => {
+    const nowMs = Date.now()
+    const userRef = db.collection(RECRUITER_USERS_COLLECTION).doc(recruiterId)
+    const existingUser = await tx.get(userRef)
+    const existingData = existingUser.exists ? existingUser.data() as Record<string, unknown> : null
+    if (existingData?.status === "disabled") return null
+
+    if (existingUser.exists) {
+      const existingEmail = typeof existingData?.email === "string" ? existingData.email.trim().toLowerCase() : ""
+      if (existingEmail && existingEmail !== identity.email) throw new Error("email_mismatch")
+      const notificationPreferences = readNotificationPreferences(existingData)
+      const recruiter = { ...recruiterBase, notificationPreferences }
+      tx.set(userRef, {
+        ...recruiter,
+        status: "active",
+        lastSeenAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true })
+      return recruiter
+    }
+
+    let inviteId: string | null = null
+    let inviteRef: DocumentReference | null = null
+    for (const id of candidateInviteCodeIds(input.inviteCode)) {
+      const ref = db.collection(RECRUITER_INVITE_CODES_COLLECTION).doc(id)
+      const snap = await tx.get(ref)
+      if (!snap.exists) continue
+      const data = snap.data() as Record<string, unknown>
+      if (!inviteCodeUsable(data, nowMs)) return null
+      inviteId = id
+      inviteRef = ref
+      break
+    }
+    if (!inviteId || !inviteRef) return null
+
+    const recruiter = { ...recruiterBase, notificationPreferences: { newRolesEmail: true } }
+
+    tx.set(userRef, {
+      ...recruiter,
+      status: "active",
+      inviteCodeId: inviteId,
+      registeredAt: FieldValue.serverTimestamp(),
+      lastSeenAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+    tx.set(inviteRef, {
+      usedCount: FieldValue.increment(1),
+      lastUsedAt: FieldValue.serverTimestamp(),
+      lastUsedByUid: identity.uid,
+      lastUsedByEmail: identity.email,
+    }, { merge: true })
+    return recruiter
+  })
+
+  return result
+}
+
+async function authenticateRecruiter(
+  db: Firestore,
+  req: { headers?: { authorization?: string }; get?: (name: string) => string | undefined },
+): Promise<RecruiterProfilePublic | null> {
+  const identity = await recruiterIdentityFromFirebaseBearer(req)
+  if (!identity) return null
+  const snap = await db.collection(RECRUITER_USERS_COLLECTION).doc(identity.uid).get()
+  if (!snap.exists) return null
+  const data = snap.data() as Record<string, unknown>
+  if (data.status === "disabled") return null
+  const email = typeof data.email === "string" ? data.email.trim().toLowerCase() : ""
+  if (email !== identity.email) return null
+  return {
+    recruiterId: identity.uid,
+    firebaseUid: identity.uid,
+    name: String(data.name ?? ""),
+    email,
+    notificationPreferences: readNotificationPreferences(data),
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -557,13 +835,275 @@ export const paCollabJobsListSchema = onRequest(
   },
 )
 
+export const paRecruiterInviteCodeCreate = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const adminEmail = await hiringBoardAdminEmail(req)
+    if (!adminEmail) {
+      res.status(403).json({ ok: false, reason: "forbidden" })
+      return
+    }
+    const validated = validateInviteCodeCreate(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+
+    const db = getFirestore()
+    const requestedCode = validated.value.code
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const inviteCode = requestedCode ?? generateRecruiterInviteCode()
+      const normalizedCode = normalizeRecruiterInviteCode(inviteCode)
+      const codeHash = hashRecruiterInviteCode(normalizedCode)
+      const ref = db.collection(RECRUITER_INVITE_CODES_COLLECTION).doc(codeHash)
+      try {
+        await ref.create({
+          inviteCodeId: codeHash,
+          active: true,
+          label: validated.value.label ?? null,
+          codePreview: maskRecruiterInviteCode(normalizedCode),
+          maxUses: validated.value.maxUses,
+          usedCount: 0,
+          expiresAt: validated.value.expiresAt ?? null,
+          createdByEmail: adminEmail,
+          createdAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        })
+        res.set("Cache-Control", "private, max-age=0, no-store")
+        res.status(200).json({
+          ok: true,
+          inviteCode: normalizedCode,
+          inviteCodeId: codeHash,
+          codePreview: maskRecruiterInviteCode(normalizedCode),
+          maxUses: validated.value.maxUses,
+          expiresAt: validated.value.expiresAt ?? null,
+        })
+        return
+      } catch (err) {
+        const message = String(err)
+        const alreadyExists = message.includes("ALREADY_EXISTS") || message.includes("already exists")
+        if (alreadyExists && !requestedCode) continue
+        logger.warn("paRecruiterInviteCodeCreate_failed", { error: message, adminEmail })
+        res.status(alreadyExists ? 409 : 500).json({
+          ok: false,
+          reason: alreadyExists ? "invite_code_exists" : "internal_error",
+        })
+        return
+      }
+    }
+    res.status(500).json({ ok: false, reason: "code_generation_collision" })
+  },
+)
+
+export const paRecruiterAccess = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const identity = await recruiterIdentityFromFirebaseBearer(req)
+    if (!identity) {
+      res.status(401).json({ ok: false, reason: "firebase_auth_required" })
+      return
+    }
+    const validated = validateRecruiterRegistration(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+    try {
+      const recruiter = await registerRecruiterAccess(getFirestore(), identity, validated.value)
+      if (!recruiter) {
+        res.status(403).json({ ok: false, reason: "invalid_or_expired_invite_code" })
+        return
+      }
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, recruiterId: recruiter.recruiterId, recruiter })
+    } catch (err) {
+      const reason = String(err).includes("email_mismatch") ? "email_mismatch" : "internal_error"
+      logger.error("paRecruiterAccess_failed", { error: String(err), uid: identity.uid })
+      res.status(reason === "email_mismatch" ? 403 : 500).json({ ok: false, reason })
+    }
+  },
+)
+
+export const paRecruiterMe = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "GET") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const recruiter = await authenticateRecruiter(getFirestore(), req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    res.set("Cache-Control", "private, max-age=0, no-store")
+    res.status(200).json({ ok: true, recruiterId: recruiter.recruiterId, recruiter })
+  },
+)
+
+interface RecruiterSubmissionListItem {
+  id: string
+  submissionId?: string
+  jobId?: string
+  inboundJobId?: string
+  jobTitleSnapshot?: string
+  companyLabelSnapshot?: string
+  candidate?: {
+    name?: string
+    link?: string
+    currentRole?: string
+    yoe?: string
+    notes?: string
+  }
+  score?: SubmissionScore
+  status?: string
+  recruiterFeedbackNote?: string | null
+  recruiterFeedbackUpdatedAt?: unknown
+  createdAt?: unknown
+  updatedAt?: unknown
+}
+
+function timestampMs(value: unknown): number {
+  const iso = coerceToIso(value)
+  return iso ? Date.parse(iso) || 0 : 0
+}
+
+function publicRecruiterSubmission(d: { id: string; data: () => Record<string, unknown> }): RecruiterSubmissionListItem {
+  const data = d.data()
+  return {
+    id: d.id,
+    submissionId: typeof data.submissionId === "string" ? data.submissionId : undefined,
+    jobId: typeof data.jobId === "string" ? data.jobId : undefined,
+    inboundJobId: typeof data.inboundJobId === "string" ? data.inboundJobId : undefined,
+    jobTitleSnapshot: typeof data.jobTitleSnapshot === "string" ? data.jobTitleSnapshot : undefined,
+    companyLabelSnapshot: typeof data.companyLabelSnapshot === "string" ? data.companyLabelSnapshot : undefined,
+    candidate: typeof data.candidate === "object" && data.candidate !== null
+      ? data.candidate as RecruiterSubmissionListItem["candidate"]
+      : undefined,
+    score: typeof data.score === "object" && data.score !== null ? data.score as SubmissionScore : undefined,
+    status: typeof data.status === "string" ? data.status : "submitted",
+    recruiterFeedbackNote: typeof data.recruiterFeedbackNote === "string" ? data.recruiterFeedbackNote : null,
+    recruiterFeedbackUpdatedAt: data.recruiterFeedbackUpdatedAt,
+    createdAt: data.createdAt,
+    updatedAt: data.updatedAt,
+  }
+}
+
+export const paRecruiterSubmissionsList = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "GET") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+
+    try {
+      const byRecruiter = await db
+        .collection(RECRUITER_SUBMISSIONS_COLLECTION)
+        .where("recruiterId", "==", recruiter.recruiterId)
+        .limit(200)
+        .get()
+
+      const merged = new Map<string, RecruiterSubmissionListItem>()
+      for (const doc of byRecruiter.docs) {
+        merged.set(doc.id, publicRecruiterSubmission(doc))
+      }
+      const submissions = [...merged.values()]
+        .sort((a, b) => timestampMs(b.createdAt) - timestampMs(a.createdAt))
+        .slice(0, 200)
+
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, recruiter, submissions })
+    } catch (err) {
+      logger.error("paRecruiterSubmissionsList_failed", { error: String(err), recruiterId: recruiter.recruiterId })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
+
+export const paRecruiterPreferencesUpdate = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {}
+    const prefsBody = body.notificationPreferences && typeof body.notificationPreferences === "object"
+      ? body.notificationPreferences as Record<string, unknown>
+      : {}
+    if (typeof prefsBody.newRolesEmail !== "boolean") {
+      res.status(400).json({ ok: false, reason: "invalid_new_roles_email" })
+      return
+    }
+    const notificationPreferences: RecruiterNotificationPreferences = {
+      newRolesEmail: prefsBody.newRolesEmail,
+    }
+    await db.collection(RECRUITER_USERS_COLLECTION).doc(recruiter.recruiterId).set({
+      notificationPreferences,
+      lastSeenAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true })
+    res.set("Cache-Control", "private, max-age=0, no-store")
+    res.status(200).json({
+      ok: true,
+      recruiter: { ...recruiter, notificationPreferences },
+    })
+  },
+)
+
 // ─────────────────────────────────────────────────────────────────────────────
 // paRecruiterSubmission — public POST
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface SubmissionPayload {
   jobId: string
-  submitter: { name: string; email: string; company?: string }
+  submitter: { name: string; email: string }
   candidate: {
     name: string
     link: string
@@ -572,6 +1112,7 @@ interface SubmissionPayload {
     notes?: string
   }
   checklist: { [itemId: string]: boolean }
+  candidateConsent: true
   /** Caller hint: which surface produced this submission. Tracked verbatim. */
   source?: string
 }
@@ -599,9 +1140,6 @@ function validateSubmission(input: unknown):
   if (!isNonEmptyString(s.email)) return { ok: false, reason: "missing_submitter_email" }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.email)) return { ok: false, reason: "invalid_email" }
   if (s.name.length > 200 || s.email.length > 320) return { ok: false, reason: "submitter_too_long" }
-  if (s.company !== undefined && (typeof s.company !== "string" || s.company.length > 200)) {
-    return { ok: false, reason: "invalid_submitter_company" }
-  }
 
   const c = b.candidate as Record<string, unknown> | undefined
   if (!c || typeof c !== "object") return { ok: false, reason: "missing_candidate" }
@@ -637,6 +1175,7 @@ function validateSubmission(input: unknown):
       source = trimmed
     }
   }
+  if (b.candidateConsent !== true) return { ok: false, reason: "candidate_consent_required" }
 
   return {
     ok: true,
@@ -645,7 +1184,6 @@ function validateSubmission(input: unknown):
       submitter: {
         name: s.name.trim(),
         email: (s.email as string).trim().toLowerCase(),
-        company: typeof s.company === "string" ? s.company.trim() : undefined,
       },
       candidate: {
         name: (c.name as string).trim(),
@@ -655,6 +1193,7 @@ function validateSubmission(input: unknown):
         notes: typeof c.notes === "string" ? (c.notes as string).trim() : undefined,
       },
       checklist: cleanedChecklist,
+      candidateConsent: true,
       source,
     },
   }
@@ -695,6 +1234,235 @@ export function computeSubmissionScore(
   return score
 }
 
+interface RecruiterRoleNotificationEmailInput {
+  recruiterName: string
+  roleTitle: string
+  companyLabel: string
+  location: string
+  roleUrl: string
+}
+
+export function shouldNotifyRecruitersForRoleRelease(
+  before: Record<string, unknown> | null | undefined,
+  after: Record<string, unknown> | null | undefined,
+): boolean {
+  const isReleased = (data: Record<string, unknown> | null | undefined): boolean => {
+    const rb = data?.recruiterBoard as RecruiterBoardPayload | undefined
+    return data?.wekruitCollaborationStatus === "collaborated" && rb?.active === true
+  }
+  return !isReleased(before) && isReleased(after)
+}
+
+export function composeRecruiterRoleNotificationEmail(
+  input: RecruiterRoleNotificationEmailInput,
+): { subject: string; text: string; html: string } {
+  const subject = `New WeKruit role: ${input.roleTitle}`
+  const text = [
+    `Hi ${input.recruiterName || "there"},`,
+    "",
+    "A new WeKruit collab role is open for recruiter submissions.",
+    "",
+    `Role: ${input.roleTitle}`,
+    `Company: ${input.companyLabel}`,
+    `Location: ${input.location}`,
+    "",
+    `Open the role and submit candidates: ${input.roleUrl}`,
+    "",
+    "You can turn off new-role emails in your WeKruit recruiter settings.",
+  ].join("\n")
+  const html = [
+    `<p>Hi ${escapeHtml(input.recruiterName || "there")},</p>`,
+    "<p>A new WeKruit collab role is open for recruiter submissions.</p>",
+    "<ul>",
+    `<li><b>Role:</b> ${escapeHtml(input.roleTitle)}</li>`,
+    `<li><b>Company:</b> ${escapeHtml(input.companyLabel)}</li>`,
+    `<li><b>Location:</b> ${escapeHtml(input.location)}</li>`,
+    "</ul>",
+    `<p><a href="${escapeHtml(input.roleUrl)}">Open the role and submit candidates</a></p>`,
+    "<p style=\"color:#666;font-size:12px\">You can turn off new-role emails in your WeKruit recruiter settings.</p>",
+  ].join("")
+  return { subject, text, html }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
+interface RecruiterMailgunConfig {
+  apiKey: string
+  domain: string
+  from: string
+  region: "us" | "eu"
+}
+
+function recruiterMailgunConfigFromEnv(): RecruiterMailgunConfig | null {
+  const apiKey = (process.env.MAILGUN_API_KEY ?? "").trim()
+  const domain = (process.env.MAILGUN_DOMAIN ?? "").trim()
+  if (!apiKey || !domain) return null
+  const from = (process.env.MAILGUN_FROM ?? "").trim() || `WeKruit <claire@${domain}>`
+  const region = process.env.MAILGUN_REGION === "eu" ? "eu" : "us"
+  return { apiKey, domain, from, region }
+}
+
+async function sendRecruiterMailgunEmail(
+  cfg: RecruiterMailgunConfig,
+  input: { to: string; subject: string; text: string; html: string },
+): Promise<{ ok: true; messageId?: string } | { ok: false; status: number; raw: string }> {
+  const base = cfg.region === "eu" ? "https://api.eu.mailgun.net" : "https://api.mailgun.net"
+  const body = new URLSearchParams()
+  body.set("from", cfg.from)
+  body.set("to", input.to)
+  body.set("subject", input.subject)
+  body.set("text", input.text)
+  body.set("html", input.html)
+  const resp = await fetch(`${base}/v3/${encodeURIComponent(cfg.domain)}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: "Basic " + Buffer.from(`api:${cfg.apiKey}`).toString("base64"),
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  })
+  const raw = await resp.text()
+  if (!resp.ok) return { ok: false, status: resp.status, raw }
+  try {
+    const parsed = JSON.parse(raw) as { id?: string }
+    return { ok: true, messageId: parsed.id }
+  } catch {
+    return { ok: true }
+  }
+}
+
+async function notifyRecruitersForReleasedRole(
+  db: Firestore,
+  jobId: string,
+  jobData: Record<string, unknown>,
+): Promise<{ created: number; sent: number; skipped: number; failed: number }> {
+  const rb = jobData.recruiterBoard as RecruiterBoardPayload | undefined
+  if (!rb) return { created: 0, sent: 0, skipped: 0, failed: 0 }
+  const publicJobId = typeof jobData.publicId === "string" ? jobData.publicId : jobId
+  const roleUrl = `${RECRUITER_PUBLIC_BASE_URL}/recruiters/job/${encodeURIComponent(publicJobId)}`
+  const roleTitle = String(jobData.title ?? "New WeKruit role")
+  const cfg = recruiterMailgunConfigFromEnv()
+  const profiles = await db
+    .collection(RECRUITER_USERS_COLLECTION)
+    .where("status", "==", "active")
+    .limit(500)
+    .get()
+
+  let created = 0
+  let sent = 0
+  let skipped = 0
+  let failed = 0
+  for (const profileDoc of profiles.docs) {
+    const profile = profileDoc.data() as Record<string, unknown>
+    const prefs = readNotificationPreferences(profile)
+    const email = typeof profile.email === "string" ? profile.email : ""
+    if (!email || !prefs.newRolesEmail) {
+      skipped++
+      continue
+    }
+    const notificationId = createHash("sha256").update(`new_role:${jobId}:${profileDoc.id}`).digest("hex").slice(0, 40)
+    const notificationRef = db.collection(RECRUITER_NOTIFICATIONS_COLLECTION).doc(notificationId)
+    try {
+      await notificationRef.create({
+        notificationId,
+        type: "new_role",
+        status: "queued",
+        recruiterId: profileDoc.id,
+        recruiterEmail: email,
+        jobId,
+        publicJobId,
+        roleTitle,
+        companyLabel: rb.label.company,
+        location: rb.label.location,
+        roleUrl,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      created++
+    } catch (err) {
+      const message = String(err)
+      if (message.includes("ALREADY_EXISTS") || message.includes("already exists")) {
+        skipped++
+        continue
+      }
+      failed++
+      logger.error("recruiter_role_notification_create_failed", { error: message, jobId, recruiterId: profileDoc.id })
+      continue
+    }
+
+    if (!cfg) {
+      failed++
+      await notificationRef.set({
+        status: "failed",
+        lastError: "mailgun_not_configured",
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true })
+      continue
+    }
+
+    const emailContent = composeRecruiterRoleNotificationEmail({
+      recruiterName: typeof profile.name === "string" ? profile.name : "",
+      roleTitle,
+      companyLabel: rb.label.company,
+      location: rb.label.location,
+      roleUrl,
+    })
+    try {
+      const result = await sendRecruiterMailgunEmail(cfg, { to: email, ...emailContent })
+      if (result.ok) {
+        sent++
+        await notificationRef.set({
+          status: "sent",
+          provider: "mailgun",
+          messageId: result.messageId ?? null,
+          sentAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true })
+      } else {
+        failed++
+        await notificationRef.set({
+          status: "failed",
+          provider: "mailgun",
+          lastError: `mailgun_${result.status}:${result.raw.slice(0, 300)}`,
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true })
+      }
+    } catch (err) {
+      failed++
+      await notificationRef.set({
+        status: "failed",
+        provider: "mailgun",
+        lastError: String(err).slice(0, 300),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true })
+    }
+  }
+  return { created, sent, skipped, failed }
+}
+
+export const paRecruiterRoleReleasedNotify = onDocumentWritten(
+  {
+    document: "pa-jobs/{jobId}",
+    region: "us-central1",
+    memory: RECRUITER_BOARD_MEMORY,
+    secrets: MAILGUN_SECRETS,
+  },
+  async (event) => {
+    const before = event.data?.before.exists ? event.data.before.data() as Record<string, unknown> : null
+    const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null
+    if (!shouldNotifyRecruitersForRoleRelease(before, after) || !after) return
+    const summary = await notifyRecruitersForReleasedRole(getFirestore(), event.params.jobId, after)
+    logger.info("paRecruiterRoleReleasedNotify_done", { jobId: event.params.jobId, ...summary })
+  },
+)
+
 export const paRecruiterSubmission = onRequest(
   { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
   async (req, res) => {
@@ -727,6 +1495,11 @@ export const paRecruiterSubmission = onRequest(
     const payload = validated.value
 
     const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (payload.source === "hiring-board" && !recruiter) {
+      res.status(401).json({ ok: false, reason: "recruiter_access_required" })
+      return
+    }
 
     // Fast path: idempotent replay returns the existing doc without
     // re-resolving the job or re-scoring the checklist.
@@ -777,6 +1550,12 @@ export const paRecruiterSubmission = onRequest(
     const submissionId = idempotencyHeader || randomUUID()
     const ip = req.get("x-forwarded-for")?.split(",")[0]?.trim() || ""
     const callerSource = payload.source ?? "unknown"
+    const submitter = recruiter
+      ? {
+          name: payload.submitter.name || recruiter.name,
+          email: recruiter.email,
+        }
+      : payload.submitter
     const submissionDoc = {
       submissionId,
       // Canonical Firestore doc id (what admin tooling expects). When the
@@ -786,8 +1565,11 @@ export const paRecruiterSubmission = onRequest(
       inboundJobId: payload.jobId,
       jobTitleSnapshot: String(jobData.title ?? ""),
       companyLabelSnapshot: rb.label.company,
-      submitter: payload.submitter,
+      submitter,
+      recruiterId: recruiter?.recruiterId ?? null,
+      recruiterEmail: recruiter?.email ?? payload.submitter.email,
       candidate: payload.candidate,
+      candidateConsent: payload.candidateConsent,
       checklist: payload.checklist,
       score,
       // Caller-supplied audit surface. Tracks which UI (hiring-board, api,
@@ -799,7 +1581,12 @@ export const paRecruiterSubmission = onRequest(
         referrer: req.get("referer") ?? "",
         ipHash: ip ? createHash("sha256").update(ip).digest("hex").slice(0, 16) : "",
       },
-      status: "new",
+      status: "submitted",
+      statusHistory: [{
+        status: "submitted",
+        by: "recruiter",
+        atIso: new Date().toISOString(),
+      }],
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     }
@@ -841,9 +1628,10 @@ export const paRecruiterSubmission = onRequest(
     logger.info("paRecruiterSubmission_received", {
       submissionId,
       jobId: realJobId,
-      submitterEmail: payload.submitter.email,
+      submitterEmail: submitter.email,
       hardScore: `${score.hardChecked}/${score.hardTotal}`,
       callerSource,
+      recruiterId: recruiter?.recruiterId ?? null,
       idempotent: false,
     })
 
@@ -856,7 +1644,7 @@ export const paRecruiterSubmission = onRequest(
         submissionId,
         jobId: realJobId,
         companyLabel: rb.label.company,
-        submitter: payload.submitter,
+        submitter,
         candidate: payload.candidate,
         checklist: payload.checklist,
         score,

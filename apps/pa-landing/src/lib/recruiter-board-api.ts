@@ -2,13 +2,18 @@
  * Client helpers for the recruiter board CFs (paCollabJobsList,
  * paRecruiterSubmission). Backs /recruiters and /recruiters/job/:jobId routes.
  */
+import { auth } from "./firebase.js"
 
 const DEFAULT_BASE =
   (typeof import.meta !== "undefined" && (import.meta as { env?: { VITE_PA_FUNCTIONS_BASE_URL?: string } }).env?.VITE_PA_FUNCTIONS_BASE_URL) ||
   "https://us-central1-wekruit-5f89b.cloudfunctions.net"
 
 export const COLLAB_JOBS_URL = `${DEFAULT_BASE}/paCollabJobsList`
+export const RECRUITER_ACCESS_URL = `${DEFAULT_BASE}/paRecruiterAccess`
+export const RECRUITER_ME_URL = `${DEFAULT_BASE}/paRecruiterMe`
+export const RECRUITER_PREFERENCES_URL = `${DEFAULT_BASE}/paRecruiterPreferencesUpdate`
 export const RECRUITER_SUBMISSION_URL = `${DEFAULT_BASE}/paRecruiterSubmission`
+export const RECRUITER_SUBMISSIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterSubmissionsList`
 
 // Mirrors PublicCollabJob in apps/functions/src/recruiter-board.ts. Loose
 // typing on purpose — the server is source of truth.
@@ -40,7 +45,7 @@ export interface CollabJob {
 
 export interface SubmissionInput {
   jobId: string
-  submitter: { name: string; email: string; company?: string }
+  submitter: { name: string; email: string }
   candidate: {
     name: string
     link: string
@@ -49,6 +54,7 @@ export interface SubmissionInput {
     notes?: string
   }
   checklist: { [itemId: string]: boolean }
+  candidateConsent: true
 }
 
 export interface SubmissionResponse {
@@ -63,6 +69,49 @@ export interface SubmissionResponse {
   reason?: string
 }
 
+export interface RecruiterProfile {
+  recruiterId: string
+  firebaseUid: string
+  name: string
+  email: string
+  notificationPreferences?: {
+    newRolesEmail: boolean
+  }
+}
+
+export interface RecruiterSession {
+  recruiterId: string
+  recruiter: RecruiterProfile
+}
+
+export interface RecruiterSubmissionItem {
+  id: string
+  submissionId?: string
+  jobId?: string
+  inboundJobId?: string
+  jobTitleSnapshot?: string
+  companyLabelSnapshot?: string
+  candidate?: {
+    name?: string
+    link?: string
+    currentRole?: string
+    yoe?: string
+    notes?: string
+  }
+  score?: SubmissionResponse["score"]
+  status?: string
+  recruiterFeedbackNote?: string | null
+  createdAt?: { seconds?: number } | string | null
+  updatedAt?: { seconds?: number } | string | null
+}
+
+export async function recruiterAuthHeaders(): Promise<Record<string, string>> {
+  const user = auth().currentUser
+  if (!user) throw new Error("recruiter_auth_required")
+  const token = await user.getIdToken()
+  return { Authorization: `Bearer ${token}` }
+}
+
 export async function fetchCollabJobs(): Promise<CollabJob[]> {
   const res = await fetch(COLLAB_JOBS_URL, { method: "GET" })
   if (!res.ok) throw new Error(`paCollabJobsList HTTP ${res.status}`)
@@ -71,11 +120,97 @@ export async function fetchCollabJobs(): Promise<CollabJob[]> {
   return body.jobs
 }
 
+export async function registerRecruiterAccess(input: {
+  name: string
+  email: string
+  inviteCode: string
+}): Promise<RecruiterSession> {
+  const res = await fetch(RECRUITER_ACCESS_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(await recruiterAuthHeaders()),
+    },
+    body: JSON.stringify(input),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    recruiterId?: string
+    recruiter?: RecruiterProfile
+  }
+  if (!res.ok || !body.ok || !body.recruiterId || !body.recruiter) {
+    throw new Error(body.reason ?? `paRecruiterAccess HTTP ${res.status}`)
+  }
+  return { recruiterId: body.recruiterId, recruiter: body.recruiter }
+}
+
+export async function getRecruiterProfile(): Promise<RecruiterSession> {
+  const res = await fetch(RECRUITER_ME_URL, {
+    method: "GET",
+    headers: await recruiterAuthHeaders(),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    recruiterId?: string
+    recruiter?: RecruiterProfile
+  }
+  if (!res.ok || !body.ok || !body.recruiterId || !body.recruiter) {
+    throw new Error(body.reason ?? `paRecruiterMe HTTP ${res.status}`)
+  }
+  return { recruiterId: body.recruiterId, recruiter: body.recruiter }
+}
+
+export async function fetchRecruiterSubmissions(): Promise<RecruiterSubmissionItem[]> {
+  const res = await fetch(RECRUITER_SUBMISSIONS_LIST_URL, {
+    method: "GET",
+    headers: await recruiterAuthHeaders(),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    submissions?: RecruiterSubmissionItem[]
+  }
+  if (!res.ok || !body.ok || !body.submissions) {
+    throw new Error(body.reason ?? `paRecruiterSubmissionsList HTTP ${res.status}`)
+  }
+  return body.submissions
+}
+
+export async function updateRecruiterPreferences(
+  notificationPreferences: { newRolesEmail: boolean },
+): Promise<RecruiterSession> {
+  const res = await fetch(RECRUITER_PREFERENCES_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(await recruiterAuthHeaders()),
+    },
+    body: JSON.stringify({ notificationPreferences }),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    recruiter?: RecruiterProfile
+  }
+  if (!res.ok || !body.ok || !body.recruiter) {
+    throw new Error(body.reason ?? `paRecruiterPreferencesUpdate HTTP ${res.status}`)
+  }
+  return { recruiterId: body.recruiter.recruiterId, recruiter: body.recruiter }
+}
+
 export async function submitRecruiterCandidate(input: SubmissionInput): Promise<SubmissionResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" }
+  try {
+    Object.assign(headers, await recruiterAuthHeaders())
+  } catch {
+    return { ok: false, reason: "recruiter_auth_required" }
+  }
   const res = await fetch(RECRUITER_SUBMISSION_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    headers,
+    body: JSON.stringify({ ...input, source: "hiring-board" }),
   })
   const body = (await res.json().catch(() => ({}))) as SubmissionResponse
   if (!res.ok) return { ok: false, reason: body.reason ?? `http_${res.status}` }

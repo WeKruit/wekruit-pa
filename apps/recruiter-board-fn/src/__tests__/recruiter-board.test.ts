@@ -17,8 +17,16 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
   computeSubmissionScore,
+  composeRecruiterRoleNotificationEmail,
   fetchCollabJobs,
+  generateRecruiterInviteCode,
+  hashRecruiterInviteCode,
   isHiringBoardAdmin,
+  inviteCodeUsable,
+  normalizeRecruiterInviteCode,
+  recruiterIdentityFromFirebaseBearer,
+  shouldNotifyRecruitersForRoleRelease,
+  validateInviteCodeCreate,
   type RecruiterBoardChecklistGroup,
   type RecruiterBoardPayload,
 } from "../recruiter-board.js"
@@ -80,6 +88,94 @@ describe("computeSubmissionScore", () => {
     })
     assert.equal(score.hardChecked, 1)
     assert.equal(score.hardTotal, 3)
+  })
+})
+
+describe("recruiter access helpers", () => {
+  it("normalizes invite codes without changing the visible code contract", () => {
+    assert.equal(normalizeRecruiterInviteCode(" wk-7k2p "), "WK-7K2P")
+    assert.equal(normalizeRecruiterInviteCode("wk 7k2p"), "WK7K2P")
+  })
+
+  it("hashes invite codes", () => {
+    assert.equal(hashRecruiterInviteCode("WK-7K2P").length, 64)
+  })
+
+  it("generates visible invite codes in the WeKruit format", () => {
+    assert.match(generateRecruiterInviteCode(), /^WK-[A-Z0-9]{4}-[A-Z0-9]{4}$/)
+  })
+
+  it("forces recruiter invite codes to be single-use", () => {
+    const defaultCode = validateInviteCodeCreate({})
+    assert.equal(defaultCode.ok, true)
+    if (defaultCode.ok) assert.equal(defaultCode.value.maxUses, 1)
+    const explicitSingleUse = validateInviteCodeCreate({ maxUses: 1 })
+    assert.equal(explicitSingleUse.ok, true)
+    if (explicitSingleUse.ok) assert.equal(explicitSingleUse.value.maxUses, 1)
+    assert.deepEqual(validateInviteCodeCreate({ maxUses: 2 }), {
+      ok: false,
+      reason: "invalid_max_uses",
+    })
+    assert.equal(inviteCodeUsable({ active: true, maxUses: 5, usedCount: 0 }, Date.now()), true)
+    assert.equal(inviteCodeUsable({ active: true, maxUses: 5, usedCount: 1 }, Date.now()), false)
+  })
+
+  it("binds recruiter API identity to Firebase Auth uid and normalized email", async () => {
+    const identity = await recruiterIdentityFromFirebaseBearer(
+      { headers: { authorization: "Bearer firebase-id-token" } },
+      async (token) => {
+        assert.equal(token, "firebase-id-token")
+        return { uid: "firebase-uid-123", email: "Sloane@Agency.com" }
+      },
+    )
+
+    assert.deepEqual(identity, {
+      uid: "firebase-uid-123",
+      email: "sloane@agency.com",
+    })
+  })
+
+  it("rejects malformed recruiter Firebase bearer tokens", async () => {
+    assert.equal(
+      await recruiterIdentityFromFirebaseBearer(
+        { headers: { authorization: "Bearer old-recruiter-id:local-token" } },
+        async () => ({ uid: "firebase-uid-123", email: "sloane@agency.com" }),
+      ),
+      null,
+    )
+  })
+})
+
+describe("recruiter role notifications", () => {
+  it("fires only when a collab role becomes active on the recruiter board", () => {
+    assert.equal(shouldNotifyRecruitersForRoleRelease(null, {
+      wekruitCollaborationStatus: "collaborated",
+      recruiterBoard: { active: true },
+    }), true)
+    assert.equal(shouldNotifyRecruitersForRoleRelease({
+      wekruitCollaborationStatus: "collaborated",
+      recruiterBoard: { active: true },
+    }, {
+      wekruitCollaborationStatus: "collaborated",
+      recruiterBoard: { active: true },
+    }), false)
+    assert.equal(shouldNotifyRecruitersForRoleRelease(null, {
+      wekruitCollaborationStatus: "not_collaborated",
+      recruiterBoard: { active: true },
+    }), false)
+  })
+
+  it("composes a role email with the role link and opt-out language", () => {
+    const email = composeRecruiterRoleNotificationEmail({
+      recruiterName: "Sloane",
+      roleTitle: "Founding Engineer",
+      companyLabel: "Co. B",
+      location: "San Francisco",
+      roleUrl: "https://candidate.wekruit.com/recruiters/job/role-1",
+    })
+    assert.match(email.subject, /Founding Engineer/)
+    assert.match(email.text, /candidate\.wekruit\.com/)
+    assert.match(email.text, /turn off new-role emails/i)
   })
 })
 

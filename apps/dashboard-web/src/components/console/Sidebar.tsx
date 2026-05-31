@@ -57,6 +57,15 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     ],
   },
   {
+    id: "recruiters",
+    label: "Recruiters",
+    icon: "user_check",
+    defaultOpen: true,
+    items: [
+      { to: "/admin/recruiter-submissions", label: "Submissions & codes", hitl: true },
+    ],
+  },
+  {
     id: "employers",
     label: "Employers",
     icon: "shield",
