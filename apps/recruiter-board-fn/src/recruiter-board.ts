@@ -377,6 +377,14 @@ export function inviteCodeUsable(data: Record<string, unknown>, nowMs: number): 
   return usedCount < 1
 }
 
+export function recruiterInviteCodeMatchesBoundUser(
+  existingData: Record<string, unknown> | null | undefined,
+  normalizedCode: string,
+): boolean {
+  const inviteCodeId = typeof existingData?.inviteCodeId === "string" ? existingData.inviteCodeId.trim() : ""
+  return Boolean(inviteCodeId && candidateInviteCodeIds(normalizedCode).includes(inviteCodeId))
+}
+
 export async function registerRecruiterAccess(
   db: Firestore,
   identity: RecruiterFirebaseIdentity,
@@ -404,6 +412,7 @@ export async function registerRecruiterAccess(
     if (existingUser.exists) {
       const existingEmail = typeof existingData?.email === "string" ? existingData.email.trim().toLowerCase() : ""
       if (existingEmail && existingEmail !== identity.email) throw new Error("email_mismatch")
+      if (!recruiterInviteCodeMatchesBoundUser(existingData, input.inviteCode)) return null
       const notificationPreferences = readNotificationPreferences(existingData)
       const recruiter = { ...recruiterBase, notificationPreferences }
       tx.set(userRef, {

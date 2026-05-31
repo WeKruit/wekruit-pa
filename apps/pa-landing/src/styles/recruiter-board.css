@@ -483,6 +483,13 @@
   letter-spacing: -0.015em;
 }
 
+.rb-access__hint {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .rb-access__card label,
 .rb-search {
   display: flex;

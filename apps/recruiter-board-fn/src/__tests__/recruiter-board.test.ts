@@ -25,6 +25,7 @@ import {
   isHiringBoardAdmin,
   inviteCodeUsable,
   normalizeRecruiterInviteCode,
+  recruiterInviteCodeMatchesBoundUser,
   recruiterIdentityFromFirebaseBearer,
   shouldNotifyRecruitersForRoleRelease,
   validateInviteCodeCreate,
@@ -140,6 +141,15 @@ describe("recruiter access helpers", () => {
     })
     assert.equal(inviteCodeUsable({ active: true, maxUses: 5, usedCount: 0 }, Date.now()), true)
     assert.equal(inviteCodeUsable({ active: true, maxUses: 5, usedCount: 1 }, Date.now()), false)
+  })
+
+  it("lets a bound recruiter reuse only their own access code with the same Google account", () => {
+    const normalizedCode = normalizeRecruiterInviteCode("WK-CDKE-AUC5")
+    const inviteCodeId = hashRecruiterInviteCode(normalizedCode)
+
+    assert.equal(recruiterInviteCodeMatchesBoundUser({ inviteCodeId }, normalizedCode), true)
+    assert.equal(recruiterInviteCodeMatchesBoundUser({ inviteCodeId }, "WK-OTHER-CODE"), false)
+    assert.equal(recruiterInviteCodeMatchesBoundUser({}, normalizedCode), false)
   })
 
   it("binds recruiter API identity to Firebase Auth uid and normalized email", async () => {
