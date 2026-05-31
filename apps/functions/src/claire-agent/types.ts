@@ -81,6 +81,14 @@ export interface ClaireToolContext {
   judgeModel: string
   /** active job id for prescreen config lookup (when in a prescreen flow). */
   jobId?: string
+  /**
+   * candidate phone (E.164) for the current inbound turn. Threaded from
+   * ClaireTurnInput.toE164 so the by-name prescreen tool (begin_collab_prescreen)
+   * can hand it to runPreScreenForUser exactly like the copy-paste trigger does.
+   * Absent on a proactive/outbound-initiated turn → the tool falls back to the
+   * candidate's stored pa-users.phoneE164.
+   */
+  toE164?: string
   log: (event: string, payload?: Record<string, unknown>) => void
   nowIso: () => string
   /**
@@ -91,6 +99,17 @@ export interface ClaireToolContext {
     userId: string
     requestedCount?: number | null
   }) => Promise<FindMatchResult>
+  /**
+   * Optional seam for the by-name prescreen tool (begin_collab_prescreen). Production leaves this
+   * undefined → the tool calls the REAL legacy runPreScreenForUser (the SAME session-start the
+   * copy-paste WeKruit_<jobId>_<userId>_Job trigger uses). Evals inject a stub so the resolver +
+   * tool can be driven offline without enqueuing a real outbound. Mirrors the findMatch DI pattern.
+   */
+  beginPrescreen?: (args: {
+    jobId: string
+    userId: string
+    toE164: string
+  }) => Promise<{ ok: boolean; reason?: string; sessionId: string }>
 }
 
 export type ClaireRunResult = {

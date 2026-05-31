@@ -275,6 +275,7 @@ export async function runClaireTurn(
     transport: tracked.transport,
     judgeModel: deps.judgeModel ?? CLAIRE_MODEL,
     jobId: deps.jobId,
+    ...(input.toE164 ? { toE164: input.toE164 } : {}),
     log,
     nowIso: deps.nowIso ?? (() => new Date().toISOString()),
     findMatch: deps.findMatch,

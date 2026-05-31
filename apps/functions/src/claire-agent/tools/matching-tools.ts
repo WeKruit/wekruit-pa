@@ -65,6 +65,7 @@ import {
 } from "../reducers/matching-profile-reducer.js"
 import type { ClaireToolContext, FindMatchResult } from "../types.js"
 import { runCandidatePrivacyRequest } from "../../production-hardening.js"
+import { runPreScreenForUser } from "../../prescreen-session-start.js"
 
 const PA_USERS_COLLECTION = "pa-users"
 const JOB_PROFILES_COLLECTION = "pa-job-profiles"
@@ -116,6 +117,126 @@ async function readSnapshotTags(
   if (slice.targetJobType) snap.targetJobType = slice.targetJobType
   if (slice.targetLocations) snap.targetLocations = slice.targetLocations
   return snap
+}
+
+/** A pushed collab/partner role persisted by find_match for start-by-name resolution. */
+export interface CollabRole {
+  jobId: string
+  company: string
+  title: string
+}
+
+/** Lower-cased word tokens (len ≥ 2) for the role-name overlap match (NO enum-classification regex). */
+function roleTokens(s: string): string[] {
+  return (s ?? "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 2)
+}
+
+/**
+ * Resolve a free-form role name ("the Helium one" / "invoko PM") to AT MOST ONE pushed collab role.
+ *
+ * SIMPLE matching only (Adam: NO enum-classification regex): for each saved role, score it on
+ *   (a) whether the query, case-insensitively, CONTAINS the company or title (or vice-versa), and
+ *   (b) token overlap between the query and the "company title" string.
+ * Roles with zero signal are dropped. The best non-zero score wins ONLY when it is strictly the
+ * single best — a tie (≥2 roles share the top score) is AMBIGUOUS, never a silent pick of the wrong
+ * role. Pure + deterministic so it is unit-testable offline.
+ *
+ *   0 roles match  → { kind: "no_match" }
+ *   >1 tie at top  → { kind: "ambiguous", candidates }
+ *   exactly 1 best → { kind: "match", role }
+ */
+export function resolveCollabRole(
+  roleQuery: string,
+  roles: CollabRole[],
+): { kind: "no_match" } | { kind: "ambiguous"; candidates: CollabRole[] } | { kind: "match"; role: CollabRole } {
+  const q = (roleQuery ?? "").trim().toLowerCase()
+  const valid = (roles ?? []).filter((r) => r && typeof r.jobId === "string" && r.jobId.trim().length > 0)
+  if (!q || valid.length === 0) return { kind: "no_match" }
+  const qTokens = new Set(roleTokens(q))
+
+  const scored = valid.map((role) => {
+    const company = (role.company ?? "").toLowerCase().trim()
+    const title = (role.title ?? "").toLowerCase().trim()
+    const haystack = [company, title].filter(Boolean).join(" ")
+    let score = 0
+    // (a) substring containment in EITHER direction → strong signal.
+    if (company && (q.includes(company) || company.includes(q))) score += 5
+    if (title && (q.includes(title) || title.includes(q))) score += 5
+    if (haystack && (q.includes(haystack) || haystack.includes(q))) score += 3
+    // (b) per-token overlap — "invoko pm" hits the company token + a title token.
+    for (const t of new Set(roleTokens(haystack))) {
+      if (qTokens.has(t)) score += 1
+    }
+    return { role, score }
+  })
+
+  const best = Math.max(...scored.map((s) => s.score))
+  if (best <= 0) return { kind: "no_match" }
+  const top = scored.filter((s) => s.score === best).map((s) => s.role)
+  if (top.length > 1) return { kind: "ambiguous", candidates: top }
+  return { kind: "match", role: top[0]! }
+}
+
+/** Read the candidate's pushed collab roles from pa-users/{userId}.lastCollabRoles. Fail-soft → []. */
+async function readLastCollabRoles(
+  db: Firestore,
+  userId: string,
+  log: ClaireToolContext["log"],
+): Promise<CollabRole[]> {
+  try {
+    const snap = await db.collection(PA_USERS_COLLECTION).doc(userId).get()
+    const raw = snap.exists ? (snap.data()?.lastCollabRoles as unknown) : null
+    if (!Array.isArray(raw)) return []
+    return raw
+      .map((r) => {
+        const o = (r ?? {}) as Record<string, unknown>
+        return {
+          jobId: typeof o.jobId === "string" ? o.jobId : "",
+          company: typeof o.company === "string" ? o.company : "",
+          title: typeof o.title === "string" ? o.title : "",
+        }
+      })
+      .filter((r) => r.jobId.trim().length > 0)
+  } catch (err) {
+    log("pa.claire.read_last_collab_roles_error", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return []
+  }
+}
+
+/** Resolve the candidate's phone (E.164): ctx.toE164 first, else pa-users.phoneE164. "" when unknown. */
+async function resolveCandidatePhone(
+  db: Firestore,
+  userId: string,
+  ctxPhone: string | undefined,
+  log: ClaireToolContext["log"],
+): Promise<string> {
+  const fromCtx = (ctxPhone ?? "").trim()
+  if (fromCtx) return fromCtx
+  try {
+    const snap = await db.collection(PA_USERS_COLLECTION).doc(userId).get()
+    const phone = snap.exists ? snap.data()?.phoneE164 : null
+    return typeof phone === "string" ? phone.trim() : ""
+  } catch (err) {
+    log("pa.claire.resolve_candidate_phone_error", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return ""
+  }
+}
+
+/** Map a stored prescreen-session terminal (PASS/FAIL/null) to the candidate-facing progress status. */
+export function prescreenStatusFromTerminal(terminal: unknown): "passed" | "not_passed" | "in_progress" {
+  const t = typeof terminal === "string" ? terminal.toUpperCase() : ""
+  if (t === "PASS") return "passed"
+  if (t === "FAIL") return "not_passed"
+  return "in_progress"
 }
 
 /** Resolve mem0 config from env; null when not configured (tool no-ops fail-open). */
@@ -311,6 +432,25 @@ export function makeV16FindMatch(
       // rec-card fire (TOP job → reliably the top collab role when present), and the formatted lines
       // all operate over THIS array, so every downstream consumer sees the same ordered, deduped set.
       const rawJobs = [...collabJobs, ...openJobs]
+
+      // PERSIST the pushed collab roles (req #1) — write the collab subset we just surfaced to
+      // pa-users/{userId}.lastCollabRoles = [{ jobId, company, title }] so a LATER turn's
+      // begin_collab_prescreen can resolve a free-form role name ("the Helium one") back to a real
+      // jobId WITHOUT re-running the matcher. Only the collab pass roles (the prescreen-eligible
+      // partner inventory) go here — open-market fill is not a start-by-name target. Best-effort,
+      // fail-soft: a write failure must NEVER break find_match's never-throws contract (RC2).
+      if (collabJobs.length > 0) {
+        const lastCollabRoles = collabJobs.map((j) => ({
+          jobId: j.id,
+          company: (j.companyName || "").trim(),
+          title: (j.jobTitle || j.roleTitle || "").trim(),
+        }))
+        await db
+          .collection("pa-users")
+          .doc(userId)
+          .set({ lastCollabRoles, lastCollabRolesAt: nowIso() }, { merge: true })
+          .catch((e) => log("pa.claire.find_match.last_collab_roles_write_failed", { err: String(e) }))
+      }
       // Rec tracking (req #4/#5) — write the ledger + job_presented events for
       // the offered jobs. Fail-open: never breaks the never-throws contract.
       if (rawJobs.length > 0) {
@@ -852,7 +992,144 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     },
   })
 
-  // ── 9. cv_parse — parse pasted resume text via pa-resume-parser v2 ───────
+  // ── 9. begin_collab_prescreen — START a prescreen by NAMING the role ─────
+  // The FRIENDLY second path alongside the copy-paste WeKruit_<jobId>_<userId>_Job trigger: the
+  // candidate names a collab role in free text ("the Helium one" / "invoko PM") and we resolve it to
+  // EXACTLY ONE jobId from the roles find_match pushed (pa-users.lastCollabRoles), then create the
+  // session via the SAME legacy runPreScreenForUser the copy-paste trigger uses — so the existing
+  // thin-prescreen mode-selector + terminal flow pick it up UNCHANGED. We NEVER start the wrong role:
+  // 0 matches → no_match (re-offer); >1 → ambiguous (clarify). Deterministic resolver, NO regex.
+  const beginCollabPrescreen = tool({
+    name: "begin_collab_prescreen",
+    description:
+      "START the pre-screen for a WeKruit collab/partner role the candidate NAMED in plain text (instead " +
+      "of copy-pasting the trigger line) — e.g. 'let's do the Helium one', 'start the invoko PM screen'. " +
+      "Pass roleQuery = the role they named, verbatim. It resolves against the collab roles you just " +
+      "recommended and starts the real interview session for the ONE matching role. If it returns " +
+      "reason 'no_match' or 'ambiguous', DO NOT start anything — re-offer the roles or ask which one " +
+      "they mean. Use ONLY when they clearly want to begin a specific collab role's prescreen.",
+    parameters: z.object({ roleQuery: z.string() }),
+    async execute({ roleQuery }) {
+      const roles = await readLastCollabRoles(ctx.db, ctx.userId, ctx.log)
+      const resolved = resolveCollabRole(roleQuery, roles)
+      if (resolved.kind === "no_match") {
+        ctx.log("pa.claire.begin_collab_prescreen.no_match", {
+          userId: ctx.userId,
+          roleQuery,
+          roleCount: roles.length,
+        })
+        return { ok: false, reason: "no_match", roles }
+      }
+      if (resolved.kind === "ambiguous") {
+        ctx.log("pa.claire.begin_collab_prescreen.ambiguous", {
+          userId: ctx.userId,
+          roleQuery,
+          candidateCount: resolved.candidates.length,
+        })
+        return { ok: false, reason: "ambiguous", candidates: resolved.candidates }
+      }
+      const { role } = resolved
+      const toE164 = await resolveCandidatePhone(ctx.db, ctx.userId, ctx.toE164, ctx.log)
+      if (!toE164) {
+        ctx.log("pa.claire.begin_collab_prescreen.no_phone", { userId: ctx.userId, jobId: role.jobId })
+        return { ok: false, reason: "no_phone", jobId: role.jobId, title: role.title, company: role.company }
+      }
+      try {
+        // SAME session-start the copy-paste trigger runs (PrescreenTrigger → runPreScreenForUser). Do
+        // NOT hand-roll a session shape — reuse so the existing mode-selector + terminal flow are unchanged.
+        // ctx.beginPrescreen is the eval seam (default = the real legacy handler); prod leaves it undefined.
+        const result = ctx.beginPrescreen
+          ? await ctx.beginPrescreen({ jobId: role.jobId, userId: ctx.userId, toE164 })
+          : await runPreScreenForUser({
+              db: ctx.db,
+              jobId: role.jobId,
+              userId: ctx.userId,
+              toE164,
+              log: ctx.log,
+            })
+        if (!result.ok) {
+          ctx.log("pa.claire.begin_collab_prescreen.start_failed", {
+            userId: ctx.userId,
+            jobId: role.jobId,
+            reason: result.reason,
+          })
+          return { ok: false, reason: result.reason ?? "start_failed", jobId: role.jobId, title: role.title, company: role.company }
+        }
+        ctx.log("pa.claire.begin_collab_prescreen.started", {
+          userId: ctx.userId,
+          jobId: role.jobId,
+          sessionId: result.sessionId,
+        })
+        return { ok: true, jobId: role.jobId, title: role.title, company: role.company }
+      } catch (err) {
+        ctx.log("pa.claire.begin_collab_prescreen.error", {
+          userId: ctx.userId,
+          jobId: role.jobId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return { ok: false, reason: "start_error", jobId: role.jobId, title: role.title, company: role.company }
+      }
+    },
+  })
+
+  // ── 10. check_prescreen_progress — READ-ONLY status of the candidate's screens ──
+  // Answers "how's my prescreen going / did I pass the Invoko one?". Mirrors prescreen-context.ts:
+  // a userId-only query + in-memory filter (index-light, no `!=`/orderBy dependency), optional
+  // company/title contains filter. Maps terminal → status. NEVER writes, NEVER throws.
+  const checkPrescreenProgress = tool({
+    name: "check_prescreen_progress",
+    description:
+      "Look up the status of the candidate's pre-screens when they ask about their progress " +
+      "('how did my screen go?', 'did I pass the Invoko one?', 'what's the status of my interviews?'). " +
+      "Optional query = a company/title to filter to (e.g. 'Invoko'); omit to list all their screens. " +
+      "Returns each screen's company, title, and status (passed / not_passed / in_progress). READ-ONLY.",
+    parameters: z.object({ query: z.string().nullable() }),
+    async execute({ query }) {
+      try {
+        const snap = await ctx.db
+          .collection("pa-prescreen-sessions")
+          .where("userId", "==", ctx.userId)
+          .limit(50)
+          .get()
+        const q = (query ?? "").trim().toLowerCase()
+        const sessions = snap.docs
+          .map((doc) => {
+            const d = doc.data() as Record<string, unknown>
+            const cfg = (d.cfgSnapshot ?? {}) as Record<string, unknown>
+            const company = typeof cfg.company === "string" ? cfg.company : ""
+            const title = typeof cfg.jobTitle === "string" ? cfg.jobTitle : ""
+            const jobId = typeof d.jobId === "string" ? d.jobId : ""
+            const createdAt = typeof d.createdAt === "string" ? d.createdAt : ""
+            return {
+              company,
+              title,
+              jobId,
+              createdAt,
+              status: prescreenStatusFromTerminal(d.terminal),
+            }
+          })
+          // optional company/title filter (in-memory contains; NO regex/enum classification).
+          .filter((s) => !q || s.company.toLowerCase().includes(q) || s.title.toLowerCase().includes(q))
+          // most-recent first when createdAt is present.
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+          .map(({ createdAt: _createdAt, ...rest }) => rest)
+        ctx.log("pa.claire.check_prescreen_progress", {
+          userId: ctx.userId,
+          query: q || null,
+          count: sessions.length,
+        })
+        return { ok: true, sessions }
+      } catch (err) {
+        ctx.log("pa.claire.check_prescreen_progress_error", {
+          userId: ctx.userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return { ok: false, sessions: [], reason: "could not load prescreen status right now" }
+      }
+    },
+  })
+
+  // ── 11. cv_parse — parse pasted resume text via pa-resume-parser v2 ───────
   // Returns the parsed structured summary to the LLM. Does NOT itself write
   // tags — the conversation-confirm + applyPartialUserTags path (D12) owns
   // persistence; this tool only extracts so Claire can confirm understanding.
@@ -997,6 +1274,8 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     saveJobProfile,
     setDailySubscription,
     matchCollab,
+    beginCollabPrescreen,
+    checkPrescreenProgress,
     cvParse,
   ]
 }
