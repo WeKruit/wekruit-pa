@@ -12,6 +12,8 @@
  *   GET  paRecruiterMe             -> returns the Firebase Auth-bound recruiter profile
  *   POST paRecruiterAccess         -> validates invite code + binds Firebase Auth uid
  *   POST paRecruiterPreferencesUpdate -> recruiter updates notification settings
+ *   GET  paRecruiterSourcedCandidatesList -> recruiter-authenticated source CRM
+ *   POST paRecruiterSourcedCandidateSave -> upserts one sourced candidate
  *   POST paRecruiterSubmission     -> writes pa-recruiter-submissions doc
  *                                     (honors Idempotency-Key header)
  *   GET  paRecruiterSubmissionsList -> recruiter-authenticated status tracker
@@ -219,6 +221,7 @@ const RECRUITER_INVITE_CODES_COLLECTION = "pa-recruiter-invite-codes"
 const RECRUITER_USERS_COLLECTION = "pa-recruiter-users"
 const RECRUITER_SUBMISSIONS_COLLECTION = "pa-recruiter-submissions"
 const RECRUITER_NOTIFICATIONS_COLLECTION = "pa-recruiter-notifications"
+const RECRUITER_SOURCED_CANDIDATES_COLLECTION = "pa-recruiter-sourced-candidates"
 
 export interface RecruiterNotificationPreferences {
   newRolesEmail: boolean
@@ -1027,6 +1030,230 @@ function publicRecruiterSubmission(d: { id: string; data: () => Record<string, u
     updatedAt: data.updatedAt,
   }
 }
+
+export const RECRUITER_SOURCED_CANDIDATE_STAGES = [
+  "sourced",
+  "contacted",
+  "screened",
+  "ready",
+  "submitted",
+  "archived",
+] as const
+
+export type RecruiterSourcedCandidateStage = (typeof RECRUITER_SOURCED_CANDIDATE_STAGES)[number]
+
+interface RecruiterSourcedCandidateInput {
+  candidateId?: string
+  jobId: string
+  stage: RecruiterSourcedCandidateStage
+  candidate: {
+    name: string
+    link: string
+    currentRole?: string
+    yoe?: string
+    notes?: string
+  }
+}
+
+interface RecruiterSourcedCandidateListItem {
+  id: string
+  candidateId: string
+  recruiterId?: string
+  jobId?: string
+  inboundJobId?: string
+  jobTitleSnapshot?: string
+  companyLabelSnapshot?: string
+  stage: RecruiterSourcedCandidateStage
+  candidate?: RecruiterSourcedCandidateInput["candidate"]
+  createdAt?: unknown
+  updatedAt?: unknown
+}
+
+function sanitizeOptionalString(v: unknown, max: number): string | undefined {
+  if (v === undefined || v === null) return undefined
+  if (typeof v !== "string") return undefined
+  const trimmed = v.trim()
+  if (!trimmed) return undefined
+  return trimmed.slice(0, max)
+}
+
+export function validateRecruiterSourcedCandidateInput(input: unknown):
+  | { ok: true; value: RecruiterSourcedCandidateInput }
+  | { ok: false; reason: string } {
+  if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
+  const b = input as Record<string, unknown>
+  const candidateId = sanitizeOptionalString(b.candidateId, 120)
+  if (candidateId && !/^[A-Za-z0-9_.:-]{1,120}$/.test(candidateId)) return { ok: false, reason: "invalid_candidate_id" }
+  if (!isNonEmptyString(b.jobId)) return { ok: false, reason: "missing_jobId" }
+  if (b.jobId.length > 200) return { ok: false, reason: "jobId_too_long" }
+  const stage = typeof b.stage === "string" && RECRUITER_SOURCED_CANDIDATE_STAGES.includes(b.stage as RecruiterSourcedCandidateStage)
+    ? b.stage as RecruiterSourcedCandidateStage
+    : "sourced"
+
+  const c = b.candidate as Record<string, unknown> | undefined
+  if (!c || typeof c !== "object") return { ok: false, reason: "missing_candidate" }
+  if (!isNonEmptyString(c.name)) return { ok: false, reason: "missing_candidate_name" }
+  if (!isNonEmptyString(c.link)) return { ok: false, reason: "missing_candidate_link" }
+  if (c.name.length > 200) return { ok: false, reason: "candidate_name_too_long" }
+  if (c.link.length > 2000) return { ok: false, reason: "candidate_link_too_long" }
+  for (const k of ["currentRole", "yoe", "notes"] as const) {
+    if (c[k] !== undefined && typeof c[k] !== "string") return { ok: false, reason: `invalid_${k}` }
+    if (typeof c[k] === "string" && (c[k] as string).length > 4000) return { ok: false, reason: `${k}_too_long` }
+  }
+
+  return {
+    ok: true,
+    value: {
+      candidateId,
+      jobId: b.jobId.trim(),
+      stage,
+      candidate: {
+        name: c.name.trim(),
+        link: c.link.trim(),
+        currentRole: sanitizeOptionalString(c.currentRole, 4000),
+        yoe: sanitizeOptionalString(c.yoe, 4000),
+        notes: sanitizeOptionalString(c.notes, 4000),
+      },
+    },
+  }
+}
+
+function publicRecruiterSourcedCandidate(
+  d: { id: string; data: () => Record<string, unknown> | undefined },
+): RecruiterSourcedCandidateListItem {
+  const data = d.data() ?? {}
+  const stage = typeof data.stage === "string" && RECRUITER_SOURCED_CANDIDATE_STAGES.includes(data.stage as RecruiterSourcedCandidateStage)
+    ? data.stage as RecruiterSourcedCandidateStage
+    : "sourced"
+  return {
+    id: d.id,
+    candidateId: typeof data.candidateId === "string" ? data.candidateId : d.id,
+    recruiterId: typeof data.recruiterId === "string" ? data.recruiterId : undefined,
+    jobId: typeof data.jobId === "string" ? data.jobId : undefined,
+    inboundJobId: typeof data.inboundJobId === "string" ? data.inboundJobId : undefined,
+    jobTitleSnapshot: typeof data.jobTitleSnapshot === "string" ? data.jobTitleSnapshot : undefined,
+    companyLabelSnapshot: typeof data.companyLabelSnapshot === "string" ? data.companyLabelSnapshot : undefined,
+    stage,
+    candidate: typeof data.candidate === "object" && data.candidate !== null
+      ? data.candidate as RecruiterSourcedCandidateInput["candidate"]
+      : undefined,
+    createdAt: data.createdAt,
+    updatedAt: data.updatedAt,
+  }
+}
+
+export const paRecruiterSourcedCandidatesList = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "GET") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    try {
+      const snap = await db
+        .collection(RECRUITER_SOURCED_CANDIDATES_COLLECTION)
+        .where("recruiterId", "==", recruiter.recruiterId)
+        .limit(300)
+        .get()
+      const candidates = snap.docs
+        .map(publicRecruiterSourcedCandidate)
+        .sort((a, b) => timestampMs(b.updatedAt ?? b.createdAt) - timestampMs(a.updatedAt ?? a.createdAt))
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, recruiter, candidates })
+    } catch (err) {
+      logger.error("paRecruiterSourcedCandidatesList_failed", { error: String(err), recruiterId: recruiter.recruiterId })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
+
+export const paRecruiterSourcedCandidateSave = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    const validated = validateRecruiterSourcedCandidateInput(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+    const payload = validated.value
+
+    try {
+      const realJobId = await resolvePublicIdToDocId(db, payload.jobId)
+      if (!realJobId) {
+        res.status(404).json({ ok: false, reason: "job_not_found" })
+        return
+      }
+      const jobSnap = await db.collection("pa-jobs").doc(realJobId).get()
+      if (!jobSnap.exists) {
+        res.status(404).json({ ok: false, reason: "job_not_found" })
+        return
+      }
+      const jobData = jobSnap.data() as Record<string, unknown>
+      const rb = jobData.recruiterBoard as RecruiterBoardPayload | undefined
+      if (jobData.wekruitCollaborationStatus !== "collaborated" || !rb || rb.active !== true) {
+        res.status(403).json({ ok: false, reason: "job_not_active_on_board" })
+        return
+      }
+
+      const candidateId = payload.candidateId || randomUUID()
+      const ref = db.collection(RECRUITER_SOURCED_CANDIDATES_COLLECTION).doc(candidateId)
+      const existing = await ref.get()
+      if (existing.exists) {
+        const existingRecruiterId = existing.data()?.recruiterId
+        if (existingRecruiterId !== recruiter.recruiterId) {
+          res.status(403).json({ ok: false, reason: "candidate_belongs_to_another_recruiter" })
+          return
+        }
+      }
+
+      await ref.set({
+        candidateId,
+        recruiterId: recruiter.recruiterId,
+        recruiterEmail: recruiter.email,
+        jobId: realJobId,
+        inboundJobId: payload.jobId,
+        jobTitleSnapshot: String(jobData.title ?? ""),
+        companyLabelSnapshot: rb.label.company,
+        stage: payload.stage,
+        candidate: payload.candidate,
+        updatedAt: FieldValue.serverTimestamp(),
+        ...(existing.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
+      }, { merge: true })
+      const saved = await ref.get()
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, candidate: publicRecruiterSourcedCandidate(saved) })
+    } catch (err) {
+      logger.error("paRecruiterSourcedCandidateSave_failed", { error: String(err), recruiterId: recruiter.recruiterId })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
 
 export const paRecruiterSubmissionsList = onRequest(
   { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },

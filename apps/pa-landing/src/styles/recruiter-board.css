@@ -776,6 +776,18 @@
   font-style: normal;
 }
 
+.rb-stat span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rb-stat span em {
+  color: var(--live-2);
+  font-size: 14px;
+  font-weight: 800;
+}
+
 .rb-stat strong {
   color: var(--ink);
   font-family: var(--font-serif);
@@ -792,8 +804,100 @@
   align-items: start;
 }
 
+.rb-workbench-grid {
+  display: grid;
+  grid-template-columns: minmax(520px, 1.08fr) minmax(420px, 0.92fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
 .rb-panel {
   overflow: hidden;
+}
+
+.rb-priority-table {
+  display: grid;
+}
+
+.rb-priority-table__head,
+.rb-priority-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.5fr) minmax(86px, 0.7fr) minmax(118px, 0.9fr) minmax(110px, 0.8fr) minmax(96px, 0.75fr) 88px;
+  gap: 12px;
+  align-items: center;
+}
+
+.rb-priority-table__head {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.rb-priority-row {
+  min-height: 58px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  text-decoration: none;
+}
+
+.rb-priority-row:last-child { border-bottom: 0; }
+.rb-priority-row:hover { background: var(--cream-3); }
+
+.rb-priority-row strong,
+.rb-priority-row em {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-priority-row strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.rb-priority-row em {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-style: normal;
+}
+
+.rb-fit-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.rb-fit-signal::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.rb-fit-signal.is-live { color: var(--live-2); }
+.rb-fit-signal.is-info { color: var(--info); }
+.rb-fit-signal.is-warn { color: var(--warning); }
+
+.rb-row-button {
+  justify-self: end;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 9px;
+  color: var(--ink);
+  background: #fff;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .rb-panel__head {
@@ -829,6 +933,121 @@
   font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.rb-pipeline {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(128px, 1fr));
+  min-height: 392px;
+}
+
+.rb-pipeline__lane {
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  background: #fff;
+}
+
+.rb-pipeline__lane:first-child { border-left: 0; }
+
+.rb-pipeline__lane header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 3px solid var(--ink-3);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 10px 8px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.rb-pipeline__lane.is-live header { border-top-color: var(--live); }
+.rb-pipeline__lane.is-info header { border-top-color: var(--info); }
+.rb-pipeline__lane.is-warn header { border-top-color: var(--warning); }
+.rb-pipeline__lane.is-success header { border-top-color: var(--success); }
+
+.rb-pipeline__lane header strong {
+  min-width: 22px;
+  border-radius: var(--r-pill);
+  background: var(--cream-2);
+  color: var(--ink-2);
+  text-align: center;
+  font-size: 11px;
+  padding: 2px 6px;
+}
+
+.rb-pipeline__lane > div {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+}
+
+.rb-pipeline-card,
+.rb-source-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  text-decoration: none;
+  padding: 10px;
+}
+
+.rb-pipeline-card {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.rb-pipeline-card strong,
+.rb-pipeline-card em,
+.rb-pipeline-card small,
+.rb-source-card strong,
+.rb-source-card em {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-pipeline-card strong,
+.rb-source-card strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.rb-pipeline-card em,
+.rb-source-card em {
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-style: normal;
+}
+
+.rb-pipeline-card small {
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.rb-candidate-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--cream-2);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.rb-pipeline__empty {
+  margin: 8px 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  text-align: center;
 }
 
 .rb-role-list,
@@ -935,6 +1154,19 @@
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.rb-role-card__signal {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0 2px;
+}
+
+.rb-role-card__signal em {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-style: normal;
 }
 
 .rb-role-card footer {
@@ -1050,6 +1282,220 @@
   text-align: center;
 }
 
+.rb-feedback-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 16px;
+  padding: 14px;
+}
+
+.rb-feedback-table {
+  display: grid;
+  gap: 8px;
+}
+
+.rb-feedback-line {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 0.8fr) minmax(220px, 1.3fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff;
+}
+
+.rb-feedback-line strong,
+.rb-feedback-line em {
+  display: block;
+}
+
+.rb-feedback-line strong { color: var(--ink); font-size: 13px; }
+.rb-feedback-line em,
+.rb-feedback-line small { color: var(--ink-3); font-size: 11.5px; font-style: normal; }
+.rb-feedback-line p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.rb-next-action {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--cream-3);
+  padding: 16px;
+}
+
+.rb-next-action span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.rb-next-action strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.rb-next-action p {
+  margin: 0 0 6px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-candidate-crm {
+  display: grid;
+  grid-template-columns: 360px minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px;
+}
+
+.rb-source-form {
+  align-self: start;
+  display: grid;
+  gap: 11px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--cream-3);
+  padding: 16px;
+}
+
+.rb-source-form h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.rb-source-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.rb-source-form label span {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.rb-source-form input,
+.rb-source-form select,
+.rb-source-form textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 10px 11px;
+}
+
+.rb-source-form textarea {
+  min-height: 86px;
+  resize: vertical;
+}
+
+.rb-source-form__split {
+  display: grid;
+  grid-template-columns: 1fr 0.78fr;
+  gap: 10px;
+}
+
+.rb-candidate-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.rb-candidate-stage {
+  min-height: 220px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.rb-candidate-stage header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 3px solid var(--ink-3);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 12px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.rb-candidate-stage.is-live header { border-top-color: var(--live); }
+.rb-candidate-stage.is-info header { border-top-color: var(--info); }
+.rb-candidate-stage.is-success header { border-top-color: var(--success); }
+.rb-candidate-stage.is-warn header { border-top-color: var(--warning); }
+
+.rb-candidate-stage header span {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.rb-candidate-stage > p {
+  margin: 0;
+  padding: 28px 12px;
+  color: var(--ink-3);
+  font-size: 12px;
+  text-align: center;
+}
+
+.rb-source-card {
+  margin: 10px;
+}
+
+.rb-source-card > div {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 9px;
+  align-items: center;
+}
+
+.rb-source-card p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.rb-source-card footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rb-source-card footer select {
+  min-width: 112px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  padding: 5px 7px;
+}
+
+.rb-source-card footer a {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
 .rb-settings {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1158,11 +1604,20 @@
 
 @media (max-width: 1080px) {
   .rb-access__body,
-  .rb-workspace__grid {
+  .rb-workspace__grid,
+  .rb-workbench-grid,
+  .rb-feedback-grid,
+  .rb-candidate-crm {
     grid-template-columns: 1fr;
   }
   .rb-stats {
     grid-template-columns: repeat(2, 1fr);
+  }
+  .rb-pipeline {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+  .rb-candidate-board {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
   }
 }
 
@@ -1192,6 +1647,16 @@
   .rb-settings {
     grid-template-columns: 1fr;
   }
+  .rb-priority-table__head {
+    display: none;
+  }
+  .rb-priority-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .rb-row-button {
+    justify-self: start;
+  }
 }
 
 @media (max-width: 620px) {
@@ -1206,6 +1671,12 @@
   }
   .rb-role-row,
   .rb-submission {
+    grid-template-columns: 1fr;
+  }
+  .rb-pipeline,
+  .rb-candidate-board,
+  .rb-source-form__split,
+  .rb-feedback-line {
     grid-template-columns: 1fr;
   }
   .rb-role-row__action,

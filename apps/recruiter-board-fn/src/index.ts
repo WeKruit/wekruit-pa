@@ -20,6 +20,8 @@ export {
   paRecruiterMe,
   paRecruiterPreferencesUpdate,
   paRecruiterRoleReleasedNotify,
+  paRecruiterSourcedCandidateSave,
+  paRecruiterSourcedCandidatesList,
   paRecruiterSubmission,
   paRecruiterSubmissionsList,
 } from "./recruiter-board.js"

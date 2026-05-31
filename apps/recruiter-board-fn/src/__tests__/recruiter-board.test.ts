@@ -29,6 +29,7 @@ import {
   recruiterIdentityFromFirebaseBearer,
   shouldNotifyRecruitersForRoleRelease,
   validateInviteCodeCreate,
+  validateRecruiterSourcedCandidateInput,
   type RecruiterBoardChecklistGroup,
   type RecruiterBoardPayload,
 } from "../recruiter-board.js"
@@ -208,6 +209,56 @@ describe("recruiter role notifications", () => {
     assert.match(email.subject, /Founding Engineer/)
     assert.match(email.text, /candidate\.wekruit\.com/)
     assert.match(email.text, /turn off new-role emails/i)
+  })
+})
+
+describe("recruiter sourced candidates", () => {
+  it("accepts a recruiter-sourced candidate and trims optional fields", () => {
+    const result = validateRecruiterSourcedCandidateInput({
+      jobId: " public-job-1 ",
+      stage: "ready",
+      candidate: {
+        name: " Ada Lovelace ",
+        link: " https://linkedin.com/in/ada ",
+        currentRole: " Staff Engineer ",
+        yoe: " 9 ",
+        notes: " strong backend match ",
+      },
+    })
+
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.value.jobId, "public-job-1")
+    assert.equal(result.value.stage, "ready")
+    assert.deepEqual(result.value.candidate, {
+      name: "Ada Lovelace",
+      link: "https://linkedin.com/in/ada",
+      currentRole: "Staff Engineer",
+      yoe: "9",
+      notes: "strong backend match",
+    })
+  })
+
+  it("rejects malformed sourced candidate payloads", () => {
+    assert.deepEqual(validateRecruiterSourcedCandidateInput({}), {
+      ok: false,
+      reason: "missing_jobId",
+    })
+    assert.deepEqual(validateRecruiterSourcedCandidateInput({
+      jobId: "job-1",
+      candidate: { name: "Ada" },
+    }), {
+      ok: false,
+      reason: "missing_candidate_link",
+    })
+    assert.deepEqual(validateRecruiterSourcedCandidateInput({
+      candidateId: "../bad",
+      jobId: "job-1",
+      candidate: { name: "Ada", link: "https://linkedin.com/in/ada" },
+    }), {
+      ok: false,
+      reason: "invalid_candidate_id",
+    })
   })
 })
 

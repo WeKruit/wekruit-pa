@@ -17,25 +17,40 @@ import { Link, useSearchParams } from "react-router-dom"
 import "../styles/recruiter-board.css"
 import {
   fetchCollabJobs,
+  fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissions,
   getRecruiterProfile,
   registerRecruiterAccess,
+  saveRecruiterSourcedCandidate,
   updateRecruiterPreferences,
   type CollabJob,
   type RecruiterSession,
+  type RecruiterSourcedCandidateInput,
+  type RecruiterSourcedCandidateItem,
+  type RecruiterSourcedCandidateStage,
   type RecruiterSubmissionItem,
 } from "../lib/recruiter-board-api.js"
 import { auth } from "../lib/firebase.js"
 import { redirectResultPromise } from "../lib/auth-redirect-bootstrap.js"
 
-type RecruiterTab = "overview" | "roles" | "submissions" | "feedback" | "settings"
+type RecruiterTab = "overview" | "roles" | "candidates" | "submissions" | "feedback" | "settings"
 
 const TABS: Array<{ id: RecruiterTab; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "roles", label: "Roles" },
+  { id: "candidates", label: "Candidates" },
   { id: "submissions", label: "Submissions" },
   { id: "feedback", label: "Feedback" },
   { id: "settings", label: "Settings" },
+]
+
+const SOURCE_STAGES: Array<{ id: RecruiterSourcedCandidateStage; label: string; tone: "live" | "info" | "success" | "warn" | "mute" }> = [
+  { id: "sourced", label: "Sourced", tone: "mute" },
+  { id: "contacted", label: "Contacted", tone: "info" },
+  { id: "screened", label: "Screened", tone: "info" },
+  { id: "ready", label: "Ready", tone: "live" },
+  { id: "submitted", label: "Submitted", tone: "success" },
+  { id: "archived", label: "Archived", tone: "mute" },
 ]
 
 const STATUS_LABELS: Record<string, { label: string; tone: "live" | "info" | "success" | "warn" | "mute" }> = {
@@ -54,7 +69,14 @@ function statusMeta(status?: string) {
 }
 
 function createdAtMs(s: RecruiterSubmissionItem): number {
-  const raw = s.createdAt
+  return timestampValueMs(s.createdAt)
+}
+
+function updatedAtMs(s: RecruiterSourcedCandidateItem): number {
+  return timestampValueMs(s.updatedAt ?? s.createdAt)
+}
+
+function timestampValueMs(raw: RecruiterSubmissionItem["createdAt"] | RecruiterSourcedCandidateItem["createdAt"]): number {
   if (!raw) return 0
   if (typeof raw === "string") return Date.parse(raw) || 0
   if (typeof raw === "object" && typeof raw.seconds === "number") return raw.seconds * 1000
@@ -75,9 +97,25 @@ function sortSubmissions(rows: RecruiterSubmissionItem[]): RecruiterSubmissionIt
   return [...rows].sort((a, b) => createdAtMs(b) - createdAtMs(a))
 }
 
+function sortSourcedCandidates(rows: RecruiterSourcedCandidateItem[]): RecruiterSourcedCandidateItem[] {
+  return [...rows].sort((a, b) => updatedAtMs(b) - updatedAtMs(a))
+}
+
 function submissionScore(s: RecruiterSubmissionItem): string {
   if (!s.score) return "Score pending"
   return `Hard ${s.score.hardChecked}/${s.score.hardTotal} · Fit ${s.score.fitChecked}/${s.score.fitTotal}`
+}
+
+function roleKey(job: CollabJob): string {
+  return job.jobId
+}
+
+function candidateName(c: RecruiterSourcedCandidateItem): string {
+  return c.candidate?.name || "Unnamed candidate"
+}
+
+function sourceStageMeta(stage?: RecruiterSourcedCandidateStage) {
+  return SOURCE_STAGES.find((s) => s.id === stage) ?? SOURCE_STAGES[0]!
 }
 
 function cleanRecruiterEmail(value: string): string {
@@ -169,6 +207,7 @@ export default function RecruiterBoard() {
   const [session, setSession] = useState<RecruiterSession | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
+  const [sourcedCandidates, setSourcedCandidates] = useState<RecruiterSourcedCandidateItem[]>([])
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [accessError, setAccessError] = useState<string | null>(null)
@@ -190,6 +229,7 @@ export default function RecruiterBoard() {
       if (!user) {
         if (!active) return
         setSession(null)
+        setSourcedCandidates([])
         setSubmissions([])
         setAuthReady(true)
         return
@@ -217,6 +257,7 @@ export default function RecruiterBoard() {
           await signOut(auth()).catch(() => undefined)
           if (active) {
             setSession(null)
+            setSourcedCandidates([])
             setSubmissions([])
             setAccessError(formatRecruiterAuthError(e))
           }
@@ -236,6 +277,7 @@ export default function RecruiterBoard() {
         await signOut(auth()).catch(() => undefined)
         if (active) {
           setSession(null)
+          setSourcedCandidates([])
           setSubmissions([])
         }
       } finally {
@@ -265,8 +307,12 @@ export default function RecruiterBoard() {
     if (!session) return
     try {
       setSubmissionError(null)
-      const rows = await fetchRecruiterSubmissions()
-      setSubmissions(sortSubmissions(rows))
+      const [submissionRows, sourceRows] = await Promise.all([
+        fetchRecruiterSubmissions(),
+        fetchRecruiterSourcedCandidates(),
+      ])
+      setSubmissions(sortSubmissions(submissionRows))
+      setSourcedCandidates(sortSourcedCandidates(sourceRows))
     } catch (e) {
       setSubmissionError(e instanceof Error ? e.message : String(e))
     }
@@ -288,7 +334,7 @@ export default function RecruiterBoard() {
   }
 
   const openJobs = jobs ?? []
-  const stats = computeRecruiterStats(openJobs, submissions)
+  const stats = computeRecruiterStats(openJobs, submissions, sourcedCandidates)
   const recentSubmissions = submissions.slice(0, 4)
   const feedbackRows = submissions.filter((s) => Boolean(s.recruiterFeedbackNote))
 
@@ -318,6 +364,7 @@ export default function RecruiterBoard() {
               onClick={() => setTab(tab.id)}
             >
               {tab.label}
+              {tab.id === "candidates" && sourcedCandidates.length > 0 ? <span>{sourcedCandidates.length}</span> : null}
               {tab.id === "submissions" && submissions.length > 0 ? <span>{submissions.length}</span> : null}
             </button>
           ))}
@@ -331,6 +378,7 @@ export default function RecruiterBoard() {
           onClick={() => {
             void signOut(auth())
             setSession(null)
+            setSourcedCandidates([])
             setSubmissions([])
           }}
         >
@@ -362,11 +410,20 @@ export default function RecruiterBoard() {
             stats={stats}
             jobs={openJobs}
             submissions={recentSubmissions}
+            sourcedCandidates={sourcedCandidates}
             onRoles={() => setTab("roles")}
+            onCandidates={() => setTab("candidates")}
             onSubmissions={() => setTab("submissions")}
           />
         )}
-        {activeTab === "roles" && <RolesTab jobs={openJobs} loading={!jobs && !error} />}
+        {activeTab === "roles" && <RolesTab jobs={openJobs} submissions={submissions} sourcedCandidates={sourcedCandidates} loading={!jobs && !error} />}
+        {activeTab === "candidates" && (
+          <CandidatesTab
+            jobs={openJobs}
+            candidates={sourcedCandidates}
+            onSaved={(saved) => setSourcedCandidates((rows) => sortSourcedCandidates([saved, ...rows.filter((row) => row.id !== saved.id)]))}
+          />
+        )}
         {activeTab === "submissions" && <SubmissionsTab submissions={submissions} />}
         {activeTab === "feedback" && <FeedbackTab submissions={feedbackRows} />}
         {activeTab === "settings" && <SettingsTab session={session} onSessionChange={setSession} />}
@@ -375,15 +432,22 @@ export default function RecruiterBoard() {
   )
 }
 
-function computeRecruiterStats(jobs: CollabJob[], submissions: RecruiterSubmissionItem[]) {
+function computeRecruiterStats(
+  jobs: CollabJob[],
+  submissions: RecruiterSubmissionItem[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+) {
   const reviewing = submissions.filter((s) => ["submitted", "new", "reviewing"].includes(s.status ?? "submitted")).length
   const advanced = submissions.filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? "")).length
+  const interviews = submissions.filter((s) => ["interviewing", "hired"].includes(s.status ?? "")).length
   const feedback = submissions.filter((s) => Boolean(s.recruiterFeedbackNote)).length
+  const activeSource = sourcedCandidates.filter((c) => c.stage !== "archived").length
+  const interviewRate = submissions.length ? Math.round((interviews / submissions.length) * 100) : 0
   return [
-    { label: "Open roles", value: String(jobs.length), meta: "from WeKruit collab jobs" },
-    { label: "My submissions", value: String(submissions.length), meta: "tracked by your recruiter account" },
-    { label: "In review", value: String(reviewing), meta: "waiting on WeKruit or hiring team" },
-    { label: "Advanced", value: String(advanced), meta: feedback ? `${feedback} feedback notes` : "no feedback notes yet" },
+    { label: "Open roles", value: String(jobs.length), meta: "live WeKruit collab searches", signal: "live", tone: "live" },
+    { label: "Sourced candidates", value: String(activeSource), meta: "saved before submission", signal: "+", tone: "info" },
+    { label: "Pending review", value: String(reviewing), meta: "waiting on WeKruit or hiring team", signal: "wait", tone: "warn" },
+    { label: "Interview rate", value: `${interviewRate}%`, meta: feedback ? `${advanced} advanced - ${feedback} notes` : `${advanced} advanced`, signal: "rate", tone: "success" },
   ]
 }
 
@@ -480,53 +544,258 @@ function OverviewTab({
   stats,
   jobs,
   submissions,
+  sourcedCandidates,
   onRoles,
+  onCandidates,
   onSubmissions,
 }: {
-  stats: Array<{ label: string; value: string; meta: string }>
+  stats: Array<{ label: string; value: string; meta: string; signal: string; tone: string }>
   jobs: CollabJob[]
   submissions: RecruiterSubmissionItem[]
+  sourcedCandidates: RecruiterSourcedCandidateItem[]
   onRoles: () => void
+  onCandidates: () => void
   onSubmissions: () => void
 }) {
+  const priorityJobs = jobs.slice(0, 7)
+  const pipeline = buildCandidatePipeline(sourcedCandidates, submissions)
+  const feedback = submissions.filter((s) => Boolean(s.recruiterFeedbackNote)).slice(0, 3)
   return (
     <div className="rb-workspace">
       <section className="rb-stats">
         {stats.map((s) => (
-          <article className="rb-stat" key={s.label}>
-            <span>{s.label}</span>
+          <article className={`rb-stat is-${s.tone}`} key={s.label}>
+            <span>{s.label}<em>{s.signal}</em></span>
             <strong>{s.value}</strong>
             <em>{s.meta}</em>
           </article>
         ))}
       </section>
-      <div className="rb-workspace__grid">
-        <section className="rb-panel">
+      <div className="rb-workbench-grid">
+        <section className="rb-panel rb-priority-panel">
           <header className="rb-panel__head">
-            <div><h2>Roles ready for candidates</h2><p>Open searches with WeKruit collaboration enabled.</p></div>
+            <div><h2>Priority roles</h2><p>Open briefs ranked by WeKruit collab readiness.</p></div>
             <button type="button" className="rb-panel__link" onClick={onRoles}>All roles</button>
           </header>
-          <div className="rb-role-list">
-            {jobs.slice(0, 4).map((job) => <RoleRow key={job.jobId} job={job} />)}
+          <div className="rb-priority-table">
+            <div className="rb-priority-table__head">
+              <span>Role</span>
+              <span>Reward</span>
+              <span>Location</span>
+              <span>Checks</span>
+              <span>Signal</span>
+              <span>Action</span>
+            </div>
+            {priorityJobs.map((job) => (
+              <PriorityRoleRow
+                key={job.jobId}
+                job={job}
+                sourcedCount={sourcedCandidates.filter((c) => c.inboundJobId === roleKey(job) || c.jobId === roleKey(job)).length}
+                submissionCount={submissions.filter((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job)).length}
+              />
+            ))}
             {jobs.length === 0 && <p className="rb-empty">No active collab roles right now.</p>}
           </div>
         </section>
-        <section className="rb-panel">
+        <section className="rb-panel rb-pipeline-panel">
           <header className="rb-panel__head">
-            <div><h2>Status tracker</h2><p>Submission feedback lands here after WeKruit review.</p></div>
-            <button type="button" className="rb-panel__link" onClick={onSubmissions}>Open tracker</button>
+            <div><h2>Candidate pipeline</h2><p>Sourcing through submitted status in one view.</p></div>
+            <button type="button" className="rb-panel__link" onClick={onCandidates}>All candidates</button>
           </header>
-          <div className="rb-submission-list">
-            {submissions.map((s) => <SubmissionRow key={s.id} submission={s} />)}
-            {submissions.length === 0 && <p className="rb-empty">Submit your first candidate from a role page.</p>}
+          <div className="rb-pipeline">
+            {pipeline.map((lane) => (
+              <div className={`rb-pipeline__lane is-${lane.tone}`} key={lane.label}>
+                <header><span>{lane.label}</span><strong>{lane.items.length}</strong></header>
+                <div>
+                  {lane.items.slice(0, 4).map((item) => <PipelineCard key={item.id} item={item} />)}
+                  {lane.items.length === 0 && <p className="rb-pipeline__empty">No candidates</p>}
+                </div>
+              </div>
+            ))}
           </div>
         </section>
       </div>
+      <section className="rb-panel rb-feedback-panel">
+        <header className="rb-panel__head">
+          <div><h2>Feedback &amp; calibration</h2><p>Hiring-team notes and next actions for tighter submissions.</p></div>
+          <button type="button" className="rb-panel__link" onClick={onSubmissions}>Open submissions</button>
+        </header>
+        <div className="rb-feedback-grid">
+          <div className="rb-feedback-table">
+            {feedback.map((s) => <FeedbackLine key={s.id} submission={s} />)}
+            {feedback.length === 0 && <p className="rb-empty">No written feedback yet. Submit candidates and WeKruit notes will appear here.</p>}
+          </div>
+          <aside className="rb-next-action">
+            <span>Next action</span>
+            <strong>{sourcedCandidates.length ? "Move ready candidates into role briefs" : "Start a sourcing shortlist"}</strong>
+            <p>
+              {sourcedCandidates.length
+                ? "Use the Candidates tab to keep prospects warm, then open the matching role brief when they are ready to submit."
+                : "Save prospects before submission so your workbench has a real pipeline, not just final submissions."}
+            </p>
+            <button type="button" className="rb-btn" onClick={onCandidates}>Open candidate CRM</button>
+          </aside>
+        </div>
+      </section>
     </div>
   )
 }
 
-function RolesTab({ jobs, loading }: { jobs: CollabJob[]; loading: boolean }) {
+type PipelineItem = {
+  id: string
+  name: string
+  title: string
+  company: string
+  age: string
+  kind: "source" | "submission"
+  href?: string
+}
+
+function buildCandidatePipeline(
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+  submissions: RecruiterSubmissionItem[],
+) {
+  const sourced = sourcedCandidates
+    .filter((c) => ["sourced", "contacted", "screened"].includes(c.stage))
+    .map(sourceToPipelineItem)
+  const ready = sourcedCandidates.filter((c) => c.stage === "ready").map(sourceToPipelineItem)
+  const submitted = submissions
+    .filter((s) => ["submitted", "new"].includes(s.status ?? "submitted"))
+    .map(submissionToPipelineItem)
+  const reviewing = submissions.filter((s) => s.status === "reviewing").map(submissionToPipelineItem)
+  const interviewing = submissions
+    .filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? ""))
+    .map(submissionToPipelineItem)
+  return [
+    { label: "Sourced", tone: "mute", items: sourced },
+    { label: "Ready", tone: "live", items: ready },
+    { label: "Submitted", tone: "info", items: submitted },
+    { label: "In review", tone: "warn", items: reviewing },
+    { label: "Interviewing", tone: "success", items: interviewing },
+  ]
+}
+
+function sourceToPipelineItem(c: RecruiterSourcedCandidateItem): PipelineItem {
+  return {
+    id: c.id,
+    name: candidateName(c),
+    title: c.candidate?.currentRole || "Candidate",
+    company: c.jobTitleSnapshot || c.companyLabelSnapshot || "Saved prospect",
+    age: formatCandidateAge(c.updatedAt ?? c.createdAt),
+    kind: "source",
+    href: c.inboundJobId ? `/recruiters/job/${encodeURIComponent(c.inboundJobId)}` : undefined,
+  }
+}
+
+function submissionToPipelineItem(s: RecruiterSubmissionItem): PipelineItem {
+  return {
+    id: s.id,
+    name: s.candidate?.name || "Candidate",
+    title: s.candidate?.currentRole || "Submitted candidate",
+    company: s.jobTitleSnapshot || s.companyLabelSnapshot || "Submitted role",
+    age: formatWhen(s),
+    kind: "submission",
+  }
+}
+
+function formatCandidateAge(raw: RecruiterSourcedCandidateItem["createdAt"]): string {
+  const ms = timestampValueMs(raw)
+  if (!ms) return "Today"
+  const days = Math.max(0, Math.floor((Date.now() - ms) / 86_400_000))
+  if (days === 0) return "Today"
+  if (days === 1) return "1d ago"
+  return `${days}d ago`
+}
+
+function roleChecklistCounts(job: CollabJob) {
+  const hard = job.recruiterBoard.checklist.groups.find((g) => g.kind === "hard")?.items.length ?? 0
+  const fit = job.recruiterBoard.checklist.groups.find((g) => g.kind === "fit")?.items.length ?? 0
+  return { hard, fit }
+}
+
+function roleFitSignal(job: CollabJob, sourcedCount: number, submissionCount: number) {
+  const { hard, fit } = roleChecklistCounts(job)
+  const base = Math.min(96, 52 + hard * 4 + fit * 2 + submissionCount * 8 + sourcedCount * 3)
+  if (base >= 82) return { label: "High", percent: base, tone: "live" }
+  if (base >= 68) return { label: "Medium", percent: base, tone: "warn" }
+  return { label: "Good", percent: base, tone: "info" }
+}
+
+function roleReward(job: CollabJob): string {
+  if (job.compSummary) return job.compSummary.length > 18 ? "Success fee" : job.compSummary
+  return "$10K+"
+}
+
+function PriorityRoleRow({
+  job,
+  sourcedCount,
+  submissionCount,
+}: {
+  job: CollabJob
+  sourcedCount: number
+  submissionCount: number
+}) {
+  const { hard, fit } = roleChecklistCounts(job)
+  const signal = roleFitSignal(job, sourcedCount, submissionCount)
+  return (
+    <Link to={`/recruiters/job/${job.jobId}`} className="rb-priority-row">
+      <span>
+        <strong>{job.title}</strong>
+        <em>{job.recruiterBoard.label.company}</em>
+      </span>
+      <span>{roleReward(job)}</span>
+      <span>{job.recruiterBoard.label.location}</span>
+      <span>{hard} hard - {fit} fit</span>
+      <span className={`rb-fit-signal is-${signal.tone}`}>{signal.label} {signal.percent}%</span>
+      <span className="rb-row-button">Open brief</span>
+    </Link>
+  )
+}
+
+function PipelineCard({ item }: { item: PipelineItem }) {
+  const body = (
+    <>
+      <span className="rb-candidate-dot">{item.name.slice(0, 1).toUpperCase()}</span>
+      <span>
+        <strong>{item.name}</strong>
+        <em>{item.title}</em>
+        <small>{item.company} - {item.age}</small>
+      </span>
+    </>
+  )
+  return item.href ? (
+    <Link to={item.href} className="rb-pipeline-card">{body}</Link>
+  ) : (
+    <div className="rb-pipeline-card">{body}</div>
+  )
+}
+
+function FeedbackLine({ submission }: { submission: RecruiterSubmissionItem }) {
+  const meta = statusMeta(submission.status)
+  return (
+    <article className="rb-feedback-line">
+      <span className={`rb-status is-${meta.tone}`}>{meta.label}</span>
+      <span>
+        <strong>{submission.candidate?.name || "Candidate"}</strong>
+        <em>{submission.jobTitleSnapshot || "Role"}</em>
+      </span>
+      <p>{submission.recruiterFeedbackNote}</p>
+      <small>{formatWhen(submission)}</small>
+    </article>
+  )
+}
+
+function RolesTab({
+  jobs,
+  submissions,
+  sourcedCandidates,
+  loading,
+}: {
+  jobs: CollabJob[]
+  submissions: RecruiterSubmissionItem[]
+  sourcedCandidates: RecruiterSourcedCandidateItem[]
+  loading: boolean
+}) {
   const [q, setQ] = useState("")
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -542,7 +811,7 @@ function RolesTab({ jobs, loading }: { jobs: CollabJob[]; loading: boolean }) {
   return (
     <section className="rb-panel rb-panel--fill">
       <header className="rb-panel__head">
-        <div><h2>Role marketplace</h2><p>These are the live WeKruit collab `pa-jobs` open to recruiter submissions.</p></div>
+        <div><h2>Role marketplace</h2><p>Live WeKruit collab roles with scorecards, pipeline context, and submit paths.</p></div>
         <label className="rb-search">
           <span>Search roles</span>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Title, location, tag..." autoComplete="off" />
@@ -551,11 +820,231 @@ function RolesTab({ jobs, loading }: { jobs: CollabJob[]; loading: boolean }) {
       {loading && <div className="rb-state">Loading open roles...</div>}
       {!loading && (
         <div className="rb-role-grid">
-          {filtered.map((job) => <RoleCard key={job.jobId} job={job} />)}
+          {filtered.map((job) => (
+            <RoleCard
+              key={job.jobId}
+              job={job}
+              sourcedCount={sourcedCandidates.filter((c) => c.inboundJobId === roleKey(job) || c.jobId === roleKey(job)).length}
+              submissionCount={submissions.filter((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job)).length}
+            />
+          ))}
           {filtered.length === 0 && <p className="rb-empty">No roles match that search.</p>}
         </div>
       )}
     </section>
+  )
+}
+
+function CandidatesTab({
+  jobs,
+  candidates,
+  onSaved,
+}: {
+  jobs: CollabJob[]
+  candidates: RecruiterSourcedCandidateItem[]
+  onSaved: (candidate: RecruiterSourcedCandidateItem) => void
+}) {
+  const [form, setForm] = useState<RecruiterSourcedCandidateInput>(() => ({
+    jobId: jobs[0]?.jobId ?? "",
+    stage: "sourced",
+    candidate: { name: "", link: "", currentRole: "", yoe: "", notes: "" },
+  }))
+  const [saving, setSaving] = useState(false)
+  const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!form.jobId && jobs[0]) setForm((next) => ({ ...next, jobId: jobs[0]!.jobId }))
+  }, [form.jobId, jobs])
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!form.jobId) {
+      setErr("Choose a role for this candidate.")
+      return
+    }
+    setSaving(true)
+    setErr(null)
+    try {
+      const saved = await saveRecruiterSourcedCandidate({
+        ...form,
+        candidate: {
+          name: form.candidate.name.trim(),
+          link: form.candidate.link.trim(),
+          currentRole: form.candidate.currentRole?.trim() || undefined,
+          yoe: form.candidate.yoe?.trim() || undefined,
+          notes: form.candidate.notes?.trim() || undefined,
+        },
+      })
+      onSaved(saved)
+      setForm({
+        jobId: form.jobId,
+        stage: "sourced",
+        candidate: { name: "", link: "", currentRole: "", yoe: "", notes: "" },
+      })
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const grouped = SOURCE_STAGES.map((stage) => ({
+    ...stage,
+    candidates: candidates.filter((c) => c.stage === stage.id),
+  }))
+
+  const updateStage = async (candidate: RecruiterSourcedCandidateItem, stage: RecruiterSourcedCandidateStage) => {
+    const jobId = candidate.inboundJobId || candidate.jobId || ""
+    const link = candidate.candidate?.link?.trim()
+    if (!jobId || !link) {
+      setErr("This saved candidate is missing the role or link needed to update it.")
+      return
+    }
+    setUpdatingId(candidate.id)
+    setErr(null)
+    try {
+      const saved = await saveRecruiterSourcedCandidate({
+        candidateId: candidate.candidateId || candidate.id,
+        jobId,
+        stage,
+        candidate: {
+          name: candidate.candidate?.name || candidateName(candidate),
+          link,
+          currentRole: candidate.candidate?.currentRole,
+          yoe: candidate.candidate?.yoe,
+          notes: candidate.candidate?.notes,
+        },
+      })
+      onSaved(saved)
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
+  return (
+    <section className="rb-panel rb-panel--fill">
+      <header className="rb-panel__head">
+        <div><h2>Candidate CRM</h2><p>Save prospects before formal submission, then move ready candidates into a role brief.</p></div>
+      </header>
+      <div className="rb-candidate-crm">
+        <form className="rb-source-form" onSubmit={save}>
+          <h3>Save sourced candidate</h3>
+          <label>
+            <span>Role</span>
+            <select value={form.jobId} onChange={(e) => setForm({ ...form, jobId: e.target.value })} required>
+              <option value="" disabled>Choose role</option>
+              {jobs.map((job) => (
+                <option key={job.jobId} value={job.jobId}>{job.title} · {job.recruiterBoard.label.company}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Candidate name</span>
+            <input
+              value={form.candidate.name}
+              onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, name: e.target.value } })}
+              required
+            />
+          </label>
+          <label>
+            <span>LinkedIn / resume</span>
+            <input
+              value={form.candidate.link}
+              onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, link: e.target.value } })}
+              placeholder="https://linkedin.com/in/..."
+              required
+            />
+          </label>
+          <div className="rb-source-form__split">
+            <label>
+              <span>Current role</span>
+              <input
+                value={form.candidate.currentRole ?? ""}
+                onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, currentRole: e.target.value } })}
+              />
+            </label>
+            <label>
+              <span>Stage</span>
+              <select value={form.stage} onChange={(e) => setForm({ ...form, stage: e.target.value as RecruiterSourcedCandidateStage })}>
+                {SOURCE_STAGES.filter((s) => s.id !== "submitted").map((stage) => (
+                  <option key={stage.id} value={stage.id}>{stage.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label>
+            <span>Recruiter note</span>
+            <textarea
+              value={form.candidate.notes ?? ""}
+              onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, notes: e.target.value } })}
+              placeholder="Why this person fits, warm intro status, compensation notes..."
+            />
+          </label>
+          {err && <p className="rb-access__err">{err}</p>}
+          <button className="rb-btn primary rb-btn--block" disabled={saving || jobs.length === 0}>
+            {saving ? "Saving..." : "Save to pipeline"}
+          </button>
+        </form>
+
+        <div className="rb-candidate-board">
+          {grouped.map((group) => (
+            <section className={`rb-candidate-stage is-${group.tone}`} key={group.id}>
+              <header><strong>{group.label}</strong><span>{group.candidates.length}</span></header>
+              {group.candidates.slice(0, 8).map((candidate) => (
+                <SourcedCandidateCard
+                  key={candidate.id}
+                  candidate={candidate}
+                  disabled={updatingId === candidate.id}
+                  onStageChange={(stage) => void updateStage(candidate, stage)}
+                />
+              ))}
+              {group.candidates.length === 0 && <p>No candidates</p>}
+            </section>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function SourcedCandidateCard({
+  candidate,
+  disabled,
+  onStageChange,
+}: {
+  candidate: RecruiterSourcedCandidateItem
+  disabled: boolean
+  onStageChange: (stage: RecruiterSourcedCandidateStage) => void
+}) {
+  const stage = sourceStageMeta(candidate.stage)
+  return (
+    <article className="rb-source-card">
+      <div>
+        <span className="rb-candidate-dot">{candidateName(candidate).slice(0, 1).toUpperCase()}</span>
+        <span>
+          <strong>{candidateName(candidate)}</strong>
+          <em>{candidate.candidate?.currentRole || candidate.jobTitleSnapshot || "Candidate"}</em>
+        </span>
+      </div>
+      <p>{shortText(candidate.candidate?.notes, "No note yet", 96)}</p>
+      <footer>
+        <span className={`rb-status is-${stage.tone}`}>{stage.label}</span>
+        <select
+          aria-label={`Update ${candidateName(candidate)} stage`}
+          value={candidate.stage}
+          disabled={disabled}
+          onChange={(e) => onStageChange(e.target.value as RecruiterSourcedCandidateStage)}
+        >
+          {SOURCE_STAGES.map((option) => (
+            <option key={option.id} value={option.id}>{option.label}</option>
+          ))}
+        </select>
+        {candidate.inboundJobId ? <Link to={`/recruiters/job/${candidate.inboundJobId}`}>Open brief</Link> : null}
+      </footer>
+    </article>
   )
 }
 
@@ -639,16 +1128,28 @@ function SettingsTab({
   )
 }
 
-function RoleCard({ job }: { job: CollabJob }) {
-  const hard = job.recruiterBoard.checklist.groups.find((g) => g.kind === "hard")?.items.length ?? 0
-  const fit = job.recruiterBoard.checklist.groups.find((g) => g.kind === "fit")?.items.length ?? 0
+function RoleCard({
+  job,
+  sourcedCount = 0,
+  submissionCount = 0,
+}: {
+  job: CollabJob
+  sourcedCount?: number
+  submissionCount?: number
+}) {
+  const { hard, fit } = roleChecklistCounts(job)
+  const signal = roleFitSignal(job, sourcedCount, submissionCount)
   return (
     <Link to={`/recruiters/job/${job.jobId}`} className="rb-role-card">
       <span className="rb-role-card__code">Co. {job.recruiterBoard.label.companyCode}</span>
       <h3>{job.title}</h3>
-      <p>{job.recruiterBoard.label.company} · {job.recruiterBoard.label.location}</p>
+      <p>{job.recruiterBoard.label.company} - {job.recruiterBoard.label.location}</p>
       <div className="rb-role-card__pills">
         {job.recruiterBoard.label.pills.map((p, i) => <span key={i} className={`rb-pill ${p.tone ?? ""}`}>{p.text}</span>)}
+      </div>
+      <div className="rb-role-card__signal">
+        <span className={`rb-fit-signal is-${signal.tone}`}>{signal.label} {signal.percent}%</span>
+        <em>{sourcedCount} sourced - {submissionCount} submitted</em>
       </div>
       <footer>
         <span>{hard} hard checks</span>

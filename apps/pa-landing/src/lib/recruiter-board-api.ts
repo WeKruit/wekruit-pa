@@ -12,6 +12,8 @@ export const COLLAB_JOBS_URL = `${DEFAULT_BASE}/paCollabJobsList`
 export const RECRUITER_ACCESS_URL = `${DEFAULT_BASE}/paRecruiterAccess`
 export const RECRUITER_ME_URL = `${DEFAULT_BASE}/paRecruiterMe`
 export const RECRUITER_PREFERENCES_URL = `${DEFAULT_BASE}/paRecruiterPreferencesUpdate`
+export const RECRUITER_SOURCED_CANDIDATES_LIST_URL = `${DEFAULT_BASE}/paRecruiterSourcedCandidatesList`
+export const RECRUITER_SOURCED_CANDIDATE_SAVE_URL = `${DEFAULT_BASE}/paRecruiterSourcedCandidateSave`
 export const RECRUITER_SUBMISSION_URL = `${DEFAULT_BASE}/paRecruiterSubmission`
 export const RECRUITER_SUBMISSIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterSubmissionsList`
 
@@ -105,6 +107,41 @@ export interface RecruiterSubmissionItem {
   updatedAt?: { seconds?: number } | string | null
 }
 
+export type RecruiterSourcedCandidateStage = "sourced" | "contacted" | "screened" | "ready" | "submitted" | "archived"
+
+export interface RecruiterSourcedCandidateItem {
+  id: string
+  candidateId: string
+  recruiterId?: string
+  jobId?: string
+  inboundJobId?: string
+  jobTitleSnapshot?: string
+  companyLabelSnapshot?: string
+  stage: RecruiterSourcedCandidateStage
+  candidate?: {
+    name?: string
+    link?: string
+    currentRole?: string
+    yoe?: string
+    notes?: string
+  }
+  createdAt?: { seconds?: number } | string | null
+  updatedAt?: { seconds?: number } | string | null
+}
+
+export interface RecruiterSourcedCandidateInput {
+  candidateId?: string
+  jobId: string
+  stage: RecruiterSourcedCandidateStage
+  candidate: {
+    name: string
+    link: string
+    currentRole?: string
+    yoe?: string
+    notes?: string
+  }
+}
+
 export async function recruiterAuthHeaders(): Promise<Record<string, string>> {
   const user = auth().currentUser
   if (!user) throw new Error("recruiter_auth_required")
@@ -176,6 +213,44 @@ export async function fetchRecruiterSubmissions(): Promise<RecruiterSubmissionIt
     throw new Error(body.reason ?? `paRecruiterSubmissionsList HTTP ${res.status}`)
   }
   return body.submissions
+}
+
+export async function fetchRecruiterSourcedCandidates(): Promise<RecruiterSourcedCandidateItem[]> {
+  const res = await fetch(RECRUITER_SOURCED_CANDIDATES_LIST_URL, {
+    method: "GET",
+    headers: await recruiterAuthHeaders(),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    candidates?: RecruiterSourcedCandidateItem[]
+  }
+  if (!res.ok || !body.ok || !body.candidates) {
+    throw new Error(body.reason ?? `paRecruiterSourcedCandidatesList HTTP ${res.status}`)
+  }
+  return body.candidates
+}
+
+export async function saveRecruiterSourcedCandidate(
+  input: RecruiterSourcedCandidateInput,
+): Promise<RecruiterSourcedCandidateItem> {
+  const res = await fetch(RECRUITER_SOURCED_CANDIDATE_SAVE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(await recruiterAuthHeaders()),
+    },
+    body: JSON.stringify(input),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    candidate?: RecruiterSourcedCandidateItem
+  }
+  if (!res.ok || !body.ok || !body.candidate) {
+    throw new Error(body.reason ?? `paRecruiterSourcedCandidateSave HTTP ${res.status}`)
+  }
+  return body.candidate
 }
 
 export async function updateRecruiterPreferences(
