@@ -13,6 +13,7 @@ import {
   writeUserTagsFull,
   applyPartialUserTags,
   auditUsersWithoutTags,
+  projectTagsToGlobalTags,
 } from "../user-tags-writer.js"
 import { USER_TAGS_SCHEMA_VERSION } from "../user-tags-merger.js"
 
@@ -76,7 +77,8 @@ test("writeUserTagsFull: happy path writes {tags} merge:true", async () => {
   assert.equal(res.ok, true)
   assert.equal(ctx.writes.length, 1)
   assert.equal(ctx.writes[0]!.id, "u-1")
-  assert.deepEqual(ctx.writes[0]!.data, { tags })
+  // PR1 — the sole writer now lands BOTH surfaces atomically: tags + projected globalTags.
+  assert.deepEqual(ctx.writes[0]!.data, { tags, globalTags: projectTagsToGlobalTags(tags) })
   assert.equal(ctx.writes[0]!.merge, true)
 })
 
@@ -348,4 +350,105 @@ test("applyPartialUserTags: preferenceHardness on a doc with none writes it whol
   const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
   const ph = written.tags.preferenceHardness as Record<string, { hardness: string }>
   assert.equal(ph.salary?.hardness, "hard")
+})
+
+// ---------------------------------------------------------------------------
+// PR1 — projectTagsToGlobalTags (tags → /me globalTags) + write-through
+// ---------------------------------------------------------------------------
+
+test("projectTagsToGlobalTags: renames tags→globalTags fields", () => {
+  const g = projectTagsToGlobalTags({
+    targetRoleFunction: ["software_engineering"],
+    skills: [{ name: "python" }],
+    industrySector: ["financial_technology"],
+    targetLocations: ["new_york"],
+    targetJobType: ["full_time"],
+    relevantTags: ["fintech"],
+    minSalary: 140000,
+    visaStatus: "sponsor_needed",
+  })
+  assert.deepEqual(g.roleFunction, ["software_engineering"])
+  assert.deepEqual(g.skills, [{ name: "python" }])
+  assert.deepEqual(g.industrySector, ["financial_technology"])
+  assert.deepEqual(g.targetLocations, ["new_york"])
+  assert.deepEqual(g.targetJobType, ["full_time"])
+  assert.deepEqual(g.relevantTags, ["fintech"])
+  assert.equal(g.minSalaryUsd, 140000)
+  assert.equal(g.visaStatus, "sponsor_needed")
+  // tags-only field names must NOT leak into globalTags.
+  assert.equal(g.targetRoleFunction, undefined)
+  assert.equal(g.minSalary, undefined)
+})
+
+test("projectTagsToGlobalTags: companySize 'open' → 'no_preference' sentinel + scalar lift", () => {
+  assert.deepEqual(
+    projectTagsToGlobalTags({ companySize: "open" }).companySizePreference,
+    ["no_preference"],
+  )
+  // scalar single-pick lifts to a 1-elem array (was dropped pre-PR1)
+  assert.deepEqual(
+    projectTagsToGlobalTags({ companySize: "enterprise" }).companySizePreference,
+    ["enterprise"],
+  )
+  // array form: only 'open' is rewritten, others pass through
+  assert.deepEqual(
+    projectTagsToGlobalTags({ companySize: ["seed", "open", "enterprise"] }).companySizePreference,
+    ["seed", "no_preference", "enterprise"],
+  )
+})
+
+test("projectTagsToGlobalTags: careerStageRange derived from careerStage + bufferSteps", () => {
+  const g = projectTagsToGlobalTags({
+    careerStage: "junior",
+    preferenceHardness: { careerStage: { hardness: "soft", bufferSteps: 2 } },
+  })
+  assert.equal(g.careerStage, "junior")
+  // junior + 2 steps up CAREER_STAGE_VOCAB → [junior, senior] (mid_level is +1, senior +2)
+  const range = g.careerStageRange as [string, string]
+  assert.equal(range[0], "junior")
+  assert.equal(range[1], "senior")
+  // no buffer → scalar only, no range
+  const g2 = projectTagsToGlobalTags({ careerStage: "junior" })
+  assert.equal(g2.careerStage, "junior")
+  assert.equal(g2.careerStageRange, undefined)
+})
+
+test("projectTagsToGlobalTags: companyStage projected as array (scalar or array on tags)", () => {
+  assert.deepEqual(
+    projectTagsToGlobalTags({ companyStage: "seed" }).companyStage,
+    ["seed"],
+  )
+  assert.deepEqual(
+    projectTagsToGlobalTags({ companyStage: ["seed", "series_a"] }).companyStage,
+    ["seed", "series_a"],
+  )
+  // absent companyStage → not emitted
+  assert.equal(projectTagsToGlobalTags({ skills: [] }).companyStage, undefined)
+})
+
+test("projectTagsToGlobalTags: legacy visa tokens folded; off-vocab dropped", () => {
+  assert.equal(projectTagsToGlobalTags({ visaStatus: "gc" }).visaStatus, "permanent_resident")
+  assert.equal(projectTagsToGlobalTags({ visaStatus: "h1b" }).visaStatus, "sponsor_needed")
+  assert.equal(projectTagsToGlobalTags({ visaStatus: "opt" }).visaStatus, "sponsor_needed")
+  assert.equal(projectTagsToGlobalTags({ visaStatus: "citizen" }).visaStatus, "citizen")
+  // unknown/off-vocab visa is dropped (must never fail the /me read parse)
+  assert.equal(projectTagsToGlobalTags({ visaStatus: "tn_visa" }).visaStatus, undefined)
+})
+
+test("applyPartialUserTags: write lands projected globalTags alongside tags", async () => {
+  const ctx = makeDb({
+    "u-proj": { tags: { skills: [{ name: "python" }], schemaVersion: USER_TAGS_SCHEMA_VERSION } },
+  })
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-proj",
+    { targetRoleFunction: ["software_engineering"], companySize: "open" } as Record<string, unknown>,
+    { source: "chat" },
+  )
+  assert.equal(res.ok, true)
+  const data = ctx.writes[0]!.data as { tags: Record<string, unknown>; globalTags: Record<string, unknown> }
+  assert.ok(data.globalTags, "write must include globalTags")
+  assert.deepEqual(data.globalTags.roleFunction, ["software_engineering"])
+  assert.deepEqual(data.globalTags.companySizePreference, ["no_preference"])
+  assert.deepEqual(data.globalTags.skills, [{ name: "python" }])
 })

@@ -31,9 +31,124 @@ import {
   canonicalizeSkillName,
   type UserTags,
 } from "./user-tags-merger.js"
-import { SkillSchema, type Skill } from "@wekruit/shared-tags"
+import { SkillSchema, CAREER_STAGE_VOCAB, type Skill } from "@wekruit/shared-tags"
 
 const PA_USERS_COLLECTION = "pa-users"
+
+/**
+ * Seniority RANGE for /me: [anchor, anchor+bufferSteps] in CAREER_STAGE_VOCAB order, clamped to the
+ * vocab bounds. `bufferSteps` lives on `tags.preferenceHardness.careerStage.bufferSteps` (how far up the
+ * candidate is open, set at onboarding). Returns undefined when the anchor is off-vocab or buffer ≤ 0 —
+ * the caller then emits only the scalar `careerStage` and /me shows the single stage.
+ */
+function deriveCareerStageRange(
+  anchor: string,
+  preferenceHardness: unknown
+): [string, string] | undefined {
+  const vocab = CAREER_STAGE_VOCAB as readonly string[]
+  const idx = vocab.indexOf(anchor)
+  if (idx < 0) return undefined
+  const ph =
+    preferenceHardness && typeof preferenceHardness === "object" && !Array.isArray(preferenceHardness)
+      ? (preferenceHardness as Record<string, unknown>)
+      : undefined
+  const csPref =
+    ph?.careerStage && typeof ph.careerStage === "object" && !Array.isArray(ph.careerStage)
+      ? (ph.careerStage as Record<string, unknown>)
+      : undefined
+  const rawBuffer = csPref?.bufferSteps
+  const buffer =
+    typeof rawBuffer === "number" && Number.isFinite(rawBuffer) ? Math.max(0, Math.floor(rawBuffer)) : 0
+  if (buffer <= 0) return undefined
+  const upperIdx = Math.min(idx + buffer, vocab.length - 1)
+  if (upperIdx <= idx) return undefined
+  return [vocab[idx]!, vocab[upperIdx]!]
+}
+
+// companySize on the matching store (UserTags) carries the token `open`; the candidate-facing
+// CandidateGlobalTagsSchema does NOT accept `open` — it uses the `no_preference` sentinel. Normalize
+// at projection so a "no preference" answer survives the /me read-schema parse (Adam 2026-05-31:
+// normalize to the existing sentinel rather than adding a vocab token). The matcher already treats
+// the sentinel / empty as "no constraint", so /me and matching agree.
+function normalizeCompanySizeForGlobalTags(value: string): string {
+  return value === "open" ? "no_preference" : value
+}
+
+// Defensive: older docs / extractor passes can carry legacy visa tokens (gc/opt/h1b/cpt) while the
+// /me VisaSchema is the strict 4-token D4 enum. Fold legacy → canonical at projection so a stale doc
+// never fails the candidate-portal read. Anything still off-vocab after folding is dropped (not
+// projected) rather than poisoning the parse.
+const VISA_LEGACY_TO_CANONICAL: Record<string, string> = {
+  gc: "permanent_resident",
+  green_card: "permanent_resident",
+  greencard: "permanent_resident",
+  opt: "sponsor_needed",
+  cpt: "sponsor_needed",
+  h1b: "sponsor_needed",
+  h1b1: "sponsor_needed",
+  f1: "sponsor_needed",
+}
+const CANONICAL_VISA = new Set(["citizen", "permanent_resident", "sponsor_needed", "other"])
+
+/**
+ * Project the matching tag store (`pa-users.tags`, UserTags) onto the candidate-facing
+ * `pa-users.globalTags` (CandidateGlobalTags) surface that the /me portal reads.
+ *
+ * WHY (Adam 2026-05-30 — the /me-renders-nothing gap): the conversation/onboarding path writes ONLY
+ * `pa-users.tags`. The /me portal + admin marketplace read `candidateSelfProfiles.globalTags`, which
+ * `claimCandidateProfile` populates from `pa-users.globalTags` — a field that only the external-supply
+ * path ever wrote. So a phone-onboarded candidate had a complete, canonical `tags` blob that was
+ * INVISIBLE to /me. Projecting here, in the D8 sole writer, closes the split with zero new sync job:
+ * every tag write lands both surfaces atomically. Field renames per CandidateGlobalTagsSchema:
+ * targetRoleFunction→roleFunction, minSalary→minSalaryUsd, companySize→companySizePreference; the rest
+ * are 1:1. Values are already canonical (validated upstream), so the /me read-schema parse is safe.
+ * Only keys present in `tags` are emitted → set({merge:true}) preserves any globalTags subfields this
+ * path doesn't own (e.g. external-supply-set fields).
+ */
+export function projectTagsToGlobalTags(tags: Record<string, unknown>): Record<string, unknown> {
+  const g: Record<string, unknown> = {}
+  const arr = (k: string): unknown[] | undefined => (Array.isArray(tags[k]) ? (tags[k] as unknown[]) : undefined)
+  const role = arr("targetRoleFunction")
+  if (role) g.roleFunction = role
+  if (Array.isArray(tags.skills)) g.skills = tags.skills
+  if (typeof tags.careerStage === "string") {
+    g.careerStage = tags.careerStage
+    // Seniority RANGE — anchor + how far up the candidate is open (preferenceHardness.careerStage.bufferSteps)
+    // → [anchor, anchor+buffer] in CAREER_STAGE_VOCAB order. Lets /me render "junior–senior", not "junior".
+    const range = deriveCareerStageRange(tags.careerStage, tags.preferenceHardness)
+    if (range) g.careerStageRange = range
+  }
+  if (Array.isArray(tags.yoeRange)) g.yoeRange = tags.yoeRange
+  const ind = arr("industrySector")
+  if (ind) g.industrySector = ind
+  const loc = arr("targetLocations")
+  if (loc) g.targetLocations = loc
+  if (typeof tags.visaStatus === "string" && tags.visaStatus) {
+    const folded = VISA_LEGACY_TO_CANONICAL[tags.visaStatus] ?? tags.visaStatus
+    if (CANONICAL_VISA.has(folded)) g.visaStatus = folded
+  }
+  const jt = arr("targetJobType")
+  if (jt) g.targetJobType = jt
+  const rt = arr("relevantTags")
+  if (rt) g.relevantTags = rt
+  if (typeof tags.minSalary === "number" && Number.isFinite(tags.minSalary)) g.minSalaryUsd = tags.minSalary
+  // companySize is scalar-OR-array on tags — lift a scalar to a 1-elem array so a single-pick
+  // ("enterprise") still reaches globalTags, and normalize `open`→`no_preference` (read-schema sentinel).
+  const csRaw = tags.companySize
+  if (Array.isArray(csRaw) && csRaw.length) {
+    g.companySizePreference = csRaw
+      .filter((v): v is string => typeof v === "string" && !!v)
+      .map(normalizeCompanySizeForGlobalTags)
+  } else if (typeof csRaw === "string" && csRaw) {
+    g.companySizePreference = [normalizeCompanySizeForGlobalTags(csRaw)]
+  }
+  // companyStage — funding-stage preference, orthogonal to companySize. Scalar OR array on tags; always
+  // emit as an array on globalTags (the /me schema + UI treat it multi-pick). No-op until capture lands.
+  const stage = tags.companyStage
+  if (Array.isArray(stage) && stage.length) g.companyStage = stage
+  else if (typeof stage === "string" && stage) g.companyStage = [stage]
+  return g
+}
 
 /**
  * Partial-update shape — any subset of `UserTags` keys plus optional
@@ -91,7 +206,7 @@ export async function writeUserTagsFull(
     await db
       .collection(PA_USERS_COLLECTION)
       .doc(userId)
-      .set({ tags }, { merge: true })
+      .set({ tags, globalTags: projectTagsToGlobalTags(tags) }, { merge: true })
     log("pa.user_tags.write_full_ok", {
       userId,
       source: opts.source ?? "cv",
@@ -291,7 +406,7 @@ export async function applyPartialUserTags(
     await db
       .collection(PA_USERS_COLLECTION)
       .doc(userId)
-      .set({ tags: merged }, { merge: true })
+      .set({ tags: merged, globalTags: projectTagsToGlobalTags(merged) }, { merge: true })
     log("pa.user_tags.apply_partial_ok", {
       userId,
       source,
