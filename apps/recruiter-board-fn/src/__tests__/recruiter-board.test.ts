@@ -231,15 +231,18 @@ describe("recruiter access helpers", () => {
     ])
   })
 
-  it("validates primary role slots for recruiter workspaces", () => {
+  it("validates approved role access limits for recruiter workspaces", () => {
     assert.deepEqual(validateRecruiterWorkspacePreferences({
       primaryRoleIds: [" role-1 ", "role-2", "role-1"],
     }), {
       ok: true,
       value: { primaryRoleIds: ["role-1", "role-2"] },
     })
+    assert.equal(validateRecruiterWorkspacePreferences({
+      primaryRoleIds: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
+    }).ok, true)
     assert.deepEqual(validateRecruiterWorkspacePreferences({
-      primaryRoleIds: ["a", "b", "c", "d", "e", "f"],
+      primaryRoleIds: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"],
     }), {
       ok: false,
       reason: "too_many_primary_roles",

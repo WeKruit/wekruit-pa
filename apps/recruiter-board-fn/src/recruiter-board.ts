@@ -81,7 +81,7 @@ const RECRUITER_CANDIDATE_CONFIRM_URL =
 // ─────────────────────────────────────────────────────────────────────────────
 
 const HIRING_BOARD_ADMIN_EMAIL_DOMAIN = "@wekruit.com"
-const RECRUITER_PRIMARY_ROLE_SLOT_LIMIT = 5
+const RECRUITER_PRIMARY_ROLE_SLOT_LIMIT = 10
 const RECRUITER_SINGLE_SUBMISSION_WEEKLY_LIMIT = 5
 
 /**
