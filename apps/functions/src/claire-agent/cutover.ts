@@ -92,8 +92,12 @@ export async function maybeRunThinClaire(
     // (evals must not touch real Storage). makeV16FindMatch no-ops without these
     // deps, and maybeSendRecCard re-checks the flag internally — so on any
     // init failure we fall through to text-only recs, never blocking delivery.
+    // REC-CARD IMAGE ALLOWLIST (Adam 2026-06-01: "for image let's only send to 4243201960"): even though
+    // thin Claire is on for all users, the card IMAGE only sends to this dev-phone uid for now — everyone
+    // else gets text-only recs. Widen this set to ramp the image. (The text rec + offer are unaffected.)
+    const REC_CARD_UIDS = new Set<string>(["8fEwIduUrzxZsblHHsNz"]) // +14243201960
     let cardDeps: import("./tools/matching-tools.js").V16FindMatchCardDeps | undefined
-    if (!deps.dryRun && toE164) {
+    if (!deps.dryRun && toE164 && REC_CARD_UIDS.has(userId)) {
       try {
         const { isJobRecCardEnabled } = await import("../job-rec-card/job-rec-card.js")
         if (isJobRecCardEnabled()) {
