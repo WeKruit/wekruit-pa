@@ -33,16 +33,26 @@ import {
 import { auth } from "../lib/firebase.js"
 import { redirectResultPromise } from "../lib/auth-redirect-bootstrap.js"
 
-type RecruiterTab = "overview" | "roles" | "candidates" | "submissions" | "feedback" | "settings"
+type RecruiterTab = "overview" | "roles" | "matches" | "candidates" | "submissions" | "performance" | "settings"
 
 const TABS: Array<{ id: RecruiterTab; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "roles", label: "Roles" },
+  { id: "matches", label: "Matchboard" },
   { id: "candidates", label: "Candidates" },
   { id: "submissions", label: "Submissions" },
-  { id: "feedback", label: "Feedback" },
+  { id: "performance", label: "Performance" },
   { id: "settings", label: "Settings" },
 ]
+
+const ROLE_FILTERS = [
+  { id: "all", label: "All roles" },
+  { id: "new", label: "New this week" },
+  { id: "with_candidates", label: "Has candidates" },
+  { id: "needs_submissions", label: "Needs submissions" },
+] as const
+
+type RoleFilter = typeof ROLE_FILTERS[number]["id"]
 
 const SOURCE_STAGES: Array<{ id: RecruiterSourcedCandidateStage; label: string; tone: "live" | "info" | "success" | "warn" | "mute" }> = [
   { id: "sourced", label: "Sourced", tone: "mute" },
@@ -71,6 +81,14 @@ const CALIBRATION_LABELS: Record<string, { label: string; tone: "live" | "info" 
   bad_fit: { label: "Not a fit", tone: "warn" },
   suggested: { label: "Suggested direction", tone: "info" },
 }
+
+const SUBMISSION_PROGRESS = [
+  { id: "submitted", label: "Submitted" },
+  { id: "reviewing", label: "WeKruit review" },
+  { id: "advanced", label: "Hiring team" },
+  { id: "interviewing", label: "Interviewing" },
+  { id: "hired", label: "Hired" },
+] as const
 
 function statusMeta(status?: string) {
   return STATUS_LABELS[status ?? "submitted"] ?? { label: status ?? "Submitted", tone: "mute" as const }
@@ -122,12 +140,31 @@ function roleKey(job: CollabJob): string {
   return job.jobId
 }
 
+function roleUpdatedMs(job: CollabJob): number {
+  return job.updatedAt ? Date.parse(job.updatedAt) || 0 : 0
+}
+
+function isNewRole(job: CollabJob): boolean {
+  const updatedMs = roleUpdatedMs(job)
+  return updatedMs > 0 && Date.now() - updatedMs <= 7 * 86_400_000
+}
+
 function candidateName(c: RecruiterSourcedCandidateItem): string {
   return c.candidate?.name || "Unnamed candidate"
 }
 
 function sourceStageMeta(stage?: RecruiterSourcedCandidateStage) {
   return SOURCE_STAGES.find((s) => s.id === stage) ?? SOURCE_STAGES[0]!
+}
+
+function normalizeTokens(value: string | undefined): string[] {
+  if (!value) return []
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9+#.]+/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3)
 }
 
 function cleanRecruiterEmail(value: string): string {
@@ -221,6 +258,7 @@ export default function RecruiterBoard() {
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
   const [sourcedCandidates, setSourcedCandidates] = useState<RecruiterSourcedCandidateItem[]>([])
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
+  const [statusLoaded, setStatusLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [accessError, setAccessError] = useState<string | null>(null)
   const [submissionError, setSubmissionError] = useState<string | null>(null)
@@ -243,6 +281,7 @@ export default function RecruiterBoard() {
         setSession(null)
         setSourcedCandidates([])
         setSubmissions([])
+        setStatusLoaded(false)
         setAuthReady(true)
         return
       }
@@ -271,6 +310,7 @@ export default function RecruiterBoard() {
             setSession(null)
             setSourcedCandidates([])
             setSubmissions([])
+            setStatusLoaded(false)
             setAccessError(formatRecruiterAuthError(e))
           }
           return
@@ -291,6 +331,7 @@ export default function RecruiterBoard() {
           setSession(null)
           setSourcedCandidates([])
           setSubmissions([])
+          setStatusLoaded(false)
         }
       } finally {
         if (active) setAuthReady(true)
@@ -319,12 +360,14 @@ export default function RecruiterBoard() {
     if (!session) return
     try {
       setSubmissionError(null)
+      setStatusLoaded(false)
       const [submissionRows, sourceRows] = await Promise.all([
         fetchRecruiterSubmissions(),
         fetchRecruiterSourcedCandidates(),
       ])
       setSubmissions(sortSubmissions(submissionRows))
       setSourcedCandidates(sortSourcedCandidates(sourceRows))
+      setStatusLoaded(true)
     } catch (e) {
       setSubmissionError(e instanceof Error ? e.message : String(e))
     }
@@ -348,7 +391,6 @@ export default function RecruiterBoard() {
   const openJobs = jobs ?? []
   const stats = computeRecruiterStats(openJobs, submissions, sourcedCandidates)
   const recentSubmissions = submissions.slice(0, 4)
-  const feedbackRows = submissions.filter((s) => Boolean(s.recruiterFeedbackNote))
 
   return (
     <div className="rb-platform">
@@ -392,6 +434,7 @@ export default function RecruiterBoard() {
             setSession(null)
             setSourcedCandidates([])
             setSubmissions([])
+            setStatusLoaded(false)
           }}
         >
           Sign out
@@ -417,27 +460,34 @@ export default function RecruiterBoard() {
         {error && <div className="rb-state error">Could not load roles: {error}</div>}
         {submissionError && <div className="rb-state error">Could not load your submissions: {submissionError}</div>}
 
-        {activeTab === "overview" && (
+        {activeTab === "overview" && !statusLoaded && <RecruiterStatusLoading />}
+        {activeTab === "overview" && statusLoaded && (
           <OverviewTab
             stats={stats}
             jobs={openJobs}
             submissions={recentSubmissions}
             sourcedCandidates={sourcedCandidates}
             onRoles={() => setTab("roles")}
+            onMatches={() => setTab("matches")}
             onCandidates={() => setTab("candidates")}
             onSubmissions={() => setTab("submissions")}
           />
         )}
         {activeTab === "roles" && <RolesTab jobs={openJobs} submissions={submissions} sourcedCandidates={sourcedCandidates} loading={!jobs && !error} />}
+        {activeTab === "matches" && !statusLoaded && <RecruiterStatusLoading />}
+        {activeTab === "matches" && statusLoaded && <MatchboardTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} />}
         {activeTab === "candidates" && (
+          !statusLoaded ? <RecruiterStatusLoading /> :
           <CandidatesTab
             jobs={openJobs}
             candidates={sourcedCandidates}
             onSaved={(saved) => setSourcedCandidates((rows) => sortSourcedCandidates([saved, ...rows.filter((row) => row.id !== saved.id)]))}
           />
         )}
-        {activeTab === "submissions" && <SubmissionsTab submissions={submissions} />}
-        {activeTab === "feedback" && <FeedbackTab submissions={feedbackRows} />}
+        {activeTab === "submissions" && !statusLoaded && <RecruiterStatusLoading />}
+        {activeTab === "submissions" && statusLoaded && <SubmissionsTab submissions={submissions} />}
+        {activeTab === "performance" && !statusLoaded && <RecruiterStatusLoading />}
+        {activeTab === "performance" && statusLoaded && <PerformanceTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} />}
         {activeTab === "settings" && <SettingsTab session={session} onSessionChange={setSession} />}
       </main>
     </div>
@@ -461,6 +511,15 @@ function computeRecruiterStats(
     { label: "Pending review", value: String(reviewing), meta: "waiting on WeKruit or hiring team", signal: "wait", tone: "warn" },
     { label: "Interview rate", value: `${interviewRate}%`, meta: feedback ? `${advanced} advanced - ${feedback} notes` : `${advanced} advanced`, signal: "rate", tone: "success" },
   ]
+}
+
+function RecruiterStatusLoading() {
+  return (
+    <section className="rb-panel rb-panel--fill rb-loading-panel" aria-live="polite">
+      <h2>Syncing recruiter workspace...</h2>
+      <p>Loading your saved candidates, submissions, feedback, and role-alert settings.</p>
+    </section>
+  )
 }
 
 function RecruiterAccessGate({ initialError }: { initialError?: string | null }) {
@@ -558,6 +617,7 @@ function OverviewTab({
   submissions,
   sourcedCandidates,
   onRoles,
+  onMatches,
   onCandidates,
   onSubmissions,
 }: {
@@ -566,12 +626,14 @@ function OverviewTab({
   submissions: RecruiterSubmissionItem[]
   sourcedCandidates: RecruiterSourcedCandidateItem[]
   onRoles: () => void
+  onMatches: () => void
   onCandidates: () => void
   onSubmissions: () => void
 }) {
   const priorityJobs = jobs.slice(0, 7)
   const pipeline = buildCandidatePipeline(sourcedCandidates, submissions)
   const feedback = submissions.filter((s) => Boolean(s.recruiterFeedbackNote)).slice(0, 3)
+  const workItems = buildRecruiterWorkQueue(jobs, sourcedCandidates, submissions)
   return (
     <div className="rb-workspace">
       <section className="rb-stats">
@@ -627,6 +689,28 @@ function OverviewTab({
           </div>
         </section>
       </div>
+      <section className="rb-panel rb-command-panel">
+        <header className="rb-panel__head">
+          <div><h2>Today&apos;s work queue</h2><p>The fastest path from open role to sourced candidate to submitted status.</p></div>
+          <button type="button" className="rb-panel__link" onClick={onMatches}>Open matchboard</button>
+        </header>
+        <div className="rb-command-list">
+          {workItems.map((item) => (
+            <article className={`rb-command-item is-${item.tone}`} key={item.title}>
+              <span>{item.label}</span>
+              <strong>{item.title}</strong>
+              <p>{item.body}</p>
+              <button
+                type="button"
+                className="rb-panel__link"
+                onClick={item.action === "roles" ? onRoles : item.action === "submissions" ? onSubmissions : item.action === "matches" ? onMatches : onCandidates}
+              >
+                {item.cta}
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
       <section className="rb-panel rb-feedback-panel">
         <header className="rb-panel__head">
           <div><h2>Feedback &amp; calibration</h2><p>Hiring-team notes and next actions for tighter submissions.</p></div>
@@ -684,6 +768,77 @@ function buildCandidatePipeline(
     { label: "Submitted", tone: "info", items: submitted },
     { label: "In review", tone: "warn", items: reviewing },
     { label: "Interviewing", tone: "success", items: interviewing },
+  ]
+}
+
+function buildRecruiterWorkQueue(
+  jobs: CollabJob[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+  submissions: RecruiterSubmissionItem[],
+) {
+  const readyCandidates = sourcedCandidates.filter((c) => c.stage === "ready")
+  const newRoles = jobs.filter(isNewRole)
+  const feedbackRows = submissions.filter((s) => Boolean(s.recruiterFeedbackNote))
+  const pending = submissions.filter((s) => ["submitted", "new", "reviewing"].includes(s.status ?? "submitted"))
+
+  if (readyCandidates.length > 0) {
+    return [
+      {
+        label: "Submit next",
+        title: `${readyCandidates.length} ready candidate${readyCandidates.length === 1 ? "" : "s"}`,
+        body: "Use the matchboard to choose the strongest open role before sending another formal submission.",
+        cta: "Match candidates",
+        action: "matches" as const,
+        tone: "live",
+      },
+      {
+        label: "Calibration",
+        title: feedbackRows.length ? `${feedbackRows.length} feedback note${feedbackRows.length === 1 ? "" : "s"}` : "No written feedback yet",
+        body: feedbackRows.length ? "Read the notes before continuing the same search." : "Keep submissions tight until the first feedback arrives.",
+        cta: "Review submissions",
+        action: "submissions" as const,
+        tone: feedbackRows.length ? "warn" : "info",
+      },
+      {
+        label: "Role supply",
+        title: newRoles.length ? `${newRoles.length} new role${newRoles.length === 1 ? "" : "s"} this week` : `${jobs.length} open roles`,
+        body: "Prioritize roles with clear hard checks and no current submissions from your account.",
+        cta: "Browse roles",
+        action: "roles" as const,
+        tone: "info",
+      },
+    ]
+  }
+
+  return [
+    {
+      label: "Start here",
+      title: sourcedCandidates.length ? "Move prospects to ready" : "Build a sourced shortlist",
+      body: sourcedCandidates.length
+        ? "Screen saved prospects, mark the strongest as ready, then submit from the role brief."
+        : "Save LinkedIn or resume links before submitting so duplicate and status tracking can work.",
+      cta: "Open candidate CRM",
+      action: "candidates" as const,
+      tone: "live",
+    },
+    {
+      label: "Role supply",
+      title: newRoles.length ? `${newRoles.length} new role${newRoles.length === 1 ? "" : "s"} this week` : `${jobs.length} open roles`,
+      body: "Filter the marketplace before sourcing so you do not waste effort on weak-fit roles.",
+      cta: "Browse roles",
+      action: "roles" as const,
+      tone: "info",
+    },
+    {
+      label: "Review load",
+      title: pending.length ? `${pending.length} pending review` : "No pending submissions",
+      body: pending.length
+        ? "Wait for feedback if you are close to the pending limit on a role."
+        : "You have room to submit once a candidate has confirmed consent.",
+      cta: "Open submissions",
+      action: "submissions" as const,
+      tone: pending.length ? "warn" : "success",
+    },
   ]
 }
 
@@ -809,16 +964,25 @@ function RolesTab({
   loading: boolean
 }) {
   const [q, setQ] = useState("")
+  const [filter, setFilter] = useState<RoleFilter>("all")
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    if (!needle) return jobs
-    return jobs.filter((j) =>
+    const visible = jobs.filter((job) => {
+      const sourcedCount = sourcedCandidates.filter((c) => c.inboundJobId === roleKey(job) || c.jobId === roleKey(job)).length
+      const submissionCount = submissions.filter((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job)).length
+      if (filter === "new" && !isNewRole(job)) return false
+      if (filter === "with_candidates" && sourcedCount === 0) return false
+      if (filter === "needs_submissions" && submissionCount > 0) return false
+      return true
+    })
+    if (!needle) return visible
+    return visible.filter((j) =>
       j.title.toLowerCase().includes(needle) ||
       j.recruiterBoard.label.location.toLowerCase().includes(needle) ||
       j.recruiterBoard.label.company.toLowerCase().includes(needle) ||
       j.recruiterBoard.label.pills.some((p) => p.text.toLowerCase().includes(needle)),
     )
-  }, [jobs, q])
+  }, [filter, jobs, q, sourcedCandidates, submissions])
 
   return (
     <section className="rb-panel rb-panel--fill">
@@ -829,6 +993,18 @@ function RolesTab({
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Title, location, tag..." autoComplete="off" />
         </label>
       </header>
+      <div className="rb-filter-row" role="tablist" aria-label="Role filters">
+        {ROLE_FILTERS.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className={filter === option.id ? "is-active" : ""}
+            onClick={() => setFilter(option.id)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
       {loading && <div className="rb-state">Loading open roles...</div>}
       {!loading && (
         <div className="rb-role-grid">
@@ -844,6 +1020,195 @@ function RolesTab({
         </div>
       )}
     </section>
+  )
+}
+
+type CandidateRoleMatch = {
+  job: CollabJob
+  score: number
+  reasons: string[]
+  sourcedCount: number
+  submissionCount: number
+}
+
+function candidateMatchText(candidate: RecruiterSourcedCandidateItem): string {
+  return [
+    candidate.candidate?.name,
+    candidate.candidate?.currentRole,
+    candidate.candidate?.yoe,
+    candidate.candidate?.notes,
+    candidate.jobTitleSnapshot,
+    candidate.companyLabelSnapshot,
+  ].filter(Boolean).join(" ")
+}
+
+function jobMatchText(job: CollabJob): string {
+  return [
+    job.title,
+    job.recruiterBoard.label.location,
+    job.recruiterBoard.label.pills.map((p) => p.text).join(" "),
+    job.recruiterBoard.checklist.groups.flatMap((g) => [g.heading, ...g.items.map((item) => item.text)]).join(" "),
+    job.jdBlocks.map((block) => `${block.heading} ${block.body}`).join(" "),
+  ].filter(Boolean).join(" ")
+}
+
+function scoreCandidateAgainstJob(
+  candidate: RecruiterSourcedCandidateItem,
+  job: CollabJob,
+  submissions: RecruiterSubmissionItem[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+): CandidateRoleMatch {
+  const candidateTokens = new Set(normalizeTokens(candidateMatchText(candidate)))
+  const jobTokens = normalizeTokens(jobMatchText(job))
+  const overlap = Array.from(new Set(jobTokens.filter((token) => candidateTokens.has(token)))).slice(0, 5)
+  const stageBoost: Record<RecruiterSourcedCandidateStage, number> = {
+    sourced: 3,
+    contacted: 6,
+    screened: 10,
+    ready: 16,
+    submitted: 6,
+    archived: -16,
+  }
+  const calibrationBoost = candidate.calibrationStatus === "good_fit"
+    ? 8
+    : candidate.calibrationStatus === "bad_fit"
+      ? -14
+      : candidate.calibrationStatus === "calibration_requested"
+        ? -4
+        : 0
+  const titleTokens = normalizeTokens(job.title)
+  const titleOverlap = titleTokens.filter((token) => candidateTokens.has(token)).length
+  const sourcedCount = sourcedCandidates.filter((c) => c.inboundJobId === roleKey(job) || c.jobId === roleKey(job)).length
+  const submissionCount = submissions.filter((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job)).length
+  const score = Math.max(20, Math.min(98, 42 + overlap.length * 7 + titleOverlap * 8 + (stageBoost[candidate.stage] ?? 0) + calibrationBoost - submissionCount * 3))
+  const reasons = [
+    ...overlap.slice(0, 3).map((token) => `Keyword: ${token}`),
+    sourceStageMeta(candidate.stage).label,
+    candidate.calibrationStatus ? calibrationMeta(candidate.calibrationStatus).label : "",
+    submissionCount === 0 ? "No submissions yet" : "",
+  ].filter(Boolean).slice(0, 4)
+  return { job, score, reasons, sourcedCount, submissionCount }
+}
+
+function buildCandidateRoleMatches(
+  candidate: RecruiterSourcedCandidateItem,
+  jobs: CollabJob[],
+  submissions: RecruiterSubmissionItem[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+): CandidateRoleMatch[] {
+  return jobs
+    .map((job) => scoreCandidateAgainstJob(candidate, job, submissions, sourcedCandidates))
+    .sort((a, b) => b.score - a.score)
+}
+
+function MatchboardTab({
+  jobs,
+  candidates,
+  submissions,
+}: {
+  jobs: CollabJob[]
+  candidates: RecruiterSourcedCandidateItem[]
+  submissions: RecruiterSubmissionItem[]
+}) {
+  const activeCandidates = useMemo(
+    () => sortSourcedCandidates(candidates.filter((candidate) => candidate.stage !== "archived")),
+    [candidates],
+  )
+  const [selectedId, setSelectedId] = useState<string>("")
+  const selectedCandidate = activeCandidates.find((candidate) => candidate.id === selectedId) ?? activeCandidates[0]
+  const matches = useMemo(
+    () => selectedCandidate ? buildCandidateRoleMatches(selectedCandidate, jobs, submissions, candidates).slice(0, 8) : [],
+    [candidates, jobs, selectedCandidate, submissions],
+  )
+
+  useEffect(() => {
+    if (!selectedId && activeCandidates[0]) setSelectedId(activeCandidates[0].id)
+    if (selectedId && !activeCandidates.some((candidate) => candidate.id === selectedId)) {
+      setSelectedId(activeCandidates[0]?.id ?? "")
+    }
+  }, [activeCandidates, selectedId])
+
+  return (
+    <section className="rb-panel rb-panel--fill">
+      <header className="rb-panel__head">
+        <div><h2>Candidate-to-role matchboard</h2><p>Pick a saved prospect, compare open roles, then submit from the strongest brief.</p></div>
+      </header>
+      {activeCandidates.length === 0 ? (
+        <p className="rb-empty">Save sourced candidates first. The matchboard needs candidate notes or a LinkedIn/resume link to rank open roles.</p>
+      ) : (
+        <div className="rb-matchboard">
+          <aside className="rb-matchboard__candidates" aria-label="Saved candidates">
+            {activeCandidates.map((candidate) => {
+              const stage = sourceStageMeta(candidate.stage)
+              const topMatch = buildCandidateRoleMatches(candidate, jobs, submissions, candidates)[0]
+              return (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  className={selectedCandidate?.id === candidate.id ? "is-active" : ""}
+                  onClick={() => setSelectedId(candidate.id)}
+                >
+                  <span className="rb-candidate-dot">{candidateName(candidate).slice(0, 1).toUpperCase()}</span>
+                  <span>
+                    <strong>{candidateName(candidate)}</strong>
+                    <em>{candidate.candidate?.currentRole || candidate.jobTitleSnapshot || "Candidate"}</em>
+                    <small>{stage.label}{topMatch ? ` - ${topMatch.score}% top match` : ""}</small>
+                  </span>
+                </button>
+              )
+            })}
+          </aside>
+          <div className="rb-matchboard__main">
+            {selectedCandidate && (
+              <section className="rb-match-profile">
+                <div>
+                  <span className="rb-candidate-dot">{candidateName(selectedCandidate).slice(0, 1).toUpperCase()}</span>
+                  <span>
+                    <strong>{candidateName(selectedCandidate)}</strong>
+                    <em>{selectedCandidate.candidate?.currentRole || "Candidate profile"}</em>
+                  </span>
+                </div>
+                <p>{shortText(selectedCandidate.candidate?.notes, "No recruiter note yet. Add context in Candidate CRM to improve ranking.", 160)}</p>
+              </section>
+            )}
+            <div className="rb-match-list">
+              {matches.map((match) => <CandidateRoleMatchRow key={match.job.jobId} match={match} candidate={selectedCandidate} />)}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function CandidateRoleMatchRow({
+  match,
+  candidate,
+}: {
+  match: CandidateRoleMatch
+  candidate?: RecruiterSourcedCandidateItem
+}) {
+  return (
+    <article className="rb-match-row">
+      <div className="rb-match-row__score">
+        <strong>{match.score}%</strong>
+        <span>fit</span>
+      </div>
+      <div className="rb-match-row__body">
+        <h3>{match.job.title}</h3>
+        <p>{match.job.recruiterBoard.label.company} - {match.job.recruiterBoard.label.location}</p>
+        <div>
+          {match.reasons.map((reason) => <span key={reason}>{reason}</span>)}
+        </div>
+      </div>
+      <div className="rb-match-row__meta">
+        <span>{match.sourcedCount} sourced</span>
+        <span>{match.submissionCount} submitted</span>
+        <Link to={`/recruiters/job/${match.job.jobId}${candidate ? `?candidateId=${encodeURIComponent(candidate.id)}` : ""}`}>
+          Open brief
+        </Link>
+      </div>
+    </article>
   )
 }
 
@@ -1081,15 +1446,88 @@ function SubmissionsTab({ submissions }: { submissions: RecruiterSubmissionItem[
   )
 }
 
-function FeedbackTab({ submissions }: { submissions: RecruiterSubmissionItem[] }) {
+function PerformanceTab({
+  jobs,
+  candidates,
+  submissions,
+}: {
+  jobs: CollabJob[]
+  candidates: RecruiterSourcedCandidateItem[]
+  submissions: RecruiterSubmissionItem[]
+}) {
+  const feedbackRows = submissions.filter((s) => Boolean(s.recruiterFeedbackNote))
+  const advanced = submissions.filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? "")).length
+  const pending = submissions.filter((s) => ["submitted", "new", "reviewing"].includes(s.status ?? "submitted")).length
+  const ready = candidates.filter((c) => c.stage === "ready").length
+  const sourceToSubmit = candidates.length ? Math.round((submissions.length / candidates.length) * 100) : 0
+  const metrics = [
+    { label: "Submitted", value: String(submissions.length), meta: "formal candidates", tone: "live" },
+    { label: "Pending review", value: String(pending), meta: "awaiting feedback", tone: "warn" },
+    { label: "Advanced", value: String(advanced), meta: "sent forward / interview", tone: "success" },
+    { label: "Source to submit", value: `${sourceToSubmit}%`, meta: `${ready} ready now`, tone: "info" },
+  ]
+  const stageRows = SOURCE_STAGES.map((stage) => ({
+    ...stage,
+    count: candidates.filter((candidate) => candidate.stage === stage.id).length,
+  }))
+  const statusRows = Object.entries(STATUS_LABELS).map(([status, meta]) => ({
+    status,
+    ...meta,
+    count: submissions.filter((submission) => (submission.status ?? "submitted") === status).length,
+  })).filter((row) => row.count > 0)
+
   return (
     <section className="rb-panel rb-panel--fill">
       <header className="rb-panel__head">
-        <div><h2>Feedback loop</h2><p>WeKruit review notes show up here so your next candidates calibrate faster.</p></div>
+        <div><h2>Performance &amp; calibration</h2><p>Source quality, review velocity, and feedback from WeKruit in one operating view.</p></div>
       </header>
-      <div className="rb-submission-list rb-submission-list--full">
-        {submissions.map((s) => <SubmissionRow key={s.id} submission={s} expanded />)}
-        {submissions.length === 0 && <p className="rb-empty">No written feedback yet. Status changes will still appear in Submissions.</p>}
+      <section className="rb-stats rb-stats--inside">
+        {metrics.map((metric) => (
+          <article className={`rb-stat is-${metric.tone}`} key={metric.label}>
+            <span>{metric.label}<em>{metric.tone}</em></span>
+            <strong>{metric.value}</strong>
+            <em>{metric.meta}</em>
+          </article>
+        ))}
+      </section>
+      <div className="rb-performance-grid">
+        <section className="rb-performance-card">
+          <h3>Pipeline funnel</h3>
+          <div className="rb-funnel">
+            {stageRows.map((row) => (
+              <div key={row.id}>
+                <span>{row.label}</span>
+                <strong>{row.count}</strong>
+                <i style={{ width: `${Math.max(8, Math.min(100, candidates.length ? (row.count / candidates.length) * 100 : 8))}%` }} />
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="rb-performance-card">
+          <h3>Submission status</h3>
+          <div className="rb-funnel">
+            {statusRows.length > 0 ? statusRows.map((row) => (
+              <div key={row.status}>
+                <span>{row.label}</span>
+                <strong>{row.count}</strong>
+                <i style={{ width: `${Math.max(8, Math.min(100, submissions.length ? (row.count / submissions.length) * 100 : 8))}%` }} />
+              </div>
+            )) : <p>No submissions yet.</p>}
+          </div>
+        </section>
+        <section className="rb-performance-card rb-performance-card--wide">
+          <h3>Feedback loop</h3>
+          <div className="rb-submission-list">
+            {feedbackRows.map((s) => <SubmissionRow key={s.id} submission={s} expanded />)}
+            {feedbackRows.length === 0 && <p className="rb-empty">No written feedback yet. Status changes will still appear in Submissions.</p>}
+          </div>
+        </section>
+        <section className="rb-performance-card">
+          <h3>Role coverage</h3>
+          <p>{jobs.length} open role{jobs.length === 1 ? "" : "s"} connected to WeKruit collab `pa-jobs`.</p>
+          <p>{jobs.filter(isNewRole).length} opened or updated this week.</p>
+          <p>{jobs.filter((job) => !submissions.some((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job))).length} have no submissions from this account yet.</p>
+        </section>
       </div>
     </section>
   )
@@ -1160,7 +1598,10 @@ function RoleCard({
   const signal = roleFitSignal(job, sourcedCount, submissionCount)
   return (
     <Link to={`/recruiters/job/${job.jobId}`} className="rb-role-card">
-      <span className="rb-role-card__code">Co. {job.recruiterBoard.label.companyCode}</span>
+      <div className="rb-role-card__topline">
+        <span className="rb-role-card__code">Co. {job.recruiterBoard.label.companyCode}</span>
+        {isNewRole(job) && <span className="rb-role-card__new">New</span>}
+      </div>
       <h3>{job.title}</h3>
       <p>{job.recruiterBoard.label.company} - {job.recruiterBoard.label.location}</p>
       <div className="rb-role-card__pills">
@@ -1193,6 +1634,9 @@ function RoleRow({ job }: { job: CollabJob }) {
 
 function SubmissionRow({ submission, expanded = false }: { submission: RecruiterSubmissionItem; expanded?: boolean }) {
   const meta = statusMeta(submission.status)
+  const currentStatus = submission.status === "new" ? "submitted" : submission.status ?? "submitted"
+  const currentIndex = SUBMISSION_PROGRESS.findIndex((step) => step.id === currentStatus)
+  const isClosed = currentStatus === "rejected" || currentStatus === "duplicate"
   return (
     <article className={`rb-submission ${expanded ? "is-expanded" : ""}`}>
       <div className="rb-submission__main">
@@ -1208,6 +1652,14 @@ function SubmissionRow({ submission, expanded = false }: { submission: Recruiter
       </div>
       {expanded && (
         <div className="rb-submission__detail">
+          <div className={`rb-submission-timeline ${isClosed ? "is-closed" : ""}`} aria-label="Submission status timeline">
+            {SUBMISSION_PROGRESS.map((step, index) => (
+              <span key={step.id} className={currentIndex >= index ? "is-complete" : ""}>
+                {step.label}
+              </span>
+            ))}
+            {isClosed && <span className="is-complete">{meta.label}</span>}
+          </div>
           <p><strong>Candidate:</strong> {submission.candidate?.currentRole || "Role not provided"}{submission.candidate?.yoe ? ` · ${submission.candidate.yoe} YOE` : ""}</p>
           {submission.candidate?.link && <a href={submission.candidate.link} target="_blank" rel="noopener noreferrer">{shortText(submission.candidate.link, submission.candidate.link, 80)}</a>}
           {submission.recruiterFeedbackNote && (

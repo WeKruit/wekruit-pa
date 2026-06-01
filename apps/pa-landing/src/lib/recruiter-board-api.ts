@@ -23,6 +23,7 @@ export interface CollabJob {
   jobId: string
   title: string
   compSummary?: string
+  updatedAt?: string | null
   jdBlocks: Array<{ heading: string; body: string; kind?: "list" | "prose" }>
   recruiterBoard: {
     active: boolean
