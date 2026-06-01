@@ -1,7 +1,10 @@
 /**
  * Sendblue Reactions API — outbound wrapper (BUG #6 sister-feature).
  *
- * Endpoint: POST https://api.sendblue.com/api/send-reaction
+ * Endpoint: POST https://api.sendblue.co/api/send-reaction
+ *   (api.sendblue.co — the host every working Sendblue call uses: send-message,
+ *    send-typing-indicator, mark-read, upload-file. The docs spell it .com, but
+ *    .com fails — using .com here was the 2026-06 "no tapbacks" regression.)
  * Headers:  sb-api-key-id, sb-api-secret-key, content-type
  * Body:     { from_number, message_handle, reaction }
  *
@@ -29,7 +32,7 @@ import {
   type SendblueCredentials,
 } from "./sendblue-client.js"
 
-const SEND_REACTION_URL = "https://api.sendblue.com/api/send-reaction"
+const SEND_REACTION_URL = "https://api.sendblue.co/api/send-reaction"
 const REACTION_BREAKER_KEY = "sendblue-reaction"
 const DEFAULT_TIMEOUT_MS = 30_000
 
