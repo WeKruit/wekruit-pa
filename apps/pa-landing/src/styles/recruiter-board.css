@@ -1477,6 +1477,60 @@
   line-height: 1.45;
 }
 
+.rb-operating-grid {
+  display: grid;
+  grid-template-columns: 1.15fr repeat(3, minmax(0, 1fr)) 1.05fr;
+  gap: 12px;
+  padding: 14px;
+}
+
+.rb-operating-card {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--ink-3);
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+}
+
+.rb-operating-card.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-operating-card.is-info { border-top-color: var(--info); }
+.rb-operating-card.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-operating-card.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-operating-card.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-operating-card span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-operating-card strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-operating-card--lead strong,
+.rb-operating-card--challenge strong {
+  font-size: 22px;
+  line-height: 1.08;
+}
+
+.rb-operating-card p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 .rb-pipeline {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(152px, 1fr));
@@ -2336,6 +2390,71 @@
   background: var(--live);
 }
 
+.rb-performance-status {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 14px;
+  padding: 0 20px 18px;
+}
+
+.rb-performance-status__lead,
+.rb-performance-targets article {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+}
+
+.rb-performance-status__lead {
+  display: grid;
+  gap: 7px;
+  background: var(--cream-3);
+}
+
+.rb-performance-status__lead span,
+.rb-performance-targets article span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-performance-status__lead strong,
+.rb-performance-targets article strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-performance-status__lead p,
+.rb-performance-targets article p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-performance-targets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-performance-targets article {
+  display: grid;
+  gap: 7px;
+  border-top: 3px solid var(--ink-3);
+}
+
+.rb-performance-targets article.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-performance-targets article.is-info { border-top-color: var(--info); }
+.rb-performance-targets article.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-performance-targets article.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-performance-targets article.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
 .rb-candidate-crm {
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
@@ -2816,6 +2935,15 @@
   .rb-stats {
     grid-template-columns: repeat(2, 1fr);
   }
+  .rb-operating-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rb-performance-status {
+    grid-template-columns: 1fr;
+  }
+  .rb-performance-targets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .rb-market-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -2905,6 +3033,8 @@
   .rb-candidate-board,
   .rb-command-list,
   .rb-market-grid,
+  .rb-operating-grid,
+  .rb-performance-targets,
   .rb-source-form__split,
   .rb-feedback-line,
   .rb-role-cockpit,

@@ -74,6 +74,7 @@ type RoleSort = typeof ROLE_SORTS[number]["id"]
 
 const PRIMARY_ROLE_SLOT_LIMIT = 5
 const SINGLE_SUBMISSION_WEEKLY_LIMIT = 5
+const WEEKLY_SUBMISSION_TARGET = 8
 
 const SOURCE_STAGES: Array<{ id: RecruiterSourcedCandidateStage; label: string; tone: "live" | "info" | "success" | "warn" | "mute" }> = [
   { id: "sourced", label: "Sourced", tone: "mute" },
@@ -540,6 +541,15 @@ export default function RecruiterBoard() {
 
   const openJobs = jobs ?? []
   const stats = computeRecruiterStats(openJobs, submissions, sourcedCandidates)
+  const operatingMetrics = computeRecruiterOperatingMetrics(
+    openJobs,
+    submissions,
+    sourcedCandidates,
+    roleFeedback,
+    roleQuestions,
+    roleIntelligence,
+    primaryRoleIds,
+  )
   return (
     <div className="rb-platform">
       <aside className="rb-platform__nav">
@@ -620,11 +630,13 @@ export default function RecruiterBoard() {
             sourcedCandidates={sourcedCandidates}
             roleQuestions={roleQuestions}
             roleIntelligence={roleIntelligence}
+            operatingMetrics={operatingMetrics}
             primaryRoleIds={primaryRoleIds}
             onRoles={() => setTab("roles")}
             onMatches={() => setTab("matches")}
             onCandidates={() => setTab("candidates")}
             onSubmissions={() => setTab("submissions")}
+            onPerformance={() => setTab("performance")}
             onPrimaryRoleToggle={(jobId, makePrimary) => void updatePrimaryRoleSlots(jobId, makePrimary)}
             primaryRoleSavingId={primaryRoleSavingId}
           />
@@ -656,7 +668,7 @@ export default function RecruiterBoard() {
         {activeTab === "submissions" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "submissions" && statusLoaded && <SubmissionsTab submissions={submissions} />}
         {activeTab === "performance" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "performance" && statusLoaded && <PerformanceTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} primaryRoleIds={primaryRoleIds} roleFeedback={roleFeedback} />}
+        {activeTab === "performance" && statusLoaded && <PerformanceTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} primaryRoleIds={primaryRoleIds} roleFeedback={roleFeedback} operatingMetrics={operatingMetrics} />}
         {activeTab === "settings" && <SettingsTab session={session} onSessionChange={setSession} />}
       </main>
     </div>
@@ -680,6 +692,201 @@ function computeRecruiterStats(
     { label: "Pending review", value: String(reviewing), meta: "waiting on WeKruit or hiring team", signal: "wait", tone: "warn" },
     { label: "Interview rate", value: `${interviewRate}%`, meta: feedback ? `${advanced} advanced - ${feedback} notes` : `${advanced} advanced`, signal: "rate", tone: "success" },
   ]
+}
+
+type OperatingTone = "live" | "info" | "success" | "warn" | "mute"
+
+type RecruiterOperatingMetric = {
+  label: string
+  value: string
+  body: string
+  tone: OperatingTone
+}
+
+type RecruiterOperatingMetrics = {
+  statusLabel: string
+  statusBody: string
+  statusTone: OperatingTone
+  qualityScore: number | null
+  qualityLabel: string
+  qualityBody: string
+  reviewLabel: string
+  reviewBody: string
+  reviewTone: OperatingTone
+  challengeTitle: string
+  challengeBody: string
+  challengeTarget: string
+  cards: RecruiterOperatingMetric[]
+  targets: RecruiterOperatingMetric[]
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
+
+function computeRecruiterOperatingMetrics(
+  jobs: CollabJob[],
+  submissions: RecruiterSubmissionItem[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+  roleFeedback: RecruiterRoleFeedbackItem[],
+  roleQuestions: RecruiterRoleQuestionItem[],
+  roleIntelligence: RecruiterRoleIntelligenceItem[],
+  primaryRoleIds: string[],
+): RecruiterOperatingMetrics {
+  const activeCandidates = sourcedCandidates.filter((candidate) => candidate.stage !== "archived")
+  const readyCandidates = activeCandidates.filter((candidate) => candidate.stage === "ready")
+  const pendingSubmissions = submissions.filter((submission) => ["submitted", "new", "reviewing"].includes(submission.status ?? "submitted"))
+  const advancedSubmissions = submissions.filter((submission) => ["advanced", "interviewing", "hired"].includes(submission.status ?? ""))
+  const closedNegative = submissions.filter((submission) => ["rejected", "duplicate"].includes(submission.status ?? ""))
+  const feedbackNotes = submissions.filter((submission) => Boolean(submission.recruiterFeedbackNote)).length
+  const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open").length
+  const intelligenceByJob = new Map(roleIntelligence.map((item) => [item.jobId, item]))
+  const cleanLanes = jobs.filter((job) => (intelligenceByJob.get(roleKey(job))?.submissionCount ?? rowsForRole(job, submissions).length) === 0).length
+  const activePrimaryRoles = primaryRoleIds.length
+  const primaryRolesWithActivity = jobs.filter((job) => {
+    if (!isPrimaryRole(job, primaryRoleIds)) return false
+    return rowsForRole(job, submissions).length > 0 || rowsForRole(job, sourcedCandidates).some((candidate) => candidate.stage !== "archived")
+  }).length
+  const slotUtilization = activePrimaryRoles ? Math.round((primaryRolesWithActivity / activePrimaryRoles) * 100) : 0
+  const sourceToSubmitRate = activeCandidates.length ? Math.round((submissions.length / activeCandidates.length) * 100) : 0
+  const firstRoundRate = submissions.length ? Math.round((advancedSubmissions.length / submissions.length) * 100) : 0
+  const rejectionRate = submissions.length ? Math.round((closedNegative.length / submissions.length) * 100) : 0
+  const hardOrBlockedRoles = roleIntelligence.length
+    ? roleIntelligence.filter((item) => item.feedback.hard > 0 || item.feedback.blocked > 0).length
+    : roleFeedback.filter((feedback) => feedback.difficulty === "hard" || feedback.difficulty === "blocked").length
+  const remainingWeeklySubmissions = Math.min(WEEKLY_SUBMISSION_TARGET, Math.max(1, WEEKLY_SUBMISSION_TARGET - submissions.length))
+  const qualityScore = submissions.length
+    ? clampNumber(Math.round(58 + firstRoundRate * 0.55 - rejectionRate * 0.45 + Math.min(16, feedbackNotes * 3)), 24, 98)
+    : activeCandidates.length
+      ? clampNumber(44 + readyCandidates.length * 7 + Math.min(14, activeCandidates.length * 2), 44, 74)
+      : null
+  const statusLabel = submissions.length >= WEEKLY_SUBMISSION_TARGET && firstRoundRate >= 30 && rejectionRate <= 40
+    ? "Preferred track"
+    : submissions.length >= 3 || activeCandidates.length >= 6
+      ? "Standard track"
+      : "Builder track"
+  const statusBody = statusLabel === "Preferred track"
+    ? "You have enough submission activity and interview movement to justify more role access."
+    : statusLabel === "Standard track"
+      ? "You have visible activity. Keep the quality bar high before asking for more lanes."
+      : "Build a visible sourcing record before the platform can trust more role volume."
+  const statusTone: OperatingTone = statusLabel === "Preferred track" ? "success" : statusLabel === "Standard track" ? "info" : "mute"
+  const qualityLabel = qualityScore === null ? "No score yet" : `${qualityScore}/100`
+  const qualityBody = qualityScore === null
+    ? "Save prospects and submit with consent to start a quality signal."
+    : submissions.length < 3
+      ? "Early signal only. More submissions and feedback will make this meaningful."
+      : `${firstRoundRate}% advanced/interviewing signal with ${rejectionRate}% rejected or duplicate.`
+  const reviewTone: OperatingTone = activeCandidates.length === 0 && submissions.length === 0
+    ? "mute"
+    : rejectionRate >= 50 && submissions.length >= 3
+      ? "warn"
+      : hardOrBlockedRoles > 0 || openQuestions > 0
+        ? "info"
+        : "success"
+  const reviewLabel = reviewTone === "warn"
+    ? "Calibration review"
+    : reviewTone === "info"
+      ? "Needs calibration"
+      : reviewTone === "success"
+        ? "Healthy activity"
+        : "No activity yet"
+  const reviewBody = reviewTone === "warn"
+    ? "Rejection or duplicate rate is high. Slow down and use role feedback before more submissions."
+    : reviewTone === "info"
+      ? "Open questions or hard-role feedback should be cleared before adding more volume."
+      : reviewTone === "success"
+        ? "Current activity is within the quality bar. Keep status updates moving."
+        : "Start with sourced candidates tied to primary roles."
+  const challengeTitle = openQuestions > 0
+    ? "Clear the calibration queue"
+    : readyCandidates.length > 0
+      ? "Convert ready candidates"
+      : cleanLanes > 0
+        ? "Build first shortlists"
+        : "Refresh active lanes"
+  const challengeBody = openQuestions > 0
+    ? "Ask precise role questions and wait for WeKruit answers before sourcing through uncertainty."
+    : readyCandidates.length > 0
+      ? "Move ready candidates into the strongest role briefs while consent is fresh."
+      : cleanLanes > 0
+        ? "Pick clean-lane roles and add sourced prospects before another recruiter gets there."
+        : "Update candidate stages and use feedback to source tighter lookalikes."
+  const challengeTarget = openQuestions > 0
+    ? `${openQuestions} open question${openQuestions === 1 ? "" : "s"}`
+    : readyCandidates.length > 0
+      ? `${Math.min(readyCandidates.length, 3)} ready-to-submit`
+    : cleanLanes > 0
+      ? `3 prospects in ${Math.min(cleanLanes, 2)} clean lane${cleanLanes === 1 ? "" : "s"}`
+      : `${remainingWeeklySubmissions} quality submission${remainingWeeklySubmissions === 1 ? "" : "s"}`
+  return {
+    statusLabel,
+    statusBody,
+    statusTone,
+    qualityScore,
+    qualityLabel,
+    qualityBody,
+    reviewLabel,
+    reviewBody,
+    reviewTone,
+    challengeTitle,
+    challengeBody,
+    challengeTarget,
+    cards: [
+      {
+        label: "Recruiter status",
+        value: statusLabel,
+        body: statusBody,
+        tone: statusTone,
+      },
+      {
+        label: "Quality signal",
+        value: qualityLabel,
+        body: qualityBody,
+        tone: qualityScore === null ? "mute" : qualityScore >= 75 ? "success" : qualityScore >= 58 ? "info" : "warn",
+      },
+      {
+        label: "Primary utilization",
+        value: `${slotUtilization}%`,
+        body: activePrimaryRoles
+          ? `${primaryRolesWithActivity}/${activePrimaryRoles} primary roles have live candidates or submissions.`
+          : "Add primary roles before scaling submissions.",
+        tone: slotUtilization >= 80 ? "success" : slotUtilization > 0 ? "info" : "mute",
+      },
+      {
+        label: "Weekly pace",
+        value: `${submissions.length}/${WEEKLY_SUBMISSION_TARGET}`,
+        body: `${pendingSubmissions.length} pending, ${advancedSubmissions.length} advanced, ${cleanLanes} clean lanes open.`,
+        tone: submissions.length >= WEEKLY_SUBMISSION_TARGET ? "success" : submissions.length ? "info" : "mute",
+      },
+    ],
+    targets: [
+      {
+        label: "This week's challenge",
+        value: challengeTarget,
+        body: `${challengeTitle}. ${challengeBody}`,
+        tone: openQuestions > 0 ? "warn" : readyCandidates.length > 0 ? "live" : "info",
+      },
+      {
+        label: "Submission quality",
+        value: `${firstRoundRate}%`,
+        body: "Keep the advanced/interview signal moving before asking for more role volume.",
+        tone: firstRoundRate >= 30 ? "success" : submissions.length ? "info" : "mute",
+      },
+      {
+        label: "Calibration debt",
+        value: String(openQuestions + hardOrBlockedRoles),
+        body: "Open questions plus hard or blocked role signals.",
+        tone: openQuestions + hardOrBlockedRoles > 0 ? "warn" : "success",
+      },
+      {
+        label: "Source to submit",
+        value: `${sourceToSubmitRate}%`,
+        body: "Saved prospects converted into formal submissions.",
+        tone: sourceToSubmitRate >= 35 ? "success" : activeCandidates.length ? "info" : "mute",
+      },
+    ],
+  }
 }
 
 function RecruiterStatusLoading() {
@@ -787,11 +994,13 @@ function OverviewTab({
   sourcedCandidates,
   roleQuestions,
   roleIntelligence,
+  operatingMetrics,
   primaryRoleIds,
   onRoles,
   onMatches,
   onCandidates,
   onSubmissions,
+  onPerformance,
   onPrimaryRoleToggle,
   primaryRoleSavingId,
 }: {
@@ -801,11 +1010,13 @@ function OverviewTab({
   sourcedCandidates: RecruiterSourcedCandidateItem[]
   roleQuestions: RecruiterRoleQuestionItem[]
   roleIntelligence: RecruiterRoleIntelligenceItem[]
+  operatingMetrics: RecruiterOperatingMetrics
   primaryRoleIds: string[]
   onRoles: () => void
   onMatches: () => void
   onCandidates: () => void
   onSubmissions: () => void
+  onPerformance: () => void
   onPrimaryRoleToggle: (jobId: string, makePrimary: boolean) => void
   primaryRoleSavingId: string | null
 }) {
@@ -829,6 +1040,7 @@ function OverviewTab({
           </article>
         ))}
       </section>
+      <RecruiterOperatingPanel metrics={operatingMetrics} onPerformance={onPerformance} />
       <div className="rb-workbench-grid">
         <section className="rb-panel rb-priority-panel">
           <header className="rb-panel__head">
@@ -940,6 +1152,45 @@ function OverviewTab({
         </div>
       </section>
     </div>
+  )
+}
+
+function RecruiterOperatingPanel({
+  metrics,
+  onPerformance,
+}: {
+  metrics: RecruiterOperatingMetrics
+  onPerformance: () => void
+}) {
+  return (
+    <section className="rb-panel rb-operating-panel">
+      <header className="rb-panel__head">
+        <div>
+          <h2>Recruiter operating scorecard</h2>
+          <p>Status, quality signal, and weekly pace for earning more trusted role access.</p>
+        </div>
+        <button type="button" className="rb-panel__link" onClick={onPerformance}>Open performance</button>
+      </header>
+      <div className="rb-operating-grid">
+        <article className={`rb-operating-card rb-operating-card--lead is-${metrics.statusTone}`}>
+          <span>Current track</span>
+          <strong>{metrics.statusLabel}</strong>
+          <p>{metrics.statusBody}</p>
+        </article>
+        {metrics.cards.slice(1).map((card) => (
+          <article className={`rb-operating-card is-${card.tone}`} key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <p>{card.body}</p>
+          </article>
+        ))}
+        <article className={`rb-operating-card rb-operating-card--challenge is-${metrics.reviewTone}`}>
+          <span>Activity review</span>
+          <strong>{metrics.reviewLabel}</strong>
+          <p>{metrics.reviewBody}</p>
+        </article>
+      </div>
+    </section>
   )
 }
 
@@ -2060,12 +2311,14 @@ function PerformanceTab({
   submissions,
   primaryRoleIds,
   roleFeedback,
+  operatingMetrics,
 }: {
   jobs: CollabJob[]
   candidates: RecruiterSourcedCandidateItem[]
   submissions: RecruiterSubmissionItem[]
   primaryRoleIds: string[]
   roleFeedback: RecruiterRoleFeedbackItem[]
+  operatingMetrics: RecruiterOperatingMetrics
 }) {
   const feedbackRows = submissions.filter((s) => Boolean(s.recruiterFeedbackNote))
   const advanced = submissions.filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? "")).length
@@ -2105,6 +2358,22 @@ function PerformanceTab({
             <em>{metric.meta}</em>
           </article>
         ))}
+      </section>
+      <section className="rb-performance-status">
+        <div className="rb-performance-status__lead">
+          <span>Recruiter status</span>
+          <strong>{operatingMetrics.statusLabel}</strong>
+          <p>{operatingMetrics.statusBody}</p>
+        </div>
+        <div className="rb-performance-targets">
+          {operatingMetrics.targets.map((target) => (
+            <article className={`is-${target.tone}`} key={target.label}>
+              <span>{target.label}</span>
+              <strong>{target.value}</strong>
+              <p>{target.body}</p>
+            </article>
+          ))}
+        </div>
       </section>
       <div className="rb-performance-grid">
         <section className="rb-performance-card">
