@@ -65,6 +65,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/admin/recruiter-access", label: "Access codes" },
       { to: "/admin/recruiter-sourced", label: "Sourced candidates", hitl: true },
       { to: "/admin/recruiter-feedback", label: "Role feedback", hitl: true },
+      { to: "/admin/recruiter-questions", label: "Role questions", hitl: true },
       { to: "/admin/recruiter-submissions", label: "Submissions", hitl: true },
     ],
   },

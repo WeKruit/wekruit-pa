@@ -33,6 +33,7 @@ import {
   sanitizeSubmissionStatusHistory,
   validateInviteCodeCreate,
   validateRecruiterRoleFeedbackInput,
+  validateRecruiterRoleQuestionInput,
   validateRecruiterSourcedCandidateInput,
   validateRecruiterWorkspacePreferences,
   type RecruiterBoardChecklistGroup,
@@ -351,6 +352,36 @@ describe("recruiter role feedback", () => {
     }), {
       ok: false,
       reason: "invalid_reasons",
+    })
+  })
+})
+
+describe("recruiter role questions", () => {
+  it("accepts a role question for WeKruit calibration", () => {
+    assert.deepEqual(validateRecruiterRoleQuestionInput({
+      jobId: " role-123 ",
+      question: "Can the hiring team consider candidates from Canada if they can work US hours?",
+    }), {
+      ok: true,
+      value: {
+        jobId: "role-123",
+        question: "Can the hiring team consider candidates from Canada if they can work US hours?",
+      },
+    })
+  })
+
+  it("rejects malformed role question payloads", () => {
+    assert.deepEqual(validateRecruiterRoleQuestionInput({ question: "Too short" }), {
+      ok: false,
+      reason: "missing_jobId",
+    })
+    assert.deepEqual(validateRecruiterRoleQuestionInput({ jobId: "role-123", question: "short" }), {
+      ok: false,
+      reason: "question_too_short",
+    })
+    assert.deepEqual(validateRecruiterRoleQuestionInput({ jobId: "role-123", question: "x".repeat(2001) }), {
+      ok: false,
+      reason: "question_too_long",
     })
   })
 })

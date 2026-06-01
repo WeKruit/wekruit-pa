@@ -16,6 +16,8 @@ export const RECRUITER_SOURCED_CANDIDATES_LIST_URL = `${DEFAULT_BASE}/paRecruite
 export const RECRUITER_SOURCED_CANDIDATE_SAVE_URL = `${DEFAULT_BASE}/paRecruiterSourcedCandidateSave`
 export const RECRUITER_ROLE_FEEDBACK_LIST_URL = `${DEFAULT_BASE}/paRecruiterRoleFeedbackList`
 export const RECRUITER_ROLE_FEEDBACK_SAVE_URL = `${DEFAULT_BASE}/paRecruiterRoleFeedbackSave`
+export const RECRUITER_ROLE_QUESTIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterRoleQuestionsList`
+export const RECRUITER_ROLE_QUESTION_CREATE_URL = `${DEFAULT_BASE}/paRecruiterRoleQuestionCreate`
 export const RECRUITER_SUBMISSION_URL = `${DEFAULT_BASE}/paRecruiterSubmission`
 export const RECRUITER_SUBMISSIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterSubmissionsList`
 
@@ -197,6 +199,29 @@ export interface RecruiterRoleFeedbackInput {
   note?: string
 }
 
+export interface RecruiterRoleQuestionItem {
+  id: string
+  questionId?: string
+  recruiterId?: string
+  recruiterEmail?: string
+  jobId?: string
+  inboundJobId?: string
+  jobTitleSnapshot?: string
+  companyLabelSnapshot?: string
+  question?: string
+  status?: "open" | "answered"
+  answer?: string | null
+  answeredByEmail?: string | null
+  answeredAt?: { seconds?: number } | string | null
+  createdAt?: { seconds?: number } | string | null
+  updatedAt?: { seconds?: number } | string | null
+}
+
+export interface RecruiterRoleQuestionInput {
+  jobId: string
+  question: string
+}
+
 export async function recruiterAuthHeaders(): Promise<Record<string, string>> {
   const user = auth().currentUser
   if (!user) throw new Error("recruiter_auth_required")
@@ -322,6 +347,44 @@ export async function saveRecruiterRoleFeedback(
     throw new Error(body.reason ?? `paRecruiterRoleFeedbackSave HTTP ${res.status}`)
   }
   return body.feedback
+}
+
+export async function fetchRecruiterRoleQuestions(): Promise<RecruiterRoleQuestionItem[]> {
+  const res = await fetch(RECRUITER_ROLE_QUESTIONS_LIST_URL, {
+    method: "GET",
+    headers: await recruiterAuthHeaders(),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    questions?: RecruiterRoleQuestionItem[]
+  }
+  if (!res.ok || !body.ok || !body.questions) {
+    throw new Error(body.reason ?? `paRecruiterRoleQuestionsList HTTP ${res.status}`)
+  }
+  return body.questions
+}
+
+export async function createRecruiterRoleQuestion(
+  input: RecruiterRoleQuestionInput,
+): Promise<RecruiterRoleQuestionItem> {
+  const res = await fetch(RECRUITER_ROLE_QUESTION_CREATE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(await recruiterAuthHeaders()),
+    },
+    body: JSON.stringify(input),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    question?: RecruiterRoleQuestionItem
+  }
+  if (!res.ok || !body.ok || !body.question) {
+    throw new Error(body.reason ?? `paRecruiterRoleQuestionCreate HTTP ${res.status}`)
+  }
+  return body.question
 }
 
 export async function saveRecruiterSourcedCandidate(

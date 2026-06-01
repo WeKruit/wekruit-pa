@@ -10,8 +10,10 @@ import { onAuthStateChanged } from "firebase/auth"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import "../styles/recruiter-board.css"
 import {
+  createRecruiterRoleQuestion,
   fetchCollabJobs,
   fetchRecruiterRoleFeedback,
+  fetchRecruiterRoleQuestions,
   fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissions,
   getRecruiterProfile,
@@ -22,6 +24,7 @@ import {
   type RecruiterRoleFeedbackDifficulty,
   type RecruiterRoleFeedbackItem,
   type RecruiterRoleFeedbackReason,
+  type RecruiterRoleQuestionItem,
   type RecruiterSession,
   type RecruiterSourcedCandidateItem,
   type RecruiterSubmissionItem,
@@ -104,10 +107,12 @@ function withRecruiterDefaults(state: FormState, session: RecruiterSession | nul
   }
 }
 
-function timestampMs(raw: RecruiterSubmissionItem["createdAt"] | RecruiterSourcedCandidateItem["createdAt"]): number {
+function timestampMs(raw: unknown): number {
   if (!raw) return 0
   if (typeof raw === "string") return Date.parse(raw) || 0
-  if (typeof raw === "object" && typeof raw.seconds === "number") return raw.seconds * 1000
+  if (typeof raw === "object" && typeof (raw as { seconds?: unknown }).seconds === "number") {
+    return (raw as { seconds: number }).seconds * 1000
+  }
   return 0
 }
 
@@ -247,6 +252,7 @@ export default function RecruiterRole() {
   const [sourcedCandidates, setSourcedCandidates] = useState<RecruiterSourcedCandidateItem[]>([])
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
   const [roleFeedback, setRoleFeedback] = useState<RecruiterRoleFeedbackItem[]>([])
+  const [roleQuestions, setRoleQuestions] = useState<RecruiterRoleQuestionItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [trackerError, setTrackerError] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
@@ -296,12 +302,18 @@ export default function RecruiterRole() {
   useEffect(() => {
     if (!session) return
     let active = true
-    Promise.all([fetchRecruiterSourcedCandidates(), fetchRecruiterSubmissions(), fetchRecruiterRoleFeedback()])
-      .then(([candidates, rows, feedback]) => {
+    Promise.all([
+      fetchRecruiterSourcedCandidates(),
+      fetchRecruiterSubmissions(),
+      fetchRecruiterRoleFeedback(),
+      fetchRecruiterRoleQuestions(),
+    ])
+      .then(([candidates, rows, feedback, questions]) => {
         if (!active) return
         setSourcedCandidates(candidates)
         setSubmissions(rows)
         setRoleFeedback(feedback)
+        setRoleQuestions(questions)
         setTrackerError(null)
       })
       .catch((e) => {
@@ -388,6 +400,9 @@ export default function RecruiterRole() {
     .filter((row) => roleMatches(job, row))
     .sort((a, b) => timestampMs(b.createdAt) - timestampMs(a.createdAt))
   const currentRoleFeedback = roleFeedback.find((feedback) => roleMatches(job, feedback)) ?? null
+  const currentRoleQuestions = roleQuestions
+    .filter((question) => roleMatches(job, question))
+    .sort((a, b) => timestampMs(b.updatedAt ?? b.createdAt) - timestampMs(a.updatedAt ?? a.createdAt))
   const pendingCount = roleSubmissions.filter((row) => ["submitted", "new", "reviewing"].includes(row.status ?? "submitted")).length
   const pendingSlots = Math.max(0, ROLE_PENDING_SUBMISSION_LIMIT - pendingCount)
   const selectedCandidate = prefilledCandidateId
@@ -759,6 +774,14 @@ export default function RecruiterRole() {
               }}
             />
 
+            <RoleQuestionsPanel
+              job={job}
+              questions={currentRoleQuestions}
+              onCreated={(question) => {
+                setRoleQuestions((rows) => [question, ...rows.filter((row) => row.id !== question.id)])
+              }}
+            />
+
             <section className="rb-side-panel">
               <h3>My submissions</h3>
               <div className="rb-role-submission-list">
@@ -878,6 +901,81 @@ function RoleFeedbackPanel({
         </button>
       </div>
       {savedAt && <p className="rb-form-note rb-form-note--active">Saved at {savedAt}.</p>}
+      {err && <p className="rb-error">{err}</p>}
+    </section>
+  )
+}
+
+function roleQuestionTime(raw: unknown): string {
+  const ms = timestampMs(raw)
+  return ms ? new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Just now"
+}
+
+function RoleQuestionsPanel({
+  job,
+  questions,
+  onCreated,
+}: {
+  job: CollabJob
+  questions: RecruiterRoleQuestionItem[]
+  onCreated: (question: RecruiterRoleQuestionItem) => void
+}) {
+  const [question, setQuestion] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+  const [savedAt, setSavedAt] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  const createQuestion = async () => {
+    const trimmed = question.trim()
+    if (trimmed.length < 8) {
+      setErr("Ask a specific role question.")
+      return
+    }
+    setSubmitting(true)
+    setErr(null)
+    try {
+      const saved = await createRecruiterRoleQuestion({
+        jobId: job.jobId,
+        question: trimmed,
+      })
+      onCreated(saved)
+      setQuestion("")
+      setSavedAt(new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }))
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <section className="rb-side-panel rb-role-questions">
+      <h3>Questions for WeKruit</h3>
+      <p>Ask role-specific calibration questions before spending sourcing cycles.</p>
+      <div className="rb-role-question-list">
+        {questions.slice(0, 5).map((item) => (
+          <article key={item.id} className={item.status === "answered" ? "is-answered" : ""}>
+            <div>
+              <strong>{item.question || "Question"}</strong>
+              <small>{item.status === "answered" ? "Answered" : "Open"} · {roleQuestionTime(item.updatedAt ?? item.createdAt)}</small>
+            </div>
+            {item.answer && <p>{item.answer}</p>}
+          </article>
+        ))}
+        {questions.length === 0 && <p className="rb-side-empty">No questions for this role yet.</p>}
+      </div>
+      <textarea
+        value={question}
+        onChange={(e) => setQuestion(e.target.value)}
+        placeholder="Example: Are Canada-based candidates acceptable if they overlap US hours?"
+        rows={4}
+      />
+      <div className="rb-role-feedback__footer">
+        <span>{savedAt ? `Sent at ${savedAt}` : "WeKruit answers appear here"}</span>
+        <button type="button" className="rb-btn" onClick={() => void createQuestion()} disabled={submitting || question.trim().length < 8}>
+          {submitting ? "Sending..." : "Ask question"}
+        </button>
+      </div>
       {err && <p className="rb-error">{err}</p>}
     </section>
   )

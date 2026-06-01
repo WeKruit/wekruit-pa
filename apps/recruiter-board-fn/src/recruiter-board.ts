@@ -16,6 +16,8 @@
  *   POST paRecruiterSourcedCandidateSave -> upserts one sourced candidate
  *   GET  paRecruiterRoleFeedbackList -> recruiter-authenticated role feedback
  *   POST paRecruiterRoleFeedbackSave -> upserts role difficulty / market feedback
+ *   GET  paRecruiterRoleQuestionsList -> recruiter-authenticated role Q&A
+ *   POST paRecruiterRoleQuestionCreate -> creates one role calibration question
  *   POST paRecruiterSubmission     -> writes pa-recruiter-submissions doc
  *                                     (honors Idempotency-Key header)
  *   GET  paRecruiterSubmissionsList -> recruiter-authenticated status tracker
@@ -227,6 +229,7 @@ const RECRUITER_SUBMISSIONS_COLLECTION = "pa-recruiter-submissions"
 const RECRUITER_NOTIFICATIONS_COLLECTION = "pa-recruiter-notifications"
 const RECRUITER_SOURCED_CANDIDATES_COLLECTION = "pa-recruiter-sourced-candidates"
 const RECRUITER_ROLE_FEEDBACK_COLLECTION = "pa-recruiter-role-feedback"
+const RECRUITER_ROLE_QUESTIONS_COLLECTION = "pa-recruiter-role-questions"
 
 export interface RecruiterNotificationPreferences {
   newRolesEmail: boolean
@@ -1201,6 +1204,29 @@ interface RecruiterRoleFeedbackListItem {
   updatedAt?: unknown
 }
 
+interface RecruiterRoleQuestionInput {
+  jobId: string
+  question: string
+}
+
+interface RecruiterRoleQuestionListItem {
+  id: string
+  questionId?: string
+  recruiterId?: string
+  recruiterEmail?: string
+  jobId?: string
+  inboundJobId?: string
+  jobTitleSnapshot?: string
+  companyLabelSnapshot?: string
+  question?: string
+  status?: "open" | "answered"
+  answer?: string | null
+  answeredByEmail?: string | null
+  answeredAt?: unknown
+  createdAt?: unknown
+  updatedAt?: unknown
+}
+
 export function normalizeRecruiterCandidateLink(raw: string): string {
   const trimmed = raw.trim()
   if (!trimmed) return ""
@@ -1367,6 +1393,44 @@ function publicRecruiterRoleFeedback(
     difficulty,
     reasons,
     note: typeof data.note === "string" ? data.note : null,
+    createdAt: data.createdAt,
+    updatedAt: data.updatedAt,
+  }
+}
+
+export function validateRecruiterRoleQuestionInput(input: unknown):
+  | { ok: true; value: RecruiterRoleQuestionInput }
+  | { ok: false; reason: string } {
+  if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
+  const b = input as Record<string, unknown>
+  if (!isNonEmptyString(b.jobId)) return { ok: false, reason: "missing_jobId" }
+  if (b.jobId.length > 200) return { ok: false, reason: "jobId_too_long" }
+  if (typeof b.question !== "string") return { ok: false, reason: "missing_question" }
+  const question = b.question.trim()
+  if (question.length < 8) return { ok: false, reason: "question_too_short" }
+  if (question.length > 2000) return { ok: false, reason: "question_too_long" }
+  return { ok: true, value: { jobId: b.jobId.trim(), question } }
+}
+
+function publicRecruiterRoleQuestion(
+  d: { id: string; data: () => Record<string, unknown> | undefined },
+): RecruiterRoleQuestionListItem {
+  const data = d.data() ?? {}
+  const status = data.status === "answered" ? "answered" : "open"
+  return {
+    id: d.id,
+    questionId: typeof data.questionId === "string" ? data.questionId : d.id,
+    recruiterId: typeof data.recruiterId === "string" ? data.recruiterId : undefined,
+    recruiterEmail: typeof data.recruiterEmail === "string" ? data.recruiterEmail : undefined,
+    jobId: typeof data.jobId === "string" ? data.jobId : undefined,
+    inboundJobId: typeof data.inboundJobId === "string" ? data.inboundJobId : undefined,
+    jobTitleSnapshot: typeof data.jobTitleSnapshot === "string" ? data.jobTitleSnapshot : undefined,
+    companyLabelSnapshot: typeof data.companyLabelSnapshot === "string" ? data.companyLabelSnapshot : undefined,
+    question: typeof data.question === "string" ? data.question : undefined,
+    status,
+    answer: typeof data.answer === "string" ? data.answer : null,
+    answeredByEmail: typeof data.answeredByEmail === "string" ? data.answeredByEmail : null,
+    answeredAt: data.answeredAt,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   }
@@ -1618,6 +1682,113 @@ export const paRecruiterRoleFeedbackSave = onRequest(
       res.status(200).json({ ok: true, feedback: publicRecruiterRoleFeedback(saved) })
     } catch (err) {
       logger.error("paRecruiterRoleFeedbackSave_failed", { error: String(err), recruiterId: recruiter.recruiterId })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
+
+export const paRecruiterRoleQuestionsList = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "GET") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    try {
+      const snap = await db
+        .collection(RECRUITER_ROLE_QUESTIONS_COLLECTION)
+        .where("recruiterId", "==", recruiter.recruiterId)
+        .limit(300)
+        .get()
+      const questions = snap.docs
+        .map(publicRecruiterRoleQuestion)
+        .sort((a, b) => timestampMs(b.updatedAt ?? b.createdAt) - timestampMs(a.updatedAt ?? a.createdAt))
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, recruiter, questions })
+    } catch (err) {
+      logger.error("paRecruiterRoleQuestionsList_failed", { error: String(err), recruiterId: recruiter.recruiterId })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
+
+export const paRecruiterRoleQuestionCreate = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    const validated = validateRecruiterRoleQuestionInput(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+    const payload = validated.value
+
+    try {
+      const realJobId = await resolvePublicIdToDocId(db, payload.jobId)
+      if (!realJobId) {
+        res.status(404).json({ ok: false, reason: "job_not_found" })
+        return
+      }
+      const jobSnap = await db.collection("pa-jobs").doc(realJobId).get()
+      if (!jobSnap.exists) {
+        res.status(404).json({ ok: false, reason: "job_not_found" })
+        return
+      }
+      const jobData = jobSnap.data() as Record<string, unknown>
+      const rb = jobData.recruiterBoard as RecruiterBoardPayload | undefined
+      if (jobData.wekruitCollaborationStatus !== "collaborated" || !rb || rb.active !== true) {
+        res.status(403).json({ ok: false, reason: "job_not_active_on_board" })
+        return
+      }
+
+      const questionId = randomUUID()
+      const ref = db.collection(RECRUITER_ROLE_QUESTIONS_COLLECTION).doc(questionId)
+      await ref.create({
+        questionId,
+        recruiterId: recruiter.recruiterId,
+        recruiterEmail: recruiter.email,
+        jobId: realJobId,
+        inboundJobId: payload.jobId,
+        jobTitleSnapshot: String(jobData.title ?? ""),
+        companyLabelSnapshot: rb.label.company,
+        question: payload.question,
+        status: "open",
+        answer: null,
+        answeredByEmail: null,
+        answeredAt: null,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+      const saved = await ref.get()
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, question: publicRecruiterRoleQuestion(saved) })
+    } catch (err) {
+      logger.error("paRecruiterRoleQuestionCreate_failed", { error: String(err), recruiterId: recruiter.recruiterId })
       res.status(500).json({ ok: false, reason: "internal_error" })
     }
   },

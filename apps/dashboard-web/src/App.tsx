@@ -237,6 +237,7 @@ export default function App() {
           <Route path="/admin/recruiter-codes" element={<Navigate to="/admin/recruiter-access" replace />} />
           <Route path="/admin/recruiter-sourced" element={<RecruiterSubmissions section="sourced" />} />
           <Route path="/admin/recruiter-feedback" element={<RecruiterSubmissions section="feedback" />} />
+          <Route path="/admin/recruiter-questions" element={<RecruiterSubmissions section="questions" />} />
           <Route path="/admin/recruiter-submissions" element={<RecruiterSubmissions section="submissions" />} />
           {/* v2.0 External Supply V1 — Wave D admin surfaces. */}
           <Route path="/admin/external-supply" element={<ExternalSupplyLanding />} />
