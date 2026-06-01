@@ -4583,6 +4583,162 @@
   align-content: start;
 }
 
+.rb-match-command {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.78fr) minmax(0, 1.1fr);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.rb-match-command.is-live { border-color: var(--live-border); }
+.rb-match-command.is-info { border-color: #c8d7eb; }
+.rb-match-command.is-success { border-color: #b8dbc0; }
+.rb-match-command.is-warn { border-color: #e7c894; }
+.rb-match-command.is-mute { border-color: var(--border); }
+
+.rb-match-command__mission {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border-right: 1px solid var(--border);
+  border-top: 4px solid var(--info);
+  padding: 16px;
+}
+
+.rb-match-command.is-live .rb-match-command__mission { border-top-color: var(--live); background: var(--live-soft); }
+.rb-match-command.is-success .rb-match-command__mission { border-top-color: var(--success); background: var(--success-bg); }
+.rb-match-command.is-warn .rb-match-command__mission { border-top-color: var(--warning); background: #fffaf1; }
+.rb-match-command.is-mute .rb-match-command__mission { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-match-command__mission > div {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.rb-match-command__mission em,
+.rb-match-command__cards span,
+.rb-match-command__shortlist > span {
+  display: block;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-match-command__mission strong {
+  display: block;
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: clamp(23px, 2.4vw, 31px);
+  font-weight: 400;
+  line-height: 1.04;
+}
+
+.rb-match-command__mission p,
+.rb-match-command__cards em,
+.rb-match-command__shortlist p,
+.rb-match-command__shortlist a em {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.rb-match-command__mission a {
+  justify-self: start;
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 12px;
+  text-decoration: none;
+}
+
+.rb-match-command__cards {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid var(--border);
+}
+
+.rb-match-command__cards a,
+.rb-match-command__cards article {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  border-right: 1px solid var(--border);
+  border-top: 3px solid var(--ink-3);
+  color: inherit;
+  padding: 13px;
+  text-decoration: none;
+}
+
+.rb-match-command__cards a:nth-child(2n),
+.rb-match-command__cards article:nth-child(2n) {
+  border-right: 0;
+}
+
+.rb-match-command__cards a:hover {
+  background: var(--cream-3);
+}
+
+.rb-match-command__cards .is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-match-command__cards .is-info { border-top-color: var(--info); }
+.rb-match-command__cards .is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-match-command__cards .is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-match-command__cards .is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-match-command__cards strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 25px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-match-command__shortlist {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.rb-match-command__shortlist > div {
+  display: grid;
+  gap: 7px;
+}
+
+.rb-match-command__shortlist a {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--live);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 9px 10px;
+  text-decoration: none;
+}
+
+.rb-match-command__shortlist a:hover {
+  background: var(--live-soft);
+}
+
+.rb-match-command__shortlist a strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .rb-match-profile,
 .rb-match-row {
   border: 1px solid var(--border);
@@ -5162,6 +5318,7 @@
   .rb-inbox-grid,
   .rb-feedback-grid,
   .rb-candidate-crm,
+  .rb-match-command,
   .rb-matchboard,
   .rb-submissions-layout,
   .rb-role-workroom,
@@ -5218,6 +5375,10 @@
   }
   .rb-role-side {
     position: static;
+  }
+  .rb-match-command__mission {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
   .rb-stats {
     grid-template-columns: repeat(2, 1fr);
@@ -5382,6 +5543,7 @@
   .rb-access-table article,
   .rb-source-form__split,
   .rb-feedback-line,
+  .rb-match-command__cards,
   .rb-role-cockpit,
   .rb-role-workroom__cards,
   .rb-role-intel__metrics,

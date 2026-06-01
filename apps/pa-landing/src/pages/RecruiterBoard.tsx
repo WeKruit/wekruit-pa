@@ -634,6 +634,12 @@ function candidateFollowUpState(candidate: RecruiterSourcedCandidateItem): {
   return { label: `Follow-up ${formatFollowUpDate(candidate.outreach?.nextFollowUpAt)}`, body: "Next touch is scheduled.", tone: "info", needsAction: false }
 }
 
+const RECRUITER_MATCH_STOP_WORDS = new Set([
+  "and", "are", "but", "can", "for", "from", "has", "have", "into", "our", "per", "the", "this", "that",
+  "their", "they", "with", "you", "your", "candidate", "candidates", "role", "team", "work", "working",
+  "experience", "years", "strong", "good", "fit", "must", "nice", "need", "needs", "build", "building",
+])
+
 function normalizeTokens(value: string | undefined): string[] {
   if (!value) return []
   return value
@@ -641,7 +647,7 @@ function normalizeTokens(value: string | undefined): string[] {
     .replace(/[^a-z0-9+#.]+/g, " ")
     .split(/\s+/)
     .map((token) => token.trim())
-    .filter((token) => token.length >= 3)
+    .filter((token) => token.length >= 3 && !RECRUITER_MATCH_STOP_WORDS.has(token))
 }
 
 function cleanRecruiterEmail(value: string): string {
@@ -3856,6 +3862,22 @@ type CandidateRoleMatch = {
   submissionCount: number
 }
 
+type CandidateMatchCommand = {
+  tone: "live" | "info" | "success" | "warn" | "mute"
+  label: string
+  title: string
+  body: string
+  actionLabel: string
+  actionHref: string
+  cards: Array<{
+    label: string
+    value: string
+    body: string
+    tone: "live" | "info" | "success" | "warn" | "mute"
+    href?: string
+  }>
+}
+
 function candidateMatchText(candidate: RecruiterSourcedCandidateItem): string {
   return [
     candidate.candidate?.name,
@@ -4024,6 +4046,125 @@ function buildCandidateRoleMatches(
     .sort((a, b) => b.score - a.score)
 }
 
+function candidateMatchedSubmissions(candidate: RecruiterSourcedCandidateItem, submissions: RecruiterSubmissionItem[]): RecruiterSubmissionItem[] {
+  const email = candidate.candidate?.email?.trim().toLowerCase()
+  const link = candidate.candidate?.link?.trim().toLowerCase()
+  return submissions.filter((submission) => {
+    if (submission.sourcedCandidateId && (submission.sourcedCandidateId === candidate.id || submission.sourcedCandidateId === candidate.candidateId)) return true
+    if (email && submission.candidate?.email?.trim().toLowerCase() === email) return true
+    if (link && submission.candidate?.link?.trim().toLowerCase() === link) return true
+    return false
+  })
+}
+
+function buildCandidateMatchCommand(
+  candidate: RecruiterSourcedCandidateItem,
+  matches: CandidateRoleMatch[],
+  submissions: RecruiterSubmissionItem[],
+  primaryRoleIds: string[],
+): CandidateMatchCommand {
+  const topMatch = matches[0]
+  const matchedSubmissions = candidateMatchedSubmissions(candidate, submissions)
+  const stage = sourceStageMeta(candidate.stage)
+  const profileItems = [
+    candidate.candidate?.email,
+    candidate.candidate?.link,
+    candidate.candidate?.currentRole,
+    candidate.candidate?.yoe,
+    candidate.candidate?.notes,
+  ].filter(Boolean).length
+  const hasCandidateIdentity = Boolean(candidate.candidate?.email && candidate.candidate?.link)
+  const topRoleHref = topMatch ? `/recruiters/job/${topMatch.job.jobId}?candidateId=${encodeURIComponent(candidate.id)}` : "/recruiters?tab=roles"
+  const topRolePrimary = topMatch ? isPrimaryRole(topMatch.job, primaryRoleIds) : false
+  let tone: CandidateMatchCommand["tone"] = "info"
+  let label = "Candidate command"
+  let title = topMatch ? `Best role: ${topMatch.job.title}` : "No open role match yet"
+  let body = topMatch
+    ? "Open the strongest role brief, verify hard checks, then submit with candidate consent."
+    : "Save richer candidate notes or wait for a matching WeKruit collab role."
+  let actionLabel = topMatch ? "Open best brief" : "Browse roles"
+  let actionHref = topRoleHref
+
+  if (matchedSubmissions.length > 0 || candidate.stage === "submitted") {
+    tone = "success"
+    label = "Already in pipeline"
+    title = `${candidateName(candidate)} has an active submission signal`
+    body = "Track status, consent confirmation, and feedback before sending lookalike candidates."
+    actionLabel = "Track submission"
+    actionHref = "/recruiters?tab=submissions"
+  } else if (!hasCandidateIdentity) {
+    tone = "warn"
+    label = "Profile proof missing"
+    title = "Add email and LinkedIn before submission"
+    body = "WeKruit needs candidate identity and consent confirmation before this can become a clean submission."
+    actionLabel = "Open candidate CRM"
+    actionHref = "/recruiters?tab=candidates"
+  } else if (candidate.stage === "ready" && topMatch) {
+    tone = topMatch.score >= 70 ? "live" : "info"
+    label = "Submit next"
+    title = `${candidateName(candidate)} is ready for ${topMatch.job.title}`
+    body = topRolePrimary
+      ? "Approved role access is available. Verify hard checks and submit from the role brief."
+      : "This is a candidate-led opportunity. Use a single-submit credit only if the hard checks are strong."
+    actionLabel = "Submit from brief"
+  } else if (topMatch && topMatch.score >= 72) {
+    tone = "live"
+    label = "Strong match"
+    title = `${topMatch.score}% fit for ${topMatch.job.title}`
+    body = "Screen the candidate against hard checks, mark ready, then submit from the role brief."
+    actionLabel = "Open role fit"
+  } else if (topMatch) {
+    tone = "info"
+    label = "Needs screening"
+    title = `${candidateName(candidate)} needs more proof`
+    body = "The match is plausible, but recruiter notes and hard-check evidence need to improve before submission."
+    actionLabel = "Review best role"
+  }
+
+  return {
+    tone,
+    label,
+    title,
+    body,
+    actionLabel,
+    actionHref,
+    cards: [
+      {
+        label: "Candidate stage",
+        value: stage.label,
+        body: candidate.outreach?.status ? `${outreachMeta(candidate.outreach.status).label} outreach` : "No outreach status captured yet.",
+        tone: stage.tone,
+        href: "/recruiters?tab=candidates",
+      },
+      {
+        label: "Best role",
+        value: topMatch ? `${topMatch.score}%` : "None",
+        body: topMatch ? `${topMatch.job.title} · ${topMatch.job.recruiterBoard.label.company}` : "No live role can be ranked yet.",
+        tone: topMatch ? topMatch.score >= 72 ? "live" : topMatch.score >= 58 ? "info" : "mute" : "mute",
+        href: topMatch ? topRoleHref : "/recruiters?tab=roles",
+      },
+      {
+        label: "Access lane",
+        value: topMatch ? topRolePrimary ? "Approved" : "Single-submit" : "No lane",
+        body: topMatch
+          ? topRolePrimary
+            ? "Trusted role access is available for this candidate."
+            : "Submit only when the candidate-led proof is strong."
+          : "Browse roles or wait for a better market fit.",
+        tone: topRolePrimary ? "success" : topMatch ? "warn" : "mute",
+        href: topMatch ? topRoleHref : "/recruiters?tab=access",
+      },
+      {
+        label: "Profile proof",
+        value: `${profileItems}/5`,
+        body: hasCandidateIdentity ? "Email and link are present for consent workflow." : "Email and LinkedIn/resume are required.",
+        tone: hasCandidateIdentity ? profileItems >= 4 ? "success" : "info" : "warn",
+        href: "/recruiters?tab=candidates",
+      },
+    ],
+  }
+}
+
 function MatchboardTab({
   jobs,
   candidates,
@@ -4044,6 +4185,10 @@ function MatchboardTab({
   const matches = useMemo(
     () => selectedCandidate ? buildCandidateRoleMatches(selectedCandidate, jobs, submissions, candidates).slice(0, 8) : [],
     [candidates, jobs, selectedCandidate, submissions],
+  )
+  const command = useMemo(
+    () => selectedCandidate ? buildCandidateMatchCommand(selectedCandidate, matches, submissions, primaryRoleIds) : null,
+    [matches, primaryRoleIds, selectedCandidate, submissions],
   )
 
   useEffect(() => {
@@ -4084,18 +4229,7 @@ function MatchboardTab({
             })}
           </aside>
           <div className="rb-matchboard__main">
-            {selectedCandidate && (
-              <section className="rb-match-profile">
-                <div>
-                  <span className="rb-candidate-dot">{candidateName(selectedCandidate).slice(0, 1).toUpperCase()}</span>
-                  <span>
-                    <strong>{candidateName(selectedCandidate)}</strong>
-                    <em>{selectedCandidate.candidate?.currentRole || "Candidate profile"}</em>
-                  </span>
-                </div>
-                <p>{shortText(selectedCandidate.candidate?.notes, "No recruiter note yet. Add context in Candidate CRM to improve ranking.", 160)}</p>
-              </section>
-            )}
+            {selectedCandidate && command && <CandidateMatchCommandPanel candidate={selectedCandidate} command={command} matches={matches} />}
             <div className="rb-match-list">
               {matches.map((match) => (
                 <CandidateRoleMatchRow
@@ -4109,6 +4243,62 @@ function MatchboardTab({
           </div>
         </div>
       )}
+    </section>
+  )
+}
+
+function CandidateMatchCommandPanel({
+  candidate,
+  command,
+  matches,
+}: {
+  candidate: RecruiterSourcedCandidateItem
+  command: CandidateMatchCommand
+  matches: CandidateRoleMatch[]
+}) {
+  return (
+    <section className={`rb-match-command is-${command.tone}`} aria-label="Candidate match command">
+      <div className="rb-match-command__mission">
+        <div>
+          <span className="rb-candidate-dot">{candidateName(candidate).slice(0, 1).toUpperCase()}</span>
+          <span>
+            <em>{command.label}</em>
+            <strong>{command.title}</strong>
+          </span>
+        </div>
+        <p>{command.body}</p>
+        <Link to={command.actionHref}>{command.actionLabel}</Link>
+      </div>
+
+      <div className="rb-match-command__cards">
+        {command.cards.map((card) => {
+          const body = (
+            <>
+              <span>{card.label}</span>
+              <strong>{card.value}</strong>
+              <em>{card.body}</em>
+            </>
+          )
+          return card.href ? (
+            <Link className={`is-${card.tone}`} to={card.href} key={card.label}>{body}</Link>
+          ) : (
+            <article className={`is-${card.tone}`} key={card.label}>{body}</article>
+          )
+        })}
+      </div>
+
+      <div className="rb-match-command__shortlist">
+        <span>Top role shortlist</span>
+        <div>
+          {matches.slice(0, 3).map((match) => (
+            <Link key={match.job.jobId} to={`/recruiters/job/${match.job.jobId}?candidateId=${encodeURIComponent(candidate.id)}`}>
+              <strong>{match.job.title}</strong>
+              <em>{match.score}% · {match.reasons.slice(0, 2).join(" · ") || "Role match"}</em>
+            </Link>
+          ))}
+          {matches.length === 0 && <p>No live roles can be ranked for this candidate.</p>}
+        </div>
+      </div>
     </section>
   )
 }
