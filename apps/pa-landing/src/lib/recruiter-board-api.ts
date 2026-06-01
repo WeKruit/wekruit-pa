@@ -23,6 +23,7 @@ export const RECRUITER_ROLE_QUESTIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterRol
 export const RECRUITER_ROLE_QUESTION_CREATE_URL = `${DEFAULT_BASE}/paRecruiterRoleQuestionCreate`
 export const RECRUITER_SUBMISSION_URL = `${DEFAULT_BASE}/paRecruiterSubmission`
 export const RECRUITER_SUBMISSIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterSubmissionsList`
+export const RECRUITER_CANDIDATE_CONFIRMATION_RESEND_URL = `${DEFAULT_BASE}/paRecruiterCandidateConsentResend`
 
 // Mirrors PublicCollabJob in apps/functions/src/recruiter-board.ts. Loose
 // typing on purpose — the server is source of truth.
@@ -127,7 +128,9 @@ export interface RecruiterSubmissionItem {
     status?: string
     candidateEmail?: string
     sentAt?: { seconds?: number } | string | null
+    lastResentAt?: { seconds?: number } | string | null
     confirmedAt?: { seconds?: number } | string | null
+    resendCount?: number
     lastError?: string | null
   }
   score?: SubmissionResponse["score"]
@@ -604,4 +607,36 @@ export async function submitRecruiterCandidate(input: SubmissionInput): Promise<
   const body = (await res.json().catch(() => ({}))) as SubmissionResponse
   if (!res.ok) return { ok: false, reason: body.reason ?? `http_${res.status}` }
   return body
+}
+
+export async function resendRecruiterCandidateConfirmation(
+  submissionId: string,
+): Promise<{
+  ok: boolean
+  reason?: string
+  candidateConsentStatus?: string
+  confirmationStatus?: string
+}> {
+  const res = await fetch(RECRUITER_CANDIDATE_CONFIRMATION_RESEND_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(await recruiterAuthHeaders()),
+    },
+    body: JSON.stringify({ submissionId }),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    candidateConsentStatus?: string
+    confirmationStatus?: string
+  }
+  if (!res.ok || !body.ok) {
+    throw new Error(body.reason ?? `paRecruiterCandidateConsentResend HTTP ${res.status}`)
+  }
+  return {
+    ok: true,
+    candidateConsentStatus: body.candidateConsentStatus,
+    confirmationStatus: body.confirmationStatus,
+  }
 }

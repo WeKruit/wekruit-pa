@@ -25,6 +25,7 @@ import {
   fetchRecruiterSubmissions,
   getRecruiterProfile,
   registerRecruiterAccess,
+  resendRecruiterCandidateConfirmation,
   saveRecruiterSourcedCandidate,
   saveRecruiterRoleApplication,
   updateRecruiterPreferences,
@@ -324,7 +325,33 @@ function submissionAgeDays(submission: RecruiterSubmissionItem): number {
 }
 
 function submissionNeedsAction(submission: RecruiterSubmissionItem): boolean {
-  return Boolean(submission.recruiterFeedbackNote) || (submissionIsActiveReview(submission) && submissionAgeDays(submission) >= 3)
+  return (
+    Boolean(submission.recruiterFeedbackNote) ||
+    candidateConfirmationCanResend(submission) ||
+    (submissionIsActiveReview(submission) && submissionAgeDays(submission) >= 3)
+  )
+}
+
+function candidateConfirmationCanResend(submission: RecruiterSubmissionItem): boolean {
+  return [
+    "pending_candidate_confirmation",
+    "confirmation_email_failed",
+    "confirmation_email_not_configured",
+  ].includes(submission.candidateConsentStatus ?? "")
+}
+
+function candidateConfirmationActionBody(submission: RecruiterSubmissionItem): string {
+  const email = submission.candidateConfirmation?.candidateEmail || submission.candidate?.email || "the candidate"
+  if (submission.candidateConsentStatus === "confirmation_email_failed") {
+    return `The confirmation email to ${email} failed. Resend it before assuming the candidate approved the submission.`
+  }
+  if (submission.candidateConsentStatus === "confirmation_email_not_configured") {
+    return "Candidate confirmation email is not configured in the current environment."
+  }
+  const count = submission.candidateConfirmation?.resendCount ?? 0
+  return count > 0
+    ? `Confirmation is still pending for ${email}. Last resend: ${formatActivityDate(submission.candidateConfirmation?.lastResentAt ?? submission.candidateConfirmation?.sentAt)}.`
+    : `Confirmation is pending for ${email}. Resend if they did not receive the email.`
 }
 
 function submissionFilterMatches(submission: RecruiterSubmissionItem, filter: SubmissionFilter): boolean {
@@ -947,7 +974,7 @@ export default function RecruiterBoard() {
           />
         )}
         {activeTab === "submissions" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "submissions" && statusLoaded && <SubmissionsTab submissions={submissions} />}
+        {activeTab === "submissions" && statusLoaded && <SubmissionsTab submissions={submissions} onRefresh={reloadSubmissions} />}
         {activeTab === "performance" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "performance" && statusLoaded && <PerformanceTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} primaryRoleIds={primaryRoleIds} roleFeedback={roleFeedback} operatingMetrics={operatingMetrics} />}
         {activeTab === "earnings" && !statusLoaded && <RecruiterStatusLoading />}
@@ -2201,6 +2228,7 @@ function buildRecruiterInboxSummary(
   const rejectedWithFeedback = submissions.filter((submission) =>
     ["rejected", "duplicate"].includes(submission.status ?? "") && Boolean(submission.recruiterFeedbackNote),
   ).length
+  const candidateConfirmationNeeds = submissions.filter(candidateConfirmationCanResend).length
   const readyCandidates = sourcedCandidates.filter((candidate) => candidate.stage === "ready").length
   const calibrationNeeds = sourcedCandidates.filter((candidate) =>
     candidate.calibrationStatus === "bad_fit" ||
@@ -2213,8 +2241,9 @@ function buildRecruiterInboxSummary(
     ["submitted", "new", "reviewing", "advanced", "interviewing"].includes(submission.status ?? "submitted"),
   ).length
   return {
-    needsAction: rejectedWithFeedback + readyCandidates + calibrationNeeds + followUpDue + openQuestions,
+    needsAction: rejectedWithFeedback + candidateConfirmationNeeds + readyCandidates + calibrationNeeds + followUpDue + openQuestions,
     feedbackNotes,
+    candidateConfirmationNeeds,
     followUpDue,
     readyCandidates,
     openQuestions,
@@ -2242,6 +2271,23 @@ function buildRecruiterInboxItems(
     const closed = status === "rejected" || status === "duplicate"
     const moving = status === "advanced" || status === "interviewing" || status === "hired"
     const pending = status === "submitted" || status === "new" || status === "reviewing"
+
+    if (candidateConfirmationCanResend(submission)) {
+      const resendTone = submission.candidateConsentStatus === "pending_candidate_confirmation" ? "info" : "warn"
+      items.push({
+        id: `submission-confirmation-${submission.id}`,
+        bucket: "Candidate confirmation",
+        title: `${candidate} has not confirmed yet`,
+        body: candidateConfirmationActionBody(submission),
+        meta: `${roleLabel} · ${formatActivityDate(submission.candidateConfirmation?.sentAt ?? submission.updatedAt ?? submission.createdAt)}`,
+        tone: resendTone,
+        priority: resendTone === "warn" ? 96 : 84,
+        atMs,
+        cta: "Resend confirmation",
+        action: "submissions",
+      })
+      continue
+    }
 
     if (submission.recruiterFeedbackNote) {
       items.push({
@@ -4124,9 +4170,17 @@ function SourcedCandidateCard({
   )
 }
 
-function SubmissionsTab({ submissions }: { submissions: RecruiterSubmissionItem[] }) {
+function SubmissionsTab({
+  submissions,
+  onRefresh,
+}: {
+  submissions: RecruiterSubmissionItem[]
+  onRefresh: () => Promise<void>
+}) {
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<SubmissionFilter>("all")
+  const [resendingId, setResendingId] = useState<string | null>(null)
+  const [resendError, setResendError] = useState<string | null>(null)
   const dashboard = useMemo(() => buildSubmissionDashboard(submissions), [submissions])
   const visibleSubmissions = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -4136,6 +4190,19 @@ function SubmissionsTab({ submissions }: { submissions: RecruiterSubmissionItem[
     })
   }, [filter, query, submissions])
   const nextActions = dashboard.needsAction.slice(0, 5)
+  const handleResendConfirmation = async (submission: RecruiterSubmissionItem) => {
+    const submissionId = submissionReceiptId(submission)
+    setResendingId(submission.id)
+    setResendError(null)
+    try {
+      await resendRecruiterCandidateConfirmation(submissionId)
+      await onRefresh()
+    } catch (error) {
+      setResendError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setResendingId(null)
+    }
+  }
 
   return (
     <section className="rb-panel rb-panel--fill rb-submissions-dashboard">
@@ -4174,7 +4241,16 @@ function SubmissionsTab({ submissions }: { submissions: RecruiterSubmissionItem[
 
       <div className="rb-submissions-layout">
         <div className="rb-submission-list rb-submission-list--full">
-          {visibleSubmissions.map((s) => <SubmissionRow key={s.id} submission={s} expanded />)}
+          {resendError && <p className="rb-state error">Could not resend candidate confirmation: {resendError}</p>}
+          {visibleSubmissions.map((s) => (
+            <SubmissionRow
+              key={s.id}
+              submission={s}
+              expanded
+              onResendConfirmation={() => void handleResendConfirmation(s)}
+              resendingConfirmation={resendingId === s.id}
+            />
+          ))}
           {submissions.length === 0 && <p className="rb-empty">No submissions yet. Open a role and submit a candidate with consent.</p>}
           {submissions.length > 0 && visibleSubmissions.length === 0 && <p className="rb-empty">No submissions match the current filter.</p>}
         </div>
@@ -4626,7 +4702,17 @@ function RoleRow({ job }: { job: CollabJob }) {
   )
 }
 
-function SubmissionRow({ submission, expanded = false }: { submission: RecruiterSubmissionItem; expanded?: boolean }) {
+function SubmissionRow({
+  submission,
+  expanded = false,
+  onResendConfirmation,
+  resendingConfirmation = false,
+}: {
+  submission: RecruiterSubmissionItem
+  expanded?: boolean
+  onResendConfirmation?: () => void
+  resendingConfirmation?: boolean
+}) {
   const meta = statusMeta(submission.status)
   const consent = candidateConsentMeta(submission.candidateConsentStatus)
   const currentStatus = submission.status === "new" ? "submitted" : submission.status ?? "submitted"
@@ -4686,6 +4772,19 @@ function SubmissionRow({ submission, expanded = false }: { submission: Recruiter
             <strong>{nextAction.title}</strong>
             <span>{nextAction.body}</span>
           </div>
+          {candidateConfirmationCanResend(submission) && (
+            <div className={`rb-confirmation-action is-${consent.tone}`}>
+              <div>
+                <strong>Candidate confirmation</strong>
+                <span>{candidateConfirmationActionBody(submission)}</span>
+              </div>
+              {onResendConfirmation && (
+                <button type="button" onClick={onResendConfirmation} disabled={resendingConfirmation}>
+                  {resendingConfirmation ? "Sending..." : "Resend confirmation"}
+                </button>
+              )}
+            </div>
+          )}
           <div className="rb-activity-log" aria-label="Submission activity">
             {activity.map((event) => (
               <div className={`rb-activity-log__item is-${event.tone}`} key={event.id}>

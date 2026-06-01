@@ -3207,6 +3207,62 @@
   background: var(--danger-bg);
 }
 
+.rb-confirmation-action {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.rb-confirmation-action div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.rb-confirmation-action strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.rb-confirmation-action span {
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.rb-confirmation-action button {
+  border: 1px solid var(--ink);
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+
+.rb-confirmation-action button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.rb-confirmation-action.is-info {
+  border-color: var(--info-bg);
+  background: var(--info-bg);
+}
+
+.rb-confirmation-action.is-warn {
+  border-color: var(--danger-bg);
+  background: var(--danger-bg);
+}
+
 .rb-activity-log {
   position: relative;
   display: grid;

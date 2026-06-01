@@ -12,7 +12,7 @@ import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../component
 import { DataTable, type Column } from "../components/console/primitives.js"
 import { useTable } from "../components/console/useTable.js"
 import { auth, db } from "../lib/firebase.js"
-import { createRecruiterInviteCode, replaceRecruiterInviteCode, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
+import { createRecruiterInviteCode, replaceRecruiterInviteCode, restoreRecruiterInviteCode, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
 
 interface SubmissionDoc {
   id: string
@@ -726,6 +726,8 @@ function RecruiterOpsPanel() {
   const [knownInviteCodes, setKnownInviteCodes] = useState<Record<string, string>>(() => readKnownRecruiterInviteCodes())
   const [creating, setCreating] = useState(false)
   const [replacingCodeId, setReplacingCodeId] = useState<string | null>(null)
+  const [restoringCodeId, setRestoringCodeId] = useState<string | null>(null)
+  const [restoreInputs, setRestoreInputs] = useState<Record<string, string>>({})
   const [err, setErr] = useState<string | null>(null)
 
   const reload = async () => {
@@ -793,6 +795,30 @@ function RecruiterOpsPanel() {
       setErr(error instanceof Error ? error.message : String(error))
     } finally {
       setReplacingCodeId(null)
+    }
+  }
+
+  const restoreKnownCode = async (inviteCodeId: string) => {
+    const inviteCode = (restoreInputs[inviteCodeId] ?? "").trim()
+    if (!inviteCode) {
+      setErr("Paste the full WK access code first.")
+      return
+    }
+    setRestoringCodeId(inviteCodeId)
+    setErr(null)
+    try {
+      const result = await restoreRecruiterInviteCode(inviteCodeId, inviteCode)
+      rememberGeneratedCode(result)
+      setRestoreInputs((prev) => {
+        const next = { ...prev }
+        delete next[inviteCodeId]
+        return next
+      })
+      await reload()
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRestoringCodeId(null)
     }
   }
 
@@ -873,7 +899,7 @@ function RecruiterOpsPanel() {
             </div>
           )}
         </form>
-        <OpsSection title="Access codes" subtitle="Admins can view and copy full one-use recruiter codes when the row stores the raw code. Preview-only legacy rows cannot be reversed; replace them to issue a visible code.">
+        <OpsSection title="Access codes" subtitle="Admins can view and copy full one-use recruiter codes. For older preview-only rows, paste the known full code to restore it or replace the row.">
           {sortedCodes.length ? (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -919,17 +945,36 @@ function RecruiterOpsPanel() {
                               Copy full code
                             </button>
                           ) : rawMissing ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                void replaceLegacyCode(code.id)
-                              }}
-                              disabled={replacingCodeId === code.id}
-                              style={{ padding: "5px 8px", border: "1px solid #d9b892", borderRadius: 6, background: "#fff7ed", color: "#7a3e10", fontSize: 12 }}
-                            >
-                              {replacingCodeId === code.id ? "Replacing..." : "Replace with visible code"}
-                            </button>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                              <input
+                                value={restoreInputs[code.id] ?? ""}
+                                onChange={(e) => setRestoreInputs((prev) => ({ ...prev, [code.id]: e.target.value }))}
+                                placeholder="WK-XXXX-XXXX"
+                                style={{ width: 132, padding: "5px 7px", border: "1px solid #ddd", borderRadius: 6, fontSize: 12 }}
+                              />
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void restoreKnownCode(code.id)
+                                }}
+                                disabled={restoringCodeId === code.id}
+                                style={{ padding: "5px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff", fontSize: 12 }}
+                              >
+                                {restoringCodeId === code.id ? "Restoring..." : "Show full code"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void replaceLegacyCode(code.id)
+                                }}
+                                disabled={replacingCodeId === code.id}
+                                style={{ padding: "5px 8px", border: "1px solid #d9b892", borderRadius: 6, background: "#fff7ed", color: "#7a3e10", fontSize: 12 }}
+                              >
+                                {replacingCodeId === code.id ? "Replacing..." : "Replace"}
+                              </button>
+                            </div>
                           ) : (
                             <span style={{ color: "#999" }}>—</span>
                           )}

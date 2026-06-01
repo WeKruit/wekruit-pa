@@ -10,6 +10,7 @@
  *                                     (supports ?limit, ?offset, ?since, ?status)
  *   POST paRecruiterInviteCodeCreate -> admin creates one-use recruiter invite code
  *   POST paRecruiterInviteCodeReplace -> admin replaces a legacy unrecoverable invite code
+ *   POST paRecruiterInviteCodeRestore -> admin stores a known raw code on a preview-only row
  *   GET  paRecruiterMe             -> returns the Firebase Auth-bound recruiter profile
  *   POST paRecruiterAccess         -> validates invite code + binds Firebase Auth uid
  *   POST paRecruiterPreferencesUpdate -> recruiter updates notification settings
@@ -24,6 +25,7 @@
  *   GET  paRecruiterRoleIntelligenceList -> recruiter-authenticated aggregate role signal
  *   POST paRecruiterSubmission     -> writes pa-recruiter-submissions doc
  *                                     (honors Idempotency-Key header)
+ *   POST paRecruiterCandidateConsentResend -> recruiter resends candidate double-opt-in email
  *   GET  paRecruiterCandidateConsentConfirm -> candidate confirms submitted interest
  *   GET  paRecruiterSubmissionsList -> recruiter-authenticated status tracker
  *   TRG  paRecruiterRoleReleasedNotify -> emails recruiters when a role is released
@@ -278,6 +280,11 @@ interface RecruiterInviteCodeReplaceInput {
   inviteCodeId: string
 }
 
+interface RecruiterInviteCodeRestoreInput {
+  inviteCodeId: string
+  inviteCode: string
+}
+
 export function normalizeRecruiterInviteCode(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, "")
 }
@@ -389,6 +396,25 @@ export function validateInviteCodeReplace(input: unknown):
   const inviteCodeId = b.inviteCodeId.trim()
   if (!/^[a-f0-9]{64}$/i.test(inviteCodeId)) return { ok: false, reason: "invalid_invite_code_id" }
   return { ok: true, value: { inviteCodeId } }
+}
+
+export function validateInviteCodeRestore(input: unknown):
+  | { ok: true; value: RecruiterInviteCodeRestoreInput }
+  | { ok: false; reason: string } {
+  if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
+  const b = input as Record<string, unknown>
+  const replaceValidation = validateInviteCodeReplace({ inviteCodeId: b.inviteCodeId })
+  if (!replaceValidation.ok) return replaceValidation
+  if (!isNonEmptyString(b.inviteCode) || b.inviteCode.length > 80) return { ok: false, reason: "invalid_code" }
+  const inviteCode = normalizeRecruiterInviteCode(b.inviteCode)
+  if (!/^WK-[A-Z0-9-]{4,40}$/.test(inviteCode)) return { ok: false, reason: "invalid_code" }
+  return {
+    ok: true,
+    value: {
+      inviteCodeId: replaceValidation.value.inviteCodeId,
+      inviteCode,
+    },
+  }
 }
 
 function buildRecruiterInviteCodeDoc(input: {
@@ -1107,6 +1133,73 @@ export const paRecruiterInviteCodeReplace = onRequest(
   },
 )
 
+export const paRecruiterInviteCodeRestore = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const adminEmail = await hiringBoardAdminEmail(req)
+    if (!adminEmail) {
+      res.status(403).json({ ok: false, reason: "forbidden" })
+      return
+    }
+    const validated = validateInviteCodeRestore(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+
+    const { inviteCodeId, inviteCode } = validated.value
+    const expectedId = hashRecruiterInviteCode(inviteCode)
+    if (expectedId !== inviteCodeId) {
+      res.status(400).json({ ok: false, reason: "code_does_not_match_row" })
+      return
+    }
+
+    const ref = getFirestore().collection(RECRUITER_INVITE_CODES_COLLECTION).doc(inviteCodeId)
+    const snap = await ref.get()
+    if (!snap.exists) {
+      res.status(404).json({ ok: false, reason: "invite_code_not_found" })
+      return
+    }
+    const data = snap.data() as Record<string, unknown>
+    if (!inviteCodeUsable(data, Date.now())) {
+      res.status(409).json({ ok: false, reason: "invite_code_not_usable" })
+      return
+    }
+    const rawOldCode = typeof data.inviteCode === "string" ? data.inviteCode.trim() : ""
+    if (isNonEmptyString(rawOldCode) && normalizeRecruiterInviteCode(rawOldCode) !== inviteCode) {
+      res.status(409).json({ ok: false, reason: "invite_code_already_visible" })
+      return
+    }
+
+    await ref.set({
+      inviteCode,
+      codePreview: maskRecruiterInviteCode(inviteCode),
+      restoredByEmail: adminEmail,
+      restoredAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true })
+
+    res.set("Cache-Control", "private, max-age=0, no-store")
+    res.status(200).json({
+      ok: true,
+      inviteCode,
+      inviteCodeId,
+      codePreview: maskRecruiterInviteCode(inviteCode),
+      maxUses: typeof data.maxUses === "number" ? data.maxUses : 1,
+      expiresAt: coerceToIso(data.expiresAt) ?? null,
+    })
+  },
+)
+
 export const paRecruiterAccess = onRequest(
   { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
   async (req, res) => {
@@ -1187,7 +1280,9 @@ interface RecruiterSubmissionListItem {
     status?: string
     candidateEmail?: string
     sentAt?: unknown
+    lastResentAt?: unknown
     confirmedAt?: unknown
+    resendCount?: number
     lastError?: string | null
   }
   score?: SubmissionScore
@@ -1270,7 +1365,9 @@ function publicRecruiterCandidateConfirmation(raw: unknown): RecruiterSubmission
   if (typeof data.status === "string") out.status = data.status
   if (typeof data.candidateEmail === "string") out.candidateEmail = data.candidateEmail
   if (data.sentAt !== undefined) out.sentAt = data.sentAt
+  if (data.lastResentAt !== undefined) out.lastResentAt = data.lastResentAt
   if (data.confirmedAt !== undefined) out.confirmedAt = data.confirmedAt
+  if (typeof data.resendCount === "number") out.resendCount = data.resendCount
   if (typeof data.lastError === "string") out.lastError = data.lastError
   return Object.keys(out).length ? out : undefined
 }
@@ -2744,6 +2841,10 @@ interface SubmissionPayload {
   source?: string
 }
 
+interface CandidateConfirmationResendInput {
+  submissionId: string
+}
+
 /** Allowed values for `source` in the request body. */
 const ALLOWED_SUBMISSION_SOURCES = new Set(["hiring-board", "api", "unknown"])
 /** Pattern for the `Idempotency-Key` header. Mirrors Stripe's rules. */
@@ -2878,6 +2979,17 @@ export function validateSubmission(input: unknown):
       source,
     },
   }
+}
+
+export function validateCandidateConfirmationResendInput(input: unknown):
+  | { ok: true; value: CandidateConfirmationResendInput }
+  | { ok: false; reason: string } {
+  if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
+  const b = input as Record<string, unknown>
+  if (!isNonEmptyString(b.submissionId)) return { ok: false, reason: "missing_submission_id" }
+  const submissionId = b.submissionId.trim()
+  if (!IDEMPOTENCY_KEY_RE.test(submissionId)) return { ok: false, reason: "invalid_submission_id" }
+  return { ok: true, value: { submissionId } }
 }
 
 export interface SubmissionScore {
@@ -3060,6 +3172,131 @@ async function sendRecruiterMailgunEmail(
     return { ok: true, messageId: parsed.id }
   } catch {
     return { ok: true }
+  }
+}
+
+type CandidateConfirmationSendResult =
+  | { ok: true; status: "email_sent"; candidateConsentStatus: "pending_candidate_confirmation"; messageId?: string }
+  | { ok: false; reason: string; candidateConsentStatus: "candidate_confirmed" | "confirmation_email_failed" | "confirmation_email_not_configured" }
+
+function candidateSubmissionConfirmationEmailInputFromDoc(
+  submissionId: string,
+  data: Record<string, unknown>,
+): (CandidateSubmissionConfirmationEmailInput & { candidateEmail: string; token: string }) | { reason: string } {
+  const candidate = data.candidate && typeof data.candidate === "object"
+    ? data.candidate as Record<string, unknown>
+    : {}
+  const submitter = data.submitter && typeof data.submitter === "object"
+    ? data.submitter as Record<string, unknown>
+    : {}
+  const candidateName = typeof candidate.name === "string" ? candidate.name.trim() : ""
+  const candidateEmail = typeof candidate.email === "string" ? normalizeRecruiterCandidateEmail(candidate.email) : ""
+  if (!candidateEmail || !validRecruiterCandidateEmail(candidateEmail)) return { reason: "missing_candidate_email" }
+  const token = randomUUID()
+  return {
+    candidateName,
+    candidateEmail,
+    recruiterName: typeof submitter.name === "string" ? submitter.name.trim() : "",
+    roleTitle: typeof data.jobTitleSnapshot === "string" && data.jobTitleSnapshot.trim()
+      ? data.jobTitleSnapshot.trim()
+      : "WeKruit role",
+    companyLabel: typeof data.companyLabelSnapshot === "string" && data.companyLabelSnapshot.trim()
+      ? data.companyLabelSnapshot.trim()
+      : "WeKruit",
+    confirmationUrl: recruiterCandidateConfirmationUrl(submissionId, token),
+    token,
+  }
+}
+
+async function sendCandidateSubmissionConfirmationForDoc(
+  submissionRef: DocumentReference,
+  submissionId: string,
+  data: Record<string, unknown>,
+  actor: "submission" | "recruiter_resend",
+): Promise<CandidateConfirmationSendResult> {
+  if (data.candidateConsentStatus === "candidate_confirmed") {
+    return { ok: false, reason: "candidate_already_confirmed", candidateConsentStatus: "candidate_confirmed" }
+  }
+  const input = candidateSubmissionConfirmationEmailInputFromDoc(submissionId, data)
+  if ("reason" in input) {
+    await submissionRef.set({
+      candidateConsentStatus: "confirmation_email_failed",
+      "candidateConfirmation.status": "email_failed",
+      "candidateConfirmation.lastError": input.reason,
+      "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true })
+    return { ok: false, reason: input.reason, candidateConsentStatus: "confirmation_email_failed" }
+  }
+
+  const cfg = recruiterMailgunConfigFromEnv()
+  const queuedUpdate: Record<string, unknown> = {
+    candidateConsentStatus: "pending_candidate_confirmation",
+    "candidateConfirmation.status": "email_queued",
+    "candidateConfirmation.candidateEmail": input.candidateEmail,
+    "candidateConfirmation.tokenHash": hashRecruiterCandidateConfirmationToken(input.token),
+    "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  }
+  if (actor === "recruiter_resend") {
+    queuedUpdate["candidateConfirmation.resendCount"] = FieldValue.increment(1)
+    queuedUpdate["candidateConfirmation.lastResentAt"] = FieldValue.serverTimestamp()
+  }
+  await submissionRef.set(queuedUpdate, { merge: true })
+
+  if (!cfg) {
+    await submissionRef.set({
+      candidateConsentStatus: "confirmation_email_not_configured",
+      "candidateConfirmation.status": "email_not_configured",
+      "candidateConfirmation.lastError": "mailgun_not_configured",
+      "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true })
+    return { ok: false, reason: "mailgun_not_configured", candidateConsentStatus: "confirmation_email_not_configured" }
+  }
+
+  const emailContent = composeCandidateSubmissionConfirmationEmail(input)
+  try {
+    const result = await sendRecruiterMailgunEmail(cfg, { to: input.candidateEmail, ...emailContent })
+    if (result.ok) {
+      await submissionRef.set({
+        candidateConsentStatus: "pending_candidate_confirmation",
+        "candidateConfirmation.status": "email_sent",
+        "candidateConfirmation.provider": "mailgun",
+        "candidateConfirmation.messageId": result.messageId ?? null,
+        "candidateConfirmation.sentAt": FieldValue.serverTimestamp(),
+        "candidateConfirmation.lastError": null,
+        "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true })
+      return {
+        ok: true,
+        status: "email_sent",
+        candidateConsentStatus: "pending_candidate_confirmation",
+        messageId: result.messageId,
+      }
+    }
+    const reason = `mailgun_${result.status}:${result.raw.slice(0, 300)}`
+    await submissionRef.set({
+      candidateConsentStatus: "confirmation_email_failed",
+      "candidateConfirmation.status": "email_failed",
+      "candidateConfirmation.provider": "mailgun",
+      "candidateConfirmation.lastError": reason,
+      "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true })
+    return { ok: false, reason, candidateConsentStatus: "confirmation_email_failed" }
+  } catch (err) {
+    const reason = String(err).slice(0, 300)
+    await submissionRef.set({
+      candidateConsentStatus: "confirmation_email_failed",
+      "candidateConfirmation.status": "email_failed",
+      "candidateConfirmation.provider": "mailgun",
+      "candidateConfirmation.lastError": reason,
+      "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true })
+    return { ok: false, reason, candidateConsentStatus: "confirmation_email_failed" }
   }
 }
 
@@ -3285,15 +3522,14 @@ export const paRecruiterSubmission = onRequest(
     const score = computeSubmissionScore(rb.checklist.groups, payload.checklist)
 
     const submissionId = idempotencyHeader || randomUUID()
-    const confirmationToken = payload.candidate.email ? randomUUID() : ""
     const candidateConsentStatus = payload.candidate.email
       ? "pending_candidate_confirmation"
       : "recruiter_asserted"
+    let finalCandidateConsentStatus = candidateConsentStatus
     const candidateConfirmation = payload.candidate.email
       ? {
           status: "email_queued",
           candidateEmail: payload.candidate.email,
-          tokenHash: hashRecruiterCandidateConfirmationToken(confirmationToken),
           requestedAt: FieldValue.serverTimestamp(),
         }
       : null
@@ -3389,60 +3625,11 @@ export const paRecruiterSubmission = onRequest(
       submissionMode,
     })
 
-    if (payload.candidate.email && confirmationToken) {
+    if (payload.candidate.email) {
       try {
         const submissionRef = db.collection("pa-recruiter-submissions").doc(submissionId)
-        const cfg = recruiterMailgunConfigFromEnv()
-        if (!cfg) {
-          await submissionRef.set({
-            candidateConsentStatus: "confirmation_email_not_configured",
-            "candidateConfirmation.status": "email_not_configured",
-            "candidateConfirmation.lastError": "mailgun_not_configured",
-            "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
-            updatedAt: FieldValue.serverTimestamp(),
-          }, { merge: true })
-        } else {
-          const confirmationUrl = recruiterCandidateConfirmationUrl(submissionId, confirmationToken)
-          const emailContent = composeCandidateSubmissionConfirmationEmail({
-            candidateName: payload.candidate.name,
-            recruiterName: submitter.name,
-            roleTitle: String(jobData.title ?? "WeKruit role"),
-            companyLabel: rb.label.company,
-            confirmationUrl,
-          })
-          try {
-            const result = await sendRecruiterMailgunEmail(cfg, { to: payload.candidate.email, ...emailContent })
-            if (result.ok) {
-              await submissionRef.set({
-                candidateConsentStatus: "pending_candidate_confirmation",
-                "candidateConfirmation.status": "email_sent",
-                "candidateConfirmation.provider": "mailgun",
-                "candidateConfirmation.messageId": result.messageId ?? null,
-                "candidateConfirmation.sentAt": FieldValue.serverTimestamp(),
-                "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
-                updatedAt: FieldValue.serverTimestamp(),
-              }, { merge: true })
-            } else {
-              await submissionRef.set({
-                candidateConsentStatus: "confirmation_email_failed",
-                "candidateConfirmation.status": "email_failed",
-                "candidateConfirmation.provider": "mailgun",
-                "candidateConfirmation.lastError": `mailgun_${result.status}:${result.raw.slice(0, 300)}`,
-                "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
-                updatedAt: FieldValue.serverTimestamp(),
-              }, { merge: true })
-            }
-          } catch (err) {
-            await submissionRef.set({
-              candidateConsentStatus: "confirmation_email_failed",
-              "candidateConfirmation.status": "email_failed",
-              "candidateConfirmation.provider": "mailgun",
-              "candidateConfirmation.lastError": String(err).slice(0, 300),
-              "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
-              updatedAt: FieldValue.serverTimestamp(),
-            }, { merge: true })
-          }
-        }
+        const confirmationResult = await sendCandidateSubmissionConfirmationForDoc(submissionRef, submissionId, submissionDoc, "submission")
+        finalCandidateConsentStatus = confirmationResult.candidateConsentStatus
       } catch (err) {
         logger.error("paRecruiterSubmission_candidate_confirmation_failed", {
           error: String(err),
@@ -3491,7 +3678,77 @@ export const paRecruiterSubmission = onRequest(
       submissionId,
       score,
       submissionMode,
-      candidateConsentStatus,
+      candidateConsentStatus: finalCandidateConsentStatus,
+    })
+  },
+)
+
+export const paRecruiterCandidateConsentResend = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: MAILGUN_SECRETS },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "recruiter_access_required" })
+      return
+    }
+
+    const validated = validateCandidateConfirmationResendInput(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+
+    const { submissionId } = validated.value
+    const submissionRef = db.collection(RECRUITER_SUBMISSIONS_COLLECTION).doc(submissionId)
+    const snap = await submissionRef.get()
+    if (!snap.exists) {
+      res.status(404).json({ ok: false, reason: "submission_not_found" })
+      return
+    }
+    const data = snap.data() as Record<string, unknown>
+    if (data.recruiterId !== recruiter.recruiterId) {
+      res.status(403).json({ ok: false, reason: "forbidden" })
+      return
+    }
+    if (data.candidateConsentStatus === "candidate_confirmed") {
+      res.status(409).json({
+        ok: false,
+        reason: "candidate_already_confirmed",
+        candidateConsentStatus: "candidate_confirmed",
+      })
+      return
+    }
+
+    const result = await sendCandidateSubmissionConfirmationForDoc(
+      submissionRef,
+      submissionId,
+      data,
+      "recruiter_resend",
+    )
+    if (result.ok) {
+      res.status(200).json({
+        ok: true,
+        candidateConsentStatus: result.candidateConsentStatus,
+        confirmationStatus: result.status,
+      })
+      return
+    }
+
+    res.status(result.reason === "mailgun_not_configured" ? 503 : 502).json({
+      ok: false,
+      reason: result.reason,
+      candidateConsentStatus: result.candidateConsentStatus,
     })
   },
 )

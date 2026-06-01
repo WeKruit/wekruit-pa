@@ -35,8 +35,10 @@ import {
   recruiterIdentityFromFirebaseBearer,
   shouldNotifyRecruitersForRoleRelease,
   sanitizeSubmissionStatusHistory,
+  validateCandidateConfirmationResendInput,
   validateInviteCodeCreate,
   validateInviteCodeReplace,
+  validateInviteCodeRestore,
   validateRecruiterRoleApplicationInput,
   validateRecruiterRoleFeedbackInput,
   validateRecruiterRoleQuestionInput,
@@ -183,6 +185,18 @@ describe("recruiter access helpers", () => {
     })
   })
 
+  it("validates restoring a known raw code onto the matching hashed row", () => {
+    const inviteCodeId = hashRecruiterInviteCode("WK-CDKE-AUC5")
+    assert.deepEqual(validateInviteCodeRestore({ inviteCodeId, inviteCode: " wk-cdke-auc5 " }), {
+      ok: true,
+      value: { inviteCodeId, inviteCode: "WK-CDKE-AUC5" },
+    })
+    assert.deepEqual(validateInviteCodeRestore({ inviteCodeId, inviteCode: "not-a-wk-code" }), {
+      ok: false,
+      reason: "invalid_code",
+    })
+  })
+
   it("lets a bound recruiter reuse only their own access code with the same Google account", () => {
     const normalizedCode = normalizeRecruiterInviteCode("WK-CDKE-AUC5")
     const inviteCodeId = hashRecruiterInviteCode(normalizedCode)
@@ -236,6 +250,23 @@ describe("recruiter access helpers", () => {
       ),
       null,
     )
+  })
+})
+
+describe("candidate confirmation resend", () => {
+  it("validates recruiter-owned submission ids for confirmation resend", () => {
+    assert.deepEqual(validateCandidateConfirmationResendInput({ submissionId: "sub_123" }), {
+      ok: true,
+      value: { submissionId: "sub_123" },
+    })
+    assert.deepEqual(validateCandidateConfirmationResendInput({ submissionId: "../bad" }), {
+      ok: false,
+      reason: "invalid_submission_id",
+    })
+    assert.deepEqual(validateCandidateConfirmationResendInput({}), {
+      ok: false,
+      reason: "missing_submission_id",
+    })
   })
 })
 
