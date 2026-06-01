@@ -65,6 +65,8 @@ import { IdentityConflicts } from "./pages/IdentityConflicts.js"
 import SendbluePool from "./pages/SendbluePool.js"
 // v2.0 S6 - admin outreach readiness snapshot.
 import OutreachOps from "./pages/OutreachOps.js"
+// Batch human-approve-then-send queue (pa-pending-outbound). Send is gated.
+import PendingOutbound from "./pages/PendingOutbound.js"
 // v2.0 S7 - job-scoped passed candidate snapshots.
 import PassedCandidates from "./pages/PassedCandidates.js"
 // v1.9 Phase 89 — pre-screen feedback aggregate.
@@ -228,6 +230,8 @@ export default function App() {
           <Route path="/admin/ats-inbound" element={<AtsInbound />} />
           <Route path="/admin/bulk-resumes" element={<BulkResumes />} />
           <Route path="/admin/outreach-ops" element={<OutreachOps />} />
+          {/* Batch human-approve-then-send queue (pa-pending-outbound). */}
+          <Route path="/admin/pending-outbound" element={<PendingOutbound />} />
           {/* v1.9 Phase 88 — Sendblue number pool admin. */}
           <Route path="/admin/sendblue-pool" element={<SendbluePool />} />
           {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}

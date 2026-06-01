@@ -227,6 +227,12 @@ export { paQaEvaluatorWeekly } from "./qa-evaluator-weekly.js"
 // optional weight-override sandbox values, and returns full per-job score
 // breakdown + counters for the dashboard's live debugger.
 export { paAdminJobMatchDebug, paAdminMatchDebug } from "./admin-match-debug.js"
+// pa-pending-outbound — admin-only callable backing /admin/pending-outbound
+// (batch human-approve-then-send queue). list/update/approve/skip are
+// functional; `send` is GATED + the live Sendblue dispatch seam is
+// intentionally NOT wired (returns blocked) so no message can fire without a
+// deliberate, Adam-gated follow-up.
+export { paPendingOutboundAdmin } from "./pending-outbound/admin.js"
 // Coresignal Agentic Search proxy — admin-only callable forwarding to
 // /v2/agentic_search/reasoning. Backs the /admin/coresignal-playground page.
 export { paAdminCoresignalAgenticSearch } from "./admin-coresignal-agentic-search.js"

@@ -85,6 +85,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     icon: "send",
     items: [
       { to: "/admin/outreach-ops", label: "Outreach ops" },
+      { to: "/admin/pending-outbound", label: "Pending outbound", hitl: true },
       { to: "/admin/external-supply", label: "External supply", end: true },
       { to: "/admin/external-supply/outreach", label: "Outreach campaigns" },
       { to: "/admin/external-supply/sync", label: "Instantly sync" },
