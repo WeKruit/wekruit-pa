@@ -1905,6 +1905,24 @@ type RecruiterEarningsMetrics = {
   expectations: RecruiterOperatingMetric[]
 }
 
+type RecruiterTrustGate = {
+  label: string
+  value: string
+  body: string
+  tone: OperatingTone
+}
+
+type RecruiterTrustCenter = {
+  statusLabel: string
+  statusBody: string
+  statusTone: OperatingTone
+  score: number
+  nextActionLabel: string
+  nextActionBody: string
+  cards: RecruiterTrustGate[]
+  gates: RecruiterTrustGate[]
+}
+
 function formatCurrencyShort(value: number): string {
   if (value >= 1_000_000) return `$${Math.round(value / 100_000) / 10}M`
   if (value >= 1_000) return `$${Math.round(value / 1_000)}K`
@@ -2219,6 +2237,172 @@ function computeRecruiterEarningsMetrics(
         value: String(openQuestions + hardFeedback),
         body: `${openQuestions} open role question${openQuestions === 1 ? "" : "s"}, ${hardFeedback} hard or blocked market signal${hardFeedback === 1 ? "" : "s"}.`,
         tone: openQuestions + hardFeedback > 0 ? "warn" : "success",
+      },
+    ],
+  }
+}
+
+function computeRecruiterTrustCenter(
+  candidates: RecruiterSourcedCandidateItem[],
+  submissions: RecruiterSubmissionItem[],
+  roleFeedback: RecruiterRoleFeedbackItem[],
+  primaryRoleIds: string[],
+  operatingMetrics: RecruiterOperatingMetrics,
+): RecruiterTrustCenter {
+  const activeCandidates = candidates.filter((candidate) => candidate.stage !== "archived")
+  const readyCandidates = activeCandidates.filter((candidate) => candidate.stage === "ready")
+  const profileCompleteCandidates = activeCandidates.filter((candidate) =>
+    Boolean(candidate.candidate?.email?.trim()) &&
+    Boolean(candidate.candidate?.link?.trim()) &&
+    Boolean(candidate.candidate?.notes?.trim()),
+  )
+  const duplicateIds = duplicateCandidateIds(activeCandidates)
+  const followUpsDue = activeCandidates.filter((candidate) => candidateFollowUpState(candidate).needsAction)
+  const confirmationNeeds = submissions.filter(candidateConfirmationCanResend)
+  const rejectedOrDuplicate = submissions.filter((submission) => CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? ""))
+  const ratedSubmissions = submissions
+    .map(submissionFeedbackRating)
+    .filter((rating): rating is number => rating !== null)
+  const oneStarRatings = ratedSubmissions.filter((rating) => rating === 1).length
+  const lowRatings = ratedSubmissions.filter((rating) => rating <= 2).length
+  const averageRating = ratedSubmissions.length
+    ? ratedSubmissions.reduce((sum, rating) => sum + rating, 0) / ratedSubmissions.length
+    : null
+  const hardOrBlockedRoles = roleFeedback.filter((feedback) => feedback.difficulty === "hard" || feedback.difficulty === "blocked")
+  const profileCoverage = activeCandidates.length ? Math.round((profileCompleteCandidates.length / activeCandidates.length) * 100) : 0
+  const confirmationPenalty = confirmationNeeds.length * 8
+  const duplicatePenalty = duplicateIds.size * 7
+  const rejectionPenalty = submissions.length ? Math.round((rejectedOrDuplicate.length / submissions.length) * 18) : 0
+  const lowRatingPenalty = oneStarRatings * 28 + Math.max(0, lowRatings - oneStarRatings) * 12
+  const feedbackPenalty = hardOrBlockedRoles.length * 5
+  const followUpPenalty = followUpsDue.length * 4
+  const baseScore = operatingMetrics.qualityScore ?? (submissions.length ? 62 : activeCandidates.length ? 52 : 40)
+  const score = clampNumber(
+    baseScore +
+      Math.min(10, readyCandidates.length * 2) +
+      Math.min(8, Math.floor(profileCoverage / 14)) -
+      confirmationPenalty -
+      duplicatePenalty -
+      rejectionPenalty -
+      lowRatingPenalty -
+      feedbackPenalty -
+      followUpPenalty,
+    0,
+    100,
+  )
+  const statusTone: OperatingTone = oneStarRatings > 0 || score < 45
+    ? "warn"
+    : score >= 78 && confirmationNeeds.length === 0 && duplicateIds.size === 0
+      ? "success"
+      : score >= 60
+        ? "info"
+        : "mute"
+  const statusLabel = oneStarRatings > 0
+    ? "Quality hold risk"
+    : statusTone === "success"
+      ? "Trust-ready"
+      : statusTone === "info"
+        ? "Watch list"
+        : "Builder trust"
+  const statusBody = oneStarRatings > 0
+    ? "A 1/4 rating should pause volume until feedback is understood and the next packet is visibly stronger."
+    : confirmationNeeds.length > 0
+      ? "Candidate confirmation debt can weaken recruiter trust even when role fit is good."
+      : duplicateIds.size > 0
+        ? "Duplicate identity signals should be cleaned before scaling outreach or submissions."
+        : statusTone === "success"
+          ? "The current account signal supports more role focus if activity stays clean."
+          : "Build stronger proof, confirmation hygiene, and feedback response before asking for more role volume."
+  const nextActionLabel = oneStarRatings > 0 || lowRatings > 0
+    ? "Read low-rated feedback"
+    : confirmationNeeds.length > 0
+      ? "Fix candidate confirmations"
+      : duplicateIds.size > 0
+        ? "Clean duplicate candidates"
+        : followUpsDue.length > 0
+          ? "Clear follow-up debt"
+          : readyCandidates.length > 0
+            ? "Convert ready candidates"
+            : "Build proof-rich bench"
+  const nextActionBody = oneStarRatings > 0 || lowRatings > 0
+    ? "Open the feedback rows, identify the missing hard filters, and do not send lookalikes until the scorecard is corrected."
+    : confirmationNeeds.length > 0
+      ? "Resend confirmation or stop treating those packets as clean submissions until the candidate confirms."
+      : duplicateIds.size > 0
+        ? "Keep one source-of-truth record per candidate email or profile link before outreach continues."
+        : followUpsDue.length > 0
+          ? "Move overdue prospects forward or archive them so the bench stays truthful."
+          : readyCandidates.length > 0
+            ? "Match the strongest ready candidates into role briefs and submit only with consent."
+            : "Add email, LinkedIn/resume, notes, outreach status, and follow-up dates to make matching reliable."
+
+  return {
+    statusLabel,
+    statusBody,
+    statusTone,
+    score,
+    nextActionLabel,
+    nextActionBody,
+    cards: [
+      {
+        label: "Trust score",
+        value: `${score}/100`,
+        body: "Composite of submission quality, confirmation hygiene, duplicate risk, and role-feedback drag.",
+        tone: statusTone,
+      },
+      {
+        label: "Rating signal",
+        value: averageRating === null ? "Unrated" : `${averageRating.toFixed(1)}/4`,
+        body: ratedSubmissions.length
+          ? `${ratedSubmissions.length} rated submission${ratedSubmissions.length === 1 ? "" : "s"}, ${oneStarRatings} one-star risk.`
+          : "No rated submissions yet.",
+        tone: oneStarRatings > 0 ? "warn" : averageRating !== null && averageRating >= 3 ? "success" : ratedSubmissions.length ? "info" : "mute",
+      },
+      {
+        label: "Ownership hygiene",
+        value: `${confirmationNeeds.length + duplicateIds.size}`,
+        body: `${confirmationNeeds.length} confirmation follow-up${confirmationNeeds.length === 1 ? "" : "s"}, ${duplicateIds.size} duplicate identity signal${duplicateIds.size === 1 ? "" : "s"}.`,
+        tone: confirmationNeeds.length + duplicateIds.size ? "warn" : "success",
+      },
+      {
+        label: "Profile proof",
+        value: `${profileCoverage}%`,
+        body: `${profileCompleteCandidates.length}/${activeCandidates.length || 0} active candidates include email, link, and notes.`,
+        tone: profileCoverage >= 70 ? "success" : activeCandidates.length ? "info" : "mute",
+      },
+    ],
+    gates: [
+      {
+        label: "Submission guard",
+        value: oneStarRatings > 0 ? "Hold" : lowRatings > 0 ? "Review" : "Open",
+        body: oneStarRatings > 0
+          ? "Pause new volume until the low-rated packet is reviewed."
+          : lowRatings > 0
+            ? "Use low-rated feedback before sending another similar candidate."
+            : "No low-rating guard detected.",
+        tone: oneStarRatings > 0 || lowRatings > 0 ? "warn" : "success",
+      },
+      {
+        label: "Approved lane coverage",
+        value: `${primaryRoleIds.length}/${APPROVED_ROLE_LIMIT}`,
+        body: primaryRoleIds.length
+          ? "Approved roles need live candidate motion and clean packets."
+          : "Apply for role access once the bench has proof.",
+        tone: primaryRoleIds.length ? "info" : "mute",
+      },
+      {
+        label: "Feedback debt",
+        value: String(hardOrBlockedRoles.length + rejectedOrDuplicate.length),
+        body: `${hardOrBlockedRoles.length} hard/blocked role signal${hardOrBlockedRoles.length === 1 ? "" : "s"} and ${rejectedOrDuplicate.length} rejected/duplicate submission${rejectedOrDuplicate.length === 1 ? "" : "s"}.`,
+        tone: hardOrBlockedRoles.length + rejectedOrDuplicate.length ? "warn" : "success",
+      },
+      {
+        label: "Responsiveness",
+        value: String(followUpsDue.length),
+        body: followUpsDue.length
+          ? "Candidate follow-ups are overdue or unscheduled."
+          : "No follow-up debt detected in the active bench.",
+        tone: followUpsDue.length ? "warn" : "success",
       },
     ],
   }
@@ -6098,6 +6282,7 @@ function PerformanceTab({
   const primarySubmissions = submissions.filter((submission) => submission.submissionMode === "primary_role").length
   const blockedRoles = roleFeedback.filter((feedback) => feedback.difficulty === "blocked").length
   const hardRoles = roleFeedback.filter((feedback) => feedback.difficulty === "hard").length
+  const trustCenter = computeRecruiterTrustCenter(candidates, submissions, roleFeedback, primaryRoleIds, operatingMetrics)
   const metrics = [
     { label: "Submitted", value: String(submissions.length), meta: "formal candidates", tone: "live" },
     { label: "Pending review", value: String(pending), meta: "awaiting feedback", tone: "warn" },
@@ -6144,6 +6329,7 @@ function PerformanceTab({
           ))}
         </div>
       </section>
+      <RecruiterTrustCenterPanel model={trustCenter} />
       <div className="rb-performance-grid">
         <section className="rb-performance-card">
           <h3>Pipeline funnel</h3>
@@ -6189,6 +6375,43 @@ function PerformanceTab({
           <p>{hardRoles} hard roles and {blockedRoles} blocked roles flagged.</p>
           <p>{roleFeedback.filter((feedback) => feedback.note).length} reports include recruiter notes.</p>
         </section>
+      </div>
+    </section>
+  )
+}
+
+function RecruiterTrustCenterPanel({ model }: { model: RecruiterTrustCenter }) {
+  return (
+    <section className={`rb-trust-center is-${model.statusTone}`} aria-label="Recruiter trust center">
+      <header>
+        <div>
+          <span>Trust command</span>
+          <strong>{model.statusLabel}</strong>
+          <p>{model.statusBody}</p>
+        </div>
+        <aside>
+          <span>Next trust action</span>
+          <strong>{model.nextActionLabel}</strong>
+          <p>{model.nextActionBody}</p>
+        </aside>
+      </header>
+      <div className="rb-trust-center__cards">
+        {model.cards.map((card) => (
+          <article className={`is-${card.tone}`} key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <p>{card.body}</p>
+          </article>
+        ))}
+      </div>
+      <div className="rb-trust-center__gates">
+        {model.gates.map((gate) => (
+          <article className={`is-${gate.tone}`} key={gate.label}>
+            <span>{gate.label}</span>
+            <strong>{gate.value}</strong>
+            <p>{gate.body}</p>
+          </article>
+        ))}
       </div>
     </section>
   )

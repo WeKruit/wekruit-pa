@@ -4932,6 +4932,100 @@
 .rb-performance-targets article.is-success { border-top-color: var(--success); background: var(--success-bg); }
 .rb-performance-targets article.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
 
+.rb-trust-center {
+  display: grid;
+  gap: 12px;
+  margin: 0 20px 18px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ink-3);
+  border-radius: 10px;
+  background: #fff;
+  padding: 16px;
+}
+
+.rb-trust-center.is-live { border-left-color: var(--live); background: var(--live-soft); }
+.rb-trust-center.is-info { border-left-color: var(--info); }
+.rb-trust-center.is-success { border-left-color: var(--success); background: var(--success-bg); }
+.rb-trust-center.is-warn { border-left-color: var(--warning); background: #fffaf1; }
+.rb-trust-center.is-mute { border-left-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-trust-center > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.68fr);
+  gap: 12px;
+}
+
+.rb-trust-center > header > div,
+.rb-trust-center > header > aside,
+.rb-trust-center__cards article,
+.rb-trust-center__gates article {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.76);
+  padding: 12px;
+}
+
+.rb-trust-center span,
+.rb-trust-center__cards span,
+.rb-trust-center__gates span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-trust-center strong {
+  color: var(--ink);
+  line-height: 1.12;
+}
+
+.rb-trust-center > header strong {
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 400;
+}
+
+.rb-trust-center p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-trust-center__cards,
+.rb-trust-center__gates {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-trust-center__cards article,
+.rb-trust-center__gates article {
+  border-top: 3px solid var(--ink-3);
+}
+
+.rb-trust-center__cards article.is-live,
+.rb-trust-center__gates article.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-trust-center__cards article.is-info,
+.rb-trust-center__gates article.is-info { border-top-color: var(--info); }
+.rb-trust-center__cards article.is-success,
+.rb-trust-center__gates article.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-trust-center__cards article.is-warn,
+.rb-trust-center__gates article.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-trust-center__cards article.is-mute,
+.rb-trust-center__gates article.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-trust-center__cards strong,
+.rb-trust-center__gates strong {
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 400;
+}
+
 .rb-earnings-hero {
   display: grid;
   grid-template-columns: 1.15fr repeat(3, minmax(0, 1fr));
@@ -6636,8 +6730,13 @@
   .rb-performance-status {
     grid-template-columns: 1fr;
   }
-  .rb-performance-targets {
+  .rb-performance-targets,
+  .rb-trust-center__cards,
+  .rb-trust-center__gates {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rb-trust-center > header {
+    grid-template-columns: 1fr;
   }
   .rb-earnings-hero,
   .rb-status-ladder,
@@ -6777,6 +6876,8 @@
   .rb-inbox-item,
   .rb-operating-grid,
   .rb-performance-targets,
+  .rb-trust-center__cards,
+  .rb-trust-center__gates,
   .rb-earnings-hero,
   .rb-status-ladder,
   .rb-expectation-list,
