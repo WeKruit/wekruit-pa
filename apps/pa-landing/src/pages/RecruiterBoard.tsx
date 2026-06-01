@@ -112,6 +112,8 @@ const STATUS_LABELS: Record<string, { label: string; tone: "live" | "info" | "su
   reviewing: { label: "WeKruit review", tone: "info" },
   advanced: { label: "Sent to hiring team", tone: "success" },
   interviewing: { label: "Interviewing", tone: "success" },
+  backburner: { label: "Backburner", tone: "info" },
+  offer: { label: "Offer", tone: "success" },
   hired: { label: "Hired", tone: "success" },
   rejected: { label: "Not a fit", tone: "warn" },
   duplicate: { label: "Duplicate", tone: "mute" },
@@ -143,18 +145,25 @@ const SUBMISSION_PROGRESS = [
   { id: "reviewing", label: "WeKruit review" },
   { id: "advanced", label: "Hiring team" },
   { id: "interviewing", label: "Interviewing" },
+  { id: "offer", label: "Offer" },
   { id: "hired", label: "Hired" },
 ] as const
 
 const SUBMISSION_FILTERS = [
   { id: "all", label: "All" },
   { id: "active", label: "Active review" },
+  { id: "late_stage", label: "Late stage" },
   { id: "advanced", label: "Advanced" },
   { id: "feedback", label: "Has feedback" },
   { id: "closed", label: "Closed" },
 ] as const
 
 type SubmissionFilter = typeof SUBMISSION_FILTERS[number]["id"]
+const ACTIVE_REVIEW_STATUSES = ["submitted", "new", "reviewing", "backburner"]
+const ADVANCED_STATUSES = ["advanced", "interviewing", "offer", "hired"]
+const LATE_STAGE_STATUSES = ["interviewing", "offer", "hired"]
+const CLOSED_NEGATIVE_STATUSES = ["rejected", "duplicate"]
+const OPEN_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "interviewing", "backburner", "offer"]
 
 function statusMeta(status?: string) {
   return STATUS_LABELS[status ?? "submitted"] ?? { label: status ?? "Submitted", tone: "mute" as const }
@@ -256,6 +265,10 @@ function submissionNextAction(status?: string): { title: string; body: string; t
       return { title: "Sent to hiring team", body: "Keep the candidate warm and be ready for interview logistics.", tone: "success" }
     case "interviewing":
       return { title: "Interviewing", body: "Watch for scheduling or closing feedback from WeKruit.", tone: "success" }
+    case "offer":
+      return { title: "Offer stage", body: "Keep the candidate warm while WeKruit confirms close process and start-date details.", tone: "success" }
+    case "backburner":
+      return { title: "Backburner", body: "Candidate is parked, not rejected. Wait for a clearer next step before adding lookalikes.", tone: "info" }
     case "hired":
       return { title: "Placement won", body: "This candidate reached hired status.", tone: "success" }
     case "rejected":
@@ -388,15 +401,15 @@ function submissionModeLabel(mode?: RecruiterSubmissionItem["submissionMode"]): 
 }
 
 function submissionIsActiveReview(submission: RecruiterSubmissionItem): boolean {
-  return ["submitted", "new", "reviewing"].includes(submission.status ?? "submitted")
+  return ACTIVE_REVIEW_STATUSES.includes(submission.status ?? "submitted")
 }
 
 function submissionIsAdvanced(submission: RecruiterSubmissionItem): boolean {
-  return ["advanced", "interviewing", "hired"].includes(submission.status ?? "")
+  return ADVANCED_STATUSES.includes(submission.status ?? "")
 }
 
 function submissionIsClosed(submission: RecruiterSubmissionItem): boolean {
-  return ["rejected", "duplicate"].includes(submission.status ?? "")
+  return CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? "")
 }
 
 function submissionAgeDays(submission: RecruiterSubmissionItem): number {
@@ -438,6 +451,7 @@ function candidateConfirmationActionBody(submission: RecruiterSubmissionItem): s
 function submissionFilterMatches(submission: RecruiterSubmissionItem, filter: SubmissionFilter): boolean {
   switch (filter) {
     case "active": return submissionIsActiveReview(submission)
+    case "late_stage": return LATE_STAGE_STATUSES.includes(submission.status ?? "")
     case "advanced": return submissionIsAdvanced(submission)
     case "feedback": return submissionHasStructuredFeedback(submission)
     case "closed": return submissionIsClosed(submission)
@@ -479,7 +493,7 @@ function buildSubmissionDashboard(submissions: RecruiterSubmissionItem[]) {
     needsAction,
     hero: [
       { label: "Active review", value: String(active.length), body: "Submitted, queued, or under WeKruit review.", tone: active.length ? "live" : "mute" },
-      { label: "Advanced", value: String(advanced.length), body: "Sent forward, interviewing, or hired.", tone: advanced.length ? "success" : "mute" },
+      { label: "Advanced", value: String(advanced.length), body: "Sent forward, interviewing, offer, or hired.", tone: advanced.length ? "success" : "mute" },
       { label: "Rated submissions", value: String(rated.length), body: "WeKruit /4 quality signal plus reasons.", tone: rated.length ? "info" : "mute" },
       { label: "Needs action", value: String(needsAction.length), body: "Aged reviews or feedback that should change sourcing.", tone: needsAction.length ? "warn" : "success" },
     ] as Array<{ label: string; value: string; body: string; tone: "live" | "info" | "success" | "warn" | "mute" }>,
@@ -1104,9 +1118,9 @@ function computeRecruiterStats(
   submissions: RecruiterSubmissionItem[],
   sourcedCandidates: RecruiterSourcedCandidateItem[],
 ) {
-  const reviewing = submissions.filter((s) => ["submitted", "new", "reviewing"].includes(s.status ?? "submitted")).length
-  const advanced = submissions.filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? "")).length
-  const interviews = submissions.filter((s) => ["interviewing", "hired"].includes(s.status ?? "")).length
+  const reviewing = submissions.filter((s) => ACTIVE_REVIEW_STATUSES.includes(s.status ?? "submitted")).length
+  const advanced = submissions.filter((s) => ADVANCED_STATUSES.includes(s.status ?? "")).length
+  const interviews = submissions.filter((s) => LATE_STAGE_STATUSES.includes(s.status ?? "")).length
   const feedback = submissions.filter(submissionHasStructuredFeedback).length
   const activeSource = sourcedCandidates.filter((c) => c.stage !== "archived").length
   const interviewRate = submissions.length ? Math.round((interviews / submissions.length) * 100) : 0
@@ -1159,9 +1173,9 @@ function computeRecruiterOperatingMetrics(
 ): RecruiterOperatingMetrics {
   const activeCandidates = sourcedCandidates.filter((candidate) => candidate.stage !== "archived")
   const readyCandidates = activeCandidates.filter((candidate) => candidate.stage === "ready")
-  const pendingSubmissions = submissions.filter((submission) => ["submitted", "new", "reviewing"].includes(submission.status ?? "submitted"))
-  const advancedSubmissions = submissions.filter((submission) => ["advanced", "interviewing", "hired"].includes(submission.status ?? ""))
-  const closedNegative = submissions.filter((submission) => ["rejected", "duplicate"].includes(submission.status ?? ""))
+  const pendingSubmissions = submissions.filter((submission) => ACTIVE_REVIEW_STATUSES.includes(submission.status ?? "submitted"))
+  const advancedSubmissions = submissions.filter((submission) => ADVANCED_STATUSES.includes(submission.status ?? ""))
+  const closedNegative = submissions.filter((submission) => CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? ""))
   const ratedSubmissions = submissions
     .map(submissionFeedbackRating)
     .filter((rating): rating is number => rating !== null)
@@ -1212,7 +1226,7 @@ function computeRecruiterOperatingMetrics(
       ? `${averageRating.toFixed(1)}/4 average submission rating across ${ratedSubmissions.length} rated submission${ratedSubmissions.length === 1 ? "" : "s"}.`
     : submissions.length < 3
       ? "Early signal only. More submissions and feedback will make this meaningful."
-      : `${firstRoundRate}% advanced/interviewing signal with ${rejectionRate}% rejected or duplicate.`
+      : `${firstRoundRate}% advanced/interview/offer signal with ${rejectionRate}% rejected or duplicate.`
   const reviewTone: OperatingTone = activeCandidates.length === 0 && submissions.length === 0
     ? "mute"
     : rejectionRate >= 50 && submissions.length >= 3
@@ -1306,7 +1320,7 @@ function computeRecruiterOperatingMetrics(
       {
         label: "Submission quality",
         value: `${firstRoundRate}%`,
-        body: "Keep the advanced/interview signal moving before asking for more role volume.",
+        body: "Keep the advanced/interview/offer signal moving before asking for more role volume.",
         tone: firstRoundRate >= 30 ? "success" : submissions.length ? "info" : "mute",
       },
       {
@@ -1403,19 +1417,23 @@ function submissionRewardAmount(submission: RecruiterSubmissionItem, jobsById: M
 }
 
 function isSubmissionOpen(status?: string): boolean {
-  return !["rejected", "duplicate"].includes(status ?? "")
+  return !CLOSED_NEGATIVE_STATUSES.includes(status ?? "")
 }
 
 function isSubmissionAdvanced(status?: string): boolean {
-  return ["advanced", "interviewing", "hired"].includes(status ?? "")
+  return ADVANCED_STATUSES.includes(status ?? "")
 }
 
 function payoutTiming(status?: string): string {
   switch (status) {
     case "hired":
       return "Payout starts after start-date confirmation"
+    case "offer":
+      return "Offer in motion; payout depends on accepted start"
     case "interviewing":
       return "Potential payout if candidate closes"
+    case "backburner":
+      return "Parked; no payout movement until reopened"
     case "advanced":
       return "Potential payout if hiring team converts"
     case "rejected":
@@ -1536,7 +1554,7 @@ function computeRecruiterEarningsMetrics(
     },
   ]
   const payoutRows = sortSubmissions(submissions)
-    .filter((submission) => ["reviewing", "advanced", "interviewing", "hired", "submitted", "new"].includes(submission.status ?? "submitted"))
+    .filter((submission) => OPEN_SUBMISSION_STATUSES.includes(submission.status ?? "submitted") || submission.status === "hired")
     .slice(0, 8)
     .map((submission): RecruiterPayoutRow => {
       const meta = statusMeta(submission.status)
@@ -2146,9 +2164,9 @@ function buildCandidatePipeline(
   const submitted = submissions
     .filter((s) => ["submitted", "new"].includes(s.status ?? "submitted"))
     .map(submissionToPipelineItem)
-  const reviewing = submissions.filter((s) => s.status === "reviewing").map(submissionToPipelineItem)
+  const reviewing = submissions.filter((s) => s.status === "reviewing" || s.status === "backburner").map(submissionToPipelineItem)
   const interviewing = submissions
-    .filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? ""))
+    .filter((s) => ADVANCED_STATUSES.includes(s.status ?? ""))
     .map(submissionToPipelineItem)
   return [
     { label: "Sourced", tone: "mute", items: sourced },
@@ -2169,7 +2187,7 @@ function buildRecruiterWorkQueue(
   const readyCandidates = sourcedCandidates.filter((c) => c.stage === "ready")
   const newRoles = jobs.filter(isNewRole)
   const feedbackRows = submissions.filter(submissionHasStructuredFeedback)
-  const pending = submissions.filter((s) => ["submitted", "new", "reviewing"].includes(s.status ?? "submitted"))
+  const pending = submissions.filter((s) => ACTIVE_REVIEW_STATUSES.includes(s.status ?? "submitted"))
   const openQuestions = roleQuestions.filter((q) => (q.status ?? "open") === "open")
   const blockedRoles = roleIntelligence.filter((item) => item.feedback.blocked > 0 || item.feedback.hard > 0)
   const noSubmissionRoles = jobs.filter((job) => (roleIntelligence.find((item) => item.jobId === roleKey(job))?.submissionCount ?? 0) === 0)
@@ -2372,7 +2390,7 @@ function buildRecruiterInboxSummary(
 ) {
   const feedbackNotes = submissions.filter(submissionHasStructuredFeedback).length
   const rejectedWithFeedback = submissions.filter((submission) =>
-    ["rejected", "duplicate"].includes(submission.status ?? "") && submissionHasStructuredFeedback(submission),
+    CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? "") && submissionHasStructuredFeedback(submission),
   ).length
   const candidateConfirmationNeeds = submissions.filter(candidateConfirmationCanResend).length
   const readyCandidates = sourcedCandidates.filter((candidate) => candidate.stage === "ready").length
@@ -2384,7 +2402,7 @@ function buildRecruiterInboxSummary(
   const followUpDue = sourcedCandidates.filter((candidate) => candidateFollowUpState(candidate).needsAction).length
   const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open").length
   const activeSubmissions = submissions.filter((submission) =>
-    ["submitted", "new", "reviewing", "advanced", "interviewing"].includes(submission.status ?? "submitted"),
+    OPEN_SUBMISSION_STATUSES.includes(submission.status ?? "submitted"),
   ).length
   const unreadNotifications = notifications.filter((notification) => !notification.readAt).length
   return {
@@ -2448,9 +2466,9 @@ function buildRecruiterInboxItems(
     const atMs = timestampValueMs(submission.recruiterFeedbackUpdatedAt ?? submission.updatedAt ?? submission.createdAt)
     const candidate = submission.candidate?.name || "Submitted candidate"
     const roleLabel = rowRoleLabel(submission, jobsById)
-    const closed = status === "rejected" || status === "duplicate"
-    const moving = status === "advanced" || status === "interviewing" || status === "hired"
-    const pending = status === "submitted" || status === "new" || status === "reviewing"
+    const closed = CLOSED_NEGATIVE_STATUSES.includes(status)
+    const moving = ADVANCED_STATUSES.includes(status)
+    const pending = ACTIVE_REVIEW_STATUSES.includes(status)
 
     if (candidateConfirmationCanResend(submission)) {
       const resendTone = submission.candidateConsentStatus === "pending_candidate_confirmation" ? "info" : "warn"
@@ -2792,9 +2810,9 @@ function buildRoleInsight(
   const roleSubmissions = rowsForRole(job, submissions)
   const roleCandidates = rowsForRole(job, sourcedCandidates).filter((candidate) => candidate.stage !== "archived")
   const readyCount = roleCandidates.filter((candidate) => candidate.stage === "ready").length
-  const pendingCount = roleSubmissions.filter((submission) => ["submitted", "new", "reviewing"].includes(submission.status ?? "submitted")).length
-  const advancedCount = roleSubmissions.filter((submission) => ["advanced", "interviewing", "hired"].includes(submission.status ?? "")).length
-  const rejectedCount = roleSubmissions.filter((submission) => ["rejected", "duplicate"].includes(submission.status ?? "")).length
+  const pendingCount = roleSubmissions.filter((submission) => ACTIVE_REVIEW_STATUSES.includes(submission.status ?? "submitted")).length
+  const advancedCount = roleSubmissions.filter((submission) => ADVANCED_STATUSES.includes(submission.status ?? "")).length
+  const rejectedCount = roleSubmissions.filter((submission) => CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? "")).length
   const feedback = latestRoleFeedback(job, roleFeedback)
   const application = latestRoleApplication(job, roleApplications)
   const intelligence = roleIntelligence.find((item) => item.jobId === roleKey(job))
@@ -4510,8 +4528,8 @@ function PerformanceTab({
   operatingMetrics: RecruiterOperatingMetrics
 }) {
   const feedbackRows = submissions.filter(submissionHasStructuredFeedback)
-  const advanced = submissions.filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? "")).length
-  const pending = submissions.filter((s) => ["submitted", "new", "reviewing"].includes(s.status ?? "submitted")).length
+  const advanced = submissions.filter((s) => ADVANCED_STATUSES.includes(s.status ?? "")).length
+  const pending = submissions.filter((s) => ACTIVE_REVIEW_STATUSES.includes(s.status ?? "submitted")).length
   const ready = candidates.filter((c) => c.stage === "ready").length
   const sourceToSubmit = candidates.length ? Math.round((submissions.length / candidates.length) * 100) : 0
   const singleSubmissions = submissions.filter((submission) => submission.submissionMode === "single_submission").length
@@ -4521,7 +4539,7 @@ function PerformanceTab({
   const metrics = [
     { label: "Submitted", value: String(submissions.length), meta: "formal candidates", tone: "live" },
     { label: "Pending review", value: String(pending), meta: "awaiting feedback", tone: "warn" },
-    { label: "Advanced", value: String(advanced), meta: "sent forward / interview", tone: "success" },
+    { label: "Advanced", value: String(advanced), meta: "sent forward / interview / offer", tone: "success" },
     { label: "Source to submit", value: `${sourceToSubmit}%`, meta: `${ready} ready now`, tone: "info" },
   ]
   const stageRows = SOURCE_STAGES.map((stage) => ({
@@ -4662,7 +4680,7 @@ function EarningsTab({
         <div>
           <span>Interview movement</span>
           <strong>{metrics.interviewRate}%</strong>
-          <p>Preferred target is {PREFERRED_INTERVIEW_RATE_TARGET}%+ advanced, interviewing, or hired.</p>
+          <p>Preferred target is {PREFERRED_INTERVIEW_RATE_TARGET}%+ advanced, interviewing, offer, or hired.</p>
         </div>
       </section>
 
@@ -4926,7 +4944,8 @@ function SubmissionRow({
   const meta = statusMeta(submission.status)
   const consent = candidateConsentMeta(submission.candidateConsentStatus)
   const currentStatus = submission.status === "new" ? "submitted" : submission.status ?? "submitted"
-  const currentIndex = SUBMISSION_PROGRESS.findIndex((step) => step.id === currentStatus)
+  const timelineStatus = currentStatus === "backburner" ? "reviewing" : currentStatus
+  const currentIndex = SUBMISSION_PROGRESS.findIndex((step) => step.id === timelineStatus)
   const isClosed = currentStatus === "rejected" || currentStatus === "duplicate"
   const nextAction = submissionNextAction(submission.status)
   const activity = submissionActivityEvents(submission)

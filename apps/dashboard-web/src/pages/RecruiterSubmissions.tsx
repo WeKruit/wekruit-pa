@@ -78,7 +78,9 @@ function statusBadge(s: string | undefined): "ok" | "warn" | "info" | "muted" {
       return "info"
     case "advanced": return "ok"
     case "interviewing": return "ok"
+    case "offer": return "ok"
     case "hired": return "ok"
+    case "backburner": return "info"
     case "rejected": return "warn"
     case "reviewing": return "info"
     default: return "muted"
@@ -95,7 +97,11 @@ function consentBadge(status: string | undefined): { label: string; tone: "ok" |
   }
 }
 
-const STATUS_VALUES = ["submitted", "new", "reviewing", "advanced", "interviewing", "hired", "rejected", "duplicate"]
+const STATUS_VALUES = ["submitted", "new", "reviewing", "advanced", "interviewing", "backburner", "offer", "hired", "rejected", "duplicate"]
+const ACTIVE_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "interviewing", "backburner", "offer"]
+const PENDING_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "backburner"]
+const ADVANCED_SUBMISSION_STATUSES = ["advanced", "interviewing", "offer", "hired"]
+const NEGATIVE_SUBMISSION_STATUSES = ["rejected", "duplicate"]
 const RECRUITER_WEEKLY_SUBMISSION_TARGET = 8
 const RECRUITER_INTERVIEW_RATE_TARGET = 50
 
@@ -535,9 +541,9 @@ function buildRecruiterRoleOpsRows(input: {
         sourced: roleCandidates.filter((row) => row.stage !== "archived").length,
         ready: roleCandidates.filter((row) => row.stage === "ready").length,
         submissions: roleSubmissions.length,
-        pendingSubmissions: roleSubmissions.filter((row) => ["submitted", "new", "reviewing"].includes(row.status ?? "submitted")).length,
-        advanced: roleSubmissions.filter((row) => ["advanced", "interviewing", "hired"].includes(row.status ?? "")).length,
-        rejectedOrDuplicate: roleSubmissions.filter((row) => ["rejected", "duplicate"].includes(row.status ?? "")).length,
+        pendingSubmissions: roleSubmissions.filter((row) => PENDING_SUBMISSION_STATUSES.includes(row.status ?? "submitted")).length,
+        advanced: roleSubmissions.filter((row) => ADVANCED_SUBMISSION_STATUSES.includes(row.status ?? "")).length,
+        rejectedOrDuplicate: roleSubmissions.filter((row) => NEGATIVE_SUBMISSION_STATUSES.includes(row.status ?? "")).length,
         openQuestions: roleQuestions.filter((row) => (row.status ?? "open") === "open").length,
         hardFeedback: roleFeedback.filter((row) => row.difficulty === "hard").length,
         blockedFeedback: roleFeedback.filter((row) => row.difficulty === "blocked").length,
@@ -564,16 +570,16 @@ function computeRecruiterQualityRows(
       .filter((n): n is number => n !== null)
     const avgRating = ratings.length ? ratings.reduce((sum, n) => sum + n, 0) / ratings.length : null
     const submissions7d = recruiterSubmissions.filter((s) => timestampToMs(s.createdAt) >= weekStartMs).length
-    const activeSubmissions = recruiterSubmissions.filter((s) => ["submitted", "new", "reviewing", "advanced", "interviewing"].includes(s.status ?? "submitted")).length
-    const advancedCount = recruiterSubmissions.filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? "")).length
-    const negativeCount = recruiterSubmissions.filter((s) => ["rejected", "duplicate"].includes(s.status ?? "")).length
+    const activeSubmissions = recruiterSubmissions.filter((s) => ACTIVE_SUBMISSION_STATUSES.includes(s.status ?? "submitted")).length
+    const advancedCount = recruiterSubmissions.filter((s) => ADVANCED_SUBMISSION_STATUSES.includes(s.status ?? "")).length
+    const negativeCount = recruiterSubmissions.filter((s) => NEGATIVE_SUBMISSION_STATUSES.includes(s.status ?? "")).length
     const movementRate = recruiterSubmissions.length ? Math.round((advancedCount / recruiterSubmissions.length) * 100) : 0
     const rejectionDrag = recruiterSubmissions.length ? Math.round((negativeCount / recruiterSubmissions.length) * 100) : 0
     const approvedApplications = recruiterApplications.filter((a) => a.status === "approved")
     const pendingApplications = recruiterApplications.filter((a) => (a.status ?? "pending") === "pending").length
     const approvedRoleIds = [...new Set(approvedApplications.map(rowJobKey).filter(Boolean))]
     const activeRoleIds = new Set([
-      ...recruiterSubmissions.filter((s) => ["submitted", "new", "reviewing", "advanced", "interviewing", "hired"].includes(s.status ?? "submitted")).map(rowJobKey),
+      ...recruiterSubmissions.filter((s) => [...ACTIVE_SUBMISSION_STATUSES, "hired"].includes(s.status ?? "submitted")).map(rowJobKey),
       ...recruiterCandidates.filter((c) => c.stage !== "archived").map(rowJobKey),
     ].filter(Boolean))
     const coveredApprovedRoles = approvedRoleIds.filter((id) => activeRoleIds.has(id)).length
@@ -966,7 +972,7 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
       key: "status",
       label: "Status",
       sortable: true,
-      width: 100,
+      width: 120,
       render: (r) => <Badge tone={statusBadge(r.status)}>{r.status ?? "submitted"}</Badge>,
     },
     {
@@ -1946,7 +1952,7 @@ function RecruiterQualityDetailPanel({
           <div><b>Email:</b> {row.email}</div>
           <div><b>Total submissions:</b> {row.submissionsTotal}</div>
           <div><b>Active submissions:</b> {row.activeSubmissions}</div>
-          <div><b>Advanced/interviewing/hired:</b> {row.advancedCount} ({row.movementRate}%)</div>
+          <div><b>Advanced/interview/offer/hired:</b> {row.advancedCount} ({row.movementRate}%)</div>
           <div><b>Rejected/duplicate drag:</b> {row.rejectionDrag}%</div>
           <div><b>Sourced candidates:</b> {row.sourcedActive} active · {row.readyCandidates} ready</div>
           <div><b>Role applications:</b> {row.approvedRoles} approved · {row.pendingApplications} pending</div>

@@ -423,6 +423,33 @@ describe("recruiter role intelligence", () => {
     assert.equal(role?.pipelinePreview[0]?.candidateLabel, "Role 7")
     assert.equal(role?.pipelinePreview[5]?.candidateLabel, "Role 2")
   })
+
+  it("counts backburner as pending and offer as advanced in role intelligence", () => {
+    const [role] = buildRecruiterRoleIntelligence(
+      [{ jobId: "public-role-1", aliases: ["real-role-1", "public-role-1"] }],
+      "recruiter-a",
+      {
+        sourcedCandidates: [],
+        submissions: [
+          { jobId: "real-role-1", recruiterId: "recruiter-a", status: "backburner" },
+          { inboundJobId: "public-role-1", recruiterId: "recruiter-a", status: "offer" },
+          { inboundJobId: "public-role-1", recruiterId: "recruiter-b", status: "hired" },
+        ],
+        feedback: [],
+        questions: [],
+        applications: [],
+      },
+    )
+
+    assert.equal(role?.pendingCount, 1)
+    assert.equal(role?.advancedCount, 2)
+    assert.deepEqual(role?.my, {
+      sourcedCount: 0,
+      readyCount: 0,
+      submissionCount: 2,
+      pendingCount: 1,
+    })
+  })
 })
 
 describe("recruiter role notifications", () => {

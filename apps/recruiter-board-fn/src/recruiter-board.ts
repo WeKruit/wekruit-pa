@@ -83,6 +83,8 @@ const RECRUITER_CANDIDATE_CONFIRM_URL =
 const HIRING_BOARD_ADMIN_EMAIL_DOMAIN = "@wekruit.com"
 const RECRUITER_PRIMARY_ROLE_SLOT_LIMIT = 10
 const RECRUITER_SINGLE_SUBMISSION_WEEKLY_LIMIT = 5
+const RECRUITER_PENDING_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "backburner"]
+const RECRUITER_ADVANCED_SUBMISSION_STATUSES = ["advanced", "interviewing", "offer", "hired"]
 
 /**
  * Verifies a Bearer Firebase ID token and returns true when the caller's
@@ -2220,11 +2222,11 @@ function rowRecruiterId(row: Record<string, unknown>): string {
 }
 
 function isPendingSubmissionStatus(status: unknown): boolean {
-  return status === "submitted" || status === "new" || status === "reviewing" || status === undefined || status === null
+  return status === undefined || status === null || (typeof status === "string" && RECRUITER_PENDING_SUBMISSION_STATUSES.includes(status))
 }
 
 function isAdvancedSubmissionStatus(status: unknown): boolean {
-  return status === "advanced" || status === "interviewing" || status === "hired"
+  return typeof status === "string" && RECRUITER_ADVANCED_SUBMISSION_STATUSES.includes(status)
 }
 
 function isReadySourcedStage(stage: unknown): boolean {
@@ -3967,6 +3969,8 @@ function recruiterSubmissionStatusLabel(status: string): string {
     case "reviewing": return "WeKruit review"
     case "advanced": return "sent to hiring team"
     case "interviewing": return "interviewing"
+    case "backburner": return "backburner"
+    case "offer": return "offer"
     case "hired": return "hired"
     case "rejected": return "not a fit"
     case "duplicate": return "duplicate"

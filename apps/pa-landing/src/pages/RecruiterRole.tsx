@@ -60,6 +60,10 @@ const ROLE_FEEDBACK_REASONS: Array<{ id: RecruiterRoleFeedbackReason; label: str
   { id: "other", label: "Other" },
 ]
 
+const ROLE_PENDING_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "backburner"]
+const ROLE_ADVANCED_SUBMISSION_STATUSES = ["advanced", "interviewing", "offer", "hired"]
+const ROLE_NEGATIVE_SUBMISSION_STATUSES = ["rejected", "duplicate"]
+
 interface FormState {
   submitterName: string
   submitterEmail: string
@@ -176,6 +180,8 @@ function roleSubmissionStatusLabel(status?: string): string {
     case "reviewing": return "WeKruit review"
     case "advanced": return "Sent to team"
     case "interviewing": return "Interviewing"
+    case "backburner": return "Backburner"
+    case "offer": return "Offer"
     case "hired": return "Hired"
     case "rejected": return "Rejected"
     case "duplicate": return "Duplicate"
@@ -191,6 +197,8 @@ function roleSubmissionNextAction(status?: string): string {
     case "reviewing": return "Wait for WeKruit calibration before sending lookalikes."
     case "advanced": return "Keep the candidate warm for hiring-team review."
     case "interviewing": return "Watch for scheduling and close-process updates."
+    case "backburner": return "Candidate is parked, not rejected. Wait for a clearer next step before sending lookalikes."
+    case "offer": return "Offer is in motion. Keep the candidate warm while WeKruit confirms closing details."
     case "hired": return "Placement reached hired status."
     case "rejected": return "Read feedback before sourcing another candidate."
     case "duplicate": return "Candidate already exists for this search."
@@ -484,14 +492,15 @@ function buildRoleCalibrationBrief(input: {
   const antiItems = roleChecklistItems(job, "anti").map((item) => item.text)
   const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open")
   const answeredQuestions = roleQuestions.filter((question) => question.status === "answered")
-  const rejected = roleSubmissions.filter((row) => row.status === "rejected")
-  const duplicate = roleSubmissions.filter((row) => row.status === "duplicate")
-  const advanced = roleSubmissions.filter((row) => ["advanced", "interviewing", "hired"].includes(row.status ?? ""))
+  const negative = roleSubmissions.filter((row) => ROLE_NEGATIVE_SUBMISSION_STATUSES.includes(row.status ?? ""))
+  const rejected = negative.filter((row) => row.status === "rejected")
+  const duplicate = negative.filter((row) => row.status === "duplicate")
+  const advanced = roleSubmissions.filter((row) => ROLE_ADVANCED_SUBMISSION_STATUSES.includes(row.status ?? ""))
   const readyLocal = roleCandidates.filter((candidate) => candidate.stage === "ready").length
   const sourced = intelligence?.sourcedCount ?? roleCandidates.length
   const ready = intelligence?.readyCount ?? readyLocal
   const submitted = intelligence?.submissionCount ?? roleSubmissions.length
-  const pending = intelligence?.pendingCount ?? roleSubmissions.filter((row) => ["submitted", "new", "reviewing"].includes(row.status ?? "submitted")).length
+  const pending = intelligence?.pendingCount ?? roleSubmissions.filter((row) => ROLE_PENDING_SUBMISSION_STATUSES.includes(row.status ?? "submitted")).length
   const advancedCount = intelligence?.advancedCount ?? advanced.length
   const rejectedCount = intelligence?.rejectedCount ?? rejected.length
   const duplicateCount = intelligence?.duplicateCount ?? duplicate.length
@@ -825,7 +834,7 @@ export default function RecruiterRole() {
   const currentRoleQuestions = roleQuestions
     .filter((question) => roleMatches(job, question))
     .sort((a, b) => timestampMs(b.updatedAt ?? b.createdAt) - timestampMs(a.updatedAt ?? a.createdAt))
-  const pendingCount = roleSubmissions.filter((row) => ["submitted", "new", "reviewing"].includes(row.status ?? "submitted")).length
+  const pendingCount = roleSubmissions.filter((row) => ROLE_PENDING_SUBMISSION_STATUSES.includes(row.status ?? "submitted")).length
   const pendingSlots = Math.max(0, ROLE_PENDING_SUBMISSION_LIMIT - pendingCount)
   const selectedCandidate = prefilledCandidateId
     ? roleCandidates.find((candidate) => candidate.id === prefilledCandidateId || candidate.candidateId === prefilledCandidateId) ?? null
