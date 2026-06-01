@@ -40,6 +40,8 @@ import {
   type PendingOutboundStatus,
 } from "@pa/core-types"
 import { authorizeAdminCallable } from "../promote-sandbox-tag.js"
+import { isSuppressed, type SuppressionResult } from "./suppression.js"
+import { sendImessage } from "../sendblue/sendblue-client.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 
@@ -146,6 +148,20 @@ export type PendingOutboundAdminDeps = {
    * outreachPaused + candidateLifecycleState === "opted_out").
    */
   resolveLiveRecipient?: (userId: string) => Promise<LiveRecipient>
+  /**
+   * FULL outbound suppression re-check at click time. This is BROADER than
+   * `resolveLiveRecipient` (which only reads the basic pa-users opt-out flags):
+   * it also catches `outreach.status === "paused"` (the reversible STOP-keyword
+   * pause), filed-but-unprocessed `stop_outreach`/`delete` privacy requests, the
+   * global kill switch, and `dailyJobRecSubscribe.optedIn === false`. It is
+   * fail-CLOSED for the `recovery` kind. A row that became paused/opted-out
+   * AFTER it was queued is blocked here even though it was approved. Defaults to
+   * the real `isSuppressed` in production.
+   */
+  checkSuppression?: (
+    userId: string,
+    kind: string
+  ) => Promise<SuppressionResult>
   /**
    * The ACTUAL Sendblue dispatch seam. Intentionally optional: when absent the
    * `send` action returns `blocked` instead of dispatching, so no live send can
@@ -306,6 +322,43 @@ export async function runPendingOutboundAdmin(
     }
   }
 
+  // Gate 2.5 — FULL suppression re-check at click time, ALWAYS fail-CLOSED. This
+  // is the gate that catches a row which became paused / opted-out /
+  // privacy-stopped AFTER it was queued+approved. It reads every opt-out signal
+  // in the system (incl. the reversible STOP-keyword pause on
+  // outreach.status === "paused" and filed-but-unprocessed privacy requests),
+  // which `resolveLiveRecipient` alone does NOT cover.
+  //
+  // A human-clicked send is the single highest-stakes outbound moment, so we
+  // hard-pin the suppression read to the fail-CLOSED `recovery` kind regardless
+  // of `doc.kind`: any transient read error here MUST suppress (better to make
+  // the operator re-click than to text someone whose opt-out read just failed).
+  // The recovery campaign already queues kind:"recovery"; this hardening keeps
+  // the per-draft Send button safe if the queue is ever reused for ai_review /
+  // rec / reengage kinds (which fail OPEN on their own bulk paths). We persist
+  // the freshly discovered suppression onto the row so the queue reflects
+  // reality.
+  const checkSuppression =
+    deps.checkSuppression ??
+    ((userId: string) =>
+      isSuppressed(deps.db, userId, { kind: "recovery" }))
+  const suppression = await checkSuppression(doc.userId, doc.kind)
+  if (suppression.suppressed) {
+    const suppressed: PendingOutbound = PendingOutboundSchema.parse({
+      ...doc,
+      suppressed: true,
+      suppressedReason: suppression.reason,
+    })
+    await ref.set(suppressed)
+    return {
+      action: "send",
+      ok: false,
+      blocked: true,
+      reason: suppression.reason,
+      doc: suppressed,
+    }
+  }
+
   // Gate 3 — re-validate the LIVE recipient + opt-out at send time. Never
   // trust the denormalized `toE164` on the row.
   const live = deps.resolveLiveRecipient
@@ -361,6 +414,13 @@ export async function runPendingOutboundAdmin(
       docId: doc.id,
     })
   } catch (e) {
+    // NOTE (operator behavior): a thrown send is recorded as a terminal
+    // `failed` row, so the operator must re-approve before re-sending. Some
+    // throws are TRANSIENT (Sendblue 5xx / circuit-breaker-OPEN 60s cooldown /
+    // network), where a simple re-click would have succeeded; others are
+    // PERMANENT (4xx client errors). We intentionally keep the conservative
+    // "one click = one durable outcome" semantics here (no auto-retry), but a
+    // future hardening could leave transient failures as `approved`/retryable.
     const failed: PendingOutbound = PendingOutboundSchema.parse({
       ...doc,
       status: "failed",
@@ -438,10 +498,30 @@ export const paPendingOutboundAdmin = onCall(
       actorUid: uid,
       resolveLiveRecipient: (userId) =>
         resolveLiveRecipientFromUsers(db, userId),
-      // sendImpl INTENTIONALLY NOT WIRED. Wiring this to the live Sendblue
-      // dispatch is a deliberate, Adam-gated follow-up (real iMessage to
-      // non-test recipients per CLAUDE.md). Until then `send` returns
-      // `{ blocked:true, reason:"send_not_wired" }` and never dispatches.
+      // Pin the click-time re-check to the fail-CLOSED `recovery` kind so a
+      // transient opt-out read error blocks the human-clicked send (one click =
+      // one message; re-clicking after a transient blip is the safe recovery).
+      checkSuppression: (userId) =>
+        isSuppressed(db, userId, { kind: "recovery" }),
+      // sendImpl WIRED to the live Sendblue iMessage sender. This is reached
+      // ONLY via the authenticated, admin-gated `action:"send"` path — i.e. one
+      // operator click = one message — and ONLY after every gate above passes
+      // (approved row + not flagged-suppressed + full isSuppressed re-check +
+      // live-recipient re-validation). There is NO auto/bulk/scheduled caller of
+      // this seam; the dashboard per-draft "Send" button is the sole trigger.
+      // Pool-aware routing + thread continuity come from passing `userId`+`db`;
+      // `allowEnvFromNumberFallback:false` keeps an empty public pool from
+      // silently falling back to an admin/internal line.
+      sendImpl: async ({ toE164, body, userId, docId }) => {
+        const resp = await sendImessage({
+          to: toE164,
+          content: body,
+          userId,
+          db,
+          allowEnvFromNumberFallback: false,
+        })
+        return { providerMessageId: resp.message_handle ?? resp.uuid ?? docId }
+      },
     })
   }
 )

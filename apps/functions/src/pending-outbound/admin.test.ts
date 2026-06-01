@@ -145,6 +145,17 @@ function baseDeps(
       toE164: "+14243201960",
       optedOut: false,
     }),
+    // Default the full suppression re-check to CLEAR so the older send-gate
+    // tests keep exercising the gate they were written for. Tests that want to
+    // assert the suppression gate inject their own `checkSuppression`, and the
+    // "real default" test passes `checkSuppression: undefined` to fall through
+    // to the production `isSuppressed`.
+    checkSuppression: async () => ({
+      suppressed: false,
+      reason: "clear",
+      signals: [],
+      failedClosed: false,
+    }),
     ...over,
   }
 }
@@ -345,4 +356,130 @@ test("send marks the row failed when sendImpl throws", async () => {
   assert.equal(res.blocked, false)
   assert.equal(res.doc.status, "failed")
   assert.match(res.doc.sendError ?? "", /503/)
+})
+
+// ---------------------------------------------------------------------------
+// send — full isSuppressed re-check at click time (the post-queue pause gate)
+// ---------------------------------------------------------------------------
+
+test("REQUIRED(e): send is blocked at click time when isSuppressed fires after queueing (paused-after-approve)", async () => {
+  // Row was queued + approved CLEAN (suppressed=false, live recipient OK), but
+  // the candidate texted STOP afterward → the FULL suppression re-check must
+  // block it even though the static row flag + basic live opt-out look clear.
+  const { db, store } = makeFakeFirestore()
+  const row = seedRow(store, { status: "approved", suppressed: false })
+  let dispatched = false
+  const res = await runPendingOutboundAdmin(
+    { action: "send", id: row.id },
+    baseDeps(db, {
+      // basic live recipient looks reachable + not opted out…
+      resolveLiveRecipient: async () => ({ toE164: "+14243201960", optedOut: false }),
+      // …but the full suppression gate sees the reversible pause they just set.
+      checkSuppression: async () => ({
+        suppressed: true,
+        reason: "outreach_status_paused",
+        signals: ["outreach_status_paused"],
+        failedClosed: false,
+      }),
+      sendImpl: async () => {
+        dispatched = true
+        return { providerMessageId: "x" }
+      },
+    })
+  )
+  if (res.action !== "send") return assert.fail("wrong action")
+  assert.equal(res.blocked, true)
+  assert.equal(res.ok, false)
+  assert.equal(dispatched, false)
+  assert.equal(res.reason, "outreach_status_paused")
+  // the row is persisted as suppressed so the queue reflects reality
+  assert.equal(res.doc.suppressed, true)
+  assert.equal(res.doc.suppressedReason, "outreach_status_paused")
+  const stored = store.get(PA_COLLECTIONS.pendingOutbound)!.get(row.id)!
+  assert.equal(stored.suppressed, true)
+})
+
+test("REQUIRED(d): send dispatches + marks sent when the full suppression re-check is CLEAR", async () => {
+  // Same clean path, but now the explicit full-suppression seam returns clear —
+  // proving the new gate is wired in series with (not in place of) dispatch.
+  const { db, store } = makeFakeFirestore()
+  const row = seedRow(store, { status: "approved" })
+  const calls: unknown[] = []
+  const res = await runPendingOutboundAdmin(
+    { action: "send", id: row.id },
+    baseDeps(db, {
+      checkSuppression: async () => ({
+        suppressed: false,
+        reason: "clear",
+        signals: [],
+        failedClosed: false,
+      }),
+      sendImpl: async (args) => {
+        calls.push(args)
+        return { providerMessageId: "msg-789" }
+      },
+    })
+  )
+  if (res.action !== "send") return assert.fail("wrong action")
+  assert.equal(res.ok, true)
+  assert.equal(res.blocked, false)
+  assert.equal(res.doc.status, "sent")
+  assert.equal(calls.length, 1)
+})
+
+test("send fails CLOSED when isSuppressed itself errors (recovery kind), no dispatch", async () => {
+  // If the suppression read throws, the default (recovery) behavior must be to
+  // NOT send. We model that by a checkSuppression that returns a failedClosed
+  // suppression — the gate blocks and never reaches sendImpl.
+  const { db, store } = makeFakeFirestore()
+  const row = seedRow(store, { status: "approved" })
+  let dispatched = false
+  const res = await runPendingOutboundAdmin(
+    { action: "send", id: row.id },
+    baseDeps(db, {
+      checkSuppression: async () => ({
+        suppressed: true,
+        reason: "user_read_failed",
+        signals: ["user_read_failed"],
+        failedClosed: true,
+      }),
+      sendImpl: async () => {
+        dispatched = true
+        return { providerMessageId: "x" }
+      },
+    })
+  )
+  if (res.action !== "send") return assert.fail("wrong action")
+  assert.equal(res.blocked, true)
+  assert.equal(dispatched, false)
+  assert.equal(res.reason, "user_read_failed")
+})
+
+test("default checkSuppression wires the real isSuppressed (a real opted_out pa-users doc blocks)", async () => {
+  // No checkSuppression injected → the handler must fall back to the real
+  // isSuppressed(db, userId). Seed a pa-users doc that is opted out and prove
+  // the send is blocked WITHOUT ever calling sendImpl.
+  const { db, store } = makeFakeFirestore()
+  const row = seedRow(store, { status: "approved" })
+  store.get(PA_COLLECTIONS.users)!.set("user-1", {
+    id: "user-1",
+    phoneE164: "+14243201960",
+    candidateLifecycleState: "opted_out",
+  })
+  let dispatched = false
+  const res = await runPendingOutboundAdmin(
+    { action: "send", id: row.id },
+    baseDeps(db, {
+      // intentionally NOT injecting checkSuppression — exercise the real default
+      checkSuppression: undefined,
+      sendImpl: async () => {
+        dispatched = true
+        return { providerMessageId: "x" }
+      },
+    })
+  )
+  if (res.action !== "send") return assert.fail("wrong action")
+  assert.equal(res.blocked, true)
+  assert.equal(dispatched, false)
+  assert.match(res.reason, /opted_out|lifecycle/)
 })

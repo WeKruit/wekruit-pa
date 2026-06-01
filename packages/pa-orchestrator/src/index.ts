@@ -3987,8 +3987,140 @@ async function handleCompletedUserJobSearchRequest(
 type PrivacyIntent =
   | { kind: "summary"; includeMemory: boolean }
   | { kind: "request"; requestKind: PrivacyRequestKind }
+  // STOP-keyword opt-out → reversible PAUSE (Adam 2026-06-01: STOP = PAUSE, not
+  // a permanent opted_out). Distinct from `request:stop_outreach` only in that
+  // it ALSO writes a durable pause that the outbound suppression gate reads.
+  | { kind: "resume" }
 
-function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | null {
+/**
+ * Carrier-standard opt-out CONTROL keyword detection.
+ *
+ * IMPORTANT — this is NOT enum/profile tagging. The "no regex in the tagging
+ * path" rule (D15 / MEMORY no_regex_in_tagging) forbids regex that classifies
+ * free text into a closed *tag* enum. Opt-out / opt-in keyword handling is a
+ * different concern: it is a deterministic TCPA/carrier control surface ("STOP"
+ * / "UNSUBSCRIBE" / "START") where the candidate's literal keyword IS the
+ * instruction. A keyword match here gates *outbound delivery*, it never writes a
+ * skill/role/industry tag. Deterministic matching is the correct, auditable
+ * tool for control keywords; LLM inference is not.
+ *
+ * CONSERVATIVE by design: we only fire on (a) a lone control keyword (the whole
+ * trimmed message is the keyword, optionally with trailing punctuation), or
+ * (b) an explicit opt-out phrase. We deliberately do NOT match "stop" buried in
+ * an unrelated sentence ("I cannot stop thinking about that role", "non-stop",
+ * "stopgap"). Rationale (Adam): a MISSED stop is recoverable on the next inbound
+ * message; a FALSE pause silences a happy candidate — so when unsure, do NOT
+ * pause.
+ */
+
+/** Lone carrier-standard STOP keywords (whole-message, case-insensitive). */
+const STOP_CONTROL_KEYWORDS = new Set([
+  "stop",
+  "stopall",
+  "unsubscribe",
+  "cancel",
+  "end",
+  "quit",
+])
+
+/** Lone carrier-standard START keywords (whole-message, case-insensitive). */
+const RESUME_CONTROL_KEYWORDS = new Set([
+  "start",
+  "unstop",
+  "resume",
+  "unpause",
+])
+
+/**
+ * Strip a message to its bare control token: lowercase, trim, drop surrounding
+ * punctuation/whitespace, collapse internal whitespace. Returns "" when the
+ * message clearly is not a lone keyword (multi-word and not an explicit phrase).
+ */
+function normalizeControlKeyword(body: string): string {
+  return body
+    .toLowerCase()
+    .trim()
+    // strip leading/trailing punctuation + symbols (keep inner letters)
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+/**
+ * True when the message is a STOP opt-out: a lone STOP keyword, an optional
+ * "please stop"/"stop please", or an explicit opt-out phrase. Conservative —
+ * see the block comment above.
+ */
+export function detectStopIntent(text: string | undefined | null): boolean {
+  const body = (text ?? "").trim()
+  if (!body) return false
+  const normalized = normalizeControlKeyword(body)
+  // (a) lone control keyword: "STOP", "STOP.", "stop!", "Unsubscribe"
+  if (STOP_CONTROL_KEYWORDS.has(normalized)) return true
+  // (a') trivial politeness wrapper around a lone STOP keyword:
+  //      "please stop", "stop please", "please unsubscribe"
+  if (
+    /^(?:please\s+)?(?:stop|stopall|unsubscribe|cancel|quit)(?:\s+please)?$/u.test(
+      normalized,
+    )
+  ) {
+    return true
+  }
+  // (b) explicit opt-out phrases (intent is unambiguous even mid-sentence).
+  //     These mirror — and extend — the narrow legacy `stop_outreach` set.
+  if (
+    /\b(?:stop|pause)\s+(?:texting|outreach|messages|messaging|reaching\s+out|contacting\s+me)\b/iu.test(
+      body,
+    ) ||
+    /\b(?:stop\s+texting\s+me|leave\s+me\s+alone|do\s+not\s+(?:text|contact|message)\s+me|don'?t\s+(?:text|contact|message)\s+me|opt\s+me\s+out|unsubscribe\s+me)\b/iu.test(
+      body,
+    )
+  ) {
+    return true
+  }
+  // (b') "remove me" / "take me off" are ONLY a global opt-out when bound to an
+  //      outreach target. Audit (2026-06-01): the bare bigrams false-paused
+  //      ENGAGED candidates declining ONE role/list ("please remove me from the
+  //      Google role", "take me off the night shift list"). A lone-keyword path
+  //      already covers terse opt-outs; these phrasal forms must be explicitly
+  //      about the texts/outreach/list-as-a-whole, never a single job.
+  if (
+    /\b(?:remove\s+me|take\s+me\s+off)\s+(?:from\s+)?(?:your\s+|the\s+|all\s+)?(?:list|lists|outreach|texts?|messages|messaging|contact(?:s|\s+list)?|everything)\b/iu.test(
+      body,
+    )
+  ) {
+    return true
+  }
+  return false
+}
+
+/**
+ * True when the message is a START opt-in: a lone START keyword or an explicit
+ * resume phrase. Same conservative rules as STOP.
+ */
+export function detectResumeIntent(text: string | undefined | null): boolean {
+  const body = (text ?? "").trim()
+  if (!body) return false
+  const normalized = normalizeControlKeyword(body)
+  if (RESUME_CONTROL_KEYWORDS.has(normalized)) return true
+  if (
+    /^(?:please\s+)?(?:start|resume|unstop|unpause)(?:\s+please)?$/u.test(
+      normalized,
+    )
+  ) {
+    return true
+  }
+  if (
+    /\b(?:start\s+texting\s+me|resume\s+(?:texting|outreach|messages|messaging)|unpause\s+(?:outreach|messages)|opt\s+me\s+back\s+in|opt\s+me\s+in)\b/iu.test(
+      body,
+    )
+  ) {
+    return true
+  }
+  return false
+}
+
+export function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | null {
   const body = (text ?? "").trim()
   if (!body) return null
   const lower = body.toLowerCase()
@@ -4006,9 +4138,16 @@ function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | n
   ) {
     return { kind: "request", requestKind: "export" }
   }
-  if (
-    /\b(?:stop|pause)\s+(?:texting|outreach|messages|reaching\s+out)\b/i.test(body)
-  ) {
+  // Opt-in (START) takes precedence over opt-out so an explicit resume is never
+  // misread as a stop. Resume is only meaningful when currently paused; the
+  // handler enforces that (it never un-opts-out a true opted_out/deleted).
+  if (detectResumeIntent(body)) {
+    return { kind: "resume" }
+  }
+  // Broadened STOP capture: lone carrier keyword OR explicit opt-out phrase →
+  // reversible PAUSE. (See detectStopIntent block comment for the no-regex-in-
+  // tagging distinction.)
+  if (detectStopIntent(body)) {
     return { kind: "request", requestKind: "stop_outreach" }
   }
   if (asksData || asksMemory || lower.includes("privacy")) {
@@ -4017,7 +4156,7 @@ function detectPrivacyIntent(text: string | undefined | null): PrivacyIntent | n
   return null
 }
 
-async function handlePrivacyIntent(
+export async function handlePrivacyIntent(
   event: InboundEvent,
   store: OrchestratorStore,
   turnId: string,
@@ -4040,6 +4179,59 @@ async function handlePrivacyIntent(
       await store.recordMemoryAction({ userId: event.userId, eventId: event.id, action: "list", status: "succeeded" })
     }
     await sendMemoryReply(store, event, turnId, lines.join("\n\n"))
+    return true
+  }
+
+  // ---- RESUME (START / opt back in) ---------------------------------------
+  // TCPA-standard opt-in. Only clears a reversible PAUSE; it NEVER reactivates a
+  // true opted_out/deleted candidate (that requires the explicit privacy flow).
+  // IMPORTANT: only CONSUME the turn (reply + return true) when a pause was
+  // actually cleared. A lone "START" from a candidate who is NOT paused (e.g. a
+  // brand-new user responding to a "text START to begin" prompt, or plain
+  // enthusiasm) must NOT dead-end with "you're already active"; we return false
+  // so the message flows on to normal onboarding/handling. This keeps START a
+  // no-op-except-when-paused control keyword.
+  if (intent.kind === "resume") {
+    const resumed = await applyOutreachResume(store, event.userId, store.nowIso())
+    if (!resumed) {
+      // Not paused → do not short-circuit; let the inbound router handle the
+      // message normally (onboarding, LLM, etc.).
+      return false
+    }
+    await sendMemoryReply(
+      store,
+      event,
+      turnId,
+      "ok, you’re back in — i’ll keep sending. 🙌",
+    )
+    return true
+  }
+
+  // ---- STOP → durable, reversible PAUSE -----------------------------------
+  // For the stop_outreach intent we ALSO set a durable pause on
+  // pa-users.outreach so the outbound suppression gate (functions
+  // pending-outbound/suppression.ts: outreach.status === "paused") blocks any
+  // queued recovery message immediately, even before the privacy queue runs.
+  // The pause is a reducer-style merge that NEVER downgrades an existing
+  // opted_out/deleted to the weaker "paused".
+  if (intent.requestKind === "stop_outreach") {
+    await applyOutreachPause(store, event.userId, event.body ?? "", store.nowIso())
+    // Keep filing the audit privacy request too (when the store supports it).
+    if (store.createPrivacyRequest) {
+      await store.createPrivacyRequest({
+        userId: event.userId,
+        kind: "stop_outreach",
+        detail: event.body ?? "",
+        eventId: event.id,
+        sessionId: event.sessionId,
+      })
+    }
+    await sendMemoryReply(
+      store,
+      event,
+      turnId,
+      "ok — i’ll stop texting. reply START anytime to pick back up."
+    )
     return true
   }
 
@@ -4069,6 +4261,107 @@ async function handlePrivacyIntent(
     `Got it. I submitted a ${kindCopy[result.kind]} request.${result.existingOpen ? " You already had one open, so I did not create a duplicate." : " We will review it from the privacy queue and keep an audit trail."}`
   await sendMemoryReply(store, event, turnId, reply)
   return true
+}
+
+/**
+ * Durably PAUSE outbound for a candidate (reducer-style merge into
+ * pa-users.outreach). Safety locks:
+ *  - NEVER write `paused` over an existing `opted_out`/`deleted` (those are
+ *    stronger and irreversible-by-keyword); a STOP from such a user is a no-op
+ *    on the lifecycle but we still record the stop text for audit.
+ *  - Idempotent: re-pausing an already-paused user just refreshes the timestamp.
+ *
+ * The suppression gate reads `outreach.status === "paused"` (and lifecycle
+ * opted_out/deleted), so this single write is enough to block recovery sends.
+ */
+export async function applyOutreachPause(
+  store: OrchestratorStore,
+  userId: string,
+  stopText: string,
+  nowIso: string
+): Promise<void> {
+  const db = store.db
+  if (!db) return
+  try {
+    const ref = db.collection(PA_COLLECTIONS.users).doc(userId)
+    const snap = await ref.get()
+    const data = (snap.exists ? snap.data() : {}) as Record<string, unknown>
+    const lifecycleAlias = data.candidateLifecycle as { state?: unknown } | undefined
+    const lifecycleState =
+      (typeof data.candidateLifecycleState === "string"
+        ? (data.candidateLifecycleState as string)
+        : undefined) ??
+      (typeof lifecycleAlias?.state === "string" ? (lifecycleAlias.state as string) : undefined)
+    const existingOutreach = (data.outreach ?? {}) as Record<string, unknown>
+    const existingStatus = typeof existingOutreach.status === "string" ? existingOutreach.status : undefined
+    // Reducer guard: never downgrade a stronger terminal/opt-out state.
+    const stronger =
+      lifecycleState === "opted_out" ||
+      lifecycleState === "deleted" ||
+      existingStatus === "opted_out"
+    const cappedText = stopText.trim().slice(0, 240)
+    const outreachPatch: Record<string, unknown> = stronger
+      ? {
+          // Keep the existing stronger status; just record this stop event.
+          ...existingOutreach,
+          lastStopText: cappedText,
+          lastStopAt: nowIso,
+        }
+      : {
+          ...existingOutreach,
+          status: "paused",
+          pausedAt: nowIso,
+          source: "inbound_stop_keyword",
+          lastStopText: cappedText,
+        }
+    await ref.set({ outreach: outreachPatch, updatedAt: nowIso }, { merge: true })
+  } catch {
+    // Fail-soft: the suppression gate also fails CLOSED for the recovery kind
+    // and we still file the audit privacy request, so a write hiccup here does
+    // not open a send. Never throw into the turn.
+  }
+}
+
+/**
+ * Clear a reversible PAUSE (START / opt back in). Returns true when a pause was
+ * actually cleared. NEVER reactivates opted_out/deleted (only the explicit
+ * privacy flow can do that). Only flips when current status is exactly
+ * "paused".
+ */
+export async function applyOutreachResume(
+  store: OrchestratorStore,
+  userId: string,
+  nowIso: string
+): Promise<boolean> {
+  const db = store.db
+  if (!db) return false
+  try {
+    const ref = db.collection(PA_COLLECTIONS.users).doc(userId)
+    const snap = await ref.get()
+    if (!snap.exists) return false
+    const data = (snap.data() ?? {}) as Record<string, unknown>
+    const existingOutreach = (data.outreach ?? {}) as Record<string, unknown>
+    const existingStatus = typeof existingOutreach.status === "string" ? existingOutreach.status : undefined
+    if (existingStatus !== "paused") {
+      // Not paused (active, opted_out, deleted, or unset) → do not change state.
+      return false
+    }
+    await ref.set(
+      {
+        outreach: {
+          ...existingOutreach,
+          status: "active",
+          resumedAt: nowIso,
+          source: "inbound_start_keyword",
+        },
+        updatedAt: nowIso,
+      },
+      { merge: true }
+    )
+    return true
+  } catch {
+    return false
+  }
 }
 
 function composeSavedJobPreferencesReply(
@@ -4668,7 +4961,24 @@ export async function processInboundEvent(event: InboundEvent, store: Orchestrat
       return
     }
 
-    if (userAuthoredEvent && detectJobRecommendationSubscriptionCancel(event.body)) {
+    // A carrier-standard opt-out (lone "STOP"/"UNSUBSCRIBE"/"CANCEL"/"QUIT"/… or
+    // an explicit "stop texting me"/"take me off the list" phrase) must NOT be
+    // swallowed by the narrower job-recommendation cancel below. The rec-cancel
+    // path only writes jobRecommendationSubscription.status="paused", which the
+    // outbound suppression gate does NOT read — so a bare "STOP" would otherwise
+    // pause job-rec dialogue yet leave the win-back recovery campaign free to
+    // re-ping the candidate. We let these messages fall through to
+    // detectPrivacyIntent → handlePrivacyIntent's stop_outreach path, which
+    // writes the suppression-readable pa-users.outreach.status="paused" + files
+    // the audit privacy request + replies with the TCPA-standard "reply START"
+    // confirm. A noun-qualified "cancel my job recs" is NOT a detectStopIntent
+    // match, so it still routes to the daily-rec cancel handler below.
+    const isCarrierStopOptOut = userAuthoredEvent && detectStopIntent(event.body)
+    if (
+      !isCarrierStopOptOut &&
+      userAuthoredEvent &&
+      detectJobRecommendationSubscriptionCancel(event.body)
+    ) {
       const pauseResult = await store.pauseJobRecommendationSubscription?.(event.userId, {
         inboundEventId: event.id,
         sessionId: event.sessionId,
