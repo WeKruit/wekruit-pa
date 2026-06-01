@@ -529,6 +529,148 @@
   font-weight: 600;
 }
 
+.rb-submission-packet {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  border: 1px solid #ded8ce;
+  border-left: 4px solid #8d887e;
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px;
+}
+
+.rb-submission-packet.is-ready {
+  border-left-color: #1e6b34;
+  background: #f3faf5;
+}
+
+.rb-submission-packet.is-watch {
+  border-left-color: #b77c2f;
+  background: #fffaf1;
+}
+
+.rb-submission-packet.is-blocked {
+  border-left-color: #a33a2d;
+  background: #fff6f4;
+}
+
+.rb-submission-packet header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.rb-submission-packet span,
+.rb-submission-packet em {
+  color: #6a6a64;
+  font-size: 11.5px;
+  font-style: normal;
+}
+
+.rb-submission-packet header span,
+.rb-submission-packet__grid article > span {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-submission-packet strong {
+  color: #1a1a1a;
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.rb-submission-packet header strong {
+  display: block;
+  font-size: 19px;
+}
+
+.rb-submission-packet p,
+.rb-submission-packet li {
+  margin: 0;
+  color: #4a4a44;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-submission-packet__score {
+  min-width: 92px;
+  display: grid;
+  justify-items: center;
+  border: 1px solid #e2ddd4;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.rb-submission-packet__score b {
+  color: #1a1a1a;
+  font-family: var(--font-serif);
+  font-size: 34px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-submission-packet__grid {
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr 1fr;
+  gap: 10px;
+}
+
+.rb-submission-packet__grid article {
+  min-width: 0;
+  border: 1px solid #eee7dd;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.68);
+  padding: 12px;
+}
+
+.rb-submission-packet ul {
+  margin: 0;
+  padding-left: 17px;
+}
+
+.rb-submission-packet li + li {
+  margin-top: 4px;
+}
+
+.rb-submission-packet__checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-submission-packet__checks div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  border-top: 1px solid #e9dfd0;
+  padding-top: 10px;
+}
+
+.rb-submission-packet__checks strong {
+  flex-basis: 100%;
+  font-size: 12.5px;
+}
+
+.rb-submission-packet__checks span {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #e1d5c4;
+  border-radius: 999px;
+  background: #fff;
+  color: #4a4038;
+  padding: 5px 8px;
+  font-size: 11.5px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .rb-form .field {
   display: grid;
   grid-template-columns: 140px 1fr;
@@ -3553,6 +3695,12 @@
   .rb-role-dashboard {
     grid-template-columns: 1fr;
   }
+  .rb-submission-packet__grid {
+    grid-template-columns: 1fr;
+  }
+  .rb-submission-packet__checks {
+    grid-template-columns: 1fr;
+  }
   .rb-role-cockpit {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3632,6 +3780,12 @@
   }
   .rb-platform__cta {
     margin-top: 8px;
+  }
+  .rb-submission-packet header {
+    grid-template-columns: 1fr;
+  }
+  .rb-submission-packet__score {
+    justify-items: start;
   }
   .rb-platform__top {
     position: static;

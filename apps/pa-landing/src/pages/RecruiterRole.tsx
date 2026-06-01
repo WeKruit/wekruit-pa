@@ -191,6 +191,101 @@ function formatSubmissionFailure(reason?: string): string {
   return reason ?? "submission_failed"
 }
 
+type RoleChecklistKind = CollabJob["recruiterBoard"]["checklist"]["groups"][number]["kind"]
+
+type RoleSubmissionPacket = {
+  score: number
+  label: string
+  tone: "ready" | "watch" | "blocked"
+  summary: string
+  blockers: string[]
+  warnings: string[]
+  proof: string[]
+  nextAction: string
+  missingHard: string[]
+  antiFlags: string[]
+}
+
+function roleChecklistItems(job: CollabJob, kind: RoleChecklistKind) {
+  return job.recruiterBoard.checklist.groups.find((group) => group.kind === kind)?.items ?? []
+}
+
+function buildRoleSubmissionPacket(input: {
+  job: CollabJob
+  form: FormState
+  pendingSlots: number
+  selectedCandidate: RecruiterSourcedCandidateItem | null
+  roleCandidates: RecruiterSourcedCandidateItem[]
+  roleSubmissions: RecruiterSubmissionItem[]
+  roleFeedback: RecruiterRoleFeedbackItem | null
+  roleQuestions: RecruiterRoleQuestionItem[]
+  intelligence: RecruiterRoleIntelligenceItem | null
+}): RoleSubmissionPacket {
+  const { job, form, pendingSlots, selectedCandidate, roleCandidates, roleSubmissions, roleFeedback, roleQuestions, intelligence } = input
+  const hardItems = roleChecklistItems(job, "hard")
+  const fitItems = roleChecklistItems(job, "fit")
+  const bonusItems = roleChecklistItems(job, "bonus")
+  const antiItems = roleChecklistItems(job, "anti")
+  const checked = (kind: RoleChecklistKind) => roleChecklistItems(job, kind).filter((item) => form.checklist[item.id]).length
+  const hardChecked = checked("hard")
+  const fitChecked = checked("fit")
+  const bonusChecked = checked("bonus")
+  const antiChecked = checked("anti")
+  const missingHard = hardItems.filter((item) => !form.checklist[item.id]).map((item) => item.text)
+  const antiFlags = antiItems.filter((item) => form.checklist[item.id]).map((item) => item.text)
+  const blockers: string[] = []
+  const warnings: string[] = []
+  const proof: string[] = []
+  if (!form.candidateName.trim()) blockers.push("Candidate name is missing.")
+  if (!form.candidateLink.trim()) blockers.push("LinkedIn or resume link is missing.")
+  if (!form.candidateConsent) blockers.push("Candidate consent is not confirmed.")
+  if (pendingSlots <= 0) blockers.push("This role has no pending submission slots left.")
+  if (hardItems.length > 0 && hardChecked < hardItems.length) warnings.push(`${hardItems.length - hardChecked} hard check${hardItems.length - hardChecked === 1 ? "" : "s"} still need proof.`)
+  if (antiFlags.length > 0) warnings.push(`${antiFlags.length} anti-signal${antiFlags.length === 1 ? "" : "s"} marked. Add context before submitting.`)
+  if (fitItems.length > 0 && fitChecked === 0) warnings.push("No fit checks are verified yet.")
+  if (!form.candidateNotes.trim()) warnings.push("Add notes explaining why this candidate fits the role.")
+  if (roleFeedback?.difficulty === "blocked") warnings.push("You marked this role blocked. Ask WeKruit for calibration before adding volume.")
+  if (roleQuestions.some((question) => (question.status ?? "open") === "open")) warnings.push("There is an open role question waiting on WeKruit.")
+  if (selectedCandidate) proof.push("Pulled from saved candidate queue")
+  if (form.candidateCurrentRole.trim()) proof.push(form.candidateCurrentRole.trim())
+  if (form.candidateYoe.trim()) proof.push(`${form.candidateYoe.trim()} experience`)
+  if (hardChecked === hardItems.length && hardItems.length > 0) proof.push("All hard checks verified")
+  if (fitChecked > 0) proof.push(`${fitChecked}/${fitItems.length} fit checks`)
+  if (bonusChecked > 0) proof.push(`${bonusChecked}/${bonusItems.length} bonus signals`)
+  if ((intelligence?.readyCount ?? 0) > 0) proof.push(`${intelligence?.readyCount} ready candidate${intelligence?.readyCount === 1 ? "" : "s"} across board`)
+  if (roleCandidates.length > 0) proof.push(`${roleCandidates.length} sourced in your CRM`)
+  if (roleSubmissions.length > 0) proof.push(`${roleSubmissions.length} prior submission${roleSubmissions.length === 1 ? "" : "s"}`)
+
+  const basicsScore = (form.candidateName.trim() ? 10 : 0) + (form.candidateLink.trim() ? 10 : 0) + (form.candidateConsent ? 12 : 0)
+  const hardScore = hardItems.length ? Math.round((hardChecked / hardItems.length) * 34) : 22
+  const fitScore = fitItems.length ? Math.round((fitChecked / fitItems.length) * 18) : 10
+  const bonusScore = bonusItems.length ? Math.min(10, Math.round((bonusChecked / bonusItems.length) * 10)) : 4
+  const notesScore = form.candidateNotes.trim() ? 8 : 0
+  const queueScore = selectedCandidate ? 5 : roleCandidates.length ? 3 : 0
+  const penalty = antiChecked * 12 + (pendingSlots <= 0 ? 30 : 0) + (roleFeedback?.difficulty === "blocked" ? 10 : 0)
+  const score = Math.max(0, Math.min(100, basicsScore + hardScore + fitScore + bonusScore + notesScore + queueScore - penalty))
+  const tone: RoleSubmissionPacket["tone"] = blockers.length ? "blocked" : score >= 82 && warnings.length === 0 ? "ready" : "watch"
+  const label = tone === "blocked" ? "Blocked" : tone === "ready" ? "Ready to submit" : "Needs proof"
+  const summary = tone === "ready"
+    ? "This packet has consent, candidate identity, and enough checklist proof to submit cleanly."
+    : tone === "blocked"
+      ? "Fix the blocking items before this submission can move cleanly through WeKruit review."
+      : "This candidate can become a strong submission once the missing proof is filled in."
+  const nextAction = blockers[0] ?? warnings[0] ?? "Submit the candidate, then track review status from the recruiter inbox."
+  return {
+    score,
+    label,
+    tone,
+    summary,
+    blockers,
+    warnings,
+    proof: proof.slice(0, 6),
+    nextAction,
+    missingHard: missingHard.slice(0, 4),
+    antiFlags: antiFlags.slice(0, 4),
+  }
+}
+
 // Minimal Markdown → React renderer for jdBlocks.body. Supports `-` bullet
 // lists, blank-line paragraphs, and inline `**bold**` / `*em*` / `` `code` ``.
 function renderMarkdown(text: string): ReactNode[] {
@@ -413,8 +508,19 @@ export default function RecruiterRole() {
   const pendingCount = roleSubmissions.filter((row) => ["submitted", "new", "reviewing"].includes(row.status ?? "submitted")).length
   const pendingSlots = Math.max(0, ROLE_PENDING_SUBMISSION_LIMIT - pendingCount)
   const selectedCandidate = prefilledCandidateId
-    ? roleCandidates.find((candidate) => candidate.id === prefilledCandidateId || candidate.candidateId === prefilledCandidateId)
+    ? roleCandidates.find((candidate) => candidate.id === prefilledCandidateId || candidate.candidateId === prefilledCandidateId) ?? null
     : null
+  const submissionPacket = buildRoleSubmissionPacket({
+    job,
+    form,
+    pendingSlots,
+    selectedCandidate,
+    roleCandidates,
+    roleSubmissions,
+    roleFeedback: currentRoleFeedback,
+    roleQuestions: currentRoleQuestions,
+    intelligence: currentRoleIntelligence,
+  })
 
   const useSourcedCandidate = (candidate: RecruiterSourcedCandidateItem) => {
     setForm((next) => withRecruiterDefaults({
@@ -613,32 +719,34 @@ export default function RecruiterRole() {
               <span className="chip">{pendingSlots} pending slots open</span>
             </div>
 
-        <form id="submit-candidate" className="rb-form-section rb-form" onSubmit={onSubmit}>
-          <h3 className="section-title">Your contact (for follow-up)</h3>
-          <p className="rb-form-note">Submitting as {session.recruiter.email}. WeKruit status updates will appear in your recruiter tracker.</p>
-          {selectedCandidate && (
-            <p className="rb-form-note rb-form-note--active">
-              Prefilled from your sourced candidate queue: {selectedCandidate.candidate?.name || "Candidate"}.
-            </p>
-          )}
-          <div className="field">
-            <label>Your name *</label>
-            <input
-              type="text"
-              required
-              value={form.submitterName}
-              onChange={(e) => setForm({ ...form, submitterName: e.target.value })}
-            />
-          </div>
-          <div className="field">
-            <label>Your email *</label>
-            <input
-              type="email"
-              required
-              value={form.submitterEmail}
-              onChange={(e) => setForm({ ...form, submitterEmail: e.target.value })}
-            />
-          </div>
+            <SubmissionPacketPanel packet={submissionPacket} />
+
+            <form id="submit-candidate" className="rb-form-section rb-form" onSubmit={onSubmit}>
+              <h3 className="section-title">Your contact (for follow-up)</h3>
+              <p className="rb-form-note">Submitting as {session.recruiter.email}. WeKruit status updates will appear in your recruiter tracker.</p>
+              {selectedCandidate && (
+                <p className="rb-form-note rb-form-note--active">
+                  Prefilled from your sourced candidate queue: {selectedCandidate.candidate?.name || "Candidate"}.
+                </p>
+              )}
+              <div className="field">
+                <label>Your name *</label>
+                <input
+                  type="text"
+                  required
+                  value={form.submitterName}
+                  onChange={(e) => setForm({ ...form, submitterName: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label>Your email *</label>
+                <input
+                  type="email"
+                  required
+                  value={form.submitterEmail}
+                  onChange={(e) => setForm({ ...form, submitterEmail: e.target.value })}
+                />
+              </div>
 
           <h3 className="section-title" style={{ marginTop: 24 }}>Candidate</h3>
           <div className="field">
@@ -821,6 +929,66 @@ export default function RecruiterRole() {
         </div>
       </main>
     </div>
+  )
+}
+
+function SubmissionPacketPanel({ packet }: { packet: RoleSubmissionPacket }) {
+  return (
+    <section className={`rb-submission-packet is-${packet.tone}`} aria-label="Submission packet readiness">
+      <header>
+        <div>
+          <span>Submission packet</span>
+          <strong>{packet.label}</strong>
+          <p>{packet.summary}</p>
+        </div>
+        <div className="rb-submission-packet__score">
+          <b>{packet.score}</b>
+          <em>quality score</em>
+        </div>
+      </header>
+      <div className="rb-submission-packet__grid">
+        <article>
+          <span>Next required move</span>
+          <strong>{packet.nextAction}</strong>
+        </article>
+        <article>
+          <span>Proof captured</span>
+          {packet.proof.length ? (
+            <ul>
+              {packet.proof.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          ) : (
+            <p>No candidate proof captured yet.</p>
+          )}
+        </article>
+        <article>
+          <span>Review risks</span>
+          {packet.blockers.length || packet.warnings.length ? (
+            <ul>
+              {[...packet.blockers, ...packet.warnings].slice(0, 6).map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          ) : (
+            <p>No major review risks detected.</p>
+          )}
+        </article>
+      </div>
+      {(packet.missingHard.length > 0 || packet.antiFlags.length > 0) && (
+        <div className="rb-submission-packet__checks">
+          {packet.missingHard.length > 0 && (
+            <div>
+              <strong>Missing hard proof</strong>
+              {packet.missingHard.map((item) => <span key={item}>{item}</span>)}
+            </div>
+          )}
+          {packet.antiFlags.length > 0 && (
+            <div>
+              <strong>Anti-signal context needed</strong>
+              {packet.antiFlags.map((item) => <span key={item}>{item}</span>)}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   )
 }
 
