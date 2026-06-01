@@ -367,6 +367,29 @@ type RoleDealDeskModel = {
   }>
 }
 
+type RoleIntakeMemo = {
+  tone: "good" | "watch" | "blocked" | "quiet"
+  label: string
+  title: string
+  body: string
+  action: RoleWorkroomAction
+  actionLabel: string
+  facts: Array<{
+    label: string
+    value: string
+    detail: string
+    tone: "good" | "watch" | "blocked" | "quiet"
+    action: RoleWorkroomAction
+  }>
+  talkTrack: string[]
+  assumptions: Array<{
+    label: string
+    detail: string
+    tone: "good" | "watch" | "blocked" | "quiet"
+    action: RoleWorkroomAction
+  }>
+}
+
 type RoleQuestionPrompt = {
   id: string
   label: string
@@ -1238,6 +1261,194 @@ function buildRoleDealDeskModel(input: {
   }
 }
 
+function buildRoleIntakeMemo(input: {
+  job: CollabJob
+  approvedForRole: boolean
+  application: RecruiterRoleApplicationItem | null
+  pendingSlots: number
+  roleCandidates: RecruiterSourcedCandidateItem[]
+  roleSubmissions: RecruiterSubmissionItem[]
+  roleQuestions: RecruiterRoleQuestionItem[]
+  roleFeedback: RecruiterRoleFeedbackItem | null
+  intelligence: RecruiterRoleIntelligenceItem | null
+  brief: RoleCalibrationBrief
+}): RoleIntakeMemo {
+  const { job, approvedForRole, application, pendingSlots, roleCandidates, roleSubmissions, roleQuestions, roleFeedback, intelligence, brief } = input
+  const hardItems = roleChecklistItems(job, "hard").map((item) => item.text)
+  const fitItems = roleChecklistItems(job, "fit").map((item) => item.text)
+  const antiItems = roleChecklistItems(job, "anti").map((item) => item.text)
+  const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open")
+  const answeredQuestions = roleQuestions.filter((question) => question.status === "answered")
+  const rejectedOrDuplicate = roleSubmissions.filter((row) => ROLE_NEGATIVE_SUBMISSION_STATUSES.includes(row.status ?? ""))
+  const advanced = roleSubmissions.filter((row) => ROLE_ADVANCED_SUBMISSION_STATUSES.includes(row.status ?? ""))
+  const readyCandidates = roleCandidates.filter((candidate) => candidate.stage === "ready")
+  const blocked = brief.tone === "blocked" || roleFeedback?.difficulty === "blocked" || pendingSlots === 0
+  const watch = openQuestions.length > 0 || roleFeedback?.difficulty === "hard" || rejectedOrDuplicate.length > 0
+  const tone: RoleIntakeMemo["tone"] = blocked
+    ? "blocked"
+    : watch
+      ? "watch"
+      : readyCandidates.length || advanced.length
+        ? "good"
+        : "quiet"
+  const company = job.recruiterBoard.label.company
+  const roleStory = job.recruiterBoard.culture.bet || job.recruiterBoard.culture.bullets[0] || `${company} is actively hiring for ${job.title}.`
+  const firstHard = hardItems[0] ?? "candidate consent, identity proof, and role-specific evidence"
+  const firstFit = fitItems[0] ?? roleStory
+  const firstAnti = antiItems[0] ?? "weak-fit submissions without hard-check proof"
+  const accessLabel = approvedForRole
+    ? "Approved lane"
+    : application?.status === "pending"
+      ? "Access pending"
+      : "Single-submit"
+  const reviewLabel = pendingSlots === 0
+    ? "Queue full"
+    : openQuestions.length
+      ? "Answer needed"
+      : `${pendingSlots}/5 open`
+  const title = blocked
+    ? "Resolve role intake risk before sending more candidates"
+    : openQuestions.length
+      ? "Use WeKruit answers before sourcing through uncertainty"
+      : readyCandidates.length
+        ? "Turn the ready candidate into a clean packet"
+        : roleCandidates.length
+          ? "Screen the bench against the intake memo"
+          : "Source against the intake memo before submitting"
+  const body = blocked
+    ? "This search has a capacity or calibration blocker. Recruiters should tighten the role lane before adding volume."
+    : openQuestions.length
+      ? "A recruiter question is waiting on WeKruit. Treat the answer as intake context before making more outreach promises."
+      : "Use this memo as the private role-intake brief: what to sell, what to prove, what to avoid, and when to ask WeKruit."
+  const action: RoleWorkroomAction = blocked || openQuestions.length
+    ? "questions"
+    : readyCandidates.length
+      ? "submit"
+      : !approvedForRole && roleCandidates.length > 0
+        ? "access"
+        : "candidates"
+  const facts: RoleIntakeMemo["facts"] = [
+    {
+      label: "Client story",
+      value: company,
+      detail: shortText(roleStory, roleStory, 140),
+      tone: "good",
+      action: "candidates",
+    },
+    {
+      label: "Must prove",
+      value: `${hardItems.length || 1} check${hardItems.length === 1 ? "" : "s"}`,
+      detail: shortText(firstHard, firstHard, 140),
+      tone: hardItems.length ? "watch" : "quiet",
+      action: "submit",
+    },
+    {
+      label: "Review lane",
+      value: reviewLabel,
+      detail: job.recruiterBoard.interviewProcess || (pendingSlots ? "WeKruit review capacity is open." : "Wait for review movement before adding volume."),
+      tone: pendingSlots === 0 ? "blocked" : openQuestions.length ? "watch" : "good",
+      action: openQuestions.length ? "questions" : "feedback",
+    },
+    {
+      label: "Access posture",
+      value: accessLabel,
+      detail: approvedForRole
+        ? "Expected to actively cover this lane."
+        : application?.status === "pending"
+          ? "Access request is waiting on WeKruit."
+          : "Use candidate-led proof before asking for trusted access.",
+      tone: approvedForRole ? "good" : application?.status === "pending" ? "watch" : "quiet",
+      action: "access",
+    },
+  ]
+  const assumptions: RoleIntakeMemo["assumptions"] = []
+  const addAssumption = (item: RoleIntakeMemo["assumptions"][number]) => {
+    if (!assumptions.some((row) => row.label === item.label)) assumptions.push(item)
+  }
+  if (!job.compSummary || roleFeedback?.reasons.includes("low_comp")) {
+    addAssumption({
+      label: "Compensation story",
+      detail: job.compSummary ? `Candidate comp pushback exists despite ${job.compSummary}.` : "Compensation is not specific enough for high-intent outreach.",
+      tone: roleFeedback?.reasons.includes("low_comp") ? "blocked" : "watch",
+      action: "questions",
+    })
+  }
+  if (roleFeedback?.reasons.includes("location_mismatch") || /remote|hybrid|onsite/i.test(job.recruiterBoard.label.location)) {
+    addAssumption({
+      label: "Location boundary",
+      detail: `Clarify exceptions around ${job.recruiterBoard.label.location} before widening the search.`,
+      tone: roleFeedback?.reasons.includes("location_mismatch") ? "blocked" : "watch",
+      action: "questions",
+    })
+  }
+  if (roleFeedback?.reasons.includes("unclear_requirements") || hardItems.length === 0) {
+    addAssumption({
+      label: "Must-have cutline",
+      detail: "The role needs a clearer line between true hard filters and nice-to-have fit.",
+      tone: "blocked",
+      action: "questions",
+    })
+  }
+  if (rejectedOrDuplicate.length > 0) {
+    addAssumption({
+      label: "Rejected packet lesson",
+      detail: `${rejectedOrDuplicate.length} rejected or duplicate packet${rejectedOrDuplicate.length === 1 ? "" : "s"} should shape the next shortlist.`,
+      tone: "watch",
+      action: "feedback",
+    })
+  }
+  if (openQuestions[0]) {
+    addAssumption({
+      label: "Open WeKruit answer",
+      detail: openQuestions[0].question || "A role question is still open.",
+      tone: "watch",
+      action: "questions",
+    })
+  }
+  if (answeredQuestions[0]) {
+    addAssumption({
+      label: "Latest answer",
+      detail: answeredQuestions[0].answer || answeredQuestions[0].question || "WeKruit answered a role question.",
+      tone: "good",
+      action: "questions",
+    })
+  }
+  if (assumptions.length === 0) {
+    addAssumption({
+      label: "No unresolved intake blocker",
+      detail: "Proceed with hard-filter proof, candidate consent, and clean ownership checks.",
+      tone: "good",
+      action: "submit",
+    })
+  }
+  const talkTrack = [
+    `${company}: ${shortText(roleStory, roleStory, 160)}`,
+    `Lead with ${shortText(firstFit, firstFit, 130)}.`,
+    `Validate proof for ${shortText(firstHard, firstHard, 130)} before submission.`,
+    `Do not pitch ${shortText(firstAnti, firstAnti, 130)}.`,
+    intelligence?.recruiterCount && intelligence.recruiterCount > 1
+      ? `${intelligence.recruiterCount} recruiters have market signal here; avoid duplicate lanes.`
+      : "Keep the candidate paper trail in WeKruit before formal submission.",
+  ]
+  return {
+    tone,
+    label: "Private intake memo",
+    title,
+    body,
+    action,
+    actionLabel: action === "questions"
+      ? "Ask WeKruit"
+      : action === "submit"
+        ? "Complete packet"
+        : action === "access"
+          ? "Review access"
+          : "Open candidate CRM",
+    facts,
+    talkTrack,
+    assumptions: assumptions.slice(0, 4),
+  }
+}
+
 // Minimal Markdown → React renderer for jdBlocks.body. Supports `-` bullet
 // lists, blank-line paragraphs, and inline `**bold**` / `*em*` / `` `code` ``.
 function renderMarkdown(text: string): ReactNode[] {
@@ -1573,6 +1784,18 @@ export default function RecruiterRole() {
     packet: submissionPacket,
     brief: calibrationBrief,
   })
+  const roleIntakeMemo = buildRoleIntakeMemo({
+    job,
+    approvedForRole,
+    application: currentRoleApplication,
+    pendingSlots,
+    roleCandidates,
+    roleSubmissions,
+    roleQuestions: currentRoleQuestions,
+    roleFeedback: currentRoleFeedback,
+    intelligence: currentRoleIntelligence,
+    brief: calibrationBrief,
+  })
   const identityBlocksSubmit = identityCheck.status === "checking" || Boolean(identityCheck.result?.conflict)
 
   const useSourcedCandidate = (candidate: RecruiterSourcedCandidateItem) => {
@@ -1771,6 +1994,11 @@ export default function RecruiterRole() {
 
         <RoleDealDeskPanel
           model={roleDealDesk}
+          onAction={runRoleWorkroomAction}
+        />
+
+        <RoleIntakeMemoPanel
+          memo={roleIntakeMemo}
           onAction={runRoleWorkroomAction}
         />
 
@@ -2342,6 +2570,60 @@ function RoleDealDeskPanel({
               >
                 <span>{risk.label}</span>
                 <em>{risk.detail}</em>
+              </button>
+            ))}
+          </div>
+        </article>
+      </div>
+    </section>
+  )
+}
+
+function RoleIntakeMemoPanel({
+  memo,
+  onAction,
+}: {
+  memo: RoleIntakeMemo
+  onAction: (action: RoleWorkroomAction) => void
+}) {
+  return (
+    <section className={`rb-role-intake is-${memo.tone}`} aria-label="Private role intake memo">
+      <header>
+        <div>
+          <span>{memo.label}</span>
+          <strong>{memo.title}</strong>
+          <p>{memo.body}</p>
+        </div>
+        <button type="button" className="rb-btn primary" onClick={() => onAction(memo.action)}>
+          {memo.actionLabel}
+        </button>
+      </header>
+
+      <div className="rb-role-intake__facts">
+        {memo.facts.map((fact) => (
+          <button type="button" className={`is-${fact.tone}`} key={fact.label} onClick={() => onAction(fact.action)}>
+            <span>{fact.label}</span>
+            <strong>{fact.value}</strong>
+            <em>{fact.detail}</em>
+          </button>
+        ))}
+      </div>
+
+      <div className="rb-role-intake__body">
+        <article className="rb-role-intake__talk">
+          <h3>Recruiter talk track</h3>
+          <ol>
+            {memo.talkTrack.map((line) => <li key={line}>{line}</li>)}
+          </ol>
+        </article>
+
+        <article className="rb-role-intake__assumptions">
+          <h3>Open assumptions</h3>
+          <div>
+            {memo.assumptions.map((item) => (
+              <button type="button" className={`is-${item.tone}`} key={item.label} onClick={() => onAction(item.action)}>
+                <span>{item.label}</span>
+                <em>{item.detail}</em>
               </button>
             ))}
           </div>
