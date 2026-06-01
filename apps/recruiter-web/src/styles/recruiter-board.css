@@ -2407,6 +2407,115 @@
   line-height: 1;
 }
 
+.rb-launch-sequence {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.72fr) minmax(0, 1.28fr);
+  overflow: hidden;
+}
+
+.rb-launch-sequence__mission {
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  border-right: 1px solid var(--border);
+  border-top: 4px solid var(--info);
+  background: var(--cream-3);
+  padding: 18px;
+}
+
+.rb-launch-sequence__mission.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-launch-sequence__mission.is-info { border-top-color: var(--info); }
+.rb-launch-sequence__mission.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-launch-sequence__mission.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-launch-sequence__mission.is-mute { border-top-color: var(--ink-3); }
+
+.rb-launch-sequence__mission span,
+.rb-launch-sequence__steps span,
+.rb-launch-sequence__steps em {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-launch-sequence__mission strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: clamp(28px, 3vw, 40px);
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-launch-sequence__mission p,
+.rb-launch-sequence__steps p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-launch-sequence__mission button {
+  justify-self: start;
+  min-height: 34px;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 13px;
+}
+
+.rb-launch-sequence__steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.rb-launch-sequence__steps button {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-top: 4px solid transparent;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 14px;
+  text-align: left;
+}
+
+.rb-launch-sequence__steps button:last-child {
+  border-right: 0;
+}
+
+.rb-launch-sequence__steps button:hover {
+  background: var(--cream-3);
+}
+
+.rb-launch-sequence__steps button.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-launch-sequence__steps button.is-info { border-top-color: var(--info); }
+.rb-launch-sequence__steps button.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-launch-sequence__steps button.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-launch-sequence__steps button.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+.rb-launch-sequence__steps button.is-next { outline: 2px solid rgba(45, 26, 10, 0.18); outline-offset: -2px; }
+
+.rb-launch-sequence__steps strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .rb-workspace__grid {
   display: grid;
   grid-template-columns: 1.3fr 1fr;
@@ -4080,6 +4189,74 @@
   color: var(--ink-3);
   font-size: 11px;
   font-style: normal;
+}
+
+.rb-submissions-empty {
+  display: grid;
+  gap: 18px;
+  margin: 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--cream-3);
+  padding: clamp(18px, 2.5vw, 28px);
+}
+
+.rb-submissions-empty__copy {
+  display: grid;
+  gap: 8px;
+  max-width: 740px;
+}
+
+.rb-submissions-empty__copy span,
+.rb-submissions-empty__steps span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rb-submissions-empty__copy strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: clamp(28px, 3.4vw, 44px);
+  font-weight: 400;
+  line-height: 1.02;
+}
+
+.rb-submissions-empty__copy p,
+.rb-submissions-empty__steps p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.rb-submissions-empty__steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-submissions-empty__steps article {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 13px;
+}
+
+.rb-submissions-empty__steps strong {
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.rb-submissions-empty__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .rb-submission__main {
@@ -6009,6 +6186,7 @@
 @media (max-width: 1080px) {
   .rb-access__body,
   .rb-cockpit,
+  .rb-launch-sequence,
   .rb-workspace__grid,
   .rb-workbench-grid,
   .rb-inbox-grid,
@@ -6101,6 +6279,10 @@
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
+  .rb-launch-sequence__mission {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
   .rb-cockpit__focus {
     grid-template-columns: 1fr;
   }
@@ -6113,6 +6295,9 @@
   }
   .rb-cockpit__steps {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rb-launch-sequence__steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
   .rb-operating-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -6251,6 +6436,7 @@
   .rb-pipeline,
   .rb-candidate-board,
   .rb-cockpit__steps,
+  .rb-launch-sequence__steps,
   .rb-command-list,
   .rb-market-grid,
   .rb-inbox-hero,
@@ -6273,6 +6459,7 @@
   .rb-submission-command__cards,
   .rb-role-market-strip,
   .rb-role-cockpit,
+  .rb-submissions-empty__steps,
   .rb-role-workroom__cards,
   .rb-role-intel__metrics,
   .rb-role-intel__pipeline-preview > div,

@@ -1328,7 +1328,14 @@ export default function RecruiterBoard() {
           />
         )}
         {activeTab === "submissions" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "submissions" && statusLoaded && <SubmissionsTab submissions={submissions} onRefresh={reloadSubmissions} />}
+        {activeTab === "submissions" && statusLoaded && (
+          <SubmissionsTab
+            submissions={submissions}
+            onRefresh={reloadSubmissions}
+            onRoles={() => setTab("roles")}
+            onCandidates={() => setTab("candidates")}
+          />
+        )}
         {activeTab === "performance" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "performance" && statusLoaded && <PerformanceTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} primaryRoleIds={primaryRoleIds} roleFeedback={roleFeedback} operatingMetrics={operatingMetrics} />}
         {activeTab === "earnings" && !statusLoaded && <RecruiterStatusLoading />}
@@ -1595,6 +1602,23 @@ type RecruiterCockpitModel = {
   }>
 }
 
+type RecruiterLaunchItem = {
+  label: string
+  title: string
+  body: string
+  cta: string
+  action: RecruiterCockpitAction
+  complete: boolean
+  tone: OperatingTone
+}
+
+type RecruiterLaunchModel = {
+  completed: number
+  total: number
+  nextItem: RecruiterLaunchItem
+  items: RecruiterLaunchItem[]
+}
+
 function submissionActionPriority(submission: RecruiterSubmissionItem): number {
   if (candidateConfirmationCanResend(submission)) return 100
   if (CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? "") && submissionHasStructuredFeedback(submission)) return 92
@@ -1620,6 +1644,90 @@ function selectFocusCandidate(candidates: RecruiterSourcedCandidateItem[]): Recr
         0
       return stageRank(b) - stageRank(a) || timestampValueMs(b.updatedAt ?? b.createdAt) - timestampValueMs(a.updatedAt ?? a.createdAt)
     })[0]
+}
+
+function buildRecruiterLaunchModel(
+  jobs: CollabJob[],
+  submissions: RecruiterSubmissionItem[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+  roleFeedback: RecruiterRoleFeedbackItem[],
+  primaryRoleIds: string[],
+): RecruiterLaunchModel {
+  const activeCandidates = sourcedCandidates.filter((candidate) => candidate.stage !== "archived")
+  const readyCandidates = activeCandidates.filter((candidate) => candidate.stage === "ready" || candidate.stage === "submitted")
+  const activeSubmissions = submissions.filter((submission) => OPEN_SUBMISSION_STATUSES.includes(submission.status ?? "submitted"))
+  const feedbackSignals = submissions.filter(submissionHasStructuredFeedback).length + roleFeedback.length
+  const hasRoleLane = primaryRoleIds.length > 0
+  const hasCandidateBench = activeCandidates.length > 0
+  const hasReadyShortlist = readyCandidates.length > 0 || submissions.length > 0
+  const hasSubmission = submissions.length > 0
+  const hasFeedback = feedbackSignals > 0
+  const matchedCount = readyCandidates.length || submissions.length
+  const items: RecruiterLaunchItem[] = [
+    {
+      label: "01",
+      title: "Claim role lane",
+      body: hasRoleLane
+        ? `${primaryRoleIds.length}/${APPROVED_ROLE_LIMIT} approved role lane${primaryRoleIds.length === 1 ? "" : "s"} active.`
+        : jobs.length
+          ? "Choose a focused role lane before spending sourcing cycles."
+          : "WeKruit role releases will appear here when available.",
+      cta: hasRoleLane ? "Review lanes" : "Choose role",
+      action: "roles",
+      complete: hasRoleLane,
+      tone: hasRoleLane ? "success" : jobs.length ? "live" : "mute",
+    },
+    {
+      label: "02",
+      title: "Build private bench",
+      body: hasCandidateBench
+        ? `${activeCandidates.length} active candidate${activeCandidates.length === 1 ? "" : "s"} saved before submission.`
+        : "Save prospects with notes, links, and fit signal before sending packets.",
+      cta: hasCandidateBench ? "Open bench" : "Add candidate",
+      action: "candidates",
+      complete: hasCandidateBench,
+      tone: hasCandidateBench ? "success" : "info",
+    },
+    {
+      label: "03",
+      title: "Match shortlist",
+      body: hasReadyShortlist
+        ? `${matchedCount} candidate${matchedCount === 1 ? "" : "s"} reached match or submit state.`
+        : "Use the matchboard to turn bench candidates into role-specific shortlists.",
+      cta: hasReadyShortlist ? "Review matches" : "Open matchboard",
+      action: "matches",
+      complete: hasReadyShortlist,
+      tone: hasReadyShortlist ? "success" : hasCandidateBench ? "live" : "mute",
+    },
+    {
+      label: "04",
+      title: "Submit with receipt",
+      body: hasSubmission
+        ? `${submissions.length} submission${submissions.length === 1 ? "" : "s"} tracked, ${activeSubmissions.length} active.`
+        : "Submit from a role brief after candidate consent is recorded.",
+      cta: hasSubmission ? "Track submissions" : "Open roles",
+      action: hasSubmission ? "submissions" : "roles",
+      complete: hasSubmission,
+      tone: hasSubmission ? "success" : hasReadyShortlist ? "live" : "mute",
+    },
+    {
+      label: "05",
+      title: "Learn and earn",
+      body: hasFeedback
+        ? `${feedbackSignals} feedback signal${feedbackSignals === 1 ? "" : "s"} available for calibration.`
+        : "Read status, feedback, and payout movement before sending lookalikes.",
+      cta: hasFeedback ? "Open performance" : "Open tracker",
+      action: hasFeedback ? "performance" : "submissions",
+      complete: hasFeedback,
+      tone: hasFeedback ? "success" : hasSubmission ? "info" : "mute",
+    },
+  ]
+  return {
+    completed: items.filter((item) => item.complete).length,
+    total: items.length,
+    nextItem: items.find((item) => !item.complete) ?? items[items.length - 1],
+    items,
+  }
 }
 
 function buildRecruiterCockpitModel(
@@ -2319,6 +2427,7 @@ function OverviewTab({
   const workItems = buildRecruiterWorkQueue(jobs, sourcedCandidates, submissions, roleQuestions, roleIntelligence)
   const marketPulse = buildMarketPulse(jobs, roleQuestions, roleIntelligence)
   const cockpit = buildRecruiterCockpitModel(jobs, submissions, sourcedCandidates, roleFeedback, roleQuestions, roleIntelligence, roleApplications, primaryRoleIds)
+  const launch = buildRecruiterLaunchModel(jobs, submissions, sourcedCandidates, roleFeedback, primaryRoleIds)
   const routeCockpitAction = (action: RecruiterCockpitAction) => {
     if (action === "roles") onRoles()
     else if (action === "matches") onMatches()
@@ -2330,6 +2439,7 @@ function OverviewTab({
   return (
     <div className="rb-workspace">
       <RecruiterCockpit model={cockpit} onAction={routeCockpitAction} />
+      {launch.completed < launch.total && <RecruiterLaunchSequence model={launch} onAction={routeCockpitAction} />}
       <section className="rb-stats">
         {stats.map((s) => (
           <article className={`rb-stat is-${s.tone}`} key={s.label}>
@@ -2451,6 +2561,40 @@ function OverviewTab({
         </div>
       </section>
     </div>
+  )
+}
+
+function RecruiterLaunchSequence({
+  model,
+  onAction,
+}: {
+  model: RecruiterLaunchModel
+  onAction: (action: RecruiterCockpitAction) => void
+}) {
+  return (
+    <section className="rb-panel rb-launch-sequence">
+      <div className={`rb-launch-sequence__mission is-${model.nextItem.tone}`}>
+        <span>First marketplace loop</span>
+        <strong>{model.completed}/{model.total} activated</strong>
+        <p>{model.nextItem.complete ? "Your first recruiter loop is active. Keep using feedback to tighten the next shortlist." : `${model.nextItem.title}: ${model.nextItem.body}`}</p>
+        <button type="button" onClick={() => onAction(model.nextItem.action)}>{model.nextItem.cta}</button>
+      </div>
+      <div className="rb-launch-sequence__steps">
+        {model.items.map((item) => (
+          <button
+            type="button"
+            className={`is-${item.tone}${item.complete ? " is-complete" : item === model.nextItem ? " is-next" : ""}`}
+            key={item.label}
+            onClick={() => onAction(item.action)}
+          >
+            <span>{item.label}</span>
+            <strong>{item.title}</strong>
+            <p>{item.body}</p>
+            <em>{item.complete ? "Complete" : item === model.nextItem ? "Next" : "Queued"}</em>
+          </button>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -5535,9 +5679,13 @@ function SourcedCandidateCard({
 function SubmissionsTab({
   submissions,
   onRefresh,
+  onRoles,
+  onCandidates,
 }: {
   submissions: RecruiterSubmissionItem[]
   onRefresh: () => Promise<void>
+  onRoles: () => void
+  onCandidates: () => void
 }) {
   const [query, setQuery] = useState("")
   const [filter, setFilter] = useState<SubmissionFilter>("all")
@@ -5624,7 +5772,7 @@ function SubmissionsTab({
               resendingConfirmation={resendingId === s.id}
             />
           ))}
-          {submissions.length === 0 && <p className="rb-empty">No submissions yet. Open a role and submit a candidate with consent.</p>}
+          {submissions.length === 0 && <SubmissionEmptyState onRoles={onRoles} onCandidates={onCandidates} />}
           {submissions.length > 0 && visibleSubmissions.length === 0 && <p className="rb-empty">No submissions match the current filter.</p>}
         </div>
 
@@ -5731,6 +5879,45 @@ function SubmissionCommandPanel({
         </div>
       </aside>
     </section>
+  )
+}
+
+function SubmissionEmptyState({
+  onRoles,
+  onCandidates,
+}: {
+  onRoles: () => void
+  onCandidates: () => void
+}) {
+  return (
+    <div className="rb-submissions-empty">
+      <div className="rb-submissions-empty__copy">
+        <span>No submissions yet</span>
+        <strong>Start with a role lane and a consented candidate packet.</strong>
+        <p>Submission rows appear here only after a candidate is sent from a recruiter role brief. Each row will carry ownership, confirmation, review status, feedback, and payout movement.</p>
+      </div>
+      <div className="rb-submissions-empty__steps">
+        <article>
+          <span>01</span>
+          <strong>Choose role</strong>
+          <p>Pick the role you can actually cover.</p>
+        </article>
+        <article>
+          <span>02</span>
+          <strong>Save candidate</strong>
+          <p>Add links, notes, and fit proof before submit.</p>
+        </article>
+        <article>
+          <span>03</span>
+          <strong>Submit packet</strong>
+          <p>Candidate consent creates the tracked receipt.</p>
+        </article>
+      </div>
+      <div className="rb-submissions-empty__actions">
+        <button type="button" className="rb-btn primary" onClick={onRoles}>Browse roles</button>
+        <button type="button" className="rb-btn" onClick={onCandidates}>Add candidate</button>
+      </div>
+    </div>
   )
 }
 
