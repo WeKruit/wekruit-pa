@@ -39,10 +39,11 @@ import {
 import { auth } from "../lib/firebase.js"
 import { redirectResultPromise } from "../lib/auth-redirect-bootstrap.js"
 
-type RecruiterTab = "overview" | "roles" | "access" | "matches" | "candidates" | "submissions" | "performance" | "earnings" | "settings"
+type RecruiterTab = "overview" | "inbox" | "roles" | "access" | "matches" | "candidates" | "submissions" | "performance" | "earnings" | "settings"
 
 const TABS: Array<{ id: RecruiterTab; label: string }> = [
   { id: "overview", label: "Overview" },
+  { id: "inbox", label: "Inbox" },
   { id: "roles", label: "Roles" },
   { id: "access", label: "Access" },
   { id: "matches", label: "Matchboard" },
@@ -563,6 +564,7 @@ export default function RecruiterBoard() {
     primaryRoleIds,
     operatingMetrics,
   )
+  const inboxSummary = buildRecruiterInboxSummary(submissions, sourcedCandidates, roleQuestions)
   return (
     <div className="rb-platform">
       <aside className="rb-platform__nav">
@@ -589,6 +591,7 @@ export default function RecruiterBoard() {
               onClick={() => setTab(tab.id)}
             >
               {tab.label}
+              {tab.id === "inbox" && inboxSummary.needsAction > 0 ? <span>{inboxSummary.needsAction}</span> : null}
               {tab.id === "candidates" && sourcedCandidates.length > 0 ? <span>{sourcedCandidates.length}</span> : null}
               {tab.id === "submissions" && submissions.length > 0 ? <span>{submissions.length}</span> : null}
             </button>
@@ -652,6 +655,20 @@ export default function RecruiterBoard() {
             onPerformance={() => setTab("performance")}
             onPrimaryRoleToggle={(jobId, makePrimary) => void updatePrimaryRoleSlots(jobId, makePrimary)}
             primaryRoleSavingId={primaryRoleSavingId}
+          />
+        )}
+        {activeTab === "inbox" && !statusLoaded && <RecruiterStatusLoading />}
+        {activeTab === "inbox" && statusLoaded && (
+          <RecruiterInboxTab
+            jobs={openJobs}
+            submissions={submissions}
+            sourcedCandidates={sourcedCandidates}
+            roleFeedback={roleFeedback}
+            roleQuestions={roleQuestions}
+            onRoles={() => setTab("roles")}
+            onCandidates={() => setTab("candidates")}
+            onSubmissions={() => setTab("submissions")}
+            onMatches={() => setTab("matches")}
           />
         )}
         {activeTab === "roles" && (
@@ -1505,6 +1522,162 @@ function OverviewTab({
   )
 }
 
+function RecruiterInboxTab({
+  jobs,
+  submissions,
+  sourcedCandidates,
+  roleFeedback,
+  roleQuestions,
+  onRoles,
+  onCandidates,
+  onSubmissions,
+  onMatches,
+}: {
+  jobs: CollabJob[]
+  submissions: RecruiterSubmissionItem[]
+  sourcedCandidates: RecruiterSourcedCandidateItem[]
+  roleFeedback: RecruiterRoleFeedbackItem[]
+  roleQuestions: RecruiterRoleQuestionItem[]
+  onRoles: () => void
+  onCandidates: () => void
+  onSubmissions: () => void
+  onMatches: () => void
+}) {
+  const items = useMemo(
+    () => buildRecruiterInboxItems(jobs, submissions, sourcedCandidates, roleFeedback, roleQuestions),
+    [jobs, roleFeedback, roleQuestions, sourcedCandidates, submissions],
+  )
+  const summary = buildRecruiterInboxSummary(submissions, sourcedCandidates, roleQuestions)
+  const urgentItems = items.filter((item) => item.priority >= 80)
+  const waitingItems = items.filter((item) => item.bucket === "Waiting on feedback" || item.bucket === "Under review" || item.bucket === "WeKruit answer needed")
+  const learningItems = items.filter((item) =>
+    item.bucket.includes("Feedback") ||
+    item.bucket.includes("calibration") ||
+    item.bucket.includes("Market") ||
+    item.bucket.includes("answer"),
+  )
+  const topItem = items[0]
+  const dispatch = (action: RecruiterInboxAction) => {
+    if (action === "roles") onRoles()
+    else if (action === "submissions") onSubmissions()
+    else if (action === "matches") onMatches()
+    else onCandidates()
+  }
+
+  return (
+    <section className="rb-panel rb-panel--fill rb-inbox">
+      <header className="rb-panel__head">
+        <div>
+          <h2>Recruiter inbox</h2>
+          <p>One operating queue for feedback, candidate calibration, role questions, and status movement.</p>
+        </div>
+        <button type="button" className="rb-panel__link" onClick={onSubmissions}>Submission tracker</button>
+      </header>
+
+      <section className="rb-inbox-hero">
+        <article className={summary.needsAction ? "is-warn" : "is-success"}>
+          <span>Needs action</span>
+          <strong>{summary.needsAction}</strong>
+          <p>Ready candidates, rejection feedback, calibration notes, and open role questions.</p>
+        </article>
+        <article className={summary.activeSubmissions ? "is-live" : "is-mute"}>
+          <span>Active submissions</span>
+          <strong>{summary.activeSubmissions}</strong>
+          <p>Candidates still moving through WeKruit review or hiring-team stages.</p>
+        </article>
+        <article className={summary.feedbackNotes ? "is-info" : "is-mute"}>
+          <span>Feedback notes</span>
+          <strong>{summary.feedbackNotes}</strong>
+          <p>Written WeKruit notes that should change your next sourced lookalike.</p>
+        </article>
+        <article className={summary.openQuestions ? "is-warn" : "is-success"}>
+          <span>Open questions</span>
+          <strong>{summary.openQuestions}</strong>
+          <p>Role-calibration questions waiting on a WeKruit answer.</p>
+        </article>
+      </section>
+
+      <section className="rb-inbox-grid">
+        <div className="rb-inbox-feed">
+          <header>
+            <h3>Action feed</h3>
+            <p>Sorted by the next move most likely to prevent wasted sourcing.</p>
+          </header>
+          <div className="rb-inbox-list">
+            {items.slice(0, 12).map((item) => (
+              <RecruiterInboxItemCard key={item.id} item={item} onAction={dispatch} />
+            ))}
+            {items.length === 0 && (
+              <div className="rb-inbox-empty">
+                <strong>No recruiter activity yet</strong>
+                <p>Save sourced candidates, ask role questions, or submit candidates to start the feedback loop.</p>
+                <button type="button" onClick={onCandidates}>Open candidate CRM</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <aside className="rb-inbox-side">
+          <article className={`rb-inbox-next ${topItem ? `is-${topItem.tone}` : "is-mute"}`}>
+            <span>Next best move</span>
+            <strong>{topItem?.title ?? "Build your first sourcing lane"}</strong>
+            <p>{topItem?.body ?? "Create a sourced candidate record before formal submission so WeKruit can track duplicates, calibration, and status."}</p>
+            <button type="button" onClick={() => topItem ? dispatch(topItem.action) : onCandidates()}>
+              {topItem?.cta ?? "Open candidate CRM"}
+            </button>
+          </article>
+
+          <article>
+            <h3>Urgent work</h3>
+            {urgentItems.slice(0, 4).map((item) => (
+              <button type="button" key={item.id} onClick={() => dispatch(item.action)}>
+                <strong>{item.bucket}</strong>
+                <span>{item.title}</span>
+              </button>
+            ))}
+            {urgentItems.length === 0 && <p>No urgent recruiter action right now.</p>}
+          </article>
+
+          <article>
+            <h3>Waiting room</h3>
+            <p>{waitingItems.length} item{waitingItems.length === 1 ? "" : "s"} currently depend on WeKruit review or answers.</p>
+            <button type="button" onClick={onSubmissions}>Track submitted candidates</button>
+          </article>
+
+          <article>
+            <h3>Learning loop</h3>
+            <p>{learningItems.length} signal{learningItems.length === 1 ? "" : "s"} can improve your next submission.</p>
+            <button type="button" onClick={onMatches}>Apply to matchboard</button>
+          </article>
+        </aside>
+      </section>
+    </section>
+  )
+}
+
+function RecruiterInboxItemCard({
+  item,
+  onAction,
+}: {
+  item: RecruiterInboxItem
+  onAction: (action: RecruiterInboxAction) => void
+}) {
+  return (
+    <article className={`rb-inbox-item is-${item.tone}`}>
+      <div>
+        <span>{item.bucket}</span>
+        <strong>{item.title}</strong>
+        <p>{item.body}</p>
+        <em>{item.meta}</em>
+      </div>
+      <footer>
+        <button type="button" onClick={() => onAction(item.action)}>{item.cta}</button>
+        {item.href && <Link to={item.href}>Open role</Link>}
+      </footer>
+    </article>
+  )
+}
+
 function RecruiterOperatingPanel({
   metrics,
   onPerformance,
@@ -1750,6 +1923,252 @@ function buildMarketPulse(
       tone: readyAcrossMarket ? "live" : "mute",
     },
   ] as const
+}
+
+type RecruiterInboxAction = "roles" | "submissions" | "matches" | "candidates"
+
+type RecruiterInboxItem = {
+  id: string
+  bucket: string
+  title: string
+  body: string
+  meta: string
+  tone: "live" | "info" | "success" | "warn" | "mute"
+  priority: number
+  atMs: number
+  cta: string
+  action: RecruiterInboxAction
+  href?: string
+}
+
+function rolePathForRow(row: { inboundJobId?: string; jobId?: string }, candidateId?: string): string | undefined {
+  const id = row.inboundJobId || row.jobId
+  if (!id) return undefined
+  const suffix = candidateId ? `?candidateId=${encodeURIComponent(candidateId)}` : ""
+  return `/recruiters/job/${encodeURIComponent(id)}${suffix}`
+}
+
+function rowRoleLabel(row: { jobTitleSnapshot?: string; companyLabelSnapshot?: string; inboundJobId?: string; jobId?: string }, jobsById: Map<string, CollabJob>): string {
+  const id = row.inboundJobId || row.jobId || ""
+  const job = jobsById.get(id)
+  const title = row.jobTitleSnapshot || job?.title || "Role"
+  const company = row.companyLabelSnapshot || job?.recruiterBoard.label.company
+  return company ? `${title} · ${company}` : title
+}
+
+function buildRecruiterInboxSummary(
+  submissions: RecruiterSubmissionItem[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+  roleQuestions: RecruiterRoleQuestionItem[],
+) {
+  const feedbackNotes = submissions.filter((submission) => Boolean(submission.recruiterFeedbackNote)).length
+  const rejectedWithFeedback = submissions.filter((submission) =>
+    ["rejected", "duplicate"].includes(submission.status ?? "") && Boolean(submission.recruiterFeedbackNote),
+  ).length
+  const readyCandidates = sourcedCandidates.filter((candidate) => candidate.stage === "ready").length
+  const calibrationNeeds = sourcedCandidates.filter((candidate) =>
+    candidate.calibrationStatus === "bad_fit" ||
+    candidate.calibrationStatus === "calibration_requested" ||
+    Boolean(candidate.calibrationNote),
+  ).length
+  const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open").length
+  const activeSubmissions = submissions.filter((submission) =>
+    ["submitted", "new", "reviewing", "advanced", "interviewing"].includes(submission.status ?? "submitted"),
+  ).length
+  return {
+    needsAction: rejectedWithFeedback + readyCandidates + calibrationNeeds + openQuestions,
+    feedbackNotes,
+    readyCandidates,
+    openQuestions,
+    activeSubmissions,
+  }
+}
+
+function buildRecruiterInboxItems(
+  jobs: CollabJob[],
+  submissions: RecruiterSubmissionItem[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+  roleFeedback: RecruiterRoleFeedbackItem[],
+  roleQuestions: RecruiterRoleQuestionItem[],
+): RecruiterInboxItem[] {
+  const jobsById = new Map(jobs.map((job) => [roleKey(job), job]))
+  const items: RecruiterInboxItem[] = []
+
+  for (const submission of submissions) {
+    const status = submission.status ?? "submitted"
+    const meta = statusMeta(status)
+    const nextAction = submissionNextAction(status)
+    const atMs = timestampValueMs(submission.recruiterFeedbackUpdatedAt ?? submission.updatedAt ?? submission.createdAt)
+    const candidate = submission.candidate?.name || "Submitted candidate"
+    const roleLabel = rowRoleLabel(submission, jobsById)
+    const closed = status === "rejected" || status === "duplicate"
+    const moving = status === "advanced" || status === "interviewing" || status === "hired"
+    const pending = status === "submitted" || status === "new" || status === "reviewing"
+
+    if (submission.recruiterFeedbackNote) {
+      items.push({
+        id: `submission-feedback-${submission.id}`,
+        bucket: closed ? "Feedback to act on" : "Feedback landed",
+        title: `${candidate} - ${meta.label}`,
+        body: submission.recruiterFeedbackNote,
+        meta: `${roleLabel} · ${formatActivityDate(submission.recruiterFeedbackUpdatedAt ?? submission.updatedAt)}`,
+        tone: closed ? "warn" : meta.tone,
+        priority: closed ? 100 : 82,
+        atMs,
+        cta: "Review submission",
+        action: "submissions",
+        href: rolePathForRow(submission),
+      })
+      continue
+    }
+
+    if (closed) {
+      items.push({
+        id: `submission-closed-${submission.id}`,
+        bucket: "Closed candidate",
+        title: `${candidate} - ${meta.label}`,
+        body: nextAction.body,
+        meta: `${roleLabel} · ${formatActivityDate(submission.updatedAt ?? submission.createdAt)}`,
+        tone: meta.tone,
+        priority: 74,
+        atMs,
+        cta: "Review pipeline",
+        action: "submissions",
+      })
+      continue
+    }
+
+    if (moving) {
+      items.push({
+        id: `submission-moving-${submission.id}`,
+        bucket: "Interview motion",
+        title: `${candidate} is ${meta.label.toLowerCase()}`,
+        body: nextAction.body,
+        meta: `${roleLabel} · ${formatActivityDate(submission.updatedAt ?? submission.createdAt)}`,
+        tone: "success",
+        priority: 78,
+        atMs,
+        cta: "Open role",
+        action: "submissions",
+        href: rolePathForRow(submission),
+      })
+      continue
+    }
+
+    if (pending) {
+      const ageMs = Date.now() - (timestampValueMs(submission.createdAt) || Date.now())
+      const oldPending = ageMs > 3 * 86_400_000
+      items.push({
+        id: `submission-pending-${submission.id}`,
+        bucket: oldPending ? "Waiting on feedback" : "Under review",
+        title: `${candidate} is ${meta.label.toLowerCase()}`,
+        body: nextAction.body,
+        meta: `${roleLabel} · submitted ${formatWhen(submission)}`,
+        tone: oldPending ? "warn" : meta.tone,
+        priority: oldPending ? 72 : 48,
+        atMs,
+        cta: "Track status",
+        action: "submissions",
+      })
+    }
+  }
+
+  for (const candidate of sourcedCandidates) {
+    if (candidate.stage === "archived" || candidate.stage === "submitted") continue
+    const stage = sourceStageMeta(candidate.stage)
+    const calibration = calibrationMeta(candidate.calibrationStatus)
+    const atMs = timestampValueMs(candidate.calibrationUpdatedAt ?? candidate.updatedAt ?? candidate.createdAt)
+    const roleLabel = rowRoleLabel(candidate, jobsById)
+    const name = candidateName(candidate)
+
+    if (candidate.calibrationNote || candidate.calibrationStatus === "bad_fit" || candidate.calibrationStatus === "calibration_requested") {
+      items.push({
+        id: `candidate-calibration-${candidate.id}`,
+        bucket: "Candidate calibration",
+        title: `${name} - ${calibration.label}`,
+        body: candidate.calibrationNote || "WeKruit marked this prospect for calibration. Adjust the profile before submitting.",
+        meta: `${roleLabel} · ${formatActivityDate(candidate.calibrationUpdatedAt ?? candidate.updatedAt)}`,
+        tone: calibration.tone,
+        priority: candidate.calibrationStatus === "bad_fit" ? 96 : 84,
+        atMs,
+        cta: "Update candidate",
+        action: "candidates",
+        href: rolePathForRow(candidate, candidate.id),
+      })
+      continue
+    }
+
+    if (candidate.stage === "ready") {
+      items.push({
+        id: `candidate-ready-${candidate.id}`,
+        bucket: "Ready to submit",
+        title: `${name} is ready`,
+        body: shortText(candidate.candidate?.notes, "Pick the best-fit role and submit only with candidate consent.", 140),
+        meta: `${roleLabel} · ${formatActivityDate(candidate.updatedAt ?? candidate.createdAt)}`,
+        tone: "live",
+        priority: 90,
+        atMs,
+        cta: "Match role",
+        action: "matches",
+        href: rolePathForRow(candidate, candidate.id),
+      })
+      continue
+    }
+
+    if (candidate.stage === "screened" || candidate.stage === "contacted") {
+      items.push({
+        id: `candidate-followup-${candidate.id}`,
+        bucket: "Pipeline follow-up",
+        title: `${name} is ${stage.label.toLowerCase()}`,
+        body: "Move this prospect to ready when compensation, interest, and hard filters are confirmed.",
+        meta: `${roleLabel} · ${formatActivityDate(candidate.updatedAt ?? candidate.createdAt)}`,
+        tone: stage.tone,
+        priority: 42,
+        atMs,
+        cta: "Open CRM",
+        action: "candidates",
+      })
+    }
+  }
+
+  for (const question of roleQuestions) {
+    const open = (question.status ?? "open") === "open"
+    const atMs = timestampValueMs(question.answeredAt ?? question.updatedAt ?? question.createdAt)
+    const roleLabel = rowRoleLabel(question, jobsById)
+    items.push({
+      id: `role-question-${question.id}`,
+      bucket: open ? "WeKruit answer needed" : "Role answer returned",
+      title: open ? "Role question is open" : "Role question answered",
+      body: open
+        ? question.question || "A role calibration question is waiting on WeKruit."
+        : question.answer || question.question || "WeKruit answered this role calibration question.",
+      meta: `${roleLabel} · ${formatActivityDate(question.updatedAt ?? question.createdAt)}`,
+      tone: open ? "warn" : "info",
+      priority: open ? 92 : 68,
+      atMs,
+      cta: "Open roles",
+      action: "roles",
+    })
+  }
+
+  for (const feedback of roleFeedback) {
+    if (feedback.difficulty !== "hard" && feedback.difficulty !== "blocked") continue
+    const roleLabel = rowRoleLabel(feedback, jobsById)
+    items.push({
+      id: `role-feedback-${feedback.id}`,
+      bucket: "Market blocker",
+      title: `${roleFeedbackDifficultyText(feedback.difficulty)} role signal`,
+      body: feedback.note || `${feedback.reasons.map((reason) => reason.replace(/_/g, " ")).join(", ") || "Recruiter market friction"} needs calibration before more volume.`,
+      meta: `${roleLabel} · ${formatActivityDate(feedback.updatedAt ?? feedback.createdAt)}`,
+      tone: feedback.difficulty === "blocked" ? "warn" : "info",
+      priority: feedback.difficulty === "blocked" ? 86 : 64,
+      atMs: timestampValueMs(feedback.updatedAt ?? feedback.createdAt),
+      cta: "Review roles",
+      action: "roles",
+    })
+  }
+
+  return items.sort((a, b) => b.priority - a.priority || b.atMs - a.atMs)
 }
 
 function sourceToPipelineItem(c: RecruiterSourcedCandidateItem): PipelineItem {

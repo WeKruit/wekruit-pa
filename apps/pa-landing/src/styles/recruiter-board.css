@@ -1477,6 +1477,225 @@
   line-height: 1.45;
 }
 
+.rb-inbox-hero {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px 18px 8px;
+}
+
+.rb-inbox-hero article,
+.rb-inbox-next,
+.rb-inbox-side article {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.rb-inbox-hero article {
+  display: grid;
+  gap: 7px;
+  border-top: 3px solid var(--ink-3);
+  padding: 14px;
+}
+
+.rb-inbox-hero article.is-live,
+.rb-inbox-next.is-live,
+.rb-inbox-item.is-live { border-color: var(--live-border); background: var(--live-soft); }
+.rb-inbox-hero article.is-info,
+.rb-inbox-next.is-info,
+.rb-inbox-item.is-info { border-color: #c8d8f6; }
+.rb-inbox-hero article.is-warn,
+.rb-inbox-next.is-warn,
+.rb-inbox-item.is-warn { border-color: #efc56f; background: #fffaf1; }
+.rb-inbox-hero article.is-success,
+.rb-inbox-next.is-success,
+.rb-inbox-item.is-success { border-color: #b8d9c2; background: var(--success-bg); }
+.rb-inbox-hero article.is-mute,
+.rb-inbox-next.is-mute,
+.rb-inbox-item.is-mute { border-color: var(--border); background: var(--cream-3); }
+
+.rb-inbox-hero span,
+.rb-inbox-next span,
+.rb-inbox-item span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-inbox-hero strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-inbox-hero p,
+.rb-inbox-next p,
+.rb-inbox-side p,
+.rb-inbox-item p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-inbox-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
+  gap: 16px;
+  padding: 12px 18px 18px;
+  align-items: start;
+}
+
+.rb-inbox-feed,
+.rb-inbox-side {
+  min-width: 0;
+}
+
+.rb-inbox-feed > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.rb-inbox-feed h3,
+.rb-inbox-side h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.rb-inbox-feed > header p {
+  margin: 3px 0 0;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.rb-inbox-list,
+.rb-inbox-side {
+  display: grid;
+  gap: 10px;
+}
+
+.rb-inbox-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ink-3);
+  border-radius: 9px;
+  background: #fff;
+  padding: 13px;
+}
+
+.rb-inbox-item strong,
+.rb-inbox-next strong,
+.rb-inbox-side article strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.rb-inbox-item em {
+  display: block;
+  margin-top: 6px;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-style: normal;
+}
+
+.rb-inbox-item footer {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 108px;
+}
+
+.rb-inbox-item button,
+.rb-inbox-item a,
+.rb-inbox-next button,
+.rb-inbox-side article button {
+  appearance: none;
+  display: inline-flex;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 11px;
+  text-decoration: none;
+}
+
+.rb-inbox-next,
+.rb-inbox-side article {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.rb-inbox-side article button {
+  width: 100%;
+}
+
+.rb-inbox-side article button + button {
+  margin-top: 2px;
+}
+
+.rb-inbox-side article button strong,
+.rb-inbox-side article button span {
+  display: block;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-inbox-side article button span {
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.rb-inbox-empty {
+  display: grid;
+  gap: 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  padding: 18px;
+}
+
+.rb-inbox-empty strong {
+  color: var(--ink);
+}
+
+.rb-inbox-empty button {
+  justify-self: start;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 12px;
+}
+
 .rb-operating-grid {
   display: grid;
   grid-template-columns: 1.15fr repeat(3, minmax(0, 1fr)) 1.05fr;
@@ -3327,6 +3546,7 @@
   .rb-access__body,
   .rb-workspace__grid,
   .rb-workbench-grid,
+  .rb-inbox-grid,
   .rb-feedback-grid,
   .rb-candidate-crm,
   .rb-matchboard,
@@ -3361,6 +3581,7 @@
   .rb-status-ladder,
   .rb-expectation-list,
   .rb-challenge-grid,
+  .rb-inbox-hero,
   .rb-access-command-hero {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3462,6 +3683,9 @@
   .rb-candidate-board,
   .rb-command-list,
   .rb-market-grid,
+  .rb-inbox-hero,
+  .rb-inbox-grid,
+  .rb-inbox-item,
   .rb-operating-grid,
   .rb-performance-targets,
   .rb-earnings-hero,
