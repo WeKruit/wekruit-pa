@@ -2948,6 +2948,99 @@ function candidateMatchText(candidate: RecruiterSourcedCandidateItem): string {
   ].filter(Boolean).join(" ")
 }
 
+type BulkCandidateDraft = {
+  rowNumber: number
+  raw: string
+  name: string
+  link: string
+  currentRole?: string
+  notes?: string
+}
+
+type BulkCandidateParseResult =
+  | { ok: true; candidate: BulkCandidateDraft }
+  | { ok: false; rowNumber: number; raw: string; reason: string }
+
+type BulkCandidateImportResult = {
+  rowNumber: number
+  name: string
+  status: "saved" | "duplicate" | "error"
+  message: string
+}
+
+function cleanBulkCell(value: string): string {
+  return value.trim().replace(/^["']|["']$/g, "").trim()
+}
+
+function normalizeBulkCandidateLink(value: string): string {
+  const cleaned = value.trim().replace(/[),.;]+$/g, "")
+  if (/^https?:\/\//i.test(cleaned)) return cleaned
+  if (/^(?:www\.|linkedin\.com\/)/i.test(cleaned)) return `https://${cleaned}`
+  return cleaned
+}
+
+function inferCandidateNameFromLink(link: string): string {
+  const withoutQuery = link.split(/[?#]/)[0] ?? link
+  const slug = withoutQuery.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? "Candidate"
+  return slug
+    .replace(/[-_+.]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .trim() || "Candidate"
+}
+
+function parseBulkCandidateLine(line: string, rowNumber: number): BulkCandidateParseResult {
+  const raw = line.trim()
+  if (!raw) return { ok: false, rowNumber, raw: line, reason: "Empty row" }
+  const delimiter = raw.includes("\t") ? "\t" : raw.includes("|") ? "|" : raw.includes(",") ? "," : null
+  const parts = delimiter
+    ? raw.split(delimiter).map(cleanBulkCell).filter(Boolean)
+    : [raw]
+  const linkPattern = /(?:https?:\/\/|www\.|linkedin\.com\/)\S+/i
+  const linkIndex = parts.findIndex((part) => linkPattern.test(part))
+  if (linkIndex >= 0) {
+    const linkMatch = parts[linkIndex]?.match(linkPattern)?.[0]
+    const link = linkMatch ? normalizeBulkCandidateLink(linkMatch) : ""
+    const name = cleanBulkCell(parts.slice(0, linkIndex).join(" ")) || inferCandidateNameFromLink(link)
+    if (!link) return { ok: false, rowNumber, raw: line, reason: "Missing LinkedIn or resume link" }
+    const currentRole = cleanBulkCell(parts[linkIndex + 1] ?? "")
+    const notes = parts.slice(linkIndex + 2).map(cleanBulkCell).filter(Boolean).join(" · ")
+    return {
+      ok: true,
+      candidate: {
+        rowNumber,
+        raw: line,
+        name,
+        link,
+        ...(currentRole ? { currentRole } : {}),
+        ...(notes ? { notes } : {}),
+      },
+    }
+  }
+
+  const linkMatch = raw.match(linkPattern)?.[0]
+  if (!linkMatch) return { ok: false, rowNumber, raw: line, reason: "Missing LinkedIn or resume link" }
+  const link = normalizeBulkCandidateLink(linkMatch)
+  const beforeLink = cleanBulkCell(raw.slice(0, raw.indexOf(linkMatch)).replace(/[-–—|,]+$/g, ""))
+  const afterLink = cleanBulkCell(raw.slice(raw.indexOf(linkMatch) + linkMatch.length).replace(/^[-–—|,]+/g, ""))
+  return {
+    ok: true,
+    candidate: {
+      rowNumber,
+      raw: line,
+      name: beforeLink || inferCandidateNameFromLink(link),
+      link,
+      ...(afterLink ? { notes: afterLink } : {}),
+    },
+  }
+}
+
+function parseBulkCandidates(text: string): BulkCandidateParseResult[] {
+  return text
+    .split(/\r?\n/)
+    .map((line, index) => parseBulkCandidateLine(line, index + 1))
+    .filter((row) => row.ok || row.raw.trim())
+}
+
 function jobMatchText(job: CollabJob): string {
   return [
     job.title,
@@ -3148,6 +3241,9 @@ function CandidatesTab({
   const [updatingId, setUpdatingId] = useState<string | null>(null)
   const [calibratingId, setCalibratingId] = useState<string | null>(null)
   const [calibrationDrafts, setCalibrationDrafts] = useState<Record<string, string>>({})
+  const [bulkText, setBulkText] = useState("")
+  const [bulkImporting, setBulkImporting] = useState(false)
+  const [bulkResults, setBulkResults] = useState<BulkCandidateImportResult[]>([])
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
@@ -3191,6 +3287,10 @@ function CandidatesTab({
     candidates: candidates.filter((c) => c.stage === stage.id),
   }))
 
+  const bulkParsedRows = useMemo(() => parseBulkCandidates(bulkText), [bulkText])
+  const bulkValidRows = bulkParsedRows.filter((row): row is { ok: true; candidate: BulkCandidateDraft } => row.ok)
+  const bulkInvalidRows = bulkParsedRows.filter((row): row is { ok: false; rowNumber: number; raw: string; reason: string } => !row.ok)
+
   const updateStage = async (candidate: RecruiterSourcedCandidateItem, stage: RecruiterSourcedCandidateStage) => {
     const jobId = candidate.inboundJobId || candidate.jobId || ""
     const link = candidate.candidate?.link?.trim()
@@ -3218,6 +3318,77 @@ function CandidatesTab({
       setErr(error instanceof Error ? error.message : String(error))
     } finally {
       setUpdatingId(null)
+    }
+  }
+
+  const importBulkCandidates = async () => {
+    if (!form.jobId) {
+      setErr("Choose a role before importing candidates.")
+      return
+    }
+    if (bulkValidRows.length === 0) {
+      setBulkResults(bulkInvalidRows.map((row) => ({
+        rowNumber: row.rowNumber,
+        name: `Row ${row.rowNumber}`,
+        status: "error",
+        message: row.reason,
+      })))
+      return
+    }
+    const rowsToImport = bulkValidRows.slice(0, 25)
+    const nextResults: BulkCandidateImportResult[] = bulkInvalidRows.map((row) => ({
+      rowNumber: row.rowNumber,
+      name: `Row ${row.rowNumber}`,
+      status: "error",
+      message: row.reason,
+    }))
+    setBulkImporting(true)
+    setErr(null)
+    setBulkResults([])
+    try {
+      for (const row of rowsToImport) {
+        try {
+          const saved = await saveRecruiterSourcedCandidate({
+            jobId: form.jobId,
+            stage: "sourced",
+            candidate: {
+              name: row.candidate.name,
+              link: row.candidate.link,
+              currentRole: row.candidate.currentRole,
+              notes: row.candidate.notes,
+            },
+          })
+          onSaved(saved)
+          nextResults.push({
+            rowNumber: row.candidate.rowNumber,
+            name: row.candidate.name,
+            status: "saved",
+            message: "Saved to sourced pipeline",
+          })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          nextResults.push({
+            rowNumber: row.candidate.rowNumber,
+            name: row.candidate.name,
+            status: message.includes("already sourced") ? "duplicate" : "error",
+            message,
+          })
+        }
+        setBulkResults([...nextResults].sort((a, b) => a.rowNumber - b.rowNumber))
+      }
+      if (nextResults.every((result) => result.status === "saved")) {
+        if (bulkValidRows.length > rowsToImport.length) {
+          const importedRows = new Set(rowsToImport.map((row) => row.candidate.rowNumber))
+          setBulkText(bulkParsedRows
+            .filter((row) => !row.ok || !importedRows.has(row.candidate.rowNumber))
+            .map((row) => row.ok ? row.candidate.raw : row.raw)
+            .join("\n"))
+        } else {
+          setBulkText("")
+        }
+      }
+    } finally {
+      setBulkImporting(false)
     }
   }
 
@@ -3266,64 +3437,101 @@ function CandidatesTab({
         <div><h2>Candidate CRM</h2><p>Save prospects before formal submission, then move ready candidates into a role brief.</p></div>
       </header>
       <div className="rb-candidate-crm">
-        <form className="rb-source-form" onSubmit={save}>
-          <h3>Save sourced candidate</h3>
-          <label>
-            <span>Role</span>
-            <select value={form.jobId} onChange={(e) => setForm({ ...form, jobId: e.target.value })} required>
-              <option value="" disabled>Choose role</option>
-              {jobs.map((job) => (
-                <option key={job.jobId} value={job.jobId}>{job.title} · {job.recruiterBoard.label.company}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            <span>Candidate name</span>
-            <input
-              value={form.candidate.name}
-              onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, name: e.target.value } })}
-              required
-            />
-          </label>
-          <label>
-            <span>LinkedIn / resume</span>
-            <input
-              value={form.candidate.link}
-              onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, link: e.target.value } })}
-              placeholder="https://linkedin.com/in/..."
-              required
-            />
-          </label>
-          <div className="rb-source-form__split">
+        <div className="rb-candidate-tools">
+          <form className="rb-source-form" onSubmit={save}>
+            <h3>Save sourced candidate</h3>
             <label>
-              <span>Current role</span>
-              <input
-                value={form.candidate.currentRole ?? ""}
-                onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, currentRole: e.target.value } })}
-              />
-            </label>
-            <label>
-              <span>Stage</span>
-              <select value={form.stage} onChange={(e) => setForm({ ...form, stage: e.target.value as RecruiterSourcedCandidateStage })}>
-                {SOURCE_STAGES.filter((s) => s.id !== "submitted").map((stage) => (
-                  <option key={stage.id} value={stage.id}>{stage.label}</option>
+              <span>Role</span>
+              <select value={form.jobId} onChange={(e) => setForm({ ...form, jobId: e.target.value })} required>
+                <option value="" disabled>Choose role</option>
+                {jobs.map((job) => (
+                  <option key={job.jobId} value={job.jobId}>{job.title} · {job.recruiterBoard.label.company}</option>
                 ))}
               </select>
             </label>
-          </div>
-          <label>
-            <span>Recruiter note</span>
+            <label>
+              <span>Candidate name</span>
+              <input
+                value={form.candidate.name}
+                onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, name: e.target.value } })}
+                required
+              />
+            </label>
+            <label>
+              <span>LinkedIn / resume</span>
+              <input
+                value={form.candidate.link}
+                onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, link: e.target.value } })}
+                placeholder="https://linkedin.com/in/..."
+                required
+              />
+            </label>
+            <div className="rb-source-form__split">
+              <label>
+                <span>Current role</span>
+                <input
+                  value={form.candidate.currentRole ?? ""}
+                  onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, currentRole: e.target.value } })}
+                />
+              </label>
+              <label>
+                <span>Stage</span>
+                <select value={form.stage} onChange={(e) => setForm({ ...form, stage: e.target.value as RecruiterSourcedCandidateStage })}>
+                  {SOURCE_STAGES.filter((s) => s.id !== "submitted").map((stage) => (
+                    <option key={stage.id} value={stage.id}>{stage.label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label>
+              <span>Recruiter note</span>
+              <textarea
+                value={form.candidate.notes ?? ""}
+                onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, notes: e.target.value } })}
+                placeholder="Why this person fits, warm intro status, compensation notes..."
+              />
+            </label>
+            {err && <p className="rb-access__err">{err}</p>}
+            <button className="rb-btn primary rb-btn--block" disabled={saving || jobs.length === 0}>
+              {saving ? "Saving..." : "Save to pipeline"}
+            </button>
+          </form>
+
+          <section className="rb-bulk-import" aria-label="Bulk import candidates">
+            <div>
+              <h3>Bulk import</h3>
+              <p>Paste one candidate per line: name, LinkedIn/resume, current role, notes.</p>
+            </div>
             <textarea
-              value={form.candidate.notes ?? ""}
-              onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, notes: e.target.value } })}
-              placeholder="Why this person fits, warm intro status, compensation notes..."
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              placeholder={"Ada Lovelace, https://linkedin.com/in/ada, Staff Engineer, Strong backend fit\nGrace Hopper | linkedin.com/in/grace | Platform lead"}
             />
-          </label>
-          {err && <p className="rb-access__err">{err}</p>}
-          <button className="rb-btn primary rb-btn--block" disabled={saving || jobs.length === 0}>
-            {saving ? "Saving..." : "Save to pipeline"}
-          </button>
-        </form>
+            <div className="rb-bulk-import__meta">
+              <span>{bulkValidRows.length} valid</span>
+              <span>{bulkInvalidRows.length} needs fix</span>
+              {bulkValidRows.length > 25 && <span>Only first 25 import at once</span>}
+            </div>
+            <button
+              type="button"
+              className="rb-btn rb-btn--block"
+              onClick={() => void importBulkCandidates()}
+              disabled={bulkImporting || jobs.length === 0 || !bulkText.trim()}
+            >
+              {bulkImporting ? "Importing..." : "Import to sourced"}
+            </button>
+            {bulkResults.length > 0 && (
+              <div className="rb-bulk-import__results">
+                {bulkResults.slice(0, 30).map((result) => (
+                  <div key={`${result.rowNumber}-${result.name}`} className={`is-${result.status}`}>
+                    <strong>Row {result.rowNumber}: {result.name}</strong>
+                    <span>{result.message}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
 
         <div className="rb-candidate-board">
           {grouped.map((group) => (

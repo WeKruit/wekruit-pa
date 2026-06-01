@@ -3236,6 +3236,12 @@
   padding: 16px;
 }
 
+.rb-candidate-tools {
+  display: grid;
+  gap: 12px;
+  align-self: start;
+}
+
 .rb-matchboard {
   display: grid;
   grid-template-columns: 330px minmax(0, 1fr);
@@ -3473,6 +3479,84 @@
   display: grid;
   grid-template-columns: 1fr 0.78fr;
   gap: 10px;
+}
+
+.rb-bulk-import {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+}
+
+.rb-bulk-import h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.rb-bulk-import p {
+  margin: 4px 0 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.rb-bulk-import textarea {
+  min-height: 118px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--cream-3);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.45;
+  padding: 10px;
+}
+
+.rb-bulk-import__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rb-bulk-import__meta span {
+  border-radius: var(--r-pill);
+  background: var(--cream-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 8px;
+}
+
+.rb-bulk-import__results {
+  display: grid;
+  gap: 6px;
+}
+
+.rb-bulk-import__results div {
+  display: grid;
+  gap: 2px;
+  border-left: 3px solid var(--border);
+  border-radius: 8px;
+  background: var(--cream-3);
+  padding: 8px;
+}
+
+.rb-bulk-import__results div.is-saved { border-left-color: var(--success); }
+.rb-bulk-import__results div.is-duplicate { border-left-color: var(--warning); }
+.rb-bulk-import__results div.is-error { border-left-color: var(--danger); }
+
+.rb-bulk-import__results strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.rb-bulk-import__results span {
+  color: var(--ink-2);
+  font-size: 11.5px;
 }
 
 .rb-candidate-board {
