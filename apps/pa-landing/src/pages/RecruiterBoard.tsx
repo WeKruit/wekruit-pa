@@ -23,7 +23,9 @@ import {
   fetchRecruiterRoleQuestions,
   fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissions,
+  fetchRecruiterNotifications,
   getRecruiterProfile,
+  markRecruiterNotificationsRead,
   registerRecruiterAccess,
   resendRecruiterCandidateConfirmation,
   saveRecruiterSourcedCandidate,
@@ -31,6 +33,7 @@ import {
   updateRecruiterPreferences,
   type CollabJob,
   type RecruiterCandidateOutreachStatus,
+  type RecruiterNotificationItem,
   type RecruiterRoleApplicationInput,
   type RecruiterRoleApplicationItem,
   type RecruiterRoleFeedbackItem,
@@ -357,6 +360,14 @@ function sortSubmissions(rows: RecruiterSubmissionItem[]): RecruiterSubmissionIt
 
 function sortSourcedCandidates(rows: RecruiterSourcedCandidateItem[]): RecruiterSourcedCandidateItem[] {
   return [...rows].sort((a, b) => updatedAtMs(b) - updatedAtMs(a))
+}
+
+function notificationCreatedAtMs(notification: RecruiterNotificationItem): number {
+  return timestampValueMs(notification.createdAt ?? notification.updatedAt)
+}
+
+function sortRecruiterNotifications(rows: RecruiterNotificationItem[]): RecruiterNotificationItem[] {
+  return [...rows].sort((a, b) => notificationCreatedAtMs(b) - notificationCreatedAtMs(a))
 }
 
 function submissionScore(s: RecruiterSubmissionItem): string {
@@ -712,6 +723,7 @@ export default function RecruiterBoard() {
   const [roleFeedback, setRoleFeedback] = useState<RecruiterRoleFeedbackItem[]>([])
   const [roleQuestions, setRoleQuestions] = useState<RecruiterRoleQuestionItem[]>([])
   const [roleIntelligence, setRoleIntelligence] = useState<RecruiterRoleIntelligenceItem[]>([])
+  const [notifications, setNotifications] = useState<RecruiterNotificationItem[]>([])
   const [statusLoaded, setStatusLoaded] = useState(false)
   const [roleApplicationSavingId, setRoleApplicationSavingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -740,6 +752,7 @@ export default function RecruiterBoard() {
         setRoleFeedback([])
         setRoleQuestions([])
         setRoleIntelligence([])
+        setNotifications([])
         setStatusLoaded(false)
         setAuthReady(true)
         return
@@ -773,6 +786,7 @@ export default function RecruiterBoard() {
             setRoleFeedback([])
             setRoleQuestions([])
             setRoleIntelligence([])
+            setNotifications([])
             setStatusLoaded(false)
             setAccessError(formatRecruiterAuthError(e))
           }
@@ -798,6 +812,7 @@ export default function RecruiterBoard() {
           setRoleFeedback([])
           setRoleQuestions([])
           setRoleIntelligence([])
+          setNotifications([])
           setStatusLoaded(false)
         }
       } finally {
@@ -828,13 +843,14 @@ export default function RecruiterBoard() {
     try {
       setSubmissionError(null)
       setStatusLoaded(false)
-      const [submissionRows, sourceRows, applicationRows, feedbackRows, questionRows, intelligenceRows] = await Promise.all([
+      const [submissionRows, sourceRows, applicationRows, feedbackRows, questionRows, intelligenceRows, notificationRows] = await Promise.all([
         fetchRecruiterSubmissions(),
         fetchRecruiterSourcedCandidates(),
         fetchRecruiterRoleApplications(),
         fetchRecruiterRoleFeedback(),
         fetchRecruiterRoleQuestions(),
         fetchRecruiterRoleIntelligence(),
+        fetchRecruiterNotifications(),
       ])
       setSubmissions(sortSubmissions(submissionRows))
       setSourcedCandidates(sortSourcedCandidates(sourceRows))
@@ -842,6 +858,7 @@ export default function RecruiterBoard() {
       setRoleFeedback(feedbackRows)
       setRoleQuestions(questionRows)
       setRoleIntelligence(intelligenceRows)
+      setNotifications(sortRecruiterNotifications(notificationRows))
       setStatusLoaded(true)
     } catch (e) {
       setSubmissionError(e instanceof Error ? e.message : String(e))
@@ -896,7 +913,14 @@ export default function RecruiterBoard() {
     primaryRoleIds,
     operatingMetrics,
   )
-  const inboxSummary = buildRecruiterInboxSummary(submissions, sourcedCandidates, roleQuestions)
+  const inboxSummary = buildRecruiterInboxSummary(submissions, sourcedCandidates, roleQuestions, notifications)
+  const markAllNotificationsRead = async () => {
+    const unread = notifications.filter((notification) => !notification.readAt)
+    if (unread.length === 0) return
+    await markRecruiterNotificationsRead({ all: true })
+    const readAt = new Date().toISOString()
+    setNotifications((rows) => rows.map((notification) => notification.readAt ? notification : { ...notification, readAt, updatedAt: readAt }))
+  }
   return (
     <div className="rb-platform">
       <aside className="rb-platform__nav">
@@ -944,6 +968,7 @@ export default function RecruiterBoard() {
             setRoleFeedback([])
             setRoleQuestions([])
             setRoleIntelligence([])
+            setNotifications([])
             setStatusLoaded(false)
           }}
         >
@@ -998,10 +1023,12 @@ export default function RecruiterBoard() {
             sourcedCandidates={sourcedCandidates}
             roleFeedback={roleFeedback}
             roleQuestions={roleQuestions}
+            notifications={notifications}
             onRoles={() => setTab("roles")}
             onCandidates={() => setTab("candidates")}
             onSubmissions={() => setTab("submissions")}
             onMatches={() => setTab("matches")}
+            onMarkAllNotificationsRead={() => void markAllNotificationsRead()}
           />
         )}
         {activeTab === "roles" && (
@@ -1690,7 +1717,7 @@ function RecruiterAccessGate({ initialError }: { initialError?: string | null })
           <span className="rb-access__badge">Registered recruiters only</span>
           <h2>Enter access code</h2>
           <p className="rb-access__hint">
-            WeKruit verifies the code first, then binds this recruiter workspace to the Google account you choose.
+            Enter your code first, then choose the Google account it should bind to. Without a valid code, the workspace will not open.
           </p>
           <label>
             <span>Access code</span>
@@ -1884,26 +1911,30 @@ function RecruiterInboxTab({
   sourcedCandidates,
   roleFeedback,
   roleQuestions,
+  notifications,
   onRoles,
   onCandidates,
   onSubmissions,
   onMatches,
+  onMarkAllNotificationsRead,
 }: {
   jobs: CollabJob[]
   submissions: RecruiterSubmissionItem[]
   sourcedCandidates: RecruiterSourcedCandidateItem[]
   roleFeedback: RecruiterRoleFeedbackItem[]
   roleQuestions: RecruiterRoleQuestionItem[]
+  notifications: RecruiterNotificationItem[]
   onRoles: () => void
   onCandidates: () => void
   onSubmissions: () => void
   onMatches: () => void
+  onMarkAllNotificationsRead: () => void
 }) {
   const items = useMemo(
-    () => buildRecruiterInboxItems(jobs, submissions, sourcedCandidates, roleFeedback, roleQuestions),
-    [jobs, roleFeedback, roleQuestions, sourcedCandidates, submissions],
+    () => buildRecruiterInboxItems(jobs, submissions, sourcedCandidates, roleFeedback, roleQuestions, notifications),
+    [jobs, notifications, roleFeedback, roleQuestions, sourcedCandidates, submissions],
   )
-  const summary = buildRecruiterInboxSummary(submissions, sourcedCandidates, roleQuestions)
+  const summary = buildRecruiterInboxSummary(submissions, sourcedCandidates, roleQuestions, notifications)
   const urgentItems = items.filter((item) => item.priority >= 80)
   const waitingItems = items.filter((item) => item.bucket === "Waiting on feedback" || item.bucket === "Under review" || item.bucket === "WeKruit answer needed")
   const learningItems = items.filter((item) =>
@@ -1912,6 +1943,7 @@ function RecruiterInboxTab({
     item.bucket.includes("Market") ||
     item.bucket.includes("answer"),
   )
+  const unreadNotifications = notifications.filter((notification) => !notification.readAt)
   const topItem = items[0]
   const dispatch = (action: RecruiterInboxAction) => {
     if (action === "roles") onRoles()
@@ -1951,6 +1983,11 @@ function RecruiterInboxTab({
           <strong>{summary.openQuestions}</strong>
           <p>Role-calibration questions waiting on a WeKruit answer.</p>
         </article>
+        <article className={summary.unreadNotifications ? "is-live" : "is-mute"}>
+          <span>Unread alerts</span>
+          <strong>{summary.unreadNotifications}</strong>
+          <p>New roles, application decisions, and feedback notices pushed into this workspace.</p>
+        </article>
       </section>
 
       <section className="rb-inbox-grid">
@@ -1959,6 +1996,15 @@ function RecruiterInboxTab({
             <h3>Action feed</h3>
             <p>Sorted by the next move most likely to prevent wasted sourcing.</p>
           </header>
+          {unreadNotifications.length > 0 && (
+            <div className="rb-notification-strip">
+              <div>
+                <strong>{unreadNotifications.length} unread platform alert{unreadNotifications.length === 1 ? "" : "s"}</strong>
+                <p>Mark them read after you review the feed.</p>
+              </div>
+              <button type="button" onClick={onMarkAllNotificationsRead}>Mark all read</button>
+            </div>
+          )}
           <div className="rb-inbox-list">
             {items.slice(0, 12).map((item) => (
               <RecruiterInboxItemCard key={item.id} item={item} onAction={dispatch} />
@@ -2316,6 +2362,7 @@ function buildRecruiterInboxSummary(
   submissions: RecruiterSubmissionItem[],
   sourcedCandidates: RecruiterSourcedCandidateItem[],
   roleQuestions: RecruiterRoleQuestionItem[],
+  notifications: RecruiterNotificationItem[],
 ) {
   const feedbackNotes = submissions.filter(submissionHasStructuredFeedback).length
   const rejectedWithFeedback = submissions.filter((submission) =>
@@ -2333,14 +2380,16 @@ function buildRecruiterInboxSummary(
   const activeSubmissions = submissions.filter((submission) =>
     ["submitted", "new", "reviewing", "advanced", "interviewing"].includes(submission.status ?? "submitted"),
   ).length
+  const unreadNotifications = notifications.filter((notification) => !notification.readAt).length
   return {
-    needsAction: rejectedWithFeedback + candidateConfirmationNeeds + readyCandidates + calibrationNeeds + followUpDue + openQuestions,
+    needsAction: rejectedWithFeedback + candidateConfirmationNeeds + readyCandidates + calibrationNeeds + followUpDue + openQuestions + unreadNotifications,
     feedbackNotes,
     candidateConfirmationNeeds,
     followUpDue,
     readyCandidates,
     openQuestions,
     activeSubmissions,
+    unreadNotifications,
   }
 }
 
@@ -2350,9 +2399,41 @@ function buildRecruiterInboxItems(
   sourcedCandidates: RecruiterSourcedCandidateItem[],
   roleFeedback: RecruiterRoleFeedbackItem[],
   roleQuestions: RecruiterRoleQuestionItem[],
+  notifications: RecruiterNotificationItem[],
 ): RecruiterInboxItem[] {
   const jobsById = new Map(jobs.map((job) => [roleKey(job), job]))
   const items: RecruiterInboxItem[] = []
+
+  for (const notification of notifications) {
+    const unread = !notification.readAt
+    const roleId = notification.publicJobId || notification.jobId
+    const href = roleId ? `/recruiters/job/${encodeURIComponent(roleId)}` : undefined
+    const typeLabel =
+      notification.type === "new_role" ? "New role alert" :
+      notification.type === "role_application_decision" ? "Access decision" :
+      notification.type === "submission_feedback" ? "Submission notification" :
+      "Platform alert"
+    const action: RecruiterInboxAction =
+      notification.type === "submission_feedback" ? "submissions" :
+      notification.type === "new_role" || notification.type === "role_application_decision" ? "roles" :
+      "candidates"
+    items.push({
+      id: `notification-${notification.id}`,
+      bucket: unread ? "Unread platform alert" : typeLabel,
+      title: notification.title,
+      body: notification.body,
+      meta: [
+        notification.roleTitle || notification.companyLabel || "",
+        formatActivityDate(notification.createdAt ?? notification.updatedAt),
+      ].filter(Boolean).join(" · "),
+      tone: unread ? "live" : notification.type === "submission_feedback" ? "info" : "mute",
+      priority: unread ? 98 : 38,
+      atMs: notificationCreatedAtMs(notification),
+      cta: notification.type === "submission_feedback" ? "Review submission" : "Open role",
+      action,
+      href,
+    })
+  }
 
   for (const submission of submissions) {
     const status = submission.status ?? "submitted"

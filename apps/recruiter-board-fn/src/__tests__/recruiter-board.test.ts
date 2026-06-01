@@ -39,6 +39,7 @@ import {
   validateInviteCodeCreate,
   validateInviteCodeReplace,
   validateInviteCodeRestore,
+  validateRecruiterNotificationsReadInput,
   validateRecruiterRoleApplicationInput,
   validateRecruiterRoleFeedbackInput,
   validateRecruiterRoleQuestionInput,
@@ -670,6 +671,41 @@ describe("recruiter role applications", () => {
     }), {
       ok: false,
       reason: "invalid_prepared_candidate_ids",
+    })
+  })
+})
+
+describe("recruiter notifications", () => {
+  it("accepts marking all notifications read", () => {
+    assert.deepEqual(validateRecruiterNotificationsReadInput({ all: true }), {
+      ok: true,
+      value: {
+        all: true,
+        notificationIds: [],
+      },
+    })
+  })
+
+  it("accepts and de-dupes specific notification ids", () => {
+    assert.deepEqual(validateRecruiterNotificationsReadInput({
+      notificationIds: [" abc_123 ", "abc_123", "new-role-1"],
+    }), {
+      ok: true,
+      value: {
+        all: false,
+        notificationIds: ["abc_123", "new-role-1"],
+      },
+    })
+  })
+
+  it("rejects malformed notification read payloads", () => {
+    assert.deepEqual(validateRecruiterNotificationsReadInput({}), {
+      ok: false,
+      reason: "missing_notification_ids",
+    })
+    assert.deepEqual(validateRecruiterNotificationsReadInput({ notificationIds: ["../bad"] }), {
+      ok: false,
+      reason: "invalid_notification_ids",
     })
   })
 })

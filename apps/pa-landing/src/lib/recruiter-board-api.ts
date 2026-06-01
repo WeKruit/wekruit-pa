@@ -11,6 +11,8 @@ const DEFAULT_BASE =
 export const COLLAB_JOBS_URL = `${DEFAULT_BASE}/paCollabJobsList`
 export const RECRUITER_ACCESS_URL = `${DEFAULT_BASE}/paRecruiterAccess`
 export const RECRUITER_ME_URL = `${DEFAULT_BASE}/paRecruiterMe`
+export const RECRUITER_NOTIFICATIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterNotificationsList`
+export const RECRUITER_NOTIFICATIONS_READ_URL = `${DEFAULT_BASE}/paRecruiterNotificationsRead`
 export const RECRUITER_PREFERENCES_URL = `${DEFAULT_BASE}/paRecruiterPreferencesUpdate`
 export const RECRUITER_SOURCED_CANDIDATES_LIST_URL = `${DEFAULT_BASE}/paRecruiterSourcedCandidatesList`
 export const RECRUITER_SOURCED_CANDIDATE_SAVE_URL = `${DEFAULT_BASE}/paRecruiterSourcedCandidateSave`
@@ -101,6 +103,28 @@ export interface RecruiterProfile {
 export interface RecruiterSession {
   recruiterId: string
   recruiter: RecruiterProfile
+}
+
+export interface RecruiterNotificationItem {
+  id: string
+  notificationId?: string
+  type: string
+  status?: string
+  title: string
+  body: string
+  recruiterId?: string
+  recruiterEmail?: string
+  entityType?: string
+  entityId?: string
+  jobId?: string
+  publicJobId?: string
+  roleTitle?: string
+  companyLabel?: string
+  location?: string
+  roleUrl?: string
+  readAt?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
 }
 
 export interface RecruiterSubmissionStatusHistoryItem {
@@ -399,6 +423,45 @@ export async function fetchRecruiterSubmissions(): Promise<RecruiterSubmissionIt
     throw new Error(body.reason ?? `paRecruiterSubmissionsList HTTP ${res.status}`)
   }
   return body.submissions
+}
+
+export async function fetchRecruiterNotifications(): Promise<RecruiterNotificationItem[]> {
+  const res = await fetch(RECRUITER_NOTIFICATIONS_LIST_URL, {
+    method: "GET",
+    headers: await recruiterAuthHeaders(),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    notifications?: RecruiterNotificationItem[]
+  }
+  if (!res.ok || !body.ok || !body.notifications) {
+    throw new Error(body.reason ?? `paRecruiterNotificationsList HTTP ${res.status}`)
+  }
+  return body.notifications
+}
+
+export async function markRecruiterNotificationsRead(input: {
+  all?: boolean
+  notificationIds?: string[]
+}): Promise<{ updated: number }> {
+  const res = await fetch(RECRUITER_NOTIFICATIONS_READ_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(await recruiterAuthHeaders()),
+    },
+    body: JSON.stringify(input),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    updated?: number
+  }
+  if (!res.ok || !body.ok) {
+    throw new Error(body.reason ?? `paRecruiterNotificationsRead HTTP ${res.status}`)
+  }
+  return { updated: body.updated ?? 0 }
 }
 
 export async function fetchRecruiterSourcedCandidates(): Promise<RecruiterSourcedCandidateItem[]> {

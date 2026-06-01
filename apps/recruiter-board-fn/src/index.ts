@@ -21,8 +21,11 @@ export {
   paRecruiterInviteCodeReplace,
   paRecruiterInviteCodeRestore,
   paRecruiterMe,
+  paRecruiterNotificationsList,
+  paRecruiterNotificationsRead,
   paRecruiterCandidateConsentConfirm,
   paRecruiterPreferencesUpdate,
+  paRecruiterRoleApplicationDecisionNotify,
   paRecruiterRoleApplicationSave,
   paRecruiterRoleApplicationsList,
   paRecruiterRoleReleasedNotify,
@@ -34,5 +37,6 @@ export {
   paRecruiterSourcedCandidateSave,
   paRecruiterSourcedCandidatesList,
   paRecruiterSubmission,
+  paRecruiterSubmissionFeedbackNotify,
   paRecruiterSubmissionsList,
 } from "./recruiter-board.js"

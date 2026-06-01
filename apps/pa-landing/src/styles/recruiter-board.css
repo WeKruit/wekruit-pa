@@ -2052,7 +2052,7 @@
 
 .rb-inbox-hero {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
   padding: 16px 18px 8px;
 }
@@ -2155,6 +2155,43 @@
 .rb-inbox-side {
   display: grid;
   gap: 10px;
+}
+
+.rb-notification-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--live-border);
+  border-radius: 9px;
+  background: var(--live-soft);
+  padding: 12px 13px;
+}
+
+.rb-notification-strip strong {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.rb-notification-strip p {
+  margin: 2px 0 0;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.rb-notification-strip button {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 12px;
+  white-space: nowrap;
 }
 
 .rb-inbox-item {
@@ -4884,5 +4921,13 @@
     align-items: flex-start;
     justify-items: start;
     justify-self: start;
+  }
+  .rb-notification-strip {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .rb-notification-strip button {
+    justify-content: center;
+    width: 100%;
   }
 }

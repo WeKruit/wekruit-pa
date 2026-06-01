@@ -14,6 +14,8 @@
  *   GET  paRecruiterMe             -> returns the Firebase Auth-bound recruiter profile
  *   POST paRecruiterAccess         -> validates invite code + binds Firebase Auth uid
  *   POST paRecruiterPreferencesUpdate -> recruiter updates notification settings
+ *   GET  paRecruiterNotificationsList -> recruiter-authenticated notification center
+ *   POST paRecruiterNotificationsRead -> marks recruiter notifications read
  *   GET  paRecruiterRoleApplicationsList -> recruiter-authenticated role applications
  *   POST paRecruiterRoleApplicationSave -> applies/withdraws for a role
  *   GET  paRecruiterSourcedCandidatesList -> recruiter-authenticated source CRM
@@ -29,6 +31,8 @@
  *   GET  paRecruiterCandidateConsentConfirm -> candidate confirms submitted interest
  *   GET  paRecruiterSubmissionsList -> recruiter-authenticated status tracker
  *   TRG  paRecruiterRoleReleasedNotify -> emails recruiters when a role is released
+ *   TRG  paRecruiterRoleApplicationDecisionNotify -> creates recruiter inbox decision notices
+ *   TRG  paRecruiterSubmissionFeedbackNotify -> creates recruiter inbox status/feedback notices
  *   GET  paCollabJobsListSchema    -> JSON Schema for the list response shape
  *
  * Companion docs:
@@ -258,6 +262,28 @@ export interface RecruiterProfilePublic {
   workspacePreferences: RecruiterWorkspacePreferences
 }
 
+export interface RecruiterNotificationListItem {
+  id: string
+  notificationId?: string
+  type: string
+  status?: string
+  title: string
+  body: string
+  recruiterId?: string
+  recruiterEmail?: string
+  entityType?: string
+  entityId?: string
+  jobId?: string
+  publicJobId?: string
+  roleTitle?: string
+  companyLabel?: string
+  location?: string
+  roleUrl?: string
+  readAt?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+}
+
 interface RecruiterAccessRegistrationInput {
   name: string
   email: string
@@ -457,6 +483,66 @@ function readWorkspacePreferences(data: Record<string, unknown> | null | undefin
       .filter(Boolean)
     : []
   return { primaryRoleIds: [...new Set(roleIds)].slice(0, RECRUITER_PRIMARY_ROLE_SLOT_LIMIT) }
+}
+
+function publicRecruiterNotification(
+  doc: { id: string; data: () => Record<string, unknown> | undefined },
+): RecruiterNotificationListItem {
+  const data = doc.data() ?? {}
+  const type = typeof data.type === "string" && data.type.trim() ? data.type.trim() : "notification"
+  const roleTitle = typeof data.roleTitle === "string" ? data.roleTitle.trim() : ""
+  const companyLabel = typeof data.companyLabel === "string" ? data.companyLabel.trim() : ""
+  const fallbackTitle =
+    type === "new_role" ? "New role released" :
+    type === "role_application_decision" ? "Role application reviewed" :
+    type === "submission_feedback" ? "Submission update" :
+    "Recruiter notification"
+  const fallbackBody =
+    type === "new_role"
+      ? [roleTitle || "A new WeKruit role", companyLabel].filter(Boolean).join(" · ")
+      : roleTitle || companyLabel || "Open the recruiter workspace for details."
+  return {
+    id: doc.id,
+    notificationId: typeof data.notificationId === "string" ? data.notificationId : doc.id,
+    type,
+    status: typeof data.status === "string" ? data.status : undefined,
+    title: typeof data.title === "string" && data.title.trim() ? data.title.trim() : fallbackTitle,
+    body: typeof data.body === "string" && data.body.trim() ? data.body.trim() : fallbackBody,
+    recruiterId: typeof data.recruiterId === "string" ? data.recruiterId : undefined,
+    recruiterEmail: typeof data.recruiterEmail === "string" ? data.recruiterEmail : undefined,
+    entityType: typeof data.entityType === "string" ? data.entityType : undefined,
+    entityId: typeof data.entityId === "string" ? data.entityId : undefined,
+    jobId: typeof data.jobId === "string" ? data.jobId : undefined,
+    publicJobId: typeof data.publicJobId === "string" ? data.publicJobId : undefined,
+    roleTitle: roleTitle || undefined,
+    companyLabel: companyLabel || undefined,
+    location: typeof data.location === "string" ? data.location : undefined,
+    roleUrl: typeof data.roleUrl === "string" ? data.roleUrl : undefined,
+    readAt: coerceToIso(data.readAt),
+    createdAt: coerceToIso(data.createdAt),
+    updatedAt: coerceToIso(data.updatedAt),
+  }
+}
+
+export function validateRecruiterNotificationsReadInput(input: unknown):
+  | { ok: true; value: { all: boolean; notificationIds: string[] } }
+  | { ok: false; reason: string } {
+  if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
+  const body = input as Record<string, unknown>
+  const all = body.all === true
+  const notificationIds: string[] = []
+  if (body.notificationIds !== undefined) {
+    if (!Array.isArray(body.notificationIds)) return { ok: false, reason: "invalid_notification_ids" }
+    for (const raw of body.notificationIds) {
+      if (typeof raw !== "string") return { ok: false, reason: "invalid_notification_ids" }
+      const id = raw.trim()
+      if (!id || id.length > 160 || !/^[A-Za-z0-9_-]+$/.test(id)) return { ok: false, reason: "invalid_notification_ids" }
+      if (!notificationIds.includes(id)) notificationIds.push(id)
+    }
+  }
+  if (!all && notificationIds.length === 0) return { ok: false, reason: "missing_notification_ids" }
+  if (notificationIds.length > 100) return { ok: false, reason: "too_many_notification_ids" }
+  return { ok: true, value: { all, notificationIds } }
 }
 
 export function validateRecruiterWorkspacePreferences(input: unknown):
@@ -1257,6 +1343,99 @@ export const paRecruiterMe = onRequest(
     }
     res.set("Cache-Control", "private, max-age=0, no-store")
     res.status(200).json({ ok: true, recruiterId: recruiter.recruiterId, recruiter })
+  },
+)
+
+export const paRecruiterNotificationsList = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "GET") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const recruiter = await authenticateRecruiter(getFirestore(), req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    try {
+      const snap = await getFirestore()
+        .collection(RECRUITER_NOTIFICATIONS_COLLECTION)
+        .where("recruiterId", "==", recruiter.recruiterId)
+        .limit(100)
+        .get()
+      const notifications = snap.docs
+        .map(publicRecruiterNotification)
+        .sort((a, b) => (Date.parse(b.createdAt ?? "") || 0) - (Date.parse(a.createdAt ?? "") || 0))
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, notifications })
+    } catch (err) {
+      logger.error("paRecruiterNotificationsList_failed", { error: String(err), recruiterId: recruiter.recruiterId })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
+
+export const paRecruiterNotificationsRead = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    const validated = validateRecruiterNotificationsReadInput(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+    try {
+      const refs = []
+      if (validated.value.all) {
+        const snap = await db
+          .collection(RECRUITER_NOTIFICATIONS_COLLECTION)
+          .where("recruiterId", "==", recruiter.recruiterId)
+          .limit(100)
+          .get()
+        refs.push(...snap.docs.filter((doc) => !doc.data().readAt).map((doc) => doc.ref))
+      } else {
+        for (const id of validated.value.notificationIds) {
+          const ref = db.collection(RECRUITER_NOTIFICATIONS_COLLECTION).doc(id)
+          const snap = await ref.get()
+          if (!snap.exists) continue
+          if ((snap.data() as Record<string, unknown>).recruiterId !== recruiter.recruiterId) continue
+          refs.push(ref)
+        }
+      }
+      const batch = db.batch()
+      for (const ref of refs) {
+        batch.set(ref, {
+          readAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true })
+      }
+      if (refs.length > 0) await batch.commit()
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, updated: refs.length })
+    } catch (err) {
+      logger.error("paRecruiterNotificationsRead_failed", { error: String(err), recruiterId: recruiter.recruiterId })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
   },
 )
 
@@ -3451,6 +3630,154 @@ async function notifyRecruitersForReleasedRole(
   return { created, sent, skipped, failed }
 }
 
+function eventNotificationId(type: string, entityId: string, eventId: string): string {
+  return createHash("sha256").update(`${type}:${entityId}:${eventId}`).digest("hex").slice(0, 40)
+}
+
+async function createRecruiterInAppNotification(
+  db: Firestore,
+  input: {
+    type: "role_application_decision" | "submission_feedback"
+    eventId: string
+    recruiterId: string
+    recruiterEmail?: string
+    entityType: "role_application" | "submission"
+    entityId: string
+    title: string
+    body: string
+    jobId?: string
+    publicJobId?: string
+    roleTitle?: string
+    companyLabel?: string
+    roleUrl?: string
+  },
+): Promise<boolean> {
+  if (!input.recruiterId) return false
+  const notificationId = eventNotificationId(input.type, input.entityId, input.eventId)
+  try {
+    await db.collection(RECRUITER_NOTIFICATIONS_COLLECTION).doc(notificationId).create({
+      notificationId,
+      type: input.type,
+      status: "in_app",
+      recruiterId: input.recruiterId,
+      recruiterEmail: input.recruiterEmail ?? null,
+      entityType: input.entityType,
+      entityId: input.entityId,
+      title: input.title,
+      body: input.body,
+      jobId: input.jobId ?? null,
+      publicJobId: input.publicJobId ?? input.jobId ?? null,
+      roleTitle: input.roleTitle ?? null,
+      companyLabel: input.companyLabel ?? null,
+      roleUrl: input.roleUrl ?? null,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+    return true
+  } catch (err) {
+    const message = String(err)
+    if (message.includes("ALREADY_EXISTS") || message.includes("already exists")) return false
+    throw err
+  }
+}
+
+function recruiterNotificationRoleUrl(data: Record<string, unknown>): string | undefined {
+  const publicJobId =
+    typeof data.inboundJobId === "string" && data.inboundJobId.trim()
+      ? data.inboundJobId.trim()
+      : typeof data.jobId === "string" && data.jobId.trim()
+        ? data.jobId.trim()
+        : ""
+  return publicJobId ? `${RECRUITER_PUBLIC_BASE_URL}/recruiters/job/${encodeURIComponent(publicJobId)}` : undefined
+}
+
+function compactNotificationBody(parts: Array<string | null | undefined>): string {
+  return parts
+    .map((part) => typeof part === "string" ? part.trim() : "")
+    .filter(Boolean)
+    .join(" · ")
+    .slice(0, 500)
+}
+
+function roleApplicationDecisionNotification(
+  before: Record<string, unknown> | null,
+  after: Record<string, unknown> | null,
+): { title: string; body: string } | null {
+  if (!after) return null
+  const beforeStatus = typeof before?.status === "string" ? before.status : ""
+  const afterStatus = typeof after.status === "string" ? after.status : "pending"
+  if (beforeStatus === afterStatus) return null
+  if (!["approved", "not_approved", "rescinded"].includes(afterStatus)) return null
+  const roleTitle = typeof after.jobTitleSnapshot === "string" && after.jobTitleSnapshot.trim()
+    ? after.jobTitleSnapshot.trim()
+    : "Role access"
+  const statusTitle =
+    afterStatus === "approved" ? "Role access approved" :
+    afterStatus === "not_approved" ? "Role application not approved" :
+    "Role access rescinded"
+  const adminNote = typeof after.adminNote === "string" ? after.adminNote : ""
+  const body = compactNotificationBody([
+    roleTitle,
+    adminNote || (afterStatus === "approved"
+      ? "You can now work this as an approved role."
+      : "Review the note before reapplying or sourcing more candidates."),
+  ])
+  return { title: statusTitle, body }
+}
+
+function recruiterSubmissionStatusLabel(status: string): string {
+  switch (status) {
+    case "reviewing": return "WeKruit review"
+    case "advanced": return "sent to hiring team"
+    case "interviewing": return "interviewing"
+    case "hired": return "hired"
+    case "rejected": return "not a fit"
+    case "duplicate": return "duplicate"
+    case "submitted":
+    case "new":
+    default:
+      return "submitted"
+  }
+}
+
+function feedbackFieldChanged(before: Record<string, unknown> | null, after: Record<string, unknown>): boolean {
+  const keys = ["recruiterFeedbackNote", "recruiterFeedbackRating", "recruiterFeedbackUpdatedAt"]
+  if (keys.some((key) => JSON.stringify(before?.[key] ?? null) !== JSON.stringify(after[key] ?? null))) return true
+  return JSON.stringify(before?.recruiterFeedbackReasons ?? []) !== JSON.stringify(after.recruiterFeedbackReasons ?? [])
+}
+
+function submissionFeedbackNotification(
+  before: Record<string, unknown> | null,
+  after: Record<string, unknown> | null,
+): { title: string; body: string } | null {
+  if (!before || !after) return null
+  const beforeStatus = typeof before.status === "string" ? before.status : "submitted"
+  const afterStatus = typeof after.status === "string" ? after.status : "submitted"
+  const statusChanged = beforeStatus !== afterStatus
+  const feedbackChanged = feedbackFieldChanged(before, after)
+  if (!statusChanged && !feedbackChanged) return null
+  const candidate = after.candidate && typeof after.candidate === "object"
+    ? after.candidate as Record<string, unknown>
+    : {}
+  const candidateName = typeof candidate.name === "string" && candidate.name.trim() ? candidate.name.trim() : "Candidate"
+  const rating = typeof after.recruiterFeedbackRating === "number" ? `${after.recruiterFeedbackRating}/4` : ""
+  const reasons = Array.isArray(after.recruiterFeedbackReasons)
+    ? after.recruiterFeedbackReasons.filter((reason): reason is string => typeof reason === "string").map((reason) => reason.replace(/_/g, " ")).slice(0, 4).join(", ")
+    : ""
+  const note = typeof after.recruiterFeedbackNote === "string" ? after.recruiterFeedbackNote : ""
+  const title = feedbackChanged
+    ? `WeKruit feedback for ${candidateName}`
+    : `${candidateName} is ${recruiterSubmissionStatusLabel(afterStatus)}`
+  const body = compactNotificationBody([
+    typeof after.jobTitleSnapshot === "string" ? after.jobTitleSnapshot : "",
+    statusChanged ? `Status: ${recruiterSubmissionStatusLabel(afterStatus)}` : "",
+    rating ? `Rating ${rating}` : "",
+    reasons,
+    note,
+  ])
+  return { title, body }
+}
+
 export const paRecruiterRoleReleasedNotify = onDocumentWritten(
   {
     document: "pa-jobs/{jobId}",
@@ -3464,6 +3791,70 @@ export const paRecruiterRoleReleasedNotify = onDocumentWritten(
     if (!shouldNotifyRecruitersForRoleRelease(before, after) || !after) return
     const summary = await notifyRecruitersForReleasedRole(getFirestore(), event.params.jobId, after)
     logger.info("paRecruiterRoleReleasedNotify_done", { jobId: event.params.jobId, ...summary })
+  },
+)
+
+export const paRecruiterRoleApplicationDecisionNotify = onDocumentWritten(
+  {
+    document: `${RECRUITER_ROLE_APPLICATIONS_COLLECTION}/{applicationId}`,
+    region: "us-central1",
+    memory: RECRUITER_BOARD_MEMORY,
+  },
+  async (event) => {
+    const before = event.data?.before.exists ? event.data.before.data() as Record<string, unknown> : null
+    const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null
+    const notification = roleApplicationDecisionNotification(before, after)
+    if (!notification || !after) return
+    const recruiterId = typeof after.recruiterId === "string" ? after.recruiterId : ""
+    if (!recruiterId) return
+    const created = await createRecruiterInAppNotification(getFirestore(), {
+      type: "role_application_decision",
+      eventId: event.id,
+      recruiterId,
+      recruiterEmail: typeof after.recruiterEmail === "string" ? after.recruiterEmail : undefined,
+      entityType: "role_application",
+      entityId: event.params.applicationId,
+      title: notification.title,
+      body: notification.body,
+      jobId: typeof after.jobId === "string" ? after.jobId : undefined,
+      publicJobId: typeof after.inboundJobId === "string" ? after.inboundJobId : undefined,
+      roleTitle: typeof after.jobTitleSnapshot === "string" ? after.jobTitleSnapshot : undefined,
+      companyLabel: typeof after.companyLabelSnapshot === "string" ? after.companyLabelSnapshot : undefined,
+      roleUrl: recruiterNotificationRoleUrl(after),
+    })
+    if (created) logger.info("paRecruiterRoleApplicationDecisionNotify_done", { applicationId: event.params.applicationId, recruiterId })
+  },
+)
+
+export const paRecruiterSubmissionFeedbackNotify = onDocumentWritten(
+  {
+    document: `${RECRUITER_SUBMISSIONS_COLLECTION}/{submissionId}`,
+    region: "us-central1",
+    memory: RECRUITER_BOARD_MEMORY,
+  },
+  async (event) => {
+    const before = event.data?.before.exists ? event.data.before.data() as Record<string, unknown> : null
+    const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null
+    const notification = submissionFeedbackNotification(before, after)
+    if (!notification || !after) return
+    const recruiterId = typeof after.recruiterId === "string" ? after.recruiterId : ""
+    if (!recruiterId) return
+    const created = await createRecruiterInAppNotification(getFirestore(), {
+      type: "submission_feedback",
+      eventId: event.id,
+      recruiterId,
+      recruiterEmail: typeof after.recruiterEmail === "string" ? after.recruiterEmail : undefined,
+      entityType: "submission",
+      entityId: event.params.submissionId,
+      title: notification.title,
+      body: notification.body,
+      jobId: typeof after.jobId === "string" ? after.jobId : undefined,
+      publicJobId: typeof after.inboundJobId === "string" ? after.inboundJobId : undefined,
+      roleTitle: typeof after.jobTitleSnapshot === "string" ? after.jobTitleSnapshot : undefined,
+      companyLabel: typeof after.companyLabelSnapshot === "string" ? after.companyLabelSnapshot : undefined,
+      roleUrl: recruiterNotificationRoleUrl(after),
+    })
+    if (created) logger.info("paRecruiterSubmissionFeedbackNotify_done", { submissionId: event.params.submissionId, recruiterId })
   },
 )
 
