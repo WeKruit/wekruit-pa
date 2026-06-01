@@ -4194,6 +4194,243 @@
   line-height: 1.4;
 }
 
+.rb-submission-deal-room {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.86fr) minmax(340px, 1.08fr) minmax(280px, 0.82fr);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.rb-submission-deal-room.is-live { border-color: var(--live-border); }
+.rb-submission-deal-room.is-info { border-color: var(--info-bg); }
+.rb-submission-deal-room.is-success { border-color: var(--success-bg); }
+.rb-submission-deal-room.is-warn { border-color: var(--danger-bg); }
+
+.rb-submission-deal-room__lead {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 11px;
+  border-right: 1px solid var(--border);
+  background: linear-gradient(180deg, #fff 0%, var(--cream-3) 100%);
+  padding: 18px;
+}
+
+.rb-submission-deal-room__lead > span,
+.rb-submission-deal-room__gates span,
+.rb-submission-deal-room__side span,
+.rb-submission-deal-room__timeline > span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.rb-submission-deal-room__lead h3 {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 32px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.rb-submission-deal-room__lead p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.rb-submission-deal-room__facts {
+  display: grid;
+  gap: 6px;
+}
+
+.rb-submission-deal-room__facts em {
+  overflow: hidden;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.2;
+  padding: 8px 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-submission-deal-room__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rb-submission-deal-room__actions a,
+.rb-submission-deal-room__actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 9px 14px;
+  text-decoration: none;
+}
+
+.rb-submission-deal-room__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.rb-submission-deal-room__actions .is-secondary {
+  background: #fff;
+  color: var(--ink);
+}
+
+.rb-submission-deal-room__gates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.rb-submission-deal-room__gates article,
+.rb-submission-deal-room__payout,
+.rb-submission-deal-room__risks article {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--cream-3);
+  padding: 13px;
+}
+
+.rb-submission-deal-room__gates article.is-live,
+.rb-submission-deal-room__payout.is-live,
+.rb-submission-deal-room__risks article.is-live,
+.rb-submission-deal-room__timeline div.is-live i {
+  border-color: var(--live-border);
+  background: var(--live-soft);
+}
+
+.rb-submission-deal-room__gates article.is-info,
+.rb-submission-deal-room__payout.is-info,
+.rb-submission-deal-room__risks article.is-info,
+.rb-submission-deal-room__timeline div.is-info i {
+  border-color: var(--info-bg);
+  background: var(--info-bg);
+}
+
+.rb-submission-deal-room__gates article.is-success,
+.rb-submission-deal-room__payout.is-success,
+.rb-submission-deal-room__risks article.is-success,
+.rb-submission-deal-room__timeline div.is-success i {
+  border-color: var(--success-bg);
+  background: var(--success-bg);
+}
+
+.rb-submission-deal-room__gates article.is-warn,
+.rb-submission-deal-room__payout.is-warn,
+.rb-submission-deal-room__risks article.is-warn,
+.rb-submission-deal-room__timeline div.is-warn i {
+  border-color: var(--danger-bg);
+  background: var(--danger-bg);
+}
+
+.rb-submission-deal-room__gates strong,
+.rb-submission-deal-room__payout strong,
+.rb-submission-deal-room__risks strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-submission-deal-room__gates p,
+.rb-submission-deal-room__payout p,
+.rb-submission-deal-room__risks p,
+.rb-submission-deal-room__timeline p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.rb-submission-deal-room__side {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border-left: 1px solid var(--border);
+  padding: 14px;
+}
+
+.rb-submission-deal-room__risks,
+.rb-submission-deal-room__timeline {
+  display: grid;
+  gap: 8px;
+}
+
+.rb-submission-deal-room__timeline {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 13px;
+}
+
+.rb-submission-deal-room__timeline div {
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  gap: 9px;
+}
+
+.rb-submission-deal-room__timeline i {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--cream-3);
+}
+
+.rb-submission-deal-room__timeline section {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.rb-submission-deal-room__timeline strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-submission-deal-room__timeline em {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.25;
+}
+
 .rb-submissions-hero {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -6615,6 +6852,7 @@
   .rb-candidate-dossier,
   .rb-match-command,
   .rb-submission-command,
+  .rb-submission-deal-room,
   .rb-matchboard,
   .rb-submissions-layout,
   .rb-role-workroom,
@@ -6694,6 +6932,14 @@
     border-bottom: 1px solid var(--border);
   }
   .rb-submission-command__queue {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+  .rb-submission-deal-room__lead {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .rb-submission-deal-room__side {
     border-left: 0;
     border-top: 1px solid var(--border);
   }
@@ -6891,6 +7137,7 @@
   .rb-candidate-command__queue article,
   .rb-match-command__cards,
   .rb-submission-command__cards,
+  .rb-submission-deal-room__gates,
   .rb-role-market-strip,
   .rb-role-cockpit,
   .rb-submissions-empty__steps,
@@ -6948,6 +7195,9 @@
     justify-self: start;
   }
   .rb-submission-command__mission h3 {
+    font-size: 26px;
+  }
+  .rb-submission-deal-room__lead h3 {
     font-size: 26px;
   }
   .rb-candidate-command__mission h3 {

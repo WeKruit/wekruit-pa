@@ -535,6 +535,35 @@ type SubmissionCommandModel = {
   queue: Array<{ id: string; label: string; title: string; body: string; tone: "live" | "info" | "success" | "warn" | "mute" }>
 }
 
+type SubmissionDealRoomGate = {
+  label: string
+  value: string
+  body: string
+  tone: "live" | "info" | "success" | "warn" | "mute"
+}
+
+type SubmissionDealRoomModel = {
+  focus?: RecruiterSubmissionItem
+  label: string
+  title: string
+  body: string
+  tone: "live" | "info" | "success" | "warn" | "mute"
+  primaryLabel: string
+  primaryAction: SubmissionCommandAction
+  href?: string
+  candidate: string
+  role: string
+  company: string
+  receipt: string
+  payoutValue: string
+  payoutLabel: string
+  payoutBody: string
+  payoutTone: "live" | "info" | "success" | "warn" | "mute"
+  gates: SubmissionDealRoomGate[]
+  risks: SubmissionDealRoomGate[]
+  timeline: SubmissionActivityEvent[]
+}
+
 function submissionCandidateName(submission: RecruiterSubmissionItem): string {
   return submission.candidate?.name || "Candidate"
 }
@@ -689,6 +718,148 @@ function buildSubmissionCommand(submissions: RecruiterSubmissionItem[]): Submiss
       },
     ],
     queue: actionableQueue,
+  }
+}
+
+function buildSubmissionDealRoom(submissions: RecruiterSubmissionItem[], jobs: CollabJob[]): SubmissionDealRoomModel {
+  const focus = sortSubmissionCommands(submissions)[0]
+  if (!focus) {
+    return {
+      label: "Submission deal room",
+      title: "No live packet yet",
+      body: "Create a consented candidate packet from a recruiter role. The active packet will show consent, review, feedback, payout, and recent movement here.",
+      tone: "info",
+      primaryLabel: "Browse roles",
+      primaryAction: "browse_roles",
+      href: "/recruiters?tab=roles",
+      candidate: "No candidate",
+      role: "No role",
+      company: "WeKruit",
+      receipt: "Pending",
+      payoutValue: "$0",
+      payoutLabel: "Projected",
+      payoutBody: "Payout appears after a candidate packet exists.",
+      payoutTone: "mute",
+      gates: [
+        { label: "Consent", value: "Required", body: "Candidate approval is required before WeKruit review.", tone: "info" },
+        { label: "Review", value: "Waiting", body: "No submitted packet is in review yet.", tone: "mute" },
+        { label: "Feedback", value: "Pending", body: "WeKruit ratings appear after review.", tone: "mute" },
+        { label: "Payout", value: "$0", body: "Estimated fee appears after a role-backed packet exists.", tone: "mute" },
+      ],
+      risks: [{ label: "Next step", value: "Create packet", body: "Pick an approved role lane and submit one high-proof candidate.", tone: "info" }],
+      timeline: [],
+    }
+  }
+
+  const jobsById = new Map(jobs.map((job) => [roleKey(job), job]))
+  const job = jobsById.get(submissionRoleId(focus))
+  const candidate = submissionCandidateName(focus)
+  const role = focus.jobTitleSnapshot || job?.title || "Role"
+  const company = focus.companyLabelSnapshot || job?.recruiterBoard.label.company || "Company"
+  const status = statusMeta(focus.status)
+  const consent = candidateConsentMeta(focus.candidateConsentStatus)
+  const nextAction = submissionNextAction(focus.status)
+  const roleHref = rolePathForRow(focus)
+  const feedbackRating = submissionFeedbackRating(focus)
+  const feedbackReasons = submissionFeedbackReasonLabels(focus)
+  const payoutMeta = recruiterPayoutStatusMeta(focus.recruiterPayout?.status)
+  const payoutValue = formatCurrencyShort(recruiterPayoutAmount(focus, jobsById))
+  const hasRecordedPayout = Boolean(focus.recruiterPayout?.status && focus.recruiterPayout.status !== "none")
+  const ageDays = submissionAgeDays(focus)
+  const receipt = submissionReceiptId(focus)
+  let title = `${candidate} packet is ${status.label.toLowerCase()}`
+  let body = `${role} at ${company}. ${nextAction.body}`
+  let primaryLabel = "Open packet"
+  let primaryAction: SubmissionCommandAction = "open_submission"
+  let href: string | undefined
+  let tone = status.tone
+
+  if (candidateConfirmationCanResend(focus)) {
+    title = `${candidate} needs consent confirmed`
+    body = candidateConfirmationActionBody(focus)
+    primaryLabel = "Resend confirmation"
+    primaryAction = "resend_confirmation"
+    tone = consent.tone
+  } else if (submissionHasStructuredFeedback(focus)) {
+    title = `Close the loop on ${candidate}`
+    body = submissionCommandBody(focus)
+    primaryLabel = "Read feedback"
+    tone = submissionFeedbackRatingTone(focus)
+  } else if (submissionIsAdvanced(focus) && roleHref) {
+    title = `${candidate} is moving with the hiring team`
+    body = "Keep the candidate warm and use the role room for next sourcing or logistics context."
+    primaryLabel = "Open role"
+    primaryAction = "open_role"
+    href = roleHref
+    tone = "success"
+  } else if (submissionIsActiveReview(focus) && ageDays >= 3) {
+    title = `${candidate} review is aging`
+    body = "Do not flood lookalikes until WeKruit gives a clearer packet signal."
+    tone = "warn"
+  }
+
+  const risks: SubmissionDealRoomGate[] = []
+  if (candidateConfirmationCanResend(focus)) {
+    risks.push({ label: "Consent risk", value: consent.label, body: candidateConfirmationActionBody(focus), tone: consent.tone })
+  }
+  if (submissionIsActiveReview(focus) && ageDays >= 3) {
+    risks.push({ label: "Review aging", value: `${ageDays} days`, body: "Hold more lookalikes until the current review produces a signal.", tone: "warn" })
+  }
+  if (submissionIsClosed(focus) && submissionHasStructuredFeedback(focus)) {
+    risks.push({ label: "Loop closure", value: "Feedback", body: "Apply this note before sourcing similar candidates.", tone: "warn" })
+  }
+  if (feedbackRating !== null && feedbackRating <= 2) {
+    risks.push({ label: "Quality hold", value: `${feedbackRating}/4`, body: feedbackReasons.length ? feedbackReasons.join(", ") : "Low packet rating needs calibration.", tone: feedbackRating === 1 ? "warn" : "info" })
+  }
+  if (risks.length === 0) {
+    risks.push({ label: "Next step", value: nextAction.title, body: nextAction.body, tone: nextAction.tone })
+  }
+
+  return {
+    focus,
+    label: "Submission deal room",
+    title,
+    body,
+    tone,
+    primaryLabel,
+    primaryAction,
+    href,
+    candidate,
+    role,
+    company,
+    receipt,
+    payoutValue,
+    payoutLabel: hasRecordedPayout ? payoutMeta.label : "Projected",
+    payoutBody: payoutTimingForSubmission(focus),
+    payoutTone: hasRecordedPayout ? payoutMeta.tone : status.tone,
+    gates: [
+      {
+        label: "Consent",
+        value: consent.label,
+        body: focus.candidateConfirmation?.candidateEmail || focus.candidate?.email || "Candidate approval is recorded on this packet.",
+        tone: consent.tone,
+      },
+      {
+        label: "Review",
+        value: status.label,
+        body: `${nextAction.title}. Submitted ${formatActivityDate(focus.createdAt)}.`,
+        tone: status.tone,
+      },
+      {
+        label: "Feedback",
+        value: feedbackRating === null ? "Not rated" : `${feedbackRating}/4`,
+        body: feedbackReasons.length ? feedbackReasons.join(", ") : focus.recruiterFeedbackNote || "Waiting for WeKruit feedback.",
+        tone: feedbackRating === null ? "mute" : submissionFeedbackRatingTone(focus),
+      },
+      {
+        label: "Payout",
+        value: payoutValue,
+        body: hasRecordedPayout ? `${payoutMeta.label}: ${payoutTimingForSubmission(focus)}` : payoutTimingForSubmission(focus),
+        tone: hasRecordedPayout ? payoutMeta.tone : status.tone,
+      },
+    ],
+    risks,
+    timeline: [...submissionActivityEvents(focus)].reverse().slice(0, 5),
   }
 }
 
@@ -1331,6 +1502,7 @@ export default function RecruiterBoard() {
         {activeTab === "submissions" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "submissions" && statusLoaded && (
           <SubmissionsTab
+            jobs={openJobs}
             submissions={submissions}
             onRefresh={reloadSubmissions}
             onRoles={() => setTab("roles")}
@@ -6014,11 +6186,13 @@ function SourcedCandidateCard({
 }
 
 function SubmissionsTab({
+  jobs,
   submissions,
   onRefresh,
   onRoles,
   onCandidates,
 }: {
+  jobs: CollabJob[]
   submissions: RecruiterSubmissionItem[]
   onRefresh: () => Promise<void>
   onRoles: () => void
@@ -6030,6 +6204,7 @@ function SubmissionsTab({
   const [resendError, setResendError] = useState<string | null>(null)
   const dashboard = useMemo(() => buildSubmissionDashboard(submissions), [submissions])
   const command = useMemo(() => buildSubmissionCommand(submissions), [submissions])
+  const dealRoom = useMemo(() => buildSubmissionDealRoom(submissions, jobs), [jobs, submissions])
   const visibleSubmissions = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return submissions.filter((submission) => {
@@ -6063,6 +6238,13 @@ function SubmissionsTab({
 
       <SubmissionCommandPanel
         model={command}
+        onReviewSubmission={handleReviewSubmission}
+        onResendConfirmation={(submission) => void handleResendConfirmation(submission)}
+        resendingSubmissionId={resendingId}
+      />
+
+      <SubmissionDealRoomPanel
+        model={dealRoom}
         onReviewSubmission={handleReviewSubmission}
         onResendConfirmation={(submission) => void handleResendConfirmation(submission)}
         resendingSubmissionId={resendingId}
@@ -6213,6 +6395,109 @@ function SubmissionCommandPanel({
             </button>
           ))}
           {model.queue.length === 0 && <p>No submission needs immediate follow-up.</p>}
+        </div>
+      </aside>
+    </section>
+  )
+}
+
+function SubmissionDealRoomPanel({
+  model,
+  onReviewSubmission,
+  onResendConfirmation,
+  resendingSubmissionId,
+}: {
+  model: SubmissionDealRoomModel
+  onReviewSubmission: (submissionId: string) => void
+  onResendConfirmation: (submission: RecruiterSubmissionItem) => void
+  resendingSubmissionId: string | null
+}) {
+  const focus = model.focus
+  const renderPrimaryAction = () => {
+    if (model.primaryAction === "browse_roles" && model.href) {
+      return <Link to={model.href}>{model.primaryLabel}</Link>
+    }
+    if (model.primaryAction === "open_role" && model.href) {
+      return <Link to={model.href}>{model.primaryLabel}</Link>
+    }
+    if (model.primaryAction === "resend_confirmation" && focus) {
+      return (
+        <button type="button" onClick={() => onResendConfirmation(focus)} disabled={resendingSubmissionId === focus.id}>
+          {resendingSubmissionId === focus.id ? "Sending..." : model.primaryLabel}
+        </button>
+      )
+    }
+    if (focus) {
+      return <button type="button" onClick={() => onReviewSubmission(focus.id)}>{model.primaryLabel}</button>
+    }
+    return null
+  }
+
+  return (
+    <section className={`rb-submission-deal-room is-${model.tone}`}>
+      <div className="rb-submission-deal-room__lead">
+        <span>{model.label}</span>
+        <h3>{model.title}</h3>
+        <p>{model.body}</p>
+        <div className="rb-submission-deal-room__facts">
+          <em>{model.candidate}</em>
+          <em>{model.role}</em>
+          <em>{model.company}</em>
+          <em>{model.receipt}</em>
+        </div>
+        <div className="rb-submission-deal-room__actions">
+          {renderPrimaryAction()}
+          {focus && model.primaryAction !== "open_submission" && (
+            <button type="button" className="is-secondary" onClick={() => onReviewSubmission(focus.id)}>
+              Open packet
+            </button>
+          )}
+          {focus && rolePathForRow(focus) && model.primaryAction !== "open_role" && (
+            <Link className="is-secondary" to={rolePathForRow(focus)!}>
+              Open role
+            </Link>
+          )}
+        </div>
+      </div>
+
+      <div className="rb-submission-deal-room__gates">
+        {model.gates.map((gate) => (
+          <article className={`is-${gate.tone}`} key={gate.label}>
+            <span>{gate.label}</span>
+            <strong>{gate.value}</strong>
+            <p>{gate.body}</p>
+          </article>
+        ))}
+      </div>
+
+      <aside className="rb-submission-deal-room__side">
+        <article className={`rb-submission-deal-room__payout is-${model.payoutTone}`}>
+          <span>{model.payoutLabel}</span>
+          <strong>{model.payoutValue}</strong>
+          <p>{model.payoutBody}</p>
+        </article>
+        <div className="rb-submission-deal-room__risks">
+          {model.risks.map((risk) => (
+            <article className={`is-${risk.tone}`} key={`${risk.label}-${risk.value}`}>
+              <span>{risk.label}</span>
+              <strong>{risk.value}</strong>
+              <p>{risk.body}</p>
+            </article>
+          ))}
+        </div>
+        <div className="rb-submission-deal-room__timeline">
+          <span>Recent movement</span>
+          {model.timeline.map((event) => (
+            <div className={`is-${event.tone}`} key={event.id}>
+              <i />
+              <section>
+                <strong>{event.label}</strong>
+                <p>{event.detail}</p>
+                <em>{event.at}</em>
+              </section>
+            </div>
+          ))}
+          {model.timeline.length === 0 && <p>No packet activity yet.</p>}
         </div>
       </aside>
     </section>
