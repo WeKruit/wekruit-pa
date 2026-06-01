@@ -2169,6 +2169,27 @@ type RecruiterPayoutRow = {
   tone: OperatingTone
 }
 
+type RecruiterRewardLedgerRow = {
+  id: string
+  category: string
+  title: string
+  body: string
+  value: string
+  status: string
+  schedule: string
+  tone: OperatingTone
+  action?: RecruiterChallenge["action"]
+  actionLabel?: string
+}
+
+type RecruiterRewardLedger = {
+  headline: string
+  body: string
+  summary: RecruiterOperatingMetric[]
+  rows: RecruiterRewardLedgerRow[]
+  policies: RecruiterOperatingMetric[]
+}
+
 type RecruiterStatusTier = {
   label: string
   body: string
@@ -2192,6 +2213,7 @@ type RecruiterEarningsMetrics = {
   tiers: RecruiterStatusTier[]
   challenges: RecruiterChallenge[]
   payouts: RecruiterPayoutRow[]
+  rewardLedger: RecruiterRewardLedger
   expectations: RecruiterOperatingMetric[]
 }
 
@@ -2718,6 +2740,110 @@ function computeRecruiterEarningsMetrics(
           : statusMeta(submission.status).tone,
       }
     })
+  const rewardSubmissionRows = sortSubmissions(submissions)
+    .filter((submission) => {
+      const payoutStatus = submission.recruiterPayout?.status
+      return (payoutStatus && payoutStatus !== "none") ||
+        ["advanced", "interviewing", "offer", "hired"].includes(submission.status ?? "")
+    })
+    .slice(0, 6)
+    .map((submission): RecruiterRewardLedgerRow => {
+      const payoutStatus = submission.recruiterPayout?.status
+      const payoutMeta = recruiterPayoutStatusMeta(payoutStatus)
+      const hasRecordedPayout = Boolean(payoutStatus && payoutStatus !== "none")
+      const submissionMeta = statusMeta(submission.status)
+      const status = hasRecordedPayout ? payoutMeta.label : submissionMeta.label
+      const tone = hasRecordedPayout ? payoutMeta.tone : submissionMeta.tone
+      const role = submission.jobTitleSnapshot || jobsById.get(submissionRoleId(submission))?.title || "Role"
+      const candidate = submission.candidate?.name || "Candidate"
+      const category = hasRecordedPayout
+        ? "Recorded payout"
+        : submission.status === "hired" || submission.status === "offer"
+          ? "Hire reward"
+          : "Interview movement"
+      return {
+        id: `submission-${submission.id}`,
+        category,
+        title: candidate,
+        body: role,
+        value: hasRecordedPayout || submission.status === "hired" || submission.status === "offer"
+          ? formatCurrencyShort(recruiterPayoutAmount(submission, jobsById))
+          : "Projected",
+        status,
+        schedule: payoutTimingForSubmission(submission),
+        tone,
+        action: "submissions",
+        actionLabel: "Open submission",
+      }
+    })
+  const challengeLedgerRows = challenges.slice(0, 2).map((challenge): RecruiterRewardLedgerRow => ({
+    id: `challenge-${challenge.id}`,
+    category: "Weekly challenge",
+    title: challenge.title,
+    body: challenge.eligibility,
+    value: challenge.reward,
+    status: challenge.progressLabel,
+    schedule: challenge.payoutTiming,
+    tone: challenge.tone,
+    action: challenge.action,
+    actionLabel: challenge.actionLabel,
+  }))
+  const rewardLedgerRows = [...rewardSubmissionRows, ...challengeLedgerRows].slice(0, 8)
+  const rewardLedger: RecruiterRewardLedger = {
+    headline: activePipelineValue > 0 ? `${formatCurrencyShort(activePipelineValue)} projected` : "No projected rewards yet",
+    body: activePipelineValue > 0
+      ? `${openSubmissions.length} active submission${openSubmissions.length === 1 ? "" : "s"} can still convert into recorded payout.`
+      : "Create consented submissions and advance them into hiring-team review to start the ledger.",
+    summary: [
+      {
+        label: "Projected open",
+        value: formatCurrencyShort(activePipelineValue),
+        body: "Non-closed submissions using recorded payout amount first, role reward second.",
+        tone: activePipelineValue > 0 ? "live" : "mute",
+      },
+      {
+        label: "Recorded won",
+        value: formatCurrencyShort(wonValue),
+        body: paidPayoutSubmissions.length
+          ? `${paidPayoutSubmissions.length} paid payout${paidPayoutSubmissions.length === 1 ? "" : "s"} in the tracker.`
+          : "Hired outcomes are shown here until payout is explicitly recorded.",
+        tone: wonValue > 0 ? "success" : "mute",
+      },
+      {
+        label: "Movement rate",
+        value: `${interviewRate}%`,
+        body: `${advancedSubmissions.length}/${submissions.length || 0} submissions have advanced, interview, offer, or hired status.`,
+        tone: interviewRate >= PREFERRED_INTERVIEW_RATE_TARGET ? "success" : submissions.length ? "info" : "mute",
+      },
+      {
+        label: "Ledger rows",
+        value: String(rewardLedgerRows.length),
+        body: "Recorded payout, late-stage opportunity, and weekly challenge items visible now.",
+        tone: rewardLedgerRows.length ? "info" : "mute",
+      },
+    ],
+    rows: rewardLedgerRows,
+    policies: [
+      {
+        label: "Projected vs recorded",
+        value: "Recorded wins",
+        body: "When WeKruit records recruiterPayout status or amount, the ledger uses that instead of estimates.",
+        tone: "info",
+      },
+      {
+        label: "Hire reward timing",
+        value: "Start-date gated",
+        body: "Offer and hire rows stay projected until start-date, eligibility, invoice, or paid status is recorded.",
+        tone: "mute",
+      },
+      {
+        label: "Challenge rewards",
+        value: challengeDeadlineLabel(),
+        body: "Weekly challenges explain access, status, or bonus posture; cash is only final when payout status is recorded.",
+        tone: challenges.some((challenge) => challenge.tone === "live" || challenge.tone === "success") ? "success" : "info",
+      },
+    ],
+  }
   return {
     statusLabel: operatingMetrics.statusLabel,
     ratingLabel,
@@ -2789,6 +2915,7 @@ function computeRecruiterEarningsMetrics(
     ],
     challenges,
     payouts: payoutRows,
+    rewardLedger,
     expectations: [
       {
         label: "Primary coverage",
@@ -7297,6 +7424,8 @@ function EarningsTab({
         </div>
       </section>
 
+      <RewardLedgerPanel ledger={metrics.rewardLedger} onAction={runAction} />
+
       <section className="rb-earnings-grid">
         <article className="rb-earnings-card rb-earnings-card--wide">
           <header>
@@ -7404,6 +7533,75 @@ function EarningsTab({
           </div>
         </article>
       </section>
+    </section>
+  )
+}
+
+function RewardLedgerPanel({
+  ledger,
+  onAction,
+}: {
+  ledger: RecruiterRewardLedger
+  onAction: (action: RecruiterChallenge["action"]) => void
+}) {
+  return (
+    <section className="rb-reward-ledger">
+      <header>
+        <div>
+          <span>Reward ledger</span>
+          <strong>{ledger.headline}</strong>
+          <p>{ledger.body}</p>
+        </div>
+        <div className="rb-reward-ledger__summary">
+          {ledger.summary.map((item) => (
+            <article className={`is-${item.tone}`} key={item.label}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+              <p>{item.body}</p>
+            </article>
+          ))}
+        </div>
+      </header>
+
+      <div className="rb-reward-ledger__body">
+        <div className="rb-reward-ledger__rows">
+          {ledger.rows.map((row) => {
+            const action = row.action
+            return (
+              <article className={`is-${row.tone}`} key={row.id}>
+                <div>
+                  <span>{row.category}</span>
+                  <strong>{row.title}</strong>
+                  <p>{row.body}</p>
+                </div>
+                <dl>
+                  <div><dt>Status</dt><dd>{row.status}</dd></div>
+                  <div><dt>Schedule</dt><dd>{row.schedule}</dd></div>
+                </dl>
+                <footer>
+                  <b>{row.value}</b>
+                  {action && row.actionLabel && (
+                    <button type="button" onClick={() => onAction(action)}>{row.actionLabel}</button>
+                  )}
+                </footer>
+              </article>
+            )
+          })}
+          {ledger.rows.length === 0 && (
+            <p className="rb-empty">No reward ledger rows yet. Advance a submission or select a weekly challenge to start tracking money movement.</p>
+          )}
+        </div>
+
+        <aside className="rb-reward-ledger__policy">
+          {ledger.policies.map((policy) => (
+            <article className={`is-${policy.tone}`} key={policy.label}>
+              <span>{policy.label}</span>
+              <strong>{policy.value}</strong>
+              <p>{policy.body}</p>
+            </article>
+          ))}
+        </aside>
+      </div>
     </section>
   )
 }
