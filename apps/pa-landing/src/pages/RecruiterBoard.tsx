@@ -220,7 +220,9 @@ function calibrationMeta(status?: string) {
 }
 
 function canRequestCandidateCalibration(candidate: RecruiterSourcedCandidateItem): boolean {
+  const hasRole = Boolean(candidate.inboundJobId || candidate.jobId)
   return (
+    hasRole &&
     candidate.stage !== "submitted" &&
     candidate.stage !== "archived" &&
     (!candidate.calibrationStatus ||
@@ -660,26 +662,50 @@ interface PendingRecruiterAccess {
 }
 
 function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
-  try {
-    const raw = window.sessionStorage.getItem(RECRUITER_ACCESS_PENDING_KEY)
+  const readStored = (storage: Storage): PendingRecruiterAccess | null => {
+    const raw = storage.getItem(RECRUITER_ACCESS_PENDING_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<PendingRecruiterAccess>
     if (!parsed.inviteCode || typeof parsed.inviteCode !== "string") return null
     if (typeof parsed.createdAtMs !== "number" || Date.now() - parsed.createdAtMs > 10 * 60 * 1000) {
-      window.sessionStorage.removeItem(RECRUITER_ACCESS_PENDING_KEY)
+      storage.removeItem(RECRUITER_ACCESS_PENDING_KEY)
       return null
     }
     return { inviteCode: parsed.inviteCode, createdAtMs: parsed.createdAtMs }
+  }
+
+  try {
+    const pending = readStored(window.sessionStorage)
+    if (pending) return pending
+  } catch {
+    // sessionStorage can be unavailable in private browsing.
+  }
+  try {
+    return readStored(window.localStorage)
   } catch {
     return null
   }
 }
 
 function writePendingRecruiterAccess(inviteCode: string) {
-  window.sessionStorage.setItem(RECRUITER_ACCESS_PENDING_KEY, JSON.stringify({
+  const payload = JSON.stringify({
     inviteCode,
     createdAtMs: Date.now(),
-  }))
+  })
+  let wrote = false
+  try {
+    window.sessionStorage.setItem(RECRUITER_ACCESS_PENDING_KEY, payload)
+    wrote = true
+  } catch {
+    // sessionStorage can be unavailable in private browsing.
+  }
+  try {
+    window.localStorage.setItem(RECRUITER_ACCESS_PENDING_KEY, payload)
+    wrote = true
+  } catch {
+    // localStorage can be unavailable in private browsing.
+  }
+  if (!wrote) throw new Error("Browser storage is blocking recruiter access. Enable site storage and try again.")
 }
 
 function clearPendingRecruiterAccess() {
@@ -687,6 +713,11 @@ function clearPendingRecruiterAccess() {
     window.sessionStorage.removeItem(RECRUITER_ACCESS_PENDING_KEY)
   } catch {
     // sessionStorage can be unavailable in private browsing.
+  }
+  try {
+    window.localStorage.removeItem(RECRUITER_ACCESS_PENDING_KEY)
+  } catch {
+    // localStorage can be unavailable in private browsing.
   }
 }
 
@@ -829,6 +860,7 @@ export default function RecruiterBoard() {
           setRoleIntelligence([])
           setNotifications([])
           setStatusLoaded(false)
+          setAccessError("Enter a recruiter access code before choosing a Google account. Google sign-in alone cannot open this workspace.")
         }
       } finally {
         if (active) setAuthReady(true)
@@ -2377,7 +2409,7 @@ function rolePathForRow(row: { inboundJobId?: string; jobId?: string }, candidat
 function rowRoleLabel(row: { jobTitleSnapshot?: string; companyLabelSnapshot?: string; inboundJobId?: string; jobId?: string }, jobsById: Map<string, CollabJob>): string {
   const id = row.inboundJobId || row.jobId || ""
   const job = jobsById.get(id)
-  const title = row.jobTitleSnapshot || job?.title || "Role"
+  const title = row.jobTitleSnapshot || job?.title || "Private bench"
   const company = row.companyLabelSnapshot || job?.recruiterBoard.label.company
   return company ? `${title} · ${company}` : title
 }
@@ -3889,21 +3921,16 @@ function CandidatesTab({
   const [bulkResults, setBulkResults] = useState<BulkCandidateImportResult[]>([])
   const [err, setErr] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (!form.jobId && jobs[0]) setForm((next) => ({ ...next, jobId: jobs[0]!.jobId }))
-  }, [form.jobId, jobs])
-
   const save = async (e: FormEvent) => {
     e.preventDefault()
-    if (!form.jobId) {
-      setErr("Choose a role for this candidate.")
-      return
-    }
     setSaving(true)
     setErr(null)
     try {
+      const selectedJobId = form.jobId?.trim()
       const saved = await saveRecruiterSourcedCandidate({
-        ...form,
+        ...(selectedJobId ? { jobId: selectedJobId } : {}),
+        stage: form.stage,
+        ...(form.outreach ? { outreach: form.outreach } : {}),
         candidate: {
           name: form.candidate.name.trim(),
           email: form.candidate.email?.trim().toLowerCase() || undefined,
@@ -3915,7 +3942,7 @@ function CandidatesTab({
       })
       onSaved(saved)
       setForm({
-        jobId: form.jobId,
+        jobId: selectedJobId || "",
         stage: "sourced",
         candidate: { name: "", email: "", link: "", currentRole: "", yoe: "", notes: "" },
         outreach: { status: "not_contacted" },
@@ -3939,8 +3966,8 @@ function CandidatesTab({
   const updateStage = async (candidate: RecruiterSourcedCandidateItem, stage: RecruiterSourcedCandidateStage) => {
     const jobId = candidate.inboundJobId || candidate.jobId || ""
     const link = candidate.candidate?.link?.trim()
-    if (!jobId || !link) {
-      setErr("This saved candidate is missing the role or link needed to update it.")
+    if (!link) {
+      setErr("This saved candidate is missing the link needed to update it.")
       return
     }
     setUpdatingId(candidate.id)
@@ -3948,7 +3975,7 @@ function CandidatesTab({
     try {
       const saved = await saveRecruiterSourcedCandidate({
         candidateId: candidate.candidateId || candidate.id,
-        jobId,
+        ...(jobId ? { jobId } : {}),
         stage,
         candidate: {
           name: candidate.candidate?.name || candidateName(candidate),
@@ -3969,10 +3996,6 @@ function CandidatesTab({
   }
 
   const importBulkCandidates = async () => {
-    if (!form.jobId) {
-      setErr("Choose a role before importing candidates.")
-      return
-    }
     if (bulkValidRows.length === 0) {
       setBulkResults(bulkInvalidRows.map((row) => ({
         rowNumber: row.rowNumber,
@@ -3993,10 +4016,11 @@ function CandidatesTab({
     setErr(null)
     setBulkResults([])
     try {
+      const selectedJobId = form.jobId?.trim()
       for (const row of rowsToImport) {
         try {
           const saved = await saveRecruiterSourcedCandidate({
-            jobId: form.jobId,
+            ...(selectedJobId ? { jobId: selectedJobId } : {}),
             stage: "sourced",
             candidate: {
               name: row.candidate.name,
@@ -4011,7 +4035,7 @@ function CandidatesTab({
             rowNumber: row.candidate.rowNumber,
             name: row.candidate.name,
             status: "saved",
-            message: "Saved to sourced pipeline",
+            message: selectedJobId ? "Saved to role pipeline" : "Saved to candidate bench",
           })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -4087,8 +4111,8 @@ function CandidatesTab({
   ) => {
     const jobId = candidate.inboundJobId || candidate.jobId || ""
     const link = candidate.candidate?.link?.trim()
-    if (!jobId || !link) {
-      setErr("This saved candidate is missing the role or link needed to update outreach.")
+    if (!link) {
+      setErr("This saved candidate is missing the link needed to update outreach.")
       return
     }
     setUpdatingId(candidate.id)
@@ -4100,7 +4124,7 @@ function CandidatesTab({
       }
       const saved = await saveRecruiterSourcedCandidate({
         candidateId: candidate.candidateId || candidate.id,
-        jobId,
+        ...(jobId ? { jobId } : {}),
         stage: candidate.stage,
         candidate: {
           name: candidate.candidate?.name || candidateName(candidate),
@@ -4123,7 +4147,7 @@ function CandidatesTab({
   return (
     <section className="rb-panel rb-panel--fill">
       <header className="rb-panel__head">
-        <div><h2>Candidate CRM</h2><p>Save prospects before formal submission, then move ready candidates into a role brief.</p></div>
+        <div><h2>Candidate CRM</h2><p>Build a private candidate bench first. Attach a role now only when you already know the best brief.</p></div>
       </header>
       <div className="rb-candidate-crm">
         <div className="rb-candidate-tools">
@@ -4131,8 +4155,8 @@ function CandidatesTab({
             <h3>Save sourced candidate</h3>
             <label>
               <span>Role</span>
-              <select value={form.jobId} onChange={(e) => setForm({ ...form, jobId: e.target.value })} required>
-                <option value="" disabled>Choose role</option>
+              <select value={form.jobId ?? ""} onChange={(e) => setForm({ ...form, jobId: e.target.value })}>
+                <option value="">Private bench - match later</option>
                 {jobs.map((job) => (
                   <option key={job.jobId} value={job.jobId}>{job.title} · {job.recruiterBoard.label.company}</option>
                 ))}
@@ -4217,15 +4241,15 @@ function CandidatesTab({
               />
             </label>
             {err && <p className="rb-access__err">{err}</p>}
-            <button className="rb-btn primary rb-btn--block" disabled={saving || jobs.length === 0}>
-              {saving ? "Saving..." : "Save to pipeline"}
+            <button className="rb-btn primary rb-btn--block" disabled={saving}>
+              {saving ? "Saving..." : "Save to candidate bench"}
             </button>
           </form>
 
           <section className="rb-bulk-import" aria-label="Bulk import candidates">
             <div>
               <h3>Bulk import</h3>
-              <p>Paste one candidate per line: name, LinkedIn/resume, current role, notes.</p>
+              <p>Paste one candidate per line. Leave role on Private bench to rank them on the matchboard later.</p>
             </div>
             <textarea
               value={bulkText}
@@ -4241,9 +4265,9 @@ function CandidatesTab({
               type="button"
               className="rb-btn rb-btn--block"
               onClick={() => void importBulkCandidates()}
-              disabled={bulkImporting || jobs.length === 0 || !bulkText.trim()}
+              disabled={bulkImporting || !bulkText.trim()}
             >
-              {bulkImporting ? "Importing..." : "Import to sourced"}
+              {bulkImporting ? "Importing..." : "Import to bench"}
             </button>
             {bulkResults.length > 0 && (
               <div className="rb-bulk-import__results">
@@ -4308,6 +4332,10 @@ function SourcedCandidateCard({
   const followUp = candidateFollowUpState(candidate)
   const calibration = calibrationMeta(candidate.calibrationStatus)
   const calibrationOpen = canRequestCandidateCalibration(candidate)
+  const hasRole = Boolean(candidate.inboundJobId || candidate.jobId)
+  const roleLabel = candidate.jobTitleSnapshot && candidate.companyLabelSnapshot
+    ? `${candidate.jobTitleSnapshot} · ${candidate.companyLabelSnapshot}`
+    : candidate.jobTitleSnapshot || "Private bench"
   return (
     <article className="rb-source-card">
       <div>
@@ -4379,6 +4407,7 @@ function SourcedCandidateCard({
         </div>
       )}
       <footer>
+        <span className={`rb-status is-${hasRole ? "info" : "mute"}`}>{roleLabel}</span>
         <span className={`rb-status is-${stage.tone}`}>{stage.label}</span>
         <select
           aria-label={`Update ${candidateName(candidate)} stage`}
@@ -4390,7 +4419,9 @@ function SourcedCandidateCard({
             <option key={option.id} value={option.id}>{option.label}</option>
           ))}
         </select>
-        {candidate.inboundJobId ? <Link to={`/recruiters/job/${candidate.inboundJobId}?candidateId=${encodeURIComponent(candidate.id)}`}>Submit</Link> : null}
+        {candidate.inboundJobId
+          ? <Link to={`/recruiters/job/${candidate.inboundJobId}?candidateId=${encodeURIComponent(candidate.id)}`}>Submit</Link>
+          : <Link to="/recruiters?tab=matches">Find role</Link>}
       </footer>
     </article>
   )

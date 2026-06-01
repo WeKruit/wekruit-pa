@@ -820,13 +820,16 @@ export default function RecruiterRole() {
   const roleCandidates = sourcedCandidates
     .filter((candidate) => roleMatches(job, candidate))
     .sort((a, b) => timestampMs(b.updatedAt ?? b.createdAt) - timestampMs(a.updatedAt ?? a.createdAt))
+  const unassignedCandidates = sourcedCandidates
+    .filter((candidate) => !candidate.jobId && !candidate.inboundJobId && candidate.stage !== "archived")
+    .sort((a, b) => timestampMs(b.updatedAt ?? b.createdAt) - timestampMs(a.updatedAt ?? a.createdAt))
   const roleSubmissions = submissions
     .filter((row) => roleMatches(job, row))
     .sort((a, b) => timestampMs(b.createdAt) - timestampMs(a.createdAt))
   const currentRoleApplication = latestRoleApplication(job, roleApplications)
   const legacyApprovedRole = session.recruiter.workspacePreferences?.primaryRoleIds?.includes(job.jobId) ?? false
   const approvedForRole = legacyApprovedRole || currentRoleApplication?.status === "approved"
-  const preparedApplicationCandidates = roleCandidates
+  const preparedApplicationCandidates = [...roleCandidates, ...unassignedCandidates]
     .filter((candidate) => candidate.stage !== "archived")
     .slice(0, 10)
   const currentRoleFeedback = roleFeedback.find((feedback) => roleMatches(job, feedback)) ?? null
@@ -837,7 +840,7 @@ export default function RecruiterRole() {
   const pendingCount = roleSubmissions.filter((row) => ROLE_PENDING_SUBMISSION_STATUSES.includes(row.status ?? "submitted")).length
   const pendingSlots = Math.max(0, ROLE_PENDING_SUBMISSION_LIMIT - pendingCount)
   const selectedCandidate = prefilledCandidateId
-    ? roleCandidates.find((candidate) => candidate.id === prefilledCandidateId || candidate.candidateId === prefilledCandidateId) ?? null
+    ? sourcedCandidates.find((candidate) => candidate.id === prefilledCandidateId || candidate.candidateId === prefilledCandidateId) ?? null
     : null
   const submissionPacket = buildRoleSubmissionPacket({
     job,
@@ -947,6 +950,10 @@ export default function RecruiterRole() {
             ? {
                 ...row,
                 stage: "submitted",
+                jobId: job.jobId,
+                inboundJobId: job.jobId,
+                jobTitleSnapshot: job.title,
+                companyLabelSnapshot: job.recruiterBoard.label.company,
                 linkedSubmissionId: result.submissionId ?? row.linkedSubmissionId,
                 submittedAt,
                 candidate: submittedCandidate,

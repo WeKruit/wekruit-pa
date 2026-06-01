@@ -612,10 +612,32 @@ describe("recruiter sourced candidates", () => {
     })
   })
 
+  it("accepts a recruiter-sourced candidate without a role for the private candidate bench", () => {
+    const result = validateRecruiterSourcedCandidateInput({
+      stage: "sourced",
+      outreach: { status: "not_contacted" },
+      candidate: {
+        name: " Grace Hopper ",
+        link: " https://linkedin.com/in/grace ",
+        notes: " platform systems lead ",
+      },
+    })
+
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.value.jobId, undefined)
+    assert.equal(result.value.stage, "sourced")
+    assert.deepEqual(result.value.candidate, {
+      name: "Grace Hopper",
+      link: "https://linkedin.com/in/grace",
+      notes: "platform systems lead",
+    })
+  })
+
   it("rejects malformed sourced candidate payloads", () => {
     assert.deepEqual(validateRecruiterSourcedCandidateInput({}), {
       ok: false,
-      reason: "missing_jobId",
+      reason: "missing_candidate",
     })
     assert.deepEqual(validateRecruiterSourcedCandidateInput({
       jobId: "job-1",
@@ -640,12 +662,18 @@ describe("recruiter sourced candidates", () => {
       reason: "invalid_candidate_email",
     })
     assert.deepEqual(validateRecruiterSourcedCandidateInput({
-      jobId: "job-1",
       calibrationRequest: { note: 123 },
       candidate: { name: "Ada", link: "https://linkedin.com/in/ada" },
     }), {
       ok: false,
       reason: "invalid_calibration_note",
+    })
+    assert.deepEqual(validateRecruiterSourcedCandidateInput({
+      calibrationRequest: { note: "Is this a fit?" },
+      candidate: { name: "Ada", link: "https://linkedin.com/in/ada" },
+    }), {
+      ok: false,
+      reason: "calibration_requires_job",
     })
     assert.deepEqual(validateRecruiterSourcedCandidateInput({
       jobId: "job-1",

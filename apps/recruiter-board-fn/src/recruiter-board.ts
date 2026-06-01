@@ -1610,7 +1610,7 @@ interface RecruiterCandidateOutreach {
 
 interface RecruiterSourcedCandidateInput {
   candidateId?: string
-  jobId: string
+  jobId?: string
   stage: RecruiterSourcedCandidateStage
   candidate: {
     name: string
@@ -1866,8 +1866,15 @@ export function validateRecruiterSourcedCandidateInput(input: unknown):
   const b = input as Record<string, unknown>
   const candidateId = sanitizeOptionalString(b.candidateId, 120)
   if (candidateId && !/^[A-Za-z0-9_.:-]{1,120}$/.test(candidateId)) return { ok: false, reason: "invalid_candidate_id" }
-  if (!isNonEmptyString(b.jobId)) return { ok: false, reason: "missing_jobId" }
-  if (b.jobId.length > 200) return { ok: false, reason: "jobId_too_long" }
+  let jobId: string | undefined
+  if (b.jobId !== undefined && b.jobId !== null && b.jobId !== "") {
+    if (typeof b.jobId !== "string") return { ok: false, reason: "invalid_jobId" }
+    const trimmedJobId = b.jobId.trim()
+    if (trimmedJobId) {
+      if (trimmedJobId.length > 200) return { ok: false, reason: "jobId_too_long" }
+      jobId = trimmedJobId
+    }
+  }
   const stage = typeof b.stage === "string" && RECRUITER_SOURCED_CANDIDATE_STAGES.includes(b.stage as RecruiterSourcedCandidateStage)
     ? b.stage as RecruiterSourcedCandidateStage
     : "sourced"
@@ -1938,6 +1945,9 @@ export function validateRecruiterSourcedCandidateInput(input: unknown):
       note: sanitizeOptionalString(request.note, 1200),
     }
   }
+  if (calibrationRequest && !jobId) {
+    return { ok: false, reason: "calibration_requires_job" }
+  }
 
   const candidate: RecruiterSourcedCandidateInput["candidate"] = {
     name: c.name.trim(),
@@ -1956,7 +1966,7 @@ export function validateRecruiterSourcedCandidateInput(input: unknown):
     ok: true,
     value: {
       candidateId,
-      jobId: b.jobId.trim(),
+      ...(jobId ? { jobId } : {}),
       stage,
       candidate,
       ...(outreach ? { outreach } : {}),
@@ -2600,7 +2610,14 @@ export const paRecruiterRoleApplicationSave = onRequest(
           res.status(400).json({ ok: false, reason: "invalid_prepared_candidate" })
           return
         }
-        if (candidate.jobId !== realJobId && candidate.inboundJobId !== payload.jobId) {
+        const candidateJobId = typeof candidate.jobId === "string" ? candidate.jobId : ""
+        const candidateInboundJobId = typeof candidate.inboundJobId === "string" ? candidate.inboundJobId : ""
+        const candidateAlreadyAssigned = Boolean(candidateJobId || candidateInboundJobId)
+        if (
+          candidateAlreadyAssigned &&
+          candidateJobId !== realJobId &&
+          candidateInboundJobId !== payload.jobId
+        ) {
           res.status(400).json({ ok: false, reason: "prepared_candidate_wrong_role" })
           return
         }
@@ -2702,21 +2719,26 @@ export const paRecruiterSourcedCandidateSave = onRequest(
     const payload = validated.value
 
     try {
-      const realJobId = await resolvePublicIdToDocId(db, payload.jobId)
-      if (!realJobId) {
-        res.status(404).json({ ok: false, reason: "job_not_found" })
-        return
-      }
-      const jobSnap = await db.collection("pa-jobs").doc(realJobId).get()
-      if (!jobSnap.exists) {
-        res.status(404).json({ ok: false, reason: "job_not_found" })
-        return
-      }
-      const jobData = jobSnap.data() as Record<string, unknown>
-      const rb = jobData.recruiterBoard as RecruiterBoardPayload | undefined
-      if (jobData.wekruitCollaborationStatus !== "collaborated" || !rb || rb.active !== true) {
-        res.status(403).json({ ok: false, reason: "job_not_active_on_board" })
-        return
+      let realJobId: string | null = null
+      let jobData: Record<string, unknown> | null = null
+      let rb: RecruiterBoardPayload | null = null
+      if (payload.jobId) {
+        realJobId = await resolvePublicIdToDocId(db, payload.jobId)
+        if (!realJobId) {
+          res.status(404).json({ ok: false, reason: "job_not_found" })
+          return
+        }
+        const jobSnap = await db.collection("pa-jobs").doc(realJobId).get()
+        if (!jobSnap.exists) {
+          res.status(404).json({ ok: false, reason: "job_not_found" })
+          return
+        }
+        jobData = jobSnap.data() as Record<string, unknown>
+        rb = (jobData.recruiterBoard as RecruiterBoardPayload | undefined) ?? null
+        if (jobData.wekruitCollaborationStatus !== "collaborated" || !rb || rb.active !== true) {
+          res.status(403).json({ ok: false, reason: "job_not_active_on_board" })
+          return
+        }
       }
 
       const candidateLinkKey = hashRecruiterCandidateLink(payload.candidate.link)
@@ -2737,8 +2759,14 @@ export const paRecruiterSourcedCandidateSave = onRequest(
 
       for (const match of candidateMatches.docs) {
         const data = match.data()
-        if (data.jobId !== realJobId) continue
+        const matchJobId = typeof data.jobId === "string" ? data.jobId : ""
+        const matchInboundJobId = typeof data.inboundJobId === "string" ? data.inboundJobId : ""
+        const sameCandidateScope = realJobId
+          ? matchJobId === realJobId || matchInboundJobId === payload.jobId
+          : !matchJobId && !matchInboundJobId
+        if (!sameCandidateScope) continue
         if (data.recruiterId !== recruiter.recruiterId) {
+          if (!realJobId) continue
           res.status(409).json({ ok: false, reason: "candidate_already_sourced_for_role" })
           return
         }
@@ -2758,8 +2786,14 @@ export const paRecruiterSourcedCandidateSave = onRequest(
 
         for (const match of emailMatches.docs) {
           const data = match.data()
-          if (data.jobId !== realJobId) continue
+          const matchJobId = typeof data.jobId === "string" ? data.jobId : ""
+          const matchInboundJobId = typeof data.inboundJobId === "string" ? data.inboundJobId : ""
+          const sameCandidateScope = realJobId
+            ? matchJobId === realJobId || matchInboundJobId === payload.jobId
+            : !matchJobId && !matchInboundJobId
+          if (!sameCandidateScope) continue
           if (data.recruiterId !== recruiter.recruiterId) {
+            if (!realJobId) continue
             res.status(409).json({ ok: false, reason: "candidate_already_sourced_for_role" })
             return
           }
@@ -2782,6 +2816,21 @@ export const paRecruiterSourcedCandidateSave = onRequest(
           return
         }
       }
+      const existingData = existing.exists ? existing.data() as Record<string, unknown> : {}
+      const existingHasRole =
+        typeof existingData.jobId === "string" ||
+        typeof existingData.inboundJobId === "string"
+      const rolePatch = realJobId && jobData && rb
+        ? {
+            jobId: realJobId,
+            inboundJobId: payload.jobId,
+            jobTitleSnapshot: String(jobData.title ?? ""),
+            companyLabelSnapshot: rb.label.company,
+            candidateScope: "role",
+          }
+        : existingHasRole
+          ? {}
+          : { candidateScope: "global" }
 
       const calibrationPatch = payload.calibrationRequest
         ? {
@@ -2804,12 +2853,9 @@ export const paRecruiterSourcedCandidateSave = onRequest(
         candidateId,
         recruiterId: recruiter.recruiterId,
         recruiterEmail: recruiter.email,
-        jobId: realJobId,
-        inboundJobId: payload.jobId,
+        ...rolePatch,
         candidateLinkKey,
         ...(candidateEmailKey ? { candidateEmailKey } : {}),
-        jobTitleSnapshot: String(jobData.title ?? ""),
-        companyLabelSnapshot: rb.label.company,
         stage: payload.stage,
         candidate: payload.candidate,
         ...(payload.outreach ? { outreach: payload.outreach } : {}),
@@ -4213,7 +4259,14 @@ export const paRecruiterSubmission = onRequest(
         res.status(403).json({ ok: false, reason: "sourced_candidate_forbidden" })
         return
       }
-      if (sourcedData.jobId !== realJobId && sourcedData.inboundJobId !== payload.jobId) {
+      const sourcedJobId = typeof sourcedData.jobId === "string" ? sourcedData.jobId : ""
+      const sourcedInboundJobId = typeof sourcedData.inboundJobId === "string" ? sourcedData.inboundJobId : ""
+      const sourcedAlreadyAssigned = Boolean(sourcedJobId || sourcedInboundJobId)
+      if (
+        sourcedAlreadyAssigned &&
+        sourcedJobId !== realJobId &&
+        sourcedInboundJobId !== payload.jobId
+      ) {
         res.status(409).json({ ok: false, reason: "sourced_candidate_role_mismatch" })
         return
       }
@@ -4305,6 +4358,11 @@ export const paRecruiterSubmission = onRequest(
     const sourcedCandidateSubmittedPatch = sourcedCandidateRef
       ? {
           stage: "submitted",
+          jobId: realJobId,
+          inboundJobId: payload.jobId,
+          jobTitleSnapshot: String(jobData.title ?? ""),
+          companyLabelSnapshot: rb.label.company,
+          candidateScope: "role",
           linkedSubmissionId: submissionId,
           submittedAt: FieldValue.serverTimestamp(),
           candidate: payload.candidate,

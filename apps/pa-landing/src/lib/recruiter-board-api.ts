@@ -213,7 +213,7 @@ export interface RecruiterSourcedCandidateItem {
 
 export interface RecruiterSourcedCandidateInput {
   candidateId?: string
-  jobId: string
+  jobId?: string
   stage: RecruiterSourcedCandidateStage
   candidate: {
     name: string
