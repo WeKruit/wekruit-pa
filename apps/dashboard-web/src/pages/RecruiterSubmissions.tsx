@@ -920,15 +920,26 @@ function RecruiterOpsPanel() {
                       ? code.inviteCode
                       : knownInviteCodes[code.id]
                     const canCopy = isFullRecruiterInviteCode(rawInviteCode)
-                    const visibleCode = canCopy ? rawInviteCode : (code.codePreview ? `${code.codePreview} preview` : "Preview only")
+                    const visibleCode = canCopy ? rawInviteCode : (code.codePreview ? code.codePreview : "Preview only")
                     const rawMissing = !canCopy && status.label === "usable"
                     return (
                       <tr key={code.id} style={{ borderBottom: "1px solid #f1f1f1" }}>
                         <td style={{ padding: "9px 6px", fontFamily: "monospace", fontWeight: 700, whiteSpace: "nowrap" }}>
                           <div>{visibleCode}</div>
                           {rawMissing && (
-                            <div style={{ marginTop: 3, fontFamily: "inherit", fontWeight: 500, color: "#9a4b12", fontSize: 11 }}>
-                              full code was not stored
+                            <div style={{ marginTop: 6, display: "grid", gap: 6, fontFamily: "Inter, system-ui, sans-serif", fontWeight: 500, color: "#7a3e10", fontSize: 11, whiteSpace: "normal", maxWidth: 260 }}>
+                              <span>Legacy hash-only row. The full code cannot be revealed because it was never stored.</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void replaceLegacyCode(code.id)
+                                }}
+                                disabled={replacingCodeId === code.id}
+                                style={{ width: "fit-content", padding: "5px 8px", border: "1px solid #d9b892", borderRadius: 6, background: "#fff7ed", color: "#7a3e10", fontSize: 12 }}
+                              >
+                                {replacingCodeId === code.id ? "Replacing..." : "Replace and show new code"}
+                              </button>
                             </div>
                           )}
                         </td>
@@ -961,18 +972,7 @@ function RecruiterOpsPanel() {
                                 disabled={restoringCodeId === code.id}
                                 style={{ padding: "5px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff", fontSize: 12 }}
                               >
-                                {restoringCodeId === code.id ? "Restoring..." : "Show full code"}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  void replaceLegacyCode(code.id)
-                                }}
-                                disabled={replacingCodeId === code.id}
-                                style={{ padding: "5px 8px", border: "1px solid #d9b892", borderRadius: 6, background: "#fff7ed", color: "#7a3e10", fontSize: 12 }}
-                              >
-                                {replacingCodeId === code.id ? "Replacing..." : "Replace"}
+                                {restoringCodeId === code.id ? "Restoring..." : "Restore known code"}
                               </button>
                             </div>
                           ) : (
