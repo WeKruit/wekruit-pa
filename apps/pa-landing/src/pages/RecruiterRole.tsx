@@ -1610,6 +1610,7 @@ function RoleIntelligencePanel({
   const answeredQuestions = intelligence?.answeredQuestionCount ?? 0
   const feedbackTotal = intelligence?.feedback.total ?? (fallback.feedback ? 1 : 0)
   const activity = intelligence ? roleIntelligenceActivityLabel(intelligence.lastActivityAt) : "Self data only"
+  const pipelinePreview = intelligence?.pipelinePreview ?? []
 
   return (
     <section className={`rb-role-intel is-${diagnosis.tone}`} aria-label="Role intelligence">
@@ -1644,6 +1645,33 @@ function RoleIntelligencePanel({
           <span>No blocker reason yet</span>
         )}
       </div>
+      {pipelinePreview.length > 0 && (
+        <div className="rb-role-intel__pipeline-preview">
+          <header>
+            <div>
+              <span>Candidate pipeline preview</span>
+              <strong>{pipelinePreview.length} latest signal{pipelinePreview.length === 1 ? "" : "s"}</strong>
+            </div>
+            <em>Identity stays hidden for market candidates.</em>
+          </header>
+          <div>
+            {pipelinePreview.map((row) => (
+              <article key={row.id}>
+                <div>
+                  <strong>{row.candidateLabel}</strong>
+                  <p>{row.candidateHeadline ?? "No background shared yet."}</p>
+                  {row.candidateSignal && <em>{row.candidateSignal}</em>}
+                </div>
+                <aside>
+                  <span>{row.recruiterScope === "mine" ? "Your candidate" : row.anonymized ? "Anonymized market" : "Market background"}</span>
+                  <b>{row.status ?? row.stage}</b>
+                  <small>{roleIntelligenceActivityLabel(row.updatedAt)}</small>
+                </aside>
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
     </section>
   )
 }

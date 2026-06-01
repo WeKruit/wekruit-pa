@@ -323,6 +323,19 @@ export interface RecruiterRoleIntelligenceReasonCount {
   count: number
 }
 
+export interface RecruiterRoleIntelligencePipelinePreviewItem {
+  id: string
+  source: "sourced" | "submission"
+  stage: string
+  status: string | null
+  candidateLabel: string
+  candidateHeadline: string | null
+  candidateSignal: string | null
+  recruiterScope: "mine" | "market"
+  anonymized: boolean
+  updatedAt: string | null
+}
+
 export interface RecruiterRoleIntelligenceItem {
   jobId: string
   sourcedCount: number
@@ -350,6 +363,7 @@ export interface RecruiterRoleIntelligenceItem {
     submissionCount: number
     pendingCount: number
   }
+  pipelinePreview?: RecruiterRoleIntelligencePipelinePreviewItem[]
 }
 
 export async function recruiterAuthHeaders(): Promise<Record<string, string>> {

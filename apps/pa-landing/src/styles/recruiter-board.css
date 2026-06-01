@@ -302,6 +302,108 @@
   text-transform: none;
 }
 
+.rb-role-intel__pipeline-preview {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #eee7dd;
+  border-radius: 10px;
+  background: #fffdfa;
+  padding: 12px;
+}
+
+.rb-role-intel__pipeline-preview header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.rb-role-intel__pipeline-preview header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.rb-role-intel__pipeline-preview header strong {
+  font-size: 15px;
+}
+
+.rb-role-intel__pipeline-preview > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.rb-role-intel__pipeline-preview article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 124px;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid #e9e1d5;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.rb-role-intel__pipeline-preview article > div,
+.rb-role-intel__pipeline-preview aside {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rb-role-intel__pipeline-preview article strong {
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-role-intel__pipeline-preview p {
+  display: -webkit-box;
+  min-height: 34px;
+  margin: 0;
+  overflow: hidden;
+  color: #4a4a44;
+  font-size: 12.5px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.rb-role-intel__pipeline-preview article em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-role-intel__pipeline-preview aside {
+  justify-items: end;
+  align-content: start;
+  text-align: right;
+}
+
+.rb-role-intel__pipeline-preview b {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #f1ede6;
+  color: #211915;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.rb-role-intel__pipeline-preview small {
+  color: #7d766c;
+  font-size: 11px;
+}
+
 .rb-calibration-brief {
   display: grid;
   gap: 12px;
@@ -4746,6 +4848,9 @@
   .rb-role-intel__metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+  .rb-role-intel__pipeline-preview > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .rb-calibration-brief header,
   .rb-calibration-brief__body {
     grid-template-columns: 1fr;
@@ -4900,10 +5005,23 @@
   .rb-feedback-line,
   .rb-role-cockpit,
   .rb-role-intel__metrics,
+  .rb-role-intel__pipeline-preview > div,
   .rb-performance-grid,
   .rb-match-row,
   .rb-role-card footer {
     grid-template-columns: 1fr;
+  }
+  .rb-role-intel__pipeline-preview header,
+  .rb-role-intel__pipeline-preview article {
+    grid-template-columns: 1fr;
+  }
+  .rb-role-intel__pipeline-preview header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .rb-role-intel__pipeline-preview aside {
+    justify-items: start;
+    text-align: left;
   }
   .rb-performance-card--wide {
     grid-column: span 1;

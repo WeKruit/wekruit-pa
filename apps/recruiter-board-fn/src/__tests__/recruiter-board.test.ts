@@ -296,20 +296,58 @@ describe("candidate confirmation resend", () => {
 })
 
 describe("recruiter role intelligence", () => {
-  it("aggregates role-level signal without exposing candidate rows", () => {
+  it("aggregates role-level signal and sanitizes candidate pipeline preview", () => {
     const [role] = buildRecruiterRoleIntelligence(
       [{ jobId: "public-role-1", aliases: ["real-role-1", "public-role-1"] }],
       "recruiter-a",
       {
         sourcedCandidates: [
-          { jobId: "real-role-1", recruiterId: "recruiter-a", stage: "ready", updatedAt: "2026-06-01T10:00:00.000Z" },
-          { inboundJobId: "public-role-1", recruiterId: "recruiter-b", stage: "sourced", updatedAt: "2026-06-01T11:00:00.000Z" },
+          {
+            jobId: "real-role-1",
+            recruiterId: "recruiter-a",
+            candidateId: "own-candidate-1",
+            candidateLinkKey: "own-link",
+            stage: "ready",
+            candidate: { name: "Ada Lovelace", currentRole: "Backend Lead", yoe: "8 years", notes: "Knows graph infra." },
+            updatedAt: "2026-06-01T10:00:00.000Z",
+          },
+          {
+            inboundJobId: "public-role-1",
+            recruiterId: "recruiter-b",
+            candidateId: "market-candidate-1",
+            candidateLinkKey: "market-link",
+            stage: "sourced",
+            candidate: { name: "Private Person", currentRole: "Staff AI Engineer", yoe: "6 years", notes: "email private@example.com" },
+            updatedAt: "2026-06-01T11:00:00.000Z",
+          },
           { jobId: "other-role", recruiterId: "recruiter-c", stage: "ready" },
         ],
         submissions: [
-          { jobId: "real-role-1", recruiterId: "recruiter-a", status: "submitted", createdAt: "2026-06-01T12:00:00.000Z" },
-          { inboundJobId: "public-role-1", recruiterId: "recruiter-b", status: "advanced", createdAt: "2026-06-01T13:00:00.000Z" },
-          { jobId: "real-role-1", recruiterId: "recruiter-c", status: "duplicate", createdAt: "2026-06-01T14:00:00.000Z" },
+          {
+            jobId: "real-role-1",
+            recruiterId: "recruiter-a",
+            sourcedCandidateId: "own-candidate-1",
+            candidateLinkKey: "own-link",
+            status: "submitted",
+            candidate: { name: "Ada Lovelace", currentRole: "Backend Lead", yoe: "8 years", notes: "Candidate opted in." },
+            createdAt: "2026-06-01T12:00:00.000Z",
+          },
+          {
+            inboundJobId: "public-role-1",
+            recruiterId: "recruiter-b",
+            candidateLinkKey: "market-link",
+            status: "advanced",
+            candidate: { name: "Private Person", currentRole: "Staff AI Engineer", yoe: "6 years" },
+            createdAt: "2026-06-01T13:00:00.000Z",
+          },
+          {
+            jobId: "real-role-1",
+            recruiterId: "recruiter-c",
+            submissionId: "market-submission-2",
+            status: "duplicate",
+            candidate: { name: "Named Market Candidate", currentRole: "Founding Designer", yoe: "5 years" },
+            createdAt: "2026-06-01T14:00:00.000Z",
+          },
         ],
         feedback: [
           { jobId: "real-role-1", recruiterId: "recruiter-a", difficulty: "hard", reasons: ["low_comp", "small_candidate_pool"] },
@@ -318,6 +356,10 @@ describe("recruiter role intelligence", () => {
         questions: [
           { jobId: "real-role-1", recruiterId: "recruiter-a", status: "open" },
           { inboundJobId: "public-role-1", recruiterId: "recruiter-b", status: "answered" },
+        ],
+        applications: [
+          { jobId: "real-role-1", recruiterId: "recruiter-a", status: "approved", anonymizeCandidates: false },
+          { inboundJobId: "public-role-1", recruiterId: "recruiter-b", status: "approved", anonymizeCandidates: true },
         ],
       },
     )
@@ -339,6 +381,44 @@ describe("recruiter role intelligence", () => {
       submissionCount: 1,
       pendingCount: 1,
     })
+    assert.equal(role?.pipelinePreview.length, 3)
+    assert.equal(role?.pipelinePreview[0]?.recruiterScope, "market")
+    assert.equal(role?.pipelinePreview[0]?.candidateLabel, "Founding Designer")
+    assert.equal(role?.pipelinePreview[0]?.candidateHeadline, "Founding Designer · 5 years exp")
+    assert.equal(role?.pipelinePreview[1]?.candidateLabel, "Anonymized candidate")
+    assert.equal(role?.pipelinePreview[1]?.anonymized, true)
+    assert.equal(role?.pipelinePreview[1]?.candidateHeadline, "Background hidden by recruiter privacy setting.")
+    assert.equal(role?.pipelinePreview[2]?.recruiterScope, "mine")
+    assert.equal(role?.pipelinePreview[2]?.candidateLabel, "Ada Lovelace")
+    assert.equal(role?.pipelinePreview.some((row) => row.candidateLabel === "Private Person"), false)
+    assert.equal(role?.pipelinePreview.some((row) => `${row.candidateHeadline ?? ""} ${row.candidateSignal ?? ""}`.includes("private@example.com")), false)
+  })
+
+  it("caps pipeline preview to the latest six candidate identities", () => {
+    const sourcedCandidates = Array.from({ length: 8 }, (_, index) => ({
+      jobId: "real-role-1",
+      recruiterId: `recruiter-${index}`,
+      candidateId: `candidate-${index}`,
+      stage: "sourced",
+      candidate: { currentRole: `Role ${index}` },
+      updatedAt: `2026-06-01T10:0${index}:00.000Z`,
+    }))
+
+    const [role] = buildRecruiterRoleIntelligence(
+      [{ jobId: "public-role-1", aliases: ["real-role-1"] }],
+      "recruiter-a",
+      {
+        sourcedCandidates,
+        submissions: [],
+        feedback: [],
+        questions: [],
+        applications: [],
+      },
+    )
+
+    assert.equal(role?.pipelinePreview.length, 6)
+    assert.equal(role?.pipelinePreview[0]?.candidateLabel, "Role 7")
+    assert.equal(role?.pipelinePreview[5]?.candidateLabel, "Role 2")
   })
 })
 

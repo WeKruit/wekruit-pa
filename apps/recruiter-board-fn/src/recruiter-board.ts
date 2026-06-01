@@ -1768,6 +1768,19 @@ export interface RecruiterRoleIntelligenceReasonCount {
   count: number
 }
 
+export interface RecruiterRoleIntelligencePipelinePreviewItem {
+  id: string
+  source: "sourced" | "submission"
+  stage: string
+  status: string | null
+  candidateLabel: string
+  candidateHeadline: string | null
+  candidateSignal: string | null
+  recruiterScope: "mine" | "market"
+  anonymized: boolean
+  updatedAt: string | null
+}
+
 export interface RecruiterRoleIntelligenceItem {
   jobId: string
   sourcedCount: number
@@ -1795,6 +1808,7 @@ export interface RecruiterRoleIntelligenceItem {
     submissionCount: number
     pendingCount: number
   }
+  pipelinePreview: RecruiterRoleIntelligencePipelinePreviewItem[]
 }
 
 export interface RecruiterRoleIntelligenceAggregateInput {
@@ -1802,6 +1816,7 @@ export interface RecruiterRoleIntelligenceAggregateInput {
   submissions: Record<string, unknown>[]
   feedback: Record<string, unknown>[]
   questions: Record<string, unknown>[]
+  applications: Record<string, unknown>[]
 }
 
 export function normalizeRecruiterCandidateLink(raw: string): string {
@@ -2224,6 +2239,154 @@ function latestActivityIso(rows: Record<string, unknown>[]): string | null {
   return latest ? new Date(latest).toISOString() : null
 }
 
+const RECRUITER_ROLE_PIPELINE_PREVIEW_LIMIT = 6
+
+function safePipelineText(value: unknown, maxLength: number): string {
+  if (typeof value !== "string") return ""
+  return value
+    .trim()
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email]")
+    .replace(/\b(?:https?:\/\/|www\.)\S+/gi, "[link]")
+    .replace(/\blinkedin\.com\/\S+/gi, "[link]")
+    .replace(/\s+/g, " ")
+    .slice(0, maxLength)
+}
+
+function pipelineCandidate(row: Record<string, unknown>): {
+  name: string
+  currentRole: string
+  yoe: string
+  notes: string
+} {
+  const candidate = typeof row.candidate === "object" && row.candidate !== null
+    ? row.candidate as Record<string, unknown>
+    : {}
+  return {
+    name: safePipelineText(candidate.name, 80),
+    currentRole: safePipelineText(candidate.currentRole, 90),
+    yoe: safePipelineText(candidate.yoe, 36),
+    notes: safePipelineText(candidate.notes, 160),
+  }
+}
+
+function recruiterAnonymizesRoleCandidates(applications: Record<string, unknown>[], recruiterId: string): boolean {
+  if (!recruiterId) return false
+  return applications.some((row) => {
+    const status = typeof row.status === "string" ? row.status : ""
+    return rowRecruiterId(row) === recruiterId &&
+      row.anonymizeCandidates === true &&
+      status !== "withdrawn" &&
+      status !== "rescinded"
+  })
+}
+
+function pipelineIdentityKey(row: Record<string, unknown>, source: RecruiterRoleIntelligencePipelinePreviewItem["source"], index: number): string {
+  for (const key of ["candidateLinkKey", "candidateEmailKey", "sourcedCandidateId", "candidateId", "submissionId"]) {
+    const value = typeof row[key] === "string" ? row[key].trim() : ""
+    if (value) return value
+  }
+  return `${source}:${index}`
+}
+
+function pipelinePublicId(row: Record<string, unknown>, source: RecruiterRoleIntelligencePipelinePreviewItem["source"], index: number): string {
+  const preferredKeys = source === "submission"
+    ? ["submissionId", "sourcedCandidateId"]
+    : ["candidateId", "linkedSubmissionId"]
+  for (const key of preferredKeys) {
+    const value = typeof row[key] === "string" ? row[key].trim() : ""
+    if (value) return `${source}:${value}`
+  }
+  return `${source}:${index}`
+}
+
+function pipelineActivityMs(row: Record<string, unknown>): number {
+  return Math.max(
+    timestampMs(row.updatedAt),
+    timestampMs(row.submittedAt),
+    timestampMs(row.createdAt),
+    timestampMs(row.recruiterFeedbackUpdatedAt),
+  )
+}
+
+function buildRecruiterRolePipelinePreview(
+  sourced: Record<string, unknown>[],
+  submissions: Record<string, unknown>[],
+  applications: Record<string, unknown>[],
+  recruiterId: string,
+): RecruiterRoleIntelligencePipelinePreviewItem[] {
+  type InternalPreview = RecruiterRoleIntelligencePipelinePreviewItem & {
+    identityKey: string
+    activityMs: number
+    sourceRank: number
+  }
+  const viewerHidesMarketBackground = recruiterAnonymizesRoleCandidates(applications, recruiterId)
+  const rows: InternalPreview[] = []
+
+  const pushRow = (
+    row: Record<string, unknown>,
+    source: RecruiterRoleIntelligencePipelinePreviewItem["source"],
+    index: number,
+  ) => {
+    if (source === "sourced" && row.stage === "archived") return
+    const ownerRecruiterId = rowRecruiterId(row)
+    const mine = ownerRecruiterId === recruiterId
+    const ownerHidesBackground = !mine && recruiterAnonymizesRoleCandidates(applications, ownerRecruiterId)
+    const anonymized = !mine && (viewerHidesMarketBackground || ownerHidesBackground)
+    const candidate = pipelineCandidate(row)
+    const stage = source === "sourced"
+      ? safePipelineText(row.stage, 40) || "sourced"
+      : "submitted"
+    const status = source === "submission"
+      ? safePipelineText(row.status, 40) || "submitted"
+      : null
+    const backgroundParts = [candidate.currentRole, candidate.yoe ? `${candidate.yoe} exp` : ""].filter(Boolean)
+    const candidateHeadline = anonymized
+      ? "Background hidden by recruiter privacy setting."
+      : backgroundParts.join(" · ") || (mine ? candidate.notes : "Shared background context")
+    const candidateSignal = anonymized
+      ? "Only stage and status are visible."
+      : mine
+        ? candidate.notes || "Your saved context is visible to you."
+        : "Background only; identity, email, and links stay hidden."
+
+    rows.push({
+      id: pipelinePublicId(row, source, index),
+      source,
+      stage,
+      status,
+      candidateLabel: mine
+        ? candidate.name || "Your candidate"
+        : anonymized
+          ? "Anonymized candidate"
+          : candidate.currentRole || "Market candidate",
+      candidateHeadline: candidateHeadline || null,
+      candidateSignal: candidateSignal || null,
+      recruiterScope: mine ? "mine" : "market",
+      anonymized,
+      updatedAt: coerceToIso(row.updatedAt ?? row.submittedAt ?? row.createdAt ?? row.recruiterFeedbackUpdatedAt),
+      identityKey: pipelineIdentityKey(row, source, index),
+      activityMs: pipelineActivityMs(row),
+      sourceRank: source === "submission" ? 2 : 1,
+    })
+  }
+
+  sourced.forEach((row, index) => pushRow(row, "sourced", index))
+  submissions.forEach((row, index) => pushRow(row, "submission", index))
+
+  const byIdentity = new Map<string, InternalPreview>()
+  for (const row of rows) {
+    const existing = byIdentity.get(row.identityKey)
+    if (!existing || row.sourceRank > existing.sourceRank || (row.sourceRank === existing.sourceRank && row.activityMs > existing.activityMs)) {
+      byIdentity.set(row.identityKey, row)
+    }
+  }
+
+  return [...byIdentity.values()]
+    .sort((a, b) => b.activityMs - a.activityMs || b.sourceRank - a.sourceRank || a.id.localeCompare(b.id))
+    .slice(0, RECRUITER_ROLE_PIPELINE_PREVIEW_LIMIT)
+    .map(({ identityKey: _identityKey, activityMs: _activityMs, sourceRank: _sourceRank, ...row }) => row)
+}
+
 export function buildRecruiterRoleIntelligence(
   jobs: RecruiterRoleIntelligenceJobAlias[],
   recruiterId: string,
@@ -2235,8 +2398,9 @@ export function buildRecruiterRoleIntelligence(
     const submissions = input.submissions.filter((row) => rowMatchesRoleAliases(row, aliases))
     const feedbackRows = input.feedback.filter((row) => rowMatchesRoleAliases(row, aliases))
     const questions = input.questions.filter((row) => rowMatchesRoleAliases(row, aliases))
+    const applications = input.applications.filter((row) => rowMatchesRoleAliases(row, aliases))
     const recruiters = new Set<string>()
-    for (const row of [...sourced, ...submissions, ...feedbackRows, ...questions]) {
+    for (const row of [...sourced, ...submissions, ...feedbackRows, ...questions, ...applications]) {
       const id = rowRecruiterId(row)
       if (id) recruiters.add(id)
     }
@@ -2282,7 +2446,7 @@ export function buildRecruiterRoleIntelligence(
       recruiterCount: recruiters.size,
       openQuestionCount: questions.filter((row) => row.status !== "answered").length,
       answeredQuestionCount: questions.filter((row) => row.status === "answered").length,
-      lastActivityAt: latestActivityIso([...sourced, ...submissions, ...feedbackRows, ...questions]),
+      lastActivityAt: latestActivityIso([...sourced, ...submissions, ...feedbackRows, ...questions, ...applications]),
       feedback,
       my: {
         sourcedCount: mySourced.filter((row) => row.stage !== "archived").length,
@@ -2290,6 +2454,7 @@ export function buildRecruiterRoleIntelligence(
         submissionCount: mySubmissions.length,
         pendingCount: mySubmissions.filter((row) => isPendingSubmissionStatus(row.status)).length,
       },
+      pipelinePreview: buildRecruiterRolePipelinePreview(sourced, submissions, applications, recruiterId),
     }
   })
 }
@@ -2825,12 +2990,13 @@ export const paRecruiterRoleIntelligenceList = onRequest(
     }
 
     try {
-      const [jobSnap, sourcedSnap, submissionSnap, feedbackSnap, questionSnap] = await Promise.all([
+      const [jobSnap, sourcedSnap, submissionSnap, feedbackSnap, questionSnap, applicationSnap] = await Promise.all([
         db.collection("pa-jobs").where("wekruitCollaborationStatus", "==", "collaborated").limit(500).get(),
         db.collection(RECRUITER_SOURCED_CANDIDATES_COLLECTION).limit(1000).get(),
         db.collection(RECRUITER_SUBMISSIONS_COLLECTION).limit(1000).get(),
         db.collection(RECRUITER_ROLE_FEEDBACK_COLLECTION).limit(1000).get(),
         db.collection(RECRUITER_ROLE_QUESTIONS_COLLECTION).limit(1000).get(),
+        db.collection(RECRUITER_ROLE_APPLICATIONS_COLLECTION).limit(1000).get(),
       ])
       const jobs = jobSnap.docs
         .map((doc): RecruiterRoleIntelligenceJobAlias | null => {
@@ -2850,6 +3016,7 @@ export const paRecruiterRoleIntelligenceList = onRequest(
         submissions: submissionSnap.docs.map((doc) => doc.data()),
         feedback: feedbackSnap.docs.map((doc) => doc.data()),
         questions: questionSnap.docs.map((doc) => doc.data()),
+        applications: applicationSnap.docs.map((doc) => doc.data()),
       })
       res.set("Cache-Control", "private, max-age=0, no-store")
       res.status(200).json({ ok: true, recruiter, intelligence })
