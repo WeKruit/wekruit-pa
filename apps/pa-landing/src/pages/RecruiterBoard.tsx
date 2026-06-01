@@ -39,7 +39,7 @@ import {
 import { auth } from "../lib/firebase.js"
 import { redirectResultPromise } from "../lib/auth-redirect-bootstrap.js"
 
-type RecruiterTab = "overview" | "roles" | "matches" | "candidates" | "submissions" | "performance" | "settings"
+type RecruiterTab = "overview" | "roles" | "matches" | "candidates" | "submissions" | "performance" | "earnings" | "settings"
 
 const TABS: Array<{ id: RecruiterTab; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -48,6 +48,7 @@ const TABS: Array<{ id: RecruiterTab; label: string }> = [
   { id: "candidates", label: "Candidates" },
   { id: "submissions", label: "Submissions" },
   { id: "performance", label: "Performance" },
+  { id: "earnings", label: "Earnings" },
   { id: "settings", label: "Settings" },
 ]
 
@@ -75,6 +76,8 @@ type RoleSort = typeof ROLE_SORTS[number]["id"]
 const PRIMARY_ROLE_SLOT_LIMIT = 5
 const SINGLE_SUBMISSION_WEEKLY_LIMIT = 5
 const WEEKLY_SUBMISSION_TARGET = 8
+const DEFAULT_SUCCESS_FEE = 10_000
+const PREFERRED_INTERVIEW_RATE_TARGET = 50
 
 const SOURCE_STAGES: Array<{ id: RecruiterSourcedCandidateStage; label: string; tone: "live" | "info" | "success" | "warn" | "mute" }> = [
   { id: "sourced", label: "Sourced", tone: "mute" },
@@ -550,6 +553,15 @@ export default function RecruiterBoard() {
     roleIntelligence,
     primaryRoleIds,
   )
+  const earningsMetrics = computeRecruiterEarningsMetrics(
+    openJobs,
+    submissions,
+    sourcedCandidates,
+    roleFeedback,
+    roleQuestions,
+    primaryRoleIds,
+    operatingMetrics,
+  )
   return (
     <div className="rb-platform">
       <aside className="rb-platform__nav">
@@ -669,6 +681,16 @@ export default function RecruiterBoard() {
         {activeTab === "submissions" && statusLoaded && <SubmissionsTab submissions={submissions} />}
         {activeTab === "performance" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "performance" && statusLoaded && <PerformanceTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} primaryRoleIds={primaryRoleIds} roleFeedback={roleFeedback} operatingMetrics={operatingMetrics} />}
+        {activeTab === "earnings" && !statusLoaded && <RecruiterStatusLoading />}
+        {activeTab === "earnings" && statusLoaded && (
+          <EarningsTab
+            metrics={earningsMetrics}
+            onRoles={() => setTab("roles")}
+            onCandidates={() => setTab("candidates")}
+            onSubmissions={() => setTab("submissions")}
+            onPerformance={() => setTab("performance")}
+          />
+        )}
         {activeTab === "settings" && <SettingsTab session={session} onSessionChange={setSession} />}
       </main>
     </div>
@@ -884,6 +906,317 @@ function computeRecruiterOperatingMetrics(
         value: `${sourceToSubmitRate}%`,
         body: "Saved prospects converted into formal submissions.",
         tone: sourceToSubmitRate >= 35 ? "success" : activeCandidates.length ? "info" : "mute",
+      },
+    ],
+  }
+}
+
+type RecruiterChallenge = {
+  title: string
+  body: string
+  progress: number
+  target: number
+  progressLabel: string
+  reward: string
+  tone: OperatingTone
+  actionLabel: string
+  action: "roles" | "candidates" | "submissions" | "performance"
+}
+
+type RecruiterPayoutRow = {
+  id: string
+  candidate: string
+  role: string
+  status: string
+  value: string
+  payout: string
+  tone: OperatingTone
+}
+
+type RecruiterStatusTier = {
+  label: string
+  body: string
+  requirement: string
+  active: boolean
+  tone: OperatingTone
+}
+
+type RecruiterEarningsMetrics = {
+  statusLabel: string
+  ratingLabel: string
+  ratingBody: string
+  interviewRate: number
+  activePipelineValue: number
+  wonValue: number
+  openOpportunityValue: number
+  activityCoverage: number
+  activePrimaryRoles: number
+  coveredPrimaryRoles: number
+  summary: RecruiterOperatingMetric[]
+  tiers: RecruiterStatusTier[]
+  challenges: RecruiterChallenge[]
+  payouts: RecruiterPayoutRow[]
+  expectations: RecruiterOperatingMetric[]
+}
+
+function formatCurrencyShort(value: number): string {
+  if (value >= 1_000_000) return `$${Math.round(value / 100_000) / 10}M`
+  if (value >= 1_000) return `$${Math.round(value / 1_000)}K`
+  return `$${value}`
+}
+
+function roleRewardAmount(job: CollabJob): number {
+  const text = job.compSummary?.toLowerCase() ?? ""
+  const isFeeLike = /fee|reward|bounty|placement|success/.test(text)
+  if (!isFeeLike) return DEFAULT_SUCCESS_FEE
+  const match = job.compSummary?.match(/\$?\s*([0-9]+(?:\.[0-9]+)?)\s*(k|m)?/i)
+  if (!match) return DEFAULT_SUCCESS_FEE
+  const raw = Number(match[1])
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_SUCCESS_FEE
+  const suffix = match[2]?.toLowerCase()
+  if (suffix === "m") return Math.round(raw * 1_000_000)
+  if (suffix === "k") return Math.round(raw * 1_000)
+  return raw >= 1_000 ? Math.round(raw) : Math.round(raw * 1_000)
+}
+
+function submissionRoleId(submission: RecruiterSubmissionItem): string {
+  return submission.inboundJobId || submission.jobId || ""
+}
+
+function submissionRewardAmount(submission: RecruiterSubmissionItem, jobsById: Map<string, CollabJob>): number {
+  const job = jobsById.get(submissionRoleId(submission))
+  return job ? roleRewardAmount(job) : DEFAULT_SUCCESS_FEE
+}
+
+function isSubmissionOpen(status?: string): boolean {
+  return !["rejected", "duplicate"].includes(status ?? "")
+}
+
+function isSubmissionAdvanced(status?: string): boolean {
+  return ["advanced", "interviewing", "hired"].includes(status ?? "")
+}
+
+function payoutTiming(status?: string): string {
+  switch (status) {
+    case "hired":
+      return "Payout starts after start-date confirmation"
+    case "interviewing":
+      return "Potential payout if candidate closes"
+    case "advanced":
+      return "Potential payout if hiring team converts"
+    case "rejected":
+      return "Closed - no payout"
+    case "duplicate":
+      return "Closed as duplicate"
+    case "reviewing":
+      return "Waiting for WeKruit review"
+    default:
+      return "Waiting for review movement"
+  }
+}
+
+function tierRank(label: string): number {
+  switch (label) {
+    case "Preferred track": return 2
+    case "Standard track": return 1
+    default: return 0
+  }
+}
+
+function computeRecruiterEarningsMetrics(
+  jobs: CollabJob[],
+  submissions: RecruiterSubmissionItem[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+  roleFeedback: RecruiterRoleFeedbackItem[],
+  roleQuestions: RecruiterRoleQuestionItem[],
+  primaryRoleIds: string[],
+  operatingMetrics: RecruiterOperatingMetrics,
+): RecruiterEarningsMetrics {
+  const jobsById = new Map(jobs.map((job) => [roleKey(job), job]))
+  const openSubmissions = submissions.filter((submission) => isSubmissionOpen(submission.status))
+  const advancedSubmissions = submissions.filter((submission) => isSubmissionAdvanced(submission.status))
+  const hiredSubmissions = submissions.filter((submission) => submission.status === "hired")
+  const interviewRate = submissions.length ? Math.round((advancedSubmissions.length / submissions.length) * 100) : 0
+  const activePipelineValue = openSubmissions.reduce((sum, submission) => sum + submissionRewardAmount(submission, jobsById), 0)
+  const wonValue = hiredSubmissions.reduce((sum, submission) => sum + submissionRewardAmount(submission, jobsById), 0)
+  const openOpportunityValue = jobs.reduce((sum, job) => sum + roleRewardAmount(job), 0)
+  const activePrimaryRoles = primaryRoleIds.length
+  const coveredPrimaryRoles = jobs.filter((job) => {
+    if (!isPrimaryRole(job, primaryRoleIds)) return false
+    return rowsForRole(job, sourcedCandidates).some((candidate) => candidate.stage !== "archived") ||
+      rowsForRole(job, submissions).some((submission) => isSubmissionOpen(submission.status))
+  }).length
+  const activityCoverage = activePrimaryRoles ? Math.round((coveredPrimaryRoles / activePrimaryRoles) * 100) : 0
+  const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open").length
+  const hardFeedback = roleFeedback.filter((feedback) => feedback.difficulty === "hard" || feedback.difficulty === "blocked").length
+  const readyCandidates = sourcedCandidates.filter((candidate) => candidate.stage === "ready").length
+  const statusRank = tierRank(operatingMetrics.statusLabel)
+  const ratingBase = operatingMetrics.qualityScore ?? 100
+  const ratingNumber = clampNumber(Math.round((ratingBase / 20) * 10) / 10, 3.2, 5)
+  const ratingLabel = `${ratingNumber.toFixed(1)} / 5`
+  const ratingBody = submissions.length
+    ? `${interviewRate}% interview movement across ${submissions.length} submission${submissions.length === 1 ? "" : "s"}.`
+    : "All recruiters start with a clean rating signal. Submissions make it real."
+  const primaryActivityChallenge: RecruiterChallenge = {
+    title: "Primary role activity",
+    body: "Each primary role should have at least one live candidate or one active submission.",
+    progress: coveredPrimaryRoles,
+    target: Math.max(1, activePrimaryRoles || PRIMARY_ROLE_SLOT_LIMIT),
+    progressLabel: `${coveredPrimaryRoles}/${activePrimaryRoles || PRIMARY_ROLE_SLOT_LIMIT} covered`,
+    reward: "Protects role access",
+    tone: activityCoverage >= 80 ? "success" : coveredPrimaryRoles > 0 ? "info" : "warn",
+    actionLabel: activePrimaryRoles ? "Open roles" : "Choose primary roles",
+    action: "roles",
+  }
+  const challenges: RecruiterChallenge[] = [
+    openQuestions > 0 ? {
+      title: "Clear calibration debt",
+      body: "Resolve open role questions before sourcing through ambiguity.",
+      progress: Math.max(0, openQuestions - openQuestions),
+      target: openQuestions,
+      progressLabel: `${openQuestions} open`,
+      reward: "Cleaner approvals",
+      tone: "warn",
+      actionLabel: "Review performance",
+      action: "performance",
+    } : primaryActivityChallenge,
+    readyCandidates > 0 ? {
+      title: "Convert ready candidates",
+      body: "Move ready prospects into the strongest role brief while consent is fresh.",
+      progress: Math.min(readyCandidates, 3),
+      target: 3,
+      progressLabel: `${Math.min(readyCandidates, 3)}/3 ready`,
+      reward: "Submission velocity",
+      tone: "live",
+      actionLabel: "Open candidates",
+      action: "candidates",
+    } : {
+      title: "Build sourced pipeline",
+      body: "Save candidates before submission so duplicate checks and role matching can work.",
+      progress: Math.min(sourcedCandidates.filter((candidate) => candidate.stage !== "archived").length, 5),
+      target: 5,
+      progressLabel: `${Math.min(sourcedCandidates.filter((candidate) => candidate.stage !== "archived").length, 5)}/5 sourced`,
+      reward: "Matchboard unlock",
+      tone: sourcedCandidates.length ? "info" : "mute",
+      actionLabel: "Add candidates",
+      action: "candidates",
+    },
+    {
+      title: "Interview-rate push",
+      body: `Preferred-level recruiters should trend toward ${PREFERRED_INTERVIEW_RATE_TARGET}% interview movement.`,
+      progress: Math.min(interviewRate, PREFERRED_INTERVIEW_RATE_TARGET),
+      target: PREFERRED_INTERVIEW_RATE_TARGET,
+      progressLabel: `${interviewRate}%/${PREFERRED_INTERVIEW_RATE_TARGET}%`,
+      reward: "Preferred queue signal",
+      tone: interviewRate >= PREFERRED_INTERVIEW_RATE_TARGET ? "success" : submissions.length ? "info" : "mute",
+      actionLabel: "Open submissions",
+      action: "submissions",
+    },
+  ]
+  const payoutRows = sortSubmissions(submissions)
+    .filter((submission) => ["reviewing", "advanced", "interviewing", "hired", "submitted", "new"].includes(submission.status ?? "submitted"))
+    .slice(0, 8)
+    .map((submission): RecruiterPayoutRow => {
+      const meta = statusMeta(submission.status)
+      return {
+        id: submission.id,
+        candidate: submission.candidate?.name || "Candidate",
+        role: submission.jobTitleSnapshot || jobsById.get(submissionRoleId(submission))?.title || "Role",
+        status: meta.label,
+        value: formatCurrencyShort(submissionRewardAmount(submission, jobsById)),
+        payout: payoutTiming(submission.status),
+        tone: meta.tone,
+      }
+    })
+  return {
+    statusLabel: operatingMetrics.statusLabel,
+    ratingLabel,
+    ratingBody,
+    interviewRate,
+    activePipelineValue,
+    wonValue,
+    openOpportunityValue,
+    activityCoverage,
+    activePrimaryRoles,
+    coveredPrimaryRoles,
+    summary: [
+      {
+        label: "Status",
+        value: operatingMetrics.statusLabel,
+        body: operatingMetrics.statusBody,
+        tone: operatingMetrics.statusTone,
+      },
+      {
+        label: "Recruiter rating",
+        value: ratingLabel,
+        body: ratingBody,
+        tone: ratingNumber >= 4.7 ? "success" : submissions.length ? "info" : "mute",
+      },
+      {
+        label: "Active pipeline value",
+        value: formatCurrencyShort(activePipelineValue),
+        body: `${openSubmissions.length} active submission${openSubmissions.length === 1 ? "" : "s"} with estimated success-fee exposure.`,
+        tone: activePipelineValue > 0 ? "live" : "mute",
+      },
+      {
+        label: "Won value",
+        value: formatCurrencyShort(wonValue),
+        body: `${hiredSubmissions.length} hired placement${hiredSubmissions.length === 1 ? "" : "s"} recorded.`,
+        tone: wonValue > 0 ? "success" : "mute",
+      },
+    ],
+    tiers: [
+      {
+        label: "Builder",
+        body: "Create visible sourced candidates and first quality submissions.",
+        requirement: "Start here",
+        active: statusRank === 0,
+        tone: "mute",
+      },
+      {
+        label: "Standard",
+        body: "Maintain role activity and respond to calibration quickly.",
+        requirement: "3+ submissions or 6+ active sourced candidates",
+        active: statusRank === 1,
+        tone: "info",
+      },
+      {
+        label: "Preferred",
+        body: "Higher-trust access for recruiters with quality movement.",
+        requirement: "8 weekly submissions, 30%+ advanced, low duplicate/rejection drag",
+        active: statusRank >= 2,
+        tone: "success",
+      },
+      {
+        label: "Premier",
+        body: "Reserved for repeat placements and consistently clean trust record.",
+        requirement: "Hired outcomes plus sustained Preferred metrics",
+        active: wonValue > 0 && interviewRate >= PREFERRED_INTERVIEW_RATE_TARGET,
+        tone: "live",
+      },
+    ],
+    challenges,
+    payouts: payoutRows,
+    expectations: [
+      {
+        label: "Primary coverage",
+        value: `${activityCoverage}%`,
+        body: activePrimaryRoles
+          ? `${coveredPrimaryRoles}/${activePrimaryRoles} primary roles have a live candidate or active submission.`
+          : "Choose primary roles before the platform can score coverage.",
+        tone: activityCoverage >= 80 ? "success" : activePrimaryRoles ? "warn" : "mute",
+      },
+      {
+        label: "Open opportunity",
+        value: formatCurrencyShort(openOpportunityValue),
+        body: `${jobs.length} active WeKruit collab role${jobs.length === 1 ? "" : "s"} estimated at the default success-fee floor when no explicit bounty exists.`,
+        tone: jobs.length ? "info" : "mute",
+      },
+      {
+        label: "Calibration load",
+        value: String(openQuestions + hardFeedback),
+        body: `${openQuestions} open role question${openQuestions === 1 ? "" : "s"}, ${hardFeedback} hard or blocked market signal${hardFeedback === 1 ? "" : "s"}.`,
+        tone: openQuestions + hardFeedback > 0 ? "warn" : "success",
       },
     ],
   }
@@ -2421,6 +2754,144 @@ function PerformanceTab({
           <p>{roleFeedback.filter((feedback) => feedback.note).length} reports include recruiter notes.</p>
         </section>
       </div>
+    </section>
+  )
+}
+
+function EarningsTab({
+  metrics,
+  onRoles,
+  onCandidates,
+  onSubmissions,
+  onPerformance,
+}: {
+  metrics: RecruiterEarningsMetrics
+  onRoles: () => void
+  onCandidates: () => void
+  onSubmissions: () => void
+  onPerformance: () => void
+}) {
+  const runAction = (action: RecruiterChallenge["action"]) => {
+    if (action === "roles") onRoles()
+    else if (action === "candidates") onCandidates()
+    else if (action === "submissions") onSubmissions()
+    else onPerformance()
+  }
+  return (
+    <section className="rb-panel rb-panel--fill">
+      <header className="rb-panel__head">
+        <div>
+          <h2>Earnings, status &amp; challenges</h2>
+          <p>Recruiter business view: estimated payout exposure, status tier, weekly challenges, and role-activity expectations.</p>
+        </div>
+        <button type="button" className="rb-panel__link" onClick={onPerformance}>Open performance</button>
+      </header>
+
+      <section className="rb-earnings-hero">
+        <div>
+          <span>Current status</span>
+          <strong>{metrics.statusLabel}</strong>
+          <p>{metrics.ratingLabel} recruiter rating. {metrics.ratingBody}</p>
+        </div>
+        <div>
+          <span>Active pipeline value</span>
+          <strong>{formatCurrencyShort(metrics.activePipelineValue)}</strong>
+          <p>Estimated success-fee value across active, non-closed submissions.</p>
+        </div>
+        <div>
+          <span>Won value</span>
+          <strong>{formatCurrencyShort(metrics.wonValue)}</strong>
+          <p>Recorded hired outcomes in your recruiter tracker.</p>
+        </div>
+        <div>
+          <span>Interview movement</span>
+          <strong>{metrics.interviewRate}%</strong>
+          <p>Preferred target is {PREFERRED_INTERVIEW_RATE_TARGET}%+ advanced, interviewing, or hired.</p>
+        </div>
+      </section>
+
+      <section className="rb-earnings-grid">
+        <article className="rb-earnings-card rb-earnings-card--wide">
+          <header>
+            <h3>Status ladder</h3>
+            <p>How WeKruit should decide who earns more trusted role access.</p>
+          </header>
+          <div className="rb-status-ladder">
+            {metrics.tiers.map((tier) => (
+              <article className={`is-${tier.tone} ${tier.active ? "is-active" : ""}`} key={tier.label}>
+                <span>{tier.label}</span>
+                <strong>{tier.requirement}</strong>
+                <p>{tier.body}</p>
+              </article>
+            ))}
+          </div>
+        </article>
+
+        <article className="rb-earnings-card">
+          <header>
+            <h3>Activity expectations</h3>
+            <p>Primary roles need live motion, not shelf space.</p>
+          </header>
+          <div className="rb-expectation-list">
+            {metrics.expectations.map((item) => (
+              <div className={`is-${item.tone}`} key={item.label}>
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+                <p>{item.body}</p>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        <article className="rb-earnings-card rb-earnings-card--wide">
+          <header>
+            <h3>Weekly challenges</h3>
+            <p>Focused work that moves status, quality, and payout odds.</p>
+          </header>
+          <div className="rb-challenge-grid">
+            {metrics.challenges.map((challenge) => {
+              const pct = challenge.target > 0 ? Math.min(100, Math.round((challenge.progress / challenge.target) * 100)) : 0
+              return (
+                <article className={`is-${challenge.tone}`} key={challenge.title}>
+                  <span>{challenge.reward}</span>
+                  <strong>{challenge.title}</strong>
+                  <p>{challenge.body}</p>
+                  <div className="rb-challenge-progress" aria-label={`${challenge.title} progress`}>
+                    <i style={{ width: `${pct}%` }} />
+                  </div>
+                  <footer>
+                    <em>{challenge.progressLabel}</em>
+                    <button type="button" onClick={() => runAction(challenge.action)}>{challenge.actionLabel}</button>
+                  </footer>
+                </article>
+              )
+            })}
+          </div>
+        </article>
+
+        <article className="rb-earnings-card rb-earnings-card--payouts">
+          <header>
+            <h3>Payout tracker</h3>
+            <p>Submissions with potential value and the current payout posture.</p>
+          </header>
+          <div className="rb-payout-list">
+            {metrics.payouts.map((row) => (
+              <article key={row.id}>
+                <span className={`rb-status is-${row.tone}`}>{row.status}</span>
+                <div>
+                  <strong>{row.candidate}</strong>
+                  <p>{row.role}</p>
+                  <em>{row.payout}</em>
+                </div>
+                <b>{row.value}</b>
+              </article>
+            ))}
+            {metrics.payouts.length === 0 && (
+              <p className="rb-empty">No active payout exposure yet. Submit consented candidates to start an earnings tracker.</p>
+            )}
+          </div>
+        </article>
+      </section>
     </section>
   )
 }

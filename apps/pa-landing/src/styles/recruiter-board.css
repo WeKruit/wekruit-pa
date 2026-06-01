@@ -2455,6 +2455,237 @@
 .rb-performance-targets article.is-success { border-top-color: var(--success); background: var(--success-bg); }
 .rb-performance-targets article.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
 
+.rb-earnings-hero {
+  display: grid;
+  grid-template-columns: 1.15fr repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px 20px 8px;
+}
+
+.rb-earnings-hero > div {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  padding: 16px;
+}
+
+.rb-earnings-hero > div:first-child {
+  background: var(--cream-3);
+  border-top: 3px solid var(--live);
+}
+
+.rb-earnings-hero span,
+.rb-status-ladder article span,
+.rb-expectation-list span,
+.rb-challenge-grid article span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-earnings-hero strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-earnings-hero p,
+.rb-earnings-card header p,
+.rb-status-ladder article p,
+.rb-expectation-list p,
+.rb-challenge-grid article p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-earnings-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  padding: 12px 20px 20px;
+}
+
+.rb-earnings-card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px;
+}
+
+.rb-earnings-card--wide {
+  grid-column: span 1;
+}
+
+.rb-earnings-card--payouts {
+  grid-column: 1 / -1;
+}
+
+.rb-earnings-card header {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 14px;
+}
+
+.rb-earnings-card h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.rb-status-ladder {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-status-ladder article,
+.rb-expectation-list div,
+.rb-challenge-grid article {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--ink-3);
+  border-radius: 8px;
+  background: var(--cream-3);
+  padding: 13px;
+}
+
+.rb-status-ladder article.is-active {
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+
+.rb-status-ladder article.is-live,
+.rb-expectation-list div.is-live,
+.rb-challenge-grid article.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-status-ladder article.is-info,
+.rb-expectation-list div.is-info,
+.rb-challenge-grid article.is-info { border-top-color: var(--info); }
+.rb-status-ladder article.is-warn,
+.rb-expectation-list div.is-warn,
+.rb-challenge-grid article.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-status-ladder article.is-success,
+.rb-expectation-list div.is-success,
+.rb-challenge-grid article.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-status-ladder article.is-mute,
+.rb-expectation-list div.is-mute,
+.rb-challenge-grid article.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-status-ladder article strong,
+.rb-expectation-list strong,
+.rb-challenge-grid article strong {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.rb-expectation-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-expectation-list strong {
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-challenge-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-challenge-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: rgba(44, 34, 27, 0.12);
+}
+
+.rb-challenge-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--live);
+}
+
+.rb-challenge-grid footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.rb-challenge-grid footer em {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.rb-challenge-grid footer button {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 10px;
+}
+
+.rb-payout-list {
+  display: grid;
+  gap: 8px;
+}
+
+.rb-payout-list article {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 72px;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--cream-3);
+  padding: 11px 12px;
+}
+
+.rb-payout-list strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.rb-payout-list p,
+.rb-payout-list em {
+  display: block;
+  margin: 2px 0 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.rb-payout-list b {
+  justify-self: end;
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 400;
+}
+
 .rb-candidate-crm {
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
@@ -2944,6 +3175,15 @@
   .rb-performance-targets {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .rb-earnings-hero,
+  .rb-status-ladder,
+  .rb-expectation-list,
+  .rb-challenge-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rb-earnings-grid {
+    grid-template-columns: 1fr;
+  }
   .rb-market-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3035,6 +3275,10 @@
   .rb-market-grid,
   .rb-operating-grid,
   .rb-performance-targets,
+  .rb-earnings-hero,
+  .rb-status-ladder,
+  .rb-expectation-list,
+  .rb-challenge-grid,
   .rb-source-form__split,
   .rb-feedback-line,
   .rb-role-cockpit,
@@ -3046,6 +3290,12 @@
   }
   .rb-performance-card--wide {
     grid-column: span 1;
+  }
+  .rb-payout-list article {
+    grid-template-columns: 1fr;
+  }
+  .rb-payout-list b {
+    justify-self: start;
   }
   .rb-role-row__action,
   .rb-submission__side,
