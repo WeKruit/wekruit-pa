@@ -334,6 +334,10 @@ describe("recruiter sourced candidates", () => {
       calibrationRequest: {
         note: " Is this senior enough for the hiring bar? ",
       },
+      outreach: {
+        status: "contacted",
+        nextFollowUpAt: "2026-06-02T16:00:00.000Z",
+      },
       candidate: {
         name: " Ada Lovelace ",
         link: " https://linkedin.com/in/ada ",
@@ -356,6 +360,10 @@ describe("recruiter sourced candidates", () => {
     })
     assert.deepEqual(result.value.calibrationRequest, {
       note: "Is this senior enough for the hiring bar?",
+    })
+    assert.deepEqual(result.value.outreach, {
+      status: "contacted",
+      nextFollowUpAt: "2026-06-02T16:00:00.000Z",
     })
   })
 
@@ -386,6 +394,22 @@ describe("recruiter sourced candidates", () => {
     }), {
       ok: false,
       reason: "invalid_calibration_note",
+    })
+    assert.deepEqual(validateRecruiterSourcedCandidateInput({
+      jobId: "job-1",
+      outreach: { status: "cold" },
+      candidate: { name: "Ada", link: "https://linkedin.com/in/ada" },
+    }), {
+      ok: false,
+      reason: "invalid_outreach_status",
+    })
+    assert.deepEqual(validateRecruiterSourcedCandidateInput({
+      jobId: "job-1",
+      outreach: { nextFollowUpAt: "later" },
+      candidate: { name: "Ada", link: "https://linkedin.com/in/ada" },
+    }), {
+      ok: false,
+      reason: "invalid_next_follow_up_at",
     })
   })
 

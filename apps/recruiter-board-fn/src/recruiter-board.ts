@@ -1260,6 +1260,20 @@ export const RECRUITER_SOURCED_CANDIDATE_STAGES = [
 
 export type RecruiterSourcedCandidateStage = (typeof RECRUITER_SOURCED_CANDIDATE_STAGES)[number]
 
+export const RECRUITER_CANDIDATE_OUTREACH_STATUSES = [
+  "not_contacted",
+  "contacted",
+  "responded",
+  "not_interested",
+] as const
+
+export type RecruiterCandidateOutreachStatus = (typeof RECRUITER_CANDIDATE_OUTREACH_STATUSES)[number]
+
+interface RecruiterCandidateOutreach {
+  status?: RecruiterCandidateOutreachStatus
+  nextFollowUpAt?: string | null
+}
+
 interface RecruiterSourcedCandidateInput {
   candidateId?: string
   jobId: string
@@ -1271,6 +1285,7 @@ interface RecruiterSourcedCandidateInput {
     yoe?: string
     notes?: string
   }
+  outreach?: RecruiterCandidateOutreach
   calibrationRequest?: {
     note?: string
   }
@@ -1286,6 +1301,7 @@ interface RecruiterSourcedCandidateListItem {
   companyLabelSnapshot?: string
   stage: RecruiterSourcedCandidateStage
   candidate?: RecruiterSourcedCandidateInput["candidate"]
+  outreach?: RecruiterCandidateOutreach
   calibrationStatus?: string
   calibrationNote?: string | null
   calibrationUpdatedAt?: unknown
@@ -1502,6 +1518,43 @@ export function validateRecruiterSourcedCandidateInput(input: unknown):
     if (typeof c[k] === "string" && (c[k] as string).length > 4000) return { ok: false, reason: `${k}_too_long` }
   }
 
+  let outreach: RecruiterSourcedCandidateInput["outreach"]
+  if (b.outreach !== undefined) {
+    if (!b.outreach || typeof b.outreach !== "object") {
+      return { ok: false, reason: "invalid_outreach" }
+    }
+    const o = b.outreach as Record<string, unknown>
+    let status: RecruiterCandidateOutreachStatus | undefined
+    if (o.status !== undefined && o.status !== null && o.status !== "") {
+      if (
+        typeof o.status !== "string" ||
+        !RECRUITER_CANDIDATE_OUTREACH_STATUSES.includes(o.status as RecruiterCandidateOutreachStatus)
+      ) {
+        return { ok: false, reason: "invalid_outreach_status" }
+      }
+      status = o.status as RecruiterCandidateOutreachStatus
+    }
+
+    let nextFollowUpAt: string | null | undefined
+    if (o.nextFollowUpAt !== undefined) {
+      if (o.nextFollowUpAt === null || o.nextFollowUpAt === "") {
+        nextFollowUpAt = null
+      } else if (typeof o.nextFollowUpAt === "string") {
+        if (o.nextFollowUpAt.length > 120) return { ok: false, reason: "next_follow_up_at_too_long" }
+        const parsed = Date.parse(o.nextFollowUpAt)
+        if (!Number.isFinite(parsed)) return { ok: false, reason: "invalid_next_follow_up_at" }
+        nextFollowUpAt = new Date(parsed).toISOString()
+      } else {
+        return { ok: false, reason: "invalid_next_follow_up_at" }
+      }
+    }
+
+    outreach = {
+      ...(status ? { status } : {}),
+      ...(nextFollowUpAt !== undefined ? { nextFollowUpAt } : {}),
+    }
+  }
+
   let calibrationRequest: RecruiterSourcedCandidateInput["calibrationRequest"]
   if (b.calibrationRequest !== undefined) {
     if (!b.calibrationRequest || typeof b.calibrationRequest !== "object") {
@@ -1534,8 +1587,28 @@ export function validateRecruiterSourcedCandidateInput(input: unknown):
       jobId: b.jobId.trim(),
       stage,
       candidate,
+      ...(outreach ? { outreach } : {}),
       ...(calibrationRequest ? { calibrationRequest } : {}),
     },
+  }
+}
+
+function publicRecruiterCandidateOutreach(raw: unknown): RecruiterCandidateOutreach | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const data = raw as Record<string, unknown>
+  const status = typeof data.status === "string" &&
+    RECRUITER_CANDIDATE_OUTREACH_STATUSES.includes(data.status as RecruiterCandidateOutreachStatus)
+    ? data.status as RecruiterCandidateOutreachStatus
+    : undefined
+  const nextFollowUpAt = typeof data.nextFollowUpAt === "string"
+    ? data.nextFollowUpAt
+    : data.nextFollowUpAt === null
+      ? null
+      : undefined
+  if (!status && nextFollowUpAt === undefined) return undefined
+  return {
+    ...(status ? { status } : {}),
+    ...(nextFollowUpAt !== undefined ? { nextFollowUpAt } : {}),
   }
 }
 
@@ -1558,6 +1631,7 @@ function publicRecruiterSourcedCandidate(
     candidate: typeof data.candidate === "object" && data.candidate !== null
       ? data.candidate as RecruiterSourcedCandidateInput["candidate"]
       : undefined,
+    outreach: publicRecruiterCandidateOutreach(data.outreach),
     calibrationStatus: typeof data.calibrationStatus === "string" ? data.calibrationStatus : undefined,
     calibrationNote: typeof data.calibrationNote === "string" ? data.calibrationNote : null,
     calibrationUpdatedAt: data.calibrationUpdatedAt,
@@ -2188,6 +2262,7 @@ export const paRecruiterSourcedCandidateSave = onRequest(
         companyLabelSnapshot: rb.label.company,
         stage: payload.stage,
         candidate: payload.candidate,
+        ...(payload.outreach ? { outreach: payload.outreach } : {}),
         ...calibrationPatch,
         updatedAt: FieldValue.serverTimestamp(),
         ...(existing.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),

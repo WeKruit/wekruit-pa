@@ -56,8 +56,15 @@ function safeSessionStorage(): Storage | null {
   }
 }
 
+function shouldUseCrossDomainSso(): boolean {
+  if (SSO_BASE_URL) return true
+  if (typeof window === "undefined") return false
+  return !["localhost", "127.0.0.1", "::1"].includes(window.location.hostname)
+}
+
 export async function bootstrapSsoFromCookie(): Promise<User | null> {
   if (typeof window === "undefined") return null
+  if (!shouldUseCrossDomainSso()) return null
   // If Firebase already has a session on this origin, no work to do.
   if (auth().currentUser) return auth().currentUser
   const ss = safeSessionStorage()
@@ -79,6 +86,7 @@ export async function bootstrapSsoFromCookie(): Promise<User | null> {
 }
 
 export function registerSsoCookieRefresh(): Unsubscribe {
+  if (!shouldUseCrossDomainSso()) return () => undefined
   return onIdTokenChanged(auth(), async (user) => {
     if (!user) return
     try {
@@ -99,6 +107,7 @@ export function registerSsoCookieRefresh(): Unsubscribe {
 
 export async function clearSsoCookie(): Promise<void> {
   safeSessionStorage()?.removeItem(SSO_BOOTSTRAP_TRIED_KEY)
+  if (!shouldUseCrossDomainSso()) return
   try {
     await fetch(SSO_LOGOUT_URL, { method: "POST", credentials: "include" })
   } catch {

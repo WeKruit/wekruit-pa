@@ -4311,6 +4311,8 @@
 }
 
 .rb-source-card {
+  display: grid;
+  gap: 10px;
   margin: 10px;
 }
 
@@ -4326,6 +4328,65 @@
   color: var(--ink-2);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.rb-source-card > .rb-source-card__outreach {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--cream-3);
+  padding: 8px;
+}
+
+.rb-source-card__outreach > div:first-child {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rb-source-card__outreach small {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.rb-source-card__outreach small.is-live { color: var(--live-2); }
+.rb-source-card__outreach small.is-info { color: var(--info); }
+.rb-source-card__outreach small.is-success { color: var(--success); }
+.rb-source-card__outreach small.is-warn { color: var(--danger); }
+
+.rb-source-card__outreach-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.rb-source-card__outreach-controls label {
+  display: grid;
+  gap: 5px;
+}
+
+.rb-source-card__outreach-controls label span {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 900;
+}
+
+.rb-source-card__outreach-controls select,
+.rb-source-card__outreach-controls input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  padding: 7px;
 }
 
 .rb-source-card__calibration {

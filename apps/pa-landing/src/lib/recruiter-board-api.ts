@@ -131,6 +131,13 @@ export interface RecruiterSubmissionItem {
 
 export type RecruiterSourcedCandidateStage = "sourced" | "contacted" | "screened" | "ready" | "submitted" | "archived"
 
+export type RecruiterCandidateOutreachStatus = "not_contacted" | "contacted" | "responded" | "not_interested"
+
+export interface RecruiterCandidateOutreach {
+  status?: RecruiterCandidateOutreachStatus
+  nextFollowUpAt?: string | null
+}
+
 export interface RecruiterSourcedCandidateItem {
   id: string
   candidateId: string
@@ -147,6 +154,7 @@ export interface RecruiterSourcedCandidateItem {
     yoe?: string
     notes?: string
   }
+  outreach?: RecruiterCandidateOutreach
   calibrationStatus?: string
   calibrationNote?: string | null
   calibrationUpdatedAt?: { seconds?: number } | string | null
@@ -165,6 +173,7 @@ export interface RecruiterSourcedCandidateInput {
     yoe?: string
     notes?: string
   }
+  outreach?: RecruiterCandidateOutreach
   calibrationRequest?: {
     note?: string
   }

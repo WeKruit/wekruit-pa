@@ -29,6 +29,7 @@ import {
   saveRecruiterRoleApplication,
   updateRecruiterPreferences,
   type CollabJob,
+  type RecruiterCandidateOutreachStatus,
   type RecruiterRoleApplicationInput,
   type RecruiterRoleApplicationItem,
   type RecruiterRoleFeedbackItem,
@@ -92,6 +93,13 @@ const SOURCE_STAGES: Array<{ id: RecruiterSourcedCandidateStage; label: string; 
   { id: "ready", label: "Ready", tone: "live" },
   { id: "submitted", label: "Submitted", tone: "success" },
   { id: "archived", label: "Archived", tone: "mute" },
+]
+
+const OUTREACH_STATUSES: Array<{ id: RecruiterCandidateOutreachStatus; label: string; tone: "live" | "info" | "success" | "warn" | "mute" }> = [
+  { id: "not_contacted", label: "Not contacted", tone: "mute" },
+  { id: "contacted", label: "Contacted", tone: "info" },
+  { id: "responded", label: "Responded", tone: "success" },
+  { id: "not_interested", label: "Not interested", tone: "warn" },
 ]
 
 const STATUS_LABELS: Record<string, { label: string; tone: "live" | "info" | "success" | "warn" | "mute" }> = {
@@ -414,6 +422,67 @@ function candidateName(c: RecruiterSourcedCandidateItem): string {
 
 function sourceStageMeta(stage?: RecruiterSourcedCandidateStage) {
   return SOURCE_STAGES.find((s) => s.id === stage) ?? SOURCE_STAGES[0]!
+}
+
+function outreachMeta(status?: RecruiterCandidateOutreachStatus) {
+  return OUTREACH_STATUSES.find((s) => s.id === (status ?? "not_contacted")) ?? OUTREACH_STATUSES[0]!
+}
+
+function dateInputToIso(value: string): string | null {
+  if (!value) return null
+  const parsed = new Date(`${value}T12:00:00`)
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+}
+
+function isoToDateInput(raw?: string | null): string {
+  if (!raw) return ""
+  const parsed = new Date(raw)
+  if (Number.isNaN(parsed.getTime())) return ""
+  return parsed.toISOString().slice(0, 10)
+}
+
+function formatFollowUpDate(raw?: string | null): string {
+  if (!raw) return "No follow-up set"
+  const ms = Date.parse(raw)
+  if (!ms) return "No follow-up set"
+  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+}
+
+function candidateFollowUpState(candidate: RecruiterSourcedCandidateItem): {
+  label: string
+  body: string
+  tone: "live" | "info" | "success" | "warn" | "mute"
+  needsAction: boolean
+} {
+  const status = candidate.outreach?.status ?? "not_contacted"
+  if (candidate.stage === "submitted" || candidate.stage === "archived") {
+    return { label: "Closed loop", body: "This prospect is no longer in recruiter outreach.", tone: "mute", needsAction: false }
+  }
+  if (candidate.stage === "ready") {
+    return { label: "Ready to submit", body: "Candidate is ready for role matching or submission.", tone: "live", needsAction: false }
+  }
+  if (status === "not_interested") {
+    return { label: "Not interested", body: "No further outreach is expected unless the candidate re-opens.", tone: "warn", needsAction: false }
+  }
+
+  const ms = candidate.outreach?.nextFollowUpAt ? Date.parse(candidate.outreach.nextFollowUpAt) : 0
+  if (!ms) {
+    const body = status === "not_contacted"
+      ? "No outreach attempt is logged yet."
+      : "No next follow-up is scheduled."
+    return { label: "No follow-up", body, tone: "mute", needsAction: status === "not_contacted" }
+  }
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const tomorrowMs = today.getTime() + 86_400_000
+  if (ms < today.getTime()) {
+    return { label: "Follow-up overdue", body: `Was due ${formatFollowUpDate(candidate.outreach?.nextFollowUpAt)}.`, tone: "warn", needsAction: true }
+  }
+  if (ms < tomorrowMs) {
+    return { label: "Follow-up today", body: "This prospect needs a touch today.", tone: "live", needsAction: true }
+  }
+  return { label: `Follow-up ${formatFollowUpDate(candidate.outreach?.nextFollowUpAt)}`, body: "Next touch is scheduled.", tone: "info", needsAction: false }
 }
 
 function normalizeTokens(value: string | undefined): string[] {
@@ -1723,17 +1792,17 @@ function RecruiterInboxTab({
         <article className={summary.needsAction ? "is-warn" : "is-success"}>
           <span>Needs action</span>
           <strong>{summary.needsAction}</strong>
-          <p>Ready candidates, rejection feedback, calibration notes, and open role questions.</p>
+          <p>Follow-ups, ready candidates, rejection feedback, calibration notes, and open role questions.</p>
         </article>
         <article className={summary.activeSubmissions ? "is-live" : "is-mute"}>
           <span>Active submissions</span>
           <strong>{summary.activeSubmissions}</strong>
           <p>Candidates still moving through WeKruit review or hiring-team stages.</p>
         </article>
-        <article className={summary.feedbackNotes ? "is-info" : "is-mute"}>
-          <span>Feedback notes</span>
-          <strong>{summary.feedbackNotes}</strong>
-          <p>Written WeKruit notes that should change your next sourced lookalike.</p>
+        <article className={summary.followUpDue ? "is-warn" : "is-mute"}>
+          <span>Follow-ups due</span>
+          <strong>{summary.followUpDue}</strong>
+          <p>Prospects needing outreach before they go cold.</p>
         </article>
         <article className={summary.openQuestions ? "is-warn" : "is-success"}>
           <span>Open questions</span>
@@ -2116,13 +2185,15 @@ function buildRecruiterInboxSummary(
     candidate.calibrationStatus === "calibration_requested" ||
     Boolean(candidate.calibrationNote),
   ).length
+  const followUpDue = sourcedCandidates.filter((candidate) => candidateFollowUpState(candidate).needsAction).length
   const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open").length
   const activeSubmissions = submissions.filter((submission) =>
     ["submitted", "new", "reviewing", "advanced", "interviewing"].includes(submission.status ?? "submitted"),
   ).length
   return {
-    needsAction: rejectedWithFeedback + readyCandidates + calibrationNeeds + openQuestions,
+    needsAction: rejectedWithFeedback + readyCandidates + calibrationNeeds + followUpDue + openQuestions,
     feedbackNotes,
+    followUpDue,
     readyCandidates,
     openQuestions,
     activeSubmissions,
@@ -2225,6 +2296,7 @@ function buildRecruiterInboxItems(
     const atMs = timestampValueMs(candidate.calibrationUpdatedAt ?? candidate.updatedAt ?? candidate.createdAt)
     const roleLabel = rowRoleLabel(candidate, jobsById)
     const name = candidateName(candidate)
+    const followUp = candidateFollowUpState(candidate)
 
     if (candidate.calibrationNote || candidate.calibrationStatus === "bad_fit" || candidate.calibrationStatus === "calibration_requested") {
       items.push({
@@ -2255,6 +2327,23 @@ function buildRecruiterInboxItems(
         atMs,
         cta: "Match role",
         action: "matches",
+        href: rolePathForRow(candidate, candidate.id),
+      })
+      continue
+    }
+
+    if (followUp.needsAction) {
+      items.push({
+        id: `candidate-outreach-${candidate.id}`,
+        bucket: "Follow-up due",
+        title: `${name} - ${followUp.label}`,
+        body: followUp.body,
+        meta: `${roleLabel} · ${formatActivityDate(candidate.outreach?.nextFollowUpAt ?? candidate.updatedAt ?? candidate.createdAt)}`,
+        tone: followUp.tone,
+        priority: followUp.tone === "warn" ? 88 : 76,
+        atMs: timestampValueMs(candidate.outreach?.nextFollowUpAt ?? candidate.updatedAt ?? candidate.createdAt),
+        cta: "Open CRM",
+        action: "candidates",
         href: rolePathForRow(candidate, candidate.id),
       })
       continue
@@ -3490,6 +3579,7 @@ function CandidatesTab({
     jobId: jobs[0]?.jobId ?? "",
     stage: "sourced",
     candidate: { name: "", link: "", currentRole: "", yoe: "", notes: "" },
+    outreach: { status: "not_contacted" },
   }))
   const [saving, setSaving] = useState(false)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
@@ -3528,6 +3618,7 @@ function CandidatesTab({
         jobId: form.jobId,
         stage: "sourced",
         candidate: { name: "", link: "", currentRole: "", yoe: "", notes: "" },
+        outreach: { status: "not_contacted" },
       })
     } catch (error) {
       setErr(error instanceof Error ? error.message : String(error))
@@ -3566,6 +3657,7 @@ function CandidatesTab({
           yoe: candidate.candidate?.yoe,
           notes: candidate.candidate?.notes,
         },
+        outreach: candidate.outreach,
       })
       onSaved(saved)
     } catch (error) {
@@ -3668,6 +3760,7 @@ function CandidatesTab({
           yoe: candidate.candidate?.yoe,
           notes: candidate.candidate?.notes,
         },
+        outreach: candidate.outreach,
         calibrationRequest: {
           note: note || undefined,
         },
@@ -3682,6 +3775,44 @@ function CandidatesTab({
       setErr(error instanceof Error ? error.message : String(error))
     } finally {
       setCalibratingId(null)
+    }
+  }
+
+  const updateOutreach = async (
+    candidate: RecruiterSourcedCandidateItem,
+    patch: { status?: RecruiterCandidateOutreachStatus; nextFollowUpAt?: string | null },
+  ) => {
+    const jobId = candidate.inboundJobId || candidate.jobId || ""
+    const link = candidate.candidate?.link?.trim()
+    if (!jobId || !link) {
+      setErr("This saved candidate is missing the role or link needed to update outreach.")
+      return
+    }
+    setUpdatingId(candidate.id)
+    setErr(null)
+    try {
+      const outreach = {
+        status: patch.status ?? candidate.outreach?.status ?? "not_contacted",
+        nextFollowUpAt: patch.nextFollowUpAt !== undefined ? patch.nextFollowUpAt : candidate.outreach?.nextFollowUpAt ?? null,
+      }
+      const saved = await saveRecruiterSourcedCandidate({
+        candidateId: candidate.candidateId || candidate.id,
+        jobId,
+        stage: candidate.stage,
+        candidate: {
+          name: candidate.candidate?.name || candidateName(candidate),
+          link,
+          currentRole: candidate.candidate?.currentRole,
+          yoe: candidate.candidate?.yoe,
+          notes: candidate.candidate?.notes,
+        },
+        outreach,
+      })
+      onSaved(saved)
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setUpdatingId(null)
     }
   }
 
@@ -3735,6 +3866,33 @@ function CandidatesTab({
                     <option key={stage.id} value={stage.id}>{stage.label}</option>
                   ))}
                 </select>
+              </label>
+            </div>
+            <div className="rb-source-form__split">
+              <label>
+                <span>Outreach status</span>
+                <select
+                  value={form.outreach?.status ?? "not_contacted"}
+                  onChange={(e) => setForm({
+                    ...form,
+                    outreach: { ...form.outreach, status: e.target.value as RecruiterCandidateOutreachStatus },
+                  })}
+                >
+                  {OUTREACH_STATUSES.map((status) => (
+                    <option key={status.id} value={status.id}>{status.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>Next follow-up</span>
+                <input
+                  type="date"
+                  value={isoToDateInput(form.outreach?.nextFollowUpAt)}
+                  onChange={(e) => setForm({
+                    ...form,
+                    outreach: { ...form.outreach, nextFollowUpAt: dateInputToIso(e.target.value) },
+                  })}
+                />
               </label>
             </div>
             <label>
@@ -3799,6 +3957,7 @@ function CandidatesTab({
                   calibrationNote={calibrationDrafts[candidate.id] ?? ""}
                   calibrationDisabled={calibratingId === candidate.id}
                   onStageChange={(stage) => void updateStage(candidate, stage)}
+                  onOutreachChange={(patch) => void updateOutreach(candidate, patch)}
                   onCalibrationNoteChange={(note) => setCalibrationDrafts((next) => ({ ...next, [candidate.id]: note }))}
                   onCalibrationRequest={() => void requestCalibration(candidate)}
                 />
@@ -3818,6 +3977,7 @@ function SourcedCandidateCard({
   calibrationNote,
   calibrationDisabled,
   onStageChange,
+  onOutreachChange,
   onCalibrationNoteChange,
   onCalibrationRequest,
 }: {
@@ -3826,10 +3986,13 @@ function SourcedCandidateCard({
   calibrationNote: string
   calibrationDisabled: boolean
   onStageChange: (stage: RecruiterSourcedCandidateStage) => void
+  onOutreachChange: (patch: { status?: RecruiterCandidateOutreachStatus; nextFollowUpAt?: string | null }) => void
   onCalibrationNoteChange: (note: string) => void
   onCalibrationRequest: () => void
 }) {
   const stage = sourceStageMeta(candidate.stage)
+  const outreach = outreachMeta(candidate.outreach?.status)
+  const followUp = candidateFollowUpState(candidate)
   const calibration = calibrationMeta(candidate.calibrationStatus)
   const calibrationOpen = canRequestCandidateCalibration(candidate)
   return (
@@ -3842,6 +4005,38 @@ function SourcedCandidateCard({
         </span>
       </div>
       <p>{shortText(candidate.candidate?.notes, "No note yet", 96)}</p>
+      <div className="rb-source-card__outreach">
+        <div>
+          <span className={`rb-status is-${outreach.tone}`}>{outreach.label}</span>
+          <small className={`is-${followUp.tone}`}>{followUp.label}</small>
+        </div>
+        <p>{followUp.body}</p>
+        <div className="rb-source-card__outreach-controls">
+          <label>
+            <span>Outreach status</span>
+            <select
+              aria-label={`Update ${candidateName(candidate)} outreach status`}
+              value={candidate.outreach?.status ?? "not_contacted"}
+              disabled={disabled}
+              onChange={(e) => onOutreachChange({ status: e.target.value as RecruiterCandidateOutreachStatus })}
+            >
+              {OUTREACH_STATUSES.map((option) => (
+                <option key={option.id} value={option.id}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Next follow-up</span>
+            <input
+              aria-label={`Update ${candidateName(candidate)} next follow-up`}
+              type="date"
+              value={isoToDateInput(candidate.outreach?.nextFollowUpAt)}
+              disabled={disabled}
+              onChange={(e) => onOutreachChange({ nextFollowUpAt: dateInputToIso(e.target.value) })}
+            />
+          </label>
+        </div>
+      </div>
       {(candidate.calibrationStatus || candidate.calibrationNote) && (
         <div className="rb-source-card__calibration">
           <span className={`rb-status is-${calibration.tone}`}>{calibration.label}</span>
