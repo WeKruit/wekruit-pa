@@ -300,6 +300,34 @@ type RoleSourcingKit = {
   doNotPitch: string[]
 }
 
+type RoleWorkroomAction = "submit" | "candidate" | "candidates" | "questions" | "feedback" | "access"
+
+type RoleCandidateRecommendation = {
+  candidate: RecruiterSourcedCandidateItem
+  score: number
+  tone: "good" | "watch" | "blocked" | "quiet"
+  label: string
+  source: "role" | "bench"
+  reasons: string[]
+}
+
+type RoleWorkroomModel = {
+  tone: "good" | "watch" | "blocked" | "quiet"
+  label: string
+  title: string
+  body: string
+  action: RoleWorkroomAction
+  actionLabel: string
+  actionCandidate?: RecruiterSourcedCandidateItem
+  cards: Array<{
+    label: string
+    value: string
+    body: string
+    tone: "good" | "watch" | "blocked" | "quiet"
+    action: RoleWorkroomAction
+  }>
+}
+
 function roleChecklistItems(job: CollabJob, kind: RoleChecklistKind) {
   return job.recruiterBoard.checklist.groups.find((group) => group.kind === kind)?.items ?? []
 }
@@ -603,6 +631,260 @@ function buildRoleCalibrationBrief(input: {
   }
 }
 
+function candidateDisplayName(candidate: RecruiterSourcedCandidateItem): string {
+  return candidate.candidate?.name || "Candidate"
+}
+
+function candidateHeadline(candidate: RecruiterSourcedCandidateItem): string {
+  return [
+    candidate.candidate?.currentRole,
+    candidate.candidate?.yoe,
+    candidate.jobTitleSnapshot,
+    candidate.companyLabelSnapshot,
+  ].filter(Boolean).join(" · ") || sourcedStageLabel(candidate.stage)
+}
+
+function roleCandidateText(candidate: RecruiterSourcedCandidateItem): string {
+  return [
+    candidate.candidate?.name,
+    candidate.candidate?.currentRole,
+    candidate.candidate?.yoe,
+    candidate.candidate?.notes,
+    candidate.jobTitleSnapshot,
+    candidate.companyLabelSnapshot,
+  ].filter(Boolean).join(" ")
+}
+
+function scoreRoleCandidate(job: CollabJob, candidate: RecruiterSourcedCandidateItem): RoleCandidateRecommendation {
+  const roleText = [
+    job.title,
+    job.recruiterBoard.label.location,
+    job.recruiterBoard.label.pills.map((pill) => pill.text).join(" "),
+    job.jdBlocks.map((block) => `${block.heading} ${block.body}`).join(" "),
+    roleChecklistItems(job, "hard").map((item) => item.text).join(" "),
+    roleChecklistItems(job, "fit").map((item) => item.text).join(" "),
+  ].join(" ")
+  const roleTokens = sourcingTokens(roleText, 28)
+  const candidateTokens = new Set(sourcingTokens(roleCandidateText(candidate), 36))
+  const overlap = roleTokens.filter((token) => candidateTokens.has(token)).slice(0, 5)
+  const stageBoost: Record<string, number> = {
+    ready: 22,
+    screened: 15,
+    contacted: 9,
+    sourced: 5,
+    submitted: -12,
+    archived: -24,
+  }
+  const calibrationBoost = candidate.calibrationStatus === "good_fit"
+    ? 12
+    : candidate.calibrationStatus === "bad_fit"
+      ? -22
+      : candidate.calibrationStatus === "calibration_requested"
+        ? -6
+        : 0
+  const roleBound = roleMatches(job, candidate) ? 10 : 0
+  const profileProof = (candidate.candidate?.link ? 4 : 0) + (candidate.candidate?.email ? 4 : 0) + (candidate.candidate?.notes ? 6 : 0)
+  const score = Math.max(18, Math.min(98, 34 + overlap.length * 8 + (stageBoost[candidate.stage] ?? 0) + calibrationBoost + roleBound + profileProof))
+  const tone: RoleCandidateRecommendation["tone"] = candidate.stage === "archived" || candidate.calibrationStatus === "bad_fit"
+    ? "blocked"
+    : score >= 78
+      ? "good"
+      : score >= 58
+        ? "watch"
+        : "quiet"
+  const label = candidate.stage === "ready"
+    ? "Ready candidate"
+    : roleMatches(job, candidate)
+      ? "Role candidate"
+      : "Private bench"
+  const reasons = [
+    sourcedStageLabel(candidate.stage),
+    candidate.calibrationStatus ? sourcedCalibrationLabel(candidate.calibrationStatus) : "",
+    ...overlap.slice(0, 3).map((token) => `Matches ${token}`),
+    candidate.candidate?.email ? "Email present" : "",
+    candidate.candidate?.notes ? "Recruiter notes present" : "",
+  ].filter(Boolean).slice(0, 5)
+  return {
+    candidate,
+    score,
+    tone,
+    label,
+    source: roleMatches(job, candidate) ? "role" : "bench",
+    reasons,
+  }
+}
+
+function buildRoleCandidateRecommendations(job: CollabJob, candidates: RecruiterSourcedCandidateItem[]): RoleCandidateRecommendation[] {
+  const byId = new Map<string, RecruiterSourcedCandidateItem>()
+  for (const candidate of candidates) {
+    if (candidate.stage === "archived" || candidate.stage === "submitted") continue
+    byId.set(candidate.id, candidate)
+  }
+  return [...byId.values()]
+    .map((candidate) => scoreRoleCandidate(job, candidate))
+    .sort((a, b) => b.score - a.score || timestampMs(b.candidate.updatedAt ?? b.candidate.createdAt) - timestampMs(a.candidate.updatedAt ?? a.candidate.createdAt))
+}
+
+function buildRoleWorkroomModel(input: {
+  approvedForRole: boolean
+  application: RecruiterRoleApplicationItem | null
+  pendingSlots: number
+  roleCandidates: RecruiterSourcedCandidateItem[]
+  roleSubmissions: RecruiterSubmissionItem[]
+  roleQuestions: RecruiterRoleQuestionItem[]
+  roleFeedback: RecruiterRoleFeedbackItem | null
+  selectedCandidate: RecruiterSourcedCandidateItem | null
+  candidateRecommendations: RoleCandidateRecommendation[]
+  packet: RoleSubmissionPacket
+  brief: RoleCalibrationBrief
+}): RoleWorkroomModel {
+  const {
+    approvedForRole,
+    application,
+    pendingSlots,
+    roleCandidates,
+    roleSubmissions,
+    roleQuestions,
+    roleFeedback,
+    selectedCandidate,
+    candidateRecommendations,
+    packet,
+    brief,
+  } = input
+  const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open").length
+  const pendingSubmissions = roleSubmissions.filter((row) => ROLE_PENDING_SUBMISSION_STATUSES.includes(row.status ?? "submitted")).length
+  const negativeSubmissions = roleSubmissions.filter((row) => ROLE_NEGATIVE_SUBMISSION_STATUSES.includes(row.status ?? "")).length
+  const readyRecommendation = candidateRecommendations.find((item) => item.candidate.stage === "ready")
+  const topRecommendation = candidateRecommendations[0]
+
+  let tone: RoleWorkroomModel["tone"] = "quiet"
+  let label = "Role workroom"
+  let title = "Build the first shortlist"
+  let body = "Start by saving candidates into the role or private bench, then submit only when the packet has proof and consent."
+  let action: RoleWorkroomAction = "candidates"
+  let actionLabel = "Open candidate CRM"
+  let actionCandidate: RecruiterSourcedCandidateItem | undefined
+
+  if (pendingSlots <= 0) {
+    tone = "blocked"
+    label = "Hold submissions"
+    title = "This role has no pending slots left"
+    body = "Wait for WeKruit feedback before adding more volume. Use the feedback panel to capture what the market is telling you."
+    action = "feedback"
+    actionLabel = "Open feedback"
+  } else if (roleFeedback?.difficulty === "blocked" || brief.tone === "blocked") {
+    tone = "blocked"
+    label = "Calibration blocked"
+    title = "Do not source through uncertainty"
+    body = "The role needs a sharper search lane before more recruiter time goes into it."
+    action = "questions"
+    actionLabel = "Ask WeKruit"
+  } else if (openQuestions > 0) {
+    tone = "watch"
+    label = "Question pending"
+    title = `${openQuestions} role question${openQuestions === 1 ? "" : "s"} ${openQuestions === 1 ? "needs" : "need"} answer`
+    body = "Use the answer before adding candidates, otherwise the role will create noisy submissions."
+    action = "questions"
+    actionLabel = "Open questions"
+  } else if (selectedCandidate && packet.tone === "ready") {
+    tone = "good"
+    label = "Submit packet ready"
+    title = `${candidateDisplayName(selectedCandidate)} is ready for review`
+    body = "The packet has the core candidate proof. Review the final form and submit with consent."
+    action = "submit"
+    actionLabel = "Open submit packet"
+  } else if (selectedCandidate) {
+    tone = packet.tone === "blocked" ? "blocked" : "watch"
+    label = "Complete packet"
+    title = `Finish ${candidateDisplayName(selectedCandidate)}`
+    body = packet.nextAction
+    action = "submit"
+    actionLabel = "Open submit packet"
+  } else if (readyRecommendation) {
+    tone = "good"
+    label = "Submit next"
+    title = `${candidateDisplayName(readyRecommendation.candidate)} is ready`
+    body = "Prefill this candidate, verify hard checks, and submit while the candidate is warm."
+    action = "candidate"
+    actionLabel = "Use candidate"
+    actionCandidate = readyRecommendation.candidate
+  } else if (topRecommendation) {
+    tone = topRecommendation.tone === "good" ? "good" : "watch"
+    label = topRecommendation.source === "bench" ? "Bench match" : "Screen next"
+    title = `${candidateDisplayName(topRecommendation.candidate)} is the best next candidate`
+    body = topRecommendation.source === "bench"
+      ? "This private bench candidate has enough signal to test against the role brief."
+      : "Move this role candidate to ready or fill the missing proof before submission."
+    action = "candidate"
+    actionLabel = "Use candidate"
+    actionCandidate = topRecommendation.candidate
+  } else if (application?.status === "pending") {
+    tone = "watch"
+    label = "Access pending"
+    title = "Build candidate proof while WeKruit reviews access"
+    body = "A pending role application should not stall sourcing. Build a short list so the role is ready when approved."
+    action = "candidates"
+    actionLabel = "Add candidates"
+  } else if (!approvedForRole) {
+    tone = "quiet"
+    label = "Single-submit lane"
+    title = "Work this only with a strong candidate"
+    body = "Apply for trusted access once you have candidate proof, or use a single-submit credit for an exceptional consented candidate."
+    action = "access"
+    actionLabel = "Open access"
+  }
+
+  return {
+    tone,
+    label,
+    title,
+    body,
+    action,
+    actionLabel,
+    actionCandidate,
+    cards: [
+      {
+        label: "Access lane",
+        value: approvedForRole ? "Approved" : application?.status === "pending" ? "Pending" : "Single-submit",
+        body: approvedForRole
+          ? "Expected active coverage for this role."
+          : application?.status === "pending"
+            ? "WeKruit is reviewing your request."
+            : "Use for exceptional candidates or apply with proof.",
+        tone: approvedForRole ? "good" : application?.status === "pending" ? "watch" : "quiet",
+        action: "access",
+      },
+      {
+        label: "Candidate fit",
+        value: candidateRecommendations.length ? `${topRecommendation?.score ?? 0}%` : "No bench",
+        body: topRecommendation
+          ? `${candidateDisplayName(topRecommendation.candidate)} · ${topRecommendation.label}`
+          : `${roleCandidates.length} role candidate${roleCandidates.length === 1 ? "" : "s"} saved.`,
+        tone: topRecommendation?.tone ?? (roleCandidates.length ? "watch" : "quiet"),
+        action: topRecommendation ? "candidate" : "candidates",
+      },
+      {
+        label: "Submission packet",
+        value: `${packet.score}/100`,
+        body: packet.nextAction,
+        tone: packet.tone === "ready" ? "good" : packet.tone === "blocked" ? "blocked" : "watch",
+        action: "submit",
+      },
+      {
+        label: "Feedback loop",
+        value: openQuestions ? `${openQuestions} Q` : negativeSubmissions ? `${negativeSubmissions} risk` : `${pendingSubmissions} pending`,
+        body: openQuestions
+          ? "Resolve role questions before adding volume."
+          : negativeSubmissions
+            ? "Use rejection or duplicate signal before more sourcing."
+            : "Track review movement and keep candidates warm.",
+        tone: openQuestions || negativeSubmissions ? "watch" : pendingSubmissions ? "quiet" : "good",
+        action: openQuestions ? "questions" : "feedback",
+      },
+    ],
+  }
+}
+
 // Minimal Markdown → React renderer for jdBlocks.body. Supports `-` bullet
 // lists, blank-line paragraphs, and inline `**bold**` / `*em*` / `` `code` ``.
 function renderMarkdown(text: string): ReactNode[] {
@@ -863,6 +1145,20 @@ export default function RecruiterRole() {
     intelligence: currentRoleIntelligence,
   })
   const sourcingKit = buildRoleSourcingKit(job, calibrationBrief)
+  const candidateRecommendations = buildRoleCandidateRecommendations(job, [...roleCandidates, ...unassignedCandidates])
+  const roleWorkroom = buildRoleWorkroomModel({
+    approvedForRole,
+    application: currentRoleApplication,
+    pendingSlots,
+    roleCandidates,
+    roleSubmissions,
+    roleQuestions: currentRoleQuestions,
+    roleFeedback: currentRoleFeedback,
+    selectedCandidate,
+    candidateRecommendations,
+    packet: submissionPacket,
+    brief: calibrationBrief,
+  })
 
   const useSourcedCandidate = (candidate: RecruiterSourcedCandidateItem) => {
     setForm((next) => withRecruiterDefaults({
@@ -877,6 +1173,30 @@ export default function RecruiterRole() {
     setPrefilledCandidateId(candidate.id)
     setSearchParams({ candidateId: candidate.id })
     requestAnimationFrame(() => document.getElementById("submit-candidate")?.scrollIntoView({ behavior: "smooth", block: "start" }))
+  }
+
+  const runRoleWorkroomAction = (action: RoleWorkroomAction, candidate?: RecruiterSourcedCandidateItem) => {
+    if (action === "candidate" && candidate) {
+      useSourcedCandidate(candidate)
+      return
+    }
+    if (action === "candidates") {
+      navigate("/recruiters?tab=candidates")
+      return
+    }
+    if (action === "access") {
+      document.querySelector(".rb-role-access-panel")?.scrollIntoView({ behavior: "smooth", block: "start" })
+      return
+    }
+    if (action === "questions") {
+      document.querySelector(".rb-role-questions")?.scrollIntoView({ behavior: "smooth", block: "start" })
+      return
+    }
+    if (action === "feedback") {
+      document.querySelector(".rb-role-feedback")?.scrollIntoView({ behavior: "smooth", block: "start" })
+      return
+    }
+    document.getElementById("submit-candidate")?.scrollIntoView({ behavior: "smooth", block: "start" })
   }
 
   const saveRoleApplication = async (input: RecruiterRoleApplicationInput) => {
@@ -1019,6 +1339,12 @@ export default function RecruiterRole() {
             <em>{totals.anti} anti-signal checks.</em>
           </article>
         </section>
+
+        <RoleWorkroomPanel
+          model={roleWorkroom}
+          candidates={candidateRecommendations}
+          onAction={runRoleWorkroomAction}
+        />
 
         <RoleAccessPanel
           job={job}
@@ -1332,6 +1658,86 @@ export default function RecruiterRole() {
         </div>
       </main>
     </div>
+  )
+}
+
+function RoleWorkroomPanel({
+  model,
+  candidates,
+  onAction,
+}: {
+  model: RoleWorkroomModel
+  candidates: RoleCandidateRecommendation[]
+  onAction: (action: RoleWorkroomAction, candidate?: RecruiterSourcedCandidateItem) => void
+}) {
+  const visibleCandidates = candidates.slice(0, 4)
+  return (
+    <section className={`rb-role-workroom is-${model.tone}`} aria-label="Role workroom">
+      <div className="rb-role-workroom__mission">
+        <span>{model.label}</span>
+        <strong>{model.title}</strong>
+        <p>{model.body}</p>
+        <button
+          type="button"
+          className="rb-btn primary"
+          onClick={() => onAction(model.action, model.actionCandidate)}
+        >
+          {model.actionLabel}
+        </button>
+      </div>
+
+      <div className="rb-role-workroom__cards">
+        {model.cards.map((card) => (
+          <button
+            type="button"
+            key={card.label}
+            className={`is-${card.tone}`}
+            onClick={() => onAction(card.action, card.action === "candidate" ? model.actionCandidate ?? candidates[0]?.candidate : undefined)}
+          >
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <em>{card.body}</em>
+          </button>
+        ))}
+      </div>
+
+      <div className="rb-role-workroom__bench">
+        <header>
+          <span>Best candidates to work now</span>
+          <strong>{visibleCandidates.length ? `${visibleCandidates.length} ranked` : "No candidate signal yet"}</strong>
+        </header>
+        <div>
+          {visibleCandidates.map((item) => (
+            <article key={item.candidate.id} className={`is-${item.tone}`}>
+              <div>
+                <span>{item.label}</span>
+                <strong>{candidateDisplayName(item.candidate)}</strong>
+                <p>{candidateHeadline(item.candidate)}</p>
+                <em>{item.reasons.join(" · ")}</em>
+              </div>
+              <aside>
+                <b>{item.score}%</b>
+                <button type="button" onClick={() => onAction("candidate", item.candidate)}>Use</button>
+              </aside>
+            </article>
+          ))}
+          {visibleCandidates.length === 0 && (
+            <article className="is-quiet">
+              <div>
+                <span>Shortlist empty</span>
+                <strong>Save candidates before submitting</strong>
+                <p>Use Candidate CRM or the sourcing kit to create role-specific proof.</p>
+                <em>No private bench or role candidates are available for this role.</em>
+              </div>
+              <aside>
+                <b>0%</b>
+                <button type="button" onClick={() => onAction("candidates")}>Add</button>
+              </aside>
+            </article>
+          )}
+        </div>
+      </div>
+    </section>
   )
 }
 
