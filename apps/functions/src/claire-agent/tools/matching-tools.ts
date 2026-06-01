@@ -679,8 +679,10 @@ export function makeV16FindMatch(
         const head = isCollab ? `${title} @ ${company} [WeKruit partner role]` : `${title} @ ${company}`
         const base = url ? `${head}\n${url}` : head
         // The trigger line is RELAYED VERBATIM by the agent (prompt rule) so the candidate can copy it.
+        // Human lead-in, and the WeKruit_..._Job token ALONE on its own final line so it copies cleanly
+        // (the job-opener regex still extracts it whether they copy the line or the whole block).
         if (isCollab && prescreenReady.has(j.id)) {
-          return `${base}\n[start prescreen — copy & reply this exact line] WeKruit_${j.id}_${userId}_Job`
+          return `${base}\nto start this screen, just reply "${title} @ ${company}" — or copy & send me this line:\nWeKruit_${j.id}_${userId}_Job`
         }
         return base
       })
@@ -1183,9 +1185,12 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     description:
       "START the pre-screen for a specific WeKruit collab/partner role, identified by its jobId — which " +
       "you get from find_my_role (kind='one' → best.jobId, or the candidate's chosen one after you " +
-      "clarified an 'ambiguous' result). Do NOT call this with a guessed or ambiguous jobId; resolve " +
-      "first. If it returns reason 'not_matched', the candidate was never matched to that role — guide " +
-      "them to the website instead. Use ONLY when they clearly want to begin that role's screen.",
+      "clarified an 'ambiguous' result). NEVER call this with a jobId you guessed, invented, or read off " +
+      "a token in your own context — ALWAYS resolve via find_my_role first. reason 'not_matched' means " +
+      "the jobId YOU passed isn't in their matched set (you likely guessed) — it does NOT mean the " +
+      "candidate is unmatched. NEVER tell them they're 'not matched'; instead read the returned `roles` " +
+      "(their REAL matched roles) and ask which one they meant. Only point them to the website if `roles` " +
+      "is empty. Use ONLY when they clearly want to begin a role's screen.",
     parameters: z.object({ jobId: z.string() }),
     async execute({ jobId }) {
       const cleanJobId = (jobId ?? "").trim()
