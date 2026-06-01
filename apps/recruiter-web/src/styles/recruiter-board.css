@@ -3099,6 +3099,64 @@
   line-height: 1.45;
 }
 
+.rb-inbox-triage {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 8px 18px 12px;
+}
+
+.rb-inbox-triage button {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ink-3);
+  border-radius: 9px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 13px;
+  text-align: left;
+}
+
+.rb-inbox-triage button:hover {
+  background: var(--cream-3);
+}
+
+.rb-inbox-triage button.is-live { border-left-color: var(--live); background: var(--live-soft); }
+.rb-inbox-triage button.is-info { border-left-color: var(--info); }
+.rb-inbox-triage button.is-success { border-left-color: var(--success); background: var(--success-bg); }
+.rb-inbox-triage button.is-warn { border-left-color: var(--warning); background: #fffaf1; }
+.rb-inbox-triage button.is-mute { border-left-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-inbox-triage span,
+.rb-inbox-triage em {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-inbox-triage strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-inbox-triage p {
+  min-height: 36px;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 .rb-inbox-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
@@ -3205,6 +3263,33 @@
   font-size: 11.5px;
   font-style: normal;
 }
+
+.rb-inbox-item__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.rb-inbox-item__badges small {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 5px 8px;
+}
+
+.rb-inbox-item__badges small.is-live { border-color: var(--live-border); background: var(--live-soft); color: var(--live-2); }
+.rb-inbox-item__badges small.is-info { border-color: #c8d8f6; color: var(--info); }
+.rb-inbox-item__badges small.is-success { border-color: #b8d9c2; background: var(--success-bg); color: var(--success); }
+.rb-inbox-item__badges small.is-warn { border-color: #efc56f; background: #fffaf1; color: #8f5a00; }
+.rb-inbox-item__badges small.is-mute { background: var(--cream-3); color: var(--ink-3); }
 
 .rb-inbox-item footer {
   display: flex;
@@ -7640,6 +7725,7 @@
   .rb-workspace__grid,
   .rb-workbench-grid,
   .rb-inbox-grid,
+  .rb-inbox-triage,
   .rb-feedback-grid,
   .rb-candidate-crm,
   .rb-candidate-command,
@@ -7928,6 +8014,7 @@
   .rb-candidate-board,
   .rb-cockpit__steps,
   .rb-launch-sequence__steps,
+  .rb-inbox-triage,
   .rb-candidate-dossier__checks,
   .rb-candidate-dossier__body,
   .rb-command-list,

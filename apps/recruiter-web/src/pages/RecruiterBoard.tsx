@@ -1870,6 +1870,7 @@ function computeRecruiterOperatingMetrics(
 }
 
 type RecruiterCockpitAction = "roles" | "matches" | "candidates" | "submissions" | "performance" | "access"
+type RecruiterInboxOwner = "recruiter" | "wekruit" | "hiring_team" | "candidate" | "platform"
 
 type RecruiterCockpitModel = {
   missionLabel: string
@@ -1906,6 +1907,29 @@ type RecruiterLaunchModel = {
   total: number
   nextItem: RecruiterLaunchItem
   items: RecruiterLaunchItem[]
+}
+
+type RecruiterInboxOwnerMeta = {
+  id: RecruiterInboxOwner
+  label: string
+  body: string
+  tone: RecruiterInboxTone
+}
+
+type RecruiterInboxClock = {
+  label: string
+  tone: RecruiterInboxTone
+  stale: boolean
+}
+
+type RecruiterInboxTriageLane = {
+  label: string
+  value: string
+  body: string
+  action: RecruiterInboxAction
+  cta: string
+  tone: RecruiterInboxTone
+  item?: RecruiterInboxItem
 }
 
 function submissionActionPriority(submission: RecruiterSubmissionItem): number {
@@ -3698,6 +3722,7 @@ function RecruiterInboxTab({
   )
   const unreadNotifications = notifications.filter((notification) => !notification.readAt)
   const topItem = items[0]
+  const triageLanes = buildRecruiterInboxTriage(items)
   const dispatch = (action: RecruiterInboxAction) => {
     if (action === "roles") onRoles()
     else if (action === "submissions") onSubmissions()
@@ -3742,6 +3767,17 @@ function RecruiterInboxTab({
           <strong>{summary.unreadNotifications}</strong>
           <p>New roles, application decisions, and feedback notices pushed into this workspace.</p>
         </article>
+      </section>
+
+      <section className="rb-inbox-triage" aria-label="Recruiter inbox ownership triage">
+        {triageLanes.map((lane) => (
+          <button type="button" className={`is-${lane.tone}`} key={lane.label} onClick={() => dispatch(lane.action)}>
+            <span>{lane.label}</span>
+            <strong>{lane.value}</strong>
+            <p>{lane.body}</p>
+            <em>{lane.item ? `${recruiterInboxOwner(lane.item).label} · ${recruiterInboxClock(lane.item).label}` : lane.cta}</em>
+          </button>
+        ))}
       </section>
 
       <section className="rb-inbox-grid">
@@ -3818,12 +3854,19 @@ function RecruiterInboxItemCard({
   item: RecruiterInboxItem
   onAction: (action: RecruiterInboxAction) => void
 }) {
+  const owner = recruiterInboxOwner(item)
+  const clock = recruiterInboxClock(item)
   return (
     <article className={`rb-inbox-item is-${item.tone}`}>
       <div>
         <span>{item.bucket}</span>
         <strong>{item.title}</strong>
         <p>{item.body}</p>
+        <div className="rb-inbox-item__badges" aria-label="Inbox item ownership and review clock">
+          <small className={`is-${owner.tone}`}>{owner.label}</small>
+          <small className={`is-${clock.tone}`}>{clock.label}</small>
+          <small>{recruiterInboxAgeLabel(item)}</small>
+        </div>
         <em>{item.meta}</em>
       </div>
       <footer>
@@ -4093,6 +4136,120 @@ type RecruiterInboxItem = {
   cta: string
   action: RecruiterInboxAction
   href?: string
+}
+
+function recruiterInboxOwner(item: RecruiterInboxItem): RecruiterInboxOwnerMeta {
+  const bucket = item.bucket.toLowerCase()
+  if (bucket.includes("waiting on feedback") || bucket.includes("under review") || bucket.includes("answer needed")) {
+    return {
+      id: "wekruit",
+      label: "WeKruit owns next",
+      body: "Waiting on WeKruit review, answer, or status movement.",
+      tone: "info",
+    }
+  }
+  if (bucket.includes("interview motion")) {
+    return {
+      id: "hiring_team",
+      label: "Hiring team owns next",
+      body: "Candidate is moving after WeKruit handoff.",
+      tone: "success",
+    }
+  }
+  if (bucket.includes("candidate confirmation")) {
+    return {
+      id: "candidate",
+      label: "Candidate owns next",
+      body: "Candidate confirmation is required before the packet can move.",
+      tone: "warn",
+    }
+  }
+  if (bucket.includes("unread") || bucket.includes("role alert") || bucket.includes("payout update") || bucket.includes("access decision")) {
+    return {
+      id: "platform",
+      label: "Platform signal",
+      body: "A WeKruit system alert should be reviewed.",
+      tone: item.tone === "live" ? "live" : "info",
+    }
+  }
+  return {
+    id: "recruiter",
+    label: "Recruiter owns next",
+    body: "Your action can unblock this item.",
+    tone: item.priority >= 80 ? "warn" : "live",
+  }
+}
+
+function recruiterInboxAgeLabel(item: RecruiterInboxItem): string {
+  if (!item.atMs) return "No timestamp"
+  const ageDays = Math.max(0, Math.floor((Date.now() - item.atMs) / 86_400_000))
+  if (ageDays === 0) return "Today"
+  if (ageDays === 1) return "1d old"
+  return `${ageDays}d old`
+}
+
+function recruiterInboxClock(item: RecruiterInboxItem): RecruiterInboxClock {
+  if (!item.atMs) return { label: "Review clock unknown", tone: "mute", stale: false }
+  const owner = recruiterInboxOwner(item)
+  const ageDays = Math.max(0, Math.floor((Date.now() - item.atMs) / 86_400_000))
+  if (owner.id === "recruiter") {
+    if (item.priority >= 90) return { label: "Act now", tone: "warn", stale: true }
+    if (ageDays >= 2) return { label: "Getting stale", tone: "warn", stale: true }
+    return { label: "Actionable", tone: "live", stale: false }
+  }
+  if (owner.id === "candidate") {
+    if (ageDays >= 3) return { label: "Nudge candidate", tone: "warn", stale: true }
+    return { label: "Awaiting candidate", tone: "info", stale: false }
+  }
+  if (owner.id === "wekruit") {
+    if (ageDays >= 4) return { label: "Escalation watch", tone: "warn", stale: true }
+    return { label: "Waiting on WeKruit", tone: "info", stale: false }
+  }
+  if (owner.id === "hiring_team") {
+    if (ageDays >= 7) return { label: "Hiring team stale", tone: "warn", stale: true }
+    return { label: "Hiring team active", tone: "success", stale: false }
+  }
+  return item.tone === "live"
+    ? { label: "Unread", tone: "live", stale: item.priority >= 90 }
+    : { label: "Logged", tone: "mute", stale: false }
+}
+
+function buildRecruiterInboxTriage(items: RecruiterInboxItem[]): RecruiterInboxTriageLane[] {
+  const recruiterOwned = items.filter((item) => recruiterInboxOwner(item).id === "recruiter")
+  const waiting = items.filter((item) => {
+    const owner = recruiterInboxOwner(item).id
+    return owner === "wekruit" || owner === "hiring_team"
+  })
+  const stale = items.filter((item) => recruiterInboxClock(item).stale)
+  const learning = items.filter((item) => {
+    const bucket = item.bucket.toLowerCase()
+    return bucket.includes("feedback") || bucket.includes("calibration") || bucket.includes("answer")
+  })
+  const laneFor = (
+    label: string,
+    rows: RecruiterInboxItem[],
+    emptyBody: string,
+    defaultAction: RecruiterInboxAction,
+    cta: string,
+    tone: RecruiterInboxTone,
+  ): RecruiterInboxTriageLane => {
+    const item = rows[0]
+    return {
+      label,
+      value: String(rows.length),
+      body: item ? `${item.bucket}: ${item.title}` : emptyBody,
+      action: item?.action ?? defaultAction,
+      cta,
+      tone: item ? tone : "mute",
+      item,
+    }
+  }
+  return [
+    laneFor("Recruiter next", recruiterOwned, "No recruiter-owned blockers.", "candidates", "Open next task", "live"),
+    laneFor("Waiting room", waiting, "No WeKruit or hiring-team waits.", "submissions", "Track waits", "info"),
+    laneFor("Stale risk", stale, "No stale recruiter-board items.", "submissions", "Review risk", "warn"),
+    laneFor("Learning loop", learning, "No calibration signal yet.", "matches", "Apply signal", "success"),
+  ]
 }
 
 function rolePathForRow(row: { inboundJobId?: string; jobId?: string }, candidateId?: string): string | undefined {
