@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "typeRoots": ["../pa-landing/node_modules/@types"]
+  },
+  "include": [
+    "src",
+    "../pa-landing/src/pages/RecruiterBoard.tsx",
+    "../pa-landing/src/pages/RecruiterRole.tsx",
+    "../pa-landing/src/lib/firebase.ts",
+    "../pa-landing/src/lib/auth-redirect-bootstrap.ts",
+    "../pa-landing/src/lib/cross-domain-sso.ts",
+    "../pa-landing/src/lib/recruiter-board-api.ts",
+    "../pa-landing/src/lib/recruiter-inbox.ts"
+  ],
+  "references": []
+}

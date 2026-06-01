@@ -13,6 +13,9 @@
         ],
         "layoff": [
           "layoff-wekruit"
+        ],
+        "pa-recruiter": [
+          "wekruit-recruiters"
         ]
       }
     }

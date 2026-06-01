@@ -151,6 +151,48 @@
       ]
     },
     {
+      "_comment": "Recruiter-only SPA. Keeps partner recruiter workspace isolated from candidate-facing pa-landing routes while reusing the recruiter route modules during extraction.",
+      "target": "pa-recruiter",
+      "public": "apps/recruiter-web/dist",
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "predeploy": [
+        "node scripts/inject-pa-landing-vite-env.mjs",
+        "npm exec --workspace=@pa/landing -- tsc -p ../recruiter-web/tsconfig.json --noEmit",
+        "npm exec --workspace=@pa/landing -- vite build --config ../recruiter-web/vite.config.ts"
+      ],
+      "rewrites": [
+        {
+          "source": "/_sso/login",
+          "function": { "functionId": "paSsoLogin", "region": "us-central1" }
+        },
+        {
+          "source": "/_sso/bootstrap",
+          "function": { "functionId": "paSsoBootstrap", "region": "us-central1" }
+        },
+        {
+          "source": "/_sso/logout",
+          "function": { "functionId": "paSsoLogout", "region": "us-central1" }
+        },
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ],
+      "headers": [
+        {
+          "source": "**",
+          "headers": [
+            { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
+            { "key": "X-Content-Type-Options", "value": "nosniff" }
+          ]
+        }
+      ]
+    },
+    {
       "_comment": "layoff.wekruit.com → layoff-wekruit.web.app (Cloudflare CNAME). Thin shell — only three surfaces live here: / (cream LayoffLanding), /onboarding (candidate resume + SMS intake), /employer (employer signup → Mailgun → admin@wekruit). No cross-host redirects: layoff is intentionally a standalone product, not a funnel into candidate.wekruit.com. Adam directive 2026-05-18.",
       "target": "layoff",
       "public": "apps/pa-landing/dist",

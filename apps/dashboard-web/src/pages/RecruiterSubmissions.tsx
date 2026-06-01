@@ -449,7 +449,7 @@ function formatCodeExpiry(raw?: string | null): string {
 }
 
 const KNOWN_RECRUITER_INVITE_CODES_KEY = "wekruit.admin.recruiterInviteCodes.v1"
-const RECRUITER_INVITE_BASE_URL = "https://candidate.wekruit.com/recruiters"
+const RECRUITER_INVITE_BASE_URL = "https://wekruit-recruiters.web.app/recruiters"
 
 function isFullRecruiterInviteCode(raw?: string | null): raw is string {
   const trimmed = raw?.trim()
