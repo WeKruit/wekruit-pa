@@ -111,16 +111,93 @@ function updatedAtMs(s: RecruiterSourcedCandidateItem): number {
   return timestampValueMs(s.updatedAt ?? s.createdAt)
 }
 
-function timestampValueMs(raw: RecruiterSubmissionItem["createdAt"] | RecruiterSourcedCandidateItem["createdAt"]): number {
+function timestampValueMs(raw: unknown): number {
   if (!raw) return 0
   if (typeof raw === "string") return Date.parse(raw) || 0
-  if (typeof raw === "object" && typeof raw.seconds === "number") return raw.seconds * 1000
+  if (typeof raw === "object" && typeof (raw as { seconds?: unknown }).seconds === "number") {
+    return (raw as { seconds: number }).seconds * 1000
+  }
   return 0
 }
 
 function formatWhen(s: RecruiterSubmissionItem): string {
   const ms = createdAtMs(s)
   return ms ? new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Just now"
+}
+
+function formatActivityDate(raw: unknown): string {
+  const ms = timestampValueMs(raw)
+  if (!ms) return "Now"
+  return new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+}
+
+function submissionNextAction(status?: string): { title: string; body: string; tone: "live" | "info" | "success" | "warn" | "mute" } {
+  switch (status) {
+    case "reviewing":
+      return { title: "WeKruit is reviewing", body: "Hold additional lookalikes until the review note lands.", tone: "info" }
+    case "advanced":
+      return { title: "Sent to hiring team", body: "Keep the candidate warm and be ready for interview logistics.", tone: "success" }
+    case "interviewing":
+      return { title: "Interviewing", body: "Watch for scheduling or closing feedback from WeKruit.", tone: "success" }
+    case "hired":
+      return { title: "Placement won", body: "This candidate reached hired status.", tone: "success" }
+    case "rejected":
+      return { title: "Read feedback before sourcing more", body: "Use the WeKruit note to tighten the next submission.", tone: "warn" }
+    case "duplicate":
+      return { title: "Duplicate candidate", body: "Do not continue outreach for this role unless WeKruit reopens it.", tone: "mute" }
+    case "submitted":
+    case "new":
+    default:
+      return { title: "Queued for triage", body: "WeKruit will move this into review or send feedback.", tone: "live" }
+  }
+}
+
+type SubmissionActivityEvent = {
+  id: string
+  label: string
+  detail: string
+  at: string
+  tone: "live" | "info" | "success" | "warn" | "mute"
+  ms: number
+}
+
+function submissionActivityEvents(submission: RecruiterSubmissionItem): SubmissionActivityEvent[] {
+  const events: SubmissionActivityEvent[] = []
+  for (const [index, item] of (submission.statusHistory ?? []).entries()) {
+    const meta = statusMeta(item.status)
+    const ms = item.atIso ? Date.parse(item.atIso) || 0 : 0
+    events.push({
+      id: `status-${index}-${item.status}`,
+      label: meta.label,
+      detail: item.note || (item.by === "recruiter" ? "Submitted by recruiter" : "Updated by WeKruit"),
+      at: formatActivityDate(item.atIso),
+      tone: meta.tone,
+      ms,
+    })
+  }
+  if (!events.some((event) => event.label === "Submitted")) {
+    events.push({
+      id: "created",
+      label: "Submitted",
+      detail: "Submitted by recruiter",
+      at: formatActivityDate(submission.createdAt),
+      tone: "live",
+      ms: timestampValueMs(submission.createdAt),
+    })
+  }
+  if (submission.recruiterFeedbackNote && !events.some((event) => event.detail === submission.recruiterFeedbackNote)) {
+    events.push({
+      id: "feedback",
+      label: "WeKruit feedback",
+      detail: submission.recruiterFeedbackNote,
+      at: formatActivityDate(submission.recruiterFeedbackUpdatedAt ?? submission.updatedAt),
+      tone: statusMeta(submission.status).tone,
+      ms: timestampValueMs(submission.recruiterFeedbackUpdatedAt ?? submission.updatedAt),
+    })
+  }
+  return events
+    .sort((a, b) => (a.ms || Number.MAX_SAFE_INTEGER) - (b.ms || Number.MAX_SAFE_INTEGER))
+    .slice(-8)
 }
 
 function shortText(text: string | undefined, fallback = "—", max = 56): string {
@@ -1783,6 +1860,8 @@ function SubmissionRow({ submission, expanded = false }: { submission: Recruiter
   const currentStatus = submission.status === "new" ? "submitted" : submission.status ?? "submitted"
   const currentIndex = SUBMISSION_PROGRESS.findIndex((step) => step.id === currentStatus)
   const isClosed = currentStatus === "rejected" || currentStatus === "duplicate"
+  const nextAction = submissionNextAction(submission.status)
+  const activity = submissionActivityEvents(submission)
   return (
     <article className={`rb-submission ${expanded ? "is-expanded" : ""}`}>
       <div className="rb-submission__main">
@@ -1811,6 +1890,22 @@ function SubmissionRow({ submission, expanded = false }: { submission: Recruiter
           {submission.recruiterFeedbackNote && (
             <blockquote>{submission.recruiterFeedbackNote}</blockquote>
           )}
+          <div className={`rb-next-step is-${nextAction.tone}`}>
+            <strong>{nextAction.title}</strong>
+            <span>{nextAction.body}</span>
+          </div>
+          <div className="rb-activity-log" aria-label="Submission activity">
+            {activity.map((event) => (
+              <div className={`rb-activity-log__item is-${event.tone}`} key={event.id}>
+                <span />
+                <div>
+                  <strong>{event.label}</strong>
+                  <p>{event.detail}</p>
+                  <em>{event.at}</em>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </article>

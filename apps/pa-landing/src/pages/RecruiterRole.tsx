@@ -111,6 +111,15 @@ function timestampMs(raw: RecruiterSubmissionItem["createdAt"] | RecruiterSource
   return 0
 }
 
+function submissionTimeMs(raw: unknown): number {
+  if (!raw) return 0
+  if (typeof raw === "string") return Date.parse(raw) || 0
+  if (typeof raw === "object" && typeof (raw as { seconds?: unknown }).seconds === "number") {
+    return (raw as { seconds: number }).seconds * 1000
+  }
+  return 0
+}
+
 function roleMatches(job: CollabJob, row: { jobId?: string; inboundJobId?: string }): boolean {
   return row.inboundJobId === job.jobId || row.jobId === job.jobId
 }
@@ -128,6 +137,23 @@ function roleSubmissionStatusLabel(status?: string): string {
     default:
       return "Submitted"
   }
+}
+
+function roleSubmissionNextAction(status?: string): string {
+  switch (status) {
+    case "reviewing": return "Wait for WeKruit calibration before sending lookalikes."
+    case "advanced": return "Keep the candidate warm for hiring-team review."
+    case "interviewing": return "Watch for scheduling and close-process updates."
+    case "hired": return "Placement reached hired status."
+    case "rejected": return "Read feedback before sourcing another candidate."
+    case "duplicate": return "Candidate already exists for this search."
+    default: return "Queued for WeKruit triage."
+  }
+}
+
+function roleSubmissionLastActivity(row: RecruiterSubmissionItem): string {
+  const ms = submissionTimeMs(row.recruiterFeedbackUpdatedAt ?? row.updatedAt ?? row.createdAt)
+  return ms ? new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Today"
 }
 
 function sourcedStageLabel(stage?: string): string {
@@ -741,8 +767,10 @@ export default function RecruiterRole() {
                     <span>
                       <strong>{row.candidate?.name || "Candidate"}</strong>
                       <em>{roleSubmissionStatusLabel(row.status)}</em>
+                      <em>{roleSubmissionNextAction(row.status)}</em>
+                      {row.recruiterFeedbackNote && <em className="rb-role-submission-note">{row.recruiterFeedbackNote}</em>}
                     </span>
-                    <small>{timestampMs(row.createdAt) ? new Date(timestampMs(row.createdAt)).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Today"}</small>
+                    <small>{roleSubmissionLastActivity(row)}</small>
                   </article>
                 ))}
                 {roleSubmissions.length === 0 && <p className="rb-side-empty">No submitted candidates yet.</p>}

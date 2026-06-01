@@ -1047,15 +1047,47 @@ interface RecruiterSubmissionListItem {
   score?: SubmissionScore
   submissionMode?: "primary_role" | "single_submission" | "unclassified"
   status?: string
+  statusHistory?: RecruiterSubmissionStatusHistoryItem[]
   recruiterFeedbackNote?: string | null
   recruiterFeedbackUpdatedAt?: unknown
   createdAt?: unknown
   updatedAt?: unknown
 }
 
+export interface RecruiterSubmissionStatusHistoryItem {
+  status: string
+  by?: string
+  atIso?: string
+  note?: string
+}
+
 function timestampMs(value: unknown): number {
   const iso = coerceToIso(value)
   return iso ? Date.parse(iso) || 0 : 0
+}
+
+export function sanitizeSubmissionStatusHistory(raw: unknown): RecruiterSubmissionStatusHistoryItem[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((entry): RecruiterSubmissionStatusHistoryItem | null => {
+      if (!entry || typeof entry !== "object") return null
+      const record = entry as Record<string, unknown>
+      const status = typeof record.status === "string" ? record.status.trim() : ""
+      if (!status || status.length > 80) return null
+      const by = typeof record.by === "string" ? record.by.trim().slice(0, 80) : undefined
+      const atIso = typeof record.atIso === "string" && !Number.isNaN(Date.parse(record.atIso))
+        ? new Date(record.atIso).toISOString()
+        : undefined
+      const note = typeof record.note === "string" ? record.note.trim().slice(0, 1000) : undefined
+      return {
+        status,
+        ...(by ? { by } : {}),
+        ...(atIso ? { atIso } : {}),
+        ...(note ? { note } : {}),
+      }
+    })
+    .filter((entry): entry is RecruiterSubmissionStatusHistoryItem => entry !== null)
+    .slice(-20)
 }
 
 function publicRecruiterSubmission(d: { id: string; data: () => Record<string, unknown> }): RecruiterSubmissionListItem {
@@ -1075,6 +1107,7 @@ function publicRecruiterSubmission(d: { id: string; data: () => Record<string, u
       ? data.submissionMode
       : "unclassified",
     status: typeof data.status === "string" ? data.status : "submitted",
+    statusHistory: sanitizeSubmissionStatusHistory(data.statusHistory),
     recruiterFeedbackNote: typeof data.recruiterFeedbackNote === "string" ? data.recruiterFeedbackNote : null,
     recruiterFeedbackUpdatedAt: data.recruiterFeedbackUpdatedAt,
     createdAt: data.createdAt,

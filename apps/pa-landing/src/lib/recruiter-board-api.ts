@@ -93,6 +93,13 @@ export interface RecruiterSession {
   recruiter: RecruiterProfile
 }
 
+export interface RecruiterSubmissionStatusHistoryItem {
+  status: string
+  by?: string
+  atIso?: string
+  note?: string
+}
+
 export interface RecruiterSubmissionItem {
   id: string
   submissionId?: string
@@ -110,7 +117,9 @@ export interface RecruiterSubmissionItem {
   score?: SubmissionResponse["score"]
   submissionMode?: "primary_role" | "single_submission" | "unclassified"
   status?: string
+  statusHistory?: RecruiterSubmissionStatusHistoryItem[]
   recruiterFeedbackNote?: string | null
+  recruiterFeedbackUpdatedAt?: { seconds?: number } | string | null
   createdAt?: { seconds?: number } | string | null
   updatedAt?: { seconds?: number } | string | null
 }

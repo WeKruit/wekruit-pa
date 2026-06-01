@@ -1440,21 +1440,23 @@ function RowDetailPanel({
     setSaving(true)
     setSaveError(null)
     try {
+      const cleanNote = draftNote.trim()
       await updateDoc(doc(db(), "pa-recruiter-submissions", row.id), {
         status: draftStatus,
-        recruiterFeedbackNote: draftNote.trim() || null,
+        recruiterFeedbackNote: cleanNote || null,
         recruiterFeedbackUpdatedAt: serverTimestamp(),
         statusHistory: arrayUnion({
           status: draftStatus,
           by: "admin",
           atIso: new Date().toISOString(),
+          ...(cleanNote ? { note: cleanNote } : {}),
         }),
         updatedAt: serverTimestamp(),
       })
       onUpdated({
         id: row.id,
         status: draftStatus,
-        recruiterFeedbackNote: draftNote.trim() || null,
+        recruiterFeedbackNote: cleanNote || null,
       })
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e))

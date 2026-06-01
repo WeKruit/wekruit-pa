@@ -294,6 +294,19 @@
   font-style: normal;
 }
 
+.rb-role-submission-list .rb-role-submission-note {
+  margin-top: 5px;
+  padding: 7px 9px;
+  border-left: 2px solid var(--live);
+  border-radius: 0 7px 7px 0;
+  background: var(--live-soft);
+  color: var(--ink-2);
+  line-height: 1.35;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
 .rb-role-candidate-list .rb-btn {
   padding: 5px 8px;
   font-size: 12px;
@@ -1664,6 +1677,102 @@
   border-radius: 0 8px 8px 0;
   font-size: 13.5px;
   line-height: 1.5;
+}
+
+.rb-next-step {
+  margin-top: 10px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--cream-3);
+}
+
+.rb-next-step strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.rb-next-step span {
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.rb-next-step.is-live {
+  border-color: var(--live-border);
+  background: var(--live-soft);
+}
+
+.rb-next-step.is-info {
+  border-color: var(--info-bg);
+  background: var(--info-bg);
+}
+
+.rb-next-step.is-success {
+  border-color: var(--success-bg);
+  background: var(--success-bg);
+}
+
+.rb-next-step.is-warn {
+  border-color: var(--danger-bg);
+  background: var(--danger-bg);
+}
+
+.rb-activity-log {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-left: 6px;
+}
+
+.rb-activity-log__item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.rb-activity-log__item > span {
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--ink-3);
+  box-shadow: 0 0 0 4px var(--cream-3);
+}
+
+.rb-activity-log__item.is-live > span { background: var(--live-2); }
+.rb-activity-log__item.is-info > span { background: var(--info); }
+.rb-activity-log__item.is-success > span { background: var(--success); }
+.rb-activity-log__item.is-warn > span { background: var(--danger); }
+.rb-activity-log__item.is-mute > span { background: var(--ink-3); }
+
+.rb-activity-log__item strong,
+.rb-activity-log__item p,
+.rb-activity-log__item em {
+  display: block;
+}
+
+.rb-activity-log__item strong {
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.rb-activity-log__item p {
+  margin: 2px 0 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.rb-activity-log__item em {
+  margin-top: 2px;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-style: normal;
 }
 
 .rb-submission-timeline {

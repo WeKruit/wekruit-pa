@@ -30,6 +30,7 @@ import {
   recruiterInviteCodeMatchesBoundUser,
   recruiterIdentityFromFirebaseBearer,
   shouldNotifyRecruitersForRoleRelease,
+  sanitizeSubmissionStatusHistory,
   validateInviteCodeCreate,
   validateRecruiterRoleFeedbackInput,
   validateRecruiterSourcedCandidateInput,
@@ -95,6 +96,20 @@ describe("computeSubmissionScore", () => {
     })
     assert.equal(score.hardChecked, 1)
     assert.equal(score.hardTotal, 3)
+  })
+})
+
+describe("sanitizeSubmissionStatusHistory", () => {
+  it("keeps recruiter-safe status history and drops malformed entries", () => {
+    assert.deepEqual(sanitizeSubmissionStatusHistory([
+      { status: " submitted ", by: "recruiter", atIso: "2026-05-30T12:00:00Z" },
+      { status: "reviewing", by: "admin", atIso: "bad-date", note: "Internal note".repeat(200) },
+      { by: "admin" },
+      null,
+    ]), [
+      { status: "submitted", by: "recruiter", atIso: "2026-05-30T12:00:00.000Z" },
+      { status: "reviewing", by: "admin", note: "Internal note".repeat(200).slice(0, 1000) },
+    ])
   })
 })
 
