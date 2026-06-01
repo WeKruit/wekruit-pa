@@ -53,17 +53,20 @@ const TABS: Array<{ id: RecruiterTab; label: string }> = [
 
 const ROLE_FILTERS = [
   { id: "all", label: "All roles" },
+  { id: "primary", label: "Primary slots" },
   { id: "new", label: "New this week" },
-  { id: "with_candidates", label: "Has candidates" },
-  { id: "needs_submissions", label: "Needs submissions" },
+  { id: "clean_lane", label: "Clean lanes" },
+  { id: "market_moving", label: "Market moving" },
+  { id: "needs_answers", label: "Needs WeKruit answer" },
 ] as const
 
 type RoleFilter = typeof ROLE_FILTERS[number]["id"]
 
 const ROLE_SORTS = [
   { id: "recommended", label: "Recommended" },
+  { id: "clean_lane", label: "Clean lane" },
+  { id: "market_signal", label: "Market signal" },
   { id: "newest", label: "Newest" },
-  { id: "least_worked", label: "Least worked" },
   { id: "most_ready", label: "Most ready" },
 ] as const
 
@@ -632,6 +635,8 @@ export default function RecruiterBoard() {
             submissions={submissions}
             sourcedCandidates={sourcedCandidates}
             roleFeedback={roleFeedback}
+            roleQuestions={roleQuestions}
+            roleIntelligence={roleIntelligence}
             loading={!jobs && !error}
             primaryRoleIds={primaryRoleIds}
             primaryRoleSavingId={primaryRoleSavingId}
@@ -1213,9 +1218,18 @@ type RoleInsight = {
   readyCount: number
   submissionCount: number
   pendingCount: number
+  platformReadyCount: number
+  platformSubmissionCount: number
+  platformPendingCount: number
+  recruiterCount: number
+  openQuestionCount: number
+  answeredQuestionCount: number
+  marketFrictionCount: number
+  cleanLane: boolean
   primary: boolean
   updatedMs: number
   feedback?: RecruiterRoleFeedbackItem
+  intelligence?: RecruiterRoleIntelligenceItem
 }
 
 function rowsForRole<T extends { inboundJobId?: string; jobId?: string }>(job: CollabJob, rows: T[]): T[] {
@@ -1263,6 +1277,8 @@ function buildRoleInsight(
   sourcedCandidates: RecruiterSourcedCandidateItem[],
   primaryRoleIds: string[],
   roleFeedback: RecruiterRoleFeedbackItem[],
+  roleQuestions: RecruiterRoleQuestionItem[],
+  roleIntelligence: RecruiterRoleIntelligenceItem[],
 ): RoleInsight {
   const roleSubmissions = rowsForRole(job, submissions)
   const roleCandidates = rowsForRole(job, sourcedCandidates).filter((candidate) => candidate.stage !== "archived")
@@ -1271,24 +1287,39 @@ function buildRoleInsight(
   const advancedCount = roleSubmissions.filter((submission) => ["advanced", "interviewing", "hired"].includes(submission.status ?? "")).length
   const rejectedCount = roleSubmissions.filter((submission) => ["rejected", "duplicate"].includes(submission.status ?? "")).length
   const feedback = latestRoleFeedback(job, roleFeedback)
+  const intelligence = roleIntelligence.find((item) => item.jobId === roleKey(job))
+  const questions = rowsForRole(job, roleQuestions)
+  const openQuestionCount = intelligence?.openQuestionCount ?? questions.filter((question) => (question.status ?? "open") === "open").length
+  const answeredQuestionCount = intelligence?.answeredQuestionCount ?? questions.filter((question) => question.status === "answered").length
+  const platformReadyCount = intelligence?.readyCount ?? readyCount
+  const platformSubmissionCount = intelligence?.submissionCount ?? roleSubmissions.length
+  const platformPendingCount = intelligence?.pendingCount ?? pendingCount
+  const recruiterCount = intelligence?.recruiterCount ?? (roleCandidates.length || roleSubmissions.length ? 1 : 0)
+  const marketFrictionCount = (intelligence?.feedback.hard ?? (feedback?.difficulty === "hard" ? 1 : 0)) + (intelligence?.feedback.blocked ?? (feedback?.difficulty === "blocked" ? 1 : 0))
+  const cleanLane = platformSubmissionCount === 0
   const { hard, fit } = roleChecklistCounts(job)
   const updatedMs = roleUpdatedMs(job)
   const primary = isPrimaryRole(job, primaryRoleIds)
   const freshBoost = isNewRole(job) ? 16 : updatedMs && Date.now() - updatedMs <= 14 * 86_400_000 ? 8 : 0
-  const noSubmissionBoost = roleSubmissions.length === 0 ? 14 : -Math.min(18, roleSubmissions.length * 5)
+  const noSubmissionBoost = cleanLane ? 16 : -Math.min(18, platformSubmissionCount * 4)
+  const marketBoost = Math.min(16, platformReadyCount * 6 + recruiterCount * 2)
+  const blockerDrag = Math.min(24, openQuestionCount * 6 + marketFrictionCount * 8)
   const score = Math.max(18, Math.min(98,
     44 +
     freshBoost +
     (primary ? 12 : 0) +
     Math.min(18, readyCount * 9) +
+    marketBoost +
     Math.min(10, roleCandidates.length * 2) +
     noSubmissionBoost +
     Math.min(12, hard * 2 + fit) +
     advancedCount * 8 -
     rejectedCount * 4 +
-    feedbackDifficultyAdjustment(feedback),
+    feedbackDifficultyAdjustment(feedback) -
+    blockerDrag,
   ))
-  const tone: RoleInsightTone = feedback?.difficulty === "blocked"
+  const blockedByMarket = marketFrictionCount > 0 && (intelligence?.feedback.blocked ?? 0) > 0
+  const tone: RoleInsightTone = blockedByMarket || feedback?.difficulty === "blocked"
     ? "warn"
     : score >= 82
       ? "live"
@@ -1297,8 +1328,10 @@ function buildRoleInsight(
         : score >= 52
           ? "info"
           : "mute"
-  const scoreLabel = feedback?.difficulty === "blocked"
+  const scoreLabel = blockedByMarket || feedback?.difficulty === "blocked"
     ? "Blocked"
+    : openQuestionCount > 0
+      ? "Clarify"
     : score >= 82
       ? "Work now"
       : score >= 68
@@ -1306,36 +1339,42 @@ function buildRoleInsight(
         : score >= 52
           ? "Watch"
           : "Low priority"
-  const marketLoad = roleSubmissions.length === 0
-    ? "No submissions from you"
-    : pendingCount > 0
-      ? `${pendingCount} pending review`
-      : `${roleSubmissions.length} submitted`
+  const marketLoad = cleanLane
+    ? "Clean lane"
+    : platformPendingCount > 0
+      ? `${platformPendingCount} pending across market`
+      : `${platformSubmissionCount} submitted across market`
   const urgency = primary
     ? "Primary slot"
     : isNewRole(job)
       ? "New role"
-      : roleSubmissions.length === 0
+      : cleanLane
         ? "Open lane"
+        : recruiterCount > 1
+          ? "Competitive lane"
         : "Secondary"
-  const nextAction = feedback?.difficulty === "blocked"
-    ? "Ask WeKruit to clear blocker"
+  const nextAction = blockedByMarket || feedback?.difficulty === "blocked"
+    ? "Clear market blocker"
+    : openQuestionCount > 0
+      ? "Get WeKruit answer"
     : readyCount > 0
       ? "Submit ready candidate"
-      : roleCandidates.length > 0
+    : roleCandidates.length > 0
         ? "Screen saved prospects"
-        : roleSubmissions.length === 0
+        : cleanLane
           ? "Build first shortlist"
           : pendingCount > 0
             ? "Wait for feedback"
             : "Source lookalikes"
-  const nextActionBody = feedback?.difficulty === "blocked"
+  const nextActionBody = blockedByMarket || feedback?.difficulty === "blocked"
     ? "Use the role brief question box before spending sourcing cycles."
+    : openQuestionCount > 0
+      ? "There is an unanswered role question. Clear the calibration issue before adding volume."
     : readyCount > 0
       ? "Open the brief and move the strongest ready candidate into a consented submission."
       : roleCandidates.length > 0
         ? "Advance screened prospects to Ready before submitting."
-        : roleSubmissions.length === 0
+        : cleanLane
           ? "Start with two or three sourced prospects so duplicate checks and match ranking can work."
           : pendingCount > 0
             ? "Let WeKruit review the current submission before sending lookalikes."
@@ -1344,7 +1383,9 @@ function buildRoleInsight(
     roleUpdatedLabel(updatedMs),
     primary ? "Counts toward primary-role activity" : "Uses single-submit credit unless slotted",
     readyCount ? `${readyCount} ready candidate${readyCount === 1 ? "" : "s"}` : "",
-    roleSubmissions.length === 0 ? "Clean submission lane" : marketLoad,
+    cleanLane ? "Clean submission lane" : marketLoad,
+    recruiterCount ? `${recruiterCount} recruiter${recruiterCount === 1 ? "" : "s"} active` : "",
+    openQuestionCount ? `${openQuestionCount} open role Q` : "",
     feedback ? `${roleFeedbackDifficultyText(feedback.difficulty)} role` : "",
   ].filter(Boolean).slice(0, 4)
 
@@ -1362,9 +1403,18 @@ function buildRoleInsight(
     readyCount,
     submissionCount: roleSubmissions.length,
     pendingCount,
+    platformReadyCount,
+    platformSubmissionCount,
+    platformPendingCount,
+    recruiterCount,
+    openQuestionCount,
+    answeredQuestionCount,
+    marketFrictionCount,
+    cleanLane,
     primary,
     updatedMs,
     feedback,
+    intelligence,
   }
 }
 
@@ -1373,10 +1423,12 @@ function sortRoleInsights(insights: RoleInsight[], sort: RoleSort): RoleInsight[
   switch (sort) {
     case "newest":
       return rows.sort((a, b) => b.updatedMs - a.updatedMs || b.score - a.score)
-    case "least_worked":
-      return rows.sort((a, b) => (a.submissionCount + a.sourcedCount) - (b.submissionCount + b.sourcedCount) || b.score - a.score)
+    case "clean_lane":
+      return rows.sort((a, b) => Number(b.cleanLane) - Number(a.cleanLane) || b.score - a.score)
+    case "market_signal":
+      return rows.sort((a, b) => (b.platformReadyCount + b.platformSubmissionCount + b.recruiterCount) - (a.platformReadyCount + a.platformSubmissionCount + a.recruiterCount) || b.score - a.score)
     case "most_ready":
-      return rows.sort((a, b) => b.readyCount - a.readyCount || b.score - a.score)
+      return rows.sort((a, b) => b.platformReadyCount - a.platformReadyCount || b.readyCount - a.readyCount || b.score - a.score)
     case "recommended":
     default:
       return rows.sort((a, b) => b.score - a.score || b.updatedMs - a.updatedMs)
@@ -1460,6 +1512,8 @@ function RolesTab({
   submissions,
   sourcedCandidates,
   roleFeedback,
+  roleQuestions,
+  roleIntelligence,
   loading,
   primaryRoleIds,
   primaryRoleSavingId,
@@ -1469,6 +1523,8 @@ function RolesTab({
   submissions: RecruiterSubmissionItem[]
   sourcedCandidates: RecruiterSourcedCandidateItem[]
   roleFeedback: RecruiterRoleFeedbackItem[]
+  roleQuestions: RecruiterRoleQuestionItem[]
+  roleIntelligence: RecruiterRoleIntelligenceItem[]
   loading: boolean
   primaryRoleIds: string[]
   primaryRoleSavingId: string | null
@@ -1478,15 +1534,17 @@ function RolesTab({
   const [filter, setFilter] = useState<RoleFilter>("all")
   const [sort, setSort] = useState<RoleSort>("recommended")
   const insights = useMemo(
-    () => jobs.map((job) => buildRoleInsight(job, submissions, sourcedCandidates, primaryRoleIds, roleFeedback)),
-    [jobs, primaryRoleIds, roleFeedback, sourcedCandidates, submissions],
+    () => jobs.map((job) => buildRoleInsight(job, submissions, sourcedCandidates, primaryRoleIds, roleFeedback, roleQuestions, roleIntelligence)),
+    [jobs, primaryRoleIds, roleFeedback, roleIntelligence, roleQuestions, sourcedCandidates, submissions],
   )
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase()
     const visible = insights.filter((insight) => {
+      if (filter === "primary" && !insight.primary) return false
       if (filter === "new" && !isNewRole(insight.job)) return false
-      if (filter === "with_candidates" && insight.sourcedCount === 0) return false
-      if (filter === "needs_submissions" && insight.submissionCount > 0) return false
+      if (filter === "clean_lane" && !insight.cleanLane) return false
+      if (filter === "market_moving" && insight.platformReadyCount + insight.platformSubmissionCount + insight.recruiterCount === 0) return false
+      if (filter === "needs_answers" && insight.openQuestionCount + insight.marketFrictionCount === 0) return false
       return true
     })
     const searched = !needle ? visible : visible.filter(({ job }) =>
@@ -1536,7 +1594,7 @@ function RolesTab({
               <header>
                 <span>Role command center</span>
                 <strong>{spotlight[0]?.scoreLabel ?? "Recommended"} focus</strong>
-                <em>{spotlight.length} role{spotlight.length === 1 ? "" : "s"} ranked from your pipeline, submissions, and feedback.</em>
+                <em>{spotlight.length} role{spotlight.length === 1 ? "" : "s"} ranked from pipeline, recruiter activity, role Q&amp;A, and market friction.</em>
               </header>
               <div>
                 {spotlight.map((insight) => <RoleCommandCard key={insight.job.jobId} insight={insight} />)}
@@ -2190,6 +2248,13 @@ function RoleCard({
 }) {
   const { job, primary } = insight
   const { hard, fit } = roleChecklistCounts(job)
+  const marketChips = [
+    `${insight.recruiterCount} recruiter${insight.recruiterCount === 1 ? "" : "s"} active`,
+    `${insight.platformReadyCount} ready`,
+    `${insight.platformSubmissionCount} total submitted`,
+    insight.openQuestionCount ? `${insight.openQuestionCount} open Q` : "",
+    insight.marketFrictionCount ? `${insight.marketFrictionCount} friction signal${insight.marketFrictionCount === 1 ? "" : "s"}` : "",
+  ].filter(Boolean).slice(0, 4)
   const slotDisabled = disabled || (!primary && primarySlotsFull)
   return (
     <article className={`rb-role-card ${primary ? "is-primary" : ""}`}>
@@ -2209,7 +2274,10 @@ function RoleCard({
       </div>
       <div className="rb-role-card__signal">
         <span>{insight.urgency}</span>
-        <em>{insight.sourcedCount} sourced - {insight.readyCount} ready - {insight.submissionCount} submitted</em>
+        <em>{insight.sourcedCount} sourced by you - {insight.readyCount} ready - {insight.submissionCount} submitted by you</em>
+      </div>
+      <div className="rb-role-card__market" aria-label="Platform market signal">
+        {marketChips.map((chip) => <span key={chip}>{chip}</span>)}
       </div>
       <footer>
         <span>{hard} hard checks</span>

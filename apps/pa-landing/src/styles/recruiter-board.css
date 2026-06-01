@@ -1914,6 +1914,24 @@
   font-style: normal;
 }
 
+.rb-role-card__market {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.rb-role-card__market span {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  padding: 4px 8px;
+}
+
 .rb-role-card footer {
   margin-top: auto;
   display: grid;
