@@ -146,6 +146,16 @@ export const PA_COLLECTIONS = {
    * referral row.
    */
   referralSlugs: "pa-referral-slugs",
+  /**
+   * Human-approve-then-send outbound queue. One doc = one queued message
+   * awaiting operator approval before delivery; reusable across recovery /
+   * ai_review / rec / reengage kinds. The queue NEVER sends — it is pure CRUD;
+   * a separate approved-send worker (outside this contract) reads `approved`
+   * rows and dispatches via the existing transport. Deterministic doc ids
+   * (`pending-<userId>-<reasonCode>-<sourceSessionId|short>`) make backfill
+   * re-runs idempotent (no duplicate queue rows). See `PendingOutboundSchema`.
+   */
+  pendingOutbound: "pa-pending-outbound",
 } as const
 
 /**

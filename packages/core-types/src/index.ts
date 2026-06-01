@@ -882,6 +882,23 @@ export {
 export * from "./external-supply.js"
 export * from "./evaluation.js"
 
+// Human-approve-then-send outbound queue contract (recovery / ai_review /
+// rec / reengage). See ./pending-outbound.ts.
+export {
+  PendingOutboundSchema,
+  PendingOutboundChannelSchema,
+  PendingOutboundKindSchema,
+  PendingOutboundReasonCodeSchema,
+  PendingOutboundStatusSchema,
+  PENDING_OUTBOUND_REASON_CODES,
+  pendingOutboundDocId,
+  type PendingOutbound,
+  type PendingOutboundChannel,
+  type PendingOutboundKind,
+  type PendingOutboundReasonCode,
+  type PendingOutboundStatus,
+} from "./pending-outbound.js"
+
 // pa-users canonical `source` label allowlist (2026-05-18 cleanup goal).
 export {
   PA_USER_SOURCES,
