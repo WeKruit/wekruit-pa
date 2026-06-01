@@ -1634,6 +1634,7 @@ export default function RecruiterBoard() {
             onCandidates={() => setTab("candidates")}
             onSubmissions={() => setTab("submissions")}
             onPerformance={() => setTab("performance")}
+            onSettings={() => setTab("settings")}
           />
         )}
         {activeTab === "settings" && <SettingsTab session={session} approvedRoleCount={primaryRoleIds.length} onSessionChange={setSession} />}
@@ -2190,6 +2191,24 @@ type RecruiterRewardLedger = {
   policies: RecruiterOperatingMetric[]
 }
 
+type RecruiterPayoutReadinessStep = {
+  label: string
+  value: string
+  body: string
+  tone: OperatingTone
+  action?: "settings" | "submissions"
+  actionLabel?: string
+}
+
+type RecruiterPayoutReadiness = {
+  label: string
+  title: string
+  body: string
+  tone: OperatingTone
+  cards: RecruiterOperatingMetric[]
+  steps: RecruiterPayoutReadinessStep[]
+}
+
 type RecruiterStatusTier = {
   label: string
   body: string
@@ -2214,6 +2233,7 @@ type RecruiterEarningsMetrics = {
   challenges: RecruiterChallenge[]
   payouts: RecruiterPayoutRow[]
   rewardLedger: RecruiterRewardLedger
+  payoutReadiness: RecruiterPayoutReadiness
   expectations: RecruiterOperatingMetric[]
 }
 
@@ -2621,7 +2641,17 @@ function computeRecruiterEarningsMetrics(
   const interviewRate = submissions.length ? Math.round((advancedSubmissions.length / submissions.length) * 100) : 0
   const activePipelineValue = openSubmissions.reduce((sum, submission) => sum + recruiterPayoutAmount(submission, jobsById), 0)
   const paidPayoutSubmissions = submissions.filter((submission) => submission.recruiterPayout?.status === "paid")
+  const recordedPayoutSubmissions = submissions.filter((submission) => {
+    const status = submission.recruiterPayout?.status
+    return Boolean(status && status !== "none")
+  })
+  const invoiceReadySubmissions = submissions.filter((submission) => submission.recruiterPayout?.status === "invoice_ready")
+  const pendingPayoutSubmissions = submissions.filter((submission) =>
+    ["eligible", "pending_start", "invoice_ready"].includes(submission.recruiterPayout?.status ?? ""),
+  )
   const wonValue = (paidPayoutSubmissions.length ? paidPayoutSubmissions : hiredSubmissions)
+    .reduce((sum, submission) => sum + recruiterPayoutAmount(submission, jobsById), 0)
+  const pendingPayoutValue = pendingPayoutSubmissions
     .reduce((sum, submission) => sum + recruiterPayoutAmount(submission, jobsById), 0)
   const openOpportunityValue = jobs.reduce((sum, job) => sum + roleRewardAmount(job), 0)
   const activePrimaryRoles = primaryRoleIds.length
@@ -2844,6 +2874,87 @@ function computeRecruiterEarningsMetrics(
       },
     ],
   }
+  const payoutReadinessTone: OperatingTone = invoiceReadySubmissions.length || paidPayoutSubmissions.length
+    ? "success"
+    : pendingPayoutSubmissions.length || hiredSubmissions.length
+      ? "live"
+      : activePipelineValue > 0
+        ? "info"
+        : "mute"
+  const payoutReadiness: RecruiterPayoutReadiness = {
+    label: "Payout readiness",
+    title: invoiceReadySubmissions.length
+      ? "Invoice-ready payout exists"
+      : pendingPayoutSubmissions.length
+        ? "Payout is being cleared"
+        : activePipelineValue > 0
+          ? "Payment setup should be confirmed before first hire"
+          : "No payout setup needed yet",
+    body: invoiceReadySubmissions.length
+      ? `${invoiceReadySubmissions.length} payout${invoiceReadySubmissions.length === 1 ? "" : "s"} can move to processing.`
+      : pendingPayoutSubmissions.length
+        ? `${pendingPayoutSubmissions.length} payout${pendingPayoutSubmissions.length === 1 ? "" : "s"} need start-date or invoice readiness.`
+        : activePipelineValue > 0
+          ? "You have projected earning exposure. Confirm payment method before the first eligible hire."
+          : "Build sourced candidates and consented submissions first; payout setup becomes relevant when value appears.",
+    tone: payoutReadinessTone,
+    cards: [
+      {
+        label: "Pending payout",
+        value: formatCurrencyShort(pendingPayoutValue),
+        body: pendingPayoutSubmissions.length
+          ? `${pendingPayoutSubmissions.length} recorded payout${pendingPayoutSubmissions.length === 1 ? "" : "s"} not paid yet.`
+          : "No eligible, pending-start, or invoice-ready payout is recorded.",
+        tone: pendingPayoutValue > 0 ? "live" : "mute",
+      },
+      {
+        label: "Invoice ready",
+        value: String(invoiceReadySubmissions.length),
+        body: "Rows with invoice_ready status are ready for payout processing.",
+        tone: invoiceReadySubmissions.length ? "success" : "mute",
+      },
+      {
+        label: "Payment method",
+        value: "Ops-assisted",
+        body: recordedPayoutSubmissions.length
+          ? `${recordedPayoutSubmissions.length} payout row${recordedPayoutSubmissions.length === 1 ? "" : "s"} recorded; no connected payment-provider field is exposed in recruiter profile yet.`
+          : "No connected payment-provider field is exposed in recruiter profile yet.",
+        tone: activePipelineValue > 0 || pendingPayoutSubmissions.length ? "warn" : "mute",
+      },
+    ],
+    steps: [
+      {
+        label: "Account identity",
+        value: "Verified",
+        body: "This recruiter workspace is bound to a Firebase account and one-use access code.",
+        tone: "success",
+      },
+      {
+        label: "Payment method",
+        value: activePipelineValue > 0 || pendingPayoutSubmissions.length ? "Confirm before hire" : "Not due",
+        body: "A real Stripe or payment-method connection is not in the profile schema yet, so payout setup remains an ops-confirmed step.",
+        tone: activePipelineValue > 0 || pendingPayoutSubmissions.length ? "warn" : "mute",
+        action: "settings",
+        actionLabel: "Open account",
+      },
+      {
+        label: "Eligible outcome",
+        value: String(pendingPayoutSubmissions.length + paidPayoutSubmissions.length),
+        body: "Eligibility starts only after WeKruit records payout status on an offer, hire, or paid submission.",
+        tone: pendingPayoutSubmissions.length || paidPayoutSubmissions.length ? "live" : activePipelineValue > 0 ? "info" : "mute",
+        action: "submissions",
+        actionLabel: "Open submissions",
+      },
+      {
+        label: "Processing",
+        value: paidPayoutSubmissions.length ? `${paidPayoutSubmissions.length} paid` : invoiceReadySubmissions.length ? `${invoiceReadySubmissions.length} ready` : "Not started",
+        body: paidPayoutSubmissions.length
+          ? "Paid payouts remain visible in the tracker for audit."
+          : "Processing starts after invoice-ready or paid status is recorded by WeKruit.",
+        tone: paidPayoutSubmissions.length || invoiceReadySubmissions.length ? "success" : "mute",
+      },
+    ],
+  }
   return {
     statusLabel: operatingMetrics.statusLabel,
     ratingLabel,
@@ -2916,6 +3027,7 @@ function computeRecruiterEarningsMetrics(
     challenges,
     payouts: payoutRows,
     rewardLedger,
+    payoutReadiness,
     expectations: [
       {
         label: "Primary coverage",
@@ -7359,12 +7471,14 @@ function EarningsTab({
   onCandidates,
   onSubmissions,
   onPerformance,
+  onSettings,
 }: {
   metrics: RecruiterEarningsMetrics
   onRoles: () => void
   onCandidates: () => void
   onSubmissions: () => void
   onPerformance: () => void
+  onSettings: () => void
 }) {
   const runAction = (action: RecruiterChallenge["action"]) => {
     if (action === "roles") onRoles()
@@ -7425,6 +7539,12 @@ function EarningsTab({
       </section>
 
       <RewardLedgerPanel ledger={metrics.rewardLedger} onAction={runAction} />
+
+      <PayoutReadinessPanel
+        readiness={metrics.payoutReadiness}
+        onSettings={onSettings}
+        onSubmissions={onSubmissions}
+      />
 
       <section className="rb-earnings-grid">
         <article className="rb-earnings-card rb-earnings-card--wide">
@@ -7601,6 +7721,56 @@ function RewardLedgerPanel({
             </article>
           ))}
         </aside>
+      </div>
+    </section>
+  )
+}
+
+function PayoutReadinessPanel({
+  readiness,
+  onSettings,
+  onSubmissions,
+}: {
+  readiness: RecruiterPayoutReadiness
+  onSettings: () => void
+  onSubmissions: () => void
+}) {
+  const runAction = (action?: RecruiterPayoutReadinessStep["action"]) => {
+    if (action === "settings") onSettings()
+    if (action === "submissions") onSubmissions()
+  }
+  return (
+    <section className={`rb-payout-readiness is-${readiness.tone}`} aria-label="Payout readiness">
+      <header>
+        <div>
+          <span>{readiness.label}</span>
+          <strong>{readiness.title}</strong>
+          <p>{readiness.body}</p>
+        </div>
+        <div className="rb-payout-readiness__cards">
+          {readiness.cards.map((card) => (
+            <article className={`is-${card.tone}`} key={card.label}>
+              <span>{card.label}</span>
+              <strong>{card.value}</strong>
+              <p>{card.body}</p>
+            </article>
+          ))}
+        </div>
+      </header>
+
+      <div className="rb-payout-readiness__steps">
+        {readiness.steps.map((step) => (
+          <article className={`is-${step.tone}`} key={step.label}>
+            <div>
+              <span>{step.label}</span>
+              <strong>{step.value}</strong>
+              <p>{step.body}</p>
+            </div>
+            {step.action && step.actionLabel && (
+              <button type="button" onClick={() => runAction(step.action)}>{step.actionLabel}</button>
+            )}
+          </article>
+        ))}
       </div>
     </section>
   )
