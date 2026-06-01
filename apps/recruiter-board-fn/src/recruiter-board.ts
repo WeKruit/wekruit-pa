@@ -8,7 +8,7 @@
  *
  *   GET  paCollabJobsList          -> sanitized list of WeKruit collab jobs
  *                                     (supports ?limit, ?offset, ?since, ?status)
- *   POST paRecruiterInviteCodeCreate -> admin creates hashed recruiter invite code
+ *   POST paRecruiterInviteCodeCreate -> admin creates one-use recruiter invite code
  *   GET  paRecruiterMe             -> returns the Firebase Auth-bound recruiter profile
  *   POST paRecruiterAccess         -> validates invite code + binds Firebase Auth uid
  *   POST paRecruiterPreferencesUpdate -> recruiter updates notification settings
@@ -64,6 +64,8 @@ const RECRUITER_PUBLIC_BASE_URL = "https://candidate.wekruit.com"
 // ─────────────────────────────────────────────────────────────────────────────
 
 const HIRING_BOARD_ADMIN_EMAIL_DOMAIN = "@wekruit.com"
+const RECRUITER_PRIMARY_ROLE_SLOT_LIMIT = 5
+const RECRUITER_SINGLE_SUBMISSION_WEEKLY_LIMIT = 5
 
 /**
  * Verifies a Bearer Firebase ID token and returns true when the caller's
@@ -227,12 +229,17 @@ export interface RecruiterNotificationPreferences {
   newRolesEmail: boolean
 }
 
+export interface RecruiterWorkspacePreferences {
+  primaryRoleIds: string[]
+}
+
 export interface RecruiterProfilePublic {
   recruiterId: string
   firebaseUid: string
   name: string
   email: string
   notificationPreferences: RecruiterNotificationPreferences
+  workspacePreferences: RecruiterWorkspacePreferences
 }
 
 interface RecruiterAccessRegistrationInput {
@@ -361,6 +368,36 @@ function readNotificationPreferences(data: Record<string, unknown> | null | unde
   return { newRolesEmail: prefs.newRolesEmail !== false }
 }
 
+function readWorkspacePreferences(data: Record<string, unknown> | null | undefined): RecruiterWorkspacePreferences {
+  const raw = data?.workspacePreferences
+  const prefs = raw && typeof raw === "object" ? raw as Record<string, unknown> : {}
+  const roleIds = Array.isArray(prefs.primaryRoleIds)
+    ? prefs.primaryRoleIds
+      .filter((id): id is string => typeof id === "string")
+      .map((id) => id.trim())
+      .filter(Boolean)
+    : []
+  return { primaryRoleIds: [...new Set(roleIds)].slice(0, RECRUITER_PRIMARY_ROLE_SLOT_LIMIT) }
+}
+
+export function validateRecruiterWorkspacePreferences(input: unknown):
+  | { ok: true; value: RecruiterWorkspacePreferences }
+  | { ok: false; reason: string } {
+  const body = input && typeof input === "object" ? input as Record<string, unknown> : {}
+  if (!Array.isArray(body.primaryRoleIds)) return { ok: false, reason: "invalid_primary_role_ids" }
+  const primaryRoleIds: string[] = []
+  for (const raw of body.primaryRoleIds) {
+    if (typeof raw !== "string") return { ok: false, reason: "invalid_primary_role_ids" }
+    const id = raw.trim()
+    if (!id || id.length > 160) return { ok: false, reason: "invalid_primary_role_ids" }
+    if (!primaryRoleIds.includes(id)) primaryRoleIds.push(id)
+  }
+  if (primaryRoleIds.length > RECRUITER_PRIMARY_ROLE_SLOT_LIMIT) {
+    return { ok: false, reason: "too_many_primary_roles" }
+  }
+  return { ok: true, value: { primaryRoleIds } }
+}
+
 function inviteCodeExpired(data: Record<string, unknown>, nowMs: number): boolean {
   const expiresAtIso = coerceToIso(data.expiresAt)
   if (!expiresAtIso) return false
@@ -403,6 +440,7 @@ export async function registerRecruiterAccess(
     name: input.name,
     email: identity.email,
     notificationPreferences: { newRolesEmail: true },
+    workspacePreferences: { primaryRoleIds: [] },
   }
 
   const result = await db.runTransaction(async (tx) => {
@@ -417,7 +455,8 @@ export async function registerRecruiterAccess(
       if (existingEmail && existingEmail !== identity.email) throw new Error("email_mismatch")
       if (!recruiterInviteCodeMatchesBoundUser(existingData, input.inviteCode)) return null
       const notificationPreferences = readNotificationPreferences(existingData)
-      const recruiter = { ...recruiterBase, notificationPreferences }
+      const workspacePreferences = readWorkspacePreferences(existingData)
+      const recruiter = { ...recruiterBase, notificationPreferences, workspacePreferences }
       tx.set(userRef, {
         ...recruiter,
         status: "active",
@@ -441,7 +480,11 @@ export async function registerRecruiterAccess(
     }
     if (!inviteId || !inviteRef) return null
 
-    const recruiter = { ...recruiterBase, notificationPreferences: { newRolesEmail: true } }
+    const recruiter = {
+      ...recruiterBase,
+      notificationPreferences: { newRolesEmail: true },
+      workspacePreferences: { primaryRoleIds: [] },
+    }
 
     tx.set(userRef, {
       ...recruiter,
@@ -481,6 +524,7 @@ async function authenticateRecruiter(
     name: String(data.name ?? ""),
     email,
     notificationPreferences: readNotificationPreferences(data),
+    workspacePreferences: readWorkspacePreferences(data),
   }
 }
 
@@ -998,6 +1042,7 @@ interface RecruiterSubmissionListItem {
     notes?: string
   }
   score?: SubmissionScore
+  submissionMode?: "primary_role" | "single_submission" | "unclassified"
   status?: string
   recruiterFeedbackNote?: string | null
   recruiterFeedbackUpdatedAt?: unknown
@@ -1023,6 +1068,9 @@ function publicRecruiterSubmission(d: { id: string; data: () => Record<string, u
       ? data.candidate as RecruiterSubmissionListItem["candidate"]
       : undefined,
     score: typeof data.score === "object" && data.score !== null ? data.score as SubmissionScore : undefined,
+    submissionMode: data.submissionMode === "primary_role" || data.submissionMode === "single_submission"
+      ? data.submissionMode
+      : "unclassified",
     status: typeof data.status === "string" ? data.status : "submitted",
     recruiterFeedbackNote: typeof data.recruiterFeedbackNote === "string" ? data.recruiterFeedbackNote : null,
     recruiterFeedbackUpdatedAt: data.recruiterFeedbackUpdatedAt,
@@ -1371,23 +1419,40 @@ export const paRecruiterPreferencesUpdate = onRequest(
     const body = req.body && typeof req.body === "object" ? req.body as Record<string, unknown> : {}
     const prefsBody = body.notificationPreferences && typeof body.notificationPreferences === "object"
       ? body.notificationPreferences as Record<string, unknown>
-      : {}
-    if (typeof prefsBody.newRolesEmail !== "boolean") {
+      : null
+    const workspacePrefsBody = body.workspacePreferences && typeof body.workspacePreferences === "object"
+      ? body.workspacePreferences as Record<string, unknown>
+      : null
+    if (!prefsBody && !workspacePrefsBody) {
+      res.status(400).json({ ok: false, reason: "missing_preferences_update" })
+      return
+    }
+    if (prefsBody && typeof prefsBody.newRolesEmail !== "boolean") {
       res.status(400).json({ ok: false, reason: "invalid_new_roles_email" })
       return
     }
-    const notificationPreferences: RecruiterNotificationPreferences = {
-      newRolesEmail: prefsBody.newRolesEmail,
+    const workspacePreferencesResult = workspacePrefsBody
+      ? validateRecruiterWorkspacePreferences(workspacePrefsBody)
+      : { ok: true as const, value: recruiter.workspacePreferences }
+    if (!workspacePreferencesResult.ok) {
+      res.status(400).json({ ok: false, reason: workspacePreferencesResult.reason })
+      return
     }
-    await db.collection(RECRUITER_USERS_COLLECTION).doc(recruiter.recruiterId).set({
+    const notificationPreferences: RecruiterNotificationPreferences = prefsBody
+      ? { newRolesEmail: prefsBody.newRolesEmail as boolean }
+      : recruiter.notificationPreferences
+    const workspacePreferences = workspacePreferencesResult.value
+    const updateDoc: Record<string, unknown> = {
       notificationPreferences,
+      workspacePreferences,
       lastSeenAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
-    }, { merge: true })
+    }
+    await db.collection(RECRUITER_USERS_COLLECTION).doc(recruiter.recruiterId).set(updateDoc, { merge: true })
     res.set("Cache-Control", "private, max-age=0, no-store")
     res.status(200).json({
       ok: true,
-      recruiter: { ...recruiter, notificationPreferences },
+      recruiter: { ...recruiter, notificationPreferences, workspacePreferences },
     })
   },
 )
@@ -1416,6 +1481,40 @@ interface SubmissionPayload {
 const ALLOWED_SUBMISSION_SOURCES = new Set(["hiring-board", "api", "unknown"])
 /** Pattern for the `Idempotency-Key` header. Mirrors Stripe's rules. */
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9_.:-]{1,200}$/
+
+function recruiterPrimaryRoleMatches(
+  recruiter: RecruiterProfilePublic | null,
+  inboundJobId: string,
+  realJobId: string,
+): boolean {
+  if (!recruiter) return false
+  return recruiter.workspacePreferences.primaryRoleIds.includes(inboundJobId) ||
+    recruiter.workspacePreferences.primaryRoleIds.includes(realJobId)
+}
+
+async function recentSingleSubmissionCount(
+  db: Firestore,
+  recruiter: RecruiterProfilePublic,
+  weekStartMs: number,
+): Promise<number> {
+  const snap = await db
+    .collection(RECRUITER_SUBMISSIONS_COLLECTION)
+    .where("recruiterId", "==", recruiter.recruiterId)
+    .limit(200)
+    .get()
+  let count = 0
+  for (const doc of snap.docs) {
+    const data = doc.data()
+    const createdMs = timestampMs(data.createdAt)
+    if (!createdMs || createdMs < weekStartMs) continue
+    if (data.submissionMode === "primary_role") continue
+    const inboundJobId = typeof data.inboundJobId === "string" ? data.inboundJobId : ""
+    const realJobId = typeof data.jobId === "string" ? data.jobId : ""
+    if (recruiterPrimaryRoleMatches(recruiter, inboundJobId, realJobId)) continue
+    count += 1
+  }
+  return count
+}
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0
@@ -1839,6 +1938,17 @@ export const paRecruiterSubmission = onRequest(
       res.status(403).json({ ok: false, reason: "job_not_active_on_board" })
       return
     }
+    const submissionMode = recruiterPrimaryRoleMatches(recruiter, payload.jobId, realJobId)
+      ? "primary_role"
+      : "single_submission"
+    if (recruiter && submissionMode === "single_submission") {
+      const weekStartMs = Date.now() - 7 * 86_400_000
+      const recentSingles = await recentSingleSubmissionCount(db, recruiter, weekStartMs)
+      if (recentSingles >= RECRUITER_SINGLE_SUBMISSION_WEEKLY_LIMIT) {
+        res.status(403).json({ ok: false, reason: "single_submission_limit_reached" })
+        return
+      }
+    }
 
     const score = computeSubmissionScore(rb.checklist.groups, payload.checklist)
 
@@ -1867,6 +1977,7 @@ export const paRecruiterSubmission = onRequest(
       candidateConsent: payload.candidateConsent,
       checklist: payload.checklist,
       score,
+      submissionMode,
       // Caller-supplied audit surface. Tracks which UI (hiring-board, api,
       // unknown) produced the submission so downstream filtering works.
       callerSource,
@@ -1928,6 +2039,7 @@ export const paRecruiterSubmission = onRequest(
       callerSource,
       recruiterId: recruiter?.recruiterId ?? null,
       idempotent: false,
+      submissionMode,
     })
 
     // Best-effort Sheet sync. Failure does not block the 200 — the Firestore
@@ -1969,6 +2081,7 @@ export const paRecruiterSubmission = onRequest(
       ok: true,
       submissionId,
       score,
+      submissionMode,
     })
   },
 )

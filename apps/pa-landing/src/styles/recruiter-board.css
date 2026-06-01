@@ -1004,14 +1004,26 @@
 .rb-priority-table__head,
 .rb-priority-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1.35fr) 86px minmax(104px, 0.9fr) 88px 92px;
+  grid-template-columns: minmax(180px, 1.35fr) 86px minmax(104px, 0.9fr) 88px 92px 82px;
   gap: 10px;
   align-items: center;
 }
 
-.rb-priority-table__head span:last-child,
-.rb-priority-row .rb-row-button {
-  display: none;
+.rb-slot-meter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--cream-3);
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.rb-slot-meter strong {
+  color: var(--ink);
+  font-size: 12.5px;
 }
 
 .rb-priority-table__head {
@@ -1035,7 +1047,7 @@
 .rb-priority-row:last-child { border-bottom: 0; }
 .rb-priority-row:hover { background: var(--cream-3); }
 
-.rb-priority-row strong,
+.rb-priority-row a,
 .rb-priority-row em {
   display: block;
   min-width: 0;
@@ -1044,9 +1056,11 @@
   white-space: nowrap;
 }
 
-.rb-priority-row strong {
+.rb-priority-row a {
   color: var(--ink);
   font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
 }
 
 .rb-priority-row em {
@@ -1085,6 +1099,18 @@
   background: #fff;
   font-size: 12px;
   font-weight: 800;
+  cursor: pointer;
+}
+
+.rb-row-button.is-active {
+  border-color: var(--live-border);
+  background: var(--live-soft);
+  color: var(--live-2);
+}
+
+.rb-row-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .rb-panel__head {
@@ -1379,6 +1405,11 @@
   transform: translateY(-1px);
 }
 
+.rb-role-card.is-primary {
+  border-color: var(--live-border);
+  box-shadow: 0 0 0 2px rgba(83, 126, 66, 0.08);
+}
+
 .rb-role-card__code {
   align-self: flex-start;
   color: var(--live-2);
@@ -1415,6 +1446,11 @@
   line-height: 1.18;
 }
 
+.rb-role-card h3 a {
+  color: var(--ink);
+  text-decoration: none;
+}
+
 .rb-role-card p {
   margin: 0;
   color: var(--ink-3);
@@ -1443,13 +1479,38 @@
 
 .rb-role-card footer {
   margin-top: auto;
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
   gap: 10px;
+  align-items: center;
   padding-top: 12px;
   border-top: 1px solid var(--border);
   color: var(--ink-3);
   font-size: 12px;
+}
+
+.rb-role-card footer button {
+  justify-self: end;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 9px;
+}
+
+.rb-role-card.is-primary footer button {
+  border-color: var(--live-border);
+  background: var(--live-soft);
+  color: var(--live-2);
+}
+
+.rb-role-card footer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .rb-submission {
@@ -1904,6 +1965,11 @@
   font-size: 12px;
 }
 
+.rb-match-row__meta strong {
+  color: var(--ink);
+  font-size: 12px;
+}
+
 .rb-match-row__meta a {
   border-radius: 8px;
   background: var(--ink);
@@ -2260,7 +2326,8 @@
   .rb-feedback-line,
   .rb-role-cockpit,
   .rb-performance-grid,
-  .rb-match-row {
+  .rb-match-row,
+  .rb-role-card footer {
     grid-template-columns: 1fr;
   }
   .rb-performance-card--wide {
@@ -2268,8 +2335,10 @@
   }
   .rb-role-row__action,
   .rb-submission__side,
-  .rb-match-row__meta {
+  .rb-match-row__meta,
+  .rb-role-card footer button {
     align-items: flex-start;
     justify-items: start;
+    justify-self: start;
   }
 }

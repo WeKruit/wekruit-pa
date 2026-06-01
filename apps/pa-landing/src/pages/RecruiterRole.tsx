@@ -127,6 +127,13 @@ function sourcedCalibrationLabel(status?: string): string {
   }
 }
 
+function formatSubmissionFailure(reason?: string): string {
+  if (reason === "single_submission_limit_reached") {
+    return "This role is outside your primary slots and your weekly single-submission limit is used. Add the role as primary from the recruiter dashboard or wait for the rolling window to reset."
+  }
+  return reason ?? "submission_failed"
+}
+
 // Minimal Markdown → React renderer for jdBlocks.body. Supports `-` bullet
 // lists, blank-line paragraphs, and inline `**bold**` / `*em*` / `` `code` ``.
 function renderMarkdown(text: string): ReactNode[] {
@@ -402,7 +409,7 @@ export default function RecruiterRole() {
       saveFormState(job.jobId, withRecruiterDefaults(emptyForm(), session))
       window.scrollTo({ top: 0, behavior: "smooth" })
     } else {
-      setSubmitError(result.reason ?? "submission_failed")
+      setSubmitError(formatSubmissionFailure(result.reason))
     }
   }
 
@@ -467,6 +474,11 @@ export default function RecruiterRole() {
                 · Fit {submission.score.fitChecked}/{submission.score.fitTotal}{" "}
                 · Bonus {submission.score.bonusChecked}/{submission.score.bonusTotal}{" "}
                 · Anti {submission.score.antiChecked}/{submission.score.antiTotal}
+              </div>
+            )}
+            {submission.submissionMode && (
+              <div style={{ marginTop: 6, color: "#1a1a1a" }}>
+                Submission mode: {submission.submissionMode === "primary_role" ? "Primary role" : "Single submission"}
               </div>
             )}
             <div style={{ marginTop: 10, display: "flex", gap: 8 }}>

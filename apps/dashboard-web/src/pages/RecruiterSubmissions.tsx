@@ -161,6 +161,38 @@ function formatCodeExpiry(raw?: string | null): string {
   return Number.isNaN(ms) ? raw : new Date(ms).toLocaleString()
 }
 
+const KNOWN_RECRUITER_INVITE_CODES_KEY = "wekruit.admin.recruiterInviteCodes.v1"
+
+function isFullRecruiterInviteCode(raw?: string | null): raw is string {
+  const trimmed = raw?.trim()
+  return Boolean(trimmed && /^WK-[A-Z0-9-]{4,40}$/.test(trimmed))
+}
+
+function readKnownRecruiterInviteCodes(): Record<string, string> {
+  if (typeof window === "undefined") return {}
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(KNOWN_RECRUITER_INVITE_CODES_KEY) ?? "{}") as Record<string, unknown>
+    const codes: Record<string, string> = {}
+    for (const [id, code] of Object.entries(parsed)) {
+      if (typeof code === "string" && isFullRecruiterInviteCode(code)) {
+        codes[id] = code.trim().toUpperCase()
+      }
+    }
+    return codes
+  } catch {
+    return {}
+  }
+}
+
+function writeKnownRecruiterInviteCodes(codes: Record<string, string>): void {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(KNOWN_RECRUITER_INVITE_CODES_KEY, JSON.stringify(codes))
+  } catch {
+    // Firestore remains source of truth; this cache only preserves same-browser visibility.
+  }
+}
+
 type RecruiterAdminSection = "codes" | "sourced" | "submissions"
 
 function codeStatus(code: RecruiterInviteCodeDoc): { label: string; tone: Parameters<typeof Badge>[0]["tone"] } {
@@ -541,6 +573,7 @@ function RecruiterOpsPanel() {
   const [label, setLabel] = useState("")
   const [expiresAtLocal, setExpiresAtLocal] = useState(() => defaultRecruiterCodeExpiryLocal())
   const [generated, setGenerated] = useState<CreateRecruiterInviteCodeResult | null>(null)
+  const [knownInviteCodes, setKnownInviteCodes] = useState<Record<string, string>>(() => readKnownRecruiterInviteCodes())
   const [creating, setCreating] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -579,6 +612,11 @@ function RecruiterOpsPanel() {
         expiresAt,
       })
       setGenerated(result)
+      setKnownInviteCodes((prev) => {
+        const next = { ...prev, [result.inviteCodeId]: result.inviteCode }
+        writeKnownRecruiterInviteCodes(next)
+        return next
+      })
       setLabel("")
       setExpiresAtLocal(defaultRecruiterCodeExpiryLocal())
       await reload()
@@ -659,7 +697,7 @@ function RecruiterOpsPanel() {
             </div>
           )}
         </form>
-        <OpsSection title="Access codes" subtitle="Admins can view and copy one-use recruiter codes.">
+        <OpsSection title="Access codes" subtitle="Admins can view and copy one-use recruiter codes. Legacy rows without a saved raw code must be reissued.">
           {sortedCodes.length ? (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -676,22 +714,36 @@ function RecruiterOpsPanel() {
                 <tbody>
                   {sortedCodes.slice(0, 8).map((code) => {
                     const status = codeStatus(code)
-                    const visibleCode = code.inviteCode ?? code.codePreview ?? code.id.slice(0, 10)
+                    const rawInviteCode = isFullRecruiterInviteCode(code.inviteCode)
+                      ? code.inviteCode
+                      : knownInviteCodes[code.id]
+                    const canCopy = isFullRecruiterInviteCode(rawInviteCode)
+                    const visibleCode = canCopy ? rawInviteCode : code.codePreview ?? code.id.slice(0, 10)
+                    const rawMissing = !canCopy && status.label === "usable"
                     return (
                       <tr key={code.id} style={{ borderBottom: "1px solid #f1f1f1" }}>
-                        <td style={{ padding: "9px 6px", fontFamily: "monospace", fontWeight: 700 }}>{visibleCode}</td>
+                        <td style={{ padding: "9px 6px", fontFamily: "monospace", fontWeight: 700, whiteSpace: "nowrap" }}>
+                          <div>{visibleCode}</div>
+                          {rawMissing && (
+                            <div style={{ marginTop: 3, fontFamily: "inherit", fontWeight: 500, color: "#9a4b12", fontSize: 11 }}>
+                              raw code unavailable
+                            </div>
+                          )}
+                        </td>
                         <td style={{ padding: "9px 6px" }}>
-                          {code.inviteCode ? (
+                          {canCopy ? (
                             <button
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation()
-                                void navigator.clipboard?.writeText(code.inviteCode ?? "")
+                                void navigator.clipboard?.writeText(rawInviteCode)
                               }}
                               style={{ padding: "5px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff", fontSize: 12 }}
                             >
                               Copy
                             </button>
+                          ) : rawMissing ? (
+                            <span style={{ color: "#9a4b12" }}>Reissue</span>
                           ) : (
                             <span style={{ color: "#999" }}>—</span>
                           )}

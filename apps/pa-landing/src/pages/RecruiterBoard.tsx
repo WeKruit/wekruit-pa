@@ -54,6 +54,9 @@ const ROLE_FILTERS = [
 
 type RoleFilter = typeof ROLE_FILTERS[number]["id"]
 
+const PRIMARY_ROLE_SLOT_LIMIT = 5
+const SINGLE_SUBMISSION_WEEKLY_LIMIT = 5
+
 const SOURCE_STAGES: Array<{ id: RecruiterSourcedCandidateStage; label: string; tone: "live" | "info" | "success" | "warn" | "mute" }> = [
   { id: "sourced", label: "Sourced", tone: "mute" },
   { id: "contacted", label: "Contacted", tone: "info" },
@@ -138,6 +141,14 @@ function submissionScore(s: RecruiterSubmissionItem): string {
 
 function roleKey(job: CollabJob): string {
   return job.jobId
+}
+
+function recruiterPrimaryRoleIds(session: RecruiterSession | null): string[] {
+  return session?.recruiter.workspacePreferences?.primaryRoleIds ?? []
+}
+
+function isPrimaryRole(job: CollabJob, primaryRoleIds: string[]): boolean {
+  return primaryRoleIds.includes(roleKey(job))
 }
 
 function roleUpdatedMs(job: CollabJob): number {
@@ -259,6 +270,7 @@ export default function RecruiterBoard() {
   const [sourcedCandidates, setSourcedCandidates] = useState<RecruiterSourcedCandidateItem[]>([])
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
   const [statusLoaded, setStatusLoaded] = useState(false)
+  const [primaryRoleSavingId, setPrimaryRoleSavingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [accessError, setAccessError] = useState<string | null>(null)
   const [submissionError, setSubmissionError] = useState<string | null>(null)
@@ -379,6 +391,31 @@ export default function RecruiterBoard() {
   }, [session?.recruiterId])
 
   const setTab = (tab: RecruiterTab) => setSearchParams(tab === "overview" ? {} : { tab })
+  const primaryRoleIds = recruiterPrimaryRoleIds(session)
+  const updatePrimaryRoleSlots = async (jobId: string, makePrimary: boolean) => {
+    if (!session) return
+    const current = recruiterPrimaryRoleIds(session)
+    const next = makePrimary
+      ? [...current.filter((id) => id !== jobId), jobId]
+      : current.filter((id) => id !== jobId)
+    if (next.length > PRIMARY_ROLE_SLOT_LIMIT) {
+      setSubmissionError(`Primary roles are limited to ${PRIMARY_ROLE_SLOT_LIMIT} active slots.`)
+      return
+    }
+    setPrimaryRoleSavingId(jobId)
+    setSubmissionError(null)
+    try {
+      const updated = await updateRecruiterPreferences({
+        notificationPreferences: session.recruiter.notificationPreferences ?? { newRolesEmail: true },
+        workspacePreferences: { primaryRoleIds: next },
+      })
+      setSession(updated)
+    } catch (e) {
+      setSubmissionError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPrimaryRoleSavingId(null)
+    }
+  }
 
   if (!authReady) {
     return <div className="rb-access"><div className="rb-state">Loading recruiter workspace...</div></div>
@@ -467,15 +504,28 @@ export default function RecruiterBoard() {
             jobs={openJobs}
             submissions={recentSubmissions}
             sourcedCandidates={sourcedCandidates}
+            primaryRoleIds={primaryRoleIds}
             onRoles={() => setTab("roles")}
             onMatches={() => setTab("matches")}
             onCandidates={() => setTab("candidates")}
             onSubmissions={() => setTab("submissions")}
+            onPrimaryRoleToggle={(jobId, makePrimary) => void updatePrimaryRoleSlots(jobId, makePrimary)}
+            primaryRoleSavingId={primaryRoleSavingId}
           />
         )}
-        {activeTab === "roles" && <RolesTab jobs={openJobs} submissions={submissions} sourcedCandidates={sourcedCandidates} loading={!jobs && !error} />}
+        {activeTab === "roles" && (
+          <RolesTab
+            jobs={openJobs}
+            submissions={submissions}
+            sourcedCandidates={sourcedCandidates}
+            loading={!jobs && !error}
+            primaryRoleIds={primaryRoleIds}
+            primaryRoleSavingId={primaryRoleSavingId}
+            onPrimaryRoleToggle={(jobId, makePrimary) => void updatePrimaryRoleSlots(jobId, makePrimary)}
+          />
+        )}
         {activeTab === "matches" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "matches" && statusLoaded && <MatchboardTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} />}
+        {activeTab === "matches" && statusLoaded && <MatchboardTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} primaryRoleIds={primaryRoleIds} />}
         {activeTab === "candidates" && (
           !statusLoaded ? <RecruiterStatusLoading /> :
           <CandidatesTab
@@ -487,7 +537,7 @@ export default function RecruiterBoard() {
         {activeTab === "submissions" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "submissions" && statusLoaded && <SubmissionsTab submissions={submissions} />}
         {activeTab === "performance" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "performance" && statusLoaded && <PerformanceTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} />}
+        {activeTab === "performance" && statusLoaded && <PerformanceTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} primaryRoleIds={primaryRoleIds} />}
         {activeTab === "settings" && <SettingsTab session={session} onSessionChange={setSession} />}
       </main>
     </div>
@@ -616,21 +666,31 @@ function OverviewTab({
   jobs,
   submissions,
   sourcedCandidates,
+  primaryRoleIds,
   onRoles,
   onMatches,
   onCandidates,
   onSubmissions,
+  onPrimaryRoleToggle,
+  primaryRoleSavingId,
 }: {
   stats: Array<{ label: string; value: string; meta: string; signal: string; tone: string }>
   jobs: CollabJob[]
   submissions: RecruiterSubmissionItem[]
   sourcedCandidates: RecruiterSourcedCandidateItem[]
+  primaryRoleIds: string[]
   onRoles: () => void
   onMatches: () => void
   onCandidates: () => void
   onSubmissions: () => void
+  onPrimaryRoleToggle: (jobId: string, makePrimary: boolean) => void
+  primaryRoleSavingId: string | null
 }) {
-  const priorityJobs = jobs.slice(0, 7)
+  const primaryJobs = jobs.filter((job) => isPrimaryRole(job, primaryRoleIds))
+  const suggestedJobs = jobs
+    .filter((job) => !isPrimaryRole(job, primaryRoleIds))
+    .slice(0, Math.max(0, PRIMARY_ROLE_SLOT_LIMIT - primaryJobs.length))
+  const priorityJobs = [...primaryJobs, ...suggestedJobs].slice(0, PRIMARY_ROLE_SLOT_LIMIT)
   const pipeline = buildCandidatePipeline(sourcedCandidates, submissions)
   const feedback = submissions.filter((s) => Boolean(s.recruiterFeedbackNote)).slice(0, 3)
   const workItems = buildRecruiterWorkQueue(jobs, sourcedCandidates, submissions)
@@ -648,9 +708,13 @@ function OverviewTab({
       <div className="rb-workbench-grid">
         <section className="rb-panel rb-priority-panel">
           <header className="rb-panel__head">
-            <div><h2>Priority roles</h2><p>Open briefs ranked by WeKruit collab readiness.</p></div>
+            <div><h2>Primary role slots</h2><p>Focus up to {PRIMARY_ROLE_SLOT_LIMIT} roles; non-primary submissions use weekly single-submit credits.</p></div>
             <button type="button" className="rb-panel__link" onClick={onRoles}>All roles</button>
           </header>
+          <div className="rb-slot-meter">
+            <strong>{primaryRoleIds.length}/{PRIMARY_ROLE_SLOT_LIMIT} primary slots</strong>
+            <span>{SINGLE_SUBMISSION_WEEKLY_LIMIT} single submissions per rolling week outside primary roles.</span>
+          </div>
           <div className="rb-priority-table">
             <div className="rb-priority-table__head">
               <span>Role</span>
@@ -658,7 +722,7 @@ function OverviewTab({
               <span>Location</span>
               <span>Checks</span>
               <span>Signal</span>
-              <span>Action</span>
+              <span>Slot</span>
             </div>
             {priorityJobs.map((job) => (
               <PriorityRoleRow
@@ -666,6 +730,9 @@ function OverviewTab({
                 job={job}
                 sourcedCount={sourcedCandidates.filter((c) => c.inboundJobId === roleKey(job) || c.jobId === roleKey(job)).length}
                 submissionCount={submissions.filter((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job)).length}
+                primary={isPrimaryRole(job, primaryRoleIds)}
+                disabled={primaryRoleSavingId === roleKey(job) || (!isPrimaryRole(job, primaryRoleIds) && primaryRoleIds.length >= PRIMARY_ROLE_SLOT_LIMIT)}
+                onPrimaryRoleToggle={onPrimaryRoleToggle}
               />
             ))}
             {jobs.length === 0 && <p className="rb-empty">No active collab roles right now.</p>}
@@ -897,25 +964,38 @@ function PriorityRoleRow({
   job,
   sourcedCount,
   submissionCount,
+  primary,
+  disabled,
+  onPrimaryRoleToggle,
 }: {
   job: CollabJob
   sourcedCount: number
   submissionCount: number
+  primary: boolean
+  disabled: boolean
+  onPrimaryRoleToggle: (jobId: string, makePrimary: boolean) => void
 }) {
   const { hard, fit } = roleChecklistCounts(job)
   const signal = roleFitSignal(job, sourcedCount, submissionCount)
   return (
-    <Link to={`/recruiters/job/${job.jobId}`} className="rb-priority-row">
+    <article className="rb-priority-row">
       <span>
-        <strong>{job.title}</strong>
+        <Link to={`/recruiters/job/${job.jobId}`}>{job.title}</Link>
         <em>{job.recruiterBoard.label.company}</em>
       </span>
       <span>{roleReward(job)}</span>
       <span>{job.recruiterBoard.label.location}</span>
       <span>{hard} hard - {fit} fit</span>
       <span className={`rb-fit-signal is-${signal.tone}`}>{signal.label} {signal.percent}%</span>
-      <span className="rb-row-button">Open brief</span>
-    </Link>
+      <button
+        type="button"
+        className={`rb-row-button ${primary ? "is-active" : ""}`}
+        disabled={disabled}
+        onClick={() => onPrimaryRoleToggle(roleKey(job), !primary)}
+      >
+        {primary ? "Primary" : "Add slot"}
+      </button>
+    </article>
   )
 }
 
@@ -957,11 +1037,17 @@ function RolesTab({
   submissions,
   sourcedCandidates,
   loading,
+  primaryRoleIds,
+  primaryRoleSavingId,
+  onPrimaryRoleToggle,
 }: {
   jobs: CollabJob[]
   submissions: RecruiterSubmissionItem[]
   sourcedCandidates: RecruiterSourcedCandidateItem[]
   loading: boolean
+  primaryRoleIds: string[]
+  primaryRoleSavingId: string | null
+  onPrimaryRoleToggle: (jobId: string, makePrimary: boolean) => void
 }) {
   const [q, setQ] = useState("")
   const [filter, setFilter] = useState<RoleFilter>("all")
@@ -1014,6 +1100,10 @@ function RolesTab({
               job={job}
               sourcedCount={sourcedCandidates.filter((c) => c.inboundJobId === roleKey(job) || c.jobId === roleKey(job)).length}
               submissionCount={submissions.filter((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job)).length}
+              primary={isPrimaryRole(job, primaryRoleIds)}
+              primarySlotsFull={primaryRoleIds.length >= PRIMARY_ROLE_SLOT_LIMIT}
+              disabled={primaryRoleSavingId === roleKey(job)}
+              onPrimaryRoleToggle={onPrimaryRoleToggle}
             />
           ))}
           {filtered.length === 0 && <p className="rb-empty">No roles match that search.</p>}
@@ -1105,10 +1195,12 @@ function MatchboardTab({
   jobs,
   candidates,
   submissions,
+  primaryRoleIds,
 }: {
   jobs: CollabJob[]
   candidates: RecruiterSourcedCandidateItem[]
   submissions: RecruiterSubmissionItem[]
+  primaryRoleIds: string[]
 }) {
   const activeCandidates = useMemo(
     () => sortSourcedCandidates(candidates.filter((candidate) => candidate.stage !== "archived")),
@@ -1172,7 +1264,14 @@ function MatchboardTab({
               </section>
             )}
             <div className="rb-match-list">
-              {matches.map((match) => <CandidateRoleMatchRow key={match.job.jobId} match={match} candidate={selectedCandidate} />)}
+              {matches.map((match) => (
+                <CandidateRoleMatchRow
+                  key={match.job.jobId}
+                  match={match}
+                  candidate={selectedCandidate}
+                  primary={isPrimaryRole(match.job, primaryRoleIds)}
+                />
+              ))}
             </div>
           </div>
         </div>
@@ -1184,9 +1283,11 @@ function MatchboardTab({
 function CandidateRoleMatchRow({
   match,
   candidate,
+  primary,
 }: {
   match: CandidateRoleMatch
   candidate?: RecruiterSourcedCandidateItem
+  primary: boolean
 }) {
   return (
     <article className="rb-match-row">
@@ -1202,6 +1303,7 @@ function CandidateRoleMatchRow({
         </div>
       </div>
       <div className="rb-match-row__meta">
+        <strong>{primary ? "Primary role" : "Single submission"}</strong>
         <span>{match.sourcedCount} sourced</span>
         <span>{match.submissionCount} submitted</span>
         <Link to={`/recruiters/job/${match.job.jobId}${candidate ? `?candidateId=${encodeURIComponent(candidate.id)}` : ""}`}>
@@ -1450,16 +1552,20 @@ function PerformanceTab({
   jobs,
   candidates,
   submissions,
+  primaryRoleIds,
 }: {
   jobs: CollabJob[]
   candidates: RecruiterSourcedCandidateItem[]
   submissions: RecruiterSubmissionItem[]
+  primaryRoleIds: string[]
 }) {
   const feedbackRows = submissions.filter((s) => Boolean(s.recruiterFeedbackNote))
   const advanced = submissions.filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? "")).length
   const pending = submissions.filter((s) => ["submitted", "new", "reviewing"].includes(s.status ?? "submitted")).length
   const ready = candidates.filter((c) => c.stage === "ready").length
   const sourceToSubmit = candidates.length ? Math.round((submissions.length / candidates.length) * 100) : 0
+  const singleSubmissions = submissions.filter((submission) => submission.submissionMode === "single_submission").length
+  const primarySubmissions = submissions.filter((submission) => submission.submissionMode === "primary_role").length
   const metrics = [
     { label: "Submitted", value: String(submissions.length), meta: "formal candidates", tone: "live" },
     { label: "Pending review", value: String(pending), meta: "awaiting feedback", tone: "warn" },
@@ -1524,9 +1630,10 @@ function PerformanceTab({
         </section>
         <section className="rb-performance-card">
           <h3>Role coverage</h3>
-          <p>{jobs.length} open role{jobs.length === 1 ? "" : "s"} connected to WeKruit collab `pa-jobs`.</p>
-          <p>{jobs.filter(isNewRole).length} opened or updated this week.</p>
-          <p>{jobs.filter((job) => !submissions.some((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job))).length} have no submissions from this account yet.</p>
+          <p>{primaryRoleIds.length}/{PRIMARY_ROLE_SLOT_LIMIT} primary role slots are active.</p>
+          <p>{primarySubmissions} submissions came from primary roles.</p>
+          <p>{singleSubmissions}/{SINGLE_SUBMISSION_WEEKLY_LIMIT} single submissions used in the tracked window.</p>
+          <p>{jobs.filter((job) => !submissions.some((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job))).length} open roles have no submissions from this account yet.</p>
         </section>
       </div>
     </section>
@@ -1547,7 +1654,10 @@ function SettingsTab({
     setSaving(true)
     setErr(null)
     try {
-      const updated = await updateRecruiterPreferences({ newRolesEmail: next })
+      const updated = await updateRecruiterPreferences({
+        notificationPreferences: { newRolesEmail: next },
+        workspacePreferences: session.recruiter.workspacePreferences ?? { primaryRoleIds: [] },
+      })
       onSessionChange(updated)
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
@@ -1564,6 +1674,7 @@ function SettingsTab({
         <div><dt>Name</dt><dd>{session.recruiter.name}</dd></div>
         <div><dt>Email</dt><dd>{session.recruiter.email}</dd></div>
         <div><dt>Access model</dt><dd>Firebase Auth + recruiter access code</dd></div>
+        <div><dt>Primary roles</dt><dd>{(session.recruiter.workspacePreferences?.primaryRoleIds.length ?? 0)}/{PRIMARY_ROLE_SLOT_LIMIT} slots</dd></div>
       </dl>
       <label className="rb-settings-toggle">
         <span>
@@ -1589,33 +1700,49 @@ function RoleCard({
   job,
   sourcedCount = 0,
   submissionCount = 0,
+  primary,
+  primarySlotsFull,
+  disabled,
+  onPrimaryRoleToggle,
 }: {
   job: CollabJob
   sourcedCount?: number
   submissionCount?: number
+  primary: boolean
+  primarySlotsFull: boolean
+  disabled: boolean
+  onPrimaryRoleToggle: (jobId: string, makePrimary: boolean) => void
 }) {
   const { hard, fit } = roleChecklistCounts(job)
   const signal = roleFitSignal(job, sourcedCount, submissionCount)
+  const slotDisabled = disabled || (!primary && primarySlotsFull)
   return (
-    <Link to={`/recruiters/job/${job.jobId}`} className="rb-role-card">
+    <article className={`rb-role-card ${primary ? "is-primary" : ""}`}>
       <div className="rb-role-card__topline">
         <span className="rb-role-card__code">Co. {job.recruiterBoard.label.companyCode}</span>
         {isNewRole(job) && <span className="rb-role-card__new">New</span>}
       </div>
-      <h3>{job.title}</h3>
+      <h3><Link to={`/recruiters/job/${job.jobId}`}>{job.title}</Link></h3>
       <p>{job.recruiterBoard.label.company} - {job.recruiterBoard.label.location}</p>
       <div className="rb-role-card__pills">
         {job.recruiterBoard.label.pills.map((p, i) => <span key={i} className={`rb-pill ${p.tone ?? ""}`}>{p.text}</span>)}
       </div>
       <div className="rb-role-card__signal">
         <span className={`rb-fit-signal is-${signal.tone}`}>{signal.label} {signal.percent}%</span>
-        <em>{sourcedCount} sourced - {submissionCount} submitted</em>
+        <em>{sourcedCount} sourced - {submissionCount} submitted - {primary ? "primary slot" : "single-submit role"}</em>
       </div>
       <footer>
         <span>{hard} hard checks</span>
         <span>{fit} fit checks</span>
+        <button
+          type="button"
+          disabled={slotDisabled}
+          onClick={() => onPrimaryRoleToggle(roleKey(job), !primary)}
+        >
+          {primary ? "Primary" : primarySlotsFull ? "Slots full" : "Add primary"}
+        </button>
       </footer>
-    </Link>
+    </article>
   )
 }
 

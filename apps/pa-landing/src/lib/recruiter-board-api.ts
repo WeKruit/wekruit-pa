@@ -70,6 +70,7 @@ export interface SubmissionResponse {
     antiChecked: number; antiTotal: number
   }
   reason?: string
+  submissionMode?: "primary_role" | "single_submission"
 }
 
 export interface RecruiterProfile {
@@ -79,6 +80,9 @@ export interface RecruiterProfile {
   email: string
   notificationPreferences?: {
     newRolesEmail: boolean
+  }
+  workspacePreferences?: {
+    primaryRoleIds: string[]
   }
 }
 
@@ -102,6 +106,7 @@ export interface RecruiterSubmissionItem {
     notes?: string
   }
   score?: SubmissionResponse["score"]
+  submissionMode?: "primary_role" | "single_submission" | "unclassified"
   status?: string
   recruiterFeedbackNote?: string | null
   createdAt?: { seconds?: number } | string | null
@@ -261,7 +266,10 @@ export async function saveRecruiterSourcedCandidate(
 }
 
 export async function updateRecruiterPreferences(
-  notificationPreferences: { newRolesEmail: boolean },
+  input: {
+    notificationPreferences?: { newRolesEmail: boolean }
+    workspacePreferences?: { primaryRoleIds: string[] }
+  },
 ): Promise<RecruiterSession> {
   const res = await fetch(RECRUITER_PREFERENCES_URL, {
     method: "POST",
@@ -269,7 +277,7 @@ export async function updateRecruiterPreferences(
       "Content-Type": "application/json",
       ...(await recruiterAuthHeaders()),
     },
-    body: JSON.stringify({ notificationPreferences }),
+    body: JSON.stringify(input),
   })
   const body = (await res.json().catch(() => ({}))) as {
     ok?: boolean

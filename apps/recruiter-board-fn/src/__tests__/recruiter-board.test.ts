@@ -32,6 +32,7 @@ import {
   shouldNotifyRecruitersForRoleRelease,
   validateInviteCodeCreate,
   validateRecruiterSourcedCandidateInput,
+  validateRecruiterWorkspacePreferences,
   type RecruiterBoardChecklistGroup,
   type RecruiterBoardPayload,
 } from "../recruiter-board.js"
@@ -153,6 +154,27 @@ describe("recruiter access helpers", () => {
     assert.equal(recruiterInviteCodeMatchesBoundUser({ inviteCodeId }, normalizedCode), true)
     assert.equal(recruiterInviteCodeMatchesBoundUser({ inviteCodeId }, "WK-OTHER-CODE"), false)
     assert.equal(recruiterInviteCodeMatchesBoundUser({}, normalizedCode), false)
+  })
+
+  it("validates primary role slots for recruiter workspaces", () => {
+    assert.deepEqual(validateRecruiterWorkspacePreferences({
+      primaryRoleIds: [" role-1 ", "role-2", "role-1"],
+    }), {
+      ok: true,
+      value: { primaryRoleIds: ["role-1", "role-2"] },
+    })
+    assert.deepEqual(validateRecruiterWorkspacePreferences({
+      primaryRoleIds: ["a", "b", "c", "d", "e", "f"],
+    }), {
+      ok: false,
+      reason: "too_many_primary_roles",
+    })
+    assert.deepEqual(validateRecruiterWorkspacePreferences({
+      primaryRoleIds: ["role-1", 123],
+    }), {
+      ok: false,
+      reason: "invalid_primary_role_ids",
+    })
   })
 
   it("binds recruiter API identity to Firebase Auth uid and normalized email", async () => {
