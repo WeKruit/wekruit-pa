@@ -5417,6 +5417,176 @@
   font-weight: 400;
 }
 
+.rb-learning-center {
+  display: grid;
+  gap: 14px;
+  margin: 0 20px 18px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ink-3);
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px;
+}
+
+.rb-learning-center.is-live { border-left-color: var(--live); background: var(--live-soft); }
+.rb-learning-center.is-info { border-left-color: var(--info); }
+.rb-learning-center.is-success { border-left-color: var(--success); background: var(--success-bg); }
+.rb-learning-center.is-warn { border-left-color: var(--warning); background: #fffaf1; }
+.rb-learning-center.is-mute { border-left-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-learning-center > header {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.72fr) minmax(0, 1.28fr);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.rb-learning-center > header > div,
+.rb-learning-center > header article,
+.rb-learning-center__rules,
+.rb-learning-center__evidence,
+.rb-learning-center__rules article,
+.rb-learning-center__evidence article {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.rb-learning-center > header > div {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+}
+
+.rb-learning-center > header aside {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-learning-center > header article,
+.rb-learning-center__rules article,
+.rb-learning-center__evidence article {
+  display: grid;
+  gap: 7px;
+  border-top: 3px solid var(--ink-3);
+  padding: 12px;
+}
+
+.rb-learning-center > header article.is-live,
+.rb-learning-center__rules article.is-live,
+.rb-learning-center__evidence article.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-learning-center > header article.is-info,
+.rb-learning-center__rules article.is-info,
+.rb-learning-center__evidence article.is-info { border-top-color: var(--info); }
+.rb-learning-center > header article.is-success,
+.rb-learning-center__rules article.is-success,
+.rb-learning-center__evidence article.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-learning-center > header article.is-warn,
+.rb-learning-center__rules article.is-warn,
+.rb-learning-center__evidence article.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-learning-center > header article.is-mute,
+.rb-learning-center__rules article.is-mute,
+.rb-learning-center__evidence article.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-learning-center span,
+.rb-learning-center__rules > div p,
+.rb-learning-center__evidence > div p,
+.rb-learning-center__rules article span,
+.rb-learning-center__evidence article span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-learning-center > header > div strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 1.05;
+}
+
+.rb-learning-center > header article strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-learning-center p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-learning-center__body {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.95fr) minmax(0, 1.05fr);
+  gap: 12px;
+}
+
+.rb-learning-center__rules,
+.rb-learning-center__evidence {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 12px;
+}
+
+.rb-learning-center__rules > div,
+.rb-learning-center__evidence > div {
+  display: grid;
+  gap: 4px;
+}
+
+.rb-learning-center__rules h3,
+.rb-learning-center__evidence h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.rb-learning-center__rules article strong,
+.rb-learning-center__evidence article strong {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.24;
+}
+
+.rb-learning-center__rules footer,
+.rb-learning-center__evidence footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rb-learning-center__rules footer em,
+.rb-learning-center__evidence footer em {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.rb-learning-center__rules footer a,
+.rb-learning-center__evidence footer a {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 10px;
+  text-decoration: none;
+}
+
 .rb-earnings-hero {
   display: grid;
   grid-template-columns: 1.15fr repeat(3, minmax(0, 1fr));
@@ -7235,10 +7405,13 @@
     grid-template-columns: 1fr;
   }
   .rb-performance-targets,
+  .rb-learning-center > header aside,
   .rb-trust-center__cards,
   .rb-trust-center__gates {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .rb-learning-center > header,
+  .rb-learning-center__body,
   .rb-trust-center > header {
     grid-template-columns: 1fr;
   }
@@ -7380,6 +7553,8 @@
   .rb-inbox-item,
   .rb-operating-grid,
   .rb-performance-targets,
+  .rb-learning-center > header aside,
+  .rb-learning-center__body,
   .rb-trust-center__cards,
   .rb-trust-center__gates,
   .rb-earnings-hero,

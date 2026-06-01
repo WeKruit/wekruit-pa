@@ -42,6 +42,7 @@ import {
   type RecruiterRoleApplicationInput,
   type RecruiterRoleApplicationItem,
   type RecruiterRoleFeedbackItem,
+  type RecruiterRoleFeedbackReason,
   type RecruiterRoleIntelligenceItem,
   type RecruiterRoleQuestionItem,
   type RecruiterSession,
@@ -145,6 +146,18 @@ const SUBMISSION_FEEDBACK_REASON_LABELS: Record<string, string> = {
   comp_mismatch: "Comp mismatch",
   location_mismatch: "Location mismatch",
   seniority_mismatch: "Seniority mismatch",
+}
+
+const ROLE_FEEDBACK_REASON_LABELS: Record<RecruiterRoleFeedbackReason, string> = {
+  low_comp: "Low compensation",
+  location_mismatch: "Location mismatch",
+  unclear_requirements: "Unclear requirements",
+  small_candidate_pool: "Small candidate pool",
+  hiring_team_slow: "Hiring team slow",
+  role_too_broad: "Role too broad",
+  candidate_interest_low: "Candidate interest low",
+  too_many_recruiters: "Too many recruiters",
+  other: "Other",
 }
 
 const CALIBRATION_LABELS: Record<string, { label: string; tone: "live" | "info" | "success" | "warn" | "mute" }> = {
@@ -2198,6 +2211,247 @@ type RecruiterTrustCenter = {
   nextActionBody: string
   cards: RecruiterTrustGate[]
   gates: RecruiterTrustGate[]
+}
+
+type RecruiterLearningCard = {
+  label: string
+  value: string
+  body: string
+  tone: OperatingTone
+}
+
+type RecruiterLearningRule = {
+  label: string
+  title: string
+  body: string
+  evidence: string
+  tone: OperatingTone
+  href?: string
+}
+
+type RecruiterLearningCenter = {
+  statusLabel: string
+  statusTitle: string
+  statusBody: string
+  statusTone: OperatingTone
+  cards: RecruiterLearningCard[]
+  rules: RecruiterLearningRule[]
+  evidence: RecruiterLearningRule[]
+}
+
+function countByLabel(labels: string[]): Array<{ label: string; count: number }> {
+  const counts = new Map<string, number>()
+  for (const label of labels) {
+    counts.set(label, (counts.get(label) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+}
+
+function roleFeedbackReasonLabel(reason: RecruiterRoleFeedbackReason): string {
+  return ROLE_FEEDBACK_REASON_LABELS[reason] ?? reason.replace(/_/g, " ")
+}
+
+function topCountLabel(rows: Array<{ label: string; count: number }>, fallback: string): string {
+  const first = rows[0]
+  return first ? `${first.label} x${first.count}` : fallback
+}
+
+function buildRecruiterLearningCenter(
+  jobs: CollabJob[],
+  candidates: RecruiterSourcedCandidateItem[],
+  submissions: RecruiterSubmissionItem[],
+  roleFeedback: RecruiterRoleFeedbackItem[],
+): RecruiterLearningCenter {
+  const jobsById = new Map(jobs.map((job) => [roleKey(job), job]))
+  const feedbackSubmissions = submissions.filter(submissionHasStructuredFeedback)
+  const lowRatedSubmissions = feedbackSubmissions.filter((submission) => {
+    const rating = submissionFeedbackRating(submission)
+    return rating !== null && rating <= 2
+  })
+  const positiveSubmissions = feedbackSubmissions.filter((submission) => {
+    const rating = submissionFeedbackRating(submission)
+    return rating !== null && rating >= 3
+  })
+  const closedWithFeedback = feedbackSubmissions.filter((submission) => CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? ""))
+  const frictionFeedback = roleFeedback.filter((feedback) => feedback.difficulty === "hard" || feedback.difficulty === "blocked")
+  const calibratedCandidates = candidates.filter((candidate) =>
+    candidate.calibrationStatus === "bad_fit" ||
+    candidate.calibrationStatus === "calibration_requested" ||
+    Boolean(candidate.calibrationNote),
+  )
+  const readyCandidates = candidates.filter((candidate) => candidate.stage === "ready")
+  const reasonCounts = countByLabel(feedbackSubmissions.flatMap(submissionFeedbackReasonLabels))
+  const frictionReasonCounts = countByLabel(frictionFeedback.flatMap((feedback) => feedback.reasons.map(roleFeedbackReasonLabel)))
+  const strongReasonCounts = countByLabel(positiveSubmissions.flatMap(submissionFeedbackReasonLabels))
+  const profileProofMissing = candidates.filter((candidate) =>
+    candidate.stage !== "archived" &&
+    (!candidate.candidate?.email || !candidate.candidate?.link || !candidate.candidate?.notes?.trim()),
+  ).length
+  const feedbackCoverage = submissions.length ? Math.round((feedbackSubmissions.length / submissions.length) * 100) : 0
+
+  const rules: RecruiterLearningRule[] = []
+  if (lowRatedSubmissions.length > 0) {
+    const focus = lowRatedSubmissions
+      .sort((a, b) => timestampValueMs(b.recruiterFeedbackUpdatedAt ?? b.updatedAt ?? b.createdAt) - timestampValueMs(a.recruiterFeedbackUpdatedAt ?? a.updatedAt ?? a.createdAt))[0]
+    rules.push({
+      label: "Quality hold",
+      title: "Pause lookalikes until low-rated feedback is applied",
+      body: focus?.recruiterFeedbackNote || topCountLabel(reasonCounts, "Low-rated submissions need sharper hard-filter evidence."),
+      evidence: `${lowRatedSubmissions.length} low-rated submission${lowRatedSubmissions.length === 1 ? "" : "s"}`,
+      tone: "warn",
+      href: "/recruiters?tab=submissions",
+    })
+  }
+  if (closedWithFeedback.length > 0) {
+    const reason = topCountLabel(reasonCounts, "Closed feedback")
+    rules.push({
+      label: "Avoid next",
+      title: `Do not repeat ${reason.toLowerCase()}`,
+      body: "Closed candidates should create a concrete anti-pattern before the next outreach batch.",
+      evidence: `${closedWithFeedback.length} rejected or duplicate packet${closedWithFeedback.length === 1 ? "" : "s"} with feedback`,
+      tone: "warn",
+      href: "/recruiters?tab=submissions",
+    })
+  }
+  if (frictionFeedback.length > 0) {
+    const focus = frictionFeedback
+      .sort((a, b) => timestampValueMs(b.updatedAt ?? b.createdAt) - timestampValueMs(a.updatedAt ?? a.createdAt))[0]
+    rules.push({
+      label: "Ask WeKruit",
+      title: `Clear ${topCountLabel(frictionReasonCounts, "role friction").toLowerCase()}`,
+      body: focus?.note || "Role-market friction should become a precise question before more sourcing spend.",
+      evidence: `${frictionFeedback.length} hard or blocked role signal${frictionFeedback.length === 1 ? "" : "s"}`,
+      tone: "info",
+      href: rolePathForRow(focus ?? {}),
+    })
+  }
+  if (positiveSubmissions.length > 0) {
+    const focus = positiveSubmissions
+      .sort((a, b) => timestampValueMs(b.recruiterFeedbackUpdatedAt ?? b.updatedAt ?? b.createdAt) - timestampValueMs(a.recruiterFeedbackUpdatedAt ?? a.updatedAt ?? a.createdAt))[0]
+    rules.push({
+      label: "Repeat next",
+      title: `Source around ${topCountLabel(strongReasonCounts, "strong evidence").toLowerCase()}`,
+      body: focus?.recruiterFeedbackNote || "Use high-rated feedback as the next search pattern.",
+      evidence: `${positiveSubmissions.length} positive rated submission${positiveSubmissions.length === 1 ? "" : "s"}`,
+      tone: "success",
+      href: rolePathForRow(focus ?? {}),
+    })
+  }
+  if (profileProofMissing > 0) {
+    rules.push({
+      label: "Proof gap",
+      title: "Complete candidate proof before matching",
+      body: "Candidates missing email, link, or notes weaken consent, duplicate checks, and submission quality.",
+      evidence: `${profileProofMissing} active candidate${profileProofMissing === 1 ? "" : "s"} missing proof`,
+      tone: "info",
+      href: "/recruiters?tab=candidates",
+    })
+  }
+  if (rules.length === 0) {
+    rules.push({
+      label: "Start learning",
+      title: "Create the first feedback signal",
+      body: "Save a candidate, submit with consent, then use WeKruit feedback to make the next search sharper.",
+      evidence: "No recruiter feedback loop yet",
+      tone: "mute",
+      href: "/recruiters?tab=roles",
+    })
+  }
+
+  const evidence: RecruiterLearningRule[] = [
+    ...feedbackSubmissions
+      .sort((a, b) => timestampValueMs(b.recruiterFeedbackUpdatedAt ?? b.updatedAt ?? b.createdAt) - timestampValueMs(a.recruiterFeedbackUpdatedAt ?? a.updatedAt ?? a.createdAt))
+      .slice(0, 4)
+      .map((submission): RecruiterLearningRule => ({
+        label: submissionFeedbackRatingLabel(submission),
+        title: submission.candidate?.name || "Candidate feedback",
+        body: submission.recruiterFeedbackNote || submissionFeedbackReasonLabels(submission).join(", ") || submissionNextAction(submission.status).body,
+        evidence: rowRoleLabel(submission, jobsById),
+        tone: submissionFeedbackRatingTone(submission),
+        href: rolePathForRow(submission),
+      })),
+    ...frictionFeedback
+      .sort((a, b) => timestampValueMs(b.updatedAt ?? b.createdAt) - timestampValueMs(a.updatedAt ?? a.createdAt))
+      .slice(0, 3)
+      .map((feedback): RecruiterLearningRule => ({
+        label: roleFeedbackDifficultyText(feedback.difficulty),
+        title: rowRoleLabel(feedback, jobsById),
+        body: feedback.note || feedback.reasons.map(roleFeedbackReasonLabel).join(", ") || "Role friction reported.",
+        evidence: feedback.reasons.map(roleFeedbackReasonLabel).slice(0, 3).join(" · ") || "Market feedback",
+        tone: feedback.difficulty === "blocked" ? "warn" : "info",
+        href: rolePathForRow(feedback),
+      })),
+    ...calibratedCandidates
+      .sort((a, b) => timestampValueMs(b.calibrationUpdatedAt ?? b.updatedAt ?? b.createdAt) - timestampValueMs(a.calibrationUpdatedAt ?? a.updatedAt ?? a.createdAt))
+      .slice(0, 3)
+      .map((candidate): RecruiterLearningRule => ({
+        label: calibrationMeta(candidate.calibrationStatus).label,
+        title: candidateName(candidate),
+        body: candidate.calibrationNote || "Candidate calibration should change the next role match.",
+        evidence: rowRoleLabel(candidate, jobsById),
+        tone: calibrationMeta(candidate.calibrationStatus).tone,
+        href: rolePathForRow(candidate, candidate.id),
+      })),
+  ].slice(0, 8)
+
+  const statusTone: OperatingTone = lowRatedSubmissions.length || frictionFeedback.some((feedback) => feedback.difficulty === "blocked")
+    ? "warn"
+    : positiveSubmissions.length || feedbackCoverage >= 50
+      ? "success"
+      : feedbackSubmissions.length || frictionFeedback.length || calibratedCandidates.length
+        ? "info"
+        : "mute"
+  const statusTitle = statusTone === "warn"
+    ? "Tighten before more volume"
+    : statusTone === "success"
+      ? "Learning loop is active"
+      : statusTone === "info"
+        ? "Signals need translation"
+        : "No feedback loop yet"
+  const statusBody = statusTone === "warn"
+    ? "Low ratings, closed feedback, or blocked roles should change sourcing immediately."
+    : statusTone === "success"
+      ? "There is enough positive or covered feedback to guide the next shortlist."
+      : statusTone === "info"
+        ? "Convert the available notes into one or two concrete sourcing rules."
+        : "Submit consented candidates to generate WeKruit feedback and recruiter learning."
+
+  return {
+    statusLabel: "Feedback learning",
+    statusTitle,
+    statusBody,
+    statusTone,
+    cards: [
+      {
+        label: "Feedback coverage",
+        value: `${feedbackCoverage}%`,
+        body: `${feedbackSubmissions.length}/${submissions.length || 0} submissions have structured notes or ratings.`,
+        tone: feedbackCoverage >= 50 ? "success" : feedbackSubmissions.length ? "info" : "mute",
+      },
+      {
+        label: "Top anti-pattern",
+        value: topCountLabel(reasonCounts, "None"),
+        body: "Most repeated submission-feedback reason.",
+        tone: reasonCounts.length ? "warn" : "mute",
+      },
+      {
+        label: "Role blockers",
+        value: String(frictionFeedback.length),
+        body: topCountLabel(frictionReasonCounts, "No hard or blocked role feedback."),
+        tone: frictionFeedback.length ? "warn" : "success",
+      },
+      {
+        label: "Ready to apply",
+        value: String(readyCandidates.length),
+        body: "Ready candidates should be matched only after the current learning rules are applied.",
+        tone: readyCandidates.length ? "live" : "mute",
+      },
+    ],
+    rules: rules.slice(0, 5),
+    evidence,
+  }
 }
 
 function formatCurrencyShort(value: number): string {
@@ -6767,6 +7021,7 @@ function PerformanceTab({
   const blockedRoles = roleFeedback.filter((feedback) => feedback.difficulty === "blocked").length
   const hardRoles = roleFeedback.filter((feedback) => feedback.difficulty === "hard").length
   const trustCenter = computeRecruiterTrustCenter(candidates, submissions, roleFeedback, primaryRoleIds, operatingMetrics)
+  const learningCenter = buildRecruiterLearningCenter(jobs, candidates, submissions, roleFeedback)
   const metrics = [
     { label: "Submitted", value: String(submissions.length), meta: "formal candidates", tone: "live" },
     { label: "Pending review", value: String(pending), meta: "awaiting feedback", tone: "warn" },
@@ -6814,6 +7069,7 @@ function PerformanceTab({
         </div>
       </section>
       <RecruiterTrustCenterPanel model={trustCenter} />
+      <RecruiterLearningCenterPanel model={learningCenter} />
       <div className="rb-performance-grid">
         <section className="rb-performance-card">
           <h3>Pipeline funnel</h3>
@@ -6896,6 +7152,75 @@ function RecruiterTrustCenterPanel({ model }: { model: RecruiterTrustCenter }) {
             <p>{gate.body}</p>
           </article>
         ))}
+      </div>
+    </section>
+  )
+}
+
+function RecruiterLearningCenterPanel({ model }: { model: RecruiterLearningCenter }) {
+  const renderRuleAction = (rule: RecruiterLearningRule) => {
+    if (!rule.href) return null
+    return <Link to={rule.href}>Open signal</Link>
+  }
+
+  return (
+    <section className={`rb-learning-center is-${model.statusTone}`} aria-label="Feedback learning center">
+      <header>
+        <div>
+          <span>{model.statusLabel}</span>
+          <strong>{model.statusTitle}</strong>
+          <p>{model.statusBody}</p>
+        </div>
+        <aside>
+          {model.cards.map((card) => (
+            <article className={`is-${card.tone}`} key={card.label}>
+              <span>{card.label}</span>
+              <strong>{card.value}</strong>
+              <p>{card.body}</p>
+            </article>
+          ))}
+        </aside>
+      </header>
+
+      <div className="rb-learning-center__body">
+        <section className="rb-learning-center__rules">
+          <div>
+            <h3>Next sourcing rules</h3>
+            <p>What the next shortlist should do differently.</p>
+          </div>
+          {model.rules.map((rule) => (
+            <article className={`is-${rule.tone}`} key={`${rule.label}-${rule.title}`}>
+              <span>{rule.label}</span>
+              <strong>{rule.title}</strong>
+              <p>{rule.body}</p>
+              <footer>
+                <em>{rule.evidence}</em>
+                {renderRuleAction(rule)}
+              </footer>
+            </article>
+          ))}
+        </section>
+
+        <section className="rb-learning-center__evidence">
+          <div>
+            <h3>Evidence feed</h3>
+            <p>Recent feedback, role blockers, and candidate calibration that created the rules.</p>
+          </div>
+          {model.evidence.map((item) => (
+            <article className={`is-${item.tone}`} key={`${item.label}-${item.title}-${item.evidence}`}>
+              <span>{item.label}</span>
+              <strong>{item.title}</strong>
+              <p>{item.body}</p>
+              <footer>
+                <em>{item.evidence}</em>
+                {renderRuleAction(item)}
+              </footer>
+            </article>
+          ))}
+          {model.evidence.length === 0 && (
+            <p className="rb-empty">No feedback evidence yet. Submit consented candidates to start the learning feed.</p>
+          )}
+        </section>
       </div>
     </section>
   )
