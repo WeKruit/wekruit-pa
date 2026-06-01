@@ -13,6 +13,8 @@
  *   GET  paRecruiterMe             -> returns the Firebase Auth-bound recruiter profile
  *   POST paRecruiterAccess         -> validates invite code + binds Firebase Auth uid
  *   POST paRecruiterPreferencesUpdate -> recruiter updates notification settings
+ *   GET  paRecruiterRoleApplicationsList -> recruiter-authenticated role applications
+ *   POST paRecruiterRoleApplicationSave -> applies/withdraws for a role
  *   GET  paRecruiterSourcedCandidatesList -> recruiter-authenticated source CRM
  *   POST paRecruiterSourcedCandidateSave -> upserts one sourced candidate
  *   GET  paRecruiterRoleFeedbackList -> recruiter-authenticated role feedback
@@ -230,6 +232,7 @@ const RECRUITER_USERS_COLLECTION = "pa-recruiter-users"
 const RECRUITER_SUBMISSIONS_COLLECTION = "pa-recruiter-submissions"
 const RECRUITER_NOTIFICATIONS_COLLECTION = "pa-recruiter-notifications"
 const RECRUITER_SOURCED_CANDIDATES_COLLECTION = "pa-recruiter-sourced-candidates"
+const RECRUITER_ROLE_APPLICATIONS_COLLECTION = "pa-recruiter-role-applications"
 const RECRUITER_ROLE_FEEDBACK_COLLECTION = "pa-recruiter-role-feedback"
 const RECRUITER_ROLE_QUESTIONS_COLLECTION = "pa-recruiter-role-questions"
 
@@ -1313,6 +1316,52 @@ export const RECRUITER_ROLE_FEEDBACK_REASONS = [
 
 export type RecruiterRoleFeedbackReason = (typeof RECRUITER_ROLE_FEEDBACK_REASONS)[number]
 
+export const RECRUITER_ROLE_APPLICATION_STATUSES = [
+  "pending",
+  "approved",
+  "not_approved",
+  "withdrawn",
+  "rescinded",
+] as const
+
+export type RecruiterRoleApplicationStatus = (typeof RECRUITER_ROLE_APPLICATION_STATUSES)[number]
+
+export const RECRUITER_ROLE_APPLICATION_ACTIONS = [
+  "apply",
+  "withdraw",
+] as const
+
+export type RecruiterRoleApplicationAction = (typeof RECRUITER_ROLE_APPLICATION_ACTIONS)[number]
+
+interface RecruiterRoleApplicationInput {
+  jobId: string
+  action: RecruiterRoleApplicationAction
+  pitch?: string
+  anonymizeCandidates: boolean
+  preparedCandidateIds: string[]
+}
+
+interface RecruiterRoleApplicationListItem {
+  id: string
+  applicationId?: string
+  recruiterId?: string
+  recruiterEmail?: string
+  jobId?: string
+  inboundJobId?: string
+  jobTitleSnapshot?: string
+  companyLabelSnapshot?: string
+  status: RecruiterRoleApplicationStatus
+  pitch?: string | null
+  anonymizeCandidates?: boolean
+  preparedCandidateIds?: string[]
+  preparedCandidateCount?: number
+  adminNote?: string | null
+  reviewedByEmail?: string | null
+  reviewedAt?: unknown
+  createdAt?: unknown
+  updatedAt?: unknown
+}
+
 interface RecruiterRoleFeedbackInput {
   jobId: string
   difficulty: RecruiterRoleFeedbackDifficulty
@@ -1512,6 +1561,87 @@ function publicRecruiterSourcedCandidate(
     calibrationStatus: typeof data.calibrationStatus === "string" ? data.calibrationStatus : undefined,
     calibrationNote: typeof data.calibrationNote === "string" ? data.calibrationNote : null,
     calibrationUpdatedAt: data.calibrationUpdatedAt,
+    createdAt: data.createdAt,
+    updatedAt: data.updatedAt,
+  }
+}
+
+function recruiterRoleApplicationId(recruiterId: string, realJobId: string): string {
+  return createHash("sha256").update(`${recruiterId}:${realJobId}`).digest("hex").slice(0, 40)
+}
+
+export function validateRecruiterRoleApplicationInput(input: unknown):
+  | { ok: true; value: RecruiterRoleApplicationInput }
+  | { ok: false; reason: string } {
+  if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
+  const b = input as Record<string, unknown>
+  if (!isNonEmptyString(b.jobId)) return { ok: false, reason: "missing_jobId" }
+  if (b.jobId.length > 200) return { ok: false, reason: "jobId_too_long" }
+  const action = typeof b.action === "string" && RECRUITER_ROLE_APPLICATION_ACTIONS.includes(b.action as RecruiterRoleApplicationAction)
+    ? b.action as RecruiterRoleApplicationAction
+    : "apply"
+  let pitch: string | undefined
+  if (b.pitch !== undefined && b.pitch !== null) {
+    if (typeof b.pitch !== "string") return { ok: false, reason: "invalid_pitch" }
+    pitch = b.pitch.trim()
+    if (pitch.length > 2000) return { ok: false, reason: "pitch_too_long" }
+  }
+  if (action === "apply" && (!pitch || pitch.length < 20)) {
+    return { ok: false, reason: "pitch_too_short" }
+  }
+  const anonymizeCandidates = b.anonymizeCandidates === true
+  const preparedRaw = b.preparedCandidateIds === undefined ? [] : b.preparedCandidateIds
+  if (!Array.isArray(preparedRaw)) return { ok: false, reason: "invalid_prepared_candidate_ids" }
+  const preparedCandidateIds: string[] = []
+  for (const raw of preparedRaw) {
+    if (typeof raw !== "string") return { ok: false, reason: "invalid_prepared_candidate_ids" }
+    const id = raw.trim()
+    if (!id || id.length > 160 || !/^[A-Za-z0-9_.:-]{1,160}$/.test(id)) {
+      return { ok: false, reason: "invalid_prepared_candidate_ids" }
+    }
+    if (!preparedCandidateIds.includes(id)) preparedCandidateIds.push(id)
+  }
+  if (preparedCandidateIds.length > 10) return { ok: false, reason: "too_many_prepared_candidates" }
+  return {
+    ok: true,
+    value: {
+      jobId: b.jobId.trim(),
+      action,
+      ...(pitch ? { pitch } : {}),
+      anonymizeCandidates,
+      preparedCandidateIds,
+    },
+  }
+}
+
+function publicRecruiterRoleApplication(
+  d: { id: string; data: () => Record<string, unknown> | undefined },
+): RecruiterRoleApplicationListItem {
+  const data = d.data() ?? {}
+  const status = typeof data.status === "string" &&
+    RECRUITER_ROLE_APPLICATION_STATUSES.includes(data.status as RecruiterRoleApplicationStatus)
+    ? data.status as RecruiterRoleApplicationStatus
+    : "pending"
+  const preparedCandidateIds = Array.isArray(data.preparedCandidateIds)
+    ? data.preparedCandidateIds.filter((id): id is string => typeof id === "string")
+    : []
+  return {
+    id: d.id,
+    applicationId: typeof data.applicationId === "string" ? data.applicationId : d.id,
+    recruiterId: typeof data.recruiterId === "string" ? data.recruiterId : undefined,
+    recruiterEmail: typeof data.recruiterEmail === "string" ? data.recruiterEmail : undefined,
+    jobId: typeof data.jobId === "string" ? data.jobId : undefined,
+    inboundJobId: typeof data.inboundJobId === "string" ? data.inboundJobId : undefined,
+    jobTitleSnapshot: typeof data.jobTitleSnapshot === "string" ? data.jobTitleSnapshot : undefined,
+    companyLabelSnapshot: typeof data.companyLabelSnapshot === "string" ? data.companyLabelSnapshot : undefined,
+    status,
+    pitch: typeof data.pitch === "string" ? data.pitch : null,
+    anonymizeCandidates: data.anonymizeCandidates === true,
+    preparedCandidateIds,
+    preparedCandidateCount: typeof data.preparedCandidateCount === "number" ? data.preparedCandidateCount : preparedCandidateIds.length,
+    adminNote: typeof data.adminNote === "string" ? data.adminNote : null,
+    reviewedByEmail: typeof data.reviewedByEmail === "string" ? data.reviewedByEmail : null,
+    reviewedAt: data.reviewedAt,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   }
@@ -1732,6 +1862,185 @@ export function buildRecruiterRoleIntelligence(
     }
   })
 }
+
+export const paRecruiterRoleApplicationsList = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "GET") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    try {
+      const snap = await db
+        .collection(RECRUITER_ROLE_APPLICATIONS_COLLECTION)
+        .where("recruiterId", "==", recruiter.recruiterId)
+        .limit(300)
+        .get()
+      const applications = snap.docs
+        .map(publicRecruiterRoleApplication)
+        .sort((a, b) => timestampMs(b.updatedAt ?? b.createdAt) - timestampMs(a.updatedAt ?? a.createdAt))
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, recruiter, applications })
+    } catch (err) {
+      logger.error("paRecruiterRoleApplicationsList_failed", { error: String(err), recruiterId: recruiter.recruiterId })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
+
+export const paRecruiterRoleApplicationSave = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+    const validated = validateRecruiterRoleApplicationInput(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+    const payload = validated.value
+
+    try {
+      const realJobId = await resolvePublicIdToDocId(db, payload.jobId)
+      if (!realJobId) {
+        res.status(404).json({ ok: false, reason: "job_not_found" })
+        return
+      }
+      const jobSnap = await db.collection("pa-jobs").doc(realJobId).get()
+      if (!jobSnap.exists) {
+        res.status(404).json({ ok: false, reason: "job_not_found" })
+        return
+      }
+      const jobData = jobSnap.data() as Record<string, unknown>
+      const rb = jobData.recruiterBoard as RecruiterBoardPayload | undefined
+      if (jobData.wekruitCollaborationStatus !== "collaborated" || !rb || rb.active !== true) {
+        res.status(403).json({ ok: false, reason: "job_not_active_on_board" })
+        return
+      }
+
+      const applicationId = recruiterRoleApplicationId(recruiter.recruiterId, realJobId)
+      const ref = db.collection(RECRUITER_ROLE_APPLICATIONS_COLLECTION).doc(applicationId)
+      const existing = await ref.get()
+
+      if (payload.action === "withdraw") {
+        if (!existing.exists) {
+          res.status(404).json({ ok: false, reason: "application_not_found" })
+          return
+        }
+        await ref.set({
+          status: "withdrawn",
+          withdrawnAt: FieldValue.serverTimestamp(),
+          statusHistory: FieldValue.arrayUnion({
+            status: "withdrawn",
+            by: "recruiter",
+            recruiterEmail: recruiter.email,
+            atIso: new Date().toISOString(),
+          }),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true })
+        const saved = await ref.get()
+        res.set("Cache-Control", "private, max-age=0, no-store")
+        res.status(200).json({ ok: true, application: publicRecruiterRoleApplication(saved) })
+        return
+      }
+
+      const existingAppsSnap = await db
+        .collection(RECRUITER_ROLE_APPLICATIONS_COLLECTION)
+        .where("recruiterId", "==", recruiter.recruiterId)
+        .limit(200)
+        .get()
+      let pendingCount = 0
+      let approvedCount = 0
+      for (const docSnap of existingAppsSnap.docs) {
+        if (docSnap.id === applicationId) continue
+        const status = docSnap.data().status
+        if (status === "pending") pendingCount++
+        if (status === "approved") approvedCount++
+      }
+      if (pendingCount >= 3) {
+        res.status(403).json({ ok: false, reason: "pending_application_limit_reached" })
+        return
+      }
+      if (approvedCount >= 10) {
+        res.status(403).json({ ok: false, reason: "approved_role_limit_reached" })
+        return
+      }
+
+      let preparedCandidateCount = 0
+      for (const candidateId of payload.preparedCandidateIds) {
+        const candidateSnap = await db.collection(RECRUITER_SOURCED_CANDIDATES_COLLECTION).doc(candidateId).get()
+        if (!candidateSnap.exists) {
+          res.status(400).json({ ok: false, reason: "invalid_prepared_candidate" })
+          return
+        }
+        const candidate = candidateSnap.data() as Record<string, unknown>
+        if (candidate.recruiterId !== recruiter.recruiterId) {
+          res.status(400).json({ ok: false, reason: "invalid_prepared_candidate" })
+          return
+        }
+        if (candidate.jobId !== realJobId && candidate.inboundJobId !== payload.jobId) {
+          res.status(400).json({ ok: false, reason: "prepared_candidate_wrong_role" })
+          return
+        }
+        preparedCandidateCount++
+      }
+
+      await ref.set({
+        applicationId,
+        recruiterId: recruiter.recruiterId,
+        recruiterEmail: recruiter.email,
+        jobId: realJobId,
+        inboundJobId: payload.jobId,
+        jobTitleSnapshot: String(jobData.title ?? ""),
+        companyLabelSnapshot: rb.label.company,
+        status: "pending",
+        pitch: payload.pitch ?? null,
+        anonymizeCandidates: payload.anonymizeCandidates,
+        preparedCandidateIds: payload.preparedCandidateIds,
+        preparedCandidateCount,
+        statusHistory: FieldValue.arrayUnion({
+          status: "pending",
+          by: "recruiter",
+          recruiterEmail: recruiter.email,
+          atIso: new Date().toISOString(),
+          note: "Applied to recruit",
+        }),
+        updatedAt: FieldValue.serverTimestamp(),
+        ...(existing.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
+      }, { merge: true })
+      const saved = await ref.get()
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, application: publicRecruiterRoleApplication(saved) })
+    } catch (err) {
+      logger.error("paRecruiterRoleApplicationSave_failed", { error: String(err), recruiterId: recruiter.recruiterId })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
 
 export const paRecruiterSourcedCandidatesList = onRequest(
   { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
@@ -2301,6 +2610,20 @@ function recruiterPrimaryRoleMatches(
     recruiter.workspacePreferences.primaryRoleIds.includes(realJobId)
 }
 
+async function recruiterApprovedForRole(
+  db: Firestore,
+  recruiter: RecruiterProfilePublic | null,
+  inboundJobId: string,
+  realJobId: string,
+): Promise<boolean> {
+  if (!recruiter) return false
+  if (recruiterPrimaryRoleMatches(recruiter, inboundJobId, realJobId)) return true
+  const applicationId = recruiterRoleApplicationId(recruiter.recruiterId, realJobId)
+  const snap = await db.collection(RECRUITER_ROLE_APPLICATIONS_COLLECTION).doc(applicationId).get()
+  if (!snap.exists) return false
+  return snap.data()?.status === "approved"
+}
+
 async function recentSingleSubmissionCount(
   db: Firestore,
   recruiter: RecruiterProfilePublic,
@@ -2747,7 +3070,8 @@ export const paRecruiterSubmission = onRequest(
       res.status(403).json({ ok: false, reason: "job_not_active_on_board" })
       return
     }
-    const submissionMode = recruiterPrimaryRoleMatches(recruiter, payload.jobId, realJobId)
+    const approvedForRole = await recruiterApprovedForRole(db, recruiter, payload.jobId, realJobId)
+    const submissionMode = approvedForRole
       ? "primary_role"
       : "single_submission"
     if (recruiter && submissionMode === "single_submission") {

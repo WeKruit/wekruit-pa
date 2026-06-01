@@ -14,6 +14,8 @@ export const RECRUITER_ME_URL = `${DEFAULT_BASE}/paRecruiterMe`
 export const RECRUITER_PREFERENCES_URL = `${DEFAULT_BASE}/paRecruiterPreferencesUpdate`
 export const RECRUITER_SOURCED_CANDIDATES_LIST_URL = `${DEFAULT_BASE}/paRecruiterSourcedCandidatesList`
 export const RECRUITER_SOURCED_CANDIDATE_SAVE_URL = `${DEFAULT_BASE}/paRecruiterSourcedCandidateSave`
+export const RECRUITER_ROLE_APPLICATIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterRoleApplicationsList`
+export const RECRUITER_ROLE_APPLICATION_SAVE_URL = `${DEFAULT_BASE}/paRecruiterRoleApplicationSave`
 export const RECRUITER_ROLE_FEEDBACK_LIST_URL = `${DEFAULT_BASE}/paRecruiterRoleFeedbackList`
 export const RECRUITER_ROLE_FEEDBACK_SAVE_URL = `${DEFAULT_BASE}/paRecruiterRoleFeedbackSave`
 export const RECRUITER_ROLE_INTELLIGENCE_LIST_URL = `${DEFAULT_BASE}/paRecruiterRoleIntelligenceList`
@@ -166,6 +168,37 @@ export interface RecruiterSourcedCandidateInput {
   calibrationRequest?: {
     note?: string
   }
+}
+
+export type RecruiterRoleApplicationStatus = "pending" | "approved" | "not_approved" | "withdrawn" | "rescinded"
+
+export interface RecruiterRoleApplicationItem {
+  id: string
+  applicationId?: string
+  recruiterId?: string
+  recruiterEmail?: string
+  jobId?: string
+  inboundJobId?: string
+  jobTitleSnapshot?: string
+  companyLabelSnapshot?: string
+  status: RecruiterRoleApplicationStatus
+  pitch?: string | null
+  anonymizeCandidates?: boolean
+  preparedCandidateIds?: string[]
+  preparedCandidateCount?: number
+  adminNote?: string | null
+  reviewedByEmail?: string | null
+  reviewedAt?: { seconds?: number } | string | null
+  createdAt?: { seconds?: number } | string | null
+  updatedAt?: { seconds?: number } | string | null
+}
+
+export interface RecruiterRoleApplicationInput {
+  jobId: string
+  action?: "apply" | "withdraw"
+  pitch?: string
+  anonymizeCandidates?: boolean
+  preparedCandidateIds?: string[]
 }
 
 export type RecruiterRoleFeedbackDifficulty = "easy" | "medium" | "hard" | "blocked"
@@ -347,6 +380,49 @@ export async function fetchRecruiterSourcedCandidates(): Promise<RecruiterSource
     throw new Error(body.reason ?? `paRecruiterSourcedCandidatesList HTTP ${res.status}`)
   }
   return body.candidates
+}
+
+export async function fetchRecruiterRoleApplications(): Promise<RecruiterRoleApplicationItem[]> {
+  const res = await fetch(RECRUITER_ROLE_APPLICATIONS_LIST_URL, {
+    method: "GET",
+    headers: await recruiterAuthHeaders(),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    applications?: RecruiterRoleApplicationItem[]
+  }
+  if (!res.ok || !body.ok || !body.applications) {
+    throw new Error(body.reason ?? `paRecruiterRoleApplicationsList HTTP ${res.status}`)
+  }
+  return body.applications
+}
+
+export async function saveRecruiterRoleApplication(
+  input: RecruiterRoleApplicationInput,
+): Promise<RecruiterRoleApplicationItem> {
+  const res = await fetch(RECRUITER_ROLE_APPLICATION_SAVE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(await recruiterAuthHeaders()),
+    },
+    body: JSON.stringify({
+      action: "apply",
+      anonymizeCandidates: false,
+      preparedCandidateIds: [],
+      ...input,
+    }),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    application?: RecruiterRoleApplicationItem
+  }
+  if (!res.ok || !body.ok || !body.application) {
+    throw new Error(body.reason ?? `paRecruiterRoleApplicationSave HTTP ${res.status}`)
+  }
+  return body.application
 }
 
 export async function fetchRecruiterRoleFeedback(): Promise<RecruiterRoleFeedbackItem[]> {

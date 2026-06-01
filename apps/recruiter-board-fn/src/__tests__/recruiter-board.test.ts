@@ -34,6 +34,7 @@ import {
   sanitizeSubmissionStatusHistory,
   validateInviteCodeCreate,
   validateInviteCodeReplace,
+  validateRecruiterRoleApplicationInput,
   validateRecruiterRoleFeedbackInput,
   validateRecruiterRoleQuestionInput,
   validateRecruiterSourcedCandidateInput,
@@ -446,6 +447,67 @@ describe("recruiter role feedback", () => {
     }), {
       ok: false,
       reason: "invalid_reasons",
+    })
+  })
+})
+
+describe("recruiter role applications", () => {
+  it("accepts an apply request with pitch, anonymization, and prepared candidates", () => {
+    const result = validateRecruiterRoleApplicationInput({
+      jobId: " public-job-1 ",
+      action: "apply",
+      pitch: "I have recently placed post-training research profiles and can source from speech labs this week.",
+      anonymizeCandidates: true,
+      preparedCandidateIds: [" candidate-1 ", "candidate-1", "candidate_2"],
+    })
+
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.deepEqual(result.value, {
+      jobId: "public-job-1",
+      action: "apply",
+      pitch: "I have recently placed post-training research profiles and can source from speech labs this week.",
+      anonymizeCandidates: true,
+      preparedCandidateIds: ["candidate-1", "candidate_2"],
+    })
+  })
+
+  it("accepts a withdraw request without requiring a pitch", () => {
+    assert.deepEqual(validateRecruiterRoleApplicationInput({
+      jobId: "role-1",
+      action: "withdraw",
+    }), {
+      ok: true,
+      value: {
+        jobId: "role-1",
+        action: "withdraw",
+        anonymizeCandidates: false,
+        preparedCandidateIds: [],
+      },
+    })
+  })
+
+  it("rejects malformed role application payloads", () => {
+    assert.deepEqual(validateRecruiterRoleApplicationInput({}), {
+      ok: false,
+      reason: "missing_jobId",
+    })
+    assert.deepEqual(validateRecruiterRoleApplicationInput({
+      jobId: "role-1",
+      action: "apply",
+      pitch: "too short",
+    }), {
+      ok: false,
+      reason: "pitch_too_short",
+    })
+    assert.deepEqual(validateRecruiterRoleApplicationInput({
+      jobId: "role-1",
+      action: "apply",
+      pitch: "I can source strong candidates from my network for this role.",
+      preparedCandidateIds: ["../bad"],
+    }), {
+      ok: false,
+      reason: "invalid_prepared_candidate_ids",
     })
   })
 })

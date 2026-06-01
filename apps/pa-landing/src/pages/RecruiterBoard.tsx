@@ -19,14 +19,18 @@ import {
   fetchCollabJobs,
   fetchRecruiterRoleFeedback,
   fetchRecruiterRoleIntelligence,
+  fetchRecruiterRoleApplications,
   fetchRecruiterRoleQuestions,
   fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissions,
   getRecruiterProfile,
   registerRecruiterAccess,
   saveRecruiterSourcedCandidate,
+  saveRecruiterRoleApplication,
   updateRecruiterPreferences,
   type CollabJob,
+  type RecruiterRoleApplicationInput,
+  type RecruiterRoleApplicationItem,
   type RecruiterRoleFeedbackItem,
   type RecruiterRoleIntelligenceItem,
   type RecruiterRoleQuestionItem,
@@ -258,6 +262,48 @@ function recruiterPrimaryRoleIds(session: RecruiterSession | null): string[] {
   return session?.recruiter.workspacePreferences?.primaryRoleIds ?? []
 }
 
+function roleApplicationMatches(job: CollabJob, application: RecruiterRoleApplicationItem): boolean {
+  const key = roleKey(job)
+  return application.inboundJobId === key || application.jobId === key
+}
+
+function latestRoleApplication(job: CollabJob, roleApplications: RecruiterRoleApplicationItem[]): RecruiterRoleApplicationItem | undefined {
+  return roleApplications
+    .filter((application) => roleApplicationMatches(job, application))
+    .sort((a, b) => timestampValueMs(b.updatedAt ?? b.createdAt) - timestampValueMs(a.updatedAt ?? a.createdAt))[0]
+}
+
+function recruiterApprovedRoleIds(session: RecruiterSession | null, roleApplications: RecruiterRoleApplicationItem[]): string[] {
+  const legacyPrimaryIds = recruiterPrimaryRoleIds(session)
+  const approvedIds = roleApplications
+    .filter((application) => application.status === "approved")
+    .flatMap((application) => [application.inboundJobId, application.jobId])
+    .filter((id): id is string => Boolean(id))
+  return [...new Set([...legacyPrimaryIds, ...approvedIds])].slice(0, PRIMARY_ROLE_SLOT_LIMIT)
+}
+
+function roleApplicationStatusLabel(status?: RecruiterRoleApplicationItem["status"]): string {
+  switch (status) {
+    case "approved": return "Approved"
+    case "pending": return "Pending approval"
+    case "not_approved": return "Not approved"
+    case "withdrawn": return "Withdrawn"
+    case "rescinded": return "Rescinded"
+    default: return "Not applied"
+  }
+}
+
+function roleApplicationStatusTone(status?: RecruiterRoleApplicationItem["status"]): "live" | "info" | "success" | "warn" | "mute" {
+  switch (status) {
+    case "approved": return "success"
+    case "pending": return "info"
+    case "not_approved":
+    case "rescinded": return "warn"
+    case "withdrawn": return "mute"
+    default: return "mute"
+  }
+}
+
 function isPrimaryRole(job: CollabJob, primaryRoleIds: string[]): boolean {
   return primaryRoleIds.includes(roleKey(job))
 }
@@ -380,11 +426,12 @@ export default function RecruiterBoard() {
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
   const [sourcedCandidates, setSourcedCandidates] = useState<RecruiterSourcedCandidateItem[]>([])
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
+  const [roleApplications, setRoleApplications] = useState<RecruiterRoleApplicationItem[]>([])
   const [roleFeedback, setRoleFeedback] = useState<RecruiterRoleFeedbackItem[]>([])
   const [roleQuestions, setRoleQuestions] = useState<RecruiterRoleQuestionItem[]>([])
   const [roleIntelligence, setRoleIntelligence] = useState<RecruiterRoleIntelligenceItem[]>([])
   const [statusLoaded, setStatusLoaded] = useState(false)
-  const [primaryRoleSavingId, setPrimaryRoleSavingId] = useState<string | null>(null)
+  const [roleApplicationSavingId, setRoleApplicationSavingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [accessError, setAccessError] = useState<string | null>(null)
   const [submissionError, setSubmissionError] = useState<string | null>(null)
@@ -407,6 +454,7 @@ export default function RecruiterBoard() {
         setSession(null)
         setSourcedCandidates([])
         setSubmissions([])
+        setRoleApplications([])
         setRoleFeedback([])
         setRoleQuestions([])
         setRoleIntelligence([])
@@ -439,6 +487,7 @@ export default function RecruiterBoard() {
             setSession(null)
             setSourcedCandidates([])
             setSubmissions([])
+            setRoleApplications([])
             setRoleFeedback([])
             setRoleQuestions([])
             setRoleIntelligence([])
@@ -463,6 +512,7 @@ export default function RecruiterBoard() {
           setSession(null)
           setSourcedCandidates([])
           setSubmissions([])
+          setRoleApplications([])
           setRoleFeedback([])
           setRoleQuestions([])
           setRoleIntelligence([])
@@ -496,15 +546,17 @@ export default function RecruiterBoard() {
     try {
       setSubmissionError(null)
       setStatusLoaded(false)
-      const [submissionRows, sourceRows, feedbackRows, questionRows, intelligenceRows] = await Promise.all([
+      const [submissionRows, sourceRows, applicationRows, feedbackRows, questionRows, intelligenceRows] = await Promise.all([
         fetchRecruiterSubmissions(),
         fetchRecruiterSourcedCandidates(),
+        fetchRecruiterRoleApplications(),
         fetchRecruiterRoleFeedback(),
         fetchRecruiterRoleQuestions(),
         fetchRecruiterRoleIntelligence(),
       ])
       setSubmissions(sortSubmissions(submissionRows))
       setSourcedCandidates(sortSourcedCandidates(sourceRows))
+      setRoleApplications(applicationRows)
       setRoleFeedback(feedbackRows)
       setRoleQuestions(questionRows)
       setRoleIntelligence(intelligenceRows)
@@ -520,32 +572,20 @@ export default function RecruiterBoard() {
   }, [session?.recruiterId])
 
   const setTab = (tab: RecruiterTab) => setSearchParams(tab === "overview" ? {} : { tab })
-  const primaryRoleIds = recruiterPrimaryRoleIds(session)
-  const updatePrimaryRoleSlots = async (jobId: string, makePrimary: boolean) => {
+  const primaryRoleIds = recruiterApprovedRoleIds(session, roleApplications)
+  const saveRoleApplication = async (input: RecruiterRoleApplicationInput) => {
     if (!session) return
-    const current = recruiterPrimaryRoleIds(session)
-    const next = makePrimary
-      ? [...current.filter((id) => id !== jobId), jobId]
-      : current.filter((id) => id !== jobId)
-    if (next.length > PRIMARY_ROLE_SLOT_LIMIT) {
-      setSubmissionError(`Primary roles are limited to ${PRIMARY_ROLE_SLOT_LIMIT} active slots.`)
-      return
-    }
-    setPrimaryRoleSavingId(jobId)
+    setRoleApplicationSavingId(input.jobId)
     setSubmissionError(null)
     try {
-      const updated = await updateRecruiterPreferences({
-        notificationPreferences: session.recruiter.notificationPreferences ?? { newRolesEmail: true },
-        workspacePreferences: { primaryRoleIds: next },
-      })
-      setSession(updated)
+      const saved = await saveRecruiterRoleApplication(input)
+      setRoleApplications((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)])
     } catch (e) {
       setSubmissionError(e instanceof Error ? e.message : String(e))
     } finally {
-      setPrimaryRoleSavingId(null)
+      setRoleApplicationSavingId(null)
     }
   }
-
   if (!authReady) {
     return <div className="rb-access"><div className="rb-state">Loading recruiter workspace...</div></div>
   }
@@ -618,6 +658,7 @@ export default function RecruiterBoard() {
             setSession(null)
             setSourcedCandidates([])
             setSubmissions([])
+            setRoleApplications([])
             setRoleFeedback([])
             setRoleQuestions([])
             setRoleIntelligence([])
@@ -656,6 +697,7 @@ export default function RecruiterBoard() {
             sourcedCandidates={sourcedCandidates}
             roleQuestions={roleQuestions}
             roleIntelligence={roleIntelligence}
+            roleApplications={roleApplications}
             operatingMetrics={operatingMetrics}
             primaryRoleIds={primaryRoleIds}
             onRoles={() => setTab("roles")}
@@ -663,8 +705,7 @@ export default function RecruiterBoard() {
             onCandidates={() => setTab("candidates")}
             onSubmissions={() => setTab("submissions")}
             onPerformance={() => setTab("performance")}
-            onPrimaryRoleToggle={(jobId, makePrimary) => void updatePrimaryRoleSlots(jobId, makePrimary)}
-            primaryRoleSavingId={primaryRoleSavingId}
+            onAccess={() => setTab("access")}
           />
         )}
         {activeTab === "inbox" && !statusLoaded && <RecruiterStatusLoading />}
@@ -689,10 +730,11 @@ export default function RecruiterBoard() {
             roleFeedback={roleFeedback}
             roleQuestions={roleQuestions}
             roleIntelligence={roleIntelligence}
+            roleApplications={roleApplications}
             loading={!jobs && !error}
             primaryRoleIds={primaryRoleIds}
-            primaryRoleSavingId={primaryRoleSavingId}
-            onPrimaryRoleToggle={(jobId, makePrimary) => void updatePrimaryRoleSlots(jobId, makePrimary)}
+            roleApplicationSavingId={roleApplicationSavingId}
+            onAccess={() => setTab("access")}
           />
         )}
         {activeTab === "access" && statusLoaded && (
@@ -703,9 +745,10 @@ export default function RecruiterBoard() {
             roleFeedback={roleFeedback}
             roleQuestions={roleQuestions}
             roleIntelligence={roleIntelligence}
+            roleApplications={roleApplications}
             primaryRoleIds={primaryRoleIds}
-            primaryRoleSavingId={primaryRoleSavingId}
-            onPrimaryRoleToggle={(jobId, makePrimary) => void updatePrimaryRoleSlots(jobId, makePrimary)}
+            roleApplicationSavingId={roleApplicationSavingId}
+            onRoleApplicationSave={(input) => void saveRoleApplication(input)}
             onRoles={() => setTab("roles")}
             onCandidates={() => setTab("candidates")}
           />
@@ -1371,6 +1414,7 @@ function OverviewTab({
   sourcedCandidates,
   roleQuestions,
   roleIntelligence,
+  roleApplications,
   operatingMetrics,
   primaryRoleIds,
   onRoles,
@@ -1378,8 +1422,7 @@ function OverviewTab({
   onCandidates,
   onSubmissions,
   onPerformance,
-  onPrimaryRoleToggle,
-  primaryRoleSavingId,
+  onAccess,
 }: {
   stats: Array<{ label: string; value: string; meta: string; signal: string; tone: string }>
   jobs: CollabJob[]
@@ -1387,6 +1430,7 @@ function OverviewTab({
   sourcedCandidates: RecruiterSourcedCandidateItem[]
   roleQuestions: RecruiterRoleQuestionItem[]
   roleIntelligence: RecruiterRoleIntelligenceItem[]
+  roleApplications: RecruiterRoleApplicationItem[]
   operatingMetrics: RecruiterOperatingMetrics
   primaryRoleIds: string[]
   onRoles: () => void
@@ -1394,10 +1438,10 @@ function OverviewTab({
   onCandidates: () => void
   onSubmissions: () => void
   onPerformance: () => void
-  onPrimaryRoleToggle: (jobId: string, makePrimary: boolean) => void
-  primaryRoleSavingId: string | null
+  onAccess: () => void
 }) {
   const primaryJobs = jobs.filter((job) => isPrimaryRole(job, primaryRoleIds))
+  const pendingApplications = roleApplications.filter((application) => application.status === "pending")
   const suggestedJobs = jobs
     .filter((job) => !isPrimaryRole(job, primaryRoleIds))
     .slice(0, Math.max(0, PRIMARY_ROLE_SLOT_LIMIT - primaryJobs.length))
@@ -1421,12 +1465,12 @@ function OverviewTab({
       <div className="rb-workbench-grid">
         <section className="rb-panel rb-priority-panel">
           <header className="rb-panel__head">
-            <div><h2>Primary role slots</h2><p>Focus up to {PRIMARY_ROLE_SLOT_LIMIT} roles; non-primary submissions use weekly single-submit credits.</p></div>
+            <div><h2>Approved role access</h2><p>Work approved roles deeply; non-approved roles stay single-submit only until WeKruit reviews your application.</p></div>
             <button type="button" className="rb-panel__link" onClick={onRoles}>All roles</button>
           </header>
           <div className="rb-slot-meter">
-            <strong>{primaryRoleIds.length}/{PRIMARY_ROLE_SLOT_LIMIT} primary slots</strong>
-            <span>{SINGLE_SUBMISSION_WEEKLY_LIMIT} single submissions per rolling week outside primary roles.</span>
+            <strong>{primaryRoleIds.length}/{PRIMARY_ROLE_SLOT_LIMIT} approved roles</strong>
+            <span>{pendingApplications.length}/3 pending applications · {SINGLE_SUBMISSION_WEEKLY_LIMIT} single submissions per rolling week outside approved roles.</span>
           </div>
           <div className="rb-priority-table">
             <div className="rb-priority-table__head">
@@ -1444,8 +1488,8 @@ function OverviewTab({
                 sourcedCount={sourcedCandidates.filter((c) => c.inboundJobId === roleKey(job) || c.jobId === roleKey(job)).length}
                 submissionCount={submissions.filter((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job)).length}
                 primary={isPrimaryRole(job, primaryRoleIds)}
-                disabled={primaryRoleSavingId === roleKey(job) || (!isPrimaryRole(job, primaryRoleIds) && primaryRoleIds.length >= PRIMARY_ROLE_SLOT_LIMIT)}
-                onPrimaryRoleToggle={onPrimaryRoleToggle}
+                application={latestRoleApplication(job, roleApplications)}
+                onAccess={onAccess}
               />
             ))}
             {jobs.length === 0 && <p className="rb-empty">No active collab roles right now.</p>}
@@ -2258,6 +2302,7 @@ type RoleInsight = {
   cleanLane: boolean
   primary: boolean
   updatedMs: number
+  application?: RecruiterRoleApplicationItem
   feedback?: RecruiterRoleFeedbackItem
   intelligence?: RecruiterRoleIntelligenceItem
 }
@@ -2309,6 +2354,7 @@ function buildRoleInsight(
   roleFeedback: RecruiterRoleFeedbackItem[],
   roleQuestions: RecruiterRoleQuestionItem[],
   roleIntelligence: RecruiterRoleIntelligenceItem[],
+  roleApplications: RecruiterRoleApplicationItem[] = [],
 ): RoleInsight {
   const roleSubmissions = rowsForRole(job, submissions)
   const roleCandidates = rowsForRole(job, sourcedCandidates).filter((candidate) => candidate.stage !== "archived")
@@ -2317,6 +2363,7 @@ function buildRoleInsight(
   const advancedCount = roleSubmissions.filter((submission) => ["advanced", "interviewing", "hired"].includes(submission.status ?? "")).length
   const rejectedCount = roleSubmissions.filter((submission) => ["rejected", "duplicate"].includes(submission.status ?? "")).length
   const feedback = latestRoleFeedback(job, roleFeedback)
+  const application = latestRoleApplication(job, roleApplications)
   const intelligence = roleIntelligence.find((item) => item.jobId === roleKey(job))
   const questions = rowsForRole(job, roleQuestions)
   const openQuestionCount = intelligence?.openQuestionCount ?? questions.filter((question) => (question.status ?? "open") === "open").length
@@ -2375,7 +2422,7 @@ function buildRoleInsight(
       ? `${platformPendingCount} pending across market`
       : `${platformSubmissionCount} submitted across market`
   const urgency = primary
-    ? "Primary slot"
+    ? "Approved access"
     : isNewRole(job)
       ? "New role"
       : cleanLane
@@ -2411,7 +2458,7 @@ function buildRoleInsight(
             : "Use feedback and previous hard checks to source a tighter next candidate."
   const reasons = [
     roleUpdatedLabel(updatedMs),
-    primary ? "Counts toward primary-role activity" : "Uses single-submit credit unless slotted",
+    primary ? "Approved role access" : "Uses single-submit credit unless approved",
     readyCount ? `${readyCount} ready candidate${readyCount === 1 ? "" : "s"}` : "",
     cleanLane ? "Clean submission lane" : marketLoad,
     recruiterCount ? `${recruiterCount} recruiter${recruiterCount === 1 ? "" : "s"} active` : "",
@@ -2443,6 +2490,7 @@ function buildRoleInsight(
     cleanLane,
     primary,
     updatedMs,
+    application,
     feedback,
     intelligence,
   }
@@ -2465,7 +2513,7 @@ function sortRoleInsights(insights: RoleInsight[], sort: RoleSort): RoleInsight[
   }
 }
 
-type RoleAccessStatus = "approved" | "candidate_proof" | "request_ready" | "single_submission" | "needs_answer"
+type RoleAccessStatus = "approved" | "pending" | "not_approved" | "candidate_proof" | "request_ready" | "single_submission" | "needs_answer"
 
 type RoleAccessDecision = {
   insight: RoleInsight
@@ -2482,8 +2530,8 @@ function roleAccessDecision(insight: RoleInsight, primarySlotsFull: boolean): Ro
     return {
       insight,
       status: "approved",
-      label: "Approved primary",
-      body: "This role is in your focus set. Keep at least one live candidate or active submission here.",
+      label: "Approved to recruit",
+      body: "WeKruit approved your role access. Keep at least one live candidate or active submission here.",
       evidence: [
         `${insight.sourcedCount} sourced`,
         `${insight.submissionCount} submitted`,
@@ -2491,6 +2539,36 @@ function roleAccessDecision(insight: RoleInsight, primarySlotsFull: boolean): Ro
       ],
       tone: "success",
       actionLabel: "Open brief",
+    }
+  }
+  if (insight.application?.status === "pending") {
+    return {
+      insight,
+      status: "pending",
+      label: "Pending approval",
+      body: "WeKruit is reviewing your role application. Build candidate proof while you wait.",
+      evidence: [
+        insight.application.preparedCandidateCount ? `${insight.application.preparedCandidateCount} prepared candidate${insight.application.preparedCandidateCount === 1 ? "" : "s"}` : "",
+        insight.application.anonymizeCandidates ? "Candidates anonymized" : "Shared candidate context",
+        roleUpdatedLabel(timestampValueMs(insight.application.updatedAt ?? insight.application.createdAt)),
+      ].filter(Boolean),
+      tone: "info",
+      actionLabel: "Withdraw",
+    }
+  }
+  if (insight.application?.status === "not_approved" || insight.application?.status === "rescinded") {
+    return {
+      insight,
+      status: "not_approved",
+      label: roleApplicationStatusLabel(insight.application.status),
+      body: insight.application.adminNote || "WeKruit did not approve recruiting access for this role yet.",
+      evidence: [
+        insight.application.preparedCandidateCount ? `${insight.application.preparedCandidateCount} prepared candidate${insight.application.preparedCandidateCount === 1 ? "" : "s"}` : "",
+        insight.application.reviewedByEmail ? `Reviewed by ${insight.application.reviewedByEmail}` : "",
+        insight.application.reviewedAt ? formatActivityDate(insight.application.reviewedAt) : "",
+      ].filter(Boolean),
+      tone: "warn",
+      actionLabel: "Reapply",
     }
   }
   if (insight.openQuestionCount > 0 || insight.marketFrictionCount > 0) {
@@ -2572,8 +2650,10 @@ function sortRoleAccessDecisions(rows: RoleAccessDecision[]): RoleAccessDecision
   const rank: Record<RoleAccessStatus, number> = {
     candidate_proof: 5,
     approved: 4,
+    pending: 4,
     request_ready: 3,
     single_submission: 2,
+    not_approved: 1,
     needs_answer: 1,
   }
   return [...rows].sort((a, b) => rank[b.status] - rank[a.status] || b.insight.score - a.insight.score)
@@ -2582,6 +2662,7 @@ function sortRoleAccessDecisions(rows: RoleAccessDecision[]): RoleAccessDecision
 function roleAccessSummary(decisions: RoleAccessDecision[]) {
   return {
     approved: decisions.filter((decision) => decision.status === "approved").length,
+    pending: decisions.filter((decision) => decision.status === "pending").length,
     candidateProof: decisions.filter((decision) => decision.status === "candidate_proof").length,
     requestReady: decisions.filter((decision) => decision.status === "request_ready").length,
     needsAnswer: decisions.filter((decision) => decision.status === "needs_answer").length,
@@ -2594,15 +2675,15 @@ function PriorityRoleRow({
   sourcedCount,
   submissionCount,
   primary,
-  disabled,
-  onPrimaryRoleToggle,
+  application,
+  onAccess,
 }: {
   job: CollabJob
   sourcedCount: number
   submissionCount: number
   primary: boolean
-  disabled: boolean
-  onPrimaryRoleToggle: (jobId: string, makePrimary: boolean) => void
+  application?: RecruiterRoleApplicationItem
+  onAccess: () => void
 }) {
   const { hard, fit } = roleChecklistCounts(job)
   const signal = roleFitSignal(job, sourcedCount, submissionCount)
@@ -2619,10 +2700,10 @@ function PriorityRoleRow({
       <button
         type="button"
         className={`rb-row-button ${primary ? "is-active" : ""}`}
-        disabled={disabled}
-        onClick={() => onPrimaryRoleToggle(roleKey(job), !primary)}
+        disabled={primary || application?.status === "pending"}
+        onClick={onAccess}
       >
-        {primary ? "Primary" : "Add slot"}
+        {primary ? "Approved" : application?.status === "pending" ? "Pending" : "Apply"}
       </button>
     </article>
   )
@@ -2668,9 +2749,10 @@ function RoleAccessTab({
   roleFeedback,
   roleQuestions,
   roleIntelligence,
+  roleApplications,
   primaryRoleIds,
-  primaryRoleSavingId,
-  onPrimaryRoleToggle,
+  roleApplicationSavingId,
+  onRoleApplicationSave,
   onRoles,
   onCandidates,
 }: {
@@ -2680,17 +2762,21 @@ function RoleAccessTab({
   roleFeedback: RecruiterRoleFeedbackItem[]
   roleQuestions: RecruiterRoleQuestionItem[]
   roleIntelligence: RecruiterRoleIntelligenceItem[]
+  roleApplications: RecruiterRoleApplicationItem[]
   primaryRoleIds: string[]
-  primaryRoleSavingId: string | null
-  onPrimaryRoleToggle: (jobId: string, makePrimary: boolean) => void
+  roleApplicationSavingId: string | null
+  onRoleApplicationSave: (input: RecruiterRoleApplicationInput) => void
   onRoles: () => void
   onCandidates: () => void
 }) {
+  const [applicationDraftJobId, setApplicationDraftJobId] = useState<string | null>(null)
+  const [applicationPitch, setApplicationPitch] = useState("")
+  const [anonymizeCandidates, setAnonymizeCandidates] = useState(false)
   const primarySlotsFull = primaryRoleIds.length >= PRIMARY_ROLE_SLOT_LIMIT
   const decisions = useMemo(() => {
-    const insights = jobs.map((job) => buildRoleInsight(job, submissions, sourcedCandidates, primaryRoleIds, roleFeedback, roleQuestions, roleIntelligence))
+    const insights = jobs.map((job) => buildRoleInsight(job, submissions, sourcedCandidates, primaryRoleIds, roleFeedback, roleQuestions, roleIntelligence, roleApplications))
     return sortRoleAccessDecisions(insights.map((insight) => roleAccessDecision(insight, primarySlotsFull)))
-  }, [jobs, primaryRoleIds, primarySlotsFull, roleFeedback, roleIntelligence, roleQuestions, sourcedCandidates, submissions])
+  }, [jobs, primaryRoleIds, primarySlotsFull, roleApplications, roleFeedback, roleIntelligence, roleQuestions, sourcedCandidates, submissions])
   const summary = roleAccessSummary(decisions)
   const singleSubmissions = submissions.filter((submission) => submission.submissionMode === "single_submission").length
   const singleCreditsLeft = Math.max(0, SINGLE_SUBMISSION_WEEKLY_LIMIT - singleSubmissions)
@@ -2698,6 +2784,24 @@ function RoleAccessTab({
     .filter((decision) => decision.status === "candidate_proof" || (decision.status === "request_ready" && decision.insight.sourcedCount > 0))
     .slice(0, 5)
   const blockedRoles = decisions.filter((decision) => decision.status === "needs_answer").slice(0, 4)
+  const selectedApplicationDecision = decisions.find((decision) => roleKey(decision.insight.job) === applicationDraftJobId)
+  const selectedPreparedCandidates = selectedApplicationDecision
+    ? rowsForRole(selectedApplicationDecision.insight.job, sourcedCandidates).filter((candidate) => candidate.stage !== "archived").slice(0, 10)
+    : []
+  const submitApplication = () => {
+    if (!selectedApplicationDecision) return
+    const jobId = roleKey(selectedApplicationDecision.insight.job)
+    onRoleApplicationSave({
+      jobId,
+      action: "apply",
+      pitch: applicationPitch,
+      anonymizeCandidates,
+      preparedCandidateIds: selectedPreparedCandidates.map((candidate) => candidate.id),
+    })
+    setApplicationDraftJobId(null)
+    setApplicationPitch("")
+    setAnonymizeCandidates(false)
+  }
 
   return (
     <section className="rb-panel rb-panel--fill">
@@ -2711,9 +2815,14 @@ function RoleAccessTab({
 
       <section className="rb-access-command-hero">
         <article className="is-success">
-          <span>Approved primary access</span>
+          <span>Approved role access</span>
           <strong>{summary.approved}/{PRIMARY_ROLE_SLOT_LIMIT}</strong>
-          <p>Primary slots are the roles WeKruit should expect you to actively cover.</p>
+          <p>Approved roles are the searches WeKruit should expect you to actively cover.</p>
+        </article>
+        <article className="is-info">
+          <span>Pending applications</span>
+          <strong>{summary.pending}/3</strong>
+          <p>Role applications waiting on WeKruit review.</p>
         </article>
         <article className="is-live">
           <span>Candidate proof ready</span>
@@ -2721,9 +2830,9 @@ function RoleAccessTab({
           <p>Ready candidates that can justify role focus or a one-off submission.</p>
         </article>
         <article className="is-info">
-          <span>Request-ready roles</span>
+          <span>Apply-ready roles</span>
           <strong>{summary.requestReady}</strong>
-          <p>Roles that can become focus access once you build enough proof.</p>
+          <p>Roles that can become approved access once you build enough proof.</p>
         </article>
         <article className="is-warn">
           <span>Needs answer</span>
@@ -2746,8 +2855,11 @@ function RoleAccessTab({
           <div className="rb-access-table">
             {decisions.slice(0, 10).map((decision) => {
               const job = decision.insight.job
-              const canAddPrimary = !decision.insight.primary && !primarySlotsFull && decision.status !== "needs_answer"
-              const isSaving = primaryRoleSavingId === roleKey(job)
+              const canApply = !decision.insight.primary &&
+                !primarySlotsFull &&
+                decision.status !== "needs_answer" &&
+                decision.status !== "pending"
+              const canWithdraw = decision.status === "pending"
               return (
                 <article key={job.jobId} className={`is-${decision.tone}`}>
                   <div>
@@ -2760,13 +2872,28 @@ function RoleAccessTab({
                     <p>{decision.evidence.join(" · ")}</p>
                   </div>
                   <div>
-                    {canAddPrimary ? (
+                    {canWithdraw ? (
                       <button
                         type="button"
-                        disabled={isSaving}
-                        onClick={() => onPrimaryRoleToggle(roleKey(job), true)}
+                        disabled={roleApplicationSavingId === roleKey(job)}
+                        onClick={() => onRoleApplicationSave({ jobId: roleKey(job), action: "withdraw" })}
                       >
-                        {isSaving ? "Adding..." : decision.actionLabel}
+                        {roleApplicationSavingId === roleKey(job) ? "Withdrawing..." : "Withdraw"}
+                      </button>
+                    ) : canApply ? (
+                      <button
+                        type="button"
+                        disabled={roleApplicationSavingId === roleKey(job)}
+                        onClick={() => {
+                          setApplicationDraftJobId(roleKey(job))
+                          setApplicationPitch(
+                            decision.insight.readyCount > 0
+                              ? `I have ${decision.insight.readyCount} ready candidate${decision.insight.readyCount === 1 ? "" : "s"} for this role and can actively source against the hard checks.`
+                              : "",
+                          )
+                        }}
+                      >
+                        {roleApplicationSavingId === roleKey(job) ? "Saving..." : decision.status === "not_approved" ? "Reapply" : "Apply"}
                       </button>
                     ) : (
                       <Link to={`/recruiters/job/${job.jobId}`}>{decision.actionLabel}</Link>
@@ -2779,13 +2906,47 @@ function RoleAccessTab({
           </div>
         </article>
 
+        {selectedApplicationDecision && (
+          <article className="rb-role-application-composer">
+            <header>
+              <span>Apply to recruit</span>
+              <strong>{selectedApplicationDecision.insight.job.title}</strong>
+              <button type="button" onClick={() => setApplicationDraftJobId(null)}>Cancel</button>
+            </header>
+            <p>Share why WeKruit should trust you with this search. Prepared candidates from your CRM are attached automatically.</p>
+            <textarea
+              value={applicationPitch}
+              onChange={(event) => setApplicationPitch(event.target.value)}
+              placeholder="Relevant recruiting background, warm candidate proof, sourcing lane, and expected weekly coverage..."
+            />
+            <label>
+              <input
+                type="checkbox"
+                checked={anonymizeCandidates}
+                onChange={(event) => setAnonymizeCandidates(event.target.checked)}
+              />
+              <span>Anonymize prepared candidate details from other recruiters</span>
+            </label>
+            <div>
+              <span>{selectedPreparedCandidates.length} prepared candidate{selectedPreparedCandidates.length === 1 ? "" : "s"} attached</span>
+              <button
+                type="button"
+                disabled={applicationPitch.trim().length < 20 || roleApplicationSavingId === roleKey(selectedApplicationDecision.insight.job)}
+                onClick={submitApplication}
+              >
+                {roleApplicationSavingId === roleKey(selectedApplicationDecision.insight.job) ? "Submitting..." : "Submit application"}
+              </button>
+            </div>
+          </article>
+        )}
+
         <aside className="rb-access-side">
           <article>
             <h3>Access rules</h3>
-            <p>Primary access means you are committing active coverage. Single submissions are for exceptional candidate-led opportunities.</p>
+            <p>Approved role access means you are committing active coverage. Single submissions are for exceptional candidate-led opportunities.</p>
             <ul>
-              <li>Do not add a role as primary unless you can source or submit soon.</li>
-              <li>Use candidate proof before asking for more trusted access.</li>
+              <li>Apply only when you can source or submit soon.</li>
+              <li>Attach candidate proof before asking for trusted access.</li>
               <li>Pause roles with open questions until WeKruit answers.</li>
             </ul>
           </article>
@@ -2824,10 +2985,11 @@ function RolesTab({
   roleFeedback,
   roleQuestions,
   roleIntelligence,
+  roleApplications,
   loading,
   primaryRoleIds,
-  primaryRoleSavingId,
-  onPrimaryRoleToggle,
+  roleApplicationSavingId,
+  onAccess,
 }: {
   jobs: CollabJob[]
   submissions: RecruiterSubmissionItem[]
@@ -2835,17 +2997,18 @@ function RolesTab({
   roleFeedback: RecruiterRoleFeedbackItem[]
   roleQuestions: RecruiterRoleQuestionItem[]
   roleIntelligence: RecruiterRoleIntelligenceItem[]
+  roleApplications: RecruiterRoleApplicationItem[]
   loading: boolean
   primaryRoleIds: string[]
-  primaryRoleSavingId: string | null
-  onPrimaryRoleToggle: (jobId: string, makePrimary: boolean) => void
+  roleApplicationSavingId: string | null
+  onAccess: () => void
 }) {
   const [q, setQ] = useState("")
   const [filter, setFilter] = useState<RoleFilter>("all")
   const [sort, setSort] = useState<RoleSort>("recommended")
   const insights = useMemo(
-    () => jobs.map((job) => buildRoleInsight(job, submissions, sourcedCandidates, primaryRoleIds, roleFeedback, roleQuestions, roleIntelligence)),
-    [jobs, primaryRoleIds, roleFeedback, roleIntelligence, roleQuestions, sourcedCandidates, submissions],
+    () => jobs.map((job) => buildRoleInsight(job, submissions, sourcedCandidates, primaryRoleIds, roleFeedback, roleQuestions, roleIntelligence, roleApplications)),
+    [jobs, primaryRoleIds, roleApplications, roleFeedback, roleIntelligence, roleQuestions, sourcedCandidates, submissions],
   )
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase()
@@ -2917,8 +3080,8 @@ function RolesTab({
                 key={insight.job.jobId}
                 insight={insight}
                 primarySlotsFull={primaryRoleIds.length >= PRIMARY_ROLE_SLOT_LIMIT}
-                disabled={primaryRoleSavingId === roleKey(insight.job)}
-                onPrimaryRoleToggle={onPrimaryRoleToggle}
+                disabled={roleApplicationSavingId === roleKey(insight.job)}
+                onAccess={onAccess}
               />
             ))}
             {filtered.length === 0 && <p className="rb-empty">No roles match that search.</p>}
@@ -3988,12 +4151,12 @@ function RoleCard({
   insight,
   primarySlotsFull,
   disabled,
-  onPrimaryRoleToggle,
+  onAccess,
 }: {
   insight: RoleInsight
   primarySlotsFull: boolean
   disabled: boolean
-  onPrimaryRoleToggle: (jobId: string, makePrimary: boolean) => void
+  onAccess: () => void
 }) {
   const { job, primary } = insight
   const { hard, fit } = roleChecklistCounts(job)
@@ -4004,7 +4167,9 @@ function RoleCard({
     insight.openQuestionCount ? `${insight.openQuestionCount} open Q` : "",
     insight.marketFrictionCount ? `${insight.marketFrictionCount} friction signal${insight.marketFrictionCount === 1 ? "" : "s"}` : "",
   ].filter(Boolean).slice(0, 4)
+  const application = insight.application
   const slotDisabled = disabled || (!primary && primarySlotsFull)
+  const accessTone = primary ? "success" : roleApplicationStatusTone(application?.status)
   return (
     <article className={`rb-role-card ${primary ? "is-primary" : ""}`}>
       <div className="rb-role-card__topline">
@@ -4031,13 +4196,18 @@ function RoleCard({
       <footer>
         <span>{hard} hard checks</span>
         <span>{fit} fit checks</span>
-        <button
-          type="button"
-          disabled={slotDisabled}
-          onClick={() => onPrimaryRoleToggle(roleKey(job), !primary)}
-        >
-          {primary ? "Primary" : primarySlotsFull ? "Slots full" : "Add primary"}
-        </button>
+        <span className={`rb-status is-${accessTone}`}>{primary ? "Approved" : roleApplicationStatusLabel(application?.status)}</span>
+        {primary ? (
+          <Link className="rb-role-card__footer-action" to={`/recruiters/job/${job.jobId}`}>Open brief</Link>
+        ) : (
+          <button
+            type="button"
+            disabled={slotDisabled || application?.status === "pending"}
+            onClick={onAccess}
+          >
+            {application?.status === "pending" ? "Pending" : primarySlotsFull ? "Limit full" : "Apply"}
+          </button>
+        )}
       </footer>
     </article>
   )

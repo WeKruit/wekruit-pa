@@ -165,6 +165,28 @@ interface RecruiterRoleQuestionDoc {
   updatedAtMs?: number
 }
 
+interface RecruiterRoleApplicationDoc {
+  id: string
+  applicationId?: string
+  recruiterId?: string
+  recruiterEmail?: string
+  jobId?: string
+  inboundJobId?: string
+  jobTitleSnapshot?: string
+  companyLabelSnapshot?: string
+  status?: "pending" | "approved" | "not_approved" | "withdrawn" | "rescinded"
+  pitch?: string | null
+  anonymizeCandidates?: boolean
+  preparedCandidateIds?: string[]
+  preparedCandidateCount?: number
+  adminNote?: string | null
+  reviewedByEmail?: string | null
+  reviewedAt?: { seconds?: number } | string | null
+  createdAt?: { seconds?: number } | string | null
+  updatedAt?: { seconds?: number } | string | null
+  updatedAtMs?: number
+}
+
 function timestampToMs(raw: unknown): number {
   if (!raw) return 0
   if (typeof raw === "string") return Date.parse(raw) || 0
@@ -228,7 +250,7 @@ function writeKnownRecruiterInviteCodes(codes: Record<string, string>): void {
   }
 }
 
-type RecruiterAdminSection = "codes" | "sourced" | "feedback" | "questions" | "submissions"
+type RecruiterAdminSection = "codes" | "applications" | "sourced" | "feedback" | "questions" | "submissions"
 
 function codeStatus(code: RecruiterInviteCodeDoc): { label: string; tone: Parameters<typeof Badge>[0]["tone"] } {
   if (code.active === false) return { label: "disabled", tone: "muted" }
@@ -359,6 +381,8 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
         title={
           section === "codes"
             ? "Recruiter Access"
+            : section === "applications"
+              ? "Recruiter Applications"
             : section === "sourced"
               ? "Recruiter Sourced Candidates"
               : section === "feedback"
@@ -370,6 +394,8 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
         description={
           section === "codes"
             ? "Create one-use recruiter access codes, review recruiter accounts, and monitor new-role alerts."
+            : section === "applications"
+              ? "Review recruiter requests to work specific roles, approve trusted coverage, and reject weak or over-capacity searches."
             : section === "sourced"
               ? "Review sourced prospects before formal submission, calibrate recruiters, and monitor role-level supply."
               : section === "feedback"
@@ -397,6 +423,15 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
       <div>
         {header}
         <RecruiterSourcedCandidatesPanel />
+      </div>
+    )
+  }
+
+  if (section === "applications") {
+    return (
+      <div>
+        {header}
+        <RecruiterRoleApplicationsPanel />
       </div>
     )
   }
@@ -581,6 +616,12 @@ function RecruiterSectionTabs({ active }: { active: RecruiterAdminSection }) {
       detail: "Invite codes, accounts, role alerts",
     },
     {
+      key: "applications",
+      label: "Applications",
+      to: "/admin/recruiter-applications",
+      detail: "Approve role access",
+    },
+    {
       key: "sourced",
       label: "Sourced candidates",
       to: "/admin/recruiter-sourced",
@@ -611,7 +652,7 @@ function RecruiterSectionTabs({ active }: { active: RecruiterAdminSection }) {
       aria-label="Recruiter admin sections"
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
+        gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
         gap: 12,
         margin: "0 0 16px",
       }}
@@ -1331,6 +1372,287 @@ function RecruiterRoleFeedbackPanel() {
         />
       </Panel>
     </div>
+  )
+}
+
+function applicationStatusTone(status?: string): Parameters<typeof Badge>[0]["tone"] {
+  switch (status) {
+    case "approved": return "ok"
+    case "pending": return "info"
+    case "not_approved":
+    case "rescinded": return "warn"
+    default: return "muted"
+  }
+}
+
+function RecruiterRoleApplicationsPanel() {
+  const [rows, setRows] = useState<RecruiterRoleApplicationDoc[]>([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  const reload = async () => {
+    setLoading(true)
+    setErr(null)
+    try {
+      const snap = await getDocs(query(
+        collection(db(), "pa-recruiter-role-applications"),
+        orderBy("updatedAt", "desc"),
+        limit(500),
+      ))
+      setRows(snap.docs.map((d) => {
+        const data = d.data() as Omit<RecruiterRoleApplicationDoc, "id">
+        return { id: d.id, ...data, updatedAtMs: timestampToMs(data.updatedAt ?? data.createdAt) }
+      }))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void reload()
+  }, [])
+
+  const jobOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const r of rows) {
+      const id = r.inboundJobId ?? r.jobId
+      if (id && !seen.has(id)) seen.set(id, r.jobTitleSnapshot ?? id)
+    }
+    return [...seen.entries()].map(([jobId, label]) => ({
+      key: jobId,
+      label,
+      title: jobId,
+      test: (r: RecruiterRoleApplicationDoc) => r.inboundJobId === jobId || r.jobId === jobId,
+    }))
+  }, [rows])
+
+  const table = useTable<RecruiterRoleApplicationDoc>(rows, {
+    defaultSort: { key: "updatedAtMs", dir: "desc" },
+    pageSize: 50,
+    search: (r, q) =>
+      (r.recruiterEmail?.toLowerCase().includes(q) ?? false) ||
+      (r.jobTitleSnapshot?.toLowerCase().includes(q) ?? false) ||
+      (r.companyLabelSnapshot?.toLowerCase().includes(q) ?? false) ||
+      (r.pitch?.toLowerCase().includes(q) ?? false) ||
+      (r.adminNote?.toLowerCase().includes(q) ?? false),
+    chips: [
+      { id: "job", label: "Job", multi: false, options: jobOptions },
+      {
+        id: "status",
+        label: "Status",
+        multi: true,
+        options: ["pending", "approved", "not_approved", "withdrawn", "rescinded"].map((s) => ({
+          key: s,
+          label: prettyKey(s),
+          test: (r: RecruiterRoleApplicationDoc) => (r.status ?? "pending") === s,
+        })),
+      },
+    ],
+  })
+
+  const metrics = {
+    total: rows.length,
+    pending: rows.filter((r) => r.status === "pending").length,
+    approved: rows.filter((r) => r.status === "approved").length,
+    withProof: rows.filter((r) => (r.preparedCandidateCount ?? 0) > 0).length,
+  }
+
+  if (loading) return <LoadingState label="Loading recruiter applications..." />
+  if (err) return <ErrorState message={err} />
+
+  const columns: Column<RecruiterRoleApplicationDoc>[] = [
+    {
+      key: "updatedAtMs",
+      label: "Updated",
+      sortable: true,
+      width: 160,
+      render: (r) => <span style={{ whiteSpace: "nowrap" }}>{formatOpsDate(r.updatedAt ?? r.createdAt)}</span>,
+    },
+    {
+      key: "jobTitleSnapshot",
+      label: "Role",
+      sortable: true,
+      render: (r) => (
+        <>
+          <div style={{ fontWeight: 500 }}>
+            {r.jobId ? <AdminJobLink jobId={r.jobId}>{r.jobTitleSnapshot ?? r.jobId}</AdminJobLink> : r.jobTitleSnapshot ?? "—"}
+          </div>
+          <div style={{ color: "#777", fontSize: 11 }}>{r.companyLabelSnapshot ?? ""}</div>
+        </>
+      ),
+    },
+    {
+      key: "recruiterEmail",
+      label: "Recruiter",
+      sortable: true,
+      render: (r) => r.recruiterEmail ?? r.recruiterId ?? "—",
+    },
+    {
+      key: "status",
+      label: "Status",
+      sortable: true,
+      width: 130,
+      render: (r) => <Badge tone={applicationStatusTone(r.status)}>{prettyKey(r.status ?? "pending")}</Badge>,
+    },
+    {
+      key: "preparedCandidateCount",
+      label: "Proof",
+      sortable: true,
+      width: 90,
+      render: (r) => `${r.preparedCandidateCount ?? r.preparedCandidateIds?.length ?? 0}`,
+    },
+    {
+      key: "pitch",
+      label: "Pitch",
+      render: (r) => r.pitch ? (r.pitch.length > 96 ? `${r.pitch.slice(0, 96)}...` : r.pitch) : "—",
+    },
+  ]
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+        <OpsMetric label="Applications" value={metrics.total} />
+        <OpsMetric label="Pending review" value={metrics.pending} />
+        <OpsMetric label="Approved" value={metrics.approved} />
+        <OpsMetric label="With candidate proof" value={metrics.withProof} />
+      </div>
+      <Panel actions={<button type="button" onClick={() => void reload()}>Refresh</button>}>
+        <DataTable<RecruiterRoleApplicationDoc>
+          columns={columns}
+          rows={table.visibleRows}
+          chips={table.chipsForRender}
+          search={table.search}
+          onSearch={table.setSearch}
+          searchPlaceholder="Search recruiter / role / pitch..."
+          sort={table.sort}
+          onSort={table.toggleSort}
+          page={table.page}
+          pageCount={table.pageCount}
+          onPageChange={table.setPage}
+          onResetFilters={table.reset}
+          count={table.filteredCount}
+          totalCount={table.totalRows}
+          onRowClick={(r) => setExpandedId(expandedId === r.id ? null : r.id ?? null)}
+          empty={
+            <div style={{ padding: 40, textAlign: "center", color: "#777" }}>
+              No recruiter role applications yet.
+            </div>
+          }
+        />
+      </Panel>
+      {expandedId && (() => {
+        const row = rows.find((r) => r.id === expandedId)
+        if (!row) return null
+        return (
+          <RoleApplicationDetailPanel
+            row={row}
+            onClose={() => setExpandedId(null)}
+            onUpdated={(next) => {
+              setRows((prev) => prev.map((r) => r.id === next.id ? { ...r, ...next, updatedAtMs: Date.now() } : r))
+            }}
+          />
+        )
+      })()}
+    </div>
+  )
+}
+
+function RoleApplicationDetailPanel({
+  row,
+  onClose,
+  onUpdated,
+}: {
+  row: RecruiterRoleApplicationDoc
+  onClose: () => void
+  onUpdated: (next: RecruiterRoleApplicationDoc) => void
+}) {
+  const [status, setStatus] = useState(row.status ?? "pending")
+  const [adminNote, setAdminNote] = useState(row.adminNote ?? "")
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const saveReview = async () => {
+    setSaving(true)
+    setErr(null)
+    try {
+      const reviewedByEmail = auth().currentUser?.email ?? "operator"
+      const cleanNote = adminNote.trim()
+      await updateDoc(doc(db(), "pa-recruiter-role-applications", row.id), {
+        status,
+        adminNote: cleanNote || null,
+        reviewedByEmail,
+        reviewedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        statusHistory: arrayUnion({
+          status,
+          by: "admin",
+          adminEmail: reviewedByEmail,
+          atIso: new Date().toISOString(),
+          ...(cleanNote ? { note: cleanNote } : {}),
+        }),
+      })
+      onUpdated({
+        ...row,
+        status,
+        adminNote: cleanNote || null,
+        reviewedByEmail,
+        updatedAtMs: Date.now(),
+      })
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Panel title="Review role application" eyebrow={row.jobTitleSnapshot ?? row.jobId ?? "Role application"}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div style={{ display: "grid", gap: 8, fontSize: 13 }}>
+          <div><b>Recruiter:</b> {row.recruiterEmail ?? row.recruiterId ?? "—"}</div>
+          <div><b>Role:</b> {row.jobId ? <AdminJobLink jobId={row.jobId}>{row.jobTitleSnapshot ?? row.jobId}</AdminJobLink> : row.jobTitleSnapshot ?? "—"}</div>
+          <div><b>Prepared candidates:</b> {row.preparedCandidateCount ?? row.preparedCandidateIds?.length ?? 0}</div>
+          <div><b>Anonymized:</b> {row.anonymizeCandidates ? "yes" : "no"}</div>
+        </div>
+        <div style={{ padding: 12, border: "1px solid #eee", borderRadius: 8, background: "#faf8f4", fontSize: 13, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+          <b>Recruiter pitch:</b>
+          <br />
+          {row.pitch ?? "—"}
+        </div>
+      </div>
+      <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid #eee", display: "grid", gap: 10 }}>
+        <label style={{ display: "grid", gap: 6, fontSize: 13, color: "#555" }}>
+          Review status
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value as NonNullable<RecruiterRoleApplicationDoc["status"]>)}
+            style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 8, font: "inherit", color: "#222" }}
+          >
+            {["pending", "approved", "not_approved", "rescinded"].map((s) => <option key={s} value={s}>{prettyKey(s)}</option>)}
+          </select>
+        </label>
+        <label style={{ display: "grid", gap: 6, fontSize: 13, color: "#555" }}>
+          Recruiter-visible note
+          <textarea
+            value={adminNote}
+            onChange={(e) => setAdminNote(e.target.value)}
+            rows={5}
+            placeholder="Why approved, what proof is missing, or what to improve before reapplying..."
+            style={{ resize: "vertical", padding: 10, border: "1px solid #ddd", borderRadius: 8, font: "inherit", color: "#222" }}
+          />
+        </label>
+        {err && <div style={{ color: "#a00", fontSize: 13 }}>{err}</div>}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" onClick={() => void saveReview()} disabled={saving}>
+            {saving ? "Saving..." : "Save review"}
+          </button>
+          <button type="button" onClick={onClose} disabled={saving}>Close</button>
+        </div>
+      </div>
+    </Panel>
   )
 }
 
