@@ -49,10 +49,20 @@ export async function maybeRunThinClaire(
 
   const userId = typeof data.userId === "string" ? data.userId : undefined
   const sessionId = typeof data.sessionId === "string" ? data.sessionId : undefined
-  const text =
+  let text =
     typeof data.body === "string" ? data.body : typeof data.text === "string" ? data.text : ""
   // Thin Claire needs a durable session + a real message. Otherwise fall through to legacy.
   if (!userId || !sessionId || !text.trim()) return false
+
+  // DEV TRIGGER — `__PA_SCHEDULE__` deterministically exercises the thin scheduling
+  // flow (mirrors `__PA_FIND_MATCH__`). We rewrite the sentinel into a natural
+  // scheduling ask so the agent calls offer_interview_slots through its normal turn.
+  // The scheduling tools self-gate to SCHEDULING_DEV_UIDS, so a non-dev sender just
+  // hears "a teammate will lock in a time" — safe to leave the sentinel ungated here.
+  if (text.trim() === "__PA_SCHEDULE__") {
+    text = "I'd like to schedule the interview now — what times do you have open?"
+    log("thin_claire.dev_trigger.schedule", { eventId, userId })
+  }
 
   let enabled = false
   try {
