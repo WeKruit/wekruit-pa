@@ -3414,6 +3414,7 @@
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 12px;
+  scroll-margin-top: 18px;
 }
 
 .rb-submission-list--full {
@@ -3425,7 +3426,222 @@
 }
 
 .rb-submissions-dashboard {
+  display: grid;
   gap: 18px;
+}
+
+.rb-submission-command {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.92fr) minmax(320px, 1.2fr) minmax(240px, 0.72fr);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.rb-submission-command.is-live { border-color: var(--live-border); }
+.rb-submission-command.is-info { border-color: var(--info-bg); }
+.rb-submission-command.is-success { border-color: var(--success-bg); }
+.rb-submission-command.is-warn { border-color: var(--danger-bg); }
+
+.rb-submission-command__mission {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  border-right: 1px solid var(--border);
+  background: var(--cream-3);
+  padding: 18px;
+}
+
+.rb-submission-command__mission span,
+.rb-submission-command__cards span,
+.rb-submission-command__queue > span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.rb-submission-command__mission h3 {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 32px;
+  font-weight: 500;
+  line-height: 0.98;
+}
+
+.rb-submission-command__mission p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.rb-submission-command__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.rb-submission-command__actions a,
+.rb-submission-command__actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 38px;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 9px 14px;
+  text-decoration: none;
+}
+
+.rb-submission-command__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.rb-submission-command__actions .is-secondary {
+  background: #fff;
+  color: var(--ink);
+}
+
+.rb-submission-command__cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+
+.rb-submission-command__cards article {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--cream-3);
+  padding: 12px;
+}
+
+.rb-submission-command__cards article.is-live {
+  border-color: var(--live-border);
+  background: var(--live-soft);
+}
+
+.rb-submission-command__cards article.is-info {
+  border-color: var(--info-bg);
+  background: var(--info-bg);
+}
+
+.rb-submission-command__cards article.is-success {
+  border-color: var(--success-bg);
+  background: var(--success-bg);
+}
+
+.rb-submission-command__cards article.is-warn {
+  border-color: var(--danger-bg);
+  background: var(--danger-bg);
+}
+
+.rb-submission-command__cards strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-submission-command__cards p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.rb-submission-command__queue {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border-left: 1px solid var(--border);
+  padding: 14px;
+}
+
+.rb-submission-command__queue > div {
+  display: grid;
+  gap: 8px;
+}
+
+.rb-submission-command__queue button {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 10px;
+  text-align: left;
+}
+
+.rb-submission-command__queue button.is-live {
+  border-color: var(--live-border);
+  background: var(--live-soft);
+}
+
+.rb-submission-command__queue button.is-info {
+  border-color: var(--info-bg);
+  background: var(--info-bg);
+}
+
+.rb-submission-command__queue button.is-success {
+  border-color: var(--success-bg);
+  background: var(--success-bg);
+}
+
+.rb-submission-command__queue button.is-warn {
+  border-color: var(--danger-bg);
+  background: var(--danger-bg);
+}
+
+.rb-submission-command__queue em,
+.rb-submission-command__queue small {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-submission-command__queue strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-submission-command__queue p {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.4;
 }
 
 .rb-submissions-hero {
@@ -5319,6 +5535,7 @@
   .rb-feedback-grid,
   .rb-candidate-crm,
   .rb-match-command,
+  .rb-submission-command,
   .rb-matchboard,
   .rb-submissions-layout,
   .rb-role-workroom,
@@ -5379,6 +5596,14 @@
   .rb-match-command__mission {
     border-right: 0;
     border-bottom: 1px solid var(--border);
+  }
+  .rb-submission-command__mission {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .rb-submission-command__queue {
+    border-left: 0;
+    border-top: 1px solid var(--border);
   }
   .rb-stats {
     grid-template-columns: repeat(2, 1fr);
@@ -5544,6 +5769,7 @@
   .rb-source-form__split,
   .rb-feedback-line,
   .rb-match-command__cards,
+  .rb-submission-command__cards,
   .rb-role-cockpit,
   .rb-role-workroom__cards,
   .rb-role-intel__metrics,
@@ -5589,6 +5815,9 @@
     align-items: flex-start;
     justify-items: start;
     justify-self: start;
+  }
+  .rb-submission-command__mission h3 {
+    font-size: 26px;
   }
   .rb-notification-strip {
     align-items: stretch;

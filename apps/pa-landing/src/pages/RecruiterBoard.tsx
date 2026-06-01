@@ -394,6 +394,10 @@ function submissionReceiptId(submission: RecruiterSubmissionItem): string {
   return submission.submissionId || submission.id
 }
 
+function submissionDomId(submissionId: string): string {
+  return `submission-${submissionId.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+}
+
 function submissionModeLabel(mode?: RecruiterSubmissionItem["submissionMode"]): string {
   switch (mode) {
     case "primary_role": return "Approved role lane"
@@ -499,6 +503,178 @@ function buildSubmissionDashboard(submissions: RecruiterSubmissionItem[]) {
       { label: "Rated submissions", value: String(rated.length), body: "WeKruit /4 quality signal plus reasons.", tone: rated.length ? "info" : "mute" },
       { label: "Needs action", value: String(needsAction.length), body: "Aged reviews or feedback that should change sourcing.", tone: needsAction.length ? "warn" : "success" },
     ] as Array<{ label: string; value: string; body: string; tone: "live" | "info" | "success" | "warn" | "mute" }>,
+  }
+}
+
+type SubmissionCommandAction = "browse_roles" | "open_submission" | "open_role" | "resend_confirmation"
+
+type SubmissionCommandModel = {
+  focus?: RecruiterSubmissionItem
+  label: string
+  title: string
+  body: string
+  cta: string
+  tone: "live" | "info" | "success" | "warn" | "mute"
+  action: SubmissionCommandAction
+  href?: string
+  cards: Array<{ label: string; value: string; body: string; tone: "live" | "info" | "success" | "warn" | "mute" }>
+  queue: Array<{ id: string; label: string; title: string; body: string; tone: "live" | "info" | "success" | "warn" | "mute" }>
+}
+
+function submissionCandidateName(submission: RecruiterSubmissionItem): string {
+  return submission.candidate?.name || "Candidate"
+}
+
+function submissionCommandPriority(submission: RecruiterSubmissionItem): number {
+  if (candidateConfirmationCanResend(submission)) return 100
+  if (submissionIsClosed(submission) && submissionHasStructuredFeedback(submission)) return 92
+  if (submissionHasStructuredFeedback(submission)) return 82
+  if (submissionIsActiveReview(submission) && submissionAgeDays(submission) >= 3) return 74
+  if (submissionIsAdvanced(submission)) return 68
+  if (submissionIsActiveReview(submission)) return 40
+  return 20
+}
+
+function sortSubmissionCommands(submissions: RecruiterSubmissionItem[]): RecruiterSubmissionItem[] {
+  return [...submissions].sort((a, b) =>
+    submissionCommandPriority(b) - submissionCommandPriority(a) ||
+    timestampValueMs(b.recruiterFeedbackUpdatedAt ?? b.updatedAt ?? b.createdAt) -
+      timestampValueMs(a.recruiterFeedbackUpdatedAt ?? a.updatedAt ?? a.createdAt),
+  )
+}
+
+function submissionCommandBody(submission: RecruiterSubmissionItem): string {
+  const rating = submissionFeedbackRating(submission)
+  const reasons = submissionFeedbackReasonLabels(submission)
+  if (submission.recruiterFeedbackNote) return submission.recruiterFeedbackNote
+  if (rating !== null) {
+    return [`WeKruit rating ${rating}/4`, reasons.length ? reasons.join(", ") : ""].filter(Boolean).join(" · ")
+  }
+  return submissionNextAction(submission.status).body
+}
+
+function buildSubmissionCommand(submissions: RecruiterSubmissionItem[]): SubmissionCommandModel {
+  const focus = sortSubmissionCommands(submissions)[0]
+  const actionableQueue = sortSubmissionCommands(submissions)
+    .filter((submission) => submissionNeedsAction(submission) || submissionIsAdvanced(submission))
+    .slice(0, 4)
+    .map((submission) => {
+      const status = statusMeta(submission.status)
+      return {
+        id: submission.id,
+        label: status.label,
+        title: submissionCandidateName(submission),
+        body: submissionCommandBody(submission),
+        tone: status.tone,
+      }
+    })
+
+  if (!focus) {
+    return {
+      label: "Submission command",
+      title: "No candidate packets yet",
+      body: "Open a role, save a prospect, confirm consent, then submit the strongest packet into WeKruit review.",
+      cta: "Browse roles",
+      tone: "info",
+      action: "browse_roles",
+      href: "/recruiters?tab=roles",
+      cards: [
+        { label: "Submitted", value: "0", body: "No formal submissions from this recruiter account.", tone: "mute" },
+        { label: "Consent", value: "Required", body: "Every packet needs candidate approval before review.", tone: "info" },
+        { label: "Feedback", value: "Pending", body: "WeKruit ratings appear here after review.", tone: "mute" },
+      ],
+      queue: actionableQueue,
+    }
+  }
+
+  const candidate = submissionCandidateName(focus)
+  const status = statusMeta(focus.status)
+  const consent = candidateConsentMeta(focus.candidateConsentStatus)
+  const nextAction = submissionNextAction(focus.status)
+  const ageDays = submissionAgeDays(focus)
+  const roleHref = rolePathForRow(focus)
+  const feedbackRating = submissionFeedbackRating(focus)
+  const feedbackReasons = submissionFeedbackReasonLabels(focus)
+  let label = "Submission command"
+  let title = `${candidate} is ${status.label.toLowerCase()}`
+  let body = nextAction.body
+  let cta = "Open packet"
+  let tone = status.tone
+  let action: SubmissionCommandAction = "open_submission"
+  let href: string | undefined
+
+  if (candidateConfirmationCanResend(focus)) {
+    label = "Candidate confirmation"
+    title = `${candidate} has not confirmed consent`
+    body = candidateConfirmationActionBody(focus)
+    cta = "Resend confirmation"
+    tone = consent.tone
+    action = "resend_confirmation"
+  } else if (submissionIsClosed(focus) && submissionHasStructuredFeedback(focus)) {
+    label = "Feedback command"
+    title = `Use ${candidate}'s feedback before sending lookalikes`
+    body = submissionCommandBody(focus)
+    cta = "Review feedback"
+    tone = "warn"
+  } else if (submissionHasStructuredFeedback(focus)) {
+    label = "Feedback landed"
+    title = `Calibrate around ${candidate}`
+    body = submissionCommandBody(focus)
+    cta = "Read feedback"
+    tone = submissionFeedbackRatingTone(focus)
+  } else if (submissionIsActiveReview(focus) && ageDays >= 3) {
+    label = "Review aging"
+    title = `${candidate} has waited ${ageDays} days`
+    body = "This review is aging. Avoid flooding lookalikes until WeKruit gives a clearer signal on this packet."
+    cta = "Open packet"
+    tone = "warn"
+  } else if (submissionIsAdvanced(focus)) {
+    label = "Candidate moving"
+    title = `${candidate} is moving forward`
+    body = "Keep the candidate warm and stay ready for logistics while WeKruit works the hiring team."
+    cta = roleHref ? "Open role" : "Open packet"
+    tone = "success"
+    action = roleHref ? "open_role" : "open_submission"
+    href = roleHref
+  }
+
+  return {
+    focus,
+    label,
+    title,
+    body,
+    cta,
+    tone,
+    action,
+    href,
+    cards: [
+      { label: "Status", value: status.label, body: nextAction.title, tone: status.tone },
+      {
+        label: "Consent",
+        value: consent.label,
+        body: focus.candidateConfirmation?.candidateEmail || focus.candidate?.email || "Candidate approval tracked on the receipt.",
+        tone: consent.tone,
+      },
+      {
+        label: "Feedback",
+        value: feedbackRating === null ? "Not rated" : `${feedbackRating}/4`,
+        body: feedbackReasons.length ? feedbackReasons.slice(0, 3).join(", ") : "No structured WeKruit feedback yet.",
+        tone: feedbackRating === null ? "mute" : submissionFeedbackRatingTone(focus),
+      },
+      {
+        label: "Age",
+        value: `${ageDays}d`,
+        body: `Submitted ${formatActivityDate(focus.createdAt)}.`,
+        tone: ageDays >= 3 && submissionIsActiveReview(focus) ? "warn" : "info",
+      },
+      {
+        label: "Lane",
+        value: submissionModeLabel(focus.submissionMode),
+        body: submissionReceiptId(focus),
+        tone: "info",
+      },
+    ],
+    queue: actionableQueue,
   }
 }
 
@@ -4879,6 +5055,7 @@ function SubmissionsTab({
   const [resendingId, setResendingId] = useState<string | null>(null)
   const [resendError, setResendError] = useState<string | null>(null)
   const dashboard = useMemo(() => buildSubmissionDashboard(submissions), [submissions])
+  const command = useMemo(() => buildSubmissionCommand(submissions), [submissions])
   const visibleSubmissions = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return submissions.filter((submission) => {
@@ -4900,12 +5077,22 @@ function SubmissionsTab({
       setResendingId(null)
     }
   }
+  const handleReviewSubmission = (submissionId: string) => {
+    document.getElementById(submissionDomId(submissionId))?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
 
   return (
     <section className="rb-panel rb-panel--fill rb-submissions-dashboard">
       <header className="rb-panel__head">
         <div><h2>Submission pipeline</h2><p>Track candidate ownership, WeKruit review status, feedback, and next action from one dashboard.</p></div>
       </header>
+
+      <SubmissionCommandPanel
+        model={command}
+        onReviewSubmission={handleReviewSubmission}
+        onResendConfirmation={(submission) => void handleResendConfirmation(submission)}
+        resendingSubmissionId={resendingId}
+      />
 
       <section className="rb-submissions-hero">
         {dashboard.hero.map((item) => (
@@ -4979,6 +5166,81 @@ function SubmissionsTab({
           </article>
         </aside>
       </div>
+    </section>
+  )
+}
+
+function SubmissionCommandPanel({
+  model,
+  onReviewSubmission,
+  onResendConfirmation,
+  resendingSubmissionId,
+}: {
+  model: SubmissionCommandModel
+  onReviewSubmission: (submissionId: string) => void
+  onResendConfirmation: (submission: RecruiterSubmissionItem) => void
+  resendingSubmissionId: string | null
+}) {
+  const focus = model.focus
+  const renderPrimaryAction = () => {
+    if (model.action === "browse_roles" && model.href) {
+      return <Link to={model.href}>{model.cta}</Link>
+    }
+    if (model.action === "open_role" && model.href) {
+      return <Link to={model.href}>{model.cta}</Link>
+    }
+    if (model.action === "resend_confirmation" && focus) {
+      return (
+        <button type="button" onClick={() => onResendConfirmation(focus)} disabled={resendingSubmissionId === focus.id}>
+          {resendingSubmissionId === focus.id ? "Sending..." : model.cta}
+        </button>
+      )
+    }
+    if (focus) {
+      return <button type="button" onClick={() => onReviewSubmission(focus.id)}>{model.cta}</button>
+    }
+    return null
+  }
+
+  return (
+    <section className={`rb-submission-command is-${model.tone}`}>
+      <div className="rb-submission-command__mission">
+        <span>{model.label}</span>
+        <h3>{model.title}</h3>
+        <p>{model.body}</p>
+        <div className="rb-submission-command__actions">
+          {renderPrimaryAction()}
+          {focus && model.action !== "open_submission" && (
+            <button type="button" className="is-secondary" onClick={() => onReviewSubmission(focus.id)}>
+              Open packet
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="rb-submission-command__cards">
+        {model.cards.map((card) => (
+          <article className={`is-${card.tone}`} key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <p>{card.body}</p>
+          </article>
+        ))}
+      </div>
+
+      <aside className="rb-submission-command__queue">
+        <span>Action queue</span>
+        <div>
+          {model.queue.map((item) => (
+            <button type="button" className={`is-${item.tone}`} key={item.id} onClick={() => onReviewSubmission(item.id)}>
+              <em>{item.label}</em>
+              <strong>{item.title}</strong>
+              <small>{item.body}</small>
+            </button>
+          ))}
+          {model.queue.length === 0 && <p>No submission needs immediate follow-up.</p>}
+        </div>
+      </aside>
     </section>
   )
 }
@@ -5423,7 +5685,7 @@ function SubmissionRow({
   const feedbackReasons = submissionFeedbackReasonLabels(submission)
   const feedbackRating = submissionFeedbackRating(submission)
   return (
-    <article className={`rb-submission ${expanded ? "is-expanded" : ""}`}>
+    <article id={submissionDomId(submission.id)} className={`rb-submission ${expanded ? "is-expanded" : ""}`}>
       <div className="rb-submission__main">
         <span className={`rb-status is-${meta.tone}`}>{meta.label}</span>
         <div>
