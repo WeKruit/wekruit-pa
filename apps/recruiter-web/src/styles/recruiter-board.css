@@ -4505,6 +4505,160 @@
   line-height: 1.4;
 }
 
+.rb-submission-status-board {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px;
+}
+
+.rb-submission-status-board > header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.rb-submission-status-board > header div {
+  display: grid;
+  gap: 4px;
+}
+
+.rb-submission-status-board > header span,
+.rb-submission-status-lane > header span,
+.rb-submission-status-card span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.rb-submission-status-board > header strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.rb-submission-status-board > header p,
+.rb-submission-status-lane > header p,
+.rb-submission-status-card small,
+.rb-submission-status-empty,
+.rb-submission-status-more {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.rb-submission-status-board__lanes {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(150px, 1fr));
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.rb-submission-status-lane {
+  min-width: 150px;
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  border-left: 1px solid var(--border);
+  background: #fff;
+  padding: 10px;
+}
+
+.rb-submission-status-lane:first-child {
+  border-left: 0;
+}
+
+.rb-submission-status-lane > header {
+  display: grid;
+  gap: 5px;
+  border-top: 3px solid var(--ink-3);
+  padding-top: 8px;
+}
+
+.rb-submission-status-lane > header div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rb-submission-status-lane > header strong {
+  min-width: 24px;
+  border-radius: var(--r-pill);
+  background: var(--cream-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 7px;
+  text-align: center;
+}
+
+.rb-submission-status-lane.is-live > header { border-top-color: var(--live); }
+.rb-submission-status-lane.is-info > header { border-top-color: var(--info); }
+.rb-submission-status-lane.is-success > header { border-top-color: var(--success); }
+.rb-submission-status-lane.is-warn > header { border-top-color: var(--warning); }
+.rb-submission-status-lane.is-mute > header { border-top-color: var(--ink-3); }
+
+.rb-submission-status-lane > div {
+  display: grid;
+  gap: 8px;
+}
+
+.rb-submission-status-card {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ink-3);
+  border-radius: 9px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 10px;
+  text-align: left;
+}
+
+.rb-submission-status-card.is-live { border-left-color: var(--live); background: var(--live-soft); }
+.rb-submission-status-card.is-info { border-left-color: var(--info); }
+.rb-submission-status-card.is-success { border-left-color: var(--success); background: var(--success-bg); }
+.rb-submission-status-card.is-warn { border-left-color: var(--warning); background: #fffaf1; }
+.rb-submission-status-card.is-mute { border-left-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-submission-status-card strong,
+.rb-submission-status-card em {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-submission-status-card em {
+  color: var(--ink-2);
+  font-size: 11.5px;
+  font-style: normal;
+}
+
+.rb-submission-status-empty,
+.rb-submission-status-more {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+}
+
 .rb-submissions-controls {
   display: flex;
   align-items: center;
@@ -6864,6 +7018,9 @@
   .rb-submission-receipt {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .rb-submission-status-board__lanes {
+    grid-template-columns: repeat(6, minmax(180px, 1fr));
+  }
   .rb-submissions-side {
     position: static;
   }
@@ -7199,6 +7356,13 @@
   }
   .rb-submission-deal-room__lead h3 {
     font-size: 26px;
+  }
+  .rb-submission-status-board > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .rb-submission-status-board > header strong {
+    font-size: 24px;
   }
   .rb-candidate-command__mission h3 {
     font-size: 26px;

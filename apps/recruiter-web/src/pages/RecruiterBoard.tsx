@@ -564,6 +564,25 @@ type SubmissionDealRoomModel = {
   timeline: SubmissionActivityEvent[]
 }
 
+type SubmissionPipelineCardModel = {
+  id: string
+  candidate: string
+  role: string
+  company: string
+  meta: string
+  status: string
+  receipt: string
+  tone: "live" | "info" | "success" | "warn" | "mute"
+}
+
+type SubmissionPipelineLaneModel = {
+  id: string
+  label: string
+  body: string
+  tone: "live" | "info" | "success" | "warn" | "mute"
+  items: SubmissionPipelineCardModel[]
+}
+
 function submissionCandidateName(submission: RecruiterSubmissionItem): string {
   return submission.candidate?.name || "Candidate"
 }
@@ -861,6 +880,88 @@ function buildSubmissionDealRoom(submissions: RecruiterSubmissionItem[], jobs: C
     risks,
     timeline: [...submissionActivityEvents(focus)].reverse().slice(0, 5),
   }
+}
+
+function submissionPipelineLaneId(submission: RecruiterSubmissionItem): string {
+  const status = submission.status ?? "submitted"
+  if (candidateConfirmationCanResend(submission)) return "consent"
+  if (status === "offer" || status === "hired") return "closing"
+  if (status === "advanced" || status === "interviewing") return "hiring_team"
+  if (status === "reviewing" || status === "backburner") return "review"
+  if (status === "rejected" || status === "duplicate") return "closed"
+  return "submitted"
+}
+
+function submissionPipelineCard(submission: RecruiterSubmissionItem): SubmissionPipelineCardModel {
+  const status = statusMeta(submission.status)
+  const rating = submissionFeedbackRating(submission)
+  const reasons = submissionFeedbackReasonLabels(submission)
+  const age = `${submissionAgeDays(submission)}d`
+  const feedback = rating !== null
+    ? `${rating}/4${reasons.length ? ` · ${reasons.slice(0, 2).join(", ")}` : ""}`
+    : status.label
+  return {
+    id: submission.id,
+    candidate: submissionCandidateName(submission),
+    role: shortText(submission.jobTitleSnapshot, "Role", 34),
+    company: shortText(submission.companyLabelSnapshot, "Company", 28),
+    meta: `${age} old · ${feedback}`,
+    status: status.label,
+    receipt: submissionReceiptId(submission),
+    tone: status.tone,
+  }
+}
+
+function buildSubmissionPipelineBoard(submissions: RecruiterSubmissionItem[]): SubmissionPipelineLaneModel[] {
+  const laneDefs: Array<Omit<SubmissionPipelineLaneModel, "items">> = [
+    {
+      id: "consent",
+      label: "Consent needed",
+      body: "Candidate confirmation is missing or failed.",
+      tone: submissions.some(candidateConfirmationCanResend) ? "warn" : "mute",
+    },
+    {
+      id: "submitted",
+      label: "Submitted",
+      body: "Queued packets waiting for triage.",
+      tone: "live",
+    },
+    {
+      id: "review",
+      label: "WeKruit review",
+      body: "Under review, parked, or awaiting WeKruit signal.",
+      tone: "info",
+    },
+    {
+      id: "hiring_team",
+      label: "Hiring team",
+      body: "Advanced or interviewing with the company.",
+      tone: "success",
+    },
+    {
+      id: "closing",
+      label: "Offer / hired",
+      body: "Close process and payout movement.",
+      tone: "success",
+    },
+    {
+      id: "closed",
+      label: "Closed feedback",
+      body: "Rejected or duplicate packets to learn from.",
+      tone: "warn",
+    },
+  ]
+  const cardsByLane = new Map<string, SubmissionPipelineCardModel[]>()
+  for (const submission of sortSubmissionCommands(submissions)) {
+    const lane = submissionPipelineLaneId(submission)
+    const cards = cardsByLane.get(lane) ?? []
+    cards.push(submissionPipelineCard(submission))
+    cardsByLane.set(lane, cards)
+  }
+  return laneDefs.map((lane) => ({
+    ...lane,
+    items: cardsByLane.get(lane.id) ?? [],
+  }))
 }
 
 function roleKey(job: CollabJob): string {
@@ -6205,6 +6306,7 @@ function SubmissionsTab({
   const dashboard = useMemo(() => buildSubmissionDashboard(submissions), [submissions])
   const command = useMemo(() => buildSubmissionCommand(submissions), [submissions])
   const dealRoom = useMemo(() => buildSubmissionDealRoom(submissions, jobs), [jobs, submissions])
+  const pipelineBoard = useMemo(() => buildSubmissionPipelineBoard(submissions), [submissions])
   const visibleSubmissions = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return submissions.filter((submission) => {
@@ -6259,6 +6361,8 @@ function SubmissionsTab({
           </article>
         ))}
       </section>
+
+      <SubmissionPipelineBoard lanes={pipelineBoard} onReviewSubmission={handleReviewSubmission} />
 
       <div className="rb-submissions-controls">
         <label className="rb-search">
@@ -6500,6 +6604,56 @@ function SubmissionDealRoomPanel({
           {model.timeline.length === 0 && <p>No packet activity yet.</p>}
         </div>
       </aside>
+    </section>
+  )
+}
+
+function SubmissionPipelineBoard({
+  lanes,
+  onReviewSubmission,
+}: {
+  lanes: SubmissionPipelineLaneModel[]
+  onReviewSubmission: (submissionId: string) => void
+}) {
+  return (
+    <section className="rb-submission-status-board" aria-label="Submission status board">
+      <header>
+        <div>
+          <span>Status board</span>
+          <strong>Your submitted candidates by pipeline stage</strong>
+        </div>
+        <p>Click any card to open the full receipt, feedback, consent state, and activity trail below.</p>
+      </header>
+      <div className="rb-submission-status-board__lanes">
+        {lanes.map((lane) => (
+          <section className={`rb-submission-status-lane is-${lane.tone}`} key={lane.id}>
+            <header>
+              <div>
+                <span>{lane.label}</span>
+                <strong>{lane.items.length}</strong>
+              </div>
+              <p>{lane.body}</p>
+            </header>
+            <div>
+              {lane.items.slice(0, 5).map((item) => (
+                <button
+                  type="button"
+                  className={`rb-submission-status-card is-${item.tone}`}
+                  key={item.id}
+                  onClick={() => onReviewSubmission(item.id)}
+                >
+                  <span>{item.status}</span>
+                  <strong>{item.candidate}</strong>
+                  <em>{item.role} · {item.company}</em>
+                  <small>{item.meta}</small>
+                </button>
+              ))}
+              {lane.items.length > 5 && <p className="rb-submission-status-more">+{lane.items.length - 5} more in full tracker</p>}
+              {lane.items.length === 0 && <p className="rb-submission-status-empty">No candidates</p>}
+            </div>
+          </section>
+        ))}
+      </div>
     </section>
   )
 }
