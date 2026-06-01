@@ -9,6 +9,7 @@ import {
   getAvailableSlots,
   getCalcomApiKey,
   getEventTypes,
+  parseMeetingUrl,
 } from "./calcom-client.js"
 
 // FAKE key — NEVER a literal cal_live_. Set in env so the client reads it.
@@ -147,6 +148,83 @@ test("createBooking sends cal-api-version 2026-02-25 + NO location (event-type d
     assert.equal(body.attendee.language, "en")
     assert.equal(body.attendee.email, "adam@example.com")
     assert.equal(body.eventTypeId, 5847961)
+  } finally {
+    restore()
+  }
+})
+
+test("parseMeetingUrl: prefers data.meetingUrl; else http(s) location; else references; ignores non-URL location", () => {
+  // 1. explicit meetingUrl wins.
+  assert.equal(
+    parseMeetingUrl({ meetingUrl: "https://meet.google.com/aaa", location: "https://meet.google.com/bbb" }),
+    "https://meet.google.com/aaa",
+  )
+  // 2. location IS the Meet URL (the live shape this fix targets).
+  assert.equal(parseMeetingUrl({ location: "https://meet.google.com/xyz-abc-def" }), "https://meet.google.com/xyz-abc-def")
+  // 3. non-URL location string (e.g. "Google Meet" or "integrations:daily") → ignored, no false positive.
+  assert.equal(parseMeetingUrl({ location: "integrations:google:meet" }), undefined)
+  // 4. references[] fallback.
+  assert.equal(
+    parseMeetingUrl({ references: [{ type: "google_meet_video", meetingUrl: "https://meet.google.com/ref-1" }] }),
+    "https://meet.google.com/ref-1",
+  )
+  // 5. nothing parseable → undefined.
+  assert.equal(parseMeetingUrl({ id: 1, uid: "u" }), undefined)
+})
+
+test("createBooking parses meetingUrl from a location:'https://meet.google.com/x' response", async () => {
+  const { restore } = mockFetch(() =>
+    jsonResponse(200, {
+      status: "success",
+      data: {
+        id: 1001,
+        uid: "booking-uid-meet",
+        title: "Software Engineer Interview",
+        status: "accepted",
+        start: "2026-06-02T13:00:00.000-04:00",
+        end: "2026-06-02T13:15:00.000-04:00",
+        duration: 15,
+        eventType: { id: 5847961, slug: "software-engineer-interview" },
+        location: "https://meet.google.com/abc-defg-hij",
+      },
+    }),
+  )
+  try {
+    const res = await createBooking({
+      start: "2026-06-02T13:00:00.000-04:00",
+      eventTypeId: 5847961,
+      attendee: { name: "Adam", email: "adam@example.com", timeZone: "America/New_York" },
+    })
+    assert.equal(res.meetingUrl, "https://meet.google.com/abc-defg-hij")
+  } finally {
+    restore()
+  }
+})
+
+test("createBooking leaves meetingUrl undefined when the response has no join URL", async () => {
+  const { restore } = mockFetch(() =>
+    jsonResponse(200, {
+      status: "success",
+      data: {
+        id: 1002,
+        uid: "booking-uid-nomeet",
+        title: "x",
+        status: "accepted",
+        start: "2026-06-02T13:00:00.000-04:00",
+        end: "2026-06-02T13:15:00.000-04:00",
+        duration: 15,
+        eventType: { id: 5847961, slug: "swe" },
+        location: "integrations:google:meet", // not an http URL
+      },
+    }),
+  )
+  try {
+    const res = await createBooking({
+      start: "2026-06-02T13:00:00.000-04:00",
+      eventTypeId: 5847961,
+      attendee: { name: "Adam", email: "adam@example.com", timeZone: "America/New_York" },
+    })
+    assert.equal(res.meetingUrl, undefined)
   } finally {
     restore()
   }

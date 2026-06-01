@@ -24,7 +24,7 @@
  */
 import { tool, z } from "../sdk.js"
 import type { Firestore } from "firebase-admin/firestore"
-import { InterviewBookingSchema, interviewBookingDocId } from "@pa/core-types"
+import { InterviewBookingSchema, interviewBookingDocId, PA_COLLECTIONS } from "@pa/core-types"
 import { type Location } from "@wekruit/shared-tags"
 
 import {
@@ -175,6 +175,123 @@ async function resolveActiveSchedulingJobId(ctx: ClaireToolContext): Promise<str
     })
   }
   return direct
+}
+
+/** A schedulable opportunity surfaced to the candidate when we must disambiguate. */
+export interface SchedulableJob {
+  jobId: string
+  label: string
+  /** canonical roleFunction token that routes the Cal event-type (dev-mimic only; real jobs route via resolveRoleFunctions). */
+  roleFunction?: string
+}
+
+/**
+ * Fixed 2-job mimic for SCHEDULING_DEV_UIDS so the multi-job disambiguation flow
+ * is testable end-to-end EVEN when the dev account has zero real dashboard-committed
+ * passes. The two roles deliberately route to DIFFERENT Cal event-types
+ * (software_engineering → 5847961, creatives_and_design → 5604544) so booking the
+ * CHOSEN one is verifiable on the interviewer's calendar.
+ */
+const DEV_MIMIC_SCHEDULABLE_JOBS: SchedulableJob[] = [
+  { jobId: "dev-metavoice-swe", label: "Software Engineer @ MetaVoice", roleFunction: "software_engineering" },
+  { jobId: "dev-helium-design", label: "Product Designer @ Helium", roleFunction: "creatives_and_design" },
+]
+
+/** Cap on the schedulable-jobs list we present (keeps the disambiguation prompt short). */
+const MAX_SCHEDULABLE_JOBS = 5
+
+/**
+ * Build a human label for a schedulable job from the job side. The
+ * pa-employer-visible-profiles doc itself carries NO job title/company (only
+ * candidateId/jobId/displayName=candidate name), so resolve the label from
+ * matching-jobs/{jobId} (companyName/jobTitle) → pa-jobs/{jobId} (company/jobTitle)
+ * → bare jobId. Fail-soft: any read error → jobId.
+ */
+async function resolveJobLabel(ctx: ClaireToolContext, jobId: string): Promise<string> {
+  const join = (title: string, company: string): string => {
+    const t = title.trim()
+    const c = company.trim()
+    if (t && c) return `${t} @ ${c}`
+    return t || c || jobId
+  }
+  try {
+    const mj = await ctx.db.collection("matching-jobs").doc(jobId).get()
+    if (mj.exists) {
+      const d = mj.data() as Record<string, unknown>
+      const title = typeof d.jobTitle === "string" ? d.jobTitle : typeof d.roleTitle === "string" ? d.roleTitle : ""
+      const company = typeof d.companyName === "string" ? d.companyName : ""
+      if (title || company) return join(title, company)
+    }
+  } catch {
+    /* fail-soft */
+  }
+  try {
+    const pj = await ctx.db.collection("pa-jobs").doc(jobId).get()
+    if (pj.exists) {
+      const d = pj.data() as Record<string, unknown>
+      const title = typeof d.jobTitle === "string" ? d.jobTitle : ""
+      const company = typeof d.company === "string" ? d.company : typeof d.companyName === "string" ? d.companyName : ""
+      if (title || company) return join(title, company)
+    }
+  } catch {
+    /* fail-soft */
+  }
+  return jobId
+}
+
+/**
+ * The set of jobs a candidate can actually schedule = jobs with a dashboard-committed
+ * PASS, which lives ONLY in pa-employer-visible-profiles (written by
+ * applyPassedCandidateSnapshot via the HITL commit path). Query that collection by
+ * candidateId == ctx.userId, map each to {jobId,label}, dedup by jobId, cap at 5.
+ *
+ * Dev-mimic fallback: for SCHEDULING_DEV_UIDS only, when the REAL query is empty,
+ * return DEV_MIMIC_SCHEDULABLE_JOBS so the disambiguation flow is testable.
+ * Fail-soft: any query error → [] (real) so a non-dev never gets a phantom list.
+ */
+export async function listSchedulableJobs(ctx: ClaireToolContext): Promise<SchedulableJob[]> {
+  const out: SchedulableJob[] = []
+  const seen = new Set<string>()
+  try {
+    const snap = await ctx.db
+      .collection(PA_COLLECTIONS.employerVisibleProfiles)
+      .where("candidateId", "==", ctx.userId)
+      .get()
+    for (const d of snap.docs) {
+      const data = d.data() as Record<string, unknown>
+      const jobId = typeof data.jobId === "string" ? data.jobId.trim() : ""
+      if (!jobId || seen.has(jobId)) continue
+      seen.add(jobId)
+      out.push({ jobId, label: await resolveJobLabel(ctx, jobId) })
+      if (out.length >= MAX_SCHEDULABLE_JOBS) break
+    }
+  } catch (err) {
+    ctx.log("pa.claire.scheduling.list_jobs_error", {
+      userId: ctx.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  // Dev-mimic ONLY when the real query found nothing (so a dev's REAL passes win).
+  if (out.length === 0 && SCHEDULING_DEV_UIDS.has(ctx.userId)) {
+    ctx.log("pa.claire.scheduling.list_jobs_dev_mimic", { userId: ctx.userId, count: DEV_MIMIC_SCHEDULABLE_JOBS.length })
+    return DEV_MIMIC_SCHEDULABLE_JOBS.map((j) => ({ ...j }))
+  }
+  return out
+}
+
+/**
+ * Match the candidate's free-text/jobId job pick against the schedulable list:
+ * exact jobId first, then case-insensitive substring on the label. Returns the
+ * matched job or null.
+ */
+function matchJobChoice(jobs: SchedulableJob[], jobChoice: string): SchedulableJob | null {
+  const choice = jobChoice.trim()
+  if (!choice) return null
+  const byId = jobs.find((j) => j.jobId === choice)
+  if (byId) return byId
+  const lc = choice.toLowerCase()
+  const bySubstr = jobs.find((j) => j.label.toLowerCase().includes(lc))
+  return bySubstr ?? null
 }
 
 /** A string looks like a plausible IANA tz when it contains a "/". */
@@ -379,25 +496,59 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
       "right after they PASS a collab/partner prescreen. Returns a numbered list of real open slots in the " +
       "candidate's timezone — present 3-5 of them in your voice and ask which works. To refine ('anything in " +
       "the afternoon?', 'next week?', 'I'm on west coast'), call again with partOfDay and/or timeZone. " +
+      "If the candidate could be scheduling for MORE THAN ONE role, pass jobChoice = the jobId or role label " +
+      "they named. If it returns needs_job_choice, ask which of the listed roles and call again with jobChoice. " +
       "Pass null for anything not stated.",
     parameters: z.object({
       timeZone: z.string().nullable(),
       partOfDay: z.enum(["morning", "afternoon", "evening", "any"]).nullable(),
+      jobChoice: z.string().nullable(),
     }),
-    async execute({ timeZone, partOfDay }) {
+    async execute({ timeZone, partOfDay, jobChoice }) {
       // (1) GATE — no Cal.com call, no write for a non-dev uid.
       if (!SCHEDULING_DEV_UIDS.has(ctx.userId)) {
         ctx.log("pa.claire.offer_interview_slots", { userId: ctx.userId, gated: true })
         return { ok: false as const, reason: "scheduling_not_enabled" as const }
       }
 
-      // Recover the real jobId across turns: a re-offer ('anything in the
-      // afternoon?') frequently arrives on a TRIAGE turn (no ctx.jobId), so
-      // without this the re-offer would write an orphan calbk-<uid>__unknown_job
-      // doc that never reconciles with the original real-jobId offer.
-      const jobId = await resolveActiveSchedulingJobId(ctx)
+      // (1a) RESOLVE which job this offer is for.
+      //   (a) turn context (resolveActiveSchedulingJobId — ctx.jobId on a prescreen
+      //       turn, else the candidate's most-recent live scheduling doc) → single,
+      //       no ask. This also recovers a re-offer ('anything in the afternoon?')
+      //       that arrives on a TRIAGE turn so it reconciles with the original
+      //       real-jobId offer doc instead of writing an orphan __unknown_job doc.
+      //   (b) else disambiguate over the candidate's dashboard-committed PASSes.
+      let jobId = await resolveActiveSchedulingJobId(ctx)
+      // roleFunction override carried ONLY when the chosen job is a dev-mimic (its
+      // event-type is routed from this token, since it has no matching-jobs doc).
+      let mimicRoleFunction: string | undefined
+      if (jobId === "unknown_job") {
+        const jobs = await listSchedulableJobs(ctx)
+        if (jobs.length === 0) {
+          ctx.log("pa.claire.offer_interview_slots", { userId: ctx.userId, reason: "no_schedulable_job" })
+          return { ok: false as const, reason: "no_schedulable_job" as const }
+        }
+        let chosen: SchedulableJob | null = jobs.length === 1 ? jobs[0]! : null
+        if (!chosen && jobChoice) chosen = matchJobChoice(jobs, jobChoice)
+        if (!chosen) {
+          ctx.log("pa.claire.offer_interview_slots", { userId: ctx.userId, reason: "needs_job_choice", count: jobs.length })
+          return {
+            ok: false as const,
+            reason: "needs_job_choice" as const,
+            jobs: jobs.map((j) => ({ jobId: j.jobId, label: j.label })),
+          }
+        }
+        jobId = chosen.jobId
+        mimicRoleFunction = chosen.roleFunction
+      }
+
       const tz = await resolveTimeZone(ctx, timeZone)
-      const { override, roleFunctions } = await resolveRoleFunctions(ctx, jobId)
+      // Event-type routing: a dev-mimic chosen job has no matching-jobs doc, so
+      // route from its own roleFunction token (MetaVoice→5847961, Helium→design);
+      // a real job keeps the resolveRoleFunctions(ctx, jobId) path.
+      const { override, roleFunctions } = mimicRoleFunction
+        ? { override: null as number | null, roleFunctions: [mimicRoleFunction] }
+        : await resolveRoleFunctions(ctx, jobId)
       const { eventTypeId } = resolveEventTypeId({ jobOverrideEventTypeId: override, roleFunctions })
 
       const now = new Date(ctx.nowIso())
@@ -488,8 +639,8 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
       "Book the interview slot the candidate picked from the list offer_interview_slots gave you. Pass the " +
       "slotNumber (preferred — 1-based, exactly as you listed them) or the exact slotIso from that list. If " +
       "the candidate typed an email this turn, pass candidateEmail. If it returns need_email, ask for their " +
-      "email once then call again with candidateEmail. On ok:true tell them it's locked in. Pass null for " +
-      "anything not provided.",
+      "email once then call again with candidateEmail. On ok:true tell them it's locked in, and if it returns a " +
+      "non-empty meetingUrl include that link in your message. Pass null for anything not provided.",
     parameters: z.object({
       slotNumber: z.number().int().min(1).max(10).nullable(),
       slotIso: z.string().nullable(),
@@ -583,6 +734,9 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
           action: "already_booked" as const,
           slotIso: chosenIso,
           when: humanLabel(chosenIso, doc?.timeZone || DEFAULT_TIMEZONE),
+          // Surface the join link from the persisted doc so Claire can re-share it
+          // in chat on a repeat ask (same field the email rendered). Absent → "".
+          meetingUrl: typeof doc?.meetingUrl === "string" ? doc.meetingUrl : "",
           emailed: !!doc?.confirmationEmailMessageId,
           calBookingUid: doc?.calBookingUid ?? "",
         }
@@ -679,6 +833,9 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
       // (7) write booked.
       const calBookingId = typeof booking.id === "number" ? booking.id : null
       const calBookingUid = typeof booking.uid === "string" ? booking.uid : ""
+      // Video-call join link (e.g. Google Meet) parsed from the Cal response →
+      // persisted + rendered in the WeKruit confirmation email. Absent → null.
+      const meetingUrl = typeof booking.meetingUrl === "string" && booking.meetingUrl ? booking.meetingUrl : ""
       try {
         await ref.set(
           {
@@ -691,6 +848,7 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
             selectedSlotIso: chosenIso,
             calBookingId,
             calBookingUid: calBookingUid || null,
+            meetingUrl: meetingUrl || null,
             candidateEmail: email,
             lastError: null,
             sessionId: ctx.sessionId,
@@ -719,6 +877,7 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
           timeZone: tz,
           jobId,
           eventTypeId,
+          ...(meetingUrl ? { meetingUrl } : {}),
           db: ctx.db,
           userId: ctx.userId,
         })
@@ -760,6 +919,10 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
         action: "booked" as const,
         slotIso: chosenIso,
         when: humanLabel(chosenIso, tz),
+        // The video-call join link (e.g. Google Meet) so Claire can drop it
+        // straight into the iMessage lock-in bubble, not just the email. "" when
+        // Cal didn't return a parseable join URL → prompt keeps the invite wording.
+        meetingUrl,
         emailed,
         calBookingUid,
       }

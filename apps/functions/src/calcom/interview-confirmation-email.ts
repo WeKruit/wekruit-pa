@@ -28,6 +28,12 @@ export interface SendInterviewConfirmationEmailInput {
   timeZone: string
   jobId: string
   eventTypeId: number
+  /**
+   * Video-call join link (e.g. Google Meet) from the Cal booking. When present,
+   * we render the ACTUAL link in the email; when absent we fall back to the
+   * "you'll find the link in your calendar invite" line.
+   */
+  meetingUrl?: string
   db: Firestore
   /** pa-users doc id (internal; for the sent_emails audit row). */
   userId: string
@@ -100,12 +106,22 @@ export async function sendInterviewConfirmationEmail(
   const when = formatWhen(input.whenIso, input.timeZone)
   const firstName = (input.name ?? "").trim().split(/\s+/)[0] || "there"
   const subject = "Your WeKruit interview is confirmed"
+  // Only render an explicit join link when it's a real http(s) URL; otherwise
+  // fall back to the calendar-invite line (Cal still sends its own invite email).
+  const joinUrl = (input.meetingUrl ?? "").trim()
+  const hasJoinUrl = /^https?:\/\//i.test(joinUrl)
+  const videoLineText = hasJoinUrl
+    ? `It's a quick video call. Join here: ${joinUrl}`
+    : `It's a quick video call — you'll find the link in your calendar invite.`
+  const videoLineHtml = hasJoinUrl
+    ? `<p>It's a quick video call. <a href="${escapeHtml(joinUrl)}">Join the video call</a></p>`
+    : `<p>It's a quick video call — you'll find the link in your calendar invite.</p>`
   const text = [
     `Hi ${firstName},`,
     ``,
     `Your interview is confirmed for ${when}.`,
     ``,
-    `It's a quick video call — you'll find the link in your calendar invite.`,
+    videoLineText,
     `See you then!`,
     ``,
     `— Claire @ WeKruit`,
@@ -113,7 +129,7 @@ export async function sendInterviewConfirmationEmail(
   const html =
     `<p>Hi ${escapeHtml(firstName)},</p>` +
     `<p>Your interview is confirmed for <strong>${escapeHtml(when)}</strong>.</p>` +
-    `<p>It's a quick video call — you'll find the link in your calendar invite.</p>` +
+    videoLineHtml +
     `<p>See you then!</p>` +
     `<p>— Claire @ WeKruit</p>`
 

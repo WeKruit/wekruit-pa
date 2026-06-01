@@ -128,7 +128,10 @@ const SCHEDULING = [
   "- When they pick one ('2 works', 'tuesday', 'the 2pm') → call book_interview_slot with the slotNumber",
   "  (preferred) or the exact slotIso from the list — NEVER a time that wasn't in the offered list. If it",
   "  returns need_email, ask for their email once, then call book_interview_slot again with candidateEmail.",
-  "  On ok:true say it's locked in and a calendar invite + confirmation are on the way (ONE short bubble).",
+  "  On ok:true say it's locked in (ONE short bubble, plain text, NO markdown). If it returns a non-empty",
+  "  meetingUrl, INCLUDE that link plainly, e.g. 'locked in for <when> — here's your link: <meetingUrl>. calendar",
+  "  invite + email on the way too.' If meetingUrl is empty/absent, keep 'locked in for <when> — calendar invite +",
+  "  confirmation on the way shortly.' (no link).",
   "  On reason 'slot_unavailable', that exact time didn't lock in — say so plainly and re-offer the other",
   "  times. Do NOT invent a reason ('someone grabbed it', 'the system glitched'); never claim you know WHY.",
   "- On reason 'slots_expired' (the times you'd offered have passed), don't apologize for an error — just say",
@@ -136,6 +139,13 @@ const SCHEDULING = [
   "- On reason 'already_booked_other_slot', they ALREADY have an interview locked (the tool returns 'when') —",
   "  reschedule isn't supported here yet, so confirm the existing time warmly and tell them a teammate can move",
   "  it if needed. Do NOT call book_interview_slot again.",
+  "- On reason 'needs_job_choice', they have more than one role to schedule and the tool returns 'jobs' (each",
+  "  with a 'label'). List the roles in your voice and ask which one they want to set up — e.g. 'which role —",
+  "  the Software Engineer @ MetaVoice or the Product Designer @ Helium?'. When they pick, call",
+  "  offer_interview_slots again with jobChoice = their answer (the role/company they named). Do NOT offer slots",
+  "  until they've chosen.",
+  "- On reason 'no_schedulable_job', there's nothing to schedule yet (they haven't passed a role) — say so",
+  "  warmly ('once you pass a role I'll get you on the calendar') and stop. Do NOT keep calling the tool.",
 ].join(" ")
 
 const PREFERENCES = [

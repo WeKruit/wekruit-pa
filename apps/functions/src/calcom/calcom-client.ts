@@ -223,6 +223,58 @@ export interface BookingResult {
   end: string
   duration: number
   eventType: { id: number; slug: string }
+  /**
+   * Video-call join URL for an integration location (e.g. Google Meet). Cal
+   * returns it inconsistently across event-type integrations — see
+   * parseMeetingUrl for the precedence. Absent → undefined (the email falls back
+   * to "you'll find the link in your calendar invite").
+   */
+  meetingUrl?: string
+}
+
+/** A string is a usable join URL when it's an http(s) URL. */
+function isHttpUrl(v: unknown): v is string {
+  return typeof v === "string" && /^https?:\/\//i.test(v.trim())
+}
+
+/**
+ * Extract the video-call join URL from a Cal v2 booking `data` object. Cal puts
+ * it in different places depending on the integration; precedence (first hit):
+ *   1. `data.meetingUrl` (when Cal flattens it)
+ *   2. `data.location` IF it's an http(s) URL (integration locations — Google
+ *      Meet returns the Meet URL here; non-URL "location" strings are ignored)
+ *   3. scan `data.references[]` for `meetingUrl`/`videoCallUrl`/`videoCallData.url`
+ *   4. scan `data.conferenceData`/`videoCallData` for a url/joinUrl
+ * Returns undefined when none is an http(s) URL. Pure + exported for the test.
+ */
+export function parseMeetingUrl(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") return undefined
+  const o = data as Record<string, unknown>
+  if (isHttpUrl(o.meetingUrl)) return o.meetingUrl.trim()
+  if (isHttpUrl(o.location)) return o.location.trim()
+  // references[] — Cal lists conferencing integrations here.
+  if (Array.isArray(o.references)) {
+    for (const ref of o.references) {
+      if (!ref || typeof ref !== "object") continue
+      const r = ref as Record<string, unknown>
+      if (isHttpUrl(r.meetingUrl)) return r.meetingUrl.trim()
+      if (isHttpUrl(r.videoCallUrl)) return r.videoCallUrl.trim()
+      const vcd = r.videoCallData
+      if (vcd && typeof vcd === "object" && isHttpUrl((vcd as Record<string, unknown>).url)) {
+        return String((vcd as Record<string, unknown>).url).trim()
+      }
+    }
+  }
+  // conferenceData / videoCallData blocks.
+  for (const key of ["conferenceData", "videoCallData"]) {
+    const block = o[key]
+    if (block && typeof block === "object") {
+      const b = block as Record<string, unknown>
+      if (isHttpUrl(b.url)) return b.url.trim()
+      if (isHttpUrl(b.joinUrl)) return b.joinUrl.trim()
+    }
+  }
+  return undefined
 }
 
 /**
@@ -274,7 +326,11 @@ export async function createBooking(
   const retryAfter = resp.headers.get("retry-after") ?? undefined
   if (resp.status >= 200 && resp.status < 300) {
     const data = parsed && typeof parsed === "object" ? (parsed as { data?: unknown }).data : undefined
-    return (data ?? {}) as BookingResult
+    const result = (data ?? {}) as BookingResult
+    const meetingUrl = parseMeetingUrl(data)
+    // Only set meetingUrl when present so the field stays absent (not "") when no
+    // join URL is parseable → the email falls back to the calendar-invite line.
+    return meetingUrl ? { ...result, meetingUrl } : result
   }
   classifyHttp(resp.status, errMessage(parsed, resp.status, "bookings"), parsed, retryAfter ?? undefined)
 }

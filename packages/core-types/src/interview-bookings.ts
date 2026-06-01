@@ -76,6 +76,13 @@ export const InterviewBookingSchema = z.object({
   selectedSlotIso: z.string().min(1).nullable(),
   calBookingId: z.number().int().nullable(),
   calBookingUid: z.string().min(1).nullable(),
+  /**
+   * Video-call join URL (e.g. Google Meet) parsed from the Cal booking response.
+   * Surfaced in BOTH the confirmation email and the iMessage lock-in bubble.
+   * Optional + nullable: absent on legacy docs and on bookings where Cal returned
+   * no parseable join URL.
+   */
+  meetingUrl: z.string().min(1).nullable().optional(),
   // CONFIRM (email) state:
   confirmationEmailSentAt: z.string().min(1).nullable(),
   confirmationEmailMessageId: z.string().min(1).nullable(),

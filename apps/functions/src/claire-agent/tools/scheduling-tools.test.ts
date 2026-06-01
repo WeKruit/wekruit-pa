@@ -8,6 +8,7 @@ import {
   humanLabel,
   filterByPartOfDay,
   resolveTimeZone,
+  listSchedulableJobs,
 } from "./scheduling-tools.js"
 import type { ClaireToolContext } from "../types.js"
 import type { FlatSlot } from "../../calcom/calcom-client.js"
@@ -36,6 +37,8 @@ class FakeDb {
   matchingJobs = new Map<string, Doc>()
   paJobs = new Map<string, Doc>()
   paUsers = new Map<string, Doc>()
+  // queryable rows: pa-employer-visible-profiles (dashboard-committed PASSes)
+  employerVisible: Doc[] = []
   writes: Array<{ path: string; data: Doc }> = []
   sentEmails: Doc[] = []
   calcomCalls: string[] = []
@@ -66,10 +69,20 @@ class FakeDb {
         }
       },
       where(field: string, _op: string, value: unknown) {
-        // Two query shapes:
+        // Three query shapes:
         //   pa-candidate-handles: where(candidateId).where(kind).limit(1).get()
         //   pa-interview-bookings (cross-turn recovery): where(userId).where(status,'in',[...]).get()
+        //   pa-employer-visible-profiles (schedulable jobs): where(candidateId).get()  ← single where
         return {
+          // Single-where terminal .get() — listSchedulableJobs queries
+          // pa-employer-visible-profiles by candidateId == userId only.
+          async get() {
+            if (name === "pa-employer-visible-profiles") {
+              const rows = self.employerVisible.filter((d) => d[field] === value)
+              return { empty: rows.length === 0, docs: rows.map((d, i) => ({ id: `${name}-${i}`, data: () => d })) }
+            }
+            return { empty: true, docs: [] as Array<{ id: string; data: () => Doc }> }
+          },
           where(field2: string, op2: string, value2: unknown) {
             const runBookingsRecovery = () => {
               // rows = all booking docs in this collection matching userId + status-in.
@@ -252,7 +265,7 @@ test("GATE: non-dev uid → both tools scheduling_not_enabled, ZERO Cal calls / 
   try {
     const ctx = makeCtx(db, NON_DEV_UID)
     const { offer, book } = tools(ctx)
-    const o = await invoke(offer, { timeZone: null, partOfDay: null })
+    const o = await invoke(offer, { timeZone: null, partOfDay: null, jobChoice: null })
     const b = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
     assert.deepEqual(o, { ok: false, reason: "scheduling_not_enabled" })
     assert.deepEqual(b, { ok: false, reason: "scheduling_not_enabled" })
@@ -270,7 +283,7 @@ test("offer persists status:offered + ordered offeredSlots; returns numbered lis
   try {
     const ctx = makeCtx(db, DEV_UID)
     const { offer } = tools(ctx)
-    const res = await invoke(offer, { timeZone: null, partOfDay: null })
+    const res = await invoke(offer, { timeZone: null, partOfDay: null, jobChoice: null })
     assert.equal(res.ok, true)
     const slots = res.slots as Array<{ number: number; iso: string; label: string }>
     assert.equal(slots.length, 5)
@@ -300,7 +313,7 @@ test("offer partOfDay filter narrows; empties fall back to unfiltered with filte
   try {
     const ctx = makeCtx(db, DEV_UID)
     const { offer } = tools(ctx)
-    const res = await invoke(offer, { timeZone: "America/New_York", partOfDay: "evening" })
+    const res = await invoke(offer, { timeZone: "America/New_York", partOfDay: "evening", jobChoice: null })
     assert.equal(res.ok, true)
     assert.equal(res.filteredEmpty, true)
     assert.equal((res.slots as unknown[]).length, 2) // unfiltered fallback
@@ -313,7 +326,7 @@ test("offer with no slots → { ok:false, reason:no_slots }", async () => {
   const db = new FakeDb()
   const restore = installCalcomFetch({ slots: [] })
   try {
-    const res = await invoke(tools(makeCtx(db, DEV_UID)).offer, { timeZone: null, partOfDay: null })
+    const res = await invoke(tools(makeCtx(db, DEV_UID)).offer, { timeZone: null, partOfDay: null, jobChoice: null })
     assert.deepEqual(res, { ok: false, reason: "no_slots" })
   } finally {
     restore()
@@ -324,7 +337,7 @@ test("offer FAIL-OPEN: calcom throws → { ok:false, reason:calcom_unavailable }
   const db = new FakeDb()
   const restore = installCalcomFetch({ slots: "throw" })
   try {
-    const res = await invoke(tools(makeCtx(db, DEV_UID)).offer, { timeZone: null, partOfDay: null })
+    const res = await invoke(tools(makeCtx(db, DEV_UID)).offer, { timeZone: null, partOfDay: null, jobChoice: null })
     assert.deepEqual(res, { ok: false, reason: "calcom_unavailable" })
   } finally {
     restore()
@@ -334,7 +347,7 @@ test("offer FAIL-OPEN: calcom throws → { ok:false, reason:calcom_unavailable }
 // ── BOOK ───────────────────────────────────────────────────────────────────
 async function offerThen(db: FakeDb, ctx: ClaireToolContext) {
   const { offer } = tools(ctx)
-  await invoke(offer, { timeZone: null, partOfDay: null })
+  await invoke(offer, { timeZone: null, partOfDay: null, jobChoice: null })
 }
 
 test("book resolves slotNumber → exact persisted ISO; writes booked→confirmed; sent_emails audit", async () => {
@@ -573,7 +586,7 @@ test("CROSS-TURN: re-offer in TRIAGE ctx (jobId undefined) reconciles with the r
     await offerThen(db, makeCtx(db, DEV_UID, { jobId: "job-1" }))
     // Turn 2 — re-offer (e.g. 'anything in the afternoon?') in TRIAGE (no jobId).
     const { offer } = tools(makeCtx(db, DEV_UID, { jobId: undefined }))
-    const res = await invoke(offer, { timeZone: null, partOfDay: "afternoon" })
+    const res = await invoke(offer, { timeZone: null, partOfDay: "afternoon", jobChoice: null })
     assert.equal(res.ok, true)
     // Re-offer wrote the SAME real-jobId doc — no calbk-<uid>__unknown_job orphan.
     assert.equal(db.store.get(`pa-interview-bookings/${interviewBookingDocId({ userId: DEV_UID, jobId: "unknown_job" })}`), undefined)
@@ -607,7 +620,7 @@ test("RESCHEDULE: book slot #1, re-offer (status flips to offered), then pick a 
     assert.equal(bookingPosts, 1)
     // candidate asks for different times → re-offer flips status back to 'offered'
     // (but leaves calBookingId/calBookingUid/selectedSlotIso intact).
-    await invoke(tools(ctx).offer, { timeZone: null, partOfDay: null })
+    await invoke(tools(ctx).offer, { timeZone: null, partOfDay: null, jobChoice: null })
     assert.equal(db.store.get(BOOKING_PATH)!.status, "offered")
     // now pick a DIFFERENT slot (#2). The OLD code would POST a 2nd booking and
     // orphan booking A. The guard refuses.
@@ -641,7 +654,7 @@ test("RESCHEDULE: re-offer then re-pick the SAME already-booked slot → already
     await offerThen(db, ctx)
     await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
     assert.equal(bookingPosts, 1)
-    await invoke(tools(ctx).offer, { timeZone: null, partOfDay: null }) // status → offered, live booking intact
+    await invoke(tools(ctx).offer, { timeZone: null, partOfDay: null, jobChoice: null }) // status → offered, live booking intact
     const again = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
     assert.equal(again.ok, true)
     assert.equal(again.action, "already_booked")
@@ -692,7 +705,7 @@ test("TZ precedence: book WITHOUT an explicit tz uses the OFFER's persisted doc.
   try {
     // Offer in America/Los_Angeles (candidate said 'I'm on west coast').
     const ctx = makeCtx(db, DEV_UID)
-    await invoke(tools(ctx).offer, { timeZone: "America/Los_Angeles", partOfDay: null })
+    await invoke(tools(ctx).offer, { timeZone: "America/Los_Angeles", partOfDay: null, jobChoice: null })
     assert.equal(db.store.get(BOOKING_PATH)!.timeZone, "America/Los_Angeles")
     // Book WITHOUT restating the tz → must keep the offer's LA tz (not NY from tags).
     const res = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
@@ -734,4 +747,342 @@ test("LOCATION_TZ: the OLD bare/abbrev keys are GONE — old LA-mapping tokens n
   // appear in stored tags. After re-keying they must NOT match → default NY.
   dbBare.paUsers.set(DEV_UID, { tags: { targetLocations: ["sf_bay_area", "san_francisco", "la", "los_angeles"] } })
   assert.equal(await resolveTimeZone(makeCtx(dbBare, DEV_UID), null), "America/New_York") // default, NOT LA
+})
+
+// ── listSchedulableJobs (schedule-which-role disambiguation) ───────────────
+const NOAH_DEV_UID = "UKFaKdsMzzfPW2CDl5ve" // Noah +12154034668 — also in the gate set.
+
+test("listSchedulableJobs: real pa-employer-visible-profiles passes → mapped jobs (label from matching-jobs)", async () => {
+  const db = new FakeDb()
+  // Dashboard-committed PASSes (written by applyPassedCandidateSnapshot).
+  db.employerVisible.push({ candidateId: DEV_UID, jobId: "job-a" })
+  db.employerVisible.push({ candidateId: DEV_UID, jobId: "job-b" })
+  db.employerVisible.push({ candidateId: "someone-else", jobId: "job-z" }) // other candidate — excluded
+  db.matchingJobs.set("job-a", { jobTitle: "Backend Engineer", companyName: "Acme" })
+  db.matchingJobs.set("job-b", { jobTitle: "Staff Designer", companyName: "Globex" })
+  const jobs = await listSchedulableJobs(makeCtx(db, DEV_UID))
+  assert.equal(jobs.length, 2)
+  assert.deepEqual(jobs.map((j) => j.jobId).sort(), ["job-a", "job-b"])
+  assert.equal(jobs.find((j) => j.jobId === "job-a")!.label, "Backend Engineer @ Acme")
+  assert.equal(jobs.find((j) => j.jobId === "job-b")!.label, "Staff Designer @ Globex")
+})
+
+test("listSchedulableJobs: dedup by jobId; falls back to jobId when no label source", async () => {
+  const db = new FakeDb()
+  db.employerVisible.push({ candidateId: DEV_UID, jobId: "job-a" })
+  db.employerVisible.push({ candidateId: DEV_UID, jobId: "job-a" }) // duplicate row
+  // no matching-jobs / pa-jobs doc → label falls back to the jobId itself.
+  const jobs = await listSchedulableJobs(makeCtx(db, DEV_UID))
+  assert.equal(jobs.length, 1)
+  assert.equal(jobs[0]!.jobId, "job-a")
+  assert.equal(jobs[0]!.label, "job-a")
+})
+
+test("listSchedulableJobs: dev uid with ZERO real passes → mimic 2 jobs routing to different event-types", async () => {
+  const db = new FakeDb() // no employerVisible rows
+  const jobs = await listSchedulableJobs(makeCtx(db, DEV_UID))
+  assert.equal(jobs.length, 2)
+  assert.deepEqual(
+    jobs.map((j) => j.jobId),
+    ["dev-metavoice-swe", "dev-helium-design"],
+  )
+  assert.equal(jobs[0]!.roleFunction, "software_engineering")
+  assert.equal(jobs[1]!.roleFunction, "creatives_and_design")
+})
+
+test("listSchedulableJobs: dev uid REAL passes WIN over the mimic (no mimic when real exist)", async () => {
+  const db = new FakeDb()
+  db.employerVisible.push({ candidateId: NOAH_DEV_UID, jobId: "real-job" })
+  db.matchingJobs.set("real-job", { jobTitle: "PM", companyName: "Initech" })
+  const jobs = await listSchedulableJobs(makeCtx(db, NOAH_DEV_UID))
+  assert.equal(jobs.length, 1)
+  assert.equal(jobs[0]!.jobId, "real-job")
+  assert.equal(jobs[0]!.label, "PM @ Initech")
+})
+
+test("listSchedulableJobs: NON-dev uid with empty real query → [] (no phantom mimic)", async () => {
+  const db = new FakeDb()
+  const jobs = await listSchedulableJobs(makeCtx(db, NON_DEV_UID))
+  assert.deepEqual(jobs, [])
+})
+
+// ── offer_interview_slots disambiguation ───────────────────────────────────
+// A ctx with NO turn-context job and NO live booking doc → resolveActiveSchedulingJobId
+// returns "unknown_job" → the offer must disambiguate over listSchedulableJobs.
+function noJobCtx(db: FakeDb, userId: string): ClaireToolContext {
+  return makeCtx(db, userId, { jobId: undefined })
+}
+
+test("offer disambiguation: NON-dev (would be 0 jobs) → scheduling_not_enabled (gate wins, no Cal call)", async () => {
+  // The gate is checked BEFORE any job resolution — confirm the gate is untouched.
+  const db = new FakeDb()
+  let fetchCalled = false
+  const orig = globalThis.fetch
+  globalThis.fetch = (async () => {
+    fetchCalled = true
+    return new Response("{}", { status: 200 })
+  }) as typeof fetch
+  try {
+    const res = await invoke(tools(noJobCtx(db, NON_DEV_UID)).offer, { timeZone: null, partOfDay: null, jobChoice: null })
+    assert.deepEqual(res, { ok: false, reason: "scheduling_not_enabled" })
+    assert.equal(fetchCalled, false)
+  } finally {
+    globalThis.fetch = orig
+  }
+})
+
+test("offer disambiguation: 2+ schedulable jobs, no jobChoice → needs_job_choice (NO Cal call)", async () => {
+  const db = new FakeDb()
+  db.employerVisible.push({ candidateId: DEV_UID, jobId: "job-a" })
+  db.employerVisible.push({ candidateId: DEV_UID, jobId: "job-b" })
+  db.matchingJobs.set("job-a", { jobTitle: "Backend Engineer", companyName: "Acme" })
+  db.matchingJobs.set("job-b", { jobTitle: "Staff Designer", companyName: "Globex" })
+  let slotsFetched = false
+  const orig = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    if (String(input).includes("/slots")) slotsFetched = true
+    return new Response("{}", { status: 200 })
+  }) as typeof fetch
+  try {
+    const res = await invoke(tools(noJobCtx(db, DEV_UID)).offer, { timeZone: null, partOfDay: null, jobChoice: null })
+    assert.equal(res.ok, false)
+    assert.equal(res.reason, "needs_job_choice")
+    const jobs = res.jobs as Array<{ jobId: string; label: string }>
+    assert.equal(jobs.length, 2)
+    assert.ok(jobs.every((j) => typeof j.label === "string" && j.label.length > 0))
+    assert.equal(slotsFetched, false, "no Cal.com /slots call before disambiguation")
+    // nothing persisted yet (we didn't pick a job).
+    assert.equal(db.writes.length, 0)
+  } finally {
+    globalThis.fetch = orig
+  }
+})
+
+test("offer disambiguation: 2+ jobs WITH matching jobChoice (label substring) → proceeds, persists chosen jobId", async () => {
+  const db = new FakeDb()
+  db.employerVisible.push({ candidateId: DEV_UID, jobId: "job-a" })
+  db.employerVisible.push({ candidateId: DEV_UID, jobId: "job-b" })
+  db.matchingJobs.set("job-a", { jobTitle: "Backend Engineer", companyName: "Acme", roleFunction: ["software_engineering"] })
+  db.matchingJobs.set("job-b", { jobTitle: "Staff Designer", companyName: "Globex", roleFunction: ["creatives_and_design"] })
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    const res = await invoke(tools(noJobCtx(db, DEV_UID)).offer, {
+      timeZone: null,
+      partOfDay: null,
+      jobChoice: "designer", // case-insensitive substring on "Staff Designer @ Globex"
+    })
+    assert.equal(res.ok, true)
+    assert.ok((res.slots as unknown[]).length > 0)
+    // persisted under the CHOSEN jobId (job-b), so book recovers the SAME job.
+    const path = `pa-interview-bookings/${interviewBookingDocId({ userId: DEV_UID, jobId: "job-b" })}`
+    const persisted = db.store.get(path)!
+    assert.equal(persisted.jobId, "job-b")
+    assert.equal(persisted.status, "offered")
+    // job-b is a design role → design event-type 5604544.
+    assert.equal(persisted.eventTypeId, 5604544)
+  } finally {
+    restore()
+  }
+})
+
+test("offer disambiguation: jobChoice that matches NOTHING → needs_job_choice again (no Cal call)", async () => {
+  const db = new FakeDb()
+  db.employerVisible.push({ candidateId: DEV_UID, jobId: "job-a" })
+  db.employerVisible.push({ candidateId: DEV_UID, jobId: "job-b" })
+  db.matchingJobs.set("job-a", { jobTitle: "Backend Engineer", companyName: "Acme" })
+  db.matchingJobs.set("job-b", { jobTitle: "Staff Designer", companyName: "Globex" })
+  let slotsFetched = false
+  const orig = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    if (String(input).includes("/slots")) slotsFetched = true
+    return new Response("{}", { status: 200 })
+  }) as typeof fetch
+  try {
+    const res = await invoke(tools(noJobCtx(db, DEV_UID)).offer, { timeZone: null, partOfDay: null, jobChoice: "data scientist" })
+    assert.equal(res.ok, false)
+    assert.equal(res.reason, "needs_job_choice")
+    assert.equal((res.jobs as unknown[]).length, 2)
+    assert.equal(slotsFetched, false)
+  } finally {
+    globalThis.fetch = orig
+  }
+})
+
+test("offer disambiguation: exactly 1 schedulable job → uses it, no ask; routes its event-type", async () => {
+  const db = new FakeDb()
+  db.employerVisible.push({ candidateId: NOAH_DEV_UID, jobId: "solo-job" })
+  db.matchingJobs.set("solo-job", { jobTitle: "Sales Lead", companyName: "Hooli", roleFunction: ["sales"] })
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    const res = await invoke(tools(noJobCtx(db, NOAH_DEV_UID)).offer, { timeZone: null, partOfDay: null, jobChoice: null })
+    assert.equal(res.ok, true)
+    assert.equal(res.eventTypeId, 5180826) // sales → GTM Interview
+    const path = `pa-interview-bookings/${interviewBookingDocId({ userId: NOAH_DEV_UID, jobId: "solo-job" })}`
+    assert.equal(db.store.get(path)!.jobId, "solo-job")
+  } finally {
+    restore()
+  }
+})
+
+test("offer disambiguation: dev-mimic 2-job round-trips — offer chosen mimic then BOOK recovers same job + event-type", async () => {
+  const db = new FakeDb() // zero real passes → mimic kicks in
+  db.handles.push({ candidateId: DEV_UID, kind: "email", normalizedValue: "adam@example.com" })
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    // Pick the DESIGN mimic by label substring → routes to design event-type 5604544.
+    const offerCtx = noJobCtx(db, DEV_UID)
+    const offerRes = await invoke(tools(offerCtx).offer, { timeZone: null, partOfDay: null, jobChoice: "Helium" })
+    assert.equal(offerRes.ok, true)
+    assert.equal(offerRes.eventTypeId, 5604544)
+    const path = `pa-interview-bookings/${interviewBookingDocId({ userId: DEV_UID, jobId: "dev-helium-design" })}`
+    assert.equal(db.store.get(path)!.jobId, "dev-helium-design")
+    assert.equal(db.store.get(path)!.eventTypeId, 5604544)
+    // Book on a later TRIAGE turn (no ctx.jobId) → resolveActiveSchedulingJobId
+    // recovers dev-helium-design from the persisted offered doc, books the SAME job.
+    const bookCtx = noJobCtx(db, DEV_UID)
+    const bookRes = await invoke(tools(bookCtx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    assert.equal(bookRes.ok, true)
+    assert.equal(bookRes.action, "booked")
+    const booked = db.store.get(path)!
+    assert.equal(booked.jobId, "dev-helium-design")
+    assert.equal(booked.eventTypeId, 5604544) // design event-type round-tripped through book
+  } finally {
+    restore()
+  }
+})
+
+// ── meetingUrl plumbing (Google Meet join link) ────────────────────────────
+test("book: Meet location in Cal response → persisted on doc + rendered as join link in the email", async () => {
+  const db = new FakeDb()
+  db.handles.push({ candidateId: DEV_UID, kind: "email", normalizedValue: "adam@example.com" })
+  // Custom fetch: slots OK; booking returns a google-meet `location`; capture the
+  // mailgun POST body to confirm the join link is rendered.
+  let mailgunBody = ""
+  const orig = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString()
+    if (url.includes("/slots")) {
+      const data: Record<string, unknown[]> = {}
+      for (const s of SLOTS) {
+        data[s.date] ??= []
+        ;(data[s.date] as unknown[]).push({ start: s.iso })
+      }
+      return new Response(JSON.stringify({ status: "success", data }), { status: 200, headers: { "content-type": "application/json" } })
+    }
+    if (url.includes("/bookings")) {
+      const body = JSON.parse(String(init?.body))
+      return new Response(
+        JSON.stringify({
+          status: "success",
+          data: {
+            id: 8888,
+            uid: "uid-meet",
+            title: "Interview",
+            status: "accepted",
+            start: body.start,
+            end: body.start,
+            duration: 15,
+            eventType: { id: body.eventTypeId, slug: "swe" },
+            location: "https://meet.google.com/abc-defg-hij",
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )
+    }
+    // mailgun — capture the form body (contains text/html).
+    mailgunBody = init?.body ? String(init.body) : ""
+    return new Response(JSON.stringify({ id: "<mg-msg@wekruit.com>" }), { status: 200, headers: { "content-type": "application/json" } })
+  }) as typeof fetch
+  try {
+    const ctx = makeCtx(db, DEV_UID)
+    await offerThen(db, ctx)
+    const res = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    assert.equal(res.ok, true)
+    assert.equal(res.action, "booked")
+    // returned to the agent → Claire can drop the link into the iMessage bubble.
+    assert.equal(res.meetingUrl, "https://meet.google.com/abc-defg-hij")
+    // persisted on the booking doc.
+    assert.equal(db.store.get(BOOKING_PATH)!.meetingUrl, "https://meet.google.com/abc-defg-hij")
+    // the WeKruit email rendered the ACTUAL join link (URL is form-encoded in the body).
+    assert.ok(mailgunBody.includes("meet.google.com"))
+  } finally {
+    globalThis.fetch = orig
+  }
+})
+
+test("book: no Meet location → ok result has meetingUrl:'' (prompt keeps the calendar-invite wording)", async () => {
+  const db = new FakeDb()
+  db.handles.push({ candidateId: DEV_UID, kind: "email", normalizedValue: "adam@example.com" })
+  // installCalcomFetch's booking response carries NO location → no parseable join URL.
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    const ctx = makeCtx(db, DEV_UID)
+    await offerThen(db, ctx)
+    const res = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    assert.equal(res.ok, true)
+    assert.equal(res.action, "booked")
+    assert.equal(res.meetingUrl, "") // empty → Claire uses the "calendar invite on the way" wording
+  } finally {
+    restore()
+  }
+})
+
+test("book already_booked: returns the persisted meetingUrl so Claire can re-share the link in chat", async () => {
+  const db = new FakeDb()
+  db.handles.push({ candidateId: DEV_UID, kind: "email", normalizedValue: "adam@example.com" })
+  // Custom fetch: booking returns a Meet location so the FIRST book persists it.
+  const orig = globalThis.fetch
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString()
+    if (url.includes("/slots")) {
+      const data: Record<string, unknown[]> = {}
+      for (const s of SLOTS) {
+        data[s.date] ??= []
+        ;(data[s.date] as unknown[]).push({ start: s.iso })
+      }
+      return new Response(JSON.stringify({ status: "success", data }), { status: 200, headers: { "content-type": "application/json" } })
+    }
+    if (url.includes("/bookings")) {
+      const body = JSON.parse(String(init?.body))
+      return new Response(
+        JSON.stringify({
+          status: "success",
+          data: { id: 5, uid: "uid-5", title: "x", status: "accepted", start: body.start, end: body.start, duration: 15, eventType: { id: body.eventTypeId, slug: "s" }, location: "https://meet.google.com/dup-link-xyz" },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )
+    }
+    return new Response(JSON.stringify({ id: "<mg@wekruit.com>" }), { status: 200, headers: { "content-type": "application/json" } })
+  }) as typeof fetch
+  try {
+    const ctx = makeCtx(db, DEV_UID)
+    await offerThen(db, ctx)
+    const first = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    assert.equal(first.ok, true)
+    assert.equal(first.action, "booked")
+    // Repeat ask for the SAME slot → already_booked, link recovered from the doc.
+    const again = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    assert.equal(again.ok, true)
+    assert.equal(again.action, "already_booked")
+    assert.equal(again.meetingUrl, "https://meet.google.com/dup-link-xyz")
+  } finally {
+    globalThis.fetch = orig
+  }
+})
+
+test("offer disambiguation: turn-context jobId WINS — single job, no disambiguation even with passes present", async () => {
+  const db = new FakeDb()
+  // Multiple committed passes exist, but the prescreen turn has ctx.jobId set →
+  // the offer must use THAT job, not ask.
+  db.employerVisible.push({ candidateId: DEV_UID, jobId: "job-a" })
+  db.employerVisible.push({ candidateId: DEV_UID, jobId: "job-b" })
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    const ctx = makeCtx(db, DEV_UID, { jobId: "job-1" }) // turn context
+    const res = await invoke(tools(ctx).offer, { timeZone: null, partOfDay: null, jobChoice: null })
+    assert.equal(res.ok, true)
+    assert.equal(db.store.get(BOOKING_PATH)!.jobId, "job-1") // persisted under turn-context job
+  } finally {
+    restore()
+  }
 })
