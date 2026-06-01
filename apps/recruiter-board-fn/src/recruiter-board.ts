@@ -33,7 +33,7 @@
  *   GET  paRecruiterSubmissionsList -> recruiter-authenticated status tracker
  *   TRG  paRecruiterRoleReleasedNotify -> emails recruiters when a role is released
  *   TRG  paRecruiterRoleApplicationDecisionNotify -> creates recruiter inbox decision notices
- *   TRG  paRecruiterSubmissionFeedbackNotify -> creates recruiter inbox status/feedback and confirmation notices
+ *   TRG  paRecruiterSubmissionFeedbackNotify -> creates recruiter inbox status/feedback, confirmation, and payout notices
  *   GET  paCollabJobsListSchema    -> JSON Schema for the list response shape
  *
  * Companion docs:
@@ -499,6 +499,7 @@ function publicRecruiterNotification(
     type === "new_role" ? "New role released" :
     type === "role_application_decision" ? "Role application reviewed" :
     type === "candidate_confirmation" ? "Candidate confirmation update" :
+    type === "payout_update" ? "Payout update" :
     type === "submission_feedback" ? "Submission update" :
     "Recruiter notification"
   const fallbackBody =
@@ -1478,7 +1479,17 @@ interface RecruiterSubmissionListItem {
   recruiterFeedbackReasons?: string[]
   recruiterFeedbackUpdatedByEmail?: string | null
   recruiterFeedbackUpdatedAt?: unknown
+  recruiterPayout?: RecruiterSubmissionPayoutPublic
   createdAt?: unknown
+  updatedAt?: unknown
+}
+
+interface RecruiterSubmissionPayoutPublic {
+  status?: string
+  amount?: number
+  currency?: string
+  note?: string | null
+  updatedByEmail?: string | null
   updatedAt?: unknown
 }
 
@@ -1566,6 +1577,7 @@ function publicRecruiterSubmission(d: { id: string; data: () => Record<string, u
       ? data.recruiterFeedbackUpdatedByEmail
       : null,
     recruiterFeedbackUpdatedAt: data.recruiterFeedbackUpdatedAt,
+    recruiterPayout: publicRecruiterPayout(data.recruiterPayout),
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   }
@@ -1582,6 +1594,25 @@ function publicRecruiterCandidateConfirmation(raw: unknown): RecruiterSubmission
   if (data.confirmedAt !== undefined) out.confirmedAt = data.confirmedAt
   if (typeof data.resendCount === "number") out.resendCount = data.resendCount
   if (typeof data.lastError === "string") out.lastError = data.lastError
+  return Object.keys(out).length ? out : undefined
+}
+
+function publicRecruiterPayout(raw: unknown): RecruiterSubmissionListItem["recruiterPayout"] | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const data = raw as Record<string, unknown>
+  const out: RecruiterSubmissionPayoutPublic = {}
+  if (typeof data.status === "string" && /^[a-z0-9_:-]{1,80}$/i.test(data.status.trim())) {
+    out.status = data.status.trim()
+  }
+  if (typeof data.amount === "number" && Number.isFinite(data.amount) && data.amount > 0) {
+    out.amount = Math.round(data.amount)
+  }
+  if (typeof data.currency === "string" && /^[A-Z]{3}$/.test(data.currency.trim().toUpperCase())) {
+    out.currency = data.currency.trim().toUpperCase()
+  }
+  if (typeof data.note === "string") out.note = data.note.trim().slice(0, 500) || null
+  if (typeof data.updatedByEmail === "string") out.updatedByEmail = data.updatedByEmail.trim().slice(0, 320)
+  if (data.updatedAt !== undefined) out.updatedAt = data.updatedAt
   return Object.keys(out).length ? out : undefined
 }
 
@@ -3959,7 +3990,7 @@ function eventNotificationId(type: string, entityId: string, eventId: string): s
 async function createRecruiterInAppNotification(
   db: Firestore,
   input: {
-    type: "candidate_calibration" | "candidate_confirmation" | "role_application_decision" | "role_question_answer" | "submission_feedback"
+    type: "candidate_calibration" | "candidate_confirmation" | "payout_update" | "role_application_decision" | "role_question_answer" | "submission_feedback"
     eventId: string
     recruiterId: string
     recruiterEmail?: string
@@ -4256,6 +4287,78 @@ export function candidateConfirmationNotification(
   return null
 }
 
+function submissionPayout(data: Record<string, unknown> | null): RecruiterSubmissionPayoutPublic {
+  const payout = data?.recruiterPayout && typeof data.recruiterPayout === "object"
+    ? data.recruiterPayout as Record<string, unknown>
+    : {}
+  return {
+    status: typeof payout.status === "string" ? payout.status.trim() : "",
+    amount: typeof payout.amount === "number" && Number.isFinite(payout.amount) && payout.amount > 0
+      ? Math.round(payout.amount)
+      : undefined,
+    currency: typeof payout.currency === "string" && payout.currency.trim()
+      ? payout.currency.trim().toUpperCase()
+      : "USD",
+    note: typeof payout.note === "string" ? payout.note.trim() : "",
+  }
+}
+
+function payoutStatusLabel(status: string): string {
+  switch (status) {
+    case "eligible": return "eligible"
+    case "pending_start": return "pending start"
+    case "invoice_ready": return "invoice ready"
+    case "paid": return "paid"
+    case "void": return "void"
+    default: return status.replace(/_/g, " ")
+  }
+}
+
+function formatPayoutAmount(amount?: number, currency = "USD"): string {
+  if (!amount) return ""
+  const formatted = amount.toLocaleString("en-US")
+  return currency === "USD" ? `$${formatted}` : `${currency} ${formatted}`
+}
+
+export function payoutUpdateNotification(
+  before: Record<string, unknown> | null,
+  after: Record<string, unknown> | null,
+): { title: string; body: string } | null {
+  if (!before || !after) return null
+  const beforePayout = submissionPayout(before)
+  const afterPayout = submissionPayout(after)
+  const beforeKey = JSON.stringify({
+    status: beforePayout.status || "",
+    amount: beforePayout.amount ?? null,
+    currency: beforePayout.currency ?? "USD",
+    note: beforePayout.note || "",
+  })
+  const afterKey = JSON.stringify({
+    status: afterPayout.status || "",
+    amount: afterPayout.amount ?? null,
+    currency: afterPayout.currency ?? "USD",
+    note: afterPayout.note || "",
+  })
+  if (beforeKey === afterKey) return null
+  if (!afterPayout.status || afterPayout.status === "none") return null
+
+  const candidateName = submissionCandidateName(after)
+  const roleTitle = typeof after.jobTitleSnapshot === "string" && after.jobTitleSnapshot.trim()
+    ? after.jobTitleSnapshot.trim()
+    : "Recruiter submission"
+  const amount = formatPayoutAmount(afterPayout.amount, afterPayout.currency)
+  const statusLabel = payoutStatusLabel(afterPayout.status)
+  return {
+    title: `Payout ${statusLabel} for ${candidateName}`,
+    body: compactNotificationBody([
+      roleTitle,
+      amount,
+      `Status: ${statusLabel}`,
+      afterPayout.note || undefined,
+    ]),
+  }
+}
+
 export const paRecruiterRoleReleasedNotify = onDocumentWritten(
   {
     document: "pa-jobs/{jobId}",
@@ -4379,7 +4482,8 @@ export const paRecruiterSubmissionFeedbackNotify = onDocumentWritten(
     const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null
     const feedbackNotification = submissionFeedbackNotification(before, after)
     const confirmationNotification = candidateConfirmationNotification(before, after)
-    if ((!feedbackNotification && !confirmationNotification) || !after) return
+    const payoutNotification = payoutUpdateNotification(before, after)
+    if ((!feedbackNotification && !confirmationNotification && !payoutNotification) || !after) return
     const recruiterId = typeof after.recruiterId === "string" ? after.recruiterId : ""
     if (!recruiterId) return
     const db = getFirestore()
@@ -4412,6 +4516,15 @@ export const paRecruiterSubmissionFeedbackNotify = onDocumentWritten(
         body: confirmationNotification.body,
       })
       if (created) logger.info("paRecruiterSubmissionCandidateConfirmationNotify_done", { submissionId: event.params.submissionId, recruiterId })
+    }
+    if (payoutNotification) {
+      const created = await createRecruiterInAppNotification(db, {
+        ...common,
+        type: "payout_update",
+        title: payoutNotification.title,
+        body: payoutNotification.body,
+      })
+      if (created) logger.info("paRecruiterSubmissionPayoutNotify_done", { submissionId: event.params.submissionId, recruiterId })
     }
   },
 )

@@ -73,6 +73,14 @@ interface SubmissionDoc {
   recruiterFeedbackReasons?: string[]
   recruiterFeedbackUpdatedByEmail?: string | null
   recruiterFeedbackUpdatedAt?: { seconds?: number } | string | null
+  recruiterPayout?: {
+    status?: string
+    amount?: number
+    currency?: string
+    note?: string | null
+    updatedByEmail?: string | null
+    updatedAt?: { seconds?: number } | string | null
+  }
   sheetSyncedAt?: { seconds: number } | null
   sheetSyncError?: string | null
   createdAt?: { seconds: number } | null
@@ -109,6 +117,35 @@ function consentBadge(status: string | undefined): { label: string; tone: "ok" |
     case "confirmation_email_not_configured": return { label: "not configured", tone: "warn" }
     default: return { label: "recruiter", tone: "muted" }
   }
+}
+
+const PAYOUT_STATUS_VALUES = ["none", "eligible", "pending_start", "invoice_ready", "paid", "void"]
+
+function payoutBadge(status: string | undefined): { label: string; tone: "ok" | "warn" | "info" | "muted" } {
+  switch (status) {
+    case "eligible": return { label: "eligible", tone: "info" }
+    case "pending_start": return { label: "pending start", tone: "info" }
+    case "invoice_ready": return { label: "invoice ready", tone: "ok" }
+    case "paid": return { label: "paid", tone: "ok" }
+    case "void": return { label: "void", tone: "warn" }
+    default: return { label: "not set", tone: "muted" }
+  }
+}
+
+function normalizePayoutAmount(input: string): number | null {
+  const clean = input.replace(/[$,]/g, "").trim()
+  if (!clean) return null
+  const n = Number(clean)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return Math.round(n)
+}
+
+function payoutAmountLabel(payout?: SubmissionDoc["recruiterPayout"]): string {
+  const amount = payout?.amount
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) return "—"
+  const currency = payout?.currency ?? "USD"
+  const formatted = amount.toLocaleString("en-US")
+  return currency === "USD" ? `$${formatted}` : `${currency} ${formatted}`
 }
 
 const STATUS_VALUES = ["submitted", "new", "reviewing", "advanced", "interviewing", "backburner", "offer", "hired", "rejected", "duplicate"]
@@ -1003,6 +1040,20 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
       sortable: true,
       width: 120,
       render: (r) => <Badge tone={statusBadge(r.status)}>{r.status ?? "submitted"}</Badge>,
+    },
+    {
+      key: "recruiterPayout",
+      label: "Payout",
+      width: 128,
+      render: (r) => {
+        const meta = payoutBadge(r.recruiterPayout?.status)
+        return (
+          <>
+            <Badge tone={meta.tone}>{meta.label}</Badge>
+            <div style={{ color: "#777", fontSize: 11, marginTop: 3 }}>{payoutAmountLabel(r.recruiterPayout)}</div>
+          </>
+        )
+      },
     },
     {
       key: "recruiterFeedbackRating",
@@ -3305,6 +3356,11 @@ function RowDetailPanel({
     normalizeFeedbackRating(row.recruiterFeedbackRating)?.toString() ?? "",
   )
   const [draftReasons, setDraftReasons] = useState<string[]>(row.recruiterFeedbackReasons ?? [])
+  const [draftPayoutStatus, setDraftPayoutStatus] = useState(row.recruiterPayout?.status ?? "none")
+  const [draftPayoutAmount, setDraftPayoutAmount] = useState(
+    typeof row.recruiterPayout?.amount === "number" ? String(row.recruiterPayout.amount) : "",
+  )
+  const [draftPayoutNote, setDraftPayoutNote] = useState(row.recruiterPayout?.note ?? "")
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -3326,6 +3382,17 @@ function RowDetailPanel({
         .map((reason) => reason.id)
         .filter((reason) => draftReasons.includes(reason))
       const adminEmail = auth().currentUser?.email ?? null
+      const payoutStatus = PAYOUT_STATUS_VALUES.includes(draftPayoutStatus) ? draftPayoutStatus : "none"
+      const payoutAmount = normalizePayoutAmount(draftPayoutAmount)
+      const payoutNote = draftPayoutNote.trim()
+      const recruiterPayout = {
+        status: payoutStatus,
+        ...(payoutAmount ? { amount: payoutAmount } : {}),
+        currency: "USD",
+        note: payoutNote || null,
+        updatedByEmail: adminEmail,
+        updatedAt: serverTimestamp(),
+      }
       await updateDoc(doc(db(), "pa-recruiter-submissions", row.id), {
         status: draftStatus,
         recruiterFeedbackNote: cleanNote || null,
@@ -3333,6 +3400,7 @@ function RowDetailPanel({
         recruiterFeedbackReasons: reasons,
         recruiterFeedbackUpdatedByEmail: adminEmail,
         recruiterFeedbackUpdatedAt: serverTimestamp(),
+        recruiterPayout,
         statusHistory: arrayUnion({
           status: draftStatus,
           by: "admin",
@@ -3340,6 +3408,8 @@ function RowDetailPanel({
           ...(cleanNote ? { note: cleanNote } : {}),
           ...(rating ? { rating } : {}),
           ...(reasons.length ? { reasons } : {}),
+          ...(payoutStatus !== "none" ? { payoutStatus } : {}),
+          ...(payoutStatus !== "none" && payoutAmount ? { payoutAmount } : {}),
         }),
         updatedAt: serverTimestamp(),
       })
@@ -3351,6 +3421,14 @@ function RowDetailPanel({
         recruiterFeedbackReasons: reasons,
         recruiterFeedbackUpdatedByEmail: adminEmail,
         recruiterFeedbackUpdatedAt: new Date().toISOString(),
+        recruiterPayout: {
+          status: payoutStatus,
+          ...(payoutAmount ? { amount: payoutAmount } : {}),
+          currency: "USD",
+          note: payoutNote || null,
+          updatedByEmail: adminEmail,
+          updatedAt: new Date().toISOString(),
+        },
       })
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e))
@@ -3611,6 +3689,38 @@ function RowDetailPanel({
               </button>
             )
           })}
+        </div>
+        <div style={{ marginTop: 14, border: "1px solid #eadfce", borderRadius: 10, background: "#fffaf3", padding: 12 }}>
+          <h4 style={{ margin: "0 0 8px", fontSize: 12, textTransform: "uppercase", color: "#7a4a16" }}>
+            Recruiter payout tracker
+          </h4>
+          <div style={{ display: "grid", gridTemplateColumns: "180px 160px 1fr", gap: 10, alignItems: "start" }}>
+            <select
+              value={draftPayoutStatus}
+              onChange={(e) => setDraftPayoutStatus(e.target.value)}
+              aria-label="Recruiter payout status"
+              style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}
+            >
+              {PAYOUT_STATUS_VALUES.map((status) => <option value={status} key={status}>{payoutBadge(status).label}</option>)}
+            </select>
+            <input
+              value={draftPayoutAmount}
+              onChange={(e) => setDraftPayoutAmount(e.target.value)}
+              placeholder="USD amount"
+              inputMode="numeric"
+              style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}
+            />
+            <textarea
+              value={draftPayoutNote}
+              onChange={(e) => setDraftPayoutNote(e.target.value)}
+              placeholder="Visible to recruiter: payout condition, invoice note, or why void..."
+              rows={2}
+              style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, resize: "vertical" }}
+            />
+          </div>
+          <p style={{ margin: "8px 0 0", color: "#7a4a16", fontSize: 12 }}>
+            Status and amount are visible in the recruiter earnings tab and create a recruiter inbox alert when changed.
+          </p>
         </div>
         {saveError && <p style={{ color: "#a00", fontSize: 12, margin: "8px 0 0" }}>{saveError}</p>}
       </div>

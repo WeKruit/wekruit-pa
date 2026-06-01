@@ -1,4 +1,4 @@
-export type RecruiterInboxAction = "roles" | "submissions" | "matches" | "candidates"
+export type RecruiterInboxAction = "roles" | "submissions" | "matches" | "candidates" | "earnings"
 
 export type RecruiterInboxTone = "live" | "info" | "success" | "warn" | "mute"
 
@@ -26,6 +26,14 @@ export function recruiterNotificationInboxMeta(type: string): RecruiterNotificat
         unreadBucket: "Unread candidate confirmation",
         action: "submissions",
         cta: "Track submission",
+        readTone: "success",
+      }
+    case "payout_update":
+      return {
+        typeLabel: "Payout update",
+        unreadBucket: "Unread payout update",
+        action: "earnings",
+        cta: "Open earnings",
         readTone: "success",
       }
     case "new_role":

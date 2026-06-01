@@ -96,6 +96,14 @@ const WEEKLY_SUBMISSION_TARGET = 8
 const DEFAULT_SUCCESS_FEE = 10_000
 const PREFERRED_INTERVIEW_RATE_TARGET = 50
 
+const PAYOUT_STATUS_LABELS: Record<string, { label: string; tone: "live" | "info" | "success" | "warn" | "mute"; body: string }> = {
+  eligible: { label: "Eligible", tone: "live", body: "Eligible for payout once placement requirements are cleared." },
+  pending_start: { label: "Pending start", tone: "info", body: "Waiting for start-date confirmation before payout can close." },
+  invoice_ready: { label: "Invoice ready", tone: "success", body: "Ready for payout processing." },
+  paid: { label: "Paid", tone: "success", body: "Payout recorded as paid." },
+  void: { label: "Void", tone: "warn", body: "No payout expected for this submission." },
+}
+
 const SOURCE_STAGES: Array<{ id: RecruiterSourcedCandidateStage; label: string; tone: "live" | "info" | "success" | "warn" | "mute" }> = [
   { id: "sourced", label: "Sourced", tone: "mute" },
   { id: "contacted", label: "Contacted", tone: "info" },
@@ -1268,6 +1276,7 @@ export default function RecruiterBoard() {
             onCandidates={() => setTab("candidates")}
             onSubmissions={() => setTab("submissions")}
             onMatches={() => setTab("matches")}
+            onEarnings={() => setTab("earnings")}
             onMarkAllNotificationsRead={() => void markAllNotificationsRead()}
           />
         )}
@@ -1827,12 +1836,32 @@ function submissionRewardAmount(submission: RecruiterSubmissionItem, jobsById: M
   return job ? roleRewardAmount(job) : DEFAULT_SUCCESS_FEE
 }
 
+function recruiterPayoutStatusMeta(status?: string) {
+  return PAYOUT_STATUS_LABELS[status ?? ""] ?? { label: "Projected", tone: "mute" as const, body: "No payout status has been recorded yet." }
+}
+
+function recruiterPayoutAmount(submission: RecruiterSubmissionItem, jobsById: Map<string, CollabJob>): number {
+  const amount = submission.recruiterPayout?.amount
+  return typeof amount === "number" && Number.isFinite(amount) && amount > 0
+    ? Math.round(amount)
+    : submissionRewardAmount(submission, jobsById)
+}
+
 function isSubmissionOpen(status?: string): boolean {
   return !CLOSED_NEGATIVE_STATUSES.includes(status ?? "")
 }
 
 function isSubmissionAdvanced(status?: string): boolean {
   return ADVANCED_STATUSES.includes(status ?? "")
+}
+
+function payoutTimingForSubmission(submission: RecruiterSubmissionItem): string {
+  const payout = submission.recruiterPayout
+  const meta = recruiterPayoutStatusMeta(payout?.status)
+  if (payout?.status && payout.status !== "none") {
+    return payout.note ? `${meta.label} - ${payout.note}` : meta.body
+  }
+  return payoutTiming(submission.status)
 }
 
 function payoutTiming(status?: string): string {
@@ -1876,12 +1905,14 @@ function computeRecruiterEarningsMetrics(
   operatingMetrics: RecruiterOperatingMetrics,
 ): RecruiterEarningsMetrics {
   const jobsById = new Map(jobs.map((job) => [roleKey(job), job]))
-  const openSubmissions = submissions.filter((submission) => isSubmissionOpen(submission.status))
+  const openSubmissions = submissions.filter((submission) => isSubmissionOpen(submission.status) && submission.recruiterPayout?.status !== "void")
   const advancedSubmissions = submissions.filter((submission) => isSubmissionAdvanced(submission.status))
   const hiredSubmissions = submissions.filter((submission) => submission.status === "hired")
   const interviewRate = submissions.length ? Math.round((advancedSubmissions.length / submissions.length) * 100) : 0
-  const activePipelineValue = openSubmissions.reduce((sum, submission) => sum + submissionRewardAmount(submission, jobsById), 0)
-  const wonValue = hiredSubmissions.reduce((sum, submission) => sum + submissionRewardAmount(submission, jobsById), 0)
+  const activePipelineValue = openSubmissions.reduce((sum, submission) => sum + recruiterPayoutAmount(submission, jobsById), 0)
+  const paidPayoutSubmissions = submissions.filter((submission) => submission.recruiterPayout?.status === "paid")
+  const wonValue = (paidPayoutSubmissions.length ? paidPayoutSubmissions : hiredSubmissions)
+    .reduce((sum, submission) => sum + recruiterPayoutAmount(submission, jobsById), 0)
   const openOpportunityValue = jobs.reduce((sum, job) => sum + roleRewardAmount(job), 0)
   const activePrimaryRoles = primaryRoleIds.length
   const coveredPrimaryRoles = jobs.filter((job) => {
@@ -1965,18 +1996,23 @@ function computeRecruiterEarningsMetrics(
     },
   ]
   const payoutRows = sortSubmissions(submissions)
-    .filter((submission) => OPEN_SUBMISSION_STATUSES.includes(submission.status ?? "submitted") || submission.status === "hired")
+    .filter((submission) => OPEN_SUBMISSION_STATUSES.includes(submission.status ?? "submitted") || submission.status === "hired" || Boolean(submission.recruiterPayout?.status && submission.recruiterPayout.status !== "none"))
     .slice(0, 8)
     .map((submission): RecruiterPayoutRow => {
-      const meta = statusMeta(submission.status)
+      const payoutMeta = recruiterPayoutStatusMeta(submission.recruiterPayout?.status)
+      const status = submission.recruiterPayout?.status && submission.recruiterPayout.status !== "none"
+        ? payoutMeta.label
+        : statusMeta(submission.status).label
       return {
         id: submission.id,
         candidate: submission.candidate?.name || "Candidate",
         role: submission.jobTitleSnapshot || jobsById.get(submissionRoleId(submission))?.title || "Role",
-        status: meta.label,
-        value: formatCurrencyShort(submissionRewardAmount(submission, jobsById)),
-        payout: payoutTiming(submission.status),
-        tone: meta.tone,
+        status,
+        value: formatCurrencyShort(recruiterPayoutAmount(submission, jobsById)),
+        payout: payoutTimingForSubmission(submission),
+        tone: submission.recruiterPayout?.status && submission.recruiterPayout.status !== "none"
+          ? payoutMeta.tone
+          : statusMeta(submission.status).tone,
       }
     })
   return {
@@ -2006,13 +2042,15 @@ function computeRecruiterEarningsMetrics(
       {
         label: "Active pipeline value",
         value: formatCurrencyShort(activePipelineValue),
-        body: `${openSubmissions.length} active submission${openSubmissions.length === 1 ? "" : "s"} with estimated success-fee exposure.`,
+        body: `${openSubmissions.length} active submission${openSubmissions.length === 1 ? "" : "s"} using recorded payout amounts where available.`,
         tone: activePipelineValue > 0 ? "live" : "mute",
       },
       {
         label: "Won value",
         value: formatCurrencyShort(wonValue),
-        body: `${hiredSubmissions.length} hired placement${hiredSubmissions.length === 1 ? "" : "s"} recorded.`,
+        body: paidPayoutSubmissions.length
+          ? `${paidPayoutSubmissions.length} paid payout${paidPayoutSubmissions.length === 1 ? "" : "s"} recorded.`
+          : `${hiredSubmissions.length} hired placement${hiredSubmissions.length === 1 ? "" : "s"} recorded.`,
         tone: wonValue > 0 ? "success" : "mute",
       },
     ],
@@ -2425,6 +2463,7 @@ function RecruiterInboxTab({
   onCandidates,
   onSubmissions,
   onMatches,
+  onEarnings,
   onMarkAllNotificationsRead,
 }: {
   jobs: CollabJob[]
@@ -2437,6 +2476,7 @@ function RecruiterInboxTab({
   onCandidates: () => void
   onSubmissions: () => void
   onMatches: () => void
+  onEarnings: () => void
   onMarkAllNotificationsRead: () => void
 }) {
   const items = useMemo(
@@ -2458,6 +2498,7 @@ function RecruiterInboxTab({
     if (action === "roles") onRoles()
     else if (action === "submissions") onSubmissions()
     else if (action === "matches") onMatches()
+    else if (action === "earnings") onEarnings()
     else onCandidates()
   }
 

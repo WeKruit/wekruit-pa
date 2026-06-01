@@ -24,6 +24,16 @@ test("recruiterNotificationInboxMeta routes candidate confirmation into the subm
   })
 })
 
+test("recruiterNotificationInboxMeta routes payout updates into earnings", () => {
+  assert.deepEqual(recruiterNotificationInboxMeta("payout_update"), {
+    typeLabel: "Payout update",
+    unreadBucket: "Unread payout update",
+    action: "earnings",
+    cta: "Open earnings",
+    readTone: "success",
+  })
+})
+
 test("recruiterNotificationInboxMeta routes role-question answers back to roles", () => {
   assert.deepEqual(recruiterNotificationInboxMeta("role_question_answer"), {
     typeLabel: "Role answer returned",

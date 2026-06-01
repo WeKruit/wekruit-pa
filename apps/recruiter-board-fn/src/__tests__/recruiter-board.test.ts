@@ -33,6 +33,7 @@ import {
   normalizeRecruiterCandidateLink,
   inviteCodeUsable,
   normalizeRecruiterInviteCode,
+  payoutUpdateNotification,
   recruiterCandidateIdentityConflictForRole,
   recruiterInviteCodeMatchesBoundUser,
   recruiterIdentityFromFirebaseBearer,
@@ -619,6 +620,56 @@ describe("recruiter candidate confirmation notifications", () => {
     }, {
       candidateConsentStatus: "candidate_confirmed",
       candidateConfirmation: { status: "confirmed", candidateEmail: "ada@example.com" },
+    }), null)
+  })
+})
+
+describe("recruiter payout update notifications", () => {
+  it("does not notify when a submission is first created without payout status", () => {
+    assert.equal(payoutUpdateNotification(null, {
+      status: "submitted",
+      candidate: { name: "Ada Lovelace" },
+    }), null)
+  })
+
+  it("notifies when admin marks a recruiter payout eligible", () => {
+    const notification = payoutUpdateNotification({
+      recruiterPayout: { status: "none" },
+      candidate: { name: "Ada Lovelace" },
+    }, {
+      recruiterPayout: {
+        status: "eligible",
+        amount: 12000,
+        currency: "USD",
+        note: "Candidate accepted the hiring team's interview loop.",
+      },
+      jobTitleSnapshot: "Founding Engineer",
+      candidate: { name: "Ada Lovelace" },
+    })
+    assert.equal(notification?.title, "Payout eligible for Ada Lovelace")
+    assert.match(notification?.body ?? "", /Founding Engineer/)
+    assert.match(notification?.body ?? "", /\$12,000/)
+    assert.match(notification?.body ?? "", /interview loop/)
+  })
+
+  it("notifies when a recruiter payout is recorded as paid", () => {
+    const notification = payoutUpdateNotification({
+      recruiterPayout: { status: "invoice_ready", amount: 12000, currency: "USD" },
+      candidate: { name: "Ada Lovelace" },
+    }, {
+      recruiterPayout: { status: "paid", amount: 12000, currency: "USD" },
+      candidate: { name: "Ada Lovelace" },
+    })
+    assert.equal(notification?.title, "Payout paid for Ada Lovelace")
+    assert.match(notification?.body ?? "", /\$12,000/)
+    assert.match(notification?.body ?? "", /Status: paid/)
+  })
+
+  it("does not notify again when payout fields are unchanged", () => {
+    assert.equal(payoutUpdateNotification({
+      recruiterPayout: { status: "eligible", amount: 12000, currency: "USD", note: "Same note" },
+    }, {
+      recruiterPayout: { status: "eligible", amount: 12000, currency: "USD", note: "Same note" },
     }), null)
   })
 })

@@ -149,6 +149,15 @@ export interface RecruiterSubmissionStatusHistoryItem {
   reasons?: string[]
 }
 
+export interface RecruiterSubmissionPayout {
+  status?: string
+  amount?: number
+  currency?: string
+  note?: string | null
+  updatedByEmail?: string | null
+  updatedAt?: { seconds?: number } | string | null
+}
+
 export interface RecruiterSubmissionItem {
   id: string
   submissionId?: string
@@ -184,6 +193,7 @@ export interface RecruiterSubmissionItem {
   recruiterFeedbackReasons?: string[]
   recruiterFeedbackUpdatedByEmail?: string | null
   recruiterFeedbackUpdatedAt?: { seconds?: number } | string | null
+  recruiterPayout?: RecruiterSubmissionPayout
   createdAt?: { seconds?: number } | string | null
   updatedAt?: { seconds?: number } | string | null
 }
