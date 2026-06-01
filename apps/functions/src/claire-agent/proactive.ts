@@ -335,24 +335,16 @@ function proactiveDirective(
   jobs: ProactiveCandidateJob[]
 ): string {
   const bubbleRule =
-    lang === "zh"
-      ? "用最多 2 条短消息（用空行分隔），像朋友发短信。不要 markdown。"
-      : "Write at most 2 short bubbles (separate them with a blank line), like texting a friend. No markdown."
+    "Write at most 2 short bubbles (separate them with a blank line), like texting a friend. No markdown."
   switch (kind) {
     case "post_match_retention":
-      return lang === "zh"
-        ? `主动给候选人发个轻松的回访：问问之前推的岗位感觉怎么样。${bubbleRule}`
-        : `Proactively check in with the candidate: ask how the roles you sent earlier felt. ${bubbleRule}`
+      return `Proactively check in with the candidate: ask how the roles you sent earlier felt. ${bubbleRule}`
     case "daily_job_rec": {
       const lines = jobs.map((j) => j.line ?? j.id).join("\n")
-      return lang === "zh"
-        ? `主动给候选人发今天新匹配的岗位。岗位:\n${lines}\n${bubbleRule}`
-        : `Proactively send the candidate today's fresh matched roles. Roles:\n${lines}\n${bubbleRule}`
+      return `Proactively send the candidate today's fresh matched roles. Roles:\n${lines}\n${bubbleRule}`
     }
     case "follow_up":
-      return lang === "zh"
-        ? `主动给候选人发个温和的跟进，看看他们还在不在找。${bubbleRule}`
-        : `Send the candidate a gentle proactive follow-up to see if they're still looking. ${bubbleRule}`
+      return `Send the candidate a gentle proactive follow-up to see if they're still looking. ${bubbleRule}`
   }
 }
 

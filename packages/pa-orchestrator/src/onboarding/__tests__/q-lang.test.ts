@@ -2,7 +2,8 @@
  * Layer 1 unit tests — q_lang (LangJudge regex; no LLM).
  *
  * P7-5 Wave 2 — Adam directive: each Q its own test file. q_lang uses
- * LangJudge (deterministic bilingual regex), so no LLM stub needed.
+ * LangJudge (deterministic regex), so no LLM stub needed. Product is
+ * English-only, so the judge resolves meaningful replies to en / mixed.
  */
 import test from "node:test"
 import assert from "node:assert/strict"
@@ -20,50 +21,8 @@ test("q-lang: 'English' → en", async () => {
   if (r.accept) assert.equal(r.value, "en")
 })
 
-test("q-lang: '英文' → en", async () => {
-  const r = await J.judge("英文", "en", ctx())
-  assert.equal(r.accept, true)
-  if (r.accept) assert.equal(r.value, "en")
-})
-
-test("q-lang: '中文' → zh", async () => {
-  const r = await J.judge("中文", "zh", ctx())
-  assert.equal(r.accept, true)
-  if (r.accept) assert.equal(r.value, "zh")
-})
-
-test("q-lang: 'chinese' → zh", async () => {
-  const r = await J.judge("chinese", "en", ctx())
-  assert.equal(r.accept, true)
-  if (r.accept) assert.equal(r.value, "zh")
-})
-
-test("q-lang: '普通话' → zh", async () => {
-  const r = await J.judge("普通话", "zh", ctx())
-  assert.equal(r.accept, true)
-  if (r.accept) assert.equal(r.value, "zh")
-})
-
 test("q-lang: 'mixed' → mixed", async () => {
   const r = await J.judge("mixed", "en", ctx())
-  assert.equal(r.accept, true)
-  if (r.accept) assert.equal(r.value, "mixed")
-})
-
-test("q-lang: '都行' → mixed", async () => {
-  const r = await J.judge("都行", "zh", ctx())
-  assert.equal(r.accept, true)
-  if (r.accept) assert.equal(r.value, "mixed")
-})
-
-test("q-lang: '中英文混合' → mixed", async () => {
-  const r = await J.judge("中英文混合", "zh", ctx())
-  assert.equal(r.accept, true)
-  if (r.accept) assert.equal(r.value, "mixed")
-})
-
-test("q-lang: '混着说' → mixed", async () => {
-  const r = await J.judge("混着说", "zh", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.equal(r.value, "mixed")
 })

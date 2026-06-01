@@ -225,7 +225,7 @@ const defaultDeps: Required<
   },
   detectLocale(body) {
     if (!body) return undefined
-    const hasZh = /[一-鿿]/.test(body)
+    const hasZh = /[\u4e00-\u9fff]/.test(body)
     const hasEn = /[A-Za-z]/.test(body)
     if (hasZh && hasEn) return "mixed"
     if (hasZh) return "zh-CN"

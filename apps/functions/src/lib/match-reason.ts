@@ -4,8 +4,8 @@
  * Given a job carrying a `matchScore.breakdown` (attached by `rankJobs` in
  * @pa/job-rec), surface the top 1-2 weighted-contribution dimensions and
  * translate them into a short human-readable line for the iMessage compose
- * path. Replaces the previous "光秃秃 title + URL" output — users now see
- * a "为啥推:" / "why:" line that cites the strongest signal(s).
+ * path. Replaces the previous bare title + URL output — users now see
+ * a "why:" line that cites the strongest signal(s).
  *
  * Pure / deterministic. No LLM. No side effects. Designed to be reusable by
  * the daily-batch fallback path (D5) when no LLM-grounded reason is on file.
@@ -15,13 +15,13 @@
  *   - "Top" is ranked by *weighted contribution*, not raw component value.
  *     skillScore=1 contributes 0.35; locationScore=1 contributes 0.15. The
  *     first is far stronger evidence the job fits.
- *   - We deliberately drop the salary dim from rendering — the message
- *     "薪资到你 floor" is awkward in context and the contribution is tiny
+ *   - We deliberately drop the salary dim from rendering — a "hits your
+ *     salary floor" message is awkward in context and the contribution is tiny
  *     (weight 0.05).
  *   - Sponsorship is only surfaced when the user actively needs it (visa
  *     status implies they care). Citizens / GC holders shouldn't see
- *     "可以 sponsor" — it's noise.
- *   - Output length cap: ≤ 50 chars (zh) / 70 chars (en). Above the cap we
+ *     "offers sponsorship" — it's noise.
+ *   - Output length cap: 70 chars (en). Above the cap we
  *     drop the second clause. We never truncate mid-word.
  *   - Empty / missing breakdown → return "" so the caller's URL line is
  *     unchanged. `orchestrator-deps` simply skips the reason line on "".
@@ -78,7 +78,7 @@ export type JobReasonUserContext = {
 }
 
 /**
- * Format a "为啥推" reason line for a single job. Returns "" when no
+ * Format a "why" reason line for a single job. Returns "" when no
  * breakdown is available so the caller can skip the line cleanly.
  */
 export function formatJobMatchReason(
@@ -94,7 +94,7 @@ export function formatJobMatchReason(
 
   // Build weighted-contribution candidates. Skip salary (weight 0.05, awkward
   // to render). Skip sponsorship when the user doesn't need it (citizens
-  // don't care about "可以 sponsor"). Skip location when no preference set.
+  // don't care about "offers sponsorship"). Skip location when no preference set.
   const userNeedsSponsor = userNeedsSponsorship(userContext?.visaStatus)
   const userHasLocationPref = (userContext?.targetLocations ?? []).some(
     (s) => typeof s === "string" && s.trim().length > 0
@@ -188,7 +188,7 @@ function renderPhrase(
   c: Candidate,
   job: JobReasonInput,
   userContext: JobReasonUserContext | undefined,
-  lang: "zh" | "en" | "mixed"
+  _lang: "zh" | "en" | "mixed"
 ): string {
   switch (c.dim) {
     case "skill": {
@@ -198,33 +198,20 @@ function renderPhrase(
       )
       if (overlap.length === 0) return ""
       const list = overlap.slice(0, 2).join(" + ")
-      if (lang === "zh") return `${list} 命中`
-      if (lang === "en") return `matches ${list}`
-      // mixed
-      return `${list} 命中`
+      return `matches ${list}`
     }
     case "embedding": {
-      // Vibe / overall direction. The "整体方向贴你简历" line.
+      // Vibe / overall direction.
       const role = pickRoleLabel(userContext?.targetRole)
-      if (lang === "zh") {
-        return role ? `方向对得上你 ${role.upper}` : "整体方向贴你简历"
-      }
-      if (lang === "en") {
-        return role ? `${role.upper}-aligned with your resume` : "lines up with your resume"
-      }
-      return role ? `${role.upper} direction` : "整体方向贴你简历"
+      return role ? `${role.upper}-aligned with your resume` : "lines up with your resume"
     }
     case "sponsorship": {
-      if (lang === "zh") return "可以 sponsor"
-      if (lang === "en") return "offers sponsorship"
-      return "可以 sponsor"
+      return "offers sponsorship"
     }
     case "location": {
       const pref = (userContext?.targetLocations ?? [])[0] ?? ""
       const label = pref.toLowerCase().trim()
-      if (lang === "zh") return label ? `地点 ${label} 对得上` : "地点对得上"
-      if (lang === "en") return label ? `location ${label} fits` : "location fits"
-      return label ? `${label} 地点对得上` : "地点对得上"
+      return label ? `location ${label} fits` : "location fits"
     }
     case "salary":
       // Intentional drop — see top-of-file rationale.
@@ -272,8 +259,6 @@ function computeSkillOverlap(
  * the overall score is non-trivial. Used when the user has no skills /
  * location prefs AND no sponsorship need but the embedding cosine is decent.
  */
-function phraseFallback(lang: "zh" | "en" | "mixed"): string {
-  if (lang === "zh") return "整体方向贴近"
-  if (lang === "en") return "overall fit"
-  return "整体方向贴近"
+function phraseFallback(_lang: "zh" | "en" | "mixed"): string {
+  return "overall fit"
 }

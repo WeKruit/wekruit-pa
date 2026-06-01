@@ -14,11 +14,6 @@ describe("isSkipReply", () => {
     assert.equal(isSkipReply("pass"), true)
     assert.equal(isSkipReply("skip."), true)
   })
-  it("matches zh skip variants", () => {
-    assert.equal(isSkipReply("不用"), true)
-    assert.equal(isSkipReply("不想"), true)
-    assert.equal(isSkipReply("跳过"), true)
-  })
   it("does not match real feedback", () => {
     assert.equal(isSkipReply("5"), false)
     assert.equal(isSkipReply("loved it"), false)

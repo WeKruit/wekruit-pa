@@ -2,8 +2,8 @@
  * Layer 1 unit tests — q_tos (YesNoJudge bilingual).
  *
  * Three buckets:
- *   - clear yes (同意/agree/yes/...) → accept value=true
- *   - clear no (不同意/no/decline/...) → reason="declined"
+ *   - clear yes (agree/yes/...) → accept value=true
+ *   - clear no (no/decline/...) → reason="declined"
  *   - anything else → reason="irrelevant"
  */
 import test from "node:test"
@@ -15,12 +15,6 @@ function ctx(): JudgeCtx {
   return { userId: "u", turnId: "t" }
 }
 const J = new YesNoJudge()
-
-test("q-tos: '同意' → accept true", async () => {
-  const r = await J.judge("同意", "zh", ctx())
-  assert.equal(r.accept, true)
-  if (r.accept) assert.equal(r.value, true)
-})
 
 test("q-tos: 'agree' → accept true", async () => {
   const r = await J.judge("agree", "en", ctx())
@@ -37,20 +31,9 @@ test("q-tos: 'ok' → accept true", async () => {
   assert.equal(r.accept, true)
 })
 
-test("q-tos: '好的' → accept true", async () => {
-  const r = await J.judge("好的", "zh", ctx())
-  assert.equal(r.accept, true)
-})
-
 test("q-tos: 'sounds good' → accept true", async () => {
   const r = await J.judge("sounds good", "en", ctx())
   assert.equal(r.accept, true)
-})
-
-test("q-tos: '不同意' → declined", async () => {
-  const r = await J.judge("不同意", "zh", ctx())
-  assert.equal(r.accept, false)
-  if (!r.accept) assert.equal(r.reason, "declined")
 })
 
 test("q-tos: 'no thanks' → declined", async () => {
@@ -84,8 +67,3 @@ test("q-tos: 'sure' → accept true", async () => {
   assert.equal(r.accept, true)
 })
 
-test("q-tos: '拒绝' → declined", async () => {
-  const r = await J.judge("拒绝", "zh", ctx())
-  assert.equal(r.accept, false)
-  if (!r.accept) assert.equal(r.reason, "declined")
-})

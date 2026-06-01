@@ -33,7 +33,11 @@ export * from "./canonical/registry.js"
 
 // ─── Phase A2 (post-v1.7) company axes ────────────────────────────
 export * from "./canonical/company-stage.js"
+export * from "./canonical/company-size.js"
 export * from "./canonical/company-tag.js"
 
 // ─── SOFT-vs-HARD preference model (2026-05-28) ───────────────────
 export * from "./canonical/preference-hardness.js"
+
+// ─── Match-feedback vocab (2026-05-30, no-regex LLM extraction) ────
+export * from "./canonical/feedback.js"

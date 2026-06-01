@@ -13,9 +13,16 @@
  * (tapback/no_reply) already handled it, send it as text.
  */
 import type { ClaireToolContext } from "./types.js"
+import { normalizeReply } from "./guardrails.js"
 
 /** Slow tools that should trigger the typing reflex. */
 export const SLOW_TOOLS = ["find_match", "match_collab", "cv_parse"] as const
+
+/**
+ * Hard cap on bubbles per turn — a runaway `messages` array can never flood the thread. Overflow
+ * is MERGED into the last bubble (never dropped), so content is preserved, just compacted.
+ */
+const MAX_BUBBLES = 4
 
 /** Fire the mark-read reflex (immediate, every inbound, pre-run). */
 export async function markReadReflex(ctx: ClaireToolContext): Promise<void> {
@@ -68,4 +75,54 @@ export async function deliverFinalText(
   if (!out || deliveredViaTool) return false
   await ctx.transport.sendText(out)
   return true
+}
+
+/**
+ * Deliver the agent's structured reply as N iMessage bubbles — ONE Sendblue send per element, in
+ * order. This is the SDK-native multi-bubble path (the agent's `outputType.messages` array): the
+ * agent emits ALL bubbles in ONE response, and we POST each. It REPLACES the old "send each bubble
+ * via a tool" approach, whose `send_status_then_continue` loop spammed "one sec" and timed out (the
+ * 2026-05-30 kickoff bug): a status/filler tool is NOT a message-sender, and calling it never ends
+ * the turn, so the model looped until claire_run_timeout → "hiccupped" fallback.
+ *
+ * Each bubble is normalized (markdown strip + length cap) independently. Bubbles beyond MAX_BUBBLES
+ * are merged into the last. Returns the count actually sent (0 when a delivery TOOL already handled
+ * the turn — tapback/no_reply — or the array is empty).
+ */
+export async function deliverBubbles(
+  ctx: ClaireToolContext,
+  messages: readonly string[],
+  deliveredViaTool = false,
+): Promise<number> {
+  if (deliveredViaTool) return 0
+  const clean = (Array.isArray(messages) ? messages : [])
+    .map((m) => normalizeReply(String(m ?? "")).trim())
+    .filter(Boolean)
+  if (clean.length === 0) return 0
+  const bubbles =
+    clean.length > MAX_BUBBLES
+      ? [...clean.slice(0, MAX_BUBBLES - 1), clean.slice(MAX_BUBBLES - 1).join(" ")]
+      : clean
+
+  // SINGLE interface for ALL multi-bubble outbound (onboarding, recs, proactive) — ordered + human.
+  // WHY (Adam 2026-05-30, the reversed-greeting bug): two bubbles enqueue two independent pa-outbound
+  // rows, each delivered by a SEPARATE concurrent outbox CF instance whose typing dwell is LENGTH-
+  // based — the longer compliment dwelled longer and arrived AFTER the shorter question. Fix here, at
+  // the single emit seam:
+  //   1. send SEQUENTIALLY, and for every bubble after the first, fire a typing indicator + a small
+  //      RANDOMIZED human delay BEFORE it. That spaces the `createdAt` timestamps ≥600ms apart (so
+  //      create order is unambiguous) AND reads like a person typing the next message.
+  //   2. tag each row { seq, paced } so the outbox SKIPS its own length-based dwell for these rows
+  //      (delivery.ts already paced them) — no double-pacing, no length-skew reorder.
+  // Single bubble (the common case) keeps the legacy path: no emit delay, forwarder dwell as before.
+  const multi = bubbles.length > 1
+  for (let i = 0; i < bubbles.length; i++) {
+    if (i > 0) {
+      await ctx.transport.typing().catch(() => {})
+      const ms = 600 + Math.floor(Math.random() * 900) // 600–1500ms human inter-bubble beat
+      await new Promise((r) => setTimeout(r, ms))
+    }
+    await ctx.transport.sendText(bubbles[i]!, multi ? { seq: i, paced: true } : undefined)
+  }
+  return bubbles.length
 }

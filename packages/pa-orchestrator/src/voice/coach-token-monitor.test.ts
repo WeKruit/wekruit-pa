@@ -1,29 +1,18 @@
 /**
  * Phase 24 T1D — coach-token-monitor unit tests.
  *
- * 12 behavior cases:
- *   1-5:  pattern match (one per category)
- *   6-8:  false-positive guard on clean Claire replies
- *   9-10: tapCoachTokens log invocation
- *   11:   tapCoachTokens signature returns void (no mutation)
- *   12:   token truncation ≤ 40 chars
+ * behavior cases:
+ *   pattern match (one per category)
+ *   false-positive guard on clean Claire replies
+ *   tapCoachTokens log invocation
+ *   tapCoachTokens signature returns void (no mutation)
+ *   token truncation ≤ 40 chars
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { detectCoachTokens, tapCoachTokens } from "./coach-token-monitor.js"
 
-// --- Pattern match tests (1-5) ---
-
-describe("detectCoachTokens — zh_coach_verb", () => {
-  it("Test 1: matches 我建议你", () => {
-    const hits = detectCoachTokens("我建议你把投递时间记一下")
-    assert.ok(hits.length >= 1, `expected ≥1 hit, got ${hits.length}`)
-    assert.ok(
-      hits.some((h) => h.pattern === "zh_coach_verb"),
-      `expected pattern "zh_coach_verb", got ${JSON.stringify(hits)}`
-    )
-  })
-})
+// --- Pattern match tests ---
 
 describe("detectCoachTokens — en_coach_verb", () => {
   it("Test 2: matches 'I suggest'", () => {
@@ -60,7 +49,7 @@ describe("detectCoachTokens — numbered_list", () => {
 
 describe("detectCoachTokens — subordinate_chain_4plus", () => {
   it("Test 5: matches 3+ connectives (subordinate chain)", () => {
-    const hits = detectCoachTokens("先这样, 然后那样, 接着再这样, 然后最后那样")
+    const hits = detectCoachTokens("do this, and then that, after that this, and then finally that")
     assert.ok(hits.length >= 1, `expected ≥1 hit, got ${hits.length}`)
     assert.ok(
       hits.some((h) => h.pattern === "subordinate_chain_4plus"),
@@ -69,11 +58,11 @@ describe("detectCoachTokens — subordinate_chain_4plus", () => {
   })
 })
 
-// --- False-positive guard on clean Claire replies (6-8) ---
+// --- False-positive guard on clean Claire replies ---
 
 describe("detectCoachTokens — false-positive guard (clean Claire replies)", () => {
-  it("Test 6: no hits on 拒得快说明他们没准备好你", () => {
-    const hits = detectCoachTokens("拒得快说明他们没准备好你. next.")
+  it("Test 6: no hits on short reaction reply", () => {
+    const hits = detectCoachTokens("quick reject means they weren't ready for you. next.")
     assert.equal(
       hits.length,
       0,
@@ -81,8 +70,8 @@ describe("detectCoachTokens — false-positive guard (clean Claire replies)", ()
     )
   })
 
-  it("Test 7: no hits on 可能下周回 emo reply", () => {
-    const hits = detectCoachTokens("可能下周回. 也可能默拒. 别先 emo.")
+  it("Test 7: no hits on short emo reply", () => {
+    const hits = detectCoachTokens("maybe they reply next week. or silent reject. don't emo first.")
     assert.equal(
       hits.length,
       0,
@@ -90,8 +79,8 @@ describe("detectCoachTokens — false-positive guard (clean Claire replies)", ()
     )
   })
 
-  it("Test 8: no hits on 来. 喘一下.", () => {
-    const hits = detectCoachTokens("来. 喘一下.")
+  it("Test 8: no hits on tiny reaction", () => {
+    const hits = detectCoachTokens("come on. breathe.")
     assert.equal(
       hits.length,
       0,
@@ -100,14 +89,14 @@ describe("detectCoachTokens — false-positive guard (clean Claire replies)", ()
   })
 })
 
-// --- tapCoachTokens behavior (9-11) ---
+// --- tapCoachTokens behavior ---
 
 describe("tapCoachTokens — log invocation", () => {
   it("Test 9: invokes log with pa.voice.coach_token.observed when hits exist", () => {
     const calls: unknown[][] = []
     const mockLog = (...args: unknown[]) => calls.push(args)
     tapCoachTokens(
-      "我建议你做个计划",
+      "I suggest you make a plan",
       { turnId: "t1", userId: "u1", replyLength: 10 },
       mockLog
     )
@@ -127,7 +116,7 @@ describe("tapCoachTokens — log invocation", () => {
     const calls: unknown[][] = []
     const mockLog = (...args: unknown[]) => calls.push(args)
     tapCoachTokens(
-      "来. 喘一下.",
+      "come on. breathe.",
       { turnId: "t2", userId: "u2", replyLength: 7 },
       mockLog
     )
@@ -135,7 +124,7 @@ describe("tapCoachTokens — log invocation", () => {
   })
 
   it("Test 11: tapCoachTokens returns void and does not mutate reply", () => {
-    const original = "我建议你休息一下"
+    const original = "I suggest you take a rest"
     const reply = original
     const result = tapCoachTokens(
       reply,
@@ -149,12 +138,12 @@ describe("tapCoachTokens — log invocation", () => {
   })
 })
 
-// --- Token truncation (12) ---
+// --- Token truncation ---
 
 describe("detectCoachTokens — token truncation", () => {
   it("Test 12: token property is truncated to ≤40 chars", () => {
     // Build a string where the match could be very long
-    const longText = "我建议你" + "x".repeat(100)
+    const longText = "I suggest " + "x".repeat(100)
     const hits = detectCoachTokens(longText)
     assert.ok(hits.length >= 1, "expected at least 1 hit")
     for (const hit of hits) {

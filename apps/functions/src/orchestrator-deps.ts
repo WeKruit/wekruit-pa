@@ -68,6 +68,7 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
     generateCvAnalysis: makeGenerateCvAnalysis(),
     generateJobRecs: makeGenerateJobRecs(),
     extractAnswerIntent: makeExtractAnswerIntent(),
+    classifyFeedback: makeClassifyFeedback(),
     startPrescreenForJob: async ({ userId, jobId, toE164 }) => {
       if (!getApps().length) initializeApp()
       const db = getFirestore()
@@ -146,6 +147,31 @@ export function resolveRuntimeJobRecRoleFocus(explicitFocus: unknown, userTags: 
     return targetRoleFunction.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
   }
   return normalizeRuntimeRoleFocus((userTags as { targetRole?: unknown }).targetRole)
+}
+
+/**
+ * Rec tracking (req #4, 2026-05-29) — pick the attribution `reason` label for a
+ * `recordRecommendedJobs` ledger row from the V16 matcher result + the call
+ * intent. Single source of truth so the orchestrator-deps path and the
+ * claire_agent tool path tag the same canonical vocabulary:
+ *
+ *   - `collab_prescreen`        — collab/partner-only request (opts.collabPrescreenOnly).
+ *   - `general_market_fallback` — V16 relaxed all hard filters and surfaced
+ *     general scraped-market jobs (out.fallbackApplied) so Claire is never
+ *     dead-silent (req #5).
+ *   - `runtime_job_search_reply`— the default curated/collab+market mix.
+ *
+ * Pure + exported for unit test (orchestrator-deps.test.ts): the un-DI'd
+ * `makeGenerateJobRecs` reads Firestore directly, so we lock the reason-
+ * selection contract here rather than driving the whole closure.
+ */
+export function resolveRecommendationReason(args: {
+  collabPrescreenOnly?: boolean
+  fallbackApplied?: boolean
+}): "collab_prescreen" | "general_market_fallback" | "runtime_job_search_reply" {
+  if (args.collabPrescreenOnly === true) return "collab_prescreen"
+  if (args.fallbackApplied === true) return "general_market_fallback"
+  return "runtime_job_search_reply"
 }
 
 /**
@@ -332,7 +358,7 @@ function makeGenerateJobRecs(): NonNullable<
       }
 
       // v1.7 hotfix — LLM-composed nuanced reasoning for top-2.
-      // Replaces V16 template "为啥推: skill X+Y 跟 JD 核心技能对得上"
+      // Replaces the generic V16 skill-overlap template
       // with reason citing specific work-history bridge.
       // Pulls user's parsedCandidateResumes for work-history + projects.
       // Fail-graceful: if LLM errors, falls back to V16 template `j.reason`.
@@ -389,6 +415,20 @@ function makeGenerateJobRecs(): NonNullable<
               keyPrefix: rawKey.slice(0, 5),
             })
           }
+          // Stated-priority + seniority signals from the candidate's tags so the
+          // nuanced reason can land the "leans into the comp + equity you said
+          // matter most" angle Adam flagged as missing (2026-05-30).
+          const tagsForReason =
+            userTagsForJobRec && typeof userTagsForJobRec === "object"
+              ? (userTagsForJobRec as Record<string, unknown>)
+              : undefined
+          const candidatePriorities = Array.isArray(tagsForReason?.targetCompanyTags)
+            ? (tagsForReason!.targetCompanyTags as unknown[]).filter(
+                (t): t is string => typeof t === "string" && t.trim().length > 0,
+              )
+            : []
+          const candidateSeniority =
+            typeof tagsForReason?.careerStage === "string" ? tagsForReason!.careerStage : null
           const reasons = await Promise.all(
             visibleItems.map((item) =>
               composeNuancedReason(
@@ -405,9 +445,24 @@ function makeGenerateJobRecs(): NonNullable<
                       : null,
                     seniorityLevel: (item.sourceJob as { seniorityLevel?: string | null }).seniorityLevel ?? null,
                     jobDescription: (item.sourceJob as { jobDescription?: string | null }).jobDescription ?? null,
+                    companyStage:
+                      (item.sourceJob as { companySize?: string | null; companyStage?: string | null }).companyStage ??
+                      (item.sourceJob as { companySize?: string | null }).companySize ??
+                      null,
+                    industry: Array.isArray((item.sourceJob as { industrySector?: string[] }).industrySector)
+                      ? (item.sourceJob as { industrySector?: string[] }).industrySector!
+                      : Array.isArray((item.sourceJob as { industryEnum?: string[] }).industryEnum)
+                        ? (item.sourceJob as { industryEnum?: string[] }).industryEnum!
+                        : null,
+                    location:
+                      (item.sourceJob as { locationRaw?: string | null; location?: string | null }).locationRaw ??
+                      (item.sourceJob as { location?: string | null }).location ??
+                      null,
                   },
                   matchedSkills:
                     (item.sourceJob as { matchedSkills?: Array<{ name: string; proficiency?: string }> }).matchedSkills ?? [],
+                  candidatePriorities,
+                  candidateSeniority,
                 },
                 {
                   openaiApiKey: openaiKey,
@@ -511,13 +566,43 @@ function makeGenerateJobRecs(): NonNullable<
         total: out.total,
         dropped: out.dropped,
         llmCacheStale: out.llmCacheStale ?? false,
+        fallbackApplied: out.fallbackApplied ?? false,
+        relaxedHardFilters: out.relaxedHardFilters ?? [],
       })
+      // Rec tracking (req #4/#5) — distinguish WHY the batch was surfaced so the
+      // flywheel can tell a curated/collab mix apart from a general-market
+      // fallback. `source` stays the coarse scalar; `reason` is the precise
+      // ledger label resolved from the matcher result + intent.
+      const recommendationReason = resolveRecommendationReason({
+        collabPrescreenOnly: opts?.collabPrescreenOnly,
+        fallbackApplied: out.fallbackApplied,
+      })
+      if (out.fallbackApplied === true) {
+        // req #5 — Claire fell back to general scraped-market jobs (no curated/
+        // collab match). Surface it so the never-dead-silence path is auditable.
+        logger.info("pa.match.general_market_fallback_activated", {
+          userId,
+          visible: messageItems.length,
+          total: out.total,
+          relaxedHardFilters: out.relaxedHardFilters ?? [],
+        })
+      }
       await recordRecommendedJobs(
         db,
         {
           userId,
-          jobs: messageItems.map((item) => item.sourceJob),
+          // Persist the grounded "why matched" pitch alongside each rec so the
+          // /me/matches API reads the GOOD reason rather than recomputing weak
+          // templates. messageItems[i].reason is the LLM nuanced reason
+          // ("why: …") or the V16 fallback; recordRecommendedJobs strips the
+          // "why:" prefix + length-caps. (The per-job `matchReason` field is
+          // distinct from the args-level `reason` ledger label below.)
+          jobs: messageItems.map((item) => ({
+            ...item.sourceJob,
+            ...(item.reason ? { matchReason: item.reason } : {}),
+          })),
           source: "runtime_job_search_reply",
+          reason: recommendationReason,
         },
           (event, payload) => logger.info("[job-recs]", { event, ...(payload ?? {}) }),
       )
@@ -706,7 +791,7 @@ export function buildCvAnalysisFallback(
     recentRoleTitle?: string
     recentCompany?: string
   },
-  lang: "zh" | "en"
+  _lang: "zh" | "en"
 ): string {
   const skillsArr = (fields.topSkills ?? [])
     .filter((s): s is string => typeof s === "string" && s.length > 0)
@@ -721,14 +806,6 @@ export function buildCvAnalysisFallback(
     : company
       ? company
       : ""
-  if (lang === "zh") {
-    if (skills && trajectory) {
-      return `看下来你: ${skills} + ${trajectory} — 我会把这些作为你的资料证据`
-    }
-    if (skills) return `看下来你 hands-on: ${skills} — 我会把这些作为你的资料证据`
-    if (trajectory) return `看下来你最近: ${trajectory} — 我会把这个作为你的资料证据`
-    return "我先把 CV 里的信息作为你的资料证据"
-  }
   if (skills && trajectory) {
     return `From your CV, I see ${skills} + ${trajectory}; I’ll use that as profile evidence.`
   }
@@ -839,9 +916,7 @@ function makeGenerateCvAnalysis(): NonNullable<
     }
 
     const langDirective =
-      lang === "zh"
-        ? "用中文回，1 句话，朋友语气，不要列表，不要客套，不要重复同一个 token。"
-        : "Reply in English, 1 sentence, friend-tone casual, no bullets, no fluff, do NOT repeat the same token."
+      "Reply in English, 1 sentence, friend-tone casual, no bullets, no fluff, do NOT repeat the same token."
     // iter34 H.2 / CR1 — diversity rule. Adam G5 sim showed Qwen-7B picking
     // Azure + Docker only out of 12 distinct CV skills then degenerating into
     // "Docker, Docker, Docker..." x60. Force at least 3 distinct skills
@@ -922,8 +997,8 @@ function makeGenerateCvAnalysis(): NonNullable<
 
 /**
  * iter34 P0.2 — generic LLM intent extractor for the 5 non-email
- * deterministic Q's. Adam directive 2026-05-05: "不只是 email, 包括所有
- * 一开始的 deterministic 的 question 都需要加这个".
+ * deterministic Q's. Adam directive 2026-05-05: not just email — every
+ * deterministic question at the start needs this intent extractor.
  *
  * Per-step prompts live inline so each Q has its own canonical value
  * space + clarifying-question style. Returns null on any error so the
@@ -940,8 +1015,8 @@ function makeExtractAnswerIntent(): NonNullable<
       examples: [
         '"engineer at a startup" → {"intent":"provided","value":"swe","confidence":0.85}',
         '"PM for fintech" → {"intent":"provided","value":"pm","confidence":0.9}',
-        '"我做 ml infra 的" → {"intent":"provided","value":"ml","confidence":0.9}',
-        '"我什么都行" → {"intent":"unclear","clarifyingQuestion":"那大致偏哪个方向? 工程 / 产品 / 研究 / 设计?"}',
+        '"i do ml infra" → {"intent":"provided","value":"ml","confidence":0.9}',
+        '"anything works for me" → {"intent":"unclear","clarifyingQuestion":"roughly which direction? engineering / product / research / design?"}',
       ],
     },
     ask_q_yoe: {
@@ -950,9 +1025,9 @@ function makeExtractAnswerIntent(): NonNullable<
         '"value":<integer years OR "fresh" for fresh-grad / 0 yrs>',
       examples: [
         '"about 5 years" → {"intent":"provided","value":5,"confidence":0.95}',
-        '"两年多" → {"intent":"provided","value":2,"confidence":0.85}',
-        '"刚毕业" → {"intent":"provided","value":"fresh","confidence":0.95}',
-        '"还没工作过" → {"intent":"provided","value":"fresh","confidence":0.9}',
+        '"a little over two years" → {"intent":"provided","value":2,"confidence":0.85}',
+        '"just graduated" → {"intent":"provided","value":"fresh","confidence":0.95}',
+        '"haven\'t worked yet" → {"intent":"provided","value":"fresh","confidence":0.9}',
         '"a while" → {"intent":"unclear","clarifyingQuestion":"a while is like... 2 years? 5? a number is fine"}',
       ],
     },
@@ -962,11 +1037,11 @@ function makeExtractAnswerIntent(): NonNullable<
         '"value":"citizen" | "gc" | "opt" | "cpt" | "h1b" | "tn" | "sponsorship" | "other"',
       examples: [
         '"i\'m a US citizen" → {"intent":"provided","value":"citizen","confidence":0.95}',
-        '"绿卡" → {"intent":"provided","value":"gc","confidence":0.95}',
+        '"green card" → {"intent":"provided","value":"gc","confidence":0.95}',
         '"need h1b" → {"intent":"provided","value":"h1b","confidence":0.9}',
         '"opt extension" → {"intent":"provided","value":"opt","confidence":0.9}',
         '"i need sponsorship" → {"intent":"provided","value":"sponsorship","confidence":0.85}',
-        '"i\'m on a visa" → {"intent":"unclear","clarifyingQuestion":"哪种签证? 比如 H1B / OPT / 其他?"}',
+        '"i\'m on a visa" → {"intent":"unclear","clarifyingQuestion":"which visa? e.g. H1B / OPT / other?"}',
       ],
     },
     ask_q_startup_pref: {
@@ -974,27 +1049,27 @@ function makeExtractAnswerIntent(): NonNullable<
       valueSchema:
         '"value":"startup" | "bigtech" | "either"',
       examples: [
-        '"想去创业公司" → {"intent":"provided","value":"startup","confidence":0.95}',
+        '"i want to join a startup" → {"intent":"provided","value":"startup","confidence":0.95}',
         '"big company stable" → {"intent":"provided","value":"bigtech","confidence":0.9}',
-        '"都行" → {"intent":"provided","value":"either","confidence":0.9}',
-        '"看具体团队" → {"intent":"provided","value":"either","confidence":0.7}',
+        '"either is fine" → {"intent":"provided","value":"either","confidence":0.9}',
+        '"depends on the team" → {"intent":"provided","value":"either","confidence":0.7}',
       ],
     },
     ask_q_location: {
       label: "target work location",
       valueSchema:
-        '"value":<location string, e.g. "sf" | "nyc" | "bay area" | "remote" | "boston" | "seattle" | "la" | "china" | "shanghai" | "beijing" | "hangzhou" | <free-form>>',
+        '"value":<location string, e.g. "sf" | "nyc" | "bay area" | "remote" | "boston" | "seattle" | "la" | "austin" | "chicago" | <free-form>>',
       examples: [
         '"Bay Area" → {"intent":"provided","value":"sf","confidence":0.9}',
-        '"想做远程" → {"intent":"provided","value":"remote","confidence":0.95}',
+        '"i want remote" → {"intent":"provided","value":"remote","confidence":0.95}',
         '"NYC or remote" → {"intent":"provided","value":"nyc or remote","confidence":0.85}',
-        '"上海" → {"intent":"provided","value":"shanghai","confidence":0.95}',
-        '"看机会" → {"intent":"unclear","clarifyingQuestion":"大致哪个城市/地区方便? 或者只看远程?"}',
+        '"Seattle" → {"intent":"provided","value":"seattle","confidence":0.95}',
+        '"open to opportunities" → {"intent":"unclear","clarifyingQuestion":"roughly which US city/area works? or remote only?"}',
       ],
     },
   } as const
 
-  return async (step, reply, lang) => {
+  return async (step, reply, _lang) => {
     let apiKey = ""
     try {
       apiKey = SILICONFLOW_API_KEY.value().trim()
@@ -1008,9 +1083,7 @@ function makeExtractAnswerIntent(): NonNullable<
     const def = stepDefs[step]
     if (!def) return null
     const langDirective =
-      lang === "zh"
-        ? "If the question warrants a clarifying question, ask in Chinese."
-        : "If the question warrants a clarifying question, ask in English."
+      "If the question warrants a clarifying question, ask in English."
     const systemPrompt = `You extract structured intent from a user's reply during onboarding.
 
 Question topic: ${def.label}.
@@ -1092,5 +1165,52 @@ ${def.examples.map((e) => `  ${e}`).join("\n")}`
       })
       return null
     }
+  }
+}
+
+/**
+ * No-regex (2026-05-30) — LLM match-FEEDBACK classifier for the post-match
+ * retention FSM. Returns the parsed JSON (the orchestrator's
+ * `validateFeedbackResult` validates it against the shared-tags closed enums).
+ * THROWS on any provider/parse failure so the FSM fails OPEN to `ambiguous`
+ * (re-asks) instead of regex-classifying the reply.
+ */
+function makeClassifyFeedback(): NonNullable<
+  import("@pa/pa-orchestrator").OrchestratorStoreDeps["classifyFeedback"]
+> {
+  return async ({ prompt }) => {
+    let apiKey = ""
+    try {
+      apiKey = SILICONFLOW_API_KEY.value().trim()
+    } catch {
+      // not bound
+    }
+    if (!apiKey) throw new Error("siliconflow_unbound")
+    const res = await fetch("https://api.siliconflow.cn/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "Qwen/Qwen2.5-7B-Instruct",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You classify match-feedback replies into structured JSON. Output JSON only — no prose.",
+          },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0,
+        max_tokens: 300,
+        response_format: { type: "json_object" },
+      }),
+      signal: AbortSignal.timeout(6000),
+    })
+    if (!res.ok) throw new Error(`siliconflow non-200 status=${res.status}`)
+    const data = (await res.json()) as { choices?: { message?: { content?: string } }[] }
+    const raw = data.choices?.[0]?.message?.content?.trim() ?? "{}"
+    return { json: JSON.parse(raw) }
   }
 }

@@ -60,7 +60,7 @@ export function validateLegalName(raw: string): { ok: boolean; normalized?: stri
   const trimmed = raw.trim().replace(/\s+/g, " ")
   if (trimmed.length < 2 || trimmed.length > 120) return { ok: false }
   // Must contain at least one letter (not all numbers / symbols).
-  if (!/[A-Za-z一-鿿]/.test(trimmed)) return { ok: false }
+  if (!/[A-Za-z]/.test(trimmed)) return { ok: false }
   return { ok: true, normalized: trimmed }
 }
 
@@ -357,51 +357,51 @@ class StaticRephraser implements Rephraser {
 // employer-sharing. "fail" frames it as future-matching outreach.
 const Q_LEGAL_NAME_PROMPT_PASS: BilingualText = {
   en: "Great — to share with the employer, can you confirm your legal full name?",
-  zh: "好的 — 为了与招聘方分享, 请确认你的法定全名是?",
+  zh: "Great — to share with the employer, can you confirm your legal full name?",
 }
 const Q_LEGAL_NAME_PROMPT_FAIL: BilingualText = {
   en: "Before you go — to keep you in the loop for better-aligned roles, what's your legal full name?",
-  zh: "走之前 — 为了之后给你推更合适的机会, 请问你的法定全名是?",
+  zh: "Before you go — to keep you in the loop for better-aligned roles, what's your legal full name?",
 }
 const Q_LEGAL_NAME_PROMPT: BilingualText = Q_LEGAL_NAME_PROMPT_PASS
 const Q_LEGAL_NAME_RETRIES: BilingualText[] = [
   {
     en: "Need a legal full name (first + last) — what should I send to the employer?",
-    zh: "需要法定全名 (姓 + 名) — 我应该给招聘方什么?",
+    zh: "Need a legal full name (first + last) — what should I send to the employer?",
   },
   {
-    en: "Just a name, please — e.g. 'Jane Doe' or '张三'.",
-    zh: "只需要名字 — 例如 'Jane Doe' 或 '张三'.",
+    en: "Just a name, please — e.g. 'Jane Doe'.",
+    zh: "Just a name, please — e.g. 'Jane Doe'.",
   },
 ]
 
 const Q_EMAIL_PROMPT: BilingualText = {
   en: "What email should the employer use to reach you?",
-  zh: "招聘方应该用哪个 email 联系你?",
+  zh: "What email should the employer use to reach you?",
 }
 const Q_EMAIL_RETRIES: BilingualText[] = [
   {
     en: "Looks like that wasn't a valid email — could you re-type it? (e.g. you@gmail.com)",
-    zh: "好像不是有效的 email — 重新输入下? (例如 you@gmail.com)",
+    zh: "Looks like that wasn't a valid email — could you re-type it? (e.g. you@gmail.com)",
   },
   {
     en: "I need it in the form 'name@domain.com' — try again?",
-    zh: "需要 'name@domain.com' 这种格式 — 再试一次?",
+    zh: "I need it in the form 'name@domain.com' — try again?",
   },
 ]
 
 const Q_PHONE_PROMPT: BilingualText = {
   en: "And the best phone number for next-step coordination?",
-  zh: "另外, 下一步沟通用哪个电话最方便?",
+  zh: "And the best phone number for next-step coordination?",
 }
 const Q_PHONE_RETRIES: BilingualText[] = [
   {
     en: "Need 8-15 digits — country code is optional. Try again?",
-    zh: "需要 8-15 位数字 — 国家码可选. 再试一次?",
+    zh: "Need 8-15 digits — country code is optional. Try again?",
   },
   {
     en: "E.g. +1 415 555 0123 or 13800138000.",
-    zh: "例如 +1 415 555 0123 或 13800138000.",
+    zh: "E.g. +1 415 555 0123 or 13800138000.",
   },
 ]
 
@@ -409,45 +409,45 @@ const Q_PHONE_RETRIES: BilingualText[] = [
 
 const Q_YOE_PROMPT: BilingualText = {
   en: "Now a few quick fit-questions for future role matches. Years of relevant work experience?",
-  zh: "再问几个匹配相关的小问题. 你相关工作年限大概是?",
+  zh: "Now a few quick fit-questions for future role matches. Years of relevant work experience?",
 }
 const Q_YOE_RETRIES: BilingualText[] = [
-  { en: "Numeric, e.g. '3' or '3-5' or '<1' or '10+'.", zh: "请填数字, 例如 '3', '3-5', '<1', '10+'." },
+  { en: "Numeric, e.g. '3' or '3-5' or '<1' or '10+'.", zh: "Numeric, e.g. '3' or '3-5' or '<1' or '10+'." },
 ]
 const Q_VISA_PROMPT: BilingualText = {
   en: "Work-authorization status? (US citizen, green card, H1B / OPT / CPT, sponsorship needed, other)",
-  zh: "你的工作授权状态? (美国公民 / 绿卡 / H1B / OPT / CPT / 需要 sponsor / 其他)",
+  zh: "Work-authorization status? (US citizen, green card, H1B / OPT / CPT, sponsorship needed, other)",
 }
 const Q_VISA_RETRIES: BilingualText[] = [
-  { en: "Pick one: citizen, GC, OPT/H1B (need sponsor), or other.", zh: "选一个: 公民 / 绿卡 / OPT/H1B / 其他." },
+  { en: "Pick one: citizen, GC, OPT/H1B (need sponsor), or other.", zh: "Pick one: citizen, GC, OPT/H1B (need sponsor), or other." },
 ]
 const Q_LOCATION_PROMPT: BilingualText = {
   en: "Preferred work location(s)? (city / region or 'remote' / 'anywhere')",
-  zh: "你倾向的工作地点? (城市/区域, 或 'remote' / 'anywhere')",
+  zh: "Preferred work location(s)? (city / region or 'remote' / 'anywhere')",
 }
 const Q_LOCATION_RETRIES: BilingualText[] = [
-  { en: "Comma-separated cities or 'remote'.", zh: "用逗号分隔城市, 或写 'remote'." },
+  { en: "Comma-separated cities or 'remote'.", zh: "Comma-separated cities or 'remote'." },
 ]
 const Q_SALARY_PROMPT: BilingualText = {
   en: "Minimum total compensation expectation? (e.g. '120k' or '$140-180k' or 'open')",
-  zh: "期望的最低总薪资? (例如 '120k', '$140-180k', 或 'open')",
+  zh: "Minimum total compensation expectation? (e.g. '120k' or '$140-180k' or 'open')",
 }
 const Q_SALARY_RETRIES: BilingualText[] = [
-  { en: "Numeric in USD, e.g. '120k' or 'open'.", zh: "美金数字, 例如 '120k' 或 'open'." },
+  { en: "Numeric in USD, e.g. '120k' or 'open'.", zh: "Numeric in USD, e.g. '120k' or 'open'." },
 ]
 const Q_INDUSTRY_PROMPT: BilingualText = {
   en: "Industries you're most interested in? (e.g. AI, fintech, healthtech, gaming — or 'open')",
-  zh: "你最感兴趣的行业方向? (例如 AI / fintech / healthtech / gaming, 或 'open')",
+  zh: "Industries you're most interested in? (e.g. AI, fintech, healthtech, gaming — or 'open')",
 }
 const Q_INDUSTRY_RETRIES: BilingualText[] = [
-  { en: "1-3 industries, comma-separated, or 'open'.", zh: "1-3 个行业, 逗号分隔, 或写 'open'." },
+  { en: "1-3 industries, comma-separated, or 'open'.", zh: "1-3 industries, comma-separated, or 'open'." },
 ]
 const Q_COMPANY_SIZE_PROMPT: BilingualText = {
   en: "Preferred company stage? (seed / early-startup / scale-up / mid-market / enterprise / open)",
-  zh: "倾向的公司阶段? (种子 / 早期初创 / scale-up / 中型 / 大公司 / open)",
+  zh: "Preferred company stage? (seed / early-startup / scale-up / mid-market / enterprise / open)",
 }
 const Q_COMPANY_SIZE_RETRIES: BilingualText[] = [
-  { en: "Pick one: seed, startup, scale-up, mid, enterprise, or open.", zh: "选一个: seed / startup / scale-up / mid / enterprise / open." },
+  { en: "Pick one: seed, startup, scale-up, mid, enterprise, or open.", zh: "Pick one: seed, startup, scale-up, mid, enterprise, or open." },
 ]
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -602,18 +602,18 @@ export function createPiiConfirmPipeline(opts: PiiConfirmPipelineOpts): Onboardi
     source === "fail"
       ? {
           en: "Thanks — I'll text you when stronger matches come up.",
-          zh: "收到 — 之后有更合适的我直接推给你.",
+          zh: "Thanks — I'll text you when stronger matches come up.",
         }
       : {
           en: "Thanks — you're all set. The employer will follow up directly.",
-          zh: "收到 — 已经记下了. 招聘方会直接联系你.",
+          zh: "Thanks — you're all set. The employer will follow up directly.",
         }
   return new OnboardingPipeline({
     questions: allQs,
     state: opts.state,
     haltMessageDefault: {
       en: "We'll come back to this later — please reach out to support if you need to update your contact info.",
-      zh: "我们稍后再回来 — 如需更新联系信息, 请联系客服.",
+      zh: "We'll come back to this later — please reach out to support if you need to update your contact info.",
     },
     emit: opts.emit,
     postCollect: async (collected: Record<string, unknown>, ctx: AcceptedCtx) => {

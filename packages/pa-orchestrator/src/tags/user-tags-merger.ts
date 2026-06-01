@@ -1,8 +1,8 @@
 /**
  * iter34 H.1 — Unified user tag schema + merger.
  *
- * Adam directive (2026-05-05): "聊天有tag，resume有tag，太多地方了" — the
- * candidate signal currently lives in 4+ disjoint places:
+ * Adam directive (2026-05-05): chat has tags, resume has tags — too many
+ * places — the candidate signal currently lives in 4+ disjoint places:
  *   1. `pa-users.statedPreferences` (chat-derived: role / yoe / visa / loc)
  *   2. `parsedCandidateResumes.industryTags` (CV-derived industry buckets)
  *   3. `parsedCandidateResumes.topSkills` (CV-derived ranked skills)
@@ -46,7 +46,9 @@ import {
   CAREER_STAGE_INDEX,
   JOB_TYPE_VOCAB,
   INDUSTRY_SECTOR_VOCAB,
+  COMPANY_SIZE_VOCAB,
   COMPANY_STAGE_VOCAB,
+  type CompanySize,
   PreferenceHardnessSchema,
 } from "@wekruit/shared-tags"
 import { roleToIndustryBuckets, type IndustryEnumBucket } from "../voice/role-to-industry.js"
@@ -116,7 +118,7 @@ export const UserTagsSchema = z.object({
   /**
    * ALL skills from CV — Phase 52 canonical SkillEntry shape (name + bucket
    * + proficiency + evidenceCount + baseWeight). NOT truncated. Adam spec:
-   * "skills 全量". topSkills (top-12 ranked) lives separately on
+   * "full skills list". topSkills (top-12 ranked) lives separately on
    * parsedCandidateResumes; this is the unranked bag for embedding /
    * cross-rerank consumers.
    *
@@ -255,24 +257,26 @@ export const UserTagsSchema = z.object({
   minSalary: z.number().int().nonnegative().optional(),
   /**
    * Company-SIZE preference (headcount/maturity) collected from Level 1 follow-up.
-   * Multi-pick OR: a candidate open to seed AND enterprise stores both. Accepts a
-   * scalar (single pick, back-compat with pre-2026-05-31 docs) OR an array; the
-   * projector lifts a scalar to a 1-elem array on the /me surface. `open` is the
-   * "no preference" token (normalized to the `no_preference` sentinel at projection).
-   * ORTHOGONAL to `companyStage` (funding stage) — do not conflate.
+   * MULTI-PICK / OR (2026-05-30): a candidate may want "an early-stage startup OR
+   * big tech" → `["early_startup", "enterprise"]`. Accepts a single canonical token
+   * OR an array of them (back-compat with the older scalar writes); the projector
+   * lifts a scalar to a 1-elem array on the /me surface. Vocab is the shared
+   * `COMPANY_SIZE_VOCAB` (no inline duplication). The LLM extractor emits the
+   * canonical token(s); no regex. `open` is the "no preference" token (normalized
+   * to the `no_preference` sentinel at projection). ORTHOGONAL to `companyStage`
+   * (funding stage) — do not conflate.
    */
   companySize: z
-    .union([
-      z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"]),
-      z.array(z.enum(["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"])),
-    ])
+    .union([z.enum(COMPANY_SIZE_VOCAB), z.array(z.enum(COMPANY_SIZE_VOCAB))])
     .optional(),
   /**
    * Company-STAGE preference (funding stage: pre_seed…ipo_public) — ORTHOGONAL to
-   * `companySize` (headcount). Adam 2026-05-31: "company stage and company size are
-   * different." Multi-pick OR (scalar or array). Captured no-regex (LLM picks the
-   * COMPANY_STAGE_VOCAB enum). Projected to globalTags.companyStage[] for /me.
-   * Matching weight is informational only (Adam-locked weight 0) — capture+display axis.
+   * `companySize` (headcount/maturity). Adam 2026-05-31: "company stage and company
+   * size are different." Shared `COMPANY_STAGE_VOCAB`. Multi-pick OR (scalar OR
+   * array — same back-compat shape as companySize). Captured no-regex (LLM picks the
+   * COMPANY_STAGE_VOCAB enum). Projected to globalTags.companyStage[] for the /me
+   * surface. Matching weight is informational only (Adam-locked weight 0) —
+   * capture+display axis.
    */
   companyStage: z
     .union([z.enum(COMPANY_STAGE_VOCAB), z.array(z.enum(COMPANY_STAGE_VOCAB))])
@@ -1022,15 +1026,29 @@ const NON_INTERN_YOE_THRESHOLD = 2
 /**
  * Reconcile the title-derived and yoe-derived career stage.
  *
+ * `careerStage` is a TARGET hard-filter axis (V16 builds a seniority window
+ * around it). A résumé title is a SOFT HINT, NOT a target — the live bug was
+ * "Software Engineer Intern" history pinning `careerStage = "intern"`, which
+ * (with empty `targetLocations`) over-filtered the matcher to zero. So a
+ * downward intern/student TITLE must never become a hard `intern`/`student`
+ * target on its own. Capture-merger-writer contract (2026-05-29).
+ *
  * Precedence (do NOT change without milestone):
  *  1. Onboarding-stated `careerStage` is authoritative (handled by caller).
- *  2. Otherwise prefer the title-derived stage …
- *  3. … EXCEPT when the title-derived stage is `intern`/`student` while YoE
- *     (résumé `totalYearsExperience` or onboarding `yoeRange`) indicates
- *     ≥ ~2 years AND the yoe-derived stage is genuinely more senior. In that
- *     case the recent intern/TA gig is overriding a multi-year career, so we
- *     prefer the yoe-derived stage.
- *  4. Fall back to the yoe-derived stage when there is no title signal.
+ *  2. Prefer the YoE-derived stage for an intern/student title (YoE is a
+ *     stronger, intent-adjacent signal than a possibly-stale recent gig):
+ *     - YoE ≥ ~2y and genuinely more senior → use the yoe-derived stage
+ *       (a recent intern/TA gig overriding a multi-year career).
+ *     - any yoe-derived stage present → prefer it over the intern/student
+ *       title (the title is a soft hint, the YoE band is the better target).
+ *  3. … and when an intern/student title has NO YoE signal at all → leave
+ *     careerStage UNSET (return `undefined`) rather than pinning it to
+ *     `intern`/`student` as a target. An unset stage lets the V16 matcher
+ *     apply its widened (no-window) seniority bypass instead of clamping to
+ *     intern-only jobs.
+ *  4. A non-intern title with no YoE → keep the title-derived stage (a real
+ *     "Senior Engineer" title is a reasonable target hint).
+ *  5. No title signal → fall back to the yoe-derived stage.
  *
  * `yoeYearsHigh` is the high end of the YoE signal (max of yoeRange, or the
  * scalar totalYearsExperience) — used to apply the ≥2-year floor.
@@ -1041,14 +1059,21 @@ function reconcileCareerStage(
   yoeYearsHigh: number | undefined,
 ): CareerStage | undefined {
   if (!titleStage) return yoeStage
-  if (
-    JUNIOR_TITLE_STAGES.has(titleStage) &&
-    yoeStage &&
-    typeof yoeYearsHigh === "number" &&
-    yoeYearsHigh >= NON_INTERN_YOE_THRESHOLD &&
-    CAREER_STAGE_INDEX[yoeStage] > CAREER_STAGE_INDEX[titleStage]
-  ) {
-    return yoeStage
+  if (JUNIOR_TITLE_STAGES.has(titleStage)) {
+    // Intern/student TITLE: never pin it as a hard target.
+    if (
+      yoeStage &&
+      typeof yoeYearsHigh === "number" &&
+      yoeYearsHigh >= NON_INTERN_YOE_THRESHOLD &&
+      CAREER_STAGE_INDEX[yoeStage] > CAREER_STAGE_INDEX[titleStage]
+    ) {
+      return yoeStage
+    }
+    // Any yoe-derived stage present → prefer it over the soft title hint.
+    if (yoeStage) return yoeStage
+    // No YoE signal at all → leave UNSET so the matcher widens the window
+    // instead of clamping to intern/student-only jobs.
+    return undefined
   }
   return titleStage
 }
@@ -1086,58 +1111,51 @@ function deriveCareerStageFromTitle(title: string | undefined): CareerStage | un
   return undefined
 }
 
-function deriveTargetJobTypeFromProfile(
-  title: string | undefined,
-  careerStage: CareerStage | undefined,
-): UserTags["targetJobType"] {
-  const t = title?.trim().toLowerCase() ?? ""
-  if (/\bintern(ship)?\b/.test(t) || careerStage === "intern" || careerStage === "student") {
-    return ["internship"]
-  }
-  if (/\b(new\s+grad|graduate)\b/.test(t)) return ["new_graduate"]
-  if (careerStage === "entry_level") return ["full_time", "new_graduate"]
-  return undefined
+// NOTE (capture-merger-writer contract, 2026-05-29): the former
+// `deriveTargetJobTypeFromProfile(title, careerStage)` helper was REMOVED.
+// `targetJobType` is a TARGET hard-filter axis and must come from INTENT only
+// (statedPreferences / onboarding / extractor) — never from the résumé title
+// or a title-derived careerStage. Deriving a target jobType from a "...Intern"
+// history title (→ `["internship"]`) was the live recall bug. Do NOT
+// reintroduce a résumé→targetJobType derivation.
+
+const COMPANY_SIZE_SET = new Set<string>(COMPANY_SIZE_VOCAB)
+
+function isCompanySize(value: unknown): value is CompanySize {
+  return typeof value === "string" && COMPANY_SIZE_SET.has(value)
 }
 
-const COMPANY_SIZE_TOKENS = new Set([
-  "seed",
-  "early_startup",
-  "scale_up",
-  "mid_market",
-  "enterprise",
-  "open",
-])
+/**
+ * Normalize a stated company-size preference to the canonical schema shape.
+ * Accepts a single token or an OR array (2026-05-30). Off-vocab values are
+ * dropped (validated vs the shared `COMPANY_SIZE_VOCAB` closed enum, no regex).
+ * Returns a scalar for a single value (back-compat) and an array for a
+ * multi-pick OR; `undefined` when nothing valid was provided. Carried so a
+ * chat-set size survives a CV re-merge.
+ */
 function mapCompanySizePreference(value: unknown): UserTags["companySize"] {
-  // Scalar (back-compat) OR array (multi-pick OR). Validates each token against the
-  // closed enum; drops off-vocab; returns scalar for a single pick, array for many.
-  if (typeof value === "string") {
-    return COMPANY_SIZE_TOKENS.has(value) ? (value as UserTags["companySize"]) : undefined
-  }
   if (Array.isArray(value)) {
-    const tokens = value.filter(
-      (v): v is string => typeof v === "string" && COMPANY_SIZE_TOKENS.has(v)
-    )
-    if (tokens.length === 0) return undefined
-    return (tokens.length === 1 ? tokens[0] : tokens) as UserTags["companySize"]
+    const valid = Array.from(new Set(value.filter(isCompanySize)))
+    if (valid.length === 0) return undefined
+    return valid.length === 1 ? valid[0] : valid
   }
-  return undefined
+  return isCompanySize(value) ? value : undefined
 }
 
-const COMPANY_STAGE_TOKENS = new Set<string>(COMPANY_STAGE_VOCAB)
-// companyStage (funding stage) — ORTHOGONAL to companySize. Scalar OR array; validated vs
-// COMPANY_STAGE_VOCAB closed enum, no regex. Carried so a chat-set stage survives a CV re-merge.
+const COMPANY_STAGE_SET = new Set<string>(COMPANY_STAGE_VOCAB)
+
+function isCompanyStage(value: unknown): value is (typeof COMPANY_STAGE_VOCAB)[number] {
+  return typeof value === "string" && COMPANY_STAGE_SET.has(value)
+}
+
+/** Company-STAGE (funding) preference — same OR/scalar shape as companySize. Off-vocab dropped. */
 function mapCompanyStagePreference(value: unknown): UserTags["companyStage"] {
-  if (typeof value === "string") {
-    return COMPANY_STAGE_TOKENS.has(value) ? (value as UserTags["companyStage"]) : undefined
-  }
   if (Array.isArray(value)) {
-    const tokens = value.filter(
-      (v): v is string => typeof v === "string" && COMPANY_STAGE_TOKENS.has(v)
-    )
-    if (tokens.length === 0) return undefined
-    return (tokens.length === 1 ? tokens[0] : tokens) as UserTags["companyStage"]
+    const valid = Array.from(new Set(value.filter(isCompanyStage)))
+    if (valid.length === 0) return undefined
+    return valid.length === 1 ? valid[0] : valid
   }
-  return undefined
+  return isCompanyStage(value) ? value : undefined
 }
 
 /**
@@ -1229,6 +1247,19 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
   // ---- chat side ------------------------------------------------------
   const targetRoleValues = stringsFromUnknown(statedPreferences?.targetRole)
   const targetRole = targetRoleValues.length > 0 ? [...targetRoleValues] : undefined
+  // RÉSUMÉ→TARGET DERIVATION — SINGLE ALLOWED EXCEPTION (capture-merger-writer
+  // contract, 2026-05-29). `targetRoleFunction` is a TARGET hard-filter axis,
+  // and almost every target axis must come from INTENT (statedPreferences /
+  // onboarding / extractor), NEVER from the résumé. The ONE exception is
+  // `targetRoleFunction`: inferring the role family from the candidate's recent
+  // title / skill mix is reasonable as a LAST-RESORT default when intent gave
+  // us nothing (a SWE résumé → targeting software_engineering is a sane guess,
+  // and an empty `targetRoleFunction` makes V16 fall back to a non-role-gated
+  // query). statedPreferences ALWAYS wins; CV-title and CV-skill derivations
+  // only fire when intent is empty. This is intentionally distinct from
+  // `targetJobType` (intent-ONLY — see below — because "Software Engineer
+  // Intern" history must NOT become a `targetJobType=[internship]` hard filter)
+  // and `careerStage` (title is a soft hint only — see below).
   const targetRoleFunction =
     deriveTargetRoleFunctionFromStatedPreferences(statedPreferences) ??
     deriveTargetRoleFunctionFromCvTitle(recentRoleTitle) ??
@@ -1289,10 +1320,22 @@ export function mergeUserTags(input: UserTagsInput): UserTags {
           : undefined
   const companySize = mapCompanySizePreference(statedPreferencesExt?.companySize)
   const companyStage = mapCompanyStagePreference(statedPreferencesExt?.companyStage)
+  // targetJobType is INTENT-ONLY (capture-merger-writer contract, 2026-05-29).
+  // THE LIVE BUG: this previously had a
+  //   `?? deriveTargetJobTypeFromProfile(recentRoleTitle, careerStage)`
+  // résumé fallback, so a candidate whose recent title was "Software Engineer
+  // Intern" got `targetJobType = ["internship"]` — a TARGET hard filter
+  // inferred from HISTORY. V16 then hard-dropped every non-internship job →
+  // recCount=0. targetJobType is a TARGET axis (what the candidate wants NOW),
+  // never derivable from what they did BEFORE. It is set ONLY from
+  // statedPreferences (onboarding / triage / extractor intent). When intent
+  // carries none → leave UNSET so the matcher does not gate on jobType at all
+  // (the matcher domain owns the intent-confirmed graceful fallback, NOT the
+  // résumé). `deriveTargetJobTypeFromProfile` is intentionally retired here.
   const targetJobType = deriveTargetJobTypeFromStatedPreferences(
     statedPreferencesExt?.targetJobType,
     statedPreferencesExt?.targetJobTypes
-  ) ?? deriveTargetJobTypeFromProfile(recentRoleTitle, careerStage)
+  )
 
   // ---- Phase B2 — company preference pass-through ---------------------
   // targetCompanyTags: dedupe + lowercase, cap at 30 to mirror UserTagsSchema.

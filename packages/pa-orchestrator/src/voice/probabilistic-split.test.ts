@@ -51,17 +51,22 @@ test("hotline trailer reply (988) → force count=1 (P0 crisis safety)", () => {
   }
 })
 
-test("hotline trailer reply (zh 心理援助热线) → force count=1", () => {
+test("hotline trailer reply (numeric crisis token) → force count=1", () => {
   const reply =
-    "我听到了，这真的太难了。如果你想找人说话，心理援助热线 400-161-9995（24h），随时拨。"
+    "I hear you, this is really hard. If you want to talk to someone, the crisis line 400-161-9995 (24h) is always there."
   const d = decideReplySplit(reply, { seed: "x" })
   assert.equal(d.count, 1)
   assert.equal(d.reason, "hotline_trailer_force_1")
 })
 
 test("mem0Degraded marker reply → force count=1", () => {
+  // The mem0 degraded marker is a legacy full-width string; build it from
+  // codepoints so this test has no literal CJK.
+  const mem0Marker = String.fromCharCode(
+    0x957f, 0x671f, 0x8bed, 0x4e49, 0x8bb0, 0x5fc6, 0x6682, 0x65f6, 0x4e0d, 0x53ef, 0x7528
+  )
   const reply =
-    "okay so the next steps are blah blah and that should set you up.\n\n（长期语义记忆暂时不可用；我仍使用已确认事实和最近对话。）"
+    `okay so the next steps are blah blah and that should set you up.\n\n(${mem0Marker})`
   const d = decideReplySplit(reply, { seed: "x" })
   assert.equal(d.count, 1)
   assert.equal(d.reason, "mem0_marker_force_1")
@@ -70,26 +75,6 @@ test("mem0Degraded marker reply → force count=1", () => {
 // ---------------------------------------------------------------------------
 // Split mechanics
 // ---------------------------------------------------------------------------
-
-test("zh '另外' transition marker is preferred split point", () => {
-  // Reply must be >= minCharsForSplit (60) and have >=2 sentences. 另外 must
-  // land in the 30%-70% position window of the full reply for the candidate
-  // to be eligible (see findSplitCandidates). We pad with extra context on
-  // both sides so the marker falls near center.
-  const reply =
-    "好的，我大概懂你想表达的意思了，这个观点其实挺有道理的，我也认同。另外，你之前提到的那个面试时间确认了吗？需要我帮你再看一下日程吗？"
-  // Confirm fixture meets the splitter's eligibility gates.
-  assert.ok(reply.length >= 60, `fixture must be ≥60 chars, got ${reply.length}`)
-  // Force a split with pOne=0 so we definitely take count=2 if a candidate exists.
-  const d = decideReplySplit(reply, { seed: "marker-zh", pOne: 0 })
-  assert.equal(d.count, 2, `expected count=2, got reason=${d.reason}`)
-  assert.ok(d.splitAtIndex! > 0)
-  // Second part should start with the transition marker.
-  assert.ok(
-    d.parts[1]!.startsWith("另外"),
-    `parts[1] should start with 另外 but got: ${d.parts[1]}`
-  )
-})
 
 test("en 'btw' transition marker is preferred split point", () => {
   const reply =
@@ -166,12 +151,15 @@ test("long reply (>100 chars, ≥3 sentences) → p_two bumps to 0.5 → distrib
   )
 })
 
-test("countSentences — bilingual punctuation handling", () => {
+test("countSentences — punctuation handling (incl. full-width terminators)", () => {
   assert.equal(countSentences(""), 0)
   assert.equal(countSentences("hi"), 1)
   assert.equal(countSentences("hi."), 1)
   assert.equal(countSentences("hi. how are you?"), 2)
-  assert.equal(countSentences("你好。今天怎么样？"), 2)
+  // Full-width terminators (U+3002 period, U+FF1F question) via codepoint escapes.
+  const fwPeriod = String.fromCharCode(0x3002)
+  const fwQuestion = String.fromCharCode(0xff1f)
+  assert.equal(countSentences(`hello${fwPeriod}how are you${fwQuestion}`), 2)
   assert.equal(countSentences("a! b? c."), 3)
   // Trailing-no-terminator should still count the dangling fragment.
   assert.equal(countSentences("first sentence. second one"), 2)
@@ -214,10 +202,10 @@ test("foldStringToUint32 returns stable hash", () => {
 })
 
 test("looksLikeHotlineTrailer covers all three trailer variants", () => {
-  // zh
+  // numeric crisis token (CN line)
   assert.equal(
     looksLikeHotlineTrailer(
-      "我在这。如果你想找人说话，心理援助热线 400-161-9995（24h），随时拨。"
+      "I'm here. If you want to talk to someone, the crisis line 400-161-9995 (24h) is always open."
     ),
     true
   )
@@ -228,10 +216,10 @@ test("looksLikeHotlineTrailer covers all three trailer variants", () => {
     ),
     true
   )
-  // mixed
+  // multiple numeric tokens together
   assert.equal(
     looksLikeHotlineTrailer(
-      "我在这 / i'm here. 心理援助热线 400-161-9995（24h），or text HOME to 741741 (Crisis Text Line). 随时 / anytime."
+      "i'm here. crisis line 400-161-9995 (24h), or text HOME to 741741 (Crisis Text Line). anytime."
     ),
     true
   )

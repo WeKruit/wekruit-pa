@@ -5,10 +5,10 @@
  * majority language AND the off-language token ratio in Claire's
  * reply exceeds the threshold (default 0.25 = 25% off-lang tokens).
  *
- * 25% accommodates legitimate code-switch ("我用 React 写过 dashboard"
- * is ~30-40% en tokens but still primarily zh — that should NOT trip
- * when user is also code-switching). Hard mismatch (user 100% zh,
- * assistant 100% en) trips at 100% off-lang.
+ * 25% accommodates legitimate code-switch (a CJK-frame reply carrying
+ * ~30-40% en tokens is still primarily zh — that should NOT trip when the
+ * user is also code-switching). Hard mismatch (user 100% zh, assistant
+ * 100% en) trips at 100% off-lang.
  *
  * Action: `regenerate` — wire-in caller re-calls rewriter with explicit
  * "respond in <lang>" directive. 1 retry max; fail-open on 2nd attempt.

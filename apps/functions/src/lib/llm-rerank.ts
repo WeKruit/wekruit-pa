@@ -1,8 +1,8 @@
 /**
  * iter34 followup G.4 / D.15 — async LLM rerank module.
  *
- * Adam directive 2026-05-05: "用 cheap llm 是没问题的, silconflow 的 7b 就是
- * 他妈免费的, 我们可以 async batch 跑在后台没关系".
+ * Adam directive 2026-05-05: a cheap LLM is fine here — SiliconFlow's free 7B
+ * model can run async batches in the background with no problem.
  *
  * Wraps SiliconFlow Qwen-7B (free tier) as a JSON-mode reranker so the
  * orchestrator's hard-filter + skill/embedding score pipeline can be augmented
@@ -81,7 +81,7 @@ export interface RerankRow {
   rank: number
   /** 0..1 confidence. Clamped after sanitize. */
   score: number
-  /** ≤200 chars one-sentence "为啥这个 rank" reason. */
+  /** ≤200 chars one-sentence "why this rank" reason. */
   reasoning: string
 }
 
@@ -132,25 +132,25 @@ const RERANK_MAX_TOKENS = 1500
 const REASONING_MAX_LEN = 200
 
 /**
- * Build the static system prompt. Deliberately bilingual-friendly with
- * mandatory JSON contract — Qwen2.5-7B with `response_format=json_object`
- * obeys the schema reliably when the example is in-prompt.
+ * Build the static system prompt with a mandatory JSON contract — Qwen2.5-7B
+ * with `response_format=json_object` obeys the schema reliably when the example
+ * is in-prompt.
  */
 function buildSystemPrompt(): string {
   return [
-    "你是 job match assistant。input 是候选人 (candidate) 和 N 个 jobs。",
-    "任务: 给每个 job 排一个 rank (1 最匹配, N 最不匹配), 一个 0..1 的 score,",
-    "以及一句话的 reasoning 解释为啥这个 rank (中英文都可以, 简短直接)。",
+    "You are a job match assistant. The input is a candidate and N jobs.",
+    "Task: assign each job a rank (1 = best match, N = worst), a 0..1 score,",
+    "and a one-sentence reasoning explaining why this rank (short and direct).",
     "",
-    "输出 STRICT JSON, schema:",
+    "Output STRICT JSON, schema:",
     '{"ranked":[{"jobId":"<id>","rank":<int 1..N>,"score":<float 0..1>,"reasoning":"<one short sentence>"}, ...]}',
     "",
-    "规则:",
-    "- 每个 input job 都必须出现在 ranked 里, jobId 必须严格匹配 input。",
-    "- rank 1..N 之间不能重复, 1 是最匹配的。",
-    "- score 越高越匹配, [0,1] 闭区间。",
-    "- reasoning <= 200 字符, 一句话, 不要列表不要 bullet。",
-    "- 不输出 prose, 不输出 markdown, 不输出 commentary, 只输出 JSON。",
+    "Rules:",
+    "- Every input job MUST appear in ranked, and jobId must match the input exactly.",
+    "- Ranks 1..N cannot repeat; 1 is the best match.",
+    "- Higher score = better match, in the closed interval [0,1].",
+    "- reasoning <= 200 chars, one sentence, no lists or bullets.",
+    "- Output no prose, no markdown, no commentary — only JSON.",
   ].join("\n")
 }
 

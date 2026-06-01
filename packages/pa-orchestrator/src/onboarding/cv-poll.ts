@@ -3,8 +3,8 @@
  * a non-empty doc shows up, or until timeout.
  *
  * Adam directive iter34 P3 follow-up:
- *   "resume → 等 parse done (max 90s) → 推 CV summary tag → 用户看到 →
- *    推 match"
+ *   resume -> wait for parse done (max 90s) -> push CV summary tag ->
+ *   user sees it -> push match
  *
  * Bug being fixed: cv-ingest is async. Old onResumeAccepted called
  * applyOnboarding("complete") in the same turn, so the very next

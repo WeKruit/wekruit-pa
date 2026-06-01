@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
+import { buildRichMatchReason } from "@pa/job-rec"
 
 const COLLECTIONS = {
   candidateAuth: "pa-candidate-auth",
@@ -219,7 +220,13 @@ function projectMatchCard(args: {
   const state = cleanString(args.state?.state, 80)
   const hasInvite = args.invite !== undefined
   const bucket = hasInvite || (state !== undefined && state !== "candidate_matched") ? "invited" : "recommended"
-  const whyMatched = cleanStringArray(match?.reasons, 4, 240)
+  // "WHY CLAIRE MATCHED YOU" (Adam directive 2026-05-30): prefer the GROUNDED
+  // pitch persisted on the match doc (`matchReason`, LLM-composed / rich-
+  // deterministic at recommendation time). Fall back to the legacy `reasons`
+  // array only when no stored pitch exists; final fallback is the generic line.
+  const storedReason = cleanString(match?.matchReason, 600)
+  const legacyReasons = cleanStringArray(match?.reasons, 4, 240)
+  const whyMatched = storedReason ? [storedReason] : legacyReasons
   const status = projectStatus(state, hasInvite, args.prescreenTerminal, args.prescreenReviewPending)
   const reviewDecision = projectCandidateReviewDecision(status, args.prescreenSession)
   return {
@@ -345,6 +352,46 @@ function publicRecommendationScore(args: {
   return { score, reasons }
 }
 
+/**
+ * Resolve the "WHY CLAIRE MATCHED YOU" lines for a recommended/matched row.
+ *
+ * Adam directive 2026-05-30: the reason must be a compelling, specific,
+ * recruiter-style pitch — never "Matches your resume skills: java, javascript."
+ *
+ *   1. STORED reason  — the grounded pitch persisted at recommendation time
+ *      (LLM-composed in the runtime find_match path, or rich-deterministic in
+ *      the daily batch). Authoritative; surface it verbatim.
+ *   2. RICH fallback  — re-derive a multi-signal pitch via buildRichMatchReason
+ *      over the live job + candidate tags (legacy rec/match docs have no stored
+ *      reason). Grounded in real fit signals; fail-soft.
+ *   3. Last resort    — a grounded collab / saved-profile line.
+ */
+function resolveWhyMatched(args: {
+  storedReason?: string
+  candidateTags?: Record<string, unknown>
+  job: Record<string, unknown>
+  collab: boolean
+}): string[] {
+  const stored = cleanString(args.storedReason, 600)
+  if (stored) return [stored]
+  if (args.candidateTags) {
+    try {
+      const rich = buildRichMatchReason({
+        candidate: args.candidateTags,
+        job: args.job,
+        lang: cleanString((args.candidateTags as { preferredLang?: unknown }).preferredLang, 8) === "zh" ? "zh" : "en",
+      })
+      const cleaned = cleanString(rich, 600)
+      if (cleaned) return [cleaned]
+    } catch {
+      /* fall through to grounded last-resort line */
+    }
+  }
+  return args.collab
+    ? ["WeKruit-collaborated role — Claire can run your first screen."]
+    : ["This role matches your saved profile."]
+}
+
 // Surface the recommendations the matcher actually produced for this user — the
 // SOLE recommendation source (the old wholesale "show every collaborated pa-job
 // to everyone" fallback is gone). generateJobRecs → recordRecommendedJobs writes
@@ -452,12 +499,13 @@ async function buildRecordedRecommendedRows(args: {
     collab: row.collab,
     status: "recommended",
     job: projectJobDisplay(row.jobId, row.job),
-    whyMatched:
-      row.reasons.length > 0
-        ? row.reasons
-        : row.collab
-          ? ["WeKruit-collaborated role — Claire can run your first screen."]
-          : ["This role matches your saved profile."],
+    // Adam directive 2026-05-30: surface the GROUNDED rich pitch over the live
+    // job + candidate tags — NOT the weak `publicRecommendationScore` templates
+    // ("Matches your resume skills: java, javascript."). The numeric `score` is
+    // still used for ranking above; only the displayed reason is replaced.
+    // resolveWhyMatched's collab-aware last-resort line subsumes the prior inline
+    // fallback (WeKruit-collaborated… / saved-profile).
+    whyMatched: resolveWhyMatched({ candidateTags, job: row.job, collab: row.collab }),
     rank: index + 1,
     computedAt: row.lastAt,
   }))

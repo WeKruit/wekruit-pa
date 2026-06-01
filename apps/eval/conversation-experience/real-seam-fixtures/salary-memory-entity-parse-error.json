@@ -17,8 +17,11 @@
       "minSalary": 160000
     },
     "final_tags_includes": {
-      "targetLocations": ["new_york", "remote"],
+      "targetLocations": ["new_york_metro"],
       "industrySector": ["financial_technology", "artificial_intelligence_and_machine_learning"]
+    },
+    "final_tags_includes_any": {
+      "targetLocations": ["remote_anywhere", "remote_united_states", "remote"]
     },
     "grade_criteria": "Candidate stated: needs H1B sponsorship, NYC or remote, fintech or AI, minimum base 160k. PASS only if the durable store captured visaStatus=sponsor_needed, minSalaryUsd≈160000, targetLocations includes NYC + remote, industrySector includes fintech + AI/ML. If the store is empty due to a parse_error on the numeric memoryEntities salary value, pass=false."
   }

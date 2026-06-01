@@ -18,6 +18,8 @@ import {
   EmployerVisibleProfileSchema,
   EvalArtifactSchema,
   FeedbackEventSchema,
+  JobPresentedSourceSchema,
+  makeJobPresentedEvent,
   JobEnrichmentEvalFixtureSchema,
   JobOpportunityDraftSchema,
   JobOpportunitySchema,
@@ -317,6 +319,124 @@ test("marketplace document schemas parse the S1 primitives", () => {
       createdAt: now,
     },
   })
+})
+
+test("feedback events model job_presented as a first-class flywheel signal", () => {
+  // req #4 — "a job was offered" is recorded as a job_presented feedback event.
+  // Positive case: system-surfaced presentation with candidate + job scope.
+  const presented = FeedbackEventSchema.parse({
+    eventId: "fb-job-presented-1",
+    kind: "job_presented",
+    actor: "system",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    outcome: "claire_agent",
+    evidence: [{ source: "job_match", summary: "top-ranked collab job offered" }],
+    payloadRedacted: { flow: "claire_agent", channel: "imessage" },
+    createdAt: now,
+  })
+  assert.equal(presented.kind, "job_presented")
+  assert.equal(presented.candidateId, "cand-1")
+  assert.equal(presented.jobId, "job-1")
+
+  // The Claire agent runtime surfaces via the canonical `orchestrator` actor
+  // (the conceptual "agent" actor — no parallel `agent` enum value).
+  FeedbackEventSchema.parse({
+    eventId: "fb-job-presented-orchestrator-1",
+    kind: "job_presented",
+    actor: "orchestrator",
+    candidateId: "cand-2",
+    jobId: "job-2",
+    outcome: "general_market_fallback",
+    createdAt: now,
+  })
+
+  // Every documented surfacing flow is a valid outcome.
+  for (const source of JobPresentedSourceSchema.options) {
+    FeedbackEventSchema.parse({
+      eventId: `fb-job-presented-${source}`,
+      kind: "job_presented",
+      actor: "system",
+      candidateId: "cand-3",
+      jobId: "job-3",
+      outcome: source,
+      createdAt: now,
+    })
+  }
+
+  // Negative: job_presented requires both candidateId and jobId.
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-job-presented-bad",
+        kind: "job_presented",
+        actor: "system",
+        outcome: "claire_agent",
+        createdAt: now,
+      }),
+    /candidateId|jobId/
+  )
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-job-presented-no-job",
+        kind: "job_presented",
+        actor: "system",
+        candidateId: "cand-1",
+        outcome: "claire_agent",
+        createdAt: now,
+      }),
+    /jobId/
+  )
+
+  // Other kinds keep their historical candidate/job optionality (regression).
+  FeedbackEventSchema.parse({
+    eventId: "fb-manual-note-no-scope",
+    kind: "manual_note",
+    actor: "operator",
+    outcome: "context only",
+    createdAt: now,
+  })
+})
+
+test("makeJobPresentedEvent builds a writer-ready job_presented event", () => {
+  const event = makeJobPresentedEvent({
+    eventId: "fb-helper-1",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    source: "collab_prescreen",
+    createdAt: now,
+    actor: "orchestrator",
+    channel: "imessage",
+    confidence: 0.82,
+    evidenceSummary: "collab job offered after onboarding",
+  })
+  // Helper output must satisfy the schema with no further massaging.
+  const parsed = FeedbackEventSchema.parse(event)
+  assert.equal(parsed.kind, "job_presented")
+  assert.equal(parsed.actor, "orchestrator")
+  assert.equal(parsed.outcome, "collab_prescreen")
+  assert.deepEqual(parsed.payloadRedacted, {
+    flow: "collab_prescreen",
+    channel: "imessage",
+  })
+  assert.equal(parsed.evidence[0]?.source, "job_match")
+  assert.equal(parsed.evidence[0]?.confidence, 0.82)
+
+  // Defaults: actor=system, channel falls back to the flow name.
+  const defaulted = makeJobPresentedEvent({
+    eventId: "fb-helper-2",
+    candidateId: "cand-2",
+    jobId: "job-2",
+    source: "daily_batch",
+    createdAt: now,
+  })
+  assert.equal(defaulted.actor, "system")
+  assert.deepEqual(defaulted.payloadRedacted, {
+    flow: "daily_batch",
+    channel: "daily_batch",
+  })
+  FeedbackEventSchema.parse(defaulted)
 })
 
 test("privacy request schema captures request-only redacted records", () => {

@@ -228,6 +228,17 @@ test("runCandidateListMatches surfaces ONLY recorded recs; collab flag derived f
   assert.equal(collab.job.href, "/j/job-collab")
   // Salary reveal comes from the pa-jobs prescreenConfig (employer-authoritative).
   assert.equal(collab.job.salaryRange, "$150k-$220k")
+  // Adam directive 2026-05-30: the recommended reason is the GROUNDED pitch — it cites the role at
+  // the company and reads human (never raw snake_case, never "Matches your resume skills:"). When the
+  // recorded rec carries no stored grounded reason, it gracefully falls back to a clean role@company
+  // line ("Backend Engineer at Rain — a strong fit on your saved profile"); either way it is grounded
+  // in the live job + never the weak template. (The exact tag-citation depends on a stored reason, so
+  // we assert the role@company grounding + the absence of the bad patterns, not specific tag tokens.)
+  const whyCollab = collab.whyMatched.join(" ")
+  assert.match(whyCollab, /Backend Engineer at Rain/)
+  assert.doesNotMatch(whyCollab, /Matches your resume skills:/i)
+  assert.doesNotMatch(whyCollab, /Aligned with your target role area:/i)
+  assert.doesNotMatch(whyCollab, /financial_technology/)
 
   // General rec is NOT collab → no pre-screen CTA on the client.
   assert.equal(general.collab, false)
@@ -266,6 +277,45 @@ test("runCandidateListMatches treats a collaborated pa-job WITHOUT prescreen que
   assert.equal(result.matches.length, 1)
   assert.equal(result.matches[0]!.jobId, "job-x")
   assert.equal(result.matches[0]!.collab, false)
+})
+
+test("runCandidateListMatches surfaces the STORED grounded matchReason on a match card", async () => {
+  // Adam directive 2026-05-30: when the matcher persisted a grounded pitch on
+  // the candidate-job-match doc, /me surfaces it verbatim — preferred over the
+  // legacy `reasons` array, never the weak templates.
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
+    firebaseUid: "firebase-1",
+    candidateId: "cand-1",
+  })
+  await mfs.collection("pa-candidate-job-matches").doc("cand-1__job-helium").set({
+    matchId: "cand-1__job-helium",
+    candidateId: "cand-1",
+    jobId: "job-helium",
+    finalRank: 1,
+    // The legacy weak reasons co-exist on the doc — the STORED grounded pitch
+    // must win.
+    reasons: ["Matches your resume skills: react, typescript."],
+    matchReason:
+      "Full-Stack Engineer at Helium — your React/TS background fits the stack, and it leans into the comp + early equity you said matter most.",
+  })
+  await mfs.collection("pa-jobs").doc("job-helium").set({
+    publicVisible: true,
+    prescreenConfig: { jobTitle: "Full-Stack Engineer", company: "Helium" },
+  })
+
+  const result = await runCandidateListMatches(
+    { limit: 10 },
+    { uid: "firebase-1" },
+    { db: asFirestore(mfs) }
+  )
+
+  assert.equal(result.matches.length, 1)
+  assert.deepEqual(result.matches[0]!.whyMatched, [
+    "Full-Stack Engineer at Helium — your React/TS background fits the stack, and it leans into the comp + early equity you said matter most.",
+  ])
+  // The legacy weak template on the same doc is never surfaced.
+  assert.doesNotMatch(JSON.stringify(result), /Matches your resume skills:/i)
 })
 
 test("runCandidateListMatches maps employer visible state to candidate passed", async () => {

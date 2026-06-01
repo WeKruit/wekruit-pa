@@ -45,11 +45,10 @@ export type RngFn = () => number
 /**
  * Single policy entry in the ordered bank.
  *
- * `marker` is the literal string injected (e.g. "嗯…", "wait").
+ * `marker` is the literal string injected (e.g. "wait", "oh —").
  * `separator` is what we put between marker and the original text.
- *   For en, typically " " (after a punctuation-ending marker like "wait,")
+ *   Typically " " (after a punctuation-ending marker like "wait,")
  *   or just nothing (when marker already carries punctuation like "oh —").
- *   For zh, typically "，" or just nothing (when marker carries `…`).
  * `weight` is relative selection weight WITHIN the same type bucket;
  *   higher weight = more likely picked when multiple markers of same
  *   type are eligible. Default 1.

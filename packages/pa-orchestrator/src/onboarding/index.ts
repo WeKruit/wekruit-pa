@@ -1,7 +1,7 @@
 /**
  * Public surface of the iter34 Q-as-class onboarding abstraction.
  *
- * Adam directive 2026-05-05: "每一个问题抽象成一个class". Onboarding
+ * Adam directive 2026-05-05: abstract each question into a class. Onboarding
  * becomes a sequence of Question instances composed by OnboardingPipeline.
  * Adding a new Q = appending one entry to the registry.
  *

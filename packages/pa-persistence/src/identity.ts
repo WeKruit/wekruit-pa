@@ -21,7 +21,7 @@ import {
   type CandidateSelfProfile,
   type MarketplaceEvidence,
 } from "@pa/core-types"
-import { applyCandidateLifecycleEvent } from "./marketplace.js"
+import { applyCandidateLifecycleEvent, writeCorrectionEvent } from "./marketplace.js"
 
 const AUDIT_COLLECTION = PA_COLLECTIONS.auditEvents
 
@@ -847,4 +847,432 @@ export async function claimCandidateProfile(
     claimedEventId,
     idempotent,
   }
+}
+
+// ---------------------------------------------------------------------------
+// Same-phone duplicate-profile MERGE (Adam policy 2026-05-29)
+//
+// "Same phone = same person → MERGE, even when emails differ. If they already
+//  own the phone number, it's the same one even if the emails differ."
+//
+// Two pa-users that share a deliverable phone are the same human who signed up
+// twice (e.g. yogeshsavirigana@gmail.com and yogi.savirigana1996@gmail.com both
+// with +18303265553, 2 min apart). We fold the younger duplicate INTO the
+// oldest-createdAt canonical profile: tags union, résumé / job / prescreen rows
+// re-pointed, emails preserved as alt-emails, handles re-linked. The duplicate
+// is tombstoned (phone reassigned to a sentinel, runtimeMode=paused, mergedInto
+// set) so the resolver only ever finds the canonical. Every merge writes a
+// `merge_decision_recorded` identity event AND a candidate_profile correction
+// event so the human/data fix becomes flywheel data (v2.0 rule D9).
+//
+// Idempotent: a duplicate already carrying `mergedInto === canonicalId` is
+// skipped; re-running is a no-op.
+// ---------------------------------------------------------------------------
+
+/** User-scoped collections whose rows are keyed by (or carry) `userId`. */
+const USER_SCOPED_FOLD_COLLECTIONS = [
+  "parsedCandidateResumes",
+  "pa-job-profiles",
+  "pa-job-rec-explanations",
+  "pa-prescreen-sessions",
+  PA_COLLECTIONS.candidateJobStates,
+  PA_COLLECTIONS.candidateJobMatches,
+  PA_COLLECTIONS.resumeArtifacts,
+] as const
+
+/** Tag array fields safe to ADDITIVELY union duplicate → canonical (soft signal). */
+const MERGE_TAG_ARRAY_FIELDS = [
+  "skills",
+  "relevantTags",
+  "relevantIndustry",
+  "industrySector",
+  "targetRoleFunction",
+  "targetLocations",
+  "targetJobType",
+] as const
+
+function timestampToMs(value: unknown): number {
+  if (typeof value === "string") {
+    const parsed = Date.parse(value)
+    return Number.isFinite(parsed) ? parsed : 0
+  }
+  if (value && typeof value === "object") {
+    const c = value as { toDate?: () => Date; _seconds?: number; seconds?: number }
+    if (typeof c.toDate === "function") return c.toDate().getTime()
+    if (typeof c._seconds === "number") return c._seconds * 1000
+    if (typeof c.seconds === "number") return c.seconds * 1000
+  }
+  return 0
+}
+
+/**
+ * Pick the canonical (KEEP) doc among duplicates: oldest `createdAt` ascending
+ * (immutable → stable), then most-recent `updatedAt`, then doc-id. Mirrors
+ * `choosePhoneMatchDeterministic` / `pickDeterministicUserDoc` so the merge
+ * keeps the SAME doc the resolver already resolves to live.
+ */
+function pickCanonicalUser(
+  docs: Array<{ id: string; data: Record<string, unknown> }>,
+): { id: string; data: Record<string, unknown> } {
+  return [...docs].sort((a, b) => {
+    const aCreated = timestampToMs(a.data.createdAt) || Number.POSITIVE_INFINITY
+    const bCreated = timestampToMs(b.data.createdAt) || Number.POSITIVE_INFINITY
+    if (aCreated !== bCreated) return aCreated - bCreated
+    const aUpdated = timestampToMs(a.data.updatedAt)
+    const bUpdated = timestampToMs(b.data.updatedAt)
+    if (bUpdated !== aUpdated) return bUpdated - aUpdated
+    return a.id.localeCompare(b.id)
+  })[0]!
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : []
+}
+
+function maskEmailSafe(value: unknown): string {
+  return typeof value === "string" && value.includes("@") ? maskEmail(value.trim().toLowerCase()) : "***"
+}
+
+export interface MergeCandidatesByPhoneInput {
+  phoneE164: string
+  /** Explicit canonical pin (skips the createdAt tiebreak). For ops scripts. */
+  canonicalCandidateIdHint?: string
+  actor?: "system" | "operator"
+  reason?: string
+  now?: string
+  /** When true, computes the plan and returns it WITHOUT any Firestore writes. */
+  dryRun?: boolean
+}
+
+export interface MergeFoldedDuplicate {
+  duplicateId: string
+  alreadyMerged: boolean
+  emailsFolded: string[]
+  tagFieldsUnioned: string[]
+  reLinkedHandleCount: number
+  repointedRowsByCollection: Record<string, number>
+}
+
+export interface MergeCandidatesByPhoneResult {
+  merged: boolean
+  dryRun: boolean
+  canonicalCandidateId: string | null
+  duplicateCandidateIds: string[]
+  folded: MergeFoldedDuplicate[]
+}
+
+/**
+ * Merge every pa-users that shares `phoneE164` into a single canonical profile.
+ * No-op (merged:false) when 0 or 1 docs hold the phone. Idempotent + audited.
+ */
+export async function mergeCandidatesByPhone(
+  db: Firestore,
+  input: MergeCandidatesByPhoneInput,
+): Promise<MergeCandidatesByPhoneResult> {
+  const ts = input.now ?? nowIso()
+  const actor = input.actor ?? "system"
+  const reason = input.reason ?? `Same-phone duplicate merge (${input.phoneE164.slice(-4)})`
+
+  // 1. Find all pa-users that currently hold this exact phone. Bounded read.
+  const snap = await db
+    .collection(PA_COLLECTIONS.users)
+    .where("phoneE164", "==", input.phoneE164)
+    .limit(25)
+    .get()
+  const docs = snap.docs.map((d) => ({ id: d.id, data: (d.data() ?? {}) as Record<string, unknown> }))
+  if (docs.length <= 1) {
+    return {
+      merged: false,
+      dryRun: input.dryRun === true,
+      canonicalCandidateId: docs[0]?.id ?? null,
+      duplicateCandidateIds: [],
+      folded: [],
+    }
+  }
+
+  // 2. Choose canonical (KEEP). Honor an explicit pin if it's actually one of
+  //    the phone-holders; otherwise oldest-createdAt wins.
+  const pinned = input.canonicalCandidateIdHint
+    ? docs.find((d) => d.id === input.canonicalCandidateIdHint)
+    : undefined
+  const canonical = pinned ?? pickCanonicalUser(docs)
+  const duplicates = docs.filter((d) => d.id !== canonical.id)
+
+  const folded: MergeFoldedDuplicate[] = []
+  for (const dup of duplicates) {
+    folded.push(
+      await foldDuplicateIntoCanonical(db, {
+        canonical,
+        dup,
+        phoneE164: input.phoneE164,
+        ts,
+        actor,
+        reason,
+        dryRun: input.dryRun === true,
+      }),
+    )
+  }
+
+  return {
+    merged: true,
+    dryRun: input.dryRun === true,
+    canonicalCandidateId: canonical.id,
+    duplicateCandidateIds: duplicates.map((d) => d.id),
+    folded,
+  }
+}
+
+async function foldDuplicateIntoCanonical(
+  db: Firestore,
+  args: {
+    canonical: { id: string; data: Record<string, unknown> }
+    dup: { id: string; data: Record<string, unknown> }
+    phoneE164: string
+    ts: string
+    actor: "system" | "operator"
+    reason: string
+    dryRun: boolean
+  },
+): Promise<MergeFoldedDuplicate> {
+  const { canonical, dup, phoneE164, ts, actor, reason, dryRun } = args
+  const canonicalRef = db.collection(PA_COLLECTIONS.users).doc(canonical.id)
+  const dupRef = db.collection(PA_COLLECTIONS.users).doc(dup.id)
+
+  // Idempotent guard — if already tombstoned into this canonical, no-op.
+  if (dup.data.mergedInto === canonical.id) {
+    return {
+      duplicateId: dup.id,
+      alreadyMerged: true,
+      emailsFolded: [],
+      tagFieldsUnioned: [],
+      reLinkedHandleCount: 0,
+      repointedRowsByCollection: {},
+    }
+  }
+
+  // ---- compute the tag union (additive) ----
+  const canonicalTags = (canonical.data.tags ?? {}) as Record<string, unknown>
+  const dupTags = (dup.data.tags ?? {}) as Record<string, unknown>
+  const tagUpdates: Record<string, unknown> = {}
+  const tagFieldsUnioned: string[] = []
+  for (const field of MERGE_TAG_ARRAY_FIELDS) {
+    const dupVal = dupTags[field]
+    if (!Array.isArray(dupVal) || dupVal.length === 0) continue
+    const merged = Array.from(new Set([...asArray(canonicalTags[field]), ...dupVal]))
+    const added = dupVal.filter((x) => !asArray(canonicalTags[field]).includes(x))
+    if (added.length > 0) {
+      tagUpdates[field] = merged
+      tagFieldsUnioned.push(field)
+    }
+  }
+
+  // ---- collect emails to preserve as alt-emails ----
+  const canonicalEmail = typeof canonical.data.email === "string" ? canonical.data.email.trim().toLowerCase() : null
+  const canonicalAlt = asArray(canonical.data.altEmails).filter((x): x is string => typeof x === "string")
+  const dupEmail = typeof dup.data.email === "string" ? dup.data.email.trim().toLowerCase() : null
+  const dupContact = typeof dup.data.contactEmail === "string" ? dup.data.contactEmail.trim().toLowerCase() : null
+  const emailsFolded = Array.from(
+    new Set(
+      [dupEmail, dupContact, ...canonicalAlt].filter(
+        (e): e is string => !!e && e !== canonicalEmail,
+      ),
+    ),
+  )
+
+  // ---- re-point user-scoped rows (résumé / job / prescreen) ----
+  const repointedRowsByCollection: Record<string, number> = {}
+  let reLinkedHandleCount = 0
+
+  if (!dryRun) {
+    for (const collection of USER_SCOPED_FOLD_COLLECTIONS) {
+      repointedRowsByCollection[collection] = await repointUserScopedRows(
+        db,
+        collection,
+        dup.id,
+        canonical.id,
+        ts,
+      )
+    }
+
+    // ---- re-link ALL of the duplicate's contact handles → canonical. Phone is
+    //      the unique entity key; both emails / phone / other handles now live
+    //      on the single canonical entity. ----
+    reLinkedHandleCount = await reassignDuplicateHandles(db, dup.id, canonical.id, ts)
+
+    // ---- write the canonical merge patch (tags union + alt-emails + the
+    //      duplicate's userId kept as an alias) ----
+    const canonicalPatch: Record<string, unknown> = {
+      updatedAt: ts,
+      dedupMergedFrom: Array.from(
+        new Set([...asArray(canonical.data.dedupMergedFrom).filter((x): x is string => typeof x === "string"), dup.id]),
+      ),
+      dedupMergedAt: ts,
+      // Phone = unique key: keep BOTH userIds as aliases on the canonical entity
+      // so a stale opener / link pointing at the folded id still resolves here.
+      aliasUserIds: Array.from(
+        new Set([...asArray(canonical.data.aliasUserIds).filter((x): x is string => typeof x === "string"), dup.id]),
+      ),
+    }
+    if (Object.keys(tagUpdates).length > 0) {
+      canonicalPatch.tags = { ...canonicalTags, ...tagUpdates }
+    }
+    if (emailsFolded.length > 0) {
+      canonicalPatch.altEmails = Array.from(new Set([...canonicalAlt, ...emailsFolded]))
+    }
+    // If canonical has no displayName but the duplicate does, adopt it.
+    if (!canonical.data.displayName && typeof dup.data.displayName === "string") {
+      canonicalPatch.displayName = dup.data.displayName
+    }
+    await canonicalRef.set(canonicalPatch, { merge: true })
+
+    // ---- tombstone the duplicate so the resolver never finds it again ----
+    await dupRef.set(
+      {
+        phoneE164: `${phoneE164}__merged_${dup.id}`,
+        phoneE164Source: "dedup_merged_same_phone",
+        mergedInto: canonical.id,
+        mergedAt: ts,
+        runtimeMode: "paused",
+        runtimeModeAt: ts,
+        runtimeModeSetBy: `mergeCandidatesByPhone(${actor})`,
+        runtimeModeReason: reason,
+        updatedAt: ts,
+      },
+      { merge: true },
+    )
+
+    // ---- audit: identity merge event + flywheel correction event ----
+    await writeIdentityEvent(db, {
+      eventId: deterministicId("ident", ["merge_decision_recorded", canonical.id, dup.id]),
+      type: "merge_decision_recorded",
+      actor,
+      candidateId: canonical.id,
+      relatedCandidateId: dup.id,
+      source: "system",
+      evidence: [
+        {
+          source: "system",
+          summary: `Same phone (…${phoneE164.slice(-4)}) on two pa-users → merged ${dup.id} into ${canonical.id}`,
+        },
+      ],
+      payloadRedacted: {
+        reason,
+        tagFieldsUnioned,
+        emailsFoldedCount: emailsFolded.length,
+        canonicalEmailMasked: maskEmailSafe(canonical.data.email),
+        duplicateEmailMasked: maskEmailSafe(dup.data.email),
+        reLinkedHandleCount,
+        repointedRowsByCollection,
+      },
+      createdAt: ts,
+    }).catch(() => undefined)
+
+    await writeCorrectionEvent(db, {
+      eventId: deterministicId("correction", ["candidate_profile_merge", canonical.id, dup.id]),
+      targetType: "candidate_profile",
+      targetId: canonical.id,
+      actor,
+      candidateId: canonical.id,
+      reason,
+      beforeRedacted: {
+        duplicateId: dup.id,
+        duplicateEmailMasked: maskEmailSafe(dup.data.email),
+        sharedPhoneTail: phoneE164.slice(-4),
+      },
+      afterRedacted: {
+        canonicalId: canonical.id,
+        tagFieldsUnioned,
+        emailsFoldedCount: emailsFolded.length,
+        reLinkedHandleCount,
+        repointedRowsByCollection,
+      },
+      evidence: [{ source: "system", summary: "Duplicate same-phone profile folded into canonical" }],
+      createdAt: ts,
+    }).catch(() => undefined)
+  }
+
+  return {
+    duplicateId: dup.id,
+    alreadyMerged: false,
+    emailsFolded,
+    tagFieldsUnioned,
+    reLinkedHandleCount,
+    repointedRowsByCollection,
+  }
+}
+
+/**
+ * Re-point a user-scoped collection's rows from `fromUserId` → `toUserId`.
+ * Handles both the `where userId == X` shape and the doc-id-is-userId shape.
+ * Preserves the row by writing a copy under the canonical key and dropping the
+ * duplicate-keyed row, or simply patching `userId` on a query-shaped row.
+ */
+async function repointUserScopedRows(
+  db: Firestore,
+  collection: string,
+  fromUserId: string,
+  toUserId: string,
+  ts: string,
+): Promise<number> {
+  let count = 0
+  // (a) query shape: rows carry a userId field. Re-derive the doc ref by id so
+  //     this works against both real Firestore and the test fake (whose query
+  //     result rows do not expose `.ref`).
+  const byUser = await db.collection(collection).where("userId", "==", fromUserId).limit(500).get()
+  for (const d of byUser.docs) {
+    await db
+      .collection(collection)
+      .doc(d.id)
+      .set({ userId: toUserId, dedupRepointedFrom: fromUserId, updatedAt: ts }, { merge: true })
+    count++
+  }
+  // (b) doc-id-is-userId shape (e.g. parsedCandidateResumes/{userId}). Copy the
+  //     duplicate's row under the canonical id ONLY when canonical has none, so
+  //     we never clobber the canonical's own richer data; then tombstone the
+  //     duplicate-keyed row by stamping mergedInto.
+  const byId = await db.collection(collection).doc(fromUserId).get()
+  if (byId.exists) {
+    const canonicalDoc = await db.collection(collection).doc(toUserId).get()
+    if (!canonicalDoc.exists) {
+      await db
+        .collection(collection)
+        .doc(toUserId)
+        .set({ ...(byId.data() ?? {}), userId: toUserId, dedupRepointedFrom: fromUserId, updatedAt: ts }, { merge: true })
+      count++
+    }
+    await db
+      .collection(collection)
+      .doc(fromUserId)
+      .set({ mergedInto: toUserId, mergedAt: ts }, { merge: true })
+  }
+  return count
+}
+
+/**
+ * Re-link the duplicate's `pa-candidate-handles` rows to the canonical
+ * candidateId (direct overwrite — these handles really are the same person,
+ * so ALL contact handles — both emails, the phone, browser/ats ids — live on
+ * the canonical entity). Phone = unique key: the duplicate only ever appears
+ * here because it shared the canonical's phone.
+ */
+async function reassignDuplicateHandles(
+  db: Firestore,
+  fromUserId: string,
+  toUserId: string,
+  ts: string,
+): Promise<number> {
+  const snap = await db
+    .collection(PA_COLLECTIONS.candidateHandles)
+    .where("candidateId", "==", fromUserId)
+    .limit(100)
+    .get()
+  let count = 0
+  for (const d of snap.docs) {
+    await db
+      .collection(PA_COLLECTIONS.candidateHandles)
+      .doc(d.id)
+      .set({ candidateId: toUserId, dedupRepointedFrom: fromUserId, updatedAt: ts }, { merge: true })
+    count++
+  }
+  return count
 }

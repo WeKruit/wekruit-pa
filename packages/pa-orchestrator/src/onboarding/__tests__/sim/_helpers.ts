@@ -80,7 +80,7 @@ export interface BuiltPipeline {
 }
 
 const HALT = {
-  zh: "请联系 admin1@wekruit.com 解决问题. 你现在连续失败了五次, 请不要继续",
+  zh: "please contact admin1@wekruit.com — you've failed 5 times in a row, please stop",
   en: "please contact admin1@wekruit.com — you've failed 5 times in a row, please stop",
 }
 

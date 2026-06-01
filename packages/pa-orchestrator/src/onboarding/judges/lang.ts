@@ -1,10 +1,11 @@
 /**
- * LangJudge — parses the user's preferred language preference (zh / en / mixed).
+ * LangJudge — parses the user's preferred language preference.
  *
- * Tolerant of common phrasings:
- *   - 中文 / Chinese / 普通话 / 国语 → "zh"
- *   - English / 英文 / en → "en"
- *   - both / 都行 / 中英文混合 / mixed / 混合 / 都可以 → "mixed"
+ * Product is English-only; the parser tolerates a few common phrasings and
+ * always resolves to "en" / "mixed" (which is treated as en downstream).
+ *
+ *   - English / en → "en"
+ *   - both / mixed → "mixed"
  *
  * Anything else → reason="irrelevant" (rephraser will ask again).
  */
@@ -12,9 +13,8 @@ import type { Judge, JudgeCtx, JudgeResult, Lang } from "../question.js"
 
 export type LangPref = "zh" | "en" | "mixed"
 
-const ZH_RE = /(中文|普通话|国语|chinese|cn|zh|说中文)/i
-const EN_RE = /(英文|english|en\b|说英文)/i
-const MIXED_RE = /(混合|混着|都可以|都行|both|mixed|两种|中英文|中英)/i
+const EN_RE = /(english|en\b)/i
+const MIXED_RE = /(mixed|both)/i
 
 export class LangJudge implements Judge<LangPref> {
   readonly kind = "lang"
@@ -23,13 +23,8 @@ export class LangJudge implements Judge<LangPref> {
     const t = reply.trim().toLowerCase()
     if (!t) return { accept: false, reason: "irrelevant" }
 
-    // Mixed first — "中英文" and "都行" should NOT match zh-only.
-    if (MIXED_RE.test(t)) return { accept: true, value: "mixed", confidence: 1.0 }
-    const hasZh = ZH_RE.test(t)
-    const hasEn = EN_RE.test(t)
-    if (hasZh && hasEn) return { accept: true, value: "mixed", confidence: 0.95 }
-    if (hasZh) return { accept: true, value: "zh", confidence: 1.0 }
-    if (hasEn) return { accept: true, value: "en", confidence: 1.0 }
+    if (MIXED_RE.test(t)) return { accept: true, value: "mixed", confidence: 0.95 }
+    if (EN_RE.test(t)) return { accept: true, value: "en", confidence: 1.0 }
 
     return { accept: false, reason: "irrelevant" }
   }

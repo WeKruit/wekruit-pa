@@ -3,11 +3,9 @@
  *
  * BACKGROUND
  * ----------
- * Adam iMessage 2026-05-03 00:34 repro: user sent ZH-frame messages
- *   ("我想找工作", "swe的", "yoe1年的")
- * Claire's reply 2 came back EN+ZH-mixed ("yoe1 SWE. What kind of SWE..."),
- * which is wrong — the user is writing in Chinese-frame and the reply MUST
- * stay Chinese.
+ * Historical: a cold-start onboarding hole let replies drift away from the
+ * user's input language. The product is now English-only, so this guard
+ * normalizes every non-mixed reply to English.
  *
  * RCA — DUAL CAUSE:
  *   A. The onboarding branch in `processInboundEvent` (index.ts:786-862)
@@ -16,9 +14,9 @@
  *      thus never receive the post-gen safety net. Mirror of the Phase 53
  *      Bug A pattern (crisis-hotline cold-start hole — fixed via
  *      `crisis-guard-runner.ts`).
- *   B. `detectLang` (cjk-vs-ascii majority) misclassifies bilingual user
- *      input like "swe的" or "yoe1年的" as "en". Fix B introduces
- *      `detectUserLang` (any-CJK → "zh"). Used by callers; not this helper.
+ *   B. `detectLang` (cjk-vs-ascii majority) misclassifies code-switched
+ *      user input (an ASCII token + CJK suffix) as "en". `detectUserLang`
+ *      adds a 3rd "mixed" class. Used by callers; not this helper.
  *
  * SCOPE
  * -----
@@ -138,7 +136,7 @@ export async function runLangLockGuard(
   }
 
   // Adam 2026-05-03 01:22 spec — mixed-register bypass. When the user wrote
-  // a code-switched message ("你觉得我能去 Nvidia 吗?", "swe行业"), the reply
+  // a code-switched message (an ASCII proper noun amid a CJK frame), the reply
   // MUST mirror naturally (zh frame + en tokens preserved). Hard-locking to
   // pure-zh would scrub legitimate English tokens (proper nouns, role
   // acronyms, tech terms) the user expects to see echoed back. Skip translate
@@ -153,9 +151,13 @@ export async function runLangLockGuard(
     return { reply, applied: false, reason: "mixed_register_bypass" }
   }
 
+  // The product is English-only: the target output language is ALWAYS
+  // English regardless of userLang. (mixed already bypassed above.)
+  const targetLang = "en"
+
   try {
     const replyLang = detectLang(reply)
-    if (replyLang === userLang) {
+    if (replyLang === targetLang) {
       return { reply, applied: false, reason: "already_correct_lang" }
     }
 
@@ -171,10 +173,7 @@ export async function runLangLockGuard(
       return { reply, applied: false, reason: "no_api_key" }
     }
 
-    const translatePrompt =
-      userLang === "zh"
-        ? `Rewrite the following message in Chinese (中文) only. Keep the casual texting tone, brevity, and meaning EXACT. Do NOT add or remove content. Do NOT use any English words except code/URLs/proper nouns. Output ONLY the rewritten message, no preface.\n\n${reply}`
-        : `Rewrite the following message in English only. Keep the casual texting tone, brevity, and meaning EXACT. Do NOT add or remove content. Do NOT use any Chinese characters (汉字). Output ONLY the rewritten message, no preface.\n\n${reply}`
+    const translatePrompt = `Rewrite the following message in English only. Keep the casual texting tone, brevity, and meaning EXACT. Do NOT add or remove content. Do NOT use any non-English characters. Output ONLY the rewritten message, no preface.\n\n${reply}`
 
     const ac = new AbortController()
     const timer = setTimeout(() => ac.abort(), 5000)
@@ -210,13 +209,13 @@ export async function runLangLockGuard(
       const translated = (j.choices?.[0]?.message?.content ?? "").trim()
       const translatedLang = detectLang(translated)
 
-      if (translated.length > 0 && translatedLang === userLang) {
+      if (translated.length > 0 && translatedLang === targetLang) {
         store.log("pa.voice.lang_translate.applied", {
           userId,
           turnId,
           callSite,
           fromLang: replyLang,
-          toLang: userLang,
+          toLang: targetLang,
           beforeLen: reply.length,
           afterLen: translated.length,
         })
@@ -274,14 +273,11 @@ export function buildLangLockSandwich(userLang: "zh" | "en" | "mixed"): {
     // resulting prompt is just the base systemPrompt with extra whitespace.
     return { open: "", close: "" }
   }
+  // Product is English-only: every non-mixed input gets the English lock.
   const open =
-    userLang === "zh"
-      ? "[LANGUAGE-LOCK · TOP-PRIORITY]\nuser_input_language: zh (Chinese)\nABSOLUTE RULE: You MUST reply in Chinese (中文). Do NOT switch to English unless the token is a code symbol, URL, or proper noun (人名/公司名). NEVER reply in English when the user wrote Chinese.\n[/LANGUAGE-LOCK]"
-      : "[LANGUAGE-LOCK · TOP-PRIORITY]\nuser_input_language: en (English)\nABSOLUTE RULE: You MUST reply in English. Do NOT switch to Chinese / use Chinese characters (汉字) at all. NEVER reply in Chinese when the user wrote English. Casual register is fine; language must be English.\n[/LANGUAGE-LOCK]"
+    "[LANGUAGE-LOCK · TOP-PRIORITY]\nABSOLUTE RULE: You MUST reply in English. Do NOT switch to any other language or use any non-English characters at all. Casual register is fine; language must be English.\n[/LANGUAGE-LOCK]"
   const close =
-    userLang === "zh"
-      ? "\n\n[FINAL-REMINDER]\nThe user just wrote in Chinese. Your reply MUST be in Chinese (中文). 不要用英文回复中文输入。\n[/FINAL-REMINDER]"
-      : "\n\n[FINAL-REMINDER]\nThe user just wrote in English. Your reply MUST be in English. Do not output any Chinese characters (汉字).\n[/FINAL-REMINDER]"
+    "\n\n[FINAL-REMINDER]\nYour reply MUST be in English. Do not output any non-English characters.\n[/FINAL-REMINDER]"
   return { open, close }
 }
 
@@ -294,7 +290,6 @@ export function buildLangLockSandwich(userLang: "zh" | "en" | "mixed"): {
  */
 export function buildLangLockUserDirective(userLang: "zh" | "en" | "mixed"): string {
   if (userLang === "mixed") return ""
-  return userLang === "en"
-    ? "\n\n[SYSTEM-DIRECTIVE: Reply in English only. Do not output any Chinese characters.]"
-    : "\n\n[SYSTEM-DIRECTIVE: 用中文回复。Reply only in Chinese.]"
+  // Product is English-only: every non-mixed input gets the English directive.
+  return "\n\n[SYSTEM-DIRECTIVE: Reply in English only. Do not output any non-English characters.]"
 }

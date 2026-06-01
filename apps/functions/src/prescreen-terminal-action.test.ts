@@ -158,7 +158,7 @@ describe("runPrescreenTerminalAction — PASS branch (v1.9 hotfix)", () => {
 
     assert.match(sent[0], /Employer: Acme/)
     assert.match(sent[0], /Job details: https:\/\/x\.com/)
-    assert.doesNotMatch(sent[0], /招聘方|职位详情|恭喜/)
+    assert.doesNotMatch(sent[0], /\u62DB\u8058\u65B9|\u804C\u4F4D\u8BE6\u60C5|\u606D\u559C/)
   })
 
   it("ends the matching canonical user-level job_prescreen work session", async () => {
@@ -361,7 +361,7 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
     assert.equal(r.level1Sent, false)
     assert.match(sent[0], /what you shared in this screen/i)
     assert.match(sent[0], /job link and clear requirements/i)
-    assert.doesNotMatch(sent[0], /刚才这段|岗位链接|核心要求/)
+    assert.doesNotMatch(sent[0], /\u521A\u624D\u8FD9\u6BB5|\u5C97\u4F4D\u94FE\u63A5|\u6838\u5FC3\u8981\u6C42/)
     assert.equal(piiCaptures[0].source, "fail")
     assert.equal(jobRecsCalled, true)
   })
@@ -414,7 +414,7 @@ describe("runPrescreenTerminalAction — FAIL branch (v1.9 hotfix)", () => {
     assert.match(body, /https:\/\/example\.com\/job/)
     assert.match(body, /requirements: TypeScript, Node\.js/)
     assert.match(body, /why: your TypeScript aligns with JD core skills/)
-    assert.doesNotMatch(body, /其他可能合适|为啥推|Why match:/)
+    assert.doesNotMatch(body, /\u5176\u4ED6\u53EF\u80FD\u5408\u9002|\u4E3A\u5565\u63A8|Why match:/)
   })
 })
 

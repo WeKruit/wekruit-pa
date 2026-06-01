@@ -2237,8 +2237,8 @@ function IdentityCard({ profile }: { profile: CandidateSelfProfile }) {
   const tone: "warm" | "moss" | "slate" = TONE_POOL[djb2(profile.displayName ?? "you") % TONE_POOL.length]
   const headline = deriveHeadline(profile)
   const metaParts: string[] = []
-  if (profile.globalTags?.targetJobType?.length) metaParts.push(formatProfileValue(profile.globalTags.targetJobType[0]))
-  if (profile.globalTags?.targetLocations?.length) metaParts.push(formatProfileValue(profile.globalTags.targetLocations[0]))
+  if (profile.globalTags?.targetJobType?.length) metaParts.push(joinTags(profile.globalTags.targetJobType, 2, " · "))
+  if (profile.globalTags?.targetLocations?.length) metaParts.push(joinTags(profile.globalTags.targetLocations, 2, ", "))
   metaParts.push(formatProfileStatus(profile.lifecycleState))
   return (
     <section className="wkv2-card wk-prof-card">
@@ -2261,6 +2261,13 @@ function WhatClairePitchesCard({ profile }: { profile: CandidateSelfProfile }) {
   if (tags?.targetLocations?.length) rows.push({ label: "Where", value: joinTags(tags.targetLocations, 5, ", ") })
   if (tags?.industrySector?.length) rows.push({ label: "Industries", value: joinTags(tags.industrySector, 5, " · ") })
   if (tags?.targetJobType?.length) rows.push({ label: "Job type", value: joinTags(tags.targetJobType, 4, " · ") })
+  if (tags?.companySizePreference?.length) rows.push({ label: "Company size", value: joinTags(tags.companySizePreference, 4, " · ") })
+  if (tags?.companyStage?.length) rows.push({ label: "Company stage", value: joinTags(tags.companyStage, 4, " · ") })
+  if (tags?.careerStageRange?.length === 2) {
+    rows.push({ label: "Seniority", value: `${formatProfileValue(tags.careerStageRange[0])}–${formatProfileValue(tags.careerStageRange[1])}` })
+  } else if (tags?.careerStage) {
+    rows.push({ label: "Seniority", value: formatProfileValue(tags.careerStage) })
+  }
   if (tags?.relevantTags?.length) rows.push({ label: "Tags", value: joinTags(tags.relevantTags, 6, " · ") })
   return (
     <section className="wkv2-card wk-prof-card">

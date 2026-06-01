@@ -392,9 +392,12 @@ export async function runPiiConfirmTurnIfActive(
         return
       }
       let introContext: ReturnType<typeof compactJobRecContext> | undefined
+      let candidateTagsForReason: Record<string, unknown> | undefined
       try {
         const userDoc = await db.collection("pa-users").doc(a.userId).get()
-        introContext = compactJobRecContext(userDoc.exists ? userDoc.data()?.tags : undefined)
+        const tags = userDoc.exists ? userDoc.data()?.tags : undefined
+        introContext = compactJobRecContext(tags)
+        if (tags && typeof tags === "object") candidateTagsForReason = tags as Record<string, unknown>
       } catch {
         introContext = undefined
       }
@@ -411,11 +414,33 @@ export async function runPiiConfirmTurnIfActive(
         { db, log: () => undefined }
       )
       if (sent.ok) {
+        const { buildRichMatchReason } = await import("@pa/job-rec")
         await recordRecommendedJobs(
           db,
           {
             userId: a.userId,
-            jobs: items.map((item) => item.sourceJob),
+            // Attach a grounded "why matched" pitch so /me/matches reads the GOOD
+            // reason. Rich deterministic (no LLM call); falls back to the V16
+            // sourceJob.reason inside recordRecommendedJobs when tags absent.
+            jobs: items.map((item) => {
+              const sourceJob = item.sourceJob as Record<string, unknown>
+              let matchReason: string | undefined
+              if (candidateTagsForReason) {
+                try {
+                  matchReason = buildRichMatchReason({
+                    candidate: candidateTagsForReason,
+                    job: sourceJob,
+                    matchedSkills:
+                      (sourceJob.matchedSkills as Array<{ name?: string }> | undefined) ?? [],
+                    breakdown: sourceJob.v16Score as Record<string, unknown> | undefined,
+                    lang: "en",
+                  })
+                } catch {
+                  matchReason = undefined
+                }
+              }
+              return { ...sourceJob, ...(matchReason ? { matchReason } : {}) }
+            }),
             source: "pii_confirm_post_collect",
           },
           () => undefined,

@@ -4,8 +4,8 @@
  * WHY (Adam 2026-05-02 spec):
  *   Qwen-7B advertises 32k context but effective attention degrades past
  *   ~6k input tokens. Long sessions trigger:
- *     - repeated tokens ("下下下下下下", "投投", "向向")
- *     - hallucinated literal-prompt copies ("算法磨人")
+ *     - repeated tokens
+ *     - hallucinated literal-prompt copies
  *     - mixed-register drift / NEVER-rule ignores (Bible v7.5 pushed out
  *       of attention by long history tail)
  *
@@ -76,12 +76,12 @@ export function estimateTokens(text: string | null | undefined): number {
   //   CJK Compatibility          U+F900-U+FAFF
   //   Hiragana / Katakana        U+3040-U+30FF
   //   Hangul Syllables           U+AC00-U+D7AF
-  //   CJK Symbols & Punctuation  U+3000-U+303F (counted to handle 。、)
-  const cjkRegex = /[　-〿぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]/g
+  //   CJK Symbols & Punctuation  U+3000-U+303F (counted to handle full-width punct)
+  const cjkRegex = /[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]/g
   const cjkMatches = text.match(cjkRegex)
   const cjkCount = cjkMatches ? cjkMatches.length : 0
   // Strip CJK so the ASCII word counter doesn't double-count CJK chars
-  // when they're glued to ASCII (e.g. "AI工程师").
+  // when they're glued to ASCII (e.g. an ASCII token fused to CJK).
   const asciiOnly = text.replace(cjkRegex, " ")
   const asciiWords = asciiOnly.split(/\s+/).filter((w) => w.length > 0)
   const asciiTokens = Math.ceil(asciiWords.length * 1.3)

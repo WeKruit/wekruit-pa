@@ -94,6 +94,13 @@ export type SendImessageInput = {
   to: string
   content: string
   statusCallback?: string
+  /**
+   * Optional image attachment URL. When present, Sendblue delivers the message
+   * as an iMessage image attachment (the rec-card render→host→send path). The
+   * `content` rides along as the caption. Text-only sends omit this and are
+   * byte-identical to the pre-card body.
+   */
+  mediaUrl?: string
   /** Explicit DB-selected sender line. Used for sticky/admin-internal users. */
   fromNumber?: string
   /**
@@ -159,6 +166,7 @@ export async function sendImessage(
   const body: SendblueSendRequest = {
     number: input.to,
     content: input.content,
+    ...(input.mediaUrl ? { media_url: input.mediaUrl } : {}),
     ...(resolvedFromNumber ? { from_number: resolvedFromNumber } : {}),
     ...(input.statusCallback ? { status_callback: input.statusCallback } : {}),
   }

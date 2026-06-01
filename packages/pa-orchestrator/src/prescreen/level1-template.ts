@@ -42,35 +42,17 @@ function visibleSalaryRange(value: string | undefined): string | undefined {
 
 /**
  * Compose Level 1 reveal text for a PASSED candidate. Always returns a
- * non-empty string. Bilingual (zh/en). Caller sends through the
+ * non-empty string. English-only. Caller sends through the
  * runtime-approved outbox AFTER the terminal text.
  */
-export function composeLevel1Reveal(fields: Level1RevealFields, lang: Lang): string {
-  const eta = fields.nextStepEta ?? (lang === "zh" ? "2-3 个工作日内" : "within 2-3 business days")
+export function composeLevel1Reveal(fields: Level1RevealFields, _lang: Lang): string {
+  const eta = fields.nextStepEta ?? "within 2-3 business days"
   const salaryRange = visibleSalaryRange(fields.salaryRange)
-  const companyLine = fields.company
-    ? lang === "zh"
-      ? `招聘方: ${fields.company}`
-      : `Employer: ${fields.company}`
-    : ""
-  const salaryLine = salaryRange
-    ? lang === "zh"
-      ? `薪资范围: ${salaryRange}`
-      : `Salary range: ${salaryRange}`
-    : ""
-  const linkLine = fields.applyUrl
-    ? lang === "zh"
-      ? `职位详情: ${fields.applyUrl}`
-      : `Job details: ${fields.applyUrl}`
-    : ""
-  const header =
-    lang === "zh"
-      ? `恭喜通过 ${fields.jobTitle} 初筛。`
-      : `Congrats — you've passed the initial screen for ${fields.jobTitle}.`
-  const footer =
-    lang === "zh"
-      ? `招聘方会${eta}联系你下一步, 请留意短信。`
-      : `The employer will follow up ${eta} — please watch for an SMS.`
+  const companyLine = fields.company ? `Employer: ${fields.company}` : ""
+  const salaryLine = salaryRange ? `Salary range: ${salaryRange}` : ""
+  const linkLine = fields.applyUrl ? `Job details: ${fields.applyUrl}` : ""
+  const header = `Congrats — you've passed the initial screen for ${fields.jobTitle}.`
+  const footer = `The employer will follow up ${eta} — please watch for an SMS.`
   return [header, companyLine, salaryLine, linkLine, footer].filter((l) => l.length > 0).join("\n")
 }
 
@@ -79,8 +61,6 @@ export function composeLevel1Reveal(fields: Level1RevealFields, lang: Lang): str
  * result lands). Keep it grounded in this screen so it does not feel like
  * a random match pivot.
  */
-export function composeFailJobRecsPreamble(lang: Lang): string {
-  return lang === "zh"
-    ? "我会用你刚才这段 screen 里讲到的经历, 找带岗位链接和核心要求的机会 — 稍等。"
-    : "I’ll use what you shared in this screen to look for roles with a usable job link and clear requirements — one moment."
+export function composeFailJobRecsPreamble(_lang: Lang): string {
+  return "I’ll use what you shared in this screen to look for roles with a usable job link and clear requirements — one moment."
 }

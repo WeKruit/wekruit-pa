@@ -98,6 +98,15 @@ export {
   V16_SCORE_WEIGHTS,
   V16_SCORE_WEIGHTS_SUM,
 } from "./match-weights.js"
+
+export { buildRichMatchReason, humanizeToken } from "./match-reason.js"
+export type {
+  BuildRichMatchReasonInput,
+  ReasonCandidate,
+  ReasonJob,
+  ReasonMatchedSkill,
+  ReasonScoreBreakdown,
+} from "./match-reason.js"
 export type {
   V16ScoreBreakdown,
   V16HardFilterCounters,

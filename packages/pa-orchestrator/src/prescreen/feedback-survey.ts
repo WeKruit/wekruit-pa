@@ -26,7 +26,7 @@ import {
   type Rephraser,
 } from "../onboarding/question.js"
 
-const SKIP_RE = /^\s*(skip|no\s+thanks?|nope|pass|不用|不想|跳过)\s*\.?$/i
+const SKIP_RE = /^\s*(skip|no\s+thanks?|nope|pass)\s*\.?$/i
 
 export function isSkipReply(reply: string): boolean {
   return SKIP_RE.test(reply.trim())
@@ -63,17 +63,17 @@ class FeedbackRephraser implements Rephraser {
 
 const Q_RATING_PROMPT: BilingualText = {
   en: "Last quick thing — on 1-5, how was the screening experience? (Reply 'skip' to skip)",
-  zh: "最后一个小问题 — 1-5 分, 这次预筛体验如何? (回 'skip' 跳过)",
+  zh: "Last quick thing — on 1-5, how was the screening experience? (Reply 'skip' to skip)",
 }
 const Q_RATING_RETRIES: BilingualText[] = [
-  { en: "Need a number 1-5, or 'skip'.", zh: "需要 1-5 数字, 或回 'skip'." },
+  { en: "Need a number 1-5, or 'skip'.", zh: "Need a number 1-5, or 'skip'." },
 ]
 const Q_FREEFORM_PROMPT: BilingualText = {
   en: "Any feedback you'd like to share? (Optional — reply 'skip' to finish)",
-  zh: "有任何反馈吗? (选填 — 回 'skip' 结束)",
+  zh: "Any feedback you'd like to share? (Optional — reply 'skip' to finish)",
 }
 const Q_FREEFORM_RETRIES: BilingualText[] = [
-  { en: "Type something or 'skip'.", zh: "随便写点或回 'skip'." },
+  { en: "Type something or 'skip'.", zh: "Type something or 'skip'." },
 ]
 
 export interface FeedbackHooks {
@@ -113,7 +113,7 @@ export function createFeedbackSurveyPipeline(opts: FeedbackSurveyOpts): Onboardi
     state: opts.state,
     haltMessageDefault: {
       en: "All good — thanks for your time.",
-      zh: "好的 — 感谢花时间.",
+      zh: "All good — thanks for your time.",
     },
     emit: opts.emit,
     postCollect: async (collected: Record<string, unknown>, ctx: AcceptedCtx) => {

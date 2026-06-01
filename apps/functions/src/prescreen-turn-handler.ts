@@ -207,25 +207,13 @@ function makeProductionClarifyComposer(): PreScreenClarifyComposer {
   }
 }
 
-export function prescreenClarifyRoundGuidance(round: number, lang: "zh" | "en", qId?: string): string {
+export function prescreenClarifyRoundGuidance(round: number, _lang: "zh" | "en", qId?: string): string {
   const normalizedRound = Math.max(1, Math.floor(round))
   if (qId === "technical_depth") {
-    if (lang === "zh") {
-      if (normalizedRound === 1) return "追问最弱的必备技术栈或实现细节；不要重复 role-fit 里的 impact/ownership。"
-      if (normalizedRound === 2) return "追问具体工程实现：代码、数据、API、调试或架构取舍；避免重新问业务影响。"
-      if (normalizedRound === 3) return "确认技术深度缺口：候选人是否真的做过该技术、做到什么程度、哪里没做过。"
-      return "最后一次技术确认：最小可证明 shipped technical work 或明确缺口；不要继续绕回项目影响。"
-    }
     if (normalizedRound === 1) return "Probe the weakest required technology or implementation detail; do not repeat role-fit impact/ownership."
     if (normalizedRound === 2) return "Probe concrete engineering depth: code, data, APIs, debugging, or architecture tradeoff; avoid re-asking business impact."
     if (normalizedRound === 3) return "Confirm the technical gap: whether they used the required tech, depth of use, and what they did not own."
     return "Final technical check: smallest provable shipped technical work or explicit gap; do not circle back to project impact."
-  }
-  if (lang === "zh") {
-    if (normalizedRound === 1) return "找最近的相关项目：背景、候选人亲自负责什么、用户或业务结果。"
-    if (normalizedRound === 2) return "追问 ownership 和系统边界：候选人自己做了哪一块、碰到哪些系统或数据。"
-    if (normalizedRound === 3) return "追问最难的失败/取舍/验证：问题怎么发现、怎么验证修复。"
-    return "最后一次具体确认：最小可证明的 shipped work、指标或明确缺口；不要继续泛泛追问。"
   }
   if (normalizedRound === 1) return "Find the closest relevant project: context, personal ownership, and user or business outcome."
   if (normalizedRound === 2) return "Probe ownership and system boundary: what they personally built, and which systems or data it touched."
@@ -252,30 +240,20 @@ export function prescreenSessionEvidenceContext(
   return rows.length ? rows.join("\n") : "none"
 }
 
-export function normalizePrescreenClarifyTextForRound(text: string, round: number, lang: "zh" | "en"): string {
+export function normalizePrescreenClarifyTextForRound(text: string, round: number, _lang: "zh" | "en"): string {
   const normalized = text.replace(/\s+/g, " ").trim()
   if (!normalized) return normalized
 
-  const openerByRound =
-    lang === "zh"
-      ? [
-          "明白 - ",
-          "这里 ownership 很关键 - ",
-          "这个系统细节有用 - ",
-          "最后我确认一个具体点 - ",
-        ]
-      : [
-          "Got it - ",
-          "The ownership piece matters here - ",
-          "The systems detail is the useful signal - ",
-          "One last concrete check before I score it - ",
-        ]
+  const openerByRound = [
+    "Got it - ",
+    "The ownership piece matters here - ",
+    "The systems detail is the useful signal - ",
+    "One last concrete check before I score it - ",
+  ]
   const idx = Math.min(Math.max(1, Math.floor(round)), openerByRound.length) - 1
 
   const genericAckPattern =
-    lang === "zh"
-      ? /^(这段有帮助|谢谢|收到|明白|好的|了解)[\s,，。:：;；!！—-]*/i
-      : /^(that'?s helpful|that is helpful|that helps|thanks|thank you|got it|interesting|nice)[\s,.:;!—-]*/i
+    /^(that'?s helpful|that is helpful|that helps|thanks|thank you|got it|interesting|nice)[\s,.:;!—-]*/i
 
   if (!genericAckPattern.test(normalized)) return normalized
 
@@ -554,7 +532,7 @@ async function maybeHandlePrescreenSafetyBlock(args: {
 function isUserExitPrescreenReply(reply: string): boolean {
   const normalized = reply.trim().toLowerCase()
   if (!normalized) return false
-  if (/^(stop|cancel|pause|quit|exit|end|not now|later|nevermind|never mind|退出|停止|暂停|先不|不用了|算了)[.!。！\s]*$/i.test(normalized)) {
+  if (/^(stop|cancel|pause|quit|exit|end|not now|later|nevermind|never mind)[.!\s]*$/i.test(normalized)) {
     return true
   }
   const hasExitVerb = /\b(stop|cancel|pause|quit|exit|end)\b/i.test(normalized)
@@ -592,21 +570,13 @@ function detectSimpleYesNo(body: string): "yes" | "no" | "ambiguous" {
   return "ambiguous"
 }
 
-function postPrescreenOnboardingPrompt(lang: "zh" | "en", terminal?: string | null): string {
-  if (lang === "zh") {
-    return terminal === "PASS"
-      ? "感谢回答，这次岗位初筛已经完成。下一步如果匹配合适，我会直接帮你安排和 hiring manager 沟通。同时我也可以继续帮你找更符合期待的岗位，不过需要先更了解你一点。要继续吗？"
-      : "这次 screen 先到这里。我可以继续帮你找更符合期待的岗位，不过需要先更了解你一点。要继续吗？"
-  }
+function postPrescreenOnboardingPrompt(_lang: "zh" | "en", terminal?: string | null): string {
   return terminal === "PASS"
     ? "Thanks for your answers — the role-fit screen is complete. For the next step, I’ll schedule you directly with the hiring manager once there’s a match. Meanwhile, I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
     : "Thanks for taking the time. I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
 }
 
-function pendingReviewFollowupAckText(lang: "zh" | "en"): string {
-  if (lang === "zh") {
-    return "收到，我已经把这条补充到你的岗位沟通里。这个结果还在人工 review 中，我不会在这里猜最终结论；review 完成后我会继续跟进。"
-  }
+function pendingReviewFollowupAckText(_lang: "zh" | "en"): string {
   return "Got it — I added this to your role screen context. The outcome is still under human review, so I won’t guess at the final decision here. I’ll follow up once review is complete."
 }
 
@@ -716,9 +686,6 @@ function isLikelyPrescreenContinuationReply(reply: string): boolean {
 function isJobSearchRequest(reply: string): boolean {
   const normalized = reply.trim().toLowerCase()
   if (!normalized) return false
-  if (/(?:找|推荐|匹配|看看|发)(?:一些|几个|点)?\s*(?:工作|岗位|机会|职位|内推)/.test(normalized)) {
-    return true
-  }
   return /\b(?:find|get|show|send|pull|recommend|match|search|look\s+for|looking\s+for|need|want|interested\s+in|help\s+me\s+find)\b[^.!?]{0,80}\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches|swe|software\s+engineering|software\s+engineer)\b/i.test(normalized)
 }
 
@@ -726,7 +693,7 @@ function isJobOrCompanyInfoRequest(reply: string): boolean {
   const body = reply.trim()
   if (!body) return false
   const asksQuestion =
-    /[?？]/.test(body) ||
+    /[?]/.test(body) ||
     /\b(?:what|which|who|where|how|can\s+you|could\s+you|tell\s+me|explain|details?)\b/i.test(body)
   if (!asksQuestion) return false
   return /\b(?:company|employer|hiring\s+manager|team|role|job|position|interviewing\s+for|interviewed\s+for|screening\s+for|screened\s+for)\b/i.test(body)
@@ -736,16 +703,13 @@ function isPrescreenOutcomeExplanationRequest(reply: string): boolean {
   const body = reply.trim()
   if (!body) return false
   const asksQuestion =
-    /[?？]/.test(body) ||
-    /\b(?:why|how|what|could\s+you|can\s+you|help\s+me|understand|explain|tell\s+me)\b/i.test(body) ||
-    /(?:为什么|为啥|怎么|哪里|解释|复盘|改进)/.test(body)
+    /[?]/.test(body) ||
+    /\b(?:why|how|what|could\s+you|can\s+you|help\s+me|understand|explain|tell\s+me)\b/i.test(body)
   if (!asksQuestion) return false
   const wantsOutcomeReason =
-    /\b(?:improv(?:e|ed|ing|ement)|better|stronger|strengthen|missing|gap|weak|low|pass|fail|failed|pause|paused|not\s+(?:a\s+)?fit|not\s+pass|didn'?t\s+pass|could\s+have)\b/i.test(body) ||
-    /(?:改进|提高|提升|匹配|不匹配|差距|缺口|没过|没通过|暂停|原因)/.test(body)
+    /\b(?:improv(?:e|ed|ing|ement)|better|stronger|strengthen|missing|gap|weak|low|pass|fail|failed|pause|paused|not\s+(?:a\s+)?fit|not\s+pass|didn'?t\s+pass|could\s+have)\b/i.test(body)
   if (!wantsOutcomeReason) return false
-  return /\b(?:above|this|that|same|role|job|screen|interview|prescreen|pre-screen|rain|fit)\b/i.test(body) ||
-    /(?:这个|那个|岗位|职位|面试|初筛|筛选|匹配)/.test(body)
+  return /\b(?:above|this|that|same|role|job|screen|interview|prescreen|pre-screen|rain|fit)\b/i.test(body)
 }
 
 function isJobRecommendationExplanationRequest(reply: string): boolean {
@@ -753,13 +717,11 @@ function isJobRecommendationExplanationRequest(reply: string): boolean {
   if (!body) return false
   const lower = body.toLowerCase()
   const asksQuestion =
-    /[?？]/.test(body) ||
-    /\b(?:why|what|which|how|can\s+you|tell\s+me|explain|answer)\b/i.test(body) ||
-    /(?:为什么|为啥|哪里|哪点|怎么|解释|推荐理由|匹配原因)/.test(body)
+    /[?]/.test(body) ||
+    /\b(?:why|what|which|how|can\s+you|tell\s+me|explain|answer)\b/i.test(body)
   if (!asksQuestion) return false
   const hasJobContext =
-    /\b(?:recommend(?:ed)?|matching?|matched|jobs?|roles?|positions?|opportunities|openings|internships?|co-?ops?|company|rain|constant\s+contact|fullstack)\b/i.test(body) ||
-    /(?:推荐|匹配|岗位|职位|工作|机会|实习|公司)/.test(body)
+    /\b(?:recommend(?:ed)?|matching?|matched|jobs?|roles?|positions?|opportunities|openings|internships?|co-?ops?|company|rain|constant\s+contact|fullstack)\b/i.test(body)
   if (!hasJobContext) return false
   return (
     /\bwhich\s+(?:jobs?|roles?|positions?|opportunities|matches)\b[\s\S]{0,120}\b(?:fit|fits|match|matches|best|make\s+sense)\b/i.test(body) ||
@@ -770,8 +732,7 @@ function isJobRecommendationExplanationRequest(reply: string): boolean {
     /\bwhy\s+(?:did\s+you\s+)?recommend\b/i.test(body) ||
     /\bwhat\s+part\b[\s\S]{0,120}\bmatch(?:ed|es)?\b/i.test(body) ||
     /\bwhy\s+(?:is|was|did|does)?\s*.*\bmatch(?:ed|es|ing)?\b/i.test(body) ||
-    /\b(?:deprioritize|prioritize|prefer|rather|instead\s+of)\b[\s\S]{0,120}\b(?:jobs?|roles?|internships?|co-?ops?|startups?|fullstack)\b/i.test(lower) ||
-    /(?:推荐理由|匹配原因|为什么推荐|为什么匹配)/.test(body)
+    /\b(?:deprioritize|prioritize|prefer|rather|instead\s+of)\b[\s\S]{0,120}\b(?:jobs?|roles?|internships?|co-?ops?|startups?|fullstack)\b/i.test(lower)
   )
 }
 
@@ -782,13 +743,13 @@ function isExplicitNewIntentAfterTerminal(reply: string): boolean {
 
 function isShortTerminalAck(reply: string): boolean {
   const normalized = reply.trim().toLowerCase()
-  return /^(ok|okay|yes|yeah|yep|sure|alright|all right|go ahead|proceed|got it|thanks|thank you|sounds good|明白|收到|好的|谢谢|行|可以)[.!。！\s]*$/i.test(normalized)
+  return /^(ok|okay|yes|yeah|yep|sure|alright|all right|go ahead|proceed|got it|thanks|thank you|sounds good)[.!\s]*$/i.test(normalized)
 }
 
 function isPostTerminalConstraintUpdate(reply: string): boolean {
   const normalized = reply.trim().toLowerCase()
   if (!normalized) return false
-  if (/^(remote|hybrid|onsite|sf|nyc|new york|los angeles|la|bay area|us|usa)\b.{0,80}\b(only|preferred|works|fine|ok|okay)?[.!。！\s]*$/i.test(normalized)) {
+  if (/^(remote|hybrid|onsite|sf|nyc|new york|los angeles|la|bay area|us|usa)\b.{0,80}\b(only|preferred|works|fine|ok|okay)?[.!\s]*$/i.test(normalized)) {
     return true
   }
   if (/\b(still|also|actually|for this|about this|constraint|preference|prefer|need|cannot|can't|won't|wouldn'?t)\b(?=.*\b(remote|relocat\w*|location|salary|comp|visa|sponsor|h-?1b|opt|work authorization|authorized|range)\b)/i.test(normalized)) {
@@ -1494,30 +1455,24 @@ async function finalizePrescreenTurnResult(params: {
   }
 }
 
-function expiredSessionText(lang: "zh" | "en"): string {
-  return lang === "zh"
-    ? "这次岗位初筛我先暂停了，避免把旧对话和新的经历混在一起。想继续这个岗位的话，从岗位页面重新开始，我会开一个新的 screen。"
-    : "I paused this role screen so I do not mix an old conversation with a new one. If you want to continue this role, reopen it from the job page and I will start a fresh screen."
+function expiredSessionText(_lang: "zh" | "en"): string {
+  return "I paused this role screen so I do not mix an old conversation with a new one. If you want to continue this role, reopen it from the job page and I will start a fresh screen."
 }
 
-function userExitSessionText(lang: "zh" | "en"): string {
-  return lang === "zh"
-    ? "好的，我先暂停这个岗位 screen。你之后想继续的话，从岗位页面重新开始就行；你已经分享过的经历我会保留在你的全局 profile 里。"
-    : "Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile."
+function userExitSessionText(_lang: "zh" | "en"): string {
+  return "Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile."
 }
 
 function recentTerminalSessionText(lang: "zh" | "en", terminal?: string | null): string {
   return postPrescreenOnboardingPrompt(lang, terminal)
 }
 
-function recentTerminalCourtesyAckText(lang: "zh" | "en"): string {
-  return lang === "zh"
-    ? "不客气 — 这个岗位 screen 我先保持结束状态。之后需要什么，直接在这里发我就行。"
-    : "You're welcome — I’ll keep this role screen closed. If you need anything later, message me here."
+function recentTerminalCourtesyAckText(_lang: "zh" | "en"): string {
+  return "You're welcome — I’ll keep this role screen closed. If you need anything later, message me here."
 }
 
 function recentTerminalOutcomeExplanationText(
-  lang: "zh" | "en",
+  _lang: "zh" | "en",
   terminal: string | null | undefined,
   session: Record<string, unknown>,
 ): string {
@@ -1530,16 +1485,6 @@ function recentTerminalOutcomeExplanationText(
   const strongest = strongestPrescreenSignal(session)
   const weakest = weakestPrescreenSignal(session)
   const terminalLabel = terminal === "PASS" ? "passed" : terminal === "PAUSE" ? "paused" : "ended"
-
-  if (lang === "zh") {
-    const strongText = strongest
-      ? `你最强的信号是 ${strongest.label}${strongest.summary ? `：${strongest.summary}` : ""}。`
-      : ""
-    const weakText = weakest
-      ? `这次主要差距在 ${weakest.label}${weakest.summary ? `：${weakest.summary}` : ""}。`
-      : "这次主要差距是证据还不够具体。"
-    return `${roleLabel} 这次 screen 已经${terminalLabel === "passed" ? "通过" : "结束"}。${strongText}${weakText} 下次要提高匹配度，直接给一个更具体的例子：你亲自负责什么、做了哪些实现或取舍、怎么验证有效、结果是什么。我会保留这些补充用于之后更合适的岗位。`
-  }
 
   const strongText = strongest
     ? `Your strongest signal was ${strongest.label}${strongest.summary ? `: ${strongest.summary}` : ""}. `

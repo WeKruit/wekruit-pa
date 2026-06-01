@@ -17,7 +17,7 @@
  * State shape: caller-managed. Pipeline reads + writes via stateProvider
  * so it works equally for Firestore-backed prod and in-memory tests.
  *
- * Adam directive 2026-05-05: "每一个问题抽象成一个class" — pipeline IS
+ * Adam directive 2026-05-05: abstract each question into a class — pipeline IS
  * the layer that makes Question[] composable. Adding a new Q at runtime
  * is a single .addQuestion() call (or pipeline construction with one
  * extra entry in the array).
@@ -340,9 +340,7 @@ export class OnboardingPipeline {
       const override = this.opts.completionMessage
       const completionMsg = override
         ? override[state.lang]
-        : state.lang === "zh"
-          ? "信息都收齐了, 接下来给你跑一下匹配 ✓"
-          : "got everything I need — running the match now ✓"
+        : "got everything I need — running the match now ✓"
       return await this.completeAndEmit(input, state, completionMsg)
     }
 
@@ -531,18 +529,14 @@ function sideQuestionAckFor(args: {
       typeof args.value === "number" && Number.isFinite(args.value)
         ? `about ${args.value} year${args.value === 1 ? "" : "s"}`
         : "early-career"
-    return args.lang === "zh"
-      ? `可以, 我会按 ${yoe} / early-career 来理解。`
-      : `Yes — I’ll treat that as ${yoe} / early-career for your profile.`
+    return `Yes — I’ll treat that as ${yoe} / early-career for your profile.`
   }
 
   if (
     args.qId === "q_startup_pref" &&
     /\b(ats|black holes?|huge[-\s]?company|big[-\s]?company|large[-\s]?company)\b/i.test(args.reply)
   ) {
-    return args.lang === "zh"
-      ? "明白, 我会把 startup / 小团队作为默认方向；大公司只有在要求和链接都明显值得看时才推。"
-      : "Yes - I’ll treat startups and smaller teams as the default, and only show bigger-company roles when the requirements and link look worth checking."
+    return "Yes - I’ll treat startups and smaller teams as the default, and only show bigger-company roles when the requirements and link look worth checking."
   }
 
   if (
@@ -550,30 +544,20 @@ function sideQuestionAckFor(args: {
     /\bremote\b/i.test(args.reply) &&
     /\b(us|u\.s\.|usa|united states|global|worldwide|international|unless i say global)\b/i.test(args.reply)
   ) {
-    return args.lang === "zh"
-      ? "明白, 我会先把 remote 理解成美国 remote；只有你明确说 global / worldwide 时才按全球远程处理。"
-      : "Yes - I’ll treat remote as US remote unless you explicitly say global or worldwide."
+    return "Yes - I’ll treat remote as US remote unless you explicitly say global or worldwide."
   }
 
   if (/\b(legit|real|scam|hiring manager|how does this work|how will this work|what happens next)\b/i.test(lower)) {
-    return args.lang === "zh"
-      ? "可以问。WeKruit 会用这段对话整理你的候选人资料；合作岗位的 screen 可以直接给到招聘方。"
-      : "Good question. WeKruit uses this chat to build your candidate profile; for partnered roles, the screen can go to the hiring team."
+    return "Good question. WeKruit uses this chat to build your candidate profile; for partnered roles, the screen can go to the hiring team."
   }
 
   if (/\b(job match|job matching|matching|matches|recommend|recommendation|roles?|jobs?)\b/i.test(lower)) {
-    return args.lang === "zh"
-      ? "可以。等我把你的方向记清楚后, 推荐岗位会带岗位链接和核心要求, 不会只丢一个名字。"
-      : "Yes. Once I have your direction clear, any role I recommend will include the job link and core requirements."
+    return "Yes. Once I have your direction clear, any role I recommend will include the job link and core requirements."
   }
 
   if (/\b(privacy|delete|data|save|remember|stored)\b/i.test(lower)) {
-    return args.lang === "zh"
-      ? "可以问。我们只把它用于你的 WeKruit 候选人资料和招聘流程；你也可以要求删除或导出。"
-      : "Good question. I use this for your WeKruit candidate profile and recruiting flow; you can ask to delete or export it."
+    return "Good question. I use this for your WeKruit candidate profile and recruiting flow; you can ask to delete or export it."
   }
 
-  return args.lang === "zh"
-    ? "可以问。这个我先保持在求职相关范围里处理, 然后继续把你的资料补齐。"
-    : "Fair question. I’ll keep side questions tied to your search, then keep your profile moving."
+  return "Fair question. I’ll keep side questions tied to your search, then keep your profile moving."
 }

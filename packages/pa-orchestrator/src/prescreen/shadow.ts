@@ -1,8 +1,9 @@
 /**
  * v1.8 Phase 81 — Onboarding migration shadow framework.
  *
- * Per PS10 + Adam directive 2026-05-11 ("不一刀切; 双写期 + feature flag, 先
- * shadow 跑 7 天比对老 deterministic dispatcher 输出 diff, diff 率 < 1% 再切流"),
+ * Per PS10 + Adam directive 2026-05-11 (do not cut over all at once; dual-write
+ * window + feature flag; run shadow for 7 days, compare diff vs the legacy
+ * deterministic dispatcher output, and only cut over when diff rate < 1%),
  * the migration from `onboarding-deterministic.ts` (legacy) to the new
  * PreScreenPipeline-derived engine runs in three phases per user:
  *
@@ -98,27 +99,27 @@ export function resolveEngineVersion(
 export function normalizeReplyForDiff(reply: string): string {
   return reply
     .toLowerCase()
-    .replace(/[，。！？.,!?]/g, " ")
+    .replace(/[\uFF0C\u3002\uFF01\uFF1F.,!?]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
 }
 
 /**
  * Tokenize a normalized reply into a Set of tokens for Jaccard. Treats
- * CJK characters individually (per-char Set) and non-CJK as
+ * wide-script characters individually (per-char Set) and the rest as
  * whitespace-split words. Matches the heuristic used by mirror-snippet.ts.
  */
 export function tokenizeForJaccard(normalized: string): Set<string> {
   const tokens = new Set<string>()
   for (const ch of normalized) {
-    // CJK / Hangul / Kana ranges → per-character token
-    if (/[一-鿿぀-ヿ가-힯]/.test(ch)) {
+    // Wide-script (CJK / Hangul / Kana) ranges -> per-character token
+    if (/[\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/.test(ch)) {
       tokens.add(ch)
     }
   }
-  // Whitespace-split non-CJK tokens
+  // Whitespace-split remaining tokens
   for (const w of normalized.split(/\s+/)) {
-    if (w.length > 0 && !/[一-鿿぀-ヿ가-힯]/.test(w[0])) {
+    if (w.length > 0 && !/[\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF]/.test(w[0])) {
       tokens.add(w)
     }
   }

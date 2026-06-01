@@ -4,9 +4,9 @@
  * Why this exists:
  *   The intent-matrix sim (Agent 3, commit 457d85f) discovered that fresh
  *   users' first message is silently dropped from the intent funnel — Claire
- *   ALWAYS replies with the Adam-locked first_mes ("在呢. 今天找你聊点啥? 🍋")
- *   regardless of whether the user typed "帮我找软件工程师工作" (job_search),
- *   "我是 OPT 应届" (visa_check), or anything else. Real production users
+ *   ALWAYS replies with the Adam-locked first_mes (the Adam-locked first_mes greeting)
+ *   regardless of whether the user typed a job_search ask, a visa_check
+ *   ask, or anything else. Real production users
  *   arrive WITH intent — eating it on turn-0 is a retention bug.
  *
  * Strategy (Adam brief: "this can be a reusable path"):
@@ -54,7 +54,7 @@ type IntentPattern = {
 
 /**
  * Bilingual high-confidence patterns. Designed to bias toward false NEGATIVE:
- * if a user types something ambiguous like "你好", we'd rather show the
+ * if a user types something ambiguous like "hi", we'd rather show the
  * Adam-locked greeting than ack a non-existent intent.
  */
 const INTENT_PATTERNS: readonly IntentPattern[] = [
@@ -63,23 +63,23 @@ const INTENT_PATTERNS: readonly IntentPattern[] = [
   {
     id: "job_search_zh_find",
     intent: "job_search",
-    // Allow filler between 找/看 and the role/work noun (e.g. "帮我找软件工程师工作").
-    regex: /(?:帮我|帮帮|想|要)?\s*(?:找|看|要)\s*(?:一些|个|份)?\s*(?:[一-鿿A-Za-z]{0,8}\s*)?(?:工作|活|职位|岗位|内推|实习|intern|swe|pm|工程师|开发|machine\s*learning|ml|数据|岗)/i,
+    // Allow filler between the verb and the role/work noun.
+    regex: /\b(?:find|want|looking\s+for|need)\b[^.!?]{0,20}\b(?:job|jobs|role|roles|position|positions|referral|internship|intern|swe|pm|machine\s*learning|ml)\b/i,
   },
   {
     id: "job_search_zh_change",
     intent: "job_search",
-    regex: /(?:想换|在看|准备换|考虑换|想跳槽|跳槽|换工作)/,
+    regex: /\b(?:switch\s+jobs|change\s+jobs|job\s+hopping)\b/i,
   },
   {
     id: "job_search_zh_role",
     intent: "job_search",
-    regex: /(?:找|看|要)(?:个|份|一份)?\s*(?:swe|pm|em|ic|staff|senior|junior|new\s*grad|应届)\s*(?:工作|岗位|岗|内推|的活|位置|实习|intern)/i,
+    regex: /\b(?:swe|pm|em|ic|staff|senior|junior|new\s*grad)\s+(?:job|jobs|role|position|referral|internship|intern)\b/i,
   },
   {
     id: "job_search_zh_internship",
     intent: "job_search",
-    regex: /(?:找|要|看)(?:个|份|一些)?\s*(?:实习|internship|intern\s*岗|暑期实习)/i,
+    regex: /\b(?:internship|intern\s+role|summer\s+internship)\b/i,
   },
   // EN — find/look/want jobs
   {
@@ -103,12 +103,12 @@ const INTENT_PATTERNS: readonly IntentPattern[] = [
   {
     id: "visa_check_zh",
     intent: "visa_check",
-    regex: /(?:我是|我有|关于|问下|身份|签证|工作签证|工作授权|身份问题|身份方面)\s*[^。，！？]{0,15}?(?:opt|h-?1\s*b|h1b|绿卡|gc|公民|sponsor|sponsorship|身份|签证)/i,
+    regex: /\b(?:visa|work\s+auth(?:orization)?|status)\b[^.!?]{0,15}?(?:opt|h-?1\s*b|h1b|green\s+card|gc|citizen|sponsor|sponsorship)\b/i,
   },
   {
     id: "visa_check_zh_sponsor",
     intent: "visa_check",
-    regex: /(?:需要|要|要找|找)(?:.{0,8}?)?(?:sponsor|sponsorship|赞助签证|h-?1\s*b)/i,
+    regex: /\b(?:need|want|require)\b[^.!?]{0,8}?(?:sponsor|sponsorship|h-?1\s*b)/i,
   },
   // EN — work auth / sponsorship / OPT
   {
@@ -127,7 +127,7 @@ const INTENT_PATTERNS: readonly IntentPattern[] = [
   {
     id: "resume_parse_zh",
     intent: "resume_parse",
-    regex: /(?:我的|帮我|看看|改改|看下|review)\s*(?:简历|cv|resume)/i,
+    regex: /\b(?:my|review|check|look\s+at)\s*(?:cv|resume)\b/i,
   },
   // EN
   {
@@ -146,7 +146,7 @@ const INTENT_PATTERNS: readonly IntentPattern[] = [
   {
     id: "preference_update_zh",
     intent: "preference_update",
-    regex: /(?:现在|最近|后来)(?:.{0,8}?)?(?:想转|想做|想去|改做|改方向|换方向)/,
+    regex: /\b(?:want\s+to|wanna|thinking\s+of)\s+(?:switch|change|pivot|move)\b/i,
   },
   // EN — pivot / switch direction
   {
@@ -160,12 +160,12 @@ const INTENT_PATTERNS: readonly IntentPattern[] = [
   {
     id: "interview_prep_zh",
     intent: "interview_prep",
-    regex: /(?:(?:明天|后天|下周|这周)?\s*(?:面试|interview|onsite|on-site|technical\s*screen)\s*(?:紧张|怎么准备|怎么搞|不知道|准备一下|有点慌))|(?:(?:system\s*design|系统设计|behavioral|行为面|coding\s*题|算法题|leetcode)\s*(?:紧张|不会|怎么|没准备))/i,
+    regex: /\b(?:interview|onsite|on-site|technical\s*screen)\s+(?:prep|nervous|how\s+to\s+prepare)|(?:system\s*design|behavioral|coding|leetcode)\s+(?:nervous|how|prep)/i,
   },
   {
     id: "interview_prep_zh_general",
     intent: "interview_prep",
-    regex: /(?:面试|onsite|on-site)\s*(?:有点|挺|很|超)?\s*(?:紧张|慌|焦虑|害怕)/,
+    regex: /\b(?:interview|onsite|on-site)\s+(?:nervous|anxious|scared)\b/i,
   },
   // EN
   {
@@ -184,12 +184,12 @@ const INTENT_PATTERNS: readonly IntentPattern[] = [
   {
     id: "negotiation_zh",
     intent: "negotiation",
-    regex: /(?:(?:谈|聊|要|怎么)\s*(?:offer|薪资|工资|待遇|package|tc))|(?:(?:counter|反报|加薪|涨薪|压价))|(?:(?:拿到|收到|有了)\s*(?:\d+\s*个)?\s*(?:offer|offers))/i,
+    regex: /\b(?:negotiate|discuss)\s*(?:offer|salary|package|tc)|\bcounter\b|\b(?:got|received|have)\s*(?:\d+\s*)?offers?\b/i,
   },
   {
     id: "negotiation_zh_amount",
     intent: "negotiation",
-    regex: /(?:报多少|要多少|开价|应该开|应该问)\s*(?:钱|薪|tc|总包|base)/,
+    regex: /\b(?:how\s+much|what\s+number)\s+(?:should\s+i\s+)?(?:ask|request|target)\b[^.!?]{0,12}(?:salary|tc|base|comp)/i,
   },
   // EN
   {
@@ -213,12 +213,12 @@ const INTENT_PATTERNS: readonly IntentPattern[] = [
   {
     id: "motivation_zh",
     intent: "motivation_nudge",
-    regex: /(?:没动力|没劲|不想做|拖延|拖着|提不起|懒得|emo)/,
+    regex: /\b(?:no\s+motivation|unmotivated|procrastinat\w*|lazy|emo)\b/i,
   },
   {
     id: "motivation_zh_paralyzed",
     intent: "motivation_nudge",
-    regex: /(?:不知道(?:从哪里|怎么)\s*(?:开始|下手))|(?:卡住了|动不起来|啥也不想干)/,
+    regex: /\b(?:don'?t\s+know\s+where\s+to\s+start|stuck|can'?t\s+get\s+going)\b/i,
   },
   // EN
   {
@@ -228,27 +228,27 @@ const INTENT_PATTERNS: readonly IntentPattern[] = [
   },
 
   // ---------- vent (Adam iter 21) ----------
-  // First-turn distress signal. Without this, "我崩溃了" / "I'm losing it"
-  // gets the bare "在呢. 今天找你聊点啥?" boilerplate — discards the
+  // First-turn distress signal. Without this, "I'm losing it"
+  // gets the bare first_mes boilerplate — discards the
   // user's emotional state on turn-0. iter-20 5-playbook test surfaced
   // this in vent_support_zh scenario.
   // ZH
   {
     id: "vent_zh",
     intent: "vent",
-    regex: /(?:崩溃|崩了|烦死|烦透|累死|想哭|我裂开|压力大|破防|emo|心累|绝望|受不了)/,
+    regex: /\b(?:breaking\s+down|so\s+stressed|wanna\s+cry|overwhelmed|emo|hopeless)\b/i,
   },
-  // ZH iter24 — broader distress vocab ("焦虑/翻车/撑不住/自我怀疑/睡不着/喘不过气")
+  // iter24 — broader distress vocab
   {
     id: "vent_zh_distress",
     intent: "vent",
-    regex: /(?:焦虑|睡不着|睡不好|撑不住|翻车|喘不过气|喘不上气|自我怀疑|心慌|心烦|心情不好|麻了|不行了|要疯了|垮了)/,
+    regex: /\b(?:anxious|can'?t\s+sleep|self[-\s]?doubt|panicking|losing\s+it|falling\s+apart)\b/i,
   },
-  // ZH iter24 — "感觉/觉得 + negative state"
+  // iter24 — feeling + negative state
   {
     id: "vent_zh_feel",
     intent: "vent",
-    regex: /(?:感觉|觉得).{0,5}(?:不行|没用|没希望|没意思|累|空|废|废物|loser|失败)/,
+    regex: /\b(?:feel|feeling)\b.{0,5}(?:useless|hopeless|empty|loser|failure)/i,
   },
   // EN
   {
@@ -266,7 +266,7 @@ const INTENT_PATTERNS: readonly IntentPattern[] = [
 
 /**
  * Defense-in-depth: a *light* abuse signal so we don't accidentally craft a
- * cheery "好咧! 帮你..." ack for an injection probe that slipped past the
+ * cheery "sure! let me help..." ack for an injection probe that slipped past the
  * pa-safety gate. The pa-safety v2 bank is the source of truth — this is
  * just a guard. Match → return intent=abuse → upstream falls back to default
  * Adam-locked greeting (NOT to safety canned reply — safety already passed).
@@ -275,9 +275,8 @@ const ABUSE_GUARD_PATTERNS: readonly RegExp[] = [
   /ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions|prompts?)/i,
   /system\s*prompt/i,
   /\bjailbreak\b|\bDAN\b/i,
-  /忽略(?:上面|前面|之前|所有)/,
-  /系统提示|系统指令|prompt\s*injection/i,
-  /你现在是\s*(?:DAN|admin|管理员|开发者|系统|root|越狱)/i,
+  /prompt\s*injection/i,
+  /you\s+are\s+now\s+(?:DAN|admin|developer|system|root)/i,
 ]
 
 /**
@@ -287,9 +286,9 @@ const ABUSE_GUARD_PATTERNS: readonly RegExp[] = [
  * (currently same behavior as null; reserved for future).
  */
 const CASUAL_PATTERNS: readonly RegExp[] = [
-  /^(?:你好|嗨|hi|hello|hey|嗨呀|哈喽)\s*[!！.。?？~～]?\s*$/i,
-  /^(?:在吗|在不在|忙吗)[!！.。?？~～]?\s*$/i,
-  /^(?:有人吗|hey\s+there|whats?\s*up|sup)[!！.。?？~～]?\s*$/i,
+  /^(?:hi|hello|hey)\s*[!.?~]?\s*$/i,
+  /^(?:you\s+there|around|busy)[!.?~]?\s*$/i,
+  /^(?:anyone|hey\s+there|whats?\s*up|sup)[!.?~]?\s*$/i,
 ]
 
 /**
@@ -347,35 +346,35 @@ export const INTENT_ACK_DIRECTIVES: Record<
   { zh: string; en: string }
 > = {
   job_search: {
-    zh: '用户开口就在找工作。用 friend-tone 说"好咧, 帮你看看 [角色/岗位] 的活" (1 短句, 体现你听到了用户具体说的方向, 不要照抄"角色/岗位" 字样), 然后接 ask_q_role 那句问题。',
+    zh: 'user came in asking about jobs. friend-tone ack like "got you, let\'s get you sorted on [role they mentioned]" (1 short clause, name the actual role/track they said — don\'t echo the brackets), then chain ask_q_role to confirm direction.',
     en: 'user came in asking about jobs. friend-tone ack like "got you, let\'s get you sorted on [role they mentioned]" (1 short clause, name the actual role/track they said — don\'t echo the brackets), then chain ask_q_role to confirm direction.',
   },
   visa_check: {
-    zh: '用户开口就在说身份/签证 (OPT / H1B / 绿卡 / sponsor)。用 friend-tone 说"行, 身份这块我帮你盯着" 类似的一句 ack, 然后 chain ask_q_role 那句问题 (我们先确认方向, 身份在 q_visa 那步问).',
+    zh: 'user came in mentioning work auth / OPT / sponsorship. friend-tone ack like "got you, we\'ll keep visa in scope" (1 clause), then chain ask_q_role since we ask role direction first (visa is asked later in q_visa).',
     en: 'user came in mentioning work auth / OPT / sponsorship. friend-tone ack like "got you, we\'ll keep visa in scope" (1 clause), then chain ask_q_role since we ask role direction first (visa is asked later in q_visa).',
   },
   resume_parse: {
-    zh: '用户提到简历/CV。用 friend-tone 说"好啊, 简历发我看看" 类似一句 ack, 然后 chain ask_q_role 那句问题 (先确认方向, 这样后面解析简历有上下文).',
+    zh: 'user mentioned resume/cv. friend-tone ack like "yeah send it over, I\'ll take a look" (1 clause), then chain ask_q_role to lock direction first (so resume parse has context).',
     en: 'user mentioned resume/cv. friend-tone ack like "yeah send it over, I\'ll take a look" (1 clause), then chain ask_q_role to lock direction first (so resume parse has context).',
   },
   preference_update: {
-    zh: '用户开口就在说想转方向 (PM / EM / 转 IC / 转管理). friend-tone 说"嗯, 那我们顺着这个方向聊" 类似一句 ack, 然后 chain ask_q_role 那句确认问题.',
+    zh: 'user came in talking about pivoting direction (PM / EM / IC / management). friend-tone ack like "got it, let\'s go with that" (1 clause), then chain ask_q_role to lock the new direction.',
     en: 'user came in talking about pivoting direction (PM / EM / IC / management). friend-tone ack like "got it, let\'s go with that" (1 clause), then chain ask_q_role to lock the new direction.',
   },
   vent: {
-    zh: "用户开口就在情绪发泄 (崩溃 / 烦死 / 心累). 你不是治疗师, 不是 coach, 是那个不打断的室友. ONE-SHORT acknowledgement only — 比如 \"嗯, 听着挺累的.\" 或 \"卧, 那确实.\" 或 \"听起来挺烦的, 你想说说不?\" — 不超过 12 字 / ≤2 短句. NEVER 给建议, NEVER 列原因, NEVER 引导 ask_q_role 这种 onboarding 问题, NEVER 鸡汤. 之后不接任何问题 — 让用户继续吐. friend-tone, Mandarin.",
+    zh: "user came in venting / distressed. you're not a therapist, not a coach — you're the roommate who doesn't interrupt. ONE-SHORT ack only — like \"yeah, that sounds rough.\" or \"oh fr, that sucks.\" or \"i hear you. wanna say more?\" — under 15 words / ≤2 short sentences. NEVER give advice, NEVER list reasons, NEVER chain into ask_q_role onboarding, NEVER pep talk. don't append any question — let them keep venting. friend-tone, English.",
     en: "user came in venting / distressed. you're not a therapist, not a coach — you're the roommate who doesn't interrupt. ONE-SHORT ack only — like \"yeah, that sounds rough.\" or \"oh fr, that sucks.\" or \"i hear you. wanna say more?\" — under 15 words / ≤2 short sentences. NEVER give advice, NEVER list reasons, NEVER chain into ask_q_role onboarding, NEVER pep talk. don't append any question — let them keep venting. friend-tone, English.",
   },
   interview_prep: {
-    zh: "用户开口就在面试前焦虑 (system design / behavioral / coding). 你是那个一起复盘过的朋友, 不是 coach. ONE-SHORT acknowledgement (e.g. \"嗯, 我在.\" 或 \"在的, 别慌.\") + 1 句具体的问 (e.g. \"什么公司什么岗位, 系统设计还是 behavioral?\" 或 \"你最担心哪一块?\"). ≤2 短句, ≤30 字. NEVER 长篇 STAR 法 / 列 framework / 列 N 个 tips, NEVER 引导 ask_q_role onboarding 问题. friend-tone, Mandarin.",
+    zh: "user came in nervous about an upcoming interview (system design / behavioral / coding). you're the friend who's been through it, not a coach. ONE-SHORT ack (e.g. \"hey, i got you.\" or \"deep breath.\") + ONE concrete question (e.g. \"what company / role, sys design or behavioral?\" or \"what part are you most stuck on?\"). ≤2 short sentences, ≤25 words. NEVER deliver a STAR-method paragraph or list 5 tips, NEVER chain into ask_q_role onboarding. friend-tone, English.",
     en: "user came in nervous about an upcoming interview (system design / behavioral / coding). you're the friend who's been through it, not a coach. ONE-SHORT ack (e.g. \"hey, i got you.\" or \"deep breath.\") + ONE concrete question (e.g. \"what company / role, sys design or behavioral?\" or \"what part are you most stuck on?\"). ≤2 short sentences, ≤25 words. NEVER deliver a STAR-method paragraph or list 5 tips, NEVER chain into ask_q_role onboarding. friend-tone, English.",
   },
   negotiation: {
-    zh: "用户开口就在谈 offer / 薪资 / counter. 你是过来人朋友, 不是 recruiter. ONE-SHORT ack (e.g. \"哦那挺好, 多少 offer 在手?\") + 1 句锚定信息的问 (\"现在手上几个 offer? 当前 base / total comp 大概多少? 想 target 多少?\"). ≤2 短句, ≤30 字. NEVER 直接给数字 (e.g. \"应该问 30 万\"), NEVER 列谈判 N 步法, NEVER 引导 ask_q_role onboarding 问题. friend-tone, Mandarin.",
+    zh: "user came in asking about negotiating offer / salary / counter. you're a friend who's been through it, not a recruiter. ONE-SHORT ack (e.g. \"ok cool, how many offers do you have?\") + ONE anchoring question (\"how many offers, current base / TC, what number do you want?\"). ≤2 short sentences, ≤25 words. NEVER state a specific number (e.g. \"ask for 250k\"), NEVER list a 5-step negotiation framework, NEVER chain into ask_q_role onboarding. friend-tone, English.",
     en: "user came in asking about negotiating offer / salary / counter. you're a friend who's been through it, not a recruiter. ONE-SHORT ack (e.g. \"ok cool, how many offers do you have?\") + ONE anchoring question (\"how many offers, current base / TC, what number do you want?\"). ≤2 short sentences, ≤25 words. NEVER state a specific number (e.g. \"ask for 250k\"), NEVER list a 5-step negotiation framework, NEVER chain into ask_q_role onboarding. friend-tone, English.",
   },
   motivation_nudge: {
-    zh: "用户开口就在低能量 / 拖延 / 没动力. 你是那个不强求的朋友. ONE-SHORT ack (e.g. \"嗯, 我在.\" 或 \"懂的, 那种状态.\") + 1 句轻量 nudge — 不是 \"加油!\" 鸡汤, 而是降低门槛的话 (e.g. \"先别硬做, 把手边最小的那一件先放眼前就好.\" 或 \"今天就先躺一下, 等会儿再看?\"). ≤2 短句, ≤30 字. NEVER 列 5 步走 / framework, NEVER 鸡汤, NEVER 引导 ask_q_role onboarding 问题. friend-tone, Mandarin.",
+    zh: "user came in low-energy / procrastinating / unmotivated. you're the friend who doesn't push. ONE-SHORT ack (e.g. \"yeah, i got you.\" or \"that vibe i know.\") + ONE light nudge — NOT a pep talk; lower the bar (e.g. \"don't force it. just put the smallest one in front of you.\" or \"take a beat, look at it again later.\"). ≤2 short sentences, ≤25 words. NEVER deliver a 5-step framework, NEVER pep talk, NEVER chain into ask_q_role onboarding. friend-tone, English.",
     en: "user came in low-energy / procrastinating / unmotivated. you're the friend who doesn't push. ONE-SHORT ack (e.g. \"yeah, i got you.\" or \"that vibe i know.\") + ONE light nudge — NOT a pep talk; lower the bar (e.g. \"don't force it. just put the smallest one in front of you.\" or \"take a beat, look at it again later.\"). ≤2 short sentences, ≤25 words. NEVER deliver a 5-step framework, NEVER pep talk, NEVER chain into ask_q_role onboarding. friend-tone, English.",
   },
 }

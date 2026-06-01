@@ -1,8 +1,9 @@
 /**
- * Phase 37 T2 — strategy_fit validator tests + Phase 33 parity audit.
+ * Phase 37 T2 — strategy_fit validator tests + Phase 33 parity audit
+ * (English-only).
  *
  * Parity oracle: dynamic-import voice-axes.mjs:inferStrategy. Asserts:
- * - 12 fixed inputs return identical strategy
+ * - fixed English inputs return identical strategy
  * - confidence may differ by ≤ 0.1 (TS port allows wider keyword bank
  *   evolution; documented)
  */
@@ -29,16 +30,10 @@ const VOICE_AXES_MJS = path.resolve(
 )
 
 // ---------------------------------------------------------------------------
-// 12 fixed inputs for parity audit
+// Fixed English inputs for parity audit
 // ---------------------------------------------------------------------------
 
 const PARITY_INPUTS: { reply: string; expectedStrategy?: Strategy }[] = [
-  { reply: "你今天感觉怎么样？", expectedStrategy: "Question" },
-  { reply: "你是说她直接拒绝了？", expectedStrategy: "Restatement" },
-  { reply: "听起来真的很难。", expectedStrategy: "Reflection" },
-  { reply: "我以前也遇到过类似的情况。", expectedStrategy: "SelfDisclosure" },
-  { reply: "你已经做得很好了。", expectedStrategy: "Affirmation" },
-  { reply: "可以试试先列个清单。", expectedStrategy: "Suggestion" },
   { reply: "How are you feeling today?", expectedStrategy: "Question" },
   { reply: "So you're saying she just left?", expectedStrategy: "Restatement" },
   { reply: "That sounds like a lot.", expectedStrategy: "Reflection" },
@@ -47,7 +42,7 @@ const PARITY_INPUTS: { reply: string; expectedStrategy?: Strategy }[] = [
   { reply: "Maybe try writing it down first.", expectedStrategy: "Suggestion" },
 ]
 
-test("Phase 33 parity — inferStrategy returns same strategy on 12 fixed inputs", async () => {
+test("Phase 33 parity — inferStrategy returns same strategy on fixed English inputs", async () => {
   const mjs = await import(VOICE_AXES_MJS)
   for (const { reply } of PARITY_INPUTS) {
     const ts = inferStrategy(reply)
@@ -75,18 +70,18 @@ test("Phase 33 parity — empty / whitespace input → Other", async () => {
 // inferStrategy semantics
 // ---------------------------------------------------------------------------
 
-test("inferStrategy — zh question via 怎么", () => {
-  const r = inferStrategy("最近怎么样？")
+test("inferStrategy — en question via 'how'", () => {
+  const r = inferStrategy("How have things been lately?")
   assert.equal(r.strategy, "Question")
 })
 
 test("inferStrategy — short non-keyword text → Other", () => {
-  const r = inferStrategy("好")
+  const r = inferStrategy("ok")
   assert.equal(r.strategy, "Other")
 })
 
 test("inferStrategy — long non-keyword statement → Information", () => {
-  const r = inferStrategy("这条信息非常详细需要仔细阅读")
+  const r = inferStrategy("this message is very detailed and needs careful reading")
   assert.equal(r.strategy, "Information")
 })
 
@@ -101,34 +96,34 @@ test("inferStrategy — en suggestion via 'try'", () => {
 
 test("validateStrategyFit — Reflection ∈ Comforting allowed-set", () => {
   const allowed = allowedStrategies(1, "SoftConcerned")
-  const r = validateStrategyFit("听起来真的很难。", allowed)
+  const r = validateStrategyFit("That sounds like a lot.", allowed)
   assert.equal(r.strategy, "Reflection")
   assert.equal(r.allowed, true)
 })
 
 test("validateStrategyFit — Suggestion NOT in Exploration allowed-set", () => {
   const allowed = allowedStrategies(0, "WarmCurious")
-  const r = validateStrategyFit("不妨试试这个方法。", allowed)
+  const r = validateStrategyFit("Maybe try this approach.", allowed)
   assert.equal(r.strategy, "Suggestion")
   assert.equal(r.allowed, false)
 })
 
 test("validateStrategyFit — Suggestion NOT in QuietWitness allowed-set even at Action stage", () => {
   const allowed = allowedStrategies(2, "QuietWitness")
-  const r = validateStrategyFit("可以试试先休息。", allowed)
+  const r = validateStrategyFit("Maybe try resting first.", allowed)
   assert.equal(r.strategy, "Suggestion")
   assert.equal(r.allowed, false)
 })
 
 test("validateStrategyFit — Suggestion ALLOWED in FirmDirect Action stage", () => {
   const allowed = allowedStrategies(2, "FirmDirect")
-  const r = validateStrategyFit("不妨试试先列个清单。", allowed)
+  const r = validateStrategyFit("Maybe try writing a quick list first.", allowed)
   assert.equal(r.strategy, "Suggestion")
   assert.equal(r.allowed, true)
 })
 
 test("runFsmGate — pass when reply ∈ allowed-set", () => {
-  const r = runFsmGate("听起来真的很难，已经做得很好了。", {
+  const r = runFsmGate("That sounds like a lot, you got this.", {
     uxState: "SoftConcerned",
     turnNumber: 5,
   })
@@ -137,7 +132,7 @@ test("runFsmGate — pass when reply ∈ allowed-set", () => {
 })
 
 test("runFsmGate — fail with descriptive reason when reply ∉ allowed-set", () => {
-  const r = runFsmGate("不妨试试新工具。", {
+  const r = runFsmGate("Maybe try a new tool.", {
     uxState: "WarmCurious",
     turnNumber: 1,
   })
@@ -161,10 +156,10 @@ test("inferPrevStrategyFromHistory — empty history → undefined", () => {
 
 test("inferPrevStrategyFromHistory — picks last non-empty reply", () => {
   const r = inferPrevStrategyFromHistory([
-    "你今天怎么样？",
-    "听起来真的很难。",
+    "How are you today?",
+    "That sounds like a lot.",
   ])
-  // Last is "听起来真的很难。" → Reflection
+  // Last is "That sounds like a lot." → Reflection
   assert.equal(r, "Reflection")
 })
 
@@ -175,11 +170,11 @@ test("inferPrevStrategyFromHistory — picks last non-empty reply", () => {
 test("validator latency < 3ms p95 over 50 invocations", () => {
   const samples: number[] = []
   const replies = [
-    "听起来真的很难。",
+    "That sounds like a lot.",
     "Maybe try writing it down first.",
-    "你已经做得很好了。",
+    "You got this, you've come a long way.",
     "How are you feeling today?",
-    "我以前也遇到过类似的情况。",
+    "I once had a similar thing happen.",
   ]
   for (let i = 0; i < 50; i++) {
     const start = performance.now()

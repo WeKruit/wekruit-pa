@@ -2,12 +2,12 @@
  * v1.5 / Phase 53.5 — Job market knowledge harness prompt.
  *
  * Why this exists (Adam 2026-05-02 spec):
- *   In dry-run testing Adam asked "AI agent 开发, 哪些你觉得我有" and Claire
+ *   In dry-run testing Adam asked "AI agent dev, which of these do you think I have" and Claire
  *   replied without naming any of the actual hot keywords (RAG, tool calling,
  *   workflow orchestration). Bible v7.5 is voice/style focused; it does NOT
  *   carry domain knowledge of what specific technical keywords are HOT in
  *   the 2026 AI agent market. Claire was happy to confirm vague matches
- *   ("有 Python 是 match") without checking against the harder bar.
+ *   ("you have Python so it is a match") without checking against the harder bar.
  *
  *   This module injects a tight "JOB MARKET CONTEXT (2026)" block into the
  *   system prompt, ONLY when the recent conversation/profile hints at one
@@ -18,7 +18,7 @@
  * Wire-in: same pattern as cv-context-injection.ts — code-level append
  * to the composed handbook system prompt in orchestrator/src/index.ts.
  *
- * SCOPE — Adam constraint "保守, 只列 indisputable hot skills":
+ * SCOPE — Adam constraint "be conservative, only list indisputable hot skills":
  *   - AI agent: 9 keywords (RAG, function/tool calling, workflow orchestration,
  *     multi-turn state, agentic workflows, LangChain/LlamaIndex, vector DBs,
  *     prompt engineering, evaluation harnesses)
@@ -36,16 +36,18 @@ export type JobMarketRole = "ai_agent" | "pm" | "swe"
 
 /** Hot skills for AI agent / LLM application roles in 2026. */
 export const AI_AGENT_HOT_SKILLS_2026 = {
+  // Legacy `zh` key retained for back-compat; product is English-only, so it
+  // mirrors `en`.
   zh: [
-    "RAG (检索增强生成)",
-    "function calling / tool calling",
-    "工作流编排 (workflow orchestration)",
-    "多轮对话状态管理 (multi-turn state mgmt)",
-    "agentic workflow",
+    "RAG (Retrieval-Augmented Generation)",
+    "function/tool calling",
+    "workflow orchestration",
+    "multi-turn state management",
+    "agentic workflows",
     "LangChain / LlamaIndex",
-    "vector database (向量检索)",
+    "vector databases",
     "prompt engineering",
-    "evaluation / eval harness",
+    "evaluation harnesses",
   ],
   en: [
     "RAG (Retrieval-Augmented Generation)",
@@ -63,10 +65,10 @@ export const AI_AGENT_HOT_SKILLS_2026 = {
 /** Hot skills for Product Manager roles in 2026. */
 export const PM_HOT_SKILLS_2026 = {
   zh: [
-    "数据驱动决策",
-    "AB 测试",
-    "增长指标 (DAU/MAU/retention)",
-    "用户调研 (user research)",
+    "data-driven decisions",
+    "A/B testing",
+    "growth metrics (DAU/MAU/retention)",
+    "user research",
     "GTM (go-to-market)",
   ],
   en: [
@@ -81,9 +83,9 @@ export const PM_HOT_SKILLS_2026 = {
 /** Hot skills for general SWE roles in 2026. */
 export const SWE_HOT_SKILLS_2026 = {
   zh: [
-    "系统设计",
-    "分布式系统",
-    "可观测性 (observability / metrics / tracing)",
+    "system design",
+    "distributed systems",
+    "observability (metrics / tracing)",
     "CI/CD pipelines",
     "code review",
     "on-call / incident response",
@@ -105,17 +107,17 @@ const ROLE_BANK: Record<
   ai_agent: {
     zh: AI_AGENT_HOT_SKILLS_2026.zh,
     en: AI_AGENT_HOT_SKILLS_2026.en,
-    label: { zh: "AI agent / LLM 应用开发", en: "AI agent / LLM application engineering" },
+    label: { zh: "AI agent / LLM application engineering", en: "AI agent / LLM application engineering" },
   },
   pm: {
     zh: PM_HOT_SKILLS_2026.zh,
     en: PM_HOT_SKILLS_2026.en,
-    label: { zh: "产品经理 (PM)", en: "Product Manager (PM)" },
+    label: { zh: "Product Manager (PM)", en: "Product Manager (PM)" },
   },
   swe: {
     zh: SWE_HOT_SKILLS_2026.zh,
     en: SWE_HOT_SKILLS_2026.en,
-    label: { zh: "软件工程师 (SWE)", en: "Software Engineer (SWE)" },
+    label: { zh: "Software Engineer (SWE)", en: "Software Engineer (SWE)" },
   },
 }
 
@@ -138,28 +140,24 @@ export function detectJobMarketRole(text: string | undefined | null): JobMarketR
   // Standalone "AI" is not enough (could be small-talk).
   const aiAgentSignals = [
     /\bai\s*agent\b/,
-    /\ba(?:gent|gentic)\s*(?:engineer|开发|工程|workflow|orchestr)/,
-    /\bllm\s*(?:engineer|application|app|开发|工程)/,
+    /\ba(?:gent|gentic)\s*(?:engineer|workflow|orchestr)/,
+    /\bllm\s*(?:engineer|application|app)/,
     /\brag\b/,
     /\blangchain\b/,
     /\bllama\s*index\b/,
     /\btool\s*call(?:ing)?\b/,
     /\bfunction\s*call(?:ing)?\b/,
     /\bagentic\b/,
-    /大模型\s*(?:开发|工程|应用|工程师)/,
-    /agent\s*开发/,
-    /多轮(?:对话|state)/,
+    /multi-?turn\s*(?:conversation|state)/,
   ]
   for (const re of aiAgentSignals) {
     if (re.test(body)) return "ai_agent"
   }
 
-  // pm — explicit product manager / 产品经理 mention. "growth" alone is too generic.
+  // pm — explicit product manager mention. "growth" alone is too generic.
   const pmSignals = [
-    /产品经理/,
     /\bproduct\s*manager\b/,
-    /\bpm\s*(?:role|岗|工作|岗位|job|position)/,
-    /\b(?:做|找|看|当|换)\s*pm\b/,
+    /\bpm\s*(?:role|job|position)/,
     /\bgrowth\s*pm\b/,
   ]
   for (const re of pmSignals) {
@@ -171,11 +169,7 @@ export function detectJobMarketRole(text: string | undefined | null): JobMarketR
   // as bare "engineer" because it commits to the SWE specialization.
   const sweSignals = [
     /\bsoftware\s*engineer\b/,
-    /软件工程师/,
-    /\bswe\s*(?:role|岗|工作|岗位|job|position|开发)?/,
-    /后端\s*工程师/,
-    /前端\s*工程师/,
-    /全栈\s*工程师/,
+    /\bswe\s*(?:role|job|position)?/,
     /\bbackend\s*engineer\b/,
     /\bfrontend\s*engineer\b/,
     /\bfull[- ]?stack\s*engineer\b/,
@@ -194,40 +188,26 @@ export function detectJobMarketRole(text: string | undefined | null): JobMarketR
 export function buildHarnessPrompt(role: JobMarketRole, lang: "zh" | "en"): string {
   const bank = ROLE_BANK[role]
   if (!bank) return ""
-  const skills = lang === "zh" ? bank.zh : bank.en
-  const label = lang === "zh" ? bank.label.zh : bank.label.en
+  // Product is English-only — always render the English bank/label.
+  void lang
+  const skills = bank.en
+  const label = bank.label.en
 
   const lines: string[] = []
   lines.push("## JOB MARKET CONTEXT (2026)")
-  if (lang === "zh") {
-    lines.push(
-      `用户在聊 ${label} 方向。下面这组关键词是 2026 当前市场上 *硬* 要求的核心技能 — 当用户问 "我哪些 match"、"我够格吗"、"招聘要什么" 类问题时，必须用这组关键词来评估 + 反馈，不要泛泛说 "有 Python 就是 match"。`
-    )
-    lines.push("")
-    lines.push(`${label} 当前市场关键技能 (2026):`)
-    for (const s of skills) lines.push(`  - ${s}`)
-    lines.push("")
-    lines.push("使用规则:")
-    lines.push(
-      "  - 用户列简历技能时，把上面这组当成 checklist — 直接说 \"你 RAG / tool calling 这块对得上\" 或 \"core 缺 RAG\"。"
-    )
-    lines.push("  - 单独一个 Python / SQL 这种通用语言不算真 match — 要看上面 core 关键词覆盖度。")
-    lines.push("  - 不要把 Python = AI agent。Python 是必要不充分条件。")
-  } else {
-    lines.push(
-      `User is in the ${label} track. The keyword set below is the *hard* requirement on the 2026 market — when the user asks "what do I match", "am I qualified", "what does this role want", evaluate AGAINST this list. Do NOT say "you have Python so you match"; that's the lazy answer.`
-    )
-    lines.push("")
-    lines.push(`${label} hot skills on the 2026 market:`)
-    for (const s of skills) lines.push(`  - ${s}`)
-    lines.push("")
-    lines.push("Usage rules:")
-    lines.push(
-      "  - When the user lists CV skills, treat the bank above as a checklist — name explicit hits (\"your RAG / tool calling experience lines up\") or explicit gaps (\"core RAG missing\")."
-    )
-    lines.push("  - A single generic language like Python or SQL is NOT a real match by itself — coverage of the CORE keywords is what counts.")
-    lines.push("  - Python alone ≠ AI agent qualification. Python is necessary but not sufficient.")
-  }
+  lines.push(
+    `User is in the ${label} track. The keyword set below is the *hard* requirement on the 2026 market — when the user asks "what do I match", "am I qualified", "what does this role want", evaluate AGAINST this list. Do NOT say "you have Python so you match"; that's the lazy answer.`
+  )
+  lines.push("")
+  lines.push(`${label} hot skills on the 2026 market:`)
+  for (const s of skills) lines.push(`  - ${s}`)
+  lines.push("")
+  lines.push("Usage rules:")
+  lines.push(
+    "  - When the user lists CV skills, treat the bank above as a checklist — name explicit hits (\"your RAG / tool calling experience lines up\") or explicit gaps (\"core RAG missing\")."
+  )
+  lines.push("  - A single generic language like Python or SQL is NOT a real match by itself — coverage of the CORE keywords is what counts.")
+  lines.push("  - Python alone ≠ AI agent qualification. Python is necessary but not sufficient.")
   return lines.join("\n")
 }
 
@@ -253,7 +233,7 @@ export function appendJobMarketKnowledgeToSystemPrompt(
     lang?: "zh" | "en"
   }
 ): string {
-  const lang = signals.lang ?? "zh"
+  const lang = signals.lang ?? "en"
   // Combine signals — userMessage carries the freshest intent; statedTargetRoles
   // provides persistent context (e.g. user said "I'm an AI agent dev" 3 turns ago).
   const combined = [

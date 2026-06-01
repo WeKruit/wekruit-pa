@@ -8,9 +8,9 @@
  *   - "Bay Area"            → ["sf"]                        (LLM)
  *   - "sfran or nYC works"  → ["sf","nyc"]   typo + multi    (LLM)
  *   - "Everywhere is fine"  → ["anywhere"]                   (LLM)
- *   - "都行"                → ["anywhere"]                   (bloom)
+ *   - "anywhere"            → ["anywhere"]                   (bloom)
  *   - "SF or NYC or remote" → ["sf","nyc","remote"]           (LLM)
- *   - "看机会"              → unclear                        (LLM)
+ *   - "open to options"     → unclear                        (LLM)
  */
 import test from "node:test"
 import assert from "node:assert/strict"
@@ -47,15 +47,15 @@ const LOCATION_HINTS = [
 ] as const
 
 const LOCATION_BLOOM = [
-  { pattern: /^\s*(remote|远程|远端)\s*$/i, value: ["remote"] as LocationAnswer },
-  { pattern: /^\s*(anywhere|都行|无所谓|哪都行|都可以)\s*$/i, value: ["anywhere"] as LocationAnswer },
+  { pattern: /^\s*(remote)\s*$/i, value: ["remote"] as LocationAnswer },
+  { pattern: /^\s*(anywhere)\s*$/i, value: ["anywhere"] as LocationAnswer },
 ]
 
 function parseLocation(raw: unknown): LocationAnswer | null {
   if (typeof raw === "string") {
     const t = raw.trim().toLowerCase()
-    if (/^(remote|远程|远端)$/.test(t)) return ["remote"]
-    if (/^(anywhere|都行|无所谓|哪都行|都可以)$/.test(t)) return ["anywhere"]
+    if (/^(remote)$/.test(t)) return ["remote"]
+    if (/^(anywhere)$/.test(t)) return ["anywhere"]
     return t ? [t] : null
   }
   if (Array.isArray(raw)) {
@@ -116,12 +116,12 @@ test("q-location: PAIN POINT 'Everywhere is fine' → ['anywhere'] (LLM)", async
   if (r.accept) assert.deepEqual(r.value, ["anywhere"])
 })
 
-test("q-location: PAIN POINT '都行' → ['anywhere'] (bloom)", async () => {
+test("q-location: PAIN POINT 'anywhere' → ['anywhere'] (bloom)", async () => {
   const { J, calls } = makeJudge("")
-  const r = await J.judge("都行", "zh", ctx())
+  const r = await J.judge("anywhere", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.deepEqual(r.value, ["anywhere"])
-  assert.equal(calls(), 0, "都行 must bloom-hit, no LLM call")
+  assert.equal(calls(), 0, "anywhere must bloom-hit, no LLM call")
 })
 
 test("q-location: PAIN POINT 'SF or NYC or remote' → ['sf','nyc','remote'] (LLM)", async () => {
@@ -133,18 +133,18 @@ test("q-location: PAIN POINT 'SF or NYC or remote' → ['sf','nyc','remote'] (LL
   if (r.accept) assert.deepEqual(r.value, ["sf", "nyc", "remote"])
 })
 
-test("q-location: PAIN POINT '看机会' → unclear (LLM)", async () => {
+test("q-location: PAIN POINT 'open to options' → unclear (LLM)", async () => {
   const { J } = makeJudge(
     JSON.stringify({
       intent: "unclear",
-      clarifyingQuestion: "城市说一下: 湾区 / NYC / Seattle / 上海 — 一个或多个",
+      clarifyingQuestion: "which city: Bay Area / NYC / Seattle — one or more",
     })
   )
-  const r = await J.judge("看机会", "zh", ctx())
+  const r = await J.judge("open to options", "en", ctx())
   assert.equal(r.accept, false)
   if (!r.accept) {
     assert.equal(r.reason, "unclear")
-    assert.match(r.clarifyingQuestion ?? "", /城市|湾区|nyc/i)
+    assert.match(r.clarifyingQuestion ?? "", /city|bay area|nyc/i)
   }
 })
 
@@ -158,9 +158,9 @@ test("q-location: 'remote' → bloom hit ['remote']", async () => {
   assert.equal(calls(), 0)
 })
 
-test("q-location: '远程' → bloom hit ['remote']", async () => {
+test("q-location: 'remote' → bloom hit ['remote']", async () => {
   const { J } = makeJudge("")
-  const r = await J.judge("远程", "zh", ctx())
+  const r = await J.judge("remote", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.deepEqual(r.value, ["remote"])
 })
@@ -174,20 +174,20 @@ test("q-location: 'NYC, Boston, or remote' → ['nyc','boston','remote']", async
   if (r.accept) assert.deepEqual(r.value, ["nyc", "boston", "remote"])
 })
 
-test("q-location: '上海或北京' → ['shanghai','beijing']", async () => {
+test("q-location: 'sf or nyc' → ['sf','nyc']", async () => {
   const { J } = makeJudge(
     JSON.stringify({ intent: "provided", value: ["shanghai", "beijing"], confidence: 0.95 })
   )
-  const r = await J.judge("上海或北京", "zh", ctx())
+  const r = await J.judge("sf or nyc", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.deepEqual(r.value, ["shanghai", "beijing"])
 })
 
-test("q-location: '杭州' → ['hangzhou']", async () => {
+test("q-location: 'seattle' → ['seattle']", async () => {
   const { J } = makeJudge(
     JSON.stringify({ intent: "provided", value: ["hangzhou"], confidence: 1.0 })
   )
-  const r = await J.judge("杭州", "zh", ctx())
+  const r = await J.judge("seattle", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.deepEqual(r.value, ["hangzhou"])
 })

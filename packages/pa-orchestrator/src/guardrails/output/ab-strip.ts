@@ -20,13 +20,13 @@ export const abStripGuardrail: OutputGuardrail = {
     const input = agentOutput ?? ""
     let text = input
     const patterns: string[] = []
-    // Pass 1 — tail probe (X 还是 Y? / X or Y?).
+    // Pass 1 — tail probe (X or Y?).
     const tail = stripABProbeFromTail(text)
     if (tail.hits.length > 0) {
       text = tail.stripped
       for (const h of tail.hits) patterns.push(h)
     }
-    // Pass 2 — framework head (如果你想 X，那可以 Y / If you want X, you could Y).
+    // Pass 2 — framework head (If you want X, you could Y).
     const fw = stripABFramework(text)
     if (fw.applied) {
       text = fw.text

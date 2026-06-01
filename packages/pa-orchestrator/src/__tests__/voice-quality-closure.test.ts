@@ -169,11 +169,14 @@ const baseEvent: InboundEvent = {
 // F2 — conditional A/B framework strip
 // ---------------------------------------------------------------------------
 
-test("vqc-F2: zh conditional A/B head is stripped from outbound", async () => {
+// English-only product: zh conditional A/B strip pattern removed.
+// F2 now handles only English conditional heads (en_conditional_if_then).
+// Test converted to English input/output to preserve F2 strip coverage.
+test("vqc-F2: en conditional A/B head is stripped from outbound (English-only product)", async () => {
   const captures = emptyCaptures()
-  // The exact failing pattern: "如果你想 X, 那可以 Y" — our strip should
-  // remove "如果你想转 PM 方向，那可以" and leave "先做 product analyst"
-  const llmBody = "如果你想转 PM 方向，那可以先做 product analyst"
+  // English conditional head pattern: "If you want to switch to PM, you could start as product analyst"
+  // F2 strip should remove "If you want to switch to PM, you could " and leave "start as product analyst"
+  const llmBody = "If you want to switch to PM, you could start as product analyst"
   const store = makeStore(captures, llmBody)
 
   // Env-override path: getFlag returns true on `paHumanizeRuntimeEnabled`
@@ -190,7 +193,7 @@ test("vqc-F2: zh conditional A/B head is stripped from outbound", async () => {
   process.env.PA_AB_PROBE_STRIP_ENABLED = "false"
 
   try {
-    await processInboundEvent({ ...baseEvent, body: "想换工作有想法吗" }, store)
+    await processInboundEvent({ ...baseEvent, body: "thinking about switching roles" }, store)
   } finally {
     delete process.env.paHumanizeRuntimeEnabled
     delete process.env.PA_DETECTORS_ENABLED
@@ -203,14 +206,14 @@ test("vqc-F2: zh conditional A/B head is stripped from outbound", async () => {
 
   assert.equal(captures.outboundBodies.length, 1)
   const outbound = captures.outboundBodies[0]!
-  // Head must be GONE
-  assert.doesNotMatch(outbound, /如果你想/u, `expected head removed, got: ${outbound}`)
+  // Head must be GONE (English conditional "If you want to switch to PM, you could")
+  assert.doesNotMatch(outbound, /if you want/iu, `expected head removed, got: ${outbound}`)
   // Then-clause must REMAIN
-  assert.match(outbound, /先做 product analyst/u, `expected then-clause preserved, got: ${outbound}`)
-  // Telemetry log fired with pattern label
+  assert.match(outbound, /start as product analyst/iu, `expected then-clause preserved, got: ${outbound}`)
+  // Telemetry log fired with English pattern label
   const log = captures.logs.find((l) => l.event === "pa.voice.ab_framework_strip.applied")
   assert.ok(log, `expected ab_framework_strip.applied log, got: ${JSON.stringify(captures.logs.map((l) => l.event))}`)
-  assert.equal(log!.payload["pattern"], "zh_conditional_if_then")
+  assert.equal(log!.payload["pattern"], "en_conditional_if_then")
 })
 
 test("vqc-F2: PA_AB_FRAMEWORK_STRIP_DISABLED=true bypasses the strip", async () => {
@@ -255,11 +258,15 @@ test("vqc-F2: PA_AB_FRAMEWORK_STRIP_DISABLED=true bypasses the strip", async () 
 // Boundary preservation — Phase 51 crisis-hotline guard runs AFTER my strips
 // ---------------------------------------------------------------------------
 
-test("vqc-boundary: F2 strip does not clobber Phase 51 hotline trailer", async () => {
-  // Reply has BOTH the conditional A/B head (gets stripped) AND no hotline
-  // trailer (Phase 51 guard appends one). Verify both fire correctly.
+// English-only product: zh F2 pattern removed. Boundary guarantee preserved using English
+// input/output. Safety invariant: Phase 51 crisis hotline guard must run AFTER F2 strip,
+// and the hotline trailer must not be clobbered by F2's head removal.
+test("vqc-boundary: F2 strip does not clobber Phase 51 hotline trailer (English input, English-only product)", async () => {
+  // Reply has BOTH the English conditional A/B head (gets stripped) AND no hotline
+  // trailer (Phase 51 guard appends one because user input is crisis-adjacent).
+  // Verify both fire correctly and the trailer is not removed.
   const captures = emptyCaptures()
-  const llmBody = "如果你想换工作，那可以先看看 base"
+  const llmBody = "If you want to leave, you could start by looking at base pay"
   const store = makeStore(captures, llmBody)
 
   process.env.paHumanizeRuntimeEnabled = "true"
@@ -271,10 +278,10 @@ test("vqc-boundary: F2 strip does not clobber Phase 51 hotline trailer", async (
   process.env.PA_AB_PROBE_STRIP_ENABLED = "false"
 
   try {
-    // User input has zh crisis tokens — Phase 51 main-path guard MUST fire
-    // and append hotline AFTER my F2 strip removes the head.
+    // User input has English crisis tokens — Phase 51 main-path guard MUST fire
+    // and append hotline AFTER F2 strip removes the conditional head.
     await processInboundEvent(
-      { ...baseEvent, body: "我撑不下去了，想结束这一切" },
+      { ...baseEvent, body: "i can't go on like this. i want to die." },
       store
     )
   } finally {
@@ -289,25 +296,23 @@ test("vqc-boundary: F2 strip does not clobber Phase 51 hotline trailer", async (
 
   assert.equal(captures.outboundBodies.length, 1)
   const outbound = captures.outboundBodies[0]!
-  // Then-clause preserved (F2 strip removed the head, kept the body).
-  assert.match(outbound, /先看看 base/u, `expected then-clause preserved, got: ${outbound}`)
-  // Phase 51 hotline trailer appended after F2 strip.
-  const zhHotline =
-    outbound.includes("400-161-9995") ||
-    outbound.includes("心理援助热线") ||
-    outbound.includes("12320")
-  assert.ok(zhHotline, `expected hotline trailer, got: ${outbound}`)
+  // Then-clause preserved (F2 strip removed the head "If you want to leave, you could ", kept the body).
+  assert.match(outbound, /start by looking at base pay/iu, `expected then-clause preserved, got: ${outbound}`)
+  // Phase 51 hotline trailer appended after F2 strip (English hotline for English crisis input).
+  const enHotline =
+    outbound.includes("741741") ||
+    outbound.includes("988") ||
+    outbound.includes("Crisis Text Line")
+  assert.ok(enHotline, `expected English hotline trailer, got: ${outbound}`)
   // F2 strip telemetry log fired — proves the conditional head was stripped
-  // BEFORE the crisis trailer was appended. (We can't grep "如果你想" in
-  // the final outbound because the hotline trailer legitimately contains
-  // the phrase "如果你想找人说话" — the strip operates on the LLM body,
-  // not on the post-strip trailer text.)
+  // BEFORE the crisis trailer was appended. F2 operates on the LLM body; the
+  // hotline trailer is appended to the post-strip text.
   const f2Log = captures.logs.find((l) => l.event === "pa.voice.ab_framework_strip.applied")
   assert.ok(
     f2Log,
     `expected ab_framework_strip log, got: ${JSON.stringify(captures.logs.map((l) => l.event))}`
   )
-  assert.equal(f2Log!.payload["pattern"], "zh_conditional_if_then")
+  assert.equal(f2Log!.payload["pattern"], "en_conditional_if_then")
   // Crisis hotline guard log also fired (boundary preserved).
   const crisisLog = captures.logs.find((l) => l.event === "pa.safety.crisis_detected")
   assert.ok(crisisLog, "expected pa.safety.crisis_detected log")

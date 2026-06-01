@@ -380,6 +380,7 @@ export {
   claimCandidateProfile,
   hashCandidateHandle,
   linkCandidateHandle,
+  mergeCandidatesByPhone,
   recordIdentityConflict,
   resolveCandidateIdentity,
   writeCandidateSelfProfile,
@@ -387,6 +388,9 @@ export {
 export type {
   ClaimCandidateProfileInput,
   LinkCandidateHandleInput,
+  MergeCandidatesByPhoneInput,
+  MergeCandidatesByPhoneResult,
+  MergeFoldedDuplicate,
   ResolveCandidateIdentityInput,
   WriteCandidateSelfProfileInput,
 } from "./identity.js"

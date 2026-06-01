@@ -177,7 +177,7 @@ export async function _defaultEmbedFn(
 // Language detection (mirrors Phase 35 F3 + Phase 33 detectLang algorithm).
 // ---------------------------------------------------------------------------
 
-const CJK_RE = /[㐀-鿿]/g
+const CJK_RE = /[\u3400-\u9fff]/g
 const ASCII_LETTER_RE = /[A-Za-z]/g
 
 export function detectReplyLang(text: string): "zh" | "en" | "mixed" {

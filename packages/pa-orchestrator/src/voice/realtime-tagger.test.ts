@@ -11,8 +11,8 @@ test("empty message → no extraction", () => {
   assert.equal(r.visaStatus, null)
 })
 
-test("zh visa: '我是 OPT'", () => {
-  const r = extractTagsFromUserMessage("我是 OPT 第一年")
+test("visa: 'on OPT'", () => {
+  const r = extractTagsFromUserMessage("I'm on OPT, first year")
   assert.equal(r.visaStatus, "opt")
   assert.equal(r.hasUpdate, true)
 })
@@ -27,14 +27,14 @@ test("location: 'I'm in NYC looking for SWE'", () => {
   assert.deepEqual(r.targetLocations, ["NYC"])
 })
 
-test("location bilingual: '我在 SF 但 also open to remote'", () => {
-  const r = extractTagsFromUserMessage("我在 SF 但 also open to remote")
+test("location multi: 'in SF but also open to remote'", () => {
+  const r = extractTagsFromUserMessage("I'm in SF but also open to remote")
   assert.ok(r.targetLocations?.includes("SF Bay Area"))
   assert.ok(r.targetLocations?.includes("remote"))
 })
 
-test("yoe new-grad zh", () => {
-  const r = extractTagsFromUserMessage("我刚毕业找工作")
+test("yoe new-grad", () => {
+  const r = extractTagsFromUserMessage("I'm a new grad looking for work")
   assert.deepEqual(r.yoeRange, [0, 1])
 })
 
@@ -55,13 +55,13 @@ test("startup pref ambiguous when both signals present", () => {
   assert.equal(r.prefersStartup, null)
 })
 
-test("startup pref bigco zh", () => {
-  const r = extractTagsFromUserMessage("我想去大厂")
+test("startup pref bigco", () => {
+  const r = extractTagsFromUserMessage("I want to join big tech")
   assert.equal(r.prefersStartup, false)
 })
 
 test("startup pref ambiguous → null", () => {
-  const r = extractTagsFromUserMessage("我想找工作")
+  const r = extractTagsFromUserMessage("I'm looking for a job")
   assert.equal(r.prefersStartup, null)
 })
 
@@ -90,7 +90,7 @@ test("buildTagWriteback returns null when no update", () => {
 })
 
 test("no false positive on benign chat", () => {
-  const r = extractTagsFromUserMessage("听起来挺烦的，我懂")
+  const r = extractTagsFromUserMessage("that sounds annoying, i get it")
   assert.equal(r.hasUpdate, false)
 })
 

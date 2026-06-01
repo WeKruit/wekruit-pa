@@ -21,33 +21,33 @@
 import { z } from "zod"
 
 export const INDUSTRY_TAGS = [
-  "tech_software", // 互联网/软件/SaaS
-  "tech_hardware", // 半导体/硬件/IoT
-  "fintech_finance", // 金融科技/银行/对冲基金
-  "ai_ml", // AI/ML/数据科学
-  "healthcare_biotech", // 医疗/生物科技/药物研发
-  "consumer_retail", // 电商/消费品/零售
-  "media_entertainment", // 媒体/游戏/内容
-  "manufacturing_industrial", // 制造/工业/能源
-  "education", // 教育/EdTech
-  "other", // 其他
+  "tech_software", // internet/software/SaaS
+  "tech_hardware", // semiconductors/hardware/IoT
+  "fintech_finance", // fintech/banking/hedge funds
+  "ai_ml", // AI/ML/data science
+  "healthcare_biotech", // healthcare/biotech/drug development
+  "consumer_retail", // ecommerce/consumer goods/retail
+  "media_entertainment", // media/gaming/content
+  "manufacturing_industrial", // manufacturing/industrial/energy
+  "education", // education/EdTech
+  "other", // other
 ] as const
 
 export type IndustryTag = (typeof INDUSTRY_TAGS)[number]
 export const IndustryTagSchema = z.enum(INDUSTRY_TAGS)
 
-/** Bilingual labels for surfacing the enum value in a Claire-voice probe. */
-export const INDUSTRY_LABELS: Record<IndustryTag, { zh: string; en: string }> = {
-  tech_software: { zh: "互联网/软件", en: "tech/software" },
-  tech_hardware: { zh: "半导体/硬件", en: "hardware/semiconductors" },
-  fintech_finance: { zh: "金融科技/银行", en: "fintech/finance" },
-  ai_ml: { zh: "AI/机器学习", en: "AI/ML" },
-  healthcare_biotech: { zh: "医疗/生物科技", en: "healthcare/biotech" },
-  consumer_retail: { zh: "电商/消费品", en: "consumer/retail" },
-  media_entertainment: { zh: "媒体/娱乐", en: "media/entertainment" },
-  manufacturing_industrial: { zh: "制造/工业", en: "manufacturing/industrial" },
-  education: { zh: "教育/EdTech", en: "education/edtech" },
-  other: { zh: "其他", en: "other" },
+/** Labels for surfacing the enum value in a Claire-voice probe. */
+export const INDUSTRY_LABELS: Record<IndustryTag, { en: string }> = {
+  tech_software: { en: "tech/software" },
+  tech_hardware: { en: "hardware/semiconductors" },
+  fintech_finance: { en: "fintech/finance" },
+  ai_ml: { en: "AI/ML" },
+  healthcare_biotech: { en: "healthcare/biotech" },
+  consumer_retail: { en: "consumer/retail" },
+  media_entertainment: { en: "media/entertainment" },
+  manufacturing_industrial: { en: "manufacturing/industrial" },
+  education: { en: "education/edtech" },
+  other: { en: "other" },
 }
 
 /**
@@ -1070,6 +1070,6 @@ export function renderIndustryTagsLine(tags: readonly IndustryTag[]): string | n
     }
   }
   if (ordered.length === 0) return null
-  const parts = ordered.map((t) => `${t} (${INDUSTRY_LABELS[t].zh})`)
+  const parts = ordered.map((t) => `${t} (${INDUSTRY_LABELS[t].en})`)
   return `Industry tags (top guesses from CV experiences): ${parts.join(", ")}`
 }

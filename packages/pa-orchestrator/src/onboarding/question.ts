@@ -239,7 +239,7 @@ export interface Question<TAnswer> {
   weight?: number
   /**
    * Cap on retries before pipeline halts onboarding (Adam directive
-   * 2026-05-05: "最多给一个问题5次尝试"). Default 5. Set to Infinity to
+   * 2026-05-05: "at most 5 attempts per question"). Default 5. Set to Infinity to
    * disable halt for a particular Q.
    */
   maxAttempts?: number

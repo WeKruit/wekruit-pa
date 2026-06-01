@@ -2,17 +2,13 @@
  * Adam iter 20 — phrase repeat stripper (Claire self-repetition).
  *
  * Iter 19's 10-turn anxious_grad sim surfaced 5 consecutive Claire replies
- * starting with the SAME phrase across turns 3,5,7,11,13:
- *   "要不要试试把..."
- *   "要不要试 试试把..."
- *   "要不要试试把..."
- *   "要不要试着先..."
- *   "要不要试试把..."
+ * starting with the SAME leading phrase across turns 3,5,7,11,13 (a repeated
+ * "want to try ..." opener).
  *
  * Existing modules don't catch this:
  *   - stripRepeatOpener (llm-rewriter.ts:263) — only checks last-2 prior
  *     replies AND only first clause (before terminator). Pattern slipped
- *     because in some turns it was preceded by "感觉挺磨人的。" so the
+ *     because in some turns it was preceded by a different empathy clause so the
  *     opener clause was different but the pattern after the period repeated.
  *   - F1 verb-mirror detector — measures user→Claire mirror, NOT
  *     Claire→Claire self-mirror.
@@ -114,7 +110,7 @@ function findLongestRepeatedPhrase(
     for (let i = 0; i + len <= head.length; i++) {
       const candidate = head.slice(i, i + len)
       // Skip whitespace-only / pure punctuation candidates.
-      if (!/[a-zA-Z0-9一-鿿]/.test(candidate)) continue
+      if (!/[a-zA-Z0-9\u4e00-\u9fff]/.test(candidate)) continue
       // V2 QA Agent-B fix: word-boundary snap. Raw substring slicing
       // produced "I sawr resume" / "rejected bythis morning" in prod.
       if (!snapToWordBoundary(text, i, len)) continue
@@ -179,14 +175,14 @@ export function stripPhraseRepeat(
   // Strip from offset to end of phrase + any trailing separators/whitespace.
   const before = trimmed.slice(0, match.offset)
   // After stripping, also drop leading Chinese-particle artifacts like
-  // 的/了/啊/呗/吧/嘛/呀/嗯/哦 — they're grammar-tail of the stripped
-  // phrase, not standalone sentence starts. Without this, "要不要试试看的，
-  // X" → strip "要不要试试看" → "的，X" (nonsense).
+  // common zh grammar-tail particles — they're the tail of the stripped
+  // phrase, not standalone sentence starts. Without this, stripping a leading
+  // phrase can leave a dangling particle. Matched via codepoint set below.
   const after = trimmed
     .slice(match.offset + match.phrase.length)
-    .replace(/^[\s，,。.;；!！？?…]+/, "")
-    .replace(/^[的了啊呗吧嘛呀嗯哦]+/, "")
-    .replace(/^[\s，,。.;；!！？?…]+/, "")
+    .replace(/^[\s\uff0c,\u3002.;\uff1b!\uff01\uff1f?\u2026]+/, "")
+    .replace(/^[\u7684\u4e86\u554a\u5457\u5427\u561b\u5440\u55ef\u54e6]+/, "")
+    .replace(/^[\s\uff0c,\u3002.;\uff1b!\uff01\uff1f?\u2026]+/, "")
   // QA 2026-05-28 (E): when the stripped phrase sits MID-reply, the matched span
   // carries away the inter-word whitespace, so `before + after` welds the two
   // surviving words into one token (prod: "dig up matches"→"dig upmatches",

@@ -158,7 +158,7 @@ export type WebhookDeps = {
   enqueueOrCoalesce?: typeof defaultEnqueueOrCoalesce
   /**
    * v1.5 event-driven coalesce — Sendblue typing-indicator → buffer bump.
-   * Adam 顶层设计 fix (2026-05-03). Inject for tests; production wiring uses
+   * Adam top-level-design fix (2026-05-03). Inject for tests; production wiring uses
    * the same `coalescerDeps` bundle.
    */
   bumpCoalesceBuffer?: typeof defaultBumpCoalesceBuffer
@@ -465,7 +465,7 @@ export async function handleSendblueWebhook(
   }
 
   // ---- 3b. Non-receive events (typing_indicator / line_blocked / other) -
-  // v1.5 event-driven coalesce — Adam 顶层设计 fix (2026-05-03):
+  // v1.5 event-driven coalesce — Adam top-level-design fix (2026-05-03):
   //   We have ALWAYS received Sendblue's `typing_indicator` events here, but
   //   historically only logged + dropped them. They're now first-class
   //   buffer-bump signals: when the user is still composing, we extend the

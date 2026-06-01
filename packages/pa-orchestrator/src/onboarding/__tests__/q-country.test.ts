@@ -17,21 +17,21 @@ function ctx(): JudgeCtx {
 const COUNTRY_HINTS = ["usa", "china", "canada", "europe", "anywhere"] as const
 
 const COUNTRY_BLOOM = [
-  { pattern: /^\s*(usa|us|america|美国)\s*$/i, value: ["usa"] as CountryAnswer },
-  { pattern: /^\s*(china|prc|中国|中華|中華人民共和国)\s*$/i, value: ["china"] as CountryAnswer },
-  { pattern: /^\s*(canada|加拿大)\s*$/i, value: ["canada"] as CountryAnswer },
-  { pattern: /^\s*(europe|欧洲)\s*$/i, value: ["europe"] as CountryAnswer },
-  { pattern: /^\s*(anywhere|都行|无所谓|哪都行|都可以)\s*$/i, value: ["anywhere"] as CountryAnswer },
+  { pattern: /^\s*(usa|us|america)\s*$/i, value: ["usa"] as CountryAnswer },
+  { pattern: /^\s*(china|prc)\s*$/i, value: ["china"] as CountryAnswer },
+  { pattern: /^\s*(canada)\s*$/i, value: ["canada"] as CountryAnswer },
+  { pattern: /^\s*(europe)\s*$/i, value: ["europe"] as CountryAnswer },
+  { pattern: /^\s*(anywhere)\s*$/i, value: ["anywhere"] as CountryAnswer },
 ]
 
 function parseCountry(raw: unknown): CountryAnswer | null {
   if (typeof raw === "string") {
     const t = raw.trim().toLowerCase()
-    if (/^(usa|us|america|美国)$/.test(t)) return ["usa"]
-    if (/^(china|prc|中国|中華|中華人民共和国)$/.test(t)) return ["china"]
-    if (/^(canada|加拿大)$/.test(t)) return ["canada"]
-    if (/^(europe|欧洲)$/.test(t)) return ["europe"]
-    if (/^(anywhere|都行|无所谓|哪都行|都可以)$/.test(t)) return ["anywhere"]
+    if (/^(usa|us|america)$/.test(t)) return ["usa"]
+    if (/^(china|prc)$/.test(t)) return ["china"]
+    if (/^(canada)$/.test(t)) return ["canada"]
+    if (/^(europe)$/.test(t)) return ["europe"]
+    if (/^(anywhere)$/.test(t)) return ["anywhere"]
     return t ? [t] : null
   }
   if (Array.isArray(raw)) {
@@ -70,16 +70,16 @@ test("q-country: 'USA' → bloom hit usa", async () => {
   assert.equal(calls(), 0)
 })
 
-test("q-country: '美国' → bloom hit usa", async () => {
+test("q-country: 'usa' → bloom hit usa", async () => {
   const { J } = makeJudge("")
-  const r = await J.judge("美国", "zh", ctx())
+  const r = await J.judge("usa", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.deepEqual(r.value, ["usa"])
 })
 
-test("q-country: '中国' → bloom hit china", async () => {
+test("q-country: 'china' → bloom hit china", async () => {
   const { J } = makeJudge("")
-  const r = await J.judge("中国", "zh", ctx())
+  const r = await J.judge("china", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.deepEqual(r.value, ["china"])
 })
@@ -98,16 +98,16 @@ test("q-country: 'anywhere' → bloom hit anywhere", async () => {
   if (r.accept) assert.deepEqual(r.value, ["anywhere"])
 })
 
-test("q-country: '都行' → bloom hit anywhere", async () => {
+test("q-country: 'anywhere' → bloom hit anywhere", async () => {
   const { J } = makeJudge("")
-  const r = await J.judge("都行", "zh", ctx())
+  const r = await J.judge("anywhere", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.deepEqual(r.value, ["anywhere"])
 })
 
-test("q-country: '无所谓' → bloom hit anywhere", async () => {
+test("q-country: 'anywhere (2)' → bloom hit anywhere", async () => {
   const { J } = makeJudge("")
-  const r = await J.judge("无所谓", "zh", ctx())
+  const r = await J.judge("anywhere", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.deepEqual(r.value, ["anywhere"])
 })

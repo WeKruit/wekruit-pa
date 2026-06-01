@@ -426,6 +426,14 @@ export const V16ScoreBreakdownSchema = z.object({
    * Always present (≥ 0); missing firstSeenAt → 0.
    */
   freshnessBoost: z.number(),
+  /**
+   * Collab priority (req #3, 2026-05-29) — `+V16_COLLAB_BOOST_WEIGHT` (0.08)
+   * when the job is a WeKruit collaboration job
+   * (`pa-jobs.wekruitCollaborationStatus === "collaborated"`), else 0. Ranks
+   * curated collab demand above the general scraped market at comparable
+   * relevance. Always present (≥ 0).
+   */
+  collabBoost: z.number(),
   /** Per-user/job repeat-rec penalty applied to ranking total. */
   previousRecommendationPenalty: z.number().optional(),
   /**
@@ -527,6 +535,16 @@ export type V16QueryResult = {
   llmCacheStale?: boolean
   /** Hard filters intentionally relaxed after strict retrieval returned zero. */
   relaxedHardFilters?: string[]
+  /**
+   * Market fallback (req #5, 2026-05-29) — true when the strict cascade +
+   * location relax + careerStage relax ALL yielded zero and the relaxed
+   * general-market fallback filter (visa/country/freshness/url/dead/negative
+   * gates only; location/careerStage/jobType skipped) supplied the returned
+   * jobs. On this path every job's `matchSourceLabel` is 'general match' and
+   * `collabBoost` is 0 (no collab priority on the fallback path). Lets Claire
+   * always have something real to offer instead of dead-silence.
+   */
+  fallbackApplied?: boolean
   /**
    * Phase 70 — surfaced when caller is the admin match-debug CF; opaque
    * snapshot of the user's tags doc so the dashboard can render the canonical

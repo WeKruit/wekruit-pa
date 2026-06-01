@@ -8,8 +8,15 @@ import type { Firestore } from "firebase-admin/firestore"
 import type { InboundEvent } from "@pa/core-types"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { getFlag, writeFeedbackEvent } from "@pa/pa-persistence"
-import { detectLang } from "./voice/imperfection-injector/index.js"
 import type { GenerateJobRecsFn } from "./match-connector-hooks.js"
+import {
+  AMBIGUOUS_FEEDBACK,
+  type FeedbackLlmCall,
+  type FeedbackQuestionKind,
+  type MatchFeedbackResult,
+} from "./match-feedback-extractor.js"
+import { extractFromConversation } from "./conversation-tagging.js"
+import { applyPartialUserTags } from "./tags/user-tags-writer.js"
 
 export type PostMatchRetentionStage =
   | "await_liked"
@@ -26,6 +33,8 @@ export type PostMatchRetentionState = {
   recCount?: number
   jobIds?: string[]
   sentiment?: "positive" | "negative"
+  /** LLM-classified dislike reason category (no-regex, 2026-05-30). */
+  reasonCategory?: string
   subscribeOptIn?: boolean
 }
 
@@ -34,6 +43,13 @@ export type PostMatchRetentionStore = {
   nowIso(): string
   getOnboardingUser?(userId: string): Promise<{ onboardingState?: string } | null>
   generateJobRecs?: GenerateJobRecsFn
+  /**
+   * Injectable LLM seam for match-feedback classification (no-regex, 2026-05-30).
+   * Production wires the OpenAI→Anthropic chain; evals inject a deterministic
+   * stub. When absent, the FSM fails OPEN to `ambiguous` (re-asks) — it never
+   * regex-classifies the reply.
+   */
+  classifyFeedback?: FeedbackLlmCall
   log(name: string, payload?: Record<string, unknown>): void
   enqueueOutbound?(
     userId: string,
@@ -82,98 +98,54 @@ export async function writePostMatchRetention(
     )
 }
 
-function normalizeBody(body: string): string {
-  return body.trim().toLowerCase()
-}
-
-/** User liked / disliked the batch (conversational, not tapback). */
-export function detectRecBatchSentiment(body: string): "positive" | "negative" | "ambiguous" {
-  const t = normalizeBody(body)
-  if (!t) return "ambiguous"
-  if (
-    /\b(don'?t like|didn'?t like|not good|not useful|useless|terrible|awful|hate|meh|trash|off\b|wrong|bad|nah|nope|no)\b/i.test(
-      t
-    ) ||
-    /(不喜欢|不太行|没用|不行|不好|不对|离谱|垃圾|算了|不太合适|差点意思|不太对)/.test(t)
-  ) {
-    if (/\b(not bad|not terrible)\b/i.test(t)) return "ambiguous"
-    return "negative"
-  }
-  if (
-    /\b(yes|yeah|yep|yup|good|great|love|like|useful|helpful|nice|solid|fire|lfg)\b/i.test(t) ||
-    /(不错|可以|还行|挺好|有用|喜欢|爱了|牛|赞|好的|好呀|行)/.test(t)
-  ) {
-    return "positive"
-  }
-  return "ambiguous"
-}
-
-function isExplicitQuestionOrMemoryRequest(text: string | undefined | null): boolean {
-  const body = (text ?? "").trim()
-  if (!body) return false
-  const asksSavedMatchingPreferences =
-    /\b(?:preferences?|prefs|matching profile|profile notes)\b/i.test(body) &&
-    /\b(?:match|matching|save|saved|store|stored|remember|remembered|using|use|used)\b/i.test(body) &&
-    /\b(?:what|which|show|remind|reminder|tell|using|use)\b/i.test(body)
-  return (
-    /[?？]/.test(body) ||
-    /^(?:w?hat|why|how|where|when|which|who|can|could|do|does|did|is|are|should|would|will)\b/i.test(body) ||
-    /\b(?:save|saved|store|stored|remember|remembered)\b[\s\S]{0,80}\b(?:job\s+)?(?:preferences?|prefs|profile|memory)\b/i.test(body) ||
-    asksSavedMatchingPreferences
+/**
+ * Classify a retention reply through the UNIFIED conversational tagging
+ * interface (`extractFromConversation`, purpose=post_rec_feedback) — the same
+ * entry point onboarding + every Q→A path shares (Adam top-level design 2026-05-30).
+ * No-regex; fails OPEN to `ambiguous` (FSM re-asks) when no classifier is wired
+ * or the LLM errors.
+ */
+async function classifyRetentionReply(
+  store: PostMatchRetentionStore,
+  questionKind: FeedbackQuestionKind,
+  reply: string,
+  jobIds: string[],
+  existingTags?: Record<string, unknown>,
+): Promise<MatchFeedbackResult> {
+  if (!store.classifyFeedback) return AMBIGUOUS_FEEDBACK
+  const result = await extractFromConversation(
+    {
+      purpose: "post_rec_feedback",
+      feedbackQuestionKind: questionKind,
+      existingTags,
+      ...(jobIds[0] ? { recommendation: { jobId: jobIds[0] } } : {}),
+      log: (name, payload) => store.log(name, payload),
+    },
+    reply,
+    store.classifyFeedback,
   )
-}
-
-export function detectYesNoIntent(body: string): "yes" | "no" | "ambiguous" {
-  const t = normalizeBody(body)
-  if (!t) return "ambiguous"
-  if (
-    /^(no|nope|nah|pass|skip|later|not now|don'?t|不用|不要|不了|先不|算了|否)\b/i.test(t) ||
-    /\b(no thanks|no thank you|not right now|not today|i'?m good|i am good|good for now|fine for now|i'?ll pass|i will pass|don'?t want|do not want|not interested)\b/i.test(t) ||
-    /(不用了|先不用|暂时不|不想)/.test(t)
-  ) {
-    return "no"
+  const fb = result.feedbackEvents[0]
+  return {
+    replyKind: fb?.replyKind ?? "feedback_answer",
+    sentiment: fb?.sentiment ?? "ambiguous",
+    intent: fb?.intent ?? "ambiguous",
+    reasonCategory: fb?.reasonCategory ?? "none",
+    tagDeltas: result.tagDeltas,
   }
-  if (
-    /^(yes|yeah|yep|yup|sure|ok|okay|down|let'?s|please|好|行|可以|要|愿意|sure)\b/i.test(t) ||
-    /(好的呀|没问题|来吧|可以啊|愿意)/.test(t)
-  ) {
-    return "yes"
-  }
-  return "ambiguous"
-}
-
-function isActionableJobPreferenceFeedback(body: string): boolean {
-  const t = normalizeBody(body)
-  if (!t) return false
-  const hasJobNoun =
-    /\b(?:jobs?|roles?|positions?|opportunities|openings|listings|matches)\b/i.test(t) ||
-    /(?:工作|岗位|职位|机会|内推)/.test(t)
-  if (!hasJobNoun) return false
-  return (
-    /\b(?:need|want|looking\s+for|look\s+for|prefer|require|requires|should\s+require|only|instead|too\s+senior|too\s+junior|more\s+junior|entry[-\s]?level|junior|new\s+grad|fresh\s+grad|years?\s+of\s+experience|yoe|exp|remote|onsite|hybrid|salary|visa|sponsor)\b/i.test(t) ||
-    /\b\d{1,2}\s*[-–]\s*\d{1,2}\b/.test(t) ||
-    /(?:经验|年限|初级|应届|远程|薪资|签证)/.test(t)
-  )
 }
 
 type CurrentPromptStage = Exclude<PostMatchRetentionStage, "await_prescreen" | "complete">
 
-function copyForStage(stage: CurrentPromptStage, lang: "zh" | "en"): string {
+function copyForStage(stage: CurrentPromptStage, _lang: "zh" | "en"): string {
   switch (stage) {
     case "await_liked":
-      return lang === "zh"
-        ? "刚才那几条岗位感觉怎么样？有用还是差点意思？随便说～"
-        : "How did those roles feel — useful, meh, or totally off? Be honest."
+      return "How did those roles feel — useful, meh, or totally off? Be honest."
     case "await_dislike_reason":
-      return lang === "zh"
-        ? "懂，哪块最不对？方向/级别/公司/地点/薪资都行，一句话就行。"
-        : "Got it — what was off? role level, company, location, pay… one line is enough."
+      return "Got it — what was off? role level, company, location, pay… one line is enough."
     case "await_subscribe":
-      return lang === "zh"
-        ? "要不要我每天给你推最新匹配的岗？有合适的直接发你，想停随时跟我说。"
-        : "Want me to text you fresh matched roles daily? I'll only send good fits — say stop anytime."
+      return "Want me to text you fresh matched roles daily? I'll only send good fits — say stop anytime."
     default:
-      return lang === "zh" ? "收到，我们继续聊。" : "Sounds good — keep chatting anytime."
+      return "Sounds good — keep chatting anytime."
   }
 }
 
@@ -198,12 +170,29 @@ async function loadRecentRecJobIds(
   }
 }
 
+/** True when an object has at least one own enumerable key. */
+function hasKeys(obj: Record<string, unknown>): boolean {
+  return Object.keys(obj).length > 0
+}
+
+/** Read `pa-users/{uid}.tags` (best-effort) so the extractor emits deltas only. */
+async function loadUserTags(db: Firestore, userId: string): Promise<Record<string, unknown>> {
+  try {
+    const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+    const t = snap.data()?.tags
+    return t && typeof t === "object" && !Array.isArray(t) ? (t as Record<string, unknown>) : {}
+  } catch {
+    return {}
+  }
+}
+
 async function writeBatchFeedback(input: {
   db: Firestore
   userId: string
   jobIds: string[]
   kind: "candidate_decline" | "candidate_behavior"
   outcome: string
+  reasonCategory?: string
   reasonText: string
   nowIso: string
 }): Promise<void> {
@@ -224,9 +213,14 @@ async function writeBatchFeedback(input: {
             source: "conversation",
             summary: input.reasonText.slice(0, 240),
             confidence: 0.85,
+            ...(input.reasonCategory ? { meta: { reasonCategory: input.reasonCategory } } : {}),
           },
         ],
-        payloadRedacted: { channel: "imessage", flow: "post_match_retention" },
+        payloadRedacted: {
+          channel: "imessage",
+          flow: "post_match_retention",
+          ...(input.reasonCategory ? { reasonCategory: input.reasonCategory } : {}),
+        },
         createdAt: input.nowIso,
       })
     } catch {
@@ -405,40 +399,46 @@ export async function handlePostMatchRetentionReply(
   const state = await loadPostMatchRetention(db, event.userId)
   if (!state) return false
 
+  // LLM-classify the reply for the CURRENT stage's question (no-regex). The
+  // single classification drives routing (replyKind), sentiment, intent, and
+  // the dislike reason + tag deltas.
+  const questionKind: FeedbackQuestionKind =
+    state.stage === "await_subscribe"
+      ? "daily_subscribe"
+      : state.stage === "await_dislike_reason"
+        ? "dislike_reason"
+        : "rec_batch_sentiment"
+  const existingTags = await loadUserTags(db, event.userId)
+  const jobIds = await resolveJobIds(db, event.userId, state)
+  const feedback = await classifyRetentionReply(store, questionKind, event.body, jobIds, existingTags)
+
+  // Yield to other handlers when the candidate asks a question or states a new
+  // concrete job-search preference instead of answering (LLM-classified). Only
+  // while we're collecting sentiment / reason — once at the subscribe step we
+  // commit to a yes/no.
   if (
     (state.stage === "await_liked" || state.stage === "await_dislike_reason") &&
-    isActionableJobPreferenceFeedback(event.body)
+    (feedback.replyKind === "job_search_preference" || feedback.replyKind === "explicit_question")
   ) {
-    store.log("pa.post_match_retention.yielded_to_job_search", {
+    store.log("pa.post_match_retention.yielded", {
       userId: event.userId,
       turnId,
       stage: state.stage,
-    })
-    return false
-  }
-  if (state.stage === "await_liked" && isExplicitQuestionOrMemoryRequest(event.body)) {
-    store.log("pa.post_match_retention.yielded_to_explicit_question", {
-      userId: event.userId,
-      turnId,
-      stage: state.stage,
+      replyKind: feedback.replyKind,
     })
     return false
   }
 
-  const lang = detectLang(event.body) === "zh" ? "zh" : "en"
+  const lang = "en" as const
   const at = store.nowIso()
-  const jobIds = await resolveJobIds(db, event.userId, state)
   let next: PostMatchRetentionState = { ...state, updatedAt: at }
   let reply = ""
 
   switch (state.stage) {
     case "await_liked": {
-      const sentiment = detectRecBatchSentiment(event.body)
+      const sentiment = feedback.sentiment
       if (sentiment === "ambiguous") {
-        reply =
-          lang === "zh"
-            ? "我指的是刚才那几条岗～整体偏有用还是偏离谱？随便一句就行。"
-            : "I mean those roles I just sent — overall useful or mostly off?"
+        reply = "I mean those roles I just sent — overall useful or mostly off?"
         break
       }
       next.sentiment = sentiment
@@ -452,29 +452,35 @@ export async function handlePostMatchRetentionReply(
       break
     }
     case "await_dislike_reason": {
+      // Persist the LLM-extracted canonical tag deltas the dislike reason implies
+      // (e.g. "too junior" → careerStage, "all fintech" → negativeIndustrySector)
+      // via the sole writer. Best-effort flywheel.
+      if (hasKeys(feedback.tagDeltas)) {
+        await applyPartialUserTags(db, event.userId, feedback.tagDeltas, {
+          source: "chat",
+          nowIso: at,
+          log: (name, payload) => store.log(name, payload ?? {}),
+        }).catch(() => {})
+      }
+      next.reasonCategory = feedback.reasonCategory
       await writeBatchFeedback({
         db,
         userId: event.userId,
         jobIds,
         kind: "candidate_decline",
         outcome: "batch_not_relevant",
+        reasonCategory: feedback.reasonCategory,
         reasonText: event.body,
         nowIso: at,
       })
       next.stage = "await_subscribe"
-      reply =
-        lang === "zh"
-          ? "记下了，我下次会避开这类。要不要我每天给你推更贴的新岗？想停随时说。"
-          : "Noted — I'll avoid that vibe next time. Want daily texts when something tighter shows up?"
+      reply = "Noted — I'll avoid that vibe next time. Want daily texts when something tighter shows up?"
       break
     }
     case "await_subscribe": {
-      const yn = detectYesNoIntent(event.body)
+      const yn = feedback.intent
       if (yn === "ambiguous") {
-        reply =
-          lang === "zh"
-            ? "每天推匹配岗这件事 — 要还是暂时不用？回「要」或「不用」就行。"
-            : "Daily matched roles — want that or pass for now? Just say yes or no."
+        reply = "Daily matched roles — want that or pass for now? Just say yes or no."
         break
       }
       next.subscribeOptIn = yn === "yes"
@@ -494,20 +500,13 @@ export async function handlePostMatchRetentionReply(
       next.stage = "complete"
       reply =
         yn === "yes"
-          ? lang === "zh"
-            ? "收到，我会继续在这里给你发强匹配岗位；想停随时说。"
-            : "Got it — I'll keep texting strong matches here. Say stop anytime."
-          : lang === "zh"
-            ? "没问题，我先不每天推送。你想看新岗位时随时跟我说。"
-            : "All good — I won't send daily matches. Ask anytime when you want a fresh batch."
+          ? "Got it — I'll keep texting strong matches here. Say stop anytime."
+          : "All good — I won't send daily matches. Ask anytime when you want a fresh batch."
       break
     }
     case "await_prescreen": {
       next.stage = "complete"
-      reply =
-        lang === "zh"
-          ? "收到，我会继续在这里给你推匹配岗位；不用再额外确认。"
-          : "Got it — I'll keep sending matched roles here. No extra confirmation needed."
+      reply = "Got it — I'll keep sending matched roles here. No extra confirmation needed."
       break
     }
     default:

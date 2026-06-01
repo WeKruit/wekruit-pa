@@ -11,15 +11,14 @@
  * FP rate on golden-50 PASS cases (validated 2026-04-27): deferred — insufficient PASS data (golden-50.jsonl not yet populated; gated to plan 07 verification)
  */
 
-// /u flag for correct Unicode (CJK) handling; /m flag for line-anchored patterns
+// /u flag for correct Unicode handling; /m flag for line-anchored patterns
 const COACH_PATTERNS: [RegExp, string][] = (() => {
   try {
     return [
-      [/我建议你|我推荐|你应该|听起来你|保持积极心态|你的感受是合理的|我们一步一步来|不妨试试|总之要相信自己|加油哦~?|宝~|亲~/u, "zh_coach_verb"],
       [/I suggest|Maybe you should|I recommend|I hear you|I understand/u, "en_coach_verb"],
       [/^\s*[-*•]/mu, "bullet_list"],
-      [/^\s*\d+[.)、]/mu, "numbered_list"],
-      [/(然后|接着|再|and then).*(然后|接着|再|and then).*(然后|接着|再|and then)/u, "subordinate_chain_4plus"],
+      [/^\s*\d+[.)]/mu, "numbered_list"],
+      [/(and then|next|after that).*(and then|next|after that).*(and then|next|after that)/iu, "subordinate_chain_4plus"],
     ]
   } catch (e) {
     // fail-closed: patterns failed to compile — log and return empty

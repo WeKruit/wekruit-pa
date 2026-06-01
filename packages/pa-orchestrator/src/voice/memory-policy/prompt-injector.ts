@@ -12,19 +12,21 @@
  *     1. <recent[2].text>      <- most recent first
  *     2. <recent[1].text>
  *     3. <recent[0].text>
- *   note: 已经给过的建议 — 不要重复或换皮重说，给新角度。  (zh)
- *   note: Already-given advice — don't repeat or paraphrase; bring a fresh angle.  (en)
+ *   note: Already-given advice — don't repeat or paraphrase; bring a fresh angle.
  *   [/MEMORY-POLICY]
  *
  * Empty when `recent.length === 0` → returns "" (caller skips appending).
  *
  * Items truncated to 200 chars to avoid prompt bloat. Default `max` = 3.
+ *
+ * The product is English-only. `NOTE_ZH` is retained as a distinct (English)
+ * back-compat constant so existing importers keep resolving.
  */
 
 import type { AdviceTrackerEntry } from "./types.js"
 
-const NOTE_ZH = "已经给过的建议 — 不要重复或换皮重说，给新角度。"
 const NOTE_EN = "Already-given advice — don't repeat or paraphrase; bring a fresh angle."
+const NOTE_ZH = "Already-covered advice — don't repeat or restate; bring a fresh angle."
 
 const ITEM_MAX_CHARS = 200
 

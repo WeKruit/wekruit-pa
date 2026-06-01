@@ -8,7 +8,7 @@
  * Action: `strip` — wire-in caller truncates to first N sentences.
  *
  * Algorithm parity: matches `tests/scenarios/lib/sentence-split.mjs`
- * single-pass tokenizer (ZH terminators 。！？； + EN terminators .!?
+ * single-pass tokenizer (ZH terminators U+3002/FF01/FF1F/FF1B + EN terminators .!?
  * with whitespace gating + ellipsis + decimal/URL/abbrev protection).
  *
  * Latency: pure text, < 10ms per call typical.
@@ -17,7 +17,7 @@ import type { DetectorContext, DetectorResult } from "./types.js"
 
 const DEFAULT_CAP = 3
 
-const ZH_TERMINATORS = new Set(["。", "！", "？", "；"])
+const ZH_TERMINATORS = new Set(["\u3002", "\uff01", "\uff1f", "\uff1b"])
 const EN_TERMINATORS = new Set([".", "!", "?"])
 
 const ABBREVIATIONS = new Set([
@@ -77,7 +77,7 @@ function isAbbreviationDot(text: string, i: number): boolean {
   let start = i
   while (start > 0) {
     const ch = text[start - 1]
-    if (isWhitespace(ch) || ch === "(" || ch === "[" || ch === "“") break
+    if (isWhitespace(ch) || ch === "(" || ch === "[" || ch === "\u201c") break
     start -= 1
     if (i - start > 8) break
   }
@@ -101,9 +101,9 @@ function ellipsisRunLength(text: string, i: number): number {
     while (text[i + n] === ".") n += 1
     return n
   }
-  if (text[i] === "。" && text[i + 1] === "。" && text[i + 2] === "。") {
+  if (text[i] === "\u3002" && text[i + 1] === "\u3002" && text[i + 2] === "\u3002") {
     let n = 3
-    while (text[i + n] === "。") n += 1
+    while (text[i + n] === "\u3002") n += 1
     return n
   }
   return 0
@@ -167,7 +167,7 @@ export function splitSentences(text: string): string[] {
         text[j] === "'" ||
         text[j] === ")" ||
         text[j] === "]" ||
-        text[j] === "”"
+        text[j] === "\u201d"
       ) {
         j += 1
       }
@@ -232,19 +232,18 @@ export function stripToSentenceCap(
 // ---------------------------------------------------------------------------
 // Adam iter 19 — F2 char-cap addendum.
 //
-// iter-17 sentence-cap (count > 3 → strip) doesn't catch the run-on case
+// iter-17 sentence-cap (count > 3 -> strip) doesn't catch the run-on case
 // where a single sentence is 200+ chars. Witnessed in anxious_grad sim:
-// "我之前确实碰过偏支付/风控那类的职责：核心差别是你不只是把功能跑通...异常链路的闭
-// 环一起做出来；比如实时特征/规则命中、黑白名单与策略下发、以及事后追溯都很吃系统
-// 设计。" — 1 sentence, 130+ chars, slips through sentence-cap.
+// a single CJK sentence of 130+ chars with no terminator slips through the
+// sentence-cap.
 //
 // Spec (Adam iter 17 + iter 19 combined):
-//   "需要缩短一下reply，如果一个reply太长我们可以分好几句话说"
+//   "shorten the reply; if a reply is too long we can split it across sentences"
 //   = if total reply length > char-cap, truncate at the last sentence
 //     boundary that still fits the budget (no mid-sentence truncation).
 //
 // Cap defaults: 180 chars total. Configurable via PA_F2_CHAR_CAP env.
-// (180 ≈ 3 medium zh sentences ≈ 30-40 en words; aligns with friend-chat
+// (180 ~= 3 medium CJK sentences ~= 30-40 en words; aligns with friend-chat
 //  iMessage register, not LinkedIn-post register.)
 //
 // Algorithm:
@@ -267,7 +266,7 @@ const DEFAULT_CHAR_CAP = 180
  * Heuristic markers (any one trips):
  *   - English ordinal markers ≥2: "First, ... Second,"
  *   - Numbered list ≥2: "1. ... 2." / "1) ... 2)" / "1: ... 2:"
- *   - Chinese ordinal markers ≥2: "一、二、" / "第一，第二，"
+ *   - Chinese ordinal markers >=2: U+4E00 U+3001 / U+7B2C U+4E00 U+FF0C
  *   - Bullet list ≥2: "- foo\n- bar"
  *
  * Pure regex, sub-1ms. Conservative — single occurrence doesn't trip
@@ -279,7 +278,7 @@ export function isStructuredReply(text: string): boolean {
   const enMatches = text.match(enOrdinal)
   if (enMatches && enMatches.length >= 2) return true
   if (/\b1[\.\):]\s*.+[\s\S]*?\b2[\.\):]\s*/.test(text)) return true
-  const zhOrdinal = /(一、|二、|三、|四、|五、|第一[，,]|第二[，,]|第三[，,])/g
+  const zhOrdinal = /(\u4e00\u3001|\u4e8c\u3001|\u4e09\u3001|\u56db\u3001|\u4e94\u3001|\u7b2c\u4e00[\uff0c,]|\u7b2c\u4e8c[\uff0c,]|\u7b2c\u4e09[\uff0c,])/g
   const zhMatches = text.match(zhOrdinal)
   if (zhMatches && zhMatches.length >= 2) return true
   if (/^\s*[-*•].+\n[\s\S]*?^\s*[-*•]/m.test(text)) return true

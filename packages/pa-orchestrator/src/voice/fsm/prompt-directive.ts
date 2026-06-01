@@ -15,8 +15,8 @@
  *   note: User is in soft distress. Lead with validation; no advice yet.
  *   [/FSM-DIRECTIVE]
  *
- * `note` gloss is bilingual — zh when caller passes `userLang === "zh"`, en
- * otherwise. Directive headers themselves are en-only (system-prompt convention).
+ * `note` gloss is English-only. Directive headers themselves are en-only
+ * (system-prompt convention).
  */
 
 import type { Stage, Strategy, UxState } from "./types.js"
@@ -55,33 +55,11 @@ export const STAGE_GLOSS_EN: Record<UxState, Record<Stage, Gloss>> = {
   },
 }
 
-export const STAGE_GLOSS_ZH: Record<UxState, Record<Stage, Gloss>> = {
-  WarmCurious: {
-    Exploration: "用户在好奇 / 开场。匹配温度；问一个真问题。",
-    Comforting: "用户在参与中。反映 + 肯定；保持开放。",
-    Action: "用户在参与中。肯定；只有被问到再给建议。",
-  },
-  PlayfulTease: {
-    Exploration: "用户在玩梗。匹配状态；不要给建议。短一点。",
-    Comforting: "继续玩梗。肯定 + 轻自我揭露；不要解决问题。",
-    Action: "还在玩梗。肯定 + 接住情绪；不要切换到建议。",
-  },
-  SoftConcerned: {
-    Exploration: "用户透露轻度低落。先反映；温柔提问。",
-    Comforting: "用户处于轻度低落。先验证情绪；暂不给建议。",
-    Action: "用户处于轻度低落。主要肯定；只有被直接问到再建议。",
-  },
-  FirmDirect: {
-    Exploration: "用户要行动。问一个澄清问题；下回合准备建议。",
-    Comforting: "用户要行动。肯定 + 给出一个具体选项。",
-    Action: "用户要行动。直接给具体建议。果断。",
-  },
-  QuietWitness: {
-    Exploration: "用户在重情绪里。陪伴。不要提问，不要建议。",
-    Comforting: "用户在重情绪里。简短反映；主要是沉默见证。",
-    Action: "用户在重情绪里。绝对不要建议行动。在场就好。",
-  },
-}
+/**
+ * Retained for back-compat with importers that reference the legacy zh table.
+ * The product is English-only, so this now aliases the English gloss table.
+ */
+export const STAGE_GLOSS_ZH: Record<UxState, Record<Stage, Gloss>> = STAGE_GLOSS_EN
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -95,7 +73,10 @@ export interface BuildDirectiveInput {
 }
 
 export interface BuildDirectiveOpts {
-  /** "zh" | "en" — controls the `note:` line gloss language. Default "en". */
+  /**
+   * Retained for back-compat. The product is English-only, so the `note:`
+   * gloss is always English regardless of this value.
+   */
   userLang?: "zh" | "en" | "mixed"
 }
 
@@ -109,7 +90,9 @@ export function buildFsmDirective(
   input: BuildDirectiveInput,
   opts: BuildDirectiveOpts = {}
 ): string {
-  const userLang = opts.userLang ?? "en"
+  // userLang retained for back-compat; gloss is always English (product is
+  // English-only).
+  void opts.userLang
   const allowedArr = Array.from(input.allowedStrategies)
 
   // Defensive: never emit empty whitelist. Caller's allowedStrategies()
@@ -118,8 +101,7 @@ export function buildFsmDirective(
     allowedArr.push("Other")
   }
 
-  const glossTable = userLang === "zh" ? STAGE_GLOSS_ZH : STAGE_GLOSS_EN
-  const note = glossTable[input.uxState]?.[input.stage] ?? ""
+  const note = STAGE_GLOSS_EN[input.uxState]?.[input.stage] ?? ""
 
   return [
     "[FSM-DIRECTIVE]",

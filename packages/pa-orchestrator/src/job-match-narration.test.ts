@@ -11,11 +11,6 @@ test("composeFindMatchPreCall returns curated en variants", () => {
   assert.ok(FIND_MATCH_PRE_CALL_VARIANTS.en.includes(line))
 })
 
-test("composeFindMatchPreCall returns curated zh variants", () => {
-  const line = composeFindMatchPreCall("zh", "user-1:evt-1", () => 0)
-  assert.ok(FIND_MATCH_PRE_CALL_VARIANTS.zh.includes(line))
-})
-
 test("composeFindMatchPreCall cycles variants over random picks", () => {
   const seen = new Set<string>()
   for (let i = 0; i < 40; i++) {
@@ -33,9 +28,6 @@ test("composeFindMatchPreCall is stable for the same seed", () => {
 test("composeFindMatchPreCall pre-call lines stay short (iMessage-friendly)", () => {
   for (const line of FIND_MATCH_PRE_CALL_VARIANTS.en) {
     assert.ok(line.length <= 72, line)
-  }
-  for (const line of FIND_MATCH_PRE_CALL_VARIANTS.zh) {
-    assert.ok(line.length <= 48, line)
   }
 })
 

@@ -3,7 +3,7 @@
  *
  * Coverage:
  *   - high skill component + intersection found → lists ∩
- *   - high embedding only → "整体方向贴" / "lines up with your resume"
+ *   - high embedding only → "lines up with your resume"
  *   - high sponsorship + user needs sponsor → mentions sponsor
  *   - high sponsorship + user does NOT need sponsor → suppressed
  *   - high location + user prefs set → mentions location
@@ -12,9 +12,9 @@
  *   - missing breakdown → ""
  *   - low total + nothing strong → ""
  *   - decent total + no specific dim → fallback phrase
- *   - zh / en / mixed all render
+ *   - English-only output regardless of lang arg
  *   - length cap respected
- *   - targetRole + embedding → "SWE direction" mention
+ *   - targetRole + embedding → "SWE-aligned" mention
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
@@ -53,19 +53,19 @@ describe("formatJobMatchReason", () => {
     assert.equal(out, "")
   })
 
-  it("high skill + skills ∩ found → lists 2 matches (zh)", () => {
+  it("high skill + skills ∩ found → lists 2 matches", () => {
     const out = formatJobMatchReason(
       {
         jobTitle: "Backend Engineer",
         matchScore: { breakdown: bd({ skill: 1.0 }) },
         requiredSkills: ["Node.js", "React", "Postgres"],
       },
-      "zh",
+      "en",
       { userSkills: ["Node.js", "React", "TypeScript"] }
     )
     assert.match(out, /Node\.js/)
     assert.match(out, /React/)
-    assert.match(out, /命中/)
+    assert.match(out, /matches/)
   })
 
   it("high skill + skills ∩ found (en)", () => {
@@ -82,7 +82,7 @@ describe("formatJobMatchReason", () => {
     assert.match(out, /Go/)
   })
 
-  it("high skill + skills ∩ (mixed lang)", () => {
+  it("high skill + skills ∩ (mixed lang arg → English output)", () => {
     const out = formatJobMatchReason(
       {
         jobTitle: "ML Engineer",
@@ -93,19 +93,19 @@ describe("formatJobMatchReason", () => {
       { userSkills: ["PyTorch"] }
     )
     assert.match(out, /PyTorch/)
-    assert.match(out, /命中/)
+    assert.match(out, /matches/)
   })
 
-  it("high embedding only → vibe phrase (zh, no targetRole)", () => {
+  it("high embedding only → vibe phrase (no targetRole)", () => {
     const out = formatJobMatchReason(
       {
         jobTitle: "SWE",
         matchScore: { breakdown: bd({ embedding: 0.9 }) },
       },
-      "zh",
+      "en",
       {}
     )
-    assert.match(out, /方向|贴近/)
+    assert.match(out, /lines up|resume/)
   })
 
   it("high embedding + targetRole=['swe'] → SWE-aligned phrase (en)", () => {
@@ -120,14 +120,14 @@ describe("formatJobMatchReason", () => {
     assert.match(out, /SWE/i)
   })
 
-  it("user needs sponsor + job offers sponsor + sponsorship score 1.0 → mentions sponsor (zh)", () => {
+  it("user needs sponsor + job offers sponsor + sponsorship score 1.0 → mentions sponsor", () => {
     const out = formatJobMatchReason(
       {
         jobTitle: "SWE",
         matchScore: { breakdown: bd({ sponsorship: 1.0, embedding: 0.3 }) },
         sponsorship: true,
       },
-      "zh",
+      "en",
       { visaStatus: "opt" }
     )
     assert.match(out, /sponsor/)
@@ -140,23 +140,23 @@ describe("formatJobMatchReason", () => {
         matchScore: { breakdown: bd({ sponsorship: 1.0, embedding: 0.5 }) },
         sponsorship: true,
       },
-      "zh",
+      "en",
       { visaStatus: "citizen" }
     )
     assert.doesNotMatch(out, /sponsor/)
   })
 
-  it("high location + user has location pref → mentions location (zh)", () => {
+  it("high location + user has location pref → mentions location", () => {
     const out = formatJobMatchReason(
       {
         jobTitle: "SWE",
         matchScore: { breakdown: bd({ location: 1.0, embedding: 0.3 }) },
         locationRaw: "San Francisco, CA",
       },
-      "zh",
+      "en",
       { targetLocations: ["sf"] }
     )
-    assert.match(out, /地点|sf/)
+    assert.match(out, /location|sf/)
   })
 
   it("high location + no location pref → location suppressed", () => {
@@ -263,10 +263,10 @@ describe("formatJobMatchReason", () => {
         matchScore: { breakdown: bd({ skill: 1.0, embedding: 0.5 }) },
         requiredSkills: ["go"],
       },
-      "zh",
+      "en",
       { userSkills: ["python"] } // no overlap with required ["go"]
     )
     // skill clause empty → falls back to embedding phrase.
-    assert.match(out, /方向|贴近/)
+    assert.match(out, /lines up|resume/)
   })
 })

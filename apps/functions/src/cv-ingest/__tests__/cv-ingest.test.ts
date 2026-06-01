@@ -6,7 +6,7 @@ import {
   ingestCv,
   buildCvFactBody,
   computeTopSkills,
-  detectCvLang,
+  runUserTagsMerge,
   type IngestCvDeps,
   type StructuredCv,
 } from "../cv-ingest.js"
@@ -411,8 +411,8 @@ describe("ingestCv", () => {
     assert.equal(call.userId, "user_x")
     assert.equal(call.partitionKey, "mem0_partition_42")
     assert.ok(call.factBody.length > 0)
-    // Default English template (tests use ASCII-only fixture)
-    assert.ok(/User resume summary|用户简历摘要/.test(call.factBody))
+    // English template (English-only product)
+    assert.ok(/User resume summary/.test(call.factBody))
     assert.ok(call.factBody.includes("WeKruit"))
   })
 
@@ -517,41 +517,40 @@ describe("buildCvFactBody / detectCvLang", () => {
     assert.ok(body.includes("TypeScript"))
   })
 
-  it("Chinese-heavy CV → Chinese fact body", () => {
-    const zh: StructuredCv = {
+  it("any CV → English fact body (English-only product)", () => {
+    const cv: StructuredCv = {
       candidateProfile: {
-        name: "张伟",
+        name: "Wei Zhang",
         email: null,
         phone: null,
         linkedIn: null,
-        location: "北京",
-        skills: ["量化交易", "数据分析", "机器学习"],
+        location: "Beijing",
+        skills: ["Quant Trading", "Data Analysis", "Machine Learning"],
       },
       experiences: [
         {
-          company: "瑞银集团",
-          title: "暑期分析师",
+          company: "UBS Group",
+          title: "Summer Analyst",
           startDate: "2024",
           endDate: null,
-          location: "上海",
-          description: "金融科技研究项目，负责量化模型搭建与回测",
+          location: "Shanghai",
+          description: "Fintech research project: quant model build + backtesting",
         },
       ],
       education: [
         {
-          school: "清华大学",
-          degree: "金融学学士",
-          field: "金融",
+          school: "Tsinghua University",
+          degree: "BSc Finance",
+          field: "Finance",
           startDate: "2020",
           endDate: "2024",
         },
       ],
       industryTags: ["fintech_finance"],
     }
-    assert.equal(detectCvLang(zh), "zh")
-    const body = buildCvFactBody(zh)
-    assert.ok(body.startsWith("用户简历摘要:"))
-    assert.ok(body.includes("瑞银集团"))
+    const body = buildCvFactBody(cv)
+    assert.ok(body.startsWith("User resume summary:"))
+    assert.ok(body.includes("UBS Group"))
   })
 })
 
@@ -1662,5 +1661,51 @@ describe("ingestCv post-parse runtime handoff (Phase 53 PARSE-07, D12)", () => {
     assert.equal(directSkipped?.payload?.reason, "delivery_none")
     const syntheticSkipped = events.find((e) => e.event === "pa.cv_followup.synthetic_trigger_skipped")
     assert.equal(syntheticSkipped?.payload?.reason, "delivery_none")
+  })
+})
+
+describe("runUserTagsMerge — durable skills-regression guard (2026-05-31)", () => {
+  const weakReparse = () => ({
+    skills: [{ name: "communication_skills" }, { name: "trilingual" }],
+    targetRoleFunction: ["software_engineering"],
+  })
+  it("a degraded re-parse with FEWER skills does NOT erase a richer existing skill set", async () => {
+    const existingSkills = Array.from({ length: 60 }, (_, i) => ({ name: `s${i}`, bucket: "domain_specific", baseWeight: 1 }))
+    const { db } = makeFakeDb({ users: { u_reparse: { tags: { skills: existingSkills } } } })
+    let captured: Record<string, unknown> | undefined
+    await runUserTagsMerge({
+      db: db as Parameters<typeof runUserTagsMerge>[0]["db"],
+      userId: "u_reparse",
+      parsed: happyParsed(),
+      workHistory: undefined,
+      embedding: null,
+      mergeUserTagsFn: weakReparse,
+      writeUserTags: async (_db, _uid, tags) => { captured = tags },
+      nowIso: () => "2026-05-31T00:00:00.000Z",
+      log: () => {},
+    })
+    assert.ok(captured, "writeUserTags was called")
+    assert.equal((captured!.skills as unknown[]).length, 60, "richer existing 60 skills preserved, not clobbered by the 2-skill weak re-parse")
+  })
+  it("a genuinely richer re-parse with MORE skills DOES overwrite the existing set", async () => {
+    const existingSkills = [{ name: "react" }, { name: "node" }]
+    const richReparse = () => ({
+      skills: Array.from({ length: 20 }, (_, i) => ({ name: `tech_${i}` })),
+      targetRoleFunction: ["software_engineering"],
+    })
+    const { db } = makeFakeDb({ users: { u_rich: { tags: { skills: existingSkills } } } })
+    let captured: Record<string, unknown> | undefined
+    await runUserTagsMerge({
+      db: db as Parameters<typeof runUserTagsMerge>[0]["db"],
+      userId: "u_rich",
+      parsed: happyParsed(),
+      workHistory: undefined,
+      embedding: null,
+      mergeUserTagsFn: richReparse,
+      writeUserTags: async (_db, _uid, tags) => { captured = tags },
+      nowIso: () => "2026-05-31T00:00:00.000Z",
+      log: () => {},
+    })
+    assert.equal((captured!.skills as unknown[]).length, 20, "the richer 20-skill re-parse wins")
   })
 })

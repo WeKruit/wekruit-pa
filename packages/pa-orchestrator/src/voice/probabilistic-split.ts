@@ -4,7 +4,7 @@
  * BACKGROUND
  * ----------
  * Bug 4 (commit ea59897) introduced a single-send-per-turn invariant after
- * Adam's 2026-05-03 实测 saw 6 outbound bubbles for 4 inbound msgs. That fix
+ * Adam's 2026-05-03 live test saw 6 outbound bubbles for 4 inbound msgs. That fix
  * was correct in spirit (no chunking by length) but over-corrected: real
  * humans on iMessage routinely send 1-OR-2 messages per reply turn — never
  * 3+, but mixing is what makes texting look like texting.
@@ -21,7 +21,7 @@
  *   crisis hotline trailer / contains mem0Degraded marker. Crisis must NEVER
  *   ship as 2 bubbles — splitting risks the hotline arriving alone or losing
  *   visual co-location with the empathy line.
- * - Split-point preference: transition markers (zh "另外/对了"; en "also/btw")
+ * - Split-point preference: transition markers (en "also/btw")
  *   are strongest; sentence boundaries are next; double-newline last. We never
  *   split mid-sentence.
  * - Position constraint: cut must fall in the middle 30%-70% of the reply,
@@ -120,12 +120,12 @@ function buildRng(seed: string | undefined): () => number {
 
 /**
  * Sentence-terminator regex (Bug 9 Iter 16 fix):
- *   - ZH punct `。！？` requires NO trailing whitespace (CJK convention often skips ws)
+ *   - Full-width punct `U+3002/FF01/FF1F` requires NO trailing whitespace (CJK convention often skips ws)
  *   - EN punct `.!?` still requires trailing ws or EOF (avoids U.S. / e.g. false positives)
  * Captures the punctuation so callers can preserve it in the first part.
  * We DO NOT split on bare commas — those are intra-sentence pauses.
  */
-const SENTENCE_TERMINATOR = /([。！？])|([.!?])(\s+|$)/g
+const SENTENCE_TERMINATOR = /([\u3002\uff01\uff1f])|([.!?])(\s+|$)/g
 
 /**
  * Count sentences. We use the terminator regex; if a reply has no terminator
@@ -133,11 +133,11 @@ const SENTENCE_TERMINATOR = /([。！？])|([.!?])(\s+|$)/g
  */
 export function countSentences(reply: string): number {
   if (!reply || !reply.trim()) return 0
-  const matches = reply.match(/[.。!?！？]+/g)
+  const matches = reply.match(/[.\u3002!?\uff01\uff1f]+/g)
   if (!matches || matches.length === 0) return 1
   // Trailing terminator → matches.length is sentence count.
   // No trailing terminator → there's an extra incomplete sentence after.
-  const trailing = /[.。!?！？]\s*$/.test(reply.trimEnd())
+  const trailing = /[.\u3002!?\uff01\uff1f]\s*$/.test(reply.trimEnd())
   return trailing ? matches.length : matches.length + 1
 }
 
@@ -146,13 +146,13 @@ export function countSentences(reply: string): number {
  * thought. When found at the start of a sentence (post-boundary), they're
  * the preferred split point.
  *
- * zh markers MUST be tested at-the-start-of-sentence: 另外, 对了, 还有, 不过, 而且
  * en markers (case-insensitive, word-boundary): also, btw, oh and, plus
+ * (legacy zh transition markers removed — product is English-only)
  *
  * NOTE: order within the array is irrelevant — we score candidates equally
  * within the "transition" tier; final pick is by position-score.
  */
-const ZH_TRANSITIONS = ["另外", "对了", "还有", "不过", "而且"]
+const ZH_TRANSITIONS: string[] = []
 const EN_TRANSITIONS = ["also", "btw", "oh and", "plus"]
 
 interface SplitCandidate {
@@ -180,9 +180,8 @@ function findSplitCandidates(reply: string): SplitCandidate[] {
   const candidates: SplitCandidate[] = []
 
   // Tier 3: transition markers preceded by a sentence boundary.
-  // We scan for zh markers (which carry their own boundary semantics in
-  // Chinese — they're typically at sentence-start) and en transitions
-  // following whitespace/punct.
+  // We scan for en transitions following whitespace/punct. (The legacy zh
+  // transition list is empty — product is English-only.)
   for (const marker of ZH_TRANSITIONS) {
     let from = 0
     while (true) {
@@ -195,7 +194,7 @@ function findSplitCandidates(reply: string): SplitCandidate[] {
       const lastChar = before.length > 0 ? before[before.length - 1]! : ""
       const validBefore =
         idx === 0 ||
-        /[.。!?！？\n]/.test(lastChar) ||
+        /[.\u3002!?\uff01\uff1f\n]/.test(lastChar) ||
         before.length === 0
       if (validBefore && idx >= minPos && idx <= maxPos) {
         candidates.push({ index: idx, tier: 3 })
@@ -273,8 +272,9 @@ function looksLikeHotlineTrailer(reply: string): boolean {
   if (/\b988\b/.test(reply)) return true
   if (/\b741741\b/.test(reply)) return true
   if (/400-?161-?9995/.test(reply)) return true
-  // ZH "心理援助热线" — only present in our trailer template
-  if (reply.includes("心理援助热线")) return true
+  // Full-width "psychological crisis hotline" label — only present in our
+  // trailer template.
+  if (reply.includes("\u5fc3\u7406\u63f4\u52a9\u70ed\u7ebf")) return true
   // EN "Crisis Text Line"
   if (/Crisis Text Line/i.test(reply)) return true
   return false
@@ -282,13 +282,13 @@ function looksLikeHotlineTrailer(reply: string): boolean {
 
 /**
  * mem0Degraded notice (index.ts:1488). Format:
- *   "${reply}\n\n（长期语义记忆暂时不可用；我仍使用已确认事实和最近对话。）"
+ *   "${reply}\n\n(long-term semantic memory temporarily unavailable; still using confirmed facts and recent conversation.)"
  * If the reply ends with this notice, we should not split — the notice is a
  * pinned trailer that must remain attached to the preceding body.
  */
 function looksLikeMem0DegradedNotice(reply: string): boolean {
   if (!reply) return false
-  return reply.includes("长期语义记忆暂时不可用")
+  return reply.includes("\u957f\u671f\u8bed\u4e49\u8bb0\u5fc6\u6682\u65f6\u4e0d\u53ef\u7528")
 }
 
 function looksLikeAnswerThenFollowup(reply: string): boolean {

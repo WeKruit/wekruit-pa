@@ -95,25 +95,25 @@ describe("bindPhoneToCandidate ordering (identity hardening 2026-05-21)", () => 
     assert.equal(phoneHandles[0]!.candidateId, "cand-aaaa01")
   })
 
-  it("guard G1: opener token candidate ALREADY has a different phone → reject WITHOUT polluting pa-users", async () => {
+  it("phone = unique key: opener token candidate ALREADY has a DIFFERENT phone → no cross-bind, no throw", async () => {
+    // Adam policy 2026-05-29 — different phone = different entity. The opener
+    // names cand-aaaa01 (who owns +14155550100) but arrives from +14155550999.
+    // We must NOT bind the new number to cand-aaaa01 and must NOT throw (no
+    // stuck `running` event). The texted phone has no owner → resolve null.
     const { db, store } = makeFakeDb({
       users: {
         "cand-aaaa01": { id: "cand-aaaa01", email: "a@example.com", phoneE164: "+14155550100" },
       },
     })
 
-    await assert.rejects(
-      async () => {
-        await resolveInboundUserId(db, "+14155550999", "Hello, WeKruit! cand-aaaa01")
-      },
-      /identity_conflict:pa_users_phone_mismatch/,
-    )
+    const result = await resolveInboundUserId(db, "+14155550999", "Hello, WeKruit! cand-aaaa01")
+    assert.equal(result, null, "different phone → not cross-bound; texted phone unowned → null")
 
     const userDoc = store.get("pa-users")!.get("cand-aaaa01")!
     assert.equal(
       userDoc.phoneE164,
       "+14155550100",
-      "existing pa-users.phoneE164 unchanged after rejected bind",
+      "existing pa-users.phoneE164 unchanged — no cross-bind",
     )
   })
 
@@ -154,18 +154,18 @@ describe("bindPhoneToCandidate ordering (identity hardening 2026-05-21)", () => 
     )
   })
 
-  it("phone already linked to another candidate: opener for a different candidate REJECTS with identity_conflict (1:1 invariant)", async () => {
-    // Phone is already linked to cand-aaaa01 via pa-candidate-handles.
-    // A new inbound from the same phone shows up with an opener token
-    // pointing at cand-bbbb02 (different candidate). With Adam's strict
-    // invariant (2026-05-21) the bind must throw and BOTH pa-users rows
-    // stay clean — no silent reassignment, no pollution.
+  it("phone = unique key: phone owned by A via handle, opener names B → resolve to A, never bind B, never throw", async () => {
+    // Phone +14155550100 is already linked to cand-aaaa01 via the hashed phone
+    // handle. A new inbound from that phone shows up with an opener naming
+    // cand-bbbb02. Phone is the unique key → resolve to the phone owner A; do
+    // NOT bind/steal the phone for B and do NOT throw (no stuck event). B stays
+    // clean. (A is found via lookupUserByPhoneE164's handle-owner fallback.)
     const { hashCandidateHandle } = await import("@pa/pa-persistence")
     const { handleId } = hashCandidateHandle("phone", "+14155550100")
     const { db, store } = makeFakeDb({
       users: {
         "cand-bbbb02": { id: "cand-bbbb02", email: "b@example.com" },
-        "cand-aaaa01": { id: "cand-aaaa01", email: "a@example.com" },
+        "cand-aaaa01": { id: "cand-aaaa01", email: "a@example.com", phoneE164: "+14155550100" },
       },
       handles: {
         [handleId]: {
@@ -182,18 +182,14 @@ describe("bindPhoneToCandidate ordering (identity hardening 2026-05-21)", () => 
       },
     })
 
-    await assert.rejects(
-      async () => {
-        await resolveInboundUserId(db, "+14155550100", "Hello, WeKruit! cand-bbbb02")
-      },
-      /identity_conflict:(phone_handle_owner_mismatch|pa_users_phone_already_taken)/,
-    )
+    const result = await resolveInboundUserId(db, "+14155550100", "Hello, WeKruit! cand-bbbb02")
+    assert.equal(result, "cand-aaaa01", "phone owner A wins, not opener-named B")
 
     const userDocB = store.get("pa-users")!.get("cand-bbbb02")!
     assert.equal(
       userDocB.phoneE164,
       undefined,
-      "cand-bbbb02.phoneE164 untouched — strict pre-flight rejected the bind",
+      "cand-bbbb02.phoneE164 untouched — phone never cross-bound to B",
     )
   })
 
@@ -239,5 +235,47 @@ describe("bindPhoneToCandidate ordering (identity hardening 2026-05-21)", () => 
     // Handle reassigned.
     const handleDoc = store.get("pa-candidate-handles")!.get(handleId)!
     assert.equal(handleDoc.candidateId, "cand-bbbb02", "phone handle reassigned to new candidate")
+  })
+
+  it("phone = unique key: same-phone duplicates (Yogesh) are merged into the oldest entity on opener", async () => {
+    // Two profiles signed up with different emails but the SAME phone. The
+    // candidate texts the opener FROM that phone. The resolver merges the dups
+    // (oldest createdAt canonical) and recognizes the merged entity — keeping
+    // both emails + both userIds. Phone is the unique identity key.
+    const phone = "+18303265553"
+    const canonicalId = "Uu3ZeLnEMyyIMBFHV3uM" // older
+    const dupId = "ECyfCDNOCg2SEH8CzlRQ" // newer
+    const { db, store } = makeFakeDb({
+      users: {
+        [canonicalId]: {
+          id: canonicalId,
+          email: "yogeshsavirigana@gmail.com",
+          phoneE164: phone,
+          createdAt: "2026-05-29T17:44:22.000Z",
+          tags: { skills: ["python"] },
+        },
+        [dupId]: {
+          id: dupId,
+          email: "yogi.savirigana1996@gmail.com",
+          phoneE164: phone,
+          createdAt: "2026-05-29T17:46:11.000Z",
+          tags: { skills: ["react"] },
+        },
+      },
+    })
+
+    const result = await resolveInboundUserId(db, phone, `Hello, WeKruit! ${canonicalId}`)
+    assert.equal(result, canonicalId, "resolves to the oldest-createdAt canonical entity")
+
+    const dupDoc = store.get("pa-users")!.get(dupId)!
+    assert.equal(dupDoc.mergedInto, canonicalId, "duplicate tombstoned into canonical")
+    const canonicalDoc = store.get("pa-users")!.get(canonicalId)!
+    assert.deepEqual(
+      (canonicalDoc.tags as Record<string, unknown>).skills,
+      ["python", "react"],
+      "tags unioned",
+    )
+    assert.deepEqual(canonicalDoc.altEmails, ["yogi.savirigana1996@gmail.com"], "both emails kept")
+    assert.deepEqual(canonicalDoc.aliasUserIds, [dupId], "both userIds kept as aliases")
   })
 })

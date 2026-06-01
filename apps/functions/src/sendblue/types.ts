@@ -131,6 +131,12 @@ export type SendblueSendResponse = {
   callbackURL?: string
   accountEmail?: string
   metadata?: { plan?: string; [key: string]: unknown }
+  /**
+   * Echo of the accepted media attachment URL. Present when Sendblue accepted
+   * the `media_url`; NULL/absent when the attachment was dropped (signed URL or
+   * non-extension-terminated). Used by the outbox for dropped-attachment audit.
+   */
+  media_url?: string | null
   [key: string]: unknown
 }
 

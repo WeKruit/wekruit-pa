@@ -32,3 +32,28 @@ export async function isThinClaireEnabled(db: Firestore, userId: string): Promis
   const value = await getFlag(db, THIN_CLAIRE_FLAG_KEY, { userId }, false)
   return value === true
 }
+
+export const THIN_PRESCREEN_FLAG_KEY = "paThinPrescreenEnabled"
+
+/** Same canary cohort as thin Claire (allowlist-gated, default OFF). */
+export const THIN_PRESCREEN_CANARY_UIDS = ["8fEwIduUrzxZsblHHsNz"] as const
+
+/** Seed descriptor for admin-bootstrap.ts (perUser, default false, canary allowlist). */
+export const THIN_PRESCREEN_FLAG_SEED = {
+  key: THIN_PRESCREEN_FLAG_KEY,
+  value: false,
+  type: "bool" as const,
+  scope: "perUser" as const,
+  allowlist: [...THIN_PRESCREEN_CANARY_UIDS],
+  blocklist: [] as string[],
+}
+
+/**
+ * Is the thin prescreen engine enabled for this user? Default OFF → defer to legacy prescreen.
+ * `env: process.env` is passed so the env override `paThinPrescreenEnabled=1` short-circuits true in
+ * evals (isEnvOverride reads env[key] verbatim — the flag key, NOT an UPPER_SNAKE transform).
+ */
+export async function isThinPrescreenEnabled(db: Firestore, userId: string): Promise<boolean> {
+  const value = await getFlag(db, THIN_PRESCREEN_FLAG_KEY, { userId, env: process.env }, false)
+  return value === true
+}

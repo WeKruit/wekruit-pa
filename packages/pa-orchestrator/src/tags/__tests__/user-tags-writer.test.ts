@@ -70,14 +70,20 @@ function makeDb(initialDocs: Record<string, Record<string, unknown>> = {}) {
 // writeUserTagsFull
 // ---------------------------------------------------------------------------
 
-test("writeUserTagsFull: happy path writes {tags} merge:true", async () => {
+test("writeUserTagsFull: happy path writes {tags, globalTags} merge:true", async () => {
   const ctx = makeDb()
   const tags = { skills: ["python"], industryEnum: ["tech_software"], schemaVersion: 1 }
   const res = await writeUserTagsFull(ctx.db, "u-1", tags, { source: "cv" })
   assert.equal(res.ok, true)
   assert.equal(ctx.writes.length, 1)
   assert.equal(ctx.writes[0]!.id, "u-1")
-  // PR1 — the sole writer now lands BOTH surfaces atomically: tags + projected globalTags.
+  // Writes BOTH the matching store (tags) AND the /me-facing projection (globalTags) atomically
+  // (2026-05-30 — closes the tags↔globalTags split so phone-onboarded users render on /me).
+  const written = ctx.writes[0]!.data as { tags: unknown; globalTags: Record<string, unknown> }
+  assert.deepEqual(written.tags, tags)
+  // Only mappable axes project; skills is 1:1, industryEnum/schemaVersion do not map.
+  assert.deepEqual(written.globalTags, { skills: ["python"] })
+  // PR1 — the sole writer lands BOTH surfaces atomically: tags + projected globalTags.
   assert.deepEqual(ctx.writes[0]!.data, { tags, globalTags: projectTagsToGlobalTags(tags) })
   assert.equal(ctx.writes[0]!.merge, true)
 })
@@ -182,6 +188,80 @@ test("applyPartialUserTags: normalizes extractor minSalaryUsd to V16 minSalary",
   const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
   assert.equal(written.tags.minSalary, 180000)
   assert.equal("minSalaryUsd" in written.tags, false)
+})
+
+test("applyPartialUserTags: minSalaryUsd=100000 normalizes to V16 minSalary=100000 ('at least 100k')", async () => {
+  // Capture-merger-writer contract: the candidate said "at least 100k" → the
+  // extractor emits `minSalaryUsd`; V16 reads `tags.minSalary`. The sole writer
+  // normalizes at the boundary so the salary floor survives (the live bug
+  // dropped it entirely). This is the exact value from the root-caused case.
+  const ctx = makeDb()
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { minSalaryUsd: 100000 } as Record<string, unknown>,
+    { source: "chat", nowIso: "2026-05-29T00:00:00.000Z" }
+  )
+  assert.equal(res.ok, true)
+  assert.deepEqual(res.mergedKeys, ["minSalary"])
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  assert.equal(written.tags.minSalary, 100000)
+  assert.equal("minSalaryUsd" in written.tags, false)
+})
+
+test("applyPartialUserTags: targetLocations=['anywhere'] preserved (V16 anywhere-bypass token survives)", async () => {
+  // "open to anything" → targetLocations:['anywhere'] is the matcher's
+  // anywhere-bypass signal (ANYWHERE_LOCATION_TOKENS). The token must reach
+  // pa-users.tags verbatim (lowercased) or the bypass never fires and an empty
+  // location list over-filters to zero — part of the live recall bug.
+  const ctx = makeDb()
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { targetLocations: ["anywhere"] } as Record<string, unknown>,
+    { source: "chat" }
+  )
+  assert.equal(res.ok, true)
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  assert.deepEqual(written.tags.targetLocations, ["anywhere"])
+})
+
+test("applyPartialUserTags: targetLocations mixed-case 'Anywhere' lowercased + deduped (token canonical)", async () => {
+  const ctx = makeDb()
+  await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { targetLocations: ["Anywhere", "  anywhere ", "Remote", "remote", ""] } as Record<string, unknown>,
+    { source: "chat" }
+  )
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  // lowercased, trimmed, empties dropped, deduped — "anywhere" survives so the
+  // V16 ANYWHERE_LOCATION_TOKENS check (also lowercasing) matches.
+  assert.deepEqual(written.tags.targetLocations, ["anywhere", "remote"])
+})
+
+test("applyPartialUserTags: legacy roleFunctionNegativeList folds into canonical negativeRoleFunction", async () => {
+  // Back-compat fold: older callers/docs used `roleFunctionNegativeList`; the
+  // canonical SUBTRACT field V16 reads is `negativeRoleFunction`. The writer
+  // folds the legacy key in (union + dedupe) and drops the legacy name so there
+  // is exactly one source of truth.
+  const ctx = makeDb()
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    {
+      roleFunctionNegativeList: ["software_engineering", "sales_and_account_management"],
+      negativeRoleFunction: ["software_engineering"],
+    } as Record<string, unknown>,
+    { source: "chat" }
+  )
+  assert.equal(res.ok, true)
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  assert.deepEqual(
+    (written.tags.negativeRoleFunction as string[]).sort(),
+    ["sales_and_account_management", "software_engineering"]
+  )
+  assert.equal("roleFunctionNegativeList" in written.tags, false)
 })
 
 test("applyPartialUserTags: no userId → ok:false skip", async () => {
@@ -350,6 +430,45 @@ test("applyPartialUserTags: preferenceHardness on a doc with none writes it whol
   const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
   const ph = written.tags.preferenceHardness as Record<string, { hardness: string }>
   assert.equal(ph.salary?.hardness, "hard")
+})
+
+test("projectTagsToGlobalTags: careerStage + bufferSteps → careerStageRange (seniority range for /me)", () => {
+  // 8fE's real shape: anchor junior + soft careerStage with bufferSteps 3 → junior..staff.
+  const g = projectTagsToGlobalTags({
+    careerStage: "junior",
+    preferenceHardness: { careerStage: { hardness: "soft", bufferSteps: 3, source: "onboarding" } },
+  })
+  assert.equal(g.careerStage, "junior")
+  assert.deepEqual(g.careerStageRange, ["junior", "staff"])
+})
+
+test("projectTagsToGlobalTags: no bufferSteps → scalar careerStage only, no range", () => {
+  const g = projectTagsToGlobalTags({ careerStage: "senior" })
+  assert.equal(g.careerStage, "senior")
+  assert.equal(g.careerStageRange, undefined)
+})
+
+test("projectTagsToGlobalTags: bufferSteps clamps at the top of the vocab", () => {
+  const g = projectTagsToGlobalTags({
+    careerStage: "director",
+    preferenceHardness: { careerStage: { hardness: "soft", bufferSteps: 99 } },
+  })
+  // director + 99 → clamps to the last stage (founder), never out of bounds.
+  assert.deepEqual(g.careerStageRange, ["director", "founder"])
+})
+
+test("projectTagsToGlobalTags: companyStage projects as a multi-pick array (orthogonal to companySize)", () => {
+  const g = projectTagsToGlobalTags({ companyStage: ["seed", "series_a"], companySize: ["enterprise"] })
+  assert.deepEqual(g.companyStage, ["seed", "series_a"])
+  assert.deepEqual(g.companySizePreference, ["enterprise"]) // size axis projects independently
+  // a scalar companyStage lifts to a 1-element array on globalTags.
+  assert.deepEqual(projectTagsToGlobalTags({ companyStage: "seed" }).companyStage, ["seed"])
+})
+
+test("projectTagsToGlobalTags: scalar companySize lifts to a 1-elem globalTags array (was dropped)", () => {
+  // tags.companySize can be a scalar (single pick) — must still reach globalTags.companySizePreference.
+  assert.deepEqual(projectTagsToGlobalTags({ companySize: "enterprise" }).companySizePreference, ["enterprise"])
+  assert.deepEqual(projectTagsToGlobalTags({ companySize: ["seed", "enterprise"] }).companySizePreference, ["seed", "enterprise"])
 })
 
 // ---------------------------------------------------------------------------
