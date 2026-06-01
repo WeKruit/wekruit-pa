@@ -26,6 +26,7 @@ import { httpsCallable } from "firebase/functions"
 import { doc, getFirestore, onSnapshot } from "firebase/firestore"
 import { auth, functions } from "../lib/firebase.js"
 import { mergePortalCache, readPortalCache } from "../lib/portal-cache.js"
+import { CAREER_STAGE_ORDER, expandCareerStageRange } from "../lib/career-stage-range.js"
 import {
   createCandidateProfileCorrectionSubmitter,
   type CandidateSelfProfile,
@@ -1976,6 +1977,20 @@ type ProfilePrefGroup = {
   tone: "default" | "warn"
   readFields: string[]
   options: string[]
+  /**
+   * Optional read-side token remap (stored globalTags token → editor chip token).
+   * Used where the stored sentinel differs from the chip token, e.g. companySize
+   * is stored as `companySizePreference: ["no_preference"]` but the chip is `open`.
+   */
+  readMap?: Record<string, string>
+  /**
+   * When true, this axis is a RANGE: the stored value is a [lo, hi] pair (two
+   * anchors over an ordered vocab) and the editor expands it to EVERY chip
+   * between lo and hi inclusive so the candidate sees the full open band. On
+   * save, the picked set is sent verbatim and the backend collapses it back to
+   * [min, max] in vocab order. Used for "Your seniority" → careerStageRange.
+   */
+  range?: boolean
 }
 
 // Canonical vocab tokens — mirror @wekruit/shared-tags canonical vocabs
@@ -2005,6 +2020,13 @@ const PROFILE_PREF_GROUPS: ProfilePrefGroup[] = [
     multi: true,
     tone: "default",
     readFields: ["industrySector", "relevantIndustry"],
+    // D16 FOLLOW-UP: industrySector is admin-add-able via the pa-canonical-tags
+    // Firestore overlay. This list mirrors the static 42-token vocab; once an
+    // admin PROMOTES a new sector and a candidate has it stored, initialPicked's
+    // `g.options.includes()` filter will drop it and the next /me Save will
+    // erase it from tags.industrySector. When D16 promotion goes live, either
+    // load this vocab from the overlay or carry off-list stored tokens through
+    // save as a hidden passthrough so a Save never drops an unrendered token.
     options: [
       "artificial_intelligence_and_machine_learning", "software_and_saas", "financial_technology",
       "healthcare_and_life_sciences", "biotechnology_and_pharmaceuticals", "hardware_and_semiconductors",
@@ -2034,10 +2056,19 @@ const PROFILE_PREF_GROUPS: ProfilePrefGroup[] = [
   {
     field: "companySize",
     label: "Company size",
-    hint: "How big — pick one.",
-    multi: false,
+    hint: "How big — pick any that fit (e.g. an early startup OR big tech).",
+    // MULTI-PICK: COMPANY_SIZE_VOCAB is an OR set (shared-tags company-size.ts)
+    // and both the projector (companySizePreference[]) and the matcher consume
+    // the full array. A single-pick editor would down-collapse a stored
+    // ["early_startup","enterprise"] to one value on ANY save (the editor
+    // re-emits every axis), silently destroying the candidate's real preference.
+    multi: true,
     tone: "default",
-    readFields: ["companySize"],
+    // Stored on globalTags as companySizePreference (the projector maps the
+    // editor's `open` → the `no_preference` sentinel). Read it back and fold the
+    // sentinel to the `open` chip so "Any size" highlights.
+    readFields: ["companySizePreference", "companySize"],
+    readMap: { no_preference: "open" },
     options: ["seed", "early_startup", "scale_up", "mid_market", "enterprise", "open"],
   },
   {
@@ -2055,14 +2086,22 @@ const PROFILE_PREF_GROUPS: ProfilePrefGroup[] = [
   {
     field: "careerStage",
     label: "Your seniority",
-    hint: "Your level — pick one.",
-    multi: false,
+    hint: "The range of levels you're open to — pick every level that fits.",
+    multi: true,
+    range: true,
     tone: "default",
-    readFields: ["careerStage"],
-    options: [
-      "intern", "student", "entry_level", "junior", "mid_level", "senior",
-      "staff", "principal", "manager", "director", "vp", "c_level", "founder",
-    ],
+    // Stored as a [lo, hi] range on globalTags.careerStageRange (falls back to
+    // the scalar careerStage as a single-anchor band). The editor expands the
+    // pair to every chip between the anchors so the open band is visible.
+    readFields: ["careerStageRange", "careerStage"],
+    // Canonical CAREER_STAGE_VOCAB order (shared-tags career-stage.ts), sourced
+    // from ONE place (career-stage-range.ts). expandCareerStageRange() (editor)
+    // and the backend collapseCareerStageRange() both index by this order; any
+    // divergence (e.g. swapping student/intern) would make a stored
+    // [intern, junior] band display as [intern, student, entry_level, junior]
+    // and silently re-collapse to [student, junior] on the next save — lowering
+    // the candidate's seniority floor. Sharing the array kills that drift.
+    options: [...CAREER_STAGE_ORDER],
   },
   {
     field: "visaStatus",
@@ -2092,11 +2131,21 @@ function MatchPreferencesCard({
     return []
   }
 
+  const initialPicked = (g: ProfilePrefGroup): string[] => {
+    let raw = readField(g.readFields)
+    if (g.readMap) raw = raw.map((t) => g.readMap![t] ?? t)
+    // Range axes (seniority) expand the stored [lo, hi] pair into every chip
+    // between the anchors via the SHARED helper (career-stage-range.ts), whose
+    // ordering matches the backend collapse — so the round-trip is stable.
+    if (g.range) return expandCareerStageRange(raw, g.options)
+    const current = raw.filter((t) => g.options.includes(t))
+    return g.multi ? current : current.slice(0, 1)
+  }
+
   const [picked, setPicked] = useState<Record<string, Set<string>>>(() => {
     const init: Record<string, Set<string>> = {}
     for (const g of PROFILE_PREF_GROUPS) {
-      const current = readField(g.readFields).filter((t) => g.options.includes(t))
-      init[g.field] = new Set(g.multi ? current : current.slice(0, 1))
+      init[g.field] = new Set(initialPicked(g))
     }
     return init
   })
