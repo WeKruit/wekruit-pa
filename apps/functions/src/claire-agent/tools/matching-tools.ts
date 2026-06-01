@@ -131,8 +131,13 @@ export interface CollabRole {
   roleFunction?: string[]
   /** Canonical industrySector tokens (INDUSTRY_SECTOR_VOCAB). */
   industrySector?: string[]
-  /** Where this role is in the candidate's journey. `matched` = recommended, no screen yet. */
-  status?: "passed" | "not_passed" | "in_progress" | "matched"
+  /**
+   * Where this role is in the candidate's journey. `matched` = recommended, no screen yet.
+   * `under_review` = the screen reached a terminal but it's PENDING human (HITL) confirmation — it is
+   * NOT a real pass/fail until an operator COMMITS it in the dashboard, so the candidate must never be
+   * told they passed while under_review.
+   */
+  status?: "passed" | "not_passed" | "in_progress" | "matched" | "under_review"
 }
 
 /**
@@ -284,7 +289,7 @@ export async function loadCandidateRoles(
         title: existing?.title || (typeof cfg.jobTitle === "string" ? cfg.jobTitle : ""),
         roleFunction: existing?.roleFunction ?? [],
         industrySector: existing?.industrySector ?? [],
-        status: prescreenStatusFromTerminal(d.terminal),
+        status: prescreenStatusFromSession(d),
       })
     }
   } catch (err) {
@@ -339,12 +344,55 @@ async function resolveCandidatePhone(
   }
 }
 
-/** Map a stored prescreen-session terminal (PASS/FAIL/null) to the candidate-facing progress status. */
-export function prescreenStatusFromTerminal(terminal: unknown): "passed" | "not_passed" | "in_progress" {
+/** The candidate-facing progress status of a prescreen. `under_review` = a terminal verdict that is
+ * still pending HITL confirmation (NOT a real pass/fail until an operator commits it). */
+export type PrescreenProgressStatus = "passed" | "not_passed" | "in_progress" | "under_review"
+
+/**
+ * Map a stored prescreen-session terminal (PASS/FAIL/HARD_STOP/null) to the candidate-facing progress
+ * status, taking the HITL REVIEW state into account.
+ *
+ * A terminal verdict (PASS/FAIL/HARD_STOP) is NOT real until an operator COMMITS it in the dashboard.
+ * Until then the session carries `terminalActionPendingReview === true` (and `review.status === "pending"`),
+ * and the candidate's status is **"under_review"** — NEVER "passed"/"not_passed". `commitPrescreenOutcome`
+ * (apps/functions/src/evaluation-attempts.ts) flips `terminalActionPendingReview → false` and
+ * `review.status → "approved"|"overridden"` on commit; only THEN does PASS→passed / FAIL→not_passed.
+ *
+ * The cheap per-session committed signal (no extra reads) is:
+ *   pending  ⇔ pendingReview === true  OR  reviewStatus === "pending"
+ *   committed ⇔ NOT pending
+ * which is exactly what commit writes back.
+ *
+ * `review` is optional so a bare-terminal call (legacy/tests) still resolves, but the session-reading
+ * call sites MUST pass the review state so a pending PASS reports under_review.
+ */
+export function prescreenStatusFromTerminal(
+  terminal: unknown,
+  review?: { pendingReview?: unknown; reviewStatus?: unknown },
+): PrescreenProgressStatus {
   const t = typeof terminal === "string" ? terminal.toUpperCase() : ""
+  if (t !== "PASS" && t !== "FAIL" && t !== "HARD_STOP") return "in_progress"
+  const pending =
+    review?.pendingReview === true ||
+    (typeof review?.reviewStatus === "string" && review.reviewStatus.toLowerCase() === "pending")
+  // A terminal that's awaiting human confirmation is "under review", not a real outcome.
+  if (pending) return "under_review"
   if (t === "PASS") return "passed"
-  if (t === "FAIL") return "not_passed"
-  return "in_progress"
+  return "not_passed" // FAIL / HARD_STOP committed
+}
+
+/**
+ * Map a full prescreen-session doc to the candidate-facing progress status. Reads the per-session HITL
+ * signals (`terminalActionPendingReview` + `review.status`) so a PASS/FAIL still pending operator commit
+ * reports **under_review** (never "passed"). This is the form session-reading call sites should use.
+ */
+export function prescreenStatusFromSession(session: Record<string, unknown> | undefined | null): PrescreenProgressStatus {
+  const d = session ?? {}
+  const review = (d.review ?? {}) as Record<string, unknown>
+  return prescreenStatusFromTerminal(d.terminal, {
+    pendingReview: d.terminalActionPendingReview,
+    reviewStatus: review.status,
+  })
 }
 
 /** Resolve mem0 config from env; null when not configured (tool no-ops fail-open). */
@@ -1180,7 +1228,9 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "company', 'did I pass the fintech one?'). Compose a CANONICAL query from their words: roleFunction " +
       "(closed enum), company (free text), industrySector (closed enum) — map their meaning the same way " +
       "you'd tag a preference. Returns matched+prescreened roles RANKED by canonical fit, each with its " +
-      "status (passed / not_passed / in_progress / matched). kind='one' → the single best is theirs; " +
+      "status (passed / not_passed / in_progress / matched / under_review). under_review = the screen is " +
+      "submitted but awaiting human confirmation — it is NOT a pass; do NOT say they passed for it. " +
+      "kind='one' → the single best is theirs; " +
       "kind='ambiguous' → ASK which of the candidates they mean (never guess); kind='no_match' → they " +
       "haven't been matched to such a role, so guide them to the website to start a new one. Then use " +
       "begin_collab_prescreen with the chosen jobId to START, or just report the status.",
@@ -1293,7 +1343,10 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "Look up the status of the candidate's pre-screens when they ask about their progress " +
       "('how did my screen go?', 'did I pass the Invoko one?', 'what's the status of my interviews?'). " +
       "Optional query = a company/title to filter to (e.g. 'Invoko'); omit to list all their screens. " +
-      "Returns each screen's company, title, and status (passed / not_passed / in_progress). READ-ONLY.",
+      "Returns each screen's company, title, and status (passed / not_passed / in_progress / under_review). " +
+      "under_review = the screen is SUBMITTED and awaiting human confirmation — it is NOT a pass yet; do " +
+      "NOT tell the candidate they passed (or offer a confirmed next step) for an under_review screen; only " +
+      "a 'passed' status is a real, confirmed pass. READ-ONLY.",
     parameters: z.object({ query: z.string().nullable() }),
     async execute({ query }) {
       try {
@@ -1316,7 +1369,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
               title,
               jobId,
               createdAt,
-              status: prescreenStatusFromTerminal(d.terminal),
+              status: prescreenStatusFromSession(d),
             }
           })
           // optional company/title filter (in-memory contains; NO regex/enum classification).
