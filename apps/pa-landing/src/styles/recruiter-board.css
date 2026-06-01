@@ -4849,6 +4849,174 @@
   padding: 16px;
 }
 
+.rb-candidate-command {
+  display: grid;
+  grid-template-columns: minmax(270px, 0.9fr) minmax(330px, 1fr) minmax(280px, 0.85fr);
+  margin: 16px 16px 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.rb-candidate-command.is-live { border-color: var(--live-border); }
+.rb-candidate-command.is-info { border-color: var(--info-bg); }
+.rb-candidate-command.is-success { border-color: var(--success-bg); }
+.rb-candidate-command.is-warn { border-color: var(--danger-bg); }
+
+.rb-candidate-command__mission {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 10px;
+  border-right: 1px solid var(--border);
+  background: var(--cream-3);
+  padding: 18px;
+}
+
+.rb-candidate-command__mission span,
+.rb-candidate-command__cards span,
+.rb-candidate-command__queue > span,
+.rb-candidate-command__queue article span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.rb-candidate-command__mission h3 {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 31px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.rb-candidate-command__mission p,
+.rb-candidate-command__cards p,
+.rb-candidate-command__queue p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.rb-candidate-command__mission > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rb-candidate-command__mission a,
+.rb-candidate-command__mission button,
+.rb-candidate-command__queue a,
+.rb-candidate-command__queue button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.rb-candidate-command__cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+
+.rb-candidate-command__cards article {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--cream-3);
+  padding: 12px;
+}
+
+.rb-candidate-command__cards article.is-live { border-color: var(--live-border); background: var(--live-soft); }
+.rb-candidate-command__cards article.is-info { border-color: var(--info-bg); background: var(--info-bg); }
+.rb-candidate-command__cards article.is-success { border-color: var(--success-bg); background: var(--success-bg); }
+.rb-candidate-command__cards article.is-warn { border-color: var(--danger-bg); background: var(--danger-bg); }
+
+.rb-candidate-command__cards strong {
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.1;
+}
+
+.rb-candidate-command__queue {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border-left: 1px solid var(--border);
+  padding: 14px;
+}
+
+.rb-candidate-command__queue > div {
+  display: grid;
+  gap: 8px;
+}
+
+.rb-candidate-command__queue article {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px;
+}
+
+.rb-candidate-command__queue article.is-live { border-color: var(--live-border); background: var(--live-soft); }
+.rb-candidate-command__queue article.is-info { border-color: var(--info-bg); background: var(--info-bg); }
+.rb-candidate-command__queue article.is-success { border-color: var(--success-bg); background: var(--success-bg); }
+.rb-candidate-command__queue article.is-warn { border-color: var(--danger-bg); background: var(--danger-bg); }
+
+.rb-candidate-command__queue article div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.rb-candidate-command__queue article strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-candidate-command__queue article p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.rb-candidate-command__queue a,
+.rb-candidate-command__queue button {
+  min-height: 32px;
+  padding: 7px 10px;
+}
+
 .rb-candidate-tools {
   display: grid;
   gap: 12px;
@@ -5376,14 +5544,22 @@
 .rb-source-card {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
   margin: 10px;
+  scroll-margin-top: 18px;
 }
 
 .rb-source-card > div {
+  min-width: 0;
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 9px;
   align-items: center;
+}
+
+.rb-source-card > div > span:last-child {
+  min-width: 0;
 }
 
 .rb-source-card p {
@@ -5426,11 +5602,12 @@
 
 .rb-source-card__outreach-controls {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
 }
 
 .rb-source-card__outreach-controls label {
+  min-width: 0;
   display: grid;
   gap: 5px;
 }
@@ -5445,6 +5622,7 @@
 .rb-source-card__outreach-controls input {
   width: 100%;
   min-width: 0;
+  max-width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
@@ -5514,11 +5692,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
 }
 
 .rb-source-card footer select {
-  min-width: 112px;
+  flex: 1 1 112px;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #fff;
@@ -5529,6 +5709,7 @@
 }
 
 .rb-source-card footer a {
+  flex: 0 0 auto;
   color: var(--ink);
   font-size: 12px;
   font-weight: 800;
@@ -5649,6 +5830,7 @@
   .rb-inbox-grid,
   .rb-feedback-grid,
   .rb-candidate-crm,
+  .rb-candidate-command,
   .rb-match-command,
   .rb-submission-command,
   .rb-matchboard,
@@ -5711,6 +5893,14 @@
   .rb-match-command__mission {
     border-right: 0;
     border-bottom: 1px solid var(--border);
+  }
+  .rb-candidate-command__mission {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .rb-candidate-command__queue {
+    border-left: 0;
+    border-top: 1px solid var(--border);
   }
   .rb-submission-command__mission {
     border-right: 0;
@@ -5886,6 +6076,8 @@
   .rb-access-table article,
   .rb-source-form__split,
   .rb-feedback-line,
+  .rb-candidate-command__cards,
+  .rb-candidate-command__queue article,
   .rb-match-command__cards,
   .rb-submission-command__cards,
   .rb-role-market-strip,
@@ -5936,6 +6128,9 @@
     justify-self: start;
   }
   .rb-submission-command__mission h3 {
+    font-size: 26px;
+  }
+  .rb-candidate-command__mission h3 {
     font-size: 26px;
   }
   .rb-notification-strip {

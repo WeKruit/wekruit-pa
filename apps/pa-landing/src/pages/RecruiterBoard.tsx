@@ -4161,6 +4161,211 @@ function candidateMatchText(candidate: RecruiterSourcedCandidateItem): string {
   ].filter(Boolean).join(" ")
 }
 
+function sourcedCandidateDomId(candidateId: string): string {
+  return `candidate-${candidateId.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+}
+
+function sourcedCandidateRoleHref(candidate: RecruiterSourcedCandidateItem): string | undefined {
+  const jobId = candidate.inboundJobId || candidate.jobId
+  return jobId ? `/recruiters/job/${encodeURIComponent(jobId)}?candidateId=${encodeURIComponent(candidate.id)}` : undefined
+}
+
+function sourcedCandidateIdentityKeys(candidate: RecruiterSourcedCandidateItem): string[] {
+  return [
+    candidate.candidate?.email ? `email:${candidate.candidate.email.trim().toLowerCase()}` : "",
+    candidate.candidate?.link ? `link:${normalizeBulkCandidateLink(candidate.candidate.link).toLowerCase().replace(/\/+$/, "")}` : "",
+  ].filter(Boolean)
+}
+
+function duplicateCandidateIds(candidates: RecruiterSourcedCandidateItem[]): Set<string> {
+  const keyToIds = new Map<string, Set<string>>()
+  for (const candidate of candidates) {
+    for (const key of sourcedCandidateIdentityKeys(candidate)) {
+      const ids = keyToIds.get(key) ?? new Set<string>()
+      ids.add(candidate.id)
+      keyToIds.set(key, ids)
+    }
+  }
+  const duplicates = new Set<string>()
+  for (const ids of keyToIds.values()) {
+    if (ids.size <= 1) continue
+    for (const id of ids) duplicates.add(id)
+  }
+  return duplicates
+}
+
+type CandidateSourcingAction = "bulk_import" | "open_candidate" | "match_candidate" | "submit_candidate"
+
+type CandidateSourcingCommand = {
+  focus?: RecruiterSourcedCandidateItem
+  label: string
+  title: string
+  body: string
+  tone: "live" | "info" | "success" | "warn" | "mute"
+  action: CandidateSourcingAction
+  actionLabel: string
+  href?: string
+  cards: Array<{ label: string; value: string; body: string; tone: "live" | "info" | "success" | "warn" | "mute" }>
+  queue: Array<{
+    id: string
+    label: string
+    title: string
+    body: string
+    tone: "live" | "info" | "success" | "warn" | "mute"
+    action: CandidateSourcingAction
+    href?: string
+  }>
+}
+
+function candidateSourcingPriority(candidate: RecruiterSourcedCandidateItem, duplicates: Set<string>): number {
+  const followUp = candidateFollowUpState(candidate)
+  if (duplicates.has(candidate.id)) return 98
+  if (candidate.stage === "ready" && sourcedCandidateRoleHref(candidate)) return 92
+  if (candidate.stage === "ready") return 86
+  if (followUp.needsAction) return 78
+  if (candidate.calibrationStatus === "calibration_requested" || candidate.calibrationStatus === "bad_fit") return 72
+  if (candidate.stage === "screened") return 62
+  if (candidate.outreach?.status === "responded") return 56
+  if (candidate.outreach?.status === "not_contacted" || !candidate.outreach?.status) return 48
+  if (candidate.stage === "sourced" || candidate.stage === "contacted") return 36
+  return 10
+}
+
+function candidateCommandBody(candidate: RecruiterSourcedCandidateItem, duplicates: Set<string>): string {
+  if (duplicates.has(candidate.id)) return "Duplicate identity signal. Keep one clean record before more outreach."
+  const followUp = candidateFollowUpState(candidate)
+  if (followUp.needsAction) return followUp.body
+  if (candidate.stage === "ready" && sourcedCandidateRoleHref(candidate)) return "Candidate is ready and already tied to a role. Submit from the role brief with consent."
+  if (candidate.stage === "ready") return "Candidate is ready. Use the matchboard to choose the strongest role before submission."
+  if (candidate.calibrationStatus === "bad_fit") return candidate.calibrationNote || "Marked not a fit. Do not submit without WeKruit calibration."
+  if (candidate.calibrationStatus === "calibration_requested") return candidate.calibrationNote || "Calibration has been requested. Wait for signal before submission."
+  if (candidate.outreach?.status === "responded") return "Candidate responded. Screen for comp, interest, hard filters, and role fit."
+  if (candidate.stage === "screened") return "Screening is done. Mark ready once candidate interest and hard checks are clear."
+  return "Add outreach notes, set a follow-up, or match this candidate against open roles."
+}
+
+function buildCandidateSourcingCommand(candidates: RecruiterSourcedCandidateItem[]): CandidateSourcingCommand {
+  const active = candidates.filter((candidate) => candidate.stage !== "archived")
+  const duplicates = duplicateCandidateIds(active)
+  const ready = active.filter((candidate) => candidate.stage === "ready")
+  const privateBench = active.filter((candidate) => !candidate.inboundJobId && !candidate.jobId && candidate.stage !== "submitted")
+  const followUps = active.filter((candidate) => candidateFollowUpState(candidate).needsAction)
+  const contacted = active.filter((candidate) => candidate.outreach?.status && candidate.outreach.status !== "not_contacted")
+  const submitted = candidates.filter((candidate) => candidate.stage === "submitted")
+  const focus = [...active]
+    .sort((a, b) => candidateSourcingPriority(b, duplicates) - candidateSourcingPriority(a, duplicates) || updatedAtMs(b) - updatedAtMs(a))[0]
+  const queue = [...active]
+    .filter((candidate) =>
+      duplicates.has(candidate.id) ||
+      candidate.stage === "ready" ||
+      candidateFollowUpState(candidate).needsAction ||
+      candidate.calibrationStatus === "calibration_requested" ||
+      candidate.calibrationStatus === "bad_fit",
+    )
+    .sort((a, b) => candidateSourcingPriority(b, duplicates) - candidateSourcingPriority(a, duplicates) || updatedAtMs(b) - updatedAtMs(a))
+    .slice(0, 5)
+    .map((candidate) => {
+      const href = candidate.stage === "ready" ? sourcedCandidateRoleHref(candidate) : undefined
+      const action: CandidateSourcingAction = href ? "submit_candidate" : candidate.stage === "ready" ? "match_candidate" : "open_candidate"
+      return {
+        id: candidate.id,
+        label: sourceStageMeta(candidate.stage).label,
+        title: candidateName(candidate),
+        body: candidateCommandBody(candidate, duplicates),
+        tone: duplicates.has(candidate.id) ? "warn" as const : candidateFollowUpState(candidate).tone,
+        action,
+        ...(href ? { href } : {}),
+      }
+    })
+
+  const baseCards = [
+    {
+      label: "Active bench",
+      value: String(active.length),
+      body: `${privateBench.length} private bench, ${ready.length} ready, ${submitted.length} submitted.`,
+      tone: active.length ? "live" as const : "mute" as const,
+    },
+    {
+      label: "Follow-ups due",
+      value: String(followUps.length),
+      body: followUps.length ? "Candidates need outreach movement." : "No stale follow-up dates.",
+      tone: followUps.length ? "warn" as const : "success" as const,
+    },
+    {
+      label: "Outreach coverage",
+      value: `${active.length ? Math.round((contacted.length / active.length) * 100) : 0}%`,
+      body: `${contacted.length}/${active.length || 0} active candidates have outreach status.`,
+      tone: contacted.length ? "info" as const : "mute" as const,
+    },
+    {
+      label: "Duplicate risk",
+      value: String(duplicates.size),
+      body: duplicates.size ? "Duplicate emails or links need cleanup before scale." : "No duplicate identity signal in this bench.",
+      tone: duplicates.size ? "warn" as const : "success" as const,
+    },
+  ]
+
+  if (!focus) {
+    return {
+      label: "Sourcing command",
+      title: "Build the first candidate bench",
+      body: "Paste LinkedIn profiles, attach notes, and let the matchboard rank candidates before formal submission.",
+      tone: "info",
+      action: "bulk_import",
+      actionLabel: "Open bulk import",
+      cards: baseCards,
+      queue,
+    }
+  }
+
+  const href = sourcedCandidateRoleHref(focus)
+  let label = "Sourcing command"
+  let title = `${candidateName(focus)} needs the next move`
+  let body = candidateCommandBody(focus, duplicates)
+  let tone: CandidateSourcingCommand["tone"] = sourceStageMeta(focus.stage).tone
+  let action: CandidateSourcingAction = "open_candidate"
+  let actionLabel = "Open candidate"
+
+  if (duplicates.has(focus.id)) {
+    label = "Duplicate risk"
+    title = `${candidateName(focus)} may be duplicated`
+    tone = "warn"
+  } else if (focus.stage === "ready" && href) {
+    label = "Submit next"
+    title = `${candidateName(focus)} is ready for ${focus.jobTitleSnapshot || "the role"}`
+    tone = "success"
+    action = "submit_candidate"
+    actionLabel = "Open role brief"
+  } else if (focus.stage === "ready") {
+    label = "Match next"
+    title = `${candidateName(focus)} is ready to match`
+    tone = "live"
+    action = "match_candidate"
+    actionLabel = "Open matchboard"
+  } else if (candidateFollowUpState(focus).needsAction) {
+    label = "Follow-up due"
+    title = `${candidateName(focus)} needs outreach`
+    tone = "warn"
+  } else if (focus.outreach?.status === "responded") {
+    label = "Screen next"
+    title = `${candidateName(focus)} responded`
+    tone = "live"
+  }
+
+  return {
+    focus,
+    label,
+    title,
+    body,
+    tone,
+    action,
+    actionLabel,
+    ...(href && action === "submit_candidate" ? { href } : {}),
+    cards: baseCards,
+    queue,
+  }
+}
+
 type BulkCandidateDraft = {
   rowNumber: number
   raw: string
@@ -4632,6 +4837,7 @@ function CandidatesTab({
   const [bulkImporting, setBulkImporting] = useState(false)
   const [bulkResults, setBulkResults] = useState<BulkCandidateImportResult[]>([])
   const [err, setErr] = useState<string | null>(null)
+  const command = useMemo(() => buildCandidateSourcingCommand(candidates), [candidates])
 
   const save = async (e: FormEvent) => {
     e.preventDefault()
@@ -4674,6 +4880,14 @@ function CandidatesTab({
   const bulkParsedRows = useMemo(() => parseBulkCandidates(bulkText), [bulkText])
   const bulkValidRows = bulkParsedRows.filter((row): row is { ok: true; candidate: BulkCandidateDraft } => row.ok)
   const bulkInvalidRows = bulkParsedRows.filter((row): row is { ok: false; rowNumber: number; raw: string; reason: string } => !row.ok)
+
+  const openCandidate = (candidateId: string) => {
+    document.getElementById(sourcedCandidateDomId(candidateId))?.scrollIntoView({ behavior: "smooth", block: "center" })
+  }
+
+  const openBulkImport = () => {
+    document.getElementById("bulk-import-candidates")?.scrollIntoView({ behavior: "smooth", block: "start" })
+  }
 
   const updateStage = async (candidate: RecruiterSourcedCandidateItem, stage: RecruiterSourcedCandidateStage) => {
     const jobId = candidate.inboundJobId || candidate.jobId || ""
@@ -4861,6 +5075,11 @@ function CandidatesTab({
       <header className="rb-panel__head">
         <div><h2>Candidate CRM</h2><p>Build a private candidate bench first. Attach a role now only when you already know the best brief.</p></div>
       </header>
+      <CandidateSourcingCommandPanel
+        command={command}
+        onOpenCandidate={openCandidate}
+        onOpenBulkImport={openBulkImport}
+      />
       <div className="rb-candidate-crm">
         <div className="rb-candidate-tools">
           <form className="rb-source-form" onSubmit={save}>
@@ -4958,7 +5177,7 @@ function CandidatesTab({
             </button>
           </form>
 
-          <section className="rb-bulk-import" aria-label="Bulk import candidates">
+          <section id="bulk-import-candidates" className="rb-bulk-import" aria-label="Bulk import candidates">
             <div>
               <h3>Bulk import</h3>
               <p>Paste one candidate per line. Leave role on Private bench to rank them on the matchboard later.</p>
@@ -5020,6 +5239,69 @@ function CandidatesTab({
   )
 }
 
+function CandidateSourcingCommandPanel({
+  command,
+  onOpenCandidate,
+  onOpenBulkImport,
+}: {
+  command: CandidateSourcingCommand
+  onOpenCandidate: (candidateId: string) => void
+  onOpenBulkImport: () => void
+}) {
+  const primaryAction = () => {
+    if (command.href) return <Link to={command.href}>{command.actionLabel}</Link>
+    if (command.action === "bulk_import") return <button type="button" onClick={onOpenBulkImport}>{command.actionLabel}</button>
+    if (command.action === "match_candidate") return <Link to="/recruiters?tab=matches">{command.actionLabel}</Link>
+    const focus = command.focus
+    if (focus) return <button type="button" onClick={() => onOpenCandidate(focus.id)}>{command.actionLabel}</button>
+    return null
+  }
+
+  const queueAction = (item: CandidateSourcingCommand["queue"][number]) => {
+    if (item.href) return <Link to={item.href}>Open brief</Link>
+    if (item.action === "match_candidate") return <Link to="/recruiters?tab=matches">Match</Link>
+    return <button type="button" onClick={() => onOpenCandidate(item.id)}>Open</button>
+  }
+
+  return (
+    <section className={`rb-candidate-command is-${command.tone}`} aria-label="Candidate sourcing command">
+      <div className="rb-candidate-command__mission">
+        <span>{command.label}</span>
+        <h3>{command.title}</h3>
+        <p>{command.body}</p>
+        <div>{primaryAction()}</div>
+      </div>
+
+      <div className="rb-candidate-command__cards">
+        {command.cards.map((card) => (
+          <article className={`is-${card.tone}`} key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <p>{card.body}</p>
+          </article>
+        ))}
+      </div>
+
+      <aside className="rb-candidate-command__queue">
+        <span>Sourcing queue</span>
+        <div>
+          {command.queue.map((item) => (
+            <article className={`is-${item.tone}`} key={item.id}>
+              <div>
+                <span>{item.label}</span>
+                <strong>{item.title}</strong>
+                <p>{item.body}</p>
+              </div>
+              {queueAction(item)}
+            </article>
+          ))}
+          {command.queue.length === 0 && <p>No candidate needs immediate action.</p>}
+        </div>
+      </aside>
+    </section>
+  )
+}
+
 function SourcedCandidateCard({
   candidate,
   disabled,
@@ -5049,7 +5331,7 @@ function SourcedCandidateCard({
     ? `${candidate.jobTitleSnapshot} · ${candidate.companyLabelSnapshot}`
     : candidate.jobTitleSnapshot || "Private bench"
   return (
-    <article className="rb-source-card">
+    <article id={sourcedCandidateDomId(candidate.id)} className="rb-source-card">
       <div>
         <span className="rb-candidate-dot">{candidateName(candidate).slice(0, 1).toUpperCase()}</span>
         <span>
