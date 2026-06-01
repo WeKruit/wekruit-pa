@@ -777,14 +777,16 @@
 }
 
 .rb-access__card label,
-.rb-search {
+.rb-search,
+.rb-role-sort {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
 .rb-access__card label span,
-.rb-search span {
+.rb-search span,
+.rb-role-sort span {
   color: var(--ink-2);
   font-size: 12px;
   font-weight: 700;
@@ -792,6 +794,7 @@
 
 .rb-access__card input,
 .rb-search input,
+.rb-role-sort select,
 .rb-admin-feedback select,
 .rb-admin-feedback textarea {
   width: 100%;
@@ -807,6 +810,7 @@
 
 .rb-access__card input:focus,
 .rb-search input:focus,
+.rb-role-sort select:focus,
 .rb-admin-feedback select:focus,
 .rb-admin-feedback textarea:focus {
   border-color: var(--ink);
@@ -1512,6 +1516,155 @@
   padding: 18px;
 }
 
+.rb-role-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 170px;
+  gap: 10px;
+  width: min(560px, 100%);
+}
+
+.rb-role-command {
+  margin: 18px 18px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #fff 0%, #fbfaf5 100%);
+  overflow: hidden;
+}
+
+.rb-role-command > header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rb-role-command > header span {
+  color: var(--live-2);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rb-role-command > header strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.rb-role-command > header em {
+  color: var(--ink-3);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.rb-role-command > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+}
+
+.rb-role-command-card {
+  display: grid;
+  grid-template-columns: 66px minmax(0, 1fr);
+  grid-template-rows: 1fr auto;
+  gap: 12px;
+  min-height: 176px;
+  padding: 15px;
+  border-right: 1px solid var(--border);
+}
+
+.rb-role-command-card:last-child { border-right: 0; }
+
+.rb-role-command-card__score {
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  background: var(--cream-3);
+  color: var(--ink);
+}
+
+.rb-role-command-card.is-live .rb-role-command-card__score,
+.rb-role-command-card.is-success .rb-role-command-card__score {
+  background: var(--live-soft);
+  color: var(--live-2);
+}
+
+.rb-role-command-card.is-warn .rb-role-command-card__score {
+  background: #fff4e6;
+  color: var(--warning);
+}
+
+.rb-role-command-card__score strong {
+  font-family: var(--font-serif);
+  font-size: 25px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-role-command-card__score span {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.rb-role-command-card__body {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.rb-role-command-card__body > span {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.rb-role-command-card__body h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.rb-role-command-card__body h3 a {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.rb-role-command-card__body p {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.rb-role-command-card__body div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.rb-role-command-card__body em {
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink-2);
+  font-size: 10.5px;
+  font-style: normal;
+  padding: 2px 7px;
+}
+
+.rb-role-command-card__action {
+  grid-column: 1 / -1;
+  justify-self: start;
+  color: var(--live-2);
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
 .rb-role-card {
   display: flex;
   flex-direction: column;
@@ -1582,6 +1735,27 @@
   line-height: 1.4;
 }
 
+.rb-role-card__intelligence {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--cream-3);
+  padding: 10px;
+}
+
+.rb-role-card__intelligence strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.rb-role-card__intelligence em {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
 .rb-role-card__pills {
   display: flex;
   gap: 6px;
@@ -1593,6 +1767,12 @@
   flex-direction: column;
   gap: 4px;
   padding: 10px 0 2px;
+}
+
+.rb-role-card__signal > span {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .rb-role-card__signal em {
@@ -2485,6 +2665,16 @@
   .rb-candidate-board {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
   }
+  .rb-role-command > div {
+    grid-template-columns: 1fr;
+  }
+  .rb-role-command-card {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .rb-role-command-card:last-child {
+    border-bottom: 0;
+  }
 }
 
 @media (max-width: 820px) {
@@ -2509,6 +2699,18 @@
     position: static;
     align-items: flex-start;
     flex-direction: column;
+  }
+  .rb-panel__head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .rb-role-toolbar {
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+  .rb-role-command > header {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
   .rb-settings {
     grid-template-columns: 1fr;

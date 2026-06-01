@@ -56,6 +56,15 @@ const ROLE_FILTERS = [
 
 type RoleFilter = typeof ROLE_FILTERS[number]["id"]
 
+const ROLE_SORTS = [
+  { id: "recommended", label: "Recommended" },
+  { id: "newest", label: "Newest" },
+  { id: "least_worked", label: "Least worked" },
+  { id: "most_ready", label: "Most ready" },
+] as const
+
+type RoleSort = typeof ROLE_SORTS[number]["id"]
+
 const PRIMARY_ROLE_SLOT_LIMIT = 5
 const SINGLE_SUBMISSION_WEEKLY_LIMIT = 5
 
@@ -604,6 +613,7 @@ export default function RecruiterBoard() {
             jobs={openJobs}
             submissions={submissions}
             sourcedCandidates={sourcedCandidates}
+            roleFeedback={roleFeedback}
             loading={!jobs && !error}
             primaryRoleIds={primaryRoleIds}
             primaryRoleSavingId={primaryRoleSavingId}
@@ -1046,6 +1056,192 @@ function roleReward(job: CollabJob): string {
   return "$10K+"
 }
 
+type RoleInsightTone = "live" | "info" | "success" | "warn" | "mute"
+
+type RoleInsight = {
+  job: CollabJob
+  score: number
+  scoreLabel: string
+  tone: RoleInsightTone
+  urgency: string
+  marketLoad: string
+  nextAction: string
+  nextActionBody: string
+  reasons: string[]
+  sourcedCount: number
+  readyCount: number
+  submissionCount: number
+  pendingCount: number
+  primary: boolean
+  updatedMs: number
+  feedback?: RecruiterRoleFeedbackItem
+}
+
+function rowsForRole<T extends { inboundJobId?: string; jobId?: string }>(job: CollabJob, rows: T[]): T[] {
+  const key = roleKey(job)
+  return rows.filter((row) => row.inboundJobId === key || row.jobId === key)
+}
+
+function latestRoleFeedback(job: CollabJob, roleFeedback: RecruiterRoleFeedbackItem[]): RecruiterRoleFeedbackItem | undefined {
+  return rowsForRole(job, roleFeedback)
+    .sort((a, b) => timestampValueMs(b.updatedAt ?? b.createdAt) - timestampValueMs(a.updatedAt ?? a.createdAt))[0]
+}
+
+function feedbackDifficultyAdjustment(feedback?: RecruiterRoleFeedbackItem): number {
+  switch (feedback?.difficulty) {
+    case "easy": return 8
+    case "hard": return -8
+    case "blocked": return -22
+    case "medium":
+    default: return 0
+  }
+}
+
+function roleFeedbackDifficultyText(difficulty?: RecruiterRoleFeedbackItem["difficulty"]): string {
+  switch (difficulty) {
+    case "easy": return "Easy"
+    case "hard": return "Hard"
+    case "blocked": return "Blocked"
+    case "medium":
+    default: return "Medium"
+  }
+}
+
+function roleUpdatedLabel(updatedMs: number): string {
+  if (!updatedMs) return "Open role"
+  const days = Math.max(0, Math.floor((Date.now() - updatedMs) / 86_400_000))
+  if (days === 0) return "Updated today"
+  if (days === 1) return "Updated yesterday"
+  if (days <= 7) return `Updated ${days}d ago`
+  return "Established search"
+}
+
+function buildRoleInsight(
+  job: CollabJob,
+  submissions: RecruiterSubmissionItem[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+  primaryRoleIds: string[],
+  roleFeedback: RecruiterRoleFeedbackItem[],
+): RoleInsight {
+  const roleSubmissions = rowsForRole(job, submissions)
+  const roleCandidates = rowsForRole(job, sourcedCandidates).filter((candidate) => candidate.stage !== "archived")
+  const readyCount = roleCandidates.filter((candidate) => candidate.stage === "ready").length
+  const pendingCount = roleSubmissions.filter((submission) => ["submitted", "new", "reviewing"].includes(submission.status ?? "submitted")).length
+  const advancedCount = roleSubmissions.filter((submission) => ["advanced", "interviewing", "hired"].includes(submission.status ?? "")).length
+  const rejectedCount = roleSubmissions.filter((submission) => ["rejected", "duplicate"].includes(submission.status ?? "")).length
+  const feedback = latestRoleFeedback(job, roleFeedback)
+  const { hard, fit } = roleChecklistCounts(job)
+  const updatedMs = roleUpdatedMs(job)
+  const primary = isPrimaryRole(job, primaryRoleIds)
+  const freshBoost = isNewRole(job) ? 16 : updatedMs && Date.now() - updatedMs <= 14 * 86_400_000 ? 8 : 0
+  const noSubmissionBoost = roleSubmissions.length === 0 ? 14 : -Math.min(18, roleSubmissions.length * 5)
+  const score = Math.max(18, Math.min(98,
+    44 +
+    freshBoost +
+    (primary ? 12 : 0) +
+    Math.min(18, readyCount * 9) +
+    Math.min(10, roleCandidates.length * 2) +
+    noSubmissionBoost +
+    Math.min(12, hard * 2 + fit) +
+    advancedCount * 8 -
+    rejectedCount * 4 +
+    feedbackDifficultyAdjustment(feedback),
+  ))
+  const tone: RoleInsightTone = feedback?.difficulty === "blocked"
+    ? "warn"
+    : score >= 82
+      ? "live"
+      : score >= 68
+        ? "success"
+        : score >= 52
+          ? "info"
+          : "mute"
+  const scoreLabel = feedback?.difficulty === "blocked"
+    ? "Blocked"
+    : score >= 82
+      ? "Work now"
+      : score >= 68
+        ? "Strong"
+        : score >= 52
+          ? "Watch"
+          : "Low priority"
+  const marketLoad = roleSubmissions.length === 0
+    ? "No submissions from you"
+    : pendingCount > 0
+      ? `${pendingCount} pending review`
+      : `${roleSubmissions.length} submitted`
+  const urgency = primary
+    ? "Primary slot"
+    : isNewRole(job)
+      ? "New role"
+      : roleSubmissions.length === 0
+        ? "Open lane"
+        : "Secondary"
+  const nextAction = feedback?.difficulty === "blocked"
+    ? "Ask WeKruit to clear blocker"
+    : readyCount > 0
+      ? "Submit ready candidate"
+      : roleCandidates.length > 0
+        ? "Screen saved prospects"
+        : roleSubmissions.length === 0
+          ? "Build first shortlist"
+          : pendingCount > 0
+            ? "Wait for feedback"
+            : "Source lookalikes"
+  const nextActionBody = feedback?.difficulty === "blocked"
+    ? "Use the role brief question box before spending sourcing cycles."
+    : readyCount > 0
+      ? "Open the brief and move the strongest ready candidate into a consented submission."
+      : roleCandidates.length > 0
+        ? "Advance screened prospects to Ready before submitting."
+        : roleSubmissions.length === 0
+          ? "Start with two or three sourced prospects so duplicate checks and match ranking can work."
+          : pendingCount > 0
+            ? "Let WeKruit review the current submission before sending lookalikes."
+            : "Use feedback and previous hard checks to source a tighter next candidate."
+  const reasons = [
+    roleUpdatedLabel(updatedMs),
+    primary ? "Counts toward primary-role activity" : "Uses single-submit credit unless slotted",
+    readyCount ? `${readyCount} ready candidate${readyCount === 1 ? "" : "s"}` : "",
+    roleSubmissions.length === 0 ? "Clean submission lane" : marketLoad,
+    feedback ? `${roleFeedbackDifficultyText(feedback.difficulty)} role` : "",
+  ].filter(Boolean).slice(0, 4)
+
+  return {
+    job,
+    score,
+    scoreLabel,
+    tone,
+    urgency,
+    marketLoad,
+    nextAction,
+    nextActionBody,
+    reasons,
+    sourcedCount: roleCandidates.length,
+    readyCount,
+    submissionCount: roleSubmissions.length,
+    pendingCount,
+    primary,
+    updatedMs,
+    feedback,
+  }
+}
+
+function sortRoleInsights(insights: RoleInsight[], sort: RoleSort): RoleInsight[] {
+  const rows = [...insights]
+  switch (sort) {
+    case "newest":
+      return rows.sort((a, b) => b.updatedMs - a.updatedMs || b.score - a.score)
+    case "least_worked":
+      return rows.sort((a, b) => (a.submissionCount + a.sourcedCount) - (b.submissionCount + b.sourcedCount) || b.score - a.score)
+    case "most_ready":
+      return rows.sort((a, b) => b.readyCount - a.readyCount || b.score - a.score)
+    case "recommended":
+    default:
+      return rows.sort((a, b) => b.score - a.score || b.updatedMs - a.updatedMs)
+  }
+}
+
 function PriorityRoleRow({
   job,
   sourcedCount,
@@ -1122,6 +1318,7 @@ function RolesTab({
   jobs,
   submissions,
   sourcedCandidates,
+  roleFeedback,
   loading,
   primaryRoleIds,
   primaryRoleSavingId,
@@ -1130,6 +1327,7 @@ function RolesTab({
   jobs: CollabJob[]
   submissions: RecruiterSubmissionItem[]
   sourcedCandidates: RecruiterSourcedCandidateItem[]
+  roleFeedback: RecruiterRoleFeedbackItem[]
   loading: boolean
   primaryRoleIds: string[]
   primaryRoleSavingId: string | null
@@ -1137,33 +1335,45 @@ function RolesTab({
 }) {
   const [q, setQ] = useState("")
   const [filter, setFilter] = useState<RoleFilter>("all")
+  const [sort, setSort] = useState<RoleSort>("recommended")
+  const insights = useMemo(
+    () => jobs.map((job) => buildRoleInsight(job, submissions, sourcedCandidates, primaryRoleIds, roleFeedback)),
+    [jobs, primaryRoleIds, roleFeedback, sourcedCandidates, submissions],
+  )
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase()
-    const visible = jobs.filter((job) => {
-      const sourcedCount = sourcedCandidates.filter((c) => c.inboundJobId === roleKey(job) || c.jobId === roleKey(job)).length
-      const submissionCount = submissions.filter((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job)).length
-      if (filter === "new" && !isNewRole(job)) return false
-      if (filter === "with_candidates" && sourcedCount === 0) return false
-      if (filter === "needs_submissions" && submissionCount > 0) return false
+    const visible = insights.filter((insight) => {
+      if (filter === "new" && !isNewRole(insight.job)) return false
+      if (filter === "with_candidates" && insight.sourcedCount === 0) return false
+      if (filter === "needs_submissions" && insight.submissionCount > 0) return false
       return true
     })
-    if (!needle) return visible
-    return visible.filter((j) =>
-      j.title.toLowerCase().includes(needle) ||
-      j.recruiterBoard.label.location.toLowerCase().includes(needle) ||
-      j.recruiterBoard.label.company.toLowerCase().includes(needle) ||
-      j.recruiterBoard.label.pills.some((p) => p.text.toLowerCase().includes(needle)),
+    const searched = !needle ? visible : visible.filter(({ job }) =>
+      job.title.toLowerCase().includes(needle) ||
+      job.recruiterBoard.label.location.toLowerCase().includes(needle) ||
+      job.recruiterBoard.label.company.toLowerCase().includes(needle) ||
+      job.recruiterBoard.label.pills.some((p) => p.text.toLowerCase().includes(needle)),
     )
-  }, [filter, jobs, q, sourcedCandidates, submissions])
+    return sortRoleInsights(searched, sort)
+  }, [filter, insights, q, sort])
+  const spotlight = filtered.slice(0, 3)
 
   return (
     <section className="rb-panel rb-panel--fill">
       <header className="rb-panel__head">
         <div><h2>Role marketplace</h2><p>Live WeKruit collab roles with scorecards, pipeline context, and submit paths.</p></div>
-        <label className="rb-search">
-          <span>Search roles</span>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Title, location, tag..." autoComplete="off" />
-        </label>
+        <div className="rb-role-toolbar">
+          <label className="rb-search">
+            <span>Search roles</span>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Title, location, tag..." autoComplete="off" />
+          </label>
+          <label className="rb-role-sort">
+            <span>Sort</span>
+            <select value={sort} onChange={(e) => setSort(e.target.value as RoleSort)}>
+              {ROLE_SORTS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+          </label>
+        </div>
       </header>
       <div className="rb-filter-row" role="tablist" aria-label="Role filters">
         {ROLE_FILTERS.map((option) => (
@@ -1179,21 +1389,32 @@ function RolesTab({
       </div>
       {loading && <div className="rb-state">Loading open roles...</div>}
       {!loading && (
-        <div className="rb-role-grid">
-          {filtered.map((job) => (
-            <RoleCard
-              key={job.jobId}
-              job={job}
-              sourcedCount={sourcedCandidates.filter((c) => c.inboundJobId === roleKey(job) || c.jobId === roleKey(job)).length}
-              submissionCount={submissions.filter((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job)).length}
-              primary={isPrimaryRole(job, primaryRoleIds)}
-              primarySlotsFull={primaryRoleIds.length >= PRIMARY_ROLE_SLOT_LIMIT}
-              disabled={primaryRoleSavingId === roleKey(job)}
-              onPrimaryRoleToggle={onPrimaryRoleToggle}
-            />
-          ))}
-          {filtered.length === 0 && <p className="rb-empty">No roles match that search.</p>}
-        </div>
+        <>
+          {spotlight.length > 0 && (
+            <section className="rb-role-command" aria-label="Recommended role focus">
+              <header>
+                <span>Role command center</span>
+                <strong>{spotlight[0]?.scoreLabel ?? "Recommended"} focus</strong>
+                <em>{spotlight.length} role{spotlight.length === 1 ? "" : "s"} ranked from your pipeline, submissions, and feedback.</em>
+              </header>
+              <div>
+                {spotlight.map((insight) => <RoleCommandCard key={insight.job.jobId} insight={insight} />)}
+              </div>
+            </section>
+          )}
+          <div className="rb-role-grid">
+            {filtered.map((insight) => (
+              <RoleCard
+                key={insight.job.jobId}
+                insight={insight}
+                primarySlotsFull={primaryRoleIds.length >= PRIMARY_ROLE_SLOT_LIMIT}
+                disabled={primaryRoleSavingId === roleKey(insight.job)}
+                onPrimaryRoleToggle={onPrimaryRoleToggle}
+              />
+            ))}
+            {filtered.length === 0 && <p className="rb-empty">No roles match that search.</p>}
+          </div>
+        </>
       )}
     </section>
   )
@@ -1792,25 +2013,42 @@ function SettingsTab({
   )
 }
 
+function RoleCommandCard({ insight }: { insight: RoleInsight }) {
+  const { job } = insight
+  return (
+    <article className={`rb-role-command-card is-${insight.tone}`}>
+      <div className="rb-role-command-card__score">
+        <strong>{insight.score}</strong>
+        <span>{insight.scoreLabel}</span>
+      </div>
+      <div className="rb-role-command-card__body">
+        <span>{insight.urgency} · {insight.marketLoad}</span>
+        <h3><Link to={`/recruiters/job/${job.jobId}`}>{job.title}</Link></h3>
+        <p>{job.recruiterBoard.label.company} · {job.recruiterBoard.label.location}</p>
+        <div>
+          {insight.reasons.map((reason) => <em key={reason}>{reason}</em>)}
+        </div>
+      </div>
+      <Link className="rb-role-command-card__action" to={`/recruiters/job/${job.jobId}`}>
+        {insight.nextAction}
+      </Link>
+    </article>
+  )
+}
+
 function RoleCard({
-  job,
-  sourcedCount = 0,
-  submissionCount = 0,
-  primary,
+  insight,
   primarySlotsFull,
   disabled,
   onPrimaryRoleToggle,
 }: {
-  job: CollabJob
-  sourcedCount?: number
-  submissionCount?: number
-  primary: boolean
+  insight: RoleInsight
   primarySlotsFull: boolean
   disabled: boolean
   onPrimaryRoleToggle: (jobId: string, makePrimary: boolean) => void
 }) {
+  const { job, primary } = insight
   const { hard, fit } = roleChecklistCounts(job)
-  const signal = roleFitSignal(job, sourcedCount, submissionCount)
   const slotDisabled = disabled || (!primary && primarySlotsFull)
   return (
     <article className={`rb-role-card ${primary ? "is-primary" : ""}`}>
@@ -1820,12 +2058,17 @@ function RoleCard({
       </div>
       <h3><Link to={`/recruiters/job/${job.jobId}`}>{job.title}</Link></h3>
       <p>{job.recruiterBoard.label.company} - {job.recruiterBoard.label.location}</p>
+      <div className="rb-role-card__intelligence">
+        <span className={`rb-fit-signal is-${insight.tone}`}>{insight.scoreLabel} {insight.score}</span>
+        <strong>{insight.nextAction}</strong>
+        <em>{insight.nextActionBody}</em>
+      </div>
       <div className="rb-role-card__pills">
         {job.recruiterBoard.label.pills.map((p, i) => <span key={i} className={`rb-pill ${p.tone ?? ""}`}>{p.text}</span>)}
       </div>
       <div className="rb-role-card__signal">
-        <span className={`rb-fit-signal is-${signal.tone}`}>{signal.label} {signal.percent}%</span>
-        <em>{sourcedCount} sourced - {submissionCount} submitted - {primary ? "primary slot" : "single-submit role"}</em>
+        <span>{insight.urgency}</span>
+        <em>{insight.sourcedCount} sourced - {insight.readyCount} ready - {insight.submissionCount} submitted</em>
       </div>
       <footer>
         <span>{hard} hard checks</span>
