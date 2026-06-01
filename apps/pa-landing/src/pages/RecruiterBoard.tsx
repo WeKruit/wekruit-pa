@@ -39,11 +39,12 @@ import {
 import { auth } from "../lib/firebase.js"
 import { redirectResultPromise } from "../lib/auth-redirect-bootstrap.js"
 
-type RecruiterTab = "overview" | "roles" | "matches" | "candidates" | "submissions" | "performance" | "earnings" | "settings"
+type RecruiterTab = "overview" | "roles" | "access" | "matches" | "candidates" | "submissions" | "performance" | "earnings" | "settings"
 
 const TABS: Array<{ id: RecruiterTab; label: string }> = [
   { id: "overview", label: "Overview" },
   { id: "roles", label: "Roles" },
+  { id: "access", label: "Access" },
   { id: "matches", label: "Matchboard" },
   { id: "candidates", label: "Candidates" },
   { id: "submissions", label: "Submissions" },
@@ -667,6 +668,22 @@ export default function RecruiterBoard() {
             onPrimaryRoleToggle={(jobId, makePrimary) => void updatePrimaryRoleSlots(jobId, makePrimary)}
           />
         )}
+        {activeTab === "access" && statusLoaded && (
+          <RoleAccessTab
+            jobs={openJobs}
+            submissions={submissions}
+            sourcedCandidates={sourcedCandidates}
+            roleFeedback={roleFeedback}
+            roleQuestions={roleQuestions}
+            roleIntelligence={roleIntelligence}
+            primaryRoleIds={primaryRoleIds}
+            primaryRoleSavingId={primaryRoleSavingId}
+            onPrimaryRoleToggle={(jobId, makePrimary) => void updatePrimaryRoleSlots(jobId, makePrimary)}
+            onRoles={() => setTab("roles")}
+            onCandidates={() => setTab("candidates")}
+          />
+        )}
+        {activeTab === "access" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "matches" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "matches" && statusLoaded && <MatchboardTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} primaryRoleIds={primaryRoleIds} />}
         {activeTab === "candidates" && (
@@ -2019,6 +2036,130 @@ function sortRoleInsights(insights: RoleInsight[], sort: RoleSort): RoleInsight[
   }
 }
 
+type RoleAccessStatus = "approved" | "candidate_proof" | "request_ready" | "single_submission" | "needs_answer"
+
+type RoleAccessDecision = {
+  insight: RoleInsight
+  status: RoleAccessStatus
+  label: string
+  body: string
+  evidence: string[]
+  tone: RoleInsightTone
+  actionLabel: string
+}
+
+function roleAccessDecision(insight: RoleInsight, primarySlotsFull: boolean): RoleAccessDecision {
+  if (insight.primary) {
+    return {
+      insight,
+      status: "approved",
+      label: "Approved primary",
+      body: "This role is in your focus set. Keep at least one live candidate or active submission here.",
+      evidence: [
+        `${insight.sourcedCount} sourced`,
+        `${insight.submissionCount} submitted`,
+        `${insight.pendingCount} pending`,
+      ],
+      tone: "success",
+      actionLabel: "Open brief",
+    }
+  }
+  if (insight.openQuestionCount > 0 || insight.marketFrictionCount > 0) {
+    return {
+      insight,
+      status: "needs_answer",
+      label: "Needs WeKruit answer",
+      body: "Do not spend serious sourcing cycles until the calibration issue is answered.",
+      evidence: [
+        insight.openQuestionCount ? `${insight.openQuestionCount} open question${insight.openQuestionCount === 1 ? "" : "s"}` : "",
+        insight.marketFrictionCount ? `${insight.marketFrictionCount} market friction signal${insight.marketFrictionCount === 1 ? "" : "s"}` : "",
+        insight.feedback ? `${roleFeedbackDifficultyText(insight.feedback.difficulty)} role` : "",
+      ].filter(Boolean),
+      tone: "warn",
+      actionLabel: "Open brief",
+    }
+  }
+  if (insight.readyCount > 0) {
+    return {
+      insight,
+      status: "candidate_proof",
+      label: "Candidate proof ready",
+      body: "You have a ready candidate. Use this role as a strong access request or one-off submission.",
+      evidence: [
+        `${insight.readyCount} ready`,
+        `${insight.sourcedCount} sourced`,
+        insight.cleanLane ? "Clean lane" : insight.marketLoad,
+      ],
+      tone: "live",
+      actionLabel: primarySlotsFull ? "Open brief" : "Add primary",
+    }
+  }
+  if (insight.sourcedCount > 0) {
+    return {
+      insight,
+      status: "request_ready",
+      label: "Build proof",
+      body: "Screen saved prospects before asking for focus access.",
+      evidence: [
+        `${insight.sourcedCount} sourced`,
+        insight.cleanLane ? "Clean lane" : insight.marketLoad,
+        insight.nextAction,
+      ],
+      tone: "info",
+      actionLabel: primarySlotsFull ? "Open brief" : "Add primary",
+    }
+  }
+  if (primarySlotsFull) {
+    return {
+      insight,
+      status: "single_submission",
+      label: "Single submission only",
+      body: "Primary slots are full. Work this only when you have a strong consented candidate.",
+      evidence: [
+        `${SINGLE_SUBMISSION_WEEKLY_LIMIT} weekly single-submit credits`,
+        insight.cleanLane ? "Clean lane" : insight.marketLoad,
+        roleUpdatedLabel(insight.updatedMs),
+      ],
+      tone: "mute",
+      actionLabel: "Open brief",
+    }
+  }
+  return {
+    insight,
+    status: "request_ready",
+    label: "Request primary access",
+    body: "Available for focus access if you can commit candidate activity.",
+    evidence: [
+      insight.cleanLane ? "Clean lane" : insight.marketLoad,
+      roleUpdatedLabel(insight.updatedMs),
+      `${insight.scoreLabel} ${insight.score}`,
+    ],
+    tone: insight.cleanLane ? "success" : "info",
+    actionLabel: "Add primary",
+  }
+}
+
+function sortRoleAccessDecisions(rows: RoleAccessDecision[]): RoleAccessDecision[] {
+  const rank: Record<RoleAccessStatus, number> = {
+    candidate_proof: 5,
+    approved: 4,
+    request_ready: 3,
+    single_submission: 2,
+    needs_answer: 1,
+  }
+  return [...rows].sort((a, b) => rank[b.status] - rank[a.status] || b.insight.score - a.insight.score)
+}
+
+function roleAccessSummary(decisions: RoleAccessDecision[]) {
+  return {
+    approved: decisions.filter((decision) => decision.status === "approved").length,
+    candidateProof: decisions.filter((decision) => decision.status === "candidate_proof").length,
+    requestReady: decisions.filter((decision) => decision.status === "request_ready").length,
+    needsAnswer: decisions.filter((decision) => decision.status === "needs_answer").length,
+    singleOnly: decisions.filter((decision) => decision.status === "single_submission").length,
+  }
+}
+
 function PriorityRoleRow({
   job,
   sourcedCount,
@@ -2088,6 +2229,162 @@ function FeedbackLine({ submission }: { submission: RecruiterSubmissionItem }) {
       <p>{submission.recruiterFeedbackNote}</p>
       <small>{formatWhen(submission)}</small>
     </article>
+  )
+}
+
+function RoleAccessTab({
+  jobs,
+  submissions,
+  sourcedCandidates,
+  roleFeedback,
+  roleQuestions,
+  roleIntelligence,
+  primaryRoleIds,
+  primaryRoleSavingId,
+  onPrimaryRoleToggle,
+  onRoles,
+  onCandidates,
+}: {
+  jobs: CollabJob[]
+  submissions: RecruiterSubmissionItem[]
+  sourcedCandidates: RecruiterSourcedCandidateItem[]
+  roleFeedback: RecruiterRoleFeedbackItem[]
+  roleQuestions: RecruiterRoleQuestionItem[]
+  roleIntelligence: RecruiterRoleIntelligenceItem[]
+  primaryRoleIds: string[]
+  primaryRoleSavingId: string | null
+  onPrimaryRoleToggle: (jobId: string, makePrimary: boolean) => void
+  onRoles: () => void
+  onCandidates: () => void
+}) {
+  const primarySlotsFull = primaryRoleIds.length >= PRIMARY_ROLE_SLOT_LIMIT
+  const decisions = useMemo(() => {
+    const insights = jobs.map((job) => buildRoleInsight(job, submissions, sourcedCandidates, primaryRoleIds, roleFeedback, roleQuestions, roleIntelligence))
+    return sortRoleAccessDecisions(insights.map((insight) => roleAccessDecision(insight, primarySlotsFull)))
+  }, [jobs, primaryRoleIds, primarySlotsFull, roleFeedback, roleIntelligence, roleQuestions, sourcedCandidates, submissions])
+  const summary = roleAccessSummary(decisions)
+  const singleSubmissions = submissions.filter((submission) => submission.submissionMode === "single_submission").length
+  const singleCreditsLeft = Math.max(0, SINGLE_SUBMISSION_WEEKLY_LIMIT - singleSubmissions)
+  const proofRoles = decisions
+    .filter((decision) => decision.status === "candidate_proof" || (decision.status === "request_ready" && decision.insight.sourcedCount > 0))
+    .slice(0, 5)
+  const blockedRoles = decisions.filter((decision) => decision.status === "needs_answer").slice(0, 4)
+
+  return (
+    <section className="rb-panel rb-panel--fill">
+      <header className="rb-panel__head">
+        <div>
+          <h2>Role access command</h2>
+          <p>Decide what you can work now, where you need candidate proof, and which roles need WeKruit calibration before more sourcing.</p>
+        </div>
+        <button type="button" className="rb-panel__link" onClick={onRoles}>Open marketplace</button>
+      </header>
+
+      <section className="rb-access-command-hero">
+        <article className="is-success">
+          <span>Approved primary access</span>
+          <strong>{summary.approved}/{PRIMARY_ROLE_SLOT_LIMIT}</strong>
+          <p>Primary slots are the roles WeKruit should expect you to actively cover.</p>
+        </article>
+        <article className="is-live">
+          <span>Candidate proof ready</span>
+          <strong>{summary.candidateProof}</strong>
+          <p>Ready candidates that can justify role focus or a one-off submission.</p>
+        </article>
+        <article className="is-info">
+          <span>Request-ready roles</span>
+          <strong>{summary.requestReady}</strong>
+          <p>Roles that can become focus access once you build enough proof.</p>
+        </article>
+        <article className="is-warn">
+          <span>Needs answer</span>
+          <strong>{summary.needsAnswer}</strong>
+          <p>Blocked by open role questions or hard market feedback.</p>
+        </article>
+        <article className="is-mute">
+          <span>Single credits left</span>
+          <strong>{singleCreditsLeft}/{SINGLE_SUBMISSION_WEEKLY_LIMIT}</strong>
+          <p>Use only for strong consented candidates outside primary roles.</p>
+        </article>
+      </section>
+
+      <section className="rb-access-command-grid">
+        <article className="rb-access-board">
+          <header>
+            <h3>Access decisions</h3>
+            <p>Ranked by proof, current primary access, and role blockers.</p>
+          </header>
+          <div className="rb-access-table">
+            {decisions.slice(0, 10).map((decision) => {
+              const job = decision.insight.job
+              const canAddPrimary = !decision.insight.primary && !primarySlotsFull && decision.status !== "needs_answer"
+              const isSaving = primaryRoleSavingId === roleKey(job)
+              return (
+                <article key={job.jobId} className={`is-${decision.tone}`}>
+                  <div>
+                    <span className={`rb-status is-${decision.tone}`}>{decision.label}</span>
+                    <strong>{job.title}</strong>
+                    <p>{job.recruiterBoard.label.company} - {job.recruiterBoard.label.location}</p>
+                  </div>
+                  <div>
+                    <strong>{decision.body}</strong>
+                    <p>{decision.evidence.join(" · ")}</p>
+                  </div>
+                  <div>
+                    {canAddPrimary ? (
+                      <button
+                        type="button"
+                        disabled={isSaving}
+                        onClick={() => onPrimaryRoleToggle(roleKey(job), true)}
+                      >
+                        {isSaving ? "Adding..." : decision.actionLabel}
+                      </button>
+                    ) : (
+                      <Link to={`/recruiters/job/${job.jobId}`}>{decision.actionLabel}</Link>
+                    )}
+                  </div>
+                </article>
+              )
+            })}
+            {decisions.length === 0 && <p className="rb-empty">No recruiter-board roles are active yet.</p>}
+          </div>
+        </article>
+
+        <aside className="rb-access-side">
+          <article>
+            <h3>Access rules</h3>
+            <p>Primary access means you are committing active coverage. Single submissions are for exceptional candidate-led opportunities.</p>
+            <ul>
+              <li>Do not add a role as primary unless you can source or submit soon.</li>
+              <li>Use candidate proof before asking for more trusted access.</li>
+              <li>Pause roles with open questions until WeKruit answers.</li>
+            </ul>
+          </article>
+          <article>
+            <h3>Proof queue</h3>
+            {proofRoles.length ? proofRoles.map((decision) => (
+              <Link key={decision.insight.job.jobId} to={`/recruiters/job/${decision.insight.job.jobId}`}>
+                <strong>{decision.insight.job.title}</strong>
+                <span>{decision.label} · {decision.insight.sourcedCount} sourced</span>
+              </Link>
+            )) : (
+              <button type="button" onClick={onCandidates}>Add sourced candidates</button>
+            )}
+          </article>
+          <article>
+            <h3>Calibration blockers</h3>
+            {blockedRoles.length ? blockedRoles.map((decision) => (
+              <Link key={decision.insight.job.jobId} to={`/recruiters/job/${decision.insight.job.jobId}`}>
+                <strong>{decision.insight.job.title}</strong>
+                <span>{decision.evidence.join(" · ")}</span>
+              </Link>
+            )) : (
+              <p>No blocked access lanes right now.</p>
+            )}
+          </article>
+        </aside>
+      </section>
+    </section>
   )
 }
 

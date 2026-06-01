@@ -2686,6 +2686,188 @@
   font-weight: 400;
 }
 
+.rb-access-command-hero {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  padding: 16px 20px 8px;
+}
+
+.rb-access-command-hero article {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--ink-3);
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+}
+
+.rb-access-command-hero article.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-access-command-hero article.is-info { border-top-color: var(--info); }
+.rb-access-command-hero article.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-access-command-hero article.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-access-command-hero article.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-access-command-hero span,
+.rb-access-board header p,
+.rb-access-side article p,
+.rb-access-side article li,
+.rb-access-side article a span {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.rb-access-command-hero span {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-access-command-hero strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-access-command-hero p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-access-command-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  padding: 12px 20px 20px;
+}
+
+.rb-access-board,
+.rb-access-side article {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px;
+}
+
+.rb-access-board header,
+.rb-access-side article h3 {
+  margin-bottom: 14px;
+}
+
+.rb-access-board h3,
+.rb-access-side h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.rb-access-board header p,
+.rb-access-side article p {
+  margin: 5px 0 0;
+  line-height: 1.45;
+}
+
+.rb-access-table {
+  display: grid;
+  gap: 8px;
+}
+
+.rb-access-table article {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1fr) 120px;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ink-3);
+  border-radius: 8px;
+  background: var(--cream-3);
+  padding: 12px;
+}
+
+.rb-access-table article.is-live { border-left-color: var(--live); background: var(--live-soft); }
+.rb-access-table article.is-info { border-left-color: var(--info); }
+.rb-access-table article.is-warn { border-left-color: var(--warning); background: #fffaf1; }
+.rb-access-table article.is-success { border-left-color: var(--success); background: var(--success-bg); }
+.rb-access-table article.is-mute { border-left-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-access-table strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.rb-access-table p {
+  margin: 3px 0 0;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.rb-access-table a,
+.rb-access-table button,
+.rb-access-side article button {
+  appearance: none;
+  display: inline-flex;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 11px;
+  text-decoration: none;
+}
+
+.rb-access-table button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.rb-access-side {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+
+.rb-access-side article ul {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.rb-access-side article li + li {
+  margin-top: 5px;
+}
+
+.rb-access-side article a {
+  display: grid;
+  gap: 3px;
+  border-top: 1px solid var(--border);
+  color: var(--ink);
+  padding: 10px 0;
+  text-decoration: none;
+}
+
+.rb-access-side article a:last-child {
+  padding-bottom: 0;
+}
+
+.rb-access-side article a strong {
+  font-size: 13px;
+}
+
 .rb-candidate-crm {
   display: grid;
   grid-template-columns: 360px minmax(0, 1fr);
@@ -3178,8 +3360,15 @@
   .rb-earnings-hero,
   .rb-status-ladder,
   .rb-expectation-list,
-  .rb-challenge-grid {
+  .rb-challenge-grid,
+  .rb-access-command-hero {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rb-access-command-grid {
+    grid-template-columns: 1fr;
+  }
+  .rb-access-side {
+    grid-template-columns: 1fr;
   }
   .rb-earnings-grid {
     grid-template-columns: 1fr;
@@ -3279,6 +3468,9 @@
   .rb-status-ladder,
   .rb-expectation-list,
   .rb-challenge-grid,
+  .rb-access-command-hero,
+  .rb-access-command-grid,
+  .rb-access-table article,
   .rb-source-form__split,
   .rb-feedback-line,
   .rb-role-cockpit,
