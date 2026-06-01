@@ -118,6 +118,11 @@ function timestampMs(raw: unknown): number {
   return 0
 }
 
+function shortText(text: string | undefined | null, fallback = "—", max = 64): string {
+  if (!text) return fallback
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
 function submissionTimeMs(raw: unknown): number {
   if (!raw) return 0
   if (typeof raw === "string") return Date.parse(raw) || 0
@@ -206,6 +211,21 @@ type RoleSubmissionPacket = {
   antiFlags: string[]
 }
 
+type RoleCalibrationBrief = {
+  tone: "good" | "watch" | "blocked" | "quiet"
+  headline: string
+  body: string
+  nextMove: string
+  marketFacts: Array<{ label: string; value: string; detail: string }>
+  pipeline: Array<{ label: string; count: number; total: number; tone: "good" | "watch" | "blocked" | "quiet" }>
+  rejectionReasons: Array<{ label: string; count: number; detail: string }>
+  guardrails: {
+    prove: string[]
+    avoid: string[]
+    calibrate: string[]
+  }
+}
+
 function roleChecklistItems(job: CollabJob, kind: RoleChecklistKind) {
   return job.recruiterBoard.checklist.groups.find((group) => group.kind === kind)?.items ?? []
 }
@@ -283,6 +303,131 @@ function buildRoleSubmissionPacket(input: {
     nextAction,
     missingHard: missingHard.slice(0, 4),
     antiFlags: antiFlags.slice(0, 4),
+  }
+}
+
+function buildRoleCalibrationBrief(input: {
+  job: CollabJob
+  pendingSlots: number
+  roleCandidates: RecruiterSourcedCandidateItem[]
+  roleSubmissions: RecruiterSubmissionItem[]
+  roleFeedback: RecruiterRoleFeedbackItem | null
+  roleQuestions: RecruiterRoleQuestionItem[]
+  intelligence: RecruiterRoleIntelligenceItem | null
+}): RoleCalibrationBrief {
+  const { job, pendingSlots, roleCandidates, roleSubmissions, roleFeedback, roleQuestions, intelligence } = input
+  const hardItems = roleChecklistItems(job, "hard").map((item) => item.text)
+  const fitItems = roleChecklistItems(job, "fit").map((item) => item.text)
+  const antiItems = roleChecklistItems(job, "anti").map((item) => item.text)
+  const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open")
+  const answeredQuestions = roleQuestions.filter((question) => question.status === "answered")
+  const rejected = roleSubmissions.filter((row) => row.status === "rejected")
+  const duplicate = roleSubmissions.filter((row) => row.status === "duplicate")
+  const advanced = roleSubmissions.filter((row) => ["advanced", "interviewing", "hired"].includes(row.status ?? ""))
+  const readyLocal = roleCandidates.filter((candidate) => candidate.stage === "ready").length
+  const sourced = intelligence?.sourcedCount ?? roleCandidates.length
+  const ready = intelligence?.readyCount ?? readyLocal
+  const submitted = intelligence?.submissionCount ?? roleSubmissions.length
+  const pending = intelligence?.pendingCount ?? roleSubmissions.filter((row) => ["submitted", "new", "reviewing"].includes(row.status ?? "submitted")).length
+  const advancedCount = intelligence?.advancedCount ?? advanced.length
+  const rejectedCount = intelligence?.rejectedCount ?? rejected.length
+  const duplicateCount = intelligence?.duplicateCount ?? duplicate.length
+  const totalPipeline = Math.max(1, sourced, submitted, pending + advancedCount + rejectedCount + duplicateCount)
+  const friction = (intelligence?.feedback.hard ?? 0) + (intelligence?.feedback.blocked ?? 0) + (roleFeedback?.difficulty === "hard" ? 1 : 0) + (roleFeedback?.difficulty === "blocked" ? 1 : 0)
+  const blocked = (intelligence?.feedback.blocked ?? 0) > 0 || roleFeedback?.difficulty === "blocked"
+  const tone: RoleCalibrationBrief["tone"] = blocked
+    ? "blocked"
+    : openQuestions.length || friction > 0 || pendingSlots === 0
+      ? "watch"
+      : advancedCount > 0 || ready > 0
+        ? "good"
+        : "quiet"
+  const headline = blocked
+    ? "Calibration blocked"
+    : openQuestions.length
+      ? "Answer needed before more volume"
+      : pendingSlots === 0
+        ? "Review queue is full"
+        : ready > 0
+          ? "Ready candidates exist"
+          : sourced > 0
+            ? "Build proof before submitting"
+            : "Start with sourced proof"
+  const body = blocked
+    ? "Market signal says this role needs a clearer search lane before more candidate volume."
+    : openQuestions.length
+      ? "A role question is open. Use the answer to tighten outreach and submission proof."
+      : pendingSlots === 0
+        ? "There are already five pending submissions. Wait for feedback before adding another candidate."
+        : ready > 0
+          ? "There is candidate inventory ready for a submission packet."
+          : sourced > 0
+            ? "Move the best prospects through screened and ready before submission."
+            : "Save candidates first so duplicate checks, calibration, and status tracking can work."
+  const nextMove = blocked
+    ? "Ask a precise calibration question or update the role feedback before sourcing."
+    : openQuestions.length
+      ? `Wait on: ${openQuestions[0]?.question ?? "open role question"}`
+      : pendingSlots === 0
+        ? "Hold new submissions until WeKruit moves a pending candidate."
+        : ready > 0
+          ? "Open the strongest ready candidate and complete the submission packet."
+          : sourced > 0
+            ? "Screen saved prospects and mark the strongest one ready."
+            : "Source three prospects before making a submission."
+  const topReasonRows = intelligence?.feedback.topReasons.length
+    ? intelligence.feedback.topReasons.map((item) => ({
+      label: roleFeedbackReasonLabel(item.reason),
+      count: item.count,
+      detail: "Shared market signal",
+    }))
+    : (roleFeedback?.reasons ?? []).map((reason) => ({
+      label: roleFeedbackReasonLabel(reason),
+      count: 1,
+      detail: roleFeedbackDifficultyLabel(roleFeedback?.difficulty),
+    }))
+  const feedbackReasons = rejected
+    .filter((row) => row.recruiterFeedbackNote)
+    .slice(0, 2)
+    .map((row) => ({
+      label: "Submission feedback",
+      count: 1,
+      detail: row.recruiterFeedbackNote ?? "Rejected candidate feedback",
+    }))
+  const rejectionReasons = [...topReasonRows, ...feedbackReasons].slice(0, 5)
+  const prove = hardItems.slice(0, 4)
+  const avoid = antiItems.slice(0, 4)
+  const calibrate = [
+    ...openQuestions.slice(0, 2).map((question) => question.question || "Open role question"),
+    ...answeredQuestions.slice(0, 1).map((question) => question.answer || question.question || "Recent WeKruit answer"),
+    ...(roleFeedback?.note ? [roleFeedback.note] : []),
+  ].slice(0, 4)
+  const marketFacts = [
+    { label: "Pending capacity", value: `${pendingSlots}/5`, detail: pendingSlots ? "Submission lane open" : "Wait for feedback" },
+    { label: "Market activity", value: `${intelligence?.recruiterCount ?? 1}`, detail: `${roleIntelligenceActivityLabel(intelligence?.lastActivityAt ?? null)}` },
+    { label: "Fit direction", value: `${fitItems.length}`, detail: fitItems.slice(0, 2).join(" · ") || "No fit checks listed" },
+  ]
+  const pipeline = [
+    { label: "Sourced", count: sourced, total: totalPipeline, tone: "quiet" as const },
+    { label: "Ready", count: ready, total: totalPipeline, tone: ready ? "good" as const : "quiet" as const },
+    { label: "Submitted", count: submitted, total: totalPipeline, tone: "watch" as const },
+    { label: "Pending", count: pending, total: totalPipeline, tone: pending >= 5 ? "blocked" as const : "watch" as const },
+    { label: "Advanced", count: advancedCount, total: totalPipeline, tone: advancedCount ? "good" as const : "quiet" as const },
+    { label: "Rejected/dup", count: rejectedCount + duplicateCount, total: totalPipeline, tone: rejectedCount + duplicateCount ? "blocked" as const : "quiet" as const },
+  ]
+  return {
+    tone,
+    headline,
+    body,
+    nextMove,
+    marketFacts,
+    pipeline,
+    rejectionReasons,
+    guardrails: {
+      prove,
+      avoid,
+      calibrate,
+    },
   }
 }
 
@@ -521,6 +666,15 @@ export default function RecruiterRole() {
     roleQuestions: currentRoleQuestions,
     intelligence: currentRoleIntelligence,
   })
+  const calibrationBrief = buildRoleCalibrationBrief({
+    job,
+    pendingSlots,
+    roleCandidates,
+    roleSubmissions,
+    roleFeedback: currentRoleFeedback,
+    roleQuestions: currentRoleQuestions,
+    intelligence: currentRoleIntelligence,
+  })
 
   const useSourcedCandidate = (candidate: RecruiterSourcedCandidateItem) => {
     setForm((next) => withRecruiterDefaults({
@@ -656,6 +810,8 @@ export default function RecruiterRole() {
             feedback: currentRoleFeedback,
           }}
         />
+
+        <RoleCalibrationBriefPanel brief={calibrationBrief} />
 
         {submission && submission.ok && (
           <div className="rb-success">
@@ -1088,6 +1244,86 @@ function RoleIntelligencePanel({
         ) : (
           <span>No blocker reason yet</span>
         )}
+      </div>
+    </section>
+  )
+}
+
+function RoleCalibrationBriefPanel({ brief }: { brief: RoleCalibrationBrief }) {
+  return (
+    <section className={`rb-calibration-brief is-${brief.tone}`} aria-label="Role calibration brief">
+      <header>
+        <div>
+          <span>Role calibration brief</span>
+          <strong>{brief.headline}</strong>
+          <p>{brief.body}</p>
+        </div>
+        <aside>
+          <span>Next move</span>
+          <strong>{brief.nextMove}</strong>
+        </aside>
+      </header>
+
+      <div className="rb-calibration-brief__facts">
+        {brief.marketFacts.map((fact) => (
+          <article key={fact.label}>
+            <span>{fact.label}</span>
+            <strong>{fact.value}</strong>
+            <em>{fact.detail}</em>
+          </article>
+        ))}
+      </div>
+
+      <div className="rb-calibration-brief__body">
+        <article className="rb-calibration-brief__pipeline">
+          <h3>Anonymized pipeline</h3>
+          <div>
+            {brief.pipeline.map((row) => {
+              const width = row.total > 0 ? Math.max(4, Math.round((row.count / row.total) * 100)) : 0
+              return (
+                <label key={row.label} className={`is-${row.tone}`}>
+                  <span>{row.label}</span>
+                  <b>{row.count}</b>
+                  <i><em style={{ width: `${width}%` }} /></i>
+                </label>
+              )
+            })}
+          </div>
+        </article>
+
+        <article className="rb-calibration-brief__reasons">
+          <h3>Common rejection reasons</h3>
+          {brief.rejectionReasons.length ? (
+            <div>
+              {brief.rejectionReasons.map((reason, index) => (
+                <section key={`${reason.label}-${index}`}>
+                  <strong>{reason.label}{reason.count > 1 ? ` ×${reason.count}` : ""}</strong>
+                  <p>{shortText(reason.detail, "Market feedback", 120)}</p>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <p>No rejection pattern yet. First submissions should lean on hard-check proof.</p>
+          )}
+        </article>
+
+        <article className="rb-calibration-brief__guardrails">
+          <h3>Search guardrails</h3>
+          <div>
+            <section>
+              <span>Prove</span>
+              {brief.guardrails.prove.length ? brief.guardrails.prove.map((item) => <p key={item}>{item}</p>) : <p>Role hard checks are light.</p>}
+            </section>
+            <section>
+              <span>Avoid</span>
+              {brief.guardrails.avoid.length ? brief.guardrails.avoid.map((item) => <p key={item}>{item}</p>) : <p>No explicit anti-signal listed.</p>}
+            </section>
+            <section>
+              <span>Calibrate</span>
+              {brief.guardrails.calibrate.length ? brief.guardrails.calibrate.map((item) => <p key={item}>{shortText(item, item, 120)}</p>) : <p>No open calibration note.</p>}
+            </section>
+          </div>
+        </article>
       </div>
     </section>
   )
