@@ -1868,6 +1868,160 @@
   line-height: 1;
 }
 
+.rb-cockpit {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.86fr) minmax(0, 1.42fr);
+  overflow: hidden;
+}
+
+.rb-cockpit__mission {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border-right: 1px solid var(--border);
+  border-top: 4px solid var(--info);
+  background: #fff;
+  padding: 20px;
+}
+
+.rb-cockpit__mission.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-cockpit__mission.is-info { border-top-color: var(--info); }
+.rb-cockpit__mission.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-cockpit__mission.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-cockpit__mission.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-cockpit__mission span,
+.rb-cockpit__focus span,
+.rb-cockpit__steps span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-cockpit__mission strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: clamp(24px, 2.7vw, 34px);
+  font-weight: 400;
+  line-height: 1.02;
+}
+
+.rb-cockpit__mission p,
+.rb-cockpit__focus p,
+.rb-cockpit__steps em {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.rb-cockpit__mission button,
+.rb-cockpit__focus button,
+.rb-cockpit__focus a {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 8px 12px;
+  text-decoration: none;
+}
+
+.rb-cockpit__focus {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.rb-cockpit__focus article {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  border-right: 1px solid var(--border);
+  border-top: 4px solid var(--ink-3);
+  padding: 18px;
+}
+
+.rb-cockpit__focus article:last-child {
+  border-right: 0;
+}
+
+.rb-cockpit__focus article.is-live { border-top-color: var(--live); }
+.rb-cockpit__focus article.is-info { border-top-color: var(--info); }
+.rb-cockpit__focus article.is-success { border-top-color: var(--success); }
+.rb-cockpit__focus article.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-cockpit__focus article.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-cockpit__focus strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-cockpit__steps {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--border);
+  background: var(--cream-2);
+}
+
+.rb-cockpit__steps button {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-top: 3px solid transparent;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 13px 16px 14px;
+  text-align: left;
+}
+
+.rb-cockpit__steps button:last-child {
+  border-right: 0;
+}
+
+.rb-cockpit__steps button:hover {
+  background: #fff;
+}
+
+.rb-cockpit__steps button.is-live { border-top-color: var(--live); }
+.rb-cockpit__steps button.is-info { border-top-color: var(--info); }
+.rb-cockpit__steps button.is-success { border-top-color: var(--success); }
+.rb-cockpit__steps button.is-warn { border-top-color: var(--warning); }
+.rb-cockpit__steps button.is-mute { border-top-color: var(--ink-3); }
+
+.rb-cockpit__steps strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 400;
+  line-height: 1;
+}
+
 .rb-workspace__grid {
   display: grid;
   grid-template-columns: 1.3fr 1fr;
@@ -4801,6 +4955,7 @@
 
 @media (max-width: 1080px) {
   .rb-access__body,
+  .rb-cockpit,
   .rb-workspace__grid,
   .rb-workbench-grid,
   .rb-inbox-grid,
@@ -4860,6 +5015,23 @@
   }
   .rb-stats {
     grid-template-columns: repeat(2, 1fr);
+  }
+  .rb-cockpit__mission {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .rb-cockpit__focus {
+    grid-template-columns: 1fr;
+  }
+  .rb-cockpit__focus article {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .rb-cockpit__focus article:last-child {
+    border-bottom: 0;
+  }
+  .rb-cockpit__steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .rb-operating-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4987,6 +5159,7 @@
   }
   .rb-pipeline,
   .rb-candidate-board,
+  .rb-cockpit__steps,
   .rb-command-list,
   .rb-market-grid,
   .rb-inbox-hero,

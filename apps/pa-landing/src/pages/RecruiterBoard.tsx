@@ -1053,6 +1053,7 @@ export default function RecruiterBoard() {
             jobs={openJobs}
             submissions={submissions}
             sourcedCandidates={sourcedCandidates}
+            roleFeedback={roleFeedback}
             roleQuestions={roleQuestions}
             roleIntelligence={roleIntelligence}
             roleApplications={roleApplications}
@@ -1366,6 +1367,181 @@ function computeRecruiterOperatingMetrics(
         value: `${sourceToSubmitRate}%`,
         body: "Saved prospects converted into formal submissions.",
         tone: sourceToSubmitRate >= 35 ? "success" : activeCandidates.length ? "info" : "mute",
+      },
+    ],
+  }
+}
+
+type RecruiterCockpitAction = "roles" | "matches" | "candidates" | "submissions" | "performance" | "access"
+
+type RecruiterCockpitModel = {
+  missionLabel: string
+  missionTitle: string
+  missionBody: string
+  missionAction: RecruiterCockpitAction
+  missionCta: string
+  missionTone: OperatingTone
+  focusRole?: RoleInsight
+  focusCandidate?: RecruiterSourcedCandidateItem
+  focusCandidateRoleLabel?: string
+  focusSubmission?: RecruiterSubmissionItem
+  steps: Array<{
+    label: string
+    value: string
+    body: string
+    action: RecruiterCockpitAction
+    tone: OperatingTone
+  }>
+}
+
+function submissionActionPriority(submission: RecruiterSubmissionItem): number {
+  if (candidateConfirmationCanResend(submission)) return 100
+  if (CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? "") && submissionHasStructuredFeedback(submission)) return 92
+  if (submissionHasStructuredFeedback(submission)) return 82
+  if (ADVANCED_STATUSES.includes(submission.status ?? "")) return 70
+  if (ACTIVE_REVIEW_STATUSES.includes(submission.status ?? "submitted")) {
+    const createdAtMs = timestampValueMs(submission.createdAt)
+    return createdAtMs && Date.now() - createdAtMs > 3 * 86_400_000 ? 66 : 44
+  }
+  return 20
+}
+
+function selectFocusCandidate(candidates: RecruiterSourcedCandidateItem[]): RecruiterSourcedCandidateItem | undefined {
+  return [...candidates]
+    .filter((candidate) => candidate.stage !== "archived" && candidate.stage !== "submitted")
+    .sort((a, b) => {
+      const stageRank = (candidate: RecruiterSourcedCandidateItem) =>
+        candidate.stage === "ready" ? 5 :
+        candidateFollowUpState(candidate).needsAction ? 4 :
+        candidate.calibrationStatus === "good_fit" ? 3 :
+        candidate.stage === "screened" ? 2 :
+        candidate.stage === "contacted" ? 1 :
+        0
+      return stageRank(b) - stageRank(a) || timestampValueMs(b.updatedAt ?? b.createdAt) - timestampValueMs(a.updatedAt ?? a.createdAt)
+    })[0]
+}
+
+function buildRecruiterCockpitModel(
+  jobs: CollabJob[],
+  submissions: RecruiterSubmissionItem[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+  roleFeedback: RecruiterRoleFeedbackItem[],
+  roleQuestions: RecruiterRoleQuestionItem[],
+  roleIntelligence: RecruiterRoleIntelligenceItem[],
+  roleApplications: RecruiterRoleApplicationItem[],
+  primaryRoleIds: string[],
+): RecruiterCockpitModel {
+  const jobsById = new Map(jobs.map((job) => [roleKey(job), job]))
+  const roleInsights = sortRoleInsights(
+    jobs.map((job) => buildRoleInsight(job, submissions, sourcedCandidates, primaryRoleIds, roleFeedback, roleQuestions, roleIntelligence, roleApplications)),
+    "recommended",
+  )
+  const focusRole = roleInsights[0]
+  const focusCandidate = selectFocusCandidate(sourcedCandidates)
+  const focusSubmission = [...submissions]
+    .sort((a, b) => submissionActionPriority(b) - submissionActionPriority(a) || timestampValueMs(b.updatedAt ?? b.createdAt) - timestampValueMs(a.updatedAt ?? a.createdAt))[0]
+  const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open").length
+  const readyCandidates = sourcedCandidates.filter((candidate) => candidate.stage === "ready").length
+  const privateBenchCandidates = sourcedCandidates.filter((candidate) => !candidate.jobId && !candidate.inboundJobId && candidate.stage !== "archived").length
+  const candidateConfirmationNeeds = submissions.filter(candidateConfirmationCanResend).length
+  const feedbackToRead = submissions.filter(submissionHasStructuredFeedback).length
+  const activeSubmissions = submissions.filter((submission) => OPEN_SUBMISSION_STATUSES.includes(submission.status ?? "submitted")).length
+  const approvedRoleCount = primaryRoleIds.length
+  const cleanLaneCount = roleInsights.filter((insight) => insight.cleanLane).length
+
+  let missionLabel = "Start the marketplace loop"
+  let missionTitle = "Choose one role and build a shortlist"
+  let missionBody = "The fastest path is role focus, candidate proof, consented submission, then feedback learning."
+  let missionAction: RecruiterCockpitAction = jobs.length ? "roles" : "candidates"
+  let missionCta = jobs.length ? "Pick role" : "Add candidate"
+  let missionTone: OperatingTone = "info"
+
+  if (candidateConfirmationNeeds > 0 && focusSubmission) {
+    missionLabel = "Candidate confirmation"
+    missionTitle = `${candidateConfirmationNeeds} submission${candidateConfirmationNeeds === 1 ? "" : "s"} ${candidateConfirmationNeeds === 1 ? "needs" : "need"} consent follow-up`
+    missionBody = "Candidate confirmation protects ownership and prevents weak submissions from polluting recruiter quality."
+    missionAction = "submissions"
+    missionCta = "Fix confirmations"
+    missionTone = "warn"
+  } else if (openQuestions > 0) {
+    missionLabel = "Role calibration"
+    missionTitle = `${openQuestions} open WeKruit question${openQuestions === 1 ? "" : "s"}`
+    missionBody = "Clear role uncertainty before asking recruiters to spend sourcing cycles."
+    missionAction = "access"
+    missionCta = "Open access"
+    missionTone = "warn"
+  } else if (readyCandidates > 0) {
+    const name = focusCandidate ? candidateName(focusCandidate) : "Ready candidate"
+    missionLabel = "Submit next"
+    missionTitle = `${name} is ready to match`
+    missionBody = "Use the matchboard to pick the strongest role, then submit from the role brief with consent."
+    missionAction = "matches"
+    missionCta = "Match candidate"
+    missionTone = "live"
+  } else if (privateBenchCandidates > 0) {
+    missionLabel = "Activate private bench"
+    missionTitle = `${privateBenchCandidates} unassigned candidate${privateBenchCandidates === 1 ? "" : "s"}`
+    missionBody = "Move bench candidates through the matchboard so the platform feels like a marketplace, not a spreadsheet."
+    missionAction = "matches"
+    missionCta = "Open matchboard"
+    missionTone = "live"
+  } else if (focusRole && (focusRole.cleanLane || focusRole.primary)) {
+    missionLabel = focusRole.primary ? "Approved role coverage" : "Clean lane"
+    missionTitle = focusRole.job.title
+    missionBody = focusRole.nextActionBody
+    missionAction = focusRole.primary ? "candidates" : "roles"
+    missionCta = focusRole.primary ? "Source candidate" : "Open role"
+    missionTone = focusRole.tone === "mute" ? "info" : focusRole.tone
+  } else if (feedbackToRead > 0) {
+    missionLabel = "Learning loop"
+    missionTitle = `${feedbackToRead} feedback signal${feedbackToRead === 1 ? "" : "s"} to read`
+    missionBody = "Strong recruiter marketplaces improve when recruiters learn from outcomes before sending lookalikes."
+    missionAction = "submissions"
+    missionCta = "Read feedback"
+    missionTone = "info"
+  }
+
+  return {
+    missionLabel,
+    missionTitle,
+    missionBody,
+    missionAction,
+    missionCta,
+    missionTone,
+    focusRole,
+    focusCandidate,
+    focusCandidateRoleLabel: focusCandidate ? rowRoleLabel(focusCandidate, jobsById) : undefined,
+    focusSubmission,
+    steps: [
+      {
+        label: "Roles to work",
+        value: `${approvedRoleCount}/${APPROVED_ROLE_LIMIT}`,
+        body: cleanLaneCount ? `${cleanLaneCount} clean lane${cleanLaneCount === 1 ? "" : "s"} available.` : "Use role access to focus recruiter effort.",
+        action: "roles",
+        tone: approvedRoleCount ? "success" : cleanLaneCount ? "live" : "info",
+      },
+      {
+        label: "Bench to match",
+        value: String(sourcedCandidates.filter((candidate) => candidate.stage !== "archived").length),
+        body: privateBenchCandidates
+          ? `${privateBenchCandidates} private bench candidate${privateBenchCandidates === 1 ? "" : "s"} ${privateBenchCandidates === 1 ? "needs" : "need"} role fit.`
+          : `${readyCandidates} ready for submission.`,
+        action: privateBenchCandidates || readyCandidates ? "matches" : "candidates",
+        tone: readyCandidates || privateBenchCandidates ? "live" : "mute",
+      },
+      {
+        label: "Submissions to manage",
+        value: String(activeSubmissions),
+        body: candidateConfirmationNeeds ? `${candidateConfirmationNeeds} confirmation follow-up${candidateConfirmationNeeds === 1 ? "" : "s"}.` : "Track review, interview, and offer movement.",
+        action: "submissions",
+        tone: candidateConfirmationNeeds ? "warn" : activeSubmissions ? "info" : "mute",
+      },
+      {
+        label: "Feedback to learn",
+        value: String(feedbackToRead + openQuestions),
+        body: openQuestions ? `${openQuestions} unanswered role question${openQuestions === 1 ? "" : "s"}.` : "Use WeKruit notes to tighten the next shortlist.",
+        action: openQuestions ? "access" : "performance",
+        tone: openQuestions ? "warn" : feedbackToRead ? "info" : "success",
       },
     ],
   }
@@ -1797,6 +1973,7 @@ function OverviewTab({
   jobs,
   submissions,
   sourcedCandidates,
+  roleFeedback,
   roleQuestions,
   roleIntelligence,
   roleApplications,
@@ -1813,6 +1990,7 @@ function OverviewTab({
   jobs: CollabJob[]
   submissions: RecruiterSubmissionItem[]
   sourcedCandidates: RecruiterSourcedCandidateItem[]
+  roleFeedback: RecruiterRoleFeedbackItem[]
   roleQuestions: RecruiterRoleQuestionItem[]
   roleIntelligence: RecruiterRoleIntelligenceItem[]
   roleApplications: RecruiterRoleApplicationItem[]
@@ -1835,8 +2013,18 @@ function OverviewTab({
   const feedback = submissions.filter(submissionHasStructuredFeedback).slice(0, 3)
   const workItems = buildRecruiterWorkQueue(jobs, sourcedCandidates, submissions, roleQuestions, roleIntelligence)
   const marketPulse = buildMarketPulse(jobs, roleQuestions, roleIntelligence)
+  const cockpit = buildRecruiterCockpitModel(jobs, submissions, sourcedCandidates, roleFeedback, roleQuestions, roleIntelligence, roleApplications, primaryRoleIds)
+  const routeCockpitAction = (action: RecruiterCockpitAction) => {
+    if (action === "roles") onRoles()
+    else if (action === "matches") onMatches()
+    else if (action === "submissions") onSubmissions()
+    else if (action === "performance") onPerformance()
+    else if (action === "access") onAccess(cockpit.focusRole?.job.jobId)
+    else onCandidates()
+  }
   return (
     <div className="rb-workspace">
+      <RecruiterCockpit model={cockpit} onAction={routeCockpitAction} />
       <section className="rb-stats">
         {stats.map((s) => (
           <article className={`rb-stat is-${s.tone}`} key={s.label}>
@@ -1958,6 +2146,68 @@ function OverviewTab({
         </div>
       </section>
     </div>
+  )
+}
+
+function RecruiterCockpit({
+  model,
+  onAction,
+}: {
+  model: RecruiterCockpitModel
+  onAction: (action: RecruiterCockpitAction) => void
+}) {
+  const candidate = model.focusCandidate
+  const submission = model.focusSubmission
+  const role = model.focusRole
+  const candidateRoleLabel = model.focusCandidateRoleLabel ?? "Private bench"
+  return (
+    <section className="rb-panel rb-cockpit">
+      <div className={`rb-cockpit__mission is-${model.missionTone}`}>
+        <span>{model.missionLabel}</span>
+        <strong>{model.missionTitle}</strong>
+        <p>{model.missionBody}</p>
+        <button type="button" onClick={() => onAction(model.missionAction)}>{model.missionCta}</button>
+      </div>
+
+      <div className="rb-cockpit__focus">
+        <article className={role ? `is-${role.tone}` : "is-mute"}>
+          <span>Focus role</span>
+          <strong>{role?.job.title ?? "No live role selected"}</strong>
+          <p>{role ? `${role.urgency} · ${role.marketLoad} · ${role.nextAction}` : "Open the role marketplace when WeKruit releases collab roles."}</p>
+          {role ? <Link to={`/recruiters/job/${role.job.jobId}`}>Open brief</Link> : <button type="button" onClick={() => onAction("roles")}>Browse roles</button>}
+        </article>
+        <article className={candidate ? `is-${sourceStageMeta(candidate.stage).tone}` : "is-mute"}>
+          <span>Focus candidate</span>
+          <strong>{candidate ? candidateName(candidate) : "No bench candidate"}</strong>
+          <p>
+            {candidate
+              ? `${sourceStageMeta(candidate.stage).label} · ${candidateRoleLabel}`
+              : "Save a prospect to create a private bench before formal submission."}
+          </p>
+          <button type="button" onClick={() => onAction(candidate ? "matches" : "candidates")}>{candidate ? "Match candidate" : "Add candidate"}</button>
+        </article>
+        <article className={submission ? `is-${statusMeta(submission.status).tone}` : "is-mute"}>
+          <span>Submission signal</span>
+          <strong>{submission?.candidate?.name || "No submission yet"}</strong>
+          <p>
+            {submission
+              ? `${statusMeta(submission.status).label} · ${submissionNextAction(submission.status).title}`
+              : "Submit from a role brief after the candidate confirms consent."}
+          </p>
+          <button type="button" onClick={() => onAction("submissions")}>{submission ? "Track status" : "Open tracker"}</button>
+        </article>
+      </div>
+
+      <div className="rb-cockpit__steps" aria-label="Recruiter marketplace loop">
+        {model.steps.map((step) => (
+          <button type="button" className={`is-${step.tone}`} key={step.label} onClick={() => onAction(step.action)}>
+            <span>{step.label}</span>
+            <strong>{step.value}</strong>
+            <em>{step.body}</em>
+          </button>
+        ))}
+      </div>
+    </section>
   )
 }
 
