@@ -17,6 +17,7 @@ import { Link, useSearchParams } from "react-router-dom"
 import "../styles/recruiter-board.css"
 import {
   fetchCollabJobs,
+  fetchRecruiterRoleFeedback,
   fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissions,
   getRecruiterProfile,
@@ -24,6 +25,7 @@ import {
   saveRecruiterSourcedCandidate,
   updateRecruiterPreferences,
   type CollabJob,
+  type RecruiterRoleFeedbackItem,
   type RecruiterSession,
   type RecruiterSourcedCandidateInput,
   type RecruiterSourcedCandidateItem,
@@ -269,6 +271,7 @@ export default function RecruiterBoard() {
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
   const [sourcedCandidates, setSourcedCandidates] = useState<RecruiterSourcedCandidateItem[]>([])
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
+  const [roleFeedback, setRoleFeedback] = useState<RecruiterRoleFeedbackItem[]>([])
   const [statusLoaded, setStatusLoaded] = useState(false)
   const [primaryRoleSavingId, setPrimaryRoleSavingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -293,6 +296,7 @@ export default function RecruiterBoard() {
         setSession(null)
         setSourcedCandidates([])
         setSubmissions([])
+        setRoleFeedback([])
         setStatusLoaded(false)
         setAuthReady(true)
         return
@@ -322,6 +326,7 @@ export default function RecruiterBoard() {
             setSession(null)
             setSourcedCandidates([])
             setSubmissions([])
+            setRoleFeedback([])
             setStatusLoaded(false)
             setAccessError(formatRecruiterAuthError(e))
           }
@@ -343,6 +348,7 @@ export default function RecruiterBoard() {
           setSession(null)
           setSourcedCandidates([])
           setSubmissions([])
+          setRoleFeedback([])
           setStatusLoaded(false)
         }
       } finally {
@@ -373,12 +379,14 @@ export default function RecruiterBoard() {
     try {
       setSubmissionError(null)
       setStatusLoaded(false)
-      const [submissionRows, sourceRows] = await Promise.all([
+      const [submissionRows, sourceRows, feedbackRows] = await Promise.all([
         fetchRecruiterSubmissions(),
         fetchRecruiterSourcedCandidates(),
+        fetchRecruiterRoleFeedback(),
       ])
       setSubmissions(sortSubmissions(submissionRows))
       setSourcedCandidates(sortSourcedCandidates(sourceRows))
+      setRoleFeedback(feedbackRows)
       setStatusLoaded(true)
     } catch (e) {
       setSubmissionError(e instanceof Error ? e.message : String(e))
@@ -471,6 +479,7 @@ export default function RecruiterBoard() {
             setSession(null)
             setSourcedCandidates([])
             setSubmissions([])
+            setRoleFeedback([])
             setStatusLoaded(false)
           }}
         >
@@ -537,7 +546,7 @@ export default function RecruiterBoard() {
         {activeTab === "submissions" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "submissions" && statusLoaded && <SubmissionsTab submissions={submissions} />}
         {activeTab === "performance" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "performance" && statusLoaded && <PerformanceTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} primaryRoleIds={primaryRoleIds} />}
+        {activeTab === "performance" && statusLoaded && <PerformanceTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} primaryRoleIds={primaryRoleIds} roleFeedback={roleFeedback} />}
         {activeTab === "settings" && <SettingsTab session={session} onSessionChange={setSession} />}
       </main>
     </div>
@@ -1553,11 +1562,13 @@ function PerformanceTab({
   candidates,
   submissions,
   primaryRoleIds,
+  roleFeedback,
 }: {
   jobs: CollabJob[]
   candidates: RecruiterSourcedCandidateItem[]
   submissions: RecruiterSubmissionItem[]
   primaryRoleIds: string[]
+  roleFeedback: RecruiterRoleFeedbackItem[]
 }) {
   const feedbackRows = submissions.filter((s) => Boolean(s.recruiterFeedbackNote))
   const advanced = submissions.filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? "")).length
@@ -1566,6 +1577,8 @@ function PerformanceTab({
   const sourceToSubmit = candidates.length ? Math.round((submissions.length / candidates.length) * 100) : 0
   const singleSubmissions = submissions.filter((submission) => submission.submissionMode === "single_submission").length
   const primarySubmissions = submissions.filter((submission) => submission.submissionMode === "primary_role").length
+  const blockedRoles = roleFeedback.filter((feedback) => feedback.difficulty === "blocked").length
+  const hardRoles = roleFeedback.filter((feedback) => feedback.difficulty === "hard").length
   const metrics = [
     { label: "Submitted", value: String(submissions.length), meta: "formal candidates", tone: "live" },
     { label: "Pending review", value: String(pending), meta: "awaiting feedback", tone: "warn" },
@@ -1634,6 +1647,12 @@ function PerformanceTab({
           <p>{primarySubmissions} submissions came from primary roles.</p>
           <p>{singleSubmissions}/{SINGLE_SUBMISSION_WEEKLY_LIMIT} single submissions used in the tracked window.</p>
           <p>{jobs.filter((job) => !submissions.some((s) => s.inboundJobId === roleKey(job) || s.jobId === roleKey(job))).length} open roles have no submissions from this account yet.</p>
+        </section>
+        <section className="rb-performance-card">
+          <h3>Market feedback</h3>
+          <p>{roleFeedback.length} role feedback reports submitted.</p>
+          <p>{hardRoles} hard roles and {blockedRoles} blocked roles flagged.</p>
+          <p>{roleFeedback.filter((feedback) => feedback.note).length} reports include recruiter notes.</p>
         </section>
       </div>
     </section>

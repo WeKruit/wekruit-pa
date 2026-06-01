@@ -20,6 +20,8 @@ export {
   paRecruiterMe,
   paRecruiterPreferencesUpdate,
   paRecruiterRoleReleasedNotify,
+  paRecruiterRoleFeedbackList,
+  paRecruiterRoleFeedbackSave,
   paRecruiterSourcedCandidateSave,
   paRecruiterSourcedCandidatesList,
   paRecruiterSubmission,

@@ -130,6 +130,22 @@ interface RecruiterNotificationDoc {
   lastError?: string
 }
 
+interface RecruiterRoleFeedbackDoc {
+  id: string
+  recruiterId?: string
+  recruiterEmail?: string
+  jobId?: string
+  inboundJobId?: string
+  jobTitleSnapshot?: string
+  companyLabelSnapshot?: string
+  difficulty?: string
+  reasons?: string[]
+  note?: string | null
+  createdAt?: { seconds?: number } | string | null
+  updatedAt?: { seconds?: number } | string | null
+  updatedAtMs?: number
+}
+
 function timestampToMs(raw: unknown): number {
   if (!raw) return 0
   if (typeof raw === "string") return Date.parse(raw) || 0
@@ -193,7 +209,7 @@ function writeKnownRecruiterInviteCodes(codes: Record<string, string>): void {
   }
 }
 
-type RecruiterAdminSection = "codes" | "sourced" | "submissions"
+type RecruiterAdminSection = "codes" | "sourced" | "feedback" | "submissions"
 
 function codeStatus(code: RecruiterInviteCodeDoc): { label: string; tone: Parameters<typeof Badge>[0]["tone"] } {
   if (code.active === false) return { label: "disabled", tone: "muted" }
@@ -321,13 +337,23 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
   const header = (
     <>
       <PageHeader
-        title={section === "codes" ? "Recruiter Access" : "Recruiter Submissions"}
+        title={
+          section === "codes"
+            ? "Recruiter Access"
+            : section === "sourced"
+              ? "Recruiter Sourced Candidates"
+              : section === "feedback"
+                ? "Recruiter Role Feedback"
+                : "Recruiter Submissions"
+        }
         description={
           section === "codes"
             ? "Create one-use recruiter access codes, review recruiter accounts, and monitor new-role alerts."
             : section === "sourced"
               ? "Review sourced prospects before formal submission, calibrate recruiters, and monitor role-level supply."
-            : "Review recruiter-submitted candidates and move each submission through the hiring-board pipeline."
+              : section === "feedback"
+                ? "Review recruiter market feedback on role difficulty, blockers, and calibration gaps."
+                : "Review recruiter-submitted candidates and move each submission through the hiring-board pipeline."
         }
       />
       <RecruiterSectionTabs active={section} />
@@ -348,6 +374,15 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
       <div>
         {header}
         <RecruiterSourcedCandidatesPanel />
+      </div>
+    )
+  }
+
+  if (section === "feedback") {
+    return (
+      <div>
+        {header}
+        <RecruiterRoleFeedbackPanel />
       </div>
     )
   }
@@ -520,6 +555,12 @@ function RecruiterSectionTabs({ active }: { active: RecruiterAdminSection }) {
       detail: "Calibration queue",
     },
     {
+      key: "feedback",
+      label: "Role feedback",
+      to: "/admin/recruiter-feedback",
+      detail: "Market blockers",
+    },
+    {
       key: "submissions",
       label: "Submissions",
       to: "/admin/recruiter-submissions",
@@ -532,7 +573,7 @@ function RecruiterSectionTabs({ active }: { active: RecruiterAdminSection }) {
       aria-label="Recruiter admin sections"
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
         gap: 12,
         margin: "0 0 16px",
       }}
@@ -824,6 +865,15 @@ function stageTone(stage?: string): Parameters<typeof Badge>[0]["tone"] {
   }
 }
 
+function difficultyTone(difficulty?: string): Parameters<typeof Badge>[0]["tone"] {
+  switch (difficulty) {
+    case "blocked": return "warn"
+    case "hard": return "info"
+    case "easy": return "ok"
+    default: return "muted"
+  }
+}
+
 function prettyKey(value?: string | null): string {
   return value ? value.replace(/_/g, " ") : "not rated"
 }
@@ -1030,6 +1080,184 @@ function RecruiterSourcedCandidatesPanel() {
           />
         )
       })()}
+    </div>
+  )
+}
+
+function RecruiterRoleFeedbackPanel() {
+  const [rows, setRows] = useState<RecruiterRoleFeedbackDoc[]>([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+
+  const reload = async () => {
+    setLoading(true)
+    setErr(null)
+    try {
+      const snap = await getDocs(query(
+        collection(db(), "pa-recruiter-role-feedback"),
+        orderBy("updatedAt", "desc"),
+        limit(500),
+      ))
+      setRows(snap.docs.map((d) => {
+        const data = d.data() as Omit<RecruiterRoleFeedbackDoc, "id">
+        return { id: d.id, ...data, updatedAtMs: timestampToMs(data.updatedAt ?? data.createdAt) }
+      }))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void reload()
+  }, [])
+
+  const jobOptions = useMemo(() => {
+    const seen = new Map<string, string>()
+    for (const r of rows) {
+      const id = r.inboundJobId ?? r.jobId
+      if (id && !seen.has(id)) seen.set(id, r.jobTitleSnapshot ?? id)
+    }
+    return [...seen.entries()].map(([jobId, label]) => ({
+      key: jobId,
+      label,
+      title: jobId,
+      test: (r: RecruiterRoleFeedbackDoc) => r.inboundJobId === jobId || r.jobId === jobId,
+    }))
+  }, [rows])
+
+  const table = useTable<RecruiterRoleFeedbackDoc>(rows, {
+    defaultSort: { key: "updatedAtMs", dir: "desc" },
+    pageSize: 50,
+    search: (r, q) =>
+      (r.recruiterEmail?.toLowerCase().includes(q) ?? false) ||
+      (r.jobTitleSnapshot?.toLowerCase().includes(q) ?? false) ||
+      (r.companyLabelSnapshot?.toLowerCase().includes(q) ?? false) ||
+      (r.note?.toLowerCase().includes(q) ?? false) ||
+      (r.reasons?.join(" ").toLowerCase().includes(q) ?? false),
+    chips: [
+      { id: "job", label: "Job", multi: false, options: jobOptions },
+      {
+        id: "difficulty",
+        label: "Difficulty",
+        multi: true,
+        options: ["easy", "medium", "hard", "blocked"].map((s) => ({
+          key: s,
+          label: s,
+          test: (r: RecruiterRoleFeedbackDoc) => (r.difficulty ?? "medium") === s,
+        })),
+      },
+      {
+        id: "reason",
+        label: "Reason",
+        multi: true,
+        options: [
+          "low_comp",
+          "location_mismatch",
+          "unclear_requirements",
+          "small_candidate_pool",
+          "hiring_team_slow",
+          "role_too_broad",
+          "candidate_interest_low",
+          "too_many_recruiters",
+          "other",
+        ].map((s) => ({
+          key: s,
+          label: prettyKey(s),
+          test: (r: RecruiterRoleFeedbackDoc) => r.reasons?.includes(s) ?? false,
+        })),
+      },
+    ],
+  })
+
+  const metrics = {
+    total: rows.length,
+    hard: rows.filter((r) => r.difficulty === "hard").length,
+    blocked: rows.filter((r) => r.difficulty === "blocked").length,
+    noted: rows.filter((r) => Boolean(r.note)).length,
+  }
+
+  if (loading) return <LoadingState label="Loading role feedback..." />
+  if (err) return <ErrorState message={err} />
+
+  const columns: Column<RecruiterRoleFeedbackDoc>[] = [
+    {
+      key: "updatedAtMs",
+      label: "Updated",
+      sortable: true,
+      width: 160,
+      render: (r) => <span style={{ whiteSpace: "nowrap" }}>{formatOpsDate(r.updatedAt ?? r.createdAt)}</span>,
+    },
+    {
+      key: "jobTitleSnapshot",
+      label: "Role",
+      sortable: true,
+      render: (r) => (
+        <>
+          <div style={{ fontWeight: 500 }}>
+            {r.jobId ? <AdminJobLink jobId={r.jobId}>{r.jobTitleSnapshot ?? r.jobId}</AdminJobLink> : r.jobTitleSnapshot ?? "—"}
+          </div>
+          <div style={{ color: "#777", fontSize: 11 }}>{r.companyLabelSnapshot ?? ""}</div>
+        </>
+      ),
+    },
+    {
+      key: "recruiterEmail",
+      label: "Recruiter",
+      sortable: true,
+      render: (r) => r.recruiterEmail ?? r.recruiterId ?? "—",
+    },
+    {
+      key: "difficulty",
+      label: "Difficulty",
+      sortable: true,
+      width: 120,
+      render: (r) => <Badge tone={difficultyTone(r.difficulty)}>{r.difficulty ?? "medium"}</Badge>,
+    },
+    {
+      key: "reasons",
+      label: "Reasons",
+      render: (r) => (r.reasons?.length ? r.reasons.map(prettyKey).join(", ") : "—"),
+    },
+    {
+      key: "note",
+      label: "Note",
+      render: (r) => r.note ? (r.note.length > 92 ? r.note.slice(0, 92) + "..." : r.note) : "—",
+    },
+  ]
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+        <OpsMetric label="Feedback rows" value={metrics.total} />
+        <OpsMetric label="Hard roles" value={metrics.hard} />
+        <OpsMetric label="Blocked roles" value={metrics.blocked} />
+        <OpsMetric label="With notes" value={metrics.noted} />
+      </div>
+      <Panel actions={<button type="button" onClick={() => void reload()}>Refresh</button>}>
+        <DataTable<RecruiterRoleFeedbackDoc>
+          columns={columns}
+          rows={table.visibleRows}
+          chips={table.chipsForRender}
+          search={table.search}
+          onSearch={table.setSearch}
+          searchPlaceholder="Search recruiter / role / blocker..."
+          sort={table.sort}
+          onSort={table.toggleSort}
+          page={table.page}
+          pageCount={table.pageCount}
+          onPageChange={table.setPage}
+          onResetFilters={table.reset}
+          count={table.filteredCount}
+          totalCount={table.totalRows}
+          empty={
+            <div style={{ padding: 40, textAlign: "center", color: "#777" }}>
+              No recruiter role feedback yet.
+            </div>
+          }
+        />
+      </Panel>
     </div>
   )
 }

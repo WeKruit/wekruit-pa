@@ -14,6 +14,8 @@ export const RECRUITER_ME_URL = `${DEFAULT_BASE}/paRecruiterMe`
 export const RECRUITER_PREFERENCES_URL = `${DEFAULT_BASE}/paRecruiterPreferencesUpdate`
 export const RECRUITER_SOURCED_CANDIDATES_LIST_URL = `${DEFAULT_BASE}/paRecruiterSourcedCandidatesList`
 export const RECRUITER_SOURCED_CANDIDATE_SAVE_URL = `${DEFAULT_BASE}/paRecruiterSourcedCandidateSave`
+export const RECRUITER_ROLE_FEEDBACK_LIST_URL = `${DEFAULT_BASE}/paRecruiterRoleFeedbackList`
+export const RECRUITER_ROLE_FEEDBACK_SAVE_URL = `${DEFAULT_BASE}/paRecruiterRoleFeedbackSave`
 export const RECRUITER_SUBMISSION_URL = `${DEFAULT_BASE}/paRecruiterSubmission`
 export const RECRUITER_SUBMISSIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterSubmissionsList`
 
@@ -151,6 +153,41 @@ export interface RecruiterSourcedCandidateInput {
   }
 }
 
+export type RecruiterRoleFeedbackDifficulty = "easy" | "medium" | "hard" | "blocked"
+
+export type RecruiterRoleFeedbackReason =
+  | "low_comp"
+  | "location_mismatch"
+  | "unclear_requirements"
+  | "small_candidate_pool"
+  | "hiring_team_slow"
+  | "role_too_broad"
+  | "candidate_interest_low"
+  | "too_many_recruiters"
+  | "other"
+
+export interface RecruiterRoleFeedbackItem {
+  id: string
+  recruiterId?: string
+  recruiterEmail?: string
+  jobId?: string
+  inboundJobId?: string
+  jobTitleSnapshot?: string
+  companyLabelSnapshot?: string
+  difficulty: RecruiterRoleFeedbackDifficulty
+  reasons: RecruiterRoleFeedbackReason[]
+  note?: string | null
+  createdAt?: { seconds?: number } | string | null
+  updatedAt?: { seconds?: number } | string | null
+}
+
+export interface RecruiterRoleFeedbackInput {
+  jobId: string
+  difficulty: RecruiterRoleFeedbackDifficulty
+  reasons: RecruiterRoleFeedbackReason[]
+  note?: string
+}
+
 export async function recruiterAuthHeaders(): Promise<Record<string, string>> {
   const user = auth().currentUser
   if (!user) throw new Error("recruiter_auth_required")
@@ -238,6 +275,44 @@ export async function fetchRecruiterSourcedCandidates(): Promise<RecruiterSource
     throw new Error(body.reason ?? `paRecruiterSourcedCandidatesList HTTP ${res.status}`)
   }
   return body.candidates
+}
+
+export async function fetchRecruiterRoleFeedback(): Promise<RecruiterRoleFeedbackItem[]> {
+  const res = await fetch(RECRUITER_ROLE_FEEDBACK_LIST_URL, {
+    method: "GET",
+    headers: await recruiterAuthHeaders(),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    feedback?: RecruiterRoleFeedbackItem[]
+  }
+  if (!res.ok || !body.ok || !body.feedback) {
+    throw new Error(body.reason ?? `paRecruiterRoleFeedbackList HTTP ${res.status}`)
+  }
+  return body.feedback
+}
+
+export async function saveRecruiterRoleFeedback(
+  input: RecruiterRoleFeedbackInput,
+): Promise<RecruiterRoleFeedbackItem> {
+  const res = await fetch(RECRUITER_ROLE_FEEDBACK_SAVE_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(await recruiterAuthHeaders()),
+    },
+    body: JSON.stringify(input),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    feedback?: RecruiterRoleFeedbackItem
+  }
+  if (!res.ok || !body.ok || !body.feedback) {
+    throw new Error(body.reason ?? `paRecruiterRoleFeedbackSave HTTP ${res.status}`)
+  }
+  return body.feedback
 }
 
 export async function saveRecruiterSourcedCandidate(

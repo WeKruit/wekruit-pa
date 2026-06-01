@@ -31,6 +31,7 @@ import {
   recruiterIdentityFromFirebaseBearer,
   shouldNotifyRecruitersForRoleRelease,
   validateInviteCodeCreate,
+  validateRecruiterRoleFeedbackInput,
   validateRecruiterSourcedCandidateInput,
   validateRecruiterWorkspacePreferences,
   type RecruiterBoardChecklistGroup,
@@ -293,6 +294,48 @@ describe("recruiter sourced candidates", () => {
     }), {
       ok: false,
       reason: "invalid_candidate_id",
+    })
+  })
+})
+
+describe("recruiter role feedback", () => {
+  it("accepts role feedback with difficulty, reasons, and note", () => {
+    const result = validateRecruiterRoleFeedbackInput({
+      jobId: " public-job-1 ",
+      difficulty: "blocked",
+      reasons: ["small_candidate_pool", "low_comp", "small_candidate_pool"],
+      note: " Candidate pool is thin below the current compensation range. ",
+    })
+
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.deepEqual(result.value, {
+      jobId: "public-job-1",
+      difficulty: "blocked",
+      reasons: ["small_candidate_pool", "low_comp"],
+      note: "Candidate pool is thin below the current compensation range.",
+    })
+  })
+
+  it("rejects malformed role feedback payloads", () => {
+    assert.deepEqual(validateRecruiterRoleFeedbackInput({}), {
+      ok: false,
+      reason: "missing_jobId",
+    })
+    assert.deepEqual(validateRecruiterRoleFeedbackInput({
+      jobId: "job-1",
+      difficulty: "impossible",
+    }), {
+      ok: false,
+      reason: "invalid_difficulty",
+    })
+    assert.deepEqual(validateRecruiterRoleFeedbackInput({
+      jobId: "job-1",
+      difficulty: "hard",
+      reasons: ["not_a_reason"],
+    }), {
+      ok: false,
+      reason: "invalid_reasons",
     })
   })
 })

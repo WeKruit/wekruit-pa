@@ -11,12 +11,17 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import "../styles/recruiter-board.css"
 import {
   fetchCollabJobs,
+  fetchRecruiterRoleFeedback,
   fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissions,
   getRecruiterProfile,
+  saveRecruiterRoleFeedback,
   saveRecruiterSourcedCandidate,
   submitRecruiterCandidate,
   type CollabJob,
+  type RecruiterRoleFeedbackDifficulty,
+  type RecruiterRoleFeedbackItem,
+  type RecruiterRoleFeedbackReason,
   type RecruiterSession,
   type RecruiterSourcedCandidateItem,
   type RecruiterSubmissionItem,
@@ -26,6 +31,25 @@ import { auth } from "../lib/firebase.js"
 
 const STORAGE_KEY_PREFIX = "rb-state-v1:"
 const ROLE_PENDING_SUBMISSION_LIMIT = 5
+
+const ROLE_FEEDBACK_DIFFICULTIES: Array<{ id: RecruiterRoleFeedbackDifficulty; label: string; detail: string }> = [
+  { id: "easy", label: "Easy", detail: "Candidate supply is strong" },
+  { id: "medium", label: "Medium", detail: "Workable with normal sourcing" },
+  { id: "hard", label: "Hard", detail: "Needs tighter calibration" },
+  { id: "blocked", label: "Blocked", detail: "Cannot make progress without changes" },
+]
+
+const ROLE_FEEDBACK_REASONS: Array<{ id: RecruiterRoleFeedbackReason; label: string }> = [
+  { id: "low_comp", label: "Comp too low" },
+  { id: "location_mismatch", label: "Location blocks supply" },
+  { id: "unclear_requirements", label: "Requirements unclear" },
+  { id: "small_candidate_pool", label: "Small candidate pool" },
+  { id: "hiring_team_slow", label: "Feedback too slow" },
+  { id: "role_too_broad", label: "Role too broad" },
+  { id: "candidate_interest_low", label: "Low candidate interest" },
+  { id: "too_many_recruiters", label: "Too many recruiters" },
+  { id: "other", label: "Other" },
+]
 
 interface FormState {
   submitterName: string
@@ -196,6 +220,7 @@ export default function RecruiterRole() {
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
   const [sourcedCandidates, setSourcedCandidates] = useState<RecruiterSourcedCandidateItem[]>([])
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
+  const [roleFeedback, setRoleFeedback] = useState<RecruiterRoleFeedbackItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [trackerError, setTrackerError] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
@@ -245,11 +270,12 @@ export default function RecruiterRole() {
   useEffect(() => {
     if (!session) return
     let active = true
-    Promise.all([fetchRecruiterSourcedCandidates(), fetchRecruiterSubmissions()])
-      .then(([candidates, rows]) => {
+    Promise.all([fetchRecruiterSourcedCandidates(), fetchRecruiterSubmissions(), fetchRecruiterRoleFeedback()])
+      .then(([candidates, rows, feedback]) => {
         if (!active) return
         setSourcedCandidates(candidates)
         setSubmissions(rows)
+        setRoleFeedback(feedback)
         setTrackerError(null)
       })
       .catch((e) => {
@@ -335,6 +361,7 @@ export default function RecruiterRole() {
   const roleSubmissions = submissions
     .filter((row) => roleMatches(job, row))
     .sort((a, b) => timestampMs(b.createdAt) - timestampMs(a.createdAt))
+  const currentRoleFeedback = roleFeedback.find((feedback) => roleMatches(job, feedback)) ?? null
   const pendingCount = roleSubmissions.filter((row) => ["submitted", "new", "reviewing"].includes(row.status ?? "submitted")).length
   const pendingSlots = Math.max(0, ROLE_PENDING_SUBMISSION_LIMIT - pendingCount)
   const selectedCandidate = prefilledCandidateId
@@ -698,6 +725,14 @@ export default function RecruiterRole() {
               </div>
             </section>
 
+            <RoleFeedbackPanel
+              job={job}
+              feedback={currentRoleFeedback}
+              onSaved={(saved) => {
+                setRoleFeedback((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)])
+              }}
+            />
+
             <section className="rb-side-panel">
               <h3>My submissions</h3>
               <div className="rb-role-submission-list">
@@ -717,5 +752,105 @@ export default function RecruiterRole() {
         </div>
       </main>
     </div>
+  )
+}
+
+function roleFeedbackDifficultyLabel(difficulty?: RecruiterRoleFeedbackDifficulty): string {
+  return ROLE_FEEDBACK_DIFFICULTIES.find((item) => item.id === difficulty)?.label ?? "Not shared"
+}
+
+function RoleFeedbackPanel({
+  job,
+  feedback,
+  onSaved,
+}: {
+  job: CollabJob
+  feedback: RecruiterRoleFeedbackItem | null
+  onSaved: (feedback: RecruiterRoleFeedbackItem) => void
+}) {
+  const [difficulty, setDifficulty] = useState<RecruiterRoleFeedbackDifficulty>(feedback?.difficulty ?? "medium")
+  const [reasons, setReasons] = useState<RecruiterRoleFeedbackReason[]>(feedback?.reasons ?? [])
+  const [note, setNote] = useState(feedback?.note ?? "")
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<string | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    setDifficulty(feedback?.difficulty ?? "medium")
+    setReasons(feedback?.reasons ?? [])
+    setNote(feedback?.note ?? "")
+    setSavedAt(null)
+    setErr(null)
+  }, [feedback?.id])
+
+  const toggleReason = (reason: RecruiterRoleFeedbackReason) => {
+    setReasons((current) => current.includes(reason)
+      ? current.filter((item) => item !== reason)
+      : [...current, reason].slice(0, 6))
+  }
+
+  const save = async () => {
+    setSaving(true)
+    setErr(null)
+    try {
+      const saved = await saveRecruiterRoleFeedback({
+        jobId: job.jobId,
+        difficulty,
+        reasons,
+        note: note.trim() || undefined,
+      })
+      onSaved(saved)
+      setSavedAt(new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }))
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="rb-side-panel rb-role-feedback">
+      <h3>Role feedback</h3>
+      <p>Share market signal before the search drifts.</p>
+      <div className="rb-feedback-difficulty" role="radiogroup" aria-label="Role difficulty">
+        {ROLE_FEEDBACK_DIFFICULTIES.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={difficulty === item.id ? "is-active" : ""}
+            onClick={() => setDifficulty(item.id)}
+          >
+            <strong>{item.label}</strong>
+            <span>{item.detail}</span>
+          </button>
+        ))}
+      </div>
+      <div className="rb-feedback-reasons" aria-label="Role feedback reasons">
+        {ROLE_FEEDBACK_REASONS.map((reason) => (
+          <button
+            key={reason.id}
+            type="button"
+            className={reasons.includes(reason.id) ? "is-active" : ""}
+            onClick={() => toggleReason(reason.id)}
+          >
+            {reason.label}
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Comp signal, market objection, missing calibration, or why this role is blocked..."
+        rows={4}
+      />
+      <div className="rb-role-feedback__footer">
+        <span>{feedback ? `${roleFeedbackDifficultyLabel(feedback.difficulty)} last saved` : "No role feedback yet"}</span>
+        <button type="button" className="rb-btn" onClick={() => void save()} disabled={saving}>
+          {saving ? "Saving..." : "Save feedback"}
+        </button>
+      </div>
+      {savedAt && <p className="rb-form-note rb-form-note--active">Saved at {savedAt}.</p>}
+      {err && <p className="rb-error">{err}</p>}
+    </section>
   )
 }
