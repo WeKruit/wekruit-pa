@@ -3907,7 +3907,7 @@ function CandidatesTab({
   onSaved: (candidate: RecruiterSourcedCandidateItem) => void
 }) {
   const [form, setForm] = useState<RecruiterSourcedCandidateInput>(() => ({
-    jobId: jobs[0]?.jobId ?? "",
+    jobId: "",
     stage: "sourced",
     candidate: { name: "", email: "", link: "", currentRole: "", yoe: "", notes: "" },
     outreach: { status: "not_contacted" },
