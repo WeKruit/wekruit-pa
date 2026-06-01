@@ -1430,6 +1430,53 @@
   line-height: 1.45;
 }
 
+.rb-market-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+}
+
+.rb-market-card {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ink-3);
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+}
+
+.rb-market-card.is-live { border-left-color: var(--live); background: var(--live-soft); }
+.rb-market-card.is-info { border-left-color: var(--info); }
+.rb-market-card.is-warn { border-left-color: var(--warning); background: #fffaf1; }
+.rb-market-card.is-success { border-left-color: var(--success); background: var(--success-bg); }
+.rb-market-card.is-mute { border-left-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-market-card span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-market-card strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-market-card p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 .rb-pipeline {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(152px, 1fr));
@@ -2751,6 +2798,9 @@
   .rb-stats {
     grid-template-columns: repeat(2, 1fr);
   }
+  .rb-market-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .rb-pipeline {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
   }
@@ -2836,6 +2886,7 @@
   .rb-pipeline,
   .rb-candidate-board,
   .rb-command-list,
+  .rb-market-grid,
   .rb-source-form__split,
   .rb-feedback-line,
   .rb-role-cockpit,

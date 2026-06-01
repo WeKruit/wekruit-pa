@@ -18,6 +18,8 @@ import "../styles/recruiter-board.css"
 import {
   fetchCollabJobs,
   fetchRecruiterRoleFeedback,
+  fetchRecruiterRoleIntelligence,
+  fetchRecruiterRoleQuestions,
   fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissions,
   getRecruiterProfile,
@@ -26,6 +28,8 @@ import {
   updateRecruiterPreferences,
   type CollabJob,
   type RecruiterRoleFeedbackItem,
+  type RecruiterRoleIntelligenceItem,
+  type RecruiterRoleQuestionItem,
   type RecruiterSession,
   type RecruiterSourcedCandidateInput,
   type RecruiterSourcedCandidateItem,
@@ -358,6 +362,8 @@ export default function RecruiterBoard() {
   const [sourcedCandidates, setSourcedCandidates] = useState<RecruiterSourcedCandidateItem[]>([])
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
   const [roleFeedback, setRoleFeedback] = useState<RecruiterRoleFeedbackItem[]>([])
+  const [roleQuestions, setRoleQuestions] = useState<RecruiterRoleQuestionItem[]>([])
+  const [roleIntelligence, setRoleIntelligence] = useState<RecruiterRoleIntelligenceItem[]>([])
   const [statusLoaded, setStatusLoaded] = useState(false)
   const [primaryRoleSavingId, setPrimaryRoleSavingId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -383,6 +389,8 @@ export default function RecruiterBoard() {
         setSourcedCandidates([])
         setSubmissions([])
         setRoleFeedback([])
+        setRoleQuestions([])
+        setRoleIntelligence([])
         setStatusLoaded(false)
         setAuthReady(true)
         return
@@ -413,6 +421,8 @@ export default function RecruiterBoard() {
             setSourcedCandidates([])
             setSubmissions([])
             setRoleFeedback([])
+            setRoleQuestions([])
+            setRoleIntelligence([])
             setStatusLoaded(false)
             setAccessError(formatRecruiterAuthError(e))
           }
@@ -435,6 +445,8 @@ export default function RecruiterBoard() {
           setSourcedCandidates([])
           setSubmissions([])
           setRoleFeedback([])
+          setRoleQuestions([])
+          setRoleIntelligence([])
           setStatusLoaded(false)
         }
       } finally {
@@ -465,14 +477,18 @@ export default function RecruiterBoard() {
     try {
       setSubmissionError(null)
       setStatusLoaded(false)
-      const [submissionRows, sourceRows, feedbackRows] = await Promise.all([
+      const [submissionRows, sourceRows, feedbackRows, questionRows, intelligenceRows] = await Promise.all([
         fetchRecruiterSubmissions(),
         fetchRecruiterSourcedCandidates(),
         fetchRecruiterRoleFeedback(),
+        fetchRecruiterRoleQuestions(),
+        fetchRecruiterRoleIntelligence(),
       ])
       setSubmissions(sortSubmissions(submissionRows))
       setSourcedCandidates(sortSourcedCandidates(sourceRows))
       setRoleFeedback(feedbackRows)
+      setRoleQuestions(questionRows)
+      setRoleIntelligence(intelligenceRows)
       setStatusLoaded(true)
     } catch (e) {
       setSubmissionError(e instanceof Error ? e.message : String(e))
@@ -521,8 +537,6 @@ export default function RecruiterBoard() {
 
   const openJobs = jobs ?? []
   const stats = computeRecruiterStats(openJobs, submissions, sourcedCandidates)
-  const recentSubmissions = submissions.slice(0, 4)
-
   return (
     <div className="rb-platform">
       <aside className="rb-platform__nav">
@@ -566,6 +580,8 @@ export default function RecruiterBoard() {
             setSourcedCandidates([])
             setSubmissions([])
             setRoleFeedback([])
+            setRoleQuestions([])
+            setRoleIntelligence([])
             setStatusLoaded(false)
           }}
         >
@@ -597,8 +613,10 @@ export default function RecruiterBoard() {
           <OverviewTab
             stats={stats}
             jobs={openJobs}
-            submissions={recentSubmissions}
+            submissions={submissions}
             sourcedCandidates={sourcedCandidates}
+            roleQuestions={roleQuestions}
+            roleIntelligence={roleIntelligence}
             primaryRoleIds={primaryRoleIds}
             onRoles={() => setTab("roles")}
             onMatches={() => setTab("matches")}
@@ -762,6 +780,8 @@ function OverviewTab({
   jobs,
   submissions,
   sourcedCandidates,
+  roleQuestions,
+  roleIntelligence,
   primaryRoleIds,
   onRoles,
   onMatches,
@@ -774,6 +794,8 @@ function OverviewTab({
   jobs: CollabJob[]
   submissions: RecruiterSubmissionItem[]
   sourcedCandidates: RecruiterSourcedCandidateItem[]
+  roleQuestions: RecruiterRoleQuestionItem[]
+  roleIntelligence: RecruiterRoleIntelligenceItem[]
   primaryRoleIds: string[]
   onRoles: () => void
   onMatches: () => void
@@ -789,7 +811,8 @@ function OverviewTab({
   const priorityJobs = [...primaryJobs, ...suggestedJobs].slice(0, PRIMARY_ROLE_SLOT_LIMIT)
   const pipeline = buildCandidatePipeline(sourcedCandidates, submissions)
   const feedback = submissions.filter((s) => Boolean(s.recruiterFeedbackNote)).slice(0, 3)
-  const workItems = buildRecruiterWorkQueue(jobs, sourcedCandidates, submissions)
+  const workItems = buildRecruiterWorkQueue(jobs, sourcedCandidates, submissions, roleQuestions, roleIntelligence)
+  const marketPulse = buildMarketPulse(jobs, roleQuestions, roleIntelligence)
   return (
     <div className="rb-workspace">
       <section className="rb-stats">
@@ -854,7 +877,7 @@ function OverviewTab({
       </div>
       <section className="rb-panel rb-command-panel">
         <header className="rb-panel__head">
-          <div><h2>Today&apos;s work queue</h2><p>The fastest path from open role to sourced candidate to submitted status.</p></div>
+          <div><h2>Today&apos;s work queue</h2><p>Ranked by candidate readiness, WeKruit blockers, and role-market signal.</p></div>
           <button type="button" className="rb-panel__link" onClick={onMatches}>Open matchboard</button>
         </header>
         <div className="rb-command-list">
@@ -870,6 +893,21 @@ function OverviewTab({
               >
                 {item.cta}
               </button>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="rb-panel rb-market-panel">
+        <header className="rb-panel__head">
+          <div><h2>Role market pulse</h2><p>Platform signal from recruiter activity, feedback, and unanswered role questions.</p></div>
+          <button type="button" className="rb-panel__link" onClick={onRoles}>Open role command</button>
+        </header>
+        <div className="rb-market-grid">
+          {marketPulse.map((item) => (
+            <article className={`rb-market-card is-${item.tone}`} key={item.label}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+              <p>{item.body}</p>
             </article>
           ))}
         </div>
@@ -938,71 +976,174 @@ function buildRecruiterWorkQueue(
   jobs: CollabJob[],
   sourcedCandidates: RecruiterSourcedCandidateItem[],
   submissions: RecruiterSubmissionItem[],
+  roleQuestions: RecruiterRoleQuestionItem[],
+  roleIntelligence: RecruiterRoleIntelligenceItem[],
 ) {
   const readyCandidates = sourcedCandidates.filter((c) => c.stage === "ready")
   const newRoles = jobs.filter(isNewRole)
   const feedbackRows = submissions.filter((s) => Boolean(s.recruiterFeedbackNote))
   const pending = submissions.filter((s) => ["submitted", "new", "reviewing"].includes(s.status ?? "submitted"))
+  const openQuestions = roleQuestions.filter((q) => (q.status ?? "open") === "open")
+  const blockedRoles = roleIntelligence.filter((item) => item.feedback.blocked > 0 || item.feedback.hard > 0)
+  const noSubmissionRoles = jobs.filter((job) => (roleIntelligence.find((item) => item.jobId === roleKey(job))?.submissionCount ?? 0) === 0)
+
+  const items: Array<{
+    label: string
+    title: string
+    body: string
+    cta: string
+    action: "roles" | "submissions" | "matches" | "candidates"
+    tone: "live" | "info" | "success" | "warn" | "mute"
+  }> = []
 
   if (readyCandidates.length > 0) {
-    return [
-      {
-        label: "Submit next",
-        title: `${readyCandidates.length} ready candidate${readyCandidates.length === 1 ? "" : "s"}`,
-        body: "Use the matchboard to choose the strongest open role before sending another formal submission.",
-        cta: "Match candidates",
-        action: "matches" as const,
-        tone: "live",
-      },
-      {
-        label: "Calibration",
-        title: feedbackRows.length ? `${feedbackRows.length} feedback note${feedbackRows.length === 1 ? "" : "s"}` : "No written feedback yet",
-        body: feedbackRows.length ? "Read the notes before continuing the same search." : "Keep submissions tight until the first feedback arrives.",
-        cta: "Review submissions",
-        action: "submissions" as const,
-        tone: feedbackRows.length ? "warn" : "info",
-      },
-      {
-        label: "Role supply",
-        title: newRoles.length ? `${newRoles.length} new role${newRoles.length === 1 ? "" : "s"} this week` : `${jobs.length} open roles`,
-        body: "Prioritize roles with clear hard checks and no current submissions from your account.",
-        cta: "Browse roles",
-        action: "roles" as const,
-        tone: "info",
-      },
-    ]
+    items.push({
+      label: "Submit next",
+      title: `${readyCandidates.length} ready candidate${readyCandidates.length === 1 ? "" : "s"}`,
+      body: "Use the matchboard to choose the strongest open role before sending another formal submission.",
+      cta: "Match candidates",
+      action: "matches",
+      tone: "live",
+    })
   }
 
-  return [
-    {
+  if (openQuestions.length > 0) {
+    const oldest = openQuestions
+      .map((q) => timestampValueMs(q.createdAt ?? q.updatedAt))
+      .filter((ms) => ms > 0)
+      .sort((a, b) => a - b)[0]
+    const oldestLabel = oldest ? formatCandidateAge(new Date(oldest).toISOString()).toLowerCase() : null
+    items.push({
+      label: "WeKruit answer needed",
+      title: `${openQuestions.length} open role question${openQuestions.length === 1 ? "" : "s"}`,
+      body: oldestLabel
+        ? `Oldest unanswered question opened ${oldestLabel}. Use role command before sourcing through uncertainty.`
+        : "A role has unanswered calibration questions. Clear those before investing more sourcing cycles.",
+      cta: "Open role command",
+      action: "roles",
+      tone: "warn",
+    })
+  }
+
+  if (blockedRoles.length > 0) {
+    items.push({
+      label: "Market friction",
+      title: `${blockedRoles.length} hard or blocked role${blockedRoles.length === 1 ? "" : "s"}`,
+      body: "Recruiter feedback says these searches need sharper comp, location, or requirement calibration before more volume.",
+      cta: "Review roles",
+      action: "roles",
+      tone: "warn",
+    })
+  }
+
+  if (items.length < 3 && feedbackRows.length > 0) {
+    items.push({
+      label: "Calibration",
+      title: `${feedbackRows.length} feedback note${feedbackRows.length === 1 ? "" : "s"}`,
+      body: "Read WeKruit notes before continuing the same search or sourcing lookalikes.",
+      cta: "Review submissions",
+      action: "submissions",
+      tone: "info",
+    })
+  }
+
+  if (items.length < 3 && noSubmissionRoles.length > 0) {
+    items.push({
+      label: "White space",
+      title: `${noSubmissionRoles.length} role${noSubmissionRoles.length === 1 ? "" : "s"} with no submissions`,
+      body: "These roles still have a clean lane. Pick one with clear hard checks and build a sourced shortlist.",
+      cta: "Browse roles",
+      action: "roles",
+      tone: "info",
+    })
+  }
+
+  if (items.length < 3) {
+    items.push({
       label: "Start here",
       title: sourcedCandidates.length ? "Move prospects to ready" : "Build a sourced shortlist",
       body: sourcedCandidates.length
         ? "Screen saved prospects, mark the strongest as ready, then submit from the role brief."
         : "Save LinkedIn or resume links before submitting so duplicate and status tracking can work.",
       cta: "Open candidate CRM",
-      action: "candidates" as const,
+      action: "candidates",
       tone: "live",
-    },
-    {
+    })
+  }
+
+  if (items.length < 3) {
+    items.push({
       label: "Role supply",
       title: newRoles.length ? `${newRoles.length} new role${newRoles.length === 1 ? "" : "s"} this week` : `${jobs.length} open roles`,
       body: "Filter the marketplace before sourcing so you do not waste effort on weak-fit roles.",
       cta: "Browse roles",
-      action: "roles" as const,
+      action: "roles",
       tone: "info",
-    },
-    {
+    })
+  }
+
+  if (items.length < 3) {
+    items.push({
       label: "Review load",
       title: pending.length ? `${pending.length} pending review` : "No pending submissions",
       body: pending.length
         ? "Wait for feedback if you are close to the pending limit on a role."
         : "You have room to submit once a candidate has confirmed consent.",
       cta: "Open submissions",
-      action: "submissions" as const,
+      action: "submissions",
       tone: pending.length ? "warn" : "success",
+    })
+  }
+
+  return items.slice(0, 3)
+}
+
+function buildMarketPulse(
+  jobs: CollabJob[],
+  roleQuestions: RecruiterRoleQuestionItem[],
+  roleIntelligence: RecruiterRoleIntelligenceItem[],
+) {
+  const intelligenceByJob = new Map(roleIntelligence.map((item) => [item.jobId, item]))
+  const openQuestions = roleQuestions.filter((q) => (q.status ?? "open") === "open")
+  const hardOrBlocked = roleIntelligence.filter((item) => item.feedback.hard > 0 || item.feedback.blocked > 0)
+  const whiteSpaceRoles = jobs.filter((job) => (intelligenceByJob.get(roleKey(job))?.submissionCount ?? 0) === 0)
+  const readyAcrossMarket = roleIntelligence.reduce((sum, item) => sum + item.readyCount, 0)
+  const recruiterRolePairs = roleIntelligence.reduce((sum, item) => sum + item.recruiterCount, 0)
+  const hasNetworkMotion = readyAcrossMarket > 0 || recruiterRolePairs > 0
+  return [
+    {
+      label: "Open questions",
+      value: String(openQuestions.length),
+      body: openQuestions.length
+        ? "Role calibration is waiting on WeKruit answers."
+        : "No unanswered role questions from your account.",
+      tone: openQuestions.length ? "warn" : "success",
     },
-  ]
+    {
+      label: "Hard searches",
+      value: String(hardOrBlocked.length),
+      body: hardOrBlocked.length
+        ? "Recruiter feedback shows market friction on these roles."
+        : "No hard or blocked market feedback yet.",
+      tone: hardOrBlocked.length ? "warn" : "info",
+    },
+    {
+      label: "Clean lanes",
+      value: String(whiteSpaceRoles.length),
+      body: whiteSpaceRoles.length
+        ? "Open roles still have no recruiter-board submissions."
+        : "Every open role has at least one submission signal.",
+      tone: whiteSpaceRoles.length ? "live" : "info",
+    },
+    {
+      label: "Network motion",
+      value: hasNetworkMotion ? `${readyAcrossMarket}/${recruiterRolePairs}` : "0",
+      body: hasNetworkMotion
+        ? "Ready candidates over active recruiter-role lanes across the board."
+        : "No recruiter-role lanes have market activity yet.",
+      tone: readyAcrossMarket ? "live" : "mute",
+    },
+  ] as const
 }
 
 function sourceToPipelineItem(c: RecruiterSourcedCandidateItem): PipelineItem {
