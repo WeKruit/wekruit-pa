@@ -28,6 +28,8 @@ export interface ClairePromptOptions {
   prescreenContext?: string
   /** prescreen: qId → canonical question text = DIRECTION (NOT a verbatim script). */
   prescreenPrompts?: Record<string, string>
+  /** dev-phone canary: include the strengthened (agent-decided) tapback directive. */
+  canary?: boolean
 }
 
 const PERSONA = [
@@ -338,6 +340,23 @@ const FEWSHOT = [
   "- user: 'what preferences do you have saved?' → read the saved matcher preferences from context and recite THOSE.",
 ].join(" ")
 
+// CANARY (dev-phone) — strengthen the agent's OWN tapback decisioning. The agent still
+// DECIDES (text vs react_to_user vs silence); this just makes it react like a real person
+// instead of defaulting to text. Gated to canary so we validate on dev phones first.
+const CANARY_TAPBACK = [
+  "TAPBACKS — react like a real person; YOU decide when (this is your call, not a rule):",
+  "iMessage lets you react to their last message with a tapback via react_to_user, instead of texting.",
+  "Use it the way a friend texting would:",
+  "- They send a bare acknowledgement with nothing for you to answer ('ok','k','thanks','got it','cool','👍')",
+  "  → react_to_user(like) and send NO text. Do NOT type 'np'/'you got it'/'sounds good' — that's filler.",
+  "- Genuinely great news ('I got the offer!','passed!','just accepted') → react_to_user(love).",
+  "- Something funny → react_to_user(laugh). A heartfelt thanks where words would be filler → emphasize.",
+  "- A real question, a new fact, a decision, or anything needing a reply → answer in TEXT (never a bare tapback).",
+  "Bias: if the text you were about to send is just a throwaway ack ('ok!','great!','sounds good!'),",
+  "send a tapback instead and stay silent. Don't compulsively reply to everything — silence + a tapback is",
+  "often the right, human move.",
+].join(" ")
+
 export function buildClairePrompt(opts: ClairePromptOptions): string {
   const langLine = "Reply in natural English (Claire's voice). Respond in English only, never Chinese."
   return [
@@ -349,6 +368,7 @@ export function buildClairePrompt(opts: ClairePromptOptions): string {
     PREFERENCES,
     DELIVERY,
     SCHEDULING,
+    opts.canary ? CANARY_TAPBACK : "",
     modeDirective(opts.mode, opts),
     FLEXIBILITY,
     opts.globalContext ? `CONTEXT — ${opts.globalContext}` : "",

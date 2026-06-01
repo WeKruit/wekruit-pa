@@ -16,7 +16,6 @@ import { PA_COLLECTIONS } from "@pa/core-types"
 import { isThinClaireEnabled } from "./flags.js"
 import { createSendblueTransport } from "./transport.js"
 import { selectClaireMode } from "./mode-selector.js"
-import { isLowInfoAck } from "./ack-reflex.js"
 import type { ClaireLang } from "./types.js"
 // NOTE: agent.js + tools/matching-tools.js are NOT imported statically — they pull
 // the @pa/agent-runtime/zod@4 SDK, which crashes the deployed container at boot.
@@ -137,31 +136,6 @@ export async function maybeRunThinClaire(
       log,
       ...(deps.dryRun ? { dryRun: true } : {}),
     })
-
-    // DETERMINISTIC ACK TAPBACK (triage only). A bare non-actionable ack ("ok"/
-    // "thanks"/"got it"/👍) is answered with a tapback + NO text, instead of the
-    // unreliable LLM react_to_user (the 2026-06 "no tapbacks" regression: the agent
-    // texted or ran a stray prescreen-pause line instead of reacting). The reaction
-    // transport itself is healthy (verified live). Onboarding/prescreen fall through
-    // so a mid-flow "ok" still advances. Any reaction failure falls through too.
-    if (decision.mode === "triage" && isLowInfoAck(text)) {
-      try {
-        await transport.tapback("like")
-        await db
-          .collection(PA_COLLECTIONS.inboundEvents)
-          .doc(eventId)
-          .set({ status: "completed", handledBy: "thin_claire_ack_tapback" }, { merge: true })
-        log("thin_claire.ack_tapback", { eventId, userId })
-        return true
-      } catch (ackErr) {
-        log("thin_claire.ack_tapback_failed", {
-          eventId,
-          userId,
-          err: ackErr instanceof Error ? ackErr.message : String(ackErr),
-        })
-      }
-    }
-
     await runClaireTurn(
       {
         userId,

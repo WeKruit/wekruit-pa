@@ -25,6 +25,7 @@ import { type ProcessSessionStore, type ProcessToolContext } from "./tools/proce
 import { buildClairePrompt } from "./prompt.js"
 import { buildClaireGuardrails } from "./guardrails.js"
 import { markReadReflex, wireTypingReflex, deliverBubbles } from "./delivery.js"
+import { isCanaryUser } from "./canary.js"
 import { makeClaireSession } from "./session.js"
 import { appendHotlineIfMissing } from "@pa/pa-safety"
 import { HELLO_WEKRUIT_OPENER_PREFIX } from "@pa/pa-orchestrator"
@@ -118,6 +119,9 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
     instructions: buildClairePrompt({
       mode: opts.mode,
       lang: opts.lang,
+      // Dev-phone canary: strengthen the agent's OWN tapback decisioning (it still
+      // decides text vs react_to_user vs silence) — new behavior, dev-only, one gate.
+      canary: isCanaryUser(ctx.userId),
       pendingStep: opts.pendingStep,
       currentStep: opts.currentStep,
       globalContext: opts.globalContext,
