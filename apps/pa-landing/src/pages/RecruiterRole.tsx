@@ -238,6 +238,12 @@ function formatSubmissionFailure(reason?: string): string {
   if (reason === "single_submission_limit_reached") {
     return "This role is outside your primary slots and your weekly single-submission limit is used. Add the role as primary from the recruiter dashboard or wait for the rolling window to reset."
   }
+  if (reason === "candidate_already_submitted_for_role") {
+    return "This candidate is already submitted for this role. Do not submit the same email or LinkedIn again; track the existing pipeline instead."
+  }
+  if (reason === "candidate_already_sourced_for_role") {
+    return "Another recruiter already has this candidate in motion for this role. Choose a different candidate or ask WeKruit for calibration before proceeding."
+  }
   if (reason === "missing_candidate_email") return "Add the candidate email so WeKruit can confirm consent."
   if (reason === "invalid_candidate_email") return "Enter a valid candidate email."
   if (reason === "candidate_consent_required") return "Confirm candidate consent before submitting."

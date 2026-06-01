@@ -31,6 +31,7 @@ import {
   normalizeRecruiterCandidateLink,
   inviteCodeUsable,
   normalizeRecruiterInviteCode,
+  recruiterCandidateIdentityConflictForRole,
   recruiterInviteCodeMatchesBoundUser,
   recruiterIdentityFromFirebaseBearer,
   shouldNotifyRecruitersForRoleRelease,
@@ -389,6 +390,74 @@ describe("recruiter sourced candidates", () => {
       hashRecruiterCandidateLink("https://linkedin.com/in/ada-lovelace").length,
       64,
     )
+  })
+
+  it("blocks recruiter submissions when candidate identity is already submitted for the role", () => {
+    const linkKey = hashRecruiterCandidateLink("https://linkedin.com/in/ada")
+    const emailKey = hashRecruiterCandidateEmail("ada@example.com")
+
+    assert.deepEqual(recruiterCandidateIdentityConflictForRole({
+      realJobId: "role-1",
+      recruiterId: "recruiter-a",
+      candidateLinkKey: linkKey,
+      candidateEmailKey: emailKey,
+    }, [
+      {
+        id: "sub-1",
+        collection: "submissions",
+        data: {
+          jobId: "role-1",
+          recruiterId: "recruiter-b",
+          candidateEmailKey: emailKey,
+        },
+      },
+    ]), {
+      reason: "candidate_already_submitted_for_role",
+      docId: "sub-1",
+    })
+  })
+
+  it("blocks direct submissions when another recruiter has already sourced the candidate for the role", () => {
+    const linkKey = hashRecruiterCandidateLink("https://linkedin.com/in/ada")
+
+    assert.deepEqual(recruiterCandidateIdentityConflictForRole({
+      realJobId: "role-1",
+      recruiterId: "recruiter-a",
+      candidateLinkKey: linkKey,
+    }, [
+      {
+        id: "source-1",
+        collection: "sourced",
+        data: {
+          jobId: "role-1",
+          recruiterId: "recruiter-b",
+          candidateLinkKey: linkKey,
+        },
+      },
+    ]), {
+      reason: "candidate_already_sourced_for_role",
+      docId: "source-1",
+    })
+  })
+
+  it("allows a recruiter to submit their own unsubmitted sourced candidate", () => {
+    const linkKey = hashRecruiterCandidateLink("https://linkedin.com/in/ada")
+
+    assert.equal(recruiterCandidateIdentityConflictForRole({
+      realJobId: "role-1",
+      recruiterId: "recruiter-a",
+      candidateLinkKey: linkKey,
+    }, [
+      {
+        id: "source-1",
+        collection: "sourced",
+        data: {
+          jobId: "role-1",
+          recruiterId: "recruiter-a",
+          candidateLinkKey: linkKey,
+        },
+      },
+    ]), null)
   })
 
   it("accepts a recruiter-sourced candidate and trims optional fields", () => {

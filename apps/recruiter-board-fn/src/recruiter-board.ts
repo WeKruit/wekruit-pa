@@ -3112,6 +3112,76 @@ async function recentSingleSubmissionCount(
   return count
 }
 
+export interface RecruiterCandidateIdentityConflictInput {
+  realJobId: string
+  recruiterId?: string | null
+  candidateLinkKey: string
+  candidateEmailKey?: string | null
+}
+
+export interface RecruiterCandidateIdentityDoc {
+  id: string
+  collection: "submissions" | "sourced"
+  data: Record<string, unknown>
+}
+
+export function recruiterCandidateIdentityConflictForRole(
+  input: RecruiterCandidateIdentityConflictInput,
+  docs: RecruiterCandidateIdentityDoc[],
+): { reason: "candidate_already_submitted_for_role" | "candidate_already_sourced_for_role"; docId: string } | null {
+  for (const doc of docs) {
+    const data = doc.data
+    if (data.jobId !== input.realJobId) continue
+    const linkMatches = data.candidateLinkKey === input.candidateLinkKey
+    const emailMatches = Boolean(input.candidateEmailKey && data.candidateEmailKey === input.candidateEmailKey)
+    if (!linkMatches && !emailMatches) continue
+    if (doc.collection === "submissions") {
+      return { reason: "candidate_already_submitted_for_role", docId: doc.id }
+    }
+    const owner = typeof data.recruiterId === "string" ? data.recruiterId : null
+    const linkedSubmissionId = typeof data.linkedSubmissionId === "string" ? data.linkedSubmissionId.trim() : ""
+    if (linkedSubmissionId) {
+      return { reason: "candidate_already_submitted_for_role", docId: doc.id }
+    }
+    if (owner && owner !== input.recruiterId) {
+      return { reason: "candidate_already_sourced_for_role", docId: doc.id }
+    }
+  }
+  return null
+}
+
+async function findRecruiterCandidateIdentityConflict(
+  db: Firestore,
+  input: RecruiterCandidateIdentityConflictInput,
+): Promise<ReturnType<typeof recruiterCandidateIdentityConflictForRole>> {
+  const docs = new Map<string, RecruiterCandidateIdentityDoc>()
+  const collect = async (
+    collectionName: string,
+    collectionKind: RecruiterCandidateIdentityDoc["collection"],
+    field: "candidateLinkKey" | "candidateEmailKey",
+    value?: string | null,
+  ) => {
+    if (!value) return
+    const snap = await db.collection(collectionName).where(field, "==", value).limit(25).get()
+    for (const doc of snap.docs) {
+      docs.set(`${collectionKind}:${doc.id}`, {
+        id: doc.id,
+        collection: collectionKind,
+        data: doc.data(),
+      })
+    }
+  }
+
+  await Promise.all([
+    collect(RECRUITER_SUBMISSIONS_COLLECTION, "submissions", "candidateLinkKey", input.candidateLinkKey),
+    collect(RECRUITER_SUBMISSIONS_COLLECTION, "submissions", "candidateEmailKey", input.candidateEmailKey),
+    collect(RECRUITER_SOURCED_CANDIDATES_COLLECTION, "sourced", "candidateLinkKey", input.candidateLinkKey),
+    collect(RECRUITER_SOURCED_CANDIDATES_COLLECTION, "sourced", "candidateEmailKey", input.candidateEmailKey),
+  ])
+
+  return recruiterCandidateIdentityConflictForRole(input, [...docs.values()])
+}
+
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0
 }
@@ -3983,6 +4053,21 @@ export const paRecruiterSubmission = onRequest(
       sourcedCandidateRef = sourcedSnap.ref
     }
 
+    const candidateLinkKey = hashRecruiterCandidateLink(payload.candidate.link)
+    const candidateEmailKey = payload.candidate.email
+      ? hashRecruiterCandidateEmail(payload.candidate.email)
+      : null
+    const candidateConflict = await findRecruiterCandidateIdentityConflict(db, {
+      realJobId,
+      recruiterId: recruiter?.recruiterId ?? null,
+      candidateLinkKey,
+      candidateEmailKey,
+    })
+    if (candidateConflict) {
+      res.status(409).json({ ok: false, reason: candidateConflict.reason })
+      return
+    }
+
     const score = computeSubmissionScore(rb.checklist.groups, payload.checklist)
 
     const submissionId = idempotencyHeader || randomUUID()
@@ -4019,7 +4104,8 @@ export const paRecruiterSubmission = onRequest(
       recruiterEmail: recruiter?.email ?? payload.submitter.email,
       ...(payload.sourcedCandidateId ? { sourcedCandidateId: payload.sourcedCandidateId } : {}),
       candidate: payload.candidate,
-      ...(payload.candidate.email ? { candidateEmailKey: hashRecruiterCandidateEmail(payload.candidate.email) } : {}),
+      candidateLinkKey,
+      ...(candidateEmailKey ? { candidateEmailKey } : {}),
       candidateConsent: payload.candidateConsent,
       candidateConsentStatus,
       ...(candidateConfirmation ? { candidateConfirmation } : {}),
