@@ -13,6 +13,10 @@ import { DataTable, type Column } from "../components/console/primitives.js"
 import { useTable } from "../components/console/useTable.js"
 import { auth, db } from "../lib/firebase.js"
 import { createRecruiterInviteCode, replaceRecruiterInviteCode, restoreRecruiterInviteCode, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
+import {
+  buildRoleApplicationReview,
+  type RoleApplicationReview,
+} from "./RecruiterApplicationReview.helpers.js"
 
 interface SubmissionDoc {
   id: string
@@ -1999,6 +2003,9 @@ function applicationStatusTone(status?: string): Parameters<typeof Badge>[0]["to
 
 function RecruiterRoleApplicationsPanel() {
   const [rows, setRows] = useState<RecruiterRoleApplicationDoc[]>([])
+  const [profiles, setProfiles] = useState<RecruiterProfileDoc[]>([])
+  const [submissions, setSubmissions] = useState<SubmissionDoc[]>([])
+  const [sourcedCandidates, setSourcedCandidates] = useState<SourcedCandidateDoc[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -2007,15 +2014,23 @@ function RecruiterRoleApplicationsPanel() {
     setLoading(true)
     setErr(null)
     try {
-      const snap = await getDocs(query(
-        collection(db(), "pa-recruiter-role-applications"),
-        orderBy("updatedAt", "desc"),
-        limit(500),
-      ))
-      setRows(snap.docs.map((d) => {
+      const [applicationSnap, profileSnap, submissionSnap, sourcedSnap] = await Promise.all([
+        getDocs(query(
+          collection(db(), "pa-recruiter-role-applications"),
+          orderBy("updatedAt", "desc"),
+          limit(500),
+        )),
+        getDocs(collection(db(), "pa-recruiter-users")),
+        getDocs(query(collection(db(), "pa-recruiter-submissions"), limit(1000))),
+        getDocs(query(collection(db(), "pa-recruiter-sourced-candidates"), limit(1000))),
+      ])
+      setRows(applicationSnap.docs.map((d) => {
         const data = d.data() as Omit<RecruiterRoleApplicationDoc, "id">
         return { id: d.id, ...data, updatedAtMs: timestampToMs(data.updatedAt ?? data.createdAt) }
       }))
+      setProfiles(profileSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterProfileDoc, "id">) })))
+      setSubmissions(submissionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionDoc, "id">) })))
+      setSourcedCandidates(sourcedSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SourcedCandidateDoc, "id">) })))
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
@@ -2071,6 +2086,24 @@ function RecruiterRoleApplicationsPanel() {
     approved: rows.filter((r) => r.status === "approved").length,
     withProof: rows.filter((r) => (r.preparedCandidateCount ?? 0) > 0).length,
   }
+  const reviewsById = useMemo(() => {
+    const map = new Map<string, RoleApplicationReview>()
+    for (const row of rows) {
+      map.set(row.id, buildRoleApplicationReview({
+        application: row,
+        profiles,
+        submissions,
+        candidates: sourcedCandidates,
+        applications: rows,
+      }))
+    }
+    return map
+  }, [profiles, rows, sourcedCandidates, submissions])
+  const recommendationMetrics = {
+    approve: [...reviewsById.values()].filter((review) => review.recommendation === "approve").length,
+    review: [...reviewsById.values()].filter((review) => review.recommendation === "review").length,
+    decline: [...reviewsById.values()].filter((review) => review.recommendation === "decline").length,
+  }
 
   if (loading) return <LoadingState label="Loading recruiter applications..." />
   if (err) return <ErrorState message={err} />
@@ -2110,6 +2143,21 @@ function RecruiterRoleApplicationsPanel() {
       render: (r) => <Badge tone={applicationStatusTone(r.status)}>{prettyKey(r.status ?? "pending")}</Badge>,
     },
     {
+      key: "recommendation",
+      label: "Decision signal",
+      width: 170,
+      render: (r) => {
+        const review = reviewsById.get(r.id)
+        if (!review) return "—"
+        return (
+          <>
+            <Badge tone={review.tone}>{prettyKey(review.recommendation)}</Badge>
+            <div style={{ marginTop: 4, color: "#777", fontSize: 11 }}>{review.metrics.qualityScore}/100 · {review.metrics.interviewRate}% interview</div>
+          </>
+        )
+      },
+    },
+    {
       key: "preparedCandidateCount",
       label: "Proof",
       sortable: true,
@@ -2130,6 +2178,11 @@ function RecruiterRoleApplicationsPanel() {
         <OpsMetric label="Pending review" value={metrics.pending} />
         <OpsMetric label="Approved" value={metrics.approved} />
         <OpsMetric label="With candidate proof" value={metrics.withProof} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, margin: "-4px 0 16px" }}>
+        <OpsMetric label="Approve-ready" value={recommendationMetrics.approve} />
+        <OpsMetric label="Needs operator review" value={recommendationMetrics.review} />
+        <OpsMetric label="Decline signal" value={recommendationMetrics.decline} />
       </div>
       <Panel actions={<button type="button" onClick={() => void reload()}>Refresh</button>}>
         <DataTable<RecruiterRoleApplicationDoc>
@@ -2161,6 +2214,13 @@ function RecruiterRoleApplicationsPanel() {
         return (
           <RoleApplicationDetailPanel
             row={row}
+            review={reviewsById.get(row.id) ?? buildRoleApplicationReview({
+              application: row,
+              profiles,
+              submissions,
+              candidates: sourcedCandidates,
+              applications: rows,
+            })}
             onClose={() => setExpandedId(null)}
             onUpdated={(next) => {
               setRows((prev) => prev.map((r) => r.id === next.id ? { ...r, ...next, updatedAtMs: Date.now() } : r))
@@ -2174,10 +2234,12 @@ function RecruiterRoleApplicationsPanel() {
 
 function RoleApplicationDetailPanel({
   row,
+  review,
   onClose,
   onUpdated,
 }: {
   row: RecruiterRoleApplicationDoc
+  review: RoleApplicationReview
   onClose: () => void
   onUpdated: (next: RecruiterRoleApplicationDoc) => void
 }) {
@@ -2195,6 +2257,10 @@ function RoleApplicationDetailPanel({
       await updateDoc(doc(db(), "pa-recruiter-role-applications", row.id), {
         status,
         adminNote: cleanNote || null,
+        adminReviewRecommendation: review.recommendation,
+        adminReviewQualityScore: review.metrics.qualityScore,
+        adminReviewEvidence: review.evidence.slice(0, 8),
+        adminReviewRisks: review.risks.slice(0, 8),
         reviewedByEmail,
         reviewedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -2235,6 +2301,60 @@ function RoleApplicationDetailPanel({
           {row.pitch ?? "—"}
         </div>
       </div>
+      <section style={{ marginTop: 16, display: "grid", gridTemplateColumns: "minmax(260px, .78fr) minmax(0, 1.22fr)", gap: 14 }}>
+        <article style={{ display: "grid", gap: 10, alignContent: "start", border: "1px solid #eee", borderLeft: `4px solid ${review.tone === "ok" ? "#2f7d32" : review.tone === "warn" ? "#a33a2d" : "#b77c2f"}`, borderRadius: 8, background: "#fff", padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+            <span style={{ color: "#777", fontSize: 11, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase" }}>Decision signal</span>
+            <Badge tone={review.tone}>{prettyKey(review.recommendation)}</Badge>
+          </div>
+          <strong style={{ color: "#1a1a1a", fontSize: 16 }}>{review.headline}</strong>
+          <p style={{ margin: 0, color: "#555", fontSize: 13, lineHeight: 1.45 }}>{review.rationale}</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+            <OpsMiniStat label="Quality" value={`${review.metrics.qualityScore}/100`} />
+            <OpsMiniStat label="Avg rating" value={review.metrics.avgRating === null ? "unrated" : `${review.metrics.avgRating.toFixed(1)}/4`} />
+            <OpsMiniStat label="Interview" value={`${review.metrics.interviewRate}%`} />
+            <OpsMiniStat label="Role load" value={`${review.metrics.approvedRoles}/10`} />
+          </div>
+        </article>
+        <article style={{ display: "grid", gap: 12, border: "1px solid #eee", borderRadius: 8, background: "#fff", padding: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <h4 style={{ margin: "0 0 8px", fontSize: 13 }}>Evidence</h4>
+              <ul style={{ margin: 0, paddingLeft: 18, color: "#444", fontSize: 12.5, lineHeight: 1.45 }}>
+                {review.evidence.map((item) => <li key={item}>{item}</li>)}
+              </ul>
+            </div>
+            <div>
+              <h4 style={{ margin: "0 0 8px", fontSize: 13 }}>Risks</h4>
+              {review.risks.length ? (
+                <ul style={{ margin: 0, paddingLeft: 18, color: "#6f2d24", fontSize: 12.5, lineHeight: 1.45 }}>
+                  {review.risks.map((item) => <li key={item}>{item}</li>)}
+                </ul>
+              ) : (
+                <p style={{ margin: 0, color: "#777", fontSize: 12.5 }}>No hard approval risk detected.</p>
+              )}
+            </div>
+          </div>
+          <div>
+            <h4 style={{ margin: "0 0 8px", fontSize: 13 }}>Prepared candidates</h4>
+            {review.preparedCandidates.length ? (
+              <div style={{ display: "grid", gap: 7 }}>
+                {review.preparedCandidates.map((candidate) => (
+                  <div key={candidate.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 10, alignItems: "center", border: "1px solid #eee", borderRadius: 8, background: "#faf8f4", padding: 9 }}>
+                    <span style={{ minWidth: 0 }}>
+                      <b style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#222", fontSize: 12.5 }}>{candidate.label}</b>
+                      <em style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#777", fontSize: 11.5, fontStyle: "normal" }}>{candidate.headline}</em>
+                    </span>
+                    <Badge tone={candidate.stage === "ready" || candidate.stage === "submitted" ? "ok" : "muted"}>{prettyKey(candidate.stage)}</Badge>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ margin: 0, color: "#777", fontSize: 12.5 }}>No prepared candidate proof attached to this application.</p>
+            )}
+          </div>
+        </article>
+      </section>
       <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid #eee", display: "grid", gap: 10 }}>
         <label style={{ display: "grid", gap: 6, fontSize: 13, color: "#555" }}>
           Review status
@@ -2256,6 +2376,17 @@ function RoleApplicationDetailPanel({
             style={{ resize: "vertical", padding: 10, border: "1px solid #ddd", borderRadius: 8, font: "inherit", color: "#222" }}
           />
         </label>
+        <button
+          type="button"
+          onClick={() => {
+            setAdminNote(review.noteTemplate)
+            setStatus(review.recommendation === "approve" ? "approved" : review.recommendation === "decline" ? "not_approved" : "pending")
+          }}
+          disabled={saving}
+          style={{ justifySelf: "start" }}
+        >
+          Use decision template
+        </button>
         {err && <div style={{ color: "#a00", fontSize: 13 }}>{err}</div>}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button type="button" onClick={() => void saveReview()} disabled={saving}>
@@ -2674,6 +2805,15 @@ function OpsMetric({ label, value, meta }: { label: string; value: number | stri
       <div style={{ color: "#777", fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em" }}>{label}</div>
       <div style={{ fontSize: 24, fontWeight: 700, marginTop: 4 }}>{value}</div>
       {meta && <div style={{ color: "#a60", fontSize: 12 }}>{meta}</div>}
+    </div>
+  )
+}
+
+function OpsMiniStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ border: "1px solid #eee", borderRadius: 8, background: "#faf8f4", padding: 9 }}>
+      <div style={{ color: "#777", fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".08em" }}>{label}</div>
+      <div style={{ color: "#222", fontSize: 15, fontWeight: 800, marginTop: 3 }}>{value}</div>
     </div>
   )
 }
