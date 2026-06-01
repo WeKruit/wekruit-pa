@@ -3440,7 +3440,7 @@ export const paRecruiterRoleReleasedNotify = onDocumentWritten(
 )
 
 export const paRecruiterSubmission = onRequest(
-  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: MAILGUN_SECRETS },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: MAILGUN_SECRETS, invoker: "public" },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
