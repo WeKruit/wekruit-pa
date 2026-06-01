@@ -338,6 +338,35 @@ type RoleWorkroomModel = {
   }>
 }
 
+type RoleDealDeskModel = {
+  tone: "good" | "watch" | "blocked" | "quiet"
+  mode: string
+  title: string
+  body: string
+  primaryAction: RoleWorkroomAction
+  primaryLabel: string
+  primaryCandidate?: RecruiterSourcedCandidateItem
+  lanes: Array<{
+    label: string
+    value: string
+    detail: string
+    tone: "good" | "watch" | "blocked" | "quiet"
+    action: RoleWorkroomAction
+    actionCandidate?: RecruiterSourcedCandidateItem
+  }>
+  proofPlan: Array<{
+    label: string
+    detail: string
+    tone: "good" | "watch" | "blocked" | "quiet"
+  }>
+  risks: Array<{
+    label: string
+    detail: string
+    tone: "good" | "watch" | "blocked" | "quiet"
+    action: RoleWorkroomAction
+  }>
+}
+
 function roleChecklistItems(job: CollabJob, kind: RoleChecklistKind) {
   return job.recruiterBoard.checklist.groups.find((group) => group.kind === kind)?.items ?? []
 }
@@ -895,6 +924,197 @@ function buildRoleWorkroomModel(input: {
   }
 }
 
+function buildRoleDealDeskModel(input: {
+  approvedForRole: boolean
+  application: RecruiterRoleApplicationItem | null
+  pendingSlots: number
+  roleCandidates: RecruiterSourcedCandidateItem[]
+  roleSubmissions: RecruiterSubmissionItem[]
+  roleQuestions: RecruiterRoleQuestionItem[]
+  roleFeedback: RecruiterRoleFeedbackItem | null
+  selectedCandidate: RecruiterSourcedCandidateItem | null
+  candidateRecommendations: RoleCandidateRecommendation[]
+  packet: RoleSubmissionPacket
+  brief: RoleCalibrationBrief
+}): RoleDealDeskModel {
+  const {
+    approvedForRole,
+    application,
+    pendingSlots,
+    roleCandidates,
+    roleSubmissions,
+    roleQuestions,
+    roleFeedback,
+    selectedCandidate,
+    candidateRecommendations,
+    packet,
+    brief,
+  } = input
+  const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open")
+  const readyCount = roleCandidates.filter((candidate) => candidate.stage === "ready").length
+  const screenedCount = roleCandidates.filter((candidate) => candidate.stage === "screened" || candidate.stage === "ready").length
+  const pendingCount = roleSubmissions.filter((row) => ROLE_PENDING_SUBMISSION_STATUSES.includes(row.status ?? "submitted")).length
+  const advancedCount = roleSubmissions.filter((row) => ROLE_ADVANCED_SUBMISSION_STATUSES.includes(row.status ?? "")).length
+  const negativeCount = roleSubmissions.filter((row) => ROLE_NEGATIVE_SUBMISSION_STATUSES.includes(row.status ?? "")).length
+  const topCandidate = candidateRecommendations[0]
+  const readyCandidate = candidateRecommendations.find((item) => item.candidate.stage === "ready")
+  const blocked = pendingSlots <= 0 || roleFeedback?.difficulty === "blocked" || brief.tone === "blocked"
+  const watch = openQuestions.length > 0 || packet.tone !== "ready" || negativeCount > 0
+
+  let tone: RoleDealDeskModel["tone"] = blocked ? "blocked" : watch ? "watch" : topCandidate ? "good" : "quiet"
+  let mode = approvedForRole ? "Trusted role lane" : application?.status === "pending" ? "Access pending" : "Single-submit lane"
+  let title = "Run this role from evidence, not guesses"
+  let body = "Work the role as a sequence: build candidate inventory, screen to proof, submit only clean packets, then adjust from WeKruit feedback."
+  let primaryAction: RoleWorkroomAction = "candidates"
+  let primaryLabel = "Open candidate CRM"
+  let primaryCandidate: RecruiterSourcedCandidateItem | undefined
+
+  if (pendingSlots <= 0) {
+    title = "Submission lane is full"
+    body = "Pause new submissions until WeKruit moves the review queue. Use feedback and questions to prepare the next sourcing pass."
+    primaryAction = "feedback"
+    primaryLabel = "Review feedback"
+  } else if (roleFeedback?.difficulty === "blocked" || brief.tone === "blocked") {
+    title = "Calibration is blocked"
+    body = "Do not keep adding profiles until the role has a sharper target. Ask WeKruit the blocking question and update the market signal."
+    primaryAction = "questions"
+    primaryLabel = "Ask WeKruit"
+  } else if (openQuestions.length > 0) {
+    title = "Resolve calibration before more volume"
+    body = openQuestions[0]?.question || "A role question is open. Get the answer into the workflow before submitting more candidates."
+    primaryAction = "questions"
+    primaryLabel = "Open questions"
+  } else if (selectedCandidate && packet.tone === "ready") {
+    mode = "Packet ready"
+    tone = "good"
+    title = `${candidateDisplayName(selectedCandidate)} can be submitted now`
+    body = "The selected candidate has the required identity, consent, and proof. Submit, then watch the status loop."
+    primaryAction = "submit"
+    primaryLabel = "Submit packet"
+  } else if (selectedCandidate) {
+    title = `Finish ${candidateDisplayName(selectedCandidate)} before submit`
+    body = packet.nextAction
+    primaryAction = "submit"
+    primaryLabel = "Complete packet"
+  } else if (readyCandidate) {
+    tone = "good"
+    title = `${candidateDisplayName(readyCandidate.candidate)} is the next best move`
+    body = "Use this ready candidate, complete the packet, and avoid burning the pending lane on weaker profiles."
+    primaryAction = "candidate"
+    primaryLabel = "Use candidate"
+    primaryCandidate = readyCandidate.candidate
+  } else if (topCandidate) {
+    title = `${candidateDisplayName(topCandidate.candidate)} should be screened next`
+    body = "There is candidate signal, but the packet still needs proof before WeKruit review."
+    primaryAction = "candidate"
+    primaryLabel = "Use candidate"
+    primaryCandidate = topCandidate.candidate
+  } else if (!approvedForRole && application?.status !== "pending") {
+    title = "Earn access with candidate proof"
+    body = "This role is in single-submit mode. Build proof in the CRM, then apply for trusted role access or submit one exceptional candidate."
+    primaryAction = "access"
+    primaryLabel = "Open access"
+  }
+
+  const proofBacklog = [
+    ...packet.blockers.map((item) => ({ label: "Blocking item", detail: item, tone: "blocked" as const })),
+    ...packet.warnings.map((item) => ({ label: "Needs proof", detail: item, tone: "watch" as const })),
+    ...packet.missingHard.map((item) => ({ label: "Hard requirement", detail: item, tone: "watch" as const })),
+    ...brief.guardrails.prove.slice(0, 2).map((item) => ({ label: "Evidence to capture", detail: item, tone: "quiet" as const })),
+  ].slice(0, 5)
+
+  const risks = [
+    ...(openQuestions.length
+      ? [{
+        label: `${openQuestions.length} open question${openQuestions.length === 1 ? "" : "s"}`,
+        detail: openQuestions[0]?.question || "Resolve open role questions before adding volume.",
+        tone: "watch" as const,
+        action: "questions" as const,
+      }]
+      : []),
+    ...(pendingSlots <= 0
+      ? [{
+        label: "No pending slots",
+        detail: "The role already has five pending submissions. Wait for movement before adding another.",
+        tone: "blocked" as const,
+        action: "feedback" as const,
+      }]
+      : []),
+    ...(negativeCount > 0
+      ? [{
+        label: `${negativeCount} rejection or duplicate signal${negativeCount === 1 ? "" : "s"}`,
+        detail: "Read the status feedback before sourcing lookalikes.",
+        tone: "watch" as const,
+        action: "feedback" as const,
+      }]
+      : []),
+    ...(roleFeedback?.note
+      ? [{
+        label: "Your market note",
+        detail: shortText(roleFeedback.note, roleFeedback.note, 120),
+        tone: roleFeedback.difficulty === "blocked" ? "blocked" as const : "quiet" as const,
+        action: "feedback" as const,
+      }]
+      : []),
+  ].slice(0, 4)
+
+  return {
+    tone,
+    mode,
+    title,
+    body,
+    primaryAction,
+    primaryLabel,
+    primaryCandidate,
+    lanes: [
+      {
+        label: "Source",
+        value: `${roleCandidates.length}`,
+        detail: roleCandidates.length ? "Candidates saved against this role." : "Start by saving candidates into the CRM.",
+        tone: roleCandidates.length ? "good" : "quiet",
+        action: "candidates",
+      },
+      {
+        label: "Screen",
+        value: `${screenedCount}`,
+        detail: readyCount ? `${readyCount} ready for packet work.` : "Move prospects to screened or ready with notes.",
+        tone: readyCount ? "good" : screenedCount ? "watch" : "quiet",
+        action: topCandidate ? "candidate" : "candidates",
+        actionCandidate: topCandidate?.candidate,
+      },
+      {
+        label: "Submit",
+        value: `${pendingSlots}/5`,
+        detail: pendingSlots ? `${pendingCount} pending in review.` : "Submission lane is full.",
+        tone: pendingSlots ? "good" : "blocked",
+        action: "submit",
+      },
+      {
+        label: "Close loop",
+        value: advancedCount ? `${advancedCount} advanced` : negativeCount ? `${negativeCount} risk` : `${openQuestions.length} Q`,
+        detail: advancedCount ? "Keep warm candidates moving." : negativeCount ? "Update sourcing from feedback." : "Ask and answer role questions.",
+        tone: advancedCount ? "good" : negativeCount || openQuestions.length ? "watch" : "quiet",
+        action: openQuestions.length ? "questions" : "feedback",
+      },
+    ],
+    proofPlan: proofBacklog.length
+      ? proofBacklog
+      : [{
+        label: "Packet standard",
+        detail: packet.nextAction,
+        tone: packet.tone === "ready" ? "good" : packet.tone === "blocked" ? "blocked" : "watch",
+      }],
+    risks: risks.length
+      ? risks
+      : [{
+        label: "No blocker detected",
+        detail: "Use the scorecard and candidate consent gate before submitting.",
+        tone: "good",
+        action: "submit",
+      }],
+  }
+}
+
 // Minimal Markdown → React renderer for jdBlocks.body. Supports `-` bullet
 // lists, blank-line paragraphs, and inline `**bold**` / `*em*` / `` `code` ``.
 function renderMarkdown(text: string): ReactNode[] {
@@ -1217,6 +1437,19 @@ export default function RecruiterRole() {
     packet: submissionPacket,
     brief: calibrationBrief,
   })
+  const roleDealDesk = buildRoleDealDeskModel({
+    approvedForRole,
+    application: currentRoleApplication,
+    pendingSlots,
+    roleCandidates,
+    roleSubmissions,
+    roleQuestions: currentRoleQuestions,
+    roleFeedback: currentRoleFeedback,
+    selectedCandidate,
+    candidateRecommendations,
+    packet: submissionPacket,
+    brief: calibrationBrief,
+  })
   const identityBlocksSubmit = identityCheck.status === "checking" || Boolean(identityCheck.result?.conflict)
 
   const useSourcedCandidate = (candidate: RecruiterSourcedCandidateItem) => {
@@ -1410,6 +1643,11 @@ export default function RecruiterRole() {
         <RoleWorkroomPanel
           model={roleWorkroom}
           candidates={candidateRecommendations}
+          onAction={runRoleWorkroomAction}
+        />
+
+        <RoleDealDeskPanel
+          model={roleDealDesk}
           onAction={runRoleWorkroomAction}
         />
 
@@ -1911,6 +2149,78 @@ function RoleWorkroomPanel({
             </article>
           )}
         </div>
+      </div>
+    </section>
+  )
+}
+
+function RoleDealDeskPanel({
+  model,
+  onAction,
+}: {
+  model: RoleDealDeskModel
+  onAction: (action: RoleWorkroomAction, candidate?: RecruiterSourcedCandidateItem) => void
+}) {
+  return (
+    <section className={`rb-role-deal-desk is-${model.tone}`} aria-label="Recruiting deal desk">
+      <header>
+        <div>
+          <span>{model.mode}</span>
+          <strong>{model.title}</strong>
+          <p>{model.body}</p>
+        </div>
+        <button type="button" className="rb-btn primary" onClick={() => onAction(model.primaryAction, model.primaryCandidate)}>
+          {model.primaryLabel}
+        </button>
+      </header>
+
+      <div className="rb-role-deal-desk__grid">
+        <article className="rb-role-deal-desk__lanes">
+          <h3>Operating lanes</h3>
+          <div>
+            {model.lanes.map((lane) => (
+              <button
+                type="button"
+                key={lane.label}
+                className={`is-${lane.tone}`}
+                onClick={() => onAction(lane.action, lane.actionCandidate)}
+              >
+                <span>{lane.label}</span>
+                <strong>{lane.value}</strong>
+                <em>{lane.detail}</em>
+              </button>
+            ))}
+          </div>
+        </article>
+
+        <article className="rb-role-deal-desk__proof">
+          <h3>Proof to close</h3>
+          <div>
+            {model.proofPlan.map((item, index) => (
+              <section key={`${item.label}-${index}`} className={`is-${item.tone}`}>
+                <span>{item.label}</span>
+                <p>{item.detail}</p>
+              </section>
+            ))}
+          </div>
+        </article>
+
+        <article className="rb-role-deal-desk__risks">
+          <h3>Risk and feedback</h3>
+          <div>
+            {model.risks.map((risk, index) => (
+              <button
+                type="button"
+                key={`${risk.label}-${index}`}
+                className={`is-${risk.tone}`}
+                onClick={() => onAction(risk.action)}
+              >
+                <span>{risk.label}</span>
+                <em>{risk.detail}</em>
+              </button>
+            ))}
+          </div>
+        </article>
       </div>
     </section>
   )

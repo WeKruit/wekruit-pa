@@ -332,6 +332,148 @@
   padding: 6px 10px;
 }
 
+.rb-role-deal-desk {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+  border: 1px solid #ded8ce;
+  border-left: 4px solid #8d887e;
+  border-radius: 10px;
+  background: #fff;
+  padding: 16px;
+}
+
+.rb-role-deal-desk.is-good { border-left-color: var(--live); background: #f7fcf8; }
+.rb-role-deal-desk.is-watch { border-left-color: #b77c2f; background: #fffaf1; }
+.rb-role-deal-desk.is-blocked { border-left-color: #a33a2d; background: #fff8f7; }
+
+.rb-role-deal-desk > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.rb-role-deal-desk > header > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.rb-role-deal-desk span,
+.rb-role-deal-desk h3 {
+  color: #6a6a64;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-role-deal-desk > header strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: clamp(23px, 2.6vw, 31px);
+  font-weight: 400;
+  line-height: 1.05;
+}
+
+.rb-role-deal-desk p,
+.rb-role-deal-desk em {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.rb-role-deal-desk__grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.95fr) minmax(220px, 0.9fr) minmax(220px, 0.9fr);
+  gap: 10px;
+}
+
+.rb-role-deal-desk__grid > article {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  border: 1px solid #eee7dd;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 13px;
+}
+
+.rb-role-deal-desk__grid h3 {
+  margin: 0;
+}
+
+.rb-role-deal-desk__lanes > div,
+.rb-role-deal-desk__proof > div,
+.rb-role-deal-desk__risks > div {
+  display: grid;
+  gap: 8px;
+}
+
+.rb-role-deal-desk__lanes button,
+.rb-role-deal-desk__risks button,
+.rb-role-deal-desk__proof section {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border: 1px solid #eee7dd;
+  border-left: 4px solid #9b958b;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  padding: 10px;
+  text-align: left;
+}
+
+.rb-role-deal-desk__lanes button,
+.rb-role-deal-desk__risks button {
+  cursor: pointer;
+}
+
+.rb-role-deal-desk__lanes button:hover,
+.rb-role-deal-desk__risks button:hover {
+  background: #faf8f3;
+}
+
+.rb-role-deal-desk__lanes button.is-good,
+.rb-role-deal-desk__risks button.is-good,
+.rb-role-deal-desk__proof section.is-good {
+  border-left-color: var(--live);
+  background: #f8fcf9;
+}
+
+.rb-role-deal-desk__lanes button.is-watch,
+.rb-role-deal-desk__risks button.is-watch,
+.rb-role-deal-desk__proof section.is-watch {
+  border-left-color: #b77c2f;
+  background: #fffaf1;
+}
+
+.rb-role-deal-desk__lanes button.is-blocked,
+.rb-role-deal-desk__risks button.is-blocked,
+.rb-role-deal-desk__proof section.is-blocked {
+  border-left-color: #a33a2d;
+  background: #fff8f7;
+}
+
+.rb-role-deal-desk__lanes strong {
+  color: #1a1a1a;
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-role-deal-desk__proof p,
+.rb-role-deal-desk__risks em {
+  display: block;
+}
+
 .rb-role-access-panel {
   display: grid;
   gap: 12px;
@@ -6382,6 +6524,7 @@
   .rb-matchboard,
   .rb-submissions-layout,
   .rb-role-workroom,
+  .rb-role-deal-desk__grid,
   .rb-role-dashboard {
     grid-template-columns: 1fr;
   }
@@ -6687,7 +6830,8 @@
     justify-self: start;
   }
   .rb-role-workroom__bench header,
-  .rb-role-workroom__bench article {
+  .rb-role-workroom__bench article,
+  .rb-role-deal-desk > header {
     align-items: flex-start;
     grid-template-columns: 1fr;
   }
