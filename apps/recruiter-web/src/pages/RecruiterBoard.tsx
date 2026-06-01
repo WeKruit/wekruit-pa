@@ -1637,7 +1637,16 @@ export default function RecruiterBoard() {
             onSettings={() => setTab("settings")}
           />
         )}
-        {activeTab === "settings" && <SettingsTab session={session} approvedRoleCount={primaryRoleIds.length} onSessionChange={setSession} />}
+        {activeTab === "settings" && (
+          <SettingsTab
+            session={session}
+            approvedRoleCount={primaryRoleIds.length}
+            submissions={submissions}
+            sourcedCandidates={sourcedCandidates}
+            earningsMetrics={earningsMetrics}
+            onSessionChange={setSession}
+          />
+        )}
       </main>
     </div>
   )
@@ -2259,6 +2268,168 @@ type RecruiterEarningsMetrics = {
   rewardLedger: RecruiterRewardLedger
   payoutReadiness: RecruiterPayoutReadiness
   expectations: RecruiterOperatingMetric[]
+}
+
+type RecruiterBusinessStep = {
+  label: string
+  value: string
+  body: string
+  tone: OperatingTone
+}
+
+type RecruiterBusinessCenter = {
+  title: string
+  body: string
+  value: string
+  tone: OperatingTone
+  cards: RecruiterOperatingMetric[]
+  workflow: RecruiterBusinessStep[]
+  referralBrief: string
+  referralMailto: string
+}
+
+function buildRecruiterBusinessCenter(
+  session: RecruiterSession,
+  approvedRoleCount: number,
+  submissions: RecruiterSubmissionItem[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+  earningsMetrics: RecruiterEarningsMetrics,
+): RecruiterBusinessCenter {
+  const activeCandidates = sourcedCandidates.filter((candidate) => candidate.stage !== "archived").length
+  const readyCandidates = sourcedCandidates.filter((candidate) => candidate.stage === "ready").length
+  const recordedPayoutRows = submissions.filter((submission) => {
+    const status = submission.recruiterPayout?.status
+    return Boolean(status && status !== "none")
+  })
+  const pendingPayoutRows = submissions.filter((submission) =>
+    ["eligible", "pending_start", "invoice_ready"].includes(submission.recruiterPayout?.status ?? ""),
+  )
+  const invoiceReadyRows = submissions.filter((submission) => submission.recruiterPayout?.status === "invoice_ready")
+  const paidRows = submissions.filter((submission) => submission.recruiterPayout?.status === "paid")
+  const notificationOn = session.recruiter.notificationPreferences?.newRolesEmail !== false
+  const coverage = approvedRoleCount ? Math.round((earningsMetrics.coveredPrimaryRoles / approvedRoleCount) * 100) : 0
+  const payoutValue = pendingPayoutRows.reduce((sum, submission) => {
+    const amount = submission.recruiterPayout?.amount
+    return sum + (typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? Math.round(amount) : DEFAULT_SUCCESS_FEE)
+  }, 0)
+  const payoutState = invoiceReadyRows.length
+    ? "Invoice ready"
+    : paidRows.length
+      ? "Paid recorded"
+      : pendingPayoutRows.length
+        ? "Pending"
+        : earningsMetrics.activePipelineValue > 0
+          ? "Projected"
+          : "Not started"
+  const payoutTone: OperatingTone = invoiceReadyRows.length || paidRows.length
+    ? "success"
+    : pendingPayoutRows.length
+      ? "live"
+      : earningsMetrics.activePipelineValue > 0
+        ? "info"
+        : "mute"
+  const agreementState = recordedPayoutRows.length || paidRows.length
+    ? "Ops recorded"
+    : earningsMetrics.activePipelineValue > 0
+      ? "Confirm before hire"
+      : "Not due"
+  const title = payoutTone === "success"
+    ? "Business profile is payout-aware"
+    : payoutTone === "live"
+      ? "Payout work is active"
+      : payoutTone === "info"
+        ? "Confirm business setup before the first close"
+        : "Business setup starts after real activity"
+  const body = payoutTone === "success"
+    ? "Your account, payout tracker, and recruiter access model have enough signal for WeKruit ops to process the next step."
+    : payoutTone === "live"
+      ? "There is at least one payout row in motion. Keep submissions and account identity aligned before invoice processing."
+      : payoutTone === "info"
+        ? "Projected value exists, but payment method and agreement confirmation still need WeKruit ops handling before a hire closes."
+        : "Use approved roles and consented candidates first. Payout and referral operations become relevant when the workspace has real movement."
+  const referralBrief = [
+    "Recruiter access request",
+    "",
+    `Requester: ${session.recruiter.name} <${session.recruiter.email}>`,
+    `Current recruiter status: ${earningsMetrics.statusLabel}`,
+    `Quality rating: ${earningsMetrics.ratingLabel}`,
+    `Approved role access: ${approvedRoleCount}/${APPROVED_ROLE_LIMIT}`,
+    `Active sourced candidates: ${activeCandidates}`,
+    `Ready candidates: ${readyCandidates}`,
+    `Tracked submissions: ${submissions.length}`,
+    "",
+    "Please issue a fresh one-use recruiter access code for the new recruiter. Do not reuse or forward my code.",
+  ].join("\n")
+  const referralMailto = `mailto:admin1@wekruit.com?subject=${encodeURIComponent("Recruiter access code request")}&body=${encodeURIComponent(referralBrief)}`
+
+  return {
+    title,
+    body,
+    value: payoutState,
+    tone: payoutTone,
+    cards: [
+      {
+        label: "Payout profile",
+        value: payoutState,
+        body: pendingPayoutRows.length
+          ? `${pendingPayoutRows.length} payout row${pendingPayoutRows.length === 1 ? "" : "s"} in motion${payoutValue > 0 ? `, ${formatCurrencyShort(payoutValue)} pending` : ""}.`
+          : earningsMetrics.activePipelineValue > 0
+            ? `${formatCurrencyShort(earningsMetrics.activePipelineValue)} projected pipeline value; ops setup is not self-serve yet.`
+            : "No eligible payout row is recorded yet.",
+        tone: payoutTone,
+      },
+      {
+        label: "Agreement status",
+        value: agreementState,
+        body: recordedPayoutRows.length
+          ? `${recordedPayoutRows.length} submission${recordedPayoutRows.length === 1 ? "" : "s"} include recruiter payout status.`
+          : "Agreement and payment-method confirmation remain an ops step before payout.",
+        tone: recordedPayoutRows.length ? "success" : earningsMetrics.activePipelineValue > 0 ? "warn" : "mute",
+      },
+      {
+        label: "Referral access",
+        value: "Admin-issued",
+        body: "Each invite requires a fresh one-use code bound to the new recruiter's Firebase account.",
+        tone: "info",
+      },
+      {
+        label: "Role alerts",
+        value: notificationOn ? "On" : "Off",
+        body: notificationOn ? "New collab roles can email this recruiter account." : "New-role emails are disabled for this account.",
+        tone: notificationOn ? "success" : "warn",
+      },
+    ],
+    workflow: [
+      {
+        label: "Identity",
+        value: session.recruiter.email,
+        body: "This account is bound to Firebase Auth and a consumed recruiter access code.",
+        tone: "success",
+      },
+      {
+        label: "Role coverage",
+        value: approvedRoleCount ? `${coverage}%` : "No access",
+        body: approvedRoleCount
+          ? `${earningsMetrics.coveredPrimaryRoles}/${approvedRoleCount} approved roles have candidate or submission activity.`
+          : "Apply for role access before sourcing against live collab jobs.",
+        tone: coverage >= 80 ? "success" : approvedRoleCount ? "info" : "warn",
+      },
+      {
+        label: "Payout operation",
+        value: agreementState,
+        body: earningsMetrics.payoutReadiness.body,
+        tone: earningsMetrics.payoutReadiness.tone,
+      },
+      {
+        label: "Invite another recruiter",
+        value: "Fresh code required",
+        body: "Send the referral brief to WeKruit ops so the invitee gets their own one-use access code.",
+        tone: "info",
+      },
+    ],
+    referralBrief,
+    referralMailto,
+  }
 }
 
 type RecruiterTrustGate = {
@@ -8176,15 +8347,23 @@ function PayoutReadinessPanel({
 function SettingsTab({
   session,
   approvedRoleCount,
+  submissions,
+  sourcedCandidates,
+  earningsMetrics,
   onSessionChange,
 }: {
   session: RecruiterSession
   approvedRoleCount: number
+  submissions: RecruiterSubmissionItem[]
+  sourcedCandidates: RecruiterSourcedCandidateItem[]
+  earningsMetrics: RecruiterEarningsMetrics
   onSessionChange: (session: RecruiterSession) => void
 }) {
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle")
   const newRolesEmail = session.recruiter.notificationPreferences?.newRolesEmail !== false
+  const businessCenter = buildRecruiterBusinessCenter(session, approvedRoleCount, submissions, sourcedCandidates, earningsMetrics)
   const setNewRolesEmail = async (next: boolean) => {
     setSaving(true)
     setErr(null)
@@ -8200,17 +8379,74 @@ function SettingsTab({
       setSaving(false)
     }
   }
+  const copyReferralBrief = async () => {
+    setCopyState("idle")
+    try {
+      await navigator.clipboard.writeText(businessCenter.referralBrief)
+      setCopyState("copied")
+      window.setTimeout(() => setCopyState("idle"), 1800)
+    } catch {
+      setCopyState("failed")
+    }
+  }
   return (
     <section className="rb-panel rb-panel--settings">
       <header className="rb-panel__head">
-        <div><h2>Recruiter account</h2><p>Invite-gated access for partner recruiters.</p></div>
+        <div><h2>Recruiter business center</h2><p>Account identity, payout readiness, referrals, and role alerts.</p></div>
       </header>
+      <div className={`rb-account-center__hero is-${businessCenter.tone}`}>
+        <div>
+          <span>Business status</span>
+          <h3>{businessCenter.title}</h3>
+          <p>{businessCenter.body}</p>
+        </div>
+        <strong>{businessCenter.value}</strong>
+      </div>
+      <div className="rb-account-center__cards">
+        {businessCenter.cards.map((card) => (
+          <article className={`is-${card.tone}`} key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <p>{card.body}</p>
+          </article>
+        ))}
+      </div>
       <dl className="rb-settings">
         <div><dt>Name</dt><dd>{session.recruiter.name}</dd></div>
         <div><dt>Email</dt><dd>{session.recruiter.email}</dd></div>
-        <div><dt>Access model</dt><dd>Firebase Auth + recruiter access code</dd></div>
+        <div><dt>Access model</dt><dd>Firebase Auth + one-use recruiter code</dd></div>
         <div><dt>Approved roles</dt><dd>{approvedRoleCount}/{APPROVED_ROLE_LIMIT} access limit</dd></div>
       </dl>
+      <div className="rb-account-center__grid">
+        <article className="rb-account-workflow">
+          <header>
+            <span>Operating workflow</span>
+            <strong>What has to be true</strong>
+          </header>
+          <div>
+            {businessCenter.workflow.map((step) => (
+              <section className={`is-${step.tone}`} key={step.label}>
+                <span>{step.label}</span>
+                <strong>{step.value}</strong>
+                <p>{step.body}</p>
+              </section>
+            ))}
+          </div>
+        </article>
+        <article className="rb-referral-brief">
+          <header>
+            <div>
+              <span>Recruiter referral</span>
+              <strong>Request a new one-use code</strong>
+            </div>
+            <a href={businessCenter.referralMailto}>Email ops</a>
+          </header>
+          <pre>{businessCenter.referralBrief}</pre>
+          <button type="button" onClick={() => void copyReferralBrief()}>
+            {copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy referral brief"}
+          </button>
+        </article>
+      </div>
       <label className="rb-settings-toggle">
         <span>
           <strong>New role email notifications</strong>
@@ -8225,7 +8461,7 @@ function SettingsTab({
       </label>
       {err && <p className="rb-access__err">{err}</p>}
       <p className="rb-settings__note">
-        WeKruit issues recruiter access codes manually. If the code is revoked or expires, this workspace stops loading status data.
+        WeKruit issues recruiter access codes manually. Every code is one-use and binds to exactly one recruiter Firebase account.
       </p>
     </section>
   )

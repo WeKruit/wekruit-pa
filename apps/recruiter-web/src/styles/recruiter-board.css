@@ -8102,8 +8102,210 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
-  margin: 0;
+  margin: 0 0 4px;
   padding: 20px;
+}
+
+.rb-account-center__hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin: 0 20px 16px;
+  padding: 18px;
+  background: var(--cream-3);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.rb-account-center__hero span,
+.rb-account-center__cards article span,
+.rb-account-workflow header span,
+.rb-account-workflow section span,
+.rb-referral-brief header span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rb-account-center__hero h3 {
+  margin: 5px 0 7px;
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: clamp(24px, 3vw, 38px);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 0.98;
+}
+
+.rb-account-center__hero p {
+  max-width: 720px;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.rb-account-center__hero > strong {
+  flex: 0 0 auto;
+  padding: 9px 12px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.rb-account-center__cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 20px;
+}
+
+.rb-account-center__cards article,
+.rb-account-workflow,
+.rb-referral-brief {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.rb-account-center__cards article {
+  min-height: 150px;
+  padding: 16px;
+}
+
+.rb-account-center__cards article strong {
+  display: block;
+  margin-top: 10px;
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.rb-account-center__cards article p {
+  margin: 9px 0 0;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-account-center__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.82fr);
+  gap: 16px;
+  margin: 0 20px 18px;
+}
+
+.rb-account-workflow,
+.rb-referral-brief {
+  overflow: hidden;
+}
+
+.rb-account-workflow header,
+.rb-referral-brief header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rb-account-workflow header strong,
+.rb-referral-brief header strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.rb-account-workflow > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+}
+
+.rb-account-workflow section {
+  min-height: 138px;
+  padding: 16px;
+  border-top: 1px solid rgba(43, 28, 18, 0.06);
+}
+
+.rb-account-workflow section:nth-child(1),
+.rb-account-workflow section:nth-child(2) {
+  border-top: 0;
+}
+
+.rb-account-workflow section:nth-child(odd) {
+  border-right: 1px solid rgba(43, 28, 18, 0.06);
+}
+
+.rb-account-workflow section strong {
+  display: block;
+  margin-top: 8px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.rb-account-workflow section p {
+  margin: 8px 0 0;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.rb-referral-brief header a {
+  flex: 0 0 auto;
+  padding: 8px 11px;
+  color: var(--ink);
+  background: var(--cream-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.rb-referral-brief pre {
+  max-height: 240px;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  color: var(--ink-2);
+  background: var(--cream-3);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.rb-referral-brief button {
+  width: calc(100% - 32px);
+  margin: 16px;
+  appearance: none;
+  border: 0;
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  border-radius: 10px;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 900;
+  padding: 13px 16px;
 }
 
 .rb-settings div {
@@ -8406,6 +8608,12 @@
   .rb-earnings-grid {
     grid-template-columns: 1fr;
   }
+  .rb-account-center__cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rb-account-center__grid {
+    grid-template-columns: 1fr;
+  }
   .rb-role-market-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -8481,6 +8689,20 @@
     grid-template-columns: 1fr;
     gap: 4px;
   }
+  .rb-account-center__hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .rb-account-workflow > div {
+    grid-template-columns: 1fr;
+  }
+  .rb-account-workflow section,
+  .rb-account-workflow section:nth-child(odd) {
+    border-right: 0;
+  }
+  .rb-account-workflow section:nth-child(2) {
+    border-top: 1px solid rgba(43, 28, 18, 0.06);
+  }
   .rb-settings {
     grid-template-columns: 1fr;
   }
@@ -8540,6 +8762,8 @@
   .rb-reward-ledger__rows dl,
   .rb-payout-readiness__cards,
   .rb-payout-readiness__steps,
+  .rb-account-center__cards,
+  .rb-account-center__grid,
   .rb-weekly-challenge__selected dl,
   .rb-access-command-hero,
   .rb-access-command-grid,
