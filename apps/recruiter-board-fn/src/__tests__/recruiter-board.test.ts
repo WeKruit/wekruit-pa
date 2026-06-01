@@ -206,6 +206,29 @@ describe("recruiter access helpers", () => {
     assert.equal(recruiterInviteCodeMatchesBoundUser({}, normalizedCode), false)
   })
 
+  it("sanitizes recruiter-visible submission rating history", () => {
+    assert.deepEqual(sanitizeSubmissionStatusHistory([
+      {
+        status: "reviewing",
+        by: "admin",
+        atIso: "2026-06-01T12:00:00.000Z",
+        note: "Strong candidate, keep sourcing this lane.",
+        rating: 4,
+        reasons: ["strong_match", "clear_evidence", "../bad"],
+      },
+      { status: "", rating: 9, reasons: ["ignored"] },
+    ]), [
+      {
+        status: "reviewing",
+        by: "admin",
+        atIso: "2026-06-01T12:00:00.000Z",
+        note: "Strong candidate, keep sourcing this lane.",
+        rating: 4,
+        reasons: ["strong_match", "clear_evidence"],
+      },
+    ])
+  })
+
   it("validates primary role slots for recruiter workspaces", () => {
     assert.deepEqual(validateRecruiterWorkspacePreferences({
       primaryRoleIds: [" role-1 ", "role-2", "role-1"],

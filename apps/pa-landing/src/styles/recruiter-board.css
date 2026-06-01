@@ -3130,6 +3130,8 @@
 }
 
 .rb-submission__detail blockquote {
+  display: grid;
+  gap: 5px;
   margin: 10px 0 0;
   padding: 12px 14px;
   border-left: 3px solid var(--live);
@@ -3140,9 +3142,28 @@
   line-height: 1.5;
 }
 
+.rb-submission__detail blockquote strong {
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.rb-submission__detail blockquote span,
+.rb-submission__detail blockquote em {
+  color: var(--ink-2);
+  font-size: 13px;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.rb-submission__detail blockquote em {
+  color: var(--ink-3);
+  font-size: 11.5px;
+}
+
 .rb-submission-receipt {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px;
   margin-top: 10px;
 }
@@ -3411,6 +3432,11 @@
   color: var(--ink-2);
   font-size: 12.5px;
   line-height: 1.35;
+}
+
+.rb-feedback-line p b {
+  color: var(--ink);
+  font-size: 12.5px;
 }
 
 .rb-next-action {

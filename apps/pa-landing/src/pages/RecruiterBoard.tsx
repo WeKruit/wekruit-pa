@@ -114,6 +114,19 @@ const STATUS_LABELS: Record<string, { label: string; tone: "live" | "info" | "su
   duplicate: { label: "Duplicate", tone: "mute" },
 }
 
+const SUBMISSION_FEEDBACK_REASON_LABELS: Record<string, string> = {
+  strong_match: "Strong match",
+  clear_evidence: "Clear evidence",
+  good_candidate_motivation: "Candidate motivated",
+  missing_hard_filter: "Missing hard filter",
+  weak_evidence: "Weak evidence",
+  candidate_not_interested: "Candidate not interested",
+  duplicate: "Duplicate",
+  comp_mismatch: "Comp mismatch",
+  location_mismatch: "Location mismatch",
+  seniority_mismatch: "Seniority mismatch",
+}
+
 const CALIBRATION_LABELS: Record<string, { label: string; tone: "live" | "info" | "success" | "warn" | "mute" }> = {
   not_rated: { label: "Not rated", tone: "mute" },
   calibration_requested: { label: "Needs adjustment", tone: "info" },
@@ -142,6 +155,42 @@ type SubmissionFilter = typeof SUBMISSION_FILTERS[number]["id"]
 
 function statusMeta(status?: string) {
   return STATUS_LABELS[status ?? "submitted"] ?? { label: status ?? "Submitted", tone: "mute" as const }
+}
+
+function submissionFeedbackRatingValue(raw: unknown): number | null {
+  const n = typeof raw === "number" ? raw : Number(raw)
+  return Number.isInteger(n) && n >= 1 && n <= 4 ? n : null
+}
+
+function submissionFeedbackRating(submission: RecruiterSubmissionItem): number | null {
+  return submissionFeedbackRatingValue(submission.recruiterFeedbackRating)
+}
+
+function submissionFeedbackRatingLabel(submission: RecruiterSubmissionItem): string {
+  const rating = submissionFeedbackRating(submission)
+  return rating ? `${rating}/4` : "Unrated"
+}
+
+function submissionFeedbackRatingTone(submission: RecruiterSubmissionItem): "live" | "info" | "success" | "warn" | "mute" {
+  const rating = submissionFeedbackRating(submission)
+  if (rating === null) return "mute"
+  if (rating >= 3) return "success"
+  if (rating === 2) return "info"
+  return "warn"
+}
+
+function submissionFeedbackReasonLabels(submission: RecruiterSubmissionItem): string[] {
+  return (submission.recruiterFeedbackReasons ?? [])
+    .map((reason) => SUBMISSION_FEEDBACK_REASON_LABELS[reason] ?? reason.replace(/_/g, " "))
+    .slice(0, 6)
+}
+
+function submissionHasStructuredFeedback(submission: RecruiterSubmissionItem): boolean {
+  return Boolean(
+    submission.recruiterFeedbackNote ||
+    submissionFeedbackRating(submission) !== null ||
+    (submission.recruiterFeedbackReasons ?? []).length,
+  )
 }
 
 function candidateConsentMeta(status?: string) {
@@ -232,10 +281,19 @@ function submissionActivityEvents(submission: RecruiterSubmissionItem): Submissi
   for (const [index, item] of (submission.statusHistory ?? []).entries()) {
     const meta = statusMeta(item.status)
     const ms = item.atIso ? Date.parse(item.atIso) || 0 : 0
+    const rating = submissionFeedbackRatingValue(item.rating)
+    const reasons = (item.reasons ?? [])
+      .map((reason) => SUBMISSION_FEEDBACK_REASON_LABELS[reason] ?? reason.replace(/_/g, " "))
+      .slice(0, 4)
+    const detail = [
+      rating ? `Rating ${rating}/4` : "",
+      item.note || (item.by === "recruiter" ? "Submitted by recruiter" : "Updated by WeKruit"),
+      reasons.length ? reasons.join(", ") : "",
+    ].filter(Boolean).join(" · ")
     events.push({
       id: `status-${index}-${item.status}`,
       label: meta.label,
-      detail: item.note || (item.by === "recruiter" ? "Submitted by recruiter" : "Updated by WeKruit"),
+      detail,
       at: formatActivityDate(item.atIso),
       tone: meta.tone,
       ms,
@@ -258,6 +316,18 @@ function submissionActivityEvents(submission: RecruiterSubmissionItem): Submissi
       detail: submission.recruiterFeedbackNote,
       at: formatActivityDate(submission.recruiterFeedbackUpdatedAt ?? submission.updatedAt),
       tone: statusMeta(submission.status).tone,
+      ms: timestampValueMs(submission.recruiterFeedbackUpdatedAt ?? submission.updatedAt),
+    })
+  }
+  const rating = submissionFeedbackRating(submission)
+  if (rating !== null && !events.some((event) => event.label === "Submission rating")) {
+    const reasons = submissionFeedbackReasonLabels(submission)
+    events.push({
+      id: "feedback-rating",
+      label: "Submission rating",
+      detail: [`${rating}/4`, reasons.length ? reasons.join(", ") : ""].filter(Boolean).join(" · "),
+      at: formatActivityDate(submission.recruiterFeedbackUpdatedAt ?? submission.updatedAt),
+      tone: submissionFeedbackRatingTone(submission),
       ms: timestampValueMs(submission.recruiterFeedbackUpdatedAt ?? submission.updatedAt),
     })
   }
@@ -326,7 +396,7 @@ function submissionAgeDays(submission: RecruiterSubmissionItem): number {
 
 function submissionNeedsAction(submission: RecruiterSubmissionItem): boolean {
   return (
-    Boolean(submission.recruiterFeedbackNote) ||
+    submissionHasStructuredFeedback(submission) ||
     candidateConfirmationCanResend(submission) ||
     (submissionIsActiveReview(submission) && submissionAgeDays(submission) >= 3)
   )
@@ -358,7 +428,7 @@ function submissionFilterMatches(submission: RecruiterSubmissionItem, filter: Su
   switch (filter) {
     case "active": return submissionIsActiveReview(submission)
     case "advanced": return submissionIsAdvanced(submission)
-    case "feedback": return Boolean(submission.recruiterFeedbackNote)
+    case "feedback": return submissionHasStructuredFeedback(submission)
     case "closed": return submissionIsClosed(submission)
     case "all":
     default:
@@ -377,6 +447,8 @@ function submissionSearchText(submission: RecruiterSubmissionItem): string {
     submission.companyLabelSnapshot,
     submission.status,
     submission.submissionMode,
+    submissionFeedbackRatingLabel(submission),
+    submissionFeedbackReasonLabels(submission).join(" "),
     submissionReceiptId(submission),
   ].filter(Boolean).join(" ").toLowerCase()
 }
@@ -385,7 +457,8 @@ function buildSubmissionDashboard(submissions: RecruiterSubmissionItem[]) {
   const active = submissions.filter(submissionIsActiveReview)
   const advanced = submissions.filter(submissionIsAdvanced)
   const closed = submissions.filter(submissionIsClosed)
-  const feedback = submissions.filter((submission) => Boolean(submission.recruiterFeedbackNote))
+  const feedback = submissions.filter(submissionHasStructuredFeedback)
+  const rated = submissions.filter((submission) => submissionFeedbackRating(submission) !== null)
   const needsAction = submissions.filter(submissionNeedsAction)
   return {
     active,
@@ -396,7 +469,7 @@ function buildSubmissionDashboard(submissions: RecruiterSubmissionItem[]) {
     hero: [
       { label: "Active review", value: String(active.length), body: "Submitted, queued, or under WeKruit review.", tone: active.length ? "live" : "mute" },
       { label: "Advanced", value: String(advanced.length), body: "Sent forward, interviewing, or hired.", tone: advanced.length ? "success" : "mute" },
-      { label: "Feedback notes", value: String(feedback.length), body: "Written feedback to improve the next submission.", tone: feedback.length ? "info" : "mute" },
+      { label: "Rated submissions", value: String(rated.length), body: "WeKruit /4 quality signal plus reasons.", tone: rated.length ? "info" : "mute" },
       { label: "Needs action", value: String(needsAction.length), body: "Aged reviews or feedback that should change sourcing.", tone: needsAction.length ? "warn" : "success" },
     ] as Array<{ label: string; value: string; body: string; tone: "live" | "info" | "success" | "warn" | "mute" }>,
   }
@@ -1001,14 +1074,14 @@ function computeRecruiterStats(
   const reviewing = submissions.filter((s) => ["submitted", "new", "reviewing"].includes(s.status ?? "submitted")).length
   const advanced = submissions.filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? "")).length
   const interviews = submissions.filter((s) => ["interviewing", "hired"].includes(s.status ?? "")).length
-  const feedback = submissions.filter((s) => Boolean(s.recruiterFeedbackNote)).length
+  const feedback = submissions.filter(submissionHasStructuredFeedback).length
   const activeSource = sourcedCandidates.filter((c) => c.stage !== "archived").length
   const interviewRate = submissions.length ? Math.round((interviews / submissions.length) * 100) : 0
   return [
     { label: "Open roles", value: String(jobs.length), meta: "live WeKruit collab searches", signal: "live", tone: "live" },
     { label: "Sourced candidates", value: String(activeSource), meta: "saved before submission", signal: "+", tone: "info" },
     { label: "Pending review", value: String(reviewing), meta: "waiting on WeKruit or hiring team", signal: "wait", tone: "warn" },
-    { label: "Interview rate", value: `${interviewRate}%`, meta: feedback ? `${advanced} advanced - ${feedback} notes` : `${advanced} advanced`, signal: "rate", tone: "success" },
+    { label: "Interview rate", value: `${interviewRate}%`, meta: feedback ? `${advanced} advanced - ${feedback} rated/feedback` : `${advanced} advanced`, signal: "rate", tone: "success" },
   ]
 }
 
@@ -1056,7 +1129,13 @@ function computeRecruiterOperatingMetrics(
   const pendingSubmissions = submissions.filter((submission) => ["submitted", "new", "reviewing"].includes(submission.status ?? "submitted"))
   const advancedSubmissions = submissions.filter((submission) => ["advanced", "interviewing", "hired"].includes(submission.status ?? ""))
   const closedNegative = submissions.filter((submission) => ["rejected", "duplicate"].includes(submission.status ?? ""))
-  const feedbackNotes = submissions.filter((submission) => Boolean(submission.recruiterFeedbackNote)).length
+  const ratedSubmissions = submissions
+    .map(submissionFeedbackRating)
+    .filter((rating): rating is number => rating !== null)
+  const averageRating = ratedSubmissions.length
+    ? ratedSubmissions.reduce((sum, rating) => sum + rating, 0) / ratedSubmissions.length
+    : null
+  const feedbackNotes = submissions.filter(submissionHasStructuredFeedback).length
   const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open").length
   const intelligenceByJob = new Map(roleIntelligence.map((item) => [item.jobId, item]))
   const cleanLanes = jobs.filter((job) => (intelligenceByJob.get(roleKey(job))?.submissionCount ?? rowsForRole(job, submissions).length) === 0).length
@@ -1074,7 +1153,11 @@ function computeRecruiterOperatingMetrics(
     : roleFeedback.filter((feedback) => feedback.difficulty === "hard" || feedback.difficulty === "blocked").length
   const remainingWeeklySubmissions = Math.min(WEEKLY_SUBMISSION_TARGET, Math.max(1, WEEKLY_SUBMISSION_TARGET - submissions.length))
   const qualityScore = submissions.length
-    ? clampNumber(Math.round(58 + firstRoundRate * 0.55 - rejectionRate * 0.45 + Math.min(16, feedbackNotes * 3)), 24, 98)
+    ? clampNumber(Math.round(
+      averageRating !== null
+        ? 32 + (averageRating / 4) * 60 + Math.min(8, firstRoundRate / 10) - Math.min(12, rejectionRate / 5)
+        : 58 + firstRoundRate * 0.55 - rejectionRate * 0.45 + Math.min(16, feedbackNotes * 3),
+    ), 24, 98)
     : activeCandidates.length
       ? clampNumber(44 + readyCandidates.length * 7 + Math.min(14, activeCandidates.length * 2), 44, 74)
       : null
@@ -1092,6 +1175,8 @@ function computeRecruiterOperatingMetrics(
   const qualityLabel = qualityScore === null ? "No score yet" : `${qualityScore}/100`
   const qualityBody = qualityScore === null
     ? "Save prospects and submit with consent to start a quality signal."
+    : averageRating !== null
+      ? `${averageRating.toFixed(1)}/4 average submission rating across ${ratedSubmissions.length} rated submission${ratedSubmissions.length === 1 ? "" : "s"}.`
     : submissions.length < 3
       ? "Early signal only. More submissions and feedback will make this meaningful."
       : `${firstRoundRate}% advanced/interviewing signal with ${rejectionRate}% rejected or duplicate.`
@@ -1347,12 +1432,20 @@ function computeRecruiterEarningsMetrics(
   const hardFeedback = roleFeedback.filter((feedback) => feedback.difficulty === "hard" || feedback.difficulty === "blocked").length
   const readyCandidates = sourcedCandidates.filter((candidate) => candidate.stage === "ready").length
   const statusRank = tierRank(operatingMetrics.statusLabel)
+  const ratedSubmissions = submissions
+    .map(submissionFeedbackRating)
+    .filter((rating): rating is number => rating !== null)
+  const averageRating = ratedSubmissions.length
+    ? ratedSubmissions.reduce((sum, rating) => sum + rating, 0) / ratedSubmissions.length
+    : null
   const ratingBase = operatingMetrics.qualityScore ?? 100
-  const ratingNumber = clampNumber(Math.round((ratingBase / 20) * 10) / 10, 3.2, 5)
-  const ratingLabel = `${ratingNumber.toFixed(1)} / 5`
+  const ratingNumber = averageRating ?? clampNumber(Math.round((ratingBase / 25) * 10) / 10, 2.8, 4)
+  const ratingLabel = `${ratingNumber.toFixed(1)} / 4`
   const ratingBody = submissions.length
-    ? `${interviewRate}% interview movement across ${submissions.length} submission${submissions.length === 1 ? "" : "s"}.`
-    : "All recruiters start with a clean rating signal. Submissions make it real."
+    ? averageRating !== null
+      ? `${ratedSubmissions.length}/${submissions.length} submissions rated by WeKruit. ${interviewRate}% interview movement.`
+      : `${interviewRate}% interview movement across ${submissions.length} submission${submissions.length === 1 ? "" : "s"}; no /4 ratings yet.`
+    : "All recruiters start unrated. Submissions make the quality signal real."
   const primaryActivityChallenge: RecruiterChallenge = {
     title: "Primary role activity",
     body: "Each primary role should have at least one live candidate or one active submission.",
@@ -1446,7 +1539,7 @@ function computeRecruiterEarningsMetrics(
         label: "Recruiter rating",
         value: ratingLabel,
         body: ratingBody,
-        tone: ratingNumber >= 4.7 ? "success" : submissions.length ? "info" : "mute",
+        tone: averageRating === null ? (submissions.length ? "info" : "mute") : ratingNumber >= 3 ? "success" : ratingNumber >= 2 ? "info" : "warn",
       },
       {
         label: "Active pipeline value",
@@ -1656,7 +1749,7 @@ function OverviewTab({
     .slice(0, Math.max(0, PRIMARY_ROLE_SLOT_LIMIT - primaryJobs.length))
   const priorityJobs = [...primaryJobs, ...suggestedJobs].slice(0, PRIMARY_ROLE_SLOT_LIMIT)
   const pipeline = buildCandidatePipeline(sourcedCandidates, submissions)
-  const feedback = submissions.filter((s) => Boolean(s.recruiterFeedbackNote)).slice(0, 3)
+  const feedback = submissions.filter(submissionHasStructuredFeedback).slice(0, 3)
   const workItems = buildRecruiterWorkQueue(jobs, sourcedCandidates, submissions, roleQuestions, roleIntelligence)
   const marketPulse = buildMarketPulse(jobs, roleQuestions, roleIntelligence)
   return (
@@ -2023,7 +2116,7 @@ function buildRecruiterWorkQueue(
 ) {
   const readyCandidates = sourcedCandidates.filter((c) => c.stage === "ready")
   const newRoles = jobs.filter(isNewRole)
-  const feedbackRows = submissions.filter((s) => Boolean(s.recruiterFeedbackNote))
+  const feedbackRows = submissions.filter(submissionHasStructuredFeedback)
   const pending = submissions.filter((s) => ["submitted", "new", "reviewing"].includes(s.status ?? "submitted"))
   const openQuestions = roleQuestions.filter((q) => (q.status ?? "open") === "open")
   const blockedRoles = roleIntelligence.filter((item) => item.feedback.blocked > 0 || item.feedback.hard > 0)
@@ -2224,9 +2317,9 @@ function buildRecruiterInboxSummary(
   sourcedCandidates: RecruiterSourcedCandidateItem[],
   roleQuestions: RecruiterRoleQuestionItem[],
 ) {
-  const feedbackNotes = submissions.filter((submission) => Boolean(submission.recruiterFeedbackNote)).length
+  const feedbackNotes = submissions.filter(submissionHasStructuredFeedback).length
   const rejectedWithFeedback = submissions.filter((submission) =>
-    ["rejected", "duplicate"].includes(submission.status ?? "") && Boolean(submission.recruiterFeedbackNote),
+    ["rejected", "duplicate"].includes(submission.status ?? "") && submissionHasStructuredFeedback(submission),
   ).length
   const candidateConfirmationNeeds = submissions.filter(candidateConfirmationCanResend).length
   const readyCandidates = sourcedCandidates.filter((candidate) => candidate.stage === "ready").length
@@ -2289,12 +2382,17 @@ function buildRecruiterInboxItems(
       continue
     }
 
-    if (submission.recruiterFeedbackNote) {
+    if (submissionHasStructuredFeedback(submission)) {
+      const reasons = submissionFeedbackReasonLabels(submission)
       items.push({
         id: `submission-feedback-${submission.id}`,
         bucket: closed ? "Feedback to act on" : "Feedback landed",
         title: `${candidate} - ${meta.label}`,
-        body: submission.recruiterFeedbackNote,
+        body: [
+          submissionFeedbackRating(submission) ? `Rating ${submissionFeedbackRatingLabel(submission)}` : "",
+          submission.recruiterFeedbackNote,
+          reasons.length ? reasons.join(", ") : "",
+        ].filter(Boolean).join(" · "),
         meta: `${roleLabel} · ${formatActivityDate(submission.recruiterFeedbackUpdatedAt ?? submission.updatedAt)}`,
         tone: closed ? "warn" : meta.tone,
         priority: closed ? 100 : 82,
@@ -2977,6 +3075,7 @@ function PipelineCard({ item }: { item: PipelineItem }) {
 
 function FeedbackLine({ submission }: { submission: RecruiterSubmissionItem }) {
   const meta = statusMeta(submission.status)
+  const reasons = submissionFeedbackReasonLabels(submission)
   return (
     <article className="rb-feedback-line">
       <span className={`rb-status is-${meta.tone}`}>{meta.label}</span>
@@ -2984,7 +3083,11 @@ function FeedbackLine({ submission }: { submission: RecruiterSubmissionItem }) {
         <strong>{submission.candidate?.name || "Candidate"}</strong>
         <em>{submission.jobTitleSnapshot || "Role"}</em>
       </span>
-      <p>{submission.recruiterFeedbackNote}</p>
+      <p>
+        <b>{submissionFeedbackRatingLabel(submission)}</b>
+        {submission.recruiterFeedbackNote ? ` · ${submission.recruiterFeedbackNote}` : ""}
+        {reasons.length ? ` · ${reasons.join(", ")}` : ""}
+      </p>
       <small>{formatWhen(submission)}</small>
     </article>
   )
@@ -4301,7 +4404,7 @@ function PerformanceTab({
   roleFeedback: RecruiterRoleFeedbackItem[]
   operatingMetrics: RecruiterOperatingMetrics
 }) {
-  const feedbackRows = submissions.filter((s) => Boolean(s.recruiterFeedbackNote))
+  const feedbackRows = submissions.filter(submissionHasStructuredFeedback)
   const advanced = submissions.filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? "")).length
   const pending = submissions.filter((s) => ["submitted", "new", "reviewing"].includes(s.status ?? "submitted")).length
   const ready = candidates.filter((c) => c.stage === "ready").length
@@ -4385,7 +4488,7 @@ function PerformanceTab({
           <h3>Feedback loop</h3>
           <div className="rb-submission-list">
             {feedbackRows.map((s) => <SubmissionRow key={s.id} submission={s} expanded />)}
-            {feedbackRows.length === 0 && <p className="rb-empty">No written feedback yet. Status changes will still appear in Submissions.</p>}
+            {feedbackRows.length === 0 && <p className="rb-empty">No rated feedback yet. Status changes will still appear in Submissions.</p>}
           </div>
         </section>
         <section className="rb-performance-card">
@@ -4720,6 +4823,8 @@ function SubmissionRow({
   const isClosed = currentStatus === "rejected" || currentStatus === "duplicate"
   const nextAction = submissionNextAction(submission.status)
   const activity = submissionActivityEvents(submission)
+  const feedbackReasons = submissionFeedbackReasonLabels(submission)
+  const feedbackRating = submissionFeedbackRating(submission)
   return (
     <article className={`rb-submission ${expanded ? "is-expanded" : ""}`}>
       <div className="rb-submission__main">
@@ -4747,8 +4852,14 @@ function SubmissionRow({
           <p><strong>Candidate:</strong> {submission.candidate?.currentRole || "Role not provided"}{submission.candidate?.yoe ? ` · ${submission.candidate.yoe} YOE` : ""}</p>
           {submission.candidate?.email && <p><strong>Email:</strong> {submission.candidate.email}</p>}
           {submission.candidate?.link && <a href={submission.candidate.link} target="_blank" rel="noopener noreferrer">{shortText(submission.candidate.link, submission.candidate.link, 80)}</a>}
-          {submission.recruiterFeedbackNote && (
-            <blockquote>{submission.recruiterFeedbackNote}</blockquote>
+          {submissionHasStructuredFeedback(submission) && (
+            <blockquote>
+              {feedbackRating !== null && <strong>WeKruit rating {feedbackRating}/4</strong>}
+              {submission.recruiterFeedbackNote && <span>{submission.recruiterFeedbackNote}</span>}
+              {feedbackReasons.length > 0 && (
+                <em>{feedbackReasons.join(" · ")}</em>
+              )}
+            </blockquote>
           )}
           <div className="rb-submission-receipt" aria-label="Submission ownership receipt">
             <div>
@@ -4766,6 +4877,10 @@ function SubmissionRow({
             <div>
               <span>Submitted</span>
               <strong>{formatActivityDate(submission.createdAt)}</strong>
+            </div>
+            <div>
+              <span>WeKruit rating</span>
+              <strong>{submissionFeedbackRatingLabel(submission)}</strong>
             </div>
           </div>
           <div className={`rb-next-step is-${nextAction.tone}`}>

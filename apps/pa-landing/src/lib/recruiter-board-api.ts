@@ -108,6 +108,8 @@ export interface RecruiterSubmissionStatusHistoryItem {
   by?: string
   atIso?: string
   note?: string
+  rating?: number
+  reasons?: string[]
 }
 
 export interface RecruiterSubmissionItem {
@@ -141,6 +143,9 @@ export interface RecruiterSubmissionItem {
   status?: string
   statusHistory?: RecruiterSubmissionStatusHistoryItem[]
   recruiterFeedbackNote?: string | null
+  recruiterFeedbackRating?: number | null
+  recruiterFeedbackReasons?: string[]
+  recruiterFeedbackUpdatedByEmail?: string | null
   recruiterFeedbackUpdatedAt?: { seconds?: number } | string | null
   createdAt?: { seconds?: number } | string | null
   updatedAt?: { seconds?: number } | string | null

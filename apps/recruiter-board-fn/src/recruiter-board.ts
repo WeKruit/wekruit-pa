@@ -1291,6 +1291,9 @@ interface RecruiterSubmissionListItem {
   status?: string
   statusHistory?: RecruiterSubmissionStatusHistoryItem[]
   recruiterFeedbackNote?: string | null
+  recruiterFeedbackRating?: number | null
+  recruiterFeedbackReasons?: string[]
+  recruiterFeedbackUpdatedByEmail?: string | null
   recruiterFeedbackUpdatedAt?: unknown
   createdAt?: unknown
   updatedAt?: unknown
@@ -1301,6 +1304,22 @@ export interface RecruiterSubmissionStatusHistoryItem {
   by?: string
   atIso?: string
   note?: string
+  rating?: number
+  reasons?: string[]
+}
+
+function sanitizeSubmissionFeedbackRating(raw: unknown): number | null {
+  const n = typeof raw === "number" ? raw : Number(raw)
+  return Number.isInteger(n) && n >= 1 && n <= 4 ? n : null
+}
+
+function sanitizeSubmissionFeedbackReasons(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => /^[a-z0-9_:-]{1,80}$/i.test(item))
+    .slice(0, 12)
 }
 
 function timestampMs(value: unknown): number {
@@ -1321,11 +1340,15 @@ export function sanitizeSubmissionStatusHistory(raw: unknown): RecruiterSubmissi
         ? new Date(record.atIso).toISOString()
         : undefined
       const note = typeof record.note === "string" ? record.note.trim().slice(0, 1000) : undefined
+      const rating = sanitizeSubmissionFeedbackRating(record.rating)
+      const reasons = sanitizeSubmissionFeedbackReasons(record.reasons)
       return {
         status,
         ...(by ? { by } : {}),
         ...(atIso ? { atIso } : {}),
         ...(note ? { note } : {}),
+        ...(rating ? { rating } : {}),
+        ...(reasons.length ? { reasons } : {}),
       }
     })
     .filter((entry): entry is RecruiterSubmissionStatusHistoryItem => entry !== null)
@@ -1354,6 +1377,11 @@ function publicRecruiterSubmission(d: { id: string; data: () => Record<string, u
     status: typeof data.status === "string" ? data.status : "submitted",
     statusHistory: sanitizeSubmissionStatusHistory(data.statusHistory),
     recruiterFeedbackNote: typeof data.recruiterFeedbackNote === "string" ? data.recruiterFeedbackNote : null,
+    recruiterFeedbackRating: sanitizeSubmissionFeedbackRating(data.recruiterFeedbackRating),
+    recruiterFeedbackReasons: sanitizeSubmissionFeedbackReasons(data.recruiterFeedbackReasons),
+    recruiterFeedbackUpdatedByEmail: typeof data.recruiterFeedbackUpdatedByEmail === "string"
+      ? data.recruiterFeedbackUpdatedByEmail
+      : null,
     recruiterFeedbackUpdatedAt: data.recruiterFeedbackUpdatedAt,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,

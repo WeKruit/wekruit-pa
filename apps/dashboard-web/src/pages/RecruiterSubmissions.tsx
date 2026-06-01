@@ -51,6 +51,10 @@ interface SubmissionDoc {
   recruiterId?: string | null
   recruiterEmail?: string
   recruiterFeedbackNote?: string | null
+  recruiterFeedbackRating?: number | null
+  recruiterFeedbackReasons?: string[]
+  recruiterFeedbackUpdatedByEmail?: string | null
+  recruiterFeedbackUpdatedAt?: { seconds?: number } | string | null
   sheetSyncedAt?: { seconds: number } | null
   sheetSyncError?: string | null
   createdAt?: { seconds: number } | null
@@ -88,6 +92,42 @@ function consentBadge(status: string | undefined): { label: string; tone: "ok" |
 }
 
 const STATUS_VALUES = ["submitted", "new", "reviewing", "advanced", "interviewing", "hired", "rejected", "duplicate"]
+
+const SUBMISSION_FEEDBACK_REASONS = [
+  { id: "strong_match", label: "Strong match" },
+  { id: "clear_evidence", label: "Clear evidence" },
+  { id: "good_candidate_motivation", label: "Candidate motivated" },
+  { id: "missing_hard_filter", label: "Missing hard filter" },
+  { id: "weak_evidence", label: "Weak evidence" },
+  { id: "candidate_not_interested", label: "Candidate not interested" },
+  { id: "duplicate", label: "Duplicate" },
+  { id: "comp_mismatch", label: "Comp mismatch" },
+  { id: "location_mismatch", label: "Location mismatch" },
+  { id: "seniority_mismatch", label: "Seniority mismatch" },
+] as const
+
+function feedbackReasonLabel(reason: string): string {
+  return SUBMISSION_FEEDBACK_REASONS.find((r) => r.id === reason)?.label ?? reason
+}
+
+function normalizeFeedbackRating(rating: unknown): number | null {
+  const n = typeof rating === "number" ? rating : Number(rating)
+  if (!Number.isInteger(n) || n < 1 || n > 4) return null
+  return n
+}
+
+function feedbackRatingLabel(rating: unknown): string {
+  const n = normalizeFeedbackRating(rating)
+  return n ? `${n}/4` : "unrated"
+}
+
+function feedbackRatingTone(rating: unknown): "ok" | "warn" | "info" | "muted" {
+  const n = normalizeFeedbackRating(rating)
+  if (n === null) return "muted"
+  if (n >= 3) return "ok"
+  if (n === 2) return "info"
+  return "warn"
+}
 const SOURCE_STAGE_VALUES = ["sourced", "contacted", "screened", "ready", "submitted", "archived"]
 const CALIBRATION_VALUES = ["not_rated", "calibration_requested", "good_fit", "bad_fit", "suggested"]
 
@@ -585,10 +625,21 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
       render: (r) => <Badge tone={statusBadge(r.status)}>{r.status ?? "submitted"}</Badge>,
     },
     {
+      key: "recruiterFeedbackRating",
+      label: "Rating",
+      width: 84,
+      render: (r) => <Badge tone={feedbackRatingTone(r.recruiterFeedbackRating)}>{feedbackRatingLabel(r.recruiterFeedbackRating)}</Badge>,
+    },
+    {
       key: "feedback",
       label: "Feedback",
-      width: 90,
-      render: (r) => r.recruiterFeedbackNote ? "note" : "—",
+      width: 140,
+      render: (r) => {
+        const reasons = (r.recruiterFeedbackReasons ?? []).map(feedbackReasonLabel)
+        if (r.recruiterFeedbackNote) return "note"
+        if (reasons.length) return reasons.slice(0, 2).join(", ")
+        return "—"
+      },
     },
   ]
 
@@ -2156,23 +2207,45 @@ function RowDetailPanel({
   const ticked = Object.entries(checks).filter(([, v]) => v).map(([k]) => k)
   const [draftStatus, setDraftStatus] = useState(row.status ?? "submitted")
   const [draftNote, setDraftNote] = useState(row.recruiterFeedbackNote ?? "")
+  const [draftRating, setDraftRating] = useState<string>(
+    normalizeFeedbackRating(row.recruiterFeedbackRating)?.toString() ?? "",
+  )
+  const [draftReasons, setDraftReasons] = useState<string[]>(row.recruiterFeedbackReasons ?? [])
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+
+  const toggleReason = (reason: string) => {
+    setDraftReasons((prev) => (
+      prev.includes(reason)
+        ? prev.filter((item) => item !== reason)
+        : [...prev, reason]
+    ))
+  }
 
   const saveFeedback = async () => {
     setSaving(true)
     setSaveError(null)
     try {
       const cleanNote = draftNote.trim()
+      const rating = normalizeFeedbackRating(draftRating)
+      const reasons = SUBMISSION_FEEDBACK_REASONS
+        .map((reason) => reason.id)
+        .filter((reason) => draftReasons.includes(reason))
+      const adminEmail = auth().currentUser?.email ?? null
       await updateDoc(doc(db(), "pa-recruiter-submissions", row.id), {
         status: draftStatus,
         recruiterFeedbackNote: cleanNote || null,
+        recruiterFeedbackRating: rating,
+        recruiterFeedbackReasons: reasons,
+        recruiterFeedbackUpdatedByEmail: adminEmail,
         recruiterFeedbackUpdatedAt: serverTimestamp(),
         statusHistory: arrayUnion({
           status: draftStatus,
           by: "admin",
           atIso: new Date().toISOString(),
           ...(cleanNote ? { note: cleanNote } : {}),
+          ...(rating ? { rating } : {}),
+          ...(reasons.length ? { reasons } : {}),
         }),
         updatedAt: serverTimestamp(),
       })
@@ -2180,6 +2253,10 @@ function RowDetailPanel({
         id: row.id,
         status: draftStatus,
         recruiterFeedbackNote: cleanNote || null,
+        recruiterFeedbackRating: rating,
+        recruiterFeedbackReasons: reasons,
+        recruiterFeedbackUpdatedByEmail: adminEmail,
+        recruiterFeedbackUpdatedAt: new Date().toISOString(),
       })
     } catch (e) {
       setSaveError(e instanceof Error ? e.message : String(e))
@@ -2294,7 +2371,7 @@ function RowDetailPanel({
         <h4 style={{ margin: "0 0 8px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
           Recruiter-visible status and feedback
         </h4>
-        <div style={{ display: "grid", gridTemplateColumns: "180px 1fr auto", gap: 10, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "180px 180px 1fr auto", gap: 10, alignItems: "start" }}>
           <select
             value={draftStatus}
             onChange={(e) => setDraftStatus(e.target.value)}
@@ -2302,10 +2379,22 @@ function RowDetailPanel({
           >
             {STATUS_VALUES.map((s) => <option value={s} key={s}>{s}</option>)}
           </select>
+          <select
+            value={draftRating}
+            onChange={(e) => setDraftRating(e.target.value)}
+            aria-label="Submission rating"
+            style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13 }}
+          >
+            <option value="">Unrated</option>
+            <option value="4">4/4 excellent</option>
+            <option value="3">3/4 solid</option>
+            <option value="2">2/4 low signal</option>
+            <option value="1">1/4 poor fit</option>
+          </select>
           <textarea
             value={draftNote}
             onChange={(e) => setDraftNote(e.target.value)}
-            placeholder="Optional note visible to the recruiter..."
+            placeholder="Visible to recruiter: why this candidate did or did not work..."
             rows={3}
             style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6, fontSize: 13, resize: "vertical" }}
           />
@@ -2316,6 +2405,29 @@ function RowDetailPanel({
           >
             {saving ? "Saving..." : "Save"}
           </button>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+          {SUBMISSION_FEEDBACK_REASONS.map((reason) => {
+            const active = draftReasons.includes(reason.id)
+            return (
+              <button
+                type="button"
+                key={reason.id}
+                onClick={() => toggleReason(reason.id)}
+                style={{
+                  padding: "5px 8px",
+                  border: active ? "1px solid #222" : "1px solid #ddd",
+                  background: active ? "#222" : "#fff",
+                  color: active ? "#fff" : "#555",
+                  borderRadius: 999,
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                {reason.label}
+              </button>
+            )
+          })}
         </div>
         {saveError && <p style={{ color: "#a00", fontSize: 12, margin: "8px 0 0" }}>{saveError}</p>}
       </div>
