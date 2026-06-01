@@ -95,6 +95,7 @@ const ROLE_PENDING_SUBMISSION_LIMIT = 5
 const WEEKLY_SUBMISSION_TARGET = 8
 const DEFAULT_SUCCESS_FEE = 10_000
 const PREFERRED_INTERVIEW_RATE_TARGET = 50
+const RECRUITER_WEEKLY_CHALLENGE_KEY = "wk-recruiter-weekly-challenge-v1"
 
 const PAYOUT_STATUS_LABELS: Record<string, { label: string; tone: "live" | "info" | "success" | "warn" | "mute"; body: string }> = {
   eligible: { label: "Eligible", tone: "live", body: "Eligible for payout once placement requirements are cleared." },
@@ -2131,12 +2132,15 @@ function buildRecruiterCockpitModel(
 }
 
 type RecruiterChallenge = {
+  id: string
   title: string
   body: string
   progress: number
   target: number
   progressLabel: string
   reward: string
+  payoutTiming: string
+  eligibility: string
   tone: OperatingTone
   actionLabel: string
   action: "roles" | "candidates" | "submissions" | "performance"
@@ -2299,6 +2303,32 @@ function tierRank(label: string): number {
   }
 }
 
+function challengeProgressPct(challenge: RecruiterChallenge): number {
+  return challenge.target > 0 ? Math.min(100, Math.round((challenge.progress / challenge.target) * 100)) : 0
+}
+
+function challengeWindowLabel(now = new Date()): string {
+  const start = new Date(now)
+  const day = start.getDay()
+  const daysSinceMonday = (day + 6) % 7
+  start.setDate(start.getDate() - daysSinceMonday)
+  start.setHours(0, 0, 0, 0)
+  const end = new Date(start)
+  end.setDate(start.getDate() + 7)
+  const fmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" })
+  return `${fmt.format(start)} - ${fmt.format(end)}`
+}
+
+function challengeDeadlineLabel(now = new Date()): string {
+  const end = new Date(now)
+  const day = end.getDay()
+  const daysUntilMonday = (8 - day) % 7 || 7
+  end.setDate(end.getDate() + daysUntilMonday)
+  end.setHours(0, 0, 0, 0)
+  const daysLeft = Math.max(0, Math.ceil((end.getTime() - now.getTime()) / 86_400_000))
+  return `${daysLeft} day${daysLeft === 1 ? "" : "s"} left`
+}
+
 function computeRecruiterEarningsMetrics(
   jobs: CollabJob[],
   submissions: RecruiterSubmissionItem[],
@@ -2344,56 +2374,71 @@ function computeRecruiterEarningsMetrics(
       : `${interviewRate}% interview movement across ${submissions.length} submission${submissions.length === 1 ? "" : "s"}; no /4 ratings yet.`
     : "All recruiters start unrated. Submissions make the quality signal real."
   const primaryActivityChallenge: RecruiterChallenge = {
+    id: "approved-role-activity",
     title: "Approved role activity",
     body: "Each approved role should have at least one live candidate or one active submission.",
     progress: coveredPrimaryRoles,
     target: Math.max(1, activePrimaryRoles || APPROVED_ROLE_LIMIT),
     progressLabel: `${coveredPrimaryRoles}/${activePrimaryRoles || APPROVED_ROLE_LIMIT} covered`,
     reward: "Protects role access",
+    payoutTiming: "Status credit is reviewed at the end of the weekly window.",
+    eligibility: "Counts approved roles with at least one active sourced candidate or active submission.",
     tone: activityCoverage >= 80 ? "success" : coveredPrimaryRoles > 0 ? "info" : "warn",
     actionLabel: activePrimaryRoles ? "Open roles" : "Apply for access",
     action: "roles",
   }
   const challenges: RecruiterChallenge[] = [
     openQuestions > 0 ? {
+      id: "clear-calibration-debt",
       title: "Clear calibration debt",
       body: "Resolve open role questions before sourcing through ambiguity.",
       progress: Math.max(0, openQuestions - openQuestions),
       target: openQuestions,
       progressLabel: `${openQuestions} open`,
       reward: "Cleaner approvals",
+      payoutTiming: "No payout attached; this protects future approval and quality review.",
+      eligibility: "All open role questions must be answered or closed before the week ends.",
       tone: "warn",
       actionLabel: "Review performance",
       action: "performance",
     } : primaryActivityChallenge,
     readyCandidates > 0 ? {
+      id: "convert-ready-candidates",
       title: "Convert ready candidates",
       body: "Move ready prospects into the strongest role brief while consent is fresh.",
       progress: Math.min(readyCandidates, 3),
       target: 3,
       progressLabel: `${Math.min(readyCandidates, 3)}/3 ready`,
       reward: "Submission velocity",
+      payoutTiming: "Challenge credit posts after submissions have time to reach review movement.",
+      eligibility: "Distinct ready candidates count once when they are moved into a consented role packet.",
       tone: "live",
       actionLabel: "Open candidates",
       action: "candidates",
     } : {
+      id: "build-sourced-pipeline",
       title: "Build sourced pipeline",
       body: "Save candidates before submission so duplicate checks and role matching can work.",
       progress: Math.min(sourcedCandidates.filter((candidate) => candidate.stage !== "archived").length, 5),
       target: 5,
       progressLabel: `${Math.min(sourcedCandidates.filter((candidate) => candidate.stage !== "archived").length, 5)}/5 sourced`,
       reward: "Matchboard unlock",
+      payoutTiming: "No direct payout; this unlocks better matchboard and access-review signal.",
+      eligibility: "Distinct active candidates with a LinkedIn or resume link count toward this challenge.",
       tone: sourcedCandidates.length ? "info" : "mute",
       actionLabel: "Add candidates",
       action: "candidates",
     },
     {
+      id: "interview-rate-push",
       title: "Interview-rate push",
       body: `Preferred-level recruiters should trend toward ${PREFERRED_INTERVIEW_RATE_TARGET}% interview movement.`,
       progress: Math.min(interviewRate, PREFERRED_INTERVIEW_RATE_TARGET),
       target: PREFERRED_INTERVIEW_RATE_TARGET,
       progressLabel: `${interviewRate}%/${PREFERRED_INTERVIEW_RATE_TARGET}%`,
       reward: "Preferred queue signal",
+      payoutTiming: "Reviewed after the week closes so submitted candidates have time to advance.",
+      eligibility: "Only submissions that advance, interview, offer, or hire count toward the movement rate.",
       tone: interviewRate >= PREFERRED_INTERVIEW_RATE_TARGET ? "success" : submissions.length ? "info" : "mute",
       actionLabel: "Open submissions",
       action: "submissions",
@@ -6875,6 +6920,25 @@ function EarningsTab({
     else if (action === "submissions") onSubmissions()
     else onPerformance()
   }
+  const recommendedChallenge = metrics.challenges[0]
+  const [selectedChallengeId, setSelectedChallengeId] = useState(() => {
+    try {
+      return window.localStorage.getItem(RECRUITER_WEEKLY_CHALLENGE_KEY) || recommendedChallenge?.id || ""
+    } catch {
+      return recommendedChallenge?.id || ""
+    }
+  })
+  const selectedChallenge = metrics.challenges.find((challenge) => challenge.id === selectedChallengeId) ?? recommendedChallenge
+  const selectChallenge = (challenge: RecruiterChallenge) => {
+    setSelectedChallengeId(challenge.id)
+    try {
+      window.localStorage.setItem(RECRUITER_WEEKLY_CHALLENGE_KEY, challenge.id)
+    } catch {
+      // Browser storage can be unavailable in private browsing.
+    }
+  }
+  const challengeWindow = challengeWindowLabel()
+  const challengeDeadline = challengeDeadlineLabel()
   return (
     <section className="rb-panel rb-panel--fill">
       <header className="rb-panel__head">
@@ -6944,26 +7008,51 @@ function EarningsTab({
         <article className="rb-earnings-card rb-earnings-card--wide">
           <header>
             <h3>Weekly challenges</h3>
-            <p>Focused work that moves status, quality, and payout odds.</p>
+            <p>Elect one focus for the current window, then work the dashboard like a recruiter business.</p>
           </header>
-          <div className="rb-challenge-grid">
-            {metrics.challenges.map((challenge) => {
-              const pct = challenge.target > 0 ? Math.min(100, Math.round((challenge.progress / challenge.target) * 100)) : 0
-              return (
-                <article className={`is-${challenge.tone}`} key={challenge.title}>
-                  <span>{challenge.reward}</span>
-                  <strong>{challenge.title}</strong>
-                  <p>{challenge.body}</p>
-                  <div className="rb-challenge-progress" aria-label={`${challenge.title} progress`}>
-                    <i style={{ width: `${pct}%` }} />
+          <div className="rb-weekly-challenge">
+            <aside className={`rb-weekly-challenge__selected is-${selectedChallenge?.tone ?? "mute"}`}>
+              <span>{selectedChallenge ? "Selected challenge" : "No challenge selected"}</span>
+              <strong>{selectedChallenge?.title ?? "Choose a weekly focus"}</strong>
+              <p>{selectedChallenge?.body ?? "Pick the challenge that best matches your current recruiting capacity."}</p>
+              {selectedChallenge && (
+                <>
+                  <div className="rb-challenge-progress" aria-label={`${selectedChallenge.title} progress`}>
+                    <i style={{ width: `${challengeProgressPct(selectedChallenge)}%` }} />
                   </div>
-                  <footer>
-                    <em>{challenge.progressLabel}</em>
-                    <button type="button" onClick={() => runAction(challenge.action)}>{challenge.actionLabel}</button>
-                  </footer>
-                </article>
-              )
-            })}
+                  <dl>
+                    <div><dt>Window</dt><dd>{challengeWindow}</dd></div>
+                    <div><dt>Deadline</dt><dd>{challengeDeadline}</dd></div>
+                    <div><dt>Progress</dt><dd>{selectedChallenge.progressLabel}</dd></div>
+                    <div><dt>Reward</dt><dd>{selectedChallenge.reward}</dd></div>
+                  </dl>
+                  <p>{selectedChallenge.eligibility}</p>
+                  <p>{selectedChallenge.payoutTiming}</p>
+                  <button type="button" onClick={() => runAction(selectedChallenge.action)}>{selectedChallenge.actionLabel}</button>
+                </>
+              )}
+            </aside>
+            <div className="rb-challenge-grid">
+              {metrics.challenges.map((challenge) => {
+                const selected = selectedChallenge?.id === challenge.id
+                return (
+                  <article className={`is-${challenge.tone} ${selected ? "is-selected" : ""}`} key={challenge.id}>
+                    <span>{challenge.reward}</span>
+                    <strong>{challenge.title}</strong>
+                    <p>{challenge.body}</p>
+                    <div className="rb-challenge-progress" aria-label={`${challenge.title} progress`}>
+                      <i style={{ width: `${challengeProgressPct(challenge)}%` }} />
+                    </div>
+                    <footer>
+                      <em>{challenge.progressLabel}</em>
+                      <button type="button" onClick={() => selectChallenge(challenge)}>
+                        {selected ? "Selected" : "Select"}
+                      </button>
+                    </footer>
+                  </article>
+                )
+              })}
+            </div>
           </div>
         </article>
 

@@ -5570,6 +5570,94 @@
   gap: 10px;
 }
 
+.rb-weekly-challenge {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.75fr) minmax(0, 1.25fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.rb-weekly-challenge__selected {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--ink-3);
+  border-radius: 10px;
+  background: var(--cream-3);
+  padding: 14px;
+}
+
+.rb-weekly-challenge__selected.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-weekly-challenge__selected.is-info { border-top-color: var(--info); }
+.rb-weekly-challenge__selected.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-weekly-challenge__selected.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-weekly-challenge__selected.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-weekly-challenge__selected span,
+.rb-weekly-challenge__selected dt {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-weekly-challenge__selected strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-weekly-challenge__selected p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-weekly-challenge__selected dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.rb-weekly-challenge__selected dl div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  padding: 9px;
+}
+
+.rb-weekly-challenge__selected dd {
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-weekly-challenge__selected > button {
+  justify-self: start;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 9px 13px;
+}
+
 .rb-challenge-progress {
   height: 7px;
   overflow: hidden;
@@ -5608,6 +5696,16 @@
   font-size: 12px;
   font-weight: 800;
   padding: 7px 10px;
+}
+
+.rb-challenge-grid article.is-selected {
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+
+.rb-challenge-grid article.is-selected footer button {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
 }
 
 .rb-payout-list {
@@ -7047,6 +7145,9 @@
   .rb-role-intel {
     grid-template-columns: 1fr;
   }
+  .rb-weekly-challenge {
+    grid-template-columns: 1fr;
+  }
   .rb-sourcing-kit > header,
   .rb-sourcing-kit__grid {
     grid-template-columns: 1fr;
@@ -7285,6 +7386,7 @@
   .rb-status-ladder,
   .rb-expectation-list,
   .rb-challenge-grid,
+  .rb-weekly-challenge__selected dl,
   .rb-access-command-hero,
   .rb-access-command-grid,
   .rb-access-table article,
