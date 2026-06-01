@@ -844,6 +844,10 @@ function cleanRecruiterEmail(value: string): string {
   return value.trim().toLowerCase()
 }
 
+function cleanRecruiterInviteCode(value: string): string {
+  return value.trim().toUpperCase()
+}
+
 function createRecruiterGoogleProvider(): GoogleAuthProvider {
   const provider = new GoogleAuthProvider()
   provider.setCustomParameters({ prompt: "select_account" })
@@ -1137,7 +1141,7 @@ export default function RecruiterBoard() {
   }
 
   if (!session) {
-    return <RecruiterAccessGate initialError={accessError} />
+    return <RecruiterAccessGate initialError={accessError} initialInviteCode={searchParams.get("accessCode")} />
   }
 
   const openJobs = jobs ?? []
@@ -2120,8 +2124,15 @@ function RecruiterStatusLoading() {
   )
 }
 
-function RecruiterAccessGate({ initialError }: { initialError?: string | null }) {
-  const [inviteCode, setInviteCode] = useState("")
+function RecruiterAccessGate({
+  initialError,
+  initialInviteCode,
+}: {
+  initialError?: string | null
+  initialInviteCode?: string | null
+}) {
+  const normalizedInitialInviteCode = cleanRecruiterInviteCode(initialInviteCode ?? "")
+  const [inviteCode, setInviteCode] = useState(normalizedInitialInviteCode)
   const [err, setErr] = useState<string | null>(initialError ?? null)
   const [busy, setBusy] = useState(false)
 
@@ -2129,9 +2140,13 @@ function RecruiterAccessGate({ initialError }: { initialError?: string | null })
     setErr(initialError ?? null)
   }, [initialError])
 
+  useEffect(() => {
+    if (normalizedInitialInviteCode) setInviteCode(normalizedInitialInviteCode)
+  }, [normalizedInitialInviteCode])
+
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    const trimmedInviteCode = inviteCode.trim()
+    const trimmedInviteCode = cleanRecruiterInviteCode(inviteCode)
     if (!trimmedInviteCode) {
       setErr("Enter your recruiter access code first.")
       return
@@ -2194,7 +2209,13 @@ function RecruiterAccessGate({ initialError }: { initialError?: string | null })
           </p>
           <label>
             <span>Access code</span>
-            <input value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} placeholder="WK-XXXX-XXXX" autoComplete="one-time-code" required />
+            <input
+              value={inviteCode}
+              onChange={(e) => setInviteCode(cleanRecruiterInviteCode(e.target.value))}
+              placeholder="WK-XXXX-XXXX"
+              autoComplete="one-time-code"
+              required
+            />
           </label>
           {err && <p className="rb-access__err">{err}</p>}
           <button className="rb-btn primary rb-btn--block" disabled={busy}>

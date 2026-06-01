@@ -449,10 +449,17 @@ function formatCodeExpiry(raw?: string | null): string {
 }
 
 const KNOWN_RECRUITER_INVITE_CODES_KEY = "wekruit.admin.recruiterInviteCodes.v1"
+const RECRUITER_INVITE_BASE_URL = "https://candidate.wekruit.com/recruiters"
 
 function isFullRecruiterInviteCode(raw?: string | null): raw is string {
   const trimmed = raw?.trim()
   return Boolean(trimmed && /^WK-[A-Z0-9-]{4,40}$/.test(trimmed))
+}
+
+function recruiterInviteUrl(inviteCode: string): string {
+  const url = new URL(RECRUITER_INVITE_BASE_URL)
+  url.searchParams.set("accessCode", inviteCode)
+  return url.toString()
 }
 
 function readKnownRecruiterInviteCodes(): Record<string, string> {
@@ -1617,6 +1624,14 @@ function RecruiterOpsPanel() {
             <div style={{ background: "#f7f3ed", border: "1px solid #e1d8cc", borderRadius: 8, padding: 12 }}>
               <div style={{ fontSize: 11, color: "#666", textTransform: "uppercase", letterSpacing: ".08em" }}>Give this code to the recruiter</div>
               <code style={{ display: "block", marginTop: 6, fontSize: 18, fontWeight: 700 }}>{generated.inviteCode}</code>
+              <a
+                href={recruiterInviteUrl(generated.inviteCode)}
+                target="_blank"
+                rel="noreferrer"
+                style={{ display: "block", marginTop: 6, color: "#49311f", wordBreak: "break-all" }}
+              >
+                {recruiterInviteUrl(generated.inviteCode)}
+              </a>
               <div style={{ color: "#777", fontSize: 12, marginTop: 4 }}>
                 Expires {formatCodeExpiry(generated.expiresAt)}. This full code remains visible to admins.
               </div>
@@ -1631,6 +1646,13 @@ function RecruiterOpsPanel() {
                 style={{ marginTop: 8, padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff" }}
               >
                 Copy code
+              </button>
+              <button
+                type="button"
+                onClick={() => void navigator.clipboard?.writeText(recruiterInviteUrl(generated.inviteCode))}
+                style={{ marginTop: 8, marginLeft: 8, padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff" }}
+              >
+                Copy invite link
               </button>
             </div>
           )}
@@ -1693,16 +1715,28 @@ function RecruiterOpsPanel() {
                         </td>
                         <td style={{ padding: "9px 6px" }}>
                           {canCopy ? (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                void navigator.clipboard?.writeText(rawInviteCode)
-                              }}
-                              style={{ padding: "5px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff", fontSize: 12 }}
-                            >
-                              Copy full code
-                            </button>
+                            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void navigator.clipboard?.writeText(rawInviteCode)
+                                }}
+                                style={{ padding: "5px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff", fontSize: 12 }}
+                              >
+                                Copy code
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  void navigator.clipboard?.writeText(recruiterInviteUrl(rawInviteCode))
+                                }}
+                                style={{ padding: "5px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff", fontSize: 12 }}
+                              >
+                                Copy invite link
+                              </button>
+                            </div>
                           ) : rawMissing ? (
                             <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                               <input
