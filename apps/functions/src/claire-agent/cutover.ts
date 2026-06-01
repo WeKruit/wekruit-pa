@@ -14,11 +14,12 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { isThinClaireEnabled } from "./flags.js"
-import { runClaireTurn } from "./agent.js"
 import { createSendblueTransport } from "./transport.js"
-import { makeV16FindMatch } from "./tools/matching-tools.js"
 import { selectClaireMode } from "./mode-selector.js"
 import type { ClaireLang } from "./types.js"
+// NOTE: agent.js + tools/matching-tools.js are NOT imported statically — they pull
+// the @pa/agent-runtime/zod@4 SDK, which crashes the deployed container at boot.
+// They're dynamic-imported below, only after the flag gate passes.
 
 export interface MaybeThinClaireDeps {
   log?: (event: string, payload?: Record<string, unknown>) => void
@@ -81,6 +82,11 @@ export async function maybeRunThinClaire(
   }
 
   try {
+    // Heavy agent + tools (and their @pa/agent-runtime/zod@4 SDK) load lazily here —
+    // only after the flag gate passed — so they stay out of the boot graph. Any
+    // load/resolve failure is caught below → falls through to the legacy path.
+    const { runClaireTurn } = await import("./agent.js")
+    const { makeV16FindMatch } = await import("./tools/matching-tools.js")
     // Rec-card render→host→send side-channel deps (flag-gated, fail-open).
     // Built ONLY when PA_JOB_REC_CARD_ENABLED is on AND we are NOT in dryRun
     // (evals must not touch real Storage). makeV16FindMatch no-ops without these

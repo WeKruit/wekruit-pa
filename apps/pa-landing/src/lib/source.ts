@@ -28,6 +28,10 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 180 // 180d
 function urlSource(): SignupSource | null {
   if (typeof window === "undefined") return null
   const v = new URLSearchParams(window.location.search).get("source")
+  return sourceFromQueryValue(v)
+}
+
+function sourceFromQueryValue(v: string | null): SignupSource | null {
   if (!v) return null
   if (v === "layoff" || v === "WeKruit_Laid_Off") return "WeKruit_Laid_Off"
   if (v === "candidate") return "candidate"
@@ -81,18 +85,12 @@ export function stickSourceFromLoginNext(raw: string | null | undefined): void {
   if (!raw) return
   const q = raw.indexOf("?")
   const pathname = q >= 0 ? raw.slice(0, q) : raw
+  const params = new URLSearchParams(q >= 0 ? raw.slice(q + 1) : "")
+  const explicitSource = sourceFromQueryValue(params.get("source"))
   if (/^\/j\/[^/]+(?:\/cv)?$/.test(pathname)) {
-    writeCookie("candidate")
+    writeCookie(explicitSource ?? "candidate")
     return
   }
   if (pathname !== "/onboarding") return
-  const params = new URLSearchParams(q >= 0 ? raw.slice(q + 1) : "")
-  const fromQuery = params.get("source")
-  if (fromQuery === "layoff" || fromQuery === "WeKruit_Laid_Off") {
-    writeCookie("WeKruit_Laid_Off")
-  } else if (fromQuery === "layoffhedge") {
-    writeCookie("layoffhedge")
-  } else if (fromQuery === "candidate") {
-    writeCookie("candidate")
-  }
+  if (explicitSource) writeCookie(explicitSource)
 }

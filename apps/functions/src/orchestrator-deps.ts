@@ -78,6 +78,10 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
         userId,
         jobId,
         toE164,
+        // Orchestrator-chosen jobId (the agentic collab-prescreen hook resolves the
+        // role from what Claire presented) — not candidate-supplied free text, so the
+        // matched-gate does not apply here.
+        allowMatchedBypass: true,
         log: (event, payload) => logger.info("[collab-prescreen]", { event, ...(payload ?? {}) }),
       })
       return {

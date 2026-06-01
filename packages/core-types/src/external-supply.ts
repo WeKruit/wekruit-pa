@@ -33,7 +33,7 @@
 
 import { createHash, randomUUID } from "node:crypto"
 import { z } from "zod"
-import { MarketplaceEvidenceSchema } from "./marketplace.js"
+import { MarketplaceEvidenceSchema, OptionalHttpUrlSchema } from "./marketplace.js"
 
 // Local primitive aliases mirroring marketplace.ts (kept private there).
 // Re-declared with identical constraints so external-supply.ts can ship as a
@@ -195,9 +195,22 @@ export type ExternalCandidateEmail = z.infer<typeof ExternalCandidateEmailSchema
 const ExternalCandidateExperienceSchema = z.object({
   company: z.string().min(1),
   title: z.string().min(1),
+  location: z.string().min(1).max(200).optional(),
+  description: z.string().min(1).max(4_000).optional(),
   startDate: z.string().min(1).optional(),
   endDate: z.string().min(1).optional(),
   durationMonths: z.number().nonnegative().optional(),
+  currentRole: z.boolean().optional(),
+  department: z.string().min(1).max(120).optional(),
+  managementLevel: z.string().min(1).max(120).optional(),
+  companyId: z.number().int().positive().optional(),
+  companyIndustry: z.string().min(1).max(200).optional(),
+  companySizeRange: z.string().min(1).max(120).optional(),
+  companyWebsite: OptionalHttpUrlSchema,
+  companyLinkedinUrl: OptionalHttpUrlSchema,
+  companyHqCity: z.string().min(1).max(120).optional(),
+  companyHqCountry: z.string().min(1).max(120).optional(),
+  companyLogoUrl: OptionalHttpUrlSchema,
 })
 export type ExternalCandidateExperience = z.infer<typeof ExternalCandidateExperienceSchema>
 

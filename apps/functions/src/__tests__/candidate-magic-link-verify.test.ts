@@ -2,7 +2,10 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import { runCandidateMagicLinkVerify } from "../candidate-magic-link-verify.js"
+import {
+  runCandidateMagicLinkVerify,
+  type CandidateMagicLinkVerifyDeps,
+} from "../candidate-magic-link-verify.js"
 
 type DocData = Record<string, unknown>
 type Store = Map<string, Map<string, DocData>>
@@ -54,6 +57,10 @@ function fakeDb(): Firestore {
   return new FakeFirestore() as unknown as Firestore
 }
 
+const REFERRAL_TEST_DEPS = {
+  attachReferralOnSignup: async () => ({}),
+} satisfies Pick<CandidateMagicLinkVerifyDeps, "attachReferralOnSignup">
+
 test("runCandidateMagicLinkVerify claims profile for verified email", async () => {
   const calls: Array<Record<string, unknown>> = []
   const db = fakeDb()
@@ -66,6 +73,7 @@ test("runCandidateMagicLinkVerify claims profile for verified email", async () =
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-1",
         email: "Person@Example.COM",
@@ -126,6 +134,68 @@ test("runCandidateMagicLinkVerify claims profile for verified email", async () =
   })
 })
 
+test("runCandidateMagicLinkVerify forwards stored referral slug after verified signup", async () => {
+  const referralCalls: Array<Record<string, unknown>> = []
+  const db = fakeDb()
+  const { result, status } = await runCandidateMagicLinkVerify(
+    {
+      firebaseIdToken: "token-ref",
+      referralSlug: "Maya-Chen",
+    },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "firebase-ref",
+        email: "ReferralUser@Example.COM",
+        email_verified: true,
+        name: "Referral User",
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-ref",
+        authMapping: {
+          firebaseUid: "firebase-ref",
+          candidateId: "cand-ref",
+          createdAt: "2026-05-29T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-ref",
+          kind: "email" as const,
+          handleHash: "hashhashhashhash",
+          source: "candidate" as const,
+          createdAt: "2026-05-29T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: false,
+        selfProfile: {
+          candidateId: "cand-ref",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-29T00:00:00.000Z",
+        },
+      }),
+      attachReferralOnSignup: async (args) => {
+        referralCalls.push({ ...args })
+        return { matchedReferralId: "link_maya-chen_test" }
+      },
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+    }
+  )
+
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+  assert.deepEqual(referralCalls, [
+    {
+      uid: "cand-ref",
+      email: "referraluser@example.com",
+      referralSlug: "Maya-Chen",
+    },
+  ])
+})
+
 test("runCandidateMagicLinkVerify returns sticky sender number for the canonical candidate", async () => {
   const calls: Array<{ candidateId: string; userData: Record<string, unknown> | null }> = []
   const db = fakeDb()
@@ -137,6 +207,7 @@ test("runCandidateMagicLinkVerify returns sticky sender number for the canonical
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-1",
         email: "person@example.com",
@@ -197,6 +268,7 @@ test("runCandidateMagicLinkVerify links LinkedIn OAuth identity for li_* uid", a
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "li_abc123",
         email: "person@example.com",
@@ -252,13 +324,14 @@ test("runCandidateMagicLinkVerify links LinkedIn OAuth identity for li_* uid", a
   if (result.ok) {
     assert.equal(result.candidateId, "cand-li")
     assert.equal(result.linkedinLinkedViaOauth, true)
-    assert.match(String(result.linkedinUrl), /oauth-linked\/sub-99/)
+    assert.equal(result.linkedinUrl, null)
   }
   assert.equal(linkCalls.length, 1)
   assert.equal(linkCalls[0]?.value, "https://www.linkedin.com/oauth-linked/sub-99")
 
   const userSnap = await db.collection(PA_COLLECTIONS.users).doc("cand-li").get()
   assert.equal(userSnap.data()?.linkedinOauthLinked, true)
+  assert.equal("linkedinUrl" in (userSnap.data() ?? {}), false)
 })
 
 test("runCandidateMagicLinkVerify allows wekruit.com workspace emails at public launch", async () => {
@@ -268,6 +341,7 @@ test("runCandidateMagicLinkVerify allows wekruit.com workspace emails at public 
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-admin",
         email: "admin1@wekruit.com",
@@ -322,6 +396,7 @@ test("runCandidateMagicLinkVerify reports portalReady when Claire inbound exists
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-claire",
         email: "claire@example.com",
@@ -373,6 +448,7 @@ test("runCandidateMagicLinkVerify keeps portalReady false without Claire inbound
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-claire",
         email: "claire@example.com",
@@ -427,6 +503,7 @@ test("runCandidateMagicLinkVerify reports claireConversationStarted from Claire 
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-claire",
         email: "claire@example.com",
@@ -488,6 +565,7 @@ test("runCandidateMagicLinkVerify creates account for unknown email (magic-link 
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "firebase-newuser-1",
         email: "freshperson@example.com",
@@ -541,10 +619,10 @@ test("runCandidateMagicLinkVerify still passes allowCreate=true when LinkedIn cu
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "li_xyz789",
-        email: "person@linkedin.com",
-        email_verified: true,
+        linkedinEmail: "person@linkedin.com",
         linkedinSub: "sub-77",
       }),
       claimProfile: async (_db, input) => {
@@ -594,6 +672,7 @@ test("runCandidateMagicLinkVerify still passes allowCreate=true when LinkedIn cu
     undefined,
     "LinkedIn OAuth path passes through the default (allowCreate=true via the persistence layer)",
   )
+  assert.equal(calls[0]?.email, "person@linkedin.com")
 })
 
 test("runCandidateMagicLinkVerify stamps layoffhedge on first-time pa-users create", async () => {
@@ -603,6 +682,7 @@ test("runCandidateMagicLinkVerify stamps layoffhedge on first-time pa-users crea
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "fb-1",
         email: "new.layoffhedge@example.com",
@@ -655,6 +735,7 @@ test("runCandidateMagicLinkVerify does NOT overwrite an existing pa-users.source
     undefined,
     {
       db,
+      ...REFERRAL_TEST_DEPS,
       verifyIdToken: async () => ({
         uid: "fb-2",
         email: "returning@example.com",
@@ -697,4 +778,135 @@ test("runCandidateMagicLinkVerify does NOT overwrite an existing pa-users.source
     "candidate",
     "returning user must keep first-stamped source",
   )
+})
+
+test("runCandidateMagicLinkVerify stamps first signup entry for public job sign-in", async () => {
+  const db = fakeDb()
+  const { status, result } = await runCandidateMagicLinkVerify(
+    {
+      firebaseIdToken: "token-job-entry",
+      source: "candidate",
+      registrationEntry: {
+        kind: "job_prescreen",
+        path: "/j/wekruit-37429d02-photon-macos-devops",
+        jobId: "wekruit-37429d02-photon-macos-devops",
+      },
+    },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "fb-job-entry",
+        email: "job.entry@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-job-entry",
+        authMapping: {
+          firebaseUid: "fb-job-entry",
+          candidateId: "cand-job-entry",
+          createdAt: "2026-05-30T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-job-entry",
+          kind: "email" as const,
+          handleHash: "h",
+          source: "candidate" as const,
+          createdAt: "2026-05-30T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: false,
+        selfProfile: {
+          candidateId: "cand-job-entry",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-30T00:00:00.000Z",
+        },
+      }),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+    },
+  )
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+
+  const snap = await db.collection(PA_COLLECTIONS.users).doc("cand-job-entry").get()
+  const data = snap.data() as { firstSignupEntry?: Record<string, unknown>; lastSignupEntry?: Record<string, unknown> } | undefined
+  assert.equal(data?.firstSignupEntry?.kind, "job_prescreen")
+  assert.equal(data?.firstSignupEntry?.path, "/j/wekruit-37429d02-photon-macos-devops")
+  assert.equal(data?.firstSignupEntry?.jobId, "wekruit-37429d02-photon-macos-devops")
+  assert.equal(data?.firstSignupEntry?.source, "candidate")
+  assert.equal(typeof data?.firstSignupEntry?.capturedAt, "string")
+  assert.deepEqual(data?.lastSignupEntry, data?.firstSignupEntry)
+})
+
+test("runCandidateMagicLinkVerify keeps original first signup entry on later sign-ins", async () => {
+  const db = fakeDb()
+  ;(db as unknown as FakeFirestore).seed(PA_COLLECTIONS.users, "cand-job-returning", {
+    firstSignupEntry: {
+      kind: "job_prescreen",
+      path: "/j/wekruit-original-job",
+      jobId: "wekruit-original-job",
+      source: "candidate",
+      capturedAt: "2026-05-01T00:00:00.000Z",
+    },
+  })
+
+  const { status, result } = await runCandidateMagicLinkVerify(
+    {
+      firebaseIdToken: "token-job-returning",
+      source: "candidate",
+      registrationEntry: {
+        kind: "job_prescreen",
+        path: "/j/wekruit-later-job",
+        jobId: "wekruit-later-job",
+      },
+    },
+    undefined,
+    {
+      db,
+      ...REFERRAL_TEST_DEPS,
+      verifyIdToken: async () => ({
+        uid: "fb-job-returning",
+        email: "job.returning@example.com",
+        email_verified: true,
+      }),
+      claimProfile: async () => ({
+        candidateId: "cand-job-returning",
+        authMapping: {
+          firebaseUid: "fb-job-returning",
+          candidateId: "cand-job-returning",
+          createdAt: "2026-05-30T00:00:00.000Z",
+        },
+        emailHandle: {
+          handleId: "email_hash",
+          candidateId: "cand-job-returning",
+          kind: "email" as const,
+          handleHash: "h",
+          source: "candidate" as const,
+          createdAt: "2026-05-30T00:00:00.000Z",
+        },
+        claimedEventId: "ident_claimed",
+        idempotent: true,
+        selfProfile: {
+          candidateId: "cand-job-returning",
+          lifecycleState: "claimed" as const,
+          handles: [{ kind: "email" as const, source: "candidate" as const }],
+          createdAt: "2026-05-30T00:00:00.000Z",
+        },
+      }),
+      claireConversationStarted: async () => false,
+      hasResumeOnFile: async () => false,
+    },
+  )
+  assert.equal(status, 200)
+  assert.equal(result.ok, true)
+
+  const snap = await db.collection(PA_COLLECTIONS.users).doc("cand-job-returning").get()
+  const data = snap.data() as { firstSignupEntry?: Record<string, unknown>; lastSignupEntry?: Record<string, unknown> } | undefined
+  assert.equal(data?.firstSignupEntry?.path, "/j/wekruit-original-job")
+  assert.equal(data?.lastSignupEntry?.path, "/j/wekruit-later-job")
+  assert.equal(data?.lastSignupEntry?.jobId, "wekruit-later-job")
 })

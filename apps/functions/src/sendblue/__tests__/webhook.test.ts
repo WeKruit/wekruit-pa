@@ -884,6 +884,38 @@ describe("handleSendblueWebhook", () => {
     )
   })
 
+  it("Test 16a.4 (entrypoints): SELF prescreen token for an UNMATCHED job is refused (matched-gate), no fall-through, idempotency cleared", async () => {
+    const { db, inbound, prescreenIdempotency } = makeFakeDb()
+    const body = JSON.stringify(basePayload({
+      content: "WeKruit_rain-software-engineer-fullstack-8849f6ef_uJob1_Job",
+      message_handle: "msg-entry-job-not-matched-1",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      // body userId "uJob1" === resolved → SELF path → matched-gate runs in the real
+      // bootstrap. Here the stub returns not_matched (job never matched/pushed to them).
+      lookupUserByPhone: async () => "uJob1",
+      runPreScreenForUser: async () => ({
+        ok: false,
+        reason: "not_matched",
+        sessionId: "ps_job_not_matched_1",
+      }),
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_not_matched" })
+    assert.equal(inbound.size, 0, "refused control-plane token must not fall through as candidate text")
+    assert.equal(
+      prescreenIdempotency.has("rain-software-engineer-fullstack-8849f6ef_uJob1_msg-entry-job-not-matched-1"),
+      false,
+      "not_matched clears the stamp so a later legit start (after the job IS matched) is not deduped",
+    )
+  })
+
   it("Test 16b (entrypoints): job prescreen token with answer binds and routes initial reply after session start", async () => {
     const { db, inbound } = makeFakeDb()
     const prescreenCalls: Array<{ jobId: string; userId: string; toE164: string; suppressFirstQuestion?: boolean }> = []

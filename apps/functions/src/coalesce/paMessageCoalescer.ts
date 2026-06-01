@@ -45,7 +45,9 @@ import { claimAndProcessInboundEvent } from "@pa/pa-orchestrator"
 import { PA_COLLECTIONS } from "@pa/core-types"
 // Thin Claire cutover — flag-gated (paThinClaireEnabled, default OFF). Returns false for
 // everyone but the 424 canary → legacy claimAndProcessInboundEvent path stays unchanged.
-import { maybeRunThinClaire } from "../claire-agent/index.js"
+// Direct cutover import (not the claire-agent barrel) — keeps agent/tools/SDK out
+// of the boot graph; cutover loads them lazily behind the flag gate.
+import { maybeRunThinClaire } from "../claire-agent/cutover.js"
 import { decidePreClaireTurnOwner } from "../lib/pre-claire-turn-owner.js"
 
 import {

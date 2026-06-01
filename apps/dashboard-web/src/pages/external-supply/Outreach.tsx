@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import type { OutreachApprovalStatus, OutreachPlan } from "@pa/core-types"
+import { AdminJobLink, AdminUserLink } from "../../components/AdminEntityLink.js"
 import { EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
 import { EvaluationTierBadge } from "../../components/external-supply/EvaluationTierBadge.js"
 import { OutreachCopyEditor } from "../../components/external-supply/OutreachCopyEditor.js"
@@ -317,6 +318,10 @@ export function Outreach() {
                       : ""}
                   </span>
                 )}
+              </div>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: "0.85em" }}>
+                <span>candidate <AdminUserLink userId={selectedPlan.candidateId} /></span>
+                <span>job <AdminJobLink jobId={selectedPlan.jobId} /></span>
               </div>
 
               <OutreachCopyEditor

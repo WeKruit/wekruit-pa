@@ -88,6 +88,8 @@ export const CandidateHandleKindSchema = z.enum([
   "sendblue_thread",
   "imessage",
   "linkedin",
+  "github",
+  "calcom",
 ])
 export type CandidateHandleKind = z.infer<typeof CandidateHandleKindSchema>
 
@@ -124,8 +126,9 @@ export const CandidateGlobalTagsSchema = z.object({
   roleFunction: z.array(RoleFunctionSchema).default([]),
   skills: SkillsListSchema.default([]),
   careerStage: CareerStageSchema.optional(),
-  // Seniority RANGE the candidate is open to: [anchor, upper] in CAREER_STAGE_VOCAB order, derived from
-  // careerStage + preferenceHardness.careerStage.bufferSteps. Lets /me show "junior–senior" not just "junior".
+  // Seniority RANGE the candidate is open to: [anchor, upper] in CAREER_STAGE_VOCAB order. Derived
+  // by the projector from careerStage + preferenceHardness.careerStage.bufferSteps so the portal can
+  // render "junior–senior" instead of a single stage. Optional: absent when no buffer was stated.
   careerStageRange: z.tuple([CareerStageSchema, CareerStageSchema]).optional(),
   yoeRange: z.tuple([z.number().nonnegative(), z.number().nonnegative()]).optional(),
   industrySector: z.array(IndustrySectorSchema).default([]),
@@ -148,12 +151,69 @@ export const CandidateGlobalTagsSchema = z.object({
       ])
     )
     .default([]),
-  // Company-STAGE preference (funding stage) — orthogonal to companySizePreference (headcount). Lets /me
-  // show "Company stage: Seed · Series A" distinct from "Company size". Multi-pick, COMPANY_STAGE_VOCAB.
+  // Company-STAGE preference (funding stage) — ORTHOGONAL to companySizePreference (headcount). Projected
+  // from tags.companyStage; lets /me show "Company stage: Seed · Series A" distinct from "Company size".
+  // Multi-pick, COMPANY_STAGE_VOCAB. Informational/display axis (matching weight 0).
   companyStage: z.array(CompanyStageSchema).optional(),
   updatedAt: TimestampSchema.optional(),
 })
 export type CandidateGlobalTags = z.infer<typeof CandidateGlobalTagsSchema>
+
+export const CandidateLinkedinOAuthProfileSchema = z.object({
+  connectedAt: TimestampSchema.optional(),
+  name: z.string().min(1).max(200).optional(),
+  emailMasked: z.string().min(3).max(320).optional(),
+  pictureUrl: OptionalHttpUrlSchema,
+})
+export type CandidateLinkedinOAuthProfile = z.infer<
+  typeof CandidateLinkedinOAuthProfileSchema
+>
+
+export const CandidateGithubOAuthProfileSchema = z.object({
+  connectedAt: TimestampSchema.optional(),
+  login: z.string().min(1).max(200).optional(),
+  name: z.string().min(1).max(200).optional(),
+  url: OptionalHttpUrlSchema,
+  avatarUrl: OptionalHttpUrlSchema,
+  emailMasked: z.string().min(3).max(320).optional(),
+})
+export type CandidateGithubOAuthProfile = z.infer<typeof CandidateGithubOAuthProfileSchema>
+
+export const CandidateGithubPublicRepoSchema = z.object({
+  name: z.string().min(1).max(200),
+  fullName: z.string().min(1).max(300).optional(),
+  url: OptionalHttpUrlSchema,
+  description: z.string().min(1).max(500).optional(),
+  language: z.string().min(1).max(100).optional(),
+  stars: z.number().int().nonnegative().optional(),
+  forks: z.number().int().nonnegative().optional(),
+  updatedAt: TimestampSchema.optional(),
+})
+export type CandidateGithubPublicRepo = z.infer<typeof CandidateGithubPublicRepoSchema>
+
+export const CandidateExperienceHighlightSchema = z.object({
+  title: z.string().min(1).max(200),
+  company: z.string().min(1).max(200),
+  location: z.string().min(1).max(200).optional(),
+  description: z.string().min(1).max(4_000).optional(),
+  startDate: z.string().min(1).max(64).optional(),
+  endDate: z.string().min(1).max(64).nullable().optional(),
+  durationMonths: z.number().nonnegative().optional(),
+  currentRole: z.boolean().optional(),
+  department: z.string().min(1).max(120).optional(),
+  managementLevel: z.string().min(1).max(120).optional(),
+  companyId: z.number().int().positive().optional(),
+  companyIndustry: z.string().min(1).max(200).optional(),
+  companySizeRange: z.string().min(1).max(120).optional(),
+  companyWebsite: OptionalHttpUrlSchema,
+  companyLinkedinUrl: OptionalHttpUrlSchema,
+  companyHqCity: z.string().min(1).max(120).optional(),
+  companyHqCountry: z.string().min(1).max(120).optional(),
+  companyLogoUrl: OptionalHttpUrlSchema,
+  source: z.string().min(1).max(80).optional(),
+  sourceLabel: z.string().min(1).max(120).optional(),
+})
+export type CandidateExperienceHighlight = z.infer<typeof CandidateExperienceHighlightSchema>
 
 export const CandidateProfileMarketplaceFieldsSchema = z.object({
   candidateLifecycleState: CandidateLifecycleStateSchema.default("prospect"),
@@ -166,6 +226,12 @@ export const CandidateProfileMarketplaceFieldsSchema = z.object({
   mem0UserId: z.string().min(1).optional(),
   latestResumeArtifactId: z.string().min(1).optional(),
   linkedinUrl: OptionalHttpUrlSchema,
+  linkedinOauthProfile: CandidateLinkedinOAuthProfileSchema.optional(),
+  githubUrl: OptionalHttpUrlSchema,
+  githubOauthProfile: CandidateGithubOAuthProfileSchema.optional(),
+  githubPublicRepos: z.array(CandidateGithubPublicRepoSchema).max(12).optional(),
+  calcomUrl: OptionalHttpUrlSchema,
+  experienceHighlights: z.array(CandidateExperienceHighlightSchema).max(12).optional(),
   outreach: z
     .object({
       status: z.enum(["allowed", "cooldown", "paused", "opted_out"]).default("allowed"),
@@ -232,6 +298,12 @@ export const CandidateSelfProfileSchema = z.object({
   profileSummary: z.string().max(4_000).optional(),
   globalTags: CandidateGlobalTagsSchema.optional(),
   linkedinUrl: OptionalHttpUrlSchema,
+  linkedinOauthProfile: CandidateLinkedinOAuthProfileSchema.optional(),
+  githubUrl: OptionalHttpUrlSchema,
+  githubOauthProfile: CandidateGithubOAuthProfileSchema.optional(),
+  githubPublicRepos: z.array(CandidateGithubPublicRepoSchema).max(12).optional(),
+  calcomUrl: OptionalHttpUrlSchema,
+  experienceHighlights: z.array(CandidateExperienceHighlightSchema).max(12).optional(),
   createdAt: TimestampSchema,
   updatedAt: TimestampSchema.optional(),
 })
@@ -1980,6 +2052,8 @@ export function normalizeCandidateHandleValue(
     case "sendblue_thread":
     case "imessage":
     case "linkedin":
+    case "github":
+    case "calcom":
       return trimmed.toLowerCase()
   }
 }

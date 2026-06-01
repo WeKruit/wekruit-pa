@@ -13,6 +13,7 @@
  */
 import { useState } from "react"
 import type { EvaluationTier } from "@pa/core-types"
+import { AdminUserLink } from "../AdminEntityLink.js"
 import type { AgentRankingResult } from "../../lib/external-supply-client.js"
 import { EvaluationTierBadge } from "./EvaluationTierBadge.js"
 
@@ -88,7 +89,11 @@ export function RankingApprovalRow({
         ) : null}
       </td>
       <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.78em" }}>
-        {result.candidateRecordId.slice(0, 8)}…
+        {result.candidateUserId ? (
+          <AdminUserLink userId={result.candidateUserId}>{result.candidateUserId.slice(0, 8)}…</AdminUserLink>
+        ) : (
+          `${result.candidateRecordId.slice(0, 8)}…`
+        )}
       </td>
       <td style={tdStyle}>
         <EvaluationTierBadge tier={result.deterministicTier} />
@@ -151,7 +156,13 @@ export function RankingApprovalRow({
             <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
               <h3 style={{ margin: 0, fontSize: "1em" }}>Override agent tier</h3>
               <p style={{ margin: "4px 0 8px 0", fontSize: "0.8em", color: "#64748b" }}>
-                Candidate {result.candidateRecordId.slice(0, 8)}… · current proposed{" "}
+                Candidate{" "}
+                {result.candidateUserId ? (
+                  <AdminUserLink userId={result.candidateUserId}>{result.candidateUserId.slice(0, 8)}…</AdminUserLink>
+                ) : (
+                  `${result.candidateRecordId.slice(0, 8)}…`
+                )}{" "}
+                · current proposed{" "}
                 <strong>{result.proposedAgentTier}</strong>
               </p>
               <label style={fieldStyle}>

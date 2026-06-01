@@ -104,7 +104,13 @@ test("operator approval commits prescreen state and queues exactly the approved 
   const approvedBody = "Thanks for the detail here. WeKruit reviewed your first screen and wants to move you forward for the next step."
 
   const result = await runReviewEvaluationAttempt(
-    { attemptId: "attempt-1", status: "approved", candidateMessageBody: approvedBody },
+    {
+      attemptId: "attempt-1",
+      status: "approved",
+      candidateMessageBody: approvedBody,
+      decisionReason: "The screen showed enough direct ownership for this role.",
+      recommendedActions: ["Watch for the next WeKruit text.", "Keep your profile details current."],
+    },
     ADMIN_AUTH,
     {
       db,
@@ -122,6 +128,14 @@ test("operator approval commits prescreen state and queues exactly the approved 
 
   assert.equal(result.prescreenOutcomeCommitted, true)
   assert.equal(result.candidateOutboundId, "out-approved-message")
+  assert.deepEqual(result.candidateDecision, {
+    candidateMessageBody: approvedBody,
+    decisionReason: "The screen showed enough direct ownership for this role.",
+    recommendedActions: ["Watch for the next WeKruit text.", "Keep your profile details current."],
+    finalTerminal: "PASS",
+    reviewedAt: NOW,
+    decisionOutboundId: "out-approved-message",
+  })
   assert.equal(outcomeCalls.length, 1)
   assert.equal(outcomeCalls[0]?.terminal, "PASS")
   assert.equal(sent.length, 1)
@@ -133,6 +147,17 @@ test("operator approval commits prescreen state and queues exactly the approved 
   assert.equal(session.terminalActionPendingReview, false)
   assert.equal((session.review as { status?: string; decisionOutboundId?: string } | undefined)?.status, "approved")
   assert.equal((session.review as { status?: string; decisionOutboundId?: string } | undefined)?.decisionOutboundId, "out-approved-message")
+  assert.deepEqual(
+    (session.review as { candidateDecision?: unknown } | undefined)?.candidateDecision,
+    {
+      candidateMessageBody: approvedBody,
+      decisionReason: "The screen showed enough direct ownership for this role.",
+      recommendedActions: ["Watch for the next WeKruit text.", "Keep your profile details current."],
+      finalTerminal: "PASS",
+      reviewedAt: NOW,
+      decisionOutboundId: "out-approved-message",
+    },
+  )
 })
 
 test("operator approval accepts terminal-only prescreen outcome and derives canonical outcome kind", async () => {
@@ -200,6 +225,8 @@ test("operator can draft prescreen review messages without committing state or s
         return {
           candidateMessageBody:
             "Thanks for completing the screen. We reviewed it, and this role does not look like the right next step because the GTM-growth evidence was still partial.",
+          decisionReason: "The GTM-growth evidence was still partial for this role.",
+          recommendedActions: ["Add a direct GTM growth example to your profile.", "Keep your profile active for stronger matches."],
           evidenceSummary: "Partial GTM overlap only.",
         }
       },
@@ -212,6 +239,11 @@ test("operator can draft prescreen review messages without committing state or s
   assert.equal(result.drafts[0]?.attemptId, "attempt-1")
   assert.equal(result.drafts[0]?.finalTerminal, "FAIL")
   assert.match(result.drafts[0]?.candidateMessageBody ?? "", /GTM-growth evidence/)
+  assert.match(result.drafts[0]?.decisionReason ?? "", /GTM-growth evidence/)
+  assert.deepEqual(result.drafts[0]?.recommendedActions, [
+    "Add a direct GTM growth example to your profile.",
+    "Keep your profile active for stronger matches.",
+  ])
   assert.equal(contexts[0]?.finalTerminal, "FAIL")
   const session = store.get("pa-prescreen-sessions")!.get("ps-1") as Record<string, unknown>
   assert.equal(session.terminalActionPendingReview, true)

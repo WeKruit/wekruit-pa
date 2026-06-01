@@ -136,7 +136,7 @@ test("runCandidateListMatches includes direct state-only candidate job rows", as
   assert.doesNotMatch(JSON.stringify(result), /rawTranscript/)
 })
 
-test("runCandidateListMatches recommends published jobs from parsed candidate tags when no match rows exist", async () => {
+test("runCandidateListMatches surfaces ONLY recorded recs; collab flag derived from pa-jobs collaboration status", async () => {
   const mfs = new MockFirestore()
   await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
     firebaseUid: "firebase-1",
@@ -149,40 +149,63 @@ test("runCandidateListMatches recommends published jobs from parsed candidate ta
       skills: [{ name: "python" }, { name: "sql" }],
     },
   })
-  await mfs.collection("pa-jobs").doc("job-fit").set({
-    publicVisible: true,
+  // The matcher recorded these two jobs for this candidate (daily-recommend pattern).
+  await mfs.collection("pa-user-job-recommendations").doc("cand-1").collection("jobs").doc("job-collab").set({
+    userId: "cand-1",
+    jobId: "job-collab",
+    recommendationCount: 1,
+    lastRecommendedAt: "2026-05-14T18:00:00.000Z",
+    lastRecommendedSource: "job_rec_daily_batch",
+  })
+  await mfs.collection("pa-user-job-recommendations").doc("cand-1").collection("jobs").doc("job-general").set({
+    userId: "cand-1",
+    jobId: "job-general",
+    recommendationCount: 1,
+    lastRecommendedAt: "2026-05-13T18:00:00.000Z",
+    lastRecommendedSource: "job_rec_daily_batch",
+  })
+  // A stale recorded rec whose job no longer exists anywhere → must drop.
+  await mfs.collection("pa-user-job-recommendations").doc("cand-1").collection("jobs").doc("job-gone").set({
+    userId: "cand-1",
+    jobId: "job-gone",
+    recommendationCount: 1,
+    lastRecommendedAt: "2026-05-12T18:00:00.000Z",
+  })
+  // Collab job: mirrored into matching-jobs AND carried in pa-jobs (collaborated +
+  // prescreenConfig) → collab: true, display hydrated from pa-jobs (salary reveal).
+  await mfs.collection("matching-jobs").doc("job-collab").set({
     status: "active",
     title: "Backend Engineer",
     companyName: "Rain",
-    location: "New York",
-    descriptionMd: "Build payment APIs with Python and SQL.",
     roleFunction: ["software_engineering"],
     industrySector: ["financial_technology"],
+    descriptionMd: "Build payment APIs with Python and SQL.",
+  })
+  await mfs.collection("pa-jobs").doc("job-collab").set({
+    publicVisible: true,
+    wekruitCollaborationStatus: "collaborated",
+    title: "Backend Engineer",
+    companyName: "Rain",
+    location: "New York",
     prescreenConfig: {
       jobTitle: "Backend Engineer",
       company: "Rain",
+      questions: [{ id: "q1", prompt: "Tell me about a payments system you built." }],
       level1Reveal: { salaryRange: "$150k-$220k" },
     },
   })
-  await mfs.collection("pa-jobs").doc("job-weak").set({
-    publicVisible: true,
+  // General job: matching-jobs only, no collaboration → collab: false, no CTA.
+  await mfs.collection("matching-jobs").doc("job-general").set({
     status: "active",
-    title: "Growth Marketer",
-    companyName: "Market Co",
-    descriptionMd: "Run campaigns and social channels.",
-    roleFunction: ["marketing"],
-    industrySector: ["education"],
-  })
-  await mfs.collection("pa-jobs").doc("job-hidden").set({
-    publicVisible: false,
-    status: "active",
-    title: "Hidden Python Role",
-    descriptionMd: "Python SQL",
+    title: "Data Engineer",
+    companyName: "Acme",
+    roleFunction: ["software_engineering"],
+    descriptionMd: "Pipelines in Python and SQL.",
   })
   const writesBefore = mfs.writeLog.length
 
   const result = await runCandidateListMatches(
-    { limit: 2 },
+    { limit: 10 },
     { uid: "firebase-1" },
     {
       db: asFirestore(mfs),
@@ -191,25 +214,69 @@ test("runCandidateListMatches recommends published jobs from parsed candidate ta
   )
 
   assert.equal(mfs.writeLog.length, writesBefore)
+  // Both recorded recs surface; the stale job-gone rec is dropped.
+  assert.equal(result.matches.length, 2)
+  assert.equal(result.matches.some((m) => m.jobId === "job-gone"), false)
+
+  // Collab rec ranks first (tier: collab before general) + carries the CTA flag.
+  const collab = result.matches.find((m) => m.jobId === "job-collab")!
+  const general = result.matches.find((m) => m.jobId === "job-general")!
+  assert.equal(result.matches[0]!.jobId, "job-collab")
+  assert.equal(collab.collab, true)
+  assert.equal(collab.status, "recommended")
+  assert.equal(collab.job.title, "Backend Engineer")
+  assert.equal(collab.job.href, "/j/job-collab")
+  // Salary reveal comes from the pa-jobs prescreenConfig (employer-authoritative).
+  assert.equal(collab.job.salaryRange, "$150k-$220k")
+  // Adam directive 2026-05-30: the recommended reason is the GROUNDED pitch — it cites the role at
+  // the company and reads human (never raw snake_case, never "Matches your resume skills:"). When the
+  // recorded rec carries no stored grounded reason, it gracefully falls back to a clean role@company
+  // line ("Backend Engineer at Rain — a strong fit on your saved profile"); either way it is grounded
+  // in the live job + never the weak template. (The exact tag-citation depends on a stored reason, so
+  // we assert the role@company grounding + the absence of the bad patterns, not specific tag tokens.)
+  const whyCollab = collab.whyMatched.join(" ")
+  assert.match(whyCollab, /Backend Engineer at Rain/)
+  assert.doesNotMatch(whyCollab, /Matches your resume skills:/i)
+  assert.doesNotMatch(whyCollab, /Aligned with your target role area:/i)
+  assert.doesNotMatch(whyCollab, /financial_technology/)
+
+  // General rec is NOT collab → no pre-screen CTA on the client.
+  assert.equal(general.collab, false)
+  assert.equal(general.status, "recommended")
+})
+
+test("runCandidateListMatches treats a collaborated pa-job WITHOUT prescreen questions as non-collab", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({ firebaseUid: "firebase-1", candidateId: "cand-1" })
+  await mfs.collection("pa-users").doc("cand-1").set({ tags: { skills: [{ name: "python" }] } })
+  await mfs.collection("pa-user-job-recommendations").doc("cand-1").collection("jobs").doc("job-x").set({
+    userId: "cand-1",
+    jobId: "job-x",
+    recommendationCount: 1,
+    lastRecommendedAt: "2026-05-14T18:00:00.000Z",
+  })
+  await mfs.collection("matching-jobs").doc("job-x").set({
+    status: "active",
+    title: "Engineer",
+    companyName: "Co",
+    descriptionMd: "Python.",
+  })
+  // collaborated but no prescreenConfig.questions → not pre-screenable → collab:false.
+  await mfs.collection("pa-jobs").doc("job-x").set({
+    publicVisible: true,
+    wekruitCollaborationStatus: "collaborated",
+    title: "Engineer",
+    companyName: "Co",
+  })
+
+  const result = await runCandidateListMatches(
+    { limit: 10 },
+    { uid: "firebase-1" },
+    { db: asFirestore(mfs), now: () => new Date("2026-05-14T18:30:00.000Z") }
+  )
   assert.equal(result.matches.length, 1)
-  assert.equal(result.matches[0]!.jobId, "job-fit")
-  assert.equal(result.matches[0]!.bucket, "recommended")
-  assert.equal(result.matches[0]!.status, "recommended")
-  assert.equal(result.matches[0]!.job.title, "Backend Engineer")
-  assert.equal(result.matches[0]!.job.href, "/j/job-fit")
-  assert.equal(result.matches[0]!.job.salaryRange, "$150k-$220k")
-  // Adam directive 2026-05-30: the recommended reason is now the GROUNDED rich
-  // pitch (buildRichMatchReason over the live job + candidate tags), NOT the old
-  // weak `publicRecommendationScore` template. It cites the role at the company
-  // and the humanized industry — never raw snake_case, never "Matches your
-  // resume skills:".
-  const whyFit = result.matches[0]!.whyMatched.join(" ")
-  assert.match(whyFit, /Backend Engineer at Rain/)
-  assert.match(whyFit, /software engineering|financial technology/)
-  assert.doesNotMatch(whyFit, /Matches your resume skills:/i)
-  assert.doesNotMatch(whyFit, /Aligned with your target role area:/i)
-  assert.doesNotMatch(whyFit, /financial_technology/)
-  assert.equal(result.matches.some((match) => match.jobId === "job-hidden"), false)
+  assert.equal(result.matches[0]!.jobId, "job-x")
+  assert.equal(result.matches[0]!.collab, false)
 })
 
 test("runCandidateListMatches surfaces the STORED grounded matchReason on a match card", async () => {
@@ -307,6 +374,99 @@ test("runCandidateListMatches maps pending terminal review to candidate reviewin
   assert.equal(result.matches.length, 1)
   assert.equal(result.matches[0]!.status, "review_pending")
   assert.doesNotMatch(JSON.stringify(result), /terminalActionPendingReview|ps-pass/)
+})
+
+test("runCandidateListMatches lets committed state win over stale proposed terminal and exposes approved decision", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
+    firebaseUid: "firebase-1",
+    candidateId: "cand-1",
+  })
+  await mfs.collection("pa-candidate-job-states").doc("cand-1__job-pass").set({
+    id: "cand-1__job-pass",
+    candidateId: "cand-1",
+    jobId: "job-pass",
+    state: "not_passed",
+    prescreenSessionId: "ps-pass",
+  })
+  await mfs.collection("pa-prescreen-sessions").doc("ps-pass").set({
+    sessionId: "ps-pass",
+    userId: "cand-1",
+    jobId: "job-pass",
+    terminal: "PASS",
+    terminalActionPendingReview: false,
+    review: {
+      status: "overridden",
+      finalTerminal: "FAIL",
+      candidateDecision: {
+        candidateMessageBody: "Thanks for completing the screen. This role is not the right next step.",
+        decisionReason: "The role needs direct enterprise GTM ownership, which was not clear in this screen.",
+        recommendedActions: ["Add a GTM launch example to your profile.", "Keep your WeKruit profile active for stronger matches."],
+        finalTerminal: "FAIL",
+        reviewedAt: "2026-05-20T00:00:00.000Z",
+        decisionOutboundId: "out-internal",
+      },
+    },
+  })
+  await mfs.collection("pa-jobs").doc("job-pass").set({
+    publicVisible: true,
+    prescreenConfig: { jobTitle: "GTM & Growth Marketing Manager", company: "Paradigm" },
+  })
+
+  const result = await runCandidateListMatches({}, { uid: "firebase-1" }, { db: asFirestore(mfs) })
+
+  assert.equal(result.matches.length, 1)
+  assert.equal(result.matches[0]!.status, "not_passed")
+  assert.deepEqual(result.matches[0]!.reviewDecision, {
+    candidateMessageBody: "Thanks for completing the screen. This role is not the right next step.",
+    decisionReason: "The role needs direct enterprise GTM ownership, which was not clear in this screen.",
+    recommendedActions: ["Add a GTM launch example to your profile.", "Keep your WeKruit profile active for stronger matches."],
+    finalTerminal: "FAIL",
+    reviewedAt: "2026-05-20T00:00:00.000Z",
+  })
+  assert.doesNotMatch(JSON.stringify(result), /out-internal|decisionOutboundId|terminalActionPendingReview|ps-pass/)
+})
+
+test("runCandidateListMatches never exposes candidate decision while review is pending", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
+    firebaseUid: "firebase-1",
+    candidateId: "cand-1",
+  })
+  await mfs.collection("pa-candidate-job-states").doc("cand-1__job-review").set({
+    id: "cand-1__job-review",
+    candidateId: "cand-1",
+    jobId: "job-review",
+    state: "prescreen_review_pending",
+    prescreenSessionId: "ps-review",
+  })
+  await mfs.collection("pa-prescreen-sessions").doc("ps-review").set({
+    sessionId: "ps-review",
+    userId: "cand-1",
+    jobId: "job-review",
+    terminal: "FAIL",
+    terminalActionPendingReview: true,
+    review: {
+      candidateDecision: {
+        candidateMessageBody: "This should not show yet.",
+        decisionReason: "Draft only.",
+        recommendedActions: ["Draft action"],
+        finalTerminal: "FAIL",
+        reviewedAt: "2026-05-20T00:00:00.000Z",
+      },
+    },
+  })
+  await mfs.collection("pa-jobs").doc("job-review").set({
+    publicVisible: true,
+    prescreenConfig: { jobTitle: "Frontend Engineer", company: "Review Co" },
+  })
+
+  const result = await runCandidateListMatches({}, { uid: "firebase-1" }, { db: asFirestore(mfs) })
+
+  assert.equal(result.matches.length, 1)
+  assert.equal(result.matches[0]!.status, "review_pending")
+  assert.equal(result.matches[0]!.reviewDecision, undefined)
+  assert.doesNotMatch(JSON.stringify(result), /This should not show yet|Draft action/)
 })
 
 test("runCandidateListMatches suppresses non-public jobs", async () => {

@@ -225,6 +225,18 @@ export const UserTagsSchema = z.object({
    */
   careerStage: z.enum(CAREER_STAGE_VOCAB).optional(),
   /**
+   * Explicit candidate-authored seniority RANGE `[lo, hi]` (canonical 13-token
+   * vocab). DRIVES the V16 hard-filter seniority window when present (Adam-locked
+   * 2026-05-31: "careerStageRange DRIVES matching, not display-only"). Overrides
+   * the ±1 `acceptableCareerStages(careerStage)` window — the candidate is saying
+   * "I'm open to anything from lo to hi". Written by the /me seniority editor
+   * (multi-select) and by conversation extraction ("entry to senior is fine").
+   * When ABSENT, the matcher falls back to the scalar `careerStage` window and the
+   * projector derives a display range from `careerStage` + bufferSteps. Endpoint
+   * order is not significant (`careerStageRangeWindow` normalizes it).
+   */
+  careerStageRange: z.tuple([z.enum(CAREER_STAGE_VOCAB), z.enum(CAREER_STAGE_VOCAB)]).optional(),
+  /**
    * Canonical D4 4-enum (`citizen` / `permanent_resident` / `sponsor_needed` /
    * `other`) is what new writes commit to. Legacy `gc` / `opt` / `h1b` tokens
    * remain accepted so pre-existing `pa-users.tags` rows (and the
@@ -244,19 +256,27 @@ export const UserTagsSchema = z.object({
   /** Minimum acceptable salary collected from Level 1 follow-up; read by V16 salary fit. */
   minSalary: z.number().int().nonnegative().optional(),
   /**
-   * Company-size preference. MULTI-PICK / OR (2026-05-30): a candidate may want
-   * "an early-stage startup OR big tech" → `["early_startup", "enterprise"]`.
-   * Accepts a single canonical token OR an array of them (back-compat with the
-   * older scalar writes). Vocab is the shared `COMPANY_SIZE_VOCAB` (no inline
-   * duplication). The LLM extractor emits the canonical token(s); no regex.
+   * Company-SIZE preference (headcount/maturity) collected from Level 1 follow-up.
+   * MULTI-PICK / OR (2026-05-30): a candidate may want "an early-stage startup OR
+   * big tech" → `["early_startup", "enterprise"]`. Accepts a single canonical token
+   * OR an array of them (back-compat with the older scalar writes); the projector
+   * lifts a scalar to a 1-elem array on the /me surface. Vocab is the shared
+   * `COMPANY_SIZE_VOCAB` (no inline duplication). The LLM extractor emits the
+   * canonical token(s); no regex. `open` is the "no preference" token (normalized
+   * to the `no_preference` sentinel at projection). ORTHOGONAL to `companyStage`
+   * (funding stage) — do not conflate.
    */
   companySize: z
     .union([z.enum(COMPANY_SIZE_VOCAB), z.array(z.enum(COMPANY_SIZE_VOCAB))])
     .optional(),
   /**
-   * Company-STAGE preference (funding stage) — ORTHOGONAL to companySize (headcount/maturity). Shared
-   * `COMPANY_STAGE_VOCAB`. Scalar OR array (same back-compat shape as companySize). LLM extractor emits
-   * the canonical token(s); no regex. Projected to globalTags.companyStage for the /me surface.
+   * Company-STAGE preference (funding stage: pre_seed…ipo_public) — ORTHOGONAL to
+   * `companySize` (headcount/maturity). Adam 2026-05-31: "company stage and company
+   * size are different." Shared `COMPANY_STAGE_VOCAB`. Multi-pick OR (scalar OR
+   * array — same back-compat shape as companySize). Captured no-regex (LLM picks the
+   * COMPANY_STAGE_VOCAB enum). Projected to globalTags.companyStage[] for the /me
+   * surface. Matching weight is informational only (Adam-locked weight 0) —
+   * capture+display axis.
    */
   companyStage: z
     .union([z.enum(COMPANY_STAGE_VOCAB), z.array(z.enum(COMPANY_STAGE_VOCAB))])
@@ -1108,8 +1128,10 @@ function isCompanySize(value: unknown): value is CompanySize {
 /**
  * Normalize a stated company-size preference to the canonical schema shape.
  * Accepts a single token or an OR array (2026-05-30). Off-vocab values are
- * dropped. Returns a scalar for a single value (back-compat) and an array for
- * a multi-pick OR; `undefined` when nothing valid was provided.
+ * dropped (validated vs the shared `COMPANY_SIZE_VOCAB` closed enum, no regex).
+ * Returns a scalar for a single value (back-compat) and an array for a
+ * multi-pick OR; `undefined` when nothing valid was provided. Carried so a
+ * chat-set size survives a CV re-merge.
  */
 function mapCompanySizePreference(value: unknown): UserTags["companySize"] {
   if (Array.isArray(value)) {

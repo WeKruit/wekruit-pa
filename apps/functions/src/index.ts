@@ -58,7 +58,11 @@ import {
 } from "./job-rec-copy.js"
 // Thin Claire cutover — flag-gated (paThinClaireEnabled, default OFF). Returns false for
 // everyone but the 424 canary → legacy claimAndProcessInboundEvent path stays unchanged.
-import { maybeRunThinClaire } from "./claire-agent/index.js"
+// Import the cutover seam DIRECTLY (not the claire-agent barrel) — the barrel
+// statically re-exports agent.js + tools, which pulls the @pa/agent-runtime SDK
+// into the boot graph and crashed the container at startup. cutover.js loads the
+// heavy agent/tools lazily, only behind the flag gate.
+import { maybeRunThinClaire } from "./claire-agent/cutover.js"
 export {
   MAILGUN_API_KEY,
   MAILGUN_DOMAIN,
@@ -308,7 +312,13 @@ export { paPublicLayoffPreview } from "./public-layoff-preview.js"
 // Candidate LinkedIn auth cannot use Firebase generic OIDC because LinkedIn
 // rejects token exchange without client_secret. These HTTP functions own the
 // OAuth exchange server-side and return a Firebase custom token.
-export { paLinkedinAuthStart, paLinkedinCallback } from "./linkedin-auth.js"
+export {
+  paCalcomCallback,
+  paCandidateConnectorOAuthStart,
+  paGithubCallback,
+  paLinkedinAuthStart,
+  paLinkedinCallback,
+} from "./linkedin-auth.js"
 export { paSsoLogin, paSsoBootstrap, paSsoLogout } from "./cross-domain-sso.js"
 // v2.0 S2 — candidate email-link claim callable. Authenticated candidates
 // receive only the redacted candidate self-profile projection.
@@ -877,6 +887,9 @@ async function processBrokerImessageEvent(
         jobId: triggerDecision.jobId,
         userId: triggerDecision.userId,
         toE164: payload.participant,
+        // Broker control-plane trigger (decideBrokerPrescreenTrigger already gates on
+        // self) — operator-authorized, not the candidate copy-paste threat surface.
+        allowMatchedBypass: true,
         log: (event, payload) => logger.info(`[prescreen][onPaInbound][trigger] ${event}`, payload ?? {}),
       })
       await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
@@ -2159,6 +2172,9 @@ export const paConversationRecoverySweep = onSchedule(
           jobId,
           userId,
           toE164,
+          // Recovery-agent replays inbound events that were ALREADY authorized when first
+          // received — re-gating here would wrongly refuse a legit in-flight start.
+          allowMatchedBypass: true,
           log: (event, payload) => logger.info(`[prescreen][recovery-agent] ${event}`, payload ?? {}),
         }),
       })

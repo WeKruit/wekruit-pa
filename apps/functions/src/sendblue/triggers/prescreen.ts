@@ -67,6 +67,15 @@ export interface PrescreenTriggerDeps {
      * phone-resolved real userId.
      */
      sourceRequestedUserId?: string
+    /**
+     * MATCHED-GATE bypass (2026-05-31). The trigger sets this true ONLY for an
+     * ADMIN sender (admin test-drives any user's session by design). A `self`
+     * candidate copy-paste leaves it false so the bootstrap verifies the jobId
+     * was actually matched/pushed to them — blocking a foreign jobId harvested
+     * from a /j/:jobId URL or another candidate. `public_page` first-timers carry
+     * `sourceRequestedUserId` instead (pending-invite = match evidence).
+     */
+    allowMatchedBypass?: boolean
   }): Promise<void | PrescreenRunResult>
   /** Queue a short candidate-safe notice when the token is valid but the sender phone cannot own it. */
   sendIdentityConflictNotice?(args: {
@@ -290,6 +299,9 @@ export class PrescreenTrigger implements Trigger {
         toE164: ctx.fromNumber,
         ...(initialReplyText ? { initialReplyText } : {}),
         ...(pendingMatch ? { sourceRequestedUserId: userId } : {}),
+        // admin sender drives any user's session by design → bypass the matched-gate;
+        // self/public_page do NOT (self is verified, public_page carries the invite).
+        ...(role === "admin" ? { allowMatchedBypass: true } : {}),
       })
       if (runResult && runResult.ok === false) {
         if (runResult.reason === "config_missing") {
@@ -302,6 +314,30 @@ export class PrescreenTrigger implements Trigger {
             correlationId: ctx.messageHandle,
           })
           return { kind: "handled", action: "prescreen_config_missing" }
+        }
+        if (runResult.reason === "not_matched") {
+          // MATCHED-GATE refusal (2026-05-31): the candidate sent a valid token for a
+          // jobId never matched/pushed to them (foreign jobId from a /j/ URL or another
+          // candidate). No session was created and no active screen superseded. This is a
+          // controlled refusal, NOT an error — audit + clear the idempotency stamp so a
+          // later legit start (after the job IS matched to them) isn't deduped away.
+          await this.deps.audit({
+            type: "trigger_unauthorized",
+            trigger: "prescreen",
+            reason: "job_not_matched_to_user",
+            senderUserId: resolvedUserId,
+            targetUserId: sessionUserId,
+            jobId,
+            correlationId: ctx.messageHandle,
+          })
+          if (this.deps.clearLastFiredMs) {
+            try {
+              await this.deps.clearLastFiredMs(jobId, sessionUserId, messageHandle)
+            } catch {
+              /* best-effort */
+            }
+          }
+          return { kind: "handled", action: "prescreen_not_matched" }
         }
         throw new Error(`prescreen_start_${runResult.reason ?? "failed"}`)
       }

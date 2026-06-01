@@ -37,6 +37,7 @@ import {
   listRecentExplanations,
   type ExplanationDoc,
 } from "../lib/match-explainer-api.js"
+import { AdminJobLink, AdminUserLink } from "../components/AdminEntityLink.js"
 
 function formatTs(iso: string | null): string {
   if (!iso) return "—"
@@ -192,9 +193,11 @@ export function MatchExplainerHistory() {
                     {formatTs(r.createdAt)}
                   </TableCell>
                   <TableCell className="font-mono text-xs">
-                    {r.userId.split("@")[0] ?? r.userId}
+                    <AdminUserLink userId={r.userId}>{r.userId.split("@")[0] ?? r.userId}</AdminUserLink>
                   </TableCell>
-                  <TableCell className="font-mono text-xs">{r.jobId}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    <AdminJobLink jobId={r.jobId} />
+                  </TableCell>
                   <TableCell>{r.language}</TableCell>
                   <TableCell>
                     {r.weightTableVersion !== null
@@ -229,6 +232,10 @@ export function MatchExplainerHistory() {
           eyebrow={selectedRow.language}
         >
           <div className="space-y-2 text-sm">
+            <div className="flex flex-wrap gap-3 text-xs">
+              <span>candidate <AdminUserLink userId={selectedRow.userId}>{selectedRow.userId.split("@")[0] ?? selectedRow.userId}</AdminUserLink></span>
+              <span>job <AdminJobLink jobId={selectedRow.jobId} /></span>
+            </div>
             <div>
               <span className="font-medium">Reason: </span>
               <span className="font-mono">{selectedRow.reason}</span>

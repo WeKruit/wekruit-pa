@@ -19,9 +19,21 @@ function baseEmployee(overrides: Partial<CoresignalEmployeeCollectV2> = {}): Cor
     experience: [
       {
         company_name: "IntelliPro",
+        company_id: 1818,
         position_title: "Tech Recruiter",
+        department: "People",
+        management_level: "Senior",
+        location: "San Francisco Bay Area",
+        description: "Owns technical recruiting for AI infrastructure and developer tooling teams.",
         date_from: "2022-01",
         duration_months: 24,
+        company_industry: "Staffing and Recruiting",
+        company_size_range: "1,001-5,000 employees",
+        company_website: "intelliprogroup.com",
+        company_linkedin_url: "linkedin.com/company/intellipro",
+        company_hq_city: "Santa Clara",
+        company_hq_country: "United States",
+        company_logo_url: "https://static.licdn.com/intellipro.png",
       },
     ],
     education: [],
@@ -62,6 +74,17 @@ test("normalize — happy path produces ok status + canonical url + emails + ski
   assert.equal(draft.experience[0].company, "IntelliPro")
   assert.equal(draft.experience[0].title, "Tech Recruiter")
   assert.equal(draft.experience[0].durationMonths, 24)
+  assert.equal(draft.experience[0].description, "Owns technical recruiting for AI infrastructure and developer tooling teams.")
+  assert.equal(draft.experience[0].location, "San Francisco Bay Area")
+  assert.equal(draft.experience[0].department, "People")
+  assert.equal(draft.experience[0].managementLevel, "Senior")
+  assert.equal(draft.experience[0].companyIndustry, "Staffing and Recruiting")
+  assert.equal(draft.experience[0].companySizeRange, "1,001-5,000 employees")
+  assert.equal(draft.experience[0].companyWebsite, "https://intelliprogroup.com/")
+  assert.equal(draft.experience[0].companyLinkedinUrl, "https://linkedin.com/company/intellipro")
+  assert.equal(draft.experience[0].companyHqCity, "Santa Clara")
+  assert.equal(draft.experience[0].companyHqCountry, "United States")
+  assert.equal(draft.experience[0].companyLogoUrl, "https://static.licdn.com/intellipro.png")
   // skills lowercased + deduped (sourcing appears twice, once each list)
   assert.deepEqual(draft.sourceTags.sort(), [
     "recruiting",
@@ -78,6 +101,25 @@ test("normalize — active_experience_title preferred over headline when present
     }),
   )
   assert.equal(draft.currentTitle, "Senior Software Engineer")
+})
+
+test("normalize — active_experience_description fills the current experience description", () => {
+  const draft = normalizeCoresignalCollectV2(
+    baseEmployee({
+      active_experience_title: "Tech Recruiter",
+      active_experience_description: "Leads senior engineering searches across AI infrastructure teams.",
+      experience: [
+        {
+          company_name: "IntelliPro",
+          position_title: "Tech Recruiter",
+          active_experience: 1,
+          description: null,
+        },
+      ],
+    }),
+  )
+
+  assert.equal(draft.experience[0]?.description, "Leads senior engineering searches across AI infrastructure teams.")
 })
 
 test("normalize — falls back to headline when active_experience_title missing", () => {

@@ -16,7 +16,16 @@ import {
   type CandidateListUserDoc,
   type EvaluationAttempt,
 } from "@pa/core-types"
-import { PrescreenReviewToolbar, StrictReviewBadge } from "../components/prescreen/PrescreenReviewControls.js"
+import {
+  AdminJobLink,
+  AdminPrescreenSessionLink,
+  AdminUserLink,
+} from "../components/AdminEntityLink.js"
+import {
+  PrescreenReviewToolbar,
+  StrictReviewBadge,
+  type PrescreenBulkAction,
+} from "../components/prescreen/PrescreenReviewControls.js"
 import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../components/ui.js"
 import { db } from "../lib/firebase.js"
 import {
@@ -24,8 +33,12 @@ import {
   filterAndSortPrescreenRows,
   summarizePrescreenReviewRows,
   type PrescreenReviewQuestion,
+  type StrictReviewActionFilter,
   type StrictReviewBucket,
+  type StrictReviewDraftFilter,
+  type StrictReviewQueueFilter,
   type StrictReviewSort,
+  type StrictReviewTerminalFilter,
 } from "../lib/prescreen-review-ranking.js"
 import {
   draftPrescreenReviewMessages,
@@ -58,6 +71,14 @@ type Row = {
     finalTerminal?: string
     pendingAckOutboundId?: string
     decisionOutboundId?: string
+    candidateDecision?: {
+      candidateMessageBody?: string
+      decisionReason?: string
+      recommendedActions?: string[]
+      finalTerminal?: ReviewTerminal
+      reviewedAt?: string
+      decisionOutboundId?: string
+    }
   }
   createdAt: string
   updatedAt: string
@@ -111,6 +132,8 @@ type BulkDraftItem = {
   attemptId?: string
   terminal: ReviewTerminal
   message: string
+  decisionReason: string
+  recommendedActionsText: string
   evidenceSummary?: string
   error?: string
   status?: "drafted" | "queued"
@@ -118,6 +141,7 @@ type BulkDraftItem = {
 
 function terminalTone(t: string | null | undefined): "ok" | "warn" | "info" | "muted" {
   if (t === "PASS") return "ok"
+  if (t === "PAUSE") return "info"
   if (t === null || t === undefined) return "info"
   if (t === "FAIL" || t === "HARD_STOP") return "warn"
   return "muted"
@@ -231,6 +255,41 @@ function buildLocalDraftMessage(terminal: ReviewTerminal, detail: ReviewDetail):
     : "Thanks for completing the WeKruit screen. We reviewed it, and this specific role does not look like the right next step. We will keep you in mind for roles that match your background more closely."
 }
 
+function buildLocalDecisionReason(terminal: ReviewTerminal, detail: ReviewDetail): string {
+  const summary = firstEvidenceSummary(detail)
+  if (terminal === "PASS") {
+    return summary
+      ? `Your screen showed role-relevant evidence around ${summary}.`
+      : "Your screen showed enough role-relevant evidence to move to the next step."
+  }
+  return summary
+    ? `This role needs stronger direct evidence than we saw around ${summary}.`
+    : "This screen did not show enough direct evidence for this specific role."
+}
+
+function buildLocalRecommendedActions(terminal: ReviewTerminal): string[] {
+  if (terminal === "PASS") {
+    return ["Watch for the next WeKruit message.", "Keep your profile details current."]
+  }
+  return [
+    "Keep your WeKruit profile active for stronger matches.",
+    "Add a concrete example that shows the target experience.",
+  ]
+}
+
+function parseRecommendedActions(value: string): string[] {
+  return value
+    .split(/\n+/)
+    .map((line) => line.replace(/^[-*]\s*/, "").trim())
+    .filter(Boolean)
+    .slice(0, 5)
+}
+
+function actionsText(actions: string[] | undefined, terminal: ReviewTerminal): string {
+  const source = actions && actions.length > 0 ? actions : buildLocalRecommendedActions(terminal)
+  return source.join("\n")
+}
+
 function firstEvidenceSummary(detail: ReviewDetail): string | null {
   const dim = detail.attempt?.dimensions?.find((d) => d.rationale?.trim())
   if (dim?.rationale) return dim.rationale.trim().replace(/\.$/, "").slice(0, 180)
@@ -251,8 +310,13 @@ export default function PrescreenSessionsList() {
   const [bulkOpen, setBulkOpen] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const [bucketFilter, setBucketFilter] = useState<StrictReviewBucket>("all")
+  const [queueFilter, setQueueFilter] = useState<StrictReviewQueueFilter>("pending")
+  const [terminalFilter, setTerminalFilter] = useState<StrictReviewTerminalFilter>("all")
+  const [actionFilter, setActionFilter] = useState<StrictReviewActionFilter>("all")
+  const [draftFilter, setDraftFilter] = useState<StrictReviewDraftFilter>("all")
   const [sortMode, setSortMode] = useState<StrictReviewSort>("strict_priority")
   const [search, setSearch] = useState("")
+  const [bulkAction, setBulkAction] = useState<PrescreenBulkAction>("draft")
 
   useEffect(() => {
     let cancelled = false
@@ -289,17 +353,29 @@ export default function PrescreenSessionsList() {
   }, [reloadKey])
 
   const pendingRows = useMemo(() => rows.filter((r) => r.terminalActionPendingReview === true), [rows])
-  const pendingSummary = useMemo(() => summarizePrescreenReviewRows(pendingRows), [pendingRows])
+  const reviewSummary = useMemo(() => summarizePrescreenReviewRows(rows), [rows])
   const visibleRows = useMemo(
-    () => filterAndSortPrescreenRows(pendingRows, { bucket: bucketFilter, sort: sortMode, search }),
-    [bucketFilter, pendingRows, search, sortMode],
+    () => filterAndSortPrescreenRows(rows, {
+      bucket: bucketFilter,
+      sort: sortMode,
+      search,
+      queue: queueFilter,
+      terminal: terminalFilter,
+      action: actionFilter,
+      draft: draftFilter,
+    }),
+    [actionFilter, bucketFilter, draftFilter, queueFilter, rows, search, sortMode, terminalFilter],
+  )
+  const selectableVisibleRows = useMemo(
+    () => visibleRows.filter((r) => r.terminalActionPendingReview === true),
+    [visibleRows],
   )
   const selectedPendingRows = useMemo(
     () => pendingRows.filter((r) => selected.has(r.id)),
     [pendingRows, selected],
   )
-  const allPendingSelected = visibleRows.length > 0 && visibleRows.every((r) => selected.has(r.id))
-  const somePendingSelected = !allPendingSelected && visibleRows.some((r) => selected.has(r.id))
+  const allPendingSelected = selectableVisibleRows.length > 0 && selectableVisibleRows.every((r) => selected.has(r.id))
+  const somePendingSelected = !allPendingSelected && selectableVisibleRows.some((r) => selected.has(r.id))
 
   function toggleSelected(sessionId: string) {
     setSelected((prev) => {
@@ -314,11 +390,43 @@ export default function PrescreenSessionsList() {
     setReloadKey((key) => key + 1)
   }
 
+  function selectRows(nextRows: Row[]) {
+    setSelected(new Set(nextRows.filter((row) => row.terminalActionPendingReview === true).map((row) => row.id)))
+  }
+
+  function selectVisible() {
+    selectRows(selectableVisibleRows)
+  }
+
   function selectLikelyRejects() {
-    const likelyRejectIds = pendingRows
+    selectRows(visibleRows
       .filter((row) => classifyPrescreenReviewRow(row).bucket === "batch_reject")
-      .map((row) => row.id)
-    setSelected(new Set(likelyRejectIds))
+    )
+  }
+
+  function selectHardStops() {
+    selectRows(visibleRows
+      .filter((row) => classifyPrescreenReviewRow(row).bucket === "hard_stop")
+    )
+  }
+
+  function selectCloseReview() {
+    selectRows(visibleRows
+      .filter((row) => classifyPrescreenReviewRow(row).bucket === "individual_review")
+    )
+  }
+
+  function runBulkAction() {
+    if (selectedPendingRows.length === 0) return
+    if (bulkAction === "review") {
+      setDrawerSessionId(selectedPendingRows[0]!.id)
+      return
+    }
+    setBulkOpen(true)
+  }
+
+  function clearSelected() {
+    setSelected(new Set())
   }
 
   if (loading) return <LoadingState label="Loading sessions..." />
@@ -328,34 +436,51 @@ export default function PrescreenSessionsList() {
     <div>
       <PageHeader
         title="Prescreen Review Queue"
-        description="AI proposed terminal is not a final candidate decision. Pending HITL rows require an operator-approved final message before any accept/reject outbound is queued."
+        description="Claire terminal is not a final candidate decision. PAUSE means low confidence to proceed; pending HITL rows require an operator-approved final message before any accept/reject outbound is queued."
         actions={
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ color: "#64748b", fontSize: "0.85em" }}>{selected.size} selected</span>
+            <span style={{ color: "#64748b", fontSize: "0.85em" }}>
+              {selectedPendingRows.length} pending selected
+            </span>
             <button
               type="button"
               disabled={selectedPendingRows.length === 0}
-              onClick={() => setBulkOpen(true)}
+              onClick={runBulkAction}
             >
-              Bulk reject with LLM drafts
+              Run bulk action
             </button>
             <button type="button" onClick={refresh}>Refresh</button>
           </div>
         }
       />
-      <Panel title={`${pendingRows.length} pending review(s)`} eyebrow={`${rows.length} real recent sessions`}>
-        {pendingRows.length > 0 ? (
+      <Panel title={`${visibleRows.length} visible review session(s)`} eyebrow={`${pendingRows.length} pending · ${rows.length} real recent sessions`}>
+        {rows.length > 0 ? (
           <PrescreenReviewToolbar
             bucket={bucketFilter}
+            queue={queueFilter}
+            terminal={terminalFilter}
+            action={actionFilter}
+            draft={draftFilter}
             sort={sortMode}
             search={search}
-            summary={pendingSummary}
+            bulkAction={bulkAction}
+            summary={reviewSummary}
             visibleCount={visibleRows.length}
-            selectedCount={selected.size}
+            selectedCount={selectedPendingRows.length}
             onBucketChange={setBucketFilter}
+            onQueueChange={setQueueFilter}
+            onTerminalChange={setTerminalFilter}
+            onActionChange={setActionFilter}
+            onDraftChange={setDraftFilter}
             onSortChange={setSortMode}
             onSearchChange={setSearch}
+            onSelectVisible={selectVisible}
             onSelectLikelyRejects={selectLikelyRejects}
+            onSelectHardStops={selectHardStops}
+            onSelectCloseReview={selectCloseReview}
+            onClearSelected={clearSelected}
+            onBulkActionChange={setBulkAction}
+            onRunBulkAction={runBulkAction}
           />
         ) : null}
         {rows.length === 0 && (
@@ -367,7 +492,7 @@ export default function PrescreenSessionsList() {
         )}
         {rows.length > 0 && visibleRows.length === 0 ? (
           <p style={{ opacity: 0.7, fontSize: "0.9em" }}>
-            No pending review sessions match the current filter.
+            No review sessions match the current filter.
           </p>
         ) : null}
         {visibleRows.length > 0 && (
@@ -383,14 +508,14 @@ export default function PrescreenSessionsList() {
                       if (node) node.indeterminate = somePendingSelected
                     }}
                     onChange={(e) => {
-                      setSelected(e.target.checked ? new Set(visibleRows.map((r) => r.id)) : new Set())
+                      setSelected(e.target.checked ? new Set(selectableVisibleRows.map((r) => r.id)) : new Set())
                     }}
                   />
                 </th>
                 <th style={{ textAlign: "left", padding: "0.35rem" }}>Created</th>
-                <th style={{ textAlign: "left", padding: "0.35rem" }}>AI proposed</th>
-                <th style={{ textAlign: "left", padding: "0.35rem" }}>Strict recommendation</th>
-                <th style={{ textAlign: "left", padding: "0.35rem" }}>Human decision</th>
+                <th style={{ textAlign: "left", padding: "0.35rem" }}>Claire terminal</th>
+                <th style={{ textAlign: "left", padding: "0.35rem" }}>Review recommendation</th>
+                <th style={{ textAlign: "left", padding: "0.35rem" }}>Committed final</th>
                 <th style={{ textAlign: "left", padding: "0.35rem" }}>Score</th>
                 <th style={{ textAlign: "left", padding: "0.35rem" }}>Job</th>
                 <th style={{ textAlign: "left", padding: "0.35rem" }}>User</th>
@@ -418,7 +543,7 @@ export default function PrescreenSessionsList() {
                       {r.createdAt?.slice(0, 16)}
                     </td>
                     <td style={{ padding: "0.35rem" }}>
-                      <Badge tone={terminalTone(r.terminal)}>{r.terminal ? `AI ${r.terminal}` : "IN_PROGRESS"}</Badge>
+                      <Badge tone={terminalTone(r.terminal)}>{r.terminal ? `Claire ${r.terminal}` : "IN_PROGRESS"}</Badge>
                     </td>
                     <td style={{ padding: "0.35rem" }}>
                       <div style={{ display: "grid", gap: 4 }}>
@@ -436,15 +561,17 @@ export default function PrescreenSessionsList() {
                     <td style={{ padding: "0.35rem" }}>
                       {r.score?.toFixed(2)}/{r.scoreMax?.toFixed(2)} ({(ratio * 100).toFixed(0)}%)
                     </td>
-                    <td style={{ padding: "0.35rem", fontSize: "0.85em" }}>{r.jobId}</td>
+                    <td style={{ padding: "0.35rem", fontSize: "0.85em" }}>
+                      <AdminJobLink jobId={r.jobId} />
+                    </td>
                     <td style={{ padding: "0.35rem", fontFamily: "monospace", fontSize: "0.75em" }}>
-                      {r.userId?.slice(0, 8)}...
+                      <AdminUserLink userId={r.userId}>{r.userId?.slice(0, 8)}...</AdminUserLink>
                     </td>
                     <td style={{ padding: "0.35rem" }}>
                       <button type="button" onClick={() => setDrawerSessionId(r.id)}>
                         Quick review
                       </button>{" "}
-                      <Link to={`/admin/prescreen-sessions/${r.id}`}>detail</Link>
+                      <AdminPrescreenSessionLink sessionId={r.id}>detail</AdminPrescreenSessionLink>
                     </td>
                   </tr>
                 )
@@ -493,6 +620,8 @@ function PrescreenReviewDrawer({
   const [err, setErr] = useState<string | null>(null)
   const [selectedTerminal, setSelectedTerminal] = useState<ReviewTerminal>("PASS")
   const [candidateMessageBody, setCandidateMessageBody] = useState("")
+  const [decisionReason, setDecisionReason] = useState("")
+  const [recommendedActionsText, setRecommendedActionsText] = useState("")
   const [busy, setBusy] = useState(false)
   const [draftBusy, setDraftBusy] = useState(false)
 
@@ -510,7 +639,9 @@ function PrescreenReviewDrawer({
           cleanReviewTerminal(loaded.session.terminal) ??
           "FAIL"
         setSelectedTerminal(proposed)
-        setCandidateMessageBody("")
+        setCandidateMessageBody(loaded.session.review?.candidateDecision?.candidateMessageBody ?? "")
+        setDecisionReason(loaded.session.review?.candidateDecision?.decisionReason ?? "")
+        setRecommendedActionsText(actionsText(loaded.session.review?.candidateDecision?.recommendedActions, proposed))
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
       } finally {
@@ -533,19 +664,38 @@ function PrescreenReviewDrawer({
       })
       const draft = result.drafts[0]
       if (draft?.candidateMessageBody) setCandidateMessageBody(draft.candidateMessageBody)
+      if (draft?.decisionReason) setDecisionReason(draft.decisionReason)
+      if (draft?.recommendedActions) setRecommendedActionsText(actionsText(draft.recommendedActions, selectedTerminal))
     } catch (e) {
       if (!candidateMessageBody.trim()) setCandidateMessageBody(buildLocalDraftMessage(selectedTerminal, detail))
+      if (!decisionReason.trim()) setDecisionReason(buildLocalDecisionReason(selectedTerminal, detail))
+      if (parseRecommendedActions(recommendedActionsText).length === 0) {
+        setRecommendedActionsText(actionsText(undefined, selectedTerminal))
+      }
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
       setDraftBusy(false)
     }
   }
 
+  function useEvidenceDraft() {
+    if (!detail) return
+    setCandidateMessageBody(buildLocalDraftMessage(selectedTerminal, detail))
+    setDecisionReason(buildLocalDecisionReason(selectedTerminal, detail))
+    setRecommendedActionsText(actionsText(undefined, selectedTerminal))
+  }
+
   async function approve() {
     if (!detail?.attempt?.attemptId) return
     const body = candidateMessageBody.trim()
+    const reason = decisionReason.trim()
+    const recommendedActions = parseRecommendedActions(recommendedActionsText)
     if (!body) {
       setErr("Final candidate message is required.")
+      return
+    }
+    if (!reason || recommendedActions.length === 0) {
+      setErr("Decision reason and at least one recommended action are required.")
       return
     }
     setBusy(true)
@@ -561,6 +711,8 @@ function PrescreenReviewDrawer({
           prescreenTerminal: selectedTerminal,
         },
         candidateMessageBody: body,
+        decisionReason: reason,
+        recommendedActions,
         ...(status === "overridden" ? { correctionReason: "operator_changed_prescreen_terminal" } : {}),
       })
       onReviewed()
@@ -603,20 +755,40 @@ function PrescreenReviewDrawer({
                   style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
                 />
               </label>
+              <label style={labelStyle}>
+                Candidate-visible decision reason
+                <textarea
+                  value={decisionReason}
+                  onChange={(e) => setDecisionReason(e.target.value)}
+                  rows={3}
+                  placeholder="One evidence-backed reason candidates can see."
+                  style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                />
+              </label>
+              <label style={labelStyle}>
+                Candidate-visible recommended actions
+                <textarea
+                  value={recommendedActionsText}
+                  onChange={(e) => setRecommendedActionsText(e.target.value)}
+                  rows={4}
+                  placeholder="One action per line."
+                  style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                />
+              </label>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button type="button" onClick={() => void draftWithLlm()} disabled={draftBusy}>
                   {draftBusy ? "Drafting..." : "Draft with LLM"}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setCandidateMessageBody(buildLocalDraftMessage(selectedTerminal, detail))}
+                  onClick={useEvidenceDraft}
                 >
                   Use evidence draft
                 </button>
                 <button
                   type="button"
                   onClick={() => void approve()}
-                  disabled={busy || !candidateMessageBody.trim()}
+                  disabled={busy || !candidateMessageBody.trim() || !decisionReason.trim() || parseRecommendedActions(recommendedActionsText).length === 0}
                 >
                   {busy ? "Queuing..." : "Approve and queue iMessage"}
                 </button>
@@ -626,6 +798,11 @@ function PrescreenReviewDrawer({
             <div style={{ fontSize: "0.9em", color: "#334155" }}>
               Review already committed. Final outbound:{" "}
               <code>{detail.session.review?.decisionOutboundId ?? "not recorded"}</code>
+              {detail.session.review?.candidateDecision?.decisionReason ? (
+                <div style={{ marginTop: 8 }}>
+                  <strong>Candidate decision:</strong> {detail.session.review.candidateDecision.decisionReason}
+                </div>
+              ) : null}
             </div>
           )}
         </div>
@@ -661,12 +838,15 @@ function BulkRejectDrawer({
         )
         setItems(rows.map((row) => {
           const draft = bySession.get(row.id)
+          const terminal = row.terminal === "HARD_STOP" ? "HARD_STOP" : "FAIL"
           return {
             sessionId: row.id,
             row,
             attemptId: draft?.attemptId ?? row.evaluationAttemptId ?? row.review?.evaluationAttemptId,
-            terminal: row.terminal === "HARD_STOP" ? "HARD_STOP" : "FAIL",
+            terminal,
             message: draft?.candidateMessageBody ?? "",
+            decisionReason: draft?.decisionReason ?? "",
+            recommendedActionsText: actionsText(draft?.recommendedActions, terminal),
             evidenceSummary: draft?.evidenceSummary,
             status: draft ? "drafted" : undefined,
             error: draft ? undefined : "No draft returned.",
@@ -675,14 +855,19 @@ function BulkRejectDrawer({
       } catch (e) {
         if (cancelled) return
         setErr(e instanceof Error ? e.message : String(e))
-        setItems(rows.map((row) => ({
-          sessionId: row.id,
-          row,
-          attemptId: row.evaluationAttemptId ?? row.review?.evaluationAttemptId,
-          terminal: row.terminal === "HARD_STOP" ? "HARD_STOP" : "FAIL",
-          message: "",
-          error: "LLM draft failed; open row review or paste a final message before approval.",
-        })))
+        setItems(rows.map((row) => {
+          const terminal = row.terminal === "HARD_STOP" ? "HARD_STOP" : "FAIL"
+          return {
+            sessionId: row.id,
+            row,
+            attemptId: row.evaluationAttemptId ?? row.review?.evaluationAttemptId,
+            terminal,
+            message: "",
+            decisionReason: "",
+            recommendedActionsText: actionsText(undefined, terminal),
+            error: "LLM draft failed; open row review or paste reviewed content before approval.",
+          }
+        }))
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -697,9 +882,14 @@ function BulkRejectDrawer({
   }
 
   async function approveAll() {
-    const ready = items.filter((item) => item.attemptId && item.message.trim())
+    const ready = items.filter((item) =>
+      item.attemptId &&
+      item.message.trim() &&
+      item.decisionReason.trim() &&
+      parseRecommendedActions(item.recommendedActionsText).length > 0
+    )
     if (ready.length === 0) {
-      setErr("No selected session has both an attempt id and a final message.")
+      setErr("No selected session has an attempt id plus reviewed message, reason, and actions.")
       return
     }
     setBusy(true)
@@ -715,6 +905,8 @@ function BulkRejectDrawer({
             prescreenTerminal: item.terminal,
           },
           candidateMessageBody: item.message.trim(),
+          decisionReason: item.decisionReason.trim(),
+          recommendedActions: parseRecommendedActions(item.recommendedActionsText),
           ...(item.row.terminal === item.terminal ? {} : { correctionReason: "bulk_prescreen_reject_override" }),
         })
         updateItem(item.sessionId, { status: "queued", error: undefined })
@@ -737,9 +929,13 @@ function BulkRejectDrawer({
           <div key={item.sessionId} style={cardStyle}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontFamily: "monospace", fontSize: "0.8em" }}>{item.sessionId}</div>
+                <div style={{ fontFamily: "monospace", fontSize: "0.8em" }}>
+                  <AdminPrescreenSessionLink sessionId={item.sessionId} />
+                </div>
                 <div style={{ color: "#64748b", fontSize: "0.82em" }}>
-                  {item.row.jobId} · user {item.row.userId?.slice(0, 8)}... · AI proposed {item.row.terminal ?? "IN_PROGRESS"}
+                  <AdminJobLink jobId={item.row.jobId} /> · user{" "}
+                  <AdminUserLink userId={item.row.userId}>{item.row.userId?.slice(0, 8)}...</AdminUserLink> · Claire terminal{" "}
+                  {item.row.terminal ?? "IN_PROGRESS"}
                 </div>
               </div>
               <Badge tone={item.status === "queued" ? "ok" : item.error ? "warn" : "info"}>
@@ -769,13 +965,31 @@ function BulkRejectDrawer({
                 style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
               />
             </label>
+            <label style={labelStyle}>
+              Decision reason
+              <textarea
+                value={item.decisionReason}
+                onChange={(e) => updateItem(item.sessionId, { decisionReason: e.target.value })}
+                rows={3}
+                style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+              />
+            </label>
+            <label style={labelStyle}>
+              Recommended actions
+              <textarea
+                value={item.recommendedActionsText}
+                onChange={(e) => updateItem(item.sessionId, { recommendedActionsText: e.target.value })}
+                rows={4}
+                style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+              />
+            </label>
             {item.error ? <div style={{ color: "#b91c1c", fontSize: "0.82em" }}>{item.error}</div> : null}
           </div>
         ))}
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
         <button type="button" onClick={() => void approveAll()} disabled={busy || loading}>
-          {busy ? "Queuing..." : `Approve rejects and queue ${items.filter((i) => i.message.trim()).length} iMessage(s)`}
+          {busy ? "Queuing..." : `Approve rejects and queue ${items.filter((i) => i.message.trim() && i.decisionReason.trim() && parseRecommendedActions(i.recommendedActionsText).length > 0).length} iMessage(s)`}
         </button>
         <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
       </div>
@@ -790,7 +1004,7 @@ function ReviewSummary({ detail }: { detail: ReviewDetail }) {
     <div style={cardStyle}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
         <Badge tone={terminalTone(detail.session.terminal)}>
-          AI proposed {detail.session.terminal ?? "IN_PROGRESS"}
+          Claire terminal {detail.session.terminal ?? "IN_PROGRESS"}
         </Badge>
         <StrictReviewBadge classification={classification} />
         <Badge tone={detail.session.terminalActionPendingReview ? "warn" : "muted"}>
@@ -800,8 +1014,8 @@ function ReviewSummary({ detail }: { detail: ReviewDetail }) {
           {detail.session.score?.toFixed(2)}/{detail.session.scoreMax?.toFixed(2)} ({(ratio * 100).toFixed(0)}%)
         </Badge>
       </div>
-      <DrawerKV label="Job" value={detail.session.jobId} />
-      <DrawerKV label="User" value={detail.session.userId} />
+      <DrawerKV label="Job" value={<AdminJobLink jobId={detail.session.jobId} />} />
+      <DrawerKV label="User" value={<AdminUserLink userId={detail.session.userId} />} />
       <DrawerKV label="Attempt" value={detail.attempt?.attemptId ?? "missing"} />
       <DrawerKV label="Pending ack" value={detail.session.review?.pendingAckOutboundId ?? "not recorded"} />
       <div style={{ color: "#334155", fontSize: "0.86em", marginTop: 4 }}>
@@ -840,7 +1054,7 @@ function TranscriptPreview({ turns }: { turns: PrescreenTurn[] }) {
   )
 }
 
-function DrawerKV({ label, value }: { label: string; value: string }) {
+function DrawerKV({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "90px minmax(0, 1fr)", gap: 8, fontSize: "0.85em" }}>
       <span style={{ color: "#64748b" }}>{label}</span>

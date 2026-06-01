@@ -11,10 +11,58 @@ export interface CandidateSelfProfile {
   latestResumeArtifactId?: string
   profileSummary?: string
   linkedinUrl?: string
+  linkedinOauthProfile?: {
+    connectedAt?: string
+    name?: string
+    emailMasked?: string
+    pictureUrl?: string
+  }
+  githubUrl?: string
+  githubOauthProfile?: {
+    connectedAt?: string
+    login?: string
+    name?: string
+    url?: string
+    avatarUrl?: string
+    emailMasked?: string
+  }
+  githubPublicRepos?: Array<{
+    name: string
+    fullName?: string
+    url?: string
+    description?: string
+    language?: string
+    stars?: number
+    forks?: number
+    updatedAt?: string
+  }>
+  calcomUrl?: string
+  experienceHighlights?: Array<{
+    title: string
+    company: string
+    location?: string
+    description?: string
+    startDate?: string
+    endDate?: string | null
+    durationMonths?: number
+    currentRole?: boolean
+    department?: string
+    managementLevel?: string
+    companyId?: number
+    companyIndustry?: string
+    companySizeRange?: string
+    companyWebsite?: string
+    companyLinkedinUrl?: string
+    companyHqCity?: string
+    companyHqCountry?: string
+    companyLogoUrl?: string
+    source?: string
+    sourceLabel?: string
+  }>
   handles?: Array<{ kind: string; verifiedAt?: string | null; source?: string }>
   globalTags?: {
     roleFunction?: string[]
-    skills?: string[]
+    skills?: Array<string | { name?: string; label?: string; token?: string; value?: string }>
     industrySector?: string[]
     targetLocations?: string[]
     targetJobType?: string[]

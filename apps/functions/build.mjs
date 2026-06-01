@@ -97,6 +97,7 @@ await build({
   platform: "node",
   target: "node24",
   format: "esm",
+  nodePaths: [resolve(__dirname, "node_modules")],
   banner: {
     // Provide CommonJS shims so bundled deps that use `require`/`__dirname`
     // (e.g. transitive deps of `mem0ai`) keep working in an ESM bundle.

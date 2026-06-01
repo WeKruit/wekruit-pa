@@ -33,6 +33,7 @@ export interface CoresignalExperiencesMirrorResult {
     | "skipped_no_experience"
     | "skipped_already_mirrored"
     | "skipped_no_coresignal_id"
+    | "refreshed_existing"
 }
 
 /**
@@ -52,6 +53,249 @@ function extractCoresignalEmployeeId(record: ExternalCandidateRecord): number | 
   return null
 }
 
+function isLinkedinOAuthMarker(value: unknown): boolean {
+  return typeof value === "string" && value.includes("/oauth-linked/")
+}
+
+function stripUndefined(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined))
+}
+
+function normalizeOptionalUrl(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  if (!trimmed) return undefined
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`
+  try {
+    const parsed = new URL(withProtocol)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined
+    return parsed.toString()
+  } catch {
+    return undefined
+  }
+}
+
+type ExistingParsedResumeForMirror = {
+  id?: string
+  coresignalEmployeeId?: number
+  source?: string
+  experiences?: Array<Record<string, unknown>>
+}
+
+type ResumeExperienceDescription = {
+  company: string
+  title: string
+  startDate?: string
+  endDate?: string
+  description: string
+}
+
+function cleanText(value: unknown, max = 4_000): string | undefined {
+  if (typeof value !== "string") return undefined
+  const normalized = value.replace(/\s+/g, " ").trim()
+  return normalized ? normalized.slice(0, max) : undefined
+}
+
+function normalizeForMatch(value: unknown): string {
+  return cleanText(value, 500)
+    ?.toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/\b(?:inc|incorporated|llc|ltd|corp|corporation|company|co)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim() ?? ""
+}
+
+function tokenSet(value: string): Set<string> {
+  return new Set(value.split(/\s+/).filter((token) => token.length >= 3))
+}
+
+function compactForMatch(value: string): string {
+  return value.replace(/\s+/g, "")
+}
+
+function overlapCount(a: Set<string>, b: Set<string>): number {
+  let count = 0
+  for (const token of a) {
+    if (b.has(token)) count += 1
+  }
+  return count
+}
+
+function parseMonthYear(value: unknown): { year?: number; month?: number } {
+  const text = cleanText(value, 64)?.toLowerCase()
+  if (!text) return {}
+  const yearMatch = text.match(/\b(19|20)\d{2}\b/)
+  const year = yearMatch ? Number.parseInt(yearMatch[0], 10) : undefined
+  const months = [
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+  ]
+  const monthIndex = months.findIndex((month) => text.includes(month) || text.includes(month.slice(0, 3)))
+  return { year, month: monthIndex >= 0 ? monthIndex + 1 : undefined }
+}
+
+function dateScore(
+  target: Pick<ResumeExperienceDescription, "startDate" | "endDate">,
+  candidate: Pick<ResumeExperienceDescription, "startDate" | "endDate">,
+): number {
+  const targetStart = parseMonthYear(target.startDate)
+  const candidateStart = parseMonthYear(candidate.startDate)
+  if (targetStart.year && candidateStart.year) {
+    if (targetStart.year === candidateStart.year && targetStart.month && candidateStart.month) {
+      return targetStart.month === candidateStart.month ? 2 : 1
+    }
+    if (targetStart.year === candidateStart.year) return 1
+  }
+  const targetEnd = parseMonthYear(target.endDate)
+  const candidateEnd = parseMonthYear(candidate.endDate)
+  const targetYears = [targetStart.year, targetEnd.year].filter((year): year is number => Boolean(year))
+  const candidateYears = [candidateStart.year, candidateEnd.year].filter((year): year is number => Boolean(year))
+  if (targetYears.length > 0 && candidateYears.some((year) => targetYears.includes(year))) return 1
+  return 0
+}
+
+function titlePenalty(targetTitle: string, candidateTitle: string, dates: number): number {
+  const targetTokens = tokenSet(targetTitle)
+  const candidateTokens = tokenSet(candidateTitle)
+  const targetSenior = ["senior", "staff", "principal", "manager", "director", "lead"].some((token) => targetTokens.has(token))
+  const candidateSenior = ["senior", "staff", "principal", "manager", "director", "lead"].some((token) => candidateTokens.has(token))
+  const targetIntern = targetTokens.has("intern") || targetTokens.has("internship")
+  const candidateIntern = candidateTokens.has("intern") || candidateTokens.has("internship")
+  if (dates > 0) return 0
+  if (targetSenior !== candidateSenior) return 3
+  if (targetIntern !== candidateIntern) return 2
+  return 0
+}
+
+function collectResumeDescriptions(existing: ExistingParsedResumeForMirror[]): ResumeExperienceDescription[] {
+  const out: ResumeExperienceDescription[] = []
+  for (const row of existing) {
+    if (row.source === "coresignal_collect_v2") continue
+    for (const experience of row.experiences ?? []) {
+      const company = cleanText(experience.company ?? experience.companyName, 200)
+      const title = cleanText(experience.title ?? experience.position, 200)
+      const description = cleanText(experience.description, 4_000)
+      if (!company || !title || !description) continue
+      out.push({
+        company,
+        title,
+        startDate: cleanText(experience.startDate ?? experience.start, 64),
+        endDate: cleanText(experience.endDate ?? experience.end, 64),
+        description,
+      })
+    }
+  }
+  return out
+}
+
+function bestResumeDescription(
+  target: NonNullable<ExternalCandidateRecord["experience"]>[number],
+  candidates: ResumeExperienceDescription[],
+): string | undefined {
+  const targetCompany = normalizeForMatch(target.company)
+  const targetTitle = normalizeForMatch(target.title)
+  if (!targetCompany || !targetTitle) return undefined
+  const targetCompanyTokens = tokenSet(targetCompany)
+  const targetTitleTokens = tokenSet(targetTitle)
+  let best: { score: number; description: string } | undefined
+  for (const candidate of candidates) {
+    const candidateCompany = normalizeForMatch(candidate.company)
+    const candidateTitle = normalizeForMatch(candidate.title)
+    if (!candidateCompany || !candidateTitle) continue
+    const companyEquivalent =
+      targetCompany === candidateCompany ||
+      compactForMatch(targetCompany) === compactForMatch(candidateCompany) ||
+      targetCompany.includes(candidateCompany) ||
+      candidateCompany.includes(targetCompany)
+    const companyOverlap = overlapCount(targetCompanyTokens, tokenSet(candidateCompany))
+    if (companyOverlap === 0 && !companyEquivalent) {
+      continue
+    }
+    const titleTokens = tokenSet(candidateTitle)
+    const titleOverlap = overlapCount(targetTitleTokens, titleTokens)
+    const dates = dateScore(target, candidate)
+    const companyScore = companyEquivalent ? 4 : Math.min(3, companyOverlap)
+    const titleScore =
+      targetTitle === candidateTitle || targetTitle.includes(candidateTitle) || candidateTitle.includes(targetTitle)
+        ? 3
+        : titleOverlap >= 2
+          ? 2
+          : titleOverlap
+    const score = companyScore + titleScore + dates - titlePenalty(targetTitle, candidateTitle, dates)
+    if (score < 6) continue
+    if (!best || score > best.score) {
+      best = { score, description: candidate.description }
+    }
+  }
+  return best?.description
+}
+
+function mergeResumeDescriptionsIntoRecord(
+  record: ExternalCandidateRecord,
+  existing: ExistingParsedResumeForMirror[],
+): ExternalCandidateRecord {
+  const candidates = collectResumeDescriptions(existing)
+  if (candidates.length === 0 || !record.experience?.length) return record
+  return {
+    ...record,
+    experience: record.experience.map((experience) => {
+      if (cleanText(experience.description)) return experience
+      const description = bestResumeDescription(experience, candidates)
+      return description ? { ...experience, description } : experience
+    }),
+  }
+}
+
+export function buildExperienceHighlightsFromRecord(record: ExternalCandidateRecord): Array<Record<string, unknown>> {
+  return (record.experience ?? [])
+    .filter((experience) => experience.company && experience.title)
+    .slice(0, 8)
+    .map((experience, index) => {
+      const inferredCurrent =
+        experience.currentRole === true
+          ? true
+          : experience.currentRole === false
+            ? undefined
+            : index === 0 && !experience.endDate
+              ? true
+              : undefined
+      return stripUndefined({
+        title: experience.title,
+        company: experience.company,
+        location: experience.location ?? undefined,
+        description: experience.description ?? undefined,
+        startDate: experience.startDate ?? undefined,
+        endDate: experience.endDate ?? undefined,
+        durationMonths: experience.durationMonths ?? undefined,
+        currentRole: inferredCurrent,
+        department: experience.department ?? undefined,
+        managementLevel: experience.managementLevel ?? undefined,
+        companyId: experience.companyId ?? undefined,
+        companyIndustry: experience.companyIndustry ?? undefined,
+        companySizeRange: experience.companySizeRange ?? undefined,
+        companyWebsite: normalizeOptionalUrl(experience.companyWebsite),
+        companyLinkedinUrl: normalizeOptionalUrl(experience.companyLinkedinUrl),
+        companyHqCity: experience.companyHqCity ?? undefined,
+        companyHqCountry: experience.companyHqCountry ?? undefined,
+        companyLogoUrl: normalizeOptionalUrl(experience.companyLogoUrl),
+        source: "coresignal_collect_v2",
+        sourceLabel: "LinkedIn",
+      })
+    })
+}
+
 /**
  * Translate ExternalCandidateRecord into a parsedCandidateResumes baseDoc
  * shape. Mirrors the canonical write site in
@@ -67,9 +311,22 @@ export function buildParsedResumeDocFromRecord(
   const experiences = (record.experience ?? []).map((e) => ({
     title: e.title,
     company: e.company,
+    location: e.location ?? null,
+    description: e.description ?? null,
     startDate: e.startDate ?? null,
     endDate: e.endDate ?? null,
     durationMonths: e.durationMonths ?? null,
+    currentRole: e.currentRole ?? null,
+    department: e.department ?? null,
+    managementLevel: e.managementLevel ?? null,
+    companyId: e.companyId ?? null,
+    companyIndustry: e.companyIndustry ?? null,
+    companySizeRange: e.companySizeRange ?? null,
+    companyWebsite: normalizeOptionalUrl(e.companyWebsite) ?? null,
+    companyLinkedinUrl: normalizeOptionalUrl(e.companyLinkedinUrl) ?? null,
+    companyHqCity: e.companyHqCity ?? null,
+    companyHqCountry: e.companyHqCountry ?? null,
+    companyLogoUrl: normalizeOptionalUrl(e.companyLogoUrl) ?? null,
   }))
   const education = (record.education ?? []).map((e) => ({
     school: e.school,
@@ -110,12 +367,15 @@ export function buildParsedResumeDocFromRecord(
 
 export interface MirrorDeps {
   /** Query existing parsedCandidateResumes rows for this user. */
-  findExistingForUser?: (userId: string) => Promise<Array<{ coresignalEmployeeId?: number; source?: string }>>
+  findExistingForUser?: (userId: string) => Promise<ExistingParsedResumeForMirror[]>
   /** Write the parsedCandidateResumes doc + the pa-users.coresignalEmployeeId field. */
   writeBoth?: (args: {
     parsedResumeDoc: Record<string, unknown>
     userId: string
     coresignalEmployeeId: number
+    canonicalLinkedInUrl?: string
+    experienceHighlights: Array<Record<string, unknown>>
+    existingParsedResumeDocId?: string
   }) => Promise<void>
   now?: () => string
   log?: (event: string, fields?: Record<string, unknown>) => void
@@ -145,25 +405,35 @@ export async function runCoresignalExperiencesMirror(
     return { status: "skipped_no_coresignal_id" }
   }
 
+  let existingParsedResumeDocId: string | undefined
+  let existing: ExistingParsedResumeForMirror[] = []
   if (deps.findExistingForUser) {
-    const existing = await deps.findExistingForUser(userId)
-    const dupe = existing.some(
+    existing = await deps.findExistingForUser(userId)
+    const dupe = existing.find(
       (r) =>
         r.source === "coresignal_collect_v2" &&
         r.coresignalEmployeeId === coresignalEmployeeId,
     )
     if (dupe) {
-      return { status: "skipped_already_mirrored" }
+      if (!dupe.id) {
+        return { status: "skipped_already_mirrored" }
+      }
+      existingParsedResumeDocId = dupe.id
     }
   }
 
-  const doc = buildParsedResumeDocFromRecord(record, userId, now, coresignalEmployeeId)
+  const recordWithDescriptions = mergeResumeDescriptionsIntoRecord(record, existing)
+  const doc = buildParsedResumeDocFromRecord(recordWithDescriptions, userId, now, coresignalEmployeeId)
+  const experienceHighlights = buildExperienceHighlightsFromRecord(recordWithDescriptions)
 
   if (deps.writeBoth) {
     await deps.writeBoth({
       parsedResumeDoc: doc,
       userId,
       coresignalEmployeeId,
+      canonicalLinkedInUrl: record.canonicalLinkedInUrl,
+      experienceHighlights,
+      existingParsedResumeDocId,
     })
   }
 
@@ -173,7 +443,7 @@ export async function runCoresignalExperiencesMirror(
     experienceCount: (doc.experiences as unknown[]).length,
   })
 
-  return { status: "mirrored" }
+  return { status: existingParsedResumeDocId ? "refreshed_existing" : "mirrored" }
 }
 
 // ---------------------------------------------------------------------------
@@ -186,30 +456,78 @@ export function makeFirestoreMirrorDeps(db: Firestore): Pick<MirrorDeps, "findEx
       const snap = await db
         .collection(PARSED_RESUMES_COLLECTION)
         .where("userId", "==", userId)
-        .where("source", "==", "coresignal_collect_v2")
-        .limit(10)
+        .limit(50)
         .get()
       return snap.docs.map((d) => {
         const data = d.data() as Record<string, unknown>
+        const experiences = Array.isArray(data.experiences)
+          ? data.experiences
+          : Array.isArray(data.workHistory)
+            ? data.workHistory
+            : undefined
         return {
+          id: d.id,
           coresignalEmployeeId:
             typeof data.coresignalEmployeeId === "number" ? data.coresignalEmployeeId : undefined,
           source: typeof data.source === "string" ? data.source : undefined,
+          experiences: Array.isArray(experiences)
+            ? experiences.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+            : undefined,
         }
       })
     },
-    writeBoth: async ({ parsedResumeDoc, userId, coresignalEmployeeId }) => {
+    writeBoth: async ({
+      parsedResumeDoc,
+      userId,
+      coresignalEmployeeId,
+      canonicalLinkedInUrl,
+      experienceHighlights,
+      existingParsedResumeDocId,
+    }) => {
       const batch = db.batch()
-      const newRef = db.collection(PARSED_RESUMES_COLLECTION).doc()
-      batch.set(newRef, parsedResumeDoc)
-      batch.set(
-        db.collection(PA_USERS_COLLECTION).doc(userId),
-        {
-          coresignalEmployeeId,
-          coresignalEmployeeIdUpdatedAt: new Date().toISOString(),
-        },
-        { merge: true },
-      )
+      const userRef = db.collection(PA_USERS_COLLECTION).doc(userId)
+      const selfProfileRef = db.collection("pa-candidate-self-profiles").doc(userId)
+      const [userSnap, selfProfileSnap] = await Promise.all([userRef.get(), selfProfileRef.get()])
+      const userData = (userSnap.data() ?? {}) as Record<string, unknown>
+      const existingLinkedinUrl = userData.linkedinUrl
+      const shouldWriteLinkedinUrl =
+        typeof canonicalLinkedInUrl === "string" &&
+        canonicalLinkedInUrl.trim().length > 0 &&
+        (typeof existingLinkedinUrl !== "string" ||
+          existingLinkedinUrl.trim().length === 0 ||
+          isLinkedinOAuthMarker(existingLinkedinUrl))
+      if (existingParsedResumeDocId) {
+        const existingRef = db.collection(PARSED_RESUMES_COLLECTION).doc(existingParsedResumeDocId)
+        const parsedResumePatch: Record<string, unknown> = { ...parsedResumeDoc, updatedAt: new Date().toISOString() }
+        delete parsedResumePatch.createdAt
+        batch.set(existingRef, parsedResumePatch, { merge: true })
+      } else {
+        const newRef = db.collection(PARSED_RESUMES_COLLECTION).doc()
+        batch.set(newRef, parsedResumeDoc)
+      }
+      const userPatch: Record<string, unknown> = {
+        coresignalEmployeeId,
+        coresignalEmployeeIdUpdatedAt: new Date().toISOString(),
+      }
+      if (shouldWriteLinkedinUrl) {
+        userPatch.linkedinUrl = canonicalLinkedInUrl
+      }
+      if (experienceHighlights.length > 0) {
+        userPatch.experienceHighlights = experienceHighlights
+        userPatch.experienceHighlightsUpdatedAt = new Date().toISOString()
+      }
+      batch.set(userRef, userPatch, { merge: true })
+      if (selfProfileSnap.exists && experienceHighlights.length > 0) {
+        batch.set(
+          selfProfileRef,
+          {
+            ...(shouldWriteLinkedinUrl ? { linkedinUrl: canonicalLinkedInUrl } : {}),
+            experienceHighlights,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true },
+        )
+      }
       await batch.commit()
     },
   }

@@ -157,8 +157,19 @@ export interface ReviewEvaluationAttemptInput {
   status: "approved" | "overridden" | "rejected" | "needs_more_info"
   finalOutcome?: EvaluationOutcome
   candidateMessageBody?: string
+  decisionReason?: string
+  recommendedActions?: string[]
   note?: string
   correctionReason?: string
+}
+
+export interface PrescreenCandidateDecision {
+  candidateMessageBody: string
+  decisionReason: string
+  recommendedActions: string[]
+  finalTerminal: "PASS" | "FAIL" | "HARD_STOP"
+  reviewedAt: string
+  decisionOutboundId?: string
 }
 
 export interface ReviewEvaluationAttemptResult {
@@ -170,6 +181,7 @@ export interface ReviewEvaluationAttemptResult {
   prescreenTerminalActionFired?: boolean
   prescreenOutcomeCommitted?: boolean
   candidateOutboundId?: string
+  candidateDecision?: PrescreenCandidateDecision
   externalEvaluationUpdated?: boolean
 }
 
@@ -186,6 +198,8 @@ export interface DraftPrescreenReviewMessage {
   proposedTerminal?: string
   finalTerminal: "PASS" | "FAIL" | "HARD_STOP"
   candidateMessageBody: string
+  decisionReason: string
+  recommendedActions: string[]
   evidenceSummary: string
 }
 

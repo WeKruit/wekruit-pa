@@ -358,7 +358,7 @@ export default function PublicJob() {
     let cancelled = false
     void (async () => {
       try {
-        const verified = await verifyCandidateMagicLinkSession()
+        const verified = await verifyCandidateMagicLinkSession({ registrationEntryPath: nextPath })
         if (cancelled) return
         setLoginError(null)
         if (!verified.intakeComplete && !verified.portalReady) {

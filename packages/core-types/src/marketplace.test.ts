@@ -1244,17 +1244,100 @@ test("candidate profile URL fields normalize bare LinkedIn URLs", () => {
   assert.equal(
     CandidateProfileMarketplaceFieldsSchema.parse({
       linkedinUrl: "www.linkedin.com/in/sreya-gopaladasu-b77540211",
+      githubUrl: "github.com/sreya",
+      calcomUrl: "cal.com/sreya",
     }).linkedinUrl,
     "https://www.linkedin.com/in/sreya-gopaladasu-b77540211",
   )
   assert.equal(
-    CandidateSelfProfileSchema.parse({
-      candidateId: "cand-1",
-      linkedinUrl: "linkedin.com/in/sreya-gopaladasu-b77540211",
-      createdAt: now,
-    }).linkedinUrl,
-    "https://linkedin.com/in/sreya-gopaladasu-b77540211",
+    CandidateProfileMarketplaceFieldsSchema.parse({
+      githubUrl: "github.com/sreya",
+    }).githubUrl,
+    "https://github.com/sreya",
   )
+  const selfProfile = CandidateSelfProfileSchema.parse({
+    candidateId: "cand-1",
+    linkedinUrl: "linkedin.com/in/sreya-gopaladasu-b77540211",
+    githubUrl: "github.com/sreya",
+    calcomUrl: "cal.com/sreya",
+    createdAt: now,
+  })
+  assert.equal(selfProfile.linkedinUrl, "https://linkedin.com/in/sreya-gopaladasu-b77540211")
+  assert.equal(selfProfile.githubUrl, "https://github.com/sreya")
+  assert.equal(selfProfile.calcomUrl, "https://cal.com/sreya")
+})
+
+test("candidate self profile preserves OAuth connector metadata", () => {
+  const selfProfile = CandidateSelfProfileSchema.parse({
+    candidateId: "cand-1",
+    linkedinOauthProfile: {
+      connectedAt: now,
+      name: "Sreya Gopaladasu",
+      emailMasked: "s***@example.com",
+      pictureUrl: "media.licdn.com/profile.jpg",
+    },
+    githubOauthProfile: {
+      connectedAt: now,
+      login: "sreya",
+      name: "Sreya",
+      url: "github.com/sreya",
+      avatarUrl: "avatars.githubusercontent.com/u/1",
+      emailMasked: "s***@example.com",
+    },
+    githubPublicRepos: [
+      {
+        name: "compiler",
+        fullName: "sreya/compiler",
+        url: "github.com/sreya/compiler",
+        description: "Language tooling",
+        language: "TypeScript",
+        stars: 42,
+        forks: 3,
+        updatedAt: now,
+      },
+    ],
+    createdAt: now,
+  })
+
+  assert.equal(selfProfile.linkedinOauthProfile?.pictureUrl, "https://media.licdn.com/profile.jpg")
+  assert.equal(selfProfile.githubOauthProfile?.url, "https://github.com/sreya")
+  assert.equal(selfProfile.githubPublicRepos?.[0]?.url, "https://github.com/sreya/compiler")
+  assert.equal(selfProfile.githubPublicRepos?.[0]?.stars, 42)
+})
+
+test("candidate self profile preserves enriched LinkedIn experience details", () => {
+  const selfProfile = CandidateSelfProfileSchema.parse({
+    candidateId: "cand-1",
+    experienceHighlights: [
+      {
+        title: "Senior Software Engineer",
+        company: "Tesla",
+        location: "Fremont, California, United States",
+        description: "Built vehicle telemetry tools and improved release diagnostics.",
+        department: "Engineering",
+        managementLevel: "Individual Contributor",
+        durationMonths: 24,
+        companyId: 12345,
+        companyIndustry: "Automotive",
+        companySizeRange: "10,001+ employees",
+        companyWebsite: "tesla.com",
+        companyLinkedinUrl: "linkedin.com/company/tesla-motors",
+        companyHqCity: "Austin",
+        companyHqCountry: "United States",
+        companyLogoUrl: "https://static.licdn.com/tesla.png",
+        source: "coresignal_collect_v2",
+        sourceLabel: "LinkedIn",
+      },
+    ],
+    createdAt: now,
+  })
+
+  const experience = selfProfile.experienceHighlights?.[0]
+  assert.equal(experience?.description, "Built vehicle telemetry tools and improved release diagnostics.")
+  assert.equal(experience?.companyWebsite, "https://tesla.com")
+  assert.equal(experience?.companyLinkedinUrl, "https://linkedin.com/company/tesla-motors")
+  assert.equal(experience?.companyLogoUrl, "https://static.licdn.com/tesla.png")
+  assert.equal(experience?.companyIndustry, "Automotive")
 })
 
 test("bulk resume schemas parse S3 batch and item contracts", () => {

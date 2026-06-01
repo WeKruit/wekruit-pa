@@ -66,6 +66,31 @@ function deriveCareerStageRange(
   return [vocab[idx]!, vocab[upperIdx]!]
 }
 
+// companySize on the matching store (UserTags) carries the token `open`; the candidate-facing
+// CandidateGlobalTagsSchema does NOT accept `open` — it uses the `no_preference` sentinel. Normalize
+// at projection so a "no preference" answer survives the /me read-schema parse (Adam 2026-05-31:
+// normalize to the existing sentinel rather than adding a vocab token). The matcher already treats
+// the sentinel / empty as "no constraint", so /me and matching agree.
+function normalizeCompanySizeForGlobalTags(value: string): string {
+  return value === "open" ? "no_preference" : value
+}
+
+// Defensive: older docs / extractor passes can carry legacy visa tokens (gc/opt/h1b/cpt) while the
+// /me VisaSchema is the strict 4-token D4 enum. Fold legacy → canonical at projection so a stale doc
+// never fails the candidate-portal read. Anything still off-vocab after folding is dropped (not
+// projected) rather than poisoning the parse.
+const VISA_LEGACY_TO_CANONICAL: Record<string, string> = {
+  gc: "permanent_resident",
+  green_card: "permanent_resident",
+  greencard: "permanent_resident",
+  opt: "sponsor_needed",
+  cpt: "sponsor_needed",
+  h1b: "sponsor_needed",
+  h1b1: "sponsor_needed",
+  f1: "sponsor_needed",
+}
+const CANONICAL_VISA = new Set(["citizen", "permanent_resident", "sponsor_needed", "other"])
+
 /**
  * Project the matching tag store (`pa-users.tags`, UserTags) onto the candidate-facing
  * `pa-users.globalTags` (CandidateGlobalTags) surface that the /me portal reads.
@@ -89,27 +114,49 @@ export function projectTagsToGlobalTags(tags: Record<string, unknown>): Record<s
   if (Array.isArray(tags.skills)) g.skills = tags.skills
   if (typeof tags.careerStage === "string") {
     g.careerStage = tags.careerStage
-    // Seniority RANGE — anchor + how far up the candidate is open (preferenceHardness.careerStage.bufferSteps)
-    // → [anchor, anchor+buffer] in CAREER_STAGE_VOCAB order. Lets /me render "junior–senior", not "junior".
-    const range = deriveCareerStageRange(tags.careerStage, tags.preferenceHardness)
-    if (range) g.careerStageRange = range
   }
+  // Seniority RANGE. An EXPLICIT candidate-authored range (`tags.careerStageRange`, from the /me editor
+  // or conversation) DRIVES /me + matching and wins over the derived one (Adam-locked 2026-05-31). When
+  // absent, derive a display range from the scalar anchor + how far up the candidate is open
+  // (preferenceHardness.careerStage.bufferSteps) so /me still renders "junior–senior", not "junior".
+  const explicitRange =
+    Array.isArray(tags.careerStageRange) &&
+    tags.careerStageRange.length === 2 &&
+    typeof tags.careerStageRange[0] === "string" &&
+    typeof tags.careerStageRange[1] === "string"
+      ? ([tags.careerStageRange[0], tags.careerStageRange[1]] as [string, string])
+      : undefined
+  const range =
+    explicitRange ??
+    (typeof tags.careerStage === "string"
+      ? deriveCareerStageRange(tags.careerStage, tags.preferenceHardness)
+      : undefined)
+  if (range) g.careerStageRange = range
   if (Array.isArray(tags.yoeRange)) g.yoeRange = tags.yoeRange
   const ind = arr("industrySector")
   if (ind) g.industrySector = ind
   const loc = arr("targetLocations")
   if (loc) g.targetLocations = loc
-  if (typeof tags.visaStatus === "string") g.visaStatus = tags.visaStatus
+  if (typeof tags.visaStatus === "string" && tags.visaStatus) {
+    const folded = VISA_LEGACY_TO_CANONICAL[tags.visaStatus] ?? tags.visaStatus
+    if (CANONICAL_VISA.has(folded)) g.visaStatus = folded
+  }
   const jt = arr("targetJobType")
   if (jt) g.targetJobType = jt
   const rt = arr("relevantTags")
   if (rt) g.relevantTags = rt
   if (typeof tags.minSalary === "number" && Number.isFinite(tags.minSalary)) g.minSalaryUsd = tags.minSalary
   // companySize is scalar-OR-array on tags (UserTags union) — lift a scalar to a 1-elem array so a
-  // single-pick ("enterprise") still reaches globalTags (was dropped: arr() only handled arrays).
+  // single-pick ("enterprise") still reaches globalTags (was dropped: arr() only handled arrays), and
+  // normalize `open`→`no_preference` (read-schema sentinel).
   const csRaw = tags.companySize
-  if (Array.isArray(csRaw) && csRaw.length) g.companySizePreference = csRaw
-  else if (typeof csRaw === "string" && csRaw) g.companySizePreference = [csRaw]
+  if (Array.isArray(csRaw) && csRaw.length) {
+    g.companySizePreference = csRaw
+      .filter((v): v is string => typeof v === "string" && !!v)
+      .map(normalizeCompanySizeForGlobalTags)
+  } else if (typeof csRaw === "string" && csRaw) {
+    g.companySizePreference = [normalizeCompanySizeForGlobalTags(csRaw)]
+  }
   // companyStage — funding-stage preference, orthogonal to companySize. Scalar OR array on tags; always
   // emit as an array on globalTags (the /me schema + UI treat it multi-pick).
   const stage = tags.companyStage

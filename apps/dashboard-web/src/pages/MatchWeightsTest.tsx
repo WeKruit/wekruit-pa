@@ -15,6 +15,7 @@ import {
   PageHeader,
   Panel,
 } from "../components/ui.js"
+import { AdminJobLink } from "../components/AdminEntityLink.js"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -274,7 +275,9 @@ export function MatchWeightsTest() {
               {ranked.map((r, i) => (
                 <TableRow key={r.jobId}>
                   <TableCell className="font-mono text-xs">{i + 1}</TableCell>
-                  <TableCell className="font-mono">{r.jobId}</TableCell>
+                  <TableCell className="font-mono">
+                    <AdminJobLink jobId={r.jobId} />
+                  </TableCell>
                   <TableCell className="font-mono">
                     ×{r.boostMult.toFixed(2)}
                   </TableCell>

@@ -14,6 +14,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { collection, doc, getDoc, getDocs, limit, query, setDoc } from "firebase/firestore"
+import { AdminJobLink } from "../components/AdminEntityLink.js"
 import {
   ErrorState,
   LoadingState,
@@ -574,8 +575,8 @@ export default function JobPrescreen() {
             Create new job
           </Link>
           {activeJobId && (
-            <Link
-              to={`/admin/jobs/${encodeURIComponent(activeJobId)}`}
+            <AdminJobLink
+              jobId={activeJobId}
               style={{
                 display: "block",
                 width: "100%",
@@ -590,7 +591,7 @@ export default function JobPrescreen() {
               }}
             >
               Open job workspace
-            </Link>
+            </AdminJobLink>
           )}
           <ul style={{ listStyle: "none", padding: 0, margin: 0, maxHeight: "70vh", overflow: "auto" }}>
             {jobs.map((j) => (
@@ -768,12 +769,9 @@ export default function JobPrescreen() {
                   </span>
                 )}
                 {activeJobId && (
-                  <Link
-                    to={`/admin/jobs/${encodeURIComponent(activeJobId)}`}
-                    style={{ fontSize: "0.85em", textDecoration: "underline" }}
-                  >
+                  <AdminJobLink jobId={activeJobId} style={{ fontSize: "0.85em", textDecoration: "underline" }}>
                     Publish in job workspace ↗
-                  </Link>
+                  </AdminJobLink>
                 )}
                 <div style={{ marginLeft: "auto", fontSize: "0.8em", opacity: 0.65, fontFamily: "monospace" }}>
                   trigger: <code>WeKruit_{activeJobId}_&lt;userId&gt;_Job</code>

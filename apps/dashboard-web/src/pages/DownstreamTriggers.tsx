@@ -6,6 +6,7 @@
  * fire-history drawer per trigger (last 50 events from pa-trigger-fires).
  */
 import { useEffect, useMemo, useState } from "react"
+import { AdminUserLink } from "../components/AdminEntityLink.js"
 import {
   DataTable,
   EmptyState,
@@ -243,7 +244,9 @@ function FireDrawer({ triggerId }: { triggerId: string }) {
           <span>
             <StatusBadge value={r.httpStatus !== null ? String(r.httpStatus) : "err"} />
           </span>
-          <span style={{ fontFamily: "monospace" }}>{r.userId}</span>
+          <span style={{ fontFamily: "monospace" }}>
+            <AdminUserLink userId={r.userId} />
+          </span>
           <span style={{ color: r.errorMsg ? "#dc2626" : "#64748b" }}>
             {r.errorMsg ?? "ok"}
           </span>

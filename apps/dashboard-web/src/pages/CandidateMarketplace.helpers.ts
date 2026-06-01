@@ -9,6 +9,7 @@ export const S1_MARKETPLACE_COLLECTIONS = {
   employerVisibleProfiles: "pa-employer-visible-profiles",
   feedbackEvents: "pa-feedback-events",
   correctionEvents: "pa-correction-events",
+  candidateSourceLinks: "pa-candidate-source-links",
 } as const
 
 export const S2_IDENTITY_COLLECTIONS = {
@@ -28,6 +29,7 @@ export type MarketplaceTableKey =
   | "employerSnapshots"
   | "identityEvents"
   | "identityConflicts"
+  | "sourceLinks"
   | "feedback"
   | "corrections"
 
@@ -94,6 +96,12 @@ export const MARKETPLACE_TABLES: {
     timeFields: ["updatedAt", "createdAt"],
   },
   {
+    key: "sourceLinks",
+    title: "Source links",
+    collection: S1_MARKETPLACE_COLLECTIONS.candidateSourceLinks,
+    timeFields: ["createdAt"],
+  },
+  {
     key: "feedback",
     title: "Feedback events",
     collection: S1_MARKETPLACE_COLLECTIONS.feedbackEvents,
@@ -118,6 +126,7 @@ export function emptyMarketplaceRows(): MarketplaceRowsByKey {
     employerSnapshots: [],
     identityEvents: [],
     identityConflicts: [],
+    sourceLinks: [],
     feedback: [],
     corrections: [],
   }
@@ -175,6 +184,7 @@ export function summarizeMarketplace(rows: MarketplaceRowsByKey): {
   authMappings: number
   identityEvents: number
   openIdentityConflicts: number
+  sourceLinks: number
 } {
   const jobStates = rows.jobStates
   return {
@@ -192,10 +202,74 @@ export function summarizeMarketplace(rows: MarketplaceRowsByKey): {
     authMappings: rows.authMappings.length,
     identityEvents: rows.identityEvents.length,
     openIdentityConflicts: rows.identityConflicts.filter((row) => !isResolvedIdentityConflict(row)).length,
+    sourceLinks: rows.sourceLinks.length,
   }
+}
+
+export function marketplaceExternalHref(value: unknown): string | undefined {
+  const raw = firstMarketplaceText(value)
+  if (!raw) return undefined
+  if (/^https?:\/\//i.test(raw)) return raw
+  if (/^gs:\/\//i.test(raw)) return marketplaceStorageHref(raw)
+  if (/^(?:www\.|linkedin\.com\/|github\.com\/|x\.com\/|twitter\.com\/)/i.test(raw)) {
+    return `https://${raw}`
+  }
+  return undefined
+}
+
+export function marketplaceResumeArtifactFor(
+  rows: readonly MarketplaceRow[],
+  preferredArtifactId?: string
+): MarketplaceRow | undefined {
+  const preferred = preferredArtifactId?.trim()
+  if (preferred) {
+    const match = rows.find((row) =>
+      [row.id, row.resumeId, row.parsedCandidateResumeId].some((value) => value === preferred)
+    )
+    if (match) return match
+  }
+  return rows[0]
+}
+
+export function marketplaceResumeOriginalSource(
+  artifact?: MarketplaceRow | null,
+  parsedResume?: MarketplaceRow | null
+): { raw?: string; href?: string } {
+  const raw = firstMarketplaceText(
+    artifact?.storageUri,
+    artifact?.mediaUrl,
+    artifact?.resumeUrl,
+    artifact?.sourceUrl,
+    artifact?.fileUrl,
+    parsedResume?.mediaUrl,
+    parsedResume?.resumeUrl,
+    parsedResume?.sourceUrl,
+    parsedResume?.fileUrl
+  )
+  return { raw, href: marketplaceExternalHref(raw) }
 }
 
 export function isResolvedIdentityConflict(row: MarketplaceRow): boolean {
   const status = String(row.status ?? row.state ?? "").toLowerCase()
   return Boolean(row.resolvedAt) || ["resolved", "closed", "dismissed"].includes(status)
+}
+
+function firstMarketplaceText(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== "string") continue
+    const trimmed = value.trim()
+    if (trimmed) return trimmed
+  }
+  return undefined
+}
+
+function marketplaceStorageHref(value: string): string | undefined {
+  const match = /^gs:\/\/([^/]+)\/(.+)$/i.exec(value.trim())
+  if (!match) return undefined
+  const bucket = encodeURIComponent(match[1]!)
+  const objectPath = match[2]!
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/")
+  return `https://storage.cloud.google.com/${bucket}/${objectPath}`
 }

@@ -1,6 +1,6 @@
 import { collection, getDocs, limit, orderBy, query } from "firebase/firestore"
 import { useEffect, useMemo, useState } from "react"
-import { Link } from "react-router-dom"
+import { AdminUserLink } from "../components/AdminEntityLink.js"
 import {
   DataTable,
   EmptyState,
@@ -102,9 +102,7 @@ const columns: DataTableColumn<IdentityConflictRow>[] = [
     header: "Primary",
     render: (row) =>
       row.primaryCandidateId ?? row.candidateId ? (
-        <Link to={`/admin/candidates/${encodeURIComponent(row.primaryCandidateId ?? row.candidateId ?? "")}/profile`}>
-          {row.primaryCandidateId ?? row.candidateId}
-        </Link>
+        <AdminUserLink userId={row.primaryCandidateId ?? row.candidateId ?? ""} />
       ) : (
         "-"
       ),
@@ -114,7 +112,7 @@ const columns: DataTableColumn<IdentityConflictRow>[] = [
     header: "Competing",
     render: (row) =>
       row.competingCandidateId ? (
-        <Link to={`/admin/candidates/${encodeURIComponent(row.competingCandidateId)}/profile`}>{row.competingCandidateId}</Link>
+        <AdminUserLink userId={row.competingCandidateId} />
       ) : (
         "-"
       ),

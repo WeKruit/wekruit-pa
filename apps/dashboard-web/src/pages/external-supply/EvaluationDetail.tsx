@@ -16,6 +16,7 @@ import {
   type CandidateEvaluationRun,
   type EvaluationTier,
 } from "@pa/core-types"
+import { AdminJobLink, AdminUserLink } from "../../components/AdminEntityLink.js"
 import { EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "../../components/ui.js"
 import { EvaluationTierBadge } from "../../components/external-supply/EvaluationTierBadge.js"
 import {
@@ -169,7 +170,8 @@ export function EvaluationDetail() {
             : ""
         }
         actions={
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            {run?.jobId ? <AdminJobLink jobId={run.jobId}>Open job</AdminJobLink> : null}
             <Link to={`/admin/external-supply/evaluations/${runId}/agent-ranking`}>
               <button type="button" style={primaryBtnStyle}>
                 Run agent ranking
@@ -260,7 +262,7 @@ export function EvaluationDetail() {
                     />
                   </td>
                   <td style={{ ...tdStyle, fontFamily: "monospace", fontSize: "0.8em" }}>
-                    {e.candidateId.slice(0, 8)}…
+                    <AdminUserLink userId={e.candidateId}>{e.candidateId.slice(0, 8)}…</AdminUserLink>
                   </td>
                   <td style={tdStyle}>
                     <EvaluationTierBadge tier={e.proposedTier} />

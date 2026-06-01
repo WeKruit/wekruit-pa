@@ -15,5 +15,17 @@ if (getApps().length === 0) {
 export {
   paCollabJobsList,
   paCollabJobsListSchema,
+  paRecruiterAccess,
+  paRecruiterInviteCodeCreate,
+  paRecruiterMe,
+  paRecruiterPreferencesUpdate,
+  paRecruiterRoleReleasedNotify,
+  paRecruiterRoleFeedbackList,
+  paRecruiterRoleFeedbackSave,
+  paRecruiterRoleQuestionCreate,
+  paRecruiterRoleQuestionsList,
+  paRecruiterSourcedCandidateSave,
+  paRecruiterSourcedCandidatesList,
   paRecruiterSubmission,
+  paRecruiterSubmissionsList,
 } from "./recruiter-board.js"

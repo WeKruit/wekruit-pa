@@ -39,6 +39,7 @@ import type { UserTags } from "@pa/pa-orchestrator"
 import {
   acceptableCareerStages,
   earlyCareerRelaxWindow,
+  careerStageRangeWindow,
   type CareerStage,
   CAREER_STAGE_VOCAB,
   CAREER_STAGE_INDEX,
@@ -122,6 +123,18 @@ const MATCH_LEAN_FIELDS = [
   "sponsorship", "jobType", "seniorityLevel",
   "requiredSkills", "industry", "industryKey", "industryEnum", "industrySector", "relevantTags",
 ] as const
+
+/**
+ * Push threshold for WeKruit-collab jobs (Adam 2026-05-29: "only push on
+ * threshold meets"). A collab row must clear the hard filters AND score at least
+ * this much to be returned — so a collab job that passes the fit gates but has
+ * ~zero skill/industry overlap is NOT pushed. Calibrated against prod 2026-05-29
+ * (no llm/emb cache for a fresh candidate → scoreV16Job.total runs ~0–0.10):
+ * genuine collab matches scored 0.075–0.100 and the general push bar was ~0.065,
+ * so 0.03 keeps real role+some-overlap matches while dropping zero-overlap ones.
+ * Scraped jobs are unaffected (curated by top-N + dedup).
+ */
+const COLLAB_PUSH_SCORE_FLOOR = 0.03
 
 /**
  * D10 freshness window: drop jobs whose `firstSeenAt` is more than this old.
@@ -263,6 +276,38 @@ function widenCareerStageWindow(stage: CareerStage, bufferSteps: number): Career
     if (Math.abs(CAREER_STAGE_INDEX[s] - userIdx) <= 1 + extra) widened.add(s)
   }
   return [...widened]
+}
+
+/**
+ * Resolve a candidate-authored seniority range `[lo, hi]` (canonical or
+ * normalizable tokens) to its two `CareerStage` endpoints, or `null` when the
+ * tuple is missing / either endpoint is off-vocab. Endpoint order is preserved
+ * (the window helper normalizes it).
+ */
+function resolveCareerStageRange(value: unknown): [CareerStage, CareerStage] | null {
+  if (!Array.isArray(value) || value.length !== 2) return null
+  const lo = normalizeCareerStageToken(value[0])
+  const hi = normalizeCareerStageToken(value[1])
+  return lo && hi ? [lo, hi] : null
+}
+
+/**
+ * SOFT-mode widening of an explicit careerStage RANGE — extend the inclusive
+ * ordinal band by `bufferSteps` extra tiers on each side, mirroring
+ * `widenCareerStageWindow` for the scalar case. `bufferSteps=0` → exact range.
+ */
+function widenCareerStageRangeWindow(
+  lo: CareerStage,
+  hi: CareerStage,
+  bufferSteps: number,
+): CareerStage[] {
+  const extra = Math.max(0, Math.floor(bufferSteps))
+  const loIdx = Math.min(CAREER_STAGE_INDEX[lo], CAREER_STAGE_INDEX[hi]) - extra
+  const hiIdx = Math.max(CAREER_STAGE_INDEX[lo], CAREER_STAGE_INDEX[hi]) + extra
+  return CAREER_STAGE_VOCAB.filter((s) => {
+    const idx = CAREER_STAGE_INDEX[s]
+    return idx >= loIdx && idx <= hiIdx
+  })
 }
 
 function workHistoryTitleSignals(summary: unknown): string[] {
@@ -483,22 +528,43 @@ function inferCandidateCareerStage(
 }
 
 /**
- * Live-bug fix (2026-05-29): a candidate's RÉSUMÉ saying "Software Engineer
- * Intern" must NOT set `targetJobType=['internship']`. Target job type is an
- * INTENT field (what you want next), not a HISTORY field (what you did). The
- * candidate who interned last summer is overwhelmingly targeting full-time
- * roles. Inferring `internship` from a résumé title (or a careerStage that was
- * itself title-inferred) drops every full-time job at the jobType hard gate →
- * recCount=0. This mirrors the merger-side Rule 1 fix so neither layer
- * re-injects a résumé-derived internship target.
+ * Live-bug fix (2026-05-29 → 106f199d): a candidate's RÉSUMÉ saying "Software
+ * Engineer Intern" must NEVER lock `targetJobType=['internship']` (internship-
+ * only), which hard-drops the entire full-time pool at the jobType gate →
+ * recCount=0. Target job type is an INTENT field (what you want next), not a
+ * HISTORY field (what you did). Internship is therefore gated on the candidate's
+ * ACTUAL `careerStage`, never on a résumé title alone — and even a true
+ * intern/student gets a WIDENED set that includes `new_graduate` + `full_time`
+ * so the gate never zeroes their recall and new-grads still see entry full-time
+ * roles. This mirrors the merger-side Rule 1 fix so neither layer re-injects a
+ * résumé-derived internship-only target.
  *
- * The narrow safe inference that survives: an `entry_level` candidate gets the
- * broad early-career target `['full_time', 'new_graduate']` (no `internship`,
- * which would hard-drop full-time inventory). Everything else → `undefined`
- * (no jobType constraint at all, which the hard gate no-ops on).
+ *   - careerStage intern/student → ['internship','new_graduate','full_time']
+ *   - title says new grad/graduate → ['new_graduate','full_time']
+ *   - careerStage entry_level     → ['full_time','new_graduate']
+ *   - junior and above            → undefined (no jobType constraint; gate no-ops)
  */
-function inferTargetJobTypeFromProfile(_tags: UserTags, careerStage: CareerStage | undefined): UserTags["targetJobType"] {
+function inferTargetJobTypeFromProfile(tags: UserTags, careerStage: CareerStage | undefined): UserTags["targetJobType"] {
+  const title = [
+    typeof tags.recentRoleTitle === "string" ? tags.recentRoleTitle : undefined,
+    firstWorkHistoryTitle(tags.workHistorySummary),
+  ]
+    .filter((part): part is string => Boolean(part))
+    .join(" ")
+    .toLowerCase()
+  // Gate internship on the candidate's ACTUAL careerStage, never on a résumé
+  // title alone — a past/current "Intern" title for someone already classified
+  // junior+ (e.g. "Software Engineer Intern → junior") must NOT lock them to
+  // internship-only, which hard-drops the entire full-time pool (the 2026-05-29
+  // recall-zero bug). Even true students stay open to new-grad/full-time so the
+  // jobType gate never zeroes a student's recall.
+  if (careerStage === "intern" || careerStage === "student") {
+    return ["internship", "new_graduate", "full_time"]
+  }
+  if (/\b(new\s+grad|graduate)\b/.test(title)) return ["new_graduate", "full_time"]
   if (careerStage === "entry_level") return ["full_time", "new_graduate"]
+  // junior and above: leave targetJobType unset → the jobType hard gate bypasses
+  // (fires only when a target set exists), so it can't over-filter.
   return undefined
 }
 
@@ -1072,7 +1138,18 @@ function companySizeList(tags: UserTags): string[] {
     .filter((s) => s.length > 0 && !COMPANY_SIZE_NO_CONSTRAINT.has(s))
 }
 
+/** companySize is scalar-OR-array (multi-pick OR, 2026-05-31). Normalize to a token list. */
+function companySizeTokens(size: UserTags["companySize"]): string[] {
+  if (typeof size === "string") return [size]
+  if (Array.isArray(size)) return size.filter((s) => typeof s === "string" && !!s)
+  return []
+}
+
 function bandForSize(size: string, idx: (s: CompanyStage) => number): { min: number; max: number } | null {
+  return bandForCompanySize(size, idx)
+}
+
+function bandForCompanySize(size: string, idx: (s: CompanyStage) => number): { min: number; max: number } | null {
   switch (size) {
     case "seed":
       return { min: idx("pre_seed"), max: idx("seed") }
@@ -1088,12 +1165,14 @@ function bandForSize(size: string, idx: (s: CompanyStage) => number): { min: num
       return null
   }
 }
-
 /**
  * §3.3 — the user's company-size preference as a SET of ordinal bands (OR logic). A candidate who
  * said "small team or big tech" has two disjoint bands; a job's stage matches if it falls in ANY of
  * them (never a single spanning band, which would wrongly include the gap). Empty → no preference
  * (companyStageFit = 0.5 neutral, never a drop). Falls back to the boolean startup/bigtech pref.
+ *
+ * Used by `computeCompanyStageFit` (best-fit over disjoint bands). The single-band
+ * `userCompanyStageBand` below is the union variant exported for the band-debug API.
  */
 function userCompanyStageBands(tags: UserTags): Array<{ min: number; max: number }> {
   const idx = (s: CompanyStage): number => COMPANY_STAGE_ORDINAL.indexOf(s)
@@ -1104,6 +1183,31 @@ function userCompanyStageBands(tags: UserTags): Array<{ min: number; max: number
   if (tags.prefersStartup === "startup") return [{ min: idx("pre_seed"), max: idx("series_b") }]
   if (tags.prefersStartup === "bigtech") return [{ min: idx("ipo_public"), max: idx("private_mature") }]
   return []
+}
+
+/**
+ * Single UNION band over the user's company-size tokens (multi-pick OR collapsed to one
+ * spanning [min,max]). `open` anywhere → null (explicit "no size preference", neutral fit).
+ * Falls back to the boolean startup/bigtech preference. Exported for band-debug / soft scoring.
+ */
+export function userCompanyStageBand(tags: UserTags): { min: number; max: number } | null {
+  const idx = (s: CompanyStage): number => COMPANY_STAGE_ORDINAL.indexOf(s)
+  const tokens = companySizeTokens(tags.companySize)
+  // `open` anywhere = explicit "no size preference" → no band (neutral 0.5 fit, never a drop).
+  if (tokens.includes("open")) return null
+  // Multi-pick OR: union the per-token bands so a candidate open to e.g. seed+scale_up scores
+  // 1.0 across both sub-bands (soft axis; never a hard drop here).
+  let band: { min: number; max: number } | null = null
+  for (const t of tokens) {
+    const b = bandForCompanySize(t, idx)
+    if (!b) continue
+    band = band ? { min: Math.min(band.min, b.min), max: Math.max(band.max, b.max) } : b
+  }
+  if (band) return band
+  // Fall back to the boolean startup/bigtech preference.
+  if (tags.prefersStartup === "startup") return { min: idx("pre_seed"), max: idx("series_b") }
+  if (tags.prefersStartup === "bigtech") return { min: idx("ipo_public"), max: idx("private_mature") }
+  return null
 }
 
 /**
@@ -1195,10 +1299,17 @@ function jobMissesSoftJobType(tags: UserTags, job: MatchingJob): boolean {
 function jobMissesSoftCareerStage(tags: UserTags, job: MatchingJob): boolean {
   const h = resolveHardness(tags, "careerStage")
   if (h.hardness !== "soft") return false
-  const stage = tags.careerStage
-  if (typeof stage !== "string" || !(CAREER_STAGE_VOCAB as readonly string[]).includes(stage)) return false
   const jobStage = normalizeCareerStageToken(job.seniorityLevel)
   if (!jobStage) return false
+  // careerStageRange DRIVES the soft demerit too — an explicit range defines the
+  // (buffer-widened) acceptable band; demerit only when the job is OUTSIDE it.
+  const range = resolveCareerStageRange((tags as { careerStageRange?: unknown }).careerStageRange)
+  if (range) {
+    const widened = new Set(widenCareerStageRangeWindow(range[0], range[1], h.bufferSteps))
+    return !widened.has(jobStage)
+  }
+  const stage = tags.careerStage
+  if (typeof stage !== "string" || !(CAREER_STAGE_VOCAB as readonly string[]).includes(stage)) return false
   // Demerit only when the job is OUTSIDE the widened window (within-buffer →
   // no demerit; the soft axis "widens window by bufferSteps").
   const widened = new Set(widenCareerStageWindow(stage as CareerStage, h.bufferSteps))
@@ -1374,13 +1485,25 @@ export function applyV16HardFilters(
   const careerStage = userTags.careerStage
   const careerStageValid =
     typeof careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(careerStage)
+  // careerStageRange DRIVES matching (Adam-locked 2026-05-31): an EXPLICIT
+  // candidate-authored range `[lo, hi]` defines the acceptable seniority window
+  // directly — the full inclusive ordinal band — and OVERRIDES the ±1 scalar
+  // window. Only the scalar window is used when no explicit range is present.
+  const careerStageRange = resolveCareerStageRange(
+    (userTags as { careerStageRange?: unknown }).careerStageRange,
+  )
   // SOFT-vs-HARD: when careerStage is SOFT, widen the acceptable window by
   // `bufferSteps` extra ordinal tiers each side (the default hard window stays
-  // exactly `matchingCareerStageWindow`). Flag OFF → `hCareerStage` is null →
-  // the original window is used unchanged.
-  // Recall fix (2026-05-29) — careerStage relax ladder. Precedence:
-  //   1. SOFT-vs-HARD widened window (flag ON + axis soft) wins.
-  //   2. else the explicit `careerStageRelax` rung:
+  // exactly `matchingCareerStageWindow` / `careerStageRangeWindow`). Flag OFF →
+  // `hCareerStage` is null → the base window is used unchanged.
+  //
+  // Precedence (superset of both branches):
+  //   1. EXPLICIT `careerStageRange` (Adam-locked 2026-05-31) DRIVES the window
+  //      — the full inclusive ordinal band (`careerStageRangeWindow`), widened
+  //      by `bufferSteps` when the axis is SOFT. OVERRIDES the ±1 scalar window
+  //      AND the recall relax ladder.
+  //   2. else SOFT-vs-HARD widened scalar window (flag ON + axis soft) wins.
+  //   3. else the explicit `careerStageRelax` rung (recall fix 2026-05-29):
   //        "all"        → no window (gate skipped via null below)
   //        "early_down" → early-career one-tier-down window
   //        strict/undef → default ±1 window
@@ -1392,8 +1515,13 @@ export function applyV16HardFilters(
     if (careerStageRelax === "early_down") return earlyCareerRelaxWindow(s)
     return matchingCareerStageWindow(s)
   }
-  const acceptableStages =
-    careerStageValid && careerStageRelax !== "all"
+  const acceptableStages = careerStageRange
+    ? new Set(
+        hCareerStage && hCareerStage.hardness === "soft"
+          ? widenCareerStageRangeWindow(careerStageRange[0], careerStageRange[1], hCareerStage.bufferSteps)
+          : careerStageRangeWindow(careerStageRange[0], careerStageRange[1]),
+      )
+    : careerStageValid && careerStageRelax !== "all"
       ? new Set(careerStageWindow(careerStage as CareerStage))
       : null
   const targetJobType = userTags.targetJobType
@@ -1522,23 +1650,34 @@ export function applyV16HardFilters(
       continue
     }
 
+    // WeKruit-collaborated jobs are EXEMPT from gates 5–7 (freshness / atsApplyUrl
+    // / dead). These three exist for the scraped corpus: WeKruit's pre-screen IS
+    // the apply path (no external ATS URL), and curated partnerships don't expire
+    // on a scrape cycle or get liveness-swept. They still obey every fit gate
+    // above (visa / location / careerStage / jobType) + below (negatives).
+    const isCollabJob = (job as { isWekruitCollab?: boolean }).isWekruitCollab === true
+
     // 5. firstSeenAt < freshness window (D10 default 20d, adaptive relaxation
     //    handled by caller — see `queryMatchingJobsV16`).
-    const firstSeenMs = timestampToMs(job.firstSeenAt)
-    if (firstSeenMs === 0 || nowMs - firstSeenMs > freshnessWindowMs) {
-      counters.freshness++
-      continue
+    if (!isCollabJob) {
+      const firstSeenMs = timestampToMs(job.firstSeenAt)
+      if (firstSeenMs === 0 || nowMs - firstSeenMs > freshnessWindowMs) {
+        counters.freshness++
+        continue
+      }
     }
 
     // 6. atsApplyUrl present + not jobright.ai.
-    const url = job.atsApplyUrl ?? ""
-    if (!url || /jobright\.ai/i.test(url)) {
-      counters.atsApplyUrl++
-      continue
+    if (!isCollabJob) {
+      const url = job.atsApplyUrl ?? ""
+      if (!url || /jobright\.ai/i.test(url)) {
+        counters.atsApplyUrl++
+        continue
+      }
     }
 
     // 7. dead !== true.
-    if (job.dead === true) {
+    if (!isCollabJob && job.dead === true) {
       counters.dead++
       continue
     }
@@ -2454,6 +2593,7 @@ type StrictCompanyPreference =
 /**
  * The user's company-size preferences as a SET (OR logic, Adam 2026-05-30) — normalizes the
  * scalar-or-array `companySize` + the boolean `prefersStartup`. Empty → no constraint.
+ * Drives the legacy OR-based hard filter at the call site (recall-safe multi-pick).
  */
 function strictCompanyPreferences(userTags: UserTags): StrictCompanyPreference[] {
   const out: StrictCompanyPreference[] = []
@@ -2480,6 +2620,35 @@ function companyMatchesAnyPreference(
 ): boolean {
   if (prefs.length === 0) return true
   return prefs.some((p) => companyMatchesStrictPreference(p, info))
+}
+
+const STRICT_COMPANY_SIZE_TOKENS = new Set<StrictCompanyPreference>([
+  "seed",
+  "early_startup",
+  "scale_up",
+  "mid_market",
+  "enterprise",
+])
+/**
+ * Single strict company-size preference (or null), used by the band-debug / soft-scoring API and
+ * pinned by the `strictCompanyPreference` test. Multi-pick or `open` → null (no strict hard drop —
+ * recall-safe). The live OR-based hard filter uses `strictCompanyPreferences` (plural) above.
+ */
+export function strictCompanyPreference(userTags: UserTags): StrictCompanyPreference | null {
+  // companySize is scalar-OR-array (2026-05-31). A SINGLE strict pick → that token (legacy hard
+  // filter, unchanged). `open`, or MULTIPLE distinct picks ("open to several sizes"), → null = NO
+  // strict hard drop (recall-safe; the soft companyStageBoost still ranks). Never hard-drop on a
+  // multi-pick — that would reintroduce the company-stage recall gap.
+  const tokens = companySizeTokens(userTags.companySize)
+  if (tokens.includes("open")) return null
+  const strict = Array.from(new Set(tokens.filter((t): t is StrictCompanyPreference =>
+    STRICT_COMPANY_SIZE_TOKENS.has(t as StrictCompanyPreference)
+  )))
+  if (strict.length === 1) return strict[0]!
+  if (strict.length > 1) return null
+  if (userTags.prefersStartup === "startup") return "startup"
+  if (userTags.prefersStartup === "bigtech") return "bigtech"
+  return null
 }
 
 function hasCompanyTag(info: LoadedCompanyInfo, tags: readonly string[]): boolean {
@@ -2682,6 +2851,123 @@ function hasActivePrescreenConfig(data: Record<string, unknown> | undefined): bo
   return Array.isArray(questions) && questions.length > 0
 }
 
+/**
+ * Load the WeKruit-collaborated pool (pa-jobs · wekruitCollaborationStatus ===
+ * "collaborated") as MatchingJob rows so it flows through the SAME hard-filter +
+ * score path as the scraped matching-jobs corpus (Adam 2026-05-29: "share the
+ * same matching system; match the collab pool; push on threshold").
+ *
+ * Rows are tagged isWekruitCollab=true → applyV16HardFilters skips the
+ * scraped-only gates (freshness / atsApplyUrl / dead); WeKruit's pre-screen is
+ * the apply path. They STILL obey visa / location / careerStage / jobType there.
+ *
+ * Two gates are enforced HERE because the collab pool bypasses the Firestore
+ * query layer the scraped corpus uses:
+ *   - roleFunction ∩ targetRoleFunction (the scraped side gets this via
+ *     `where('roleFunction','array-contains-any', …)`),
+ *   - eligibility: publicVisible + an active prescreenConfig (a collab job with
+ *     no questions can't run a first interview, so it isn't pushable).
+ */
+async function loadCollabPoolJobs(
+  db: Firestore,
+  userTags: UserTags,
+  log: (event: string, payload?: Record<string, unknown>) => void,
+): Promise<Array<MatchingJob & { embedding?: number[] | null }>> {
+  const targetRoles = new Set(
+    (Array.isArray(userTags.targetRoleFunction) ? userTags.targetRoleFunction : [])
+      .map((r) => String(r).trim().toLowerCase())
+      .filter((r) => r.length > 0),
+  )
+  if (targetRoles.size === 0) return []
+
+  let snap
+  try {
+    // Single-field query (no composite index needed); publicVisible filtered
+    // in-memory. The collab pool is small (≤ low hundreds ever).
+    snap = await db
+      .collection(PA_JOBS_COLLECTION)
+      .where("wekruitCollaborationStatus", "==", "collaborated")
+      .limit(200)
+      .get()
+  } catch (err) {
+    log("pa.match.collab_pool_query_failed", { error: err instanceof Error ? err.message : String(err) })
+    return []
+  }
+
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null)
+  const str = (v: unknown): string => (typeof v === "string" ? v : "")
+  const bool = (v: unknown): boolean | null => (typeof v === "boolean" ? v : null)
+  const strArr = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : []
+  const skillNames = (v: unknown): string[] =>
+    Array.isArray(v)
+      ? v
+          .map((s): string | null =>
+            typeof s === "string"
+              ? s
+              : s && typeof s === "object" && typeof (s as { name?: unknown }).name === "string"
+                ? (s as { name: string }).name
+                : null,
+          )
+          .filter((s): s is string => s !== null)
+      : []
+
+  const out: Array<MatchingJob & { embedding?: number[] | null }> = []
+  for (const doc of snap.docs) {
+    try {
+      const raw = doc.data() as Record<string, unknown>
+      if (raw.publicVisible !== true) continue
+      if (!hasActivePrescreenConfig(raw)) continue
+      const roleFunction = strArr(raw.roleFunction)
+      if (!roleFunction.some((r) => targetRoles.has(r.trim().toLowerCase()))) continue
+
+      const cfg =
+        raw.prescreenConfig && typeof raw.prescreenConfig === "object"
+          ? (raw.prescreenConfig as Record<string, unknown>)
+          : {}
+      const requiredSkills = skillNames(raw.requiredSkills)
+      const industrySector = strArr(raw.industrySector)
+      const relevantTags = strArr(raw.relevantTags)
+      const locationBuckets = strArr(raw.locationBuckets)
+      const seniorityLevel =
+        typeof raw.seniorityLevel === "string"
+          ? (normalizeCareerStageToken(raw.seniorityLevel) ?? raw.seniorityLevel)
+          : undefined
+
+      const candidate = MatchingJobSchema.parse({
+        id: doc.id,
+        companyName: str(raw.companyName) || str(cfg.company),
+        jobTitle: str(raw.title) || str(raw.roleTitle) || str(cfg.jobTitle) || "",
+        salaryMax: num(raw.salaryMax),
+        salaryMin: num(raw.salaryMin),
+        locationRaw: str(raw.location) || str(raw.locationRaw),
+        primaryUrl: str(raw.atsApplyUrl) || str(raw.primaryUrl),
+        atsApplyUrl: typeof raw.atsApplyUrl === "string" ? raw.atsApplyUrl : undefined,
+        industry: str(raw.industry),
+        sponsorship: bool(raw.sponsorship),
+        jobType: typeof raw.jobType === "string" ? raw.jobType : undefined,
+        ...(requiredSkills.length > 0 ? { requiredSkills } : {}),
+        ...(roleFunction.length > 0 ? { roleFunction } : {}),
+        ...(industrySector.length > 0 ? { industrySector } : {}),
+        ...(relevantTags.length > 0 ? { relevantTags } : {}),
+        ...(locationBuckets.length > 0 ? { locationBuckets } : {}),
+        ...(seniorityLevel ? { seniorityLevel } : {}),
+        isWekruitCollab: true,
+      }) as MatchingJob & { embedding?: number[] | null }
+      const e = raw.embedding
+      candidate.embedding = Array.isArray(e) && e.every((n) => typeof n === "number") ? (e as number[]) : null
+      out.push(candidate)
+    } catch (err) {
+      log("pa.match.collab_pool_row_dropped", {
+        id: doc.id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+  log("pa.match.collab_pool_loaded", { eligible: out.length, scanned: snap.docs.length })
+  return out
+}
+
 async function loadCollabPrescreenEligibleJobIds(
   db: Firestore,
   jobIds: string[],
@@ -2844,8 +3130,19 @@ export async function queryMatchingJobsV16(
     }
   }
 
-  // 2. Run query (push role to query layer).
-  const { jobs: rawJobs } = await runV16Query(deps.db, userTags, log)
+  // 2. Run query (push role to query layer) + fold in the WeKruit-collab pool so
+  //    BOTH pools go through one matcher (Adam 2026-05-29). Collab rows win on id
+  //    collision (the few collab jobs mirrored into matching-jobs also come back
+  //    from runV16Query; prefer the isWekruitCollab-tagged copy so it gets the
+  //    apply-path gate exemptions).
+  const [{ jobs: scrapedJobs }, collabPoolJobs] = await Promise.all([
+    runV16Query(deps.db, userTags, log),
+    loadCollabPoolJobs(deps.db, userTags, log),
+  ])
+  const rawById = new Map<string, MatchingJob & { embedding?: number[] | null }>()
+  for (const j of collabPoolJobs) rawById.set(j.id, j)
+  for (const j of scrapedJobs) if (!rawById.has(j.id)) rawById.set(j.id, j)
+  const rawJobs = [...rawById.values()]
 
   // 3. Hard-filter chain — adaptive freshness cascade for thin corpora.
   // Try strict 20d (D10) first. When zero jobs survive AND freshness was the
@@ -3146,6 +3443,25 @@ export async function queryMatchingJobsV16(
     }
     return { job, breakdown: adjustedBreakdown, matched, companyInfo, recommendedState }
   })
+
+  // Push threshold (Adam 2026-05-29): a collab job is returned only when it
+  // clears the hard filters AND COLLAB_PUSH_SCORE_FLOOR — never a marginal
+  // overlap. Scraped jobs are untouched (their top-N is curated by ranking +
+  // dedup below).
+  {
+    const before = scored.length
+    scored = scored.filter(
+      (s) =>
+        (s.job as { isWekruitCollab?: boolean }).isWekruitCollab !== true ||
+        s.breakdown.total >= COLLAB_PUSH_SCORE_FLOOR,
+    )
+    if (scored.length !== before) {
+      log("pa.match.collab_score_floor_applied", {
+        floor: COLLAB_PUSH_SCORE_FLOOR,
+        dropped: before - scored.length,
+      })
+    }
+  }
 
   // Sort by total score desc; tie-break by firstSeenAt newer first.
   scored.sort((a, b) => {

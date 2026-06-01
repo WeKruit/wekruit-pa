@@ -8,6 +8,7 @@ import {
   PageHeader,
   Panel,
 } from "../components/ui.js"
+import { AdminJobLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import { functions } from "../lib/firebase.js"
 import {
   MATCH_DEBUG_DEFAULT_WEIGHTS,
@@ -277,7 +278,9 @@ function CandidateResults({ result }: { result: CandidateDebugResult }) {
           <div style={{ display: "grid", gap: 10 }}>
             {result.jobs.map((job, index) => (
               <article key={job.jobId} style={rowStyle}>
-                <strong>{index + 1}. {job.jobTitle ?? "(no title)"} @ {job.companyName ?? "(no company)"}</strong>
+                <strong>
+                  {index + 1}. <AdminJobLink jobId={job.jobId}>{job.jobTitle ?? job.jobId}</AdminJobLink> @ {job.companyName ?? "(no company)"}
+                </strong>
                 <div style={mutedStyle}>
                   score={formatScore(job.v16Score?.total)} · sponsor={displaySponsorship(job.sponsorship)} · role=[{compactList(job.roleFunction)}]
                 </div>
@@ -300,7 +303,7 @@ function JobResults({ result }: { result: JobDebugResult }) {
           <strong>{result.candidatePool.totalReturned}</strong> · Dropped: <strong>{result.dropped}</strong>
         </div>
         <div style={mutedStyle}>
-          {result.job.jobTitle ?? result.jobId} @ {result.job.companyName ?? "(company unknown)"} · sponsor={displaySponsorship(result.job.sponsorship)}
+          <AdminJobLink jobId={result.jobId}>{result.job.jobTitle ?? result.jobId}</AdminJobLink> @ {result.job.companyName ?? "(company unknown)"} · sponsor={displaySponsorship(result.job.sponsorship)}
         </div>
         <pre style={preStyle}>{JSON.stringify(result.hardFilter, null, 2)}</pre>
       </Panel>
@@ -312,7 +315,10 @@ function JobResults({ result }: { result: JobDebugResult }) {
             {result.candidates.map((candidate) => (
               <article key={candidate.candidateId} style={rowStyle}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                  <strong>{candidate.finalRank ?? "-"} · {candidate.displayName ?? candidate.candidateId}</strong>
+                  <strong>
+                    {candidate.finalRank ?? "-"} ·{" "}
+                    <AdminUserLink userId={candidate.candidateId}>{candidate.displayName ?? candidate.candidateId}</AdminUserLink>
+                  </strong>
                   <span style={badgeStyle(actionTone(candidate.recommendedAction))}>
                     {candidate.recommendedAction ? candidate.recommendedAction.replaceAll("_", " ") : "no action"}
                   </span>

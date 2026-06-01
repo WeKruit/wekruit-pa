@@ -1,5 +1,5 @@
 import { getAuth } from "firebase-admin/auth"
-import { getFirestore, type Firestore } from "firebase-admin/firestore"
+import { FieldValue, getFirestore, type Firestore } from "firebase-admin/firestore"
 import { onRequest } from "firebase-functions/v2/https"
 import { isPaUserSource, PA_COLLECTIONS } from "@pa/core-types"
 import { claimCandidateProfile, linkCandidateHandle } from "@pa/pa-persistence"
@@ -12,6 +12,12 @@ import { assignCandidateSenderNumber } from "./identity/candidate-sender-number.
 export interface CandidateMagicLinkVerifyInput {
   firebaseIdToken?: string
   source?: string
+  referralSlug?: string | null
+  registrationEntry?: {
+    kind?: unknown
+    path?: unknown
+    jobId?: unknown
+  } | null
   linkedinUrl?: string | null
   /** True when the Firebase session is from LinkedIn OAuth (custom token / li_* uid). */
   linkedinSignIn?: boolean
@@ -60,6 +66,69 @@ function cleanString(value: unknown, max: number): string | undefined {
   return trimmed
 }
 
+function maskEmail(value: unknown): string | undefined {
+  const email = cleanString(value, 320)?.toLowerCase()
+  if (!email) return undefined
+  const [localRaw, domainRaw] = email.split("@")
+  const local = localRaw ?? ""
+  const domain = domainRaw ?? ""
+  if (!local || !domain) return undefined
+  return `${local[0]}***@${domain}`
+}
+
+function isLinkedinOAuthMarker(value: unknown): boolean {
+  return typeof value === "string" && value.includes("/oauth-linked/")
+}
+
+function cleanLinkedinProfileUrl(value: unknown): string | null {
+  const raw = cleanString(value, 500) ?? null
+  if (!raw || isLinkedinOAuthMarker(raw)) return null
+  return raw
+}
+
+function cleanPublicJobPath(value: unknown): string | undefined {
+  const raw = cleanString(value, 512)
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return undefined
+  const pathname = raw.split("?")[0] ?? ""
+  if (!/^\/j\/[^/?#]+(?:\/cv)?$/.test(pathname)) return undefined
+  return raw
+}
+
+function jobIdFromPublicJobPath(path: string): string | undefined {
+  const pathname = path.split("?")[0] ?? ""
+  const match = /^\/j\/([^/?#]+)(?:\/cv)?$/.exec(pathname)
+  return cleanString(match?.[1], 240)
+}
+
+function hasSignupEntry(value: unknown): boolean {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      typeof (value as { kind?: unknown }).kind === "string" &&
+      typeof (value as { path?: unknown }).path === "string",
+  )
+}
+
+function parseSignupEntry(
+  input: CandidateMagicLinkVerifyInput["registrationEntry"],
+  source: string | undefined,
+  capturedAt: string,
+): Record<string, unknown> | null {
+  if (!input || typeof input !== "object") return null
+  if (cleanString(input.kind, 64) !== "job_prescreen") return null
+  const path = cleanPublicJobPath(input.path)
+  if (!path) return null
+  const jobId = jobIdFromPublicJobPath(path)
+  if (!jobId) return null
+  return {
+    kind: "job_prescreen",
+    path,
+    jobId,
+    ...(source ? { source } : {}),
+    capturedAt,
+  }
+}
+
 function bearerToken(authHeader: string | undefined): string | undefined {
   if (!authHeader) return undefined
   const match = authHeader.match(/^Bearer\s+(.+)$/i)
@@ -73,6 +142,8 @@ export interface CandidateMagicLinkVerifyDeps {
     email?: string
     email_verified?: boolean
     name?: string
+    linkedinEmail?: string
+    linkedinName?: string
     linkedinSub?: string
     /**
      * Firebase `firebase.sign_in_provider` claim. Used to gate L1 entry:
@@ -100,6 +171,11 @@ export interface CandidateMagicLinkVerifyDeps {
     candidateId: string,
     userData: Record<string, unknown> | null,
   ) => Promise<{ senderNumber?: string; senderGroupId?: string }>
+  attachReferralOnSignup?: (args: {
+    uid: string
+    email: string
+    referralSlug?: string | null
+  }) => Promise<{ matchedReferralId?: string }>
 }
 
 export async function runCandidateMagicLinkVerify(
@@ -135,7 +211,20 @@ export async function runCandidateMagicLinkVerify(
         uid: decoded.uid,
         email: decoded.email,
         email_verified: decoded.email_verified,
-        name: decoded.name,
+        name:
+          typeof decoded.name === "string"
+            ? decoded.name
+            : typeof decoded.linkedinName === "string"
+              ? decoded.linkedinName
+              : undefined,
+        linkedinEmail:
+          typeof decoded.linkedinEmail === "string" && decoded.linkedinEmail.trim()
+            ? decoded.linkedinEmail.trim()
+            : undefined,
+        linkedinName:
+          typeof decoded.linkedinName === "string" && decoded.linkedinName.trim()
+            ? decoded.linkedinName.trim()
+            : undefined,
         linkedinSub,
         signInProvider,
       }
@@ -148,7 +237,7 @@ export async function runCandidateMagicLinkVerify(
     return { result: { ok: false, reason: "invalid_id_token" }, status: 401 }
   }
 
-  const email = cleanString(decoded.email, 320)?.toLowerCase()
+  const email = (cleanString(decoded.email, 320) ?? cleanString(decoded.linkedinEmail, 320))?.toLowerCase()
   if (!email || !email.includes("@")) {
     return { result: { ok: false, reason: "missing_verified_email" }, status: 412 }
   }
@@ -158,8 +247,12 @@ export async function runCandidateMagicLinkVerify(
 
   const browserUid = cleanString(input.browserUid, 128) ?? null
   const displayName =
-    cleanString(input.displayName, 200) ?? cleanString(decoded.name, 200) ?? null
-  const linkedinUrlInput = cleanString(input.linkedinUrl, 500) ?? null
+    cleanString(input.displayName, 200) ??
+    cleanString(decoded.name, 200) ??
+    cleanString(decoded.linkedinName, 200) ??
+    null
+  const referralSlug = cleanString(input.referralSlug, 120) ?? null
+  const linkedinUrlInput = cleanLinkedinProfileUrl(input.linkedinUrl)
   const linkedinSignIn = input.linkedinSignIn === true || decoded.uid.startsWith("li_")
   const sourceRaw = cleanString(input.source, 64)
   const source = sourceRaw && isPaUserSource(sourceRaw) ? sourceRaw : undefined
@@ -188,7 +281,6 @@ export async function runCandidateMagicLinkVerify(
     if (linkedinSignIn && decoded.linkedinSub) {
       linkedinLinkedViaOauth = true
       const oauthMarker = `https://www.linkedin.com/oauth-linked/${decoded.linkedinSub}`
-      linkedinUrl = linkedinUrl ?? oauthMarker
       await (deps.linkLinkedin ?? linkCandidateHandle)(deps.db, {
         candidateId: claim.candidateId,
         kind: "linkedin",
@@ -216,30 +308,55 @@ export async function runCandidateMagicLinkVerify(
       })
     }
 
-    const mergeFields: Record<string, unknown> = { updatedAt: new Date().toISOString() }
+    const now = new Date().toISOString()
+    const existingUserSnap = await userRef.get()
+    const existingUserData = existingUserSnap.data() as Record<string, unknown> | undefined
+    const mergeFields: Record<string, unknown> = { updatedAt: now }
+    if (isLinkedinOAuthMarker(existingUserData?.linkedinUrl)) {
+      mergeFields.linkedinUrl = FieldValue.delete()
+    }
     if (source) {
       // First-write-sticky attribution: only stamp `source` if the pa-users
       // doc does not already carry a valid PaUserSource. Mirrors the
       // existingUserSource guard in public-cv-ingest.ts. Without this,
       // a returning user who magic-links via a different partner URL
       // would have their original attribution silently overwritten.
-      const existingUserSnap = await userRef.get()
-      const existingUserSource = (existingUserSnap.data() as { source?: unknown } | undefined)?.source
+      const existingUserSource = existingUserData?.source
       if (!isPaUserSource(existingUserSource)) {
         mergeFields.source = source
       }
     }
+    const signupEntry = parseSignupEntry(input.registrationEntry, source, now)
+    if (signupEntry) {
+      mergeFields.lastSignupEntry = signupEntry
+      if (!hasSignupEntry(existingUserData?.firstSignupEntry)) {
+        mergeFields.firstSignupEntry = signupEntry
+      }
+    }
     if (linkedinUrl) mergeFields.linkedinUrl = linkedinUrl
-    if (linkedinLinkedViaOauth) mergeFields.linkedinOauthLinked = true
+    if (linkedinLinkedViaOauth) {
+      const oauthEmailMasked = maskEmail(decoded.linkedinEmail ?? email)
+      mergeFields.linkedinOauthLinked = true
+      mergeFields.linkedinOauthConnectedAt = now
+      mergeFields.linkedinOauthName = displayName ?? undefined
+      mergeFields.linkedinOauthProfile = {
+        connectedAt: now,
+        ...(displayName ? { name: displayName } : {}),
+        ...(oauthEmailMasked ? { emailMasked: oauthEmailMasked } : {}),
+      }
+    }
     await userRef.set(mergeFields, { merge: true })
 
     // Referral attribution (Adam Q5: same-email match only).
-    // Idempotent: only marks the first pending pa-referrals row for this email
-    // as joined. Failure here must not break sign-in.
+    // Idempotent: email invites are matched by exact lower-cased email first;
+    // shared /r/:slug links create a referral row only after verified signup.
+    // Failure here must not break sign-in.
     if (email) {
       try {
-        const { attachInviteeUserIdByEmail } = await import("./refer-program.js")
-        await attachInviteeUserIdByEmail({ uid: claim.candidateId, email })
+        const attachReferralOnSignup =
+          deps.attachReferralOnSignup ??
+          (await import("./refer-program.js")).attachInviteeReferralOnSignup
+        await attachReferralOnSignup({ uid: claim.candidateId, email, referralSlug })
       } catch (err) {
         // Non-fatal — sign-in flow continues regardless.
         // eslint-disable-next-line no-console
@@ -257,10 +374,7 @@ export async function runCandidateMagicLinkVerify(
       typeof intakeCompletedAt === "string"
         ? intakeCompletedAt.length > 0
         : intakeCompletedAt != null && typeof intakeCompletedAt === "object"
-    const storedLinkedin =
-      typeof userData.linkedinUrl === "string" && userData.linkedinUrl.trim()
-        ? userData.linkedinUrl.trim()
-        : linkedinUrl
+    const storedLinkedin = cleanLinkedinProfileUrl(userData.linkedinUrl) ?? linkedinUrl
     const storedOauthLinked = userData.linkedinOauthLinked === true || linkedinLinkedViaOauth
     const claireStarted = await (deps.claireConversationStarted ?? candidateClaireConversationStarted)(
       deps.db,

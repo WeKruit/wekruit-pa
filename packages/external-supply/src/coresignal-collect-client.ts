@@ -99,6 +99,7 @@ export const CoresignalEmployeeCollectV2Schema = z.object({
   is_decision_maker: z.union([z.boolean(), z.number()]).nullable().optional(),
   active_experience_company_id: z.number().nullable().optional(),
   active_experience_title: z.string().nullable().optional(),
+  active_experience_description: z.string().nullable().optional(),
   active_experience_department: z.string().nullable().optional(),
   active_experience_management_level: z.string().nullable().optional(),
   total_experience_duration_months: z.number().nullable().optional(),

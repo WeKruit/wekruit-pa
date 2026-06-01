@@ -1,6 +1,11 @@
 import { auth } from "./firebase.js"
-import { getBrowserUid, rememberStoredValue } from "./browser-identity.js"
+import {
+  deriveRegistrationEntryFromPath,
+  getBrowserUid,
+  rememberStoredValue,
+} from "./browser-identity.js"
 import { isLinkedInSignIn } from "./candidate-auth-provider.js"
+import { clearReferralSlug, readReferralSlug } from "./referral.js"
 import { resolveSource } from "./source.js"
 
 const DEFAULT_VERIFY_URL =
@@ -41,7 +46,9 @@ export function candidateVerifyErrorMessage(reason: string): string {
 
 export async function verifyCandidateMagicLinkSession(options?: {
   source?: string
+  referralSlug?: string | null
   linkedinUrl?: string | null
+  registrationEntryPath?: string | null
 }): Promise<{
   candidateId: string
   idempotent: boolean
@@ -58,6 +65,8 @@ export async function verifyCandidateMagicLinkSession(options?: {
   if (!user) throw new CandidateVerifyError("not_signed_in", 401)
   const idToken = await user.getIdToken(true)
   const linkedinSignIn = isLinkedInSignIn(user)
+  const referralSlug = options?.referralSlug ?? readReferralSlug()
+  const registrationEntry = deriveRegistrationEntryFromPath(options?.registrationEntryPath)
   const res = await fetch(VERIFY_URL, {
     method: "POST",
     headers: {
@@ -67,10 +76,12 @@ export async function verifyCandidateMagicLinkSession(options?: {
     body: JSON.stringify({
       firebaseIdToken: idToken,
       source: options?.source ?? resolveSource(),
+      referralSlug,
       browserUid: getBrowserUid(),
       linkedinUrl: options?.linkedinUrl ?? null,
       linkedinSignIn,
       displayName: user.displayName ?? null,
+      registrationEntry,
     }),
   })
   const data = (await res.json().catch(() => ({}))) as {
@@ -92,6 +103,7 @@ export async function verifyCandidateMagicLinkSession(options?: {
     throw new CandidateVerifyError(reason, res.status, candidateVerifyErrorMessage(reason))
   }
   rememberStoredValue(CANDIDATE_ID_KEY, data.candidateId)
+  if (referralSlug) clearReferralSlug(referralSlug)
   const claireConversationStarted = Boolean(data.claireConversationStarted)
   const hasResumeOnFile = Boolean(data.hasResumeOnFile)
   const portalReady =

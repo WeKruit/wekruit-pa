@@ -33,6 +33,8 @@ import {
   V16_COLLAB_BOOST_WEIGHT,
   resolveHardness,
   computeCompanyStageFit,
+  strictCompanyPreference,
+  userCompanyStageBand,
   PREFERENCE_HARDNESS_FLAG_KEY,
 } from "../../tools/query-matching-jobs-v16.js"
 import {
@@ -415,6 +417,74 @@ test("applyV16HardFilters: founder careerStage is senior-plus for job search, no
   const r = applyV16HardFilters(jobs, tags, NOW)
   assert.deepEqual(r.kept.map((j) => j.id), ["senior", "staff", "manager", "director", "vp", "c"])
   assert.equal(r.counters.careerStage, 2)
+})
+
+// careerStageRange DRIVES matching (Adam-locked 2026-05-31) — an explicit range
+// defines the seniority window directly and OVERRIDES the ±1 scalar window.
+test("applyV16HardFilters: careerStageRange spans the full band (entry→senior keeps mid, drops staff)", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "intern", seniorityLevel: "intern" }),
+    mkJob({ id: "entry", seniorityLevel: "entry_level" }),
+    mkJob({ id: "junior", seniorityLevel: "junior" }),
+    mkJob({ id: "mid", seniorityLevel: "mid_level" }),
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "staff", seniorityLevel: "staff" }),
+  ]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStage: "entry_level", // scalar would keep only intern/entry/junior…
+    careerStageRange: ["entry_level", "senior"], // …but the range drives the window
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id).sort(), ["entry", "junior", "mid", "senior"])
+  assert.ok(!r.kept.map((j) => j.id).includes("intern"), "below the band dropped")
+  assert.ok(!r.kept.map((j) => j.id).includes("staff"), "above the band dropped")
+  assert.equal(r.counters.careerStage, 2)
+})
+
+test("applyV16HardFilters: careerStageRange OVERRIDES a narrower scalar careerStage", () => {
+  // Scalar `entry_level` alone would drop `senior` (counters.careerStage=1);
+  // the explicit range opens the window up to senior so it is KEPT.
+  const jobs: MatchingJob[] = [mkJob({ id: "senior", seniorityLevel: "senior" })]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStage: "entry_level",
+    careerStageRange: ["junior", "staff"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["senior"])
+  assert.equal(r.counters.careerStage, 0)
+})
+
+test("applyV16HardFilters: careerStageRange is endpoint-order independent", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "junior", seniorityLevel: "junior" }),
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "vp", seniorityLevel: "vp" }),
+  ]
+  const reversed = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStageRange: ["senior", "junior"], // hi,lo order
+  } as never
+  const r = applyV16HardFilters(jobs, reversed, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id).sort(), ["junior", "senior"])
+  assert.ok(!r.kept.map((j) => j.id).includes("vp"), "vp above the band dropped")
+})
+
+test("applyV16HardFilters: malformed careerStageRange falls back to scalar window", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "entry", seniorityLevel: "entry_level" }),
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+  ]
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    careerStage: "entry_level",
+    careerStageRange: ["entry_level", "not_a_stage"], // bad endpoint → ignored
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  // Range ignored → scalar entry_level window keeps entry, drops senior.
+  assert.deepEqual(r.kept.map((j) => j.id), ["entry"])
+  assert.equal(r.counters.careerStage, 1)
 })
 
 test("applyV16HardFilters: jobType exact intersect", () => {
@@ -2530,19 +2600,100 @@ test("queryMatchingJobsV16: resume 'Intern' title alone does NOT set targetJobTy
 
   const r = await queryMatchingJobsV16({ userId: "u_resume_intern", nowMs: NOW }, { db: asFirestore(mfs) })
 
-  // Bug fix: targetJobType is NOT set from the résumé "Intern" title.
-  assert.equal(r.userTags?.targetJobType, undefined)
+  // Bug fix: a résumé "Intern" title never locks the candidate to internship-ONLY.
   // careerStage is still inferred from the title (that's a HISTORY/level signal,
-  // legitimate for the seniority window) — but it no longer forces a jobType.
+  // legitimate for the seniority window).
   assert.equal(r.userTags?.careerStage, "intern")
-  // Both the intern role AND the entry-level full-time role survive now that
-  // the spurious internship jobType filter is gone.
+  // Intern/student infers a WIDENED jobType set (internship + new_graduate +
+  // full_time) so new-grads also see entry full-time roles (fix 106f199d). It is
+  // never internship-only, so the full-time pool is never hard-dropped.
+  assert.deepEqual(r.userTags?.targetJobType, ["internship", "new_graduate", "full_time"])
+  // Both the intern role AND the entry-level full-time role survive — both job
+  // types are in the widened set, so the jobType gate drops neither.
   const ids = new Set(r.jobs.map((job) => job.id))
   assert.ok(ids.has("intern-fit"), "intern role survives")
   assert.ok(ids.has("entry-ft"), "entry full-time role survives (no bogus internship jobType drop)")
   assert.equal(r.hardFilter.jobType, 0)
   assert.ok(!r.missingAxes?.includes("careerStage"))
   assert.ok(!r.missingAxes?.includes("targetJobType"))
+})
+
+// ── WeKruit-collab pool (Adam 2026-05-29: "share the same matching system; match
+//    the collab pool; push on threshold") ────────────────────────────────────
+async function seedCollabJob(mfs: MockFirestore, id: string, over: Record<string, unknown>): Promise<void> {
+  await mfs
+    .collection("pa-jobs")
+    .doc(id)
+    .set({
+      wekruitCollaborationStatus: "collaborated",
+      publicVisible: true,
+      companyName: "CollabCo",
+      title: "Collab Backend Engineer",
+      roleFunction: ["software_engineering"],
+      seniorityLevel: "mid_level",
+      locationBuckets: ["san_francisco_bay_area"],
+      sponsorship: true,
+      jobType: "full_time",
+      requiredSkills: ["python", "typescript"],
+      // NOTE: intentionally NO atsApplyUrl and NO firstSeenAt — the collab
+      // exemptions must let it through (WeKruit pre-screen is the apply path).
+      prescreenConfig: { jobTitle: "Collab Backend Engineer", company: "CollabCo", questions: [{ id: "q1", prompt: "?" }] },
+      ...over,
+    })
+}
+
+async function seedMidSweUser(mfs: MockFirestore, id: string, over: Record<string, unknown> = {}): Promise<void> {
+  await mfs
+    .collection("pa-users")
+    .doc(id)
+    .set({
+      tags: {
+        skills: ["python", "typescript"],
+        targetRoleFunction: ["software_engineering"],
+        roleFunction: ["software_engineering"],
+        careerStage: "mid_level",
+        targetJobType: ["full_time"],
+        targetLocations: ["san_francisco_bay_area"],
+        visaStatus: "citizen",
+        schemaVersion: 1,
+        ...over,
+      },
+    })
+}
+
+test("queryMatchingJobsV16: collab pool surfaces a matching collab job despite no atsApplyUrl/freshness", async () => {
+  const mfs = new MockFirestore()
+  await seedMidSweUser(mfs, "u_mid_swe")
+  await seedCollabJob(mfs, "collab-fit", {})
+
+  const r = await queryMatchingJobsV16({ userId: "u_mid_swe", nowMs: NOW }, { db: asFirestore(mfs) })
+
+  const collab = r.jobs.find((j) => j.id === "collab-fit")
+  assert.ok(collab, "collab job should surface through the shared matcher")
+  assert.equal(collab!.matchSourceLabel, "WeKruit collaborated")
+})
+
+test("queryMatchingJobsV16: collab pool still obeys careerStage + roleFunction + prescreen gates", async () => {
+  // Wrong seniority: a mid_level collab job must drop for an intern candidate.
+  const internMfs = new MockFirestore()
+  await seedMidSweUser(internMfs, "u_intern", { careerStage: "intern", targetJobType: ["internship"] })
+  await seedCollabJob(internMfs, "collab-mid", {})
+  const internR = await queryMatchingJobsV16({ userId: "u_intern", nowMs: NOW }, { db: asFirestore(internMfs) })
+  assert.equal(internR.jobs.some((j) => j.id === "collab-mid"), false)
+
+  // No prescreen questions → not pushable (can't run the first interview).
+  const noQMfs = new MockFirestore()
+  await seedMidSweUser(noQMfs, "u_mid_swe")
+  await seedCollabJob(noQMfs, "collab-noq", { prescreenConfig: { jobTitle: "X", company: "Y" } })
+  const noQR = await queryMatchingJobsV16({ userId: "u_mid_swe", nowMs: NOW }, { db: asFirestore(noQMfs) })
+  assert.equal(noQR.jobs.some((j) => j.id === "collab-noq"), false)
+
+  // Wrong roleFunction → not in the candidate's pool.
+  const roleMfs = new MockFirestore()
+  await seedMidSweUser(roleMfs, "u_mid_swe")
+  await seedCollabJob(roleMfs, "collab-marketing", { roleFunction: ["marketing"] })
+  const roleR = await queryMatchingJobsV16({ userId: "u_mid_swe", nowMs: NOW }, { db: asFirestore(roleMfs) })
+  assert.equal(roleR.jobs.some((j) => j.id === "collab-marketing"), false)
 })
 
 test("queryMatchingJobsV16: founder resume profile can match senior product and software roles", async () => {
@@ -3145,6 +3296,54 @@ test("computeCompanyStageFit: prefersStartup=bigtech maps to ipo_public/private_
   assert.equal(computeCompanyStageFit(tags, "ipo_public", 1), 1.0)
   assert.equal(computeCompanyStageFit(tags, "private_mature", 1), 1.0)
   assert.equal(computeCompanyStageFit(tags, "seed", 1), 0.2)
+})
+
+// ---------------------------------------------------------------------------
+// companySize MULTI-PICK (scalar-OR-array, 2026-05-31) — recall-safety:
+// a multi-element array must NEVER trigger the strict HARD filter (would
+// reintroduce the company-stage recall gap); the soft band unions instead.
+// ---------------------------------------------------------------------------
+
+test("strictCompanyPreference: scalar pick unchanged (legacy hard filter)", () => {
+  assert.equal(strictCompanyPreference({ companySize: "seed" } as never), "seed")
+  assert.equal(strictCompanyPreference({ companySize: "enterprise" } as never), "enterprise")
+  assert.equal(strictCompanyPreference({ companySize: "open" } as never), null)
+  assert.equal(strictCompanyPreference({ prefersStartup: "bigtech" } as never), "bigtech")
+  assert.equal(strictCompanyPreference({} as never), null)
+})
+
+test("strictCompanyPreference: single-element array behaves like the scalar", () => {
+  assert.equal(strictCompanyPreference({ companySize: ["seed"] } as never), "seed")
+  assert.equal(strictCompanyPreference({ companySize: ["enterprise"] } as never), "enterprise")
+})
+
+test("strictCompanyPreference: MULTI-element array → null (NO hard drop, recall-safe)", () => {
+  // open to several sizes must not hard-drop any job — the recall gap guard.
+  assert.equal(strictCompanyPreference({ companySize: ["seed", "enterprise"] } as never), null)
+  assert.equal(strictCompanyPreference({ companySize: ["seed", "scale_up", "mid_market"] } as never), null)
+  // 'open' present anywhere → null
+  assert.equal(strictCompanyPreference({ companySize: ["seed", "open"] } as never), null)
+})
+
+test("userCompanyStageBand: array unions the per-token bands (soft)", () => {
+  const seedBand = userCompanyStageBand({ companySize: "seed" } as never)!
+  const scaleBand = userCompanyStageBand({ companySize: "scale_up" } as never)!
+  const unionBand = userCompanyStageBand({ companySize: ["seed", "scale_up"] } as never)!
+  assert.ok(unionBand, "multi-pick must yield a soft band")
+  // union = [min of mins, max of maxs] across the per-token bands
+  assert.equal(unionBand.min, Math.min(seedBand.min, scaleBand.min))
+  assert.equal(unionBand.max, Math.max(seedBand.max, scaleBand.max))
+  // single-element array == scalar band
+  assert.deepEqual(userCompanyStageBand({ companySize: ["seed"] } as never), seedBand)
+  // 'open' anywhere → null (no band)
+  assert.equal(userCompanyStageBand({ companySize: ["seed", "open"] } as never), null)
+})
+
+test("computeCompanyStageFit: multi-pick array scores in-band across the union", () => {
+  const tags = { skills: [], industryEnum: [], schemaVersion: 2, companySize: ["seed", "scale_up"] } as never
+  assert.equal(computeCompanyStageFit(tags, "seed", 1), 1.0) // in seed sub-band
+  assert.equal(computeCompanyStageFit(tags, "series_b", 1), 1.0) // in scale_up sub-band
+  assert.equal(computeCompanyStageFit(tags, "series_c", 1), 1.0) // inside the union span
 })
 
 // ---------------------------------------------------------------------------

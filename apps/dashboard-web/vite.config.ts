@@ -12,6 +12,15 @@ import { defineConfig } from "vite"
 // dashboard never invokes them directly.
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/[name]-pa-dashboard-[hash].js",
+        chunkFileNames: "assets/[name]-pa-dashboard-[hash].js",
+        assetFileNames: "assets/[name]-pa-dashboard-[hash][extname]",
+      },
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

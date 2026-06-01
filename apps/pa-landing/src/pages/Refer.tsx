@@ -19,8 +19,8 @@
  * Visual: warm cream/terracotta editorial system (same vocab as /me v2).
  * Styles live under `.wk-ref-*` in src/styles/wekruit-pages.css.
  *
- * Identity rule (Adam Q5): invitee MUST sign up with the same email the
- * inviter sent to — server-side attribution does a lower-cased match.
+ * Identity rule: email invites attribute by exact lower-cased invitee email;
+ * shared /r/:slug links attribute only after the invitee verifies an email.
  */
 import {
   useCallback,
@@ -33,10 +33,11 @@ import {
   type ClipboardEvent as ReactClipboardEvent,
   type ReactNode,
 } from "react"
-import { Link, useNavigate, useParams } from "react-router-dom"
+import { Link, Navigate, useNavigate, useParams } from "react-router-dom"
 import { httpsCallable } from "firebase/functions"
 import { onAuthStateChanged } from "firebase/auth"
 import { auth, functions } from "../lib/firebase.js"
+import { clearReferralSlug, rememberReferralSlug } from "../lib/referral.js"
 import {
   CandidateShell,
   Icon,
@@ -117,21 +118,30 @@ const MOCK_PREVIEW: DashboardData = {
 // Backend hooks (Phase C wires these to live CFs)
 // ────────────────────────────────────────────────────────────────────────────
 
-function useDashboard(): { data: DashboardData; loading: boolean; reload: () => void } {
+function useDashboard(): {
+  data: DashboardData
+  loading: boolean
+  signedIn: boolean | null
+  reload: () => void
+} {
   const [data, setData] = useState<DashboardData>(MOCK_PREVIEW)
   const [loading, setLoading] = useState(true)
+  const [signedIn, setSignedIn] = useState<boolean | null>(null)
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
     let cancelled = false
     const unsub = onAuthStateChanged(auth(), async (user) => {
+      if (!cancelled) setLoading(true)
       if (!user) {
         if (!cancelled) {
+          setSignedIn(false)
           setData(MOCK_PREVIEW)
           setLoading(false)
         }
         return
       }
+      if (!cancelled) setSignedIn(true)
       try {
         const call = httpsCallable<unknown, DashboardData>(functions(), "paReferDashboardList")
         const result = await call({})
@@ -149,7 +159,7 @@ function useDashboard(): { data: DashboardData; loading: boolean; reload: () => 
   }, [tick])
 
   const reload = useCallback(() => setTick((n) => n + 1), [])
-  return { data, loading, reload }
+  return { data, loading, signedIn, reload }
 }
 
 async function sendInvites(emails: string[], note: string): Promise<{ sent: number; error?: string }> {
@@ -165,16 +175,16 @@ async function sendInvites(emails: string[], note: string): Promise<{ sent: numb
   }
 }
 
-async function resolveInviter(slug: string): Promise<{ name: string | null }> {
+async function resolveInviter(slug: string): Promise<{ name: string | null; valid: boolean }> {
   try {
-    const call = httpsCallable<{ slug: string }, { name: string | null }>(
+    const call = httpsCallable<{ slug: string }, { name: string | null; valid?: boolean }>(
       functions(),
       "paReferLinkResolve",
     )
     const result = await call({ slug })
-    return { name: result.data?.name ?? null }
+    return { name: result.data?.name ?? null, valid: result.data?.valid === true }
   } catch {
-    return { name: null }
+    return { name: null, valid: false }
   }
 }
 
@@ -761,13 +771,27 @@ function ReferFAQItem({ q, a }: { q: string; a: string }) {
 // ────────────────────────────────────────────────────────────────────────────
 
 export default function ReferPage() {
-  const { data, loading, reload } = useDashboard()
+  const { data, loading, signedIn, reload } = useDashboard()
   const [toast, setToast] = useState<string | null>(null)
 
   function handleSent(count: number) {
     setToast(`Sent ${count} invite${count === 1 ? "" : "s"}. Claire will email them now.`)
     setTimeout(() => setToast(null), 2400)
     reload()
+  }
+
+  if (signedIn === false) {
+    return <Navigate to="/login?next=%2Fme%2Frefer" replace />
+  }
+
+  if (signedIn === null) {
+    return (
+      <CandidateShell signedIn={false}>
+        <div className="wk-ref">
+          <p style={{ color: "var(--ink-3)", fontSize: 14 }}>Loading your referrals…</p>
+        </div>
+      </CandidateShell>
+    )
   }
 
   return (
@@ -1074,19 +1098,20 @@ function ReferPublicCallout() {
 export function ReferPublicPage() {
   const params = useParams<{ slug?: string }>()
   const slug = params.slug ?? null
-  const [inviter, setInviter] = useState<string | null>(null)
+  const [inviter, setInviter] = useState<{ name: string | null; valid: boolean } | null>(null)
 
   useEffect(() => {
-    if (!slug) return
-    // Persist for post-signup attribution (Phase C7).
-    try {
-      window.localStorage.setItem("pa_referrer_slug", slug)
-    } catch {
-      /* ignore private mode */
+    if (!slug) {
+      setInviter(null)
+      return
     }
+    setInviter(null)
     let cancelled = false
     void resolveInviter(slug).then((res) => {
-      if (!cancelled) setInviter(res.name)
+      if (cancelled) return
+      setInviter(res)
+      if (res.valid) rememberReferralSlug(slug)
+      else clearReferralSlug(slug)
     })
     return () => {
       cancelled = true
@@ -1094,13 +1119,9 @@ export function ReferPublicPage() {
   }, [slug])
 
   const heroInviter = useMemo(() => {
-    if (inviter) return inviter
+    if (inviter?.valid) return inviter.name ?? "A WeKruit candidate"
     if (!slug) return null
-    // Fallback: humanize slug while resolve is pending.
-    return slug
-      .split("-")
-      .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
-      .join(" ")
+    return null
   }, [inviter, slug])
 
   return (

@@ -17,8 +17,25 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
   computeSubmissionScore,
+  composeRecruiterRoleNotificationEmail,
+  defaultRecruiterInviteCodeExpiresAt,
   fetchCollabJobs,
+  generateRecruiterInviteCode,
+  hashRecruiterCandidateLink,
+  hashRecruiterInviteCode,
   isHiringBoardAdmin,
+  normalizeRecruiterCandidateLink,
+  inviteCodeUsable,
+  normalizeRecruiterInviteCode,
+  recruiterInviteCodeMatchesBoundUser,
+  recruiterIdentityFromFirebaseBearer,
+  shouldNotifyRecruitersForRoleRelease,
+  sanitizeSubmissionStatusHistory,
+  validateInviteCodeCreate,
+  validateRecruiterRoleFeedbackInput,
+  validateRecruiterRoleQuestionInput,
+  validateRecruiterSourcedCandidateInput,
+  validateRecruiterWorkspacePreferences,
   type RecruiterBoardChecklistGroup,
   type RecruiterBoardPayload,
 } from "../recruiter-board.js"
@@ -80,6 +97,292 @@ describe("computeSubmissionScore", () => {
     })
     assert.equal(score.hardChecked, 1)
     assert.equal(score.hardTotal, 3)
+  })
+})
+
+describe("sanitizeSubmissionStatusHistory", () => {
+  it("keeps recruiter-safe status history and drops malformed entries", () => {
+    assert.deepEqual(sanitizeSubmissionStatusHistory([
+      { status: " submitted ", by: "recruiter", atIso: "2026-05-30T12:00:00Z" },
+      { status: "reviewing", by: "admin", atIso: "bad-date", note: "Internal note".repeat(200) },
+      { by: "admin" },
+      null,
+    ]), [
+      { status: "submitted", by: "recruiter", atIso: "2026-05-30T12:00:00.000Z" },
+      { status: "reviewing", by: "admin", note: "Internal note".repeat(200).slice(0, 1000) },
+    ])
+  })
+})
+
+describe("recruiter access helpers", () => {
+  it("normalizes invite codes without changing the visible code contract", () => {
+    assert.equal(normalizeRecruiterInviteCode(" wk-7k2p "), "WK-7K2P")
+    assert.equal(normalizeRecruiterInviteCode("wk 7k2p"), "WK7K2P")
+  })
+
+  it("hashes invite codes", () => {
+    assert.equal(hashRecruiterInviteCode("WK-7K2P").length, 64)
+  })
+
+  it("generates visible invite codes in the WeKruit format", () => {
+    assert.match(generateRecruiterInviteCode(), /^WK-[A-Z0-9]{4}-[A-Z0-9]{4}$/)
+  })
+
+  it("defaults recruiter invite codes to expire one year from creation", () => {
+    assert.equal(
+      defaultRecruiterInviteCodeExpiresAt(Date.parse("2026-05-31T12:00:00.000Z")),
+      "2027-05-31T12:00:00.000Z",
+    )
+    const before = Date.now()
+    const defaultCode = validateInviteCodeCreate({})
+    const after = Date.now()
+    assert.equal(defaultCode.ok, true)
+    if (!defaultCode.ok) return
+    const expiresAt = defaultCode.value.expiresAt
+    assert.ok(expiresAt)
+    const expiresAtMs = Date.parse(expiresAt)
+    const min = new Date(before)
+    min.setFullYear(min.getFullYear() + 1)
+    const max = new Date(after)
+    max.setFullYear(max.getFullYear() + 1)
+    assert.ok(expiresAtMs >= min.getTime())
+    assert.ok(expiresAtMs <= max.getTime())
+  })
+
+  it("forces recruiter invite codes to be single-use", () => {
+    const defaultCode = validateInviteCodeCreate({})
+    assert.equal(defaultCode.ok, true)
+    if (defaultCode.ok) assert.equal(defaultCode.value.maxUses, 1)
+    const explicitSingleUse = validateInviteCodeCreate({ maxUses: 1 })
+    assert.equal(explicitSingleUse.ok, true)
+    if (explicitSingleUse.ok) assert.equal(explicitSingleUse.value.maxUses, 1)
+    assert.deepEqual(validateInviteCodeCreate({ maxUses: 2 }), {
+      ok: false,
+      reason: "invalid_max_uses",
+    })
+    assert.equal(inviteCodeUsable({ active: true, maxUses: 5, usedCount: 0 }, Date.now()), true)
+    assert.equal(inviteCodeUsable({ active: true, maxUses: 5, usedCount: 1 }, Date.now()), false)
+  })
+
+  it("lets a bound recruiter reuse only their own access code with the same Google account", () => {
+    const normalizedCode = normalizeRecruiterInviteCode("WK-CDKE-AUC5")
+    const inviteCodeId = hashRecruiterInviteCode(normalizedCode)
+
+    assert.equal(recruiterInviteCodeMatchesBoundUser({ inviteCodeId }, normalizedCode), true)
+    assert.equal(recruiterInviteCodeMatchesBoundUser({ inviteCodeId }, "WK-OTHER-CODE"), false)
+    assert.equal(recruiterInviteCodeMatchesBoundUser({}, normalizedCode), false)
+  })
+
+  it("validates primary role slots for recruiter workspaces", () => {
+    assert.deepEqual(validateRecruiterWorkspacePreferences({
+      primaryRoleIds: [" role-1 ", "role-2", "role-1"],
+    }), {
+      ok: true,
+      value: { primaryRoleIds: ["role-1", "role-2"] },
+    })
+    assert.deepEqual(validateRecruiterWorkspacePreferences({
+      primaryRoleIds: ["a", "b", "c", "d", "e", "f"],
+    }), {
+      ok: false,
+      reason: "too_many_primary_roles",
+    })
+    assert.deepEqual(validateRecruiterWorkspacePreferences({
+      primaryRoleIds: ["role-1", 123],
+    }), {
+      ok: false,
+      reason: "invalid_primary_role_ids",
+    })
+  })
+
+  it("binds recruiter API identity to Firebase Auth uid and normalized email", async () => {
+    const identity = await recruiterIdentityFromFirebaseBearer(
+      { headers: { authorization: "Bearer firebase-id-token" } },
+      async (token) => {
+        assert.equal(token, "firebase-id-token")
+        return { uid: "firebase-uid-123", email: "Sloane@Agency.com" }
+      },
+    )
+
+    assert.deepEqual(identity, {
+      uid: "firebase-uid-123",
+      email: "sloane@agency.com",
+    })
+  })
+
+  it("rejects malformed recruiter Firebase bearer tokens", async () => {
+    assert.equal(
+      await recruiterIdentityFromFirebaseBearer(
+        { headers: { authorization: "Bearer old-recruiter-id:local-token" } },
+        async () => ({ uid: "firebase-uid-123", email: "sloane@agency.com" }),
+      ),
+      null,
+    )
+  })
+})
+
+describe("recruiter role notifications", () => {
+  it("fires only when a collab role becomes active on the recruiter board", () => {
+    assert.equal(shouldNotifyRecruitersForRoleRelease(null, {
+      wekruitCollaborationStatus: "collaborated",
+      recruiterBoard: { active: true },
+    }), true)
+    assert.equal(shouldNotifyRecruitersForRoleRelease({
+      wekruitCollaborationStatus: "collaborated",
+      recruiterBoard: { active: true },
+    }, {
+      wekruitCollaborationStatus: "collaborated",
+      recruiterBoard: { active: true },
+    }), false)
+    assert.equal(shouldNotifyRecruitersForRoleRelease(null, {
+      wekruitCollaborationStatus: "not_collaborated",
+      recruiterBoard: { active: true },
+    }), false)
+  })
+
+  it("composes a role email with the role link and opt-out language", () => {
+    const email = composeRecruiterRoleNotificationEmail({
+      recruiterName: "Sloane",
+      roleTitle: "Founding Engineer",
+      companyLabel: "Co. B",
+      location: "San Francisco",
+      roleUrl: "https://candidate.wekruit.com/recruiters/job/role-1",
+    })
+    assert.match(email.subject, /Founding Engineer/)
+    assert.match(email.text, /candidate\.wekruit\.com/)
+    assert.match(email.text, /turn off new-role emails/i)
+  })
+})
+
+describe("recruiter sourced candidates", () => {
+  it("normalizes candidate profile links before duplicate checks", () => {
+    assert.equal(
+      normalizeRecruiterCandidateLink(" HTTPS://www.LinkedIn.com/in/Ada-Lovelace/?trk=public_profile "),
+      "linkedin.com/in/ada-lovelace",
+    )
+    assert.equal(
+      hashRecruiterCandidateLink("https://linkedin.com/in/ada-lovelace").length,
+      64,
+    )
+  })
+
+  it("accepts a recruiter-sourced candidate and trims optional fields", () => {
+    const result = validateRecruiterSourcedCandidateInput({
+      jobId: " public-job-1 ",
+      stage: "ready",
+      candidate: {
+        name: " Ada Lovelace ",
+        link: " https://linkedin.com/in/ada ",
+        currentRole: " Staff Engineer ",
+        yoe: " 9 ",
+        notes: " strong backend match ",
+      },
+    })
+
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.value.jobId, "public-job-1")
+    assert.equal(result.value.stage, "ready")
+    assert.deepEqual(result.value.candidate, {
+      name: "Ada Lovelace",
+      link: "https://linkedin.com/in/ada",
+      currentRole: "Staff Engineer",
+      yoe: "9",
+      notes: "strong backend match",
+    })
+  })
+
+  it("rejects malformed sourced candidate payloads", () => {
+    assert.deepEqual(validateRecruiterSourcedCandidateInput({}), {
+      ok: false,
+      reason: "missing_jobId",
+    })
+    assert.deepEqual(validateRecruiterSourcedCandidateInput({
+      jobId: "job-1",
+      candidate: { name: "Ada" },
+    }), {
+      ok: false,
+      reason: "missing_candidate_link",
+    })
+    assert.deepEqual(validateRecruiterSourcedCandidateInput({
+      candidateId: "../bad",
+      jobId: "job-1",
+      candidate: { name: "Ada", link: "https://linkedin.com/in/ada" },
+    }), {
+      ok: false,
+      reason: "invalid_candidate_id",
+    })
+  })
+})
+
+describe("recruiter role feedback", () => {
+  it("accepts role feedback with difficulty, reasons, and note", () => {
+    const result = validateRecruiterRoleFeedbackInput({
+      jobId: " public-job-1 ",
+      difficulty: "blocked",
+      reasons: ["small_candidate_pool", "low_comp", "small_candidate_pool"],
+      note: " Candidate pool is thin below the current compensation range. ",
+    })
+
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.deepEqual(result.value, {
+      jobId: "public-job-1",
+      difficulty: "blocked",
+      reasons: ["small_candidate_pool", "low_comp"],
+      note: "Candidate pool is thin below the current compensation range.",
+    })
+  })
+
+  it("rejects malformed role feedback payloads", () => {
+    assert.deepEqual(validateRecruiterRoleFeedbackInput({}), {
+      ok: false,
+      reason: "missing_jobId",
+    })
+    assert.deepEqual(validateRecruiterRoleFeedbackInput({
+      jobId: "job-1",
+      difficulty: "impossible",
+    }), {
+      ok: false,
+      reason: "invalid_difficulty",
+    })
+    assert.deepEqual(validateRecruiterRoleFeedbackInput({
+      jobId: "job-1",
+      difficulty: "hard",
+      reasons: ["not_a_reason"],
+    }), {
+      ok: false,
+      reason: "invalid_reasons",
+    })
+  })
+})
+
+describe("recruiter role questions", () => {
+  it("accepts a role question for WeKruit calibration", () => {
+    assert.deepEqual(validateRecruiterRoleQuestionInput({
+      jobId: " role-123 ",
+      question: "Can the hiring team consider candidates from Canada if they can work US hours?",
+    }), {
+      ok: true,
+      value: {
+        jobId: "role-123",
+        question: "Can the hiring team consider candidates from Canada if they can work US hours?",
+      },
+    })
+  })
+
+  it("rejects malformed role question payloads", () => {
+    assert.deepEqual(validateRecruiterRoleQuestionInput({ question: "Too short" }), {
+      ok: false,
+      reason: "missing_jobId",
+    })
+    assert.deepEqual(validateRecruiterRoleQuestionInput({ jobId: "role-123", question: "short" }), {
+      ok: false,
+      reason: "question_too_short",
+    })
+    assert.deepEqual(validateRecruiterRoleQuestionInput({ jobId: "role-123", question: "x".repeat(2001) }), {
+      ok: false,
+      reason: "question_too_long",
+    })
   })
 })
 

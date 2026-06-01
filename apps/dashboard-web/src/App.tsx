@@ -232,8 +232,13 @@ export default function App() {
           <Route path="/admin/sendblue-pool" element={<SendbluePool />} />
           {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}
           <Route path="/admin/prescreen-feedback" element={<PrescreenFeedback />} />
-          {/* Recruiter board submissions review surface. */}
-          <Route path="/admin/recruiter-submissions" element={<RecruiterSubmissions />} />
+          {/* Recruiter board admin surfaces. */}
+          <Route path="/admin/recruiter-access" element={<RecruiterSubmissions section="codes" />} />
+          <Route path="/admin/recruiter-codes" element={<Navigate to="/admin/recruiter-access" replace />} />
+          <Route path="/admin/recruiter-sourced" element={<RecruiterSubmissions section="sourced" />} />
+          <Route path="/admin/recruiter-feedback" element={<RecruiterSubmissions section="feedback" />} />
+          <Route path="/admin/recruiter-questions" element={<RecruiterSubmissions section="questions" />} />
+          <Route path="/admin/recruiter-submissions" element={<RecruiterSubmissions section="submissions" />} />
           {/* v2.0 External Supply V1 — Wave D admin surfaces. */}
           <Route path="/admin/external-supply" element={<ExternalSupplyLanding />} />
           <Route path="/admin/external-supply/jobs" element={<ExternalSupplyJobs />} />

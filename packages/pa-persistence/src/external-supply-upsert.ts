@@ -193,6 +193,7 @@ function mergeWeakGlobalTags(
       targetJobType: [],
       relevantTags: delta.relevantTags,
       companySizePreference: [],
+      companyStage: [],
       updatedAt: now,
     }
   }

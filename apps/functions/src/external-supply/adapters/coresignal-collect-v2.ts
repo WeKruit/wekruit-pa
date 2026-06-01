@@ -68,8 +68,38 @@ function nonEmpty(v: unknown): string | null {
   return t.length > 0 ? t : null
 }
 
+function normalizeOptionalUrl(value: unknown): string | undefined {
+  const trimmed = nonEmpty(value)
+  if (!trimmed) return undefined
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`
+  try {
+    const parsed = new URL(withProtocol)
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined
+    return parsed.toString()
+  } catch {
+    return undefined
+  }
+}
+
+function firstNonEmpty(raw: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = nonEmpty(raw[key])
+    if (value) return value
+  }
+  return null
+}
+
+function isActiveExperience(value: unknown): boolean | undefined {
+  if (value === true || value === 1) return true
+  if (value === false || value === 0) return false
+  return undefined
+}
+
 function mapExperience(
   items: CoresignalEmployeeCollectV2["experience"],
+  activeExperienceDescription?: string | null,
 ): NormalizedRecordDraft["experience"] {
   if (!items || !Array.isArray(items)) return []
   return items
@@ -77,16 +107,54 @@ function mapExperience(
       (it) =>
         nonEmpty(it.company_name) && nonEmpty(it.position_title),
     )
-    .map((it) => {
+    .map((it, index) => {
+      const raw = it as Record<string, unknown>
+      const active = isActiveExperience(it.active_experience)
       const out: NormalizedRecordDraft["experience"][number] = {
         company: nonEmpty(it.company_name)!,
         title: nonEmpty(it.position_title)!,
       }
+      const location = nonEmpty(it.location)
+      if (location) out.location = location
+      const description =
+        nonEmpty(it.description) ??
+        (active === true || index === 0 ? nonEmpty(activeExperienceDescription) : null)
+      if (description) out.description = description
       if (nonEmpty(it.date_from)) out.startDate = nonEmpty(it.date_from)!
       if (nonEmpty(it.date_to)) out.endDate = nonEmpty(it.date_to)!
       if (typeof it.duration_months === "number" && it.duration_months >= 0) {
         out.durationMonths = it.duration_months
       }
+      if (active !== undefined) out.currentRole = active
+      const department = nonEmpty(it.department)
+      if (department) out.department = department
+      const managementLevel = nonEmpty(it.management_level)
+      if (managementLevel) out.managementLevel = managementLevel
+      if (typeof it.company_id === "number" && Number.isInteger(it.company_id) && it.company_id > 0) {
+        out.companyId = it.company_id
+      }
+      const companyIndustry = nonEmpty(it.company_industry)
+      if (companyIndustry) out.companyIndustry = companyIndustry
+      const companySizeRange = nonEmpty(it.company_size_range)
+      if (companySizeRange) out.companySizeRange = companySizeRange
+      const companyWebsite = normalizeOptionalUrl(it.company_website)
+      if (companyWebsite) out.companyWebsite = companyWebsite
+      const companyLinkedinUrl = normalizeOptionalUrl(it.company_linkedin_url)
+      if (companyLinkedinUrl) out.companyLinkedinUrl = companyLinkedinUrl
+      const companyHqCity = nonEmpty(it.company_hq_city)
+      if (companyHqCity) out.companyHqCity = companyHqCity
+      const companyHqCountry = nonEmpty(it.company_hq_country)
+      if (companyHqCountry) out.companyHqCountry = companyHqCountry
+      const companyLogoUrl = normalizeOptionalUrl(
+        firstNonEmpty(raw, [
+          "company_logo_url",
+          "company_logo",
+          "company_image_url",
+          "company_avatar_url",
+          "logo_url",
+        ]),
+      )
+      if (companyLogoUrl) out.companyLogoUrl = companyLogoUrl
       return out
     })
 }
@@ -181,12 +249,15 @@ export function normalizeCoresignalCollectV2(
     employee.inferred_skills ?? null,
     employee.historical_skills ?? null,
   )
+  const activeExperienceDescription = nonEmpty(
+    (employee as Record<string, unknown>).active_experience_description,
+  )
 
   const draft: NormalizedRecordDraft = {
     source: "coresignal_collect_v2",
     rawPayload: { ...employee } as Record<string, unknown>,
     emails: emails.map((value) => ({ value, hash: emailHash(value) })),
-    experience: mapExperience(employee.experience),
+    experience: mapExperience(employee.experience, activeExperienceDescription),
     education: mapEducation(employee.education),
     sourceTags,
     normalizationStatus: status,

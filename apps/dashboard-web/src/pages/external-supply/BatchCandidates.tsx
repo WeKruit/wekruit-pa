@@ -16,6 +16,7 @@
  */
 import { useEffect, useMemo, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
+import { AdminUserLink } from "../../components/AdminEntityLink.js"
 import {
   ErrorState,
   LoadingState,
@@ -707,6 +708,9 @@ function CandidateDetailPanel({ detail }: { detail: CandidateDetail }) {
         }
       >
         <div style={detailHeaderStyle}>
+          {detail.candidateId ? (
+            <AdminUserLink userId={detail.candidateId}>Open candidate profile</AdminUserLink>
+          ) : null}
           {typeof record.canonicalLinkedInUrl === "string" && (
             <a
               href={record.canonicalLinkedInUrl}

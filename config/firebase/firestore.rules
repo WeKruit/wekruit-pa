@@ -532,6 +532,38 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ─── Recruiter platform ──────────────────────────────────────────
+    // Cloud Functions own invite-code binding and notification writes. Operators can
+    // inspect recruiter access state and update submission feedback/status.
+    match /pa-recruiter-invite-codes/{inviteCodeId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-recruiter-users/{recruiterUid} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-recruiter-submissions/{submissionId} {
+      allow read, update: if isPaOperator();
+      allow create, delete: if false;
+    }
+    match /pa-recruiter-sourced-candidates/{candidateId} {
+      allow read, update: if isPaOperator();
+      allow create, delete: if false;
+    }
+    match /pa-recruiter-role-feedback/{feedbackId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-recruiter-role-questions/{questionId} {
+      allow read, update: if isPaOperator();
+      allow create, delete: if false;
+    }
+    match /pa-recruiter-notifications/{notificationId} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+
     // ─── Default deny ────────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

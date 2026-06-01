@@ -1,6 +1,69 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
-import { runPreScreenForUser } from "./prescreen-session-start.js"
+import { runPreScreenForUser, defaultIsJobMatchedToUser } from "./prescreen-session-start.js"
+
+/**
+ * Minimal fake for defaultIsJobMatchedToUser's three point-read arms:
+ *   rec ledger: pa-user-job-recommendations/{uid}/jobs/{jid}.recommendationCount
+ *   done it:    pa-prescreen-sessions where userId==&&jobId== limit 1
+ *   invite:     pa-prescreen-pending-invites/{uid}.jobId
+ */
+function makeMatchFakeDb(opts: {
+  rec?: { jobId: string; count: number }
+  session?: { userId: string; jobId: string }
+  invite?: { userId: string; jobId: string }
+  throwOnRec?: boolean
+}) {
+  return {
+    collection(c: string) {
+      if (c === "pa-user-job-recommendations") {
+        return {
+          doc() {
+            return {
+              collection() {
+                return {
+                  doc(jid: string) {
+                    return {
+                      async get() {
+                        if (opts.throwOnRec) throw new Error("firestore_down")
+                        const hit = opts.rec && opts.rec.jobId === jid
+                        return { exists: !!hit, data: () => (hit ? { recommendationCount: opts.rec!.count } : undefined) }
+                      },
+                    }
+                  },
+                }
+              },
+            }
+          },
+        }
+      }
+      if (c === "pa-prescreen-sessions") {
+        const q = {
+          where() { return q },
+          limit() { return q },
+          async get() {
+            const hit = !!opts.session
+            return { empty: !hit, docs: hit ? [{ id: "ps_x", data: () => opts.session }] : [] }
+          },
+        }
+        return q
+      }
+      if (c === "pa-prescreen-pending-invites") {
+        return {
+          doc(uid: string) {
+            return {
+              async get() {
+                const hit = opts.invite && opts.invite.userId === uid
+                return { exists: !!hit, data: () => (hit ? { jobId: opts.invite!.jobId } : undefined) }
+              },
+            }
+          },
+        }
+      }
+      throw new Error(`unexpected collection ${c}`)
+    },
+  } as never
+}
 
 type FakeDoc = { exists: boolean; data: Record<string, unknown> }
 
@@ -351,5 +414,112 @@ describe("runPreScreenForUser session boundaries", () => {
     const userWorkSession = docs.get("pa-users/u1")?.data.workSession as Record<string, unknown>
     assert.equal(userWorkSession.status, "active")
     assert.equal(userWorkSession.sessionId, result.sessionId)
+  })
+})
+
+describe("runPreScreenForUser MATCHED-GATE (2026-05-31)", () => {
+  const okSms = async ({ content }: { content: string }) => ({
+    status: "queued", from_number: null, number: "+13054507715", content, service: "iMessage", is_outbound: true,
+  })
+
+  it("REFUSES an unmatched job: no session created, no supersede of the active one", async () => {
+    const { db, docs } = makeFakeDb({
+      "pa-jobs/job-foreign": { prescreenConfig },
+      // a legitimately in-progress prescreen for ANOTHER job — must NOT be paused.
+      "pa-prescreen-sessions/ps_active": {
+        sessionId: "ps_active", userId: "u1", jobId: "job-mine", terminal: null, currentQId: "role_fit",
+      },
+    })
+    let smsCount = 0
+    const result = await runPreScreenForUser({
+      db,
+      jobId: "job-foreign",
+      userId: "u1",
+      toE164: "+13054507715",
+      // self copy-paste path: no bypass, no pending-invite. Foreign jobId not matched.
+      isJobMatchedToUser: async () => false,
+      markStarted: async () => undefined,
+      sendSms: async (a) => { smsCount++; return okSms(a) },
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, "not_matched")
+    // No new session doc for the user.
+    const created = [...docs.entries()].find(
+      ([path, doc]) => path.startsWith("pa-prescreen-sessions/") && path !== "pa-prescreen-sessions/ps_active" && doc.data.userId === "u1",
+    )
+    assert.equal(created, undefined, "no session created for an unmatched job")
+    // The active session for the candidate's REAL job is untouched (not superseded/paused).
+    assert.equal(docs.get("pa-prescreen-sessions/ps_active")?.data.terminal, null)
+    // No opener SMS sent.
+    assert.equal(smsCount, 0)
+  })
+
+  it("ALLOWS a matched job (isJobMatchedToUser=true) — session starts", async () => {
+    const { db } = makeFakeDb({ "pa-jobs/job-mine": { prescreenConfig } })
+    const result = await runPreScreenForUser({
+      db, jobId: "job-mine", userId: "u1", toE164: "+13054507715",
+      isJobMatchedToUser: async () => true,
+      markStarted: async () => undefined,
+      sendSms: okSms,
+    })
+    assert.equal(result.ok, true)
+    assert.equal(result.reason, "started")
+  })
+
+  it("allowMatchedBypass=true skips the gate (admin/system) — gate fn not even called", async () => {
+    const { db } = makeFakeDb({ "pa-jobs/job-x": { prescreenConfig } })
+    let gateCalled = false
+    const result = await runPreScreenForUser({
+      db, jobId: "job-x", userId: "u1", toE164: "+13054507715",
+      allowMatchedBypass: true,
+      isJobMatchedToUser: async () => { gateCalled = true; return false },
+      markStarted: async () => undefined,
+      sendSms: okSms,
+    })
+    assert.equal(result.ok, true)
+    assert.equal(gateCalled, false, "bypass must short-circuit the gate")
+  })
+
+  it("sourceRequestedUserId (public-page pending-invite) skips the gate", async () => {
+    const { db } = makeFakeDb({ "pa-jobs/job-pub": { prescreenConfig } })
+    let gateCalled = false
+    const result = await runPreScreenForUser({
+      db, jobId: "job-pub", userId: "u1", toE164: "+13054507715",
+      sourceRequestedUserId: "wkr_abc",
+      isJobMatchedToUser: async () => { gateCalled = true; return false },
+      markStarted: async () => undefined,
+      sendSms: okSms,
+    })
+    assert.equal(result.ok, true)
+    assert.equal(gateCalled, false, "pending-invite is the match evidence; gate skipped")
+  })
+})
+
+describe("defaultIsJobMatchedToUser — done-or-matched arms (Adam 2026-05-31)", () => {
+  it("MATCHED arm: rec ledger recommendationCount>0 → true", async () => {
+    const db = makeMatchFakeDb({ rec: { jobId: "job-a", count: 2 } })
+    assert.equal(await defaultIsJobMatchedToUser(db, "u1", "job-a"), true)
+  })
+  it("MATCHED arm: recommendationCount 0 / different job → false", async () => {
+    assert.equal(await defaultIsJobMatchedToUser(makeMatchFakeDb({ rec: { jobId: "job-a", count: 0 } }), "u1", "job-a"), false)
+    assert.equal(await defaultIsJobMatchedToUser(makeMatchFakeDb({ rec: { jobId: "job-other", count: 3 } }), "u1", "job-a"), false)
+  })
+  it("DONE arm: an existing prescreen session for (user, job) → true", async () => {
+    const db = makeMatchFakeDb({ session: { userId: "u1", jobId: "job-a" } })
+    assert.equal(await defaultIsJobMatchedToUser(db, "u1", "job-a"), true)
+  })
+  it("PENDING-INVITE arm: invite for this job → true", async () => {
+    const db = makeMatchFakeDb({ invite: { userId: "u1", jobId: "job-a" } })
+    assert.equal(await defaultIsJobMatchedToUser(db, "u1", "job-a"), true)
+  })
+  it("none of the arms → false (must go to the website / formatted-text flow)", async () => {
+    assert.equal(await defaultIsJobMatchedToUser(makeMatchFakeDb({}), "u1", "job-a"), false)
+  })
+  it("fail-OPEN on read error → true (availability beats blocking legit starts)", async () => {
+    assert.equal(await defaultIsJobMatchedToUser(makeMatchFakeDb({ throwOnRec: true }), "u1", "job-a"), true)
+  })
+  it("missing ids → false", async () => {
+    assert.equal(await defaultIsJobMatchedToUser(makeMatchFakeDb({}), "", "job-a"), false)
+    assert.equal(await defaultIsJobMatchedToUser(makeMatchFakeDb({}), "u1", ""), false)
   })
 })

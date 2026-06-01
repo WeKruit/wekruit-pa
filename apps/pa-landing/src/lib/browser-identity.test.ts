@@ -6,6 +6,7 @@ import {
   candidatePortalLoginUrl,
   cookieDomainForHost,
   deriveOnboardingIntentFromPath,
+  deriveRegistrationEntryFromPath,
   isLayoffHost,
   isPublicJobPath,
   layoffSignupLoginPath,
@@ -125,6 +126,18 @@ test("deriveOnboardingIntentFromPath distinguishes job prescreen from normal onb
     intent: "generic_onboarding",
     returnPath: null,
   })
+})
+
+test("deriveRegistrationEntryFromPath captures public job signup entry", () => {
+  assert.deepEqual(
+    deriveRegistrationEntryFromPath("/j/standout-37429d02-photon-macos-devops/cv"),
+    {
+      kind: "job_prescreen",
+      path: "/j/wekruit-37429d02-photon-macos-devops/cv",
+      jobId: "wekruit-37429d02-photon-macos-devops",
+    },
+  )
+  assert.equal(deriveRegistrationEntryFromPath("/onboarding?source=candidate"), null)
 })
 
 test("onboardingDestination routes layoff source to layoff query", () => {

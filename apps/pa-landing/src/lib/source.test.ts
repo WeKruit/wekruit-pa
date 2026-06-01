@@ -73,6 +73,22 @@ test("stickSourceFromLoginNext writes layoffhedge cookie when next carries it", 
   })
 })
 
+test("stickSourceFromLoginNext preserves layoffhedge on public job next", async () => {
+  const mod = await import("./source.js?case=stickyJobNext")
+  let cookieWritten = ""
+  withBrowser("https://candidate.wekruit.com/login", "", () => {
+    Object.defineProperty((globalThis as any).document, "cookie", {
+      configurable: true,
+      get: () => cookieWritten,
+      set: (v: string) => {
+        cookieWritten = v
+      },
+    })
+    mod.stickSourceFromLoginNext("/j/abc?source=layoffhedge")
+    assert.match(cookieWritten, /^wko_source=layoffhedge;/)
+  })
+})
+
 test("peekSource returns layoffhedge from cookie without writing back", async () => {
   const mod = await import("./source.js?case=peekLayoffhedge")
   withBrowser("https://candidate.wekruit.com/me", "wko_source=layoffhedge", () => {

@@ -23,7 +23,7 @@ export interface SheetSubmissionInput {
   submissionId: string
   jobId: string
   companyLabel: string
-  submitter: { name: string; email: string; company?: string }
+  submitter: { name: string; email: string }
   candidate: {
     name: string
     link: string
@@ -47,7 +47,6 @@ function staticColumns(): ColumnSpec[] {
     { header: "Submitted at", value: () => new Date().toISOString() },
     { header: "Submitter name", value: (i) => i.submitter.name },
     { header: "Submitter email", value: (i) => i.submitter.email },
-    { header: "Submitter company", value: (i) => i.submitter.company ?? "" },
     { header: "Candidate name", value: (i) => i.candidate.name },
     { header: "Candidate link", value: (i) => i.candidate.link },
     { header: "Current role", value: (i) => i.candidate.currentRole ?? "" },

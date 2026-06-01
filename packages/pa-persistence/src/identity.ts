@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import type { Firestore } from "firebase-admin/firestore"
+import { FieldValue, type Firestore } from "firebase-admin/firestore"
 import {
   CandidateAuthMappingSchema,
   CandidateHandleSchema,
@@ -89,6 +89,130 @@ function normalizeOptionalUrl(value: unknown): string | undefined {
   } catch {
     return undefined
   }
+}
+
+function isLinkedinOAuthMarker(value: unknown): boolean {
+  if (typeof value !== "string") return false
+  return value.includes("/oauth-linked/")
+}
+
+function normalizeLinkedinProfileUrl(value: unknown): string | undefined {
+  if (isLinkedinOAuthMarker(value)) return undefined
+  return normalizeOptionalUrl(value)
+}
+
+function normalizeExperienceHighlights(value: unknown): Array<Record<string, unknown>> | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: Array<Record<string, unknown>> = []
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue
+    const raw = item as Record<string, unknown>
+    const title = typeof raw.title === "string" ? raw.title.trim() : ""
+    const company = typeof raw.company === "string" ? raw.company.trim() : ""
+    if (!title || !company) continue
+    const location = typeof raw.location === "string" ? raw.location.trim() : ""
+    const description = typeof raw.description === "string" ? raw.description.trim() : ""
+    const startDate = typeof raw.startDate === "string" ? raw.startDate.trim() : ""
+    const endDate = typeof raw.endDate === "string" ? raw.endDate.trim() : ""
+    const department = typeof raw.department === "string" ? raw.department.trim() : ""
+    const managementLevel = typeof raw.managementLevel === "string" ? raw.managementLevel.trim() : ""
+    const companyIndustry = typeof raw.companyIndustry === "string" ? raw.companyIndustry.trim() : ""
+    const companySizeRange = typeof raw.companySizeRange === "string" ? raw.companySizeRange.trim() : ""
+    const companyHqCity = typeof raw.companyHqCity === "string" ? raw.companyHqCity.trim() : ""
+    const companyHqCountry = typeof raw.companyHqCountry === "string" ? raw.companyHqCountry.trim() : ""
+    const source = typeof raw.source === "string" ? raw.source.trim() : ""
+    const sourceLabel = typeof raw.sourceLabel === "string" ? raw.sourceLabel.trim() : ""
+    const durationMonths =
+      typeof raw.durationMonths === "number" && Number.isFinite(raw.durationMonths) && raw.durationMonths >= 0
+        ? raw.durationMonths
+        : undefined
+    const companyId =
+      typeof raw.companyId === "number" && Number.isInteger(raw.companyId) && raw.companyId > 0
+        ? raw.companyId
+        : undefined
+    out.push(stripUndefined({
+      title: title.slice(0, 200),
+      company: company.slice(0, 200),
+      location: location ? location.slice(0, 200) : undefined,
+      description: description ? description.slice(0, 4_000) : undefined,
+      startDate: startDate ? startDate.slice(0, 64) : undefined,
+      endDate: endDate ? endDate.slice(0, 64) : undefined,
+      durationMonths,
+      currentRole: raw.currentRole === true ? true : undefined,
+      department: department ? department.slice(0, 120) : undefined,
+      managementLevel: managementLevel ? managementLevel.slice(0, 120) : undefined,
+      companyId,
+      companyIndustry: companyIndustry ? companyIndustry.slice(0, 200) : undefined,
+      companySizeRange: companySizeRange ? companySizeRange.slice(0, 120) : undefined,
+      companyWebsite: normalizeOptionalUrl(raw.companyWebsite),
+      companyLinkedinUrl: normalizeOptionalUrl(raw.companyLinkedinUrl),
+      companyHqCity: companyHqCity ? companyHqCity.slice(0, 120) : undefined,
+      companyHqCountry: companyHqCountry ? companyHqCountry.slice(0, 120) : undefined,
+      companyLogoUrl: normalizeOptionalUrl(raw.companyLogoUrl),
+      source: source ? source.slice(0, 80) : undefined,
+      sourceLabel: sourceLabel ? sourceLabel.slice(0, 120) : undefined,
+    }))
+    if (out.length >= 12) break
+  }
+  return out.length > 0 ? out : undefined
+}
+
+function legacyLinkedinOauthProfile(
+  marketplaceFields: CandidateProfileMarketplaceFields | undefined,
+  ts: string
+): Record<string, unknown> | undefined {
+  if (marketplaceFields?.linkedinOauthProfile) return marketplaceFields.linkedinOauthProfile
+  const raw = (marketplaceFields ?? {}) as Record<string, unknown>
+  if (raw.linkedinOauthLinked !== true) return undefined
+  const email = typeof raw.linkedinOauthEmail === "string" ? raw.linkedinOauthEmail : undefined
+  return stripUndefined({
+    connectedAt: typeof raw.linkedinOauthConnectedAt === "string" ? raw.linkedinOauthConnectedAt : ts,
+    name: typeof raw.linkedinOauthName === "string" ? raw.linkedinOauthName : undefined,
+    pictureUrl: normalizeOptionalUrl(raw.linkedinOauthPicture),
+    emailMasked: email ? maskEmail(email.trim().toLowerCase()) : undefined,
+  })
+}
+
+function githubLoginFromUrl(value: unknown): string | undefined {
+  const url = normalizeOptionalUrl(value)
+  if (!url) return undefined
+  try {
+    const parsed = new URL(url)
+    if (!/github\.com$/i.test(parsed.hostname)) return undefined
+    const login = parsed.pathname.split("/").filter(Boolean)[0]
+    return login || undefined
+  } catch {
+    return undefined
+  }
+}
+
+function legacyGithubOauthProfile(
+  marketplaceFields: CandidateProfileMarketplaceFields | undefined,
+  ts: string
+): Record<string, unknown> | undefined {
+  if (marketplaceFields?.githubOauthProfile) return marketplaceFields.githubOauthProfile
+  const raw = (marketplaceFields ?? {}) as Record<string, unknown>
+  if (raw.githubOauthLinked !== true && !raw.githubHandle && !raw.githubUrl) return undefined
+  const email = typeof raw.githubOauthEmail === "string" ? raw.githubOauthEmail : undefined
+  return stripUndefined({
+    connectedAt: typeof raw.githubOauthConnectedAt === "string" ? raw.githubOauthConnectedAt : ts,
+    login:
+      typeof raw.githubHandle === "string" && raw.githubHandle.trim()
+        ? raw.githubHandle.trim()
+        : githubLoginFromUrl(raw.githubUrl),
+    name: typeof raw.githubOauthName === "string" ? raw.githubOauthName : undefined,
+    url: normalizeOptionalUrl(raw.githubUrl),
+    avatarUrl: normalizeOptionalUrl(raw.githubOauthAvatar),
+    emailMasked: email ? maskEmail(email.trim().toLowerCase()) : undefined,
+  })
+}
+
+function githubPublicReposFromMarketplace(
+  marketplaceFields: CandidateProfileMarketplaceFields | undefined
+): unknown {
+  if (marketplaceFields?.githubPublicRepos?.length) return marketplaceFields.githubPublicRepos
+  const raw = (marketplaceFields ?? {}) as Record<string, unknown>
+  return Array.isArray(raw.githubPublicRepos) ? raw.githubPublicRepos : undefined
 }
 
 async function writeAppendOnlyDoc<T>(
@@ -226,7 +350,7 @@ export async function linkCandidateHandle(
         deliverable: shouldPromoteDeliverable ? true : data.deliverable,
         updatedAt: ts,
       })
-      await ref.set(next, { merge: true })
+      await ref.set(stripUndefined(next as unknown as Record<string, unknown>), { merge: true })
       return { handle: next, created: false }
     }
     return { handle: data, created: false }
@@ -243,8 +367,7 @@ export async function linkCandidateHandle(
     deliverable: input.deliverable,
     createdAt: ts,
   })
-  await ref.set(handle)
-  await writeIdentityEvent(db, {
+  const identityEvent = CandidateIdentityEventSchema.parse({
     eventId: deterministicId("ident", ["handle_linked", handle.handleId, input.candidateId]),
     type: "handle_linked",
     actor: "system",
@@ -260,6 +383,8 @@ export async function linkCandidateHandle(
     },
     createdAt: ts,
   })
+  await ref.set(stripUndefined(handle as unknown as Record<string, unknown>))
+  await writeIdentityEvent(db, identityEvent)
   return { handle, created: true }
 }
 
@@ -484,15 +609,62 @@ export async function writeCandidateSelfProfile(
     latestResumeArtifactId: input.marketplaceFields?.latestResumeArtifactId,
     profileSummary: input.profileSummary || undefined,
     globalTags: input.marketplaceFields?.globalTags,
-    linkedinUrl: normalizeOptionalUrl(input.marketplaceFields?.linkedinUrl),
+    linkedinUrl: normalizeLinkedinProfileUrl(input.marketplaceFields?.linkedinUrl),
+    linkedinOauthProfile: legacyLinkedinOauthProfile(input.marketplaceFields, ts),
+    githubUrl: normalizeOptionalUrl(input.marketplaceFields?.githubUrl),
+    githubOauthProfile: legacyGithubOauthProfile(input.marketplaceFields, ts),
+    githubPublicRepos: githubPublicReposFromMarketplace(input.marketplaceFields),
+    calcomUrl: normalizeOptionalUrl(input.marketplaceFields?.calcomUrl),
+    experienceHighlights: normalizeExperienceHighlights(
+      (input.marketplaceFields as Record<string, unknown> | undefined)?.experienceHighlights,
+    ),
     createdAt: ts,
     updatedAt: ts,
   })
+  const persisted = stripUndefined(profile as unknown as Record<string, unknown>)
+  if (!profile.linkedinUrl) {
+    persisted.linkedinUrl = FieldValue.delete()
+  }
   await db
     .collection(PA_COLLECTIONS.candidateSelfProfiles)
     .doc(input.candidateId)
-    .set(stripUndefined(profile as unknown as Record<string, unknown>), { merge: true })
+    .set(persisted, { merge: true })
   return profile
+}
+
+async function loadCandidateSelfProfileHandles(
+  db: Firestore,
+  candidateId: string
+): Promise<Array<Pick<CandidateHandle, "kind" | "verifiedAt" | "source">>> {
+  const snap = await db
+    .collection(PA_COLLECTIONS.candidateHandles)
+    .where("candidateId", "==", candidateId)
+    .limit(100)
+    .get()
+  const byKind = new Map<CandidateHandleKind, Pick<CandidateHandle, "kind" | "verifiedAt" | "source">>()
+  for (const doc of snap.docs) {
+    const handle = CandidateHandleSchema.parse(doc.data())
+    byKind.set(handle.kind, {
+      kind: handle.kind,
+      verifiedAt: handle.verifiedAt,
+      source: handle.source,
+    })
+  }
+  const order: CandidateHandleKind[] = [
+    "email",
+    "phone",
+    "linkedin",
+    "github",
+    "calcom",
+    "browser_uid",
+    "ats_applicant",
+    "sendblue_thread",
+    "imessage",
+  ]
+  return order.flatMap((kind) => {
+    const handle = byKind.get(kind)
+    return handle ? [handle] : []
+  })
 }
 
 export interface ClaimCandidateProfileInput {
@@ -646,7 +818,7 @@ export async function claimCandidateProfile(
     phoneE164: typeof user.phoneE164 === "string" ? user.phoneE164 : null,
     displayName,
     marketplaceFields: user as CandidateProfileMarketplaceFields,
-    handles: [{ kind: "email", verifiedAt: ts, source: "candidate" }],
+    handles: await loadCandidateSelfProfileHandles(db, candidateId),
     now: ts,
   })
   const claimedEventId = deterministicId("ident", ["candidate_claimed", input.firebaseUid, candidateId])
