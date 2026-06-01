@@ -702,11 +702,20 @@ export function makeV16FindMatch(
               ? "no saved preferences yet"
               : "no fresh roles fit those constraints"
           : null
+      // Structured collab roles for the DETERMINISTIC prescreen offer (the find_match TOOL sends it —
+      // the LLM kept dropping it). prescreenReady ⇒ this role's jobs[] line carries a start token.
+      const collab = collabJobs.map((j) => ({
+        jobId: j.id,
+        title: (j.jobTitle || j.roleTitle || "Role").trim(),
+        company: (j.companyName || "Company").trim(),
+        prescreenReady: prescreenReady.has(j.id),
+      }))
       return {
         ok: true,
         recCount: total,
         jobs,
         reason,
+        collab,
         snapshotTags: {
           targetRoleFunction: meta.userTags?.targetRoleFunction,
           negativeRoleFunction: meta.userTags?.negativeRoleFunction,
@@ -722,6 +731,69 @@ export function makeV16FindMatch(
         reason: `matcher error: ${err instanceof Error ? err.message : String(err)}`,
       }
     }
+  }
+}
+
+/**
+ * Build the MANDATORY collab prescreen offer (Adam 2026-06-01: any match with a WeKruit collab role MUST
+ * ask the candidate to prescreen it). Names the partner role(s) and the TWO start paths. Deterministic —
+ * the LLM kept skipping this, so the find_match tool sends it itself.
+ */
+export function buildCollabPrescreenOffer(
+  collab: Array<{ title: string; company: string }>,
+): string {
+  if (collab.length === 1) {
+    const c = collab[0]!
+    return (
+      `want to knock out a quick prescreen for the ${c.title} @ ${c.company} role? it pitches you straight ` +
+      `to their team. two easy ways: reply "${c.title} @ ${c.company}", or copy & send the start line printed ` +
+      `right under it. no stress if you'd rather pass — i'll keep sending more.`
+    )
+  }
+  const names = collab.map((c) => `${c.title} @ ${c.company}`).join(" — or the ")
+  const first = collab[0]!
+  return (
+    `want to run a quick prescreen on one of the partner roles? the ${names}. it pitches you straight to ` +
+    `their team. just reply the role + company (like "${first.company}"), or copy & send the start line ` +
+    `printed under that role. no stress passing — i'll keep sending more.`
+  )
+}
+
+/**
+ * DETERMINISTIC rec delivery. The LLM repeatedly (3× / Adam 2026-06-01) dropped the collab start tokens,
+ * skipped the prescreen offer, and crammed multiple roles into one bubble. So when find_match has roles,
+ * the TOOL sends them itself via the transport: a short intro, ONE role per bubble (collab lines already
+ * carry their WeKruit_..._Job start token), then — if the batch has any prescreen-ready collab role — the
+ * MANDATORY prescreen offer. The agent then stays silent (prompt: delivered:true → empty messages).
+ * Fail-soft: a send error degrades to delivered:false so the agent narrates as before (never a dead turn).
+ */
+async function deliverRecBubbles(
+  ctx: ClaireToolContext,
+  res: FindMatchResult,
+): Promise<{ delivered: boolean; collabCount: number }> {
+  const jobs = (res.jobs ?? []).filter((s) => typeof s === "string" && s.trim().length > 0)
+  if (jobs.length === 0) return { delivered: false, collabCount: 0 }
+  const collab = (res.collab ?? []).filter((c) => c.prescreenReady)
+  try {
+    let seq = 0
+    const intro =
+      collab.length > 0
+        ? "found a few that fit right now — including WeKruit partner roles where I pitch you straight to the hiring team 👇"
+        : "found a few that fit right now 👇"
+    await ctx.transport.sendText(intro, { seq: seq++ })
+    for (const line of jobs) await ctx.transport.sendText(line, { seq: seq++ })
+    if (collab.length > 0) {
+      await ctx.transport.sendText(buildCollabPrescreenOffer(collab), { seq: seq++ })
+    }
+    ctx.log("pa.claire.find_match.delivered", {
+      userId: ctx.userId,
+      roles: jobs.length,
+      collab: collab.length,
+    })
+    return { delivered: true, collabCount: collab.length }
+  } catch (e) {
+    ctx.log("pa.claire.find_match.deliver_failed", { userId: ctx.userId, err: String(e) })
+    return { delivered: false, collabCount: 0 }
   }
 }
 
@@ -790,9 +862,12 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
   const findMatch = tool({
     name: "find_match",
     description:
-      "Find ranked job matches for the candidate from the WeKruit catalog. Use when they ask for roles / " +
-      "recommendations / 'what fits me'. Reads their SAVED preferences (call set_matching_preferences first " +
-      "if they just stated new ones). Returns concrete roles or a grounded reason none fit — never an excuse.",
+      "Find ranked job matches AND deliver them. Use when they ask for roles / recommendations / 'what fits " +
+      "me', or the moment onboarding completes. Reads their SAVED preferences (call set_matching_preferences " +
+      "first if they just stated new ones). CRITICAL: when it returns delivered:true, the role bubbles AND " +
+      "the WeKruit collab prescreen offer have ALREADY been sent to the candidate as separate messages — you " +
+      "MUST then reply with an EMPTY message list (say nothing more; any text duplicates the recs). Only when " +
+      "delivered:false (no match / error) do you speak — warmly and grounded, never an excuse.",
     parameters: z.object({
       requestedCount: z.number().int().min(1).max(5).nullable(),
     }),
@@ -814,10 +889,17 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
           ok: res.ok,
           recCount: res.recCount,
         })
+        // DETERMINISTIC delivery: when there are roles, the TOOL sends the role bubbles + the mandatory
+        // collab prescreen offer (the LLM kept dropping them). On success the agent MUST stay silent —
+        // we return delivered:true and jobs:[] so it has nothing to re-list. Only when NOT delivered
+        // (no match / error) does the agent narrate (the no-match clarifier).
+        const delivery = res.ok ? await deliverRecBubbles(ctx, res) : { delivered: false, collabCount: 0 }
         return {
           ok: res.ok,
           recCount: res.recCount,
-          jobs: res.jobs,
+          delivered: delivery.delivered,
+          collabCount: delivery.collabCount,
+          jobs: delivery.delivered ? [] : res.jobs,
           reason: res.reason,
           // prefer the matcher's own snapshot; fall back to the local read.
           snapshotTags: res.snapshotTags ?? snapshotTags,

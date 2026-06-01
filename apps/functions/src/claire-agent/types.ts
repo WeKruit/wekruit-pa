@@ -61,10 +61,16 @@ export interface ClaireTransport {
 export interface FindMatchResult {
   ok: boolean
   recCount: number
-  /** formatted lines: "Title @ Company\n<applyUrl>". */
+  /** formatted lines: "Title @ Company\n<applyUrl>" (collab lines also carry the WeKruit_..._Job token). */
   jobs: string[]
   reason: string | null
   snapshotTags?: Record<string, unknown>
+  /**
+   * Structured WeKruit collab/partner roles in THIS batch — used to build the DETERMINISTIC prescreen
+   * offer (the LLM repeatedly dropped it). prescreenReady = the role has a live prescreenConfig, so its
+   * jobs[] line carries a start token. Adam 2026-06-01: any match with a collab role MUST offer the screen.
+   */
+  collab?: Array<{ jobId: string; title: string; company: string; prescreenReady: boolean }>
 }
 
 /**
