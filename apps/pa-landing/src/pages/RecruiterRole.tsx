@@ -12,16 +12,21 @@ import "../styles/recruiter-board.css"
 import {
   createRecruiterRoleQuestion,
   fetchCollabJobs,
+  fetchRecruiterRoleApplications,
   fetchRecruiterRoleFeedback,
   fetchRecruiterRoleIntelligence,
   fetchRecruiterRoleQuestions,
   fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissions,
   getRecruiterProfile,
+  saveRecruiterRoleApplication,
   saveRecruiterRoleFeedback,
   saveRecruiterSourcedCandidate,
   submitRecruiterCandidate,
   type CollabJob,
+  type RecruiterRoleApplicationInput,
+  type RecruiterRoleApplicationItem,
+  type RecruiterRoleApplicationStatus,
   type RecruiterRoleFeedbackDifficulty,
   type RecruiterRoleFeedbackItem,
   type RecruiterRoleFeedbackReason,
@@ -134,6 +139,35 @@ function submissionTimeMs(raw: unknown): number {
 
 function roleMatches(job: CollabJob, row: { jobId?: string; inboundJobId?: string }): boolean {
   return row.inboundJobId === job.jobId || row.jobId === job.jobId
+}
+
+function latestRoleApplication(job: CollabJob, applications: RecruiterRoleApplicationItem[]): RecruiterRoleApplicationItem | null {
+  return applications
+    .filter((application) => roleMatches(job, application))
+    .sort((a, b) => timestampMs(b.updatedAt ?? b.createdAt) - timestampMs(a.updatedAt ?? a.createdAt))[0] ?? null
+}
+
+function roleApplicationStatusLabel(status?: RecruiterRoleApplicationStatus): string {
+  switch (status) {
+    case "approved": return "Approved access"
+    case "pending": return "Pending approval"
+    case "not_approved": return "Not approved"
+    case "withdrawn": return "Withdrawn"
+    case "rescinded": return "Rescinded"
+    default: return "Not applied"
+  }
+}
+
+function roleApplicationStatusTone(status?: RecruiterRoleApplicationStatus): "success" | "info" | "warn" | "mute" {
+  switch (status) {
+    case "approved": return "success"
+    case "pending": return "info"
+    case "not_approved":
+    case "rescinded": return "warn"
+    case "withdrawn":
+    default:
+      return "mute"
+  }
 }
 
 function roleSubmissionStatusLabel(status?: string): string {
@@ -493,6 +527,7 @@ export default function RecruiterRole() {
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
   const [sourcedCandidates, setSourcedCandidates] = useState<RecruiterSourcedCandidateItem[]>([])
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
+  const [roleApplications, setRoleApplications] = useState<RecruiterRoleApplicationItem[]>([])
   const [roleFeedback, setRoleFeedback] = useState<RecruiterRoleFeedbackItem[]>([])
   const [roleIntelligence, setRoleIntelligence] = useState<RecruiterRoleIntelligenceItem[]>([])
   const [roleQuestions, setRoleQuestions] = useState<RecruiterRoleQuestionItem[]>([])
@@ -503,6 +538,8 @@ export default function RecruiterRole() {
   const [submission, setSubmission] = useState<SubmissionResponse | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [prefilledCandidateId, setPrefilledCandidateId] = useState<string | null>(null)
+  const [roleApplicationSaving, setRoleApplicationSaving] = useState(false)
+  const [roleApplicationError, setRoleApplicationError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -549,14 +586,16 @@ export default function RecruiterRole() {
     Promise.all([
       fetchRecruiterSourcedCandidates(),
       fetchRecruiterSubmissions(),
+      fetchRecruiterRoleApplications(),
       fetchRecruiterRoleFeedback(),
       fetchRecruiterRoleQuestions(),
       roleIntelligenceRequest,
     ])
-      .then(([candidates, rows, feedback, questions, intelligence]) => {
+      .then(([candidates, rows, applications, feedback, questions, intelligence]) => {
         if (!active) return
         setSourcedCandidates(candidates)
         setSubmissions(rows)
+        setRoleApplications(applications)
         setRoleFeedback(feedback)
         setRoleQuestions(questions)
         setRoleIntelligence(intelligence)
@@ -645,6 +684,12 @@ export default function RecruiterRole() {
   const roleSubmissions = submissions
     .filter((row) => roleMatches(job, row))
     .sort((a, b) => timestampMs(b.createdAt) - timestampMs(a.createdAt))
+  const currentRoleApplication = latestRoleApplication(job, roleApplications)
+  const legacyApprovedRole = session.recruiter.workspacePreferences?.primaryRoleIds?.includes(job.jobId) ?? false
+  const approvedForRole = legacyApprovedRole || currentRoleApplication?.status === "approved"
+  const preparedApplicationCandidates = roleCandidates
+    .filter((candidate) => candidate.stage !== "archived")
+    .slice(0, 10)
   const currentRoleFeedback = roleFeedback.find((feedback) => roleMatches(job, feedback)) ?? null
   const currentRoleIntelligence = roleIntelligence.find((item) => item.jobId === job.jobId) ?? null
   const currentRoleQuestions = roleQuestions
@@ -688,6 +733,21 @@ export default function RecruiterRole() {
     setPrefilledCandidateId(candidate.id)
     setSearchParams({ candidateId: candidate.id })
     requestAnimationFrame(() => document.getElementById("submit-candidate")?.scrollIntoView({ behavior: "smooth", block: "start" }))
+  }
+
+  const saveRoleApplication = async (input: RecruiterRoleApplicationInput) => {
+    setRoleApplicationSaving(true)
+    setRoleApplicationError(null)
+    try {
+      const saved = await saveRecruiterRoleApplication(input)
+      setRoleApplications((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setRoleApplicationError(message)
+      throw new Error(message)
+    } finally {
+      setRoleApplicationSaving(false)
+    }
   }
 
   const onSubmit = async (e: React.FormEvent) => {
@@ -800,6 +860,17 @@ export default function RecruiterRole() {
           </article>
         </section>
 
+        <RoleAccessPanel
+          job={job}
+          application={currentRoleApplication}
+          approvedByLegacySlot={legacyApprovedRole}
+          preparedCandidates={preparedApplicationCandidates}
+          saving={roleApplicationSaving}
+          error={roleApplicationError}
+          onSave={saveRoleApplication}
+          onOpenCandidates={() => navigate("/recruiters?tab=candidates")}
+        />
+
         <RoleIntelligencePanel
           intelligence={currentRoleIntelligence}
           fallback={{
@@ -867,11 +938,12 @@ export default function RecruiterRole() {
             </div>
 
             <div className="rb-banner">
-              <strong>Recruiters: source first, submit only after consent.</strong>
+              <strong>{approvedForRole ? "Approved role lane: submit qualified candidates with proof." : "Single-submit lane: use this only for exceptional candidate-led opportunities."}</strong>
               <span className="small">
                 Use the role queue to prefill a sourced candidate, tick every verified requirement, then submit.
                 The role allows up to {ROLE_PENDING_SUBMISSION_LIMIT} pending submissions before waiting for feedback.
               </span>
+              <span className="chip">{approvedForRole ? "Approved access" : "Single-submit credit"}</span>
               <span className="chip">{pendingSlots} pending slots open</span>
             </div>
 
@@ -1144,6 +1216,174 @@ function SubmissionPacketPanel({ packet }: { packet: RoleSubmissionPacket }) {
           )}
         </div>
       )}
+    </section>
+  )
+}
+
+function RoleAccessPanel({
+  job,
+  application,
+  approvedByLegacySlot,
+  preparedCandidates,
+  saving,
+  error,
+  onSave,
+  onOpenCandidates,
+}: {
+  job: CollabJob
+  application: RecruiterRoleApplicationItem | null
+  approvedByLegacySlot: boolean
+  preparedCandidates: RecruiterSourcedCandidateItem[]
+  saving: boolean
+  error: string | null
+  onSave: (input: RecruiterRoleApplicationInput) => Promise<void>
+  onOpenCandidates: () => void
+}) {
+  const applicationStatus = approvedByLegacySlot ? "approved" : application?.status
+  const tone = roleApplicationStatusTone(applicationStatus)
+  const [composerOpen, setComposerOpen] = useState(false)
+  const [pitch, setPitch] = useState("")
+  const [anonymizeCandidates, setAnonymizeCandidates] = useState(false)
+  const [localError, setLocalError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setComposerOpen(false)
+    setPitch("")
+    setAnonymizeCandidates(false)
+    setLocalError(null)
+  }, [job.jobId, application?.id, application?.status])
+
+  const preparedCandidateIds = preparedCandidates.map((candidate) => candidate.id)
+  const canWithdraw = application?.status === "pending" && !approvedByLegacySlot
+  const canApply = !approvedByLegacySlot && applicationStatus !== "approved" && applicationStatus !== "pending"
+  const lastTouched = application ? roleQuestionTime(application.updatedAt ?? application.createdAt) : "Not requested"
+  const headline = applicationStatus === "approved"
+    ? "You can work this role as an approved recruiter."
+    : applicationStatus === "pending"
+      ? "WeKruit is reviewing your role access request."
+      : applicationStatus === "not_approved"
+        ? "This request was not approved. Reapply only with stronger proof."
+        : applicationStatus === "rescinded"
+          ? "Access was rescinded. Reapply after the role lane is fixed."
+          : "Apply for trusted access before treating this as a primary role."
+
+  const openComposer = () => {
+    setComposerOpen(true)
+    setLocalError(null)
+    if (!pitch.trim()) {
+      setPitch(preparedCandidates.length
+        ? `I have ${preparedCandidates.length} prepared candidate${preparedCandidates.length === 1 ? "" : "s"} for this role and can actively source against the hard checks.`
+        : "")
+    }
+  }
+
+  const submitApplication = async () => {
+    const trimmed = pitch.trim()
+    if (trimmed.length < 20) {
+      setLocalError("Add a specific pitch before applying.")
+      return
+    }
+    setLocalError(null)
+    try {
+      await onSave({
+        jobId: job.jobId,
+        action: "apply",
+        pitch: trimmed,
+        anonymizeCandidates,
+        preparedCandidateIds,
+      })
+      setComposerOpen(false)
+      setPitch("")
+      setAnonymizeCandidates(false)
+    } catch {
+      // Parent state renders the backend error.
+    }
+  }
+
+  const withdrawApplication = async () => {
+    try {
+      await onSave({ jobId: job.jobId, action: "withdraw" })
+    } catch {
+      // Parent state renders the backend error.
+    }
+  }
+
+  return (
+    <section className={`rb-role-access-panel is-${tone}`} aria-label="Role access state">
+      <header>
+        <div>
+          <span>Role access</span>
+          <strong>{roleApplicationStatusLabel(applicationStatus)}</strong>
+          <p>{headline}</p>
+        </div>
+        <div className="rb-role-access-panel__actions">
+          {canWithdraw && (
+            <button type="button" className="rb-btn" disabled={saving} onClick={() => void withdrawApplication()}>
+              {saving ? "Withdrawing..." : "Withdraw request"}
+            </button>
+          )}
+          {canApply && (
+            <button type="button" className="rb-btn primary" disabled={saving} onClick={openComposer}>
+              {application?.status === "not_approved" || application?.status === "rescinded" ? "Reapply" : "Apply to recruit"}
+            </button>
+          )}
+          <button type="button" className="rb-btn" onClick={onOpenCandidates}>Candidate CRM</button>
+        </div>
+      </header>
+
+      <div className="rb-role-access-panel__facts">
+        <article>
+          <span>Prepared proof</span>
+          <strong>{preparedCandidates.length}</strong>
+          <em>{preparedCandidates.length ? "Attached when you apply" : "Save candidates first"}</em>
+        </article>
+        <article>
+          <span>Submission lane</span>
+          <strong>{applicationStatus === "approved" ? "Approved role" : "Single-submit"}</strong>
+          <em>{applicationStatus === "approved" ? "Expected active coverage" : "Candidate-led only"}</em>
+        </article>
+        <article>
+          <span>Last decision</span>
+          <strong>{lastTouched}</strong>
+          <em>{application?.adminNote || application?.reviewedByEmail || "No admin note"}</em>
+        </article>
+      </div>
+
+      {composerOpen && (
+        <article className="rb-role-application-composer">
+          <header>
+            <span>Apply to recruit</span>
+            <strong>{job.title}</strong>
+            <button type="button" onClick={() => setComposerOpen(false)}>Cancel</button>
+          </header>
+          <p>Share why WeKruit should trust you with this search. Prepared candidates from your CRM are attached automatically.</p>
+          <textarea
+            value={pitch}
+            onChange={(event) => setPitch(event.target.value)}
+            placeholder="Relevant recruiting background, warm candidate proof, sourcing lane, and expected weekly coverage..."
+          />
+          <label>
+            <input
+              type="checkbox"
+              checked={anonymizeCandidates}
+              onChange={(event) => setAnonymizeCandidates(event.target.checked)}
+            />
+            <span>Anonymize prepared candidate details from other recruiters</span>
+          </label>
+          <div>
+            <span>{preparedCandidates.length} prepared candidate{preparedCandidates.length === 1 ? "" : "s"} attached</span>
+            <button
+              type="button"
+              disabled={saving || pitch.trim().length < 20}
+              onClick={() => void submitApplication()}
+            >
+              {saving ? "Submitting..." : "Submit application"}
+            </button>
+          </div>
+        </article>
+      )}
+
+      {(localError || error) && <p className="rb-error">{localError || error}</p>}
     </section>
   )
 }

@@ -129,6 +129,93 @@
   line-height: 1.15;
 }
 
+.rb-role-access-panel {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 15px;
+  border: 1px solid #ded8ce;
+  border-left: 4px solid #8d887e;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.rb-role-access-panel.is-success { border-left-color: var(--live); background: #f5fbf7; }
+.rb-role-access-panel.is-info { border-left-color: #477fb7; background: #f6f9ff; }
+.rb-role-access-panel.is-warn { border-left-color: #b77c2f; background: #fffaf1; }
+.rb-role-access-panel.is-mute { border-left-color: #9b958b; background: #fff; }
+
+.rb-role-access-panel header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.rb-role-access-panel header span,
+.rb-role-access-panel__facts span {
+  display: block;
+  color: #6a6a64;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-role-access-panel header strong {
+  display: block;
+  margin-top: 4px;
+  color: #1a1a1a;
+  font-size: 19px;
+  line-height: 1.15;
+}
+
+.rb-role-access-panel p {
+  margin: 6px 0 0;
+  color: #5f5a52;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.rb-role-access-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.rb-role-access-panel__facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.rb-role-access-panel__facts article {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  border: 1px solid #eee7dd;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 11px 12px;
+}
+
+.rb-role-access-panel__facts strong {
+  color: #1a1a1a;
+  font-size: 16px;
+  line-height: 1.15;
+}
+
+.rb-role-access-panel__facts em {
+  overflow: hidden;
+  color: #6a6a64;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .rb-role-intel {
   display: grid;
   grid-template-columns: minmax(210px, 0.8fr) minmax(0, 1.4fr) minmax(220px, 0.8fr);
@@ -4093,6 +4180,13 @@
   }
   .rb-role-cockpit {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rb-role-access-panel header,
+  .rb-role-access-panel__facts {
+    grid-template-columns: 1fr;
+  }
+  .rb-role-access-panel__actions {
+    justify-content: flex-start;
   }
   .rb-role-intel {
     grid-template-columns: 1fr;
