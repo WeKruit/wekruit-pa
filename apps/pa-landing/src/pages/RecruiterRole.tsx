@@ -236,7 +236,7 @@ function sourcedCalibrationLabel(status?: string): string {
 
 function formatSubmissionFailure(reason?: string): string {
   if (reason === "single_submission_limit_reached") {
-    return "This role is outside your primary slots and your weekly single-submission limit is used. Add the role as primary from the recruiter dashboard or wait for the rolling window to reset."
+    return "This role is outside your approved role access and your weekly single-submission limit is used. Apply for role access from the recruiter dashboard or wait for the rolling window to reset."
   }
   if (reason === "candidate_already_submitted_for_role") {
     return "This candidate is already submitted for this role. Do not submit the same email or LinkedIn again; track the existing pipeline instead."
@@ -1043,7 +1043,7 @@ export default function RecruiterRole() {
             )}
             {submission.submissionMode && (
               <div style={{ marginTop: 6, color: "#1a1a1a" }}>
-                Submission mode: {submission.submissionMode === "primary_role" ? "Primary role" : "Single submission"}
+                Submission mode: {submission.submissionMode === "primary_role" ? "Approved role" : "Single submission"}
               </div>
             )}
             <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
@@ -1424,7 +1424,7 @@ function RoleAccessPanel({
         ? "This request was not approved. Reapply only with stronger proof."
         : applicationStatus === "rescinded"
           ? "Access was rescinded. Reapply after the role lane is fixed."
-          : "Apply for trusted access before treating this as a primary role."
+          : "Apply for trusted access before treating this as an approved role."
 
   const openComposer = () => {
     setComposerOpen(true)

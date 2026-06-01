@@ -235,6 +235,7 @@ export default function App() {
           {/* Recruiter board admin surfaces. */}
           <Route path="/admin/recruiter-access" element={<RecruiterSubmissions section="codes" />} />
           <Route path="/admin/recruiter-codes" element={<Navigate to="/admin/recruiter-access" replace />} />
+          <Route path="/admin/recruiter-roles" element={<RecruiterSubmissions section="roles" />} />
           <Route path="/admin/recruiter-quality" element={<RecruiterSubmissions section="quality" />} />
           <Route path="/admin/recruiter-applications" element={<RecruiterSubmissions section="applications" />} />
           <Route path="/admin/recruiter-sourced" element={<RecruiterSubmissions section="sourced" />} />
