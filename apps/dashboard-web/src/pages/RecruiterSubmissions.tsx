@@ -17,6 +17,11 @@ import {
   buildRoleApplicationReview,
   type RoleApplicationReview,
 } from "./RecruiterApplicationReview.helpers.js"
+import {
+  buildSubmissionAdminReviewSummary,
+  buildSubmissionChecklistReview,
+  type SubmissionReviewTone,
+} from "./RecruiterSubmissionReview.helpers.js"
 
 interface SubmissionDoc {
   id: string
@@ -52,6 +57,15 @@ interface SubmissionDoc {
     antiTotal: number
   }
   status?: string
+  statusHistory?: Array<{
+    status?: string
+    by?: string
+    atIso?: string
+    note?: string
+    rating?: number
+    reasons?: string[]
+  }>
+  inboundJobId?: string
   recruiterId?: string | null
   recruiterEmail?: string
   recruiterFeedbackNote?: string | null
@@ -139,6 +153,10 @@ function feedbackRatingTone(rating: unknown): "ok" | "warn" | "info" | "muted" {
   if (n >= 3) return "ok"
   if (n === 2) return "info"
   return "warn"
+}
+
+function reviewSummaryTone(tone: SubmissionReviewTone): Parameters<typeof Badge>[0]["tone"] {
+  return tone === "ok" ? "ok" : tone === "warn" ? "warn" : tone === "info" ? "info" : "muted"
 }
 const SOURCE_STAGE_VALUES = ["sourced", "contacted", "screened", "ready", "submitted", "archived"]
 const CALIBRATION_VALUES = ["not_rated", "calibration_requested", "good_fit", "bad_fit", "suggested"]
@@ -649,6 +667,7 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
   const [loading, setLoading] = useState(isSubmissions)
   const [err, setErr] = useState<string | null>(null)
   const [rows, setRows] = useState<SubmissionDoc[]>([])
+  const [jobsByKey, setJobsByKey] = useState<Map<string, RecruiterBoardAdminJobDoc>>(new Map())
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -667,7 +686,10 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
           orderBy("createdAt", "desc"),
           limit(500),
         )
-        const snap = await getDocs(q)
+        const [snap, jobSnap] = await Promise.all([
+          getDocs(q),
+          getDocs(query(collection(db(), "pa-jobs"), limit(500))),
+        ])
         if (cancelled) return
         const all = snap.docs.map((d) => {
           const data = d.data() as Omit<SubmissionDoc, "id">
@@ -677,7 +699,14 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
             : 0
           return { id: d.id, ...data, createdAtMs, hardScorePct }
         })
+        const jobMap = new Map<string, RecruiterBoardAdminJobDoc>()
+        for (const d of jobSnap.docs) {
+          const job = { id: d.id, ...(d.data() as Omit<RecruiterBoardAdminJobDoc, "id">) }
+          jobMap.set(job.id, job)
+          if (job.publicId) jobMap.set(job.publicId, job)
+        }
         setRows(all)
+        setJobsByKey(jobMap)
       } catch (e) {
         if (!cancelled) setErr(e instanceof Error ? e.message : String(e))
       } finally {
@@ -1028,6 +1057,7 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
         return (
           <RowDetailPanel
             row={row}
+            role={jobsByKey.get(row.jobId ?? "") ?? jobsByKey.get(row.inboundJobId ?? "") ?? null}
             onClose={() => setExpandedId(null)}
             onUpdated={(next) => {
               setRows((prev) => prev.map((r) => r.id === next.id ? { ...r, ...next } : r))
@@ -3257,15 +3287,18 @@ function OpsMiniStat({ label, value }: { label: string; value: string }) {
 
 function RowDetailPanel({
   row,
+  role,
   onClose,
   onUpdated,
 }: {
   row: SubmissionDoc
+  role?: RecruiterBoardAdminJobDoc | null
   onClose: () => void
   onUpdated: (row: Partial<SubmissionDoc> & { id: string }) => void
 }) {
-  const checks = row.checklist ?? {}
-  const ticked = Object.entries(checks).filter(([, v]) => v).map(([k]) => k)
+  const checklistReview = buildSubmissionChecklistReview(row, role)
+  const reviewSummary = buildSubmissionAdminReviewSummary(row, checklistReview)
+  const fallbackTickedIds = Object.entries(row.checklist ?? {}).filter(([, v]) => v).map(([k]) => k).sort()
   const [draftStatus, setDraftStatus] = useState(row.status ?? "submitted")
   const [draftNote, setDraftNote] = useState(row.recruiterFeedbackNote ?? "")
   const [draftRating, setDraftRating] = useState<string>(
@@ -3339,6 +3372,18 @@ function RowDetailPanel({
         </button>
       }
     >
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+        <OpsMetric label="Review verdict" value={reviewSummary.title} />
+        <OpsMetric label="Hard gaps" value={checklistReview.missingHard.length} />
+        <OpsMetric label="Anti-signals" value={checklistReview.antiFlags.length} />
+        <OpsMetric label="Evidence checked" value={checklistReview.total ? `${checklistReview.checkedTotal}/${checklistReview.total}` : fallbackTickedIds.length} />
+      </div>
+      <div style={{ marginBottom: 18, border: "1px solid #eadfce", borderRadius: 10, background: "#fffaf3", padding: 12 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <Badge tone={reviewSummaryTone(reviewSummary.tone)}>{reviewSummary.title}</Badge>
+          <span style={{ color: "#555", fontSize: 13 }}>{reviewSummary.body}</span>
+        </div>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div>
           <h4 style={{ margin: "0 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
@@ -3404,16 +3449,93 @@ function RowDetailPanel({
           )}
 
           <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
-            Ticked items ({ticked.length})
+            Status history
           </h4>
-          {ticked.length === 0 ? (
-            <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No items ticked.</p>
-          ) : (
-            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: "#444" }}>
-              {ticked.map((id) => (
-                <li key={id}><code>{id}</code></li>
+          {row.statusHistory?.length ? (
+            <div style={{ display: "grid", gap: 6 }}>
+              {row.statusHistory.slice(-6).map((event, index) => (
+                <div key={`${event.status ?? "status"}-${event.atIso ?? index}`} style={{ display: "grid", gridTemplateColumns: "92px 1fr", gap: 8, fontSize: 12, color: "#444" }}>
+                  <Badge tone={statusBadge(event.status)}>{event.status ?? "updated"}</Badge>
+                  <span>
+                    {event.note || event.by || "Status updated"}
+                    {event.rating ? ` · ${event.rating}/4` : ""}
+                    {event.reasons?.length ? ` · ${event.reasons.map(feedbackReasonLabel).join(", ")}` : ""}
+                    <br />
+                    <span style={{ color: "#888" }}>{formatOpsDate(event.atIso)}</span>
+                  </span>
+                </div>
               ))}
-            </ul>
+            </div>
+          ) : (
+            <p style={{ margin: 0, fontSize: 13, color: "#999" }}>No status history stored.</p>
+          )}
+
+          <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+            Role evidence matrix
+          </h4>
+          {!checklistReview.hasReadableChecklist ? (
+            <>
+              <p style={{ margin: 0, fontSize: 13, color: "#999" }}>
+                No readable role checklist found. Showing raw checked ids from the recruiter packet.
+              </p>
+              {fallbackTickedIds.length > 0 && (
+                <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12, color: "#444" }}>
+                  {fallbackTickedIds.map((id) => (
+                    <li key={id}><code>{id}</code></li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {checklistReview.groups.map((group) => (
+                <section
+                  key={`${group.kind}-${group.heading}`}
+                  style={{
+                    border: "1px solid #eee",
+                    borderRadius: 8,
+                    background: group.kind === "anti" && group.checked > 0 ? "#fff6f2" : "#fff",
+                    padding: 10,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", marginBottom: 8 }}>
+                    <strong style={{ color: "#222", fontSize: 13 }}>{group.heading}</strong>
+                    <Badge tone={group.kind === "anti" && group.checked > 0 ? "warn" : group.checked === group.total ? "ok" : "info"}>
+                      {group.checked}/{group.total}
+                    </Badge>
+                  </div>
+                  <div style={{ display: "grid", gap: 6 }}>
+                    {group.items.map((item) => (
+                      <div
+                        key={item.id}
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "18px 1fr",
+                          gap: 8,
+                          alignItems: "start",
+                          color: item.checked ? "#222" : "#777",
+                          fontSize: 12,
+                          lineHeight: 1.35,
+                        }}
+                      >
+                        <span aria-hidden="true" style={{ color: item.checked ? "#1f7a3a" : "#b65b3a", fontWeight: 800 }}>
+                          {item.checked ? "✓" : "○"}
+                        </span>
+                        <span>{item.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+              {checklistReview.orphanCheckedIds.length > 0 && (
+                <section style={{ border: "1px solid #f1c48a", borderRadius: 8, background: "#fff8ed", padding: 10, fontSize: 12, color: "#7a3e10" }}>
+                  <strong>Checked ids no longer in role checklist</strong>
+                  <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {checklistReview.orphanCheckedIds.map((id) => <code key={id}>{id}</code>)}
+                  </div>
+                </section>
+              )}
+            </div>
           )}
 
           {row.sheetSyncError && (
