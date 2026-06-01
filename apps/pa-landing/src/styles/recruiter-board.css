@@ -4267,7 +4267,7 @@
 
 .rb-candidate-board {
   display: grid;
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 12px;
   align-items: start;
 }
@@ -4332,7 +4332,9 @@
 
 .rb-source-card > .rb-source-card__outreach {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  align-items: stretch;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--cream-3);
