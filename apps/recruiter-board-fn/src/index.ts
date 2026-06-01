@@ -22,6 +22,7 @@ export {
   paRecruiterRoleReleasedNotify,
   paRecruiterRoleFeedbackList,
   paRecruiterRoleFeedbackSave,
+  paRecruiterRoleIntelligenceList,
   paRecruiterRoleQuestionCreate,
   paRecruiterRoleQuestionsList,
   paRecruiterSourcedCandidateSave,

@@ -129,6 +129,92 @@
   line-height: 1.15;
 }
 
+.rb-role-intel {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.8fr) minmax(0, 1.4fr) minmax(220px, 0.8fr);
+  gap: 12px;
+  align-items: stretch;
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid #ded8ce;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.rb-role-intel__lead,
+.rb-role-intel__metrics > div,
+.rb-role-intel__reasons {
+  min-width: 0;
+  border-radius: 9px;
+  background: #fbfaf7;
+  border: 1px solid #eee7dd;
+  padding: 12px;
+}
+
+.rb-role-intel__lead {
+  display: grid;
+  gap: 4px;
+  border-left: 3px solid #a8a196;
+}
+
+.rb-role-intel.is-good .rb-role-intel__lead { border-left-color: var(--live); }
+.rb-role-intel.is-watch .rb-role-intel__lead { border-left-color: #b77c2f; }
+.rb-role-intel.is-blocked .rb-role-intel__lead { border-left-color: #a33a2d; }
+
+.rb-role-intel span,
+.rb-role-intel em {
+  color: #6a6a64;
+  font-size: 11.5px;
+  font-style: normal;
+}
+
+.rb-role-intel span {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.rb-role-intel strong {
+  color: #1a1a1a;
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.rb-role-intel__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.rb-role-intel__metrics > div {
+  display: grid;
+  gap: 4px;
+}
+
+.rb-role-intel__metrics strong {
+  font-size: 16px;
+}
+
+.rb-role-intel__reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-content: flex-start;
+}
+
+.rb-role-intel__reasons span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #e3dbce;
+  color: #4a4038;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
 .rb-role-dashboard {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
@@ -2653,6 +2739,12 @@
   .rb-role-cockpit {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .rb-role-intel {
+    grid-template-columns: 1fr;
+  }
+  .rb-role-intel__metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
   .rb-role-side {
     position: static;
   }
@@ -2747,6 +2839,7 @@
   .rb-source-form__split,
   .rb-feedback-line,
   .rb-role-cockpit,
+  .rb-role-intel__metrics,
   .rb-performance-grid,
   .rb-match-row,
   .rb-role-card footer {

@@ -16,6 +16,7 @@
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
+  buildRecruiterRoleIntelligence,
   computeSubmissionScore,
   composeRecruiterRoleNotificationEmail,
   defaultRecruiterInviteCodeExpiresAt,
@@ -217,6 +218,53 @@ describe("recruiter access helpers", () => {
       ),
       null,
     )
+  })
+})
+
+describe("recruiter role intelligence", () => {
+  it("aggregates role-level signal without exposing candidate rows", () => {
+    const [role] = buildRecruiterRoleIntelligence(
+      [{ jobId: "public-role-1", aliases: ["real-role-1", "public-role-1"] }],
+      "recruiter-a",
+      {
+        sourcedCandidates: [
+          { jobId: "real-role-1", recruiterId: "recruiter-a", stage: "ready", updatedAt: "2026-06-01T10:00:00.000Z" },
+          { inboundJobId: "public-role-1", recruiterId: "recruiter-b", stage: "sourced", updatedAt: "2026-06-01T11:00:00.000Z" },
+          { jobId: "other-role", recruiterId: "recruiter-c", stage: "ready" },
+        ],
+        submissions: [
+          { jobId: "real-role-1", recruiterId: "recruiter-a", status: "submitted", createdAt: "2026-06-01T12:00:00.000Z" },
+          { inboundJobId: "public-role-1", recruiterId: "recruiter-b", status: "advanced", createdAt: "2026-06-01T13:00:00.000Z" },
+          { jobId: "real-role-1", recruiterId: "recruiter-c", status: "duplicate", createdAt: "2026-06-01T14:00:00.000Z" },
+        ],
+        feedback: [
+          { jobId: "real-role-1", recruiterId: "recruiter-a", difficulty: "hard", reasons: ["low_comp", "small_candidate_pool"] },
+          { inboundJobId: "public-role-1", recruiterId: "recruiter-b", difficulty: "blocked", reasons: ["low_comp"] },
+        ],
+        questions: [
+          { jobId: "real-role-1", recruiterId: "recruiter-a", status: "open" },
+          { inboundJobId: "public-role-1", recruiterId: "recruiter-b", status: "answered" },
+        ],
+      },
+    )
+
+    assert.equal(role?.jobId, "public-role-1")
+    assert.equal(role?.sourcedCount, 2)
+    assert.equal(role?.readyCount, 1)
+    assert.equal(role?.submissionCount, 3)
+    assert.equal(role?.pendingCount, 1)
+    assert.equal(role?.advancedCount, 1)
+    assert.equal(role?.duplicateCount, 1)
+    assert.equal(role?.recruiterCount, 3)
+    assert.equal(role?.openQuestionCount, 1)
+    assert.equal(role?.answeredQuestionCount, 1)
+    assert.deepEqual(role?.feedback.topReasons[0], { reason: "low_comp", count: 2 })
+    assert.deepEqual(role?.my, {
+      sourcedCount: 1,
+      readyCount: 1,
+      submissionCount: 1,
+      pendingCount: 1,
+    })
   })
 })
 

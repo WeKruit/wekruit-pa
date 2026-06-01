@@ -18,6 +18,7 @@
  *   POST paRecruiterRoleFeedbackSave -> upserts role difficulty / market feedback
  *   GET  paRecruiterRoleQuestionsList -> recruiter-authenticated role Q&A
  *   POST paRecruiterRoleQuestionCreate -> creates one role calibration question
+ *   GET  paRecruiterRoleIntelligenceList -> recruiter-authenticated aggregate role signal
  *   POST paRecruiterSubmission     -> writes pa-recruiter-submissions doc
  *                                     (honors Idempotency-Key header)
  *   GET  paRecruiterSubmissionsList -> recruiter-authenticated status tracker
@@ -1227,6 +1228,52 @@ interface RecruiterRoleQuestionListItem {
   updatedAt?: unknown
 }
 
+export interface RecruiterRoleIntelligenceJobAlias {
+  jobId: string
+  aliases: string[]
+}
+
+export interface RecruiterRoleIntelligenceReasonCount {
+  reason: RecruiterRoleFeedbackReason
+  count: number
+}
+
+export interface RecruiterRoleIntelligenceItem {
+  jobId: string
+  sourcedCount: number
+  readyCount: number
+  submissionCount: number
+  pendingCount: number
+  advancedCount: number
+  rejectedCount: number
+  duplicateCount: number
+  recruiterCount: number
+  openQuestionCount: number
+  answeredQuestionCount: number
+  lastActivityAt: string | null
+  feedback: {
+    total: number
+    easy: number
+    medium: number
+    hard: number
+    blocked: number
+    topReasons: RecruiterRoleIntelligenceReasonCount[]
+  }
+  my: {
+    sourcedCount: number
+    readyCount: number
+    submissionCount: number
+    pendingCount: number
+  }
+}
+
+export interface RecruiterRoleIntelligenceAggregateInput {
+  sourcedCandidates: Record<string, unknown>[]
+  submissions: Record<string, unknown>[]
+  feedback: Record<string, unknown>[]
+  questions: Record<string, unknown>[]
+}
+
 export function normalizeRecruiterCandidateLink(raw: string): string {
   const trimmed = raw.trim()
   if (!trimmed) return ""
@@ -1434,6 +1481,106 @@ function publicRecruiterRoleQuestion(
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   }
+}
+
+function rowMatchesRoleAliases(row: Record<string, unknown>, aliases: Set<string>): boolean {
+  const jobId = typeof row.jobId === "string" ? row.jobId.trim() : ""
+  const inboundJobId = typeof row.inboundJobId === "string" ? row.inboundJobId.trim() : ""
+  return Boolean((jobId && aliases.has(jobId)) || (inboundJobId && aliases.has(inboundJobId)))
+}
+
+function rowRecruiterId(row: Record<string, unknown>): string {
+  return typeof row.recruiterId === "string" ? row.recruiterId.trim() : ""
+}
+
+function isPendingSubmissionStatus(status: unknown): boolean {
+  return status === "submitted" || status === "new" || status === "reviewing" || status === undefined || status === null
+}
+
+function isAdvancedSubmissionStatus(status: unknown): boolean {
+  return status === "advanced" || status === "interviewing" || status === "hired"
+}
+
+function isReadySourcedStage(stage: unknown): boolean {
+  return stage === "ready" || stage === "submitted"
+}
+
+function latestActivityIso(rows: Record<string, unknown>[]): string | null {
+  let latest = 0
+  for (const row of rows) {
+    latest = Math.max(latest, timestampMs(row.updatedAt), timestampMs(row.createdAt), timestampMs(row.recruiterFeedbackUpdatedAt))
+  }
+  return latest ? new Date(latest).toISOString() : null
+}
+
+export function buildRecruiterRoleIntelligence(
+  jobs: RecruiterRoleIntelligenceJobAlias[],
+  recruiterId: string,
+  input: RecruiterRoleIntelligenceAggregateInput,
+): RecruiterRoleIntelligenceItem[] {
+  return jobs.map((job) => {
+    const aliases = new Set([job.jobId, ...job.aliases].map((id) => id.trim()).filter(Boolean))
+    const sourced = input.sourcedCandidates.filter((row) => rowMatchesRoleAliases(row, aliases))
+    const submissions = input.submissions.filter((row) => rowMatchesRoleAliases(row, aliases))
+    const feedbackRows = input.feedback.filter((row) => rowMatchesRoleAliases(row, aliases))
+    const questions = input.questions.filter((row) => rowMatchesRoleAliases(row, aliases))
+    const recruiters = new Set<string>()
+    for (const row of [...sourced, ...submissions, ...feedbackRows, ...questions]) {
+      const id = rowRecruiterId(row)
+      if (id) recruiters.add(id)
+    }
+
+    const reasonCounts = new Map<RecruiterRoleFeedbackReason, number>()
+    const feedback = {
+      total: feedbackRows.length,
+      easy: 0,
+      medium: 0,
+      hard: 0,
+      blocked: 0,
+      topReasons: [] as RecruiterRoleIntelligenceReasonCount[],
+    }
+    for (const row of feedbackRows) {
+      if (row.difficulty === "easy") feedback.easy += 1
+      else if (row.difficulty === "hard") feedback.hard += 1
+      else if (row.difficulty === "blocked") feedback.blocked += 1
+      else feedback.medium += 1
+      const reasons = Array.isArray(row.reasons) ? row.reasons : []
+      for (const rawReason of reasons) {
+        if (!RECRUITER_ROLE_FEEDBACK_REASONS.includes(rawReason as RecruiterRoleFeedbackReason)) continue
+        const reason = rawReason as RecruiterRoleFeedbackReason
+        reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1)
+      }
+    }
+    feedback.topReasons = [...reasonCounts.entries()]
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason))
+      .slice(0, 4)
+
+    const mySourced = sourced.filter((row) => rowRecruiterId(row) === recruiterId)
+    const mySubmissions = submissions.filter((row) => rowRecruiterId(row) === recruiterId)
+
+    return {
+      jobId: job.jobId,
+      sourcedCount: sourced.filter((row) => row.stage !== "archived").length,
+      readyCount: sourced.filter((row) => isReadySourcedStage(row.stage)).length,
+      submissionCount: submissions.length,
+      pendingCount: submissions.filter((row) => isPendingSubmissionStatus(row.status)).length,
+      advancedCount: submissions.filter((row) => isAdvancedSubmissionStatus(row.status)).length,
+      rejectedCount: submissions.filter((row) => row.status === "rejected").length,
+      duplicateCount: submissions.filter((row) => row.status === "duplicate").length,
+      recruiterCount: recruiters.size,
+      openQuestionCount: questions.filter((row) => row.status !== "answered").length,
+      answeredQuestionCount: questions.filter((row) => row.status === "answered").length,
+      lastActivityAt: latestActivityIso([...sourced, ...submissions, ...feedbackRows, ...questions]),
+      feedback,
+      my: {
+        sourcedCount: mySourced.filter((row) => row.stage !== "archived").length,
+        readyCount: mySourced.filter((row) => isReadySourcedStage(row.stage)).length,
+        submissionCount: mySubmissions.length,
+        pendingCount: mySubmissions.filter((row) => isPendingSubmissionStatus(row.status)).length,
+      },
+    }
+  })
 }
 
 export const paRecruiterSourcedCandidatesList = onRequest(
@@ -1718,6 +1865,61 @@ export const paRecruiterRoleQuestionsList = onRequest(
       res.status(200).json({ ok: true, recruiter, questions })
     } catch (err) {
       logger.error("paRecruiterRoleQuestionsList_failed", { error: String(err), recruiterId: recruiter.recruiterId })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
+  },
+)
+
+export const paRecruiterRoleIntelligenceList = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "GET") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "unauthorized" })
+      return
+    }
+
+    try {
+      const [jobSnap, sourcedSnap, submissionSnap, feedbackSnap, questionSnap] = await Promise.all([
+        db.collection("pa-jobs").where("wekruitCollaborationStatus", "==", "collaborated").limit(500).get(),
+        db.collection(RECRUITER_SOURCED_CANDIDATES_COLLECTION).limit(1000).get(),
+        db.collection(RECRUITER_SUBMISSIONS_COLLECTION).limit(1000).get(),
+        db.collection(RECRUITER_ROLE_FEEDBACK_COLLECTION).limit(1000).get(),
+        db.collection(RECRUITER_ROLE_QUESTIONS_COLLECTION).limit(1000).get(),
+      ])
+      const jobs = jobSnap.docs
+        .map((doc): RecruiterRoleIntelligenceJobAlias | null => {
+          const data = doc.data() as Record<string, unknown>
+          const rb = data.recruiterBoard as RecruiterBoardPayload | undefined
+          if (!rb || rb.active !== true) return null
+          const publicId = typeof data.publicId === "string" ? data.publicId.trim() : ""
+          const jobId = publicId || doc.id
+          return {
+            jobId,
+            aliases: [doc.id, jobId].filter((id, index, arr) => id && arr.indexOf(id) === index),
+          }
+        })
+        .filter((job): job is RecruiterRoleIntelligenceJobAlias => job !== null)
+      const intelligence = buildRecruiterRoleIntelligence(jobs, recruiter.recruiterId, {
+        sourcedCandidates: sourcedSnap.docs.map((doc) => doc.data()),
+        submissions: submissionSnap.docs.map((doc) => doc.data()),
+        feedback: feedbackSnap.docs.map((doc) => doc.data()),
+        questions: questionSnap.docs.map((doc) => doc.data()),
+      })
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({ ok: true, recruiter, intelligence })
+    } catch (err) {
+      logger.error("paRecruiterRoleIntelligenceList_failed", { error: String(err), recruiterId: recruiter.recruiterId })
       res.status(500).json({ ok: false, reason: "internal_error" })
     }
   },

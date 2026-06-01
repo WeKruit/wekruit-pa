@@ -16,6 +16,7 @@ export const RECRUITER_SOURCED_CANDIDATES_LIST_URL = `${DEFAULT_BASE}/paRecruite
 export const RECRUITER_SOURCED_CANDIDATE_SAVE_URL = `${DEFAULT_BASE}/paRecruiterSourcedCandidateSave`
 export const RECRUITER_ROLE_FEEDBACK_LIST_URL = `${DEFAULT_BASE}/paRecruiterRoleFeedbackList`
 export const RECRUITER_ROLE_FEEDBACK_SAVE_URL = `${DEFAULT_BASE}/paRecruiterRoleFeedbackSave`
+export const RECRUITER_ROLE_INTELLIGENCE_LIST_URL = `${DEFAULT_BASE}/paRecruiterRoleIntelligenceList`
 export const RECRUITER_ROLE_QUESTIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterRoleQuestionsList`
 export const RECRUITER_ROLE_QUESTION_CREATE_URL = `${DEFAULT_BASE}/paRecruiterRoleQuestionCreate`
 export const RECRUITER_SUBMISSION_URL = `${DEFAULT_BASE}/paRecruiterSubmission`
@@ -222,6 +223,40 @@ export interface RecruiterRoleQuestionInput {
   question: string
 }
 
+export interface RecruiterRoleIntelligenceReasonCount {
+  reason: RecruiterRoleFeedbackReason
+  count: number
+}
+
+export interface RecruiterRoleIntelligenceItem {
+  jobId: string
+  sourcedCount: number
+  readyCount: number
+  submissionCount: number
+  pendingCount: number
+  advancedCount: number
+  rejectedCount: number
+  duplicateCount: number
+  recruiterCount: number
+  openQuestionCount: number
+  answeredQuestionCount: number
+  lastActivityAt: string | null
+  feedback: {
+    total: number
+    easy: number
+    medium: number
+    hard: number
+    blocked: number
+    topReasons: RecruiterRoleIntelligenceReasonCount[]
+  }
+  my: {
+    sourcedCount: number
+    readyCount: number
+    submissionCount: number
+    pendingCount: number
+  }
+}
+
 export async function recruiterAuthHeaders(): Promise<Record<string, string>> {
   const user = auth().currentUser
   if (!user) throw new Error("recruiter_auth_required")
@@ -325,6 +360,22 @@ export async function fetchRecruiterRoleFeedback(): Promise<RecruiterRoleFeedbac
     throw new Error(body.reason ?? `paRecruiterRoleFeedbackList HTTP ${res.status}`)
   }
   return body.feedback
+}
+
+export async function fetchRecruiterRoleIntelligence(): Promise<RecruiterRoleIntelligenceItem[]> {
+  const res = await fetch(RECRUITER_ROLE_INTELLIGENCE_LIST_URL, {
+    method: "GET",
+    headers: await recruiterAuthHeaders(),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    intelligence?: RecruiterRoleIntelligenceItem[]
+  }
+  if (!res.ok || !body.ok || !body.intelligence) {
+    throw new Error(body.reason ?? `paRecruiterRoleIntelligenceList HTTP ${res.status}`)
+  }
+  return body.intelligence
 }
 
 export async function saveRecruiterRoleFeedback(

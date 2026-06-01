@@ -13,6 +13,7 @@ import {
   createRecruiterRoleQuestion,
   fetchCollabJobs,
   fetchRecruiterRoleFeedback,
+  fetchRecruiterRoleIntelligence,
   fetchRecruiterRoleQuestions,
   fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissions,
@@ -24,6 +25,7 @@ import {
   type RecruiterRoleFeedbackDifficulty,
   type RecruiterRoleFeedbackItem,
   type RecruiterRoleFeedbackReason,
+  type RecruiterRoleIntelligenceItem,
   type RecruiterRoleQuestionItem,
   type RecruiterSession,
   type RecruiterSourcedCandidateItem,
@@ -252,6 +254,7 @@ export default function RecruiterRole() {
   const [sourcedCandidates, setSourcedCandidates] = useState<RecruiterSourcedCandidateItem[]>([])
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
   const [roleFeedback, setRoleFeedback] = useState<RecruiterRoleFeedbackItem[]>([])
+  const [roleIntelligence, setRoleIntelligence] = useState<RecruiterRoleIntelligenceItem[]>([])
   const [roleQuestions, setRoleQuestions] = useState<RecruiterRoleQuestionItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [trackerError, setTrackerError] = useState<string | null>(null)
@@ -302,18 +305,21 @@ export default function RecruiterRole() {
   useEffect(() => {
     if (!session) return
     let active = true
+    const roleIntelligenceRequest = fetchRecruiterRoleIntelligence().catch(() => [] as RecruiterRoleIntelligenceItem[])
     Promise.all([
       fetchRecruiterSourcedCandidates(),
       fetchRecruiterSubmissions(),
       fetchRecruiterRoleFeedback(),
       fetchRecruiterRoleQuestions(),
+      roleIntelligenceRequest,
     ])
-      .then(([candidates, rows, feedback, questions]) => {
+      .then(([candidates, rows, feedback, questions, intelligence]) => {
         if (!active) return
         setSourcedCandidates(candidates)
         setSubmissions(rows)
         setRoleFeedback(feedback)
         setRoleQuestions(questions)
+        setRoleIntelligence(intelligence)
         setTrackerError(null)
       })
       .catch((e) => {
@@ -400,6 +406,7 @@ export default function RecruiterRole() {
     .filter((row) => roleMatches(job, row))
     .sort((a, b) => timestampMs(b.createdAt) - timestampMs(a.createdAt))
   const currentRoleFeedback = roleFeedback.find((feedback) => roleMatches(job, feedback)) ?? null
+  const currentRoleIntelligence = roleIntelligence.find((item) => item.jobId === job.jobId) ?? null
   const currentRoleQuestions = roleQuestions
     .filter((question) => roleMatches(job, question))
     .sort((a, b) => timestampMs(b.updatedAt ?? b.createdAt) - timestampMs(a.updatedAt ?? a.createdAt))
@@ -532,6 +539,17 @@ export default function RecruiterRole() {
             <em>{totals.anti} anti-signal checks.</em>
           </article>
         </section>
+
+        <RoleIntelligencePanel
+          intelligence={currentRoleIntelligence}
+          fallback={{
+            candidates: roleCandidates.length,
+            submissions: roleSubmissions.length,
+            pending: pendingCount,
+            questions: currentRoleQuestions.length,
+            feedback: currentRoleFeedback,
+          }}
+        />
 
         {submission && submission.ok && (
           <div className="rb-success">
@@ -808,6 +826,103 @@ export default function RecruiterRole() {
 
 function roleFeedbackDifficultyLabel(difficulty?: RecruiterRoleFeedbackDifficulty): string {
   return ROLE_FEEDBACK_DIFFICULTIES.find((item) => item.id === difficulty)?.label ?? "Not shared"
+}
+
+function roleFeedbackReasonLabel(reason: RecruiterRoleFeedbackReason): string {
+  return ROLE_FEEDBACK_REASONS.find((item) => item.id === reason)?.label ?? reason
+}
+
+function roleIntelligenceActivityLabel(iso: string | null | undefined): string {
+  if (!iso) return "No activity yet"
+  const ms = Date.parse(iso)
+  if (!ms) return "No activity yet"
+  return new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" })
+}
+
+function roleIntelligenceDiagnosis(
+  intelligence: RecruiterRoleIntelligenceItem | null,
+  feedback: RecruiterRoleFeedbackItem | null,
+): { label: string; detail: string; tone: "good" | "watch" | "blocked" | "quiet" } {
+  if (intelligence?.feedback.blocked) {
+    return { label: "Blocked market", detail: "Recruiters are reporting a hard stop.", tone: "blocked" }
+  }
+  if (intelligence && intelligence.feedback.hard > intelligence.feedback.easy) {
+    return { label: "Hard search", detail: "Tighten calibration before adding volume.", tone: "watch" }
+  }
+  if (feedback?.difficulty === "blocked") {
+    return { label: "You marked blocked", detail: "This role needs WeKruit calibration.", tone: "blocked" }
+  }
+  if (feedback?.difficulty === "hard") {
+    return { label: "You marked hard", detail: "Your market signal says this needs focus.", tone: "watch" }
+  }
+  if (intelligence && (intelligence.readyCount > 0 || intelligence.advancedCount > 0)) {
+    return { label: "Market moving", detail: "Candidate signal is reaching the queue.", tone: "good" }
+  }
+  return { label: "Signal forming", detail: "Early role data; source carefully.", tone: "quiet" }
+}
+
+function RoleIntelligencePanel({
+  intelligence,
+  fallback,
+}: {
+  intelligence: RecruiterRoleIntelligenceItem | null
+  fallback: {
+    candidates: number
+    submissions: number
+    pending: number
+    questions: number
+    feedback: RecruiterRoleFeedbackItem | null
+  }
+}) {
+  const diagnosis = roleIntelligenceDiagnosis(intelligence, fallback.feedback)
+  const topReasons = intelligence?.feedback.topReasons.length
+    ? intelligence.feedback.topReasons
+    : (fallback.feedback?.reasons ?? []).map((reason) => ({ reason, count: 1 }))
+  const sourced = intelligence?.sourcedCount ?? fallback.candidates
+  const ready = intelligence?.readyCount ?? 0
+  const submissions = intelligence?.submissionCount ?? fallback.submissions
+  const pending = intelligence?.pendingCount ?? fallback.pending
+  const recruiters = intelligence?.recruiterCount ?? 1
+  const openQuestions = intelligence?.openQuestionCount ?? fallback.questions
+  const answeredQuestions = intelligence?.answeredQuestionCount ?? 0
+  const feedbackTotal = intelligence?.feedback.total ?? (fallback.feedback ? 1 : 0)
+  const activity = intelligence ? roleIntelligenceActivityLabel(intelligence.lastActivityAt) : "Self data only"
+
+  return (
+    <section className={`rb-role-intel is-${diagnosis.tone}`} aria-label="Role intelligence">
+      <div className="rb-role-intel__lead">
+        <span>Role intelligence</span>
+        <strong>{diagnosis.label}</strong>
+        <em>{diagnosis.detail}</em>
+      </div>
+      <div className="rb-role-intel__metrics">
+        <div>
+          <span>Recruiters active</span>
+          <strong>{recruiters}</strong>
+          <em>{activity}</em>
+        </div>
+        <div>
+          <span>Sourced / ready</span>
+          <strong>{sourced} / {ready}</strong>
+          <em>{submissions} submitted, {pending} pending.</em>
+        </div>
+        <div>
+          <span>Calibration</span>
+          <strong>{feedbackTotal} signal{feedbackTotal === 1 ? "" : "s"}</strong>
+          <em>{openQuestions} open Q, {answeredQuestions} answered.</em>
+        </div>
+      </div>
+      <div className="rb-role-intel__reasons">
+        {topReasons.length ? (
+          topReasons.slice(0, 4).map((item) => (
+            <span key={item.reason}>{roleFeedbackReasonLabel(item.reason)}{item.count > 1 ? ` ×${item.count}` : ""}</span>
+          ))
+        ) : (
+          <span>No blocker reason yet</span>
+        )}
+      </div>
+    </section>
+  )
 }
 
 function RoleFeedbackPanel({
