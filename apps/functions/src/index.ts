@@ -48,6 +48,7 @@ import {
   MAILGUN_REGION,
   ANTHROPIC_API_KEY,
   PA_SLACK_ALERT_WEBHOOK,
+  CALCOM_API_KEY,
   makeOrchestratorDeps,
 } from "./orchestrator-deps.js"
 import {
@@ -1069,6 +1070,15 @@ export const onPaInbound = onDocumentCreated(
       SENDBLUE_API_KEY_ID,
       SENDBLUE_API_SECRET_KEY,
       SENDBLUE_FROM_NUMBER,
+      // Cal.com interview-scheduling (thin Claire offer_interview_slots /
+      // book_interview_slot) + Mailgun confirmation email. Until Adam provisions
+      // CALCOM_API_KEY the scheduling tools fail-open; MAILGUN_* power the
+      // confirmation supplement.
+      CALCOM_API_KEY,
+      MAILGUN_API_KEY,
+      MAILGUN_DOMAIN,
+      MAILGUN_FROM,
+      MAILGUN_REGION,
     ],
     // 2026-05-19 — pinned maxInstances=1 so future deploys can't blow the
     // per-region memory quota by defaulting to 100+ instances * 1GiB. Adam
@@ -1121,6 +1131,34 @@ export const onPaInbound = onDocumentCreated(
     process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
     process.env.SENDBLUE_API_KEY_ID = SENDBLUE_API_KEY_ID.value()
     process.env.SENDBLUE_API_SECRET_KEY = SENDBLUE_API_SECRET_KEY.value()
+    // Cal.com + Mailgun — thin Claire scheduling tools read process.env.CALCOM_API_KEY
+    // / MAILGUN_* lazily. Re-export defensively; an unset CALCOM_API_KEY just makes
+    // the scheduling tools fail-open (a missing key is not an error here).
+    try {
+      process.env.CALCOM_API_KEY = CALCOM_API_KEY.value()
+    } catch {
+      /* optional — scheduling tools fail-open without it */
+    }
+    try {
+      process.env.MAILGUN_API_KEY = MAILGUN_API_KEY.value()
+    } catch {
+      /* optional */
+    }
+    try {
+      process.env.MAILGUN_DOMAIN = MAILGUN_DOMAIN.value()
+    } catch {
+      /* optional — defaults to wekruit.com */
+    }
+    try {
+      process.env.MAILGUN_FROM = MAILGUN_FROM.value()
+    } catch {
+      /* optional — defaults to WeKruit <hi@wekruit.com> */
+    }
+    try {
+      process.env.MAILGUN_REGION = MAILGUN_REGION.value()
+    } catch {
+      /* optional — defaults to us */
+    }
     try {
       const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
       if (fromNumber) {
@@ -1860,7 +1898,10 @@ function buildSendblueWebhookDeps() {
 export const paMessageCoalescer = onRequest(
   {
     region: "us-central1",
-    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
+    // CALCOM_API_KEY + MAILGUN_* added (2026-06-01): thin Claire also runs through the
+    // coalescer inbound path, so its scheduling tools need process.env.CALCOM_API_KEY /
+    // MAILGUN_* populated. A missing CALCOM_API_KEY just makes the tools fail-open.
+    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY, CALCOM_API_KEY, MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION],
     // 512MiB → 1GiB (2026-05-30): this function hosts thin Claire for COALESCED inbounds (onPaInbound
     // skips them), so a `recommend` turn runs find_match HERE. V16 pulls ~67MB of job docs (1536-float
     // embeddings → ~150-300MB parsed) on top of the @openai/agents + mem0 + Sendblue SDK baseline,
@@ -1880,6 +1921,33 @@ export const paMessageCoalescer = onRequest(
     process.env.SILICONFLOW_API_KEY = SILICONFLOW_API_KEY.value()
     process.env.QDRANT_URL = QDRANT_URL.value()
     process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
+    // Cal.com + Mailgun — thin Claire's scheduling tools (this CF hosts thin Claire for
+    // coalesced inbounds) read these lazily. A missing CALCOM_API_KEY → tools fail-open.
+    try {
+      process.env.CALCOM_API_KEY = CALCOM_API_KEY.value()
+    } catch {
+      /* optional — scheduling tools fail-open without it */
+    }
+    try {
+      process.env.MAILGUN_API_KEY = MAILGUN_API_KEY.value()
+    } catch {
+      /* optional */
+    }
+    try {
+      process.env.MAILGUN_DOMAIN = MAILGUN_DOMAIN.value()
+    } catch {
+      /* optional — defaults to wekruit.com */
+    }
+    try {
+      process.env.MAILGUN_FROM = MAILGUN_FROM.value()
+    } catch {
+      /* optional — defaults to WeKruit <hi@wekruit.com> */
+    }
+    try {
+      process.env.MAILGUN_REGION = MAILGUN_REGION.value()
+    } catch {
+      /* optional — defaults to us */
+    }
     // 2026-05-07 Adam directive — no more OPENAI_API_KEY = SF aliasing.
     try {
       const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()

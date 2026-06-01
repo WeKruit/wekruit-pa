@@ -68,7 +68,6 @@ import { runPreScreenForUser } from "../../prescreen-session-start.js"
 
 const PA_USERS_COLLECTION = "pa-users"
 const JOB_PROFILES_COLLECTION = "pa-job-profiles"
-const INTERVIEW_BOOKINGS_COLLECTION = "pa-interview-bookings"
 
 /**
  * Read the matching slice of `pa-users/{userId}.tags`. Fail-soft: a missing
@@ -951,54 +950,12 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     },
   })
 
-  // ── 4. schedule_interview — dedup REDUCER over pa-interview-bookings ──────
-  // Reuses the SAME store + deterministic bookingId scheme as the existing
-  // SCHEDULE_INTERVIEW_CONNECTOR (pa-connectors/schedule-connector.ts): one
-  // booking per (user × job). Atomic dedup via a Firestore transaction so two
-  // concurrent same-turn calls can't double-book.
-  const scheduleInterview = tool({
-    name: "schedule_interview",
-    description:
-      "Book the candidate's interview / pre-screen time slot. DEDUP: if they already have a booking " +
-      "for this opportunity, do NOT rebook. Use when they want to schedule / book / set up an interview " +
-      "or offer their availability (e.g. 'book me in', 'when can I interview?', 'set up a time').",
-    parameters: z.object({ slotIso: z.string() }),
-    async execute({ slotIso }) {
-      const jobId = (ctx.jobId ?? "").trim() || "unknown_job"
-      const bookingId = `booking-${ctx.userId}__${jobId}`
-      const ref = ctx.db.collection(INTERVIEW_BOOKINGS_COLLECTION).doc(bookingId)
-      try {
-        const committed = await ctx.db.runTransaction(async (tx) => {
-          const snap = await tx.get(ref)
-          if (snap.exists) return false
-          tx.set(ref, {
-            bookingId,
-            userId: ctx.userId,
-            jobId,
-            slotIso: (slotIso ?? "").trim() || null,
-            status: "requested",
-            sessionId: ctx.sessionId,
-            createdAt: ctx.nowIso(),
-          })
-          return true
-        })
-        ctx.log("pa.claire.schedule_interview", {
-          userId: ctx.userId,
-          jobId,
-          action: committed ? "committed" : "deduped",
-        })
-        return committed
-          ? { ok: true, action: "committed", bookingId }
-          : { ok: true, action: "deduped", bookingId }
-      } catch (err) {
-        return {
-          ok: false,
-          action: "error",
-          reason: err instanceof Error ? err.message : String(err),
-        }
-      }
-    },
-  })
+  // ── 4. (RETIRED) schedule_interview — superseded by the Cal.com scheduling
+  // tools (offer_interview_slots + book_interview_slot in scheduling-tools.ts).
+  // The legacy stub only wrote a status:"requested" doc and never called
+  // Cal.com; it is no longer built or registered. See the registration array
+  // below + the SCHEDULING prompt section (TRIAGE now routes scheduling →
+  // offer_interview_slots).
 
   // ── 5. privacy — export/delete/stop via runCandidatePrivacyRequest ───────
   // PII-website-lock: there is intentionally NO tool that writes email / phone /
@@ -1523,7 +1480,12 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     findMatch,
     captureMatchFeedback,
     rememberFact,
-    scheduleInterview,
+    // NOTE: the legacy `schedule_interview` stub is RETIRED — the Cal.com
+    // scheduling tools (offer_interview_slots + book_interview_slot, registered
+    // via buildSchedulingTools) supersede it. It only ever wrote a status:
+    // "requested" doc and never called Cal.com; keeping it registered created a
+    // three-way tool-routing conflict where TRIAGE steered "book me an interview"
+    // to the stub, bypassing the entire Cal.com flow. See scheduling-tools.ts.
     privacy,
     saveJobProfile,
     setDailySubscription,

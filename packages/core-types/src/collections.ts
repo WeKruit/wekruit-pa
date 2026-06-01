@@ -156,6 +156,13 @@ export const PA_COLLECTIONS = {
    * re-runs idempotent (no duplicate queue rows). See `PendingOutboundSchema`.
    */
   pendingOutbound: "pa-pending-outbound",
+  /**
+   * Cal.com-backed interview bookings (one doc per user × job). Shared with the
+   * legacy `schedule_interview` intent stub via distinct doc-id namespaces
+   * (`calbk-...` for Cal.com, `booking-...` for the legacy stub). See
+   * `InterviewBookingSchema` / `interviewBookingDocId`.
+   */
+  interviewBookings: "pa-interview-bookings",
 } as const
 
 /**
