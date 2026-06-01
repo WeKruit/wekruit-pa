@@ -293,8 +293,9 @@ test("maybeSendRecCard: CACHE HIT → enqueues ONE row; media_url ends in .png, 
       env: { [JOB_REC_CARD_ENV_FLAG]: "1" },
       todayYmd: () => "20260531",
       loadCompany: async () => null,
-      // Lazy-gen seam present but MUST NOT run on a cache hit.
+      // Lazy-gen seam present but MUST NOT run on a (LIVE) cache hit.
       sendblueCreds: CREDS,
+      checkMediaUrlLive: async () => true, // cached url is alive → pure cache hit
       lazyGenerate: async () => {
         rendered = true
         return "should-not-be-used"
@@ -317,6 +318,54 @@ test("maybeSendRecCard: CACHE HIT → enqueues ONE row; media_url ends in .png, 
   assert.equal(row.runtimeApproved, true)
   assert.equal(row.runtimeSource, "pa_orchestrator")
   assert.equal(row.idempotencyKey, "rec-card-u1-job-1-20260531")
+})
+
+test("maybeSendRecCard: STALE cache (HEAD non-200) + creds → regenerates fresh, sends", async () => {
+  // The 'delivered but no picture' bug: a cached Sendblue-CDN url that 404'd. The liveness HEAD treats
+  // it as a MISS so lazy-gen re-uploads a fresh url instead of silently shipping a dead one.
+  const { db } = makeFakeDb({ cachedMediaUrl: "https://storage.googleapis.com/inbound-file-store/STALE.png" })
+  let regenerated = false
+  const res = await maybeSendRecCard({
+    userId: "u1",
+    jobId: "job-1",
+    job: PAYLOAD_JOB,
+    deps: {
+      db,
+      getPhoneE164: async () => "+15551234567",
+      env: { [JOB_REC_CARD_ENV_FLAG]: "1" },
+      todayYmd: () => "20260531",
+      loadCompany: async () => null,
+      sendblueCreds: CREDS,
+      checkMediaUrlLive: async () => false, // stale → 404
+      lazyGenerate: async () => {
+        regenerated = true
+        return "https://storage.googleapis.com/inbound-file-store/FRESH.png"
+      },
+    },
+  })
+  assert.equal(regenerated, true, "stale cached url must trigger a regenerate")
+  assert.equal(res.sent, true)
+  assert.match(String(res.mediaUrl), /FRESH\.png$/, "sends the freshly-regenerated url, not the stale one")
+})
+
+test("maybeSendRecCard: STALE cache + NO creds → keeps the cached url (can't regen, maybe-dead beats nothing)", async () => {
+  const { db } = makeFakeDb({ cachedMediaUrl: SENDBLUE_MEDIA_URL })
+  const res = await maybeSendRecCard({
+    userId: "u1",
+    jobId: "job-1",
+    job: PAYLOAD_JOB,
+    deps: {
+      db,
+      getPhoneE164: async () => "+15551234567",
+      env: { [JOB_REC_CARD_ENV_FLAG]: "1" },
+      todayYmd: () => "20260531",
+      loadCompany: async () => null,
+      // NO sendblueCreds → liveness check is skipped (can't regen anyway)
+      checkMediaUrlLive: async () => false,
+    },
+  })
+  assert.equal(res.sent, true)
+  assert.equal(res.mediaUrl, SENDBLUE_MEDIA_URL)
 })
 
 test("maybeSendRecCard: CACHE MISS + creds → lazy-generates, persists, sends", async () => {

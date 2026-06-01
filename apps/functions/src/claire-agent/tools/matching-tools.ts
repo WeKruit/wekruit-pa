@@ -648,12 +648,20 @@ export function makeV16FindMatch(
       // matching-jobs.id == pa-jobs.id (enrich-collab-jobs uses doc.id), so j.id IS the trigger jobId.
       // Only emit for roles WITH a config (≤5 collab ids → one getAll); else the trigger config_missings.
       const prescreenReady = new Set<string>()
+      // jobId → WeKruit candidate-page publicId. A collab/partner role's link MUST funnel through our
+      // own site (wekruit.com/j/<publicId>), NEVER the raw external ATS url (Adam 2026-05-31: Invoko
+      // collab role was linking to app.joinhandshake.com). pa-jobs carries the publicId; matching-jobs
+      // does not, so we read it here from the same getAll already done for prescreenReady.
+      const collabPublicId = new Map<string, string>()
       if (collabIds.size > 0) {
         try {
           const snaps = await db.getAll(...[...collabIds].map((id) => db.collection("pa-jobs").doc(id)))
           for (const s of snaps) {
-            const cfg = (s.data()?.prescreenConfig ?? null) as { questions?: unknown[] } | null
+            const data = (s.data() ?? {}) as { prescreenConfig?: { questions?: unknown[] } | null; publicId?: unknown }
+            const cfg = data.prescreenConfig ?? null
             if (cfg && Array.isArray(cfg.questions) && cfg.questions.length > 0) prescreenReady.add(s.id)
+            const pid = typeof data.publicId === "string" ? data.publicId.trim() : ""
+            if (pid) collabPublicId.set(s.id, pid)
           }
         } catch (e) {
           log("pa.claire.find_match.prescreen_ready_lookup_failed", { err: String(e) })
@@ -663,8 +671,11 @@ export function makeV16FindMatch(
       const jobs = rawJobs.map((j) => {
         const title = (j.jobTitle || j.roleTitle || "Role").trim()
         const company = (j.companyName || "Company").trim()
-        const url = (j.atsApplyUrl ?? "").trim()
         const isCollab = collabIds.has(j.id)
+        // Collab roles ALWAYS link to the WeKruit candidate page (wekruit.com/j/<publicId>) — funnel
+        // through our site, never the external ATS. Open-market roles keep their atsApplyUrl.
+        const collabPid = isCollab ? collabPublicId.get(j.id) : undefined
+        const url = collabPid ? `https://wekruit.com/j/${collabPid}` : (j.atsApplyUrl ?? "").trim()
         const head = isCollab ? `${title} @ ${company} [WeKruit partner role]` : `${title} @ ${company}`
         const base = url ? `${head}\n${url}` : head
         // The trigger line is RELAYED VERBATIM by the agent (prompt rule) so the candidate can copy it.

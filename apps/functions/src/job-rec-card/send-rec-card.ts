@@ -43,6 +43,8 @@ export type SendRecCardDeps = {
   sendblueCreds?: SendblueMediaCreds
   /** Seam: read the cached media URL for a job. Defaults to a matching-jobs point-read. */
   loadCachedMediaUrl?: (db: Firestore, jobId: string) => Promise<string | null>
+  /** Seam: HEAD-check a cached media URL is still alive (non-200 → regenerate). Defaults to a real HEAD. */
+  checkMediaUrlLive?: (url: string) => Promise<boolean>
   /** Seam: lazy-generate + persist a card. Defaults to generateRecCardForJob + write-back. */
   lazyGenerate?: (input: {
     db: Firestore
@@ -89,6 +91,29 @@ async function defaultLoadCachedMediaUrl(db: Firestore, jobId: string): Promise<
     return typeof v === "string" && v.trim() ? v.trim() : null
   } catch {
     return null
+  }
+}
+
+/**
+ * Liveness HEAD-check for a cached media URL. Sendblue fetches the media_url at delivery time; if it
+ * 404s (a CDN object that expired) it silently DROPS the image and still reports DELIVERED — the
+ * "delivered but no picture" bug (Adam 2026-05-31). A non-200 here treats the cache as STALE so the
+ * caller re-generates a fresh Sendblue-CDN url. Fail-CLOSED on network error (treat as not-live →
+ * regenerate) is wrong (regen storms on transient blips) so we fail-OPEN: an errored HEAD returns
+ * `true` (send the cached url anyway). 3s timeout so a slow HEAD can't stall the send.
+ */
+async function defaultCheckMediaUrlLive(url: string): Promise<boolean> {
+  try {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 3000)
+    try {
+      const r = await fetch(url, { method: "HEAD", signal: ctrl.signal })
+      return r.status === 200
+    } finally {
+      clearTimeout(t)
+    }
+  } catch {
+    return true // fail-open: network/HEAD error → don't force a regen
   }
 }
 
@@ -195,7 +220,21 @@ export async function maybeSendRecCard(input: {
     const loadCached = deps.loadCachedMediaUrl ?? defaultLoadCachedMediaUrl
     let mediaUrl = await loadCached(deps.db, input.jobId)
 
-    // 2. LAZY GEN — only when the cache is empty AND creds are available.
+    // 1b. LIVENESS — a cached Sendblue-CDN url can expire (404). Sendblue then silently drops the image
+    // on an otherwise-DELIVERED send ("delivered but no picture"). HEAD-check it; a stale url is treated
+    // as a cache MISS so the lazy-gen below re-uploads a fresh one + rewrites matching-jobs. Only checks
+    // when there's a url AND creds to regenerate (no creds → keep the url; a maybe-dead image still beats
+    // forcing a regen we can't do).
+    if (mediaUrl && deps.sendblueCreds) {
+      const checkLive = deps.checkMediaUrlLive ?? defaultCheckMediaUrlLive
+      const live = await checkLive(mediaUrl)
+      if (!live) {
+        log("rec_card.cached_url_stale", { userId: input.userId, jobId: input.jobId })
+        mediaUrl = null
+      }
+    }
+
+    // 2. LAZY GEN — only when the cache is empty (or stale) AND creds are available.
     if (!mediaUrl && deps.sendblueCreds) {
       const lazyGen =
         deps.lazyGenerate ??
