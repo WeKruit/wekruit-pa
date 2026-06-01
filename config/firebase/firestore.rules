@@ -547,6 +547,10 @@ service cloud.firestore {
       allow read, update: if isPaOperator();
       allow create, delete: if false;
     }
+    match /pa-recruiter-role-applications/{applicationId} {
+      allow read, update: if isPaOperator();
+      allow create, delete: if false;
+    }
     match /pa-recruiter-sourced-candidates/{candidateId} {
       allow read, update: if isPaOperator();
       allow create, delete: if false;
