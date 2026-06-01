@@ -5378,6 +5378,178 @@
   padding: 7px 10px;
 }
 
+.rb-candidate-dossier {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.78fr) minmax(0, 1.22fr);
+  margin: 16px 16px 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.rb-candidate-dossier__lead {
+  display: grid;
+  align-content: center;
+  gap: 9px;
+  border-right: 1px solid var(--border);
+  border-top: 4px solid var(--ink-3);
+  background: var(--cream-3);
+  padding: 18px;
+}
+
+.rb-candidate-dossier__lead.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-candidate-dossier__lead.is-info { border-top-color: var(--info); }
+.rb-candidate-dossier__lead.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-candidate-dossier__lead.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-candidate-dossier__lead.is-mute { border-top-color: var(--ink-3); }
+
+.rb-candidate-dossier__lead span,
+.rb-candidate-dossier__checks span,
+.rb-candidate-dossier__body > article > span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-candidate-dossier__lead strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: clamp(28px, 3vw, 40px);
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-candidate-dossier__lead p,
+.rb-candidate-dossier__checks p,
+.rb-candidate-dossier__body p,
+.rb-candidate-dossier__matches em,
+.rb-candidate-dossier__receipts em {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.rb-candidate-dossier__lead div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.rb-candidate-dossier__lead a,
+.rb-candidate-dossier__matches a,
+.rb-candidate-dossier__receipts a {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.rb-candidate-dossier__lead a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  padding: 7px 12px;
+}
+
+.rb-candidate-dossier__lead a:first-child {
+  background: #fff;
+  color: var(--ink);
+}
+
+.rb-candidate-dossier__checks {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+}
+
+.rb-candidate-dossier__checks article {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--ink-3);
+  border-radius: 10px;
+  background: var(--cream-3);
+  padding: 12px;
+}
+
+.rb-candidate-dossier__checks article.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-candidate-dossier__checks article.is-info { border-top-color: var(--info); }
+.rb-candidate-dossier__checks article.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-candidate-dossier__checks article.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-candidate-dossier__checks article.is-mute { border-top-color: var(--ink-3); }
+
+.rb-candidate-dossier__checks strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-candidate-dossier__body {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  background: var(--cream-2);
+  padding: 12px;
+}
+
+.rb-candidate-dossier__body > article {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--ink-3);
+  border-radius: 10px;
+  background: #fff;
+  padding: 12px;
+}
+
+.rb-candidate-dossier__next.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-candidate-dossier__next.is-info { border-top-color: var(--info); }
+.rb-candidate-dossier__next.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-candidate-dossier__next.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-candidate-dossier__next.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-candidate-dossier__body strong {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.rb-candidate-dossier__matches,
+.rb-candidate-dossier__receipts {
+  display: grid;
+  gap: 7px;
+}
+
+.rb-candidate-dossier__matches a,
+.rb-candidate-dossier__receipts a {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--cream-3);
+  padding: 9px;
+}
+
 .rb-candidate-tools {
   display: grid;
   gap: 12px;
@@ -5911,6 +6083,11 @@
   scroll-margin-top: 18px;
 }
 
+.rb-source-card.is-selected {
+  border-color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+
 .rb-source-card > div {
   min-width: 0;
   display: grid;
@@ -6069,9 +6246,15 @@
   padding: 5px 7px;
 }
 
-.rb-source-card footer a {
+.rb-source-card footer a,
+.rb-source-card footer button {
   flex: 0 0 auto;
+  appearance: none;
+  border: 0;
+  background: transparent;
   color: var(--ink);
+  cursor: pointer;
+  font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 800;
   text-decoration: none;
@@ -6193,6 +6376,7 @@
   .rb-feedback-grid,
   .rb-candidate-crm,
   .rb-candidate-command,
+  .rb-candidate-dossier,
   .rb-match-command,
   .rb-submission-command,
   .rb-matchboard,
@@ -6257,6 +6441,10 @@
     border-bottom: 1px solid var(--border);
   }
   .rb-candidate-command__mission {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .rb-candidate-dossier__lead {
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
@@ -6437,6 +6625,8 @@
   .rb-candidate-board,
   .rb-cockpit__steps,
   .rb-launch-sequence__steps,
+  .rb-candidate-dossier__checks,
+  .rb-candidate-dossier__body,
   .rb-command-list,
   .rb-market-grid,
   .rb-inbox-hero,

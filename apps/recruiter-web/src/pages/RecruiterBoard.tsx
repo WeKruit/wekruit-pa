@@ -1324,6 +1324,7 @@ export default function RecruiterBoard() {
           <CandidatesTab
             jobs={openJobs}
             candidates={sourcedCandidates}
+            submissions={submissions}
             onSaved={(saved) => setSourcedCandidates((rows) => sortSourcedCandidates([saved, ...rows.filter((row) => row.id !== saved.id)]))}
           />
         )}
@@ -5072,10 +5073,12 @@ function CandidateRoleMatchRow({
 function CandidatesTab({
   jobs,
   candidates,
+  submissions,
   onSaved,
 }: {
   jobs: CollabJob[]
   candidates: RecruiterSourcedCandidateItem[]
+  submissions: RecruiterSubmissionItem[]
   onSaved: (candidate: RecruiterSourcedCandidateItem) => void
 }) {
   const [form, setForm] = useState<RecruiterSourcedCandidateInput>(() => ({
@@ -5093,6 +5096,20 @@ function CandidatesTab({
   const [bulkResults, setBulkResults] = useState<BulkCandidateImportResult[]>([])
   const [err, setErr] = useState<string | null>(null)
   const command = useMemo(() => buildCandidateSourcingCommand(candidates), [candidates])
+  const activeCandidates = useMemo(
+    () => sortSourcedCandidates(candidates.filter((candidate) => candidate.stage !== "archived")),
+    [candidates],
+  )
+  const [selectedCandidateId, setSelectedCandidateId] = useState("")
+  const selectedCandidate = activeCandidates.find((candidate) => candidate.id === selectedCandidateId) ?? command.focus ?? activeCandidates[0]
+
+  useEffect(() => {
+    const nextCandidate = command.focus ?? activeCandidates[0]
+    if (!selectedCandidateId && nextCandidate) setSelectedCandidateId(nextCandidate.id)
+    if (selectedCandidateId && !activeCandidates.some((candidate) => candidate.id === selectedCandidateId)) {
+      setSelectedCandidateId(nextCandidate?.id ?? "")
+    }
+  }, [activeCandidates, command.focus, selectedCandidateId])
 
   const save = async (e: FormEvent) => {
     e.preventDefault()
@@ -5137,6 +5154,7 @@ function CandidatesTab({
   const bulkInvalidRows = bulkParsedRows.filter((row): row is { ok: false; rowNumber: number; raw: string; reason: string } => !row.ok)
 
   const openCandidate = (candidateId: string) => {
+    setSelectedCandidateId(candidateId)
     document.getElementById(sourcedCandidateDomId(candidateId))?.scrollIntoView({ behavior: "smooth", block: "center" })
   }
 
@@ -5335,6 +5353,14 @@ function CandidatesTab({
         onOpenCandidate={openCandidate}
         onOpenBulkImport={openBulkImport}
       />
+      {selectedCandidate && (
+        <CandidateDossierPanel
+          candidate={selectedCandidate}
+          jobs={jobs}
+          candidates={candidates}
+          submissions={submissions}
+        />
+      )}
       <div className="rb-candidate-crm">
         <div className="rb-candidate-tools">
           <form className="rb-source-form" onSubmit={save}>
@@ -5479,16 +5505,138 @@ function CandidatesTab({
                   disabled={updatingId === candidate.id || calibratingId === candidate.id}
                   calibrationNote={calibrationDrafts[candidate.id] ?? ""}
                   calibrationDisabled={calibratingId === candidate.id}
+                  selected={selectedCandidate?.id === candidate.id}
                   onStageChange={(stage) => void updateStage(candidate, stage)}
                   onOutreachChange={(patch) => void updateOutreach(candidate, patch)}
                   onCalibrationNoteChange={(note) => setCalibrationDrafts((next) => ({ ...next, [candidate.id]: note }))}
                   onCalibrationRequest={() => void requestCalibration(candidate)}
+                  onOpenDossier={() => setSelectedCandidateId(candidate.id)}
                 />
               ))}
               {group.candidates.length === 0 && <p>No candidates</p>}
             </section>
           ))}
         </div>
+      </div>
+    </section>
+  )
+}
+
+function CandidateDossierPanel({
+  candidate,
+  jobs,
+  candidates,
+  submissions,
+}: {
+  candidate: RecruiterSourcedCandidateItem
+  jobs: CollabJob[]
+  candidates: RecruiterSourcedCandidateItem[]
+  submissions: RecruiterSubmissionItem[]
+}) {
+  const matches = buildCandidateRoleMatches(candidate, jobs, submissions, candidates).slice(0, 3)
+  const matchedSubmissions = candidateMatchedSubmissions(candidate, submissions)
+  const topMatch = matches[0]
+  const stage = sourceStageMeta(candidate.stage)
+  const outreach = outreachMeta(candidate.outreach?.status)
+  const followUp = candidateFollowUpState(candidate)
+  const hasEmail = Boolean(candidate.candidate?.email)
+  const hasLink = Boolean(candidate.candidate?.link)
+  const hasNote = Boolean(candidate.candidate?.notes?.trim())
+  const profileProofCount = [hasEmail, hasLink, hasNote, candidate.outreach?.status && candidate.outreach.status !== "not_contacted", candidate.stage === "ready" || candidate.stage === "submitted"].filter(Boolean).length
+  const latestSubmission = [...matchedSubmissions].sort((a, b) => timestampValueMs(b.updatedAt ?? b.createdAt) - timestampValueMs(a.updatedAt ?? a.createdAt))[0]
+  const latestStatus = latestSubmission ? statusMeta(latestSubmission.status) : null
+  const checklist = [
+    {
+      label: "Identity",
+      value: hasEmail && hasLink ? "Ready" : `${Number(hasEmail) + Number(hasLink)}/2`,
+      body: hasEmail && hasLink ? "Email and LinkedIn/resume are ready for duplicate checks." : "Add email and LinkedIn/resume before submission.",
+      tone: hasEmail && hasLink ? "success" as const : "warn" as const,
+    },
+    {
+      label: "Outreach",
+      value: outreach.label,
+      body: followUp.body,
+      tone: followUp.tone,
+    },
+    {
+      label: "Role match",
+      value: topMatch ? `${topMatch.score}%` : "None",
+      body: topMatch ? `${topMatch.job.title} · ${topMatch.job.recruiterBoard.label.company}` : "No active role can be ranked yet.",
+      tone: topMatch ? topMatch.score >= 72 ? "live" as const : "info" as const : "mute" as const,
+    },
+    {
+      label: "Submission trail",
+      value: matchedSubmissions.length ? String(matchedSubmissions.length) : "0",
+      body: latestSubmission ? `${latestStatus?.label ?? "Submitted"} · ${submissionNextAction(latestSubmission.status).title}` : "Not submitted to a role yet.",
+      tone: latestStatus?.tone ?? "mute" as const,
+    },
+  ]
+  const nextAction = latestSubmission
+    ? submissionNextAction(latestSubmission.status)
+    : candidate.stage === "ready" && topMatch
+      ? { title: "Submit from best role", body: "Open the top role brief, verify hard filters, then submit with consent.", tone: "live" as const }
+      : !hasEmail || !hasLink
+        ? { title: "Complete identity proof", body: "Candidate needs email and profile link before clean ownership and consent checks.", tone: "warn" as const }
+        : topMatch
+          ? { title: "Screen against best role", body: "Use the top match to collect hard-filter evidence and mark ready.", tone: "info" as const }
+          : { title: "Keep in private bench", body: "Wait for a stronger WeKruit role or add richer notes for matching.", tone: "mute" as const }
+
+  return (
+    <section className="rb-candidate-dossier" aria-label={`${candidateName(candidate)} candidate dossier`}>
+      <div className={`rb-candidate-dossier__lead is-${nextAction.tone}`}>
+        <span>{stage.label} dossier</span>
+        <strong>{candidateName(candidate)}</strong>
+        <p>{candidate.candidate?.currentRole || candidate.jobTitleSnapshot || "Candidate"} · {profileProofCount}/5 profile proof signals</p>
+        <div>
+          {candidate.candidate?.link && <a href={candidate.candidate.link} target="_blank" rel="noopener noreferrer">Open profile</a>}
+          {topMatch && <Link to={`/recruiters/job/${topMatch.job.jobId}?candidateId=${encodeURIComponent(candidate.id)}`}>{candidate.stage === "ready" ? "Submit best match" : "Open best role"}</Link>}
+          <Link to="/recruiters?tab=matches">Matchboard</Link>
+        </div>
+      </div>
+
+      <div className="rb-candidate-dossier__checks">
+        {checklist.map((item) => (
+          <article className={`is-${item.tone}`} key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+            <p>{item.body}</p>
+          </article>
+        ))}
+      </div>
+
+      <div className="rb-candidate-dossier__body">
+        <article className={`rb-candidate-dossier__next is-${nextAction.tone}`}>
+          <span>Next move</span>
+          <strong>{nextAction.title}</strong>
+          <p>{nextAction.body}</p>
+        </article>
+        <article>
+          <span>Top role matches</span>
+          <div className="rb-candidate-dossier__matches">
+            {matches.map((match) => (
+              <Link key={match.job.jobId} to={`/recruiters/job/${match.job.jobId}?candidateId=${encodeURIComponent(candidate.id)}`}>
+                <strong>{match.score}% · {match.job.title}</strong>
+                <em>{match.reasons.slice(0, 2).join(" · ") || match.job.recruiterBoard.label.company}</em>
+              </Link>
+            ))}
+            {matches.length === 0 && <p>No ranked roles yet.</p>}
+          </div>
+        </article>
+        <article>
+          <span>Submission receipts</span>
+          <div className="rb-candidate-dossier__receipts">
+            {matchedSubmissions.slice(0, 3).map((submission) => {
+              const status = statusMeta(submission.status)
+              return (
+                <Link key={submission.id} to="/recruiters?tab=submissions">
+                  <strong>{status.label} · {submissionReceiptId(submission)}</strong>
+                  <em>{submission.jobTitleSnapshot || "Role"} · {submissionFeedbackRatingLabel(submission)}</em>
+                </Link>
+              )
+            })}
+            {matchedSubmissions.length === 0 && <p>No submission receipt yet.</p>}
+          </div>
+        </article>
       </div>
     </section>
   )
@@ -5562,19 +5710,23 @@ function SourcedCandidateCard({
   disabled,
   calibrationNote,
   calibrationDisabled,
+  selected,
   onStageChange,
   onOutreachChange,
   onCalibrationNoteChange,
   onCalibrationRequest,
+  onOpenDossier,
 }: {
   candidate: RecruiterSourcedCandidateItem
   disabled: boolean
   calibrationNote: string
   calibrationDisabled: boolean
+  selected: boolean
   onStageChange: (stage: RecruiterSourcedCandidateStage) => void
   onOutreachChange: (patch: { status?: RecruiterCandidateOutreachStatus; nextFollowUpAt?: string | null }) => void
   onCalibrationNoteChange: (note: string) => void
   onCalibrationRequest: () => void
+  onOpenDossier: () => void
 }) {
   const stage = sourceStageMeta(candidate.stage)
   const outreach = outreachMeta(candidate.outreach?.status)
@@ -5586,7 +5738,7 @@ function SourcedCandidateCard({
     ? `${candidate.jobTitleSnapshot} · ${candidate.companyLabelSnapshot}`
     : candidate.jobTitleSnapshot || "Private bench"
   return (
-    <article id={sourcedCandidateDomId(candidate.id)} className="rb-source-card">
+    <article id={sourcedCandidateDomId(candidate.id)} className={`rb-source-card${selected ? " is-selected" : ""}`}>
       <div>
         <span className="rb-candidate-dot">{candidateName(candidate).slice(0, 1).toUpperCase()}</span>
         <span>
@@ -5668,6 +5820,7 @@ function SourcedCandidateCard({
             <option key={option.id} value={option.id}>{option.label}</option>
           ))}
         </select>
+        <button type="button" onClick={onOpenDossier}>Dossier</button>
         {candidate.inboundJobId
           ? <Link to={`/recruiters/job/${candidate.inboundJobId}?candidateId=${encodeURIComponent(candidate.id)}`}>Submit</Link>
           : <Link to="/recruiters?tab=matches">Find role</Link>}
