@@ -16,6 +16,11 @@ import {
 import { Link, useSearchParams } from "react-router-dom"
 import "../styles/recruiter-board.css"
 import {
+  recruiterNotificationInboxMeta,
+  type RecruiterInboxAction,
+  type RecruiterInboxTone,
+} from "../lib/recruiter-inbox.js"
+import {
   fetchCollabJobs,
   fetchRecruiterRoleFeedback,
   fetchRecruiterRoleIntelligence,
@@ -2831,15 +2836,13 @@ function buildMarketPulse(
   ] as const
 }
 
-type RecruiterInboxAction = "roles" | "submissions" | "matches" | "candidates"
-
 type RecruiterInboxItem = {
   id: string
   bucket: string
   title: string
   body: string
   meta: string
-  tone: "live" | "info" | "success" | "warn" | "mute"
+  tone: RecruiterInboxTone
   priority: number
   atMs: number
   cta: string
@@ -2907,34 +2910,32 @@ function buildRecruiterInboxItems(
 ): RecruiterInboxItem[] {
   const jobsById = new Map(jobs.map((job) => [roleKey(job), job]))
   const items: RecruiterInboxItem[] = []
+  const notifiedAnsweredQuestionIds = new Set(
+    notifications
+      .filter((notification) => notification.type === "role_question_answer")
+      .flatMap((notification) => [notification.entityId, notification.notificationId, notification.id])
+      .filter((id): id is string => Boolean(id)),
+  )
 
   for (const notification of notifications) {
     const unread = !notification.readAt
     const roleId = notification.publicJobId || notification.jobId
     const href = roleId ? `/recruiters/job/${encodeURIComponent(roleId)}` : undefined
-    const typeLabel =
-      notification.type === "new_role" ? "New role alert" :
-      notification.type === "role_application_decision" ? "Access decision" :
-      notification.type === "submission_feedback" ? "Submission notification" :
-      "Platform alert"
-    const action: RecruiterInboxAction =
-      notification.type === "submission_feedback" ? "submissions" :
-      notification.type === "new_role" || notification.type === "role_application_decision" ? "roles" :
-      "candidates"
+    const notificationMeta = recruiterNotificationInboxMeta(notification.type)
     items.push({
       id: `notification-${notification.id}`,
-      bucket: unread ? "Unread platform alert" : typeLabel,
+      bucket: unread ? notificationMeta.unreadBucket : notificationMeta.typeLabel,
       title: notification.title,
       body: notification.body,
       meta: [
         notification.roleTitle || notification.companyLabel || "",
         formatActivityDate(notification.createdAt ?? notification.updatedAt),
       ].filter(Boolean).join(" · "),
-      tone: unread ? "live" : notification.type === "submission_feedback" ? "info" : "mute",
+      tone: unread ? "live" : notificationMeta.readTone,
       priority: unread ? 98 : 38,
       atMs: notificationCreatedAtMs(notification),
-      cta: notification.type === "submission_feedback" ? "Review submission" : "Open role",
-      action,
+      cta: notificationMeta.cta,
+      action: notificationMeta.action,
       href,
     })
   }
@@ -3118,6 +3119,8 @@ function buildRecruiterInboxItems(
 
   for (const question of roleQuestions) {
     const open = (question.status ?? "open") === "open"
+    const questionIds = [question.id, question.questionId].filter((id): id is string => Boolean(id))
+    if (!open && questionIds.some((id) => notifiedAnsweredQuestionIds.has(id))) continue
     const atMs = timestampValueMs(question.answeredAt ?? question.updatedAt ?? question.createdAt)
     const roleLabel = rowRoleLabel(question, jobsById)
     items.push({
@@ -3131,8 +3134,9 @@ function buildRecruiterInboxItems(
       tone: open ? "warn" : "info",
       priority: open ? 92 : 68,
       atMs,
-      cta: "Open roles",
+      cta: open ? "Open question" : "Open answer",
       action: "roles",
+      href: rolePathForRow(question),
     })
   }
 
