@@ -1263,6 +1263,7 @@ export const paRecruiterMe = onRequest(
 interface RecruiterSubmissionListItem {
   id: string
   submissionId?: string
+  sourcedCandidateId?: string
   jobId?: string
   inboundJobId?: string
   jobTitleSnapshot?: string
@@ -1336,6 +1337,7 @@ function publicRecruiterSubmission(d: { id: string; data: () => Record<string, u
   return {
     id: d.id,
     submissionId: typeof data.submissionId === "string" ? data.submissionId : undefined,
+    sourcedCandidateId: typeof data.sourcedCandidateId === "string" ? data.sourcedCandidateId : undefined,
     jobId: typeof data.jobId === "string" ? data.jobId : undefined,
     inboundJobId: typeof data.inboundJobId === "string" ? data.inboundJobId : undefined,
     jobTitleSnapshot: typeof data.jobTitleSnapshot === "string" ? data.jobTitleSnapshot : undefined,
@@ -1429,6 +1431,8 @@ interface RecruiterSourcedCandidateListItem {
   calibrationStatus?: string
   calibrationNote?: string | null
   calibrationUpdatedAt?: unknown
+  linkedSubmissionId?: string
+  submittedAt?: unknown
   createdAt?: unknown
   updatedAt?: unknown
 }
@@ -1779,6 +1783,8 @@ function publicRecruiterSourcedCandidate(
     calibrationStatus: typeof data.calibrationStatus === "string" ? data.calibrationStatus : undefined,
     calibrationNote: typeof data.calibrationNote === "string" ? data.calibrationNote : null,
     calibrationUpdatedAt: data.calibrationUpdatedAt,
+    linkedSubmissionId: typeof data.linkedSubmissionId === "string" ? data.linkedSubmissionId : undefined,
+    submittedAt: data.submittedAt,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   }
@@ -2826,6 +2832,7 @@ export const paRecruiterPreferencesUpdate = onRequest(
 
 interface SubmissionPayload {
   jobId: string
+  sourcedCandidateId?: string
   submitter: { name: string; email: string }
   candidate: {
     name: string
@@ -2909,6 +2916,12 @@ export function validateSubmission(input: unknown):
   const b = input as Record<string, unknown>
   if (!isNonEmptyString(b.jobId)) return { ok: false, reason: "missing_jobId" }
   if (b.jobId.length > 200) return { ok: false, reason: "jobId_too_long" }
+  let sourcedCandidateId: string | undefined
+  if (b.sourcedCandidateId !== undefined && b.sourcedCandidateId !== null && b.sourcedCandidateId !== "") {
+    if (typeof b.sourcedCandidateId !== "string") return { ok: false, reason: "invalid_sourced_candidate_id" }
+    sourcedCandidateId = b.sourcedCandidateId.trim()
+    if (!/^[A-Za-z0-9_.:-]{1,120}$/.test(sourcedCandidateId)) return { ok: false, reason: "invalid_sourced_candidate_id" }
+  }
 
   const s = b.submitter as Record<string, unknown> | undefined
   if (!s || typeof s !== "object") return { ok: false, reason: "missing_submitter" }
@@ -2962,6 +2975,7 @@ export function validateSubmission(input: unknown):
     ok: true,
     value: {
       jobId: b.jobId,
+      ...(sourcedCandidateId ? { sourcedCandidateId } : {}),
       submitter: {
         name: s.name.trim(),
         email: (s.email as string).trim().toLowerCase(),
@@ -3471,11 +3485,12 @@ export const paRecruiterSubmission = onRequest(
         .doc(idempotencyHeader)
         .get()
       if (existing.exists) {
-        const existingData = existing.data() as { score?: SubmissionScore } | undefined
+        const existingData = existing.data() as { score?: SubmissionScore; sourcedCandidateId?: string } | undefined
         res.status(200).json({
           ok: true,
           submissionId: idempotencyHeader,
           score: existingData?.score ?? null,
+          ...(existingData?.sourcedCandidateId ? { sourcedCandidateId: existingData.sourcedCandidateId } : {}),
           idempotent: true,
         })
         return
@@ -3519,6 +3534,36 @@ export const paRecruiterSubmission = onRequest(
       }
     }
 
+    let sourcedCandidateRef: DocumentReference | null = null
+    if (payload.sourcedCandidateId) {
+      if (!recruiter) {
+        res.status(401).json({ ok: false, reason: "recruiter_access_required" })
+        return
+      }
+      const sourcedSnap = await db
+        .collection(RECRUITER_SOURCED_CANDIDATES_COLLECTION)
+        .doc(payload.sourcedCandidateId)
+        .get()
+      if (!sourcedSnap.exists) {
+        res.status(404).json({ ok: false, reason: "sourced_candidate_not_found" })
+        return
+      }
+      const sourcedData = sourcedSnap.data() as Record<string, unknown>
+      if (sourcedData.recruiterId !== recruiter.recruiterId) {
+        res.status(403).json({ ok: false, reason: "sourced_candidate_forbidden" })
+        return
+      }
+      if (sourcedData.jobId !== realJobId && sourcedData.inboundJobId !== payload.jobId) {
+        res.status(409).json({ ok: false, reason: "sourced_candidate_role_mismatch" })
+        return
+      }
+      if (sourcedData.stage === "archived") {
+        res.status(409).json({ ok: false, reason: "sourced_candidate_archived" })
+        return
+      }
+      sourcedCandidateRef = sourcedSnap.ref
+    }
+
     const score = computeSubmissionScore(rb.checklist.groups, payload.checklist)
 
     const submissionId = idempotencyHeader || randomUUID()
@@ -3553,6 +3598,7 @@ export const paRecruiterSubmission = onRequest(
       submitter,
       recruiterId: recruiter?.recruiterId ?? null,
       recruiterEmail: recruiter?.email ?? payload.submitter.email,
+      ...(payload.sourcedCandidateId ? { sourcedCandidateId: payload.sourcedCandidateId } : {}),
       candidate: payload.candidate,
       ...(payload.candidate.email ? { candidateEmailKey: hashRecruiterCandidateEmail(payload.candidate.email) } : {}),
       candidateConsent: payload.candidateConsent,
@@ -3580,13 +3626,38 @@ export const paRecruiterSubmission = onRequest(
       updatedAt: FieldValue.serverTimestamp(),
     }
 
+    const sourcedCandidateSubmittedPatch = sourcedCandidateRef
+      ? {
+          stage: "submitted",
+          linkedSubmissionId: submissionId,
+          submittedAt: FieldValue.serverTimestamp(),
+          candidate: payload.candidate,
+          updatedAt: FieldValue.serverTimestamp(),
+          stageHistory: FieldValue.arrayUnion({
+            stage: "submitted",
+            submissionId,
+            by: "recruiter",
+            recruiterEmail: recruiter?.email ?? submitter.email,
+            atIso: new Date().toISOString(),
+          }),
+        }
+      : null
+
     try {
+      const submissionRef = db.collection(RECRUITER_SUBMISSIONS_COLLECTION).doc(submissionId)
       if (idempotencyHeader) {
         // `create()` fails when the doc already exists. Combined with the
         // pre-check above, this protects against a narrow race where two
         // concurrent retries of the same key both miss the existence check.
         try {
-          await db.collection("pa-recruiter-submissions").doc(submissionId).create(submissionDoc)
+          if (sourcedCandidateRef && sourcedCandidateSubmittedPatch) {
+            const batch = db.batch()
+            batch.create(submissionRef, submissionDoc)
+            batch.set(sourcedCandidateRef, sourcedCandidateSubmittedPatch, { merge: true })
+            await batch.commit()
+          } else {
+            await submissionRef.create(submissionDoc)
+          }
         } catch (createErr) {
           const message = String(createErr)
           if (message.includes("ALREADY_EXISTS") || message.includes("already exists")) {
@@ -3594,11 +3665,12 @@ export const paRecruiterSubmission = onRequest(
               .collection("pa-recruiter-submissions")
               .doc(submissionId)
               .get()
-            const existingData = existing.data() as { score?: SubmissionScore } | undefined
+            const existingData = existing.data() as { score?: SubmissionScore; sourcedCandidateId?: string } | undefined
             res.status(200).json({
               ok: true,
               submissionId,
               score: existingData?.score ?? null,
+              ...(existingData?.sourcedCandidateId ? { sourcedCandidateId: existingData.sourcedCandidateId } : {}),
               idempotent: true,
             })
             return
@@ -3606,7 +3678,14 @@ export const paRecruiterSubmission = onRequest(
           throw createErr
         }
       } else {
-        await db.collection("pa-recruiter-submissions").doc(submissionId).set(submissionDoc)
+        if (sourcedCandidateRef && sourcedCandidateSubmittedPatch) {
+          const batch = db.batch()
+          batch.set(submissionRef, submissionDoc)
+          batch.set(sourcedCandidateRef, sourcedCandidateSubmittedPatch, { merge: true })
+          await batch.commit()
+        } else {
+          await submissionRef.set(submissionDoc)
+        }
       }
     } catch (err) {
       logger.error("paRecruiterSubmission_write_failed", { error: String(err), submissionId })
@@ -3679,6 +3758,7 @@ export const paRecruiterSubmission = onRequest(
       score,
       submissionMode,
       candidateConsentStatus: finalCandidateConsentStatus,
+      ...(payload.sourcedCandidateId ? { sourcedCandidateId: payload.sourcedCandidateId } : {}),
     })
   },
 )

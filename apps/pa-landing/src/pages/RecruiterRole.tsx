@@ -21,7 +21,6 @@ import {
   getRecruiterProfile,
   saveRecruiterRoleApplication,
   saveRecruiterRoleFeedback,
-  saveRecruiterSourcedCandidate,
   submitRecruiterCandidate,
   type CollabJob,
   type RecruiterRoleApplicationInput,
@@ -899,6 +898,7 @@ export default function RecruiterRole() {
     setSubmitting(true)
     const result = await submitRecruiterCandidate({
       jobId: job.jobId,
+      sourcedCandidateId: selectedCandidate?.id,
       submitter: {
         name: form.submitterName.trim(),
         email: form.submitterEmail.trim(),
@@ -918,21 +918,26 @@ export default function RecruiterRole() {
     if (result.ok) {
       setSubmission(result)
       if (selectedCandidate) {
-        saveRecruiterSourcedCandidate({
-          candidateId: selectedCandidate.candidateId || selectedCandidate.id,
-          jobId: selectedCandidate.inboundJobId || job.jobId,
-          stage: "submitted",
-          candidate: {
-            name: form.candidateName.trim(),
-            email: form.candidateEmail.trim().toLowerCase(),
-            link: form.candidateLink.trim(),
-            currentRole: form.candidateCurrentRole.trim() || undefined,
-            yoe: form.candidateYoe.trim() || undefined,
-            notes: form.candidateNotes.trim() || undefined,
-          },
-        })
-          .then((saved) => setSourcedCandidates((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)]))
-          .catch(() => undefined)
+        const submittedCandidate = {
+          name: form.candidateName.trim(),
+          email: form.candidateEmail.trim().toLowerCase(),
+          link: form.candidateLink.trim(),
+          currentRole: form.candidateCurrentRole.trim() || undefined,
+          yoe: form.candidateYoe.trim() || undefined,
+          notes: form.candidateNotes.trim() || undefined,
+        }
+        const submittedAt = new Date().toISOString()
+        setSourcedCandidates((rows) => rows.map((row) => (
+          row.id === selectedCandidate.id
+            ? {
+                ...row,
+                stage: "submitted",
+                linkedSubmissionId: result.submissionId ?? row.linkedSubmissionId,
+                submittedAt,
+                candidate: submittedCandidate,
+              }
+            : row
+        )))
       }
       saveFormState(job.jobId, withRecruiterDefaults(emptyForm(), session))
       window.scrollTo({ top: 0, behavior: "smooth" })
@@ -1237,6 +1242,7 @@ export default function RecruiterRole() {
                           {candidate.calibrationNote ? ` - ${candidate.calibrationNote}` : ""}
                         </em>
                       )}
+                      {candidate.linkedSubmissionId && <em>Linked to submission {shortText(candidate.linkedSubmissionId, "submission", 18)}</em>}
                     </span>
                     <small>{sourcedStageLabel(candidate.stage)}</small>
                     <button type="button" className="rb-btn" onClick={() => useSourcedCandidate(candidate)}>
@@ -1290,6 +1296,7 @@ export default function RecruiterRole() {
                       <strong>{row.candidate?.name || "Candidate"}</strong>
                       <em>{roleSubmissionStatusLabel(row.status)}</em>
                       <em>{roleSubmissionConsentLabel(row)}</em>
+                      {row.sourcedCandidateId && <em>From CRM candidate {shortText(row.sourcedCandidateId, "candidate", 18)}</em>}
                       <em>{roleSubmissionNextAction(row.status)}</em>
                       {row.recruiterFeedbackNote && <em className="rb-role-submission-note">{row.recruiterFeedbackNote}</em>}
                     </span>

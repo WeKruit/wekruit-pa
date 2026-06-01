@@ -498,11 +498,22 @@ describe("recruiter submissions", () => {
   }
 
   it("requires candidate email for recruiter submissions and normalizes it", () => {
-    const result = validateSubmission(validSubmission)
+    const result = validateSubmission({ ...validSubmission, sourcedCandidateId: "candidate_123" })
     assert.equal(result.ok, true)
     if (!result.ok) return
     assert.equal(result.value.candidate.email, "ada@example.com")
     assert.equal(result.value.source, "hiring-board")
+    assert.equal(result.value.sourcedCandidateId, "candidate_123")
+  })
+
+  it("rejects malformed sourced candidate ids on recruiter submissions", () => {
+    assert.deepEqual(validateSubmission({
+      ...validSubmission,
+      sourcedCandidateId: "../bad",
+    }), {
+      ok: false,
+      reason: "invalid_sourced_candidate_id",
+    })
   })
 
   it("rejects missing or malformed candidate email on recruiter submissions", () => {

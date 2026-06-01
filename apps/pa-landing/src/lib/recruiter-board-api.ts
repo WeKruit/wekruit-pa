@@ -56,6 +56,7 @@ export interface CollabJob {
 
 export interface SubmissionInput {
   jobId: string
+  sourcedCandidateId?: string
   submitter: { name: string; email: string }
   candidate: {
     name: string
@@ -72,6 +73,7 @@ export interface SubmissionInput {
 export interface SubmissionResponse {
   ok: boolean
   submissionId?: string
+  sourcedCandidateId?: string
   score?: {
     hardChecked: number; hardTotal: number
     fitChecked: number; fitTotal: number
@@ -111,6 +113,7 @@ export interface RecruiterSubmissionStatusHistoryItem {
 export interface RecruiterSubmissionItem {
   id: string
   submissionId?: string
+  sourcedCandidateId?: string
   jobId?: string
   inboundJobId?: string
   jobTitleSnapshot?: string
@@ -173,6 +176,8 @@ export interface RecruiterSourcedCandidateItem {
   calibrationStatus?: string
   calibrationNote?: string | null
   calibrationUpdatedAt?: { seconds?: number } | string | null
+  linkedSubmissionId?: string
+  submittedAt?: { seconds?: number } | string | null
   createdAt?: { seconds?: number } | string | null
   updatedAt?: { seconds?: number } | string | null
 }
