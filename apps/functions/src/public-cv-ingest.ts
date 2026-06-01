@@ -65,6 +65,12 @@ export interface PublicCvIngestRequest {
   source?: string
   employerEmailHint?: string
   atsApplicantId?: string
+  /**
+   * iMessage-first QR onboarding (doc §5/N9): single-use tokenized upload link for
+   * an UNAUTH candidate. Resolves token -> userId server-side (no Firebase ID token).
+   * `/upload?token=<t>` posts this.
+   */
+  uploadToken?: string
 }
 
 export function buildPublicCvIngestInput(args: {
@@ -122,6 +128,24 @@ export async function resolveCandidateUploadUserId(args: {
     const userId = (args.body.userId ?? args.body.tempUserId ?? "").toString().trim()
     if (!userId) return { ok: false, status: 400, reason: "missing_userId_or_tempUserId" }
     return { ok: true, userId }
+  }
+
+  // QR / iMessage-first path (doc §5/N9): a single-use upload token issued by
+  // onboarding maps token -> userId server-side, so an UNAUTH candidate (no
+  // Firebase account yet) can upload their resume from the texted link.
+  const uploadTokenRaw = (args.body.uploadToken ?? "").toString().trim()
+  if (uploadTokenRaw) {
+    const { verifyCvUploadToken } = await import("./qr-onboarding/upload-token.js")
+    const verified = await verifyCvUploadToken(args.db, uploadTokenRaw)
+    if (!verified.ok) {
+      const status = verified.reason === "token_expired" || verified.reason === "token_used" ? 410 : 401
+      return { ok: false, status, reason: verified.reason }
+    }
+    const requested = (args.body.userId ?? "").toString().trim()
+    if (requested && requested !== verified.userId) {
+      return { ok: false, status: 403, reason: "userId_mismatch" }
+    }
+    return { ok: true, userId: verified.userId }
   }
 
   const authz = args.req.header("authorization") ?? args.req.header("Authorization") ?? ""
@@ -436,6 +460,17 @@ export const paPublicCvIngest = onRequest(
           source: body.source ?? "public_job_page",
           jobIdContext: body.jobIdContext,
         })
+        // QR path: burn the single-use upload token only after a SUCCESSFUL ingest
+        // (a transient failure leaves the texted link reusable). Best-effort.
+        const uploadTokenRaw = (body.uploadToken ?? "").toString().trim()
+        if (uploadTokenRaw) {
+          try {
+            const { markCvUploadTokenUsed } = await import("./qr-onboarding/upload-token.js")
+            await markCvUploadTokenUsed(db, uploadTokenRaw)
+          } catch {
+            /* best-effort — token TTL still bounds reuse */
+          }
+        }
         res.status(200).json({ ok: true, resumeId: result.resumeId, userId: result.userId, resumeArtifactId })
       } else {
         log("public_cv_ingest.fail", {

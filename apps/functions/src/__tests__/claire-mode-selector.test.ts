@@ -81,6 +81,27 @@ test("cold start → bootstrap + onboarding (ask main_goal, awaitingAnswer=false
   assert.deepEqual(u.sharedOnboarding.answers, {})
 })
 
+test("QR resume-less provisional user cold-starts onboarding (no resume gate) — bootstrap + main_goal", async () => {
+  // Mirror the iMessage-first QR path: a freshly created provisional user with
+  // source='qr_imessage', NO resume, NO tags. bootstrapOnboarding must still cold-
+  // start (résumé is OPTIONAL FOREVER — Adam) with the same main_goal kickoff.
+  const { db, store } = makeDb({
+    [`pa-users/${UID}`]: {
+      onboardingState: "pending",
+      source: "qr_imessage",
+      firstTouchCampaign: "dev-card",
+      // intentionally NO tags / latestResumeArtifactId
+    },
+  })
+  const res = await selectClaireMode({ db, userId: UID, inboundText: "Hello, WeKruit! 11111111-2222-3333-4444-555555555555" })
+  assert.equal(res.mode, "onboarding")
+  assert.equal(res.awaitingAnswer, false, "kickoff turn does not record an answer")
+  assert.equal(res.onboardingSlot, "main_goal")
+  const u = store.get(`pa-users/${UID}`) as { sharedOnboarding: Record<string, unknown> }
+  assert.equal(u.sharedOnboarding.status, "active")
+  assert.equal(u.sharedOnboarding.currentQuestionId, "main_goal")
+})
+
 test("active onboarding → awaitingAnswer + current slot + seeded answers; selector writes NO answer", async () => {
   const { db, store } = makeDb({
     [`pa-users/${UID}`]: {

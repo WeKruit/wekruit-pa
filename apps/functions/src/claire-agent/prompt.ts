@@ -221,6 +221,13 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
             "  no fabricated details.",
             "messages[1] = the FIRST onboarding question ALONE. Do NOT restate or echo the compliment here —",
             "  just ask the question warmly in your voice.",
+            // Resume-less (QR / iMessage-first) onboarding: résumé is OPTIONAL FOREVER (Adam) — never
+            // gate onboarding on it, just nudge ONCE. If the CONTEXT carries a 'Resume upload link', weave
+            // it into messages[1] as one light, optional clause ("oh and if you wanna send your resume so I
+            // can tailor stuff, drop it here: <link> — totally optional"). If there is NO such link in the
+            // CONTEXT, do NOT invent one and do NOT mention uploading.
+            "If the CONTEXT includes a 'Resume upload link', mention it ONCE in messages[1] as an OPTIONAL",
+            "  nudge with that exact URL — never required, never repeated. If no such link is present, skip it.",
             // Profile self-serve note (Adam): tell them ONCE, lightly, that prefs are editable anytime at
             // wekruit.com — wove into the kickoff (here, messages[1]) so it's said early without nagging.
             "Weave in ONCE (in messages[1] is fine), as one short clause, that they can view and change",

@@ -43,7 +43,8 @@ service cloud.firestore {
           "dev_test",
           "e2e_run",
           "qa_run",
-          "external_supply"
+          "external_supply",
+          "qr_imessage"
         ];
       allow update, delete: if isPaOperator();
     }
@@ -562,6 +563,19 @@ service cloud.firestore {
     match /pa-recruiter-notifications/{notificationId} {
       allow read: if isPaOperator();
       allow write: if false;
+    }
+
+    // ─── iMessage-first QR onboarding ────────────────────────────────
+    // Pre-candidate scan reservations + tokenized upload links. Cloud Functions
+    // own all writes (redirect CF reserves, inbound claims, sweep abandons,
+    // onboarding issues tokens). Operators may inspect the funnel; never client-writable.
+    match /pa-qr-scan-pending/{scanToken} {
+      allow read: if isPaOperator();
+      allow write: if false;
+    }
+    match /pa-cv-upload-tokens/{token} {
+      // Tokens map to a userId — never client-readable (would leak the binding).
+      allow read, write: if false;
     }
 
     // ─── Default deny ────────────────────────────────────────────────

@@ -33,6 +33,9 @@ export const PA_USER_SOURCES = [
   "e2e_run",
   "qa_run",
   "external_supply",
+  // iMessage-first QR onboarding — the first SMS (a `Hello, WeKruit! <scanToken>`
+  // opener) IS the account-creation event; no prior web account / resume.
+  "qr_imessage",
 ] as const
 
 export type PaUserSource = (typeof PA_USER_SOURCES)[number]

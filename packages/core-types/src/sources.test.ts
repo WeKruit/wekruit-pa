@@ -4,8 +4,9 @@ import test from "node:test"
 import { PA_USER_SOURCES, PaUserSourceSchema, isPaUserSource } from "./sources.js"
 
 test("PA_USER_SOURCES contains the closed referral-partner enum", () => {
-  assert.equal(PA_USER_SOURCES.length, 8, "expected 8 sources including layoffhedge")
+  assert.equal(PA_USER_SOURCES.length, 9, "expected 9 sources including layoffhedge + qr_imessage")
   assert.ok(PA_USER_SOURCES.includes("layoffhedge"))
+  assert.ok(PA_USER_SOURCES.includes("qr_imessage"))
 })
 
 test("PaUserSourceSchema accepts layoffhedge", () => {

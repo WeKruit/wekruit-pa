@@ -300,6 +300,14 @@ export {
 // Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
 export { paPublicCvIngest } from "./public-cv-ingest.js"
+// iMessage-first QR onboarding — public GET /start?c=<campaign> picks a
+// capacity-aware Sendblue number, reserves it for a minted scanToken, and 302s
+// to sms:<number>?body=Hello, WeKruit! <scanToken>. See qr-onboarding/.
+export { paQrStartRedirect } from "./qr-onboarding/qr-start-redirect.js"
+// Abandoned-scan sweep — decrements the per-group assignedNewUsers counter for
+// pa-qr-scan-pending docs that never converted (status stays 'pending' past TTL)
+// so the new-user capacity counter doesn't leak.
+export { paQrScanAbandonedSweep } from "./qr-onboarding/abandoned-scan-sweep.js"
 // Recruiter board (candidate.wekruit.com/recruiters): public list + submission.
 // Lives in the `recruiter-board` multi-codebase (apps/recruiter-board-fn) as
 // of 2026-05-26 to keep the pa-orchestrator bundle small. Endpoints:
@@ -636,7 +644,23 @@ async function findUserByParticipant(db: Firestore, participant: string): Promis
   return { id: d.id, ...d.data() } as User
 }
 
-async function createProvisionalUser(db: Firestore, participant: string): Promise<User> {
+async function createProvisionalUser(
+  db: Firestore,
+  participant: string,
+  options?: {
+    /** Override the canonical source label (QR opener stamps `qr_imessage`). */
+    source?: string
+    /** First-touch campaign code (per-card attribution, QR path). */
+    firstTouchCampaign?: string
+    /**
+     * Scan-time sticky Sendblue number to persist as the override (doc §3.4). The
+     * scan-time pick WINS — we do NOT re-pick — so downstream sticky reads
+     * (assignCandidateSenderNumber honors an existing senderNumber) stay consistent.
+     */
+    senderNumber?: string
+    senderGroupId?: string
+  }
+): Promise<User> {
   const id = randomUUID()
   const n = normalizeImessageParticipant(participant)
   const u: User = {
@@ -648,7 +672,24 @@ async function createProvisionalUser(db: Firestore, participant: string): Promis
   }
   // 2026-05-18 cleanup goal — every pa-users initial create must stamp a
   // canonical source label. Broker / sendblue inbound = real candidate flow.
-  ;(u as User & { source?: string }).source = "candidate"
+  // QR opener overrides to `qr_imessage` so the funnel is attributable.
+  ;(u as User & { source?: string }).source = options?.source ?? "candidate"
+  const extra = u as User & {
+    firstTouchCampaign?: string
+    senderNumber?: string
+    senderGroupId?: string
+    senderAssignedAt?: string
+    senderAssignedSource?: string
+  }
+  if (options?.firstTouchCampaign) extra.firstTouchCampaign = options.firstTouchCampaign
+  // Override-first sticky: persist the scan-time number so the per-uid pick never
+  // clobbers it (assignCandidateSenderNumber no-ops when senderNumber is present).
+  if (options?.senderNumber) {
+    extra.senderNumber = options.senderNumber
+    if (options.senderGroupId) extra.senderGroupId = options.senderGroupId
+    extra.senderAssignedAt = nowIso()
+    extra.senderAssignedSource = "qr_scan"
+  }
   await db.collection(PA_COLLECTIONS.users).doc(id).set(u)
   return u
 }
@@ -801,7 +842,29 @@ async function processBrokerImessageEvent(
     user = await findUserByParticipant(db, payload.participant)
   }
   if (!user) {
-    if (!shouldCreateProvisionalUserForBrokerPayload(payload)) {
+    // iMessage-first QR onboarding (doc §4): a `source==='sendblue'` inbound is
+    // normally NOT allowed to create a pa-users profile (anti-spam). The QR path
+    // is the ONE narrow exception — the text is a `Hello, WeKruit! <scanToken>`
+    // opener whose scanToken resolves to a `pa-qr-scan-pending` doc AND that
+    // scan's campaign is canary-enabled (Adam decision 4). Generic sendblue spam
+    // and non-canary QR scans stay blocked.
+    const syncGateAllows = shouldCreateProvisionalUserForBrokerPayload(payload)
+    let qrProvision: import("./qr-onboarding/scan.js").QrOpenerProvisionDecision = {
+      shouldProvision: false,
+      scan: null,
+    }
+    if (!syncGateAllows) {
+      try {
+        const { resolveQrOpenerProvision } = await import("./qr-onboarding/scan.js")
+        qrProvision = await resolveQrOpenerProvision(db, payload.text)
+      } catch (err) {
+        logger.warn("[onPaInbound] QR opener provision check failed (non-fatal)", {
+          eventId: claimed.id,
+          err: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    if (!syncGateAllows && !qrProvision.shouldProvision) {
       const externalChatId = normalizeImessageParticipant(payload.participant)
       const isE2eUnbound = payload.e2eTest === true
       logger.warn("[onPaInbound] inbound skipped without bound pa-users profile", {
@@ -826,7 +889,31 @@ async function processBrokerImessageEvent(
       )
       return 1
     }
-    user = await createProvisionalUser(db, payload.participant)
+    if (qrProvision.shouldProvision && qrProvision.scan) {
+      // QR opener — stamp source='qr_imessage' + the campaign, and reconcile the
+      // scan-time sticky number onto the new profile (override-first, doc §3.4).
+      const scan = qrProvision.scan
+      user = await createProvisionalUser(db, payload.participant, {
+        source: "qr_imessage",
+        firstTouchCampaign: scan.campaign,
+        senderNumber: scan.number,
+        senderGroupId: scan.groupId,
+      })
+      // Mark the reservation claimed (dedupe double-scan / webhook retry,
+      // doc §3 Race C/D). Best-effort — never blocks delivery.
+      try {
+        const { claimQrScanPending } = await import("./qr-onboarding/scan.js")
+        await claimQrScanPending(db, scan.scanToken, user.id, nowIso())
+      } catch (err) {
+        logger.warn("[onPaInbound] QR scan-pending claim failed (non-fatal)", {
+          eventId: claimed.id,
+          userId: user.id,
+          err: err instanceof Error ? err.message : String(err),
+        })
+      }
+    } else {
+      user = await createProvisionalUser(db, payload.participant)
+    }
   }
   void markClaireConversationStarted(db, user.id).catch((err: unknown) => {
     logger.warn("[onPaInbound] claireConversationStarted stamp failed", {

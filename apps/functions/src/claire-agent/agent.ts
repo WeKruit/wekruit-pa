@@ -223,7 +223,25 @@ async function loadGlobalContext(db: Firestore, userId: string): Promise<string>
             .filter(Boolean)
             .join("; ")
 
-    return [resumeLine, prefsLine].filter(Boolean).join("\n")
+    // Resume-less onboarding (QR / iMessage-first): when NO résumé is on file and
+    // onboarding isn't done, surface a tokenized upload link so Claire can nudge it
+    // ONCE (résumé is OPTIONAL FOREVER — never a gate). Token is reused across turns.
+    let uploadLinkLine = ""
+    const hasResumeOnFile = Boolean(resumeLine) || Boolean(str(data.latestResumeArtifactId))
+    const onboardingDone = data.onboardingStatus === "complete" || data.onboardingStatus === "completed"
+    if (!hasResumeOnFile && !onboardingDone) {
+      try {
+        const { getOrIssueCvUploadLink } = await import("../qr-onboarding/upload-token.js")
+        const link = await getOrIssueCvUploadLink(db, userId)
+        if (link) {
+          uploadLinkLine = `Resume upload link (OPTIONAL nudge — mention once, never require): ${link}`
+        }
+      } catch {
+        /* best-effort — omit the nudge on any failure */
+      }
+    }
+
+    return [resumeLine, prefsLine, uploadLinkLine].filter(Boolean).join("\n")
   } catch {
     return ""
   }

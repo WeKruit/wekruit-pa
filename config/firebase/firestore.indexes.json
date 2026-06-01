@@ -1,6 +1,21 @@
 {
   "indexes": [
     {
+      "_comment": "iMessage-first QR onboarding — paQrScanAbandonedSweep finds pending reservations older than the TTL.",
+      "collectionGroup": "pa-qr-scan-pending",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
       "_comment": "Candidate referral dashboard — paReferDashboardList filters by inviter and shows newest referrals first.",
       "collectionGroup": "pa-referrals",
       "queryScope": "COLLECTION",

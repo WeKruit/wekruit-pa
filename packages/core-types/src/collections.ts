@@ -163,6 +163,23 @@ export const PA_COLLECTIONS = {
    * `InterviewBookingSchema` / `interviewBookingDocId`.
    */
   interviewBookings: "pa-interview-bookings",
+  /**
+   * iMessage-first QR onboarding — pre-candidate scan reservations. Doc id is the
+   * minted `scanToken`; shape: { number, groupId, campaign, createdAt, status:
+   * 'pending'|'claimed', claimedAt?, claimedUserId? }. The QR redirect CF writes
+   * `pending`; the first inbound that resolves the scanToken claims it (dedupes
+   * double-scan / webhook retry). Abandoned `pending` rows past a TTL are swept
+   * (and their group counter decremented).
+   */
+  qrScanPending: "pa-qr-scan-pending",
+  /**
+   * iMessage-first QR onboarding — single-use tokenized resume-upload links for an
+   * UNAUTH candidate. Doc id is the opaque token; shape: { userId, createdAt,
+   * expiresAt, usedAt? }. `/upload?token=` resolves token -> userId so paPublicCvIngest
+   * trusts the upload server-side without a Firebase ID token (the candidate has no
+   * web account yet on the QR path).
+   */
+  cvUploadTokens: "pa-cv-upload-tokens",
 } as const
 
 /**
