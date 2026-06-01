@@ -5558,6 +5558,26 @@ type CandidateMatchCommand = {
   }>
 }
 
+type CandidateNetworkExposureRow = {
+  candidate: RecruiterSourcedCandidateItem
+  tone: "live" | "info" | "success" | "warn" | "mute"
+  label: string
+  title: string
+  body: string
+  actionLabel: string
+  href?: string
+  matches: CandidateRoleMatch[]
+}
+
+type CandidateNetworkExposureModel = {
+  tone: "live" | "info" | "success" | "warn" | "mute"
+  label: string
+  title: string
+  body: string
+  cards: Array<{ label: string; value: string; body: string; tone: "live" | "info" | "success" | "warn" | "mute" }>
+  rows: CandidateNetworkExposureRow[]
+}
+
 function candidateMatchText(candidate: RecruiterSourcedCandidateItem): string {
   return [
     candidate.candidate?.name,
@@ -5931,6 +5951,156 @@ function buildCandidateRoleMatches(
     .sort((a, b) => b.score - a.score)
 }
 
+function candidateSubmittedRoleIds(candidate: RecruiterSourcedCandidateItem, submissions: RecruiterSubmissionItem[]): Set<string> {
+  return new Set(candidateMatchedSubmissions(candidate, submissions).map((submission) => submission.inboundJobId || submission.jobId).filter((id): id is string => Boolean(id)))
+}
+
+function buildCandidateNetworkExposure(
+  jobs: CollabJob[],
+  candidates: RecruiterSourcedCandidateItem[],
+  submissions: RecruiterSubmissionItem[],
+): CandidateNetworkExposureModel {
+  const activeCandidates = candidates.filter((candidate) => candidate.stage !== "archived")
+  const rows = activeCandidates.map((candidate): CandidateNetworkExposureRow => {
+    const submittedRoleIds = candidateSubmittedRoleIds(candidate, submissions)
+    const matches = buildCandidateRoleMatches(candidate, jobs, submissions, candidates)
+      .filter((match) => !submittedRoleIds.has(roleKey(match.job)))
+      .slice(0, 3)
+    const topMatch = matches[0]
+    const matchedSubmissions = candidateMatchedSubmissions(candidate, submissions)
+    const hasIdentity = Boolean(candidate.candidate?.email && candidate.candidate?.link)
+    const profileProofCount = [
+      candidate.candidate?.email,
+      candidate.candidate?.link,
+      candidate.candidate?.currentRole,
+      candidate.candidate?.yoe,
+      candidate.candidate?.notes,
+    ].filter(Boolean).length
+    const followUp = candidateFollowUpState(candidate)
+    const submitted = matchedSubmissions.length > 0 || candidate.stage === "submitted"
+    let tone: CandidateNetworkExposureRow["tone"] = "info"
+    let label = "Network candidate"
+    let title = topMatch ? `${candidateName(candidate)} → ${topMatch.job.title}` : candidateName(candidate)
+    let body = topMatch
+      ? `${topMatch.score}% match for ${topMatch.job.recruiterBoard.label.company}; ${topMatch.reasons.slice(0, 2).join(" · ") || "role match"}`
+      : "No strong open-role match yet. Keep the candidate warm for the next release."
+    let actionLabel = topMatch ? "Open best role" : "Open candidate"
+    let href = topMatch ? `/recruiters/job/${topMatch.job.jobId}?candidateId=${encodeURIComponent(candidate.id)}` : undefined
+
+    if (!hasIdentity) {
+      tone = "warn"
+      label = "Proof missing"
+      title = `${candidateName(candidate)} needs identity proof`
+      body = `${profileProofCount}/5 profile signals captured. Add email and LinkedIn/resume before wider matching.`
+      actionLabel = "Complete profile"
+      href = undefined
+    } else if (candidate.calibrationStatus === "bad_fit") {
+      tone = "warn"
+      label = "Hold exposure"
+      title = `${candidateName(candidate)} needs calibration`
+      body = candidate.calibrationNote || "Marked not a fit. Do not rematch this candidate until the calibration issue is resolved."
+      actionLabel = "Open candidate"
+      href = undefined
+    } else if (submitted && topMatch) {
+      tone = topMatch.score >= 70 ? "success" : "info"
+      label = "Reusable pipeline"
+      title = `${candidateName(candidate)} can be reused`
+      body = `Already has ${matchedSubmissions.length} submission signal${matchedSubmissions.length === 1 ? "" : "s"}; next best role is ${topMatch.job.title}.`
+      actionLabel = "Review next role"
+    } else if (candidate.stage === "ready" && topMatch) {
+      tone = topMatch.score >= 70 ? "live" : "info"
+      label = "Ready for network"
+      title = `${candidateName(candidate)} is ready for ${topMatch.job.title}`
+      body = `Candidate has identity proof and is ready for a candidate-led role match.`
+      actionLabel = "Submit from role"
+    } else if (followUp.needsAction) {
+      tone = followUp.tone
+      label = "Warmth risk"
+      title = `${candidateName(candidate)} needs follow-up`
+      body = `${followUp.body} Best available role: ${topMatch?.job.title ?? "none yet"}.`
+      actionLabel = topMatch ? "Open role match" : "Open candidate"
+    } else if (topMatch && topMatch.score >= 72) {
+      tone = "live"
+      label = "Strong suggested fit"
+      title = `${candidateName(candidate)} has a ${topMatch.score}% network match`
+      actionLabel = "Open match"
+    } else if (!topMatch) {
+      tone = "mute"
+      label = "No role yet"
+    }
+
+    return {
+      candidate,
+      tone,
+      label,
+      title,
+      body,
+      actionLabel,
+      ...(href ? { href } : {}),
+      matches,
+    }
+  })
+  const sortedRows = rows
+    .sort((a, b) => {
+      const score = (row: CandidateNetworkExposureRow) => (
+        row.tone === "live" ? 100 :
+        row.tone === "success" ? 86 :
+        row.tone === "warn" ? 76 :
+        row.tone === "info" ? 58 :
+        20
+      ) + (row.matches[0]?.score ?? 0)
+      return score(b) - score(a) || updatedAtMs(b.candidate) - updatedAtMs(a.candidate)
+    })
+    .slice(0, 6)
+  const readyForNetwork = rows.filter((row) => row.tone === "live" || row.tone === "success").length
+  const suggestedMatches = rows.reduce((sum, row) => sum + row.matches.filter((match) => match.score >= 64).length, 0)
+  const proofMissing = rows.filter((row) => row.label === "Proof missing").length
+  const reusablePipeline = rows.filter((row) => row.label === "Reusable pipeline").length
+  const title = readyForNetwork
+    ? `${readyForNetwork} candidate${readyForNetwork === 1 ? "" : "s"} ready for wider role exposure`
+    : proofMissing
+      ? "Complete candidate proof before network exposure"
+      : "Build candidate inventory for future role releases"
+  const body = readyForNetwork
+    ? "Use saved candidates across WeKruit collab roles instead of treating every role as a cold-start search."
+    : proofMissing
+      ? "Email, LinkedIn/resume, and notes are what make a candidate reusable across the recruiter marketplace."
+      : "Save prospects into the private bench so new roles can be matched against existing recruiter supply."
+  return {
+    tone: readyForNetwork ? "live" : proofMissing ? "warn" : activeCandidates.length ? "info" : "mute",
+    label: "Candidate network",
+    title,
+    body,
+    cards: [
+      {
+        label: "Exposure ready",
+        value: String(readyForNetwork),
+        body: "Candidates with proof and strong role-match signal.",
+        tone: readyForNetwork ? "live" : "mute",
+      },
+      {
+        label: "Suggested role fits",
+        value: String(suggestedMatches),
+        body: "Open-role matches at 64%+ across your candidate bench.",
+        tone: suggestedMatches ? "success" : "mute",
+      },
+      {
+        label: "Needs proof",
+        value: String(proofMissing),
+        body: "Candidates missing email or LinkedIn/resume before wider matching.",
+        tone: proofMissing ? "warn" : "success",
+      },
+      {
+        label: "Reusable pipeline",
+        value: String(reusablePipeline),
+        body: "Submitted candidates with possible next role matches.",
+        tone: reusablePipeline ? "info" : "mute",
+      },
+    ],
+    rows: sortedRows,
+  }
+}
+
 function candidateMatchedSubmissions(candidate: RecruiterSourcedCandidateItem, submissions: RecruiterSubmissionItem[]): RecruiterSubmissionItem[] {
   const email = candidate.candidate?.email?.trim().toLowerCase()
   const link = candidate.candidate?.link?.trim().toLowerCase()
@@ -6248,6 +6418,10 @@ function CandidatesTab({
   const [bulkResults, setBulkResults] = useState<BulkCandidateImportResult[]>([])
   const [err, setErr] = useState<string | null>(null)
   const command = useMemo(() => buildCandidateSourcingCommand(candidates), [candidates])
+  const networkExposure = useMemo(
+    () => buildCandidateNetworkExposure(jobs, candidates, submissions),
+    [candidates, jobs, submissions],
+  )
   const activeCandidates = useMemo(
     () => sortSourcedCandidates(candidates.filter((candidate) => candidate.stage !== "archived")),
     [candidates],
@@ -6504,6 +6678,10 @@ function CandidatesTab({
         command={command}
         onOpenCandidate={openCandidate}
         onOpenBulkImport={openBulkImport}
+      />
+      <CandidateNetworkExposurePanel
+        model={networkExposure}
+        onOpenCandidate={openCandidate}
       />
       {selectedCandidate && (
         <CandidateDossierPanel
@@ -6853,6 +7031,68 @@ function CandidateSourcingCommandPanel({
           {command.queue.length === 0 && <p>No candidate needs immediate action.</p>}
         </div>
       </aside>
+    </section>
+  )
+}
+
+function CandidateNetworkExposurePanel({
+  model,
+  onOpenCandidate,
+}: {
+  model: CandidateNetworkExposureModel
+  onOpenCandidate: (candidateId: string) => void
+}) {
+  return (
+    <section className={`rb-candidate-network is-${model.tone}`} aria-label="Candidate network exposure">
+      <header>
+        <div>
+          <span>{model.label}</span>
+          <strong>{model.title}</strong>
+          <p>{model.body}</p>
+        </div>
+        <Link to="/recruiters?tab=matches">Open matchboard</Link>
+      </header>
+
+      <div className="rb-candidate-network__cards">
+        {model.cards.map((card) => (
+          <article className={`is-${card.tone}`} key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <p>{card.body}</p>
+          </article>
+        ))}
+      </div>
+
+      <div className="rb-candidate-network__rows">
+        {model.rows.map((row) => (
+          <article className={`is-${row.tone}`} key={row.candidate.id}>
+            <div>
+              <span>{row.label}</span>
+              <strong>{row.title}</strong>
+              <p>{row.body}</p>
+              {row.matches.length > 0 && (
+                <em>
+                  {row.matches.slice(0, 2).map((match) => `${match.score}% ${match.job.title}`).join(" · ")}
+                </em>
+              )}
+            </div>
+            <footer>
+              {row.href ? (
+                <Link to={row.href}>{row.actionLabel}</Link>
+              ) : (
+                <button type="button" onClick={() => onOpenCandidate(row.candidate.id)}>{row.actionLabel}</button>
+              )}
+              <button type="button" onClick={() => onOpenCandidate(row.candidate.id)}>Dossier</button>
+            </footer>
+          </article>
+        ))}
+        {model.rows.length === 0 && (
+          <div className="rb-candidate-network__empty">
+            <strong>No reusable candidate supply yet</strong>
+            <p>Save candidates with email, LinkedIn or resume, and notes so future WeKruit roles can match against your bench.</p>
+          </div>
+        )}
+      </div>
     </section>
   )
 }
