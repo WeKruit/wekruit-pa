@@ -67,4 +67,7 @@ await db.collection("pa-users").doc(uid).update({
 })
 const del = async (snap) => { if (!snap.size) return; const b = db.batch(); snap.docs.forEach(d=>b.delete(d.ref)); await b.commit() }
 await del(msgs); await del(ps); await del(sess)
-console.log(`\nAPPLIED. ${uid} reset to fresh onboarding. Text "Hello, WeKruit! ${uid}" (or just say hi) to start.`)
+// Phone stays bound to this candidate (we never touch phoneE164 / candidateHandles), so a plain
+// "hi" resolves by phone lookup — NO id-bearing "Hello, WeKruit! <uid>" opener needed. Telling the
+// tester to paste the opener-with-id is what leaked the internal id into the greeting (2026-06-01).
+console.log(`\nAPPLIED. ${uid} reset to fresh onboarding. Just text "hi" from the bound dev phone to start (phone already maps to this candidate — do NOT paste the "Hello, WeKruit! <uid>" opener).`)

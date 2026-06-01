@@ -27,6 +27,7 @@ import { buildClaireGuardrails } from "./guardrails.js"
 import { markReadReflex, wireTypingReflex, deliverBubbles } from "./delivery.js"
 import { makeClaireSession } from "./session.js"
 import { appendHotlineIfMissing } from "@pa/pa-safety"
+import { HELLO_WEKRUIT_OPENER_PREFIX } from "@pa/pa-orchestrator"
 
 /** Main conversation model (the per-tool LLM judge model is configured separately). */
 export const CLAIRE_MODEL = "gpt-5.4-nano"
@@ -257,6 +258,18 @@ export interface RunClaireTurnDeps {
 }
 
 /**
+ * "Hello, WeKruit! <candidateId>" is a phone-bind handshake — the bind already ran upstream
+ * (resolveInboundUserId). The raw text still carries the INTERNAL userId; if it reaches the LLM the
+ * greeting echoes the id as the candidate's name (Adam 2026-06-01: "why it's hey with my user id??
+ * not my name"). Reduce it to the bare opener so the agent greets résumé-aware with ZERO id leak.
+ * Only the "Hello, WeKruit!" form is stripped — the "WeKruit_<jobId>_<userId>_Apply" job token
+ * (prescreen kickoff) does NOT start with this prefix, so it passes through untouched.
+ */
+export function sanitizeInboundForLlm(text: string): string {
+  return text.trimStart().startsWith(HELLO_WEKRUIT_OPENER_PREFIX) ? HELLO_WEKRUIT_OPENER_PREFIX : text
+}
+
+/**
  * The inbound turn entry the cutover calls behind paThinClaireEnabled.
  * Always replies (timeout + grounded fallback); never hangs (RC2).
  */
@@ -314,11 +327,15 @@ export async function runClaireTurn(
     userId: input.userId,
   })
 
+  // Strip the id-bearing "Hello, WeKruit! <candidateId>" handshake before it reaches the LLM (see
+  // sanitizeInboundForLlm) — otherwise the greeting echoes the internal userId as the candidate's name.
+  const turnText = sanitizeInboundForLlm(input.text)
+
   let bubbles: string[] = []
   let blocked = false
   try {
     const res = (await Promise.race([
-      run(agent, input.text, { session }),
+      run(agent, turnText, { session }),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error("claire_run_timeout")), RUN_TIMEOUT_MS),
       ),
