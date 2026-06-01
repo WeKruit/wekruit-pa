@@ -625,6 +625,168 @@
   display: block;
 }
 
+.rb-role-reward-center {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+  border: 1px solid #ded8ce;
+  border-left: 4px solid #8d887e;
+  border-radius: 10px;
+  background: #fff;
+  padding: 16px;
+}
+
+.rb-role-reward-center.is-good { border-left-color: var(--live); background: #f6fbf7; }
+.rb-role-reward-center.is-watch { border-left-color: #b77c2f; background: #fffaf1; }
+.rb-role-reward-center.is-blocked { border-left-color: #a33a2d; background: #fff8f7; }
+.rb-role-reward-center.is-quiet { border-left-color: #9b958b; }
+
+.rb-role-reward-center > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.rb-role-reward-center > header > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.rb-role-reward-center span {
+  color: #6a6a64;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-role-reward-center > header strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: clamp(23px, 2.6vw, 31px);
+  font-weight: 400;
+  line-height: 1.05;
+}
+
+.rb-role-reward-center p,
+.rb-role-reward-center em {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.rb-role-reward-center__cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-role-reward-center__cards button,
+.rb-role-reward-center__steps button {
+  min-width: 0;
+  border: 1px solid #eee7dd;
+  border-left: 4px solid #9b958b;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.86);
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.rb-role-reward-center__cards button {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+}
+
+.rb-role-reward-center__cards button:hover,
+.rb-role-reward-center__steps button:hover {
+  background: #faf8f3;
+}
+
+.rb-role-reward-center__cards button.is-good,
+.rb-role-reward-center__steps button.is-good {
+  border-left-color: var(--live);
+  background: #f8fcf9;
+}
+
+.rb-role-reward-center__cards button.is-watch,
+.rb-role-reward-center__steps button.is-watch {
+  border-left-color: #b77c2f;
+  background: #fffaf1;
+}
+
+.rb-role-reward-center__cards button.is-blocked,
+.rb-role-reward-center__steps button.is-blocked {
+  border-left-color: #a33a2d;
+  background: #fff8f7;
+}
+
+.rb-role-reward-center__cards strong {
+  overflow: hidden;
+  color: #1a1a1a;
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-role-reward-center__cards em {
+  display: -webkit-box;
+  min-height: 36px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.rb-role-reward-center__steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-role-reward-center__steps button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px;
+}
+
+.rb-role-reward-center__steps b {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: #20140f;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.rb-role-reward-center__steps div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.rb-role-reward-center__steps strong {
+  color: #1a1a1a;
+  font-size: 13.5px;
+  line-height: 1.15;
+}
+
+.rb-role-reward-center__steps em {
+  display: block;
+}
+
 .rb-role-access-panel {
   display: grid;
   gap: 12px;
@@ -8122,6 +8284,13 @@
   .rb-role-intel__pipeline-preview > div {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .rb-role-reward-center > header {
+    grid-template-columns: 1fr;
+  }
+  .rb-role-reward-center__cards,
+  .rb-role-reward-center__steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .rb-calibration-brief header,
   .rb-calibration-brief__body {
     grid-template-columns: 1fr;
@@ -8390,6 +8559,9 @@
   .rb-role-workroom__cards,
   .rb-role-intake__facts,
   .rb-role-intake__body,
+  .rb-role-reward-center > header,
+  .rb-role-reward-center__cards,
+  .rb-role-reward-center__steps,
   .rb-role-intel__metrics,
   .rb-role-intel__pipeline-preview > div,
   .rb-performance-grid,

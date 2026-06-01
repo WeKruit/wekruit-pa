@@ -390,6 +390,27 @@ type RoleIntakeMemo = {
   }>
 }
 
+type RoleRewardCenter = {
+  tone: "good" | "watch" | "blocked" | "quiet"
+  title: string
+  body: string
+  primaryAction: RoleWorkroomAction
+  primaryLabel: string
+  cards: Array<{
+    label: string
+    value: string
+    detail: string
+    tone: "good" | "watch" | "blocked" | "quiet"
+    action: RoleWorkroomAction
+  }>
+  steps: Array<{
+    label: string
+    detail: string
+    tone: "good" | "watch" | "blocked" | "quiet"
+    action: RoleWorkroomAction
+  }>
+}
+
 type RoleQuestionPrompt = {
   id: string
   label: string
@@ -1449,6 +1470,188 @@ function buildRoleIntakeMemo(input: {
   }
 }
 
+function roleRewardSummaryLooksFee(summary?: string | null): boolean {
+  return /fee|reward|bounty|placement|success/i.test(summary ?? "")
+}
+
+function roleRewardValue(job: CollabJob): string {
+  if (roleRewardSummaryLooksFee(job.compSummary)) return shortText(job.compSummary, "$10K+ success fee", 42)
+  return "$10K+ estimated"
+}
+
+function payoutStatusLabel(status?: string): string {
+  switch (status) {
+    case "paid": return "Paid"
+    case "processing": return "Processing"
+    case "invoice_ready": return "Invoice ready"
+    case "eligible": return "Eligible"
+    case "pending_start": return "Pending start"
+    case "pending": return "Pending"
+    default: return "Not recorded"
+  }
+}
+
+function payoutAmount(row: RecruiterSubmissionItem): string | null {
+  const amount = row.recruiterPayout?.amount
+  if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) return null
+  const currency = row.recruiterPayout?.currency || "USD"
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).format(amount)
+  } catch {
+    return `$${Math.round(amount).toLocaleString("en-US")}`
+  }
+}
+
+function buildRoleRewardCenter(input: {
+  job: CollabJob
+  approvedForRole: boolean
+  application: RecruiterRoleApplicationItem | null
+  pendingSlots: number
+  roleCandidates: RecruiterSourcedCandidateItem[]
+  roleSubmissions: RecruiterSubmissionItem[]
+  roleFeedback: RecruiterRoleFeedbackItem | null
+  candidateRecommendations: RoleCandidateRecommendation[]
+}): RoleRewardCenter {
+  const { job, approvedForRole, application, pendingSlots, roleCandidates, roleSubmissions, roleFeedback, candidateRecommendations } = input
+  const readyCandidates = roleCandidates.filter((candidate) => candidate.stage === "ready")
+  const screenedCandidates = roleCandidates.filter((candidate) => candidate.stage === "screened" || candidate.stage === "ready")
+  const pendingSubmissions = roleSubmissions.filter((row) => ROLE_PENDING_SUBMISSION_STATUSES.includes(row.status ?? "submitted"))
+  const advancedSubmissions = roleSubmissions.filter((row) => ROLE_ADVANCED_SUBMISSION_STATUSES.includes(row.status ?? ""))
+  const negativeSubmissions = roleSubmissions.filter((row) => ROLE_NEGATIVE_SUBMISSION_STATUSES.includes(row.status ?? ""))
+  const recordedPayouts = roleSubmissions.filter((row) => {
+    const status = row.recruiterPayout?.status
+    return Boolean(status && status !== "none")
+  })
+  const paidPayouts = recordedPayouts.filter((row) => row.recruiterPayout?.status === "paid")
+  const actionablePayout = recordedPayouts.find((row) => row.recruiterPayout?.status === "invoice_ready" || row.recruiterPayout?.status === "eligible" || row.recruiterPayout?.status === "pending_start") ?? recordedPayouts[0]
+  const payoutLabel = paidPayouts.length
+    ? `${paidPayouts.length} paid`
+    : actionablePayout
+      ? payoutStatusLabel(actionablePayout.recruiterPayout?.status)
+      : advancedSubmissions.length
+        ? "Conversion path"
+        : "Hire-triggered"
+  const payoutDetail = actionablePayout
+    ? `${payoutAmount(actionablePayout) ?? "Recorded payout"}: ${actionablePayout.recruiterPayout?.note || payoutStatusLabel(actionablePayout.recruiterPayout?.status).toLowerCase()}.`
+    : advancedSubmissions.length
+      ? `${advancedSubmissions.length} advanced candidate${advancedSubmissions.length === 1 ? "" : "s"} can still convert into payout.`
+      : "Payout becomes real after a submitted candidate reaches a hire or recorded reward milestone."
+  const qualityCandidates = candidateRecommendations.filter((item) => item.tone === "good" || item.tone === "watch")
+  const eligibleValue = readyCandidates.length
+    ? `${readyCandidates.length} ready`
+    : screenedCandidates.length
+      ? `${screenedCandidates.length} screened`
+      : qualityCandidates.length
+        ? `${qualityCandidates.length} suggested`
+        : "0 ready"
+  const rewardKnown = roleRewardSummaryLooksFee(job.compSummary)
+  const rewardDetail = rewardKnown
+    ? "Listed role reward; submit only consented candidates with hard-filter proof."
+    : job.compSummary
+      ? `Candidate comp is ${shortText(job.compSummary, job.compSummary, 74)}; recruiter reward is tracked after hire.`
+      : "No exact role reward is stored yet; treat this as estimated until WeKruit records payout status."
+  const accessDetail = approvedForRole
+    ? "Trusted access approved for active coverage."
+    : application?.status === "pending"
+      ? "Access request is waiting on WeKruit."
+      : "Single-submit route is open when you have a consented candidate with proof."
+  const title = pendingSlots === 0
+    ? "Reward lane is full until review moves"
+    : readyCandidates.length
+      ? "Turn ready candidates into reward exposure"
+      : qualityCandidates.length
+        ? "Prioritize suggested candidates before more cold sourcing"
+        : "Build candidate proof before this role has earning value"
+  const body = pendingSlots === 0
+    ? "This role has hit the pending submission limit. Wait for review feedback before creating more candidate risk."
+    : "A recruiter marketplace needs visible upside and exact next actions. This role view ties the reward story to candidates, review capacity, and payout movement."
+  const tone: RoleRewardCenter["tone"] = pendingSlots === 0
+    ? "blocked"
+    : readyCandidates.length || advancedSubmissions.length || recordedPayouts.length
+      ? "good"
+      : qualityCandidates.length || roleFeedback?.difficulty === "hard"
+        ? "watch"
+        : "quiet"
+
+  return {
+    tone,
+    title,
+    body,
+    primaryAction: pendingSlots === 0 ? "feedback" : readyCandidates.length ? "submit" : "candidates",
+    primaryLabel: pendingSlots === 0 ? "Check feedback" : readyCandidates.length ? "Submit ready candidate" : "Build candidate proof",
+    cards: [
+      {
+        label: "Success fee",
+        value: roleRewardValue(job),
+        detail: rewardDetail,
+        tone: rewardKnown ? "good" : "watch",
+        action: rewardKnown ? "submit" : "questions",
+      },
+      {
+        label: "Eligible candidates",
+        value: eligibleValue,
+        detail: readyCandidates.length
+          ? "Ready candidates can be converted into clean packets."
+          : qualityCandidates.length
+            ? "Suggested candidates still need screening and consent."
+            : "Save and screen candidates before expecting payout movement.",
+        tone: readyCandidates.length ? "good" : qualityCandidates.length ? "watch" : "quiet",
+        action: "candidates",
+      },
+      {
+        label: "Review capacity",
+        value: `${pendingSlots}/${ROLE_PENDING_SUBMISSION_LIMIT} open`,
+        detail: pendingSlots ? `${pendingSubmissions.length} pending submission${pendingSubmissions.length === 1 ? "" : "s"} in review.` : "Wait for WeKruit feedback before submitting more.",
+        tone: pendingSlots ? "good" : "blocked",
+        action: pendingSlots ? "submit" : "feedback",
+      },
+      {
+        label: "Payout path",
+        value: payoutLabel,
+        detail: payoutDetail,
+        tone: paidPayouts.length || actionablePayout ? "good" : advancedSubmissions.length ? "watch" : "quiet",
+        action: "feedback",
+      },
+    ],
+    steps: [
+      {
+        label: "Get the right to work the lane",
+        detail: accessDetail,
+        tone: approvedForRole ? "good" : application?.status === "pending" ? "watch" : "quiet",
+        action: "access",
+      },
+      {
+        label: "Create a clean submission packet",
+        detail: readyCandidates.length
+          ? `${readyCandidates.length} ready candidate${readyCandidates.length === 1 ? "" : "s"} need consent, evidence, and ownership checks.`
+          : "Screen saved candidates against hard filters before sending anything to WeKruit.",
+        tone: readyCandidates.length ? "good" : screenedCandidates.length ? "watch" : "quiet",
+        action: readyCandidates.length ? "submit" : "candidates",
+      },
+      {
+        label: "Let feedback calibrate the next batch",
+        detail: negativeSubmissions.length
+          ? `${negativeSubmissions.length} rejected or duplicate outcome${negativeSubmissions.length === 1 ? "" : "s"} should change sourcing.`
+          : pendingSubmissions.length
+            ? "Wait for review movement before copying the same candidate lane."
+            : "No review signal yet; first packet creates the learning loop.",
+        tone: negativeSubmissions.length ? "watch" : pendingSubmissions.length ? "watch" : "quiet",
+        action: "feedback",
+      },
+      {
+        label: "Track hire and payout movement",
+        detail: payoutDetail,
+        tone: paidPayouts.length || recordedPayouts.length ? "good" : advancedSubmissions.length ? "watch" : "quiet",
+        action: "feedback",
+      },
+    ],
+  }
+}
+
 // Minimal Markdown → React renderer for jdBlocks.body. Supports `-` bullet
 // lists, blank-line paragraphs, and inline `**bold**` / `*em*` / `` `code` ``.
 function renderMarkdown(text: string): ReactNode[] {
@@ -1796,6 +1999,16 @@ export default function RecruiterRole() {
     intelligence: currentRoleIntelligence,
     brief: calibrationBrief,
   })
+  const roleRewardCenter = buildRoleRewardCenter({
+    job,
+    approvedForRole,
+    application: currentRoleApplication,
+    pendingSlots,
+    roleCandidates,
+    roleSubmissions,
+    roleFeedback: currentRoleFeedback,
+    candidateRecommendations,
+  })
   const identityBlocksSubmit = identityCheck.status === "checking" || Boolean(identityCheck.result?.conflict)
 
   const useSourcedCandidate = (candidate: RecruiterSourcedCandidateItem) => {
@@ -1999,6 +2212,11 @@ export default function RecruiterRole() {
 
         <RoleIntakeMemoPanel
           memo={roleIntakeMemo}
+          onAction={runRoleWorkroomAction}
+        />
+
+        <RoleRewardCenterPanel
+          center={roleRewardCenter}
           onAction={runRoleWorkroomAction}
         />
 
@@ -2628,6 +2846,51 @@ function RoleIntakeMemoPanel({
             ))}
           </div>
         </article>
+      </div>
+    </section>
+  )
+}
+
+function RoleRewardCenterPanel({
+  center,
+  onAction,
+}: {
+  center: RoleRewardCenter
+  onAction: (action: RoleWorkroomAction) => void
+}) {
+  return (
+    <section className={`rb-role-reward-center is-${center.tone}`} aria-label="Role reward center">
+      <header>
+        <div>
+          <span>Role reward center</span>
+          <strong>{center.title}</strong>
+          <p>{center.body}</p>
+        </div>
+        <button type="button" className="rb-btn primary" onClick={() => onAction(center.primaryAction)}>
+          {center.primaryLabel}
+        </button>
+      </header>
+
+      <div className="rb-role-reward-center__cards">
+        {center.cards.map((card) => (
+          <button type="button" key={card.label} className={`is-${card.tone}`} onClick={() => onAction(card.action)}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <em>{card.detail}</em>
+          </button>
+        ))}
+      </div>
+
+      <div className="rb-role-reward-center__steps">
+        {center.steps.map((step, index) => (
+          <button type="button" key={step.label} className={`is-${step.tone}`} onClick={() => onAction(step.action)}>
+            <b>{index + 1}</b>
+            <div>
+              <strong>{step.label}</strong>
+              <em>{step.detail}</em>
+            </div>
+          </button>
+        ))}
       </div>
     </section>
   )
