@@ -174,7 +174,7 @@ function isShortInboundReply(inboundBody: string | null | undefined): boolean {
   if (typeof inboundBody !== "string") return false
   const t = inboundBody.trim()
   if (!t) return false
-  return t.length <= 12 || /^(ok|okay|k|yeah|yep|yes|sure|got it|好|行|嗯|okok)$/i.test(t)
+  return t.length <= 12 || /^(ok|okay|k|yeah|yep|yes|sure|got it|okok)$/i.test(t)
 }
 
 function isTapbackAllowed(profile: ResolvedVoiceProfile, hasMessageHandle: boolean | undefined): boolean {

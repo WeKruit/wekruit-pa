@@ -252,13 +252,13 @@ describe("runResumeAcceptedFlow — happy path (CV available immediately)", () =
 
     assert.equal(emits.length, 2)
     assert.ok(
-      emits.every((e) => !/[一-鿿]/.test(e.text)),
+      emits.every((e) => !/[\u4e00-\u9fff]/.test(e.text)),
       `expected active EN turn to avoid stale ZH copy: ${emits.map((e) => e.text).join(" | ")}`
     )
     assert.match(emits[1]!.text, /@ WeKruit/)
   })
 
-  it("mixed-pref user → mixed-language messages (both ZH + EN tokens)", async () => {
+  it("mixed-pref user → English messages (product is English-only)", async () => {
     const { db } = makeFakeDb([{ docs: [FULL_CV] }])
     const clock = makeClock()
     const emits: EmitRecord[] = []
@@ -280,9 +280,9 @@ describe("runResumeAcceptedFlow — happy path (CV available immediately)", () =
       cvPollOpts: { sleep: clock.sleep, now: clock.now },
     })
 
-    // Both messages should contain ZH + EN.
+    // Product is English-only — no Chinese characters in any message.
     for (const e of emits) {
-      assert.match(e.text, /[一-鿿]/, `expected ZH chars in: ${e.text}`)
+      assert.doesNotMatch(e.text, /[\u4e00-\u9fff]/, `unexpected ZH chars in: ${e.text}`)
     }
   })
 })
@@ -367,7 +367,7 @@ describe("runResumeAcceptedFlow — timeout fallback", () => {
 
     // Two emits: interim ack + timeout-fallback line.
     assert.equal(emits.length, 2)
-    assert.match(emits[1]!.text, /还在分析|still parsing|going by/i)
+    assert.match(emits[1]!.text, /still parsing|going by/i)
     // applyOnboarding STILL fires (don't strand user) — this matches the
     // "fallback path" requirement from the iter34 spec.
     assert.equal(applies.length, 1)
@@ -427,7 +427,7 @@ describe("runResumeAcceptedFlow — timeout fallback", () => {
     assert.equal(emits.length, 2)
   })
 
-  it("missing getOnboardingUser → defaults to zh, no crash", async () => {
+  it("missing getOnboardingUser → English summary, no crash", async () => {
     const { db } = makeFakeDb([{ docs: [FULL_CV] }])
     const clock = makeClock()
     const emits: EmitRecord[] = []
@@ -446,7 +446,7 @@ describe("runResumeAcceptedFlow — timeout fallback", () => {
     })
 
     assert.equal(emits.length, 2)
-    // Default lang zh — tag-summary should be zh-formatted.
-    assert.match(emits[1]!.text, /资料证据/)
+    // Product is English-only — tag-summary should be English-formatted.
+    assert.match(emits[1]!.text, /profile evidence/i)
   })
 })

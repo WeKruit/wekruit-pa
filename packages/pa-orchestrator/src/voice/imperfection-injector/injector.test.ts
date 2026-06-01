@@ -7,7 +7,7 @@
  *   3. Anti-stutter — prev turn opens with marker → applied rate < 5%
  *   4. Anti-blacklist runtime — 100 produced injections contain ZERO
  *      FILLER_BLACKLIST_* phrases (defense in depth beyond unit tests)
- *   5. Mixed-lang text — zh majority → uses POLICIES_ZH
+ *   5. Lang routing — English-only product always uses POLICIES_EN
  *   6. Latency — p95 < 5ms over 1000 invocations
  *   7. Empty text → never injected
  *   8. Off arm → never injected
@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url"
 
 import { detectLang, injectImperfection } from "./injector.js"
 import { POLICIES_EN } from "./policies-en.js"
-import { POLICIES_ZH } from "./policies-zh.js"
+import type { Policy } from "./types.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const VOICE_AXES_PATH = resolve(
@@ -55,19 +55,14 @@ describe("Phase 36 T3 — injector orchestrator", () => {
   })
 
   describe("detectLang", () => {
-    test("zh majority → zh", () => {
-      assert.equal(detectLang("今晚先睡吧。"), "zh")
-      // Mostly-zh code-switch (more CJK chars than ASCII letters):
-      assert.equal(detectLang("我用过那个 react 框架的"), "zh")
-    })
-    test("en-letter majority (even with some zh) → en", () => {
-      // ASCII-letter heavy code-switch — algorithm matches Phase 35
-      // (cjk vs ascii letter count). Documented behavior.
-      assert.equal(detectLang("我用 React 写过 dashboard"), "en")
-    })
     test("en majority → en", () => {
       assert.equal(detectLang("rest tonight"), "en")
       assert.equal(detectLang("interview was brutal"), "en")
+    })
+    test("ascii-letter code-switch → en", () => {
+      // ASCII-letter heavy text — algorithm matches Phase 35
+      // (cjk vs ascii letter count). Documented behavior.
+      assert.equal(detectLang("use React for the dashboard"), "en")
     })
     test("empty → en (default)", () => {
       assert.equal(detectLang(""), "en")
@@ -78,14 +73,14 @@ describe("Phase 36 T3 — injector orchestrator", () => {
     test("arm=off → never applied", () => {
       for (let i = 0; i < 100; i++) {
         const r = injectImperfection({
-          text: "今晚先睡吧",
+          text: "rest tonight",
           arm: "off",
           rng: () => Math.random(),
         })
         assert.equal(r.applied, false)
         assert.equal(r.injection_type, null)
         assert.equal(r.position, "none")
-        assert.equal(r.injected, "今晚先睡吧")
+        assert.equal(r.injected, "rest tonight")
       }
     })
 
@@ -117,7 +112,7 @@ describe("Phase 36 T3 — injector orchestrator", () => {
       const rng = mulberry32(42)
       let applied = 0
       for (let i = 0; i < 1000; i++) {
-        const r = injectImperfection({ text: "今晚先睡吧", arm: "off", rng })
+        const r = injectImperfection({ text: "rest tonight", arm: "off", rng })
         if (r.applied) applied += 1
       }
       assert.equal(applied, 0, `expected 0, got ${applied}`)
@@ -127,7 +122,7 @@ describe("Phase 36 T3 — injector orchestrator", () => {
       const rng = mulberry32(42)
       let applied = 0
       for (let i = 0; i < 1000; i++) {
-        const r = injectImperfection({ text: "今晚先睡吧", arm: "low", rng })
+        const r = injectImperfection({ text: "rest tonight", arm: "low", rng })
         if (r.applied) applied += 1
       }
       const pct = (applied / 1000) * 100
@@ -141,7 +136,7 @@ describe("Phase 36 T3 — injector orchestrator", () => {
       const rng = mulberry32(123)
       let applied = 0
       for (let i = 0; i < 1000; i++) {
-        const r = injectImperfection({ text: "今晚先睡吧", arm: "high", rng })
+        const r = injectImperfection({ text: "rest tonight", arm: "high", rng })
         if (r.applied) applied += 1
       }
       const pct = (applied / 1000) * 100
@@ -158,17 +153,18 @@ describe("Phase 36 T3 — injector orchestrator", () => {
       // weighted policy selection picks first (0 < first weight). Type
       // priority order means injector commits to the FIRST type bucket
       // (self_correct), and weighted draw within picks the first marker.
+      // Product is English-only: every turn routes through POLICIES_EN.
       const rng = () => 0
       const r = injectImperfection({
-        text: "今晚先睡吧",
+        text: "rest tonight",
         arm: "high",
         rng,
-        lang: "zh",
+        lang: "en",
       })
       assert.equal(r.applied, true)
       assert.equal(r.injection_type, "self_correct")
-      // First self_correct marker in POLICIES_ZH:
-      const firstSelfCorrect = POLICIES_ZH.find((p) => p.type === "self_correct")
+      // First self_correct marker in POLICIES_EN:
+      const firstSelfCorrect = POLICIES_EN.find((p: Policy) => p.type === "self_correct")
       assert.ok(firstSelfCorrect)
       assert.ok(r.injected.startsWith(firstSelfCorrect.marker))
     })
@@ -192,9 +188,9 @@ describe("Phase 36 T3 — injector orchestrator", () => {
       const N = 200
       for (let i = 0; i < N; i++) {
         const r = injectImperfection({
-          text: "再想想这件事。",
+          text: "think it over again.",
           arm: "high",
-          prevAssistantReply: "嗯…那今晚先睡吧。",
+          prevAssistantReply: `${POLICIES_EN[0].marker}rest tonight.`,
           rng,
         })
         if (r.applied) applied += 1
@@ -231,11 +227,11 @@ describe("Phase 36 T3 — injector orchestrator", () => {
       )) as { FILLER_BLACKLIST_ZH: string[]; FILLER_BLACKLIST_EN: string[] }
 
       const inputs = [
-        "今晚先睡吧。",
+        "sleep early tonight.",
         "rest tonight.",
-        "我用 React 写过 dashboard。",
+        "use React for the dashboard.",
         "interview was brutal today.",
-        "不知道怎么办了。",
+        "i dont know what to do.",
         "this is rough.",
       ]
       const rng = mulberry32(42)
@@ -267,53 +263,53 @@ describe("Phase 36 T3 — injector orchestrator", () => {
     })
   })
 
-  describe("Lang routing", () => {
-    test("zh-majority text → POLICIES_ZH marker", () => {
+  describe("Lang routing (English-only)", () => {
+    test("any text → POLICIES_EN marker (product is English-only)", () => {
       const rng = () => 0 // forces apply + first policy
       const r = injectImperfection({
-        text: "今晚先睡吧。",
+        text: "rest tonight.",
         arm: "high",
         rng,
       })
       assert.equal(r.applied, true)
-      const zhMarkers = POLICIES_ZH.map((p) => p.marker)
-      const usedMarker = zhMarkers.find((m) => r.injected.startsWith(m))
-      assert.ok(usedMarker, `injected "${r.injected}" should use a ZH marker`)
+      const enMarkers = POLICIES_EN.map((p: Policy) => p.marker)
+      const usedMarker = enMarkers.find((m) => r.injected.startsWith(m))
+      assert.ok(usedMarker, `injected "${r.injected}" should use an EN marker`)
     })
 
     test("en-majority text → POLICIES_EN marker", () => {
       const rng = () => 0
       const r = injectImperfection({
-        text: "rest tonight.",
+        text: "interview was brutal.",
         arm: "high",
         rng,
       })
       assert.equal(r.applied, true)
-      const enMarkers = POLICIES_EN.map((p) => p.marker)
+      const enMarkers = POLICIES_EN.map((p: Policy) => p.marker)
       const usedMarker = enMarkers.find((m) => r.injected.startsWith(m))
       assert.ok(usedMarker, `injected "${r.injected}" should use an EN marker`)
     })
 
-    test("explicit lang override beats auto-detect", () => {
+    test("explicit lang override still routes through POLICIES_EN", () => {
       const rng = () => 0
       const r = injectImperfection({
         text: "rest tonight.",
         arm: "high",
-        lang: "zh", // force zh marker bank even on en text
+        lang: "zh", // lang field is accepted but no longer changes the bank
         rng,
       })
       assert.equal(r.applied, true)
-      const zhMarkers = POLICIES_ZH.map((p) => p.marker)
-      const usedMarker = zhMarkers.find((m) => r.injected.startsWith(m))
-      assert.ok(usedMarker, `injected "${r.injected}" should use ZH marker due to lang override`)
+      const enMarkers = POLICIES_EN.map((p: Policy) => p.marker)
+      const usedMarker = enMarkers.find((m) => r.injected.startsWith(m))
+      assert.ok(usedMarker, `injected "${r.injected}" should use an EN marker`)
     })
   })
 
   describe("Position invariant — marker always at index 0 when applied", () => {
     test("100 applied injections all have marker at start", () => {
       const rng = mulberry32(42)
-      const inputs = ["今晚先睡。", "rest tonight.", "interview was tough."]
-      const allMarkers = [...POLICIES_ZH, ...POLICIES_EN].map((p) => p.marker)
+      const inputs = ["sleep early tonight.", "rest tonight.", "interview was tough."]
+      const allMarkers = POLICIES_EN.map((p: Policy) => p.marker)
       let collected = 0
       for (let i = 0; i < 500 && collected < 100; i++) {
         const r = injectImperfection({
@@ -340,16 +336,16 @@ describe("Phase 36 T3 — injector orchestrator", () => {
       const rng = mulberry32(1)
       const samples: number[] = []
       const inputs = [
-        "今晚先睡吧。",
+        "sleep early tonight.",
         "rest tonight.",
-        "我用 React 写过 dashboard。",
+        "use React for the dashboard.",
       ]
       for (let i = 0; i < 1000; i++) {
         const r = injectImperfection({
           text: inputs[i % inputs.length],
           arm: "high",
           rng,
-          prevAssistantReply: i % 7 === 0 ? "嗯…something prev" : undefined,
+          prevAssistantReply: i % 7 === 0 ? `${POLICIES_EN[0].marker}something prev` : undefined,
         })
         samples.push(r.latencyMs)
       }
@@ -362,7 +358,7 @@ describe("Phase 36 T3 — injector orchestrator", () => {
   describe("InjectorResult schema completeness", () => {
     test("all fields populated when applied", () => {
       const r = injectImperfection({
-        text: "今晚先睡吧",
+        text: "rest tonight",
         arm: "high",
         rng: () => 0,
       })

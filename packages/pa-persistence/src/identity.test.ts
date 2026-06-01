@@ -6,6 +6,7 @@ import {
   claimCandidateProfile,
   hashCandidateHandle,
   linkCandidateHandle,
+  mergeCandidatesByPhone,
   resolveCandidateIdentity,
   writeCandidateSelfProfile,
 } from "./identity.js"
@@ -638,4 +639,124 @@ test("claimCandidateProfile defaults allowCreate=true (preserves cv-ingest / OAu
   })
   assert.ok(claimed.candidateId, "default mode creates a fresh candidate")
   assert.equal(store.get(PA_COLLECTIONS.users)!.size, 1)
+})
+
+// ---------------------------------------------------------------------------
+// mergeCandidatesByPhone — same-phone duplicate fold (Adam policy 2026-05-29)
+// ---------------------------------------------------------------------------
+
+test("mergeCandidatesByPhone is a no-op when only one pa-users holds the phone", async () => {
+  const { db } = makeFakeFirestore()
+  const phone = "+18303265553"
+  db.collection(PA_COLLECTIONS.users).doc("solo").set({ id: "solo", phoneE164: phone, createdAt: now })
+  const result = await mergeCandidatesByPhone(db, { phoneE164: phone, now })
+  assert.equal(result.merged, false)
+  assert.equal(result.canonicalCandidateId, "solo")
+  assert.deepEqual(result.duplicateCandidateIds, [])
+})
+
+test("mergeCandidatesByPhone folds the younger duplicate into the oldest-createdAt canonical", async () => {
+  const { db, store } = makeFakeFirestore()
+  const phone = "+18303265553"
+  // Older = canonical (KEEP); younger = duplicate (FOLD).
+  db.collection(PA_COLLECTIONS.users).doc("Uu3Ze").set({
+    id: "Uu3Ze",
+    phoneE164: phone,
+    email: "yogeshsavirigana@gmail.com",
+    displayName: "Yogesh Savirigana",
+    createdAt: "2026-05-29T17:44:22.000Z",
+    tags: { skills: ["python"], targetRoleFunction: ["software_engineering"] },
+  })
+  db.collection(PA_COLLECTIONS.users).doc("ECyf").set({
+    id: "ECyf",
+    phoneE164: phone,
+    email: "yogi.savirigana1996@gmail.com",
+    createdAt: "2026-05-29T17:46:11.000Z",
+    tags: { skills: ["react", "python"], industrySector: ["financial_technology"] },
+  })
+  // duplicate-owned data to fold
+  db.collection("parsedCandidateResumes").doc("ECyf").set({ userId: "ECyf", topSkills: ["react"] })
+  db.collection("pa-prescreen-sessions").doc("ps_1").set({ userId: "ECyf", terminal: null })
+  await linkCandidateHandle(db, { candidateId: "ECyf", kind: "email", value: "yogi.savirigana1996@gmail.com", source: "candidate", now })
+
+  const result = await mergeCandidatesByPhone(db, { phoneE164: phone, now })
+  assert.equal(result.merged, true)
+  assert.equal(result.canonicalCandidateId, "Uu3Ze", "oldest createdAt wins")
+  assert.deepEqual(result.duplicateCandidateIds, ["ECyf"])
+
+  const canonical = store.get(PA_COLLECTIONS.users)!.get("Uu3Ze")!
+  // tags union (additive)
+  assert.deepEqual((canonical.tags as Record<string, unknown>).skills, ["python", "react"])
+  assert.deepEqual((canonical.tags as Record<string, unknown>).industrySector, ["financial_technology"])
+  assert.deepEqual((canonical.tags as Record<string, unknown>).targetRoleFunction, ["software_engineering"])
+  // duplicate email preserved as alt-email
+  assert.deepEqual(canonical.altEmails, ["yogi.savirigana1996@gmail.com"])
+  assert.deepEqual(canonical.dedupMergedFrom, ["ECyf"])
+
+  // duplicate tombstoned
+  const dup = store.get(PA_COLLECTIONS.users)!.get("ECyf")!
+  assert.equal(dup.mergedInto, "Uu3Ze")
+  assert.equal(dup.runtimeMode, "paused")
+  assert.equal(dup.phoneE164, `${phone}__merged_ECyf`, "phone tombstoned so resolver never finds it")
+
+  // prescreen session re-pointed to canonical
+  assert.equal(store.get("pa-prescreen-sessions")!.get("ps_1")!.userId, "Uu3Ze")
+  // parsedCandidateResumes (doc-id-is-userId) copied to canonical, dup tombstoned
+  assert.equal(store.get("parsedCandidateResumes")!.get("Uu3Ze")!.userId, "Uu3Ze")
+  assert.equal(store.get("parsedCandidateResumes")!.get("ECyf")!.mergedInto, "Uu3Ze")
+
+  // handle re-pointed to canonical
+  const handle = hashCandidateHandle("email", "yogi.savirigana1996@gmail.com")
+  assert.equal(store.get(PA_COLLECTIONS.candidateHandles)!.get(handle.handleId)!.candidateId, "Uu3Ze")
+
+  // audit: identity merge event + correction event written
+  const idEvents = Array.from(store.get(PA_COLLECTIONS.candidateIdentityEvents)!.values())
+  assert.ok(idEvents.some((e) => e.type === "merge_decision_recorded"), "merge identity event written")
+  assert.equal(store.get(PA_COLLECTIONS.correctionEvents)!.size, 1, "flywheel correction event written")
+})
+
+test("mergeCandidatesByPhone is idempotent (re-run does not double-fold)", async () => {
+  const { db, store } = makeFakeFirestore()
+  const phone = "+18303265553"
+  db.collection(PA_COLLECTIONS.users).doc("keep").set({ id: "keep", phoneE164: phone, createdAt: "2026-05-01T00:00:00.000Z", tags: { skills: ["a"] } })
+  db.collection(PA_COLLECTIONS.users).doc("dup").set({ id: "dup", phoneE164: phone, createdAt: "2026-05-02T00:00:00.000Z", tags: { skills: ["b"] } })
+
+  const first = await mergeCandidatesByPhone(db, { phoneE164: phone, now })
+  assert.equal(first.merged, true)
+  assert.deepEqual((store.get(PA_COLLECTIONS.users)!.get("keep")!.tags as Record<string, unknown>).skills, ["a", "b"])
+
+  // Second run: the dup phone is now tombstoned, so a phone query finds only canonical → no-op.
+  const second = await mergeCandidatesByPhone(db, { phoneE164: phone, now })
+  assert.equal(second.merged, false, "tombstoned dup no longer holds the phone → nothing to merge")
+  // tags unchanged (no double union)
+  assert.deepEqual((store.get(PA_COLLECTIONS.users)!.get("keep")!.tags as Record<string, unknown>).skills, ["a", "b"])
+})
+
+test("mergeCandidatesByPhone dry-run computes the plan with zero writes", async () => {
+  const { db, store } = makeFakeFirestore()
+  const phone = "+18303265553"
+  db.collection(PA_COLLECTIONS.users).doc("keep").set({ id: "keep", phoneE164: phone, createdAt: "2026-05-01T00:00:00.000Z", email: "a@x.com", tags: { skills: ["a"] } })
+  db.collection(PA_COLLECTIONS.users).doc("dup").set({ id: "dup", phoneE164: phone, createdAt: "2026-05-02T00:00:00.000Z", email: "b@x.com", tags: { skills: ["b"] } })
+
+  const plan = await mergeCandidatesByPhone(db, { phoneE164: phone, now, dryRun: true })
+  assert.equal(plan.merged, true)
+  assert.equal(plan.dryRun, true)
+  assert.equal(plan.canonicalCandidateId, "keep")
+  assert.deepEqual(plan.folded[0]!.tagFieldsUnioned, ["skills"])
+  assert.deepEqual(plan.folded[0]!.emailsFolded, ["b@x.com"])
+  // No mutations performed.
+  assert.equal(store.get(PA_COLLECTIONS.users)!.get("dup")!.mergedInto, undefined, "dry-run wrote nothing")
+  assert.deepEqual((store.get(PA_COLLECTIONS.users)!.get("keep")!.tags as Record<string, unknown>).skills, ["a"])
+  assert.equal(store.get(PA_COLLECTIONS.correctionEvents)!.size, 0)
+})
+
+test("mergeCandidatesByPhone honors an explicit canonical pin", async () => {
+  const { db, store } = makeFakeFirestore()
+  const phone = "+18303265553"
+  // Younger doc pinned as canonical despite older sibling.
+  db.collection(PA_COLLECTIONS.users).doc("older").set({ id: "older", phoneE164: phone, createdAt: "2026-05-01T00:00:00.000Z" })
+  db.collection(PA_COLLECTIONS.users).doc("pinned").set({ id: "pinned", phoneE164: phone, createdAt: "2026-05-02T00:00:00.000Z" })
+  const result = await mergeCandidatesByPhone(db, { phoneE164: phone, canonicalCandidateIdHint: "pinned", now })
+  assert.equal(result.canonicalCandidateId, "pinned")
+  assert.equal(store.get(PA_COLLECTIONS.users)!.get("older")!.mergedInto, "pinned")
 })

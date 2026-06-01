@@ -1,10 +1,10 @@
 /**
  * Adam iter 19 — real-time mid-conversation tag write-back.
  *
- * Spec (Adam iter 17): "边聊天我们要给用户边打标，这个标记应该是实时变化的但是
- * cost不能高，要不然match就不实时了对吧。"
+ * Spec (Adam iter 17): tag the user as they chat; the tag should update in
+ * real time but cost must stay near-zero, otherwise matching is not real-time.
  *
- * Translation: as user chats, extract tags + update pa_users in real-time
+ * As the user chats, extract tags + update pa_users in real-time
  * so job match scoring uses LIVE data, not the frozen onboarding snapshot.
  * Cost must be near-zero — no LLM calls.
  *
@@ -52,35 +52,35 @@ function parseVisaSignal(reply: string): VisaStatus | null {
   }
   if (/(h-?1\s*b|h1\b)/i.test(reply)) return "h1b"
   if (/\bOPT\b/.test(reply) || /(opt\b|stem.*opt)/i.test(lower)) return "opt"
-  if (/(green\s*card|绿卡|gc\b|permanent\s*resident)/i.test(reply)) return "gc"
-  if (/(citizen|公民|美国人|us\s*citizen)/i.test(reply)) return "citizen"
+  if (/(green\s*card|gc\b|permanent\s*resident)/i.test(reply)) return "gc"
+  if (/(citizen|us\s*citizen)/i.test(reply)) return "citizen"
   return null
 }
 
 function parseLocationSignal(reply: string): string[] | null {
   const tokens: string[] = []
-  if (/(remote|在家|远程|wfh)/i.test(reply)) tokens.push("remote")
-  if (/(湾区|bay\s*area|sf\b|san\s*francisco)/i.test(reply)) tokens.push("SF Bay Area")
-  if (/(ny\b|纽约|new\s*york|nyc)/i.test(reply)) tokens.push("NYC")
-  if (/(seattle|西雅图)/i.test(reply)) tokens.push("Seattle")
-  if (/(la\b|los\s*angeles|洛杉矶)/i.test(reply)) tokens.push("LA")
+  if (/(remote|wfh)/i.test(reply)) tokens.push("remote")
+  if (/(bay\s*area|sf\b|san\s*francisco)/i.test(reply)) tokens.push("SF Bay Area")
+  if (/(ny\b|new\s*york|nyc)/i.test(reply)) tokens.push("NYC")
+  if (/(seattle)/i.test(reply)) tokens.push("Seattle")
+  if (/(la\b|los\s*angeles)/i.test(reply)) tokens.push("LA")
   return tokens.length > 0 ? Array.from(new Set(tokens)) : null
 }
 
 function parseStartupSignal(reply: string): boolean | null {
-  const startupHit = /(startup|小公司|小厂|创业|early\s*stage|hustle)/i.test(reply)
-  const bigcoHit = /(大厂|大公司|big[-\s]*co|big\s*tech|stable|faang|enterprise)/i.test(reply)
+  const startupHit = /(startup|early\s*stage|hustle)/i.test(reply)
+  const bigcoHit = /(big[-\s]*co|big\s*tech|stable|faang|enterprise)/i.test(reply)
   if (startupHit && !bigcoHit) return true
   if (bigcoHit && !startupHit) return false
   return null
 }
 
 function parseYoeSignal(reply: string): [number, number] | null {
-  if (/(刚毕业|应届|new\s*grad|fresh(\s*out)?|just\s*graduated|no\s*experience)/i.test(reply)) {
+  if (/(new\s*grad|fresh(\s*out)?|just\s*graduated|no\s*experience)/i.test(reply)) {
     return [0, 1]
   }
   const lower = reply.toLowerCase()
-  const num = lower.match(/(\d{1,2})\s*(\+)?\s*(years?|yrs?|y\b|年)/i)
+  const num = lower.match(/(\d{1,2})\s*(\+)?\s*(years?|yrs?|y\b)/i)
   if (num && num[1]) {
     const n = parseInt(num[1], 10)
     if (Number.isFinite(n) && n >= 0 && n <= 50) return [n, n]

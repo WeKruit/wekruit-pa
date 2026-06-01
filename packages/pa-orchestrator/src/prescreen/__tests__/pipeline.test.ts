@@ -41,9 +41,9 @@ function makeCaller(seq: KeywordSetLlmOutput[]): KeywordSetLlmCaller {
 function makeQ(qId: string, scored: KeywordSetLlmOutput[]): PreScreenQuestion {
   return {
     qId,
-    prompt: { zh: `请描述你的 ${qId} 经验`, en: `Describe your ${qId} experience` },
+    prompt: { zh: `Describe your ${qId} experience`, en: `Describe your ${qId} experience` },
     clarifyPrompt: {
-      zh: `为了准确评估，能否更具体一点 (${qId})`,
+      zh: `For accurate evaluation, could you be more specific (${qId})`,
       en: `For accurate evaluation, could you be more specific (${qId})`,
     },
     judge: new KeywordSetJudge({
@@ -821,7 +821,7 @@ test("Phase 76: placeholder clarify copy falls back to probing friend-tone text"
     questions: {
       q1: {
         qId: "q1",
-        prompt: { zh: "讲讲最匹配的经历", en: "Tell me about the closest fit." },
+        prompt: { zh: "Tell me about the closest fit.", en: "Tell me about the closest fit." },
         clarifyPrompt: {
           zh: "Please add one concrete example tied to this job.",
           en: "Please add one concrete example tied to this job.",
@@ -1027,7 +1027,7 @@ test("Phase 76: repeated clarify on the same question asks a new targeted probe"
     questions: {
       q1: {
         qId: "q1",
-        prompt: { zh: "讲讲最匹配的经历", en: "What recent work best matches this software engineering role?" },
+        prompt: { zh: "What recent work best matches this software engineering role?", en: "What recent work best matches this software engineering role?" },
         clarifyPrompt: {
           zh: "Please add one concrete example tied to this job.",
           en: "Please add one concrete example tied to this job.",

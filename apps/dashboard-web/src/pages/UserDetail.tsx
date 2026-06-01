@@ -22,6 +22,7 @@ import {
   listMemoryPoints,
   type MemoryPoint,
 } from "../lib/memoryAdmin.js"
+import { reinitializeCandidate } from "../lib/reinitialize-candidate-api.js"
 // iter31 — HITL pause/resume admin client
 import { setRuntimeMode, type RuntimeMode } from "../lib/runtimeMode.js"
 import { fetchWorkerHealth, getWorkerHealthBaseUrl, type WorkerHealth } from "../lib/workerHealth.js"
@@ -293,6 +294,31 @@ export function UserDetail() {
       setMemoryPoints([])
       // Replace raw worker echo string with neutral confirmation.
       setMemoryNotice(`Memory cleared (${data.summary || "ok"})`)
+    } catch (e: unknown) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setMemoryAction(null)
+    }
+  }
+
+  async function onReinitialize() {
+    if (!id) return
+    if (
+      !window.confirm(
+        "Re-initialize this candidate? Archives the conversation, clears memory + tags + onboarding " +
+          "(back to a fresh start), and re-enriches from their résumé. PRESERVES matched jobs + " +
+          "prescreen sessions. The candidate self-initiates the next conversation. Cannot be undone.",
+      )
+    )
+      return
+    setMemoryAction("reinit")
+    try {
+      const r = await reinitializeCandidate(id)
+      setMemoryPoints([])
+      setMemoryNotice(
+        `Re-initialized: archived ${r.archivedMessages} messages, ${r.reEnriched ? `re-enriched (${r.tagKeys.length} tags)` : "no résumé to re-enrich"}, ` +
+          `matched jobs preserved. Candidate self-initiates next.`,
+      )
     } catch (e: unknown) {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
@@ -601,14 +627,25 @@ export function UserDetail() {
             title="Semantic memory"
             eyebrow="Memory admin"
             actions={
-              <button
-                type="button"
-                className="danger-button"
-                disabled={memoryAction === "clear"}
-                onClick={onClearMemory}
-              >
-                {memoryAction === "clear" ? "Clearing…" : "Clear memory"}
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={memoryAction === "clear" || memoryAction === "reinit"}
+                  onClick={onClearMemory}
+                >
+                  {memoryAction === "clear" ? "Clearing…" : "Clear memory"}
+                </button>
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={memoryAction === "clear" || memoryAction === "reinit"}
+                  onClick={onReinitialize}
+                  title="Archive conversation + clear memory/tags + re-enrich from résumé; preserves matched jobs + prescreen"
+                >
+                  {memoryAction === "reinit" ? "Re-initializing…" : "Re-initialize candidate"}
+                </button>
+              </>
             }
           >
             <div className="toolbar memory-toolbar">

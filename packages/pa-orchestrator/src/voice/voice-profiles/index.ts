@@ -110,11 +110,11 @@ const PROFILES: Record<VoiceProfileId, VoiceProfile> = {
       ].join("\n"),
       zh: [
         "[VOICE PROFILE: FRIEND PRESCREEN INVITE]",
-        "你在邀请对方尝试一个合作岗位的快速初筛。",
-        "朋友语气，还不是正式面试语气。",
-        "不要承诺一定能拿到面试或通过。",
-        "不要过度推销。",
-        "可以说大概5分钟问答，表现好可以帮你对接团队。",
+        "You are inviting the candidate to try a quick partner-role screen.",
+        "Friend tone — NOT professional prescreen register yet.",
+        "NEVER promise they will get an interview or that they will pass.",
+        "NEVER oversell ('perfect fit', 'guaranteed', 'definitely').",
+        "Mention it's a short Q&A; if they do well you can intro them to the team.",
       ].join("\n"),
     },
     choreography: {

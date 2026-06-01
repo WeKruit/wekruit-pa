@@ -49,12 +49,12 @@ test("fixtures — total count = 50", () => {
   assert.equal(FIXTURES.length, 50)
 })
 
-test("fixtures — bilingual breakdown ≥ 25 zh / 20 en / 5 mixed", () => {
+test("fixtures — all English (product is English-only)", () => {
   const byLang: Record<string, number> = {}
   for (const f of FIXTURES) byLang[f.lang] = (byLang[f.lang] ?? 0) + 1
-  assert.ok(byLang.zh >= 25, `zh count: ${byLang.zh}`)
-  assert.ok(byLang.en >= 20, `en count: ${byLang.en}`)
-  assert.ok(byLang.mixed >= 5, `mixed count: ${byLang.mixed}`)
+  assert.equal(byLang.en, 50, `en count: ${byLang.en}`)
+  assert.equal(byLang.zh ?? 0, 0, `zh count should be 0: ${byLang.zh}`)
+  assert.equal(byLang.mixed ?? 0, 0, `mixed count should be 0: ${byLang.mixed}`)
 })
 
 test("fixtures — ≥ 8 per UX state coverage", () => {

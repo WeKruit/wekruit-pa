@@ -7,7 +7,7 @@
  *
  * Algorithm (per CONTEXT D-38-3):
  *
- *   1. Tokenize reply (zh chars + ascii words)
+ *   1. Tokenize reply (ascii words)
  *   2. Fetch user-stated facts via `deps.mem0Search(query, userId)`
  *   3. Fetch persona-locked facts via `deps.getPersona(slug)` (S3 sync)
  *   4. Run lexicon match per ContradictionType in priority order:
@@ -20,7 +20,7 @@
  *   facts (no new extracts triggered)
  * - < 5ms p95 (rule-based; Mem0 search latency NOT counted here — caller
  *   may inject `factsCache` to skip)
- * - Bilingual zh + en + mixed
+ * - English-only (legacy zh lexicons removed)
  * - S3 sync: persona facts via `getPersona`, NEVER inline strings
  *
  * Graceful behavior:
@@ -69,29 +69,14 @@ const TYPE_PRIORITY: ContradictionType[] = [
 // Vegetarian/vegan-style + meat term banks reused by both `dietary` and
 // `persona_locked` (when persona declares dietary preference).
 const VEG_FACT_TERMS = [
-  "素食",
-  "吃素",
-  "素",
   "vegetarian",
   "vegan",
   "plant-based",
   "plant based",
-  "不吃肉",
+  "no meat",
 ]
 
 const MEAT_VIOLATING_TERMS = [
-  "牛排",
-  "牛肉",
-  "猪肉",
-  "鸡肉",
-  "羊肉",
-  "肋眼",
-  "排骨",
-  "鱼",
-  "鸡腿",
-  "牛",
-  "猪",
-  "羊",
   "beef",
   "steak",
   "steakhouse",
@@ -116,21 +101,12 @@ const LEXICONS: Record<Exclude<ContradictionType, "language" | "persona_locked">
   allergy: {
     // Pattern matched contextually — see allergy detector below.
     factTerms: [
-      "过敏",
       "allergic",
       "allergy",
       "intolerant",
       "intolerance",
     ],
     violatingTerms: [
-      "花生",
-      "牛奶",
-      "乳制品",
-      "鸡蛋",
-      "麸质",
-      "海鲜",
-      "坚果",
-      "贝类",
       "peanut",
       "peanuts",
       "peanut butter",
@@ -150,8 +126,8 @@ const LEXICONS: Record<Exclude<ContradictionType, "language" | "persona_locked">
   pet: {
     // `factTerms` here is "user owns cat"; violation is "Claire mentions dog"
     // (and vice versa). Detector handles both directions.
-    factTerms: ["cat", "kitten", "猫", "喵", "kitty"],
-    violatingTerms: ["dog", "puppy", "doggie", "pup", "狗", "犬", "狗狗"],
+    factTerms: ["cat", "kitten", "kitty"],
+    violatingTerms: ["dog", "puppy", "doggie", "pup"],
   },
   location: {
     // Cities — fact = where user lives; violation = different city in reply.
@@ -159,15 +135,8 @@ const LEXICONS: Record<Exclude<ContradictionType, "language" | "persona_locked">
     violatingTerms: [],
   },
   relationship: {
-    factTerms: ["单身", "没对象", "没结婚", "没老婆", "没老公", "single", "unmarried", "not married", "no partner"],
+    factTerms: ["single", "unmarried", "not married", "no partner"],
     violatingTerms: [
-      "你老婆",
-      "你老公",
-      "你妻子",
-      "你丈夫",
-      "你男朋友",
-      "你女朋友",
-      "你对象",
       "your spouse",
       "your husband",
       "your wife",
@@ -181,21 +150,13 @@ const LEXICONS: Record<Exclude<ContradictionType, "language" | "persona_locked">
     violatingTerms: [],
   },
   preference_negation: {
-    // Pattern detected contextually: "I never X" / "我从不 X" → reply suggests X
+    // Pattern detected contextually: "I never X" -> reply suggests X
     factTerms: [],
     violatingTerms: [],
   },
   health: {
-    factTerms: ["糖尿病", "高血压", "心脏病", "哮喘", "diabetic", "diabetes", "hypertension", "asthma", "heart disease"],
+    factTerms: ["diabetic", "diabetes", "hypertension", "asthma", "heart disease"],
     violatingTerms: [
-      "甜",
-      "糖",
-      "蛋糕",
-      "糖果",
-      "甜点",
-      "巧克力",
-      "汽水",
-      "可乐",
       "sugar",
       "sugary",
       "dessert",
@@ -212,7 +173,7 @@ const LEXICONS: Record<Exclude<ContradictionType, "language" | "persona_locked">
 }
 
 // City lists for location detector.
-const ZH_CITIES = ["北京", "上海", "广州", "深圳", "杭州", "成都", "南京", "武汉", "西安", "重庆"]
+const ZH_CITIES: string[] = []
 const EN_CITIES = [
   "NYC",
   "New York",
@@ -232,7 +193,7 @@ const EN_CITIES = [
   "Atlanta",
 ]
 
-const PROFESSIONS_ZH = ["医生", "律师", "程序员", "工程师", "老师", "设计师", "护士", "会计", "记者"]
+const PROFESSIONS_ZH: string[] = []
 const PROFESSIONS_EN = [
   "doctor",
   "lawyer",
@@ -252,7 +213,7 @@ const PROFESSIONS_EN = [
 // Helper utilities
 // ---------------------------------------------------------------------------
 
-const CJK_RE = /[㐀-鿿]/g
+const CJK_RE = /[\u3400-\u9fff]/g
 const ASCII_LETTER_RE = /[A-Za-z]/g
 
 function lower(s: string): string {
@@ -342,10 +303,10 @@ function checkAllergy(facts: string[], reply: string): PartialResult | null {
 }
 
 function checkPet(facts: string[], reply: string): PartialResult | null {
-  const userHasCat = facts.find((f) => containsAny(f, ["猫", "cat", "kitten", "kitty"]))
-  const userHasDog = facts.find((f) => containsAny(f, ["狗", "dog", "puppy"]))
+  const userHasCat = facts.find((f) => containsAny(f, ["cat", "kitten", "kitty"]))
+  const userHasDog = facts.find((f) => containsAny(f, ["dog", "puppy"]))
   if (userHasCat && !userHasDog) {
-    const dogHit = containsAny(reply, ["dog", "puppy", "doggie", "狗", "犬", "狗狗"])
+    const dogHit = containsAny(reply, ["dog", "puppy", "doggie"])
     if (dogHit) {
       return {
         violatedTerm: dogHit,
@@ -356,7 +317,7 @@ function checkPet(facts: string[], reply: string): PartialResult | null {
     }
   }
   if (userHasDog && !userHasCat) {
-    const catHit = containsAny(reply, ["cat", "kitten", "猫", "喵"])
+    const catHit = containsAny(reply, ["cat", "kitten"])
     if (catHit) {
       return {
         violatedTerm: catHit,
@@ -421,7 +382,7 @@ function checkProfession(facts: string[], reply: string): PartialResult | null {
   let userProfFact = ""
   for (const f of facts) {
     for (const p of allProfs) {
-      // Match phrases like "I am a doctor" / "我是医生" — basic substring is enough
+      // Match phrases like "I am a doctor" — basic substring is enough
       // for our seeded fixture set.
       if (lower(f).includes(lower(p))) {
         userProf = p
@@ -432,22 +393,19 @@ function checkProfession(facts: string[], reply: string): PartialResult | null {
     if (userProf) break
   }
   if (!userProf) return null
-  // Reply mentions a DIFFERENT profession in a "your X" / "你 X" framing.
+  // Reply mentions a DIFFERENT profession in a "your X" framing.
   for (const p of allProfs) {
     if (lower(p) === lower(userProf)) continue
     // Need to be in reply AND framed as the user's profession (heuristic:
-    // adjacent to "your" / "你的" / "your X colleagues" etc.).
+    // adjacent to "your" / "your X colleagues" etc.).
     const lp = lower(p)
     const lr = lower(reply)
     if (
       lr.includes(`your ${lp}`) ||
-      lr.includes(`你的${lp}`) ||
-      lr.includes(`你${lp}`) ||
       lr.includes(`as ${lp}`) ||
       lr.includes(`fellow ${lp}`) ||
       lr.includes(`${lp} colleagues`) ||
-      lr.includes(`${lp} colleague`) ||
-      lr.includes(`${lp}同事`)
+      lr.includes(`${lp} colleague`)
     ) {
       return {
         violatedTerm: p,
@@ -464,23 +422,10 @@ function checkPreferenceNegation(
   facts: string[],
   reply: string
 ): PartialResult | null {
-  // Pattern: "我从不喝 X" / "I never X" — extract noun X, flag if reply
+  // Pattern: "I never X" — extract noun X, flag if reply
   // suggests X.
   for (const f of facts) {
     const lf = lower(f)
-    // ZH patterns
-    const zhMatch = f.match(/(?:从不|从来不|不|不喜欢)([^\s,，。!?;]{1,8})/)
-    if (zhMatch && zhMatch[1]) {
-      const noun = zhMatch[1].trim()
-      if (noun.length > 0 && reply.includes(noun)) {
-        return {
-          violatedTerm: noun,
-          factSnippet: snippet(f),
-          replySnippet: snippet(reply),
-          confidence: 0.9,
-        }
-      }
-    }
     // EN patterns
     const enMatch = lf.match(
       /(?:never|don't|do not|dont|hate|dislike|can't|cant|won't|wont)\s+(?:drink|eat|have|use|do|wear|like)?\s*([a-z]{2,20})/

@@ -12,8 +12,8 @@
  *
  * Anti-stutter (D-36-5): if `text` already starts with our marker (or
  * any policy marker — caller can pass `additionalMarkers` to widen), we
- * refuse injection (ok=false) so we don't double-stack `嗯… 嗯…` across
- * consecutive turns.
+ * refuse injection (ok=false) so we don't double-stack the same hesitation
+ * marker across consecutive turns.
  *
  * Latency: pure string ops, < 1ms.
  */

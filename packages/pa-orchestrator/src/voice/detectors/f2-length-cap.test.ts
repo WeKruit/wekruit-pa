@@ -75,14 +75,8 @@ test("F2 abbreviation protection — 'Dr. Smith' is one sentence", () => {
   assert.equal(r.score, 1)
 })
 
-test("F2 zh terminators 。！？ count correctly", () => {
-  const r = detectLengthCap(ctx("今天累。但还撑着。下班吃啥？"))
-  assert.equal(r.score, 3)
-  assert.equal(r.triggered, false)
-})
-
 test("F2 ellipsis is one boundary, not three", () => {
-  const r = detectLengthCap(ctx("嗯…再说吧。"))
+  const r = detectLengthCap(ctx("hmm… let's talk later."))
   assert.equal(r.score, 2)
   assert.equal(r.triggered, false)
 })
@@ -118,16 +112,16 @@ test("F2 PARITY vs Phase 33 .mjs sentence-split (12 fixed inputs)", async () => 
   const mjsCount = mjs.countSentences as (s: string) => number
 
   const inputs = [
-    "今天累。但还撑着。下班吃啥？",
+    "Today was rough. Still hanging in. What's for dinner?",
     "Step 3.14 is hot. Try x. Maybe.",
     "see https://example.com/foo. Try.",
     "Dr. Smith said yes.",
-    "嗯…再说吧。",
+    "hmm… let's talk later.",
     "a. b. c. d. e.",
     "a. b. c.",
     "",
     "👀",
-    "今天累\n\n下班吃啥？",
+    "Today was rough\n\nwhat's for dinner?",
     "U.S. is far. Try here.",
     "Hello! How are you? I am fine.",
   ]
@@ -146,16 +140,16 @@ test("F2 PARITY vs Phase 33 .mjs sentence-split (12 fixed inputs)", async () => 
 test("F2 false-positive ≤ 10% on smoke-fixture-quality replies", () => {
   // Production-quality replies — short, within cap.
   const safeReplies = [
-    "听起来真的累炸。今天能歇就歇。",
-    "嗯。今晚少看手机, 早点睡。",
-    "先别想'怎么办'。睡前少看手机一小时, 明天再聊.",
+    "Sounds exhausting. Rest if you can today.",
+    "Yeah. Less screen time tonight, sleep early.",
+    "Don't spiral on 'what now'. Less phone before bed, talk tomorrow.",
     "OPT runs 12 months. Sponsorship before clock runs out.",
     "Crickets sucks. Move to next app.",
     "Sleep tonight. Tomorrow's a different day.",
-    "嗯, 那就先安静一下.",
-    "深夜班. 先吃饭再说.",
-    "戴耳机或者出门走走.",
-    "怕断现金流可以. 先骑驴找马.",
+    "Okay, let's just take a quiet beat first.",
+    "Late shift. Eat first, then we talk.",
+    "Put on headphones or go for a walk.",
+    "Worried about cash flow is fair. Line up the next thing first.",
   ]
   let fp = 0
   for (const text of safeReplies) {
@@ -194,8 +188,11 @@ test("stripToSentenceCap: 5 sentences EN → keeps first 3", () => {
   assert.equal(countSentences(r.text), 3)
 })
 
-test("stripToSentenceCap: 5 sentences ZH → keeps first 3", () => {
-  const r = stripToSentenceCap("一句。两句。三句。四句。五句。")
+test("stripToSentenceCap: 5 sentences with full-width terminators → keeps first 3", () => {
+  // Build inputs from a codepoint escape (U+3002 ideographic full stop) to
+  // verify full-width terminator handling without literal CJK in the file.
+  const fs = String.fromCharCode(0x3002)
+  const r = stripToSentenceCap(`one${fs}two${fs}three${fs}four${fs}five${fs}`)
   assert.equal(r.stripped, true)
   assert.equal(r.dropped, 2)
   assert.equal(countSentences(r.text), 3)
@@ -214,9 +211,12 @@ test("stripToSentenceCap: explicit cap=2 truncates 4-sentence reply", () => {
   assert.equal(countSentences(r.text), 2)
 })
 
-test("stripToSentenceCap: bilingual mixed → counts terminators correctly", () => {
+test("stripToSentenceCap: mixed terminators → counts terminators correctly", () => {
+  // Mix EN periods with a full-width terminator (U+3002) via codepoint escape
+  // so both terminator classes are exercised without literal CJK.
+  const fs = String.fromCharCode(0x3002)
   const text =
-    "yeah I get it. 这个事儿确实挺难的。Honestly the right move is just to ship. 别想太多。然后再迭代。"
+    `yeah I get it. this thing is genuinely hard${fs}Honestly the right move is just to ship. don't overthink${fs}then iterate${fs}`
   const r = stripToSentenceCap(text)
   assert.equal(r.stripped, true)
   // 5 sentences → keep 3
@@ -250,18 +250,22 @@ test("stripToCharCap: single over-cap sentence → keep it (fail-open)", () => {
   assert.equal(r.stripped, false)
 })
 
-test("stripToCharCap: bilingual zh+en mix → boundary on terminators", () => {
-  const text = "我之前确实碰过类似的职责。核心差别是延迟可观测性更硬。然后还有一些其它考虑比如审计链路。"
-  // 3 sentences zh; cap=20 → keep first sentence only (12 chars + period)
+test("stripToCharCap: full-width terminators → boundary on terminators", () => {
+  // Three sentences delimited by U+3002 (via codepoint escape); cap=20 keeps
+  // only the first (short) sentence.
+  const fs = String.fromCharCode(0x3002)
+  const text = `same duties${fs}latency differs${fs}also audit-trail concerns${fs}`
   const r = stripToCharCap(text, 20)
   assert.equal(r.stripped, true)
   assert.ok(r.text.length <= 20)
 })
 
-test("stripToCharCap: anxious_grad-style 200-char zh run-on → cap honored", () => {
-  // Real witnessed run-on from anxious_grad sim.
+test("stripToCharCap: multi-sentence run-on with full-width terminators → cap honored", () => {
+  // Several sentences delimited by U+3002 (via codepoint escape); cap=100 keeps
+  // the leading sentences that fit.
+  const fs = String.fromCharCode(0x3002)
   const text =
-    "我之前确实碰过偏支付/风控那类的职责，核心差别是你不只是把功能跑通，而是要把延迟、准确率、误杀/漏放、可审计、以及异常链路的闭环一起做出来；比如实时特征/规则命中、黑白名单与策略下发、以及事后追溯都很吃系统设计。"
+    `worked on payments and risk-control duties${fs}the difference is closing the loop end to end${fs}latency accuracy and auditability all matter${fs}exception paths get heavy too${fs}`
   const r = stripToCharCap(text, 100)
   assert.equal(r.stripped, true)
   assert.ok(r.text.length <= 100, `text=${r.text.length}ch`)

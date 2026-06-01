@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url"
 
 import { injectImperfection, resolveArm } from "./index.js"
 import { POLICIES_EN } from "./policies-en.js"
-import { POLICIES_ZH } from "./policies-zh.js"
+import type { Policy } from "./types.js"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const VOICE_AXES_PATH = resolve(
@@ -30,18 +30,14 @@ const VOICE_AXES_PATH = resolve(
 // behavior — not contamination from the input. ("you got it" was
 // removed because "Got it" is in FILLER_BLACKLIST_EN.)
 const SYNTH_TURNS = [
-  // zh
-  { text: "今晚先睡吧。", userId: "+15550000001" },
-  { text: "再想想这件事。", userId: "+15550000002" },
-  { text: "明天再说吧。", userId: "+15550000003" },
-  // en
+  { text: "sleep early tonight.", userId: "+15550000001" },
+  { text: "think it over again.", userId: "+15550000002" },
+  { text: "let us talk tomorrow.", userId: "+15550000003" },
   { text: "rest tonight.", userId: "+15550000004" },
   { text: "interview was rough.", userId: "+15550000005" },
   { text: "deploys are flaky lately.", userId: "+15550000006" },
-  // mixed (en-letter heavy)
   { text: "use React hooks for state", userId: "+15550000007" },
-  // mixed (zh majority)
-  { text: "我用过那个框架的", userId: "+15550000008" },
+  { text: "i used that framework before", userId: "+15550000008" },
 ]
 
 /**
@@ -114,7 +110,7 @@ describe("Phase 36 T5 — smoke / pipeline integration", () => {
   })
 
   test("position invariant: 100+ applied outputs all have marker at index 0", () => {
-    const allMarkers = [...POLICIES_ZH, ...POLICIES_EN].map((p) => p.marker)
+    const allMarkers = POLICIES_EN.map((p: Policy) => p.marker)
     let appliedCount = 0
     for (let i = 0; i < 1000 && appliedCount < 100; i++) {
       const t = SYNTH_TURNS[i % SYNTH_TURNS.length]

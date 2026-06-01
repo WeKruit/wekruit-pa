@@ -82,27 +82,7 @@ describe("runLangLockGuard — mixed branch (Adam 2026-05-03 01:22 spec)", () =>
 })
 
 describe("runLangLockGuard — pure-zh / pure-en branches (regression)", () => {
-  test("userLang='zh' + reply already zh → already_correct_lang (no translate, no bypass)", async () => {
-    const store = makeStore()
-    delete process.env.SILICONFLOW_API_KEY
-    const r = await runLangLockGuard({
-      store,
-      userId: "u_test",
-      turnId: "t_test",
-      userLang: "zh",
-      reply: "好的，我来帮你看看。",
-      callSite: "main",
-    })
-    assert.equal(r.applied, false)
-    assert.equal(r.reason, "already_correct_lang")
-    assert.equal(
-      store.logs.filter(([evt]) => evt === "pa.voice.lang_translate.bypass_mixed").length,
-      0,
-      "mixed-bypass telemetry must NOT fire on pure-zh"
-    )
-  })
-
-  test("userLang='en' + reply already en → already_correct_lang", async () => {
+  test("userLang='en' + reply already en → already_correct_lang (no translate, no bypass)", async () => {
     const store = makeStore()
     delete process.env.SILICONFLOW_API_KEY
     const r = await runLangLockGuard({
@@ -115,23 +95,28 @@ describe("runLangLockGuard — pure-zh / pure-en branches (regression)", () => {
     })
     assert.equal(r.applied, false)
     assert.equal(r.reason, "already_correct_lang")
+    assert.equal(
+      store.logs.filter(([evt]) => evt === "pa.voice.lang_translate.bypass_mixed").length,
+      0,
+      "mixed-bypass telemetry must NOT fire on pure-en"
+    )
   })
 
-  test("userLang='zh' + reply en + no SILICONFLOW_API_KEY → no_api_key (fail-open)", async () => {
+  test("userLang='zh' + reply en → already_correct_lang (English-only: target is always en)", async () => {
+    // Product is English-only: the guard normalizes every non-mixed reply to
+    // English. An English reply already matches the target, so no translate.
     const store = makeStore()
     delete process.env.SILICONFLOW_API_KEY
-    const reply = "Sounds good — let me look at that."
     const r = await runLangLockGuard({
       store,
       userId: "u_test",
       turnId: "t_test",
       userLang: "zh",
-      reply,
+      reply: "Sounds good — let me look at that.",
       callSite: "main",
     })
     assert.equal(r.applied, false)
-    assert.equal(r.reason, "no_api_key")
-    assert.equal(r.reply, reply, "fail-open: original reply still returned")
+    assert.equal(r.reason, "already_correct_lang")
   })
 })
 
@@ -142,10 +127,11 @@ describe("buildLangLockSandwich — mixed branch", () => {
     assert.equal(close, "")
   })
 
-  test("'zh' / 'en' still produce non-empty sandwiches (regression guard)", () => {
+  test("'zh' / 'en' both produce the English-only sandwich (regression guard)", () => {
+    // Product is English-only: every non-mixed input gets the English lock.
     const zh = buildLangLockSandwich("zh")
-    assert.ok(zh.open.length > 0 && zh.close.length > 0, "zh sandwich non-empty")
-    assert.match(zh.open, /中文/)
+    assert.ok(zh.open.length > 0 && zh.close.length > 0, "sandwich non-empty")
+    assert.match(zh.open, /English/)
     const en = buildLangLockSandwich("en")
     assert.ok(en.open.length > 0 && en.close.length > 0, "en sandwich non-empty")
     assert.match(en.open, /English/)
@@ -157,8 +143,8 @@ describe("buildLangLockUserDirective — mixed branch", () => {
     assert.equal(buildLangLockUserDirective("mixed"), "")
   })
 
-  test("'zh' / 'en' still produce directives (regression guard)", () => {
-    assert.match(buildLangLockUserDirective("zh"), /中文/)
+  test("'zh' / 'en' both produce the English-only directive (regression guard)", () => {
+    assert.match(buildLangLockUserDirective("zh"), /English/)
     assert.match(buildLangLockUserDirective("en"), /English/)
   })
 })

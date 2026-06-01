@@ -9,19 +9,18 @@ test("empty userMessage → directive null", () => {
   assert.deepEqual(r.picked, [])
 })
 
-test("zh user → zh slang palette (≥6 terms)", () => {
+// English-only product: ZH_SLANG is now empty. A zh-input user gets lang="zh"
+// but the palette is empty (no zh slang terms), so directive is null and picked=[].
+// This is the new correct behavior — no Chinese slang is surfaced.
+test("zh user → no zh slang palette (English-only product; ZH_SLANG empty)", () => {
   const r = buildSlangInjection({
     userMessage: "我最近真的好崩溃啊 工作累死了",
     seed: "zh-test",
   })
   assert.equal(r.lang, "zh")
-  assert.ok(r.directive && r.directive.length > 0)
-  // Palette widened (Adam 2026-05-19): expect at least 6 candidate terms.
-  assert.ok(r.picked.length >= 6, `expected ≥6 zh picks, got ${r.picked.length}`)
-  assert.ok(r.picked.length <= 8, `expected ≤8 zh picks, got ${r.picked.length}`)
-  for (const p of r.picked) {
-    assert.match(p, /[一-鿿]|emo了|yyds|i人|e人/)
-  }
+  // ZH_SLANG is empty → no picks, directive is null
+  assert.equal(r.directive, null, "zh user gets null directive when ZH_SLANG is empty (English-only)")
+  assert.deepEqual(r.picked, [])
 })
 
 test("en user → en slang palette (≥6 terms)", () => {
@@ -38,19 +37,25 @@ test("en user → en slang palette (≥6 terms)", () => {
   }
 })
 
-test("mixed user → 4 zh + 2 en (palette ≥6, ≤6)", () => {
+// English-only product: ZH_SLANG is now empty. A mixed-input user gets lang="mixed"
+// but the zh portion of the palette is empty, so only EN picks are surfaced (up to 2).
+// The palette is smaller than the old 4zh+2en=6, but is correct English-only behavior.
+test("mixed user → English-only palette (ZH_SLANG empty; up to 2 en picks)", () => {
   const r = buildSlangInjection({
     userMessage: "我刚刚 burnt out 真的崩溃了",
     seed: "mixed-test",
   })
   assert.equal(r.lang, "mixed")
-  assert.equal(r.picked.length, 6)
+  // ZH_SLANG is empty → 0 zh picks + up to MAX_PALETTE_MIXED_EN=2 en picks
   const zhCount = r.picked.filter((p) =>
     /[一-鿿]|emo了|yyds|i人|e人/.test(p)
   ).length
-  const enCount = r.picked.length - zhCount
-  assert.equal(zhCount, 4, `expected 4 zh, got ${zhCount}`)
-  assert.equal(enCount, 2, `expected 2 en, got ${enCount}`)
+  assert.equal(zhCount, 0, `expected 0 zh picks (ZH_SLANG empty), got ${zhCount}`)
+  // En picks ≤ 2, all ASCII
+  assert.ok(r.picked.length <= 2, `expected ≤2 picks (mixed, zh pool empty), got ${r.picked.length}`)
+  for (const p of r.picked) {
+    assert.ok(/^[\x00-\x7f]+$/.test(p), `expected ASCII en term, got: ${p}`)
+  }
 })
 
 test("seed determinism — same seed → same palette", () => {
@@ -72,8 +77,10 @@ test("rollback flag PA_SLANG_INJECTOR_DISABLED=true → null", () => {
   }
 })
 
-test("directive header references 'FRIEND SLANG PALETTE'", () => {
-  const r = buildSlangInjection({ userMessage: "我好累", seed: "x" })
+// English-only product: zh input now yields null directive (ZH_SLANG empty).
+// Test the palette header using an English input — directive is still produced for en users.
+test("directive header references 'FRIEND SLANG PALETTE' (English input, English-only product)", () => {
+  const r = buildSlangInjection({ userMessage: "i'm so exhausted from this job search", seed: "x" })
   assert.match(r.directive ?? "", /FRIEND SLANG PALETTE/i)
 })
 

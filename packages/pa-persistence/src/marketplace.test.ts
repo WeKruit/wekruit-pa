@@ -562,6 +562,46 @@ test("feedback and correction events are append-only with conflict detection", a
   )
 })
 
+test("writeFeedbackEvent persists a job_presented event and its audit row", async () => {
+  // req #4 — "a job was offered" flows through the single write path and lands
+  // in pa-feedback-events plus an append-only audit row, no writer change.
+  const { db, store } = makeFakeFirestore()
+  const presented: FeedbackEvent = {
+    eventId: "fb-job-presented-1",
+    kind: "job_presented",
+    actor: "orchestrator",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    outcome: "claire_agent",
+    evidence: [{ source: "job_match", summary: "top collab job offered to candidate" }],
+    payloadRedacted: { flow: "claire_agent", channel: "imessage" },
+    createdAt: now,
+  }
+
+  const result = await writeFeedbackEvent(db, presented)
+  assert.equal(result.created, true)
+  assert.equal(result.event.kind, "job_presented")
+
+  // Appended to pa-feedback-events.
+  const stored = store.get(PA_COLLECTIONS.feedbackEvents)!.get(presented.eventId)
+  assert.equal(stored!.kind, "job_presented")
+  assert.equal(stored!.outcome, "claire_agent")
+
+  // Audited to pa-audit-events with candidate + job + actor context.
+  const auditRow = store.get(PA_COLLECTIONS.auditEvents)!.get("marketplace_feedback_fb-job-presented-1")
+  assert.equal(auditRow!.action, "marketplace.feedback.append")
+  assert.equal(auditRow!.candidateId, "cand-1")
+  assert.equal(auditRow!.jobId, "job-1")
+  assert.equal(auditRow!.actor, "orchestrator")
+
+  // Append-only: identical replay is a no-op, conflicting replay rejects.
+  assert.equal((await writeFeedbackEvent(db, presented)).created, false)
+  await assert.rejects(
+    () => writeFeedbackEvent(db, { ...presented, outcome: "daily_batch" }),
+    /conflicting_duplicate_event/
+  )
+})
+
 test("eval artifacts are append-only and audited in their own collection", async () => {
   const { db, store } = makeFakeFirestore()
   const artifact: EvalArtifact = {

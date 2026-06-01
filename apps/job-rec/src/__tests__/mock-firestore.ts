@@ -109,6 +109,14 @@ class Query {
     return new Query(this.mfs, this.collectionPath, this.filters, this.orderField, this.orderDir, n)
   }
 
+  // No-op field projection (V16 uses .select(...MATCH_LEAN_FIELDS) to skip embeddings in the bulk
+  // scan). The mock returns full docs, so embeddings stay inline — which is correct for tests:
+  // production loads survivor embeddings via getAll(fieldMask) (the mock has no getAll, so V16's
+  // loadSurvivorEmbeddings fails-graceful to empty and the inline embeddings are used instead).
+  select(..._fields: string[]): Query {
+    return this
+  }
+
   async get(): Promise<{ docs: DocSnap[]; size: number; empty: boolean }> {
     const coll = (this.mfs as unknown as { getColl: (p: string) => Map<string, Record<string, unknown>> })
       .getColl(this.collectionPath)

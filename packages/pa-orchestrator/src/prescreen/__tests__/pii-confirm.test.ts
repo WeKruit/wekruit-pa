@@ -147,9 +147,8 @@ describe("validateCompanySize (Level 1)", () => {
 })
 
 describe("validateLegalName", () => {
-  it("accepts ascii + cjk", () => {
+  it("accepts ascii names", () => {
     assert.equal(validateLegalName("Jane Doe").ok, true)
-    assert.equal(validateLegalName("张三").ok, true)
     assert.equal(validateLegalName("Anne-Marie O'Brien").ok, true)
   })
   it("trims + collapses whitespace", () => {

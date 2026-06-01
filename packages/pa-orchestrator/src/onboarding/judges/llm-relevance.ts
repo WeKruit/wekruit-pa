@@ -49,7 +49,7 @@ export class LLMRelevanceJudge<TValue> implements Judge<TValue> {
   async judge(reply: string, lang: Lang, ctx: JudgeCtx): Promise<JudgeResult<TValue>> {
     const trimmed = reply.trim()
     const minChars = this.opts.minMeaningfulChars ?? 2
-    const hasContent = trimmed.length >= minChars && /[A-Za-z0-9一-鿿]/.test(trimmed)
+    const hasContent = trimmed.length >= minChars && /[A-Za-z0-9]/.test(trimmed)
     if (!hasContent) {
       return { accept: false, reason: "irrelevant" }
     }

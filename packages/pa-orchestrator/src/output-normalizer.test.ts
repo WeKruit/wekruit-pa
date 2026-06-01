@@ -164,17 +164,17 @@ test("Phase 40 — short markdown link → inline bare URL (still previews)", ()
 
 // ---------- Stream H5 — A/B probe tail stripper ---------------------------
 
-test("Stream H5 — strips trailing zh A/B probe, keeps earlier clauses", () => {
-  const input = "嗯 我在, 你今天是赶ddl还是本来就想投着玩先?"
+test("Stream H5 — strips trailing en A/B probe, keeps earlier clauses", () => {
+  const input = "Yeah I'm here, are you grinding the deadline or just messing around?"
   const { stripped, hits } = stripABProbeFromTail(input)
-  // Earlier clause "嗯 我在," (the validation/presence stem) is preserved.
-  assert.match(stripped, /嗯 我在/)
+  // Earlier clause (the validation/presence stem) is preserved.
+  assert.match(stripped, /Yeah I'm here/)
   // Trailing A/B probe is gone.
-  assert.doesNotMatch(stripped, /还是/)
+  assert.doesNotMatch(stripped, /\bor\b/)
   assert.doesNotMatch(stripped, /\?/)
-  // Telemetry hit fired with the zh label.
+  // Telemetry hit fired with the en label.
   assert.equal(hits.length, 1)
-  assert.equal(hits[0], "zh_X_还是_Y_question")
+  assert.equal(hits[0], "en_X_or_Y_question")
 })
 
 test("Stream H5 — strips trailing en A/B probe", () => {
@@ -187,7 +187,7 @@ test("Stream H5 — strips trailing en A/B probe", () => {
 })
 
 test("Stream H5 — no strip when no A/B pattern present", () => {
-  const input = "好的，我看到了"
+  const input = "ok, I saw it"
   const { stripped, hits } = stripABProbeFromTail(input)
   assert.equal(stripped, input)
   assert.equal(hits.length, 0)

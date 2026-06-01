@@ -3,8 +3,8 @@
  *
  * Adam directive 2026-05-07 (GOAL-onboarding-refactor.md G2):
  *   "resume / LinkedIn URL are NOT deterministic questions, they are
- *    DiscussionPhase: ack → state=processing → user msg 稍等 → analysis
- *    fired async → handover"
+ *    DiscussionPhase: ack -> state=processing -> user msg 'hold on' ->
+ *    analysis fired async -> handover"
  *
  * A DiscussionPhase is qualitatively different from a Question:
  *
@@ -22,8 +22,8 @@
  *      off the async worker. Returns immediately — does NOT block.
  *
  *   2. `onMessageWhileProcessing(input)` — any inbound that lands while
- *      state === `processingState`. Sends a polite hold message ("稍等一下
- *      还在读") so the user knows we're not ignoring them. Crucially does
+ *      state === `processingState`. Sends a polite hold message ("hold on,
+ *      still reading") so the user knows we're not ignoring them. Crucially does
  *      NOT re-fire the ack (Bug A regression — old code sent the
  *      "waiting" prompt twice when the synthetic [cv-parsed] event raced
  *      with a follow-up user message).
@@ -208,7 +208,7 @@ export abstract class DiscussionPhase {
   /** Kick off async worker (cv-ingest, LinkedIn scrape, etc). Fire-and-forget. */
   protected abstract kickoffAsyncWork(input: PhaseInput): Promise<void>
 
-  /** Send the hold message when user pings during processing ("稍等"). */
+  /** Send the hold message when user pings during processing ("hold on"). */
   protected abstract sendHoldMessage(input: PhaseInput): Promise<void>
 
   /** Send error recovery message on worker failure ("couldn't read, resend?"). */

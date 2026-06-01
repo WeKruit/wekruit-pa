@@ -5,7 +5,7 @@
  *   1. Resolve arm (sticky from userId or explicit `ctx.arm` override)
  *   2. Probability draw vs `firingRateForArm(arm)` — if miss, return original
  *   3. Auto-detect lang if not provided (CJK char ratio)
- *   4. Walk POLICIES_{ZH|EN} in TYPE-PRIORITY order; first whose
+ *   4. Walk POLICIES_EN in TYPE-PRIORITY order; first whose
  *      probability draw passes AND position-constraint succeeds wins
  *   5. Apply `injectAtTurnOnset` with anti-stutter check against
  *      ALL policy markers (intra-bank stutter prevention)
@@ -26,7 +26,6 @@ import {
   resolveArm,
 } from "./arm-router.js"
 import { POLICIES_EN } from "./policies-en.js"
-import { POLICIES_ZH } from "./policies-zh.js"
 import {
   injectAtTurnOnset,
   startsWithAnyMarker,
@@ -66,38 +65,27 @@ export function detectLang(text: string): "zh" | "en" {
  * Phase 53 + Adam 2026-05-03 01:22 spec — 3-class user-input lang detection.
  *
  * `detectLang` (cjk-vs-ascii majority) misclassifies bilingual user inputs
- * like "swe的" or "yoe1年的" as "en". Phase 53 corrected this with a
- * zh-biased "any CJK → zh" rule, but Adam iMessage 01:22 repro proved that
- * binary classification still over-locks: a user writing "你觉得我能去
- * Nvidia 吗?" or "swe行业" should get a reply that *mirrors* the mixed
- * register (zh frame + en token preserved), not a hard zh translate that
- * scrubs the English token.
+ * (an ASCII role token followed by a CJK suffix) as "en". Phase 53 corrected
+ * this with a zh-biased "any CJK -> zh" rule, but binary classification still
+ * over-locks: a code-switched user input should be classified "mixed" so the
+ * reply mirrors the mixed register, not a hard translate.
  *
  * Three classes:
  *   - "zh"    — pure-zh: ≥1 CJK char AND zero ASCII letter words
  *   - "en"    — pure-en: zero CJK chars AND ≥1 ASCII letter word
  *   - "mixed" — code-switched: ≥1 CJK char AND ≥1 ASCII letter word.
  *               The reply MUST mirror — no langLock translate, let the model
- *               choose the natural balance of zh frame + en tokens.
+ *               choose the natural balance of frame + en tokens.
  *
  * Counting:
  *   - CJK char: any code point in U+4E00..U+9FFF, U+3400..U+4DBF, or
  *     U+3000..U+303F (CJK punctuation block — matches detectLang).
  *   - ASCII word: a maximal run of [A-Za-z]+ counts as ONE word
- *     ("Nvidia" = 1, "swe行业" = 1 ASCII word + 2 CJK chars = mixed).
+ *     ("Nvidia" = 1; an ASCII token + CJK suffix = 1 ASCII word + CJK = mixed).
  *
  * Empty / non-string → "en" (defensive default; matches detectLang).
  * Punctuation-only ASCII (no letters) → "en" (no signal).
- * CJK-punctuation-only (e.g. "。") → "zh" (matches detectLang behavior).
- *
- * Examples:
- *   "我想找工作"             → "zh"    (≥1 CJK, 0 ASCII words)
- *   "I want a job"           → "en"    (0 CJK, 4 ASCII words)
- *   "swe的"                  → "mixed" (1 ASCII word + 1 CJK char)
- *   "yoe1年的"               → "mixed" (1 ASCII word + 2 CJK chars)
- *   "你觉得我能去 Nvidia 吗?" → "mixed" (1 ASCII word + many CJK)
- *   "swe行业"                → "mixed" (1 ASCII word + 2 CJK)
- *   "算了我还是想做cs"        → "mixed" (1 ASCII word + many CJK)
+ * CJK-punctuation-only → "zh" (matches detectLang behavior).
  *
  * USE THIS for USER-INPUT lang detection (langLock decisions). For REPLY
  * lang detection, keep using `detectLang` (faithful majority).
@@ -183,11 +171,10 @@ function chooseAndInject(
   prevAssistantReply: string | undefined
 ): { policy: Policy; injected: string } | null {
   // Anti-stutter (cross-turn): if prev turn STARTS with any of our policy
-  // markers (either lang bank), refuse injection this turn to avoid
-  // `嗯… 嗯…` / `hmm, hmm,` cadence compounding into a tic.
+  // markers, refuse injection this turn to avoid `hmm, hmm,` cadence
+  // compounding into a tic.
   if (prevAssistantReply) {
-    const allBoth = [...allMarkers(POLICIES_ZH), ...allMarkers(POLICIES_EN)]
-    if (startsWithAnyMarker(prevAssistantReply, allBoth)) {
+    if (startsWithAnyMarker(prevAssistantReply, allMarkers(POLICIES_EN))) {
       return null
     }
   }
@@ -290,9 +277,10 @@ export function injectImperfection(ctx: InjectorContext): InjectorResult {
     }
   }
 
-  // 5. Lang detection + policy bank selection.
+  // 5. Lang detection retained for telemetry, but the product is
+  // English-only: every turn routes through the English policy bank.
   const lang = ctx.lang ?? detectLang(original)
-  const policies = lang === "zh" ? POLICIES_ZH : POLICIES_EN
+  const policies = POLICIES_EN
 
   // 6. Walk type-priority order, attempt injection.
   const chosen = chooseAndInject(original, policies, rng, ctx.prevAssistantReply)

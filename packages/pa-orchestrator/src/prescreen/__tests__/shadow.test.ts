@@ -51,15 +51,17 @@ test("Phase 81: userIdToCohortBucket is deterministic", () => {
 
 test("Phase 81: normalizeReplyForDiff strips punctuation + lowercases", () => {
   assert.equal(normalizeReplyForDiff("Hello, World!"), "hello world")
-  assert.equal(normalizeReplyForDiff("你好，世界！"), "你好 世界")
+  // wide-script input: full-width punctuation is stripped, characters retained
+  const wide = "\u4F60\u597D\uFF0C\u4E16\u754C\uFF01"
+  assert.equal(normalizeReplyForDiff(wide), "\u4F60\u597D \u4E16\u754C")
 })
 
-test("Phase 81: tokenizeForJaccard splits CJK per-char + non-CJK whitespace-words", () => {
-  const t = tokenizeForJaccard("hello 你好 world")
+test("Phase 81: tokenizeForJaccard splits wide-script per-char + ascii whitespace-words", () => {
+  const t = tokenizeForJaccard("hello \u4F60\u597D world")
   assert.ok(t.has("hello"))
   assert.ok(t.has("world"))
-  assert.ok(t.has("你"))
-  assert.ok(t.has("好"))
+  assert.ok(t.has("\u4F60"))
+  assert.ok(t.has("\u597D"))
 })
 
 // ════════════════════════════════════════════════════════════════════════════

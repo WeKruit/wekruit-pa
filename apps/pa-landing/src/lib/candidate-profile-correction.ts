@@ -67,6 +67,11 @@ export interface CandidateSelfProfile {
     targetLocations?: string[]
     targetJobType?: string[]
     relevantTags?: string[]
+    careerStage?: string
+    careerStageRange?: [string, string]
+    companySizePreference?: string[]
+    companyStage?: string[]
+    minSalaryUsd?: number
   }
 }
 

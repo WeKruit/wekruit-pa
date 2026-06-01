@@ -127,7 +127,9 @@ function makeFakeDb(
 }
 
 // Sendblue client mock
-function makeSendblueMock(opts: { throwError?: Error; uuid?: string } = {}) {
+function makeSendblueMock(
+  opts: { throwError?: Error; uuid?: string; mediaEcho?: string | null } = {}
+) {
   let calls = 0
   const sendCalls: Array<Record<string, unknown>> = []
   const sendImessage = async (input: Record<string, unknown>) => {
@@ -144,6 +146,8 @@ function makeSendblueMock(opts: { throwError?: Error; uuid?: string } = {}) {
       content: "test",
       service: "iMessage" as const,
       is_outbound: true as const,
+      // Sendblue echoes the accepted media URL (null/absent when dropped).
+      ...("mediaEcho" in opts ? { media_url: opts.mediaEcho } : {}),
     }
   }
   const sendTypingIndicator = async () => {
@@ -217,6 +221,66 @@ describe("paSendblueOutboxHandler", () => {
     const finalDoc = outbound.get("doc-1")!
     assert.equal(finalDoc.status, "sent")
     assert.equal(finalDoc.messageHandle, "uuid-mock-1")
+  })
+
+  it("Test 1-media-ok: media row + Sendblue echoes media_url → mediaDropped=false recorded", async () => {
+    const MEDIA = "https://storage.googleapis.com/inbound-file-store/abc_wk-rec.png"
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "one role worth your time",
+      mediaUrl: MEDIA,
+      idempotencyKey: "out-media-ok",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb({ "doc-media-ok": baseRow }, { [USER.id]: USER })
+    const sb = makeSendblueMock({ mediaEcho: MEDIA }) // Sendblue retained the attachment
+    await paSendblueOutboxHandler(makeEvent("doc-media-ok", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date("2026-05-31T20:00:00Z"),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1", userId: USER.id, externalChatId: "x", channel: "imessage" } as never),
+    })
+    // the media_url was forwarded to Sendblue
+    assert.equal(sb.sendCalls[0]!.mediaUrl, MEDIA)
+    const finalDoc = outbound.get("doc-media-ok")!
+    assert.equal(finalDoc.status, "sent")
+    assert.equal(finalDoc.mediaRequestedUrl, MEDIA)
+    assert.equal(finalDoc.mediaEchoUrl, MEDIA)
+    assert.equal(finalDoc.mediaDropped, false)
+  })
+
+  it("Test 1-media-dropped: media row + Sendblue drops attachment (echo null) → mediaDropped=true recorded", async () => {
+    const MEDIA = "https://firebasestorage.googleapis.com/v0/b/x/o/rec.png?alt=media&token=deadbeef"
+    const baseRow: DocData = {
+      status: "pending",
+      userId: USER.id,
+      toE164: ALLOWED_PEER,
+      body: "one role worth your time",
+      mediaUrl: MEDIA,
+      idempotencyKey: "out-media-drop",
+      createdAt: new Date().toISOString(),
+    }
+    const { db, outbound } = makeFakeDb({ "doc-media-drop": baseRow }, { [USER.id]: USER })
+    const sb = makeSendblueMock({ mediaEcho: null }) // Sendblue 2xx'd but dropped the image
+    await paSendblueOutboxHandler(makeEvent("doc-media-drop", baseRow) as never, {
+      db: db as never,
+      sendblueClient: sb,
+      now: () => new Date("2026-05-31T20:00:00Z"),
+      log: () => {},
+      appendMessage: async () => {},
+      getUser: async () => USER as never,
+      getOrCreateSession: async () => ({ id: "s-1", userId: USER.id, externalChatId: "x", channel: "imessage" } as never),
+    })
+    const finalDoc = outbound.get("doc-media-drop")!
+    assert.equal(finalDoc.status, "sent")
+    assert.equal(finalDoc.mediaRequestedUrl, MEDIA)
+    assert.equal(finalDoc.mediaEchoUrl, null)
+    assert.equal(finalDoc.mediaDropped, true, "a dropped attachment MUST be detectable on the row")
   })
 
   it("Test 1a: user senderNumber is passed as explicit Sendblue fromNumber", async () => {

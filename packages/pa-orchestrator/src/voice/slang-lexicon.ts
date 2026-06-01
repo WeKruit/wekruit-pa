@@ -17,22 +17,12 @@
  * 17-RESEARCH-raw-artifacts.md. Do NOT re-author from scratch.
  */
 
-/** zh terms — 求职 + 海外华人 register. ≤ 10 entries per VOICE-07 cap. */
-export const ZH_SLANG: readonly string[] = Object.freeze([
-  "emo了",
-  "破防",
-  "听劝",
-  "i人",
-  "e人",
-  "测评",
-  "躺平",
-  "卷",
-  "显眼包",
-  "遥遥领先",
-  "yyds",
-  "芭比Q",
-  "芭比q",
-])
+/**
+ * Legacy zh slang bank. The product is English-only, so the Chinese register
+ * entries were removed. The export is retained (empty) for back-compat with
+ * importers that still reference it.
+ */
+export const ZH_SLANG: readonly string[] = Object.freeze([])
 
 /** en terms — Gen-Z + corporate-millennial sass. ≤ 7 entries per VOICE-07 cap. */
 export const EN_SLANG: readonly string[] = Object.freeze([
@@ -49,14 +39,14 @@ export const EN_SLANG: readonly string[] = Object.freeze([
 
 /**
  * Count case-insensitive lexicon matches in a single text blob.
- * - zh terms are matched literally (no case fold; CJK has no case).
  * - en terms are matched word-bounded and case-insensitive.
  * - "fr fr" is matched before "fr" so the bigram doesn't double-count.
+ * - The legacy zh bank is empty (English-only), so its loop is a no-op.
  */
 export function countSlangHits(text: string): number {
   if (!text) return 0
   let hits = 0
-  // zh: literal substring count (CJK; case-insensitivity is moot).
+  // Legacy zh bank is empty (English-only) — this loop is a no-op.
   for (const term of ZH_SLANG) {
     let i = 0
     while ((i = text.indexOf(term, i)) !== -1) {

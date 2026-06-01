@@ -34,6 +34,7 @@ import {
 import { queryMatchingJobsV16 } from "./tools/query-matching-jobs-v16.js"
 import { sendImessage } from "./tools/send-imessage.js"
 import { recordRecommendedJobs } from "./recommendation-state.js"
+import { buildRichMatchReason } from "./match-reason.js"
 import {
   buildJobCandidateText,
   buildRerankQuery,
@@ -1172,6 +1173,10 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       //     path serves so a transient blip never zeroes out a user.
       let v16Jobs: MatchingJob[] | null = null
       let v16AuthoritativeEmpty = false
+      // Captured for the rich match-reason builder at the recording site — V16
+      // already loaded + returned the user's canonical tag snapshot, so we reuse
+      // it instead of a second pa-users read.
+      let v16UserTags: Record<string, unknown> | undefined
       try {
         const v16Result = await queryMatchingJobsV16(
           {
@@ -1192,6 +1197,9 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
         )
         if (!v16Result.noUserTags && v16Result.jobs && v16Result.jobs.length > 0) {
           v16Jobs = v16Result.jobs as MatchingJob[]
+          if (v16Result.userTags && typeof v16Result.userTags === "object") {
+            v16UserTags = v16Result.userTags as Record<string, unknown>
+          }
           log("[job-rec-daily] v16_cascade_applied", {
             userId,
             jobs: v16Jobs.length,
@@ -2023,11 +2031,45 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
 
       if (sendRes.ok) {
         delivered += 1
+        // Attach a rich, grounded "why matched" pitch per job so the
+        // /me/matches API reads the GOOD reason instead of recomputing weak
+        // templates. Deterministic (no LLM cost in the cron); reuses the V16
+        // matched-skills + score breakdown + the captured user-tag snapshot.
+        // Falls back to the job's V16 `.reason` when tags are unavailable.
+        const jobsWithReason = rankedJobs.map((job) => {
+          const withV16 = job as MatchingJob & {
+            reason?: string
+            matchedSkills?: Array<{ name?: string; proficiency?: string }>
+            v16Score?: Record<string, unknown>
+          }
+          let matchReason: string | undefined
+          if (v16UserTags) {
+            try {
+              matchReason = buildRichMatchReason({
+                candidate: v16UserTags,
+                job: job as unknown as Record<string, unknown>,
+                matchedSkills: withV16.matchedSkills ?? [],
+                breakdown: withV16.v16Score,
+                lang: "en",
+              })
+            } catch {
+              matchReason = undefined
+            }
+          }
+          return {
+            ...job,
+            ...(matchReason
+              ? { matchReason }
+              : withV16.reason
+                ? { matchReason: withV16.reason }
+                : {}),
+          }
+        })
         await recordRecommendedJobs(
           deps.db,
           {
             userId,
-            jobs: rankedJobs,
+            jobs: jobsWithReason,
             source: "job_rec_daily_batch",
             nowIso: new Date().toISOString(),
           },

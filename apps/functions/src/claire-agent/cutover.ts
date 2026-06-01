@@ -15,6 +15,7 @@ import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { isThinClaireEnabled } from "./flags.js"
 import { createSendblueTransport } from "./transport.js"
+import { selectClaireMode } from "./mode-selector.js"
 import type { ClaireLang } from "./types.js"
 // NOTE: agent.js + tools/matching-tools.js are NOT imported statically — they pull
 // the @pa/agent-runtime/zod@4 SDK, which crashes the deployed container at boot.
@@ -71,18 +72,63 @@ export async function maybeRunThinClaire(
     typeof rawMeta.messageHandle === "string" ? rawMeta.messageHandle : undefined
   const lang: ClaireLang = data.lang === "zh" ? "zh" : "en"
 
+  // Deterministic mode pick from durable state (onboarding/prescreen/triage). An active
+  // prescreen DEFERS this turn to the proven legacy runner (return false → legacy handles it).
+  // Fail-safe: selectClaireMode never throws — any read error degrades to triage.
+  const decision = await selectClaireMode({ db, userId, inboundText: text, log })
+  if (decision.deferToLegacy) {
+    log("thin_claire_defer_legacy", { eventId, userId, mode: decision.mode, jobId: decision.jobId })
+    return false
+  }
+
   try {
     // Heavy agent + tools (and their @pa/agent-runtime/zod@4 SDK) load lazily here —
     // only after the flag gate passed — so they stay out of the boot graph. Any
     // load/resolve failure is caught below → falls through to the legacy path.
     const { runClaireTurn } = await import("./agent.js")
     const { makeV16FindMatch } = await import("./tools/matching-tools.js")
+    // Rec-card render→host→send side-channel deps (flag-gated, fail-open).
+    // Built ONLY when PA_JOB_REC_CARD_ENABLED is on AND we are NOT in dryRun
+    // (evals must not touch real Storage). makeV16FindMatch no-ops without these
+    // deps, and maybeSendRecCard re-checks the flag internally — so on any
+    // init failure we fall through to text-only recs, never blocking delivery.
+    let cardDeps: import("./tools/matching-tools.js").V16FindMatchCardDeps | undefined
+    if (!deps.dryRun && toE164) {
+      try {
+        const { isJobRecCardEnabled } = await import("../job-rec-card/job-rec-card.js")
+        if (isJobRecCardEnabled()) {
+          const resolvedPhone = String(toE164)
+          // CACHED-IMAGE model: the runtime reads matching-jobs.recCardMediaUrl
+          // (no render/upload). Sendblue media creds are passed ONLY for the
+          // lazy-gen fallback (a job with no cached card yet); absent → cache-read
+          // only, fail-open to text. Creds are in process.env during onPaInbound.
+          const apiKeyId = process.env.SENDBLUE_API_KEY_ID?.trim()
+          const apiSecretKey = process.env.SENDBLUE_API_SECRET_KEY?.trim()
+          cardDeps = {
+            getPhoneE164: async () => resolvedPhone,
+            ...(apiKeyId && apiSecretKey ? { sendblueCreds: { apiKeyId, apiSecretKey } } : {}),
+            log,
+          }
+        }
+      } catch (cardErr) {
+        // Non-fatal — fall through to text-only recs.
+        log("rec_card.deps_init_failed", {
+          error: cardErr instanceof Error ? cardErr.message : String(cardErr),
+        })
+      }
+    }
+
     const transport = createSendblueTransport({
       db,
       toE164: String(toE164),
       inboundMessageHandle,
       userId,
       sessionId,
+      // UNIQUE per inbound → outbound idempotency keys on the event, not just sessionId+body.
+      // Without this the kickoff/onboarding question (deterministic body + stable sessionId)
+      // re-keys identically across turns and ALREADY_EXISTS against an earlier `sent` row →
+      // the reply is silently dropped (2026-05-29 dev-phone silent-kickoff).
+      inboundEventId: eventId,
       log,
       ...(deps.dryRun ? { dryRun: true } : {}),
     })
@@ -96,7 +142,27 @@ export async function maybeRunThinClaire(
         inboundEventId: eventId,
         lang,
       },
-      { db, transport, findMatch: makeV16FindMatch(db), log },
+      {
+        db,
+        transport,
+        // 3rd arg = rec-card deps (undefined unless the flag is on + not dryRun).
+        findMatch: makeV16FindMatch(db, undefined, cardDeps),
+        log,
+        mode: decision.mode,
+        ...(decision.pendingStep ? { pendingStep: decision.pendingStep } : {}),
+        ...(decision.currentStep ? { currentStep: decision.currentStep } : {}),
+        ...(decision.processStore ? { processStore: decision.processStore } : {}),
+        ...(decision.onboardingSlot ? { onboardingSlot: decision.onboardingSlot } : {}),
+        ...(decision.awaitingAnswer !== undefined ? { awaitingAnswer: decision.awaitingAnswer } : {}),
+        // prescreen-on-thin: DIRECTION prompts + judge rubric + résumé/prior-session context + the
+        // REAL prescreen sessionId (score write-back + terminal fire) + jobId (ctx.jobId for the turn).
+        ...(decision.jobId ? { jobId: decision.jobId } : {}),
+        ...(decision.prescreenPrompts ? { prescreenPrompts: decision.prescreenPrompts } : {}),
+        ...(decision.judgeContext ? { judgeContext: decision.judgeContext } : {}),
+        ...(decision.prescreenContext ? { prescreenContext: decision.prescreenContext } : {}),
+        ...(decision.prescreenResumeSnippet ? { prescreenResumeSnippet: decision.prescreenResumeSnippet } : {}),
+        ...(decision.prescreenSessionId ? { prescreenSessionId: decision.prescreenSessionId } : {}),
+      },
     )
     await db
       .collection(PA_COLLECTIONS.inboundEvents)

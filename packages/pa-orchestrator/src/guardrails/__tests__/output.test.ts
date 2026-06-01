@@ -44,7 +44,7 @@ test("OG-1 lengthCap — caps overlong input", async () => {
 
 test("OG-2 abStrip — strips trailing X-or-Y probe", async () => {
   const ctx = createMockContext()
-  const input = "嗯, 你想刷题还是面试?"
+  const input = "yeah — do you want to grind leetcode or do interviews?"
   const out = await abStripGuardrail.execute({
     agentOutput: input,
     userInput: "",
@@ -59,7 +59,7 @@ test("OG-2 abStrip — strips trailing X-or-Y probe", async () => {
 test("OG-2 abStrip — non-AB text is no-op", async () => {
   const ctx = createMockContext()
   const out = await abStripGuardrail.execute({
-    agentOutput: "我懂了",
+    agentOutput: "got it",
     userInput: "",
     ctx,
   })
@@ -67,128 +67,15 @@ test("OG-2 abStrip — non-AB text is no-op", async () => {
   assert.equal(ctx.abStripApplied, false)
 })
 
-test("OG-3 slangEnforcer — 卧 followed by space → 卧槽", async () => {
-  const ctx = createMockContext({ locale: "zh-CN" })
+test("OG-3 slangEnforcer — English-only product: always a no-op", async () => {
+  const ctx = createMockContext()
   const out = await slangEnforcerGuardrail.execute({
-    agentOutput: "卧 这也太离谱",
-    userInput: "",
-    ctx,
-  })
-  assert.equal(out.outputInfo.transformedOutput, "卧槽 这也太离谱")
-})
-
-test("OG-3 slangEnforcer — 卧床 stays unchanged", async () => {
-  const ctx = createMockContext({ locale: "zh-CN" })
-  const out = await slangEnforcerGuardrail.execute({
-    agentOutput: "他卧床休息",
+    agentOutput: "no problem, I'll take a look.",
     userInput: "",
     ctx,
   })
   assert.equal(out.outputInfo.transformedOutput, undefined)
-})
-
-test("OG-3 slangEnforcer — 卧槽 already-full-form is no-op", async () => {
-  const ctx = createMockContext({ locale: "zh-CN" })
-  const out = await slangEnforcerGuardrail.execute({
-    agentOutput: "卧槽 离谱",
-    userInput: "",
-    ctx,
-  })
-  assert.equal(out.outputInfo.transformedOutput, undefined)
-})
-
-test("OG-3 slangEnforcer — en-US locale skips", async () => {
-  const ctx = createMockContext({ locale: "en-US" })
-  const out = await slangEnforcerGuardrail.execute({
-    agentOutput: "卧 weird",
-    userInput: "",
-    ctx,
-  })
-  assert.equal(out.outputInfo.skipped, "en_locale")
-})
-
-// iter30 Wave 3 — Bible v7 banlist expansion (友好 / 没问题).
-
-test("OG-3 slangEnforcer — 太友好了 corporate-praise frame is dropped", async () => {
-  const ctx = createMockContext({ locale: "zh-CN" })
-  const out = await slangEnforcerGuardrail.execute({
-    agentOutput: "你真是太友好了, 谢谢。",
-    userInput: "",
-    ctx,
-  })
-  const text = out.outputInfo.transformedOutput as string
-  assert.ok(typeof text === "string", "should transform")
-  assert.ok(!text.includes("太友好了"), "praise-frame stripped")
-  // Must not break grammar by leaving "你真是太了"
-  assert.ok(!text.includes("太了"))
-})
-
-test("OG-3 slangEnforcer — bare 没问题 reply → friend-tone 嗯，行", async () => {
-  const ctx = createMockContext({ locale: "zh-CN" })
-  const out = await slangEnforcerGuardrail.execute({
-    agentOutput: "没问题",
-    userInput: "",
-    ctx,
-  })
-  assert.equal(out.outputInfo.transformedOutput, "嗯，行")
-})
-
-test("OG-3 slangEnforcer — bare 没问题。 with period → friend-tone", async () => {
-  const ctx = createMockContext({ locale: "zh-CN" })
-  const out = await slangEnforcerGuardrail.execute({
-    agentOutput: "没问题。",
-    userInput: "",
-    ctx,
-  })
-  assert.equal(out.outputInfo.transformedOutput, "嗯，行")
-})
-
-test("OG-3 slangEnforcer — sentence-head 没问题 → 好", async () => {
-  const ctx = createMockContext({ locale: "zh-CN" })
-  const out = await slangEnforcerGuardrail.execute({
-    agentOutput: "没问题, 我帮你看。",
-    userInput: "",
-    ctx,
-  })
-  const text = out.outputInfo.transformedOutput as string
-  assert.ok(typeof text === "string", "should transform")
-  assert.ok(!text.includes("没问题"))
-  assert.ok(text.startsWith("好"))
-})
-
-test("OG-3 slangEnforcer — mid-sentence 没问题 stripped", async () => {
-  const ctx = createMockContext({ locale: "zh-CN" })
-  const out = await slangEnforcerGuardrail.execute({
-    agentOutput: "嗯, 我看完简历没问题就给你回复",
-    userInput: "",
-    ctx,
-  })
-  const text = out.outputInfo.transformedOutput as string
-  assert.ok(typeof text === "string", "should transform")
-  assert.ok(!text.includes("没问题"))
-})
-
-test("OG-3 slangEnforcer — 很友好 stripped without breaking sentence", async () => {
-  const ctx = createMockContext({ locale: "zh-CN" })
-  const out = await slangEnforcerGuardrail.execute({
-    agentOutput: "他很友好, 你可以问他。",
-    userInput: "",
-    ctx,
-  })
-  const text = out.outputInfo.transformedOutput as string
-  assert.ok(typeof text === "string", "should transform")
-  assert.ok(!text.includes("友好"))
-})
-
-test("OG-3 slangEnforcer — neutral 友好 alone is left intact (conservative)", async () => {
-  const ctx = createMockContext({ locale: "zh-CN" })
-  // No intensifier prefix → no strip (conservative; might be a noun reference).
-  const out = await slangEnforcerGuardrail.execute({
-    agentOutput: "中美友好关系。",
-    userInput: "",
-    ctx,
-  })
-  assert.equal(out.outputInfo.transformedOutput, undefined)
+  assert.equal(out.tripwireTriggered, false)
 })
 
 test("OG-5 crisisTrailer — appends when crisisTripped + flag on", async () => {
@@ -253,17 +140,16 @@ test("OG-7 outputNormalizer — strips markdown emphasis", async () => {
 })
 
 test("Output chain — full ordering applies AB-strip then slang-enforcer", async () => {
-  const ctx = createMockContext({ locale: "zh-CN" })
+  const ctx = createMockContext()
   const result = await runOutputChain({
     guardrails: OUTPUT_GUARDRAIL_CHAIN,
-    agentOutput: "卧 这真离谱, 你想刷题还是面试?",
-    userInput: "我不知道下一步",
+    agentOutput: "that's wild — do you want to grind leetcode or do interviews?",
+    userInput: "I don't know my next step",
     ctx,
   })
-  // After chain: AB-strip drops the trailing X-or-Y, then slang-enforcer
-  // converts 卧→卧槽. Normalizer runs last (idempotent).
-  assert.ok(result.text.includes("卧槽"))
-  assert.ok(!result.text.includes("还是"))
+  // After chain: AB-strip drops the trailing X-or-Y probe; slang-enforcer is
+  // a no-op (English-only). Normalizer runs last (idempotent).
+  assert.ok(!result.text.includes(" or do interviews"))
   assert.equal(result.transformed, true)
   // Audit trail records all 7 guardrails
   assert.equal(ctx.guardrailHits.length, 7)

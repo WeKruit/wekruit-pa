@@ -6,8 +6,8 @@
  *
  * Why
  * ---
- * Adam directive 2026-05-27: "我们能加一个routine吗，来给claude routine跑，
- * 这样每天跑完我们可以自己检查". The existing health CF
+ * Adam directive 2026-05-27: add a routine Claude can run so we can self-check
+ * the scrape output every day after it finishes. The existing health CF
  * (`paScrapeFreshnessStatusPublic`) only answers "did the pipeline run".
  * It does NOT tell us whether the jobs that landed are real. This CF is
  * the second layer: counters per source + a small random sample of

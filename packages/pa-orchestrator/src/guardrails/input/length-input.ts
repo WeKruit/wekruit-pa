@@ -11,7 +11,7 @@ import { recordGuardrailHit } from "../types.js"
 export const INPUT_LENGTH_CAP = 4000
 
 const CANNED = {
-  zh: "消息太长了，分段发我哈。",
+  zh: "that's too long for one message — please split it up.",
   en: "that's too long for one message — please split it up.",
 }
 

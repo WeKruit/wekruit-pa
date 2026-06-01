@@ -124,7 +124,7 @@ test("guided-open: LLM unclear surfaces clarifyingQuestion", async () => {
     parseValue: (v) => (typeof v === "string" ? v : null),
     llmCallFactory: () => stub.fn,
   })
-  const result = await judge.judge("看机会吧", "en", makeCtx())
+  const result = await judge.judge("open to options", "en", makeCtx())
   assert.equal(result.accept, false)
   if (!result.accept) {
     assert.equal(result.reason, "unclear")

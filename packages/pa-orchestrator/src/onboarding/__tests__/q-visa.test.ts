@@ -1,7 +1,7 @@
 /**
  * Layer 1 unit tests — q_visa (V2 GuidedOpenJudge; D4 collapse verified).
  *
- * Per CLAUDE.md D4: OPT / CPT / H1B / "需要 sponsor" → "sponsorship_needed".
+ * Per CLAUDE.md D4: OPT / CPT / H1B / "need sponsor" → "sponsorship_needed".
  * Bloom regex handles the canonical one-words; LLM stub fills typo / multi
  * / nuanced phrases.
  *
@@ -22,13 +22,13 @@ function ctx(): JudgeCtx {
 const VISA_HINTS = ["citizen", "permanent_resident", "sponsorship_needed", "other"] as const
 
 const VISA_BLOOM = [
-  { pattern: /^\s*(citizen|us citizen|公民|美国公民)\s*$/i, value: "citizen" as VisaAnswer },
+  { pattern: /^\s*(citizen|us citizen)\s*$/i, value: "citizen" as VisaAnswer },
   {
-    pattern: /^\s*(gc|green card|permanent resident|绿卡|永久居民)\s*$/i,
+    pattern: /^\s*(gc|green card|permanent resident)\s*$/i,
     value: "permanent_resident" as VisaAnswer,
   },
   {
-    pattern: /^\s*(opt|cpt|h1b|h-1b|need sponsor|need sponsorship|需要 sponsor|需要赞助|需要签证)\s*$/i,
+    pattern: /^\s*(opt|cpt|h1b|h-1b|need sponsor|need sponsorship)\s*$/i,
     value: "sponsorship_needed" as VisaAnswer,
   },
 ]
@@ -82,9 +82,9 @@ test("q-visa: 'citizen' → bloom hit citizen", async () => {
   assert.equal(calls(), 0)
 })
 
-test("q-visa: '公民' → bloom hit citizen", async () => {
+test("q-visa: 'citizen' → bloom hit citizen", async () => {
   const { J, calls } = makeJudge("")
-  const r = await J.judge("公民", "zh", ctx())
+  const r = await J.judge("citizen", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.equal(r.value, "citizen")
   assert.equal(calls(), 0)
@@ -97,9 +97,9 @@ test("q-visa: 'GC' → bloom hit permanent_resident", async () => {
   if (r.accept) assert.equal(r.value, "permanent_resident")
 })
 
-test("q-visa: '绿卡' → bloom hit permanent_resident", async () => {
+test("q-visa: 'green card' → bloom hit permanent_resident", async () => {
   const { J } = makeJudge("")
-  const r = await J.judge("绿卡", "zh", ctx())
+  const r = await J.judge("green card", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.equal(r.value, "permanent_resident")
 })
@@ -139,9 +139,9 @@ test("q-visa: D4 — 'need sponsorship' → bloom sponsorship_needed", async () 
   if (r.accept) assert.equal(r.value, "sponsorship_needed")
 })
 
-test("q-visa: D4 — '需要 sponsor' → bloom sponsorship_needed", async () => {
+test("q-visa: D4 — 'need sponsor' → bloom sponsorship_needed", async () => {
   const { J } = makeJudge("")
-  const r = await J.judge("需要 sponsor", "zh", ctx())
+  const r = await J.judge("need sponsor", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.equal(r.value, "sponsorship_needed")
 })
@@ -173,11 +173,11 @@ test("q-visa: 'declined to share' (LLM path) → declined", async () => {
   if (!r.accept) assert.equal(r.reason, "declined")
 })
 
-test("q-visa: '其他特殊情况' (LLM path) → other", async () => {
+test("q-visa: 'special status' (LLM path) → other", async () => {
   const { J } = makeJudge(
     JSON.stringify({ intent: "provided", value: "other", confidence: 0.85 })
   )
-  const r = await J.judge("我有特殊身份", "zh", ctx())
+  const r = await J.judge("i have a special status", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.equal(r.value, "other")
 })

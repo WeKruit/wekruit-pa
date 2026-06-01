@@ -122,12 +122,12 @@ describe("ResumeDiscussionPhase — onArtifactReceived", () => {
     assert.equal(tracker.kickoffCalls, 1, "cv-ingest kicked off once")
   })
 
-  it("zh language sends Chinese ack", async () => {
+  it("zh language still sends English ack (product is English-only)", async () => {
     const tracker = makeDeps()
     const phase = new ResumeDiscussionPhase(tracker.deps)
     await phase.onArtifactReceived(makeInput({ lang: "zh" }))
     assert.equal(tracker.sends.length, 1)
-    assert.match(tracker.sends[0]!.text, /读一下你的简历/, "zh ack")
+    assert.match(tracker.sends[0]!.text, /reading through your resume/i, "english ack")
   })
 })
 
@@ -156,13 +156,13 @@ describe("ResumeDiscussionPhase — onMessageWhileProcessing (Bug A regression)"
     assert.equal(tracker.states.length, 0, "no state transition during hold")
   })
 
-  it("zh hold message picks a Chinese variant", async () => {
+  it("zh language still picks an English hold variant (product is English-only)", async () => {
     const tracker = makeDeps()
-    // RNG=0 picks index 0 ("稍等一下，还在读简历")
+    // RNG=0 picks index 0 ("hold on, still reading your resume")
     const phase = new ResumeDiscussionPhase(tracker.deps, { rand: () => 0 })
     await phase.onMessageWhileProcessing(makeInput({ lang: "zh" }))
     assert.equal(tracker.sends.length, 1)
-    assert.match(tracker.sends[0]!.text, /稍等|马上|再给我/, "zh hold")
+    assert.match(tracker.sends[0]!.text, /(hold on|almost there|few more seconds)/i, "english hold")
   })
 })
 
@@ -212,7 +212,7 @@ describe("ResumeDiscussionPhase — onWorkComplete (failure)", () => {
     assert.equal(tracker.states.length, 0, "state NOT advanced on failure")
   })
 
-  it("zh language sends Chinese error message", async () => {
+  it("zh language still sends an English error message (product is English-only)", async () => {
     const tracker = makeDeps()
     const phase = new ResumeDiscussionPhase(tracker.deps)
     await phase.onWorkComplete(
@@ -220,7 +220,7 @@ describe("ResumeDiscussionPhase — onWorkComplete (failure)", () => {
       { ok: false, error: "x" }
     )
     assert.equal(tracker.sends.length, 1)
-    assert.match(tracker.sends[0]!.text, /简历读取失败/, "zh error")
+    assert.match(tracker.sends[0]!.text, /couldn't read your resume/i, "english error")
   })
 })
 

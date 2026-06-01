@@ -1,7 +1,7 @@
 /**
  * v1.5 Stream-D — typing-driven coalesce bump test suite.
  *
- * Adam 顶层设计 fix (2026-05-03): Sendblue's `typing_indicator` inbound
+ * Adam top-level-design fix (2026-05-03): Sendblue's `typing_indicator` inbound
  * webhook is wired to the coalesce buffer so natural typing gaps > 8s no
  * longer wave-split a single message thought into multiple replies.
  *

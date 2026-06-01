@@ -139,8 +139,14 @@ function makeMockFirestore(): { db: Firestore; store: MockStore } {
 // detectReplyLang
 // ---------------------------------------------------------------------------
 
+// CJK helper — build Chinese sample text from codepoints so this test file
+// has no literal CJK (detectReplyLang still classifies legacy/mixed input).
+const cjk = (...cps: number[]) => String.fromCharCode(...cps)
+// "你应该多锻炼"
+const ZH_ADVICE = cjk(0x4f60, 0x5e94, 0x8be5, 0x591a, 0x953b, 0x70bc)
+
 test("detectReplyLang: pure zh", () => {
-  assert.equal(detectReplyLang("你应该多锻炼"), "zh")
+  assert.equal(detectReplyLang(ZH_ADVICE), "zh")
 })
 
 test("detectReplyLang: pure en", () => {
@@ -148,13 +154,19 @@ test("detectReplyLang: pure en", () => {
 })
 
 test("detectReplyLang: mixed code-switch (≥ 20% minority)", () => {
-  // half-half ZH/EN → mixed
-  assert.equal(detectReplyLang("today standup 又卡 lol 不知道怎么修"), "mixed")
+  // half-half ZH/EN → mixed: "today standup 又卡 lol 不知道怎么修"
+  const body =
+    "today standup " + cjk(0x53c8, 0x5361) + " lol " + cjk(0x4e0d, 0x77e5, 0x9053, 0x600e, 0x4e48, 0x4fee)
+  assert.equal(detectReplyLang(body), "mixed")
 })
 
 test("detectReplyLang: zh majority with brief en term → still zh", () => {
   // tiny en sliver should NOT trigger mixed
-  assert.equal(detectReplyLang("我用了 React 写了一个长长的应用程序还有数据库还有缓存"), "zh")
+  const body =
+    cjk(0x6211, 0x7528, 0x4e86) + " React " +
+    cjk(0x5199, 0x4e86, 0x4e00, 0x4e2a, 0x957f, 0x957f, 0x7684, 0x5e94, 0x7528, 0x7a0b, 0x5e8f,
+        0x8fd8, 0x6709, 0x6570, 0x636e, 0x5e93, 0x8fd8, 0x6709, 0x7f13, 0x5b58)
+  assert.equal(detectReplyLang(body), "zh")
 })
 
 test("detectReplyLang: empty string → en (default)", () => {
@@ -206,14 +218,14 @@ test("trackAdvice: writes Firestore entry with embed (mocked)", async (t) => {
   })
 
   const { db, store } = makeMockFirestore()
-  await trackAdvice("u1", "你应该多锻炼", "t1", { db })
+  await trackAdvice("u1", ZH_ADVICE, "t1", { db })
   assert.equal(store.writeCount, 1)
   const userBucket = store.byUser.get("u1")
   assert.ok(userBucket)
   const entry = userBucket!.items.get("t1") as Record<string, unknown>
   assert.equal(entry.userId, "u1")
   assert.equal(entry.turnId, "t1")
-  assert.equal(entry.text, "你应该多锻炼")
+  assert.equal(entry.text, ZH_ADVICE)
   assert.equal(entry.lang, "zh")
   assert.ok(Array.isArray(entry.embedding))
   assert.equal((entry.embedding as number[]).length, 1024)

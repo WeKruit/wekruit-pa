@@ -2,12 +2,11 @@
  * iter34 Sprint A.8 — tests for formatCvSummaryForUser.
  *
  * Coverage:
- *   - Full CV (topSkills + experiences) → zh / en / mixed all correct
+ *   - Full CV (topSkills + experiences) → English output correct
  *   - topSkills missing, candidateProfile.skills present → falls back
  *   - skills empty, experiences present → role-only line
  *   - skills present, experiences empty → skills-only line
  *   - completely empty → fallback "info not much" line
- *   - lang=mixed → output contains both ZH and EN characters
  *   - more than 5 topSkills → truncated to 5
  *   - degenerate fields (whitespace-only strings) treated as missing
  */
@@ -27,30 +26,21 @@ const FULL_CV: CvSummaryInput = {
 }
 
 describe("formatCvSummaryForUser — full CV", () => {
-  it("zh — skills + role rendered with vibe phrasing", () => {
-    const out = formatCvSummaryForUser(FULL_CV, "zh")
-    assert.match(out, /Node\.js \/ React \/ Aliyun/)
-    assert.match(out, /在 Tesla 做 SWE/)
-    assert.match(out, /资料证据/)
-    // sanity — we did NOT use candidateProfile.skills (topSkills is preferred)
-    assert.ok(!out.includes("should-not-use-this"))
-  })
-
-  it("en — skills + role rendered as 'title @ company'", () => {
+  it("skills + role rendered as 'title @ company'", () => {
     const out = formatCvSummaryForUser(FULL_CV, "en")
     assert.match(out, /Node\.js \/ React \/ Aliyun/)
     assert.match(out, /SWE @ Tesla/)
     assert.match(out, /profile evidence/)
+    // sanity — we did NOT use candidateProfile.skills (topSkills is preferred)
+    assert.ok(!out.includes("should-not-use-this"))
   })
 
-  it("mixed — both ZH and EN characters present", () => {
-    const out = formatCvSummaryForUser(FULL_CV, "mixed")
-    // ASCII letters present (skills)
-    assert.match(out, /Node\.js/)
-    // CJK character class present
-    assert.match(out, /[一-鿿]/, "expected ZH chars in mixed output")
-    // EN tech terms present
+  it("English-only output regardless of lang param", () => {
+    const out = formatCvSummaryForUser(FULL_CV, "zh")
+    assert.match(out, /Node\.js \/ React \/ Aliyun/)
+    assert.match(out, /SWE @ Tesla/)
     assert.match(out, /profile evidence/)
+    assert.doesNotMatch(out, /[\u4e00-\u9fff]/, "output must be English-only")
   })
 })
 
@@ -65,13 +55,13 @@ describe("formatCvSummaryForUser — fallback paths", () => {
     assert.match(out, /Analyst @ DataCo/)
   })
 
-  it("skills empty + experiences present → role-only line (zh)", () => {
+  it("skills empty + experiences present → role-only line", () => {
     const cv: CvSummaryInput = {
       experiences: [{ company: "Anthropic", title: "PM" }],
     }
-    const out = formatCvSummaryForUser(cv, "zh")
-    assert.match(out, /在 Anthropic 做 PM/)
-    assert.match(out, /资料证据/)
+    const out = formatCvSummaryForUser(cv, "en")
+    assert.match(out, /PM @ Anthropic/)
+    assert.match(out, /profile evidence/)
     // no slash list since no skills
     assert.ok(!out.includes(" / "))
   })
@@ -86,20 +76,16 @@ describe("formatCvSummaryForUser — fallback paths", () => {
     assert.ok(!out.includes("@"))
   })
 
-  it("completely empty CV → zh fallback message", () => {
-    const out = formatCvSummaryForUser({}, "zh")
-    assert.match(out, /信息不多/)
-  })
-
-  it("completely empty CV → en fallback message", () => {
+  it("completely empty CV → fallback message", () => {
     const out = formatCvSummaryForUser({}, "en")
     assert.match(out, /not much in there/)
+    assert.doesNotMatch(out, /[\u4e00-\u9fff]/, "output must be English-only")
   })
 
-  it("completely empty CV → mixed fallback (both ZH + EN)", () => {
+  it("completely empty CV → fallback message (English-only regardless of lang)", () => {
     const out = formatCvSummaryForUser({}, "mixed")
-    assert.match(out, /[一-鿿]/)
-    assert.match(out, /CV/)
+    assert.match(out, /not much in there/)
+    assert.doesNotMatch(out, /[\u4e00-\u9fff]/, "output must be English-only")
   })
 
   it("topSkills with whitespace-only entries → ignored", () => {
@@ -141,14 +127,14 @@ describe("formatCvSummaryForUser — caps + edge cases", () => {
     assert.ok(!out.match(/@ /))
   })
 
-  it("experiences[0] with only company → 'at company' style", () => {
+  it("experiences[0] with only company → '@ company' style", () => {
     const cv: CvSummaryInput = {
       topSkills: ["Python"],
       experiences: [{ company: "OpenAI" }],
     }
-    const out = formatCvSummaryForUser(cv, "zh")
+    const out = formatCvSummaryForUser(cv, "en")
     assert.match(out, /Python/)
-    assert.match(out, /在 OpenAI/)
+    assert.match(out, /@ OpenAI/)
   })
 
   it("experiences[0] entirely empty (no title, no company) → drops role", () => {

@@ -10,6 +10,16 @@ export type EnqueueOutboundInput = {
   fromNumber?: string
   imessageChatId?: string
   body: string
+  /**
+   * Optional image attachment URL. When present the Sendblue outbox sends the
+   * row as an iMessage image attachment (rec-card path) with `body` as the
+   * caption. Omitted → text-only send, unchanged.
+   */
+  mediaUrl?: string
+  /** Multi-bubble ordering: 0-based position of this bubble within the turn (see OutboundMessageSchema). */
+  seq?: number
+  /** Emit side already paced this bubble (typing+delay) → outbox skips its length-based dwell. */
+  paced?: boolean
   idempotencyKey: string
   runtimeApproved?: true
   runtimeSource?: string
@@ -56,6 +66,9 @@ export async function enqueueOutbound(
     ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}),
     ...(input.imessageChatId ? { imessageChatId: input.imessageChatId } : {}),
     body: input.body,
+    ...(input.mediaUrl ? { mediaUrl: input.mediaUrl } : {}),
+    ...(typeof input.seq === "number" ? { seq: input.seq } : {}),
+    ...(input.paced ? { paced: true } : {}),
     status: "pending",
     createdAt: now,
     idempotencyKey: input.idempotencyKey,

@@ -11,7 +11,7 @@
  *   active_turn          — PreScreenPipeline.runTurn produced clarify/advance/terminal
  *   session_expired      — terminal=null but stale > ACTIVE_PRESCREEN_TIMEOUT_MS
  *   recent_terminal      — recent ended session within RECENT_TERMINAL_PRESCREEN_GUARD_MS
- *   user_exit            — candidate said "stop" / "暂停" / etc.
+ *   user_exit            — candidate said "stop" / "pause" / etc.
  *   stale_terminal       — sessionId known but already terminal (race or replay)
  *
  * Each outcome is deterministic over inputs. LLM only inside the active_turn
@@ -116,7 +116,7 @@ export interface PrescreenRunnerDeps {
 export function isUserExitPrescreenReply(reply: string): boolean {
   const normalized = reply.trim().toLowerCase()
   if (!normalized) return false
-  return /^(stop|cancel|pause|quit|exit|end|not now|later|nevermind|never mind|退出|停止|暂停|先不|不用了|算了)[.!。！\s]*$/i.test(
+  return /^(stop|cancel|pause|quit|exit|end|not now|later|nevermind|never mind)[.!\s]*$/i.test(
     normalized,
   )
 }
@@ -125,22 +125,16 @@ export function isUserExitPrescreenReply(reply: string): boolean {
 /* Channel-agnostic copy                                                      */
 /* ────────────────────────────────────────────────────────────────────────── */
 
-export function expiredSessionText(lang: Lang): string {
-  return lang === "zh"
-    ? "这次岗位初筛我先暂停了，避免把旧对话和新的经历混在一起。想继续这个岗位的话，从岗位页面重新开始，我会开一个新的 screen。"
-    : "I paused this role screen so I do not mix an old conversation with a new one. If you want to continue this role, reopen it from the job page and I will start a fresh screen."
+export function expiredSessionText(_lang: Lang): string {
+  return "I paused this role screen so I do not mix an old conversation with a new one. If you want to continue this role, reopen it from the job page and I will start a fresh screen."
 }
 
-export function userExitSessionText(lang: Lang): string {
-  return lang === "zh"
-    ? "好的，我先暂停这个岗位 screen。你之后想继续的话，从岗位页面重新开始就行；你已经分享过的经历我会保留在你的全局 profile 里。"
-    : "Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile."
+export function userExitSessionText(_lang: Lang): string {
+  return "Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile."
 }
 
-export function recentTerminalSessionText(lang: Lang): string {
-  return lang === "zh"
-    ? "收到。这次 screen 已经到这里。我也可以继续帮你找更符合期待的岗位，不过需要先更了解你一点。要继续吗？"
-    : "Got it. This role screen is done for now. I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
+export function recentTerminalSessionText(_lang: Lang): string {
+  return "Got it. This role screen is done for now. I can help find jobs that meet your expectations, but I need to understand you a bit better first. Do you want to proceed?"
 }
 
 /* ────────────────────────────────────────────────────────────────────────── */

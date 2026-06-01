@@ -3,7 +3,6 @@ import type { AgentDef, InboundEvent } from "@pa/core-types"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { getFlag } from "@pa/pa-persistence"
 import type { ConnectorName } from "@pa/pa-connectors"
-import { detectLang } from "./voice/imperfection-injector/index.js"
 import {
   buildCollabInviteIntent,
   buildCollabInviteTemplate,
@@ -467,7 +466,7 @@ export async function handleCollabInviteReply(
   if (!pending) return false
 
   const intent = detectCollabInviteReplyIntent(event.body)
-  const lang = detectLang(event.body) === "zh" ? "zh" : "en"
+  const lang = "en" as const
 
   if (intent === "ambiguous") {
     const profile = await resolveProfileForUser("friend_prescreen_invite", event.userId)
@@ -476,10 +475,7 @@ export async function handleCollabInviteReply(
       jobTitle: pending.jobTitle,
       company: pending.company,
     })
-    const question =
-      lang === "zh"
-        ? `你是想试一下 ${pending.company} 那个 ${pending.jobTitle} 的快速初筛吗？回「好」或「不用」就行。`
-        : `just to confirm — want the quick ~5min screen for ${pending.jobTitle} @ ${pending.company}? reply yeah or pass`
+    const question = `just to confirm — want the quick ~5min screen for ${pending.jobTitle} @ ${pending.company}? reply yeah or pass`
     const body = `${clarify}\n\n${question}`.slice(0, profile.invariants.lengthCapChars)
     const { text } = await applyTemplateOutboundHumanize({
       body,
@@ -500,10 +496,7 @@ export async function handleCollabInviteReply(
 
   if (intent === "decline") {
     await writeCollabInvitePending(store.db, event.userId, null)
-    const body =
-      lang === "zh"
-        ? "没问题，先记着。以后有更合适的合作岗我再喊你。"
-        : "all good — I'll keep you in mind if another partner role looks like a fit"
+    const body = "all good — I'll keep you in mind if another partner role looks like a fit"
     await sendCollabInviteReply(store, event, turnId, body)
     await store.updateTurn(turnId, {
       status: "succeeded",
@@ -518,10 +511,7 @@ export async function handleCollabInviteReply(
   // accept
   await writeCollabInvitePending(store.db, event.userId, null)
   if (!store.startPrescreenForJob) {
-    const body =
-      lang === "zh"
-        ? "收到！我这边稍后会发第一题 — 如果一分钟内没动静你跟我说一声。"
-        : "got it — I'll kick off the quick screen in a sec. ping me if nothing shows up in a minute"
+    const body = "got it — I'll kick off the quick screen in a sec. ping me if nothing shows up in a minute"
     await sendCollabInviteReply(store, event, turnId, body)
     await store.updateTurn(turnId, {
       status: "succeeded",
@@ -541,10 +531,7 @@ export async function handleCollabInviteReply(
   })
 
   if (!started.ok) {
-    const body =
-      lang === "zh"
-        ? "我这边拉不起那个初筛流程，稍等我查一下再回你。"
-        : "hmm I couldn't start that screen right now — give me a sec to fix it"
+    const body = "hmm I couldn't start that screen right now — give me a sec to fix it"
     await sendCollabInviteReply(store, event, turnId, body)
     await store.updateTurn(turnId, {
       status: "failed",

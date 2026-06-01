@@ -3,8 +3,8 @@
  * mode.
  *
  * Adam directive 2026-05-07 (GOAL-onboarding-refactor.md L2):
- *   "regex 必须是 bloom filter only — 击中跳 LLM 省钱，没击中绝不卡。
- *    LLM is primary source of truth."
+ *   "regex must be bloom-filter only — a hit skips the LLM to save cost,
+ *    a miss never blocks. LLM is primary source of truth."
  *
  * Used by every probe Q whose answer space is open-ended but bounded by
  * canonical hints (q_role, q_yoe, q_visa, q_country, q_location,
@@ -232,12 +232,9 @@ function defaultLlmCall(): LlmCallFn {
  */
 function buildSystemPrompt<TAnswer>(
   spec: GuidedOpenJudgeSpec<TAnswer>,
-  lang: Lang
+  _lang: Lang
 ): string {
-  const langDirective =
-    lang === "zh"
-      ? "If the question warrants a clarifying question, ask in Chinese."
-      : "If the question warrants a clarifying question, ask in English."
+  const langDirective = "If the question warrants a clarifying question, ask in English."
   const hintsLine = spec.hints.length
     ? `Canonical answer space (free-form OK, but normalize to these tokens when possible): ${spec.hints
         .map((h) => `"${h}"`)
@@ -285,7 +282,7 @@ function isNoiseReply(reply: string, minChars: number): boolean {
   if (!trimmed) return true
   if (trimmed === "__PA_RESET__") return true
   // Need at least N letter/digit/CJK chars.
-  const meaningful = trimmed.match(/[A-Za-z0-9一-鿿]/g) ?? []
+  const meaningful = trimmed.match(/[A-Za-z0-9]/g) ?? []
   return meaningful.length < minChars
 }
 

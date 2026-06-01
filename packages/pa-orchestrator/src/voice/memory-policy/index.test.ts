@@ -138,7 +138,11 @@ test("runMemoryPolicy: with prior advice, generates injection", async () => {
   assert.match(r.advice.injection, /Already-given advice/)
 })
 
-test("runMemoryPolicy: zh injection note when userLang=zh", async () => {
+// English-only product: even when userLang=zh, the injected MEMORY-POLICY note
+// scaffolding is English. The stored advice text itself may be any language (user input),
+// but the system-generated header "already_given_advice" and note are always English.
+// NOTE_ZH is now "Already-covered advice..." (English back-compat variant).
+test("runMemoryPolicy: zh userLang → English-only injection note (English-only product)", async () => {
   const { db } = makeMockFirestore()
   const { trackAdvice } = await import("./advice-tracker.js")
   await trackAdvice("u_zh", "你应该多休息", "t1", { db })
@@ -151,7 +155,14 @@ test("runMemoryPolicy: zh injection note when userLang=zh", async () => {
     userLang: "zh",
   }
   const r = await runMemoryPolicy(ctx, { db })
-  assert.match(r.advice.injection, /已经给过的建议/)
+  // English scaffolding: header "already_given_advice" + English note variant for zh lang
+  assert.match(r.advice.injection, /already_given_advice/)
+  assert.match(r.advice.injection, /Already-covered advice/)
+  // Must NOT contain Chinese characters in the system-generated scaffolding
+  const lines = r.advice.injection.split("\n").filter((l) => l.startsWith("already_given_advice") || l.startsWith("note:"))
+  for (const line of lines) {
+    assert.ok(!/[一-鿿]/.test(line), `system scaffold line must be English-only: ${line}`)
+  }
 })
 
 test("runMemoryPolicy: graceful degrade — missing all deps", async () => {

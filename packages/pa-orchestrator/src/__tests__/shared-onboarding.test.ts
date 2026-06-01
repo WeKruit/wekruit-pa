@@ -37,16 +37,27 @@ test("job interview opener binds the inbound phone to the candidate id", () => {
   )
 })
 
-test("shared onboarding asks the five conversational questions in launch order", () => {
+test("shared onboarding asks the seven conversational questions in launch order", () => {
   assert.deepEqual(SHARED_ONBOARDING_QUESTIONS.map((q) => q.id), [
     "main_goal",
     "culture_stage",
+    "target_role",
     "industry_interest",
     "location_relocation",
+    "seniority_comp",
     "special_context",
   ])
   assert.match(getSharedOnboardingQuestion("main_goal").prompt, /career growth, compensation, stability, mission, learning/i)
-  assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote, onsite, or relocating/i)
+  // target_role (Adam 2026-05-30): confirm forward role intent (résumé only
+  // seeds targetRoleFunction from history; this asks what they want NEXT).
+  assert.match(getSharedOnboardingQuestion("target_role").prompt, /what kind of roles are you going for next/i)
+  assert.match(getSharedOnboardingQuestion("target_role").prompt, /product, data, or design/i)
+  assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote within the US, onsite, or relocating/i)
+  // seniority_comp (Adam 2026-05-30): one warm question covering intern-vs-full-time +
+  // seniority + expected salary + whether those are negotiable or firm.
+  assert.match(getSharedOnboardingQuestion("seniority_comp").prompt, /internships or full-time/i)
+  assert.match(getSharedOnboardingQuestion("seniority_comp").prompt, /salary/i)
+  assert.match(getSharedOnboardingQuestion("seniority_comp").prompt, /flexible\/negotiable or pretty firm/i)
   assert.match(getSharedOnboardingQuestion("special_context").prompt, /non-negotiables/i)
   assert.doesNotMatch(
     getSharedOnboardingQuestion("special_context").prompt,
@@ -101,7 +112,7 @@ test("shared onboarding prompts ground Q1 and Q4 in resume/profile context when 
 
   const q4 = buildSharedOnboardingPrompt("location_relocation", promptContext)
   assert.match(q4, /New York, NY/i)
-  assert.match(q4, /remote, onsite, or open to relocating/i)
+  assert.match(q4, /remote within the US, onsite, or open to relocating/i)
 })
 
 test("shared onboarding opening prompt carries Claire persona guidance without changing the opener token", () => {
@@ -160,62 +171,121 @@ test("post-prescreen opening prompt thanks for the role screen and avoids first-
   assert.doesNotMatch(opener, /Saw your resume come through/i)
 })
 
-test("free-form answers produce memory evidence and confident tag patches", () => {
-  const mainGoalRole = projectSharedOnboardingAnswer(
-    "main_goal",
-    "Growth and operations",
-  )
-  assert.deepEqual(mainGoalRole.tags.targetRoleFunction, ["marketing"])
-
-  const industry = projectSharedOnboardingAnswer(
+test("NO-REGEX: projector carries ONLY the LLM's validated canonical tags (no text classification)", () => {
+  // Without LLM-provided tags, the projector classifies NOTHING from free text —
+  // it only produces the memory fact + raw-answer bookkeeping. (Regex projector removed 2026-05-30.)
+  const noTags = projectSharedOnboardingAnswer(
     "industry_interest",
     "Fintech, AI infrastructure, and maybe crypto infra are the sectors I keep coming back to.",
   )
-  assert.match(industry.memoryFact, /Fintech, AI infrastructure/)
+  assert.match(noTags.memoryFact, /Fintech, AI infrastructure/)
+  assert.deepEqual(noTags.tags, {}, "no LLM tags → no tags classified from text")
+
+  // WITH LLM-provided canonical picks, the projector validates them against the
+  // shared-tags vocab and passes them through. Multi-value = OR.
+  const industry = projectSharedOnboardingAnswer(
+    "industry_interest",
+    "Fintech, AI infrastructure, and maybe crypto infra.",
+    {
+      industrySector: [
+        "artificial_intelligence_and_machine_learning",
+        "financial_technology",
+        "crypto_web3_blockchain",
+      ],
+    },
+  )
   assert.deepEqual(industry.tags.industrySector, [
     "artificial_intelligence_and_machine_learning",
     "financial_technology",
     "crypto_web3_blockchain",
   ])
+  assert.deepEqual(industry.statedPreferences.industrySector, industry.tags.industrySector)
 
-  const roleLikeIndustry = projectSharedOnboardingAnswer(
-    "industry_interest",
-    "I would say marketing and product management.",
+  // OR multi-pick on companySize: "a small startup or big tech".
+  const culture = projectSharedOnboardingAnswer(
+    "culture_stage",
+    "I'd take a small startup or big tech.",
+    { companySize: ["early_startup", "enterprise"] },
   )
-  assert.deepEqual(roleLikeIndustry.tags.targetRoleFunction, [
-    "product_management",
-    "marketing",
-  ])
+  assert.deepEqual(culture.tags.companySize, ["early_startup", "enterprise"])
 
+  // Off-vocab LLM picks are DROPPED (never coerced/pattern-matched).
+  const offVocab = projectSharedOnboardingAnswer(
+    "industry_interest",
+    "robots and stuff",
+    { industrySector: ["not_a_real_sector", "financial_technology"] },
+  )
+  assert.deepEqual(offVocab.tags.industrySector, ["financial_technology"])
+
+  // Locations are free-form normalized tokens (OR), no regex ordering.
   const location = projectSharedOnboardingAnswer(
     "location_relocation",
-    "NYC or remote would be best, but I can relocate to Seattle for the right team.",
+    "NYC or remote, could do Seattle.",
+    { targetLocations: ["new_york", "remote", "seattle"] },
   )
-  assert.deepEqual(location.tags.targetLocations, [
-    "new_york_metro",
-    "remote_united_states",
-    "seattle_metro",
-  ])
-  assert.equal(location.evidence.relocationOpen, true)
+  assert.deepEqual(location.tags.targetLocations, ["new_york", "remote", "seattle"])
 
-  const misplacedIndustry = projectSharedOnboardingAnswer(
-    "location_relocation",
-    "I’m especially drawn to fashion/lifestyle, entertainment, gaming, media, and consumer brands.",
+  // visaStatus single canonical enum passes through.
+  const special = projectSharedOnboardingAnswer(
+    "special_context",
+    "I need H1B sponsorship and want at least 140k.",
+    { visaStatus: "sponsor_needed", minSalary: 140000 },
   )
-  assert.deepEqual(misplacedIndustry.tags.industrySector, [
-    "gaming_and_esports",
-    "media_and_entertainment",
-    "fashion_and_apparel",
-    "consumer_goods",
-  ])
+  assert.equal((special.tags as { visaStatus?: string }).visaStatus, "sponsor_needed")
+  assert.equal(special.tags.minSalary, 140000)
+  assert.equal(special.statedPreferences.specialContext, "I need H1B sponsorship and want at least 140k.")
 })
 
-test("recommendations become eligible only after Q5 is collected", () => {
+test("live-bug capture fix: Q4 open-to-anything → anywhere bypass on both axes; Q5 visa + salary floor", () => {
+  // Q4 "open to anything" with no concrete place previously captured NOTHING →
+  // empty targetLocations → V16 location hard filter over-filtered to recCount=0.
+  const anywhere = projectSharedOnboardingAnswer(
+    "location_relocation",
+    "honestly i'm open to anything, wherever the right role is",
+  )
+  assert.ok(
+    (anywhere.tags.targetLocations ?? []).includes("anywhere"),
+    "open-to-anything must emit the 'anywhere' bypass token on targetLocations",
+  )
+  assert.ok(
+    (anywhere.tags.targetCountry ?? []).includes("anywhere"),
+    "open-to-anything must emit 'anywhere' on targetCountry too",
+  )
+
+  // A named country → canonical lowercase region token.
+  const usa = projectSharedOnboardingAnswer("location_relocation", "USA, open to anywhere in the states")
+  assert.ok((usa.tags.targetCountry ?? []).includes("usa"))
+
+  // Concrete-only answer must NOT emit anywhere.
+  const concrete = projectSharedOnboardingAnswer("location_relocation", "just NYC for me")
+  assert.ok(!(concrete.tags.targetLocations ?? []).includes("anywhere"))
+
+  // Q5 "I need H1B sponsorship" previously only set a visa_context LABEL — V16's
+  // visa hard filter reads tags.visaStatus, so the sponsorship intent was lost.
+  const visa = projectSharedOnboardingAnswer("special_context", "I'll need H1B sponsorship to keep working here")
+  assert.equal(visa.tags.visaStatus, "sponsor_needed")
+  // Keep the context label too.
+  assert.ok((visa.tags.targetCompanyTags ?? []).includes("visa_context"))
+
+  // Q5 explicit salary floor (intent) → tags.minSalary (V16 salary fit).
+  const salary = projectSharedOnboardingAnswer("special_context", "looking for at least 120k base, below that is a no")
+  assert.equal(salary.tags.minSalary, 120000)
+})
+
+test("recommendations become eligible only after the final slot is collected", () => {
+  // main_goal still hands off to culture_stage (indices 0→1 unchanged).
   assert.deepEqual(resolveNextSharedOnboardingQuestionId("main_goal"), {
     nextQuestionId: "culture_stage",
     completed: false,
     shouldRecommend: false,
   })
+  // location_relocation now hands off to the new seniority_comp slot (Adam 2026-05-30).
+  assert.deepEqual(resolveNextSharedOnboardingQuestionId("location_relocation"), {
+    nextQuestionId: "seniority_comp",
+    completed: false,
+    shouldRecommend: false,
+  })
+  // special_context remains the terminal slot — completing it unlocks recs.
   assert.deepEqual(resolveNextSharedOnboardingQuestionId("special_context"), {
     nextQuestionId: null,
     completed: true,
@@ -235,22 +305,45 @@ test("shared onboarding never re-asks — judge rejections still advance except 
   )
 })
 
-test("special_context accepts realtime-communication answer without waiting on LLM", async () => {
+test("special_context accepts a substantive answer via the LLM judge", async () => {
+  // NO-REGEX (2026-05-30): the bloom-filter accept shortcut was removed, so the
+  // judge is LLM-only. The LLM returns a `provided` intent here; the raw answer
+  // is preserved as the value.
   let llmCalls = 0
+  const answer = "I've done a lot of realtime communication handling. Maybe worthy?"
   const result = await judgeSharedOnboardingAnswer({
     questionId: "special_context",
-    answer: "I've done a lot of realtime communication handling. Maybe worthy?",
+    answer,
     lang: "en",
     llmCallFactory: () => async () => {
       llmCalls += 1
-      throw new Error("LLM should not be needed for this answer")
+      return JSON.stringify({ intent: "provided", value: answer, confidence: 0.95 })
     },
   })
 
-  assert.equal(llmCalls, 0)
+  assert.equal(llmCalls, 1)
   assert.equal(result.accept, true)
   if (result.accept) {
-    assert.equal(result.value, "I've done a lot of realtime communication handling. Maybe worthy?")
+    assert.equal(result.value, answer)
+  }
+})
+
+test("special_context fail-opens to accept a substantive answer when the LLM is unavailable", async () => {
+  // failOpenOnLlmError keeps the FSM from stalling: an LLM error still accepts a
+  // substantive reply so the slot advances (no re-ask loop).
+  const answer = "I've done a lot of realtime communication handling. Maybe worthy?"
+  const result = await judgeSharedOnboardingAnswer({
+    questionId: "special_context",
+    answer,
+    lang: "en",
+    llmCallFactory: () => async () => {
+      throw new Error("LLM unavailable")
+    },
+  })
+
+  assert.equal(result.accept, true)
+  if (result.accept) {
+    assert.equal(result.value, answer)
   }
 })
 

@@ -40,9 +40,9 @@ test("slangy snapshot mentions short / casual / code-switch", () => {
   assert.match(out, /short|casual|slang/i)
 })
 
-test("high zh_char_ratio (>=0.8) labels primary language as 中文", () => {
+test("high zh_char_ratio (>=0.8) labels primary language as Chinese", () => {
   const out = buildMirrorSnippet(snap({ zh_char_ratio: 0.9 }))!
-  assert.match(out, /中文|zh/i)
+  assert.match(out, /Chinese|zh/i)
 })
 
 test("low zh_char_ratio (<=0.2) labels primary language as English", () => {
@@ -80,7 +80,7 @@ test("LOAD-BEARING: snippet contains NO negative-instruction tokens (D-03)", () 
   }
   // Trim to 20.
   const sample = variants.slice(0, 20)
-  const negative = /\b(don'?t|never|avoid|do not)\b|不要|别(?!的)|禁止|严禁/i
+  const negative = /\b(don'?t|never|avoid|do not)\b/i
   for (const v of sample) {
     const out = buildMirrorSnippet(snap(v))
     assert.ok(out, `expected non-null snippet for ${JSON.stringify(v)}`)

@@ -56,9 +56,9 @@ test("q-startup-pref: 'stable big company' → bigtech", async () => {
   if (r.accept) assert.equal(r.value, "bigtech")
 })
 
-test("q-startup-pref: '都行' → either", async () => {
+test("q-startup-pref: 'either' → either", async () => {
   const { judge } = makeJudge(JSON.stringify({ intent: "provided", value: "either", confidence: 0.95 }))
-  const r = await judge.judge("都行", "zh", ctx())
+  const r = await judge.judge("either", "en", ctx())
   assert.equal(r.accept, true)
   if (r.accept) assert.equal(r.value, "either")
 })

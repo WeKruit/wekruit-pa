@@ -1,0 +1,77 @@
+// Fresh-onboarding reinit for the dev phone (+14243201960) so Adam can test the FULL
+// prompt→extractor→tags→matcher loop end-to-end: text → onboarding captures
+// (open-to-anything/visa/salary) → canonical tags → matcher. Keeps résumé-derived
+// tags (skills/yoe/embedding) so matching has substance; clears chat-derived intent
+// tags + conversation + onboarding state so capture re-runs from scratch.
+//   PA_ENV_PATH=.env node .ops/reinit-dev-phone-fresh.mjs            (DRY)
+//   PA_ENV_PATH=.env node .ops/reinit-dev-phone-fresh.mjs --apply    (APPLY)
+import { readFileSync } from "node:fs"
+import admin from "firebase-admin"
+const APPLY = process.argv.includes("--apply")
+let raw = readFileSync(process.env.PA_ENV_PATH, "utf8").match(/^FIREBASE_SERVICE_ACCOUNT_JSON=(.*)$/m)[1].trim()
+if ((raw.startsWith("'")&&raw.endsWith("'"))||(raw.startsWith('"')&&raw.endsWith('"'))) raw = raw.slice(1,-1)
+admin.initializeApp({ credential: admin.credential.cert(JSON.parse(raw)), projectId: "wekruit-5f89b" })
+const db = admin.firestore()
+const PHONE = process.env.REINIT_PHONE || "+14243201960"
+const now = new Date().toISOString()
+
+// 1. Resolve phone → userId (query pa-users.phoneE164; assert single).
+const q = await db.collection("pa-users").where("phoneE164", "==", PHONE).get()
+const ids = q.docs.map(d => d.id)
+console.log(`=== reinit-dev-phone-fresh  mode=${APPLY?"APPLY":"DRY"} ===`)
+console.log(`phone ${PHONE} → pa-users: ${JSON.stringify(ids)}`)
+if (ids.length !== 1) { console.log(`!! expected exactly 1 user, got ${ids.length}. Aborting (resolve manually).`); process.exit(1) }
+const uid = ids[0]
+const u = q.docs[0].data()
+const tags = u.tags || {}
+
+// 2. Chat-derived INTENT tags to CLEAR (onboarding/chat re-captures these canonically).
+// IMPORTANT: targetRoleFunction + careerStage are RÉSUMÉ-derived (cv-ingest mergeUserTags from the
+// parsed résumé title/skills), NOT chat-intent. They are the matcher's hard-filter SEED — clearing
+// them blanks the role filter (0 candidates) and empties careerStage (V16 over-drops). The dev test
+// that wiped them is what made the matcher return 0 on 2026-05-29. Keep them (like skills). Production
+// reinitializeCandidate re-enriches them from the résumé; this script preserves them outright.
+const CLEAR_INTENT = ["negativeRoleFunction","roleFunctionNegativeList","targetLocations",
+  "targetCountry","industrySector","negativeIndustrySector","visaStatus","minSalary","companySize","prefersStartup",
+  "targetJobType","targetCompanyTags","companyNegativeList","companyPositiveList","urgentlySeeking","relevantTags"]
+const keptTagKeys = Object.keys(tags).filter(k => !CLEAR_INTENT.includes(k))
+const newTags = {}; for (const k of keptTagKeys) newTags[k] = tags[k]
+newTags.schemaVersion = 2
+console.log(`tags: clearing intent [${CLEAR_INTENT.filter(k=>tags[k]!==undefined).join(", ")||"none set"}]`)
+console.log(`tags: keeping résumé [${keptTagKeys.join(", ")||"none"}] (skills:${(tags.skills?.length??0)})`)
+
+// 3. Conversation + prescreen + session + onboarding docs to clear.
+const msgs = await db.collection("pa-messages").where("userId","==",uid).get()
+const ps = await db.collection("pa-prescreen-sessions").where("userId","==",uid).get()
+const sess = await db.collection("pa-sessions").where("userId","==",uid).get()
+// NOTE: we intentionally DO NOT clear pa-outbound. Delivery rows are audit history, and the real
+// fix (outbound idempotency keyed on the inbound EVENT id, not sessionId+body — see transport.ts)
+// means a fresh inbound after reinit always re-keys uniquely and sends regardless of stale rows.
+// Clearing outbound was a band-aid that masked the real bug + destroyed audit (2026-05-29).
+console.log(`clear: pa-messages=${msgs.size} pa-prescreen-sessions=${ps.size} pa-sessions=${sess.size} (pa-outbound preserved — audit)`)
+console.log(`onboardingState → pending | sharedOnboarding/workSession → removed`)
+if (!APPLY) { console.log("\nDRY — 0 writes. Re-run with --apply."); process.exit(0) }
+
+// ---- APPLY ----
+// update() (NOT set+merge) so the `tags` MAP is REPLACED wholesale with newTags
+// (kept keys only) — set+merge deep-merges nested maps, so cleared intent keys
+// would survive. update() sets the field value outright.
+await db.collection("pa-users").doc(uid).update({
+  tags: newTags,
+  onboardingState: "pending",
+  onboardingStatus: "invited",
+  sharedOnboarding: admin.firestore.FieldValue.delete(),
+  workSession: admin.firestore.FieldValue.delete(),
+  // lastCollabRoles is conversation-derived (find_match results), NOT durable résumé data — clear it
+  // so the post-onboarding auto-match repopulates a FRESH set (no stale matched roles linger).
+  lastCollabRoles: admin.firestore.FieldValue.delete(),
+  lastCollabRolesAt: admin.firestore.FieldValue.delete(),
+  reinitFreshAt: now,
+  updatedAt: now,
+})
+const del = async (snap) => { if (!snap.size) return; const b = db.batch(); snap.docs.forEach(d=>b.delete(d.ref)); await b.commit() }
+await del(msgs); await del(ps); await del(sess)
+// Phone stays bound to this candidate (we never touch phoneE164 / candidateHandles), so a plain
+// "hi" resolves by phone lookup — NO id-bearing "Hello, WeKruit! <uid>" opener needed. Telling the
+// tester to paste the opener-with-id is what leaked the internal id into the greeting (2026-06-01).
+console.log(`\nAPPLIED. ${uid} reset to fresh onboarding. Just text "hi" from the bound dev phone to start (phone already maps to this candidate — do NOT paste the "Hello, WeKruit! <uid>" opener).`)

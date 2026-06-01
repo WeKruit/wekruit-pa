@@ -1,8 +1,8 @@
 /**
  * v1.8 Phase 75 — KeywordSetJudge.
  *
- * Per Adam directive 2026-05-11 ("LLM evaluation explanation 之类的方便
- * evaluation 然后中断等"), every pre-screening question is evaluated against
+ * Per Adam directive 2026-05-11 (LLM evaluation explanation surfaced for
+ * evaluation + early abort), every pre-screening question is evaluated against
  * a JD-side keyword set with structured LLM output:
  *
  *   reply ──▶ KeywordSetJudge.judge(reply, lang, ctx)

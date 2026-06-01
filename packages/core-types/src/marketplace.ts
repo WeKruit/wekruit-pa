@@ -126,7 +126,7 @@ export const CandidateGlobalTagsSchema = z.object({
   roleFunction: z.array(RoleFunctionSchema).default([]),
   skills: SkillsListSchema.default([]),
   careerStage: CareerStageSchema.optional(),
-  // Seniority RANGE for /me — [anchor, anchor+bufferSteps] in CAREER_STAGE_VOCAB order. Derived
+  // Seniority RANGE the candidate is open to: [anchor, upper] in CAREER_STAGE_VOCAB order. Derived
   // by the projector from careerStage + preferenceHardness.careerStage.bufferSteps so the portal can
   // render "junior–senior" instead of a single stage. Optional: absent when no buffer was stated.
   careerStageRange: z.tuple([CareerStageSchema, CareerStageSchema]).optional(),
@@ -151,9 +151,10 @@ export const CandidateGlobalTagsSchema = z.object({
       ])
     )
     .default([]),
-  // Company-STAGE preference (funding stage) — ORTHOGONAL to companySizePreference (headcount).
-  // Projected from tags.companyStage. Multi-pick. Informational/display axis (matching weight 0).
-  companyStage: z.array(CompanyStageSchema).default([]),
+  // Company-STAGE preference (funding stage) — ORTHOGONAL to companySizePreference (headcount). Projected
+  // from tags.companyStage; lets /me show "Company stage: Seed · Series A" distinct from "Company size".
+  // Multi-pick, COMPANY_STAGE_VOCAB. Informational/display axis (matching weight 0).
+  companyStage: z.array(CompanyStageSchema).optional(),
   updatedAt: TimestampSchema.optional(),
 })
 export type CandidateGlobalTags = z.infer<typeof CandidateGlobalTagsSchema>
@@ -814,6 +815,36 @@ export const EmployerVisibleProfileSchema = z
   })
 export type EmployerVisibleProfile = z.infer<typeof EmployerVisibleProfileSchema>
 
+// Flywheel req #4 — "a job was offered" is a first-class signal.
+//
+// `job_presented` is emitted exactly once per (candidateId, jobId, flow) the
+// moment a job is surfaced to a candidate so we can (a) build a per-user
+// recommended-job ledger, (b) dedupe re-recommendations, and (c) feed the
+// ranking/eval flywheel. The recommendation-state ledger (matcher domain) and
+// the Claire agent (integration-edits domain) are the call sites; this module
+// only owns the vocabulary + the single write path (`writeFeedbackEvent`).
+//
+// Contract for kind === "job_presented":
+//   actor       — "system" (batch/automated surfacing) or "orchestrator"
+//                 (the Claire agent runtime; the conceptual "agent" actor maps
+//                 to the canonical `orchestrator` member of MarketplaceActor —
+//                 we do NOT add a parallel `agent` enum value, see D8/Rule 8).
+//   candidateId — REQUIRED (a presentation is always to a specific candidate).
+//   jobId       — REQUIRED (a presentation is always of a specific job).
+//   outcome     — the surfacing flow; one of JobPresentedSourceSchema.
+//   evidence[]  — each row carries a MarketplaceEvidence `source` (typically
+//                 "job_match"); summarizes why/how the job was offered.
+//   payloadRedacted — carries { flow, channel } (flow mirrors `outcome`;
+//                 channel is e.g. "imessage" | "daily_batch" | "me_matches").
+export const JobPresentedSourceSchema = z.enum([
+  "claire_agent",
+  "daily_batch",
+  "collab_prescreen",
+  "onboarding_offered",
+  "general_market_fallback",
+])
+export type JobPresentedSource = z.infer<typeof JobPresentedSourceSchema>
+
 export const FeedbackEventSchema = z.object({
   eventId: IdSchema,
   kind: z.enum([
@@ -825,6 +856,8 @@ export const FeedbackEventSchema = z.object({
     "outreach_delivery",
     "manual_note",
     "candidate_behavior",
+    // Flywheel req #4 — a job was offered to a candidate (see contract above).
+    "job_presented",
   ]),
   actor: MarketplaceActorSchema,
   candidateId: IdSchema.optional(),
@@ -834,8 +867,77 @@ export const FeedbackEventSchema = z.object({
   evidence: z.array(MarketplaceEvidenceSchema).default([]),
   payloadRedacted: z.record(z.unknown()).default({}),
   createdAt: TimestampSchema,
+}).superRefine((event, ctx) => {
+  // `job_presented` is always candidate+job scoped; without both the ledger and
+  // dedup cannot key the event. Other kinds keep the historical optionality.
+  if (event.kind === "job_presented") {
+    if (!event.candidateId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["candidateId"],
+        message: "job_presented feedback events require candidateId",
+      })
+    }
+    if (!event.jobId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["jobId"],
+        message: "job_presented feedback events require jobId",
+      })
+    }
+  }
 })
 export type FeedbackEvent = z.infer<typeof FeedbackEventSchema>
+
+/**
+ * Thin constructor for a `job_presented` feedback event. Reduces caller
+ * boilerplate at the (few) presentation call sites while keeping
+ * `writeFeedbackEvent` the single persistence path. Returns a plain
+ * `FeedbackEvent` input that the writer validates + appends.
+ *
+ * @param eventId      deterministic, append-only id (caller owns derivation)
+ * @param candidateId  required candidate the job was offered to
+ * @param jobId        required job that was offered
+ * @param source       the surfacing flow (drives `outcome` + payload.flow)
+ * @param createdAt    ISO timestamp of the presentation
+ * @param opts.actor   "system" (default) or "orchestrator" (Claire agent)
+ * @param opts.channel surfacing channel for payloadRedacted.channel
+ * @param opts.confidence optional match/rank confidence for the evidence row
+ * @param opts.evidenceSummary optional human-readable why-offered summary
+ */
+export function makeJobPresentedEvent(args: {
+  eventId: string
+  candidateId: string
+  jobId: string
+  source: JobPresentedSource
+  createdAt: string
+  actor?: Extract<MarketplaceActor, "system" | "orchestrator">
+  channel?: string
+  confidence?: number
+  evidenceSummary?: string
+}): FeedbackEvent {
+  const source = JobPresentedSourceSchema.parse(args.source)
+  return {
+    eventId: args.eventId,
+    kind: "job_presented",
+    actor: args.actor ?? "system",
+    candidateId: args.candidateId,
+    jobId: args.jobId,
+    outcome: source,
+    evidence: [
+      {
+        source: "job_match",
+        summary: args.evidenceSummary ?? `job offered to candidate via ${source}`,
+        confidence: args.confidence,
+      },
+    ],
+    payloadRedacted: {
+      flow: source,
+      channel: args.channel ?? source,
+    },
+    createdAt: args.createdAt,
+  }
+}
 
 export const CorrectionEventSchema = z.object({
   eventId: IdSchema,

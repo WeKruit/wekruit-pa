@@ -1,7 +1,9 @@
 import type { PartialUserTags } from "./tags/user-tags-writer.js"
-import { mapAnswerToLocations, mapAnswerToRoleFunction } from "./tags/onboarding-mappers.js"
+import {
+  validateOnboardingCanonicalTags,
+  type OnboardingCanonicalTagInput,
+} from "./tags/onboarding-canonical-tags.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
-import type { IndustrySector } from "@wekruit/shared-tags"
 import type { JudgeResult, Lang } from "./onboarding/question.js"
 import { GuidedOpenJudge, type LlmCallFn } from "./onboarding/judges/guided-open.js"
 import {
@@ -19,8 +21,10 @@ export const CANDIDATE_PROFILE_URL = "https://wekruit.com/me/profile"
 export type SharedOnboardingQuestionId =
   | "main_goal"
   | "culture_stage"
+  | "target_role"
   | "industry_interest"
   | "location_relocation"
+  | "seniority_comp"
   | "special_context"
 
 export type SharedOnboardingQuestion = {
@@ -85,6 +89,19 @@ export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = 
       "What kind of company culture and size or stage tends to work best for you: early startup, scale-up, larger company, high ownership, calm team, or something else?",
   },
   {
+    // Adam 2026-05-30: today targetRoleFunction is only seeded from the résumé;
+    // onboarding never confirms what role the candidate actually wants NEXT (a
+    // SWE may be pivoting to PM/data/design). One warm question to capture
+    // forward intent. The record_onboarding_answer tool extracts
+    // targetRoleFunction (canonical roleFunction enum, multi-pick) from this
+    // free-text reply — we only define the slot + prompt here (no extraction
+    // logic, no regex in this file).
+    id: "target_role",
+    label: "target role function",
+    prompt:
+      "What kind of roles are you going for next — same lane (e.g. software engineering), or shifting toward something like product, data, or design?",
+  },
+  {
     id: "industry_interest",
     label: "industry interests",
     prompt:
@@ -94,7 +111,19 @@ export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = 
     id: "location_relocation",
     label: "location and relocation",
     prompt:
-      "Where do you want to work, and are you open to remote, onsite, or relocating to another city?",
+      "We're US-only right now — where in the US do you want to work, and are you open to remote within the US, onsite, or relocating to another US city?",
+  },
+  {
+    // Adam 2026-05-30: one warm question covering target level (intern vs
+    // full-time + entry/junior/mid/senior) AND expected/target salary, AND
+    // whether each is flexible/negotiable or firm. The record_onboarding_answer
+    // tool extracts careerStage / targetJobType / minSalary + per-axis
+    // preferenceHardness (hard vs soft + buffer) from this free-text reply — we
+    // only define the slot + prompt here (no extraction logic in this file).
+    id: "seniority_comp",
+    label: "seniority level and expected salary",
+    prompt:
+      "Are you targeting internships or full-time roles (and roughly what level — entry, junior, mid, or senior), and what salary are you aiming for? Also, are those flexible/negotiable or pretty firm?",
   },
   {
     id: "special_context",
@@ -200,11 +229,17 @@ function sharedJudgeHints(questionId: SharedOnboardingQuestionId): string[] {
   if (questionId === "culture_stage") {
     return ["early_startup", "scale_up", "larger_company", "high_ownership", "calm_team", "collaborative", "open"]
   }
+  if (questionId === "target_role") {
+    return ["software_engineering", "product_management", "data_analytics", "design", "marketing", "sales", "same_lane", "open"]
+  }
   if (questionId === "industry_interest") {
     return ["financial_technology", "artificial_intelligence", "crypto_web3_blockchain", "software_saas", "healthcare", "developer_tools", "open"]
   }
   if (questionId === "location_relocation") {
     return ["remote", "onsite", "hybrid", "new_york", "san_francisco", "seattle", "relocation_open", "no_relocation"]
+  }
+  if (questionId === "seniority_comp") {
+    return ["internship", "full_time", "entry", "junior", "mid", "senior", "salary_target", "negotiable", "firm"]
   }
   return ["constraints", "strengths", "dealbreakers", "timing", "visa", "none"]
 }
@@ -222,6 +257,12 @@ function sharedJudgeExamples(questionId: SharedOnboardingQuestionId): Array<{ re
       { reply: "larger calm team, less chaos", value: "larger calm team", confidence: 0.9 },
     ]
   }
+  if (questionId === "target_role") {
+    return [
+      { reply: "staying in software engineering", value: "software engineering", confidence: 0.95 },
+      { reply: "I'm a SWE but want to move into product management", value: "product management", confidence: 0.95 },
+    ]
+  }
   if (questionId === "industry_interest") {
     return [
       { reply: "fintech and AI infrastructure", value: "fintech and AI infrastructure", confidence: 0.95 },
@@ -234,62 +275,34 @@ function sharedJudgeExamples(questionId: SharedOnboardingQuestionId): Array<{ re
       { reply: "Bay Area onsite is fine, not relocating", value: "Bay Area onsite, not relocating", confidence: 0.95 },
     ]
   }
+  if (questionId === "seniority_comp") {
+    return [
+      { reply: "full-time mid-level, aiming for ~160k but flexible", value: "full-time mid-level, ~160k target, flexible", confidence: 0.95 },
+      { reply: "summer internship, 40/hr is firm for me", value: "internship, 40/hr, firm", confidence: 0.95 },
+    ]
+  }
   return [
     { reply: "nothing else, I can start quickly", value: "nothing else, can start quickly", confidence: 0.9 },
     { reply: "I need sponsorship and want backend-heavy work", value: "needs sponsorship, backend-heavy work", confidence: 0.95 },
   ]
 }
 
-function sharedJudgeBloom(questionId: SharedOnboardingQuestionId): Array<{ pattern: RegExp; value: string }> {
-  // Shared onboarding blooms are accept signals; preserve the candidate's raw
-  // answer instead of storing an internal label.
-  const preserveRawAnswer = ""
-  if (questionId === "main_goal") {
-    return [
-      { pattern: /\b(career\s+growth|growth|learning|mentor|compensation|salary|pay|equity|stability|stable|mission|impact|ownership|work[-\s]?life)\b/i, value: preserveRawAnswer },
-    ]
-  }
-  if (questionId === "culture_stage") {
-    return [
-      { pattern: /\b(startup|early[-\s]?stage|seed|founding|scale[-\s]?up|larger|large\s+company|big\s*tech|enterprise|ownership|autonomy|calm|collaborative|open|no\s+preference)\b/i, value: preserveRawAnswer },
-    ]
-  }
-  if (questionId === "industry_interest") {
-    return [
-      { pattern: /\b(fintech|finance|ai|machine\s+learning|ml|crypto|web3|blockchain|saas|software|developer\s+tools?|security|healthcare|edtech|gaming|climate|open|anything)\b/i, value: preserveRawAnswer },
-    ]
-  }
-  if (questionId === "location_relocation") {
-    return [
-      { pattern: /\b(remote|onsite|hybrid|relocat|move|nyc|new\s+york|sf|san\s+francisco|bay\s+area|seattle|los\s+angeles|la|austin|boston|chicago|miami|canada|united\s+states|u\.?s\.?)\b/i, value: preserveRawAnswer },
-    ]
-  }
-  return [
-    {
-      pattern:
-        /\b(none|nothing|nope|no\s+special|visa|sponsor|h[-\s]?1b|opt|cpt|urgent|asap|timing|dealbreaker|constraint|strength|backend|frontend|full[-\s]?stack|systems?|real[-\s]?time|communication|webrtc|infrastructure|distributed|worthy|experience|built|handl\w*)\b/i,
-      value: preserveRawAnswer,
-    },
-  ]
-}
-
 export async function judgeSharedOnboardingAnswer(
   args: SharedOnboardingAnswerJudgeArgs,
 ): Promise<JudgeResult<string>> {
+  // No-regex (2026-05-30): the bloom-filter accept-shortcut was the last
+  // regex in this path. Answer acceptance is now LLM-only (GuidedOpenJudge),
+  // with `failOpenOnLlmError` accepting any substantive reply when the LLM is
+  // unavailable so the FSM never stalls re-asking a slot.
   const answer = args.answer.trim()
   if (isSharedOnboardingGreetingOrKickoff(answer)) {
     return { accept: false, reason: "irrelevant" }
   }
   const question = getSharedOnboardingQuestion(args.questionId)
-  const bloomRegex = sharedJudgeBloom(args.questionId)
-  if (bloomRegex.some((bloom) => bloom.pattern.test(answer))) {
-    return { accept: true, value: answer, confidence: 1.0 }
-  }
   const judge = new GuidedOpenJudge<string>({
     questionLabel: question.label,
     hints: sharedJudgeHints(args.questionId),
     examples: sharedJudgeExamples(args.questionId),
-    bloomRegex,
     parseValue: parseSharedJudgeValue,
     confidenceThreshold: 0.62,
     minMeaningfulChars: 2,
@@ -705,7 +718,9 @@ export function buildSharedOnboardingPrompt(
   if (id === "location_relocation") {
     const location = locationSummary(ctx)
     const lead = location ? `I see ${location}. ` : ""
-    return `${lead}Where should I look next: specific cities, remote, onsite, or open to relocating?`
+    // US-only scope stated ON the question (Adam 2026-05-30): WeKruit operates only in the US, so the
+    // location ASK itself must say so — don't make the candidate volunteer a city we can't serve.
+    return `${lead}We're US-only right now — where in the US should I look: specific cities, remote within the US, onsite, or open to relocating?`
   }
   return question.prompt
 }
@@ -873,90 +888,28 @@ export function currentSharedOnboardingQuestionId(user: unknown): SharedOnboardi
   return "main_goal"
 }
 
-function tagToken(raw: string): string {
-  return raw.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80)
-}
-
-function industryTags(text: string): IndustrySector[] {
-  const rules: Array<{ token: IndustrySector; pattern: RegExp }> = [
-    {
-      token: "artificial_intelligence_and_machine_learning",
-      pattern: /\b(ai|ml|machine\s+learning|artificial\s+intelligence|llm|deep\s+learning)\b/i,
-    },
-    { token: "financial_technology", pattern: /\b(fintech|financial\s+technology|payments?|banking)\b/i },
-    { token: "crypto_web3_blockchain", pattern: /\b(crypto|web3|blockchain|defi)\b/i },
-    { token: "software_and_saas", pattern: /\b(saas|software|developer\s+tools?)\b/i },
-    { token: "cybersecurity", pattern: /\b(cyber\s*security|security)\b/i },
-    { token: "healthcare_and_life_sciences", pattern: /\b(healthcare|health\s+tech|life\s+sciences?)\b/i },
-    { token: "education_technology", pattern: /\b(edtech|education\s+technology)\b/i },
-    { token: "gaming_and_esports", pattern: /\b(gaming|esports?)\b/i },
-    { token: "media_and_entertainment", pattern: /\b(media|entertainment|film|movie|youtube|creator|streaming)\b/i },
-    { token: "fashion_and_apparel", pattern: /\b(fashion|apparel|clothing|lifestyle)\b/i },
-    { token: "consumer_goods", pattern: /\bconsumer\s+(brand|brands|goods|products?)\b/i },
-    { token: "advertising_and_marketing", pattern: /\b(advertising|marketing|brand)\b/i },
-    { token: "clean_energy_and_climate_tech", pattern: /\b(climate|clean\s+energy|energy)\b/i },
-  ]
-  return rules.filter((rule) => rule.pattern.test(text)).map((rule) => rule.token)
-}
-
-function locationMentionIndex(text: string, token: string): number {
-  const rules: Record<string, RegExp[]> = {
-    new_york_metro: [/\bnyc\b/i, /new\s*york/i, /纽约/i],
-    remote_united_states: [/\bremote\b/i, /在家/i],
-    remote_anywhere: [/\banywhere\b/i, /\bremote\b/i],
-    remote_global: [/\bremote\b/i],
-    san_francisco_bay_area: [/\bsf\b/i, /san\s*francisco/i, /bay\s*area/i, /湾区/i],
-    seattle_metro: [/seattle/i, /西雅图/i],
-    los_angeles_metro: [/\bla\b/i, /los\s*angeles/i, /洛杉矶/i],
-  }
-  let best = Number.POSITIVE_INFINITY
-  for (const rule of rules[token] ?? [new RegExp(token.replace(/_/g, "\\s+"), "i")]) {
-    const hit = text.match(rule)
-    if (hit?.index !== undefined && hit.index < best) best = hit.index
-  }
-  return best
-}
-
-function orderedLocations(text: string): string[] {
-  return [...mapAnswerToLocations(text)].sort((a, b) => locationMentionIndex(text, a) - locationMentionIndex(text, b))
-}
-
-function relocationOpen(text: string): boolean | undefined {
-  if (/\b(not|can't|cannot|won't|no)\b.{0,24}\b(relocat|move|moving)\b/i.test(text)) return false
-  if (/\b(open|willing|can|would|able)\b.{0,32}\b(relocat|move|moving)\b/i.test(text)) return true
-  if (/\brelocat(?:e|ing|ion)\b/i.test(text)) return true
-  return undefined
-}
-
-function companySize(text: string): PartialUserTags["companySize"] | undefined {
-  if (/\b(seed|pre[-\s]?seed|founding|early[-\s]?stage|startup)\b/i.test(text)) return "early_startup"
-  if (/\b(series\s+[bcde]|scale[-\s]?up|growth[-\s]?stage)\b/i.test(text)) return "scale_up"
-  if (/\b(mid[-\s]?market|medium[-\s]?sized)\b/i.test(text)) return "mid_market"
-  if (/\b(enterprise|big\s*tech|large\s+company|public\s+company)\b/i.test(text)) return "enterprise"
-  if (/\b(open|no\s+preference|either|any)\b/i.test(text)) return "open"
-  return undefined
-}
-
-function companyGoalTags(text: string): string[] {
-  const tags: string[] = []
-  if (/\b(growth|career|promot|level\s*up|leadership)\b/i.test(text)) tags.push("career_growth")
-  if (/\b(comp|compensation|pay|salary|tc|equity|money)\b/i.test(text)) tags.push("high_compensation")
-  if (/\b(stability|stable|secure|security)\b/i.test(text)) tags.push("stability")
-  if (/\b(mission|impact|purpose|meaningful)\b/i.test(text)) tags.push("mission_driven")
-  if (/\b(learning|learn|mentor|mentorship)\b/i.test(text)) tags.push("learning")
-  return tags
-}
-
-function mainGoalRoleFunction(text: string): ReturnType<typeof mapAnswerToRoleFunction> {
-  if (!/\b(growth\s+(and\s+)?(ops|operations|marketing|role|roles)|growth\s+marketing|gtm|go[-\s]?to[-\s]?market)\b/i.test(text)) {
-    return []
-  }
-  return mapAnswerToRoleFunction(text)
-}
-
+/**
+ * Project a shared-onboarding answer into a memory fact + canonical tags +
+ * stated-preferences bookkeeping.
+ *
+ * NO-REGEX (2026-05-30, Adam directive): this function does ZERO classification
+ * of free-form text into canonical tags. The ONLY source of canonical tags is
+ * the LLM-driven extraction (`llmTags`), validated against the
+ * `@wekruit/shared-tags` closed enums by {@link validateOnboardingCanonicalTags}
+ * (off-vocab values dropped). The deterministic FSM still owns slot ORDER; this
+ * projector only carries the LLM's validated picks + the durable
+ * memoryFact / statedPreferences / evidence the downstream relies on.
+ *
+ * `llmTags` is the agent's STRUCTURED canonical proposal for THIS answer (any
+ * subset of axes the answer supports, multi-value = OR). When omitted (e.g. a
+ * fail-open path with no model output), tags are empty — the unified-tags
+ * extractor (conversation-extractor) remains the authoritative tag writer and
+ * the slot still advances on the raw answer.
+ */
 export function projectSharedOnboardingAnswer(
   questionId: SharedOnboardingQuestionId,
   answer: string,
+  llmTags?: OnboardingCanonicalTagInput | null,
 ): {
   memoryFact: string
   tags: PartialUserTags
@@ -965,87 +918,29 @@ export function projectSharedOnboardingAnswer(
 } {
   const trimmed = answer.trim()
   const question = getSharedOnboardingQuestion(questionId)
-  const tags: PartialUserTags = {}
+  const tags = validateOnboardingCanonicalTags(llmTags)
   const statedPreferences: Record<string, unknown> = {}
   const evidence: Record<string, unknown> = { questionId, answer: trimmed }
-  const opportunisticLocations = orderedLocations(trimmed)
 
-  if (questionId === "main_goal") {
-    const targetCompanyTags = companyGoalTags(trimmed)
-    const targetRoleFunction = mainGoalRoleFunction(trimmed)
-    if (targetCompanyTags.length > 0) tags.targetCompanyTags = targetCompanyTags
-    if (targetCompanyTags.length > 0) statedPreferences.nextCompanyGoals = targetCompanyTags
-    if (targetRoleFunction.length > 0) {
-      tags.targetRoleFunction = targetRoleFunction
-      statedPreferences.targetRoleFunction = targetRoleFunction
-    }
-    if (opportunisticLocations.length > 0) {
-      tags.targetLocations = opportunisticLocations
-      statedPreferences.targetLocations = opportunisticLocations
-    }
+  // Mirror the validated canonical tags into statedPreferences (the legacy
+  // bag downstream readers still consult). Purely structural — no classification.
+  if (tags.targetRoleFunction) statedPreferences.targetRoleFunction = tags.targetRoleFunction
+  if (tags.negativeRoleFunction) statedPreferences.negativeRoleFunction = tags.negativeRoleFunction
+  if (tags.industrySector) statedPreferences.industrySector = tags.industrySector
+  if (tags.negativeIndustrySector) statedPreferences.negativeIndustrySector = tags.negativeIndustrySector
+  if (tags.companySize) statedPreferences.companySize = tags.companySize
+  if (tags.targetLocations) statedPreferences.targetLocations = tags.targetLocations
+  if (tags.targetCountry) statedPreferences.targetCountry = tags.targetCountry
+  if (tags.targetJobType) statedPreferences.targetJobType = tags.targetJobType
+  if (tags.careerStage) statedPreferences.careerStage = tags.careerStage
+  if ((tags as { visaStatus?: unknown }).visaStatus) {
+    statedPreferences.visaStatus = (tags as { visaStatus?: unknown }).visaStatus
   }
+  if (typeof tags.minSalary === "number") statedPreferences.minSalary = tags.minSalary
 
-  if (questionId === "culture_stage") {
-    const size = companySize(trimmed)
-    const stageTags = [
-      ...(/\b(high\s+ownership|ownership|autonomy)\b/i.test(trimmed) ? ["high_ownership"] : []),
-      ...(/\b(calm|low\s+ego|collaborative|kind)\b/i.test(trimmed) ? ["calm_collaborative_culture"] : []),
-    ]
-    if (size) tags.companySize = size
-    if (/\b(startup|early[-\s]?stage|seed|founding)\b/i.test(trimmed)) tags.prefersStartup = "startup"
-    else if (/\b(big\s*tech|enterprise|large\s+company)\b/i.test(trimmed)) tags.prefersStartup = "bigtech"
-    else if (/\b(either|open|no\s+preference)\b/i.test(trimmed)) tags.prefersStartup = "either"
-    if (stageTags.length > 0) tags.targetCompanyTags = stageTags.map(tagToken)
-    if (size) statedPreferences.companySize = size
-  }
-
-  if (questionId === "industry_interest") {
-    const industries = industryTags(trimmed)
-    const targetRoleFunction = mapAnswerToRoleFunction(trimmed)
-    if (industries.length > 0) tags.industrySector = industries
-    if (industries.length > 0) statedPreferences.industrySector = industries
-    if (targetRoleFunction.length > 0) {
-      tags.targetRoleFunction = targetRoleFunction
-      statedPreferences.targetRoleFunction = targetRoleFunction
-    }
-  }
-
-  if (questionId === "location_relocation") {
-    const targetLocations = orderedLocations(trimmed)
-    const industries = industryTags(trimmed)
-    const relocate = relocationOpen(trimmed)
-    if (targetLocations.length > 0) tags.targetLocations = targetLocations
-    if (targetLocations.length > 0) statedPreferences.targetLocations = targetLocations
-    if (industries.length > 0) {
-      tags.industrySector = industries
-      statedPreferences.industrySector = industries
-    }
-    if (relocate !== undefined) {
-      statedPreferences.relocationOpen = relocate
-      evidence.relocationOpen = relocate
-    }
-  }
-
+  // Q5 keeps the raw free-text around so downstream readers and HITL can see
+  // the candidate's verbatim non-negotiables.
   if (questionId === "special_context") {
-    const targetRoleFunction = mapAnswerToRoleFunction(trimmed)
-    const industries = industryTags(trimmed)
-    const specialTags = []
-    if (/\b(visa|sponsor|h[-\s]?1b|opt|cpt)\b/i.test(trimmed)) specialTags.push("visa_context")
-    if (/\b(laid\s*off|layoff|severance|urgent|asap)\b/i.test(trimmed)) specialTags.push("urgent_search_context")
-    if (/\b(parent|caregiver|health|family)\b/i.test(trimmed)) specialTags.push("personal_constraint")
-    if (specialTags.length > 0) tags.targetCompanyTags = specialTags
-    if (targetRoleFunction.length > 0) {
-      tags.targetRoleFunction = targetRoleFunction
-      statedPreferences.targetRoleFunction = targetRoleFunction
-    }
-    if (industries.length > 0) {
-      tags.industrySector = industries
-      statedPreferences.industrySector = industries
-    }
-    if (opportunisticLocations.length > 0) {
-      tags.targetLocations = opportunisticLocations
-      statedPreferences.targetLocations = opportunisticLocations
-    }
     statedPreferences.specialContext = trimmed
   }
 

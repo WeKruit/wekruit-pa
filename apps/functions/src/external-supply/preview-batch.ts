@@ -563,9 +563,7 @@ function hashCandidateKey(
     return createHash("sha256").update(`cand:${resolvedCandidateId}`).digest("hex").slice(0, 16)
   }
   const material =
-    record.linkedinProfileHash ??
-    (record.emails[0]?.hash ?? null) ??
-    record.recordId
+    record.linkedinProfileHash ?? record.emails[0]?.hash ?? record.recordId
   return createHash("sha256").update(`rec:${material}`).digest("hex").slice(0, 16)
 }
 

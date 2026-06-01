@@ -32,6 +32,7 @@ import {
   type UserTags,
 } from "./user-tags-merger.js"
 import { SkillSchema, CAREER_STAGE_VOCAB, type Skill } from "@wekruit/shared-tags"
+import { canonicalizeLocationTokens } from "./onboarding-mappers.js"
 
 const PA_USERS_COLLECTION = "pa-users"
 
@@ -43,7 +44,7 @@ const PA_USERS_COLLECTION = "pa-users"
  */
 function deriveCareerStageRange(
   anchor: string,
-  preferenceHardness: unknown
+  preferenceHardness: unknown,
 ): [string, string] | undefined {
   const vocab = CAREER_STAGE_VOCAB as readonly string[]
   const idx = vocab.indexOf(anchor)
@@ -145,8 +146,9 @@ export function projectTagsToGlobalTags(tags: Record<string, unknown>): Record<s
   const rt = arr("relevantTags")
   if (rt) g.relevantTags = rt
   if (typeof tags.minSalary === "number" && Number.isFinite(tags.minSalary)) g.minSalaryUsd = tags.minSalary
-  // companySize is scalar-OR-array on tags — lift a scalar to a 1-elem array so a single-pick
-  // ("enterprise") still reaches globalTags, and normalize `open`→`no_preference` (read-schema sentinel).
+  // companySize is scalar-OR-array on tags (UserTags union) — lift a scalar to a 1-elem array so a
+  // single-pick ("enterprise") still reaches globalTags (was dropped: arr() only handled arrays), and
+  // normalize `open`→`no_preference` (read-schema sentinel).
   const csRaw = tags.companySize
   if (Array.isArray(csRaw) && csRaw.length) {
     g.companySizePreference = csRaw
@@ -156,7 +158,7 @@ export function projectTagsToGlobalTags(tags: Record<string, unknown>): Record<s
     g.companySizePreference = [normalizeCompanySizeForGlobalTags(csRaw)]
   }
   // companyStage — funding-stage preference, orthogonal to companySize. Scalar OR array on tags; always
-  // emit as an array on globalTags (the /me schema + UI treat it multi-pick). No-op until capture lands.
+  // emit as an array on globalTags (the /me schema + UI treat it multi-pick).
   const stage = tags.companyStage
   if (Array.isArray(stage) && stage.length) g.companyStage = stage
   else if (typeof stage === "string" && stage) g.companyStage = [stage]
@@ -355,6 +357,33 @@ export async function applyPartialUserTags(
       }
     }
     cleaned.skills = upgraded
+  }
+
+  // targetLocations — canonicalize to LOCATION_VOCAB at the sole-writer boundary
+  // so EVERY source (onboarding mapper, conversation-extractor free-form strings,
+  // CV) lands canonical tokens that intersect the job side
+  // (`matching-jobs.locationBuckets` = LOCATION_VOCAB enum). This is the ONE
+  // location canonicalizer — fixes the recurring drift (new_york vs
+  // new_york_metro) that over-filtered the location hard gate to recCount=0. The
+  // V16 anywhere-bypass tokens (anywhere/any/remote_*) are preserved verbatim by
+  // canonicalizeLocationTokens, so the bypass still fires.
+  if (cleaned.targetLocations !== undefined) {
+    cleaned.targetLocations = canonicalizeLocationTokens(cleaned.targetLocations)
+  }
+  // targetCountry — its own small region vocab (usa/canada/uk/.../anywhere), NOT
+  // the city-level LOCATION_VOCAB. Just trim+lowercase+dedupe (the extractor /
+  // onboarding extractCountries already emit canonical lowercase region tokens).
+  if (Array.isArray(cleaned.targetCountry)) {
+    const seen = new Set<string>()
+    const normalized: string[] = []
+    for (const raw of cleaned.targetCountry as unknown[]) {
+      if (typeof raw !== "string") continue
+      const norm = raw.trim().toLowerCase()
+      if (norm.length === 0 || seen.has(norm)) continue
+      seen.add(norm)
+      normalized.push(norm)
+    }
+    cleaned.targetCountry = normalized
   }
 
   if (Object.keys(cleaned).length === 0) {

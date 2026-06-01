@@ -53,10 +53,7 @@ export function buildBehaviorChoreographyPlan(input: {
     const volunteered = input.userMessage.trim().length > 18 && !tinyAck
     const shouldAck = volunteered && (input.mode === "ack_then_ask" || Math.random() < ackRate)
     if (shouldAck) {
-      ackHint =
-        /[一-鿿]/.test(input.userMessage)
-          ? "先简短接住对方刚说的信息，再自然问下一个问题。"
-          : "Briefly acknowledge what they volunteered, then ask the next question."
+      ackHint = "Briefly acknowledge what they volunteered, then ask the next question."
     }
   }
 

@@ -3,9 +3,9 @@
  * 2026-04-27).
  *
  * WHY: Bible v5 + voice-reminder + filler blacklist + slang lex still
- * couldn't stop nano from defaulting to clinical "X 还是 Y" multi-choice
- * questions, "接住你 / 硬撑着 / 喘不过气那种" pop-therapy register,
- * invented user-categories ("工作这边 / 生活那边"), and productivity-
+ * couldn't stop nano from defaulting to clinical "X or Y" multi-choice
+ * questions, pop-therapy register ("hold space" / "carrying it all"),
+ * invented user-categories ("the work side / the life side"), and productivity-
  * coach probes. The system-prompt + few-shot lever is saturated; we add
  * a cheap second-pass LLM normalizer at the orchestrator exit.
  *
@@ -237,18 +237,15 @@ export function stripThinkBlocks(s: string): string {
  *      (otherwise return original — don't strip to near-empty).
  *
  * Examples (all opener types unified):
- *   prior=["嗯，X..."]            sig="嗯"   text="嗯，Y..." → strip → "Y..."
- *   prior=["你试试先投..."]        sig="你试试" text="你试试把..." → "把..."
- *   prior=["听起来挺烦的。X"]      sig="听起来" text="听起来挺累..." → "挺累..."
- *   prior=["感觉投递真磨人，X"]    sig="感觉投" text="感觉投递太累..." → "太累..."
- *   prior=["Yeah, X"]            sig="yeah" text="Yeah, Y" → "Y"
+ *   prior=["Yeah, X..."]    sig="yeah"  text="Yeah, Y..." -> strip -> "Y..."
+ *   (CJK openers work the same way: the first 1-3 Han chars form the sig.)
  */
 function getOpenerSignature(text: string): string {
   const t = text.trim()
   // English: first contiguous word (case-insensitive)
   const enMatch = t.match(/^[A-Za-z]+/)
   if (enMatch) return enMatch[0].toLowerCase()
-  // CJK: first 3 hanzi (covers 1-char "嗯", 2-char "感觉", 3-char "你试试/听起来")
+  // CJK: first 3 Han chars (covers 1-3 char openers)
   const cjkMatch = t.match(/^[\p{Script=Han}]+/u)
   if (!cjkMatch) return ""
   return cjkMatch[0].slice(0, 3)
@@ -256,21 +253,21 @@ function getOpenerSignature(text: string): string {
 
 function getOpenerClause(text: string): string {
   // Everything up to (but excluding) the first sentence separator.
-  const m = text.match(/^([^，,。.;；!！？?\n…]+)[，,。.;；!！？?\n…]/)
+  const m = text.match(/^([^\uff0c,\u3002.;\uff1b!\uff01\uff1f?\n\u2026]+)[\uff0c,\u3002.;\uff1b!\uff01\uff1f?\n\u2026]/)
   return m ? m[1].trim() : ""
 }
 
 export function stripRepeatOpener(text: string, priorReplies: string[]): string {
   const trimmed = text.trim()
 
-  // Pass 1 — full-clause exact match (empathy phrases like "感觉投递真的挺磨人的")
+  // Pass 1 — full-clause exact match (repeated empathy phrases)
   const currentClause = getOpenerClause(trimmed)
   if (currentClause.length >= 4) {
     for (const prior of priorReplies) {
       if (getOpenerClause(prior.trim()) !== currentClause) continue
       const stripped = trimmed
         .slice(currentClause.length)
-        .replace(/^[…，,。.;；!！？?\s]+/, "")
+        .replace(/^[\u2026\uff0c,\u3002.;\uff1b!\uff01\uff1f?\s]+/, "")
         .trim()
       if (stripped.length >= 5) return stripped
     }
@@ -278,8 +275,8 @@ export function stripRepeatOpener(text: string, priorReplies: string[]): string 
 
   // Pass 2 — signature match. When sig matches, prefer to strip the WHOLE
   // opener clause (everything before first separator) — not just the 3-char
-  // sig. Without this, "感觉投递真的挺磨人的的，X" only loses "感觉投" leaving
-  // "递真的挺磨人的的，X" which a human still reads as the same phrase.
+  // sig. Without this, a repeated multi-char empathy phrase can lose only
+  // its 3-char sig and leave a tail a human still reads as the same phrase.
   // Falls back to sig-only strip when no separator exists in current text.
   const currentSig = getOpenerSignature(trimmed)
   if (currentSig.length === 0) return trimmed
@@ -290,7 +287,7 @@ export function stripRepeatOpener(text: string, priorReplies: string[]): string 
     const clauseLen = currentClause.length > 0 ? currentClause.length : currentSig.length
     const stripped = trimmed
       .slice(clauseLen)
-      .replace(/^[…，,。.;；!！？?\s]+/, "")
+      .replace(/^[\u2026\uff0c,\u3002.;\uff1b!\uff01\uff1f?\s]+/, "")
       .trim()
     if (stripped.length >= 5) return stripped
   }
@@ -299,29 +296,26 @@ export function stripRepeatOpener(text: string, priorReplies: string[]): string 
 }
 
 /**
- * Phase 33e — deterministic strip of "我懂"/"我懂那种"/"我懂你那" validation tic.
+ * Phase 33e — deterministic strip of the zh validation tic ("I get that ..."
+ * family). Matched via codepoint set so this file has no literal CJK.
  * The system prompt instructs Qwen to drop these but compliance is unreliable.
  * This guard runs unconditionally: strips the entire validation clause anywhere
  * it appears at start of reply OR after a leading reaction word.
  *
  * Examples:
- *   "我懂那种卡住的感觉" → ""  (caller falls back to original)
- *   "草 我懂那种卡住的感觉。继续。" → "草 继续。"
- *   "嗯，我懂你那种纠结。X" → "嗯，X"
+ *   leading validation clause -> "" (caller falls back to original)
+ *   "<reaction> <tic><clause>. rest." -> "<reaction> rest."
  */
 export function stripValidationTic(text: string): string {
   const trimmed = text.trim()
-  // Bible bans "我懂" — strip ALL occurrences anywhere (mid-sentence too).
-  // Examples that need handling:
-  //   "我懂那种X。Y" → "Y"               (start + clause)
-  //   "草 我懂那种X。Y" → "草 Y"         (after reaction)
-  //   "你这纠结我懂，X" → "你这纠结，X"  (mid-sentence)
-  //   "嗯，我懂你那种Z。X" → "嗯，Z。X"  (after separator + variant)
-  let result = trimmed.replace(/我懂(?:那种|你那种?)?/gu, "")
-  // Clean up artifacts: collapse "，，" / ", ," that may form after strip.
-  result = result.replace(/([，,。.;；!！？?])\s*[，,。.;；!！？?]/g, "$1")
-  // Strip leading separators (in case 我懂 was at very start).
-  result = result.replace(/^[，,。.;；!！？?\s]+/, "").trim()
+  // Bible bans the validation tic — strip ALL occurrences anywhere (mid-
+  // sentence too). The tic is "\u6211\u61c2" optionally followed by
+  // "\u90a3\u79cd" / "\u4f60\u90a3(\u79cd)?". Matched via codepoint escapes.
+  let result = trimmed.replace(/\u6211\u61c2(?:\u90a3\u79cd|\u4f60\u90a3\u79cd?)?/gu, "")
+  // Clean up artifacts: collapse doubled separators that may form after strip.
+  result = result.replace(/([\uff0c,\u3002.;\uff1b!\uff01\uff1f?])\s*[\uff0c,\u3002.;\uff1b!\uff01\uff1f?]/g, "$1")
+  // Strip leading separators (in case the tic was at the very start).
+  result = result.replace(/^[\uff0c,\u3002.;\uff1b!\uff01\uff1f?\s]+/, "").trim()
   return result.length >= 5 ? result : trimmed
 }
 
@@ -331,9 +325,9 @@ export function isDiffSafe(inputText: string, outputText: string): boolean {
   // Phase 33 — padding guard unchanged.
   if (outLen > 1.6 * inLen) return false
   // Phase 33 — shrink threshold relaxed 0.4→0.2. Anti-tic rewrites often
-  // strip "嗯，我懂那种 X，因为..." (40 chars) → "X." (10 chars) which is
+  // strip a long validation-tic preamble (40 chars) -> "X." (10 chars) which is
   // exactly what we want; the old 0.4 floor was rejecting them.
-  // Also exempt very-short outputs (< 8 chars) like "嗯." / "next." which
+  // Also exempt very-short outputs (< 8 chars) like "next." which
   // are valid 1-word reactions even when input was a paragraph.
   if (inLen > 10 && outLen < 0.2 * inLen && outLen >= 8) return false
   return true
@@ -345,7 +339,7 @@ export function isDiffSafe(inputText: string, outputText: string): boolean {
  * Key changes from v1:
  * - Opening "Do not think out loud" suppresses Qwen3 thinking mode at prompt level
  * - Positive replacement table (not a blacklist)
- * - In-prompt failure exemplar (wekruit投递 case → Claire-voice rewrite)
+ * - In-prompt failure exemplar (a stale-application case -> Claire-voice rewrite)
  * - Pass-through exemplar (clean reply → return unchanged)
  * - Tone modes: [reactive] / [casual] / [planning]
  *
@@ -354,51 +348,50 @@ export function isDiffSafe(inputText: string, outputText: string): boolean {
  * on nano per 24-CONTEXT.md constraint).
  */
 const REWRITER_V2_SYSTEM_PROMPT = [
-  "You are a style normalizer for Claire (柯莱儿 / 小柯). Do not think out loud. Output ONLY the rewritten reply text. NO preface like 'CLAIRE:' or 'REWRITTEN:'.",
+  "You are a style normalizer for Claire. Do not think out loud. Output ONLY the rewritten reply text. NO preface like 'CLAIRE:' or 'REWRITTEN:'.",
   "",
   "Tone modes — detect and apply:",
-  "  [reactive]: user vented/complained → 1 short empathy sentence, no follow-up question",
-  "  [casual]: small talk → 1-2 short sentences, slang ok",
-  "  [planning]: user explicitly asked for plan/list → may use structured format",
+  "  [reactive]: user vented/complained -> 1 short empathy sentence, no follow-up question",
+  "  [casual]: small talk -> 1-2 short sentences, slang ok",
+  "  [planning]: user explicitly asked for plan/list -> may use structured format",
   "",
   "POSITIVE REPLACEMENTS (apply these, do not just delete):",
-  "  '我建议你 X' → '你试试 X' / '要不要 X'",
-  "  '你应该 X' → '感觉 X 可能会好一点' / drop entirely",
-  "  'X 还是 Y?' (binary choice) → drop the question entirely",
-  "  '你最近怎么 X' / probing question → drop it",
-  "  Pop-therapy (接住你/硬撑着/hold space) → plain empathy ('听起来挺烦的')",
-  "  '我懂' / '我懂那种 X' / '我懂你那 X' (validation tic) → DELETE the entire phrase AND X. Keep ONLY direct content. (Iter 16: do not echo any meta-tokens or placeholder labels in output.)",
-  "  '我陪你 X' / '我们一起 X' / '让我帮你 X' (coach-opener) → DROP entirely or replace with peer reaction",
-  "  '我那时候也 X' → keep ONLY if not used in last 2 turns; else DROP",
+  "  'I suggest you X' -> 'you could try X' / 'maybe X'",
+  "  'you should X' -> 'X might help' / drop entirely",
+  "  'X or Y?' (binary choice) -> drop the question entirely",
+  "  'how have you been lately' / probing question -> drop it",
+  "  Pop-therapy ('hold space' / 'carrying it all') -> plain empathy ('that sounds rough')",
+  "  'I get that' / 'I totally get that X' validation tic -> DELETE the entire phrase AND X. Keep ONLY direct content. (Iter 16: do not echo any meta-tokens or placeholder labels in output.)",
+  "  'I'm here with you X' / 'we'll do this together X' / 'let me help you X' (coach-opener) -> DROP entirely or replace with peer reaction",
+  "  'I went through that too X' -> keep ONLY if not used in last 2 turns; else DROP",
   "",
   "OPENER ROTATION (CRITICAL — Phase 33):",
   "  If PREVIOUS REPLIES section is provided, scan the FIRST CLAUSE (everything before the first",
-  "  comma / period / semicolon / 。／，) of each prior reply.",
+  "  comma / period / semicolon) of each prior reply.",
   "  RULE 1 — Clause-level: if your draft's first clause matches any prior reply's first clause",
-  "  exactly (e.g. '感觉投递真的挺磨人的' repeating) → MUST use a different opener.",
+  "  exactly -> MUST use a different opener.",
   "  RULE 2 — Word-level: these openers are forbidden if they appear in prior replies:",
-  "    ZH: 嗯 / 嗯嗯 / 哎 / 哎呀 / 草 / 操 / 卧 / shit / 是 / 对 / 你试试 / 听起来",
-  "    EN: Yeah / yeah / Ugh / ugh / Oh / oh / Right / right / Totally / totally / Honestly / honestly / Exactly / exactly",
+  "    Yeah / yeah / Ugh / ugh / Oh / oh / Right / right / Totally / totally / Honestly / honestly / Exactly / exactly",
   "  Fix: drop the opener entirely, pick a different word/phrase, or start with content directly.",
   "  Goal: first clause must differ from ALL prior replies. Texting humans don't repeat.",
   "",
   "LENGTH CAP:",
-  "  Max ~80 Chinese chars or ~140 English chars. If draft is longer, cut to the strongest 1-2 sentences.",
+  "  Max ~140 English chars. If draft is longer, cut to the strongest 1-2 sentences.",
   "  No bullets, no markdown, no numbered lists.",
   "",
-  "FAILURE EXAMPLE → CLAIRE REWRITE:",
-  "  DRAFT: 听起来有点闷，前两天投了还没回也很正常，Wekruit 这类有时候就是慢或者直接默拒。你先别自己脑补太多，我建议你把投递时间记一下，然后等到下一周中后段再看要不要 follow up。",
-  "  CLAIRE: 可能下周回. 也可能默拒. 别先 emo.",
+  "FAILURE EXAMPLE -> CLAIRE REWRITE:",
+  "  DRAFT: It sounds a little quiet, and it's totally normal that they haven't replied after a couple of days. Companies like this are sometimes just slow or quietly pass. Don't overthink it; I suggest you note the application date and check back in the middle of next week to see whether to follow up.",
+  "  CLAIRE: Might reply next week. Might be a quiet pass. Don't spiral yet.",
   "",
   "FAILURE EXAMPLE 2 (validation tic + escalation):",
-  "  PREVIOUS REPLIES (most recent first): ['嗯，面试卡壳那种不确定感最磨人了...']",
-  "  DRAFT: 嗯，我懂那种'讲经历一紧张就断片'的落差，听起来你其实技术题反而更稳。你要是想更自信一点，我觉得就先把自我介绍那段练到不靠临场组织也能顺出来。",
-  "  CLAIRE: 自我介绍其实最该练熟到能脑子放空也说出来.",
+  "  PREVIOUS REPLIES (most recent first): ['Yeah, that uncertain feeling when you stall in an interview is the worst...']",
+  "  DRAFT: Yeah, I totally get that gap where you blank under pressure telling your story. Honestly your technical answers sound steadier. If you want to feel more confident, drill your intro until you can deliver it without improvising on the spot.",
+  "  CLAIRE: The intro is the one part to drill until you can say it on autopilot.",
   "",
   "FAILURE EXAMPLE 3 (repeat opener):",
-  "  PREVIOUS REPLIES: ['嗯…投这么久没回音确实磨人']",
-  "  DRAFT: 嗯，middle 那段最容易卡，因为它既要承上启下又要把重点抛出来；你先把自我介绍拆成三句话",
-  "  CLAIRE: middle 段最容易卡 — 拆成 3 句, 不要现场扩写.",
+  "  PREVIOUS REPLIES: ['Ugh, no reply after this long really does wear on you']",
+  "  DRAFT: Ugh, the middle section is where people stall most, because it has to bridge and surface the key point. Break your intro into three sentences first.",
+  "  CLAIRE: The middle stalls people most — break it into 3 lines, no improvising.",
   "",
   "FAILURE EXAMPLE 4 (EN repeat opener):",
   "  PREVIOUS REPLIES: [\"Yeah that's brutal—crickets after you sent emails is rough\"]",
@@ -406,8 +399,8 @@ const REWRITER_V2_SYSTEM_PROMPT = [
   "  CLAIRE: both sides at once is rough. clock + pressure is a lot.",
   "",
   "PASS-THROUGH EXAMPLE (return unchanged):",
-  "  DRAFT: 拒得快说明他们没准备好你. next.",
-  "  CLAIRE: 拒得快说明他们没准备好你. next.",
+  "  DRAFT: a fast reject just means they weren't ready for you. next.",
+  "  CLAIRE: a fast reject just means they weren't ready for you. next.",
   "",
   "Output ONLY the reply. No preface, no explanation, no quotes around it.",
 ].join("\n")
@@ -459,7 +452,7 @@ const defaultDeps: RewriterDeps = {
       priorAssistantReplies && priorAssistantReplies.length > 0
         ? `OPENER-AVOIDANCE LIST (do NOT copy any text below; only use to avoid starting your reply with the SAME opener phrase):\n${priorAssistantReplies
             .slice(0, 2)
-            .map((r, i) => `  [prev-${i + 1}-opener] ${r.trim().slice(0, 12)}…`)
+            .map((r, i) => `  [prev-${i + 1}-opener] ${r.trim().slice(0, 12)}...`)
             .join("\n")}\n\n`
         : ""
     // Phase 37 — append FSM directive to system prompt when caller provides
@@ -489,7 +482,7 @@ const defaultDeps: RewriterDeps = {
     )
     // Phase 33e: detect length-truncation. If the model hit max_tokens, the
     // last sentence is mid-word — better to return empty (caller falls back
-    // to original draft) than ship "...这块也一样，你".
+    // to original draft) than ship a mid-word truncated tail.
     const choice = response.choices[0]
     if (choice?.finish_reason === "length") return ""
     return choice?.message?.content?.trim() ?? ""

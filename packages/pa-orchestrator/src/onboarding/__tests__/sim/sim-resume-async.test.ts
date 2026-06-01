@@ -1,7 +1,7 @@
 /**
  * Layer 2 sim — DiscussionPhase resume lifecycle (full async flow).
  *
- * P7-6 task: attachment → ack → wait msg "稍等" → cv-parsed → analysis →
+ * P7-6 task: attachment → ack → wait msg "hold on" → cv-parsed → analysis →
  * handover. Verifies the ack-then-async-then-analysis sequence (DOD #4).
  *
  * Lifecycle order asserted:
@@ -9,7 +9,7 @@
  *   2. State transitions to q_resume_processing
  *   3. cv-ingest worker is kicked off (fire-and-forget)
  *   4. While processing, mid-process user msg → onMessageWhileProcessing
- *      sends hold ("稍等") — but does NOT re-fire ack
+ *      sends hold ("hold on") — but does NOT re-fire ack
  *   5. cv-ingest worker callback → onWorkComplete
  *      - persistAnalysis writes user tags
  *      - sendAnalysis sends summary message
@@ -134,8 +134,8 @@ test("sim/resume-async: full lifecycle (ack → hold → analysis) — message o
   assert.deepEqual(rec.writeTagsCalls[0]?.parsed, result.data, "parsed payload persisted")
 })
 
-test("sim/resume-async: zh language path — Chinese ack + hold + analysis", async () => {
-  const rec = makeRecorder({ composeOutput: "看到你 3 年经验" })
+test("sim/resume-async: zh-lang user still gets English ack + hold + analysis", async () => {
+  const rec = makeRecorder({ composeOutput: "I see 3 years of experience" })
   const phase = new ResumeDiscussionPhase(rec.deps, { rand: () => 0 })
 
   await phase.onArtifactReceived(makeInput({ lang: "zh", turnId: "tz1" }))
@@ -146,9 +146,9 @@ test("sim/resume-async: zh language path — Chinese ack + hold + analysis", asy
   )
 
   assert.equal(rec.sends.length, 3)
-  assert.match(rec.sends[0]!.text, /读一下你的简历/, "zh ack")
-  assert.match(rec.sends[1]!.text, /稍等|马上|再给我/, "zh hold")
-  assert.equal(rec.sends[2]!.text, "看到你 3 年经验", "zh analysis")
+  assert.match(rec.sends[0]!.text, /reading through your resume/i, "english ack")
+  assert.match(rec.sends[1]!.text, /(hold on|almost there|few more seconds)/i, "english hold")
+  assert.equal(rec.sends[2]!.text, "I see 3 years of experience", "english analysis")
 })
 
 test("sim/resume-async: cv-ingest failure → error message + no advance", async () => {

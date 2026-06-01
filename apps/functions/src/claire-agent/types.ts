@@ -51,7 +51,8 @@ export interface ClaireTransport {
   markRead(): Promise<void>
   typing(): Promise<void>
   sendStatus(text: string): Promise<void>
-  sendText(text: string): Promise<void>
+  /** opts carries multi-bubble ordering: seq (0-based position) + paced (emit already spaced it). */
+  sendText(text: string, opts?: { seq?: number; paced?: boolean }): Promise<void>
   tapback(reaction: ClaireReaction): Promise<void>
   noReply(reason: string): Promise<void>
 }
@@ -60,10 +61,16 @@ export interface ClaireTransport {
 export interface FindMatchResult {
   ok: boolean
   recCount: number
-  /** formatted lines: "Title @ Company\n<applyUrl>". */
+  /** formatted lines: "Title @ Company\n<applyUrl>" (collab lines also carry the WeKruit_..._Job token). */
   jobs: string[]
   reason: string | null
   snapshotTags?: Record<string, unknown>
+  /**
+   * Structured WeKruit collab/partner roles in THIS batch — used to build the DETERMINISTIC prescreen
+   * offer (the LLM repeatedly dropped it). prescreenReady = the role has a live prescreenConfig, so its
+   * jobs[] line carries a start token. Adam 2026-06-01: any match with a collab role MUST offer the screen.
+   */
+  collab?: Array<{ jobId: string; title: string; company: string; prescreenReady: boolean }>
 }
 
 /**
@@ -80,6 +87,14 @@ export interface ClaireToolContext {
   judgeModel: string
   /** active job id for prescreen config lookup (when in a prescreen flow). */
   jobId?: string
+  /**
+   * candidate phone (E.164) for the current inbound turn. Threaded from
+   * ClaireTurnInput.toE164 so the by-name prescreen tool (begin_collab_prescreen)
+   * can hand it to runPreScreenForUser exactly like the copy-paste trigger does.
+   * Absent on a proactive/outbound-initiated turn → the tool falls back to the
+   * candidate's stored pa-users.phoneE164.
+   */
+  toE164?: string
   log: (event: string, payload?: Record<string, unknown>) => void
   nowIso: () => string
   /**
@@ -90,6 +105,17 @@ export interface ClaireToolContext {
     userId: string
     requestedCount?: number | null
   }) => Promise<FindMatchResult>
+  /**
+   * Optional seam for the by-name prescreen tool (begin_collab_prescreen). Production leaves this
+   * undefined → the tool calls the REAL legacy runPreScreenForUser (the SAME session-start the
+   * copy-paste WeKruit_<jobId>_<userId>_Job trigger uses). Evals inject a stub so the resolver +
+   * tool can be driven offline without enqueuing a real outbound. Mirrors the findMatch DI pattern.
+   */
+  beginPrescreen?: (args: {
+    jobId: string
+    userId: string
+    toE164: string
+  }) => Promise<{ ok: boolean; reason?: string; sessionId: string }>
 }
 
 export type ClaireRunResult = {

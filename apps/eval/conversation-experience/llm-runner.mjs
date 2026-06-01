@@ -286,6 +286,14 @@ async function main() {
       const actual = asArr(runningTags[k])
       for (const v of vals) if (!actual.includes(v)) detFails.push(`  tags.${k}: expected to INCLUDE ${JSON.stringify(v)}, got ${JSON.stringify(runningTags[k])}`)
     }
+    // final_tags_includes_any — key must contain AT LEAST ONE of the listed values.
+    // Use when a concept has >1 valid canonical form (e.g. remote → remote_anywhere
+    // OR remote_united_states): asserts the concept was captured without pinning the
+    // exact variant. Still deterministic-pass; never silently drops the check.
+    for (const [k, vals] of Object.entries(fixture.expect?.final_tags_includes_any ?? {})) {
+      const actual = asArr(runningTags[k])
+      if (!vals.some((v) => actual.includes(v))) detFails.push(`  tags.${k}: expected to INCLUDE ANY of ${JSON.stringify(vals)}, got ${JSON.stringify(runningTags[k])}`)
+    }
     for (const [k, vals] of Object.entries(fixture.expect?.final_tags_excludes ?? {})) {
       const actual = asArr(runningTags[k])
       for (const v of vals) if (actual.includes(v)) detFails.push(`  tags.${k}: expected to EXCLUDE ${JSON.stringify(v)}, but present in ${JSON.stringify(runningTags[k])}`)

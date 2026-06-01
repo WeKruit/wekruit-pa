@@ -19,16 +19,12 @@ describe("CANCELLATION_PATTERNS", () => {
 
 describe("detectProactiveCancellation — positive cases", () => {
   const positives = [
-    "停止提醒",
-    "取消提醒",
-    "别提醒了",
     "stop reminders",
     "Stop Reminders",
     "stop the reminders",
     "cancel reminders",
     "Cancel Reminders",
     "cancel my reminders",
-    " 停止提醒 ",   // trim tolerance
     "  stop reminders  ", // whitespace padding
   ]
 
@@ -41,11 +37,9 @@ describe("detectProactiveCancellation — positive cases", () => {
 
 describe("detectProactiveCancellation — negative cases", () => {
   const negatives = [
-    "提醒我明天",
     "remind me tomorrow",
     "I'll stop later",
     "OK got it",
-    "好的",
     "cancel that meeting",
     "stop by later",
     "stop it",

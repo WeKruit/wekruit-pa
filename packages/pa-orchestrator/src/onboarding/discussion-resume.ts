@@ -3,8 +3,8 @@
  *
  * Adam directive 2026-05-07 (GOAL-onboarding-refactor.md G2):
  *   resume / LinkedIn URL are NOT deterministic questions. They are
- *   DiscussionPhase: ack → state=processing → user msg "稍等" → analysis
- *   fired async → handover.
+ *   DiscussionPhase: ack -> state=processing -> user msg "hold on" ->
+ *   analysis fired async -> handover.
  *
  * Lifecycle (inherited from `DiscussionPhase`):
  *
@@ -23,9 +23,9 @@
  *                                │
  *                                ▼
  *                          sendHoldMessage (random rotation):
- *                          "稍等一下，还在读简历"
- *                          "马上就好"
- *                          "再给我几秒"
+ *                          "hold on, still reading your resume"
+ *                          "almost there"
+ *                          "give me a few more seconds"
  *
  *   q_resume_processing ─── cv-ingest done callback ──▶ q_resume_done
  *                                │
@@ -109,14 +109,11 @@ export interface ResumeDiscussionDeps {
  * always picks one variant per turn — variants intentionally short.
  */
 export function pickHoldMessage(lang: "zh" | "en", rand: () => number = Math.random): string {
-  const variants =
-    lang === "zh"
-      ? ["稍等一下，还在读简历", "马上就好，还在读", "再给我几秒"]
-      : [
-          "hold on, still reading your resume",
-          "almost there, still parsing",
-          "give me a few more seconds",
-        ]
+  const variants = [
+    "hold on, still reading your resume",
+    "almost there, still parsing",
+    "give me a few more seconds",
+  ]
   const idx = Math.floor(rand() * variants.length)
   return variants[idx] ?? variants[0]!
 }
@@ -159,10 +156,7 @@ export class ResumeDiscussionPhase extends DiscussionPhase {
   }
 
   protected async sendImmediateAck(input: PhaseInput): Promise<void> {
-    const text =
-      input.lang === "zh"
-        ? "收到, 让我读一下你的简历..."
-        : "got it, reading through your resume..."
+    const text = "got it, reading through your resume..."
     await this.deps.send(input, text)
   }
 
@@ -176,10 +170,7 @@ export class ResumeDiscussionPhase extends DiscussionPhase {
   }
 
   protected async sendErrorMessage(input: PhaseInput, _result: AsyncResult): Promise<void> {
-    const text =
-      input.lang === "zh"
-        ? "简历读取失败了，能再发一次吗?"
-        : "couldn't read your resume — can you resend?"
+    const text = "couldn't read your resume — can you resend?"
     await this.deps.send(input, text)
   }
 

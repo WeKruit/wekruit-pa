@@ -31,6 +31,8 @@ import {
   INDUSTRY_SECTOR_VOCAB,
   CAREER_STAGE_VOCAB,
   JOB_TYPE_VOCAB,
+  COMPANY_SIZE_VOCAB,
+  COMPANY_STAGE_VOCAB,
   HARDNESS_AXIS_VOCAB,
   HardnessSchema,
   type RoleFunction,
@@ -222,6 +224,21 @@ export const ConversationExtractResultSchema = z.object({
       visaStatus: z.enum(VISA_STATUS_VOCAB).optional(),
       careerStage: z.enum(CAREER_STAGE_VOCAB).optional(),
       targetJobType: coerceArray(z.enum(JOB_TYPE_VOCAB)).optional(),
+      /**
+       * Company-size preference. MULTI-PICK / OR (2026-05-30) — "a small team
+       * or big tech" → ["early_startup", "enterprise"]. Closed enum from
+       * `@wekruit/shared-tags`; the model maps the free-form answer to the
+       * canonical token(s) (no regex classification). `coerceArray` accepts a
+       * lone scalar from the model and lifts it to a 1-element array.
+       */
+      companySize: coerceArray(z.enum(COMPANY_SIZE_VOCAB)).optional(),
+      /**
+       * Company-STAGE preference — funding stage, ORTHOGONAL to companySize (headcount). MULTI-PICK /
+       * OR. The model maps the free-form answer to the canonical token(s) (no regex). E.g. "early
+       * startups or a big public company" → ["seed", "ipo_public"]. Distinct from companySize so stage
+       * intent isn't conflated into the size bucket.
+       */
+      companyStage: coerceArray(z.enum(COMPANY_STAGE_VOCAB)).optional(),
       targetLocations: coerceArray(z.string().min(1).max(80)),
       minSalaryUsd: z.number().int().nonnegative().optional(),
       relevantTags: coerceArray(z.string().min(1).max(40)).refine(
@@ -229,20 +246,33 @@ export const ConversationExtractResultSchema = z.object({
         { message: "relevantTags exceeds 12" },
       ),
       /**
-       * SOFT-vs-HARD preference model (2026-05-28) — per-axis hardness the
-       * user signalled in chat. Keyed by `HARDNESS_AXIS_VOCAB`. Each entry is
-       * `{ hardness: "hard" | "soft" }` (the matcher fills buffer defaults).
-       * `.strict()` on the parent would otherwise reject this key; included
-       * here so the extractor can capture "must"/"only"/"dealbreaker" → hard
-       * and "prefer"/"ideally"/"open to" → soft. Emitted ONLY when the user
-       * clearly signals; absent = unset = matcher uses DEFAULT_HARDNESS.
+       * SOFT-vs-HARD preference model (2026-05-28) + NEGOTIABILITY DEGREE
+       * (2026-05-30) — per-axis hardness the user signalled in chat. Keyed by
+       * `HARDNESS_AXIS_VOCAB`. Each entry is `{ hardness: "hard" | "soft",
+       * bufferPct?, bufferSteps? }`:
+       *   - hardness "hard" = dealbreaker ("must"/"only"/"dealbreaker"),
+       *     "soft" = preference ("prefer"/"ideally"/"open to").
+       *   - bufferPct (continuous axes — salary) captures the DEGREE of
+       *     flexibility, e.g. "need 140k but could flex to 130" → ~0.07.
+       *   - bufferSteps (ordinal axes — careerStage/companySize/companyStage)
+       *     captures how many adjacent enum positions are acceptable, e.g.
+       *     "ideally senior but open to mid" → 1.
+       * Emitted ONLY when the user clearly signals; absent → matcher uses
+       * DEFAULT_HARDNESS. `.strict()` on the parent would otherwise reject this.
        */
       preferenceHardness: z
         .object(
           Object.fromEntries(
             HARDNESS_AXIS_VOCAB.map((a) => [
               a,
-              z.object({ hardness: HardnessSchema }).strict().optional(),
+              z
+                .object({
+                  hardness: HardnessSchema,
+                  bufferPct: z.number().min(0).max(1).optional(),
+                  bufferSteps: z.number().int().min(0).max(4).optional(),
+                })
+                .strict()
+                .optional(),
             ]),
           ),
         )
@@ -373,10 +403,12 @@ export function buildExtractorPrompt(req: ConversationExtractRequest): string {
     `  visaStatus (string):            ${VISA_STATUS_VOCAB.join(", ")}`,
     `  careerStage (string):           ${CAREER_STAGE_VOCAB.join(", ")}`,
     `  targetJobType (string[]):       ${JOB_TYPE_VOCAB.join(", ")}`,
+    `  companySize (string[]):         ${COMPANY_SIZE_VOCAB.join(", ")} (MULTI-PICK / OR — headcount/maturity; capture EVERY size the user is open to, e.g. "small startup or big tech" → [early_startup, enterprise]; "open" = no preference)`,
+    `  companyStage (string[]):        ${COMPANY_STAGE_VOCAB.join(", ")} (MULTI-PICK / OR — FUNDING stage, ORTHOGONAL to companySize; e.g. "early-stage startup or a public company" → [seed, ipo_public]; omit if not signalled)`,
     "  targetLocations (string[]):     free-form normalized location tokens, e.g. new_york, san_francisco_bay_area, remote",
     "  minSalaryUsd (integer):         minimum acceptable base salary in USD",
     "  relevantTags (string[], max 12): free-form lowercase skill/interest tokens",
-    `  preferenceHardness (object):    per-axis { hardness: "hard" | "soft" } keyed by: ${HARDNESS_AXIS_VOCAB.join(", ")}`,
+    `  preferenceHardness (object):    per-axis { hardness: "hard" | "soft", bufferPct?, bufferSteps? } keyed by: ${HARDNESS_AXIS_VOCAB.join(", ")}`,
     "Do NOT emit any key not in this list. A single-value field may be a scalar or a 1-element array.",
     "",
     "preferenceHardness — a SECONDARY annotation only. It NEVER replaces the value fields above:",
@@ -394,6 +426,13 @@ export function buildExtractorPrompt(req: ConversationExtractRequest): string {
     "      present, preferenceHardness.companyStage = { hardness: \"soft\" }.",
     "  - If the user is AMBIGUOUS about strictness, do NOT emit a preferenceHardness entry for that axis (leave it",
     "    unset so the matcher defaults are used). You STILL emit the axis VALUE field as usual.",
+    "  - DEGREE of flexibility (negotiability): when the user signals HOW MUCH they can flex, capture it so the buffer",
+    "    reflects real negotiability, not just the default. On the SALARY axis use bufferPct (0..1 = fraction below the",
+    "    floor still acceptable): e.g. \"need 140k but could flex to 130 for the right role\" → minSalaryUsd=140000 AND",
+    "    preferenceHardness.salary = { hardness: \"soft\", bufferPct: 0.07 }. On ORDINAL axes (careerStage / companySize /",
+    "    companyStage) use bufferSteps (integer 0..4 = how many adjacent enum positions are acceptable): e.g. \"ideally",
+    "    senior but open to mid\" → careerStage=senior AND preferenceHardness.careerStage = { hardness: \"soft\", bufferSteps: 1 }.",
+    "    Omit bufferPct/bufferSteps when no degree is signalled (just emit hardness).",
     "If the user asks to AVOID / exclude / is not interested in an industry (e.g. \"avoid crypto and adtech\"),",
     "emit that industry in negativeIndustrySector (canonical token, e.g. crypto_web3_blockchain) — do NOT put it",
     "in industrySector. industrySector is ONLY for PREFERRED industries the user wants more of.",
@@ -521,16 +560,30 @@ export async function runExtraction(
   // Firestore write (or vice versa). Both are logged on failure.
   const tagPatch: PartialUserTags = parsed.tagPatch as PartialUserTags
 
-  // SOFT-vs-HARD (2026-05-28) — stamp provenance on captured hardness entries
-  // so each hard/soft signal is auditable (source + timestamp). The matcher
-  // fills buffer defaults from `DEFAULT_HARDNESS`, so we only carry hardness +
-  // provenance here. Pure decoration over the LLM-emitted entries.
+  // SOFT-vs-HARD (2026-05-28) + NEGOTIABILITY DEGREE (2026-05-30) — stamp
+  // provenance on captured hardness entries so each hard/soft signal is
+  // auditable (source + timestamp). When the LLM also captured a DEGREE of
+  // flexibility (bufferPct for salary, bufferSteps for ordinal axes), carry it
+  // so the buffer reflects real negotiability rather than DEFAULT_HARDNESS.
   if (parsed.tagPatch.preferenceHardness) {
     const stampedAt = now().toISOString()
-    const stamped: Record<string, { hardness: "hard" | "soft"; source: "conversation"; updatedAt: string }> = {}
+    type StampedEntry = {
+      hardness: "hard" | "soft"
+      source: "conversation"
+      updatedAt: string
+      bufferPct?: number
+      bufferSteps?: number
+    }
+    const stamped: Record<string, StampedEntry> = {}
     for (const [axis, entry] of Object.entries(parsed.tagPatch.preferenceHardness)) {
       if (entry && (entry.hardness === "hard" || entry.hardness === "soft")) {
-        stamped[axis] = { hardness: entry.hardness, source: "conversation", updatedAt: stampedAt }
+        stamped[axis] = {
+          hardness: entry.hardness,
+          source: "conversation",
+          updatedAt: stampedAt,
+          ...(typeof entry.bufferPct === "number" ? { bufferPct: entry.bufferPct } : {}),
+          ...(typeof entry.bufferSteps === "number" ? { bufferSteps: entry.bufferSteps } : {}),
+        }
       }
     }
     if (Object.keys(stamped).length > 0) {

@@ -1,8 +1,8 @@
 /**
  * Phase 21 — LLM output rewriter unit tests (Track 4 of prod-regression fix).
  *
- * Prod screenshot 2026-04-27 showed nano defaulting to "X 还是 Y" multi-choice
- * questions, "接住你" pop-therapy register, invented user-categories, and
+ * Prod screenshot 2026-04-27 showed nano defaulting to "X or Y" multi-choice
+ * questions, pop-therapy register ("hold space"), invented user-categories, and
  * productivity-coach probes. Bible v5 + filler blacklist catches some but not
  * all — the rewriter is the LAST defense before iMessage.
  *
@@ -32,6 +32,10 @@ import {
   type RewriterDeps,
 } from "./llm-rewriter.js"
 
+// CJK helper — build Chinese sample text from codepoints so this test file has
+// no literal CJK (the rewriter helpers still strip legacy CJK openers/tics).
+const cjk = (...cps: number[]) => String.fromCharCode(...cps)
+
 /**
  * Helper: build a fake LLM dep that returns the given completion text once,
  * recording the prompt it was called with for inspection.
@@ -57,7 +61,7 @@ function fakeRewriter(returnText: string, opts: { delayMs?: number; throwAfter?:
 test("rewriteIfOff: clean text passes through unchanged (no rewrite recorded)", async () => {
   // Fake echoes the input — the contract is "rewriteApplied = did the
   // text actually change", not "did we make a model call".
-  const clean = "发来. 我给你测评下."
+  const clean = "send it over. i'll size it up."
   const { deps } = fakeRewriter(clean)
   const result = await rewriteIfOff(clean, { deps })
   assert.equal(result.text, clean)
@@ -67,8 +71,8 @@ test("rewriteIfOff: clean text passes through unchanged (no rewrite recorded)", 
 
 test("rewriteIfOff: A/B-framework draft is replaced with single-beat reply", async () => {
   const draft =
-    "听起来你最近真的被事情淹了 😮‍💨\n你现在最烦的是工作这边, 还是生活那边?"
-  const cleaned = "听起来挺烦的. 卷成这样你怎么扛过来的."
+    "sounds like you've really been buried lately 😮‍💨\nwhat's bugging you most, the work side or the life side?"
+  const cleaned = "that sounds rough. how have you been holding up?"
   const { deps, calls } = fakeRewriter(cleaned)
   const result = await rewriteIfOff(draft, { deps })
   assert.equal(result.text, cleaned)
@@ -78,12 +82,10 @@ test("rewriteIfOff: A/B-framework draft is replaced with single-beat reply", asy
   assert.equal(calls[0]!.rawText, draft)
 })
 
-test("rewriteIfOff: pop-therapy phrase 接住你 stripped", async () => {
+test("rewriteIfOff: pop-therapy phrase stripped", async () => {
   // Phase 24 diff-guard note: output must be within 40%-160% of input length.
-  // Draft ~19 chars; cleaned output must be >= 0.4*19 = 7.6 chars (i.e. ≥8 chars).
-  // Use a realistic rewrite that preserves approximate length.
-  const draft = "你现在是想找个人接住你一下 😌 我懂."  // ~19 chars
-  const cleaned = "听着挺累的. 还好吗."  // ~10 chars — within safe ratio
+  const draft = "do you just want someone to hold space for you 😌 i get it."  // ~58 chars
+  const cleaned = "sounds draining. you doing okay?"  // ~32 chars — within safe ratio
   const { deps } = fakeRewriter(cleaned)
   const result = await rewriteIfOff(draft, { deps })
   assert.equal(result.text, cleaned)
@@ -93,8 +95,8 @@ test("rewriteIfOff: pop-therapy phrase 接住你 stripped", async () => {
 test("rewriteIfOff: productivity-coach probe removed", async () => {
   // Phase 24 diff-guard note: input has 2 lines; output trims the coach probe.
   // Use a draft where the coach-probe removal still keeps output within 40% ratio.
-  const draft = "听起来挺难的. 你现在最想先把哪件搞定?"  // ~18 chars
-  const cleaned = "听起来挺难的. 难得."  // ~9 chars — within safe ratio (≥0.4*18=7.2)
+  const draft = "that sounds hard. which one do you most want to tackle first?"  // ~60 chars
+  const cleaned = "that sounds hard. that's a lot."  // ~31 chars — within safe ratio
   const { deps } = fakeRewriter(cleaned)
   const result = await rewriteIfOff(draft, { deps })
   assert.equal(result.text, cleaned)
@@ -121,8 +123,8 @@ test("rewriteIfOff: PA_LLM_REWRITE_DISABLED=true short-circuits (no model call)"
   const { deps, calls } = fakeRewriter("would-be-rewritten")
   process.env.PA_LLM_REWRITE_DISABLED = "true"
   try {
-    const result = await rewriteIfOff("听起来你硬撑着", { deps })
-    assert.equal(result.text, "听起来你硬撑着")
+    const result = await rewriteIfOff("sounds like you're toughing it out", { deps })
+    assert.equal(result.text, "sounds like you're toughing it out")
     assert.equal(result.rewriteApplied, false)
     assert.equal(result.reason, "disabled")
     assert.equal(calls.length, 0, "model must not be called when disabled")
@@ -151,9 +153,9 @@ test("rewriteIfOff: rewriter returning empty string fails open (defense-in-depth
 
 test("rewriteIfOff: identical-after-trim treated as no-op", async () => {
   // Some adapters add trailing whitespace. Don't claim a rewrite for that.
-  const { deps } = fakeRewriter("发来. 我给你测评下.\n")
-  const result = await rewriteIfOff("发来. 我给你测评下.", { deps })
-  assert.equal(result.text, "发来. 我给你测评下.")
+  const { deps } = fakeRewriter("send it over. i'll size it up.\n")
+  const result = await rewriteIfOff("send it over. i'll size it up.", { deps })
+  assert.equal(result.text, "send it over. i'll size it up.")
   assert.equal(result.rewriteApplied, false)
 })
 
@@ -337,19 +339,18 @@ test("stripRepeatOpener: strips full clause 听起来挺烦的 when prior has sa
 test("rewriteIfOff: think block stripped before comparison → valid rewrite accepted", async () => {
   // Model returns think block + actual reply; after stripping, text is different
   // from original but within diff-safe bounds → should be accepted as rewrite.
-  // Input: "听起来挺烦的 最近怎么了" (12 chars), output after strip: "卷成这样你怎么扛过来的" (11 chars)
-  // 11 chars is within [0.4*12=4.8, 1.6*12=19.2] → safe
-  const draft = "听起来挺烦的 最近怎么了"  // 12 chars
-  const modelResponse = "<think>I need to rewrite this</think>卷成这样你怎么扛过来的"
+  // Input ~30 chars, output after strip ~32 chars → within diff-safe bounds.
+  const draft = "sounds rough lately, what's been going on?"
+  const modelResponse = "<think>I need to rewrite this</think>that's a grind, how are you holding up?"
   const { deps } = fakeRewriter(modelResponse)
   const result = await rewriteIfOff(draft, { deps })
-  assert.equal(result.text, "卷成这样你怎么扛过来的")
+  assert.equal(result.text, "that's a grind, how are you holding up?")
   assert.equal(result.reason, "rewritten")
 })
 
 test("rewriteIfOff: output 2× input length rejected as rewrite_unsafe", async () => {
   // Input 20 chars, output ~40+ chars → >1.6× → rewrite_unsafe
-  const draft = "卷得挺厉害的吧"  // ~7 chars but use a longer one
+  const draft = "that is a serious grind"  // ~23 chars (longer sample)
   const longInput = "hey this is the draft"  // 21 chars
   // Output > 1.6 * 21 = 33.6 chars → needs to be 34+ chars
   const tooLongOutput = "hey this is a very much longer output that exceeds ratio"  // 57 chars
@@ -456,7 +457,7 @@ test("breaker: HALF_OPEN trial that succeeds closes the breaker", async () => {
   // Reset and verify breaker is CLOSED again, behaves normally.
   __resetBreakerForTests()
   assert.equal(getBreakerStateName("Qwen/Qwen3-8B"), "CLOSED")
-  const ok = fakeRewriter("rewritten well 你试试")
+  const ok = fakeRewriter("rewritten well you could try")
   const r = await rewriteIfOff("draft message text", { deps: ok.deps })
   assert.ok(r.reason === "rewritten" || r.reason === "no_change" || r.reason === "rewrite_unsafe")
   assert.equal(getBreakerStateName("Qwen/Qwen3-8B"), "CLOSED")
@@ -472,7 +473,7 @@ test("breaker: a successful call mid-stream resets failure count", async () => {
   assert.equal(getBreakerStateName("Qwen/Qwen3-8B"), "CLOSED")
 
   // 1 success — resets count
-  const ok = fakeRewriter("听着挺累的. 还好吗.")
+  const ok = fakeRewriter("sounds draining. you okay?")
   await rewriteIfOff("draft message text", { deps: ok.deps })
 
   // 4 more failures — still under threshold (count was reset)
@@ -484,7 +485,7 @@ test("breaker: a successful call mid-stream resets failure count", async () => {
 
 test("breaker: circuitOpen flag absent/false on healthy successful rewrite", async () => {
   __resetBreakerForTests()
-  const ok = fakeRewriter("listening sounds tough. 还好吗.")
+  const ok = fakeRewriter("listening sounds tough. you okay?")
   const r = await rewriteIfOff("draft message text input", { deps: ok.deps })
   assert.notEqual(r.circuitOpen, true)
 })
@@ -495,7 +496,7 @@ test("Phase 40 — paHumanizeRuntimeEnabled OFF default → no detector pass", a
   __resetBreakerForTests()
   delete process.env.PA_HUMANIZE_RUNTIME_DISABLED
   delete process.env.paHumanizeRuntimeEnabled
-  const ok = fakeRewriter("挺难的. 我懂.")
+  const ok = fakeRewriter("pretty hard. i get it.")
   // No db passed → umbrella OFF → no detectors.
   const r = await rewriteIfOff("draft message text input", { deps: ok.deps }, {})
   assert.equal(r.rewriteApplied, true)
@@ -507,7 +508,7 @@ test("Phase 40 — PA_HUMANIZE_RUNTIME_DISABLED=true short-circuits even with db
   __resetBreakerForTests()
   process.env.PA_HUMANIZE_RUNTIME_DISABLED = "true"
   process.env.paHumanizeRuntimeEnabled = "true" // would otherwise enable
-  const ok = fakeRewriter("挺难的. 我懂.")
+  const ok = fakeRewriter("pretty hard. i get it.")
   // Stub db — env-override should never reach getFlag because DISABLED hits first.
   let getFlagCalled = false
   const stubDb = new Proxy(
@@ -546,7 +547,7 @@ test("Phase 40 — umbrella ON via env-override → detectors run, detectorResul
       },
     }
   ) as unknown as import("firebase-admin/firestore").Firestore
-  const ok = fakeRewriter("挺难的. 还好吗.")
+  const ok = fakeRewriter("pretty hard. you okay?")
   const r = await rewriteIfOff(
     "draft message text input that is long enough",
     { deps: ok.deps },
@@ -554,8 +555,8 @@ test("Phase 40 — umbrella ON via env-override → detectors run, detectorResul
       db: stubDb,
       userId: "u1",
       turnId: "t1",
-      claireHistoryForDetectors: ["听起来挺难的", "还好吗"],
-      lastUserMessage: "今天面试挂了",
+      claireHistoryForDetectors: ["that sounds hard", "you okay"],
+      lastUserMessage: "bombed my interview today",
     }
   )
   assert.equal(r.rewriteApplied, true)
@@ -579,7 +580,7 @@ test("Phase 40 — detector pass error degrades gracefully (rewrite still succee
       },
     }
   ) as unknown as import("firebase-admin/firestore").Firestore
-  const ok = fakeRewriter("挺难的. 还好吗.")
+  const ok = fakeRewriter("pretty hard. you okay?")
   const r = await rewriteIfOff(
     "draft message text input long enough",
     { deps: ok.deps },
@@ -599,7 +600,7 @@ test("Phase 37 — FSM directive NOT passed when umbrella OFF (default)", async 
   delete process.env.PA_HUMANIZE_RUNTIME_DISABLED
   delete process.env.paHumanizeRuntimeEnabled
   delete process.env.PA_FSM_ENABLED
-  const ok = fakeRewriter("挺难的. 还好吗.")
+  const ok = fakeRewriter("pretty hard. you okay?")
   await rewriteIfOff("draft message text input that is long enough", { deps: ok.deps }, {})
   assert.equal(ok.calls.length, 1)
   assert.equal(ok.calls[0]!.fsmDirective, undefined)
@@ -617,7 +618,7 @@ test("Phase 37 — FSM directive PASSED to callRewriter when umbrella ON", async
       },
     }
   ) as unknown as import("firebase-admin/firestore").Firestore
-  const ok = fakeRewriter("挺难的. 还好吗.")
+  const ok = fakeRewriter("pretty hard. you okay?")
   await rewriteIfOff(
     "draft message text input long enough",
     { deps: ok.deps },
@@ -625,9 +626,9 @@ test("Phase 37 — FSM directive PASSED to callRewriter when umbrella ON", async
       db: stubDb,
       userId: "u1",
       turnId: "t1",
-      lastUserMessage: "今天面试挂了，整个人懵了",
-      userHistoryForFsm: ["昨天的事我还在想"],
-      claireHistoryForDetectors: ["听起来挺难的"],
+      lastUserMessage: "bombed my interview today, totally stunned",
+      userHistoryForFsm: ["still thinking about yesterday"],
+      claireHistoryForDetectors: ["that sounds hard"],
       turnNumber: 3,
     }
   )
@@ -661,7 +662,7 @@ test("Phase 37 — sub-flag PA_FSM_ENABLED=false bypasses directive even when um
       db: stubDb,
       userId: "u1",
       turnId: "t1",
-      lastUserMessage: "今天面试挂了",
+      lastUserMessage: "bombed my interview today",
       turnNumber: 1,
     }
   )

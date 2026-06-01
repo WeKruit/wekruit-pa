@@ -35,8 +35,8 @@ function makeConfig(): PrescreenConfig {
         qId: "q1",
         type: "MUST_HAVE",
         weight: 1,
-        prompt: { zh: "请描述你的 q1 经验", en: "Describe your q1 experience" },
-        clarifyPrompt: { zh: "请更具体一点 (q1)", en: "Be more specific (q1)" },
+        prompt: { zh: "Describe your q1 experience", en: "Describe your q1 experience" },
+        clarifyPrompt: { zh: "Be more specific (q1)", en: "Be more specific (q1)" },
         keywords: [{ keyword: "q1", weight: 1 }],
       },
     ],
@@ -118,7 +118,7 @@ async function setupActiveSession(
 /* ────────────────────────────────────────────────────────────────────────── */
 
 test("isUserExitPrescreenReply matches stop variants", () => {
-  for (const r of ["stop", "STOP", "pause", "cancel", "  pause  ", "退出", "暂停", "not now"]) {
+  for (const r of ["stop", "STOP", "pause", "cancel", "  pause  ", "not now"]) {
     assert.equal(isUserExitPrescreenReply(r), true, `expected match: ${r}`)
   }
 })
@@ -144,13 +144,14 @@ test("prescreenTurnRecordQId returns advance.fromQId for advance action", () => 
   assert.equal(id, "qFrom")
 })
 
-test("language-specific copy: expired EN+ZH differ", () => {
-  assert.notEqual(expiredSessionText("zh"), expiredSessionText("en"))
+test("copy is English-only regardless of lang: expired", () => {
+  assert.equal(expiredSessionText("zh"), expiredSessionText("en"))
+  assert.match(expiredSessionText("en"), /I paused this role screen/)
 })
 
-test("language-specific copy: user-exit + recent-terminal differ by lang", () => {
-  assert.notEqual(userExitSessionText("zh"), userExitSessionText("en"))
-  assert.notEqual(recentTerminalSessionText("zh"), recentTerminalSessionText("en"))
+test("copy is English-only regardless of lang: user-exit + recent-terminal", () => {
+  assert.equal(userExitSessionText("zh"), userExitSessionText("en"))
+  assert.equal(recentTerminalSessionText("zh"), recentTerminalSessionText("en"))
 })
 
 /* ────────────────────────────────────────────────────────────────────────── */
@@ -270,18 +271,6 @@ test("runPrescreenTurn → user_exit ('stop') flips state to PAUSE + records ter
   assert.equal(state?.currentQId, null)
   const recs = recorder.getRecords(sessionId)
   assert.equal(recs[0]!.action.kind, "terminal")
-})
-
-test("runPrescreenTurn → user_exit Chinese reply matches", async () => {
-  const { finder, store, cfg, deps } = makeDeps()
-  const now = Date.now()
-  const sessionId = await setupActiveSession(finder, store, cfg, now)
-  const res = await runPrescreenTurn(
-    { userId: "u1", reply: "暂停", lang: "zh", nowIso: "t", channel: "sms", now: () => now },
-    deps,
-  )
-  assert.equal(res.lifecycle.kind, "user_exit")
-  assert.equal((await store.load(sessionId))?.terminal, "PAUSE")
 })
 
 /* ────────────────────────────────────────────────────────────────────────── */

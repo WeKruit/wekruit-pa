@@ -394,6 +394,23 @@ export const OutboundMessageSchema = z.object({
   /** Optional iMessage chat id for transport routing. */
   imessageChatId: z.string().optional(),
   body: z.string(),
+  /**
+   * Optional image attachment URL. When present, the Sendblue outbox delivers
+   * the row as an iMessage image attachment (the rec-card render→host→send
+   * path) with `body` as the caption. Text-only rows omit this field and the
+   * send is byte-identical to the pre-card path.
+   */
+  mediaUrl: z.string().optional(),
+  /**
+   * Multi-bubble ordering (2026-05-30). When a single agent turn emits several iMessage bubbles
+   * (the `messages[]` reply), each row carries its 0-based position. `paced: true` marks rows the
+   * EMIT side already spaced with a typing+delay beat — the outbox forwarder then SKIPS its own
+   * length-based typing dwell for them (that per-row dwell was length-dependent and reordered
+   * bubbles: a longer bubble dwelled longer and arrived after a shorter later one). Both optional;
+   * absent on single-bubble/legacy rows → byte-identical to the pre-multibubble path.
+   */
+  seq: z.number().int().nonnegative().optional(),
+  paced: z.boolean().optional(),
   status: OutboundStatusSchema,
   createdAt: z.string(),
   createdBy: z.string().optional(),

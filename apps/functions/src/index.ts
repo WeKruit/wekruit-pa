@@ -211,6 +211,7 @@ export { paLlmRerankNightly } from "./nightly-rerank.js"
 // writes pa-canonical-tags overlay doc + audit row. Validates token format
 // via @wekruit/shared-tags `validateCanonicalToken` (rejects abbreviations).
 export { paPromoteSandboxTag } from "./promote-sandbox-tag.js"
+export { paReinitializeCandidate } from "./admin-reinitialize-candidate.js"
 
 // v1.6 Phase 61 (QA-01..05) — V1.6 SHIP GATE. Cloud Scheduler 09:00 UTC
 // Mondays. Samples 100 user×match pairs (priority queue first), evaluates
@@ -682,7 +683,10 @@ async function claimBrokerEvent(db: Firestore, data: BrokerImessageEvent): Promi
   const ref = db.collection(PA_COLLECTIONS.inboundEvents).doc(data.id)
   const now = new Date()
   const claimedAt = now.toISOString()
-  const leaseUntil = new Date(now.getTime() + 120_000).toISOString()
+  // 180s (raised from 120s, 2026-05-30) so it stays AHEAD of the thin-Claire run ceiling
+  // (RUN_TIMEOUT_MS=100s) + per-turn overhead. A cold find_match (V16 ~80s) must finish before
+  // the lease expires, or a second worker re-claims the still-running event and double-fires.
+  const leaseUntil = new Date(now.getTime() + 180_000).toISOString()
   return db.runTransaction(async (t) => {
     const snap = await t.get(ref)
     if (!snap.exists) return null
@@ -743,9 +747,43 @@ async function processBrokerImessageEvent(
   }
   let user: User | null = null
   const phoneE164 = normalizeImessageParticipant(payload.participant)
-  const resolvedId = phoneE164
-    ? await resolveInboundUserId(db, phoneE164, payload.text)
-    : null
+  // Never-silent-drop (Adam 2026-05-29): the opener-phone-wins + same-phone
+  // merge policy means resolveInboundUserId should no longer throw
+  // identity_conflict for the texted-from-a-new-number case. But ANY identity
+  // resolution error (legacy data, partial merge, schema) must NOT re-throw
+  // out of here — that leaves the inbound event stuck `running` until the
+  // 120s lease expires and silently never replies (the Yogesh bug). On an
+  // identity_conflict we finalize the event terminal (status=failed, observable
+  // in the dashboard + re-processable on the next inbound) and fall through to
+  // the unbound-user path so the candidate is not silently dropped.
+  let resolvedId: string | null = null
+  if (phoneE164) {
+    try {
+      resolvedId = await resolveInboundUserId(db, phoneE164, payload.text)
+    } catch (resolveErr) {
+      const msg = resolveErr instanceof Error ? resolveErr.message : String(resolveErr)
+      if (msg.startsWith("identity_conflict:")) {
+        logger.warn("[onPaInbound] identity conflict during resolve — finalizing event terminal (no silent drop)", {
+          eventId: claimed.id,
+          phoneTail: phoneE164.slice(-4),
+          err: msg,
+        })
+        await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
+          {
+            status: "failed",
+            lastError: msg,
+            errorCode: "IDENTITY_CONFLICT",
+            completedAt: nowIso(),
+            updatedAt: nowIso(),
+            routedTo: "identity_conflict",
+          },
+          { merge: true },
+        )
+        return 1
+      }
+      throw resolveErr
+    }
+  }
   if (resolvedId) {
     const resolvedSnap = await db.collection(PA_COLLECTIONS.users).doc(resolvedId).get()
     if (resolvedSnap.exists) {
@@ -984,6 +1022,9 @@ async function processBrokerImessageEvent(
   // free-conversation (triage) turn, matching its triage-only mode and leaving the reducer-owned
   // FSMs to the legacy path. maybeRunThinClaire re-checks isThinClaireEnabled(userId) itself and
   // returns false on flag-off / any error, so non-canary users hit legacy below, unchanged.
+  // NOTE: thin is no longer triage-only — its mode-selector also runs ONBOARDING on the thin agent
+  // (reusing the canonical sharedOnboarding state + tag writer). An active prescreen still defers to
+  // the legacy runner (mode-selector returns deferToLegacy → maybeRunThinClaire returns false here).
   try {
     const thinHandled = await maybeRunThinClaire(db, claimed.id, {
       log: (e, p) => logger.info(`[thin-claire][onPaInbound] ${e}`, p ?? {}),
@@ -1724,11 +1765,36 @@ function buildSendblueWebhookDeps() {
         },
       })
       if (runtime.ok) {
+        const { buildRichMatchReason } = await import("@pa/job-rec")
+        const candidateTagsForReason =
+          userTagsForJobRec && typeof userTagsForJobRec === "object"
+            ? (userTagsForJobRec as Record<string, unknown>)
+            : undefined
         await recordRecommendedJobs(
           db,
           {
             userId: args.userId,
-            jobs: items.map((item) => item.sourceJob),
+            // Persist the grounded "why matched" pitch so /me/matches reads the
+            // GOOD reason rather than recomputing weak templates.
+            jobs: items.map((item) => {
+              const sourceJob = item.sourceJob as Record<string, unknown>
+              let matchReason: string | undefined
+              if (candidateTagsForReason) {
+                try {
+                  matchReason = buildRichMatchReason({
+                    candidate: candidateTagsForReason,
+                    job: sourceJob,
+                    matchedSkills:
+                      (sourceJob.matchedSkills as Array<{ name?: string }> | undefined) ?? [],
+                    breakdown: sourceJob.v16Score as Record<string, unknown> | undefined,
+                    lang: "en",
+                  })
+                } catch {
+                  matchReason = undefined
+                }
+              }
+              return { ...sourceJob, ...(matchReason ? { matchReason } : {}) }
+            }),
             source: "admin_find_match",
           },
           (event, payload) =>
@@ -1789,8 +1855,15 @@ export const paMessageCoalescer = onRequest(
   {
     region: "us-central1",
     secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
-    memory: "512MiB",
+    // 512MiB → 1GiB (2026-05-30): this function hosts thin Claire for COALESCED inbounds (onPaInbound
+    // skips them), so a `recommend` turn runs find_match HERE. V16 pulls ~67MB of job docs (1536-float
+    // embeddings → ~150-300MB parsed) on top of the @openai/agents + mem0 + Sendblue SDK baseline,
+    // which OOM-killed the 512MiB instance mid-matcher → function died abruptly, event stuck `pending`,
+    // no reply, no graceful fallback (the 2026-05-30 "typing then nothing"). Matches onPaInbound's 1GiB.
+    // maxInstances pinned so the bigger allocation can't blow the us-central1 Cloud Run memory quota.
+    memory: "1GiB",
     timeoutSeconds: 120,
+    maxInstances: 4,
     cors: false,
     invoker: "private",
   },

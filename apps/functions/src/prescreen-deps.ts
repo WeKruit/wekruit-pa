@@ -86,14 +86,8 @@ export function makeProductionKeywordSetCaller(): KeywordSetLlmCaller {
   }
 }
 
-export function prescreenClarifyRoundGuidance(round: number, lang: "zh" | "en"): string {
+export function prescreenClarifyRoundGuidance(round: number, _lang: "zh" | "en"): string {
   const normalizedRound = Math.max(1, Math.floor(round))
-  if (lang === "zh") {
-    if (normalizedRound === 1) return "找最近的相关项目：背景、候选人亲自负责什么、用户或业务结果。"
-    if (normalizedRound === 2) return "追问 ownership 和系统边界：候选人自己做了哪一块、碰到哪些系统或数据。"
-    if (normalizedRound === 3) return "追问最难的失败/取舍/验证：问题怎么发现、怎么验证修复。"
-    return "最后一次具体确认：最小可证明的 shipped work、指标或明确缺口；不要继续泛泛追问。"
-  }
   if (normalizedRound === 1)
     return "Find the closest relevant project: context, personal ownership, and user or business outcome."
   if (normalizedRound === 2)
@@ -103,23 +97,18 @@ export function prescreenClarifyRoundGuidance(round: number, lang: "zh" | "en"):
   return "Final concrete check: smallest provable shipped work, measurable result, or explicit gap; do not keep circling."
 }
 
-export function normalizePrescreenClarifyTextForRound(text: string, round: number, lang: "zh" | "en"): string {
+export function normalizePrescreenClarifyTextForRound(text: string, round: number, _lang: "zh" | "en"): string {
   const normalized = text.replace(/\s+/g, " ").trim()
   if (!normalized) return normalized
-  const openerByRound =
-    lang === "zh"
-      ? ["明白 - ", "这里 ownership 很关键 - ", "这个系统细节有用 - ", "最后我确认一个具体点 - "]
-      : [
-          "Got it - ",
-          "The ownership piece matters here - ",
-          "The systems detail is the useful signal - ",
-          "One last concrete check before I score it - ",
-        ]
+  const openerByRound = [
+    "Got it - ",
+    "The ownership piece matters here - ",
+    "The systems detail is the useful signal - ",
+    "One last concrete check before I score it - ",
+  ]
   const idx = Math.min(Math.max(1, Math.floor(round)), openerByRound.length) - 1
   const genericAckPattern =
-    lang === "zh"
-      ? /^(这段有帮助|谢谢|收到|明白|好的|了解)[\s,，。:：;；!！—-]*/i
-      : /^(that'?s helpful|that is helpful|that helps|thanks|thank you|got it|interesting|nice)[\s,.:;!—-]*/i
+    /^(that'?s helpful|that is helpful|that helps|thanks|thank you|got it|interesting|nice)[\s,.:;!—-]*/i
   if (!genericAckPattern.test(normalized)) return normalized
   const withoutAck = normalized.replace(genericAckPattern, "").trim()
   if (!withoutAck) return normalized

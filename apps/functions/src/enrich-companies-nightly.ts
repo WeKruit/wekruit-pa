@@ -48,6 +48,19 @@ const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
 // reads process.env.CLEARBIT_KEY only.
 
 // ---------------------------------------------------------------------------
+// Logo URL — Google favicon by domain.
+//
+// 2026-05-31: logo.clearbit.com is DEAD (HEAD 000 — Clearbit shuttered the free
+// logo CDN). Replaced with Google's favicon endpoint (200 image/png after a
+// 301), which the rec-card renderer pre-fetches into a data: URI. 128px is large
+// enough for the 52x52 logo chip.
+// ---------------------------------------------------------------------------
+
+export function companyLogoUrlForDomain(domain: string): string {
+  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`
+}
+
+// ---------------------------------------------------------------------------
 // Tunables
 // ---------------------------------------------------------------------------
 
@@ -229,7 +242,7 @@ export function ycResultFor(co: YcCachedCompany, now: Date): EnrichmentResult {
     try {
       const u = new URL(co.website.trim())
       patch.domain = u.hostname.replace(/^www\./, "")
-      patch.logoUrl = `https://logo.clearbit.com/${patch.domain}`
+      patch.logoUrl = companyLogoUrlForDomain(patch.domain)
     } catch {
       // ignore malformed
     }
@@ -318,7 +331,7 @@ export function parseWikidataResponse(
     try {
       const u = new URL(website)
       patch.domain = u.hostname.replace(/^www\./, "")
-      patch.logoUrl = `https://logo.clearbit.com/${patch.domain}`
+      patch.logoUrl = companyLogoUrlForDomain(patch.domain)
     } catch {
       // ignore
     }
@@ -452,7 +465,7 @@ export function parseClearbitResponse(json: Record<string, unknown>): Enrichment
   if (name) patch.displayName = name
   if (domain) {
     patch.domain = domain
-    patch.logoUrl = `https://logo.clearbit.com/${domain}`
+    patch.logoUrl = companyLogoUrlForDomain(domain)
   }
   if (employees !== null) patch.employeeRange = bucketEmployeeCount(employees)
   if (typeof json.category === "object" && json.category) {
