@@ -23,6 +23,7 @@ export const RECRUITER_ROLE_FEEDBACK_SAVE_URL = `${DEFAULT_BASE}/paRecruiterRole
 export const RECRUITER_ROLE_INTELLIGENCE_LIST_URL = `${DEFAULT_BASE}/paRecruiterRoleIntelligenceList`
 export const RECRUITER_ROLE_QUESTIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterRoleQuestionsList`
 export const RECRUITER_ROLE_QUESTION_CREATE_URL = `${DEFAULT_BASE}/paRecruiterRoleQuestionCreate`
+export const RECRUITER_CANDIDATE_IDENTITY_CHECK_URL = `${DEFAULT_BASE}/paRecruiterCandidateIdentityCheck`
 export const RECRUITER_SUBMISSION_URL = `${DEFAULT_BASE}/paRecruiterSubmission`
 export const RECRUITER_SUBMISSIONS_LIST_URL = `${DEFAULT_BASE}/paRecruiterSubmissionsList`
 export const RECRUITER_CANDIDATE_CONFIRMATION_RESEND_URL = `${DEFAULT_BASE}/paRecruiterCandidateConsentResend`
@@ -85,6 +86,18 @@ export interface SubmissionResponse {
   reason?: string
   submissionMode?: "primary_role" | "single_submission"
   candidateConsentStatus?: string
+}
+
+export type RecruiterCandidateIdentityConflictReason =
+  | "candidate_already_submitted_for_role"
+  | "candidate_already_sourced_for_role"
+
+export interface RecruiterCandidateIdentityCheckResult {
+  ok: true
+  conflict: null | {
+    reason: RecruiterCandidateIdentityConflictReason
+    docId?: string
+  }
 }
 
 export interface RecruiterProfile {
@@ -694,6 +707,35 @@ export async function submitRecruiterCandidate(input: SubmissionInput): Promise<
   const body = (await res.json().catch(() => ({}))) as SubmissionResponse
   if (!res.ok) return { ok: false, reason: body.reason ?? `http_${res.status}` }
   return body
+}
+
+export async function checkRecruiterCandidateIdentity(input: {
+  jobId: string
+  candidate: {
+    email?: string
+    link: string
+  }
+}): Promise<RecruiterCandidateIdentityCheckResult> {
+  const res = await fetch(RECRUITER_CANDIDATE_IDENTITY_CHECK_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(await recruiterAuthHeaders()),
+    },
+    body: JSON.stringify(input),
+  })
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean
+    reason?: string
+    conflict?: RecruiterCandidateIdentityCheckResult["conflict"]
+  }
+  if (!res.ok || !body.ok) {
+    throw new Error(body.reason ?? `paRecruiterCandidateIdentityCheck HTTP ${res.status}`)
+  }
+  return {
+    ok: true,
+    conflict: body.conflict ?? null,
+  }
 }
 
 export async function resendRecruiterCandidateConfirmation(

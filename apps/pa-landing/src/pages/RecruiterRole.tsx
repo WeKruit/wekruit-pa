@@ -10,6 +10,7 @@ import { onAuthStateChanged } from "firebase/auth"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import "../styles/recruiter-board.css"
 import {
+  checkRecruiterCandidateIdentity,
   createRecruiterRoleQuestion,
   fetchCollabJobs,
   fetchRecruiterRoleApplications,
@@ -34,6 +35,7 @@ import {
   type RecruiterSession,
   type RecruiterSourcedCandidateItem,
   type RecruiterSubmissionItem,
+  type RecruiterCandidateIdentityCheckResult,
   type SubmissionResponse,
 } from "../lib/recruiter-board-api.js"
 import { auth } from "../lib/firebase.js"
@@ -271,6 +273,14 @@ type RoleSubmissionPacket = {
   nextAction: string
   missingHard: string[]
   antiFlags: string[]
+}
+
+type CandidateIdentityCheckStatus = "missing" | "checking" | "clear" | "conflict" | "error"
+
+type CandidateIdentityCheckState = {
+  status: CandidateIdentityCheckStatus
+  result: RecruiterCandidateIdentityCheckResult | null
+  error: string | null
 }
 
 type RoleCalibrationBrief = {
@@ -957,6 +967,11 @@ export default function RecruiterRole() {
   const [submitting, setSubmitting] = useState(false)
   const [submission, setSubmission] = useState<SubmissionResponse | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [identityCheck, setIdentityCheck] = useState<CandidateIdentityCheckState>({
+    status: "missing",
+    result: null,
+    error: null,
+  })
   const [prefilledCandidateId, setPrefilledCandidateId] = useState<string | null>(null)
   const [roleApplicationSaving, setRoleApplicationSaving] = useState(false)
   const [roleApplicationError, setRoleApplicationError] = useState<string | null>(null)
@@ -1033,6 +1048,49 @@ export default function RecruiterRole() {
   useEffect(() => {
     if (jobId) saveFormState(jobId, form)
   }, [jobId, form])
+
+  useEffect(() => {
+    const link = form.candidateLink.trim()
+    const email = form.candidateEmail.trim().toLowerCase()
+    const emailReady = !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+    if (!session || !jobId || !link || !emailReady) {
+      setIdentityCheck({ status: "missing", result: null, error: null })
+      return
+    }
+
+    let active = true
+    setIdentityCheck((current) => ({ ...current, status: "checking", error: null }))
+    const timer = window.setTimeout(() => {
+      void checkRecruiterCandidateIdentity({
+        jobId,
+        candidate: {
+          link,
+          ...(email ? { email } : {}),
+        },
+      })
+        .then((result) => {
+          if (!active) return
+          setIdentityCheck({
+            status: result.conflict ? "conflict" : "clear",
+            result,
+            error: null,
+          })
+        })
+        .catch((error) => {
+          if (!active) return
+          setIdentityCheck({
+            status: "error",
+            result: null,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        })
+    }, 550)
+
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [form.candidateEmail, form.candidateLink, jobId, session])
 
   const job = useMemo(() => jobs?.find((j) => j.jobId === jobId) ?? null, [jobs, jobId])
 
@@ -1159,6 +1217,7 @@ export default function RecruiterRole() {
     packet: submissionPacket,
     brief: calibrationBrief,
   })
+  const identityBlocksSubmit = identityCheck.status === "checking" || Boolean(identityCheck.result?.conflict)
 
   const useSourcedCandidate = (candidate: RecruiterSourcedCandidateItem) => {
     setForm((next) => withRecruiterDefaults({
@@ -1230,6 +1289,14 @@ export default function RecruiterRole() {
     }
     if (pendingSlots <= 0) {
       setSubmitError("This role already has 5 pending submissions from your account. Wait for review feedback before submitting more.")
+      return
+    }
+    if (identityCheck.status === "checking") {
+      setSubmitError("Candidate ownership check is still running. Wait for the check to finish before submitting.")
+      return
+    }
+    if (identityCheck.result?.conflict) {
+      setSubmitError(formatSubmissionFailure(identityCheck.result.conflict.reason))
       return
     }
     setSubmitError(null)
@@ -1435,6 +1502,14 @@ export default function RecruiterRole() {
               <span className="chip">{pendingSlots} pending slots open</span>
             </div>
 
+            <CandidateOwnershipGuardPanel
+              state={identityCheck}
+              candidateEmail={form.candidateEmail}
+              candidateLink={form.candidateLink}
+              onOpenCandidates={() => navigate("/recruiters?tab=candidates")}
+              onOpenSubmissions={() => navigate("/recruiters?tab=submissions")}
+            />
+
             <SubmissionPacketPanel packet={submissionPacket} />
 
             <form id="submit-candidate" className="rb-form-section rb-form" onSubmit={onSubmit}>
@@ -1561,8 +1636,8 @@ export default function RecruiterRole() {
           {submitError && <div className="rb-error">Submission failed: {submitError}</div>}
 
           <div className="rb-actions">
-            <button type="submit" className="rb-btn primary" disabled={submitting || pendingSlots <= 0}>
-              {submitting ? "Submitting…" : "Submit candidate"}
+            <button type="submit" className="rb-btn primary" disabled={submitting || pendingSlots <= 0 || identityBlocksSubmit}>
+              {submitting ? "Submitting…" : identityCheck.status === "checking" ? "Checking candidate..." : "Submit candidate"}
             </button>
             <button type="button" className="rb-btn" onClick={resetChecklist} disabled={submitting}>
               Reset checklist
@@ -1658,6 +1733,106 @@ export default function RecruiterRole() {
         </div>
       </main>
     </div>
+  )
+}
+
+function candidateIdentityConflictCopy(reason?: string): { title: string; body: string; action: "candidates" | "submissions" } {
+  if (reason === "candidate_already_submitted_for_role") {
+    return {
+      title: "Already submitted for this role",
+      body: "This candidate is already in the submission tracker. Open the existing receipt instead of creating a duplicate packet.",
+      action: "submissions",
+    }
+  }
+  if (reason === "candidate_already_sourced_for_role") {
+    return {
+      title: "Already owned in another recruiter lane",
+      body: "Another recruiter already has this candidate sourced for the role. Do not continue without WeKruit calibration.",
+      action: "candidates",
+    }
+  }
+  return {
+    title: "Candidate ownership conflict",
+    body: "This candidate cannot be submitted as a new packet for this role.",
+    action: "submissions",
+  }
+}
+
+function CandidateOwnershipGuardPanel({
+  state,
+  candidateEmail,
+  candidateLink,
+  onOpenCandidates,
+  onOpenSubmissions,
+}: {
+  state: CandidateIdentityCheckState
+  candidateEmail: string
+  candidateLink: string
+  onOpenCandidates: () => void
+  onOpenSubmissions: () => void
+}) {
+  const hasLink = candidateLink.trim().length > 0
+  const hasEmail = candidateEmail.trim().length > 0
+  if (state.status === "conflict") {
+    const copy = candidateIdentityConflictCopy(state.result?.conflict?.reason)
+    return (
+      <section className="rb-ownership-guard is-blocked" aria-label="Candidate ownership check">
+        <div>
+          <span>Candidate ownership</span>
+          <strong>{copy.title}</strong>
+          <p>{copy.body}</p>
+        </div>
+        <button type="button" className="rb-btn" onClick={copy.action === "submissions" ? onOpenSubmissions : onOpenCandidates}>
+          {copy.action === "submissions" ? "Open tracker" : "Open candidates"}
+        </button>
+      </section>
+    )
+  }
+
+  if (state.status === "checking") {
+    return (
+      <section className="rb-ownership-guard is-watch" aria-label="Candidate ownership check">
+        <div>
+          <span>Candidate ownership</span>
+          <strong>Checking candidate lane...</strong>
+          <p>We are checking this email and profile link against existing sourced candidates and submissions for the role.</p>
+        </div>
+      </section>
+    )
+  }
+
+  if (state.status === "clear") {
+    return (
+      <section className="rb-ownership-guard is-good" aria-label="Candidate ownership check">
+        <div>
+          <span>Candidate ownership</span>
+          <strong>No role duplicate found</strong>
+          <p>This candidate can move forward as a new packet. Candidate consent is still required before WeKruit review.</p>
+        </div>
+      </section>
+    )
+  }
+
+  if (state.status === "error") {
+    return (
+      <section className="rb-ownership-guard is-watch" aria-label="Candidate ownership check">
+        <div>
+          <span>Candidate ownership</span>
+          <strong>Preflight check unavailable</strong>
+          <p>{state.error || "The submit API still blocks duplicate ownership if this packet conflicts."}</p>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section className="rb-ownership-guard is-quiet" aria-label="Candidate ownership check">
+      <div>
+        <span>Candidate ownership</span>
+        <strong>Add candidate identity to verify the lane</strong>
+        <p>{hasLink || hasEmail ? "Finish the candidate email and profile link to check for duplicate ownership." : "Enter a candidate email and LinkedIn or resume link before submitting."}</p>
+      </div>
+    </section>
   )
 }
 

@@ -37,6 +37,7 @@ import {
   shouldNotifyRecruitersForRoleRelease,
   sanitizeSubmissionStatusHistory,
   validateCandidateConfirmationResendInput,
+  validateRecruiterCandidateIdentityCheckInput,
   validateInviteCodeCreate,
   validateInviteCodeReplace,
   validateInviteCodeRestore,
@@ -568,6 +569,35 @@ describe("recruiter sourced candidates", () => {
         },
       },
     ]), null)
+  })
+
+  it("validates recruiter candidate identity checks before submission", () => {
+    const result = validateRecruiterCandidateIdentityCheckInput({
+      jobId: " public-job-1 ",
+      candidate: {
+        email: " ADA@Example.com ",
+        link: " https://linkedin.com/in/ada ",
+      },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.deepEqual(result.value, {
+      jobId: "public-job-1",
+      candidate: {
+        email: "ada@example.com",
+        link: "https://linkedin.com/in/ada",
+      },
+    })
+  })
+
+  it("rejects candidate identity checks without a profile link", () => {
+    assert.deepEqual(validateRecruiterCandidateIdentityCheckInput({
+      jobId: "public-job-1",
+      candidate: { email: "ada@example.com" },
+    }), {
+      ok: false,
+      reason: "missing_candidate_link",
+    })
   })
 
   it("accepts a recruiter-sourced candidate and trims optional fields", () => {

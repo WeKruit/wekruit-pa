@@ -34,6 +34,7 @@ export {
   paRecruiterRoleIntelligenceList,
   paRecruiterRoleQuestionCreate,
   paRecruiterRoleQuestionsList,
+  paRecruiterCandidateIdentityCheck,
   paRecruiterSourcedCandidateSave,
   paRecruiterSourcedCandidatesList,
   paRecruiterSubmission,

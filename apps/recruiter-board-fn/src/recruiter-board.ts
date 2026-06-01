@@ -25,6 +25,7 @@
  *   GET  paRecruiterRoleQuestionsList -> recruiter-authenticated role Q&A
  *   POST paRecruiterRoleQuestionCreate -> creates one role calibration question
  *   GET  paRecruiterRoleIntelligenceList -> recruiter-authenticated aggregate role signal
+ *   POST paRecruiterCandidateIdentityCheck -> checks candidate ownership before submit
  *   POST paRecruiterSubmission     -> writes pa-recruiter-submissions doc
  *                                     (honors Idempotency-Key header)
  *   POST paRecruiterCandidateConsentResend -> recruiter resends candidate double-opt-in email
@@ -3274,6 +3275,14 @@ interface CandidateConfirmationResendInput {
   submissionId: string
 }
 
+interface RecruiterCandidateIdentityCheckInput {
+  jobId: string
+  candidate: {
+    email?: string
+    link: string
+  }
+}
+
 /** Allowed values for `source` in the request body. */
 const ALLOWED_SUBMISSION_SOURCES = new Set(["hiring-board", "api", "unknown"])
 /** Pattern for the `Idempotency-Key` header. Mirrors Stripe's rules. */
@@ -3338,6 +3347,33 @@ export interface RecruiterCandidateIdentityDoc {
   id: string
   collection: "submissions" | "sourced"
   data: Record<string, unknown>
+}
+
+export function validateRecruiterCandidateIdentityCheckInput(input: unknown):
+  | { ok: true; value: RecruiterCandidateIdentityCheckInput }
+  | { ok: false; reason: string } {
+  if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
+  const b = input as Record<string, unknown>
+  if (!isNonEmptyString(b.jobId)) return { ok: false, reason: "missing_jobId" }
+  if (b.jobId.length > 200) return { ok: false, reason: "jobId_too_long" }
+  const c = b.candidate as Record<string, unknown> | undefined
+  if (!c || typeof c !== "object") return { ok: false, reason: "missing_candidate" }
+  if (!isNonEmptyString(c.link)) return { ok: false, reason: "missing_candidate_link" }
+  if (c.link.length > 2000) return { ok: false, reason: "candidate_link_too_long" }
+  const candidateEmail = typeof c.email === "string" ? normalizeRecruiterCandidateEmail(c.email) : ""
+  if (c.email !== undefined && c.email !== null && c.email !== "" && !validRecruiterCandidateEmail(String(c.email))) {
+    return { ok: false, reason: "invalid_candidate_email" }
+  }
+  return {
+    ok: true,
+    value: {
+      jobId: b.jobId.trim(),
+      candidate: {
+        link: (c.link as string).trim(),
+        ...(candidateEmail ? { email: candidateEmail } : {}),
+      },
+    },
+  }
 }
 
 export function recruiterCandidateIdentityConflictForRole(
@@ -4142,6 +4178,75 @@ export const paRecruiterSubmissionFeedbackNotify = onDocumentWritten(
       roleUrl: recruiterNotificationRoleUrl(after),
     })
     if (created) logger.info("paRecruiterSubmissionFeedbackNotify_done", { submissionId: event.params.submissionId, recruiterId })
+  },
+)
+
+export const paRecruiterCandidateIdentityCheck = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const db = getFirestore()
+    const recruiter = await authenticateRecruiter(db, req)
+    if (!recruiter) {
+      res.status(401).json({ ok: false, reason: "recruiter_access_required" })
+      return
+    }
+    const validated = validateRecruiterCandidateIdentityCheckInput(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+
+    try {
+      const payload = validated.value
+      const realJobId = await resolvePublicIdToDocId(db, payload.jobId)
+      if (!realJobId) {
+        res.status(404).json({ ok: false, reason: "job_not_found" })
+        return
+      }
+      const jobSnap = await db.collection("pa-jobs").doc(realJobId).get()
+      if (!jobSnap.exists) {
+        res.status(404).json({ ok: false, reason: "job_not_found" })
+        return
+      }
+      const jobData = jobSnap.data() as Record<string, unknown>
+      const rb = (jobData.recruiterBoard as RecruiterBoardPayload | undefined) ?? null
+      if (jobData.wekruitCollaborationStatus !== "collaborated" || !rb || rb.active !== true) {
+        res.status(403).json({ ok: false, reason: "job_not_active_on_board" })
+        return
+      }
+      const candidateLinkKey = hashRecruiterCandidateLink(payload.candidate.link)
+      const candidateEmailKey = payload.candidate.email
+        ? hashRecruiterCandidateEmail(payload.candidate.email)
+        : null
+      const conflict = await findRecruiterCandidateIdentityConflict(db, {
+        realJobId,
+        recruiterId: recruiter.recruiterId,
+        candidateLinkKey,
+        candidateEmailKey,
+      })
+      res.set("Cache-Control", "private, max-age=0, no-store")
+      res.status(200).json({
+        ok: true,
+        conflict: conflict
+          ? {
+              reason: conflict.reason,
+              docId: conflict.docId,
+            }
+          : null,
+      })
+    } catch (err) {
+      logger.error("paRecruiterCandidateIdentityCheck_failed", { error: String(err), recruiterId: recruiter.recruiterId })
+      res.status(500).json({ ok: false, reason: "internal_error" })
+    }
   },
 )
 

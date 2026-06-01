@@ -1263,6 +1263,70 @@
   font-weight: 600;
 }
 
+.rb-ownership-guard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  border: 1px solid #ded8ce;
+  border-left: 4px solid #8d887e;
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px 16px;
+}
+
+.rb-ownership-guard.is-good {
+  border-left-color: #1e6b34;
+  background: #f3faf5;
+}
+
+.rb-ownership-guard.is-watch {
+  border-left-color: #b77c2f;
+  background: #fffaf1;
+}
+
+.rb-ownership-guard.is-blocked {
+  border-left-color: #a33a2d;
+  background: #fff6f4;
+}
+
+.rb-ownership-guard.is-quiet {
+  border-left-color: #9b958b;
+  background: #fff;
+}
+
+.rb-ownership-guard div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.rb-ownership-guard span {
+  color: #6a6a64;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.rb-ownership-guard strong {
+  color: #1a1a1a;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.rb-ownership-guard p {
+  margin: 0;
+  color: #4a4a44;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-ownership-guard .rb-btn {
+  flex: 0 0 auto;
+}
+
 .rb-submission-packet {
   display: grid;
   gap: 12px;
@@ -6101,6 +6165,13 @@
   .rb-role-intel__pipeline-preview aside {
     justify-items: start;
     text-align: left;
+  }
+  .rb-ownership-guard {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .rb-ownership-guard .rb-btn {
+    width: 100%;
   }
   .rb-performance-card--wide {
     grid-column: span 1;
