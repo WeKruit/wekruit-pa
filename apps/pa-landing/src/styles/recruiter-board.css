@@ -3553,6 +3553,47 @@
   color: var(--ink);
 }
 
+.rb-source-card__request {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--cream);
+  padding: 8px;
+}
+
+.rb-source-card__request label {
+  display: grid;
+  gap: 5px;
+}
+
+.rb-source-card__request label span {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rb-source-card__request textarea {
+  min-height: 62px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 8px;
+}
+
+.rb-source-card__request .rb-btn {
+  justify-content: center;
+  min-height: 34px;
+  font-size: 12px;
+}
+
 .rb-source-card footer {
   display: flex;
   align-items: center;

@@ -1268,6 +1268,9 @@ interface RecruiterSourcedCandidateInput {
     yoe?: string
     notes?: string
   }
+  calibrationRequest?: {
+    note?: string
+  }
 }
 
 interface RecruiterSourcedCandidateListItem {
@@ -1450,19 +1453,39 @@ export function validateRecruiterSourcedCandidateInput(input: unknown):
     if (typeof c[k] === "string" && (c[k] as string).length > 4000) return { ok: false, reason: `${k}_too_long` }
   }
 
+  let calibrationRequest: RecruiterSourcedCandidateInput["calibrationRequest"]
+  if (b.calibrationRequest !== undefined) {
+    if (!b.calibrationRequest || typeof b.calibrationRequest !== "object") {
+      return { ok: false, reason: "invalid_calibration_request" }
+    }
+    const request = b.calibrationRequest as Record<string, unknown>
+    if (request.note !== undefined && typeof request.note !== "string") {
+      return { ok: false, reason: "invalid_calibration_note" }
+    }
+    calibrationRequest = {
+      note: sanitizeOptionalString(request.note, 1200),
+    }
+  }
+
+  const candidate: RecruiterSourcedCandidateInput["candidate"] = {
+    name: c.name.trim(),
+    link: c.link.trim(),
+  }
+  const currentRole = sanitizeOptionalString(c.currentRole, 4000)
+  const yoe = sanitizeOptionalString(c.yoe, 4000)
+  const notes = sanitizeOptionalString(c.notes, 4000)
+  if (currentRole) candidate.currentRole = currentRole
+  if (yoe) candidate.yoe = yoe
+  if (notes) candidate.notes = notes
+
   return {
     ok: true,
     value: {
       candidateId,
       jobId: b.jobId.trim(),
       stage,
-      candidate: {
-        name: c.name.trim(),
-        link: c.link.trim(),
-        currentRole: sanitizeOptionalString(c.currentRole, 4000),
-        yoe: sanitizeOptionalString(c.yoe, 4000),
-        notes: sanitizeOptionalString(c.notes, 4000),
-      },
+      candidate,
+      ...(calibrationRequest ? { calibrationRequest } : {}),
     },
   }
 }
@@ -1828,6 +1851,23 @@ export const paRecruiterSourcedCandidateSave = onRequest(
         }
       }
 
+      const calibrationPatch = payload.calibrationRequest
+        ? {
+            calibrationStatus: "calibration_requested",
+            calibrationNote: payload.calibrationRequest.note ?? null,
+            calibrationUpdatedAt: FieldValue.serverTimestamp(),
+            calibrationRequestedByEmail: recruiter.email,
+            calibrationHistory: FieldValue.arrayUnion({
+              stage: payload.stage,
+              calibrationStatus: "calibration_requested",
+              note: payload.calibrationRequest.note ?? null,
+              by: "recruiter",
+              recruiterEmail: recruiter.email,
+              atIso: new Date().toISOString(),
+            }),
+          }
+        : {}
+
       await ref.set({
         candidateId,
         recruiterId: recruiter.recruiterId,
@@ -1839,6 +1879,7 @@ export const paRecruiterSourcedCandidateSave = onRequest(
         companyLabelSnapshot: rb.label.company,
         stage: payload.stage,
         candidate: payload.candidate,
+        ...calibrationPatch,
         updatedAt: FieldValue.serverTimestamp(),
         ...(existing.exists ? {} : { createdAt: FieldValue.serverTimestamp() }),
       }, { merge: true })

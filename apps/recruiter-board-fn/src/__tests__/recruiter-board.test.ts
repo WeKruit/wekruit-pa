@@ -330,6 +330,9 @@ describe("recruiter sourced candidates", () => {
     const result = validateRecruiterSourcedCandidateInput({
       jobId: " public-job-1 ",
       stage: "ready",
+      calibrationRequest: {
+        note: " Is this senior enough for the hiring bar? ",
+      },
       candidate: {
         name: " Ada Lovelace ",
         link: " https://linkedin.com/in/ada ",
@@ -349,6 +352,9 @@ describe("recruiter sourced candidates", () => {
       currentRole: "Staff Engineer",
       yoe: "9",
       notes: "strong backend match",
+    })
+    assert.deepEqual(result.value.calibrationRequest, {
+      note: "Is this senior enough for the hiring bar?",
     })
   })
 
@@ -371,6 +377,33 @@ describe("recruiter sourced candidates", () => {
     }), {
       ok: false,
       reason: "invalid_candidate_id",
+    })
+    assert.deepEqual(validateRecruiterSourcedCandidateInput({
+      jobId: "job-1",
+      calibrationRequest: { note: 123 },
+      candidate: { name: "Ada", link: "https://linkedin.com/in/ada" },
+    }), {
+      ok: false,
+      reason: "invalid_calibration_note",
+    })
+  })
+
+  it("omits absent optional candidate fields before Firestore writes", () => {
+    const result = validateRecruiterSourcedCandidateInput({
+      jobId: "job-1",
+      candidate: {
+        name: "Ada Lovelace",
+        link: "https://linkedin.com/in/ada",
+        currentRole: "",
+        yoe: " ",
+      },
+    })
+
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.deepEqual(result.value.candidate, {
+      name: "Ada Lovelace",
+      link: "https://linkedin.com/in/ada",
     })
   })
 })

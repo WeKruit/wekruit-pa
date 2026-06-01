@@ -125,6 +125,16 @@ function calibrationMeta(status?: string) {
   return CALIBRATION_LABELS[status ?? "not_rated"] ?? { label: status?.replace(/_/g, " ") ?? "Not rated", tone: "mute" as const }
 }
 
+function canRequestCandidateCalibration(candidate: RecruiterSourcedCandidateItem): boolean {
+  return (
+    candidate.stage !== "submitted" &&
+    candidate.stage !== "archived" &&
+    (!candidate.calibrationStatus ||
+      candidate.calibrationStatus === "not_rated" ||
+      candidate.calibrationStatus === "suggested")
+  )
+}
+
 function createdAtMs(s: RecruiterSubmissionItem): number {
   return timestampValueMs(s.createdAt)
 }
@@ -3136,6 +3146,8 @@ function CandidatesTab({
   }))
   const [saving, setSaving] = useState(false)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [calibratingId, setCalibratingId] = useState<string | null>(null)
+  const [calibrationDrafts, setCalibrationDrafts] = useState<Record<string, string>>({})
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
@@ -3206,6 +3218,45 @@ function CandidatesTab({
       setErr(error instanceof Error ? error.message : String(error))
     } finally {
       setUpdatingId(null)
+    }
+  }
+
+  const requestCalibration = async (candidate: RecruiterSourcedCandidateItem) => {
+    const jobId = candidate.inboundJobId || candidate.jobId || ""
+    const link = candidate.candidate?.link?.trim()
+    if (!jobId || !link) {
+      setErr("This saved candidate is missing the role or link needed for calibration.")
+      return
+    }
+    setCalibratingId(candidate.id)
+    setErr(null)
+    try {
+      const note = calibrationDrafts[candidate.id]?.trim()
+      const saved = await saveRecruiterSourcedCandidate({
+        candidateId: candidate.candidateId || candidate.id,
+        jobId,
+        stage: candidate.stage,
+        candidate: {
+          name: candidate.candidate?.name || candidateName(candidate),
+          link,
+          currentRole: candidate.candidate?.currentRole,
+          yoe: candidate.candidate?.yoe,
+          notes: candidate.candidate?.notes,
+        },
+        calibrationRequest: {
+          note: note || undefined,
+        },
+      })
+      onSaved(saved)
+      setCalibrationDrafts((next) => {
+        const copy = { ...next }
+        delete copy[candidate.id]
+        return copy
+      })
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setCalibratingId(null)
     }
   }
 
@@ -3282,8 +3333,12 @@ function CandidatesTab({
                 <SourcedCandidateCard
                   key={candidate.id}
                   candidate={candidate}
-                  disabled={updatingId === candidate.id}
+                  disabled={updatingId === candidate.id || calibratingId === candidate.id}
+                  calibrationNote={calibrationDrafts[candidate.id] ?? ""}
+                  calibrationDisabled={calibratingId === candidate.id}
                   onStageChange={(stage) => void updateStage(candidate, stage)}
+                  onCalibrationNoteChange={(note) => setCalibrationDrafts((next) => ({ ...next, [candidate.id]: note }))}
+                  onCalibrationRequest={() => void requestCalibration(candidate)}
                 />
               ))}
               {group.candidates.length === 0 && <p>No candidates</p>}
@@ -3298,14 +3353,23 @@ function CandidatesTab({
 function SourcedCandidateCard({
   candidate,
   disabled,
+  calibrationNote,
+  calibrationDisabled,
   onStageChange,
+  onCalibrationNoteChange,
+  onCalibrationRequest,
 }: {
   candidate: RecruiterSourcedCandidateItem
   disabled: boolean
+  calibrationNote: string
+  calibrationDisabled: boolean
   onStageChange: (stage: RecruiterSourcedCandidateStage) => void
+  onCalibrationNoteChange: (note: string) => void
+  onCalibrationRequest: () => void
 }) {
   const stage = sourceStageMeta(candidate.stage)
   const calibration = calibrationMeta(candidate.calibrationStatus)
+  const calibrationOpen = canRequestCandidateCalibration(candidate)
   return (
     <article className="rb-source-card">
       <div>
@@ -3320,6 +3384,27 @@ function SourcedCandidateCard({
         <div className="rb-source-card__calibration">
           <span className={`rb-status is-${calibration.tone}`}>{calibration.label}</span>
           {candidate.calibrationNote && <p>{shortText(candidate.calibrationNote, "", 120)}</p>}
+        </div>
+      )}
+      {calibrationOpen && (
+        <div className="rb-source-card__request">
+          <label>
+            <span>Pre-submission calibration</span>
+            <textarea
+              value={calibrationNote}
+              onChange={(e) => onCalibrationNoteChange(e.target.value)}
+              placeholder="Ask what you need calibrated before an official submission."
+              disabled={calibrationDisabled}
+            />
+          </label>
+          <button
+            type="button"
+            className="rb-btn"
+            onClick={onCalibrationRequest}
+            disabled={disabled || calibrationDisabled}
+          >
+            {calibrationDisabled ? "Requesting..." : "Request calibration"}
+          </button>
         </div>
       )}
       <footer>

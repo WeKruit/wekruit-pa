@@ -163,6 +163,9 @@ export interface RecruiterSourcedCandidateInput {
     yoe?: string
     notes?: string
   }
+  calibrationRequest?: {
+    note?: string
+  }
 }
 
 export type RecruiterRoleFeedbackDifficulty = "easy" | "medium" | "hard" | "blocked"
