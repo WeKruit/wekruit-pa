@@ -9,7 +9,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react"
 import {
   GoogleAuthProvider,
   onAuthStateChanged,
-  signInWithRedirect,
+  signInWithPopup,
   signOut,
   type User,
 } from "firebase/auth"
@@ -2098,7 +2098,7 @@ function RecruiterAccessGate({ initialError }: { initialError?: string | null })
     try {
       writePendingRecruiterAccess(trimmedInviteCode)
       if (auth().currentUser) await signOut(auth())
-      await signInWithRedirect(auth(), createRecruiterGoogleProvider())
+      await signInWithPopup(auth(), createRecruiterGoogleProvider())
     } catch (error) {
       clearPendingRecruiterAccess()
       setErr(formatRecruiterAuthError(error))
