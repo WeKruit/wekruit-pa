@@ -260,8 +260,116 @@ type RoleCalibrationBrief = {
   }
 }
 
+type RoleSourcingKit = {
+  searchStrings: Array<{ label: string; value: string; detail: string }>
+  targetSignals: string[]
+  outreach: {
+    subject: string
+    body: string
+  }
+  screenQuestions: string[]
+  proofPlan: string[]
+  doNotPitch: string[]
+}
+
 function roleChecklistItems(job: CollabJob, kind: RoleChecklistKind) {
   return job.recruiterBoard.checklist.groups.find((group) => group.kind === kind)?.items ?? []
+}
+
+const SOURCING_STOP_WORDS = new Set([
+  "and", "the", "for", "with", "from", "that", "this", "have", "has", "are", "you", "your",
+  "will", "must", "able", "role", "team", "work", "years", "experience", "candidate", "candidates",
+])
+
+function sourcingTokens(text: string, max = 8): string[] {
+  const tokens = text
+    .toLowerCase()
+    .replace(/[^a-z0-9+#.\s-]/g, " ")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 2 && !SOURCING_STOP_WORDS.has(token))
+  return [...new Set(tokens)].slice(0, max)
+}
+
+function titleVariants(title: string): string[] {
+  const base = title.replace(/\s+/g, " ").trim()
+  const withoutSeniority = base.replace(/^(senior|sr\.?|staff|principal|lead|founding)\s+/i, "").trim()
+  return [...new Set([base, withoutSeniority].filter(Boolean))].slice(0, 3)
+}
+
+function quotedOrGroup(values: string[]): string {
+  const cleanValues = [...new Set(values.map((value) => value.trim()).filter(Boolean))]
+  return cleanValues.length ? `(${cleanValues.map((value) => `"${value}"`).join(" OR ")})` : ""
+}
+
+function buildRoleSourcingKit(job: CollabJob, brief: RoleCalibrationBrief): RoleSourcingKit {
+  const hardItems = roleChecklistItems(job, "hard").map((item) => item.text)
+  const fitItems = roleChecklistItems(job, "fit").map((item) => item.text)
+  const bonusItems = roleChecklistItems(job, "bonus").map((item) => item.text)
+  const antiItems = roleChecklistItems(job, "anti").map((item) => item.text)
+  const jdText = `${job.title} ${job.jdBlocks.map((block) => `${block.heading} ${block.body}`).join(" ")} ${hardItems.join(" ")} ${fitItems.join(" ")}`
+  const skillTokens = sourcingTokens(jdText, 10)
+  const coreSignals = [...hardItems, ...fitItems, ...bonusItems]
+    .map((item) => shortText(item, item, 88))
+    .slice(0, 8)
+  const titleGroup = quotedOrGroup(titleVariants(job.title))
+  const skillGroup = quotedOrGroup(skillTokens.slice(0, 5))
+  const locationGroup = quotedOrGroup([job.recruiterBoard.label.location, ...job.recruiterBoard.label.pills.map((pill) => pill.text).filter((text) => /remote|hybrid|onsite|us|canada|uk|europe/i.test(text))].slice(0, 4))
+  const company = job.recruiterBoard.label.company
+  const searchStrings = [
+    {
+      label: "LinkedIn recruiter",
+      value: [titleGroup, skillGroup, locationGroup, "-intern", "-student"].filter(Boolean).join(" "),
+      detail: "Start broad, then add company-stage or domain filters once the first 30 profiles look noisy.",
+    },
+    {
+      label: "Google X-ray",
+      value: `site:linkedin.com/in ${titleGroup} ${skillTokens.slice(0, 4).map((token) => `"${token}"`).join(" ")} ${job.recruiterBoard.label.location}`,
+      detail: "Use when LinkedIn search is saturated or you need fresh public profiles.",
+    },
+    {
+      label: "Warm referral prompt",
+      value: `Who do you know who has done ${skillTokens.slice(0, 3).join(", ")} for a ${job.title} search?`,
+      detail: "Send to trusted operators before cold outreach.",
+    },
+  ]
+  const firstSignal = coreSignals[0] ?? job.title
+  const secondSignal = coreSignals[1] ?? job.recruiterBoard.culture.bet
+  const outreachBody = [
+    `Hi {{first_name}}, I am working with WeKruit on a ${job.title} search for ${company}.`,
+    `Your background around ${firstSignal.toLowerCase()} stood out, especially for a team where ${shortText(job.recruiterBoard.culture.bet, "the role has clear ownership", 110).toLowerCase()}.`,
+    `If ${job.recruiterBoard.label.location} and ${job.compSummary || "a success-fee-backed search"} are in range, are you open to a quick screen this week?`,
+  ].join("\n\n")
+  const screenQuestions = [
+    ...hardItems.slice(0, 4).map((item) => `Can you walk through a concrete example of ${item.toLowerCase()}?`),
+    `What would make ${job.recruiterBoard.label.location} workable or not workable for you?`,
+    `What compensation range would make this worth a serious conversation?`,
+  ].slice(0, 6)
+  const proofPlan = [
+    "Confirm candidate consent before submitting.",
+    "Save LinkedIn or resume link in Candidate CRM before formal submission.",
+    `Capture proof for: ${firstSignal}.`,
+    `Capture proof for: ${secondSignal}.`,
+    brief.nextMove,
+  ].filter(Boolean).slice(0, 6)
+  const doNotPitch = antiItems.length
+    ? antiItems.map((item) => shortText(item, item, 90)).slice(0, 6)
+    : [
+      "Do not submit candidates without explicit consent.",
+      "Do not submit weak matches just to claim role activity.",
+      "Do not ignore open WeKruit calibration questions.",
+    ]
+  return {
+    searchStrings,
+    targetSignals: coreSignals.length ? coreSignals : [`Relevant ${job.title} ownership`, job.recruiterBoard.culture.bet],
+    outreach: {
+      subject: `${job.title} at ${company}`,
+      body: outreachBody,
+    },
+    screenQuestions,
+    proofPlan,
+    doNotPitch,
+  }
 }
 
 function buildRoleSubmissionPacket(input: {
@@ -720,6 +828,7 @@ export default function RecruiterRole() {
     roleQuestions: currentRoleQuestions,
     intelligence: currentRoleIntelligence,
   })
+  const sourcingKit = buildRoleSourcingKit(job, calibrationBrief)
 
   const useSourcedCandidate = (candidate: RecruiterSourcedCandidateItem) => {
     setForm((next) => withRecruiterDefaults({
@@ -883,6 +992,8 @@ export default function RecruiterRole() {
         />
 
         <RoleCalibrationBriefPanel brief={calibrationBrief} />
+
+        <RoleSourcingKitPanel kit={sourcingKit} onOpenCandidates={() => navigate("/recruiters?tab=candidates")} />
 
         {submission && submission.ok && (
           <div className="rb-success">
@@ -1565,6 +1676,100 @@ function RoleCalibrationBriefPanel({ brief }: { brief: RoleCalibrationBrief }) {
           </div>
         </article>
       </div>
+    </section>
+  )
+}
+
+function RoleSourcingKitPanel({
+  kit,
+  onOpenCandidates,
+}: {
+  kit: RoleSourcingKit
+  onOpenCandidates: () => void
+}) {
+  const [copied, setCopied] = useState<string | null>(null)
+
+  const copyText = async (label: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(label)
+      window.setTimeout(() => setCopied(null), 1600)
+    } catch {
+      setCopied("Copy failed")
+      window.setTimeout(() => setCopied(null), 1600)
+    }
+  }
+
+  return (
+    <section className="rb-sourcing-kit" aria-label="Recruiter sourcing kit">
+      <header>
+        <div>
+          <span>Sourcing kit</span>
+          <strong>Search, screen, and submit with proof</strong>
+          <p>Use these assets to build a shortlist before spending a single-submit credit or asking for trusted role access.</p>
+        </div>
+        <button type="button" className="rb-btn" onClick={onOpenCandidates}>Open candidate CRM</button>
+      </header>
+
+      <div className="rb-sourcing-kit__grid">
+        <article className="rb-sourcing-kit__search">
+          <h3>Search strings</h3>
+          {kit.searchStrings.map((search) => (
+            <section key={search.label}>
+              <div>
+                <span>{search.label}</span>
+                <button type="button" onClick={() => void copyText(search.label, search.value)}>
+                  {copied === search.label ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <code>{search.value}</code>
+              <p>{search.detail}</p>
+            </section>
+          ))}
+        </article>
+
+        <article className="rb-sourcing-kit__outreach">
+          <h3>Outreach copy</h3>
+          <div>
+            <span>Subject</span>
+            <strong>{kit.outreach.subject}</strong>
+          </div>
+          <pre>{kit.outreach.body}</pre>
+          <button type="button" onClick={() => void copyText("Outreach", `${kit.outreach.subject}\n\n${kit.outreach.body}`)}>
+            {copied === "Outreach" ? "Copied outreach" : "Copy outreach"}
+          </button>
+        </article>
+
+        <article>
+          <h3>Target signals</h3>
+          <ul>
+            {kit.targetSignals.slice(0, 7).map((signal) => <li key={signal}>{signal}</li>)}
+          </ul>
+        </article>
+
+        <article>
+          <h3>Screening questions</h3>
+          <ol>
+            {kit.screenQuestions.map((question) => <li key={question}>{question}</li>)}
+          </ol>
+        </article>
+
+        <article>
+          <h3>Submission proof plan</h3>
+          <ul>
+            {kit.proofPlan.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </article>
+
+        <article className="rb-sourcing-kit__anti">
+          <h3>Do not pitch</h3>
+          <ul>
+            {kit.doNotPitch.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </article>
+      </div>
+
+      {copied && <p className="rb-sourcing-kit__copied" aria-live="polite">{copied}</p>}
     </section>
   )
 }

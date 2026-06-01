@@ -825,7 +825,9 @@ function RecruiterOpsPanel() {
             <div style={{ background: "#f7f3ed", border: "1px solid #e1d8cc", borderRadius: 8, padding: 12 }}>
               <div style={{ fontSize: 11, color: "#666", textTransform: "uppercase", letterSpacing: ".08em" }}>Give this code to the recruiter</div>
               <code style={{ display: "block", marginTop: 6, fontSize: 18, fontWeight: 700 }}>{generated.inviteCode}</code>
-              <div style={{ color: "#777", fontSize: 12, marginTop: 4 }}>Expires {formatCodeExpiry(generated.expiresAt)}</div>
+              <div style={{ color: "#777", fontSize: 12, marginTop: 4 }}>
+                Expires {formatCodeExpiry(generated.expiresAt)}. This full code remains visible to admins.
+              </div>
               {generated.replacedInviteCodeId && (
                 <div style={{ color: "#7a3e10", fontSize: 12, marginTop: 4 }}>
                   Replaced the unrecoverable legacy code and disabled the old row.
@@ -841,14 +843,14 @@ function RecruiterOpsPanel() {
             </div>
           )}
         </form>
-        <OpsSection title="Access codes" subtitle="Admins can view and copy one-use recruiter codes. Legacy hash-only rows can be replaced with a visible code.">
+        <OpsSection title="Access codes" subtitle="Admins can view and copy full one-use recruiter codes when the row stores the raw code. Preview-only legacy rows cannot be reversed; replace them to issue a visible code.">
           {sortedCodes.length ? (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr style={{ color: "#777", textAlign: "left", borderBottom: "1px solid #eee" }}>
-                    <th style={{ padding: "8px 6px" }}>Code</th>
-                    <th style={{ padding: "8px 6px" }}>Copy</th>
+                    <th style={{ padding: "8px 6px" }}>Full code</th>
+                    <th style={{ padding: "8px 6px" }}>Action</th>
                     <th style={{ padding: "8px 6px" }}>Label</th>
                     <th style={{ padding: "8px 6px" }}>Status</th>
                     <th style={{ padding: "8px 6px" }}>Expires</th>
@@ -862,7 +864,7 @@ function RecruiterOpsPanel() {
                       ? code.inviteCode
                       : knownInviteCodes[code.id]
                     const canCopy = isFullRecruiterInviteCode(rawInviteCode)
-                    const visibleCode = canCopy ? rawInviteCode : code.codePreview ?? code.id.slice(0, 10)
+                    const visibleCode = canCopy ? rawInviteCode : (code.codePreview ? `${code.codePreview} preview` : "Preview only")
                     const rawMissing = !canCopy && status.label === "usable"
                     return (
                       <tr key={code.id} style={{ borderBottom: "1px solid #f1f1f1" }}>
@@ -870,7 +872,7 @@ function RecruiterOpsPanel() {
                           <div>{visibleCode}</div>
                           {rawMissing && (
                             <div style={{ marginTop: 3, fontFamily: "inherit", fontWeight: 500, color: "#9a4b12", fontSize: 11 }}>
-                              raw code unavailable
+                              full code was not stored
                             </div>
                           )}
                         </td>
@@ -884,7 +886,7 @@ function RecruiterOpsPanel() {
                               }}
                               style={{ padding: "5px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff", fontSize: 12 }}
                             >
-                              Copy
+                              Copy full code
                             </button>
                           ) : rawMissing ? (
                             <button
@@ -896,7 +898,7 @@ function RecruiterOpsPanel() {
                               disabled={replacingCodeId === code.id}
                               style={{ padding: "5px 8px", border: "1px solid #d9b892", borderRadius: 6, background: "#fff7ed", color: "#7a3e10", fontSize: 12 }}
                             >
-                              {replacingCodeId === code.id ? "Replacing..." : "Replace"}
+                              {replacingCodeId === code.id ? "Replacing..." : "Replace with visible code"}
                             </button>
                           ) : (
                             <span style={{ color: "#999" }}>—</span>

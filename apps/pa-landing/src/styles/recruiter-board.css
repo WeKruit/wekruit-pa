@@ -467,6 +467,185 @@
   text-transform: uppercase;
 }
 
+.rb-sourcing-kit {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+  border: 1px solid #ded8ce;
+  border-left: 4px solid var(--info);
+  border-radius: 10px;
+  background: #f8fbff;
+  padding: 16px;
+}
+
+.rb-sourcing-kit > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.rb-sourcing-kit > header span,
+.rb-sourcing-kit article > section span,
+.rb-sourcing-kit__outreach div span {
+  display: block;
+  color: #6a6a64;
+  font-size: 11.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-sourcing-kit > header strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1.15;
+}
+
+.rb-sourcing-kit > header p,
+.rb-sourcing-kit article p {
+  margin: 5px 0 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-sourcing-kit__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.rb-sourcing-kit article {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  border: 1px solid #e4e8ed;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 13px;
+}
+
+.rb-sourcing-kit article h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.rb-sourcing-kit__search,
+.rb-sourcing-kit__outreach {
+  grid-row: span 2;
+}
+
+.rb-sourcing-kit article > section {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid #e8edf2;
+  padding-top: 9px;
+}
+
+.rb-sourcing-kit article > section:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.rb-sourcing-kit article > section > div {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rb-sourcing-kit button {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 10px;
+}
+
+.rb-sourcing-kit__search code {
+  display: block;
+  overflow-wrap: anywhere;
+  border: 1px solid #d7e2ed;
+  border-radius: 8px;
+  background: #f4f8fc;
+  color: #26394c;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 8px;
+}
+
+.rb-sourcing-kit__outreach div {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  background: #f4f8fc;
+  padding: 9px 10px;
+}
+
+.rb-sourcing-kit__outreach div strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.rb-sourcing-kit__outreach pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+  border: 1px solid #d7e2ed;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink-2);
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  line-height: 1.5;
+  padding: 10px;
+}
+
+.rb-sourcing-kit ul,
+.rb-sourcing-kit ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.rb-sourcing-kit li {
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.rb-sourcing-kit__anti {
+  border-color: var(--danger-bg);
+  background: #fff8f7;
+}
+
+.rb-sourcing-kit__copied {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  margin: 0;
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 10px;
+}
+
 .rb-role-dashboard {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
@@ -4373,6 +4552,14 @@
   }
   .rb-role-intel {
     grid-template-columns: 1fr;
+  }
+  .rb-sourcing-kit > header,
+  .rb-sourcing-kit__grid {
+    grid-template-columns: 1fr;
+  }
+  .rb-sourcing-kit__search,
+  .rb-sourcing-kit__outreach {
+    grid-row: auto;
   }
   .rb-role-intel__metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
