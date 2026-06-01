@@ -113,14 +113,13 @@ test("isJobRecCardEnabled: only 1/true/on enable", () => {
 
 // ── buildRecCardCaption ──────────────────────────────────────────────────────
 
-test("buildRecCardCaption: Claire voice + apply link", () => {
+test("buildRecCardCaption: includes the role title @ company + apply link", () => {
   const cap = buildRecCardCaption({
     company: "Invoko",
     title: "Senior Product Designer",
     applyUrl: "https://jobs.invoko.com/apply/123",
   })
-  assert.match(cap, /one role worth your time: Invoko\./)
-  assert.match(cap, /lmk if it's interesting/)
+  assert.match(cap, /Senior Product Designer @ Invoko/) // title present (was company-only)
   assert.match(cap, /https:\/\/jobs\.invoko\.com\/apply\/123/)
 })
 

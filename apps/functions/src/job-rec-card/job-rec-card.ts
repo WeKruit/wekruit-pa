@@ -74,11 +74,24 @@ export type MaybeBuildRecCardDeps = {
  * apply link included (the brief keeps the link in the text/caption).
  */
 export function buildRecCardCaption(payload: RecCardPayload): string {
-  const lines = [
-    `one role worth your time: ${payload.company}.`,
-    "lmk if it's interesting, and why or why not.",
-  ]
-  if (payload.applyUrl) lines.push(payload.applyUrl)
+  // Lead with the ROLE (title @ company) — not just the company (Adam 2026-06-01: "no title, poor
+  // wording, bad info order"). For a WeKruit collab/partner role, pitch the fast-track prescreen and
+  // offer BOTH start paths (reply the role + company, OR copy the start line find_match sent).
+  const role = (payload.title ?? "").trim()
+  const headline = role ? `${role} @ ${payload.company}` : payload.company
+  const lines: string[] = []
+  if (payload.inNetwork) {
+    lines.push(`one that jumps out — ${headline} (WeKruit partner role).`)
+    if (payload.applyUrl) lines.push(payload.applyUrl)
+    lines.push(
+      "we talk to their team directly, so a quick prescreen pitches you straight to them. " +
+        "want to run it? just reply the role + company, or copy the start line below.",
+    )
+  } else {
+    lines.push(`one that jumps out — ${headline}.`)
+    if (payload.applyUrl) lines.push(payload.applyUrl)
+    lines.push("lmk if it's interesting — and why or why not.")
+  }
   return lines.join("\n")
 }
 
