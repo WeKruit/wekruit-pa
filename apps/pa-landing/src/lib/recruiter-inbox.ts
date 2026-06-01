@@ -20,6 +20,14 @@ export function recruiterNotificationInboxMeta(type: string): RecruiterNotificat
         cta: "Open candidate",
         readTone: "info",
       }
+    case "candidate_confirmation":
+      return {
+        typeLabel: "Candidate confirmation",
+        unreadBucket: "Unread candidate confirmation",
+        action: "submissions",
+        cta: "Track submission",
+        readTone: "success",
+      }
     case "new_role":
       return {
         typeLabel: "New role alert",

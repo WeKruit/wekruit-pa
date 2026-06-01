@@ -33,7 +33,7 @@
  *   GET  paRecruiterSubmissionsList -> recruiter-authenticated status tracker
  *   TRG  paRecruiterRoleReleasedNotify -> emails recruiters when a role is released
  *   TRG  paRecruiterRoleApplicationDecisionNotify -> creates recruiter inbox decision notices
- *   TRG  paRecruiterSubmissionFeedbackNotify -> creates recruiter inbox status/feedback notices
+ *   TRG  paRecruiterSubmissionFeedbackNotify -> creates recruiter inbox status/feedback and confirmation notices
  *   GET  paCollabJobsListSchema    -> JSON Schema for the list response shape
  *
  * Companion docs:
@@ -498,6 +498,7 @@ function publicRecruiterNotification(
   const fallbackTitle =
     type === "new_role" ? "New role released" :
     type === "role_application_decision" ? "Role application reviewed" :
+    type === "candidate_confirmation" ? "Candidate confirmation update" :
     type === "submission_feedback" ? "Submission update" :
     "Recruiter notification"
   const fallbackBody =
@@ -3958,7 +3959,7 @@ function eventNotificationId(type: string, entityId: string, eventId: string): s
 async function createRecruiterInAppNotification(
   db: Firestore,
   input: {
-    type: "candidate_calibration" | "role_application_decision" | "role_question_answer" | "submission_feedback"
+    type: "candidate_calibration" | "candidate_confirmation" | "role_application_decision" | "role_question_answer" | "submission_feedback"
     eventId: string
     recruiterId: string
     recruiterEmail?: string
@@ -4169,6 +4170,92 @@ function submissionFeedbackNotification(
   return { title, body }
 }
 
+function submissionCandidateName(data: Record<string, unknown>): string {
+  const candidate = data.candidate && typeof data.candidate === "object"
+    ? data.candidate as Record<string, unknown>
+    : {}
+  return typeof candidate.name === "string" && candidate.name.trim() ? candidate.name.trim() : "Candidate"
+}
+
+function submissionCandidateEmail(data: Record<string, unknown>): string {
+  const confirmation = data.candidateConfirmation && typeof data.candidateConfirmation === "object"
+    ? data.candidateConfirmation as Record<string, unknown>
+    : {}
+  const candidate = data.candidate && typeof data.candidate === "object"
+    ? data.candidate as Record<string, unknown>
+    : {}
+  if (typeof confirmation.candidateEmail === "string" && confirmation.candidateEmail.trim()) {
+    return confirmation.candidateEmail.trim()
+  }
+  if (typeof candidate.email === "string" && candidate.email.trim()) return candidate.email.trim()
+  return ""
+}
+
+function submissionConfirmationStatus(data: Record<string, unknown> | null): string {
+  const confirmation = data?.candidateConfirmation && typeof data.candidateConfirmation === "object"
+    ? data.candidateConfirmation as Record<string, unknown>
+    : {}
+  return typeof confirmation.status === "string" ? confirmation.status.trim() : ""
+}
+
+export function candidateConfirmationNotification(
+  before: Record<string, unknown> | null,
+  after: Record<string, unknown> | null,
+): { title: string; body: string } | null {
+  if (!before || !after) return null
+  const beforeConsent = typeof before.candidateConsentStatus === "string" ? before.candidateConsentStatus : ""
+  const afterConsent = typeof after.candidateConsentStatus === "string" ? after.candidateConsentStatus : ""
+  const beforeConfirmation = submissionConfirmationStatus(before)
+  const afterConfirmation = submissionConfirmationStatus(after)
+  if (beforeConsent === afterConsent && beforeConfirmation === afterConfirmation) return null
+
+  const candidateName = submissionCandidateName(after)
+  const candidateEmail = submissionCandidateEmail(after)
+  const roleTitle = typeof after.jobTitleSnapshot === "string" && after.jobTitleSnapshot.trim()
+    ? after.jobTitleSnapshot.trim()
+    : "Recruiter submission"
+  const confirmation = after.candidateConfirmation && typeof after.candidateConfirmation === "object"
+    ? after.candidateConfirmation as Record<string, unknown>
+    : {}
+  const lastError = typeof confirmation.lastError === "string" ? confirmation.lastError.trim() : ""
+
+  if (afterConsent === "candidate_confirmed" || afterConfirmation === "confirmed") {
+    return {
+      title: `Candidate confirmed ${candidateName}`,
+      body: compactNotificationBody([
+        roleTitle,
+        candidateEmail || candidateName,
+        "Candidate confirmed consent for this recruiter submission.",
+      ]),
+    }
+  }
+
+  if (afterConsent === "confirmation_email_failed" || afterConfirmation === "email_failed") {
+    return {
+      title: "Candidate confirmation needs attention",
+      body: compactNotificationBody([
+        roleTitle,
+        candidateEmail || candidateName,
+        "Confirmation email failed. Resend it from the submission tracker.",
+        lastError,
+      ]),
+    }
+  }
+
+  if (afterConsent === "confirmation_email_not_configured" || afterConfirmation === "email_not_configured") {
+    return {
+      title: "Candidate confirmation email is not configured",
+      body: compactNotificationBody([
+        roleTitle,
+        candidateEmail || candidateName,
+        "Configure candidate confirmation email before relying on consent tracking.",
+      ]),
+    }
+  }
+
+  return null
+}
+
 export const paRecruiterRoleReleasedNotify = onDocumentWritten(
   {
     document: "pa-jobs/{jobId}",
@@ -4290,26 +4377,42 @@ export const paRecruiterSubmissionFeedbackNotify = onDocumentWritten(
   async (event) => {
     const before = event.data?.before.exists ? event.data.before.data() as Record<string, unknown> : null
     const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null
-    const notification = submissionFeedbackNotification(before, after)
-    if (!notification || !after) return
+    const feedbackNotification = submissionFeedbackNotification(before, after)
+    const confirmationNotification = candidateConfirmationNotification(before, after)
+    if ((!feedbackNotification && !confirmationNotification) || !after) return
     const recruiterId = typeof after.recruiterId === "string" ? after.recruiterId : ""
     if (!recruiterId) return
-    const created = await createRecruiterInAppNotification(getFirestore(), {
-      type: "submission_feedback",
+    const db = getFirestore()
+    const common = {
       eventId: event.id,
       recruiterId,
       recruiterEmail: typeof after.recruiterEmail === "string" ? after.recruiterEmail : undefined,
-      entityType: "submission",
+      entityType: "submission" as const,
       entityId: event.params.submissionId,
-      title: notification.title,
-      body: notification.body,
       jobId: typeof after.jobId === "string" ? after.jobId : undefined,
       publicJobId: typeof after.inboundJobId === "string" ? after.inboundJobId : undefined,
       roleTitle: typeof after.jobTitleSnapshot === "string" ? after.jobTitleSnapshot : undefined,
       companyLabel: typeof after.companyLabelSnapshot === "string" ? after.companyLabelSnapshot : undefined,
       roleUrl: recruiterNotificationRoleUrl(after),
-    })
-    if (created) logger.info("paRecruiterSubmissionFeedbackNotify_done", { submissionId: event.params.submissionId, recruiterId })
+    }
+    if (feedbackNotification) {
+      const created = await createRecruiterInAppNotification(db, {
+        ...common,
+        type: "submission_feedback",
+        title: feedbackNotification.title,
+        body: feedbackNotification.body,
+      })
+      if (created) logger.info("paRecruiterSubmissionFeedbackNotify_done", { submissionId: event.params.submissionId, recruiterId })
+    }
+    if (confirmationNotification) {
+      const created = await createRecruiterInAppNotification(db, {
+        ...common,
+        type: "candidate_confirmation",
+        title: confirmationNotification.title,
+        body: confirmationNotification.body,
+      })
+      if (created) logger.info("paRecruiterSubmissionCandidateConfirmationNotify_done", { submissionId: event.params.submissionId, recruiterId })
+    }
   },
 )
 

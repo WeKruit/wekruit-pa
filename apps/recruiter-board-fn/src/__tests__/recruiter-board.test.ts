@@ -18,6 +18,7 @@ import assert from "node:assert/strict"
 import {
   buildRecruiterRoleIntelligence,
   candidateCalibrationNotification,
+  candidateConfirmationNotification,
   computeSubmissionScore,
   composeCandidateSubmissionConfirmationEmail,
   composeRecruiterRoleNotificationEmail,
@@ -563,6 +564,61 @@ describe("recruiter candidate calibration notifications", () => {
     }, {
       calibrationStatus: "suggested",
       calibrationNote: "Use for backend-heavy roles.",
+    }), null)
+  })
+})
+
+describe("recruiter candidate confirmation notifications", () => {
+  it("does not notify when a submission is first queued for confirmation", () => {
+    assert.equal(candidateConfirmationNotification(null, {
+      candidateConsentStatus: "pending_candidate_confirmation",
+      candidateConfirmation: { status: "email_queued", candidateEmail: "ada@example.com" },
+    }), null)
+  })
+
+  it("notifies when a candidate confirms recruiter submission consent", () => {
+    const notification = candidateConfirmationNotification({
+      candidateConsentStatus: "pending_candidate_confirmation",
+      candidateConfirmation: { status: "email_sent", candidateEmail: "ada@example.com" },
+    }, {
+      candidateConsentStatus: "candidate_confirmed",
+      candidateConfirmation: { status: "confirmed", candidateEmail: "ada@example.com" },
+      jobTitleSnapshot: "Founding Engineer",
+      candidate: { name: "Ada Lovelace" },
+    })
+    assert.equal(notification?.title, "Candidate confirmed Ada Lovelace")
+    assert.match(notification?.body ?? "", /Founding Engineer/)
+    assert.match(notification?.body ?? "", /ada@example.com/)
+    assert.match(notification?.body ?? "", /confirmed consent/)
+  })
+
+  it("notifies when candidate confirmation email fails", () => {
+    const notification = candidateConfirmationNotification({
+      candidateConsentStatus: "pending_candidate_confirmation",
+      candidateConfirmation: { status: "email_queued", candidateEmail: "ada@example.com" },
+    }, {
+      candidateConsentStatus: "confirmation_email_failed",
+      candidateConfirmation: {
+        status: "email_failed",
+        candidateEmail: "ada@example.com",
+        lastError: "mailgun_500",
+      },
+      jobTitleSnapshot: "Founding Engineer",
+      candidate: { name: "Ada Lovelace" },
+    })
+    assert.equal(notification?.title, "Candidate confirmation needs attention")
+    assert.match(notification?.body ?? "", /Founding Engineer/)
+    assert.match(notification?.body ?? "", /Resend/)
+    assert.match(notification?.body ?? "", /mailgun_500/)
+  })
+
+  it("does not notify again when confirmation status is unchanged", () => {
+    assert.equal(candidateConfirmationNotification({
+      candidateConsentStatus: "candidate_confirmed",
+      candidateConfirmation: { status: "confirmed", candidateEmail: "ada@example.com" },
+    }, {
+      candidateConsentStatus: "candidate_confirmed",
+      candidateConfirmation: { status: "confirmed", candidateEmail: "ada@example.com" },
     }), null)
   })
 })

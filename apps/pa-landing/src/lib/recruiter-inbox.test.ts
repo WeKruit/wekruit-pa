@@ -14,6 +14,16 @@ test("recruiterNotificationInboxMeta routes candidate calibration to the candida
   })
 })
 
+test("recruiterNotificationInboxMeta routes candidate confirmation into the submission tracker", () => {
+  assert.deepEqual(recruiterNotificationInboxMeta("candidate_confirmation"), {
+    typeLabel: "Candidate confirmation",
+    unreadBucket: "Unread candidate confirmation",
+    action: "submissions",
+    cta: "Track submission",
+    readTone: "success",
+  })
+})
+
 test("recruiterNotificationInboxMeta routes role-question answers back to roles", () => {
   assert.deepEqual(recruiterNotificationInboxMeta("role_question_answer"), {
     typeLabel: "Role answer returned",
