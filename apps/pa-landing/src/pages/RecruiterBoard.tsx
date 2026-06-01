@@ -121,6 +121,16 @@ const SUBMISSION_PROGRESS = [
   { id: "hired", label: "Hired" },
 ] as const
 
+const SUBMISSION_FILTERS = [
+  { id: "all", label: "All" },
+  { id: "active", label: "Active review" },
+  { id: "advanced", label: "Advanced" },
+  { id: "feedback", label: "Has feedback" },
+  { id: "closed", label: "Closed" },
+] as const
+
+type SubmissionFilter = typeof SUBMISSION_FILTERS[number]["id"]
+
 function statusMeta(status?: string) {
   return STATUS_LABELS[status ?? "submitted"] ?? { label: status ?? "Submitted", tone: "mute" as const }
 }
@@ -252,6 +262,87 @@ function sortSourcedCandidates(rows: RecruiterSourcedCandidateItem[]): Recruiter
 function submissionScore(s: RecruiterSubmissionItem): string {
   if (!s.score) return "Score pending"
   return `Hard ${s.score.hardChecked}/${s.score.hardTotal} · Fit ${s.score.fitChecked}/${s.score.fitTotal}`
+}
+
+function submissionReceiptId(submission: RecruiterSubmissionItem): string {
+  return submission.submissionId || submission.id
+}
+
+function submissionModeLabel(mode?: RecruiterSubmissionItem["submissionMode"]): string {
+  switch (mode) {
+    case "primary_role": return "Approved role lane"
+    case "single_submission": return "Single-submit lane"
+    default: return "Submission lane pending"
+  }
+}
+
+function submissionIsActiveReview(submission: RecruiterSubmissionItem): boolean {
+  return ["submitted", "new", "reviewing"].includes(submission.status ?? "submitted")
+}
+
+function submissionIsAdvanced(submission: RecruiterSubmissionItem): boolean {
+  return ["advanced", "interviewing", "hired"].includes(submission.status ?? "")
+}
+
+function submissionIsClosed(submission: RecruiterSubmissionItem): boolean {
+  return ["rejected", "duplicate"].includes(submission.status ?? "")
+}
+
+function submissionAgeDays(submission: RecruiterSubmissionItem): number {
+  const ms = timestampValueMs(submission.createdAt)
+  if (!ms) return 0
+  return Math.max(0, Math.floor((Date.now() - ms) / 86_400_000))
+}
+
+function submissionNeedsAction(submission: RecruiterSubmissionItem): boolean {
+  return Boolean(submission.recruiterFeedbackNote) || (submissionIsActiveReview(submission) && submissionAgeDays(submission) >= 3)
+}
+
+function submissionFilterMatches(submission: RecruiterSubmissionItem, filter: SubmissionFilter): boolean {
+  switch (filter) {
+    case "active": return submissionIsActiveReview(submission)
+    case "advanced": return submissionIsAdvanced(submission)
+    case "feedback": return Boolean(submission.recruiterFeedbackNote)
+    case "closed": return submissionIsClosed(submission)
+    case "all":
+    default:
+      return true
+  }
+}
+
+function submissionSearchText(submission: RecruiterSubmissionItem): string {
+  return [
+    submission.candidate?.name,
+    submission.candidate?.link,
+    submission.candidate?.currentRole,
+    submission.candidate?.notes,
+    submission.jobTitleSnapshot,
+    submission.companyLabelSnapshot,
+    submission.status,
+    submission.submissionMode,
+    submissionReceiptId(submission),
+  ].filter(Boolean).join(" ").toLowerCase()
+}
+
+function buildSubmissionDashboard(submissions: RecruiterSubmissionItem[]) {
+  const active = submissions.filter(submissionIsActiveReview)
+  const advanced = submissions.filter(submissionIsAdvanced)
+  const closed = submissions.filter(submissionIsClosed)
+  const feedback = submissions.filter((submission) => Boolean(submission.recruiterFeedbackNote))
+  const needsAction = submissions.filter(submissionNeedsAction)
+  return {
+    active,
+    advanced,
+    closed,
+    feedback,
+    needsAction,
+    hero: [
+      { label: "Active review", value: String(active.length), body: "Submitted, queued, or under WeKruit review.", tone: active.length ? "live" : "mute" },
+      { label: "Advanced", value: String(advanced.length), body: "Sent forward, interviewing, or hired.", tone: advanced.length ? "success" : "mute" },
+      { label: "Feedback notes", value: String(feedback.length), body: "Written feedback to improve the next submission.", tone: feedback.length ? "info" : "mute" },
+      { label: "Needs action", value: String(needsAction.length), body: "Aged reviews or feedback that should change sourcing.", tone: needsAction.length ? "warn" : "success" },
+    ] as Array<{ label: string; value: string; body: string; tone: "live" | "info" | "success" | "warn" | "mute" }>,
+  }
 }
 
 function roleKey(job: CollabJob): string {
@@ -3797,14 +3888,86 @@ function SourcedCandidateCard({
 }
 
 function SubmissionsTab({ submissions }: { submissions: RecruiterSubmissionItem[] }) {
+  const [query, setQuery] = useState("")
+  const [filter, setFilter] = useState<SubmissionFilter>("all")
+  const dashboard = useMemo(() => buildSubmissionDashboard(submissions), [submissions])
+  const visibleSubmissions = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    return submissions.filter((submission) => {
+      if (!submissionFilterMatches(submission, filter)) return false
+      return !needle || submissionSearchText(submission).includes(needle)
+    })
+  }, [filter, query, submissions])
+  const nextActions = dashboard.needsAction.slice(0, 5)
+
   return (
-    <section className="rb-panel rb-panel--fill">
+    <section className="rb-panel rb-panel--fill rb-submissions-dashboard">
       <header className="rb-panel__head">
-        <div><h2>Submission pipeline</h2><p>Each row is one candidate you submitted through the recruiter board.</p></div>
+        <div><h2>Submission pipeline</h2><p>Track candidate ownership, WeKruit review status, feedback, and next action from one dashboard.</p></div>
       </header>
-      <div className="rb-submission-list rb-submission-list--full">
-        {submissions.map((s) => <SubmissionRow key={s.id} submission={s} expanded />)}
-        {submissions.length === 0 && <p className="rb-empty">No submissions yet. Open a role and submit a candidate with consent.</p>}
+
+      <section className="rb-submissions-hero">
+        {dashboard.hero.map((item) => (
+          <article className={`is-${item.tone}`} key={item.label}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+            <p>{item.body}</p>
+          </article>
+        ))}
+      </section>
+
+      <div className="rb-submissions-controls">
+        <label className="rb-search">
+          <span>Search submissions</span>
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Candidate, role, company, receipt..." autoComplete="off" />
+        </label>
+        <div className="rb-submissions-filter" role="tablist" aria-label="Submission filters">
+          {SUBMISSION_FILTERS.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              className={filter === option.id ? "is-active" : ""}
+              onClick={() => setFilter(option.id)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="rb-submissions-layout">
+        <div className="rb-submission-list rb-submission-list--full">
+          {visibleSubmissions.map((s) => <SubmissionRow key={s.id} submission={s} expanded />)}
+          {submissions.length === 0 && <p className="rb-empty">No submissions yet. Open a role and submit a candidate with consent.</p>}
+          {submissions.length > 0 && visibleSubmissions.length === 0 && <p className="rb-empty">No submissions match the current filter.</p>}
+        </div>
+
+        <aside className="rb-submissions-side">
+          <article className={nextActions.length ? "is-warn" : "is-success"}>
+            <span>Next action queue</span>
+            <strong>{nextActions.length ? `${nextActions.length} item${nextActions.length === 1 ? "" : "s"}` : "Clear"}</strong>
+            <p>{nextActions.length ? "Act on feedback or stale reviews before sending lookalike candidates." : "No aged reviews or feedback blockers in the visible tracker."}</p>
+          </article>
+          <div className="rb-submissions-next-list">
+            {nextActions.map((submission) => {
+              const action = submissionNextAction(submission.status)
+              return (
+                <section className={`is-${action.tone}`} key={submission.id}>
+                  <span>{statusMeta(submission.status).label}</span>
+                  <strong>{submission.candidate?.name || "Candidate"}</strong>
+                  <p>{submission.recruiterFeedbackNote || action.body}</p>
+                  <em>{submission.jobTitleSnapshot || "Role"} · {submissionAgeDays(submission)}d old</em>
+                </section>
+              )
+            })}
+            {nextActions.length === 0 && <p>No immediate submission follow-up.</p>}
+          </div>
+          <article className="is-info">
+            <span>Ownership rule</span>
+            <strong>Consent + receipt</strong>
+            <p>Every row keeps the submission id, lane, candidate link, status history, and recorded recruiter ownership.</p>
+          </article>
+        </aside>
       </div>
     </section>
   )
@@ -4245,6 +4408,7 @@ function SubmissionRow({ submission, expanded = false }: { submission: Recruiter
       <div className="rb-submission__side">
         <span>{formatWhen(submission)}</span>
         <strong>{submissionScore(submission)}</strong>
+        <em>{submissionModeLabel(submission.submissionMode)}</em>
       </div>
       {expanded && (
         <div className="rb-submission__detail">
@@ -4261,6 +4425,24 @@ function SubmissionRow({ submission, expanded = false }: { submission: Recruiter
           {submission.recruiterFeedbackNote && (
             <blockquote>{submission.recruiterFeedbackNote}</blockquote>
           )}
+          <div className="rb-submission-receipt" aria-label="Submission ownership receipt">
+            <div>
+              <span>Ownership receipt</span>
+              <strong>{submissionReceiptId(submission)}</strong>
+            </div>
+            <div>
+              <span>Submission lane</span>
+              <strong>{submissionModeLabel(submission.submissionMode)}</strong>
+            </div>
+            <div>
+              <span>Candidate consent</span>
+              <strong>Recorded</strong>
+            </div>
+            <div>
+              <span>Submitted</span>
+              <strong>{formatActivityDate(submission.createdAt)}</strong>
+            </div>
+          </div>
           <div className={`rb-next-step is-${nextAction.tone}`}>
             <strong>{nextAction.title}</strong>
             <span>{nextAction.body}</span>

@@ -2751,6 +2751,149 @@
   margin: 10px;
 }
 
+.rb-submissions-dashboard {
+  gap: 18px;
+}
+
+.rb-submissions-hero {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-submissions-hero article,
+.rb-submissions-side article,
+.rb-submissions-next-list section {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 14px;
+}
+
+.rb-submissions-hero article.is-live,
+.rb-submissions-side article.is-live,
+.rb-submissions-next-list section.is-live {
+  border-color: var(--live-border);
+  background: var(--live-soft);
+}
+
+.rb-submissions-hero article.is-info,
+.rb-submissions-side article.is-info,
+.rb-submissions-next-list section.is-info {
+  border-color: var(--info-bg);
+  background: var(--info-bg);
+}
+
+.rb-submissions-hero article.is-success,
+.rb-submissions-side article.is-success,
+.rb-submissions-next-list section.is-success {
+  border-color: var(--success-bg);
+  background: var(--success-bg);
+}
+
+.rb-submissions-hero article.is-warn,
+.rb-submissions-side article.is-warn,
+.rb-submissions-next-list section.is-warn {
+  border-color: var(--danger-bg);
+  background: var(--danger-bg);
+}
+
+.rb-submissions-hero span,
+.rb-submissions-side span,
+.rb-submissions-next-list span,
+.rb-submission-receipt span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rb-submissions-hero strong,
+.rb-submissions-side strong,
+.rb-submissions-next-list strong {
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.rb-submissions-hero p,
+.rb-submissions-side p,
+.rb-submissions-next-list p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.rb-submissions-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.rb-submissions-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.rb-submissions-filter button {
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 11px;
+}
+
+.rb-submissions-filter button.is-active {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
+.rb-submissions-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 14px;
+  align-items: start;
+}
+
+.rb-submissions-side {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.rb-submissions-next-list {
+  display: grid;
+  gap: 8px;
+}
+
+.rb-submissions-next-list section {
+  padding: 12px;
+}
+
+.rb-submissions-next-list section strong {
+  font-size: 14px;
+}
+
+.rb-submissions-next-list section em {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-style: normal;
+}
+
 .rb-submission__main {
   min-width: 0;
   display: grid;
@@ -2789,6 +2932,12 @@
   font-size: 12px;
 }
 
+.rb-submission__side em {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-style: normal;
+}
+
 .rb-submission__detail {
   grid-column: 1 / -1;
   border-top: 1px solid var(--border);
@@ -2810,6 +2959,32 @@
   border-radius: 0 8px 8px 0;
   font-size: 13.5px;
   line-height: 1.5;
+}
+
+.rb-submission-receipt {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.rb-submission-receipt > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--cream-3);
+  padding: 9px 10px;
+}
+
+.rb-submission-receipt strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rb-next-step {
@@ -4169,8 +4344,16 @@
   .rb-feedback-grid,
   .rb-candidate-crm,
   .rb-matchboard,
+  .rb-submissions-layout,
   .rb-role-dashboard {
     grid-template-columns: 1fr;
+  }
+  .rb-submissions-hero,
+  .rb-submission-receipt {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rb-submissions-side {
+    position: static;
   }
   .rb-submission-packet__grid {
     grid-template-columns: 1fr;
@@ -4270,6 +4453,10 @@
     margin-top: 8px;
   }
   .rb-submission-packet header {
+    grid-template-columns: 1fr;
+  }
+  .rb-submissions-hero,
+  .rb-submission-receipt {
     grid-template-columns: 1fr;
   }
   .rb-calibration-brief__facts {
