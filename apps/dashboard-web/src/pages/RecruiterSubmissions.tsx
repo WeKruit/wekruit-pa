@@ -1477,6 +1477,13 @@ function RecruiterOpsPanel() {
   const failedNotifications = notifications.filter((n) => n.status === "failed").length
   const sortedCodes = [...codes].sort((a, b) => timestampToMs(b.createdAt) - timestampToMs(a.createdAt))
   const sortedProfiles = [...profiles].sort((a, b) => (a.email ?? "").localeCompare(b.email ?? ""))
+  const unrecoverableUsableCodes = sortedCodes.filter((code) => {
+    const status = codeStatus(code)
+    const rawInviteCode = isFullRecruiterInviteCode(code.inviteCode)
+      ? code.inviteCode
+      : knownInviteCodes[code.id]
+    return status.label === "usable" && !isFullRecruiterInviteCode(rawInviteCode)
+  }).length
 
   return (
     <Panel
@@ -1547,7 +1554,14 @@ function RecruiterOpsPanel() {
             </div>
           )}
         </form>
-        <OpsSection title="Access codes" subtitle="Admins can view and copy full one-use recruiter codes. For older preview-only rows, paste the known full code to restore it or replace the row.">
+        <OpsSection title="Access codes" subtitle="Full codes are shown when stored. Legacy hash-only rows cannot be revealed; replace them to generate a visible one-use code.">
+          {unrecoverableUsableCodes > 0 && (
+            <div style={{ marginBottom: 10, padding: "10px 12px", border: "1px solid #f1c48a", borderRadius: 8, background: "#fff8ed", color: "#7a3e10", fontSize: 12, lineHeight: 1.45 }}>
+              {unrecoverableUsableCodes} usable legacy code{unrecoverableUsableCodes === 1 ? "" : "s"} only exist as a hash.
+              Admins can validate those codes if a recruiter enters them, but cannot reveal the original text.
+              Use Replace to create a new visible code.
+            </div>
+          )}
           {sortedCodes.length ? (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -1568,7 +1582,7 @@ function RecruiterOpsPanel() {
                       ? code.inviteCode
                       : knownInviteCodes[code.id]
                     const canCopy = isFullRecruiterInviteCode(rawInviteCode)
-                    const visibleCode = canCopy ? rawInviteCode : "Not stored"
+                    const visibleCode = canCopy ? rawInviteCode : "Legacy hash-only"
                     const rawMissing = !canCopy && status.label === "usable"
                     return (
                       <tr key={code.id} style={{ borderBottom: "1px solid #f1f1f1" }}>
@@ -1576,7 +1590,7 @@ function RecruiterOpsPanel() {
                           <div style={{ userSelect: "all" }}>{visibleCode}</div>
                           {!canCopy && code.codePreview && (
                             <div style={{ marginTop: 3, color: "#999", fontFamily: "Inter, system-ui, sans-serif", fontSize: 11, fontWeight: 500 }}>
-                              Preview: {code.codePreview}
+                              Stored preview: {code.codePreview}
                             </div>
                           )}
                           {rawMissing && (
