@@ -7524,6 +7524,192 @@
   padding: 9px;
 }
 
+.rb-outreach-studio {
+  display: grid;
+  gap: 12px;
+  margin: 16px 16px 0;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ink-3);
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px;
+}
+
+.rb-outreach-studio.is-live { border-left-color: var(--live); background: var(--live-soft); }
+.rb-outreach-studio.is-info { border-left-color: var(--info); }
+.rb-outreach-studio.is-success { border-left-color: var(--success); background: var(--success-bg); }
+.rb-outreach-studio.is-warn { border-left-color: var(--warning); background: #fffaf1; }
+.rb-outreach-studio.is-mute { border-left-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-outreach-studio > header,
+.rb-outreach-studio__touches article header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.rb-outreach-studio > header > div:first-child,
+.rb-outreach-studio__touches article header > div {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.rb-outreach-studio > header > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.rb-outreach-studio span,
+.rb-outreach-studio__cards span,
+.rb-outreach-studio__touches span,
+.rb-outreach-studio__screen span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-outreach-studio > header strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: clamp(24px, 2.7vw, 34px);
+  font-weight: 400;
+  line-height: 1.02;
+}
+
+.rb-outreach-studio p,
+.rb-outreach-studio__cards p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-outreach-studio > header a,
+.rb-outreach-studio button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border: 1px solid var(--ink);
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.rb-outreach-studio > header a {
+  background: #fff;
+  color: var(--ink);
+}
+
+.rb-outreach-studio__cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-outreach-studio__cards article {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--ink-3);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 11px;
+}
+
+.rb-outreach-studio__cards article.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-outreach-studio__cards article.is-info { border-top-color: var(--info); }
+.rb-outreach-studio__cards article.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-outreach-studio__cards article.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-outreach-studio__cards article.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-outreach-studio__cards strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+.rb-outreach-studio__touches {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-outreach-studio__touches article {
+  min-width: 0;
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--ink-3);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.rb-outreach-studio__touches article.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-outreach-studio__touches article.is-info { border-top-color: var(--info); }
+.rb-outreach-studio__touches article.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-outreach-studio__touches article.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-outreach-studio__touches article.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-outreach-studio__touches article header {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rb-outreach-studio__touches strong {
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.25;
+}
+
+.rb-outreach-studio__touches pre {
+  max-height: 260px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, 0.62);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.rb-outreach-studio__screen {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 13px;
+}
+
+.rb-outreach-studio__screen ol {
+  display: grid;
+  gap: 7px;
+  margin: 9px 0 0;
+  padding-left: 20px;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
 .rb-candidate-tools {
   display: grid;
   gap: 12px;
@@ -8656,8 +8842,12 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .rb-ownership-desk__cards,
-  .rb-ownership-desk__rules {
+  .rb-ownership-desk__rules,
+  .rb-outreach-studio__cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rb-outreach-studio__touches {
+    grid-template-columns: 1fr;
   }
   .rb-submission-command__mission {
     border-right: 0;
@@ -8835,6 +9025,13 @@
   .rb-identity-check button {
     justify-self: start;
   }
+  .rb-outreach-studio > header,
+  .rb-outreach-studio__touches article header {
+    grid-template-columns: 1fr;
+  }
+  .rb-outreach-studio > header > div:last-child {
+    justify-content: flex-start;
+  }
   .rb-account-center__hero {
     align-items: flex-start;
     flex-direction: column;
@@ -8912,6 +9109,8 @@
   .rb-account-center__grid,
   .rb-ownership-desk__cards,
   .rb-ownership-desk__rules,
+  .rb-outreach-studio__cards,
+  .rb-outreach-studio__touches,
   .rb-weekly-challenge__selected dl,
   .rb-access-command-hero,
   .rb-access-command-grid,

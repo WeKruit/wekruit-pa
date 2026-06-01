@@ -5751,6 +5751,26 @@ type CandidateNetworkExposureModel = {
   rows: CandidateNetworkExposureRow[]
 }
 
+type CandidateOutreachTouch = {
+  id: string
+  label: string
+  channel: string
+  title: string
+  body: string
+  tone: OperatingTone
+}
+
+type CandidateOutreachStudio = {
+  label: string
+  title: string
+  body: string
+  tone: OperatingTone
+  roleHref?: string
+  cards: RecruiterOperatingMetric[]
+  touches: CandidateOutreachTouch[]
+  screening: string[]
+}
+
 function candidateMatchText(candidate: RecruiterSourcedCandidateItem): string {
   return [
     candidate.candidate?.name,
@@ -6407,6 +6427,142 @@ function buildCandidateNetworkExposure(
       },
     ],
     rows: sortedRows,
+  }
+}
+
+function buildCandidateOutreachStudio(
+  candidate: RecruiterSourcedCandidateItem,
+  jobs: CollabJob[],
+  submissions: RecruiterSubmissionItem[],
+  sourcedCandidates: RecruiterSourcedCandidateItem[],
+): CandidateOutreachStudio {
+  const matches = buildCandidateRoleMatches(candidate, jobs, submissions, sourcedCandidates)
+  const topMatch = matches[0]
+  const job = topMatch?.job
+  const name = candidateName(candidate)
+  const firstName = name.split(/\s+/)[0] || "there"
+  const currentRole = candidate.candidate?.currentRole || "your work"
+  const company = job?.recruiterBoard.label.company || "a WeKruit partner company"
+  const roleTitle = job?.title || "a role I think could fit"
+  const location = job?.recruiterBoard.label.location || "the right location"
+  const roleHook = job?.recruiterBoard.culture.bet || "a team with a serious hiring need and clear ownership"
+  const comp = job ? roleCandidateCompLabel(job) : "Compensation can be calibrated before a formal submission."
+  const reasons = topMatch?.reasons.filter((reason) => !/sourced|submitted/i.test(reason)).slice(0, 2) ?? []
+  const personalization = [
+    candidate.candidate?.notes ? shortText(candidate.candidate.notes, "", 140) : "",
+    candidate.candidate?.yoe ? `${candidate.candidate.yoe} YOE` : "",
+    currentRole !== "your work" ? currentRole : "",
+    ...reasons,
+  ].filter(Boolean).slice(0, 3)
+  const followUp = candidateFollowUpState(candidate)
+  const hasIdentity = Boolean(candidate.candidate?.email && candidate.candidate?.link)
+  const matchLabel = topMatch ? `${topMatch.score}%` : "No match"
+  const title = job
+    ? `${name} outreach for ${roleTitle}`
+    : `${name} needs a role before outreach`
+  const body = job
+    ? `Use a three-touch sequence that sells ${company}, keeps the candidate warm, and leaves room for other WeKruit roles.`
+    : "Match this candidate to an active role before sending specific outreach."
+  const tone: OperatingTone = !hasIdentity
+    ? "warn"
+    : topMatch && topMatch.score >= 72
+      ? "live"
+      : topMatch
+        ? "info"
+        : "mute"
+  const subject = job
+    ? `${firstName}, ${company} ${roleTitle}`
+    : `${firstName}, quick WeKruit role check`
+  const introProof = personalization.length
+    ? `I noticed ${personalization.join(", ")}.`
+    : `Your background around ${currentRole} looked relevant.`
+  const fitLine = job
+    ? `${company} is hiring ${roleTitle} in ${location}. ${roleHook}`
+    : "I am mapping a few WeKruit searches and wanted to check what would actually be interesting before sending anything formal."
+  const optionLine = job
+    ? "If this role is not the right fit, I can keep you in mind for other WeKruit partner roles instead of forcing one search."
+    : "If there is a better direction, I can keep this broader and only send roles that match your actual preferences."
+  const touches: CandidateOutreachTouch[] = [
+    {
+      id: "email-1",
+      label: "Touch 1",
+      channel: "Email",
+      title: subject,
+      body: [
+        `Hi ${firstName},`,
+        "",
+        introProof,
+        fitLine,
+        comp !== "Not shared" ? `Comp signal: ${comp}.` : "",
+        "",
+        "Worth a quick 10 minutes to compare this against what you would actually leave for?",
+      ].filter(Boolean).join("\n"),
+      tone: topMatch && topMatch.score >= 72 ? "live" : "info",
+    },
+    {
+      id: "follow-up",
+      label: "Touch 2",
+      channel: "Follow-up",
+      title: `Re: ${subject}`,
+      body: [
+        `Hi ${firstName}, quick follow-up.`,
+        "",
+        `The reason I flagged ${roleTitle} is the combination of ${roleHook.toLowerCase()} and your background in ${currentRole}.`,
+        optionLine,
+        "",
+        "Open to me sending the cleaner brief?",
+      ].join("\n"),
+      tone: "info",
+    },
+    {
+      id: "linkedin",
+      label: "Touch 3",
+      channel: "LinkedIn",
+      title: `${roleTitle} / WeKruit`,
+      body: `Hi ${firstName}, I am working on ${roleTitle} for ${company}. Your ${currentRole} background stood out. Open to a quick exchange? If not this one, I can route you to better-fit WeKruit roles.`,
+      tone: "mute",
+    },
+  ]
+
+  return {
+    label: "Outreach studio",
+    title,
+    body,
+    tone,
+    ...(job ? { roleHref: `/recruiters/job/${job.jobId}?candidateId=${encodeURIComponent(candidate.id)}` } : {}),
+    cards: [
+      {
+        label: "Best role",
+        value: job ? roleTitle : "Match first",
+        body: job ? `${company} · ${location}` : "Use Matchboard before sending role-specific outreach.",
+        tone: job ? "live" : "mute",
+      },
+      {
+        label: "Fit score",
+        value: matchLabel,
+        body: reasons.length ? reasons.join(" · ") : "No strong role proof yet.",
+        tone: topMatch && topMatch.score >= 72 ? "success" : topMatch ? "info" : "mute",
+      },
+      {
+        label: "Personalization",
+        value: `${personalization.length}/3`,
+        body: personalization.length ? personalization.join(" · ") : "Add notes, YOE, or current role before outreach.",
+        tone: personalization.length >= 2 ? "success" : personalization.length ? "info" : "warn",
+      },
+      {
+        label: "Follow-up state",
+        value: followUp.label,
+        body: followUp.body,
+        tone: followUp.tone,
+      },
+    ],
+    touches,
+    screening: [
+      `What would make ${roleTitle} worth exploring right now?`,
+      "What compensation, location, or work-model constraint should I not ignore?",
+      `Which current projects map closest to ${job?.recruiterBoard.checklist.groups.find((group) => group.kind === "hard")?.items[0]?.text || "the hard requirements"}?`,
+      "Do I have your permission to submit your profile if the role is a fit after the screen?",
+    ],
   }
 }
 
@@ -7070,12 +7226,20 @@ function CandidatesTab({
       />
       <CandidateOwnershipDeskPanel model={ownershipDesk} />
       {selectedCandidate && (
-        <CandidateDossierPanel
-          candidate={selectedCandidate}
-          jobs={jobs}
-          candidates={candidates}
-          submissions={submissions}
-        />
+        <>
+          <CandidateDossierPanel
+            candidate={selectedCandidate}
+            jobs={jobs}
+            candidates={candidates}
+            submissions={submissions}
+          />
+          <CandidateOutreachStudioPanel
+            candidate={selectedCandidate}
+            jobs={jobs}
+            candidates={candidates}
+            submissions={submissions}
+          />
+        </>
       )}
       <div className="rb-candidate-crm">
         <div className="rb-candidate-tools">
@@ -7373,6 +7537,89 @@ function CandidateDossierPanel({
           </div>
         </article>
       </div>
+    </section>
+  )
+}
+
+function CandidateOutreachStudioPanel({
+  candidate,
+  jobs,
+  candidates,
+  submissions,
+}: {
+  candidate: RecruiterSourcedCandidateItem
+  jobs: CollabJob[]
+  candidates: RecruiterSourcedCandidateItem[]
+  submissions: RecruiterSubmissionItem[]
+}) {
+  const [copied, setCopied] = useState<string | null>(null)
+  const studio = useMemo(
+    () => buildCandidateOutreachStudio(candidate, jobs, submissions, candidates),
+    [candidate, candidates, jobs, submissions],
+  )
+  const copyText = async (label: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(label)
+      window.setTimeout(() => setCopied(null), 1600)
+    } catch {
+      setCopied("Copy failed")
+      window.setTimeout(() => setCopied(null), 1600)
+    }
+  }
+  const fullSequence = studio.touches
+    .map((touch) => `${touch.channel}: ${touch.title}\n\n${touch.body}`)
+    .join("\n\n---\n\n")
+
+  return (
+    <section className={`rb-outreach-studio is-${studio.tone}`} aria-label={`${candidateName(candidate)} outreach studio`}>
+      <header>
+        <div>
+          <span>{studio.label}</span>
+          <strong>{studio.title}</strong>
+          <p>{studio.body}</p>
+        </div>
+        <div>
+          {studio.roleHref && <Link to={studio.roleHref}>Open role</Link>}
+          <button type="button" onClick={() => void copyText("All", fullSequence)}>
+            {copied === "All" ? "Copied sequence" : copied === "Copy failed" ? "Copy failed" : "Copy sequence"}
+          </button>
+        </div>
+      </header>
+
+      <div className="rb-outreach-studio__cards">
+        {studio.cards.map((card) => (
+          <article className={`is-${card.tone}`} key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <p>{card.body}</p>
+          </article>
+        ))}
+      </div>
+
+      <div className="rb-outreach-studio__touches">
+        {studio.touches.map((touch) => (
+          <article className={`is-${touch.tone}`} key={touch.id}>
+            <header>
+              <div>
+                <span>{touch.label} · {touch.channel}</span>
+                <strong>{touch.title}</strong>
+              </div>
+              <button type="button" onClick={() => void copyText(touch.id, `${touch.title}\n\n${touch.body}`)}>
+                {copied === touch.id ? "Copied" : "Copy"}
+              </button>
+            </header>
+            <pre>{touch.body}</pre>
+          </article>
+        ))}
+      </div>
+
+      <aside className="rb-outreach-studio__screen">
+        <span>Screen before submit</span>
+        <ol>
+          {studio.screening.map((question) => <li key={question}>{question}</li>)}
+        </ol>
+      </aside>
     </section>
   )
 }
