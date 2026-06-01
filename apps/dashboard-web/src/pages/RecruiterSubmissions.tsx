@@ -22,10 +22,19 @@ interface SubmissionDoc {
   submitter?: { name?: string; email?: string }
   candidate?: {
     name?: string
+    email?: string
     link?: string
     currentRole?: string
     yoe?: string
     notes?: string
+  }
+  candidateConsentStatus?: string
+  candidateConfirmation?: {
+    status?: string
+    candidateEmail?: string
+    sentAt?: { seconds?: number } | string | null
+    confirmedAt?: { seconds?: number } | string | null
+    lastError?: string | null
   }
   checklist?: Record<string, boolean>
   score?: {
@@ -68,6 +77,16 @@ function statusBadge(s: string | undefined): "ok" | "warn" | "info" | "muted" {
   }
 }
 
+function consentBadge(status: string | undefined): { label: string; tone: "ok" | "warn" | "info" | "muted" } {
+  switch (status) {
+    case "candidate_confirmed": return { label: "confirmed", tone: "ok" }
+    case "pending_candidate_confirmation": return { label: "pending", tone: "info" }
+    case "confirmation_email_failed": return { label: "email failed", tone: "warn" }
+    case "confirmation_email_not_configured": return { label: "not configured", tone: "warn" }
+    default: return { label: "recruiter", tone: "muted" }
+  }
+}
+
 const STATUS_VALUES = ["submitted", "new", "reviewing", "advanced", "interviewing", "hired", "rejected", "duplicate"]
 const SOURCE_STAGE_VALUES = ["sourced", "contacted", "screened", "ready", "submitted", "archived"]
 const CALIBRATION_VALUES = ["not_rated", "calibration_requested", "good_fit", "bad_fit", "suggested"]
@@ -84,6 +103,7 @@ interface SourcedCandidateDoc {
   stage?: string
   candidate?: {
     name?: string
+    email?: string
     link?: string
     currentRole?: string
     yoe?: string
@@ -508,6 +528,7 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
       render: (r) => (
         <>
           <div>{r.candidate?.name ?? "—"}</div>
+          {r.candidate?.email && <div style={{ color: "#777", fontSize: 11 }}>{r.candidate.email}</div>}
           {r.candidate?.link && (
             <a
               href={r.candidate.link}
@@ -521,6 +542,15 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
           )}
         </>
       ),
+    },
+    {
+      key: "candidateConsentStatus",
+      label: "Consent",
+      width: 110,
+      render: (r) => {
+        const meta = consentBadge(r.candidateConsentStatus)
+        return <Badge tone={meta.tone}>{meta.label}</Badge>
+      },
     },
     {
       key: "hardScorePct",
@@ -2143,12 +2173,27 @@ function RowDetailPanel({
             {row.candidate?.currentRole && <> · {row.candidate.currentRole}</>}
             {row.candidate?.yoe && <> · {row.candidate.yoe} YOE</>}
           </p>
+          {row.candidate?.email && (
+            <p style={{ margin: "4px 0 0", fontSize: 12, color: "#555" }}>
+              {row.candidate.email}
+            </p>
+          )}
           {row.candidate?.link && (
             <p style={{ margin: "4px 0 0", fontSize: 12 }}>
               <a href={row.candidate.link} target="_blank" rel="noopener noreferrer">
                 {row.candidate.link}
               </a>
             </p>
+          )}
+          <h4 style={{ margin: "12px 0 6px", fontSize: 12, textTransform: "uppercase", color: "#777" }}>
+            Candidate confirmation
+          </h4>
+          <p style={{ margin: 0, fontSize: 13 }}>
+            <Badge tone={consentBadge(row.candidateConsentStatus).tone}>{consentBadge(row.candidateConsentStatus).label}</Badge>
+            {row.candidateConfirmation?.status && <span style={{ marginLeft: 8, color: "#777" }}>{row.candidateConfirmation.status}</span>}
+          </p>
+          {row.candidateConfirmation?.lastError && (
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "#a00" }}>{row.candidateConfirmation.lastError}</p>
           )}
           {row.candidate?.notes && (
             <>

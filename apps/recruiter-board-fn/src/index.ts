@@ -19,6 +19,7 @@ export {
   paRecruiterInviteCodeCreate,
   paRecruiterInviteCodeReplace,
   paRecruiterMe,
+  paRecruiterCandidateConsentConfirm,
   paRecruiterPreferencesUpdate,
   paRecruiterRoleApplicationSave,
   paRecruiterRoleApplicationsList,

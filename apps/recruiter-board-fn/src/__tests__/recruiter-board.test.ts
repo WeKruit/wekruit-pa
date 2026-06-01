@@ -18,13 +18,16 @@ import assert from "node:assert/strict"
 import {
   buildRecruiterRoleIntelligence,
   computeSubmissionScore,
+  composeCandidateSubmissionConfirmationEmail,
   composeRecruiterRoleNotificationEmail,
   defaultRecruiterInviteCodeExpiresAt,
   fetchCollabJobs,
   generateRecruiterInviteCode,
+  hashRecruiterCandidateEmail,
   hashRecruiterCandidateLink,
   hashRecruiterInviteCode,
   isHiringBoardAdmin,
+  normalizeRecruiterCandidateEmail,
   normalizeRecruiterCandidateLink,
   inviteCodeUsable,
   normalizeRecruiterInviteCode,
@@ -39,6 +42,7 @@ import {
   validateRecruiterRoleQuestionInput,
   validateRecruiterSourcedCandidateInput,
   validateRecruiterWorkspacePreferences,
+  validateSubmission,
   type RecruiterBoardChecklistGroup,
   type RecruiterBoardPayload,
 } from "../recruiter-board.js"
@@ -316,6 +320,11 @@ describe("recruiter role notifications", () => {
 })
 
 describe("recruiter sourced candidates", () => {
+  it("normalizes candidate emails for duplicate ownership checks", () => {
+    assert.equal(normalizeRecruiterCandidateEmail(" Ada@Example.COM "), "ada@example.com")
+    assert.equal(hashRecruiterCandidateEmail("ada@example.com").length, 64)
+  })
+
   it("normalizes candidate profile links before duplicate checks", () => {
     assert.equal(
       normalizeRecruiterCandidateLink(" HTTPS://www.LinkedIn.com/in/Ada-Lovelace/?trk=public_profile "),
@@ -340,6 +349,7 @@ describe("recruiter sourced candidates", () => {
       },
       candidate: {
         name: " Ada Lovelace ",
+        email: " ADA@Example.com ",
         link: " https://linkedin.com/in/ada ",
         currentRole: " Staff Engineer ",
         yoe: " 9 ",
@@ -353,6 +363,7 @@ describe("recruiter sourced candidates", () => {
     assert.equal(result.value.stage, "ready")
     assert.deepEqual(result.value.candidate, {
       name: "Ada Lovelace",
+      email: "ada@example.com",
       link: "https://linkedin.com/in/ada",
       currentRole: "Staff Engineer",
       yoe: "9",
@@ -386,6 +397,13 @@ describe("recruiter sourced candidates", () => {
     }), {
       ok: false,
       reason: "invalid_candidate_id",
+    })
+    assert.deepEqual(validateRecruiterSourcedCandidateInput({
+      jobId: "job-1",
+      candidate: { name: "Ada", email: "not-email", link: "https://linkedin.com/in/ada" },
+    }), {
+      ok: false,
+      reason: "invalid_candidate_email",
     })
     assert.deepEqual(validateRecruiterSourcedCandidateInput({
       jobId: "job-1",
@@ -430,6 +448,61 @@ describe("recruiter sourced candidates", () => {
       name: "Ada Lovelace",
       link: "https://linkedin.com/in/ada",
     })
+  })
+})
+
+describe("recruiter submissions", () => {
+  const validSubmission = {
+    jobId: "public-job-1",
+    source: "hiring-board",
+    submitter: { name: "Sloane", email: "sloane@agency.com" },
+    candidate: {
+      name: "Ada Lovelace",
+      email: "ADA@Example.com",
+      link: "https://linkedin.com/in/ada",
+      currentRole: "Staff Engineer",
+    },
+    checklist: { hard_1: true },
+    candidateConsent: true,
+  }
+
+  it("requires candidate email for recruiter submissions and normalizes it", () => {
+    const result = validateSubmission(validSubmission)
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.value.candidate.email, "ada@example.com")
+    assert.equal(result.value.source, "hiring-board")
+  })
+
+  it("rejects missing or malformed candidate email on recruiter submissions", () => {
+    assert.deepEqual(validateSubmission({
+      ...validSubmission,
+      candidate: { name: "Ada", link: "https://linkedin.com/in/ada" },
+    }), {
+      ok: false,
+      reason: "missing_candidate_email",
+    })
+    assert.deepEqual(validateSubmission({
+      ...validSubmission,
+      candidate: { name: "Ada", email: "bad", link: "https://linkedin.com/in/ada" },
+    }), {
+      ok: false,
+      reason: "invalid_candidate_email",
+    })
+  })
+
+  it("composes a candidate confirmation email with the role and confirmation link", () => {
+    const email = composeCandidateSubmissionConfirmationEmail({
+      candidateName: "Ada",
+      recruiterName: "Sloane",
+      roleTitle: "Founding Engineer",
+      companyLabel: "Co. B",
+      confirmationUrl: "https://us-central1-wekruit-5f89b.cloudfunctions.net/paRecruiterCandidateConsentConfirm?submissionId=sub_1&token=tok",
+    })
+    assert.match(email.subject, /Founding Engineer/)
+    assert.match(email.text, /Confirm here:/)
+    assert.match(email.text, /submitted you to WeKruit/)
+    assert.match(email.html, /Confirm this submission/)
   })
 })
 

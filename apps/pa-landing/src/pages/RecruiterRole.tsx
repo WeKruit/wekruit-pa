@@ -65,6 +65,7 @@ interface FormState {
   submitterName: string
   submitterEmail: string
   candidateName: string
+  candidateEmail: string
   candidateLink: string
   candidateCurrentRole: string
   candidateYoe: string
@@ -78,6 +79,7 @@ function emptyForm(): FormState {
     submitterName: "",
     submitterEmail: "",
     candidateName: "",
+    candidateEmail: "",
     candidateLink: "",
     candidateCurrentRole: "",
     candidateYoe: "",
@@ -202,6 +204,16 @@ function roleSubmissionLastActivity(row: RecruiterSubmissionItem): string {
   return ms ? new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Today"
 }
 
+function roleSubmissionConsentLabel(row: RecruiterSubmissionItem): string {
+  switch (row.candidateConsentStatus) {
+    case "candidate_confirmed": return "Candidate confirmed"
+    case "pending_candidate_confirmation": return "Confirmation pending"
+    case "confirmation_email_failed": return "Confirmation email failed"
+    case "confirmation_email_not_configured": return "Confirmation email not configured"
+    default: return "Recruiter consent recorded"
+  }
+}
+
 function sourcedStageLabel(stage?: string): string {
   switch (stage) {
     case "contacted": return "Contacted"
@@ -227,6 +239,9 @@ function formatSubmissionFailure(reason?: string): string {
   if (reason === "single_submission_limit_reached") {
     return "This role is outside your primary slots and your weekly single-submission limit is used. Add the role as primary from the recruiter dashboard or wait for the rolling window to reset."
   }
+  if (reason === "missing_candidate_email") return "Add the candidate email so WeKruit can confirm consent."
+  if (reason === "invalid_candidate_email") return "Enter a valid candidate email."
+  if (reason === "candidate_consent_required") return "Confirm candidate consent before submitting."
   return reason ?? "submission_failed"
 }
 
@@ -399,6 +414,7 @@ function buildRoleSubmissionPacket(input: {
   const warnings: string[] = []
   const proof: string[] = []
   if (!form.candidateName.trim()) blockers.push("Candidate name is missing.")
+  if (!form.candidateEmail.trim()) blockers.push("Candidate email is missing.")
   if (!form.candidateLink.trim()) blockers.push("LinkedIn or resume link is missing.")
   if (!form.candidateConsent) blockers.push("Candidate consent is not confirmed.")
   if (pendingSlots <= 0) blockers.push("This role has no pending submission slots left.")
@@ -418,7 +434,7 @@ function buildRoleSubmissionPacket(input: {
   if (roleCandidates.length > 0) proof.push(`${roleCandidates.length} sourced in your CRM`)
   if (roleSubmissions.length > 0) proof.push(`${roleSubmissions.length} prior submission${roleSubmissions.length === 1 ? "" : "s"}`)
 
-  const basicsScore = (form.candidateName.trim() ? 10 : 0) + (form.candidateLink.trim() ? 10 : 0) + (form.candidateConsent ? 12 : 0)
+  const basicsScore = (form.candidateName.trim() ? 8 : 0) + (form.candidateEmail.trim() ? 10 : 0) + (form.candidateLink.trim() ? 8 : 0) + (form.candidateConsent ? 12 : 0)
   const hardScore = hardItems.length ? Math.round((hardChecked / hardItems.length) * 34) : 22
   const fitScore = fitItems.length ? Math.round((fitChecked / fitItems.length) * 18) : 10
   const bonusScore = bonusItems.length ? Math.min(10, Math.round((bonusChecked / bonusItems.length) * 10)) : 4
@@ -732,6 +748,7 @@ export default function RecruiterRole() {
     setForm((next) => withRecruiterDefaults({
       ...next,
       candidateName: candidate.candidate?.name || "",
+      candidateEmail: candidate.candidate?.email || "",
       candidateLink: candidate.candidate?.link || "",
       candidateCurrentRole: candidate.candidate?.currentRole || "",
       candidateYoe: candidate.candidate?.yoe || "",
@@ -834,6 +851,7 @@ export default function RecruiterRole() {
     setForm((next) => withRecruiterDefaults({
       ...next,
       candidateName: candidate.candidate?.name || "",
+      candidateEmail: candidate.candidate?.email || "",
       candidateLink: candidate.candidate?.link || "",
       candidateCurrentRole: candidate.candidate?.currentRole || "",
       candidateYoe: candidate.candidate?.yoe || "",
@@ -869,6 +887,10 @@ export default function RecruiterRole() {
       setSubmitError("candidate_consent_required")
       return
     }
+    if (!form.candidateEmail.trim()) {
+      setSubmitError("missing_candidate_email")
+      return
+    }
     if (pendingSlots <= 0) {
       setSubmitError("This role already has 5 pending submissions from your account. Wait for review feedback before submitting more.")
       return
@@ -883,6 +905,7 @@ export default function RecruiterRole() {
       },
       candidate: {
         name: form.candidateName.trim(),
+        email: form.candidateEmail.trim().toLowerCase(),
         link: form.candidateLink.trim(),
         currentRole: form.candidateCurrentRole.trim() || undefined,
         yoe: form.candidateYoe.trim() || undefined,
@@ -901,6 +924,7 @@ export default function RecruiterRole() {
           stage: "submitted",
           candidate: {
             name: form.candidateName.trim(),
+            email: form.candidateEmail.trim().toLowerCase(),
             link: form.candidateLink.trim(),
             currentRole: form.candidateCurrentRole.trim() || undefined,
             yoe: form.candidateYoe.trim() || undefined,
@@ -1098,6 +1122,16 @@ export default function RecruiterRole() {
             />
           </div>
           <div className="field">
+            <label>Candidate email *</label>
+            <input
+              type="email"
+              required
+              placeholder="candidate@company.com"
+              value={form.candidateEmail}
+              onChange={(e) => setForm({ ...form, candidateEmail: e.target.value })}
+            />
+          </div>
+          <div className="field">
             <label>Resume / LinkedIn *</label>
             <input
               type="text"
@@ -1137,7 +1171,7 @@ export default function RecruiterRole() {
               checked={form.candidateConsent}
               onChange={(e) => setForm({ ...form, candidateConsent: e.target.checked })}
             />
-            <span>I confirm this candidate gave consent to be submitted to WeKruit for this role.</span>
+            <span>I confirm this candidate gave consent to be submitted to WeKruit for this role. WeKruit will email them to confirm interest.</span>
           </label>
 
           <h3 className="section-title" style={{ marginTop: 24 }}>Fit checklist</h3>
@@ -1255,6 +1289,7 @@ export default function RecruiterRole() {
                     <span>
                       <strong>{row.candidate?.name || "Candidate"}</strong>
                       <em>{roleSubmissionStatusLabel(row.status)}</em>
+                      <em>{roleSubmissionConsentLabel(row)}</em>
                       <em>{roleSubmissionNextAction(row.status)}</em>
                       {row.recruiterFeedbackNote && <em className="rb-role-submission-note">{row.recruiterFeedbackNote}</em>}
                     </span>

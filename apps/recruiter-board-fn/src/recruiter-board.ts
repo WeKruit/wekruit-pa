@@ -24,6 +24,7 @@
  *   GET  paRecruiterRoleIntelligenceList -> recruiter-authenticated aggregate role signal
  *   POST paRecruiterSubmission     -> writes pa-recruiter-submissions doc
  *                                     (honors Idempotency-Key header)
+ *   GET  paRecruiterCandidateConsentConfirm -> candidate confirms submitted interest
  *   GET  paRecruiterSubmissionsList -> recruiter-authenticated status tracker
  *   TRG  paRecruiterRoleReleasedNotify -> emails recruiters when a role is released
  *   GET  paCollabJobsListSchema    -> JSON Schema for the list response shape
@@ -61,6 +62,8 @@ const MAILGUN_FROM = defineSecret("MAILGUN_FROM")
 const MAILGUN_REGION = defineSecret("MAILGUN_REGION")
 const MAILGUN_SECRETS = [MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION]
 const RECRUITER_PUBLIC_BASE_URL = "https://candidate.wekruit.com"
+const RECRUITER_CANDIDATE_CONFIRM_URL =
+  "https://us-central1-wekruit-5f89b.cloudfunctions.net/paRecruiterCandidateConsentConfirm"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hiring-board admin gating
@@ -1173,10 +1176,19 @@ interface RecruiterSubmissionListItem {
   companyLabelSnapshot?: string
   candidate?: {
     name?: string
+    email?: string
     link?: string
     currentRole?: string
     yoe?: string
     notes?: string
+  }
+  candidateConsentStatus?: string
+  candidateConfirmation?: {
+    status?: string
+    candidateEmail?: string
+    sentAt?: unknown
+    confirmedAt?: unknown
+    lastError?: string | null
   }
   score?: SubmissionScore
   submissionMode?: "primary_role" | "single_submission" | "unclassified"
@@ -1236,6 +1248,8 @@ function publicRecruiterSubmission(d: { id: string; data: () => Record<string, u
     candidate: typeof data.candidate === "object" && data.candidate !== null
       ? data.candidate as RecruiterSubmissionListItem["candidate"]
       : undefined,
+    candidateConsentStatus: typeof data.candidateConsentStatus === "string" ? data.candidateConsentStatus : undefined,
+    candidateConfirmation: publicRecruiterCandidateConfirmation(data.candidateConfirmation),
     score: typeof data.score === "object" && data.score !== null ? data.score as SubmissionScore : undefined,
     submissionMode: data.submissionMode === "primary_role" || data.submissionMode === "single_submission"
       ? data.submissionMode
@@ -1247,6 +1261,18 @@ function publicRecruiterSubmission(d: { id: string; data: () => Record<string, u
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
   }
+}
+
+function publicRecruiterCandidateConfirmation(raw: unknown): RecruiterSubmissionListItem["candidateConfirmation"] | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const data = raw as Record<string, unknown>
+  const out: NonNullable<RecruiterSubmissionListItem["candidateConfirmation"]> = {}
+  if (typeof data.status === "string") out.status = data.status
+  if (typeof data.candidateEmail === "string") out.candidateEmail = data.candidateEmail
+  if (data.sentAt !== undefined) out.sentAt = data.sentAt
+  if (data.confirmedAt !== undefined) out.confirmedAt = data.confirmedAt
+  if (typeof data.lastError === "string") out.lastError = data.lastError
+  return Object.keys(out).length ? out : undefined
 }
 
 export const RECRUITER_SOURCED_CANDIDATE_STAGES = [
@@ -1280,6 +1306,7 @@ interface RecruiterSourcedCandidateInput {
   stage: RecruiterSourcedCandidateStage
   candidate: {
     name: string
+    email?: string
     link: string
     currentRole?: string
     yoe?: string
@@ -1486,6 +1513,19 @@ export function hashRecruiterCandidateLink(raw: string): string {
   return createHash("sha256").update(normalizeRecruiterCandidateLink(raw)).digest("hex")
 }
 
+export function normalizeRecruiterCandidateEmail(raw: string): string {
+  return raw.trim().toLowerCase()
+}
+
+export function hashRecruiterCandidateEmail(raw: string): string {
+  return createHash("sha256").update(normalizeRecruiterCandidateEmail(raw)).digest("hex")
+}
+
+function validRecruiterCandidateEmail(raw: string): boolean {
+  const email = normalizeRecruiterCandidateEmail(raw)
+  return email.length <= 320 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
+
 function sanitizeOptionalString(v: unknown, max: number): string | undefined {
   if (v === undefined || v === null) return undefined
   if (typeof v !== "string") return undefined
@@ -1513,6 +1553,11 @@ export function validateRecruiterSourcedCandidateInput(input: unknown):
   if (!isNonEmptyString(c.link)) return { ok: false, reason: "missing_candidate_link" }
   if (c.name.length > 200) return { ok: false, reason: "candidate_name_too_long" }
   if (c.link.length > 2000) return { ok: false, reason: "candidate_link_too_long" }
+  if (c.email !== undefined && c.email !== null && c.email !== "") {
+    if (typeof c.email !== "string" || !validRecruiterCandidateEmail(c.email)) {
+      return { ok: false, reason: "invalid_candidate_email" }
+    }
+  }
   for (const k of ["currentRole", "yoe", "notes"] as const) {
     if (c[k] !== undefined && typeof c[k] !== "string") return { ok: false, reason: `invalid_${k}` }
     if (typeof c[k] === "string" && (c[k] as string).length > 4000) return { ok: false, reason: `${k}_too_long` }
@@ -1573,9 +1618,11 @@ export function validateRecruiterSourcedCandidateInput(input: unknown):
     name: c.name.trim(),
     link: c.link.trim(),
   }
+  const candidateEmail = typeof c.email === "string" ? normalizeRecruiterCandidateEmail(c.email) : ""
   const currentRole = sanitizeOptionalString(c.currentRole, 4000)
   const yoe = sanitizeOptionalString(c.yoe, 4000)
   const notes = sanitizeOptionalString(c.notes, 4000)
+  if (candidateEmail) candidate.email = candidateEmail
   if (currentRole) candidate.currentRole = currentRole
   if (yoe) candidate.yoe = yoe
   if (notes) candidate.notes = notes
@@ -2196,6 +2243,9 @@ export const paRecruiterSourcedCandidateSave = onRequest(
       }
 
       const candidateLinkKey = hashRecruiterCandidateLink(payload.candidate.link)
+      const candidateEmailKey = payload.candidate.email
+        ? hashRecruiterCandidateEmail(payload.candidate.email)
+        : null
       let candidateId = payload.candidateId
       let ref = candidateId
         ? db.collection(RECRUITER_SOURCED_CANDIDATES_COLLECTION).doc(candidateId)
@@ -2220,6 +2270,28 @@ export const paRecruiterSourcedCandidateSave = onRequest(
           ref = match.ref
           existing = match
           break
+        }
+      }
+      if (candidateEmailKey) {
+        const emailMatches = await db
+          .collection(RECRUITER_SOURCED_CANDIDATES_COLLECTION)
+          .where("candidateEmailKey", "==", candidateEmailKey)
+          .limit(25)
+          .get()
+
+        for (const match of emailMatches.docs) {
+          const data = match.data()
+          if (data.jobId !== realJobId) continue
+          if (data.recruiterId !== recruiter.recruiterId) {
+            res.status(409).json({ ok: false, reason: "candidate_already_sourced_for_role" })
+            return
+          }
+          if (!candidateId) {
+            candidateId = match.id
+            ref = match.ref
+            existing = match
+            break
+          }
         }
       }
 
@@ -2258,6 +2330,7 @@ export const paRecruiterSourcedCandidateSave = onRequest(
         jobId: realJobId,
         inboundJobId: payload.jobId,
         candidateLinkKey,
+        ...(candidateEmailKey ? { candidateEmailKey } : {}),
         jobTitleSnapshot: String(jobData.title ?? ""),
         companyLabelSnapshot: rb.label.company,
         stage: payload.stage,
@@ -2659,6 +2732,7 @@ interface SubmissionPayload {
   submitter: { name: string; email: string }
   candidate: {
     name: string
+    email?: string
     link: string
     currentRole?: string
     yoe?: string
@@ -2727,7 +2801,7 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === "string" && v.trim().length > 0
 }
 
-function validateSubmission(input: unknown):
+export function validateSubmission(input: unknown):
   | { ok: true; value: SubmissionPayload }
   | { ok: false; reason: string } {
   if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
@@ -2748,6 +2822,10 @@ function validateSubmission(input: unknown):
   if (!isNonEmptyString(c.link)) return { ok: false, reason: "missing_candidate_link" }
   if (c.name.length > 200) return { ok: false, reason: "candidate_name_too_long" }
   if (c.link.length > 2000) return { ok: false, reason: "candidate_link_too_long" }
+  const candidateEmail = typeof c.email === "string" ? normalizeRecruiterCandidateEmail(c.email) : ""
+  if (c.email !== undefined && c.email !== null && c.email !== "" && !validRecruiterCandidateEmail(String(c.email))) {
+    return { ok: false, reason: "invalid_candidate_email" }
+  }
   for (const k of ["currentRole", "yoe", "notes"] as const) {
     if (c[k] !== undefined && typeof c[k] !== "string") return { ok: false, reason: `invalid_${k}` }
     if (typeof c[k] === "string" && (c[k] as string).length > 4000) return { ok: false, reason: `${k}_too_long` }
@@ -2777,6 +2855,7 @@ function validateSubmission(input: unknown):
     }
   }
   if (b.candidateConsent !== true) return { ok: false, reason: "candidate_consent_required" }
+  if (!candidateEmail) return { ok: false, reason: "missing_candidate_email" }
 
   return {
     ok: true,
@@ -2788,6 +2867,7 @@ function validateSubmission(input: unknown):
       },
       candidate: {
         name: (c.name as string).trim(),
+        ...(candidateEmail ? { email: candidateEmail } : {}),
         link: (c.link as string).trim(),
         currentRole: typeof c.currentRole === "string" ? (c.currentRole as string).trim() : undefined,
         yoe: typeof c.yoe === "string" ? (c.yoe as string).trim() : undefined,
@@ -2883,6 +2963,50 @@ export function composeRecruiterRoleNotificationEmail(
     "<p style=\"color:#666;font-size:12px\">You can turn off new-role emails in your WeKruit recruiter settings.</p>",
   ].join("")
   return { subject, text, html }
+}
+
+interface CandidateSubmissionConfirmationEmailInput {
+  candidateName: string
+  recruiterName: string
+  roleTitle: string
+  companyLabel: string
+  confirmationUrl: string
+}
+
+export function composeCandidateSubmissionConfirmationEmail(
+  input: CandidateSubmissionConfirmationEmailInput,
+): { subject: string; text: string; html: string } {
+  const roleLabel = `${input.roleTitle} at ${input.companyLabel}`
+  const subject = `Confirm your WeKruit submission for ${input.roleTitle}`
+  const text = [
+    `Hi ${input.candidateName || "there"},`,
+    "",
+    `${input.recruiterName || "A recruiter"} submitted you to WeKruit for ${roleLabel}.`,
+    "Confirm that you are interested in this role and gave permission for this submission.",
+    "",
+    `Confirm here: ${input.confirmationUrl}`,
+    "",
+    "If you did not approve this submission, ignore this email and WeKruit will not treat it as candidate-confirmed.",
+  ].join("\n")
+  const html = [
+    `<p>Hi ${escapeHtml(input.candidateName || "there")},</p>`,
+    `<p>${escapeHtml(input.recruiterName || "A recruiter")} submitted you to WeKruit for <b>${escapeHtml(roleLabel)}</b>.</p>`,
+    "<p>Confirm that you are interested in this role and gave permission for this submission.</p>",
+    `<p><a href="${escapeHtml(input.confirmationUrl)}">Confirm this submission</a></p>`,
+    "<p style=\"color:#666;font-size:12px\">If you did not approve this submission, ignore this email and WeKruit will not treat it as candidate-confirmed.</p>",
+  ].join("")
+  return { subject, text, html }
+}
+
+function recruiterCandidateConfirmationUrl(submissionId: string, token: string): string {
+  const url = new URL(RECRUITER_CANDIDATE_CONFIRM_URL)
+  url.searchParams.set("submissionId", submissionId)
+  url.searchParams.set("token", token)
+  return url.toString()
+}
+
+function hashRecruiterCandidateConfirmationToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex")
 }
 
 function escapeHtml(s: string): string {
@@ -3065,7 +3189,7 @@ export const paRecruiterRoleReleasedNotify = onDocumentWritten(
 )
 
 export const paRecruiterSubmission = onRequest(
-  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: MAILGUN_SECRETS },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
@@ -3161,6 +3285,18 @@ export const paRecruiterSubmission = onRequest(
     const score = computeSubmissionScore(rb.checklist.groups, payload.checklist)
 
     const submissionId = idempotencyHeader || randomUUID()
+    const confirmationToken = payload.candidate.email ? randomUUID() : ""
+    const candidateConsentStatus = payload.candidate.email
+      ? "pending_candidate_confirmation"
+      : "recruiter_asserted"
+    const candidateConfirmation = payload.candidate.email
+      ? {
+          status: "email_queued",
+          candidateEmail: payload.candidate.email,
+          tokenHash: hashRecruiterCandidateConfirmationToken(confirmationToken),
+          requestedAt: FieldValue.serverTimestamp(),
+        }
+      : null
     const ip = req.get("x-forwarded-for")?.split(",")[0]?.trim() || ""
     const callerSource = payload.source ?? "unknown"
     const submitter = recruiter
@@ -3182,7 +3318,10 @@ export const paRecruiterSubmission = onRequest(
       recruiterId: recruiter?.recruiterId ?? null,
       recruiterEmail: recruiter?.email ?? payload.submitter.email,
       candidate: payload.candidate,
+      ...(payload.candidate.email ? { candidateEmailKey: hashRecruiterCandidateEmail(payload.candidate.email) } : {}),
       candidateConsent: payload.candidateConsent,
+      candidateConsentStatus,
+      ...(candidateConfirmation ? { candidateConfirmation } : {}),
       checklist: payload.checklist,
       score,
       submissionMode,
@@ -3250,6 +3389,68 @@ export const paRecruiterSubmission = onRequest(
       submissionMode,
     })
 
+    if (payload.candidate.email && confirmationToken) {
+      try {
+        const submissionRef = db.collection("pa-recruiter-submissions").doc(submissionId)
+        const cfg = recruiterMailgunConfigFromEnv()
+        if (!cfg) {
+          await submissionRef.set({
+            candidateConsentStatus: "confirmation_email_not_configured",
+            "candidateConfirmation.status": "email_not_configured",
+            "candidateConfirmation.lastError": "mailgun_not_configured",
+            "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          }, { merge: true })
+        } else {
+          const confirmationUrl = recruiterCandidateConfirmationUrl(submissionId, confirmationToken)
+          const emailContent = composeCandidateSubmissionConfirmationEmail({
+            candidateName: payload.candidate.name,
+            recruiterName: submitter.name,
+            roleTitle: String(jobData.title ?? "WeKruit role"),
+            companyLabel: rb.label.company,
+            confirmationUrl,
+          })
+          try {
+            const result = await sendRecruiterMailgunEmail(cfg, { to: payload.candidate.email, ...emailContent })
+            if (result.ok) {
+              await submissionRef.set({
+                candidateConsentStatus: "pending_candidate_confirmation",
+                "candidateConfirmation.status": "email_sent",
+                "candidateConfirmation.provider": "mailgun",
+                "candidateConfirmation.messageId": result.messageId ?? null,
+                "candidateConfirmation.sentAt": FieldValue.serverTimestamp(),
+                "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
+                updatedAt: FieldValue.serverTimestamp(),
+              }, { merge: true })
+            } else {
+              await submissionRef.set({
+                candidateConsentStatus: "confirmation_email_failed",
+                "candidateConfirmation.status": "email_failed",
+                "candidateConfirmation.provider": "mailgun",
+                "candidateConfirmation.lastError": `mailgun_${result.status}:${result.raw.slice(0, 300)}`,
+                "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
+                updatedAt: FieldValue.serverTimestamp(),
+              }, { merge: true })
+            }
+          } catch (err) {
+            await submissionRef.set({
+              candidateConsentStatus: "confirmation_email_failed",
+              "candidateConfirmation.status": "email_failed",
+              "candidateConfirmation.provider": "mailgun",
+              "candidateConfirmation.lastError": String(err).slice(0, 300),
+              "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
+              updatedAt: FieldValue.serverTimestamp(),
+            }, { merge: true })
+          }
+        }
+      } catch (err) {
+        logger.error("paRecruiterSubmission_candidate_confirmation_failed", {
+          error: String(err),
+          submissionId,
+        })
+      }
+    }
+
     // Best-effort Sheet sync. Failure does not block the 200 — the Firestore
     // write is the source of truth and the doc keeps an error breadcrumb so
     // a retry job can pick it up later.
@@ -3290,6 +3491,88 @@ export const paRecruiterSubmission = onRequest(
       submissionId,
       score,
       submissionMode,
+      candidateConsentStatus,
     })
+  },
+)
+
+function candidateConfirmationHtml(input: { title: string; body: string }): string {
+  return [
+    "<!doctype html>",
+    "<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+    `<title>${escapeHtml(input.title)}</title>`,
+    "<style>body{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,sans-serif;background:#faf7f2;color:#28180f;margin:0;padding:48px 18px}.card{max-width:640px;margin:0 auto;background:white;border:1px solid #eadfce;border-radius:16px;padding:28px;box-shadow:0 18px 48px rgba(57,34,18,.08)}h1{font-family:Georgia,serif;font-size:34px;margin:0 0 12px}p{font-size:16px;line-height:1.55;color:#5d5148}.brand{letter-spacing:.18em;text-transform:uppercase;font-size:12px;color:#936c3e;font-weight:700}</style>",
+    "</head><body><main class=\"card\">",
+    "<div class=\"brand\">WeKruit</div>",
+    `<h1>${escapeHtml(input.title)}</h1>`,
+    `<p>${escapeHtml(input.body)}</p>`,
+    "</main></body></html>",
+  ].join("")
+}
+
+export const paRecruiterCandidateConsentConfirm = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    res.set("Content-Type", "text/html; charset=utf-8")
+    if (req.method !== "GET") {
+      res.status(405).send(candidateConfirmationHtml({
+        title: "Unsupported request",
+        body: "This confirmation link only works as a browser link.",
+      }))
+      return
+    }
+    const submissionId = typeof req.query.submissionId === "string" ? req.query.submissionId.trim() : ""
+    const token = typeof req.query.token === "string" ? req.query.token.trim() : ""
+    if (!submissionId || !IDEMPOTENCY_KEY_RE.test(submissionId) || !/^[A-Za-z0-9-]{20,120}$/.test(token)) {
+      res.status(400).send(candidateConfirmationHtml({
+        title: "Invalid confirmation link",
+        body: "The candidate confirmation link is malformed. Ask your recruiter or WeKruit for a fresh submission link.",
+      }))
+      return
+    }
+    const ref = getFirestore().collection("pa-recruiter-submissions").doc(submissionId)
+    const snap = await ref.get()
+    if (!snap.exists) {
+      res.status(404).send(candidateConfirmationHtml({
+        title: "Submission not found",
+        body: "We could not find this recruiter submission. It may have been removed or replaced.",
+      }))
+      return
+    }
+    const data = snap.data() as Record<string, unknown>
+    const confirmation = data.candidateConfirmation && typeof data.candidateConfirmation === "object"
+      ? data.candidateConfirmation as Record<string, unknown>
+      : {}
+    const storedHash = typeof confirmation.tokenHash === "string" ? confirmation.tokenHash : ""
+    if (!storedHash || storedHash !== hashRecruiterCandidateConfirmationToken(token)) {
+      res.status(403).send(candidateConfirmationHtml({
+        title: "Confirmation link expired",
+        body: "This link does not match the current recruiter submission. Ask your recruiter or WeKruit for a fresh link.",
+      }))
+      return
+    }
+    if (data.candidateConsentStatus !== "candidate_confirmed") {
+      await ref.update({
+        candidateConsentStatus: "candidate_confirmed",
+        "candidateConfirmation.status": "confirmed",
+        "candidateConfirmation.confirmedAt": FieldValue.serverTimestamp(),
+        "candidateConfirmation.updatedAt": FieldValue.serverTimestamp(),
+        statusHistory: FieldValue.arrayUnion({
+          status: "candidate_confirmed",
+          by: "candidate",
+          atIso: new Date().toISOString(),
+        }),
+        updatedAt: FieldValue.serverTimestamp(),
+      })
+    }
+    res.status(200).send(candidateConfirmationHtml({
+      title: "Submission confirmed",
+      body: "Thanks. WeKruit has recorded that you approved this recruiter submission and are interested in the role.",
+    }))
   },
 )

@@ -58,6 +58,7 @@ export interface SubmissionInput {
   submitter: { name: string; email: string }
   candidate: {
     name: string
+    email: string
     link: string
     currentRole?: string
     yoe?: string
@@ -78,6 +79,7 @@ export interface SubmissionResponse {
   }
   reason?: string
   submissionMode?: "primary_role" | "single_submission"
+  candidateConsentStatus?: string
 }
 
 export interface RecruiterProfile {
@@ -114,10 +116,19 @@ export interface RecruiterSubmissionItem {
   companyLabelSnapshot?: string
   candidate?: {
     name?: string
+    email?: string
     link?: string
     currentRole?: string
     yoe?: string
     notes?: string
+  }
+  candidateConsentStatus?: string
+  candidateConfirmation?: {
+    status?: string
+    candidateEmail?: string
+    sentAt?: { seconds?: number } | string | null
+    confirmedAt?: { seconds?: number } | string | null
+    lastError?: string | null
   }
   score?: SubmissionResponse["score"]
   submissionMode?: "primary_role" | "single_submission" | "unclassified"
@@ -149,6 +160,7 @@ export interface RecruiterSourcedCandidateItem {
   stage: RecruiterSourcedCandidateStage
   candidate?: {
     name?: string
+    email?: string
     link?: string
     currentRole?: string
     yoe?: string
@@ -168,6 +180,7 @@ export interface RecruiterSourcedCandidateInput {
   stage: RecruiterSourcedCandidateStage
   candidate: {
     name: string
+    email?: string
     link: string
     currentRole?: string
     yoe?: string

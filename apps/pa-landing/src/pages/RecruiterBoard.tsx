@@ -143,6 +143,16 @@ function statusMeta(status?: string) {
   return STATUS_LABELS[status ?? "submitted"] ?? { label: status ?? "Submitted", tone: "mute" as const }
 }
 
+function candidateConsentMeta(status?: string) {
+  switch (status) {
+    case "candidate_confirmed": return { label: "Candidate confirmed", tone: "success" as const }
+    case "pending_candidate_confirmation": return { label: "Confirmation pending", tone: "info" as const }
+    case "confirmation_email_failed": return { label: "Email failed", tone: "warn" as const }
+    case "confirmation_email_not_configured": return { label: "Email not configured", tone: "warn" as const }
+    default: return { label: "Recruiter consent", tone: "mute" as const }
+  }
+}
+
 function calibrationMeta(status?: string) {
   return CALIBRATION_LABELS[status ?? "not_rated"] ?? { label: status?.replace(/_/g, " ") ?? "Not rated", tone: "mute" as const }
 }
@@ -217,6 +227,7 @@ type SubmissionActivityEvent = {
 
 function submissionActivityEvents(submission: RecruiterSubmissionItem): SubmissionActivityEvent[] {
   const events: SubmissionActivityEvent[] = []
+  const consent = candidateConsentMeta(submission.candidateConsentStatus)
   for (const [index, item] of (submission.statusHistory ?? []).entries()) {
     const meta = statusMeta(item.status)
     const ms = item.atIso ? Date.parse(item.atIso) || 0 : 0
@@ -247,6 +258,16 @@ function submissionActivityEvents(submission: RecruiterSubmissionItem): Submissi
       at: formatActivityDate(submission.recruiterFeedbackUpdatedAt ?? submission.updatedAt),
       tone: statusMeta(submission.status).tone,
       ms: timestampValueMs(submission.recruiterFeedbackUpdatedAt ?? submission.updatedAt),
+    })
+  }
+  if (submission.candidateConsentStatus && submission.candidateConsentStatus !== "recruiter_asserted") {
+    events.push({
+      id: `candidate-consent-${submission.candidateConsentStatus}`,
+      label: consent.label,
+      detail: submission.candidateConfirmation?.candidateEmail || submission.candidate?.email || "Candidate confirmation status updated",
+      at: formatActivityDate(submission.candidateConfirmation?.confirmedAt ?? submission.candidateConfirmation?.sentAt ?? submission.updatedAt),
+      tone: consent.tone,
+      ms: timestampValueMs(submission.candidateConfirmation?.confirmedAt ?? submission.candidateConfirmation?.sentAt ?? submission.updatedAt),
     })
   }
   return events
@@ -321,6 +342,7 @@ function submissionFilterMatches(submission: RecruiterSubmissionItem, filter: Su
 function submissionSearchText(submission: RecruiterSubmissionItem): string {
   return [
     submission.candidate?.name,
+    submission.candidate?.email,
     submission.candidate?.link,
     submission.candidate?.currentRole,
     submission.candidate?.notes,
@@ -3295,6 +3317,7 @@ type BulkCandidateDraft = {
   rowNumber: number
   raw: string
   name: string
+  email?: string
   link: string
   currentRole?: string
   notes?: string
@@ -3339,20 +3362,23 @@ function parseBulkCandidateLine(line: string, rowNumber: number): BulkCandidateP
     ? raw.split(delimiter).map(cleanBulkCell).filter(Boolean)
     : [raw]
   const linkPattern = /(?:https?:\/\/|www\.|linkedin\.com\/)\S+/i
+  const emailPattern = /[^\s,|;<>]+@[^\s,|;<>]+\.[^\s,|;<>]+/i
+  const email = raw.match(emailPattern)?.[0]?.toLowerCase()
   const linkIndex = parts.findIndex((part) => linkPattern.test(part))
   if (linkIndex >= 0) {
     const linkMatch = parts[linkIndex]?.match(linkPattern)?.[0]
     const link = linkMatch ? normalizeBulkCandidateLink(linkMatch) : ""
-    const name = cleanBulkCell(parts.slice(0, linkIndex).join(" ")) || inferCandidateNameFromLink(link)
+    const name = cleanBulkCell(parts.slice(0, linkIndex).join(" ").replace(email ?? "", "")) || inferCandidateNameFromLink(link)
     if (!link) return { ok: false, rowNumber, raw: line, reason: "Missing LinkedIn or resume link" }
     const currentRole = cleanBulkCell(parts[linkIndex + 1] ?? "")
-    const notes = parts.slice(linkIndex + 2).map(cleanBulkCell).filter(Boolean).join(" · ")
+    const notes = parts.slice(linkIndex + 2).map(cleanBulkCell).filter((part) => part.toLowerCase() !== email).filter(Boolean).join(" · ")
     return {
       ok: true,
       candidate: {
         rowNumber,
         raw: line,
         name,
+        ...(email ? { email } : {}),
         link,
         ...(currentRole ? { currentRole } : {}),
         ...(notes ? { notes } : {}),
@@ -3363,7 +3389,7 @@ function parseBulkCandidateLine(line: string, rowNumber: number): BulkCandidateP
   const linkMatch = raw.match(linkPattern)?.[0]
   if (!linkMatch) return { ok: false, rowNumber, raw: line, reason: "Missing LinkedIn or resume link" }
   const link = normalizeBulkCandidateLink(linkMatch)
-  const beforeLink = cleanBulkCell(raw.slice(0, raw.indexOf(linkMatch)).replace(/[-–—|,]+$/g, ""))
+  const beforeLink = cleanBulkCell(raw.slice(0, raw.indexOf(linkMatch)).replace(email ?? "", "").replace(/[-–—|,]+$/g, ""))
   const afterLink = cleanBulkCell(raw.slice(raw.indexOf(linkMatch) + linkMatch.length).replace(/^[-–—|,]+/g, ""))
   return {
     ok: true,
@@ -3371,6 +3397,7 @@ function parseBulkCandidateLine(line: string, rowNumber: number): BulkCandidateP
       rowNumber,
       raw: line,
       name: beforeLink || inferCandidateNameFromLink(link),
+      ...(email ? { email } : {}),
       link,
       ...(afterLink ? { notes: afterLink } : {}),
     },
@@ -3578,7 +3605,7 @@ function CandidatesTab({
   const [form, setForm] = useState<RecruiterSourcedCandidateInput>(() => ({
     jobId: jobs[0]?.jobId ?? "",
     stage: "sourced",
-    candidate: { name: "", link: "", currentRole: "", yoe: "", notes: "" },
+    candidate: { name: "", email: "", link: "", currentRole: "", yoe: "", notes: "" },
     outreach: { status: "not_contacted" },
   }))
   const [saving, setSaving] = useState(false)
@@ -3607,6 +3634,7 @@ function CandidatesTab({
         ...form,
         candidate: {
           name: form.candidate.name.trim(),
+          email: form.candidate.email?.trim().toLowerCase() || undefined,
           link: form.candidate.link.trim(),
           currentRole: form.candidate.currentRole?.trim() || undefined,
           yoe: form.candidate.yoe?.trim() || undefined,
@@ -3617,7 +3645,7 @@ function CandidatesTab({
       setForm({
         jobId: form.jobId,
         stage: "sourced",
-        candidate: { name: "", link: "", currentRole: "", yoe: "", notes: "" },
+        candidate: { name: "", email: "", link: "", currentRole: "", yoe: "", notes: "" },
         outreach: { status: "not_contacted" },
       })
     } catch (error) {
@@ -3652,6 +3680,7 @@ function CandidatesTab({
         stage,
         candidate: {
           name: candidate.candidate?.name || candidateName(candidate),
+          email: candidate.candidate?.email,
           link,
           currentRole: candidate.candidate?.currentRole,
           yoe: candidate.candidate?.yoe,
@@ -3699,6 +3728,7 @@ function CandidatesTab({
             stage: "sourced",
             candidate: {
               name: row.candidate.name,
+              email: row.candidate.email,
               link: row.candidate.link,
               currentRole: row.candidate.currentRole,
               notes: row.candidate.notes,
@@ -3755,6 +3785,7 @@ function CandidatesTab({
         stage: candidate.stage,
         candidate: {
           name: candidate.candidate?.name || candidateName(candidate),
+          email: candidate.candidate?.email,
           link,
           currentRole: candidate.candidate?.currentRole,
           yoe: candidate.candidate?.yoe,
@@ -3801,6 +3832,7 @@ function CandidatesTab({
         stage: candidate.stage,
         candidate: {
           name: candidate.candidate?.name || candidateName(candidate),
+          email: candidate.candidate?.email,
           link,
           currentRole: candidate.candidate?.currentRole,
           yoe: candidate.candidate?.yoe,
@@ -3840,6 +3872,15 @@ function CandidatesTab({
                 value={form.candidate.name}
                 onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, name: e.target.value } })}
                 required
+              />
+            </label>
+            <label>
+              <span>Candidate email</span>
+              <input
+                type="email"
+                value={form.candidate.email ?? ""}
+                onChange={(e) => setForm({ ...form, candidate: { ...form.candidate, email: e.target.value } })}
+                placeholder="candidate@company.com"
               />
             </label>
             <label>
@@ -4002,6 +4043,7 @@ function SourcedCandidateCard({
         <span>
           <strong>{candidateName(candidate)}</strong>
           <em>{candidate.candidate?.currentRole || candidate.jobTitleSnapshot || "Candidate"}</em>
+          {candidate.candidate?.email && <em>{candidate.candidate.email}</em>}
         </span>
       </div>
       <p>{shortText(candidate.candidate?.notes, "No note yet", 96)}</p>
@@ -4586,6 +4628,7 @@ function RoleRow({ job }: { job: CollabJob }) {
 
 function SubmissionRow({ submission, expanded = false }: { submission: RecruiterSubmissionItem; expanded?: boolean }) {
   const meta = statusMeta(submission.status)
+  const consent = candidateConsentMeta(submission.candidateConsentStatus)
   const currentStatus = submission.status === "new" ? "submitted" : submission.status ?? "submitted"
   const currentIndex = SUBMISSION_PROGRESS.findIndex((step) => step.id === currentStatus)
   const isClosed = currentStatus === "rejected" || currentStatus === "duplicate"
@@ -4616,6 +4659,7 @@ function SubmissionRow({ submission, expanded = false }: { submission: Recruiter
             {isClosed && <span className="is-complete">{meta.label}</span>}
           </div>
           <p><strong>Candidate:</strong> {submission.candidate?.currentRole || "Role not provided"}{submission.candidate?.yoe ? ` · ${submission.candidate.yoe} YOE` : ""}</p>
+          {submission.candidate?.email && <p><strong>Email:</strong> {submission.candidate.email}</p>}
           {submission.candidate?.link && <a href={submission.candidate.link} target="_blank" rel="noopener noreferrer">{shortText(submission.candidate.link, submission.candidate.link, 80)}</a>}
           {submission.recruiterFeedbackNote && (
             <blockquote>{submission.recruiterFeedbackNote}</blockquote>
@@ -4631,7 +4675,7 @@ function SubmissionRow({ submission, expanded = false }: { submission: Recruiter
             </div>
             <div>
               <span>Candidate consent</span>
-              <strong>Recorded</strong>
+              <strong>{consent.label}</strong>
             </div>
             <div>
               <span>Submitted</span>

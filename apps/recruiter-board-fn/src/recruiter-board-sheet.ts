@@ -26,6 +26,7 @@ export interface SheetSubmissionInput {
   submitter: { name: string; email: string }
   candidate: {
     name: string
+    email?: string
     link: string
     currentRole?: string
     yoe?: string
@@ -48,6 +49,7 @@ function staticColumns(): ColumnSpec[] {
     { header: "Submitter name", value: (i) => i.submitter.name },
     { header: "Submitter email", value: (i) => i.submitter.email },
     { header: "Candidate name", value: (i) => i.candidate.name },
+    { header: "Candidate email", value: (i) => i.candidate.email ?? "" },
     { header: "Candidate link", value: (i) => i.candidate.link },
     { header: "Current role", value: (i) => i.candidate.currentRole ?? "" },
     { header: "YOE", value: (i) => i.candidate.yoe ?? "" },
