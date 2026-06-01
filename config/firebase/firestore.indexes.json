@@ -563,6 +563,21 @@
       ]
     },
     {
+      "_comment": "admin-passed-candidates — employer-visible snapshots for a job by recency.",
+      "collectionGroup": "pa-employer-visible-profiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "jobId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "_comment": "v2.0 S1 — feedback events by candidate recency.",
       "collectionGroup": "pa-feedback-events",
       "queryScope": "COLLECTION",

@@ -621,7 +621,7 @@ export function Candidates() {
         byIdentity.set("sendblue_eligible", (byIdentity.get("sendblue_eligible") ?? 0) + 1)
       }
     }
-    for (const r of rows) {
+    for (const r of countRows) {
       if (r.candidateClass === "candidate_account") accountCandidates++
       else if (r.candidateClass === "external_supply_prospect") externalProspects++
       else if (r.candidateClass === "legacy_sms_profile") legacySmsProfiles++

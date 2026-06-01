@@ -215,6 +215,7 @@ export async function runAdminPassedCandidatesSnapshot(
   let query: Query = deps.db
     .collection(PA_COLLECTIONS.employerVisibleProfiles)
     .where("jobId", "==", parsed.data.jobId)
+    .orderBy("createdAt", "desc")
   query = query.limit(parsed.data.limit)
   const snap = await query.get()
 

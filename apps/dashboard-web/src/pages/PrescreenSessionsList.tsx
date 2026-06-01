@@ -309,6 +309,9 @@ export default function PrescreenSessionsList() {
   const [drawerSessionId, setDrawerSessionId] = useState<string | null>(null)
   const [bulkOpen, setBulkOpen] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
+  const [includeTestProfiles, setIncludeTestProfiles] = useState(false)
+  const [loadedCount, setLoadedCount] = useState(0)
+  const [realCount, setRealCount] = useState(0)
   const [bucketFilter, setBucketFilter] = useState<StrictReviewBucket>("all")
   const [queueFilter, setQueueFilter] = useState<StrictReviewQueueFilter>("pending")
   const [terminalFilter, setTerminalFilter] = useState<StrictReviewTerminalFilter>("all")
@@ -333,9 +336,13 @@ export default function PrescreenSessionsList() {
         const loadedRows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Row, "id">) }))
         const userDocs = await loadUserDocsById(loadedRows.map((row) => row.userId))
         if (cancelled) return
-        const realRows = loadedRows.filter((row) => isRealPrescreenCandidate(row, userDocs.get(row.userId) ?? null))
+        const realRows = includeTestProfiles
+          ? loadedRows
+          : loadedRows.filter((row) => isRealPrescreenCandidate(row, userDocs.get(row.userId) ?? null))
         const pendingRows = realRows.filter((row) => row.terminalActionPendingReview === true)
         const otherRows = realRows.filter((row) => row.terminalActionPendingReview !== true)
+        setLoadedCount(loadedRows.length)
+        setRealCount(realRows.length)
         setRows([...pendingRows, ...otherRows])
         setSelected((prev) => {
           const pendingIds = new Set(pendingRows.map((r) => r.id))
@@ -350,7 +357,7 @@ export default function PrescreenSessionsList() {
     return () => {
       cancelled = true
     }
-  }, [reloadKey])
+  }, [reloadKey, includeTestProfiles])
 
   const pendingRows = useMemo(() => rows.filter((r) => r.terminalActionPendingReview === true), [rows])
   const reviewSummary = useMemo(() => summarizePrescreenReviewRows(rows), [rows])
@@ -442,6 +449,14 @@ export default function PrescreenSessionsList() {
             <span style={{ color: "#64748b", fontSize: "0.85em" }}>
               {selectedPendingRows.length} pending selected
             </span>
+            <label style={{ display: "flex", gap: 4, alignItems: "center", color: "#64748b", fontSize: "0.85em" }}>
+              <input
+                type="checkbox"
+                checked={includeTestProfiles}
+                onChange={(e) => setIncludeTestProfiles(e.target.checked)}
+              />
+              Include test/dev profiles
+            </label>
             <button
               type="button"
               disabled={selectedPendingRows.length === 0}
@@ -453,6 +468,9 @@ export default function PrescreenSessionsList() {
           </div>
         }
       />
+      <p style={{ color: "#94a3b8", fontSize: "0.8em", margin: "0 0 0.5rem" }}>
+        loaded={loadedCount} · real={realCount} · pending={pendingRows.length} · visible={visibleRows.length}
+      </p>
       <Panel title={`${visibleRows.length} visible review session(s)`} eyebrow={`${pendingRows.length} pending · ${rows.length} real recent sessions`}>
         {rows.length > 0 ? (
           <PrescreenReviewToolbar
