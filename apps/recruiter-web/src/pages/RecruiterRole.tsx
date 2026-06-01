@@ -367,6 +367,14 @@ type RoleDealDeskModel = {
   }>
 }
 
+type RoleQuestionPrompt = {
+  id: string
+  label: string
+  question: string
+  body: string
+  tone: "good" | "watch" | "blocked" | "quiet"
+}
+
 function roleChecklistItems(job: CollabJob, kind: RoleChecklistKind) {
   return job.recruiterBoard.checklist.groups.find((group) => group.kind === kind)?.items ?? []
 }
@@ -465,6 +473,121 @@ function buildRoleSourcingKit(job: CollabJob, brief: RoleCalibrationBrief): Role
     proofPlan,
     doNotPitch,
   }
+}
+
+function normalizeQuestionText(text?: string | null): string {
+  return (text ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+}
+
+function promptWasAsked(prompt: string, questions: RecruiterRoleQuestionItem[]): boolean {
+  const normalized = normalizeQuestionText(prompt)
+  if (!normalized) return false
+  return questions.some((question) => {
+    const asked = normalizeQuestionText(question.question)
+    if (!asked) return false
+    return asked === normalized || asked.includes(normalized.slice(0, 48)) || normalized.includes(asked.slice(0, 48))
+  })
+}
+
+function buildRoleQuestionPrompts(
+  job: CollabJob,
+  questions: RecruiterRoleQuestionItem[],
+  feedback: RecruiterRoleFeedbackItem | null,
+  intelligence: RecruiterRoleIntelligenceItem | null,
+): RoleQuestionPrompt[] {
+  const prompts: RoleQuestionPrompt[] = []
+  const add = (prompt: RoleQuestionPrompt) => {
+    if (prompts.some((item) => item.id === prompt.id) || promptWasAsked(prompt.question, questions)) return
+    prompts.push(prompt)
+  }
+  const hardItems = roleChecklistItems(job, "hard").map((item) => item.text)
+  const antiItems = roleChecklistItems(job, "anti").map((item) => item.text)
+  const reasons = new Set(feedback?.reasons ?? [])
+  const company = job.recruiterBoard.label.company
+  const location = job.recruiterBoard.label.location
+
+  if (!job.compSummary || reasons.has("low_comp")) {
+    add({
+      id: "comp",
+      label: "Comp calibration",
+      question: `What compensation range or flexibility should I use when candidates push back on ${job.title} at ${company}?`,
+      body: "Use this before low-comp objections keep repeating.",
+      tone: reasons.has("low_comp") ? "blocked" : "watch",
+    })
+  }
+  if (reasons.has("location_mismatch") || /remote|hybrid|onsite/i.test(location)) {
+    add({
+      id: "location",
+      label: "Location boundary",
+      question: `For ${job.title}, are there location, timezone, or visa exceptions beyond ${location}?`,
+      body: "Clarifies whether adjacent candidates are worth screening.",
+      tone: reasons.has("location_mismatch") ? "blocked" : "watch",
+    })
+  }
+  if (reasons.has("unclear_requirements") || reasons.has("role_too_broad")) {
+    add({
+      id: "must-have",
+      label: "Must-have cutline",
+      question: `Which 2-3 requirements are true must-haves for ${job.title}, and which can be traded off for stronger overall talent?`,
+      body: "Turns vague role pressure into a usable sourcing rule.",
+      tone: "blocked",
+    })
+  }
+  if (reasons.has("small_candidate_pool") || (intelligence?.readyCount ?? 0) === 0) {
+    add({
+      id: "adjacent-backgrounds",
+      label: "Adjacent backgrounds",
+      question: `Which adjacent company types, titles, or backgrounds would still count as credible for ${job.title}?`,
+      body: "Helps widen search without lowering the bar.",
+      tone: reasons.has("small_candidate_pool") ? "watch" : "quiet",
+    })
+  }
+  if (reasons.has("candidate_interest_low")) {
+    add({
+      id: "candidate-hook",
+      label: "Candidate hook",
+      question: `What is the strongest candidate-facing hook for ${job.title} when people are not responding?`,
+      body: "Improves outreach before more sourcing volume.",
+      tone: "watch",
+    })
+  }
+  if (reasons.has("hiring_team_slow")) {
+    add({
+      id: "feedback-sla",
+      label: "Feedback SLA",
+      question: `What review timeline should I promise candidates for ${job.title}, and when should I stop sending lookalikes?`,
+      body: "Prevents candidate warmth from decaying in slow review loops.",
+      tone: "watch",
+    })
+  }
+  if (reasons.has("too_many_recruiters")) {
+    add({
+      id: "undercovered-lane",
+      label: "Under-covered lane",
+      question: `Which candidate lane is still under-covered for ${job.title} so I do not duplicate other recruiters?`,
+      body: "Focuses effort when the market is crowded.",
+      tone: "watch",
+    })
+  }
+  if (hardItems[0]) {
+    add({
+      id: "hard-proof",
+      label: "Proof standard",
+      question: `What evidence is strong enough to prove "${hardItems[0]}" before I submit a candidate?`,
+      body: "Sets the bar for the most important hard check.",
+      tone: "quiet",
+    })
+  }
+  if (antiItems[0]) {
+    add({
+      id: "anti-signal",
+      label: "Anti-signal",
+      question: `If a candidate partly matches "${antiItems[0]}", what context would still make them worth reviewing?`,
+      body: "Prevents borderline candidates from becoming noisy submissions.",
+      tone: "quiet",
+    })
+  }
+  return prompts.slice(0, 5)
 }
 
 function buildRoleSubmissionPacket(input: {
@@ -1943,6 +2066,8 @@ export default function RecruiterRole() {
             <RoleQuestionsPanel
               job={job}
               questions={currentRoleQuestions}
+              feedback={currentRoleFeedback}
+              intelligence={currentRoleIntelligence}
               onCreated={(question) => {
                 setRoleQuestions((rows) => [question, ...rows.filter((row) => row.id !== question.id)])
               }}
@@ -2861,16 +2986,49 @@ function roleQuestionTime(raw: unknown): string {
 function RoleQuestionsPanel({
   job,
   questions,
+  feedback,
+  intelligence,
   onCreated,
 }: {
   job: CollabJob
   questions: RecruiterRoleQuestionItem[]
+  feedback: RecruiterRoleFeedbackItem | null
+  intelligence: RecruiterRoleIntelligenceItem | null
   onCreated: (question: RecruiterRoleQuestionItem) => void
 }) {
   const [question, setQuestion] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [savedAt, setSavedAt] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const openQuestions = questions.filter((item) => (item.status ?? "open") === "open")
+  const answeredQuestions = questions.filter((item) => item.status === "answered")
+  const prompts = useMemo(
+    () => buildRoleQuestionPrompts(job, questions, feedback, intelligence),
+    [feedback, intelligence, job, questions],
+  )
+  const oldestOpen = [...openQuestions].sort((a, b) => timestampMs(a.createdAt) - timestampMs(b.createdAt))[0]
+  const latestAnswer = answeredQuestions[0]
+  const cockpitTone = openQuestions.length
+    ? "watch"
+    : answeredQuestions.length
+      ? "good"
+      : prompts.length
+        ? "quiet"
+        : "good"
+  const cockpitTitle = openQuestions.length
+    ? `${openQuestions.length} open answer${openQuestions.length === 1 ? "" : "s"}`
+    : latestAnswer
+      ? "Use latest answer before sourcing"
+      : prompts.length
+        ? "Ask before sourcing through ambiguity"
+        : "No question pressure"
+  const cockpitBody = openQuestions.length
+    ? `Oldest question opened ${roleQuestionTime(oldestOpen?.createdAt)}. Wait for answer before adding volume if this blocks proof.`
+    : latestAnswer?.answer
+      ? shortText(latestAnswer.answer, "WeKruit answered the latest calibration question.", 132)
+      : prompts.length
+        ? "Pick one suggested question, edit it, then send it to WeKruit for role-specific calibration."
+        : "The current role signal is clear enough to keep sourcing from the brief and guardrails."
 
   const createQuestion = async () => {
     const trimmed = question.trim()
@@ -2899,6 +3057,34 @@ function RoleQuestionsPanel({
     <section className="rb-side-panel rb-role-questions">
       <h3>Questions for WeKruit</h3>
       <p>Ask role-specific calibration questions before spending sourcing cycles.</p>
+      <div className={`rb-role-question-cockpit is-${cockpitTone}`}>
+        <span>Calibration cockpit</span>
+        <strong>{cockpitTitle}</strong>
+        <p>{cockpitBody}</p>
+        <div>
+          <em>{openQuestions.length} open</em>
+          <em>{answeredQuestions.length} answered</em>
+          <em>{prompts.length} suggested</em>
+        </div>
+      </div>
+
+      {prompts.length > 0 && (
+        <div className="rb-role-question-prompts">
+          <span>Suggested asks</span>
+          {prompts.map((prompt) => (
+            <button
+              type="button"
+              className={`is-${prompt.tone}`}
+              key={prompt.id}
+              onClick={() => setQuestion(prompt.question)}
+            >
+              <strong>{prompt.label}</strong>
+              <small>{prompt.body}</small>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="rb-role-question-list">
         {questions.slice(0, 5).map((item) => (
           <article key={item.id} className={item.status === "answered" ? "is-answered" : ""}>

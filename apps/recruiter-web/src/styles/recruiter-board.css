@@ -1220,6 +1220,96 @@
   gap: 8px;
 }
 
+.rb-role-question-cockpit {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-left: 3px solid #9b958b;
+  border-radius: 9px;
+  background: #fffaf5;
+  padding: 11px;
+}
+
+.rb-role-question-cockpit.is-good {
+  border-left-color: var(--live);
+  background: var(--live-soft);
+}
+
+.rb-role-question-cockpit.is-watch {
+  border-left-color: #b77c2f;
+  background: #fffaf1;
+}
+
+.rb-role-question-cockpit.is-blocked {
+  border-left-color: #a33a2d;
+  background: #fff8f7;
+}
+
+.rb-role-question-cockpit > span,
+.rb-role-question-prompts > span {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-role-question-cockpit strong {
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.25;
+}
+
+.rb-role-question-cockpit > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.rb-role-question-cockpit em {
+  border: 1px solid rgba(42, 42, 38, 0.12);
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  padding: 4px 7px;
+}
+
+.rb-role-question-prompts {
+  display: grid;
+  gap: 7px;
+}
+
+.rb-role-question-prompts button {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-left: 3px solid #9b958b;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.rb-role-question-prompts button.is-good { border-left-color: var(--live); background: var(--live-soft); }
+.rb-role-question-prompts button.is-watch { border-left-color: #b77c2f; background: #fffaf1; }
+.rb-role-question-prompts button.is-blocked { border-left-color: #a33a2d; background: #fff8f7; }
+
+.rb-role-question-prompts strong {
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.rb-role-question-prompts small {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
 .rb-role-candidate-list article,
 .rb-role-submission-list article {
   display: grid;
