@@ -3958,11 +3958,11 @@ function eventNotificationId(type: string, entityId: string, eventId: string): s
 async function createRecruiterInAppNotification(
   db: Firestore,
   input: {
-    type: "role_application_decision" | "submission_feedback"
+    type: "role_application_decision" | "role_question_answer" | "submission_feedback"
     eventId: string
     recruiterId: string
     recruiterEmail?: string
-    entityType: "role_application" | "submission"
+    entityType: "role_application" | "role_question" | "submission"
     entityId: string
     title: string
     body: string
@@ -4044,6 +4044,30 @@ function roleApplicationDecisionNotification(
       : "Review the note before reapplying or sourcing more candidates."),
   ])
   return { title: statusTitle, body }
+}
+
+export function roleQuestionAnswerNotification(
+  before: Record<string, unknown> | null,
+  after: Record<string, unknown> | null,
+): { title: string; body: string } | null {
+  if (!before || !after) return null
+  const beforeStatus = typeof before.status === "string" ? before.status : "open"
+  const afterStatus = typeof after.status === "string" ? after.status : "open"
+  const beforeAnswer = typeof before.answer === "string" ? before.answer.trim() : ""
+  const afterAnswer = typeof after.answer === "string" ? after.answer.trim() : ""
+  if (afterStatus !== "answered" || !afterAnswer) return null
+  if (beforeStatus === "answered" && beforeAnswer === afterAnswer) return null
+
+  const roleTitle = typeof after.jobTitleSnapshot === "string" && after.jobTitleSnapshot.trim()
+    ? after.jobTitleSnapshot.trim()
+    : "Role question"
+  const question = typeof after.question === "string" ? after.question.trim() : ""
+  const body = compactNotificationBody([
+    roleTitle,
+    question ? `Q: ${question.slice(0, 180)}` : "",
+    `A: ${afterAnswer}`,
+  ])
+  return { title: "WeKruit answered your role question", body }
 }
 
 function recruiterSubmissionStatusLabel(status: string): string {
@@ -4146,6 +4170,38 @@ export const paRecruiterRoleApplicationDecisionNotify = onDocumentWritten(
       roleUrl: recruiterNotificationRoleUrl(after),
     })
     if (created) logger.info("paRecruiterRoleApplicationDecisionNotify_done", { applicationId: event.params.applicationId, recruiterId })
+  },
+)
+
+export const paRecruiterRoleQuestionAnswerNotify = onDocumentWritten(
+  {
+    document: `${RECRUITER_ROLE_QUESTIONS_COLLECTION}/{questionId}`,
+    region: "us-central1",
+    memory: RECRUITER_BOARD_MEMORY,
+  },
+  async (event) => {
+    const before = event.data?.before.exists ? event.data.before.data() as Record<string, unknown> : null
+    const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null
+    const notification = roleQuestionAnswerNotification(before, after)
+    if (!notification || !after) return
+    const recruiterId = typeof after.recruiterId === "string" ? after.recruiterId : ""
+    if (!recruiterId) return
+    const created = await createRecruiterInAppNotification(getFirestore(), {
+      type: "role_question_answer",
+      eventId: event.id,
+      recruiterId,
+      recruiterEmail: typeof after.recruiterEmail === "string" ? after.recruiterEmail : undefined,
+      entityType: "role_question",
+      entityId: event.params.questionId,
+      title: notification.title,
+      body: notification.body,
+      jobId: typeof after.jobId === "string" ? after.jobId : undefined,
+      publicJobId: typeof after.inboundJobId === "string" ? after.inboundJobId : undefined,
+      roleTitle: typeof after.jobTitleSnapshot === "string" ? after.jobTitleSnapshot : undefined,
+      companyLabel: typeof after.companyLabelSnapshot === "string" ? after.companyLabelSnapshot : undefined,
+      roleUrl: recruiterNotificationRoleUrl(after),
+    })
+    if (created) logger.info("paRecruiterRoleQuestionAnswerNotify_done", { questionId: event.params.questionId, recruiterId })
   },
 )
 

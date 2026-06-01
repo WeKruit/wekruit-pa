@@ -34,6 +34,7 @@ import {
   recruiterCandidateIdentityConflictForRole,
   recruiterInviteCodeMatchesBoundUser,
   recruiterIdentityFromFirebaseBearer,
+  roleQuestionAnswerNotification,
   shouldNotifyRecruitersForRoleRelease,
   sanitizeSubmissionStatusHistory,
   validateCandidateConfirmationResendInput,
@@ -483,6 +484,43 @@ describe("recruiter role notifications", () => {
     assert.match(email.subject, /Founding Engineer/)
     assert.match(email.text, /candidate\.wekruit\.com/)
     assert.match(email.text, /turn off new-role emails/i)
+  })
+})
+
+describe("recruiter role question answer notifications", () => {
+  it("does not notify when a role question is first created open", () => {
+    assert.equal(roleQuestionAnswerNotification(null, {
+      status: "open",
+      question: "Which profiles should we avoid?",
+      answer: null,
+    }), null)
+  })
+
+  it("notifies when an admin answers a recruiter role question", () => {
+    const notification = roleQuestionAnswerNotification({
+      status: "open",
+      question: "Which profiles should we avoid?",
+      answer: null,
+    }, {
+      status: "answered",
+      jobTitleSnapshot: "Founding Engineer",
+      question: "Which profiles should we avoid?",
+      answer: "Avoid pure frontend portfolios unless they include systems ownership.",
+    })
+    assert.equal(notification?.title, "WeKruit answered your role question")
+    assert.match(notification?.body ?? "", /Founding Engineer/)
+    assert.match(notification?.body ?? "", /Which profiles should we avoid/)
+    assert.match(notification?.body ?? "", /pure frontend portfolios/)
+  })
+
+  it("does not notify again when the answered text is unchanged", () => {
+    assert.equal(roleQuestionAnswerNotification({
+      status: "answered",
+      answer: "Target builders with systems ownership.",
+    }, {
+      status: "answered",
+      answer: "Target builders with systems ownership.",
+    }), null)
   })
 })
 
