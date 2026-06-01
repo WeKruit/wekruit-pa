@@ -2984,9 +2984,67 @@
 
 .rb-role-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
   gap: 14px;
   padding: 18px;
+}
+
+.rb-role-market-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px 18px 0;
+}
+
+.rb-role-market-strip article {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  padding: 13px 14px;
+}
+
+.rb-role-market-strip article.is-live {
+  border-color: var(--live-border);
+  background: var(--live-soft);
+}
+
+.rb-role-market-strip article.is-info {
+  border-color: var(--info-bg);
+  background: var(--info-bg);
+}
+
+.rb-role-market-strip article.is-success {
+  border-color: var(--success-bg);
+  background: var(--success-bg);
+}
+
+.rb-role-market-strip article.is-warn {
+  border-color: var(--danger-bg);
+  background: var(--danger-bg);
+}
+
+.rb-role-market-strip span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.rb-role-market-strip strong {
+  color: var(--ink);
+  font-size: 22px;
+  line-height: 1.05;
+}
+
+.rb-role-market-strip p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .rb-role-toolbar {
@@ -3228,6 +3286,63 @@
   font-style: normal;
   line-height: 1.35;
 }
+
+.rb-role-card__economics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.rb-role-card__economics > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 9px 9px 9px 0;
+}
+
+.rb-role-card__economics > div:nth-child(2n) {
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+}
+
+.rb-role-card__economics > div:nth-child(n + 3) {
+  border-top: 1px solid var(--border);
+}
+
+.rb-role-card__economics span {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.rb-role-card__economics strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.18;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rb-role-card__economics em {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  font-style: normal;
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.rb-role-card__economics > div.is-live strong { color: var(--live-2); }
+.rb-role-card__economics > div.is-success strong { color: var(--success); }
+.rb-role-card__economics > div.is-info strong { color: var(--info); }
+.rb-role-card__economics > div.is-warn strong { color: var(--warning); }
 
 .rb-role-card__pills {
   display: flex;
@@ -5651,6 +5766,9 @@
   .rb-earnings-grid {
     grid-template-columns: 1fr;
   }
+  .rb-role-market-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .rb-market-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -5770,6 +5888,7 @@
   .rb-feedback-line,
   .rb-match-command__cards,
   .rb-submission-command__cards,
+  .rb-role-market-strip,
   .rb-role-cockpit,
   .rb-role-workroom__cards,
   .rb-role-intel__metrics,

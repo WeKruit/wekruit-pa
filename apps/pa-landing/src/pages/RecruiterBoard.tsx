@@ -86,6 +86,7 @@ type RoleSort = typeof ROLE_SORTS[number]["id"]
 
 const APPROVED_ROLE_LIMIT = 10
 const SINGLE_SUBMISSION_WEEKLY_LIMIT = 5
+const ROLE_PENDING_SUBMISSION_LIMIT = 5
 const WEEKLY_SUBMISSION_TARGET = 8
 const DEFAULT_SUCCESS_FEE = 10_000
 const PREFERRED_INTERVIEW_RATE_TARGET = 50
@@ -1783,10 +1784,12 @@ function formatCurrencyShort(value: number): string {
   return `$${value}`
 }
 
+function roleCompSummaryLooksFee(summary?: string | null): boolean {
+  return /fee|reward|bounty|placement|success/i.test(summary ?? "")
+}
+
 function roleRewardAmount(job: CollabJob): number {
-  const text = job.compSummary?.toLowerCase() ?? ""
-  const isFeeLike = /fee|reward|bounty|placement|success/.test(text)
-  if (!isFeeLike) return DEFAULT_SUCCESS_FEE
+  if (!roleCompSummaryLooksFee(job.compSummary)) return DEFAULT_SUCCESS_FEE
   const match = job.compSummary?.match(/\$?\s*([0-9]+(?:\.[0-9]+)?)\s*(k|m)?/i)
   if (!match) return DEFAULT_SUCCESS_FEE
   const raw = Number(match[1])
@@ -1795,6 +1798,19 @@ function roleRewardAmount(job: CollabJob): number {
   if (suffix === "m") return Math.round(raw * 1_000_000)
   if (suffix === "k") return Math.round(raw * 1_000)
   return raw >= 1_000 ? Math.round(raw) : Math.round(raw * 1_000)
+}
+
+function roleRewardLabel(job: CollabJob): string {
+  return `${formatCurrencyShort(roleRewardAmount(job))}${roleCompSummaryLooksFee(job.compSummary) ? "" : "+"}`
+}
+
+function roleRewardSourceLabel(job: CollabJob): string {
+  return roleCompSummaryLooksFee(job.compSummary) ? "Role reward" : "Estimated success fee"
+}
+
+function roleCandidateCompLabel(job: CollabJob): string {
+  if (!job.compSummary || roleCompSummaryLooksFee(job.compSummary)) return "Not shared"
+  return shortText(job.compSummary, job.compSummary, 32)
 }
 
 function submissionRoleId(submission: RecruiterSubmissionItem): string {
@@ -3187,8 +3203,7 @@ function roleFitSignal(job: CollabJob, sourcedCount: number, submissionCount: nu
 }
 
 function roleReward(job: CollabJob): string {
-  if (job.compSummary) return job.compSummary.length > 18 ? "Success fee" : job.compSummary
-  return "$10K+"
+  return roleRewardLabel(job)
 }
 
 type RoleInsightTone = "live" | "info" | "success" | "warn" | "mute"
@@ -3220,6 +3235,61 @@ type RoleInsight = {
   application?: RecruiterRoleApplicationItem
   feedback?: RecruiterRoleFeedbackItem
   intelligence?: RecruiterRoleIntelligenceItem
+}
+
+type RoleOpportunityTerm = {
+  label: string
+  value: string
+  body: string
+  tone: RoleInsightTone
+}
+
+function roleOpportunityTerms(insight: RoleInsight): RoleOpportunityTerm[] {
+  const job = insight.job
+  const candidateComp = roleCandidateCompLabel(job)
+  const pendingLeft = Math.max(0, ROLE_PENDING_SUBMISSION_LIMIT - insight.platformPendingCount)
+  const accessValue = insight.primary
+    ? "Approved"
+    : insight.application?.status === "pending"
+      ? "Pending"
+      : "Apply"
+  const accessBody = insight.primary
+    ? "Trusted role lane. WeKruit expects active coverage."
+    : insight.application?.status === "pending"
+      ? "Access request is waiting on WeKruit review."
+      : "Request access with candidate proof or use single-submit."
+  return [
+    {
+      label: roleRewardSourceLabel(job),
+      value: roleRewardLabel(job),
+      body: "Estimated recruiter upside if a submitted candidate is hired.",
+      tone: "live",
+    },
+    {
+      label: "Candidate comp",
+      value: candidateComp,
+      body: candidateComp === "Not shared" ? "Ask WeKruit if compensation is blocking supply." : "Candidate-facing compensation context.",
+      tone: candidateComp === "Not shared" ? "mute" : "info",
+    },
+    {
+      label: "Access mode",
+      value: accessValue,
+      body: accessBody,
+      tone: insight.primary ? "success" : insight.application?.status === "pending" ? "info" : "warn",
+    },
+    {
+      label: "Market lane",
+      value: insight.cleanLane ? "Clean" : `${insight.platformSubmissionCount} sent`,
+      body: insight.cleanLane ? "No board submissions yet. First clean packet matters." : `${insight.recruiterCount} recruiter${insight.recruiterCount === 1 ? "" : "s"} active.`,
+      tone: insight.cleanLane ? "success" : insight.recruiterCount > 1 ? "warn" : "info",
+    },
+    {
+      label: "Review capacity",
+      value: `${pendingLeft}/${ROLE_PENDING_SUBMISSION_LIMIT}`,
+      body: pendingLeft ? "Pending submission room remains." : "Wait for feedback before more volume.",
+      tone: pendingLeft ? "info" : "warn",
+    },
+  ]
 }
 
 function rowsForRole<T extends { inboundJobId?: string; jobId?: string }>(job: CollabJob, rows: T[]): T[] {
@@ -3967,6 +4037,10 @@ function RolesTab({
     return sortRoleInsights(searched, sort)
   }, [filter, insights, q, sort])
   const spotlight = filtered.slice(0, 3)
+  const boardValue = filtered.reduce((sum, insight) => sum + roleRewardAmount(insight.job), 0)
+  const cleanLaneCount = filtered.filter((insight) => insight.cleanLane).length
+  const approvedCount = filtered.filter((insight) => insight.primary).length
+  const pendingReviewCount = filtered.reduce((sum, insight) => sum + insight.platformPendingCount, 0)
 
   return (
     <section className="rb-panel rb-panel--fill">
@@ -4000,6 +4074,28 @@ function RolesTab({
       {loading && <div className="rb-state">Loading open roles...</div>}
       {!loading && (
         <>
+          <section className="rb-role-market-strip" aria-label="Role marketplace economics">
+            <article className="is-live">
+              <span>Visible reward pool</span>
+              <strong>{formatCurrencyShort(boardValue)}</strong>
+              <p>{filtered.length} matching role{filtered.length === 1 ? "" : "s"} using explicit or estimated success-fee value.</p>
+            </article>
+            <article className={approvedCount ? "is-success" : "is-info"}>
+              <span>Approved lanes</span>
+              <strong>{approvedCount}/{APPROVED_ROLE_LIMIT}</strong>
+              <p>Trusted searches where WeKruit expects active recruiter coverage.</p>
+            </article>
+            <article className={cleanLaneCount ? "is-success" : "is-info"}>
+              <span>Clean lanes</span>
+              <strong>{cleanLaneCount}</strong>
+              <p>Roles with no recruiter-board submission signal yet.</p>
+            </article>
+            <article className={pendingReviewCount >= ROLE_PENDING_SUBMISSION_LIMIT ? "is-warn" : "is-info"}>
+              <span>Pending market load</span>
+              <strong>{pendingReviewCount}</strong>
+              <p>Open submission reviews across the matching board.</p>
+            </article>
+          </section>
           {spotlight.length > 0 && (
             <section className="rb-role-command" aria-label="Recommended role focus">
               <header>
@@ -5570,7 +5666,7 @@ function RoleCommandCard({ insight }: { insight: RoleInsight }) {
         <span>{insight.scoreLabel}</span>
       </div>
       <div className="rb-role-command-card__body">
-        <span>{insight.urgency} · {insight.marketLoad}</span>
+        <span>{insight.urgency} · {insight.marketLoad} · {roleRewardLabel(job)} reward</span>
         <h3><Link to={`/recruiters/job/${job.jobId}`}>{job.title}</Link></h3>
         <p>{job.recruiterBoard.label.company} · {job.recruiterBoard.label.location}</p>
         <div>
@@ -5597,6 +5693,7 @@ function RoleCard({
 }) {
   const { job, primary } = insight
   const { hard, fit } = roleChecklistCounts(job)
+  const opportunityTerms = roleOpportunityTerms(insight)
   const marketChips = [
     `${insight.recruiterCount} recruiter${insight.recruiterCount === 1 ? "" : "s"} active`,
     `${insight.platformReadyCount} ready`,
@@ -5619,6 +5716,15 @@ function RoleCard({
         <span className={`rb-fit-signal is-${insight.tone}`}>{insight.scoreLabel} {insight.score}</span>
         <strong>{insight.nextAction}</strong>
         <em>{insight.nextActionBody}</em>
+      </div>
+      <div className="rb-role-card__economics" aria-label="Role opportunity economics">
+        {opportunityTerms.slice(0, 4).map((term) => (
+          <div className={`is-${term.tone}`} key={term.label}>
+            <span>{term.label}</span>
+            <strong>{term.value}</strong>
+            <em>{term.body}</em>
+          </div>
+        ))}
       </div>
       <div className="rb-role-card__pills">
         {job.recruiterBoard.label.pills.map((p, i) => <span key={i} className={`rb-pill ${p.tone ?? ""}`}>{p.text}</span>)}
