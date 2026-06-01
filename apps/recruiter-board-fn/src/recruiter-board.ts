@@ -9,6 +9,7 @@
  *   GET  paCollabJobsList          -> sanitized list of WeKruit collab jobs
  *                                     (supports ?limit, ?offset, ?since, ?status)
  *   POST paRecruiterInviteCodeCreate -> admin creates one-use recruiter invite code
+ *   POST paRecruiterInviteCodeReplace -> admin replaces a legacy unrecoverable invite code
  *   GET  paRecruiterMe             -> returns the Firebase Auth-bound recruiter profile
  *   POST paRecruiterAccess         -> validates invite code + binds Firebase Auth uid
  *   POST paRecruiterPreferencesUpdate -> recruiter updates notification settings
@@ -267,6 +268,10 @@ interface RecruiterInviteCodeCreateInput {
   expiresAt?: string
 }
 
+interface RecruiterInviteCodeReplaceInput {
+  inviteCodeId: string
+}
+
 export function normalizeRecruiterInviteCode(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, "")
 }
@@ -367,6 +372,41 @@ export function validateInviteCodeCreate(input: unknown):
     expiresAt = new Date(ms).toISOString()
   }
   return { ok: true, value: { code, label, maxUses: 1, expiresAt } }
+}
+
+export function validateInviteCodeReplace(input: unknown):
+  | { ok: true; value: RecruiterInviteCodeReplaceInput }
+  | { ok: false; reason: string } {
+  if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
+  const b = input as Record<string, unknown>
+  if (!isNonEmptyString(b.inviteCodeId)) return { ok: false, reason: "missing_invite_code_id" }
+  const inviteCodeId = b.inviteCodeId.trim()
+  if (!/^[a-f0-9]{64}$/i.test(inviteCodeId)) return { ok: false, reason: "invalid_invite_code_id" }
+  return { ok: true, value: { inviteCodeId } }
+}
+
+function buildRecruiterInviteCodeDoc(input: {
+  inviteCodeId: string
+  inviteCode: string
+  label?: string | null
+  expiresAt?: string | null
+  createdByEmail: string
+  replacesInviteCodeId?: string
+}): Record<string, unknown> {
+  return {
+    inviteCodeId: input.inviteCodeId,
+    inviteCode: input.inviteCode,
+    active: true,
+    label: input.label ?? null,
+    codePreview: maskRecruiterInviteCode(input.inviteCode),
+    maxUses: 1,
+    usedCount: 0,
+    expiresAt: input.expiresAt ?? null,
+    createdByEmail: input.createdByEmail,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+    ...(input.replacesInviteCodeId ? { replacesInviteCodeId: input.replacesInviteCodeId } : {}),
+  }
 }
 
 function readNotificationPreferences(data: Record<string, unknown> | null | undefined): RecruiterNotificationPreferences {
@@ -935,19 +975,13 @@ export const paRecruiterInviteCodeCreate = onRequest(
       const codeHash = hashRecruiterInviteCode(normalizedCode)
       const ref = db.collection(RECRUITER_INVITE_CODES_COLLECTION).doc(codeHash)
       try {
-        await ref.create({
+        await ref.create(buildRecruiterInviteCodeDoc({
           inviteCodeId: codeHash,
           inviteCode: normalizedCode,
-          active: true,
           label: validated.value.label ?? null,
-          codePreview: maskRecruiterInviteCode(normalizedCode),
-          maxUses: validated.value.maxUses,
-          usedCount: 0,
           expiresAt: validated.value.expiresAt ?? null,
           createdByEmail: adminEmail,
-          createdAt: FieldValue.serverTimestamp(),
-          updatedAt: FieldValue.serverTimestamp(),
-        })
+        }))
         res.set("Cache-Control", "private, max-age=0, no-store")
         res.status(200).json({
           ok: true,
@@ -967,6 +1001,99 @@ export const paRecruiterInviteCodeCreate = onRequest(
           ok: false,
           reason: alreadyExists ? "invite_code_exists" : "internal_error",
         })
+        return
+      }
+    }
+    res.status(500).json({ ok: false, reason: "code_generation_collision" })
+  },
+)
+
+export const paRecruiterInviteCodeReplace = onRequest(
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  async (req, res) => {
+    setCors(res)
+    if (req.method === "OPTIONS") {
+      res.status(204).send("")
+      return
+    }
+    if (req.method !== "POST") {
+      res.status(405).json({ ok: false, reason: "method_not_allowed" })
+      return
+    }
+    const adminEmail = await hiringBoardAdminEmail(req)
+    if (!adminEmail) {
+      res.status(403).json({ ok: false, reason: "forbidden" })
+      return
+    }
+    const validated = validateInviteCodeReplace(req.body)
+    if (!validated.ok) {
+      res.status(400).json({ ok: false, reason: validated.reason })
+      return
+    }
+
+    const db = getFirestore()
+    const oldRef = db.collection(RECRUITER_INVITE_CODES_COLLECTION).doc(validated.value.inviteCodeId)
+    const oldSnap = await oldRef.get()
+    if (!oldSnap.exists) {
+      res.status(404).json({ ok: false, reason: "invite_code_not_found" })
+      return
+    }
+    const oldData = oldSnap.data() as Record<string, unknown>
+    const rawOldCode = typeof oldData.inviteCode === "string" ? oldData.inviteCode.trim() : ""
+    if (isNonEmptyString(rawOldCode)) {
+      res.status(409).json({ ok: false, reason: "invite_code_already_visible" })
+      return
+    }
+    if (!inviteCodeUsable(oldData, Date.now())) {
+      res.status(409).json({ ok: false, reason: "invite_code_not_usable" })
+      return
+    }
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const inviteCode = generateRecruiterInviteCode()
+      const normalizedCode = normalizeRecruiterInviteCode(inviteCode)
+      const inviteCodeId = hashRecruiterInviteCode(normalizedCode)
+      const newRef = db.collection(RECRUITER_INVITE_CODES_COLLECTION).doc(inviteCodeId)
+      const replacementExpiresAt = coerceToIso(oldData.expiresAt) ?? defaultRecruiterInviteCodeExpiresAt()
+      try {
+        const batch = db.batch()
+        batch.create(newRef, buildRecruiterInviteCodeDoc({
+          inviteCodeId,
+          inviteCode: normalizedCode,
+          label: typeof oldData.label === "string" ? oldData.label : null,
+          expiresAt: replacementExpiresAt,
+          createdByEmail: adminEmail,
+          replacesInviteCodeId: validated.value.inviteCodeId,
+        }))
+        batch.set(oldRef, {
+          active: false,
+          replacedByInviteCodeId: inviteCodeId,
+          replacedAt: FieldValue.serverTimestamp(),
+          replacedByEmail: adminEmail,
+          updatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true })
+        await batch.commit()
+        res.set("Cache-Control", "private, max-age=0, no-store")
+        res.status(200).json({
+          ok: true,
+          inviteCode: normalizedCode,
+          inviteCodeId,
+          codePreview: maskRecruiterInviteCode(normalizedCode),
+          maxUses: 1,
+          expiresAt: replacementExpiresAt,
+          replacedInviteCodeId: validated.value.inviteCodeId,
+        })
+        return
+      } catch (err) {
+        const message = String(err)
+        const alreadyExists = message.includes("ALREADY_EXISTS") || message.includes("already exists")
+        if (alreadyExists) continue
+        logger.warn("paRecruiterInviteCodeReplace_failed", {
+          error: message,
+          adminEmail,
+          inviteCodeId: validated.value.inviteCodeId,
+        })
+        res.status(500).json({ ok: false, reason: "internal_error" })
         return
       }
     }

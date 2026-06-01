@@ -12,7 +12,7 @@ import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../component
 import { DataTable, type Column } from "../components/console/primitives.js"
 import { useTable } from "../components/console/useTable.js"
 import { auth, db } from "../lib/firebase.js"
-import { createRecruiterInviteCode, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
+import { createRecruiterInviteCode, replaceRecruiterInviteCode, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
 
 interface SubmissionDoc {
   id: string
@@ -654,6 +654,7 @@ function RecruiterOpsPanel() {
   const [generated, setGenerated] = useState<CreateRecruiterInviteCodeResult | null>(null)
   const [knownInviteCodes, setKnownInviteCodes] = useState<Record<string, string>>(() => readKnownRecruiterInviteCodes())
   const [creating, setCreating] = useState(false)
+  const [replacingCodeId, setReplacingCodeId] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   const reload = async () => {
@@ -690,12 +691,7 @@ function RecruiterOpsPanel() {
         label: label.trim() || undefined,
         expiresAt,
       })
-      setGenerated(result)
-      setKnownInviteCodes((prev) => {
-        const next = { ...prev, [result.inviteCodeId]: result.inviteCode }
-        writeKnownRecruiterInviteCodes(next)
-        return next
-      })
+      rememberGeneratedCode(result)
       setLabel("")
       setExpiresAtLocal(defaultRecruiterCodeExpiryLocal())
       await reload()
@@ -703,6 +699,29 @@ function RecruiterOpsPanel() {
       setErr(error instanceof Error ? error.message : String(error))
     } finally {
       setCreating(false)
+    }
+  }
+
+  const rememberGeneratedCode = (result: CreateRecruiterInviteCodeResult) => {
+    setGenerated(result)
+    setKnownInviteCodes((prev) => {
+      const next = { ...prev, [result.inviteCodeId]: result.inviteCode }
+      writeKnownRecruiterInviteCodes(next)
+      return next
+    })
+  }
+
+  const replaceLegacyCode = async (inviteCodeId: string) => {
+    setReplacingCodeId(inviteCodeId)
+    setErr(null)
+    try {
+      const result = await replaceRecruiterInviteCode(inviteCodeId)
+      rememberGeneratedCode(result)
+      await reload()
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error))
+    } finally {
+      setReplacingCodeId(null)
     }
   }
 
@@ -766,6 +785,11 @@ function RecruiterOpsPanel() {
               <div style={{ fontSize: 11, color: "#666", textTransform: "uppercase", letterSpacing: ".08em" }}>Give this code to the recruiter</div>
               <code style={{ display: "block", marginTop: 6, fontSize: 18, fontWeight: 700 }}>{generated.inviteCode}</code>
               <div style={{ color: "#777", fontSize: 12, marginTop: 4 }}>Expires {formatCodeExpiry(generated.expiresAt)}</div>
+              {generated.replacedInviteCodeId && (
+                <div style={{ color: "#7a3e10", fontSize: 12, marginTop: 4 }}>
+                  Replaced the unrecoverable legacy code and disabled the old row.
+                </div>
+              )}
               <button
                 type="button"
                 onClick={() => void navigator.clipboard?.writeText(generated.inviteCode)}
@@ -776,7 +800,7 @@ function RecruiterOpsPanel() {
             </div>
           )}
         </form>
-        <OpsSection title="Access codes" subtitle="Admins can view and copy one-use recruiter codes. Legacy rows without a saved raw code must be reissued.">
+        <OpsSection title="Access codes" subtitle="Admins can view and copy one-use recruiter codes. Legacy hash-only rows can be replaced with a visible code.">
           {sortedCodes.length ? (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -822,7 +846,17 @@ function RecruiterOpsPanel() {
                               Copy
                             </button>
                           ) : rawMissing ? (
-                            <span style={{ color: "#9a4b12" }}>Reissue</span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                void replaceLegacyCode(code.id)
+                              }}
+                              disabled={replacingCodeId === code.id}
+                              style={{ padding: "5px 8px", border: "1px solid #d9b892", borderRadius: 6, background: "#fff7ed", color: "#7a3e10", fontSize: 12 }}
+                            >
+                              {replacingCodeId === code.id ? "Replacing..." : "Replace"}
+                            </button>
                           ) : (
                             <span style={{ color: "#999" }}>—</span>
                           )}

@@ -33,6 +33,7 @@ import {
   shouldNotifyRecruitersForRoleRelease,
   sanitizeSubmissionStatusHistory,
   validateInviteCodeCreate,
+  validateInviteCodeReplace,
   validateRecruiterRoleFeedbackInput,
   validateRecruiterRoleQuestionInput,
   validateRecruiterSourcedCandidateInput,
@@ -163,6 +164,18 @@ describe("recruiter access helpers", () => {
     })
     assert.equal(inviteCodeUsable({ active: true, maxUses: 5, usedCount: 0 }, Date.now()), true)
     assert.equal(inviteCodeUsable({ active: true, maxUses: 5, usedCount: 1 }, Date.now()), false)
+  })
+
+  it("validates legacy invite-code replacement requests by hashed id", () => {
+    const inviteCodeId = hashRecruiterInviteCode("WK-CDKE-AUC5")
+    assert.deepEqual(validateInviteCodeReplace({ inviteCodeId }), {
+      ok: true,
+      value: { inviteCodeId },
+    })
+    assert.deepEqual(validateInviteCodeReplace({ inviteCodeId: "WK-CDKE-AUC5" }), {
+      ok: false,
+      reason: "invalid_invite_code_id",
+    })
   })
 
   it("lets a bound recruiter reuse only their own access code with the same Google account", () => {
