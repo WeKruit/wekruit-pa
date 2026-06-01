@@ -15,17 +15,8 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "typeRoots": ["../pa-landing/node_modules/@types"]
+    "typeRoots": ["../../node_modules/@types"]
   },
-  "include": [
-    "src",
-    "../pa-landing/src/pages/RecruiterBoard.tsx",
-    "../pa-landing/src/pages/RecruiterRole.tsx",
-    "../pa-landing/src/lib/firebase.ts",
-    "../pa-landing/src/lib/auth-redirect-bootstrap.ts",
-    "../pa-landing/src/lib/cross-domain-sso.ts",
-    "../pa-landing/src/lib/recruiter-board-api.ts",
-    "../pa-landing/src/lib/recruiter-inbox.ts"
-  ],
+  "include": ["src"],
   "references": []
 }

@@ -1,9 +1,9 @@
 import React from "react"
 import ReactDOM from "react-dom/client"
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
-import "../../pa-landing/src/lib/auth-redirect-bootstrap.js"
-import RecruiterBoard from "../../pa-landing/src/pages/RecruiterBoard.js"
-import RecruiterRole from "../../pa-landing/src/pages/RecruiterRole.js"
+import "./lib/auth-redirect-bootstrap.js"
+import RecruiterBoard from "./pages/RecruiterBoard.js"
+import RecruiterRole from "./pages/RecruiterRole.js"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("Missing #root element")

@@ -1327,7 +1327,7 @@ function RecruiterRolesPanel() {
           </div>
           <div style={{ color: "#777", fontSize: 11 }}>{row.company} · {row.location}</div>
           <a
-            href={`https://candidate.wekruit.com/recruiters/job/${encodeURIComponent(row.publicId)}`}
+            href={`https://wekruit-recruiters.web.app/recruiters/job/${encodeURIComponent(row.publicId)}`}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}

@@ -6,6 +6,7 @@ dist-cjs/
 .env.local
 apps/dashboard-web/.env.production.local
 apps/dashboard-web/.env.pa-firebase-generated
+apps/recruiter-web/.env.production.local
 *.log
 *.tsbuildinfo
 .DS_Store

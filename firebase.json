@@ -151,7 +151,7 @@
       ]
     },
     {
-      "_comment": "Recruiter-only SPA. Keeps partner recruiter workspace isolated from candidate-facing pa-landing routes while reusing the recruiter route modules during extraction.",
+      "_comment": "Recruiter-only SPA. Keeps partner recruiter workspace isolated from candidate-facing pa-landing routes.",
       "target": "pa-recruiter",
       "public": "apps/recruiter-web/dist",
       "ignore": [
@@ -160,9 +160,9 @@
         "**/node_modules/**"
       ],
       "predeploy": [
-        "node scripts/inject-pa-landing-vite-env.mjs",
-        "npm exec --workspace=@pa/landing -- tsc -p ../recruiter-web/tsconfig.json --noEmit",
-        "npm exec --workspace=@pa/landing -- vite build --config ../recruiter-web/vite.config.ts"
+        "node scripts/inject-recruiter-vite-env.mjs",
+        "npm exec -- tsc -p apps/recruiter-web/tsconfig.json --noEmit",
+        "npm exec -- vite build --config apps/recruiter-web/vite.config.ts"
       ],
       "rewrites": [
         {
