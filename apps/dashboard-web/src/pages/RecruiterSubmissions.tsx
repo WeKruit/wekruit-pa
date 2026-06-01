@@ -92,6 +92,8 @@ function consentBadge(status: string | undefined): { label: string; tone: "ok" |
 }
 
 const STATUS_VALUES = ["submitted", "new", "reviewing", "advanced", "interviewing", "hired", "rejected", "duplicate"]
+const RECRUITER_WEEKLY_SUBMISSION_TARGET = 8
+const RECRUITER_INTERVIEW_RATE_TARGET = 50
 
 const SUBMISSION_FEEDBACK_REASONS = [
   { id: "strong_match", label: "Strong match" },
@@ -163,6 +165,11 @@ interface RecruiterProfileDoc {
   name?: string
   email?: string
   status?: string
+  reviewNote?: string | null
+  reviewUpdatedAt?: { seconds?: number } | string | null
+  reviewUpdatedByEmail?: string | null
+  registeredAt?: { seconds?: number } | string | null
+  lastSeenAt?: { seconds?: number } | string | null
   notificationPreferences?: { newRolesEmail?: boolean }
 }
 
@@ -247,6 +254,33 @@ interface RecruiterRoleApplicationDoc {
   updatedAtMs?: number
 }
 
+interface RecruiterQualityRow {
+  id: string
+  profile: RecruiterProfileDoc
+  name: string
+  email: string
+  status: string
+  statusTone: Parameters<typeof Badge>[0]["tone"]
+  reviewLabel: string
+  reviewTone: Parameters<typeof Badge>[0]["tone"]
+  qualityScore: number
+  avgRating: number | null
+  submissionsTotal: number
+  submissions7d: number
+  weeklyTargetPct: number
+  activeSubmissions: number
+  advancedCount: number
+  movementRate: number
+  rejectionDrag: number
+  sourcedActive: number
+  readyCandidates: number
+  approvedRoles: number
+  pendingApplications: number
+  roleCoveragePct: number
+  coveredApprovedRoles: number
+  lastActivityMs: number
+}
+
 function timestampToMs(raw: unknown): number {
   if (!raw) return 0
   if (typeof raw === "string") return Date.parse(raw) || 0
@@ -270,6 +304,11 @@ function defaultRecruiterCodeExpiryLocal(): string {
 function formatOpsDate(raw: unknown): string {
   const ms = timestampToMs(raw)
   return ms ? new Date(ms).toLocaleString() : "—"
+}
+
+function formatCompactOpsDate(raw: unknown): string {
+  const ms = timestampToMs(raw)
+  return ms ? new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—"
 }
 
 function formatCodeExpiry(raw?: string | null): string {
@@ -310,13 +349,125 @@ function writeKnownRecruiterInviteCodes(codes: Record<string, string>): void {
   }
 }
 
-type RecruiterAdminSection = "codes" | "applications" | "sourced" | "feedback" | "questions" | "submissions"
+type RecruiterAdminSection = "codes" | "quality" | "applications" | "sourced" | "feedback" | "questions" | "submissions"
 
 function codeStatus(code: RecruiterInviteCodeDoc): { label: string; tone: Parameters<typeof Badge>[0]["tone"] } {
   if (code.active === false) return { label: "disabled", tone: "muted" }
   if ((code.usedCount ?? 0) >= 1) return { label: "used", tone: "info" }
   if (code.expiresAt && Date.parse(code.expiresAt) <= Date.now()) return { label: "expired", tone: "warn" }
   return { label: "usable", tone: "ok" }
+}
+
+function recruiterAccountStatusTone(status?: string): Parameters<typeof Badge>[0]["tone"] {
+  switch (status) {
+    case "disabled": return "warn"
+    case "under_review": return "info"
+    case "active":
+    case undefined:
+    case "":
+      return "ok"
+    default:
+      return "muted"
+  }
+}
+
+function recruiterKeyMatches(row: { recruiterId?: string | null; recruiterEmail?: string }, profile: RecruiterProfileDoc): boolean {
+  const email = profile.email?.trim().toLowerCase()
+  return row.recruiterId === profile.id || Boolean(email && row.recruiterEmail?.trim().toLowerCase() === email)
+}
+
+function rowJobKey(row: { inboundJobId?: string; jobId?: string }): string {
+  return (row.inboundJobId || row.jobId || "").trim()
+}
+
+function computeRecruiterQualityRows(
+  profiles: RecruiterProfileDoc[],
+  submissions: SubmissionDoc[],
+  sourcedCandidates: SourcedCandidateDoc[],
+  applications: RecruiterRoleApplicationDoc[],
+): RecruiterQualityRow[] {
+  const weekStartMs = Date.now() - 7 * 86_400_000
+  return profiles.map((profile) => {
+    const recruiterSubmissions = submissions.filter((s) => recruiterKeyMatches(s, profile))
+    const recruiterCandidates = sourcedCandidates.filter((c) => recruiterKeyMatches(c, profile))
+    const recruiterApplications = applications.filter((a) => recruiterKeyMatches(a, profile))
+    const ratings = recruiterSubmissions
+      .map((s) => normalizeFeedbackRating(s.recruiterFeedbackRating))
+      .filter((n): n is number => n !== null)
+    const avgRating = ratings.length ? ratings.reduce((sum, n) => sum + n, 0) / ratings.length : null
+    const submissions7d = recruiterSubmissions.filter((s) => timestampToMs(s.createdAt) >= weekStartMs).length
+    const activeSubmissions = recruiterSubmissions.filter((s) => ["submitted", "new", "reviewing", "advanced", "interviewing"].includes(s.status ?? "submitted")).length
+    const advancedCount = recruiterSubmissions.filter((s) => ["advanced", "interviewing", "hired"].includes(s.status ?? "")).length
+    const negativeCount = recruiterSubmissions.filter((s) => ["rejected", "duplicate"].includes(s.status ?? "")).length
+    const movementRate = recruiterSubmissions.length ? Math.round((advancedCount / recruiterSubmissions.length) * 100) : 0
+    const rejectionDrag = recruiterSubmissions.length ? Math.round((negativeCount / recruiterSubmissions.length) * 100) : 0
+    const approvedApplications = recruiterApplications.filter((a) => a.status === "approved")
+    const pendingApplications = recruiterApplications.filter((a) => (a.status ?? "pending") === "pending").length
+    const approvedRoleIds = [...new Set(approvedApplications.map(rowJobKey).filter(Boolean))]
+    const activeRoleIds = new Set([
+      ...recruiterSubmissions.filter((s) => ["submitted", "new", "reviewing", "advanced", "interviewing", "hired"].includes(s.status ?? "submitted")).map(rowJobKey),
+      ...recruiterCandidates.filter((c) => c.stage !== "archived").map(rowJobKey),
+    ].filter(Boolean))
+    const coveredApprovedRoles = approvedRoleIds.filter((id) => activeRoleIds.has(id)).length
+    const roleCoveragePct = approvedRoleIds.length ? Math.round((coveredApprovedRoles / approvedRoleIds.length) * 100) : 0
+    const readyCandidates = recruiterCandidates.filter((c) => c.stage === "ready").length
+    const sourcedActive = recruiterCandidates.filter((c) => c.stage !== "archived").length
+    const weeklyTargetPct = Math.min(100, Math.round((submissions7d / RECRUITER_WEEKLY_SUBMISSION_TARGET) * 100))
+    const ratingScore = avgRating !== null ? (avgRating / 4) * 45 : 26
+    const movementScore = Math.min(30, (movementRate / RECRUITER_INTERVIEW_RATE_TARGET) * 30)
+    const weeklyScore = Math.min(15, (submissions7d / RECRUITER_WEEKLY_SUBMISSION_TARGET) * 15)
+    const coverageScore = approvedRoleIds.length ? Math.min(10, (roleCoveragePct / 100) * 10) : 4
+    const penalty = Math.min(20, rejectionDrag / 4)
+    const qualityScore = Math.max(0, Math.min(100, Math.round(ratingScore + movementScore + weeklyScore + coverageScore - penalty)))
+    const lastActivityMs = Math.max(
+      timestampToMs(profile.lastSeenAt),
+      ...recruiterSubmissions.map((s) => timestampToMs(s.recruiterFeedbackUpdatedAt ?? s.createdAt)),
+      ...recruiterCandidates.map((c) => timestampToMs(c.updatedAt ?? c.createdAt)),
+      ...recruiterApplications.map((a) => timestampToMs(a.updatedAt ?? a.createdAt)),
+    )
+    const needsReview =
+      profile.status === "under_review" ||
+      pendingApplications > 0 ||
+      (approvedRoleIds.length > 0 && roleCoveragePct < 50) ||
+      (recruiterSubmissions.length >= 3 && qualityScore < 55) ||
+      (rejectionDrag >= 50 && recruiterSubmissions.length >= 3)
+    const reviewLabel =
+      profile.status === "disabled" ? "Disabled" :
+      needsReview ? "Needs review" :
+      qualityScore >= 78 && movementRate >= 30 ? "Trusted" :
+      "Monitor"
+    const reviewTone =
+      profile.status === "disabled" ? "warn" :
+      needsReview ? "info" :
+      qualityScore >= 78 && movementRate >= 30 ? "ok" :
+      "muted"
+    return {
+      id: profile.id,
+      profile,
+      name: profile.name || profile.email || "Recruiter",
+      email: profile.email || profile.firebaseUid || profile.id,
+      status: profile.status || "active",
+      statusTone: recruiterAccountStatusTone(profile.status),
+      reviewLabel,
+      reviewTone,
+      qualityScore,
+      avgRating,
+      submissionsTotal: recruiterSubmissions.length,
+      submissions7d,
+      weeklyTargetPct,
+      activeSubmissions,
+      advancedCount,
+      movementRate,
+      rejectionDrag,
+      sourcedActive,
+      readyCandidates,
+      approvedRoles: approvedRoleIds.length,
+      pendingApplications,
+      roleCoveragePct,
+      coveredApprovedRoles,
+      lastActivityMs,
+    }
+  })
 }
 
 export default function RecruiterSubmissions({ section = "submissions" }: { section?: RecruiterAdminSection }) {
@@ -441,28 +592,32 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
         title={
           section === "codes"
             ? "Recruiter Access"
-            : section === "applications"
-              ? "Recruiter Applications"
-            : section === "sourced"
-              ? "Recruiter Sourced Candidates"
-              : section === "feedback"
-                ? "Recruiter Role Feedback"
-                : section === "questions"
-                  ? "Recruiter Role Questions"
-                : "Recruiter Submissions"
+            : section === "quality"
+              ? "Recruiter Quality"
+              : section === "applications"
+                ? "Recruiter Applications"
+                : section === "sourced"
+                  ? "Recruiter Sourced Candidates"
+                  : section === "feedback"
+                    ? "Recruiter Role Feedback"
+                    : section === "questions"
+                      ? "Recruiter Role Questions"
+                      : "Recruiter Submissions"
         }
         description={
           section === "codes"
             ? "Create one-use recruiter access codes, review recruiter accounts, and monitor new-role alerts."
-            : section === "applications"
-              ? "Review recruiter requests to work specific roles, approve trusted coverage, and reject weak or over-capacity searches."
-            : section === "sourced"
-              ? "Review sourced prospects before formal submission, calibrate recruiters, and monitor role-level supply."
-              : section === "feedback"
-                ? "Review recruiter market feedback on role difficulty, blockers, and calibration gaps."
-                : section === "questions"
-                  ? "Answer recruiter role-calibration questions before they waste sourcing cycles."
-                : "Review recruiter-submitted candidates and move each submission through the hiring-board pipeline."
+            : section === "quality"
+              ? "Review recruiter activity, rating, role coverage, and account status before granting more access."
+              : section === "applications"
+                ? "Review recruiter requests to work specific roles, approve trusted coverage, and reject weak or over-capacity searches."
+                : section === "sourced"
+                  ? "Review sourced prospects before formal submission, calibrate recruiters, and monitor role-level supply."
+                  : section === "feedback"
+                    ? "Review recruiter market feedback on role difficulty, blockers, and calibration gaps."
+                    : section === "questions"
+                      ? "Answer recruiter role-calibration questions before they waste sourcing cycles."
+                      : "Review recruiter-submitted candidates and move each submission through the hiring-board pipeline."
         }
       />
       <RecruiterSectionTabs active={section} />
@@ -483,6 +638,15 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
       <div>
         {header}
         <RecruiterSourcedCandidatesPanel />
+      </div>
+    )
+  }
+
+  if (section === "quality") {
+    return (
+      <div>
+        {header}
+        <RecruiterQualityPanel />
       </div>
     )
   }
@@ -697,6 +861,12 @@ function RecruiterSectionTabs({ active }: { active: RecruiterAdminSection }) {
       detail: "Invite codes, accounts, role alerts",
     },
     {
+      key: "quality",
+      label: "Quality",
+      to: "/admin/recruiter-quality",
+      detail: "Ratings, activity, account review",
+    },
+    {
       key: "applications",
       label: "Applications",
       to: "/admin/recruiter-applications",
@@ -733,7 +903,7 @@ function RecruiterSectionTabs({ active }: { active: RecruiterAdminSection }) {
       aria-label="Recruiter admin sections"
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+        gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
         gap: 12,
         margin: "0 0 16px",
       }}
@@ -971,12 +1141,17 @@ function RecruiterOpsPanel() {
                       ? code.inviteCode
                       : knownInviteCodes[code.id]
                     const canCopy = isFullRecruiterInviteCode(rawInviteCode)
-                    const visibleCode = canCopy ? rawInviteCode : (code.codePreview ? code.codePreview : "Preview only")
+                    const visibleCode = canCopy ? rawInviteCode : "Not stored"
                     const rawMissing = !canCopy && status.label === "usable"
                     return (
                       <tr key={code.id} style={{ borderBottom: "1px solid #f1f1f1" }}>
                         <td style={{ padding: "9px 6px", fontFamily: "monospace", fontWeight: 700, whiteSpace: "nowrap" }}>
-                          <div>{visibleCode}</div>
+                          <div style={{ userSelect: "all" }}>{visibleCode}</div>
+                          {!canCopy && code.codePreview && (
+                            <div style={{ marginTop: 3, color: "#999", fontFamily: "Inter, system-ui, sans-serif", fontSize: 11, fontWeight: 500 }}>
+                              Preview: {code.codePreview}
+                            </div>
+                          )}
                           {rawMissing && (
                             <div style={{ marginTop: 6, display: "grid", gap: 6, fontFamily: "Inter, system-ui, sans-serif", fontWeight: 500, color: "#7a3e10", fontSize: 11, whiteSpace: "normal", maxWidth: 260 }}>
                               <span>Legacy hash-only row. The full code cannot be revealed because it was never stored.</span>
@@ -1080,6 +1255,315 @@ function RecruiterOpsPanel() {
           ))}
           {!notifications.length && <EmptyOpsText>No role notifications yet.</EmptyOpsText>}
         </OpsSection>
+      </div>
+    </Panel>
+  )
+}
+
+function RecruiterQualityPanel() {
+  const [profiles, setProfiles] = useState<RecruiterProfileDoc[]>([])
+  const [submissions, setSubmissions] = useState<SubmissionDoc[]>([])
+  const [candidates, setCandidates] = useState<SourcedCandidateDoc[]>([])
+  const [applications, setApplications] = useState<RecruiterRoleApplicationDoc[]>([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  const reload = async () => {
+    setLoading(true)
+    setErr(null)
+    try {
+      const [profileSnap, submissionSnap, candidateSnap, applicationSnap] = await Promise.all([
+        getDocs(collection(db(), "pa-recruiter-users")),
+        getDocs(query(collection(db(), "pa-recruiter-submissions"), limit(1000))),
+        getDocs(query(collection(db(), "pa-recruiter-sourced-candidates"), limit(1000))),
+        getDocs(query(collection(db(), "pa-recruiter-role-applications"), limit(1000))),
+      ])
+      setProfiles(profileSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterProfileDoc, "id">) })))
+      setSubmissions(submissionSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SubmissionDoc, "id">) })))
+      setCandidates(candidateSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SourcedCandidateDoc, "id">) })))
+      setApplications(applicationSnap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<RecruiterRoleApplicationDoc, "id">) })))
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void reload()
+  }, [])
+
+  const rows = useMemo(
+    () => computeRecruiterQualityRows(profiles, submissions, candidates, applications),
+    [applications, candidates, profiles, submissions],
+  )
+
+  const table = useTable<RecruiterQualityRow>(rows, {
+    defaultSort: { key: "qualityScore", dir: "desc" },
+    pageSize: 50,
+    search: (r, q) =>
+      r.name.toLowerCase().includes(q) ||
+      r.email.toLowerCase().includes(q) ||
+      (r.profile.reviewNote?.toLowerCase().includes(q) ?? false),
+    chips: [
+      {
+        id: "status",
+        label: "Account",
+        multi: true,
+        options: ["active", "under_review", "disabled"].map((status) => ({
+          key: status,
+          label: prettyKey(status),
+          test: (r: RecruiterQualityRow) => r.status === status,
+        })),
+      },
+      {
+        id: "review",
+        label: "Review",
+        multi: true,
+        options: ["Needs review", "Trusted", "Monitor", "Disabled"].map((label) => ({
+          key: label,
+          label,
+          test: (r: RecruiterQualityRow) => r.reviewLabel === label,
+        })),
+      },
+    ],
+  })
+
+  const metrics = {
+    total: rows.length,
+    needsReview: rows.filter((r) => r.reviewLabel === "Needs review").length,
+    avgRating: rows.length
+      ? rows
+        .filter((r) => r.avgRating !== null)
+        .reduce((sum, r, _, ratedRows) => sum + (r.avgRating ?? 0) / Math.max(1, ratedRows.length), 0)
+      : 0,
+    weeklySubmissions: rows.reduce((sum, r) => sum + r.submissions7d, 0),
+  }
+
+  if (loading) return <LoadingState label="Loading recruiter quality..." />
+  if (err) return <ErrorState message={err} />
+
+  const columns: Column<RecruiterQualityRow>[] = [
+    {
+      key: "name",
+      label: "Recruiter",
+      sortable: true,
+      render: (r) => (
+        <>
+          <div style={{ fontWeight: 600 }}>{r.name}</div>
+          <div style={{ color: "#777", fontSize: 11 }}>{r.email}</div>
+          {r.profile.reviewNote && <div style={{ color: "#7a3e10", fontSize: 11, marginTop: 2 }}>{r.profile.reviewNote.slice(0, 80)}</div>}
+        </>
+      ),
+    },
+    {
+      key: "status",
+      label: "Account",
+      sortable: true,
+      width: 130,
+      render: (r) => <Badge tone={r.statusTone}>{prettyKey(r.status)}</Badge>,
+    },
+    {
+      key: "reviewLabel",
+      label: "Review",
+      sortable: true,
+      width: 130,
+      render: (r) => <Badge tone={r.reviewTone}>{r.reviewLabel}</Badge>,
+    },
+    {
+      key: "qualityScore",
+      label: "Quality",
+      sortable: true,
+      width: 105,
+      render: (r) => <b>{r.qualityScore}</b>,
+    },
+    {
+      key: "avgRating",
+      label: "Rating",
+      sortable: true,
+      width: 105,
+      render: (r) => r.avgRating === null ? "unrated" : `${r.avgRating.toFixed(1)}/4`,
+    },
+    {
+      key: "submissions7d",
+      label: "7d pace",
+      sortable: true,
+      width: 105,
+      render: (r) => `${r.submissions7d}/${RECRUITER_WEEKLY_SUBMISSION_TARGET}`,
+    },
+    {
+      key: "roleCoveragePct",
+      label: "Coverage",
+      sortable: true,
+      width: 110,
+      render: (r) => r.approvedRoles ? `${r.coveredApprovedRoles}/${r.approvedRoles} · ${r.roleCoveragePct}%` : "no approved roles",
+    },
+    {
+      key: "movementRate",
+      label: "Movement",
+      sortable: true,
+      width: 105,
+      render: (r) => `${r.movementRate}%`,
+    },
+    {
+      key: "lastActivityMs",
+      label: "Last activity",
+      sortable: true,
+      width: 130,
+      render: (r) => formatCompactOpsDate(r.lastActivityMs),
+    },
+  ]
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+        <OpsMetric label="Recruiters" value={metrics.total} />
+        <OpsMetric label="Needs review" value={metrics.needsReview} />
+        <OpsMetric label="Avg rating" value={metrics.avgRating ? `${metrics.avgRating.toFixed(1)}/4` : "unrated"} />
+        <OpsMetric label="7d submissions" value={metrics.weeklySubmissions} meta={`Target ${rows.length * RECRUITER_WEEKLY_SUBMISSION_TARGET}`} />
+      </div>
+      <Panel actions={<button type="button" onClick={() => void reload()}>Refresh</button>}>
+        <DataTable<RecruiterQualityRow>
+          columns={columns}
+          rows={table.visibleRows}
+          chips={table.chipsForRender}
+          search={table.search}
+          onSearch={table.setSearch}
+          searchPlaceholder="Search recruiter / review note..."
+          sort={table.sort}
+          onSort={table.toggleSort}
+          page={table.page}
+          pageCount={table.pageCount}
+          onPageChange={table.setPage}
+          onResetFilters={table.reset}
+          count={table.filteredCount}
+          totalCount={table.totalRows}
+          onRowClick={(r) => setExpandedId(expandedId === r.id ? null : r.id)}
+          empty={
+            <div style={{ padding: 40, textAlign: "center", color: "#777" }}>
+              No recruiter accounts yet.
+            </div>
+          }
+        />
+      </Panel>
+      {expandedId && (() => {
+        const row = rows.find((r) => r.id === expandedId)
+        if (!row) return null
+        return (
+          <RecruiterQualityDetailPanel
+            row={row}
+            onClose={() => setExpandedId(null)}
+            onUpdated={(profile) => {
+              setProfiles((prev) => prev.map((p) => p.id === profile.id ? { ...p, ...profile } : p))
+            }}
+          />
+        )
+      })()}
+    </div>
+  )
+}
+
+function RecruiterQualityDetailPanel({
+  row,
+  onClose,
+  onUpdated,
+}: {
+  row: RecruiterQualityRow
+  onClose: () => void
+  onUpdated: (profile: RecruiterProfileDoc) => void
+}) {
+  const [status, setStatus] = useState(row.status)
+  const [reviewNote, setReviewNote] = useState(row.profile.reviewNote ?? "")
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const saveReview = async () => {
+    setSaving(true)
+    setErr(null)
+    try {
+      const reviewUpdatedByEmail = auth().currentUser?.email ?? "operator"
+      const cleanNote = reviewNote.trim()
+      await updateDoc(doc(db(), "pa-recruiter-users", row.profile.id), {
+        status,
+        reviewNote: cleanNote || null,
+        reviewUpdatedByEmail,
+        reviewUpdatedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        accountReviewHistory: arrayUnion({
+          status,
+          by: "admin",
+          adminEmail: reviewUpdatedByEmail,
+          atIso: new Date().toISOString(),
+          ...(cleanNote ? { note: cleanNote } : {}),
+        }),
+      })
+      onUpdated({
+        ...row.profile,
+        status,
+        reviewNote: cleanNote || null,
+        reviewUpdatedByEmail,
+      })
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Panel title="Recruiter account review" eyebrow={row.email}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+        <OpsMetric label="Quality score" value={row.qualityScore} meta={row.reviewLabel} />
+        <OpsMetric label="Rating" value={row.avgRating === null ? "unrated" : `${row.avgRating.toFixed(1)}/4`} />
+        <OpsMetric label="7d pace" value={`${row.submissions7d}/${RECRUITER_WEEKLY_SUBMISSION_TARGET}`} meta={`${row.weeklyTargetPct}% of target`} />
+        <OpsMetric label="Coverage" value={row.approvedRoles ? `${row.coveredApprovedRoles}/${row.approvedRoles}` : "0"} meta={row.approvedRoles ? `${row.roleCoveragePct}% approved roles active` : "no approved roles"} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div style={{ display: "grid", gap: 8, fontSize: 13 }}>
+          <div><b>Recruiter:</b> {row.name}</div>
+          <div><b>Email:</b> {row.email}</div>
+          <div><b>Total submissions:</b> {row.submissionsTotal}</div>
+          <div><b>Active submissions:</b> {row.activeSubmissions}</div>
+          <div><b>Advanced/interviewing/hired:</b> {row.advancedCount} ({row.movementRate}%)</div>
+          <div><b>Rejected/duplicate drag:</b> {row.rejectionDrag}%</div>
+          <div><b>Sourced candidates:</b> {row.sourcedActive} active · {row.readyCandidates} ready</div>
+          <div><b>Role applications:</b> {row.approvedRoles} approved · {row.pendingApplications} pending</div>
+        </div>
+        <div style={{ display: "grid", gap: 10 }}>
+          <label style={{ display: "grid", gap: 6, fontSize: 13, color: "#555" }}>
+            Account status
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 8, font: "inherit", color: "#222" }}
+            >
+              {["active", "under_review", "disabled"].map((s) => <option key={s} value={s}>{prettyKey(s)}</option>)}
+            </select>
+          </label>
+          <label style={{ display: "grid", gap: 6, fontSize: 13, color: "#555" }}>
+            Admin review note
+            <textarea
+              value={reviewNote}
+              onChange={(e) => setReviewNote(e.target.value)}
+              rows={6}
+              placeholder="Why this recruiter should get more access, be monitored, or be disabled..."
+              style={{ resize: "vertical", padding: 10, border: "1px solid #ddd", borderRadius: 8, font: "inherit", color: "#222" }}
+            />
+          </label>
+        </div>
+      </div>
+      {status === "disabled" && (
+        <div style={{ marginTop: 14, border: "1px solid #efc56f", borderRadius: 8, background: "#fffaf1", padding: 12, color: "#5c3b05", fontSize: 13 }}>
+          Disabling a recruiter blocks the recruiter-board functions from loading this account.
+        </div>
+      )}
+      {err && <div style={{ color: "#a00", fontSize: 13, marginTop: 10 }}>{err}</div>}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 16 }}>
+        <button type="button" onClick={() => void saveReview()} disabled={saving}>
+          {saving ? "Saving..." : "Save account review"}
+        </button>
+        <button type="button" onClick={onClose} disabled={saving}>Close</button>
       </div>
     </Panel>
   )
@@ -2184,7 +2668,7 @@ function EmptyOpsText({ children }: { children: ReactNode }) {
   return <p style={{ color: "#777", fontSize: 12, margin: 0 }}>{children}</p>
 }
 
-function OpsMetric({ label, value, meta }: { label: string; value: number; meta?: string }) {
+function OpsMetric({ label, value, meta }: { label: string; value: number | string; meta?: string }) {
   return (
     <div style={{ border: "1px solid #eee", borderRadius: 8, padding: 12, background: "#fff" }}>
       <div style={{ color: "#777", fontSize: 11, textTransform: "uppercase", letterSpacing: ".08em" }}>{label}</div>
