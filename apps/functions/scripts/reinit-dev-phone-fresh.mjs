@@ -12,7 +12,7 @@ let raw = readFileSync(process.env.PA_ENV_PATH, "utf8").match(/^FIREBASE_SERVICE
 if ((raw.startsWith("'")&&raw.endsWith("'"))||(raw.startsWith('"')&&raw.endsWith('"'))) raw = raw.slice(1,-1)
 admin.initializeApp({ credential: admin.credential.cert(JSON.parse(raw)), projectId: "wekruit-5f89b" })
 const db = admin.firestore()
-const PHONE = "+14243201960"
+const PHONE = process.env.REINIT_PHONE || "+14243201960"
 const now = new Date().toISOString()
 
 // 1. Resolve phone → userId (query pa-users.phoneE164; assert single).
@@ -62,6 +62,10 @@ await db.collection("pa-users").doc(uid).update({
   onboardingStatus: "invited",
   sharedOnboarding: admin.firestore.FieldValue.delete(),
   workSession: admin.firestore.FieldValue.delete(),
+  // lastCollabRoles is conversation-derived (find_match results), NOT durable résumé data — clear it
+  // so the post-onboarding auto-match repopulates a FRESH set (no stale matched roles linger).
+  lastCollabRoles: admin.firestore.FieldValue.delete(),
+  lastCollabRolesAt: admin.firestore.FieldValue.delete(),
   reinitFreshAt: now,
   updatedAt: now,
 })
