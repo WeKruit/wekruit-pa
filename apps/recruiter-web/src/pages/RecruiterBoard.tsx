@@ -32,11 +32,13 @@ import {
   getRecruiterProfile,
   markRecruiterNotificationsRead,
   registerRecruiterAccess,
+  checkRecruiterCandidateIdentity,
   resendRecruiterCandidateConfirmation,
   saveRecruiterSourcedCandidate,
   saveRecruiterRoleApplication,
   updateRecruiterPreferences,
   type CollabJob,
+  type RecruiterCandidateIdentityCheckResult,
   type RecruiterCandidateOutreachStatus,
   type RecruiterNotificationItem,
   type RecruiterRoleApplicationInput,
@@ -5816,6 +5818,29 @@ type CandidateSourcingCommand = {
   }>
 }
 
+type CandidateOwnershipRule = {
+  label: string
+  title: string
+  body: string
+  tone: OperatingTone
+}
+
+type CandidateOwnershipDesk = {
+  label: string
+  title: string
+  body: string
+  tone: OperatingTone
+  cards: RecruiterOperatingMetric[]
+  rules: CandidateOwnershipRule[]
+}
+
+type CandidateIdentityCheckState = {
+  status: "clear" | "conflict" | "error"
+  title: string
+  body: string
+  tone: OperatingTone
+}
+
 function candidateSourcingPriority(candidate: RecruiterSourcedCandidateItem, duplicates: Set<string>): number {
   const followUp = candidateFollowUpState(candidate)
   if (duplicates.has(candidate.id)) return 98
@@ -5841,6 +5866,119 @@ function candidateCommandBody(candidate: RecruiterSourcedCandidateItem, duplicat
   if (candidate.outreach?.status === "responded") return "Candidate responded. Screen for comp, interest, hard filters, and role fit."
   if (candidate.stage === "screened") return "Screening is done. Mark ready once candidate interest and hard checks are clear."
   return "Add outreach notes, set a follow-up, or match this candidate against open roles."
+}
+
+function identityConflictCopy(
+  conflict: NonNullable<RecruiterCandidateIdentityCheckResult["conflict"]>,
+): CandidateIdentityCheckState {
+  if (conflict.reason === "candidate_already_submitted_for_role") {
+    return {
+      status: "conflict",
+      title: "Already submitted for this role",
+      body: "Do not contact or save this candidate for the selected company lane. Work another candidate or review the existing submission trail.",
+      tone: "warn",
+    }
+  }
+  return {
+    status: "conflict",
+    title: "Already sourced by another recruiter",
+    body: "This candidate is already in motion for the selected role. Pick another candidate or ask WeKruit for calibration before more outreach.",
+    tone: "warn",
+  }
+}
+
+function buildCandidateOwnershipDesk(
+  candidates: RecruiterSourcedCandidateItem[],
+  submissions: RecruiterSubmissionItem[],
+): CandidateOwnershipDesk {
+  const activeCandidates = candidates.filter((candidate) => candidate.stage !== "archived")
+  const duplicateIds = duplicateCandidateIds(activeCandidates)
+  const roleTiedCandidates = activeCandidates.filter((candidate) => Boolean(candidate.inboundJobId || candidate.jobId))
+  const privateBench = activeCandidates.filter((candidate) => !candidate.inboundJobId && !candidate.jobId)
+  const contactedCandidates = activeCandidates.filter((candidate) => candidate.outreach?.status && candidate.outreach.status !== "not_contacted")
+  const pendingConsent = submissions.filter(candidateConfirmationCanResend)
+  const duplicateSubmissions = submissions.filter((submission) => submission.status === "duplicate")
+  const submittedReceipts = submissions.filter((submission) => submission.status !== "duplicate")
+  const title = duplicateIds.size
+    ? "Clean duplicate identity before more outreach"
+    : pendingConsent.length
+      ? "Candidate confirmation needs follow-up"
+      : submittedReceipts.length || contactedCandidates.length
+        ? "Ownership trail is visible"
+        : "Start every candidate with an ownership trail"
+  const tone: OperatingTone = duplicateIds.size || duplicateSubmissions.length
+    ? "warn"
+    : pendingConsent.length
+      ? "info"
+      : submittedReceipts.length || contactedCandidates.length
+        ? "success"
+        : "mute"
+  const body = duplicateIds.size
+    ? "Local duplicate emails or links weaken candidate experience and can turn clean submissions into conflicts."
+    : pendingConsent.length
+      ? "A submitted candidate still needs confirmation before the submission has a clean consent trail."
+      : submittedReceipts.length || contactedCandidates.length
+        ? "Candidate activity is tied to outreach status, role lane, consent, and submission receipts."
+        : "Save candidates with role, email, profile link, outreach status, and notes before any formal submission."
+
+  return {
+    label: "Ownership desk",
+    title,
+    body,
+    tone,
+    cards: [
+      {
+        label: "Role-tied candidates",
+        value: String(roleTiedCandidates.length),
+        body: `${privateBench.length} candidate${privateBench.length === 1 ? "" : "s"} remain in private bench for matchboard routing.`,
+        tone: roleTiedCandidates.length ? "live" : "mute",
+      },
+      {
+        label: "Contacted trail",
+        value: `${activeCandidates.length ? Math.round((contactedCandidates.length / activeCandidates.length) * 100) : 0}%`,
+        body: `${contactedCandidates.length}/${activeCandidates.length || 0} active candidates have outreach status beyond not contacted.`,
+        tone: contactedCandidates.length ? "info" : "warn",
+      },
+      {
+        label: "Consent follow-up",
+        value: String(pendingConsent.length),
+        body: pendingConsent.length ? "Submission confirmation is still pending or failed." : "No submitted candidate needs confirmation follow-up.",
+        tone: pendingConsent.length ? "warn" : "success",
+      },
+      {
+        label: "Conflict signals",
+        value: String(duplicateIds.size + duplicateSubmissions.length),
+        body: `${duplicateIds.size} local duplicate candidate${duplicateIds.size === 1 ? "" : "s"}, ${duplicateSubmissions.length} duplicate submission${duplicateSubmissions.length === 1 ? "" : "s"}.`,
+        tone: duplicateIds.size + duplicateSubmissions.length ? "warn" : "success",
+      },
+    ],
+    rules: [
+      {
+        label: "Source first",
+        title: "Sourcing saves a private candidate record",
+        body: "It does not notify the candidate and it does not create payout ownership by itself.",
+        tone: "info",
+      },
+      {
+        label: "Check lane",
+        title: "Role-tied saves run a company-lane identity check",
+        body: "When a role is selected, WeKruit checks candidate email and profile link against existing sourced and submitted records for that role.",
+        tone: "live",
+      },
+      {
+        label: "Consent",
+        title: "Submission requires candidate consent",
+        body: "The candidate confirmation trail protects ownership and prevents weak packets from entering review.",
+        tone: pendingConsent.length ? "warn" : "success",
+      },
+      {
+        label: "No duplicate outreach",
+        title: "Already submitted candidates are off-limits for that company",
+        body: "If the identity check finds a conflict, pick another candidate or get explicit WeKruit calibration first.",
+        tone: duplicateIds.size + duplicateSubmissions.length ? "warn" : "info",
+      },
+    ],
+  }
 }
 
 function buildCandidateSourcingCommand(candidates: RecruiterSourcedCandidateItem[]): CandidateSourcingCommand {
@@ -6588,7 +6726,13 @@ function CandidatesTab({
   const [bulkImporting, setBulkImporting] = useState(false)
   const [bulkResults, setBulkResults] = useState<BulkCandidateImportResult[]>([])
   const [err, setErr] = useState<string | null>(null)
+  const [identityChecking, setIdentityChecking] = useState(false)
+  const [identityCheck, setIdentityCheck] = useState<CandidateIdentityCheckState | null>(null)
   const command = useMemo(() => buildCandidateSourcingCommand(candidates), [candidates])
+  const ownershipDesk = useMemo(
+    () => buildCandidateOwnershipDesk(candidates, submissions),
+    [candidates, submissions],
+  )
   const networkExposure = useMemo(
     () => buildCandidateNetworkExposure(jobs, candidates, submissions),
     [candidates, jobs, submissions],
@@ -6599,6 +6743,7 @@ function CandidatesTab({
   )
   const [selectedCandidateId, setSelectedCandidateId] = useState("")
   const selectedCandidate = activeCandidates.find((candidate) => candidate.id === selectedCandidateId) ?? command.focus ?? activeCandidates[0]
+  const selectedFormJob = jobs.find((job) => job.jobId === form.jobId)
 
   useEffect(() => {
     const nextCandidate = command.focus ?? activeCandidates[0]
@@ -6608,12 +6753,81 @@ function CandidatesTab({
     }
   }, [activeCandidates, command.focus, selectedCandidateId])
 
+  useEffect(() => {
+    setIdentityCheck(null)
+  }, [form.jobId, form.candidate.email, form.candidate.link])
+
+  const runIdentityCheck = async (): Promise<CandidateIdentityCheckState | null> => {
+    const selectedJobId = form.jobId?.trim()
+    const link = form.candidate.link.trim()
+    const email = form.candidate.email?.trim().toLowerCase() || undefined
+    if (!selectedJobId) {
+      const state: CandidateIdentityCheckState = {
+        status: "error",
+        title: "Select a role first",
+        body: "Role-specific ownership checks only run when this candidate is tied to a WeKruit collab role.",
+        tone: "info",
+      }
+      setIdentityCheck(state)
+      return null
+    }
+    if (!link) {
+      const state: CandidateIdentityCheckState = {
+        status: "error",
+        title: "Profile link required",
+        body: "Add a LinkedIn or resume link before checking candidate ownership.",
+        tone: "warn",
+      }
+      setIdentityCheck(state)
+      return null
+    }
+    setIdentityChecking(true)
+    setErr(null)
+    try {
+      const result = await checkRecruiterCandidateIdentity({
+        jobId: selectedJobId,
+        candidate: {
+          ...(email ? { email } : {}),
+          link,
+        },
+      })
+      const state: CandidateIdentityCheckState = result.conflict
+        ? identityConflictCopy(result.conflict)
+        : {
+            status: "clear",
+            title: "No role conflict found",
+            body: "No existing sourced or submitted candidate matched this email/link for the selected role. You still need consent before formal submission.",
+            tone: "success",
+          }
+      setIdentityCheck(state)
+      return state
+    } catch (error) {
+      const state: CandidateIdentityCheckState = {
+        status: "error",
+        title: "Ownership check failed",
+        body: error instanceof Error ? error.message : String(error),
+        tone: "warn",
+      }
+      setIdentityCheck(state)
+      return null
+    } finally {
+      setIdentityChecking(false)
+    }
+  }
+
   const save = async (e: FormEvent) => {
     e.preventDefault()
     setSaving(true)
     setErr(null)
     try {
       const selectedJobId = form.jobId?.trim()
+      if (selectedJobId) {
+        const check = await runIdentityCheck()
+        if (!check || check.status !== "clear") {
+          setErr(check?.body ?? "Resolve the ownership check before saving this candidate to a role lane.")
+          return
+        }
+      }
       const saved = await saveRecruiterSourcedCandidate({
         ...(selectedJobId ? { jobId: selectedJobId } : {}),
         stage: form.stage,
@@ -6854,6 +7068,7 @@ function CandidatesTab({
         model={networkExposure}
         onOpenCandidate={openCandidate}
       />
+      <CandidateOwnershipDeskPanel model={ownershipDesk} />
       {selectedCandidate && (
         <CandidateDossierPanel
           candidate={selectedCandidate}
@@ -6901,6 +7116,25 @@ function CandidatesTab({
                 required
               />
             </label>
+            <section className={`rb-identity-check${identityCheck ? ` is-${identityCheck.tone}` : ""}`} aria-label="Candidate ownership check">
+              <div>
+                <span>Ownership check</span>
+                <strong>{identityCheck?.title ?? (selectedFormJob ? "Check before saving to role" : "Private bench has no company claim")}</strong>
+                <p>
+                  {identityCheck?.body ??
+                    (selectedFormJob
+                      ? `${selectedFormJob.title} · ${selectedFormJob.recruiterBoard.label.company}. Check email/link against existing sourced and submitted records for this role.`
+                      : "Select a role when you are claiming a specific company lane. Private bench candidates can be matched later.")}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void runIdentityCheck()}
+                disabled={identityChecking || !form.jobId || !form.candidate.link.trim()}
+              >
+                {identityChecking ? "Checking..." : identityCheck?.status === "clear" ? "Recheck ownership" : "Check ownership"}
+              </button>
+            </section>
             <div className="rb-source-form__split">
               <label>
                 <span>Current role</span>
@@ -7263,6 +7497,38 @@ function CandidateNetworkExposurePanel({
             <p>Save candidates with email, LinkedIn or resume, and notes so future WeKruit roles can match against your bench.</p>
           </div>
         )}
+      </div>
+    </section>
+  )
+}
+
+function CandidateOwnershipDeskPanel({ model }: { model: CandidateOwnershipDesk }) {
+  return (
+    <section className={`rb-ownership-desk is-${model.tone}`} aria-label="Candidate ownership desk">
+      <header>
+        <div>
+          <span>{model.label}</span>
+          <strong>{model.title}</strong>
+          <p>{model.body}</p>
+        </div>
+      </header>
+      <div className="rb-ownership-desk__cards">
+        {model.cards.map((card) => (
+          <article className={`is-${card.tone}`} key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <p>{card.body}</p>
+          </article>
+        ))}
+      </div>
+      <div className="rb-ownership-desk__rules">
+        {model.rules.map((rule) => (
+          <article className={`is-${rule.tone}`} key={rule.label}>
+            <span>{rule.label}</span>
+            <strong>{rule.title}</strong>
+            <p>{rule.body}</p>
+          </article>
+        ))}
       </div>
     </section>
   )
