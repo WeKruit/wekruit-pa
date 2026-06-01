@@ -16,6 +16,7 @@ export {
   paCollabJobsList,
   paCollabJobsListSchema,
   paRecruiterAccess,
+  paRecruiterCandidateCalibrationNotify,
   paRecruiterCandidateConsentResend,
   paRecruiterInviteCodeCreate,
   paRecruiterInviteCodeReplace,

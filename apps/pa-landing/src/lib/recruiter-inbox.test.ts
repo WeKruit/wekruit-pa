@@ -4,6 +4,16 @@ import test from "node:test"
 
 import { recruiterNotificationInboxMeta } from "./recruiter-inbox.js"
 
+test("recruiterNotificationInboxMeta routes candidate calibration to the candidate workspace", () => {
+  assert.deepEqual(recruiterNotificationInboxMeta("candidate_calibration"), {
+    typeLabel: "Candidate calibration",
+    unreadBucket: "Unread candidate calibration",
+    action: "candidates",
+    cta: "Open candidate",
+    readTone: "info",
+  })
+})
+
 test("recruiterNotificationInboxMeta routes role-question answers back to roles", () => {
   assert.deepEqual(recruiterNotificationInboxMeta("role_question_answer"), {
     typeLabel: "Role answer returned",

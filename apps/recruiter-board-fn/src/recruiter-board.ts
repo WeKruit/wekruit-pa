@@ -3958,11 +3958,11 @@ function eventNotificationId(type: string, entityId: string, eventId: string): s
 async function createRecruiterInAppNotification(
   db: Firestore,
   input: {
-    type: "role_application_decision" | "role_question_answer" | "submission_feedback"
+    type: "candidate_calibration" | "role_application_decision" | "role_question_answer" | "submission_feedback"
     eventId: string
     recruiterId: string
     recruiterEmail?: string
-    entityType: "role_application" | "role_question" | "submission"
+    entityType: "sourced_candidate" | "role_application" | "role_question" | "submission"
     entityId: string
     title: string
     body: string
@@ -4044,6 +4044,50 @@ function roleApplicationDecisionNotification(
       : "Review the note before reapplying or sourcing more candidates."),
   ])
   return { title: statusTitle, body }
+}
+
+function candidateCalibrationStatusLabel(status: string): string {
+  switch (status) {
+    case "good_fit": return "good fit"
+    case "bad_fit": return "not a fit"
+    case "suggested": return "suggested direction"
+    case "not_rated": return "not rated"
+    default:
+      return status.replace(/_/g, " ")
+  }
+}
+
+export function candidateCalibrationNotification(
+  before: Record<string, unknown> | null,
+  after: Record<string, unknown> | null,
+): { title: string; body: string } | null {
+  if (!before || !after) return null
+  const beforeStatus = typeof before.calibrationStatus === "string" ? before.calibrationStatus : "not_rated"
+  const afterStatus = typeof after.calibrationStatus === "string" ? after.calibrationStatus : "not_rated"
+  const beforeNote = typeof before.calibrationNote === "string" ? before.calibrationNote.trim() : ""
+  const afterNote = typeof after.calibrationNote === "string" ? after.calibrationNote.trim() : ""
+  const statusChanged = beforeStatus !== afterStatus
+  const noteChanged = beforeNote !== afterNote
+  if (!statusChanged && !noteChanged) return null
+  if (afterStatus === "calibration_requested") return null
+  if (beforeStatus !== "calibration_requested" && !afterNote) return null
+
+  const candidate = after.candidate && typeof after.candidate === "object"
+    ? after.candidate as Record<string, unknown>
+    : {}
+  const candidateName = typeof candidate.name === "string" && candidate.name.trim()
+    ? candidate.name.trim()
+    : "Candidate"
+  const roleTitle = typeof after.jobTitleSnapshot === "string" && after.jobTitleSnapshot.trim()
+    ? after.jobTitleSnapshot.trim()
+    : "Role calibration"
+  const body = compactNotificationBody([
+    candidateName,
+    roleTitle,
+    `Calibration: ${candidateCalibrationStatusLabel(afterStatus)}`,
+    afterNote,
+  ])
+  return { title: `WeKruit calibrated ${candidateName}`, body }
 }
 
 export function roleQuestionAnswerNotification(
@@ -4170,6 +4214,38 @@ export const paRecruiterRoleApplicationDecisionNotify = onDocumentWritten(
       roleUrl: recruiterNotificationRoleUrl(after),
     })
     if (created) logger.info("paRecruiterRoleApplicationDecisionNotify_done", { applicationId: event.params.applicationId, recruiterId })
+  },
+)
+
+export const paRecruiterCandidateCalibrationNotify = onDocumentWritten(
+  {
+    document: `${RECRUITER_SOURCED_CANDIDATES_COLLECTION}/{candidateId}`,
+    region: "us-central1",
+    memory: RECRUITER_BOARD_MEMORY,
+  },
+  async (event) => {
+    const before = event.data?.before.exists ? event.data.before.data() as Record<string, unknown> : null
+    const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null
+    const notification = candidateCalibrationNotification(before, after)
+    if (!notification || !after) return
+    const recruiterId = typeof after.recruiterId === "string" ? after.recruiterId : ""
+    if (!recruiterId) return
+    const created = await createRecruiterInAppNotification(getFirestore(), {
+      type: "candidate_calibration",
+      eventId: event.id,
+      recruiterId,
+      recruiterEmail: typeof after.recruiterEmail === "string" ? after.recruiterEmail : undefined,
+      entityType: "sourced_candidate",
+      entityId: event.params.candidateId,
+      title: notification.title,
+      body: notification.body,
+      jobId: typeof after.jobId === "string" ? after.jobId : undefined,
+      publicJobId: typeof after.inboundJobId === "string" ? after.inboundJobId : undefined,
+      roleTitle: typeof after.jobTitleSnapshot === "string" ? after.jobTitleSnapshot : undefined,
+      companyLabel: typeof after.companyLabelSnapshot === "string" ? after.companyLabelSnapshot : undefined,
+      roleUrl: recruiterNotificationRoleUrl(after),
+    })
+    if (created) logger.info("paRecruiterCandidateCalibrationNotify_done", { candidateId: event.params.candidateId, recruiterId })
   },
 )
 

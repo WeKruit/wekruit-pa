@@ -17,6 +17,7 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
   buildRecruiterRoleIntelligence,
+  candidateCalibrationNotification,
   computeSubmissionScore,
   composeCandidateSubmissionConfirmationEmail,
   composeRecruiterRoleNotificationEmail,
@@ -520,6 +521,48 @@ describe("recruiter role question answer notifications", () => {
     }, {
       status: "answered",
       answer: "Target builders with systems ownership.",
+    }), null)
+  })
+})
+
+describe("recruiter candidate calibration notifications", () => {
+  it("does not notify when a recruiter first requests calibration", () => {
+    assert.equal(candidateCalibrationNotification(null, {
+      calibrationStatus: "calibration_requested",
+      calibrationNote: "Is this senior enough?",
+    }), null)
+    assert.equal(candidateCalibrationNotification({
+      calibrationStatus: "not_rated",
+      calibrationNote: null,
+    }, {
+      calibrationStatus: "calibration_requested",
+      calibrationNote: "Is this senior enough?",
+    }), null)
+  })
+
+  it("notifies when admin answers a requested candidate calibration", () => {
+    const notification = candidateCalibrationNotification({
+      calibrationStatus: "calibration_requested",
+      calibrationNote: "Is this senior enough?",
+    }, {
+      calibrationStatus: "good_fit",
+      calibrationNote: "Good fit if they can show production ownership.",
+      jobTitleSnapshot: "Founding Engineer",
+      candidate: { name: "Ada Lovelace" },
+    })
+    assert.equal(notification?.title, "WeKruit calibrated Ada Lovelace")
+    assert.match(notification?.body ?? "", /Founding Engineer/)
+    assert.match(notification?.body ?? "", /good fit/)
+    assert.match(notification?.body ?? "", /production ownership/)
+  })
+
+  it("does not notify again when calibration text is unchanged", () => {
+    assert.equal(candidateCalibrationNotification({
+      calibrationStatus: "suggested",
+      calibrationNote: "Use for backend-heavy roles.",
+    }, {
+      calibrationStatus: "suggested",
+      calibrationNote: "Use for backend-heavy roles.",
     }), null)
   })
 })

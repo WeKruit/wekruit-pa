@@ -2920,7 +2920,9 @@ function buildRecruiterInboxItems(
   for (const notification of notifications) {
     const unread = !notification.readAt
     const roleId = notification.publicJobId || notification.jobId
-    const href = roleId ? `/recruiters/job/${encodeURIComponent(roleId)}` : undefined
+    const href = roleId
+      ? `/recruiters/job/${encodeURIComponent(roleId)}${notification.type === "candidate_calibration" && notification.entityId ? `?candidateId=${encodeURIComponent(notification.entityId)}` : ""}`
+      : undefined
     const notificationMeta = recruiterNotificationInboxMeta(notification.type)
     items.push({
       id: `notification-${notification.id}`,

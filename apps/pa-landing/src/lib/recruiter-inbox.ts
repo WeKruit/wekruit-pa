@@ -12,6 +12,14 @@ export interface RecruiterNotificationInboxMeta {
 
 export function recruiterNotificationInboxMeta(type: string): RecruiterNotificationInboxMeta {
   switch (type) {
+    case "candidate_calibration":
+      return {
+        typeLabel: "Candidate calibration",
+        unreadBucket: "Unread candidate calibration",
+        action: "candidates",
+        cta: "Open candidate",
+        readTone: "info",
+      }
     case "new_role":
       return {
         typeLabel: "New role alert",
