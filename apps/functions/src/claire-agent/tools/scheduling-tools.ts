@@ -640,7 +640,11 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
             language: "en",
             ...(ctx.toE164 ? { phoneNumber: ctx.toE164 } : {}),
           },
-          location: { type: "integration", integration: "cal-video" },
+          // NO hardcoded location — Cal 400s a location whose integration doesn't
+          // match the event-type's configured one ("integration cal-video not valid
+          // for event type … allowed: google-meet"). Omitting it makes Cal apply the
+          // event-type's OWN integration. (2026-06-01: the cal-video hardcode failed
+          // EVERY booking on google-meet event-types → surfaced as "slot got taken".)
           metadata: { wekruitUserId: ctx.userId, wekruitJobId: jobId, sessionId: ctx.sessionId },
         })
       } catch (err) {

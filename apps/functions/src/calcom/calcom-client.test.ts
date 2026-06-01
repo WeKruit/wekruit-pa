@@ -111,7 +111,7 @@ test("getAvailableSlots sends cal-api-version 2024-09-04 + Bearer + correct quer
   }
 })
 
-test("createBooking sends cal-api-version 2026-02-25 + cal-video location + attendee.language=en", async () => {
+test("createBooking sends cal-api-version 2026-02-25 + NO location (event-type default) + attendee.language=en", async () => {
   const { restore, calls } = mockFetch(() =>
     jsonResponse(200, {
       status: "success",
@@ -141,7 +141,9 @@ test("createBooking sends cal-api-version 2026-02-25 + cal-video location + atte
     assert.equal(headerOf(c.init, "cal-api-version"), "2026-02-25")
     assert.equal(headerOf(c.init, "authorization"), `Bearer ${FAKE_KEY}`)
     const body = JSON.parse(String(c.init?.body))
-    assert.deepEqual(body.location, { type: "integration", integration: "cal-video" })
+    // NO location is sent unless the caller set one — Cal applies the event-type's
+    // own integration. (Hardcoding cal-video 400'd google-meet event-types.)
+    assert.equal(body.location, undefined)
     assert.equal(body.attendee.language, "en")
     assert.equal(body.attendee.email, "adam@example.com")
     assert.equal(body.eventTypeId, 5847961)

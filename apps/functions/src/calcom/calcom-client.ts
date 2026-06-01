@@ -240,7 +240,12 @@ export async function createBooking(
   const body: CreateBookingInput = {
     ...input,
     attendee: { language: "en", ...input.attendee },
-    location: input.location ?? { type: "integration", integration: "cal-video" },
+    // Only forward a location if the caller explicitly set one. Do NOT default to
+    // cal-video — Cal 400s a location whose integration ≠ the event-type's configured
+    // one. With no location, Cal applies the event-type's OWN integration (verified
+    // 2026-06-01: omitting it booked a google-meet event-type that the cal-video
+    // hardcode had been 400-rejecting on every attempt).
+    ...(input.location ? { location: input.location } : {}),
   }
 
   let resp: Response
