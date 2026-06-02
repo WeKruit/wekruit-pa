@@ -649,7 +649,7 @@ test("runRegisterEmployer sends hard filters in the admin notification", async (
     await runRegisterEmployer(
       employer(),
       deps(fake, {
-        sendMail: async (_cfg, input) => {
+        sendMail: async (_cfg: unknown, input: { text: string; html?: string }) => {
           sent.push({ text: input.text, html: input.html })
           return { ok: true, status: 200, messageId: "msg_1" }
         },
