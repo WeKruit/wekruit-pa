@@ -18,7 +18,7 @@
  *  floor, visa, Claire-this-week stats) are hidden or derived from what we have
  *  rather than mocked — they will light up as the backend grows.
  */
-import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { onAuthStateChanged, signOut, type User } from "firebase/auth"
 import { clearSsoCookie } from "../lib/cross-domain-sso.js"
@@ -235,13 +235,19 @@ type CandidateMatchesResult = {
   matches: CandidateMatchCard[]
 }
 
-type MatchesState =
+type MatchesSnapshot =
   | { status: "idle" | "loading" }
   | { status: "ready"; matches: CandidateMatchCard[] }
   | { status: "error"; message: string }
 
+type MatchesState = MatchesSnapshot & {
+  reload: () => void
+}
+
 export function useCandidateMatches(enabled: boolean): MatchesState {
-  const [state, setState] = useState<MatchesState>({ status: "idle" })
+  const [state, setState] = useState<MatchesSnapshot>({ status: "idle" })
+  const [tick, setTick] = useState(0)
+  const reload = useCallback(() => setTick((n) => n + 1), [])
 
   useEffect(() => {
     if (!enabled) return
@@ -262,9 +268,9 @@ export function useCandidateMatches(enabled: boolean): MatchesState {
     return () => {
       cancelled = true
     }
-  }, [enabled])
+  }, [enabled, tick])
 
-  return state
+  return { ...state, reload }
 }
 
 // Translate raw Firebase callable errors (FirebaseError.code like
@@ -762,10 +768,13 @@ function CandidateMeReady({
                 error={matchesError}
                 recommendedCount={recommended.length}
               />
+              {matchesErrored ? <MeRoleDashboardError message={matchesError} onRetry={matchesState.reload} /> : null}
               <MeActivityLog matches={allMatches} claireHref={claireHref} />
               <MePipeline
                 matches={pipelineMatches}
                 loading={matchesLoading}
+                errored={matchesErrored}
+                error={matchesError}
               />
               <MeNewMatches
                 matches={recommended}
@@ -1248,6 +1257,20 @@ function MeActionRow({ a }: { a: MeAction }) {
   )
 }
 
+function MeRoleDashboardError({ message, onRetry }: { message: string | null; onRetry: () => void }) {
+  return (
+    <section className="wkv3-roleerr" role="alert" aria-live="polite">
+      <div>
+        <strong>Your role dashboard couldn&apos;t load.</strong>
+        <span>{message ?? "Refresh, or try again in a moment."}</span>
+      </div>
+      <button type="button" className="wk-btn wk-btn--secondary wk-btn--sm" onClick={onRetry}>
+        Retry
+      </button>
+    </section>
+  )
+}
+
 function MeWaitingCard({ recommendedCount }: { recommendedCount: number }) {
   return (
     <article className="wkv3-wait">
@@ -1336,9 +1359,13 @@ const ME_STAGES: MeStageDef[] = [
 function MePipeline({
   matches,
   loading,
+  errored,
+  error,
 }: {
   matches: CandidateMatchCard[]
   loading: boolean
+  errored: boolean
+  error: string | null
 }) {
   const [activeStage, setActiveStage] = useState<string | null>(null)
   const counts = useMemo(() => {
@@ -1399,6 +1426,8 @@ function MePipeline({
 
       {loading ? (
         <div className="wkv3-empty-block">Loading interview pipeline…</div>
+      ) : errored ? (
+        <div className="wkv3-empty-block wkv3-empty-block--error">{error}</div>
       ) : filtered.length === 0 ? (
         <div className="wkv3-empty-block">
           {matches.length === 0
@@ -2298,11 +2327,21 @@ const ME_V3_STYLES = `
 }
 .wkv3-seeall:hover { border-color: var(--live-border); color: var(--ink); }
 
+.wkv3-roleerr {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+  margin-bottom: 18px; padding: 16px 18px; border: 1px solid rgba(156,43,36,.32);
+  border-radius: var(--r-md); background: rgba(156,43,36,.065); color: #7e241e;
+}
+.wkv3-roleerr div { display: grid; gap: 3px; min-width: 0; }
+.wkv3-roleerr strong { font-size: 14px; color: #69201a; }
+.wkv3-roleerr span { font-size: 13px; line-height: 1.45; color: #8d352c; }
+
 /* Empty / loading block */
 .wkv3-empty-block {
   padding: 28px 24px; background: var(--cream-3); border: 1px dashed var(--border-strong);
   border-radius: var(--r-md); color: var(--ink-3); font-size: 14px; line-height: 1.5; text-align: center;
 }
+.wkv3-empty-block--error { border-color: rgba(156,43,36,.38); background: rgba(156,43,36,.055); color: #8d352c; }
 .wkv3-empty-block h3 { margin: 0 0 6px; font-family: var(--font-serif); font-weight: 400; font-size: 20px; color: var(--ink); letter-spacing: -0.018em; }
 .wkv3-empty-block p { margin: 0 auto; color: var(--ink-2); font-size: 13px; max-width: 460px; }
 .wkv3-empty-actions {

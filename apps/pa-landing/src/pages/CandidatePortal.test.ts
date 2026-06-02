@@ -320,3 +320,16 @@ test("CandidatePortal pipeline stage filters avoid dead zero-count taps", () => 
   assert.match(source, /hasPipelineRows \? "Tap a stage to filter\." : "Stages appear as roles move forward\."/)
   assert.doesNotMatch(source, /"Tap a stage to filter\."\s*\)\s*<\/span>/)
 })
+
+test("CandidatePortal /me surfaces role load failures instead of treating them as an empty pipeline", () => {
+  assert.match(source, /reload: \(\) => void/)
+  assert.match(source, /const reload = useCallback\(\(\) => setTick\(\(n\) => n \+ 1\), \[\]\)/)
+  assert.match(source, /<MeRoleDashboardError message=\{matchesError\} onRetry=\{matchesState\.reload\} \/>/)
+  assert.match(source, /function MeRoleDashboardError\(/)
+  assert.match(source, /role="alert"/)
+  assert.match(source, /Your role dashboard couldn&apos;t load/)
+  assert.match(source, /<MePipeline[\s\S]*errored=\{matchesErrored\}[\s\S]*error=\{matchesError\}/)
+  assert.match(source, /function MePipeline\(\{[\s\S]*errored,[\s\S]*error,[\s\S]*\}/)
+  assert.match(source, /errored \? \([\s\S]*<div className="wkv3-empty-block wkv3-empty-block--error">\{error\}<\/div>/)
+  assert.doesNotMatch(source, /matchesErrored[\s\S]{0,400}<MeWaitingCard/)
+})
