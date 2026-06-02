@@ -332,47 +332,39 @@ function ArtEmpLooks() {
 }
 
 function ArtEmpAtScale() {
-  const live = [
-    { init: "MO", name: "Maya O.", role: "Sr PM · Claude APIs", q: 9, total: 12, pct: 75, tone: "warm", ping: true },
-    { init: "DP", name: "Daniel P.", role: "Staff · Inference", q: 4, total: 10, pct: 40, tone: "slate", ping: true },
-    { init: "PS", name: "Priya S.", role: "Principal · Design", q: 12, total: 14, pct: 86, tone: "moss", ping: false },
-    { init: "LW", name: "Lin W.", role: "Sr · Editor Core", q: 2, total: 9, pct: 22, tone: "warm", ping: true },
+  const screeningPlan = [
+    { init: "RB", name: "Role brief approved", role: "Must-haves, comp, location, deal-breakers", tone: "warm" },
+    { init: "EP", name: "Evidence probes", role: "Questions tied to founder-mode and API depth", tone: "slate" },
+    { init: "RF", name: "Risk follow-ups", role: "Scope mismatch, timing, competing loops", tone: "moss" },
+    { init: "CG", name: "Consent gate", role: "Employer sees the pass only after share consent", tone: "warm" },
   ] as const
   return (
     <div className="seq-live" role="presentation">
       <header className="seq-live__head">
         <span className="seq-live__pulse" aria-hidden="true" />
         <span className="seq-live__hgroup">
-          <strong>4 interviews</strong>
-          <span>in flight · this hour</span>
+          <strong>Role brief approved</strong>
+          <span>Claire screens against the evidence plan</span>
         </span>
-        <span className="seq-live__queued">+18 queued</span>
+        <span className="seq-live__queued">Sample plan</span>
       </header>
       <ul className="seq-live__rows">
-        {live.map((r, i) => (
+        {screeningPlan.map((r, i) => (
           <li key={i} className="seq-live__row">
             <span className={`seq-live__ava seq-live__ava--${r.tone}`}>{r.init}</span>
             <div className="seq-live__body">
               <div className="seq-live__row-top">
                 <span className="seq-live__name">{r.name}</span>
-                <span className="seq-live__qcount">{r.q}/{r.total}</span>
+                <span className="seq-live__status">Ready</span>
               </div>
               <div className="seq-live__role">{r.role}</div>
-              <span className="seq-live__bar">
-                <span className="seq-live__bar-fill" style={{ width: `${r.pct}%` }} />
-              </span>
+              <span className="seq-live__bar" aria-hidden="true" />
             </div>
-            {r.ping ? (
-              <span className="seq-live__typing" aria-hidden="true">
-                <span /><span /><span />
-              </span>
-            ) : (
-              <span className="seq-live__done" aria-hidden="true">
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M2 5l2 2 4-4" />
-                </svg>
-              </span>
-            )}
+            <span className="seq-live__done" aria-hidden="true">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 5l2 2 4-4" />
+              </svg>
+            </span>
           </li>
         ))}
       </ul>

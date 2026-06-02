@@ -1,11 +1,9 @@
 /**
- * EmployerSignup — /employer for layoff.wekruit.com.
+ * EmployerSignup — /employer passed-profile role intake.
  *
- * Adam directive 2026-05-18: "for employer, it's only a sign up sheet, on
- * sign up we need to connect with mailgun integration to admin to let us
- * know someone sign up as employer." Thin form → openRegisterEmployer
- * callable → Firestore (layoff_employers) + Mailgun email to admin.
- * No marketplace browse, no candidate filter — those live on candidate.
+ * Thin form → openRegisterEmployer callable → Firestore + Mailgun email to admin.
+ * The user-facing frame must match /employers: employers send a role brief,
+ * Claire screens candidates, and WeKruit returns consented passed profiles.
  */
 import { useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import { Link } from "react-router-dom"
@@ -112,7 +110,7 @@ export default function EmployerSignup() {
           className="container-narrow"
           style={{ maxWidth: 640, marginInline: "auto", paddingInline: 24 }}
         >
-          <div className="eyebrow" style={{ marginBottom: 18 }}>For employers</div>
+          <div className="eyebrow" style={{ marginBottom: 18 }}>Passed-profile role intake</div>
           <h1
             style={{
               fontFamily: "var(--font-serif)",
@@ -125,7 +123,7 @@ export default function EmployerSignup() {
               textWrap: "balance",
             }}
           >
-            Hiring? We make the <em style={{ fontStyle: "italic" }}>warm</em> intros.
+            Send a role brief. Claire screens before you meet anyone.
           </h1>
           <p
             style={{
@@ -137,9 +135,9 @@ export default function EmployerSignup() {
               color: "var(--ink-2)",
             }}
           >
-            Tell us about your company and the roles you're filling. We'll review and reach out
-            within a business day. No marketplace logins, no portals — we hand-pick from a small
-            verified list of recently-laid-off operators.
+            Tell us the role, must-haves, and context behind the brief. WeKruit reviews it,
+            Claire screens against the evidence, and you only see consented passed profiles
+            with the transcript and risks attached.
           </p>
 
           {done ? <SuccessCard email={form.workEmail} /> : (
@@ -200,17 +198,17 @@ export default function EmployerSignup() {
                 placeholder="https://www.linkedin.com/company/acme"
               />
               <Field
-                label="Roles you're hiring for"
+                label="Primary role brief"
                 value={form.rolesHiring}
                 onChange={(v) => update("rolesHiring", v)}
-                placeholder="Senior PM, Staff SWE, Lead Designer"
-                helper="Comma-separated."
+                placeholder="Senior PM for Claude APIs; SF hybrid; $220k-$290k base"
+                helper="One role per line if you are opening more than one search."
               />
               <Field
-                label="Anything else?"
+                label="Must-haves"
                 value={form.notes}
                 onChange={(v) => update("notes", v)}
-                placeholder="Compensation band, location, must-haves…"
+                placeholder="Founder-mode judgment, API product depth, comp band, location, risks Claire should probe."
                 as="textarea"
               />
 
@@ -240,7 +238,7 @@ export default function EmployerSignup() {
                   disabled={submitting}
                   style={{ minWidth: 160 }}
                 >
-                  {submitting ? "Sending…" : "Send signup"}
+                  {submitting ? "Sending..." : "Send role brief"}
                 </button>
               </div>
             </form>
@@ -365,8 +363,8 @@ function SuccessCard({ email }: { email: string }) {
         Got it.
       </h2>
       <p style={{ color: "var(--ink-2)", margin: "0 0 18px", maxWidth: 440, marginInline: "auto" }}>
-        We've sent your details to the WeKruit team. We'll reach out at <strong>{email}</strong> within
-        a business day with next steps.
+        We have sent the role brief to the WeKruit team. We will reach out at <strong>{email}</strong> within
+        a business day to confirm the brief before Claire screens candidates.
       </p>
       <Link to="/" className="btn btn--primary" style={{ textDecoration: "none" }}>
         Back to home
@@ -420,7 +418,7 @@ function Header() {
               color: "var(--ink-2)",
             }}
           >
-            Open
+            Employers
           </em>
         </Link>
         <Link to="/" className="btn btn--ghost btn--sm" style={{ textDecoration: "none" }}>
@@ -448,7 +446,7 @@ function Footer() {
         }}
       >
         <span className="caption" style={{ color: "var(--ink-3)" }}>
-          A quiet list for people between things.
+          Passed-profile hiring, with Claire screening first.
         </span>
         <a className="caption" style={{ color: "var(--ink-3)" }} href="mailto:hello@wekruit.com">
           hello@wekruit.com

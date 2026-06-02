@@ -942,8 +942,12 @@
   font-size: 12.5px; color: var(--ink); font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
-.seq-live__qcount {
-  font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3);
+.seq-live__status {
+  font-size: 10.5px;
+  color: #2E6B2E;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .seq-live__role {
   font-size: 11px; color: var(--ink-3); margin: 1px 0 5px;
@@ -952,32 +956,10 @@
 .seq-live__bar {
   display: block;
   height: 3px;
-  background: var(--cream-3);
+  background: linear-gradient(90deg, var(--peach-300), var(--live));
   border-radius: 999px;
   overflow: hidden;
 }
-.seq-live__bar-fill {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, var(--peach-300), var(--live));
-  border-radius: 999px;
-  transition: width 600ms var(--ease);
-}
-.seq-live__typing {
-  display: inline-flex; gap: 3px;
-  padding: 5px 8px;
-  background: var(--cream-2);
-  border-radius: var(--r-pill);
-  align-self: center;
-}
-.seq-live__typing span {
-  width: 4px; height: 4px;
-  border-radius: 50%;
-  background: var(--ink-3);
-  animation: seq-bounce 1.2s ease-in-out infinite;
-}
-.seq-live__typing span:nth-child(2) { animation-delay: 0.15s; }
-.seq-live__typing span:nth-child(3) { animation-delay: 0.30s; }
 .seq-live__done {
   width: 20px; height: 20px;
   border-radius: 50%;

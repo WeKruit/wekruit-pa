@@ -45,3 +45,20 @@ test("Employers inbox preview uses non-interactive sample actions", () => {
   assert.match(employersSource, /Accept intro after consent/)
   assert.match(employersSource, /Sample actions only/)
 })
+
+test("Employers sequence does not invent live interview scale", () => {
+  assert.doesNotMatch(sequenceSource, /4 interviews/)
+  assert.doesNotMatch(sequenceSource, /in flight · this hour/)
+  assert.doesNotMatch(sequenceSource, /\+18 queued/)
+  assert.doesNotMatch(sequenceSource, /q: \d/)
+  assert.doesNotMatch(sequenceSource, /total: \d/)
+  assert.doesNotMatch(sequenceSource, /pct: \d/)
+  assert.doesNotMatch(sequenceSource, /seq-live__qcount/)
+  assert.doesNotMatch(sequenceSource, /seq-live__typing/)
+
+  assert.match(sequenceSource, /screeningPlan/)
+  assert.match(sequenceSource, /Role brief approved/)
+  assert.match(sequenceSource, /Evidence probes/)
+  assert.match(sequenceSource, /Risk follow-ups/)
+  assert.match(sequenceSource, /Consent gate/)
+})
