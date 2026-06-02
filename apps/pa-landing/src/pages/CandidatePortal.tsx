@@ -3700,10 +3700,10 @@ function MatchesView({
                 <PulseDot size={6} /> Roles · {all.length} total
               </p>
               <h1 className="wkmp__h1">
-                <em>Roles</em> Claire matched for you.
+                <em>Roles</em> WeKruit is tracking for you.
               </h1>
               <p className="wkmp__sub">
-                Claire separates WeKruit-screened roles from external recommendations, shows why each matched,
+                Claire separates WeKruit-screened roles from external recommendations, shows why each role is here,
                 and uses your profile preferences to keep the next batch sharper.
               </p>
             </div>
@@ -3735,7 +3735,7 @@ function MatchesView({
               {loading ? (
                 <div className="wkmp-empty">
                   <h3>Loading…</h3>
-                  <p>Pulling the roles Claire matched for you.</p>
+                  <p>Pulling your roles and recommendations.</p>
                 </div>
               ) : errored ? (
                 <div className="wkmp-empty">
@@ -3801,6 +3801,7 @@ function MeMatchFull({ match }: { match: CandidateMatchCard }) {
   const logo = (match.job.company[0] ?? "?").toUpperCase()
   const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
   const reasons = match.whyMatched ?? []
+  const reasonsLabel = isCollab ? "Why this is in your pipeline" : "Why Claire matched you"
   const statusDisplay = getCandidateJobStatusDisplay(match.status, match.job.title)
   // Collab jobs let the candidate view their pre-screen / job status.
   const showStatus = isCollab && match.status !== "recommended"
@@ -3830,7 +3831,7 @@ function MeMatchFull({ match }: { match: CandidateMatchCard }) {
 
       {reasons.length > 0 ? (
         <div className="wkv3-match__ev">
-          <span className="wkv3-match__ev-eye">Why Claire matched you</span>
+          <span className="wkv3-match__ev-eye">{reasonsLabel}</span>
           <ul>
             {reasons.slice(0, 4).map((r, i) => (
               <li key={i}>

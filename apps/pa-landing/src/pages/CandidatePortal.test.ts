@@ -44,6 +44,15 @@ test("CandidatePortal roles inbox distinguishes WeKruit-screened roles from exte
   assert.match(source, /external recommendations/)
 })
 
+test("CandidatePortal does not label pipeline reasons as Claire match evidence", () => {
+  assert.doesNotMatch(source, /<em>Roles<\/em> Claire matched for you\./)
+  assert.doesNotMatch(source, /Pulling the roles Claire matched for you\./)
+  assert.doesNotMatch(source, /shows why each matched/)
+  assert.match(source, /<em>Roles<\/em> WeKruit is tracking for you\./)
+  assert.match(source, /const reasonsLabel = isCollab \? "Why this is in your pipeline" : "Why Claire matched you"/)
+  assert.match(source, /className="wkv3-match__ev-eye">\{reasonsLabel\}/)
+})
+
 test("CandidatePortal interview pipeline does not mix recommendation inbox into stage filters", () => {
   assert.doesNotMatch(source, /\{ id: "new", label: "New"/)
   assert.doesNotMatch(source, /const c: Record<string, number> = \{ new: recommendedCount \}/)
