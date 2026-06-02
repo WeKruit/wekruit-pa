@@ -146,7 +146,7 @@ export async function maybeRunThinClaire(
       log,
       ...(deps.dryRun ? { dryRun: true } : {}),
     })
-    await runClaireTurn(
+    const turnResult = await runClaireTurn(
       {
         userId,
         sessionId,
@@ -182,6 +182,41 @@ export async function maybeRunThinClaire(
       .collection(PA_COLLECTIONS.inboundEvents)
       .doc(eventId)
       .set({ status: "completed", handledBy: "thin_claire" }, { merge: true })
+
+    // 2A — per-turn token usage telemetry (incl cached-prefix tokens) keyed on the inbound event,
+    // tagged by MODE so prompt-cache hit-rate is visible per mode. Fail-open: a write error here
+    // must NEVER fail the turn (the reply already went out). Skipped when no usage surfaced.
+    if (turnResult?.usage) {
+      try {
+        await db
+          .collection(PA_COLLECTIONS.turns)
+          .doc(eventId)
+          .set(
+            {
+              userId,
+              sessionId,
+              mode: decision.mode,
+              handledBy: "thin_claire",
+              usage: turnResult.usage,
+              createdAt: new Date().toISOString(),
+            },
+            { merge: true },
+          )
+        log("thin_claire.turn_usage", {
+          eventId,
+          userId,
+          mode: decision.mode,
+          inputTokens: turnResult.usage.inputTokens,
+          cachedInputTokens: turnResult.usage.cachedInputTokens,
+          turnsUsed: turnResult.usage.turnsUsed,
+        })
+      } catch (usageErr) {
+        log("thin_claire.turn_usage_failed", {
+          eventId,
+          err: usageErr instanceof Error ? usageErr.message : String(usageErr),
+        })
+      }
+    }
     log("thin_claire_handled", { eventId, userId })
     return true
   } catch (e) {

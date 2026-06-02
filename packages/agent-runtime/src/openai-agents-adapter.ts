@@ -189,12 +189,22 @@ function extractUsage(
   let inputTokens = 0
   let outputTokens = 0
   let totalTokens = 0
+  let cachedInputTokens = 0
   const hostedCounts = new Map<string, number>()
 
   for (const raw of result.rawResponses ?? []) {
     const r = raw as
       | {
-          usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+          usage?: {
+            inputTokens?: number
+            outputTokens?: number
+            totalTokens?: number
+            // 2A — cached-prefix portion of inputTokens. SDK camelCase
+            // (`inputTokensDetails.cachedTokens`) OR the wire snake_case
+            // (`input_tokens_details.cached_tokens`); read whichever is present.
+            inputTokensDetails?: { cachedTokens?: number }
+            input_tokens_details?: { cached_tokens?: number }
+          }
           output?: ReadonlyArray<{
             type?: string
             name?: string
@@ -208,6 +218,9 @@ function extractUsage(
       if (typeof u.inputTokens === "number") inputTokens += u.inputTokens
       if (typeof u.outputTokens === "number") outputTokens += u.outputTokens
       if (typeof u.totalTokens === "number") totalTokens += u.totalTokens
+      const cached =
+        u.inputTokensDetails?.cachedTokens ?? u.input_tokens_details?.cached_tokens
+      if (typeof cached === "number") cachedInputTokens += cached
     }
     for (const item of r.output ?? []) {
       const t = item?.type
@@ -253,6 +266,7 @@ function extractUsage(
   if (inputTokens > 0) usage.inputTokens = inputTokens
   if (outputTokens > 0) usage.outputTokens = outputTokens
   if (totalTokens > 0) usage.totalTokens = totalTokens
+  if (cachedInputTokens > 0) usage.cachedInputTokens = cachedInputTokens
   if (hostedCounts.size > 0) {
     usage.hostedToolCalls = [...hostedCounts.entries()].map(([name, count]) => ({ name, count }))
   }

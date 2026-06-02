@@ -146,6 +146,44 @@ test("extractUsage sums tokens across rawResponses[].usage and counts web_search
   assert.deepEqual(usage.hostedToolCalls, [{ name: "web_search", count: 2 }])
 })
 
+// 2A — cached-prefix token telemetry. extractUsage sums cachedInputTokens from BOTH the SDK
+// camelCase (inputTokensDetails.cachedTokens) and the wire snake_case (input_tokens_details
+// .cached_tokens), and omits the field entirely when no cached tokens are present.
+test("extractUsage sums cachedInputTokens from camelCase + snake_case shapes (2A)", () => {
+  const fakeResult = {
+    rawResponses: [
+      {
+        usage: {
+          inputTokens: 100,
+          outputTokens: 10,
+          totalTokens: 110,
+          inputTokensDetails: { cachedTokens: 80 },
+        },
+      },
+      {
+        usage: {
+          inputTokens: 50,
+          outputTokens: 5,
+          totalTokens: 55,
+          input_tokens_details: { cached_tokens: 40 },
+        },
+      },
+    ],
+  }
+  const usage = t9ForTesting.extractUsage(fakeResult, "openai", "gpt-5.4-nano")
+  assert.equal(usage.inputTokens, 150)
+  assert.equal(usage.cachedInputTokens, 120)
+})
+
+test("extractUsage omits cachedInputTokens when no cached tokens present (2A)", () => {
+  const fakeResult = {
+    rawResponses: [{ usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }],
+  }
+  const usage = t9ForTesting.extractUsage(fakeResult, "openai", "gpt-5.4-nano")
+  assert.equal(usage.inputTokens, 10)
+  assert.equal(usage.cachedInputTokens, undefined)
+})
+
 test("extractUsage returns provider+model only when SDK omits usage and tools", () => {
   const usage = t9ForTesting.extractUsage({ rawResponses: [] }, "siliconflow", "deepseek-chat")
   assert.equal(usage.provider, "siliconflow")

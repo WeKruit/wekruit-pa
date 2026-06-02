@@ -219,7 +219,8 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
             "wrongly merged them into one bubble). Do NOT use send_status_then_continue or any tool to send",
             "these — they are just the two strings you return.",
             "messages[0] = the COMPLIMENT ALONE. Greet them BY FIRST NAME and describe WHAT THEY DID / their",
-            "  EXPERIENCE and WHY it stands out to employers, grounded in the CONTEXT's work history (use THIS)",
+            "  EXPERIENCE and WHY it stands out to employers, grounded in the work history in the CONTEXT provided",
+            "  this turn (a system note appended after the chat — use THIS)",
             "  + most-recent role — e.g. 'hey shixiang! a SWE internship at tesla plus founding two startups —",
             "  that builder track record really stands out to teams 👀'. Make it feel like you actually read",
             "  their résumé. FORBIDDEN: a generic status like 'pulling up your profile'; and listing programming",
@@ -273,8 +274,9 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
         "GROUND EVERY QUESTION, ONE COMPETENCY AT A TIME, IN ORDER. The reducer owns the order — you always",
         "ask the SINGLE pending competency that ask_next_prescreen_question returns, never a later one and",
         "never two at once. The directions below are DIRECTION ONLY — the competency to probe, not a script to",
-        "read verbatim. Before you ask, look at the PRESCREEN CONTEXT (their résumé + any PRIOR prescreen",
-        "sessions, above) and ask a SPECIFIC, probing question that ties THAT pending competency to something",
+        "read verbatim. Before you ask, look at the PRESCREEN CONTEXT provided this turn (their résumé + any PRIOR",
+        "prescreen sessions, in a system note after the chat) and ask a SPECIFIC, probing question that ties THAT",
+        "pending competency to something",
         "they actually did — e.g. instead of 'walk me through a feature you shipped', ask 'you led the checkout",
         "rebuild at Stripe — walk me through how you took that from design to ship'. If a prior session is in",
         "CONTEXT, you may call back to it ('last time you screened for the Helium role you mentioned X — how did",
@@ -387,6 +389,23 @@ const CANARY_TAPBACK = [
   "often the right, human move.",
 ].join(" ")
 
+/**
+ * STATIC HEAD (2B) — the byte-stable instructions Claire's Agent carries every turn.
+ *
+ * For OpenAI prompt caching, `Agent.instructions` must be an IDENTICAL byte string across
+ * every turn + every inner-loop iteration so the provider can serve it from a cached prefix.
+ * So this contains ONLY mode-deterministic, non-per-turn-variable content: PERSONA … SCHEDULING,
+ * the static mode-SHAPE (modeDirective, whose per-turn resolved values are byte-stable PER MODE +
+ * pendingStep/currentStep/slot — those are part of the mode shape, not free-form turn context),
+ * FLEXIBILITY, and FEWSHOT. The PER-TURN dynamic block (globalContext / prescreenContext / a
+ * non-onboarding pendingStep reminder / canary tapback) moves to buildClaireTurnContext() and is
+ * re-injected as a TRAILING system item after the Session transcript (agent.ts run() array input).
+ *
+ * NOTE on caching granularity: `opts.canary` was previously inside the head; it now lives in the
+ * turn context so the head is canary-invariant. The mode shape still varies by `mode` +
+ * onboarding pendingStep/currentStep/slot — those are stable across a given turn's inner loop
+ * (the unit the prefix cache covers), which is what matters.
+ */
 export function buildClairePrompt(opts: ClairePromptOptions): string {
   const langLine = "Reply in natural English (Claire's voice). Respond in English only, never Chinese."
   return [
@@ -398,9 +417,24 @@ export function buildClairePrompt(opts: ClairePromptOptions): string {
     PREFERENCES,
     DELIVERY,
     SCHEDULING,
-    opts.canary ? CANARY_TAPBACK : "",
     modeDirective(opts.mode, opts),
     FLEXIBILITY,
+    FEWSHOT,
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
+
+/**
+ * PER-TURN DYNAMIC CONTEXT (2B) — the block that changes every turn. Injected as a TRAILING
+ * `{role:'system'}` input item placed AFTER the Session-replayed transcript (agent.ts run()),
+ * so the static head + the growing transcript cache and only this small tail is uncached.
+ * Information-equivalent to the old inline block — same content, repositioned (highest salience).
+ * Returns "" when there is nothing dynamic this turn (the array item is then omitted).
+ */
+export function buildClaireTurnContext(opts: ClairePromptOptions): string {
+  return [
+    opts.canary ? CANARY_TAPBACK : "",
     opts.globalContext ? `CONTEXT — ${opts.globalContext}` : "",
     // prescreen: résumé arc + prior-session callbacks (loadPrescreenContext). Self-labeled
     // "PRESCREEN CONTEXT: …" so no extra prefix; only non-empty on a prescreen turn.
@@ -410,7 +444,6 @@ export function buildClairePrompt(opts: ClairePromptOptions): string {
     opts.pendingStep && opts.mode !== "onboarding"
       ? `PENDING STEP to resume after any tangent: ${opts.pendingStep}.`
       : "",
-    FEWSHOT,
   ]
     .filter(Boolean)
     .join("\n")
