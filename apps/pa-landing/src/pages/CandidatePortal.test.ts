@@ -88,6 +88,14 @@ test("CandidatePortal does not advertise unavailable account or role actions", (
   assert.match(source, /filter and review/i)
 })
 
+test("CandidatePortal recommendation cards avoid unsupported timing and internal collab wording", () => {
+  assert.doesNotMatch(source, /48 hours|usually within/i)
+  assert.doesNotMatch(source, />\s*See match\s*</)
+  assert.doesNotMatch(source, /<PulseDot size=\{5\} \/>\s*Collab/)
+  assert.match(source, /WeKruit-screened/)
+  assert.match(source, /const peekCtaLabel = isCollab \? statusDisplay\.ctaLabel : "See role"/)
+})
+
 test("CandidatePortal visibility actions route to reviewed privacy requests", () => {
   assert.doesNotMatch(source, /Pause for a week|Manage availability|Who&apos;s seeing me|Manage visibility/)
   assert.match(source, /Request outreach change/)

@@ -1045,7 +1045,7 @@ function MeWaitingCard({ recommendedCount }: { recommendedCount: number }) {
         <p className="wkv3-wait__sub">
           {recommendedCount > 0
             ? `${recommendedCount} new ${recommendedCount === 1 ? "role" : "roles"} surfaced — take a look below.`
-            : "We'll text you when a role fits your profile - usually within 48 hours of completing it."}
+            : "We'll text you when Claire finds a role that clearly fits your profile."}
         </p>
         <div className="wkv3-wait__bar" aria-hidden="true">
           <span />
@@ -1324,10 +1324,7 @@ function MeNewMatches({
       ) : (
         <div className="wkv3-empty-block">
           <h3>No roles yet.</h3>
-          <p>
-            Claire is matching you. Roles show up here when they fit your profile, usually within 48 hours of completing
-            it.
-          </p>
+          <p>Claire is matching you. Roles show up here when they clearly fit your profile.</p>
         </div>
       )}
     </section>
@@ -1350,6 +1347,8 @@ function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
   const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
   const isCollab = !!match.collab
   const target = matchPrimaryTarget(match)
+  const statusDisplay = getCandidateJobStatusDisplay(match.status, match.job.title)
+  const peekCtaLabel = isCollab ? statusDisplay.ctaLabel : "See role"
   const go = () => {
     if (target.external) window.open(target.url, "_blank", "noopener,noreferrer")
     else navigate(target.url)
@@ -1370,7 +1369,7 @@ function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
           <h4 className="wkv3-peek__t">{match.job.title}</h4>
           {isCollab ? (
             <span className="wkv3-chip wkv3-chip--warm">
-              <PulseDot size={5} /> Collab
+              <PulseDot size={5} /> WeKruit-screened
             </span>
           ) : (
             <span className="wkv3-chip wkv3-chip--muted">New</span>
@@ -1384,7 +1383,7 @@ function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
       <div className="wkv3-peek__right">
         <span className="wkv3-peek__salary">{match.job.salaryRange ?? "By interview"}</span>
         <span className="wkv3-peek__go">
-          {isCollab ? "See match" : "See role"} <Icon name="arrow-right" size={12} stroke={2} />
+          {peekCtaLabel} <Icon name="arrow-right" size={12} stroke={2} />
         </span>
       </div>
     </article>
@@ -3753,7 +3752,7 @@ function MatchesView({
                   <h3>Nothing here.</h3>
                   <p>
                     {all.length === 0
-                      ? "Claire is still matching you - roles land here when they fit your profile, usually within 48 hours of completing it."
+                      ? "Claire is still matching you - roles land here when they clearly fit your profile."
                       : "No roles in this filter — try All."}
                   </p>
                 </div>
