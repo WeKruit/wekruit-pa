@@ -82,6 +82,18 @@ function cleanStringArray(value: unknown, maxItems: number, maxLength: number): 
   return out
 }
 
+function latestIsoString(...values: unknown[]): string | undefined {
+  let best: { value: string; time: number } | undefined
+  for (const value of values) {
+    const cleaned = cleanString(value, 80)
+    if (!cleaned) continue
+    const time = Date.parse(cleaned)
+    if (!Number.isFinite(time)) continue
+    if (!best || time > best.time) best = { value: cleaned, time }
+  }
+  return best?.value
+}
+
 function createCandidateJobStateId(candidateId: string, jobId: string): string {
   return `${candidateId}__${jobId}`
 }
@@ -229,6 +241,22 @@ function projectMatchCard(args: {
   const whyMatched = storedReason ? [storedReason] : legacyReasons
   const status = projectStatus(state, hasInvite, args.prescreenTerminal, args.prescreenReviewPending)
   const reviewDecision = projectCandidateReviewDecision(status, args.prescreenSession)
+  const activityAt =
+    latestIsoString(
+      args.state?.stateUpdatedAt,
+      args.invite?.candidateResponse &&
+        typeof args.invite.candidateResponse === "object" &&
+        (args.invite.candidateResponse as Record<string, unknown>).respondedAt,
+      args.invite?.deliveredAt,
+      args.invite?.sentAt,
+      args.invite?.queuedAt,
+      args.invite?.approvedAt,
+      args.invite?.updatedAt,
+      args.invite?.createdAt,
+      match?.updatedAt,
+      match?.computedAt,
+      match?.createdAt
+    ) ?? new Date(0).toISOString()
   return {
     matchId: args.matchId,
     jobId: args.jobId,
@@ -239,7 +267,7 @@ function projectMatchCard(args: {
     job: projectJobDisplay(args.jobId, args.job),
     whyMatched: whyMatched.length > 0 ? whyMatched : ["This role matches your saved profile."],
     ...(typeof match?.finalRank === "number" && Number.isInteger(match.finalRank) ? { rank: match.finalRank } : {}),
-    computedAt: cleanString(match?.computedAt, 80) ?? cleanString(match?.updatedAt, 80) ?? new Date(0).toISOString(),
+    computedAt: activityAt,
     ...(reviewDecision ? { reviewDecision } : {}),
   }
 }

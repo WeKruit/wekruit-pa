@@ -136,6 +136,31 @@ test("runCandidateListMatches includes direct state-only candidate job rows", as
   assert.doesNotMatch(JSON.stringify(result), /rawTranscript/)
 })
 
+test("runCandidateListMatches uses stateUpdatedAt for state-only pipeline activity time", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
+    firebaseUid: "firebase-1",
+    candidateId: "cand-1",
+  })
+  await mfs.collection("pa-candidate-job-states").doc("cand-1__job-direct").set({
+    id: "cand-1__job-direct",
+    candidateId: "cand-1",
+    jobId: "job-direct",
+    state: "prescreen_started",
+    stateUpdatedAt: "2026-05-14T20:15:00.000Z",
+  })
+  await mfs.collection("pa-jobs").doc("job-direct").set({
+    publicVisible: true,
+    prescreenConfig: { jobTitle: "Backend Engineer", company: "Direct Co" },
+  })
+
+  const result = await runCandidateListMatches({}, { uid: "firebase-1" }, { db: asFirestore(mfs) })
+
+  assert.equal(result.matches.length, 1)
+  assert.equal(result.matches[0]!.status, "interview_started")
+  assert.equal(result.matches[0]!.computedAt, "2026-05-14T20:15:00.000Z")
+})
+
 test("runCandidateListMatches surfaces ONLY recorded recs; collab flag derived from pa-jobs collaboration status", async () => {
   const mfs = new MockFirestore()
   await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
