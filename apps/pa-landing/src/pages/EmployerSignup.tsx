@@ -34,6 +34,7 @@ const EMPTY_FORM: EmployerSignupFormState = {
   roleAtCompany: "",
   stage: "",
   rolesHiring: "",
+  hardFilters: "",
   notes: "",
 }
 
@@ -105,9 +106,9 @@ export default function EmployerSignup() {
               color: "var(--ink-2)",
             }}
           >
-            Tell us the role, must-haves, and context behind the brief. WeKruit reviews it,
-            Claire screens against the evidence, and you only see consented passed profiles
-            with the transcript and risks attached.
+            Tell us the role, must-haves, hard filters, and context behind the brief. WeKruit
+            reviews it, Claire screens against the evidence, and you only see consented
+            passed profiles with the transcript and risks attached.
           </p>
 
           {done ? <SuccessCard email={form.workEmail} /> : (
@@ -173,6 +174,14 @@ export default function EmployerSignup() {
                 onChange={(v) => update("rolesHiring", v)}
                 placeholder="Senior PM for developer platform; SF hybrid; $220k-$290k base"
                 helper="Start with the one role Claire should screen against first."
+              />
+              <Field
+                label="Hard filters *"
+                value={form.hardFilters}
+                onChange={(v) => update("hardFilters", v)}
+                placeholder="Requires US work authorization; SF hybrid three days per week"
+                helper="List what must stop a pass before Claire screens."
+                as="textarea"
               />
               <Field
                 label="Must-haves *"
@@ -334,7 +343,7 @@ function SuccessCard({ email }: { email: string }) {
       </h2>
       <p style={{ color: "var(--ink-2)", margin: "0 0 18px", maxWidth: 440, marginInline: "auto" }}>
         We have sent the role brief to the WeKruit team. We will reach out at <strong>{email}</strong> within
-        a business day to confirm the brief before Claire screens candidates.
+        a business day to confirm the hard filters and must-have evidence before Claire screens candidates.
       </p>
       <Link to="/" className="btn btn--primary" style={{ textDecoration: "none" }}>
         Back to home

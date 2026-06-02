@@ -30,3 +30,13 @@ test("EmployerSignup role-intake examples do not borrow real company product nam
   assert.match(source, /developer platform/)
   assert.match(source, /must-haves Claire should probe/)
 })
+
+test("EmployerSignup captures hard filters as a first-class screening constraint", () => {
+  assert.match(source, /Hard filters \*/)
+  assert.match(source, /what must stop a pass/i)
+  assert.match(source, /US work authorization/)
+  assert.match(source, /hardFilters/)
+
+  assert.doesNotMatch(source, /Hard filters \(optional\)/i)
+  assert.doesNotMatch(source, /AI learns automatically/i)
+})

@@ -70,6 +70,8 @@ export type EmployerSignupInput = {
   stage: string
   roleAtCompany: string
   rolesHiring: string[]
+  /** Hard-stop filters Claire must enforce before passing a candidate. */
+  hardFilters: string[]
   /** Free-form notes shown verbatim in the admin notification email. */
   notes?: string
   /** Submitter's name — displayed in the admin notification email. */

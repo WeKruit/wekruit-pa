@@ -40,6 +40,7 @@ type EmployerRow = {
   stage?: string
   roleAtCompany?: string
   rolesHiring?: string[]
+  hardFilters?: string[]
   contactName?: string
   notes?: string
   verificationStatus?: VerificationStatus
@@ -115,7 +116,7 @@ export default function LayoffEmployers() {
     return rows.filter((r) => {
       if (statusFilter !== "all" && (r.verificationStatus ?? "pending") !== statusFilter) return false
       if (!needle) return true
-      const hay = [r.companyName, r.workEmailLower ?? r.workEmail, r.contactName, r.roleAtCompany, r.stage]
+      const hay = [r.companyName, r.workEmailLower ?? r.workEmail, r.contactName, r.roleAtCompany, r.stage, ...(r.hardFilters ?? [])]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
@@ -245,6 +246,16 @@ export default function LayoffEmployers() {
                   </td>
                   <td style={td}>
                     {r.rolesHiring?.length ? r.rolesHiring.join(", ") : "—"}
+                    {r.hardFilters?.length ? (
+                      <details style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
+                        <summary style={{ cursor: "pointer", color: "#3a6ea5" }}>Hard filters</summary>
+                        <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                          {r.hardFilters.map((filter) => (
+                            <li key={filter}>{filter}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
                     {r.notes && (
                       <details style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
                         <summary style={{ cursor: "pointer", color: "#3a6ea5" }}>Notes</summary>

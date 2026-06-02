@@ -17,6 +17,7 @@ const VALID_FORM: EmployerSignupFormState = {
   stage: "seed",
   rolesHiring: "Founding infra engineer\nDeveloper platform PM",
   notes: "Must have shipped infrastructure products, can explain tradeoffs, and is SF hybrid.",
+  hardFilters: "Requires US work authorization\nSF hybrid three days per week",
 }
 
 test("validateEmployerSignupForm requires a real primary role brief before Claire screens", () => {
@@ -30,6 +31,13 @@ test("validateEmployerSignupForm requires must-have evidence for Claire's probes
   assert.equal(
     validateEmployerSignupForm({ ...VALID_FORM, notes: " " }),
     "Must-haves are required so Claire can probe the right evidence.",
+  )
+})
+
+test("validateEmployerSignupForm requires hard filters before Claire screens", () => {
+  assert.equal(
+    validateEmployerSignupForm({ ...VALID_FORM, hardFilters: " " }),
+    "Hard filters are required so Claire knows what must stop a pass.",
   )
 })
 
@@ -47,5 +55,6 @@ test("buildEmployerSignupPayload normalizes the role brief without inventing sco
     rolesHiring: ["Founding infra engineer", "Developer platform PM"],
     contactName: "Alex Rivera",
     notes: "Must have shipped infrastructure products, can explain tradeoffs, and is SF hybrid.",
+    hardFilters: ["Requires US work authorization", "SF hybrid three days per week"],
   })
 })

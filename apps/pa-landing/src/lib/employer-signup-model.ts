@@ -17,6 +17,7 @@ export type EmployerSignupFormState = {
   roleAtCompany: string
   stage: EmployerSignupStage | ""
   rolesHiring: string
+  hardFilters: string
   notes: string
 }
 
@@ -40,6 +41,9 @@ export function validateEmployerSignupForm(form: EmployerSignupFormState): strin
   if (!form.notes.trim()) {
     return "Must-haves are required so Claire can probe the right evidence."
   }
+  if (splitRoleBriefs(form.hardFilters).length === 0) {
+    return "Hard filters are required so Claire knows what must stop a pass."
+  }
   return null
 }
 
@@ -53,5 +57,6 @@ export function buildEmployerSignupPayload(form: EmployerSignupFormState): Emplo
     rolesHiring: splitRoleBriefs(form.rolesHiring),
     contactName: form.contactName.trim(),
     notes: form.notes.trim(),
+    hardFilters: splitRoleBriefs(form.hardFilters),
   }
 }

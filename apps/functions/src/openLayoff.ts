@@ -615,6 +615,8 @@ export type EmployerInput = {
   stage: string
   roleAtCompany: string
   rolesHiring: string[]
+  /** Hard-stop filters Claire must enforce before passing a candidate. */
+  hardFilters: string[]
   /** Submitter name — for the admin notification email. */
   contactName?: string
   /** Free-form notes — appended verbatim to the admin notification body. */
@@ -633,16 +635,39 @@ export async function runRegisterEmployer(
   if (!v.companyName || !v.workEmail) throw new HttpsError("invalid-argument", "Missing required fields")
   const workEmailLower = cleanEmail(v.workEmail)
   if (!workEmailLower) throw new HttpsError("invalid-argument", "work_email_invalid")
+  const rolesHiring = cleanStringList(v.rolesHiring)
+  if (rolesHiring.length === 0) throw new HttpsError("invalid-argument", "role_brief_required")
+  const notes = typeof v.notes === "string" ? v.notes.trim() : ""
+  if (!notes) throw new HttpsError("invalid-argument", "must_haves_required")
+  const hardFilters = cleanStringList(v.hardFilters)
+  if (hardFilters.length === 0) throw new HttpsError("invalid-argument", "hard_filters_required")
+  const cleanInput: EmployerInput = {
+    ...v,
+    companyName: v.companyName.trim(),
+    companyLinkedin: typeof v.companyLinkedin === "string" ? v.companyLinkedin.trim() : "",
+    workEmail: v.workEmail.trim(),
+    stage: typeof v.stage === "string" && v.stage.trim() ? v.stage.trim() : "other",
+    roleAtCompany: typeof v.roleAtCompany === "string" ? v.roleAtCompany.trim() : "",
+    rolesHiring,
+    hardFilters,
+    contactName: typeof v.contactName === "string" ? v.contactName.trim() : undefined,
+    notes,
+  }
   const ref = deps.db.collection("layoff_employers").doc()
   await ref.set({
-    ...v,
+    ...cleanInput,
     workEmailLower,
     verificationStatus: "pending",
     registeredByUid: auth?.uid ?? null,
     registeredAt: serverTimestamp(deps),
   })
-  await notifyAdminOfEmployerSignup(v, { employerId: ref.id, workEmailLower }, deps.sendMail ?? sendMailgun)
+  await notifyAdminOfEmployerSignup(cleanInput, { employerId: ref.id, workEmailLower }, deps.sendMail ?? sendMailgun)
   return { employerId: ref.id }
+}
+
+function cleanStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean)
 }
 
 async function notifyAdminOfEmployerSignup(
@@ -678,6 +703,7 @@ async function notifyAdminOfEmployerSignup(
     `Contact: ${v.contactName ?? "—"} (${v.roleAtCompany || "no role given"})`,
     `Work email: ${ctx.workEmailLower}`,
     `Roles hiring: ${v.rolesHiring?.length ? v.rolesHiring.join(", ") : "—"}`,
+    `Hard filters: ${v.hardFilters.length ? v.hardFilters.join("; ") : "—"}`,
     v.notes ? `\nNotes:\n${v.notes}` : null,
     `\nFirestore: layoff_employers/${ctx.employerId}`,
     `Source: layoff.wekruit.com /employer`,
@@ -696,6 +722,7 @@ async function notifyAdminOfEmployerSignup(
     `<li><b>Contact:</b> ${escapeHtml(v.contactName ?? "—")} (${escapeHtml(v.roleAtCompany || "no role given")})</li>` +
     `<li><b>Work email:</b> <a href="mailto:${escapeHtmlAttr(ctx.workEmailLower)}">${escapeHtml(ctx.workEmailLower)}</a></li>` +
     `<li><b>Roles hiring:</b> ${v.rolesHiring?.length ? escapeHtml(v.rolesHiring.join(", ")) : "—"}</li>` +
+    `<li><b>Hard filters:</b> ${v.hardFilters.length ? escapeHtml(v.hardFilters.join("; ")) : "—"}</li>` +
     `</ul>` +
     (v.notes ? `<h3 style="font-family:system-ui;font-size:14px;margin:18px 0 6px">Notes</h3><pre style="font-family:system-ui;font-size:13px;white-space:pre-wrap;background:#f6f3ee;padding:12px;border-radius:6px">${escapeHtml(v.notes)}</pre>` : "") +
     `<p style="font-family:system-ui;font-size:12px;color:#6b6357;margin-top:24px">Firestore: <code>layoff_employers/${escapeHtml(ctx.employerId)}</code><br>Source: <code>layoff.wekruit.com /employer</code></p>`
