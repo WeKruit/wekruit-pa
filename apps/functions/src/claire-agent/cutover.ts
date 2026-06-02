@@ -73,6 +73,28 @@ export async function maybeRunThinClaire(
   if (!enabled) return false
 
   const rawMeta = (data.rawMeta ?? {}) as Record<string, unknown>
+
+  // DUP-SEND GUARD (Adam 2026-06-02): runtime-event handoffs (onboarding kickoff, nurture,
+  // reverse-match, cv-reject, etc.) are SYNTHETIC inbound docs enqueued by
+  // enqueueRuntimeEventHandoff — their body is a "[system-event:…]" directive and
+  // rawMeta.runtimeEvent === true. Thin Claire has NO runtime-event semantics (no system
+  // role, no __NO_SEND__ token, no trusted-runtime-body composer); only the LEGACY path
+  // (handleSharedOnboardingRuntimeEvent / index.ts runtimeEvent branch) knows how to treat
+  // them. With thin ON for everyone, the un-guarded seam made thin answer the synthetic
+  // kickoff directive AS IF it were a candidate message → a SECOND onboarding opener (the
+  // real broker "Hello, WeKruit!" handshake produced the first). Defer ALL runtime events
+  // to legacy so exactly one path composes one opener. The candidate's real handshake flows
+  // via the broker path (no runtimeEvent marker) and is unaffected by this guard.
+  if (rawMeta.runtimeEvent === true) {
+    log("thin_claire.defer_runtime_event", {
+      eventId,
+      userId,
+      source: typeof rawMeta.runtimeEventSource === "string" ? rawMeta.runtimeEventSource : undefined,
+      kind: typeof rawMeta.runtimeEventKind === "string" ? rawMeta.runtimeEventKind : undefined,
+    })
+    return false
+  }
+
   const toE164 =
     (typeof data.fromNumber === "string" && data.fromNumber) ||
     (typeof data.externalChatId === "string" && data.externalChatId) ||
