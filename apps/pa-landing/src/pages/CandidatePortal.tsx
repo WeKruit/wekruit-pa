@@ -913,6 +913,25 @@ function deriveRecommendedRolesAction(recommendedCount: number): MeAction | null
   }
 }
 
+function buildUpNextActions({
+  actions,
+  recommendedNextAction,
+  profileNextAction,
+}: {
+  actions: MeAction[]
+  recommendedNextAction: MeAction | null
+  profileNextAction: MeAction | null
+}): MeAction[] {
+  const criticalProfileAction = profileNextAction?.urgent ? profileNextAction : null
+  const nonCriticalProfileAction = profileNextAction && !profileNextAction.urgent ? profileNextAction : null
+  return [
+    ...actions,
+    ...(criticalProfileAction ? [criticalProfileAction] : []),
+    ...(recommendedNextAction ? [recommendedNextAction] : []),
+    ...(nonCriticalProfileAction ? [nonCriticalProfileAction] : []),
+  ]
+}
+
 function profileActionHrefForMissing(missing: MeCompleteness["missing"][number]): string {
   switch (missing.id) {
     case "resume":
@@ -1163,7 +1182,7 @@ function MeUpNext({
   error: string | null
   recommendedCount: number
 }) {
-  const upNextActions = [...actions, ...(recommendedNextAction ? [recommendedNextAction] : []), ...(profileNextAction ? [profileNextAction] : [])]
+  const upNextActions = buildUpNextActions({ actions, recommendedNextAction, profileNextAction })
   return (
     <section className="wkv3-sec" id="up-next">
       <header className="wkv3-sec__head">

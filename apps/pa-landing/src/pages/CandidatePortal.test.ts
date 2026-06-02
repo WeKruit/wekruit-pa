@@ -244,7 +244,19 @@ test("CandidatePortal /me treats new recommended roles as an Up Next action", ()
   assert.match(source, /meta: `New roles · \$\{recommendedCount\} \$\{recommendedCount === 1 \? "role" : "roles"\}`/)
   assert.match(source, /title: "Review new roles Claire found"/)
   assert.match(source, /href: "\/me\/matches"/)
-  assert.match(source, /const upNextActions = \[\.\.\.actions, \.\.\.\(recommendedNextAction \? \[recommendedNextAction\] : \[\]\), \.\.\.\(profileNextAction \? \[profileNextAction\] : \[\]\)\]/)
+  assert.match(source, /recommendedNextAction \? \[recommendedNextAction\] : \[\]/)
+})
+
+test("CandidatePortal Up Next orders critical profile blockers before recommended roles", () => {
+  assert.match(source, /function buildUpNextActions\(/)
+  assert.match(source, /const criticalProfileAction = profileNextAction\?\.urgent \? profileNextAction : null/)
+  assert.match(source, /const nonCriticalProfileAction = profileNextAction && !profileNextAction\.urgent \? profileNextAction : null/)
+  assert.match(
+    source,
+    /return \[\s*\.\.\.actions,\s*\.\.\.\(criticalProfileAction \? \[criticalProfileAction\] : \[\]\),\s*\.\.\.\(recommendedNextAction \? \[recommendedNextAction\] : \[\]\),\s*\.\.\.\(nonCriticalProfileAction \? \[nonCriticalProfileAction\] : \[\]\),\s*\]/,
+  )
+  assert.match(source, /const upNextActions = buildUpNextActions\(\{ actions, recommendedNextAction, profileNextAction \}\)/)
+  assert.doesNotMatch(source, /const upNextActions = \[\.\.\.actions, \.\.\.\(recommendedNextAction \? \[recommendedNextAction\] : \[\]\), \.\.\.\(profileNextAction \? \[profileNextAction\] : \[\]\)\]/)
 })
 
 test("CandidatePortal status header CTA labels the scroll action honestly", () => {
