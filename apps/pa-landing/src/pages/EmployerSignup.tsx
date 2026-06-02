@@ -7,19 +7,16 @@
  */
 import { useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import { Link } from "react-router-dom"
-import { registerEmployer, type EmployerSignupInput } from "../lib/onboarding-api.js"
+import {
+  buildEmployerSignupPayload,
+  validateEmployerSignupForm,
+  type EmployerSignupFormState,
+  type EmployerSignupStage,
+} from "../lib/employer-signup-model.js"
+import { registerEmployer } from "../lib/onboarding-api.js"
 import "../styles/wekruit-tokens.css"
 
-type Stage =
-  | "pre-seed"
-  | "seed"
-  | "series-a"
-  | "series-b"
-  | "series-c-plus"
-  | "public"
-  | "other"
-
-const STAGE_OPTIONS: { value: Stage; label: string }[] = [
+const STAGE_OPTIONS: { value: EmployerSignupStage; label: string }[] = [
   { value: "pre-seed", label: "Pre-seed" },
   { value: "seed", label: "Seed" },
   { value: "series-a", label: "Series A" },
@@ -29,18 +26,7 @@ const STAGE_OPTIONS: { value: Stage; label: string }[] = [
   { value: "other", label: "Other" },
 ]
 
-type FormState = {
-  companyName: string
-  companyLinkedin: string
-  workEmail: string
-  contactName: string
-  roleAtCompany: string
-  stage: Stage | ""
-  rolesHiring: string
-  notes: string
-}
-
-const EMPTY_FORM: FormState = {
+const EMPTY_FORM: EmployerSignupFormState = {
   companyName: "",
   companyLinkedin: "",
   workEmail: "",
@@ -52,41 +38,25 @@ const EMPTY_FORM: FormState = {
 }
 
 export default function EmployerSignup() {
-  const [form, setForm] = useState<FormState>(EMPTY_FORM)
+  const [form, setForm] = useState<EmployerSignupFormState>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const update = <K extends keyof FormState>(k: K, v: FormState[K]) =>
+  const update = <K extends keyof EmployerSignupFormState>(k: K, v: EmployerSignupFormState[K]) =>
     setForm((prev) => ({ ...prev, [k]: v }))
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    if (!form.companyName.trim() || !form.workEmail.trim() || !form.contactName.trim()) {
-      setError("Company name, your name, and work email are required.")
-      return
-    }
-    if (!form.workEmail.includes("@")) {
-      setError("That doesn't look like a valid email.")
+    const validationError = validateEmployerSignupForm(form)
+    if (validationError) {
+      setError(validationError)
       return
     }
     setSubmitting(true)
     try {
-      const payload: EmployerSignupInput = {
-        companyName: form.companyName.trim(),
-        companyLinkedin: form.companyLinkedin.trim(),
-        workEmail: form.workEmail.trim().toLowerCase(),
-        stage: form.stage || "other",
-        roleAtCompany: form.roleAtCompany.trim(),
-        rolesHiring: form.rolesHiring
-          .split(/[,\n]+/)
-          .map((s) => s.trim())
-          .filter(Boolean),
-        contactName: form.contactName.trim(),
-        notes: form.notes.trim() || undefined,
-      }
-      await registerEmployer(payload)
+      await registerEmployer(buildEmployerSignupPayload(form))
       setDone(true)
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Something went wrong."
@@ -165,7 +135,7 @@ export default function EmployerSignup() {
                 <Field
                   label="Stage"
                   value={form.stage}
-                  onChange={(v) => update("stage", v as Stage | "")}
+                  onChange={(v) => update("stage", v as EmployerSignupStage | "")}
                   as="select"
                   options={STAGE_OPTIONS}
                 />
@@ -198,14 +168,14 @@ export default function EmployerSignup() {
                 placeholder="https://www.linkedin.com/company/acme"
               />
               <Field
-                label="Primary role brief"
+                label="Primary role brief *"
                 value={form.rolesHiring}
                 onChange={(v) => update("rolesHiring", v)}
                 placeholder="Senior PM for developer platform; SF hybrid; $220k-$290k base"
-                helper="One role per line if you are opening more than one search."
+                helper="Start with the one role Claire should screen against first."
               />
               <Field
-                label="Must-haves"
+                label="Must-haves *"
                 value={form.notes}
                 onChange={(v) => update("notes", v)}
                 placeholder="Founder-mode judgment, API product depth, comp band, location, must-haves Claire should probe."
