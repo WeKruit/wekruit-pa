@@ -143,6 +143,16 @@ test("CandidatePortal connector errors render inline candidate-safe feedback", (
   assert.match(source, /Cal\.com connection is not available yet\. Message Claire to share scheduling context\./)
 })
 
+test("CandidatePortal submit errors do not echo raw callable detail to candidates", () => {
+  assert.match(source, /function callableSubmitErrorMessage\(err: unknown\): string/)
+  assert.doesNotMatch(source, /if \(code === "functions\/failed-precondition"\) return raw \|\|/)
+  assert.doesNotMatch(source, /if \(code === "functions\/invalid-argument"\) return raw \|\|/)
+  assert.doesNotMatch(source, /return raw \|\| "Something went wrong submitting that\. Try again\."/)
+  assert.match(source, /We need to review your profile before saving this\./)
+  assert.match(source, /Review the form and try again\. Claire can still update this from your message\./)
+  assert.match(source, /That did not submit\. Try again in a moment, or message Claire if this is urgent\./)
+})
+
 test("CandidatePortal does not advertise unavailable account or role actions", () => {
   assert.doesNotMatch(source, /\bManage\s*<\/span>/)
   assert.doesNotMatch(source, /filter,\s*save\s*&\s*decide/i)

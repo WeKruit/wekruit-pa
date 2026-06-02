@@ -308,17 +308,23 @@ function matchesLoadErrorMessage(err: unknown): string {
 }
 
 // Generic translator for callable mutations (corrections, privacy requests).
-// Keeps the validation pre-check messages (server-side throws with specific
-// detail) but humanizes the generic "internal" placeholder.
+// Never echo callable detail directly; those messages often contain backend
+// state names that are not useful to candidates.
 function callableSubmitErrorMessage(err: unknown): string {
   const code =
     err && typeof err === "object" && "code" in err
       ? String((err as { code?: unknown }).code ?? "")
       : ""
   const raw = err instanceof Error ? err.message : String(err)
-  if (code === "functions/unauthenticated") return "Sign in again to submit this."
-  if (code === "functions/failed-precondition") return raw || "We can't submit this right now."
-  if (code === "functions/invalid-argument") return raw || "Please review the form and try again."
+  if (code === "functions/unauthenticated" || /unauthenticated|sign in/i.test(raw)) {
+    return "Sign in again to submit this."
+  }
+  if (code === "functions/failed-precondition" || /failed-precondition|operator review|not linked/i.test(raw)) {
+    return "We need to review your profile before saving this."
+  }
+  if (code === "functions/invalid-argument" || /invalid-argument/i.test(raw)) {
+    return "Review the form and try again. Claire can still update this from your message."
+  }
   if (
     code === "functions/internal" ||
     code === "functions/unavailable" ||
@@ -327,7 +333,7 @@ function callableSubmitErrorMessage(err: unknown): string {
   ) {
     return "Submit failed — service is briefly unavailable. Try again in a moment."
   }
-  return raw || "Something went wrong submitting that. Try again."
+  return "That did not submit. Try again in a moment, or message Claire if this is urgent."
 }
 
 // ────────────────────────────────────────────────────────────────────────────
