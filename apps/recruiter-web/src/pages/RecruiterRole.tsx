@@ -2655,26 +2655,29 @@ export default function RecruiterRole() {
     }
     setSubmitError(null)
     setSubmitting(true)
-    const result = await submitRecruiterCandidate({
-      jobId: job.jobId,
-      sourcedCandidateId: selectedCandidate?.id,
-      submitter: {
-        name: form.submitterName.trim(),
-        email: form.submitterEmail.trim(),
-      },
-      candidate: {
-        name: form.candidateName.trim(),
-        email: form.candidateEmail.trim().toLowerCase(),
-        link: form.candidateLink.trim(),
-        currentRole: form.candidateCurrentRole.trim() || undefined,
-        yoe: form.candidateYoe.trim() || undefined,
-        notes: form.candidateNotes.trim() || undefined,
-      },
-      checklist: form.checklist,
-      candidateConsent: true,
-    })
-    setSubmitting(false)
-    if (result.ok) {
+    try {
+      const result = await submitRecruiterCandidate({
+        jobId: job.jobId,
+        sourcedCandidateId: selectedCandidate?.id,
+        submitter: {
+          name: form.submitterName.trim(),
+          email: form.submitterEmail.trim(),
+        },
+        candidate: {
+          name: form.candidateName.trim(),
+          email: form.candidateEmail.trim().toLowerCase(),
+          link: form.candidateLink.trim(),
+          currentRole: form.candidateCurrentRole.trim() || undefined,
+          yoe: form.candidateYoe.trim() || undefined,
+          notes: form.candidateNotes.trim() || undefined,
+        },
+        checklist: form.checklist,
+        candidateConsent: true,
+      })
+      if (!result.ok) {
+        setSubmitError(formatSubmissionFailure(result.reason))
+        return
+      }
       setSubmission(result)
       if (selectedCandidate) {
         const submittedCandidate = {
@@ -2702,10 +2705,19 @@ export default function RecruiterRole() {
             : row
         )))
       }
+      try {
+        const updatedSubmissions = await fetchRecruiterSubmissions()
+        setSubmissions(updatedSubmissions)
+        setTrackerError(null)
+      } catch (error) {
+        setTrackerError(`Candidate submitted, but the role tracker refresh failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
       saveFormState(job.jobId, withRecruiterDefaults(emptyForm(), session))
       window.scrollTo({ top: 0, behavior: "smooth" })
-    } else {
-      setSubmitError(formatSubmissionFailure(result.reason))
+    } catch (error) {
+      setSubmitError(formatSubmissionFailure(error instanceof Error ? error.message : String(error)))
+    } finally {
+      setSubmitting(false)
     }
   }
 
