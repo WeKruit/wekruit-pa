@@ -34,6 +34,28 @@ import { HELLO_WEKRUIT_OPENER_PREFIX } from "@pa/pa-orchestrator"
 export const CLAIRE_MODEL = "gpt-5.4-nano"
 
 /**
+ * Hard cap on the SDK agent loop (model-call iterations per inbound turn) for the
+ * LIVE thin-Claire path — the `run()` calls in this file + proactive.ts.
+ *
+ * @openai/agents `run()` defaults to `DEFAULT_MAX_TURNS = 10` when no cap is
+ * passed. Each iteration re-sends the full (uncached) ~5-6K system prompt + the
+ * monotonically GROWING transcript + accumulated tool outputs, so a turn that
+ * spirals toward the ceiling multiplies token cost on a compounding context —
+ * the mechanism behind the 2026-06-01 runaway (~1.2B gpt-5.4-nano input tokens
+ * in one day → OpenAI auto-revoked the key). Capping bounds the per-inbound
+ * blast radius. Shares the SAME env knob + default as @pa/agent-runtime's
+ * `resolveMaxTurns` (the OTHER, non-conversation run() path) so a single
+ * `PA_AGENT_MAX_TURNS` governs BOTH. Default 8 (< the SDK's 10, room for the
+ * longest legit chain: matching set-prefs→find-match→compose, or the prescreen
+ * FSM load→judge→record→advance→ask). Clamped to [2,10].
+ */
+export function resolveClaireMaxTurns(): number {
+  const raw = Number(process.env.PA_AGENT_MAX_TURNS)
+  if (!Number.isFinite(raw)) return 8
+  return Math.max(2, Math.min(10, Math.trunc(raw)))
+}
+
+/**
  * Structured reply contract (Adam 2026-05-30) — the agent returns its user-facing reply as an
  * ARRAY of iMessage bubbles, each sent in order via one Sendblue POST. This is the SDK-native way
  * to do multi-bubble (e.g. a compliment bubble THEN the question bubble): ONE model response, an
@@ -357,7 +379,10 @@ export async function runClaireTurn(
   let blocked = false
   try {
     const res = (await Promise.race([
-      run(agent, turnText, { session }),
+      // maxTurns — cost guard against the unbounded agent loop (see
+      // resolveClaireMaxTurns). Without it the SDK runs up to 10 turns, each
+      // re-sending the full prompt + growing transcript (the 1.2B-token runaway).
+      run(agent, turnText, { session, maxTurns: resolveClaireMaxTurns() }),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error("claire_run_timeout")), RUN_TIMEOUT_MS),
       ),

@@ -308,7 +308,7 @@ async function defaultComposeCopy(input: {
   db: Firestore
 }): Promise<string[]> {
   const { run } = await import("./sdk.js")
-  const { buildClaireAgent, CLAIRE_MODEL } = await import("./agent.js")
+  const { buildClaireAgent, CLAIRE_MODEL, resolveClaireMaxTurns } = await import("./agent.js")
   const directive = proactiveDirective(input.kind, input.lang, input.jobs)
   const agent = buildClaireAgent(
     {
@@ -323,7 +323,7 @@ async function defaultComposeCopy(input: {
     },
     { mode: "triage", lang: input.lang },
   )
-  const res = await run(agent, directive)
+  const res = await run(agent, directive, { maxTurns: resolveClaireMaxTurns() })
   const text = String((res as { finalOutput?: unknown }).finalOutput ?? "").trim()
   return splitBubbles(text)
 }
