@@ -57,3 +57,15 @@ test("Landing trust section uses product proof instead of fake customer proof", 
   assert.match(landingSource, /Profile memory/)
   assert.match(landingSource, /pass reason, risks, fit notes, and transcript excerpts/)
 })
+
+test("Landing sample artifacts avoid borrowed real-company proof", () => {
+  assert.doesNotMatch(source, /Maya Okafor/)
+  assert.doesNotMatch(source, /Stripe|Anthropic|Snowflake|Notion|Vercel/)
+  assert.doesNotMatch(source, /Claude APIs/)
+  assert.doesNotMatch(source, /Replit|Linear/)
+
+  assert.match(source, /Sample candidate/)
+  assert.match(source, /AI infra platform/)
+  assert.match(source, /Developer platform/)
+  assert.match(source, /Productivity suite/)
+})

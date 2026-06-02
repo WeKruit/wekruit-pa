@@ -30,7 +30,7 @@ import { AudienceToggle } from "../components/AudienceToggle.js"
 import { EmployerSequence } from "../components/Sequence.js"
 
 // ────────────────────────────────────────────────────────────────────────────
-// Sample preview data — one fully-fleshed passed profile (Maya Okafor) plus
+// Sample preview data — one fully-fleshed generic passed profile plus
 // 4 stubs. Once the employer dashboard connects to live PASS events from
 // PreScreenPipeline, replace this with a Firestore query against
 // pass-snapshots/{employerId}/{jobId}.
@@ -65,28 +65,28 @@ const SAMPLE_PASS_RECORD = "Sample pass record"
 
 const EMP_PASSED: PassedProfile[] = [
   {
-    id: "pp-maya-okafor",
-    name: "Maya Okafor",
-    initials: "MO",
+    id: "pp-sample-candidate",
+    name: "Sample candidate",
+    initials: "SC",
     tone: "warm",
-    headline: "Senior PM · AI infrastructure · 7y",
-    role: "Senior Product Manager, Claude APIs",
+    headline: "Senior PM · developer platform · 7y",
+    role: "Developer platform lead",
     pass: "Strong pass",
     reviewBadge: "Evidence ready",
     summary:
-      "Built and shipped two 0→1 AI platform products at Linear and Replit. " +
-      "Owns developer-facing API roadmaps end-to-end and has scaled a billing/tiering surface from " +
+      "Built and shipped two 0→1 developer platform products at growth-stage companies. " +
+      "Owns API roadmap decisions end-to-end and has scaled a billing/tiering surface from " +
       "300M to 11B calls/month. Wants infrastructure scope, not feature work, and is ready to talk now.",
     passReason:
-      "Maya cleared every must-have on the brief: 5+y product, ships against a P&L, has shipped " +
-      "developer-facing AI APIs at scale, and lives in SF. Her answer to the “what would you cut " +
-      "from the current roadmap” question was specific and showed she'd read your changelog. " +
-      "She has one active interview elsewhere — Anthropic should move this week.",
+      "This candidate cleared every must-have on the brief: 5+y product, ships against a P&L, has shipped " +
+      "developer-facing APIs at scale, and lives in SF. Their answer to the “what would you cut " +
+      "from the current roadmap” question was specific and tied to the role brief. " +
+      "They have one active interview elsewhere, so the hiring team should decide quickly.",
     evidence: [
-      { tag: "Shipped 2 AI APIs at scale", source: "Resume · Linear, Replit" },
+      { tag: "Shipped 2 API products at scale", source: "Resume · developer platform roles" },
       { tag: "Owns roadmap + P&L", source: "Interview · Q4" },
       { tag: "Tiering / billing depth", source: "Interview · Q7" },
-      { tag: "Reads your changelog", source: "Interview · Q9" },
+      { tag: "Understands the role brief", source: "Interview · Q9" },
       { tag: "Calm under ambiguity", source: "Claire's read" },
     ],
     requirementsMet: [
@@ -99,7 +99,7 @@ const EMP_PASSED: PassedProfile[] = [
     risks: [
       "Hasn't directly managed a team (has led pods, not headcount)",
       "Wants infra scope — would walk if pushed to consumer surface",
-      "One active interview at Perplexity (loop closes Friday)",
+      "One active interview elsewhere (loop closes Friday)",
     ],
     fit: {
       compAsked: "$240k base · willing on equity",
@@ -110,33 +110,33 @@ const EMP_PASSED: PassedProfile[] = [
     },
     transcript: [
       {
-        q: "What's the worst part of the current Claude API surface?",
+        q: "What's the weakest part of this developer platform brief?",
         a:
-          "The streaming response shape is fine until you try to do tool-use inside a " +
-          "long-running agent. You end up parsing two different envelopes and clients " +
-          "drift. I'd ship a single typed event stream and burn the rest.",
+          "The current brief asks for platform depth but doesn't separate API quality from " +
+          "billing and onboarding. I'd make the first interview prove which one matters most, " +
+          "then cut any roadmap item that doesn't support that wedge.",
       },
       {
         q: "Tell me about a tiering decision you actually owned.",
         a:
-          "At Replit I moved us off seat-based to consumption with a small monthly floor. " +
+          "I moved a developer product off seat-based pricing to consumption with a small monthly floor. " +
           "Bookings dropped one quarter then doubled the next. Took heat for two months. " +
           "Wouldn't change it.",
       },
       {
-        q: "Why now? Why Anthropic specifically?",
+        q: "Why now? Why this role specifically?",
         a:
           "I'm done with feature-grid PM work. I want a roadmap that ships against safety " +
-          "evals and a research org I have to earn the trust of. Anthropic's the only " +
-          "place where that's the actual job.",
+          "evals and a technical org I have to earn the trust of. This brief sounds like " +
+          "the actual job, not a feature backlog.",
       },
     ],
-    consent: "Maya consented to share this profile with Anthropic only.",
+    consent: "Sample candidate consented to share this profile with this hiring team only.",
   },
   {
-    id: "pp-daniel-park",
-    name: "Daniel Park",
-    initials: "DP",
+    id: "pp-sample-engineer",
+    name: "Sample engineer",
+    initials: "SE",
     tone: "slate",
     headline: "Staff SWE · Inference / GPU",
     role: "Staff Software Engineer, Inference",
@@ -144,9 +144,9 @@ const EMP_PASSED: PassedProfile[] = [
     reviewBadge: SAMPLE_PASS_RECORD,
   },
   {
-    id: "pp-priya-shah",
-    name: "Priya Shah",
-    initials: "PS",
+    id: "pp-sample-designer",
+    name: "Sample designer",
+    initials: "SD",
     tone: "warm",
     headline: "Principal Designer · AI surfaces",
     role: "Principal Product Designer, AI",
@@ -154,9 +154,9 @@ const EMP_PASSED: PassedProfile[] = [
     reviewBadge: SAMPLE_PASS_RECORD,
   },
   {
-    id: "pp-jordan-reyes",
-    name: "Jordan Reyes",
-    initials: "JR",
+    id: "pp-sample-gtm",
+    name: "Sample GTM lead",
+    initials: "SG",
     tone: "moss",
     headline: "GTM · stablecoin · 9y",
     role: "GTM Lead, Stablecoin",
@@ -164,9 +164,9 @@ const EMP_PASSED: PassedProfile[] = [
     reviewBadge: "Risk noted",
   },
   {
-    id: "pp-lin-wei",
-    name: "Lin Wei",
-    initials: "LW",
+    id: "pp-sample-systems-engineer",
+    name: "Sample systems engineer",
+    initials: "SS",
     tone: "slate",
     headline: "Editor-core SWE · ex-VSCode",
     role: "Senior Engineer, Editor Core",
@@ -199,7 +199,7 @@ function EmployerShell({ children, signedIn = false }: { children: ReactNode; si
           <div className="wk-header__cta">
             {signedIn ? (
               <button className="wk-appbar__user" type="button" aria-label="Account">
-                <Avatar name="Anthropic Hiring" size={32} tone="slate" />
+                <Avatar name="Sample hiring team" size={32} tone="slate" />
               </button>
             ) : (
               <>
@@ -567,7 +567,7 @@ export default function Employers() {
               </a>
             </div>
             <p className="wk-final-cta__fine">
-              Free trial. We invoice only on signed offers. No retainers, no exclusivity.
+              Start with one role brief. WeKruit confirms scope and terms before Claire screens candidates.
             </p>
           </div>
         </div>
@@ -589,7 +589,7 @@ export function EmployersInbox() {
         <div className="wk-emp-inbox__bar">
           <div className="wk-container wk-emp-inbox__bar-inner">
             <div>
-              <p className="wk-eyebrow"><PulseDot size={6} /> Inbox · Anthropic · Senior PM, Claude APIs</p>
+              <p className="wk-eyebrow"><PulseDot size={6} /> Inbox · sample role · Developer platform lead</p>
               <h1 className="wk-emp-inbox__h1">
                 Sample passed profiles.
               </h1>
@@ -768,9 +768,7 @@ function EmpPassedDetail({ c }: { c: PassedProfile }) {
       <section className="wk-emp-pp__sec">
         <div className="wk-emp-pp__h-row">
           <h3 className="wk-emp-pp__h">Transcript excerpts</h3>
-          <a href="#full-transcript" onClick={(e) => e.preventDefault()} className="wk-link wk-emp-pp__full">
-            Open full transcript (38 min)
-          </a>
+          <span className="wk-link wk-emp-pp__full">Open sample transcript excerpt</span>
         </div>
         <ol className="wk-emp-pp__transcript">
           {c.transcript!.map((t, i) => (
@@ -817,7 +815,7 @@ function EmpPassedDetailLite({ c }: { c: PassedProfile }) {
       </header>
       <section className="wk-emp-pp__sec wk-emp-pp__lite-body">
         <p className="wk-emp-pp__lite-msg">
-          This preview follows one passed profile end-to-end. Click <strong>Maya Okafor</strong> in the rail to see the
+          This preview follows one passed profile end-to-end. Click <strong>Sample candidate</strong> in the rail to see the
           full operational view — summary, pass reason, evidence, risks, fit, and transcript excerpts.
         </p>
       </section>

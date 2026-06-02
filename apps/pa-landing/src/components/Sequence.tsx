@@ -144,7 +144,7 @@ function ArtCandReads() {
         <header className="seq-resume__head">
           <span className="seq-resume__ava">M</span>
           <div>
-            <div className="seq-resume__name">Maya Okafor</div>
+            <div className="seq-resume__name">Sample candidate</div>
             <div className="seq-resume__role">Senior Product Manager</div>
           </div>
         </header>
@@ -180,11 +180,11 @@ function ArtCandPrescreens() {
 
 function ArtCandSkips() {
   const rows = [
-    { co: "Stripe", role: "Sr PM, Payments", state: "skip", why: "comp below floor", tone: "ink" },
-    { co: "Anthropic", role: "Sr PM, Claude APIs", state: "match", why: "strong fit · surfaced", tone: "warm" },
-    { co: "Snowflake", role: "Staff PM, Warehouse", state: "skip", why: "not your domain", tone: "moss" },
-    { co: "Notion", role: "Sr PM, Editor", state: "skip", why: "not a step up", tone: "slate" },
-    { co: "Vercel", role: "Sr PM, Infra", state: "match", why: "good fit · surfaced", tone: "ink" },
+    { co: "Payments platform", role: "Sr PM, billing", state: "skip", why: "comp below floor", tone: "ink" },
+    { co: "AI infra platform", role: "Sr PM, developer APIs", state: "match", why: "clear evidence · surfaced", tone: "warm" },
+    { co: "Data warehouse", role: "Staff PM, analytics", state: "skip", why: "not your domain", tone: "moss" },
+    { co: "Productivity suite", role: "Sr PM, editor", state: "skip", why: "not a step up", tone: "slate" },
+    { co: "Developer platform", role: "Sr PM, infra", state: "match", why: "role brief fit · surfaced", tone: "ink" },
   ] as const
   return (
     <div className="seq-feed" role="presentation">
@@ -243,9 +243,9 @@ function ArtCandInterview() {
           <span className="seq-cal__dur">Claire interview · evidence ready</span>
         </div>
         <div className="seq-cal__slot-with">
-          <span className="seq-cal__ava">M</span>
+          <span className="seq-cal__ava">S</span>
           <div>
-            <strong>Maya Okafor</strong>
+            <strong>Sample candidate</strong>
             <span>Profile, transcript, and risks prepared</span>
           </div>
         </div>
@@ -268,8 +268,8 @@ function ArtEmpHears() {
       <ArtifactStack />
       <div className="seq-brief" role="presentation">
         <header className="seq-brief__head">
-          <span className="seq-brief__co">A</span>
-          <span className="seq-brief__head-text">Sr PM · Anthropic</span>
+          <span className="seq-brief__co">S</span>
+          <span className="seq-brief__head-text">Sr PM · sample role</span>
         </header>
         <section className="seq-brief__section">
           <span className="seq-brief__label">On paper</span>
@@ -297,10 +297,10 @@ function ArtEmpLooks() {
     <div className="seq-reveal" role="presentation">
       <article className="seq-reveal__paper">
         <header className="seq-reveal__paper-head">
-          <span className="seq-reveal__paper-ava">M</span>
+          <span className="seq-reveal__paper-ava">S</span>
           <div>
-            <div className="seq-reveal__paper-name">Maya Okafor</div>
-            <div className="seq-reveal__paper-meta">Senior PM · Linear · 7y</div>
+            <div className="seq-reveal__paper-name">Sample candidate</div>
+            <div className="seq-reveal__paper-meta">Senior PM · platform product · 7y</div>
           </div>
         </header>
         <div className="seq-reveal__paper-body">
@@ -376,24 +376,24 @@ function ArtEmpDelivers() {
   return (
     <div className="seq-pp" role="presentation">
       <article className="seq-pp__card seq-pp__card--3">
-        <span className="seq-pp__ava">PS</span>
+        <span className="seq-pp__ava">SD</span>
         <div className="seq-pp__body">
-          <div className="seq-pp__name">Priya Shah</div>
+          <div className="seq-pp__name">Sample designer</div>
           <div className="seq-pp__meta">Principal Designer · AI surfaces</div>
         </div>
       </article>
       <article className="seq-pp__card seq-pp__card--2">
-        <span className="seq-pp__ava">DP</span>
+        <span className="seq-pp__ava">SE</span>
         <div className="seq-pp__body">
-          <div className="seq-pp__name">Daniel Park</div>
+          <div className="seq-pp__name">Sample engineer</div>
           <div className="seq-pp__meta">Staff SWE · Inference / GPU</div>
         </div>
       </article>
       <article className="seq-pp__card seq-pp__card--1 is-focused">
         <header className="seq-pp__head">
-          <span className="seq-pp__ava-lg">MO</span>
+          <span className="seq-pp__ava-lg">SC</span>
           <div>
-            <div className="seq-pp__name">Maya Okafor</div>
+            <div className="seq-pp__name">Sample candidate</div>
             <div className="seq-pp__meta">Senior PM · AI infra · 7y</div>
           </div>
           <span className="seq-pill seq-pill--ok">

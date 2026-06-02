@@ -201,14 +201,14 @@ export default function EmployerSignup() {
                 label="Primary role brief"
                 value={form.rolesHiring}
                 onChange={(v) => update("rolesHiring", v)}
-                placeholder="Senior PM for Claude APIs; SF hybrid; $220k-$290k base"
+                placeholder="Senior PM for developer platform; SF hybrid; $220k-$290k base"
                 helper="One role per line if you are opening more than one search."
               />
               <Field
                 label="Must-haves"
                 value={form.notes}
                 onChange={(v) => update("notes", v)}
-                placeholder="Founder-mode judgment, API product depth, comp band, location, risks Claire should probe."
+                placeholder="Founder-mode judgment, API product depth, comp band, location, must-haves Claire should probe."
                 as="textarea"
               />
 

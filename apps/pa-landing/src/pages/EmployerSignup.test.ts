@@ -24,3 +24,9 @@ test("EmployerSignup is framed as passed-profile role intake, not a layoff list 
   assert.match(source, /Claire screens/)
   assert.match(source, /passed profiles/)
 })
+
+test("EmployerSignup role-intake examples do not borrow real company product names", () => {
+  assert.doesNotMatch(source, /Claude APIs/)
+  assert.match(source, /developer platform/)
+  assert.match(source, /must-haves Claire should probe/)
+})

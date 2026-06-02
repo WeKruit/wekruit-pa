@@ -69,3 +69,25 @@ test("Employers visual labels do not invent weekly pass volume", () => {
   assert.doesNotMatch(stylesSource, /passes this week/i)
   assert.match(stylesSource, /Inbox · sample pass records/)
 })
+
+test("Employers sample proof avoids borrowed real-company specificity", () => {
+  assert.doesNotMatch(source, /Maya Okafor/)
+  assert.doesNotMatch(source, /Anthropic|Perplexity|Claude APIs/)
+  assert.doesNotMatch(source, /Linear|Replit/)
+  assert.doesNotMatch(employersSource, /Open full transcript \(38 min\)/)
+  assert.doesNotMatch(employersSource, /href="#full-transcript"/)
+
+  assert.match(source, /Sample candidate/)
+  assert.match(source, /Sample hiring team/)
+  assert.match(source, /Developer platform lead/)
+  assert.match(employersSource, /Open sample transcript excerpt/)
+})
+
+test("Employers page avoids unsupported commercial certainty", () => {
+  assert.doesNotMatch(employersSource, /Free trial/)
+  assert.doesNotMatch(employersSource, /invoice only on signed offers/i)
+  assert.doesNotMatch(employersSource, /No retainers, no exclusivity/i)
+
+  assert.match(employersSource, /Start with one role brief/)
+  assert.match(employersSource, /WeKruit confirms scope and terms/)
+})
