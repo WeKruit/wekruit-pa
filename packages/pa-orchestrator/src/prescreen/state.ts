@@ -94,6 +94,19 @@ export interface PreScreenState {
     boundary?: "trigger" | "terminal" | "timeout" | "superseded" | "user_exit"
     supersededBySessionId?: string
   }
+  /**
+   * Engagement-nurture bookkeeping for sessions awaiting WeKruit's review
+   * (passed / under-review). Written by the prescreen-NURTURE engine
+   * (apps/functions/src/prescreen-nurture-*) when a periodic "still working on
+   * it" check-in is dispatched. Distinct from durable profile data — this is
+   * job-specific session bookkeeping. Absent until the first nurture fires.
+   */
+  prescreenMetrics?: {
+    /** Count of nurture check-ins dispatched for this session (cap at max). */
+    totalNurtureSent: number
+    /** ISO timestamp of the most recent nurture dispatch. */
+    lastNurtureAt: string
+  }
   /** ISO created/updated timestamps. */
   createdAt: string
   updatedAt: string

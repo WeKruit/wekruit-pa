@@ -157,6 +157,18 @@ const SEED_FLAGS: FlagSpec[] = [
     allowlist: [],
     blocklist: [],
   },
+  // Prescreen-NURTURE engagement engine — gates the whole nurture stack
+  // (paPrescreenNurtureScheduler enumerate/schedule + paProactiveSweep
+  // dispatch). Default OFF: scheduler enumerates 0, dispatches 0 → inert.
+  // Ramp via /admin/flags allowlist (perUser) then global once verified.
+  {
+    key: "paPrescreenNurtureEnabled",
+    value: false,
+    type: "bool",
+    scope: "perUser",
+    allowlist: [],
+    blocklist: [],
+  },
 ]
 
 interface PlannedWrite {

@@ -104,6 +104,9 @@ import { postSlackAlert } from "./lib/slack-alert.js"
 
 // Phase 22 — proactive check-in sweep
 export { paProactiveSweep } from "./proactive-sweep.js"
+// Prescreen-NURTURE engagement engine — hourly scheduler that creates due
+// nurture jobs for paProactiveSweep to dispatch. Flag-gated paPrescreenNurtureEnabled (default OFF).
+export { paPrescreenNurtureScheduler } from "./prescreen-nurture-cf.js"
 export { paCandidateLifecycleTrigger } from "./candidate-lifecycle-trigger.js"
 
 // Phase 24.5 — admin bootstrap (seed flags via PA_ADMIN_TOKEN, bypass local gcloud ADC)
