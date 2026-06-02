@@ -7,6 +7,7 @@ import {
   pickSpread,
   humanLabel,
   filterByPartOfDay,
+  parseStatedTime,
   resolveTimeZone,
   listSchedulableJobs,
 } from "./scheduling-tools.js"
@@ -252,6 +253,32 @@ test("filterByPartOfDay narrows by local hour; any/null = no filter", () => {
   assert.ok(morning.every((s) => s.iso.includes("T09") || s.iso.includes("T11") || s.iso.includes("T10")))
 })
 
+// ── parseStatedTime (deterministic AM/PM + weekday backstop) ───────────────
+test("parseStatedTime: extracts confident hour + weekday from the candidate's words", () => {
+  // the live bug shape: '9am mon' must read as 9:00 (not 21:00) on Monday.
+  assert.deepEqual(parseStatedTime("9am mon"), { hour24: 9, weekday: 1 })
+  assert.deepEqual(parseStatedTime("9pm"), { hour24: 21, weekday: null })
+  assert.deepEqual(parseStatedTime("9:00 pm"), { hour24: 21, weekday: null })
+  assert.deepEqual(parseStatedTime("9 p.m."), { hour24: 21, weekday: null })
+  assert.deepEqual(parseStatedTime("the 2pm friday"), { hour24: 14, weekday: 5 })
+  assert.deepEqual(parseStatedTime("12am"), { hour24: 0, weekday: null }) // midnight
+  assert.deepEqual(parseStatedTime("12pm"), { hour24: 12, weekday: null }) // noon
+  assert.deepEqual(parseStatedTime("noon"), { hour24: 12, weekday: null })
+  assert.deepEqual(parseStatedTime("midnight"), { hour24: 0, weekday: null })
+  assert.deepEqual(parseStatedTime("13:00"), { hour24: 13, weekday: null }) // unambiguous 24h
+  assert.deepEqual(parseStatedTime("tuesday"), { hour24: null, weekday: 2 }) // 'tue'/'tues' don't double-count
+})
+
+test("parseStatedTime: leaves AMBIGUOUS / non-time phrases null (no false rejection)", () => {
+  assert.deepEqual(parseStatedTime("first one"), { hour24: null, weekday: null })
+  assert.deepEqual(parseStatedTime("2"), { hour24: null, weekday: null }) // bare hour, no meridiem
+  assert.deepEqual(parseStatedTime("the second one"), { hour24: null, weekday: null })
+  assert.deepEqual(parseStatedTime(""), { hour24: null, weekday: null })
+  assert.deepEqual(parseStatedTime("2pm or 3pm"), { hour24: null, weekday: null }) // two distinct hours
+  assert.deepEqual(parseStatedTime("monday or tuesday"), { hour24: null, weekday: null }) // two distinct days
+  assert.deepEqual(parseStatedTime("9amazing role"), { hour24: null, weekday: null }) // not a real time token
+})
+
 // ── GATE ───────────────────────────────────────────────────────────────────
 test("GATE: non-dev uid → both tools scheduling_not_enabled, ZERO Cal calls / writes / email", async () => {
   assert.equal(SCHEDULING_DEV_UIDS.has(NON_DEV_UID), false)
@@ -266,7 +293,7 @@ test("GATE: non-dev uid → both tools scheduling_not_enabled, ZERO Cal calls / 
     const ctx = makeCtx(db, NON_DEV_UID)
     const { offer, book } = tools(ctx)
     const o = await invoke(offer, { timeZone: null, partOfDay: null, jobChoice: null })
-    const b = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const b = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.deepEqual(o, { ok: false, reason: "scheduling_not_enabled" })
     assert.deepEqual(b, { ok: false, reason: "scheduling_not_enabled" })
     assert.equal(fetchCalled, false, "no Cal.com / mailgun fetch")
@@ -359,7 +386,7 @@ test("book resolves slotNumber → exact persisted ISO; writes booked→confirme
     await offerThen(db, ctx)
     const { book } = tools(ctx)
     const offered = db.store.get(BOOKING_PATH)!.offeredSlots as Array<{ iso: string }>
-    const res = await invoke(book, { slotNumber: 2, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const res = await invoke(book, { slotNumber: 2, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(res.ok, true)
     assert.equal(res.action, "booked")
     assert.equal(res.slotIso, offered[1]!.iso) // slotNumber 2 → index 1
@@ -388,7 +415,7 @@ test("book slotNumber that was NOT offered → slot_not_offered, no booking", as
     const ctx = makeCtx(db, DEV_UID)
     await offerThen(db, ctx) // offers 5
     const { book } = tools(ctx)
-    const res = await invoke(book, { slotNumber: 9, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const res = await invoke(book, { slotNumber: 9, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.deepEqual(res, { ok: false, reason: "slot_not_offered" })
     const doc = db.store.get(BOOKING_PATH)!
     assert.equal(doc.status, "offered") // unchanged
@@ -411,8 +438,106 @@ test("book slotIso that was NOT offered → slot_not_offered (guards LLM-invente
       candidateEmail: null,
       candidateName: null,
       timeZone: null,
+      statedTime: null,
     })
     assert.deepEqual(res, { ok: false, reason: "slot_not_offered" })
+  } finally {
+    restore()
+  }
+})
+
+test("book REJECTS an AM/PM mismatch: slot is Fri 6PM but candidate said '6am fri' → slot_time_mismatch, NO booking", async () => {
+  // The 2026-06-01 live bug: candidate typed '9am', the agent snapped it onto the
+  // 9PM slot and booked it. The statedTime guard must catch the meridiem flip.
+  const db = new FakeDb()
+  db.handles.push({ candidateId: DEV_UID, kind: "email", normalizedValue: "adam@example.com" })
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    const ctx = makeCtx(db, DEV_UID)
+    await offerThen(db, ctx) // slot 3 = Fri Jun 5, 18:00-04:00 (6 PM ET)
+    const { book } = tools(ctx)
+    const res = await invoke(book, {
+      slotNumber: 3,
+      slotIso: null,
+      statedTime: "6am fri",
+      candidateEmail: null,
+      candidateName: null,
+      timeZone: null,
+    })
+    assert.equal(res.ok, false)
+    assert.equal(res.reason, "slot_time_mismatch")
+    assert.equal((res.offered as string[]).length, 5) // re-offer the real times
+    // NO booking written — doc stays offered, no Cal POST persisted.
+    const doc = db.store.get(BOOKING_PATH)!
+    assert.equal(doc.status, "offered")
+    assert.equal(doc.calBookingUid ?? null, null)
+  } finally {
+    restore()
+  }
+})
+
+test("book REJECTS a wrong-DAY pick: slot is Tue but candidate said 'wednesday' → slot_time_mismatch", async () => {
+  const db = new FakeDb()
+  db.handles.push({ candidateId: DEV_UID, kind: "email", normalizedValue: "adam@example.com" })
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    const ctx = makeCtx(db, DEV_UID)
+    await offerThen(db, ctx) // slot 1 = Tue Jun 2
+    const res = await invoke(tools(ctx).book, {
+      slotNumber: 1,
+      slotIso: null,
+      statedTime: "wednesday",
+      candidateEmail: null,
+      candidateName: null,
+      timeZone: null,
+    })
+    assert.equal(res.ok, false)
+    assert.equal(res.reason, "slot_time_mismatch")
+    assert.equal(db.store.get(BOOKING_PATH)!.status, "offered")
+  } finally {
+    restore()
+  }
+})
+
+test("book ALLOWS a matching statedTime ('9am tue' for the Tue 9AM slot) → books normally (no false reject)", async () => {
+  const db = new FakeDb()
+  db.handles.push({ candidateId: DEV_UID, kind: "email", normalizedValue: "adam@example.com" })
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    const ctx = makeCtx(db, DEV_UID)
+    await offerThen(db, ctx) // slot 1 = Tue Jun 2, 09:00-04:00 (9 AM ET)
+    const res = await invoke(tools(ctx).book, {
+      slotNumber: 1,
+      slotIso: null,
+      statedTime: "9am tue",
+      candidateEmail: null,
+      candidateName: null,
+      timeZone: null,
+    })
+    assert.equal(res.ok, true)
+    assert.equal(res.action, "booked")
+  } finally {
+    restore()
+  }
+})
+
+test("book ALLOWS a non-time statedTime ('first one') → no false reject, books normally", async () => {
+  const db = new FakeDb()
+  db.handles.push({ candidateId: DEV_UID, kind: "email", normalizedValue: "adam@example.com" })
+  const restore = installCalcomFetch({ slots: SLOTS })
+  try {
+    const ctx = makeCtx(db, DEV_UID)
+    await offerThen(db, ctx)
+    const res = await invoke(tools(ctx).book, {
+      slotNumber: 1,
+      slotIso: null,
+      statedTime: "first one",
+      candidateEmail: null,
+      candidateName: null,
+      timeZone: null,
+    })
+    assert.equal(res.ok, true)
+    assert.equal(res.action, "booked")
   } finally {
     restore()
   }
@@ -425,10 +550,10 @@ test("book need_email branch: no arg + no handle → need_email; with handle →
     const ctx = makeCtx(db, DEV_UID)
     await offerThen(db, ctx)
     const { book } = tools(ctx)
-    const noEmail = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const noEmail = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.deepEqual(noEmail, { ok: false, reason: "need_email" })
     // now pass an email arg → books.
-    const withArg = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: "typed@example.com", candidateName: null, timeZone: null })
+    const withArg = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: "typed@example.com", candidateName: null, timeZone: null, statedTime: null })
     assert.equal(withArg.ok, true)
     assert.equal(withArg.action, "booked")
     assert.equal(db.store.get(BOOKING_PATH)!.candidateEmail, "typed@example.com")
@@ -454,11 +579,11 @@ test("book dedup: second book for same confirmed slot → already_booked, no 2nd
     const ctx = makeCtx(db, DEV_UID)
     await offerThen(db, ctx)
     const { book } = tools(ctx)
-    const first = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const first = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(first.ok, true)
     assert.equal(first.action, "booked")
     assert.equal(bookingPosts, 1)
-    const second = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const second = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(second.ok, true)
     assert.equal(second.action, "already_booked")
     assert.equal(bookingPosts, 1, "no second Cal POST")
@@ -479,7 +604,7 @@ test("book FAIL-OPEN: calcom POST throws → { ok:false, calcom_unavailable }, s
   const restoreBook = installCalcomFetch({ slots: SLOTS, bookingThrow: true })
   try {
     const { book } = tools(ctx)
-    const res = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const res = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(res.ok, false)
     assert.equal(res.reason, "calcom_unavailable")
     assert.equal(res.retryable, true)
@@ -499,7 +624,7 @@ test("book Cal 4xx → slot_unavailable + status failed (recoverable)", async ()
   const restoreBook = installCalcomFetch({ slots: SLOTS, bookingStatus: 409 })
   try {
     const { book } = tools(ctx)
-    const res = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const res = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(res.ok, false)
     assert.equal(res.reason, "slot_unavailable")
     assert.equal(res.retryable, true)
@@ -538,7 +663,7 @@ test("book mailgun-throws-after-booking → status stays booked, { ok:true, emai
     const ctx = makeCtx(db, DEV_UID)
     await offerThen(db, ctx)
     const { book } = tools(ctx)
-    const res = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const res = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(res.ok, true)
     assert.equal(res.action, "booked")
     assert.equal(res.emailed, false)
@@ -564,7 +689,7 @@ test("CROSS-TURN: offer in prescreen ctx (jobId set) then book in TRIAGE ctx (jo
     // Without recovery this would key calbk-<uid>__unknown_job (empty) → slot_not_offered.
     const bookCtx = makeCtx(db, DEV_UID, { jobId: undefined })
     const { book } = tools(bookCtx)
-    const res = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const res = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(res.ok, true)
     assert.equal(res.action, "booked")
     assert.equal(res.slotIso, offered[0]!.iso)
@@ -614,7 +739,7 @@ test("RESCHEDULE: book slot #1, re-offer (status flips to offered), then pick a 
     // book slot #1 → real Cal booking A.
     await offerThen(db, ctx)
     const { book } = tools(ctx)
-    const first = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const first = await invoke(book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(first.ok, true)
     assert.equal(first.action, "booked")
     assert.equal(bookingPosts, 1)
@@ -625,7 +750,7 @@ test("RESCHEDULE: book slot #1, re-offer (status flips to offered), then pick a 
     // now pick a DIFFERENT slot (#2). The OLD code would POST a 2nd booking and
     // orphan booking A. The guard refuses.
     const offered = db.store.get(BOOKING_PATH)!.offeredSlots as Array<{ iso: string }>
-    const second = await invoke(tools(ctx).book, { slotNumber: 2, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const second = await invoke(tools(ctx).book, { slotNumber: 2, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(second.ok, false)
     assert.equal(second.reason, "already_booked_other_slot")
     assert.equal(bookingPosts, 1, "no second Cal POST — booking A not orphaned")
@@ -652,10 +777,10 @@ test("RESCHEDULE: re-offer then re-pick the SAME already-booked slot → already
   try {
     const ctx = makeCtx(db, DEV_UID)
     await offerThen(db, ctx)
-    await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(bookingPosts, 1)
     await invoke(tools(ctx).offer, { timeZone: null, partOfDay: null, jobChoice: null }) // status → offered, live booking intact
-    const again = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const again = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(again.ok, true)
     assert.equal(again.action, "already_booked")
     assert.equal(bookingPosts, 1, "no second Cal POST for the same slot")
@@ -683,7 +808,7 @@ test("STALENESS: every offered slot in the past → book returns slots_expired (
     await offerThen(db, makeCtx(db, DEV_UID)) // nowIso = 2026-06-01 → all SLOTS future
     // book turn happens "later" — after every offered slot (latest is Jun 7).
     const lateCtx = makeCtx(db, DEV_UID, { nowIso: () => "2026-06-30T12:00:00.000Z" })
-    const res = await invoke(tools(lateCtx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const res = await invoke(tools(lateCtx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(res.ok, false)
     assert.equal(res.reason, "slots_expired")
     assert.equal(res.retryable, true)
@@ -708,7 +833,7 @@ test("TZ precedence: book WITHOUT an explicit tz uses the OFFER's persisted doc.
     await invoke(tools(ctx).offer, { timeZone: "America/Los_Angeles", partOfDay: null, jobChoice: null })
     assert.equal(db.store.get(BOOKING_PATH)!.timeZone, "America/Los_Angeles")
     // Book WITHOUT restating the tz → must keep the offer's LA tz (not NY from tags).
-    const res = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const res = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(res.ok, true)
     assert.equal(db.store.get(BOOKING_PATH)!.timeZone, "America/Los_Angeles")
     // the booked attendee.timeZone (PT) shows a PT wall-clock label, not ET.
@@ -940,7 +1065,7 @@ test("offer disambiguation: dev-mimic 2-job round-trips — offer chosen mimic t
     // Book on a later TRIAGE turn (no ctx.jobId) → resolveActiveSchedulingJobId
     // recovers dev-helium-design from the persisted offered doc, books the SAME job.
     const bookCtx = noJobCtx(db, DEV_UID)
-    const bookRes = await invoke(tools(bookCtx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const bookRes = await invoke(tools(bookCtx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(bookRes.ok, true)
     assert.equal(bookRes.action, "booked")
     const booked = db.store.get(path)!
@@ -996,7 +1121,7 @@ test("book: Meet location in Cal response → persisted on doc + rendered as joi
   try {
     const ctx = makeCtx(db, DEV_UID)
     await offerThen(db, ctx)
-    const res = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const res = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(res.ok, true)
     assert.equal(res.action, "booked")
     // returned to the agent → Claire can drop the link into the iMessage bubble.
@@ -1018,7 +1143,7 @@ test("book: no Meet location → ok result has meetingUrl:'' (prompt keeps the c
   try {
     const ctx = makeCtx(db, DEV_UID)
     await offerThen(db, ctx)
-    const res = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const res = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(res.ok, true)
     assert.equal(res.action, "booked")
     assert.equal(res.meetingUrl, "") // empty → Claire uses the "calendar invite on the way" wording
@@ -1057,11 +1182,11 @@ test("book already_booked: returns the persisted meetingUrl so Claire can re-sha
   try {
     const ctx = makeCtx(db, DEV_UID)
     await offerThen(db, ctx)
-    const first = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const first = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(first.ok, true)
     assert.equal(first.action, "booked")
     // Repeat ask for the SAME slot → already_booked, link recovered from the doc.
-    const again = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null })
+    const again = await invoke(tools(ctx).book, { slotNumber: 1, slotIso: null, candidateEmail: null, candidateName: null, timeZone: null, statedTime: null })
     assert.equal(again.ok, true)
     assert.equal(again.action, "already_booked")
     assert.equal(again.meetingUrl, "https://meet.google.com/dup-link-xyz")

@@ -422,6 +422,72 @@ function localHour(iso: string, timeZone: string): number {
   }
 }
 
+/** Local weekday (0=Sun..6=Sat) of an ISO instant in a given IANA tz; -1 on failure. */
+const WD_INDEX: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }
+function localWeekday(iso: string, timeZone: string): number {
+  try {
+    const s = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone }).format(new Date(iso))
+    return WD_INDEX[s] ?? -1
+  } catch {
+    return -1
+  }
+}
+
+const WEEKDAY_NAMES: Record<string, number> = {
+  sunday: 0, sun: 0,
+  monday: 1, mon: 1,
+  tuesday: 2, tues: 2, tue: 2,
+  wednesday: 3, weds: 3, wed: 3,
+  thursday: 4, thurs: 4, thur: 4, thu: 4,
+  friday: 5, fri: 5,
+  saturday: 6, sat: 6,
+}
+
+/**
+ * Parse a candidate's verbatim time words ("9am mon", "the 2pm friday", "first one")
+ * into a CONFIDENT wall-clock hour + weekday, so book_interview_slot can reject when
+ * the LLM mapped a stated time onto the wrong offered slot (the 2026-06-01 "said 9am,
+ * got the 9pm slot" bug). Confidence is the whole point — we only return a value we
+ * can act on, so an unparseable phrase ("first one", "2") falls through to the normal
+ * slotNumber/slotIso path with NO false rejection.
+ *
+ *  - hour24: set ONLY when a meridiem is explicit (9am/9 p.m.) or the time is
+ *    unambiguously 24h (>=13, e.g. "13:00") or noon/midnight. A bare "9" stays null
+ *    (could mean either the 9am or 9pm slot — not our call to guess).
+ *  - weekday: set when exactly ONE weekday name appears (0=Sun..6=Sat).
+ *  - Multiple DISTINCT hours/weekdays in the phrase → that dimension stays null
+ *    (ambiguous → don't flag). Pure; exported for tests.
+ */
+export function parseStatedTime(text: string): { hour24: number | null; weekday: number | null } {
+  const t = (text || "").toLowerCase()
+
+  // ── clock ──
+  const hours = new Set<number>()
+  if (/\bnoon\b/.test(t)) hours.add(12)
+  if (/\bmidnight\b/.test(t)) hours.add(0)
+  // H(:MM) am/pm  (e.g. "9am", "9 am", "9:00 pm", "9 p.m.")
+  const reMer = /\b(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s?m\.?\b/g
+  let m: RegExpExecArray | null
+  while ((m = reMer.exec(t))) {
+    let h = Number(m[1]!) % 12
+    if (m[3] === "p") h += 12
+    hours.add(h)
+  }
+  // Unambiguous 24h "H:MM" (>=13 can't be a 12h clock).
+  const re24 = /\b(1[3-9]|2[0-3]):[0-5]\d\b/g
+  while ((m = re24.exec(t))) hours.add(Number(m[1]!))
+  const hour24 = hours.size === 1 ? [...hours][0]! : null
+
+  // ── weekday ──
+  const wds = new Set<number>()
+  for (const [name, idx] of Object.entries(WEEKDAY_NAMES)) {
+    if (new RegExp(`\\b${name}\\b`).test(t)) wds.add(idx)
+  }
+  const weekday = wds.size === 1 ? [...wds][0]! : null
+
+  return { hour24, weekday }
+}
+
 /** partOfDay filter on the slot's LOCAL hour: morning <12, afternoon 12-17, evening >=17. */
 export function filterByPartOfDay(
   slots: FlatSlot[],
@@ -637,18 +703,23 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
     name: "book_interview_slot",
     description:
       "Book the interview slot the candidate picked from the list offer_interview_slots gave you. Pass the " +
-      "slotNumber (preferred — 1-based, exactly as you listed them) or the exact slotIso from that list. If " +
-      "the candidate typed an email this turn, pass candidateEmail. If it returns need_email, ask for their " +
-      "email once then call again with candidateEmail. On ok:true tell them it's locked in, and if it returns a " +
-      "non-empty meetingUrl include that link in your message. Pass null for anything not provided.",
+      "slotNumber (preferred — 1-based, exactly as you listed them) or the exact slotIso from that list. ALSO " +
+      "pass statedTime = the candidate's own words for the time they chose, verbatim (e.g. '9am mon', 'the 2pm " +
+      "friday', 'first one', '2') — the tool uses it to reject an AM/PM or wrong-day mismatch. NEVER snap a " +
+      "stated time onto a near offered slot. If the candidate typed an email this turn, pass candidateEmail. If " +
+      "it returns need_email, ask for their email once then call again with candidateEmail. If it returns " +
+      "slot_time_mismatch, the time they named isn't on the list — tell them that plainly and re-offer the listed " +
+      "times (the tool returns them in 'offered'); do NOT book a different time. On ok:true tell them it's locked " +
+      "in, and if it returns a non-empty meetingUrl include that link. Pass null for anything not provided.",
     parameters: z.object({
       slotNumber: z.number().int().min(1).max(10).nullable(),
       slotIso: z.string().nullable(),
+      statedTime: z.string().nullable(),
       candidateEmail: z.string().nullable(),
       candidateName: z.string().nullable(),
       timeZone: z.string().nullable(),
     }),
-    async execute({ slotNumber, slotIso, candidateEmail, candidateName, timeZone }) {
+    async execute({ slotNumber, slotIso, statedTime, candidateEmail, candidateName, timeZone }) {
       // (1) GATE — NO booking, NO email for a non-dev uid.
       if (!SCHEDULING_DEV_UIDS.has(ctx.userId)) {
         ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, gated: true })
@@ -706,6 +777,40 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
       if (!isFuture(chosenIso)) {
         ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, jobId, reason: "slots_expired_picked" })
         return { ok: false as const, reason: "slots_expired" as const, retryable: true }
+      }
+
+      // (2c) STATED-TIME GUARD — the deterministic backstop for the LLM snapping a
+      // candidate's wall-clock words onto the wrong offered slot (2026-06-01: "9am
+      // mon" → got the mon 9PM slot, because the agent matched day+hour and dropped
+      // AM/PM). The slots were PRESENTED in doc.timeZone, so compare in that same tz.
+      // We only reject on a CONFIDENT conflict (explicit meridiem / unambiguous
+      // weekday) — an unparseable phrase ("first one", "2") leaves both null and
+      // falls through, so this never blocks a legit numbered pick.
+      const presentedTz = doc?.timeZone || DEFAULT_TIMEZONE
+      const stated = parseStatedTime(statedTime ?? "")
+      if (stated.hour24 !== null || stated.weekday !== null) {
+        const chosenHour = localHour(chosenIso, presentedTz)
+        const chosenWd = localWeekday(chosenIso, presentedTz)
+        const hourConflict = stated.hour24 !== null && stated.hour24 !== chosenHour
+        const dayConflict = stated.weekday !== null && chosenWd >= 0 && stated.weekday !== chosenWd
+        if (hourConflict || dayConflict) {
+          ctx.log("pa.claire.book_interview_slot", {
+            userId: ctx.userId,
+            jobId,
+            reason: "slot_time_mismatch",
+            stated: statedTime ?? "",
+            statedHour: stated.hour24,
+            statedWeekday: stated.weekday,
+            chosenHour,
+            chosenWd,
+          })
+          return {
+            ok: false as const,
+            reason: "slot_time_mismatch" as const,
+            stated: (statedTime ?? "").trim(),
+            offered: offered.filter((s) => isFuture(s.iso)).map((s) => humanLabel(s.iso, presentedTz)),
+          }
+        }
       }
 
       // (3) email — required (Cal attendee + our confirmation both need it).
