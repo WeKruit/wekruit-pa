@@ -207,23 +207,88 @@ async function loadGlobalContext(db: Firestore, userId: string): Promise<string>
     const firstName = displayName ? displayName.split(/\s+/)[0]! : ""
     const recentRoleTitle = str(tags.recentRoleTitle)
     const recentCompany = str(tags.recentCompany)
-    // workHistorySummary is the prose career arc ("SWE Intern @ Tesla; Founder @ AI Study;
-    // Co-founder @ OFO") — the compliment must describe what they DID, not list skills (Adam
-    // 2026-05-30: the live kickoff complimented "c++/java/js/python", which reads like a keyword
-    // dump). Surface it FIRST + labelled so the agent grounds the compliment on experience.
     const workHistorySummary = str(tags.workHistorySummary)
+
+    // SENIORITY ANCHOR — name the LEVEL from the canonical stage + years, never "experienced".
+    // Collapse a 2-wide yoe range to its MIDPOINT for the pitch (a range reads as hedging; keep the
+    // raw range only for matching). "~5 yrs" reads as conviction; "~4-6 yrs" reads as "Claire's unsure."
+    const careerStage = str(tags.careerStage) // student…senior…staff…founder
+    const yoeRange = Array.isArray(tags.yoeRange) ? (tags.yoeRange as unknown[]) : []
+    const yoeLo = typeof yoeRange[0] === "number" ? (yoeRange[0] as number) : undefined
+    const yoeHi = typeof yoeRange[1] === "number" ? (yoeRange[1] as number) : undefined
+    const yoeBit =
+      yoeLo != null && yoeHi != null
+        ? `~${Math.round((yoeLo + yoeHi) / 2)} yrs`
+        : yoeLo != null
+          ? `~${yoeLo} yrs`
+          : ""
+    const levelBits = [careerStage ? careerStage.replace(/_/g, " ") : "", yoeBit].filter(Boolean)
+
+    // INDUSTRY ANCHOR — plain-English, never the raw enum token. relevantIndustry = where they've BEEN.
+    const prettyIndustry = (t: string) => t.replace(/_and_/g, " & ").replace(/_/g, " ")
+    const industrySector = arr("industrySector").map(str).filter(Boolean).map(prettyIndustry)
+    const relevantIndustry = arr("relevantIndustry").map(str).filter(Boolean).map(prettyIndustry)
+
+    // IMPACT NARRATIVE — the field the pitch MUST cite. Walk the top 2 experienceHighlights and
+    // emit "title @ company (Nyr, industry) — description". THIS is what fixes skillsImpact + swap-test.
+    const highlightsRaw = Array.isArray(data.experienceHighlights)
+      ? (data.experienceHighlights as Array<Record<string, unknown>>)
+      : []
+    const ownedLines = highlightsRaw
+      .filter((h) => str(h?.description)) // only roles that carry a real impact description
+      .slice(0, 2)
+      .map((h) => {
+        const head = [str(h.title), str(h.company)].filter(Boolean).join(" @ ")
+        const meta = [
+          typeof h.durationMonths === "number"
+            ? `${Math.round(((h.durationMonths as number) / 12) * 10) / 10}yr`
+            : "",
+          str(h.companyIndustry) ? prettyIndustry(str(h.companyIndustry)) : "",
+        ]
+          .filter(Boolean)
+          .join(", ")
+        return `${head}${meta ? ` (${meta})` : ""} — ${str(h.description)}`
+      })
+
+    // GUARDRAIL SIGNAL (NEVER in the pitch) — lets the US-silence guardrail actually FIRE.
+    // visaStatus + whether role locations differ from the saved US targets.
+    const visaStatus = str(tags.visaStatus) // citizen | permanent_resident | sponsor_needed | other
+    const roleCountries = Array.from(
+      new Set(highlightsRaw.map((h) => str(h.companyHqCountry)).filter(Boolean)),
+    )
+    const targetLocsForGuard = arr("targetLocations").map(str).filter(Boolean)
+    const usTargets = targetLocsForGuard.some((l) =>
+      /united_states|remote|new_york|san_francisco|usa|us\b/i.test(l),
+    )
+    const nonUsRoles = roleCountries.some((c) => !/united states|usa|^us$/i.test(c))
+    const usSilenceActive = visaStatus === "sponsor_needed" || (usTargets && nonUsRoles)
+
     const skillNames = arr("skills")
       .map((s) => (typeof s === "string" ? s : str((s as Record<string, unknown> | null)?.name)))
       .filter(Boolean)
       .slice(0, 5)
+
     const resumeBits = [
       firstName ? `first name: ${firstName}` : "",
-      // Label work history as the compliment source so the agent describes impact, not a skill list.
-      workHistorySummary ? `work history (use THIS for the compliment): ${workHistorySummary}` : "",
+      // SENIORITY: name the level from THIS, grounded — never the word "experienced".
+      levelBits.length ? `level (name it from THIS, grounded): ${levelBits.join(", ")}` : "",
+      // INDUSTRY: plain-English domain anchor — never optional, even when work history is thin.
+      industrySector.length ? `industry / domain (say in plain english): ${industrySector.join(", ")}` : "",
+      relevantIndustry.length ? `industries they've worked in (the arc): ${relevantIndustry.join(", ")}` : "",
+      // CAREER ARC — prose, the through-line.
+      workHistorySummary ? `work history (the career arc): ${workHistorySummary}` : "",
+      // IMPACT — the OWNED outcomes. Bubble 1 MUST cite one of these (with its number if present).
+      ownedLines.length
+        ? `what they OWNED (CITE ONE verbatim-ish in bubble 1, with its number): ${ownedLines.join(" | ")}`
+        : "",
       recentRoleTitle || recentCompany
         ? `most recent: ${[recentRoleTitle, recentCompany].filter(Boolean).join(" @ ")}`
         : "",
-      skillNames.length ? `top skills (reference, NOT the compliment): ${skillNames.join(", ")}` : "",
+      skillNames.length ? `top skills (reference, NOT the pitch): ${skillNames.join(", ")}` : "",
+      // GUARDRAIL-ONLY line — the pitch must NEVER surface this; it only gates the US-silence rule.
+      usSilenceActive
+        ? `US-SILENCE GUARDRAIL = ACTIVE (work auth / non-US roles): never mention visa, sponsorship, relocation, or "based abroad" — target the saved US locations and frame the US ambition as a strength.`
+        : "",
     ].filter(Boolean)
     const resumeLine = resumeBits.length
       ? `Candidate résumé on file (use it to personalize — greet by first name, compliment what they DID from work history): ${resumeBits.join("; ")}`
