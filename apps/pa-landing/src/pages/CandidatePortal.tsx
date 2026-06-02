@@ -865,7 +865,7 @@ function MeIcon({
   size = 14,
   stroke = 1.8,
 }: {
-  name: "chevron-right" | "eye-off" | "thumb-up" | "thumb-down"
+  name: "chevron-right" | "eye-off"
   size?: number
   stroke?: number
 }) {
@@ -884,18 +884,6 @@ function MeIcon({
     return (
       <svg {...p}>
         <path d="M17 17s5-5 5-5-4-7-10-7c-1.6 0-3.1.4-4.4 1M3 3l18 18M9.9 5.1A9.4 9.4 0 0 0 2 12s4 7 10 7c1.6 0 3.1-.4 4.4-1" />
-      </svg>
-    )
-  if (name === "thumb-up")
-    return (
-      <svg {...p}>
-        <path d="M7 22V11M2 13v7a2 2 0 0 0 2 2h3V11H4a2 2 0 0 0-2 2zM15 5l-1 5h6.5a2 2 0 0 1 2 2.3l-1.4 7A2 2 0 0 1 19 21H7V11l4-9h1.5A2.5 2.5 0 0 1 15 4.5z" />
-      </svg>
-    )
-  if (name === "thumb-down")
-    return (
-      <svg {...p}>
-        <path d="M17 2v11M22 11V4a2 2 0 0 0-2-2h-3v11h3a2 2 0 0 0 2-2zM9 19l1-5H3.5a2 2 0 0 1-2-2.3l1.4-7A2 2 0 0 1 5 3h12v11l-4 9h-1.5A2.5 2.5 0 0 1 9 19.5z" />
       </svg>
     )
   return (
@@ -1152,7 +1140,7 @@ function MePipeline({
       ) : filtered.length === 0 ? (
         <div className="wkv3-empty-block">
           {matches.length === 0
-            ? "No interviews yet. Claire lines them up as employers say yes."
+            ? "No active roles yet. Claire adds them as matching work moves forward."
             : "Nothing in this stage right now."}
         </div>
       ) : (
@@ -1342,8 +1330,8 @@ function MeNewMatches({
         <div className="wkv3-empty-block">
           <h3>No roles yet.</h3>
           <p>
-            Claire is pitching you. Roles show up here when hiring managers say yes — usually within 48 hours of
-            completing your profile.
+            Claire is matching you. Roles show up here when they fit your profile, usually within 48 hours of completing
+            it.
           </p>
         </div>
       )}
@@ -3732,8 +3720,8 @@ function MatchesView({
                 <em>Roles</em> Claire matched for you.
               </h1>
               <p className="wkmp__sub">
-                You don&apos;t apply — Claire pitches you, hiring managers say yes, then it lands here. Mark
-                each one so she learns.
+                You don&apos;t apply cold. Claire keeps matched roles here, shows why they fit, and uses your profile
+                preferences to keep the next batch sharper.
               </p>
             </div>
             <div className="wkmp__action">
@@ -3782,7 +3770,7 @@ function MatchesView({
                   <h3>Nothing here.</h3>
                   <p>
                     {all.length === 0
-                      ? "Claire is still pitching you — roles land here when hiring managers say yes, usually within 48 hours of completing your profile."
+                      ? "Claire is still matching you - roles land here when they fit your profile, usually within 48 hours of completing it."
                       : "No roles in this filter — try All."}
                   </p>
                 </div>
@@ -3801,7 +3789,7 @@ function MatchesView({
                   </div>
                 </div>
                 <p className="wkmp-side__sub">
-                  Say yes to a role and Claire handles the screening questions for you.
+                  For WeKruit collab roles, Claire handles the screening questions with you.
                 </p>
                 <a href={CLAIRE_IMESSAGE_HREF} className="wk-btn wk-btn--primary wk-btn--block wk-btn--sm">
                   Continue with Claire <Icon name="arrow-right" size={13} stroke={2} />
@@ -3811,9 +3799,9 @@ function MatchesView({
               <div className="wkmp-side__card wkmp-side__card--quiet">
                 <h3 className="wkmp-side__h">How matching works</h3>
                 <ol className="wkmp-how">
-                  <li><strong>Claire scans</strong> openings from companies in your preference set.</li>
-                  <li><strong>Hiring managers review</strong> her pitch of you — only if it passes their bar does the role land here.</li>
-                  <li><strong>You decide.</strong> Yes runs you through a screen. No teaches Claire.</li>
+                  <li><strong>Claire scans</strong> openings against your profile, tags, and preferences.</li>
+                  <li><strong>Matches land here</strong> with the evidence Claire used.</li>
+                  <li><strong>You decide.</strong> Profile edits keep future matching sharper.</li>
                 </ol>
               </div>
             </aside>
@@ -3826,7 +3814,6 @@ function MatchesView({
 
 function MeMatchFull({ match }: { match: CandidateMatchCard }) {
   const navigate = useNavigate()
-  const [vote, setVote] = useState<"yes" | "no" | null>(null)
   const isCollab = !!match.collab
   const logo = (match.job.company[0] ?? "?").toUpperCase()
   const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
@@ -3873,22 +3860,6 @@ function MeMatchFull({ match }: { match: CandidateMatchCard }) {
 
       <footer className="wkv3-match__foot">
         <div className="wkv3-match__feedback">
-          <button
-            type="button"
-            className={`wkv3-fb wkv3-fb--yes${vote === "yes" ? " is-on" : ""}`}
-            onClick={() => setVote(vote === "yes" ? null : "yes")}
-            aria-pressed={vote === "yes"}
-          >
-            <MeIcon name="thumb-up" size={13} stroke={1.8} /> Interested
-          </button>
-          <button
-            type="button"
-            className={`wkv3-fb wkv3-fb--no${vote === "no" ? " is-on" : ""}`}
-            onClick={() => setVote(vote === "no" ? null : "no")}
-            aria-pressed={vote === "no"}
-          >
-            <MeIcon name="thumb-down" size={13} stroke={1.8} /> Not for now
-          </button>
           <a
             href="#"
             className="wkv3-match__prefs"
@@ -3897,7 +3868,7 @@ function MeMatchFull({ match }: { match: CandidateMatchCard }) {
               navigate("/me/profile")
             }}
           >
-            Update prefs
+            Update matching preferences
           </a>
         </div>
         <div className="wkv3-match__primaries">
@@ -4055,14 +4026,6 @@ const MATCHES_STYLES = `
   padding-top: 12px; border-top: 1px dashed var(--border);
 }
 .wkv3-match__feedback { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.wkv3-fb {
-  appearance: none; border: 1px solid var(--border); background: var(--cream); color: var(--ink-2);
-  border-radius: var(--r-pill); padding: 5px 11px; font-size: 11.5px; font-weight: 600; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 5px; transition: all var(--dur-fast) var(--ease);
-}
-.wkv3-fb:hover { border-color: var(--ink); color: var(--ink); }
-.wkv3-fb--yes.is-on { background: var(--ink); color: var(--cream); border-color: var(--ink); }
-.wkv3-fb--no.is-on { background: var(--cream-2); color: var(--ink-3); border-color: var(--border-strong); opacity: 0.7; }
 .wkv3-match__prefs {
   font-size: 11.5px; font-weight: 600; color: var(--ink-3); text-decoration: none;
   border-bottom: 1px dashed var(--border-strong); padding-bottom: 1px; margin-left: 4px;

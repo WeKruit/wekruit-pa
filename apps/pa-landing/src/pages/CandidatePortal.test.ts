@@ -28,6 +28,13 @@ test("CandidatePortal visibility copy describes active pipeline without employer
   assert.doesNotMatch(source, /employers? (?:is|are) talking with you/i)
 })
 
+test("CandidatePortal matches inbox does not present local-only feedback as durable learning", () => {
+  assert.doesNotMatch(source, /Mark\s+each\s+one\s+so\s+she\s+learns/i)
+  assert.doesNotMatch(source, /hiring managers say yes|employers say yes/i)
+  assert.doesNotMatch(source, /setVote|wkv3-fb--yes|wkv3-fb--no|No teaches Claire/)
+  assert.match(source, /Update matching preferences/)
+})
+
 test("CandidatePortal wires connector buttons through the account OAuth start callable", () => {
   assert.match(source, /label: "LinkedIn"/)
   assert.match(source, /label: "GitHub"/)
