@@ -35,6 +35,7 @@ import {
   type RecruiterRoleIntelligenceItem,
   type RecruiterRoleQuestionItem,
   type RecruiterSession,
+  type RecruiterCandidateOutreach,
   type RecruiterSourcedCandidateItem,
   type RecruiterSourcedCandidateStage,
   type RecruiterSubmissionItem,
@@ -287,6 +288,48 @@ function nextRoleCandidateStage(stage: RecruiterSourcedCandidateStage): Recruite
   const index = ROLE_CANDIDATE_STAGE_FLOW.indexOf(stage)
   if (index < 0 || index >= ROLE_CANDIDATE_STAGE_FLOW.length - 1) return null
   return ROLE_CANDIDATE_STAGE_FLOW[index + 1] ?? null
+}
+
+function roleCandidateFollowUpIso(daysFromNow: number): string {
+  const date = new Date()
+  date.setDate(date.getDate() + daysFromNow)
+  date.setHours(12, 0, 0, 0)
+  return date.toISOString()
+}
+
+function roleCandidateOutreachForStage(
+  candidate: RecruiterSourcedCandidateItem,
+  stage: RecruiterSourcedCandidateStage,
+): RecruiterCandidateOutreach | undefined {
+  const current = candidate.outreach
+  if (stage === "contacted") {
+    return {
+      ...current,
+      status: "contacted",
+      nextFollowUpAt: current?.nextFollowUpAt ?? roleCandidateFollowUpIso(3),
+    }
+  }
+  if (stage === "screened" || stage === "ready") {
+    return {
+      ...current,
+      status: "responded",
+      nextFollowUpAt: null,
+    }
+  }
+  return current
+}
+
+function roleCandidateOutreachLabel(candidate: RecruiterSourcedCandidateItem): string {
+  const status = candidate.outreach?.status ?? "not_contacted"
+  const label = status === "contacted"
+    ? "Contacted"
+    : status === "responded"
+      ? "Responded"
+      : status === "not_interested"
+        ? "Not interested"
+        : "Not contacted"
+  if (!candidate.outreach?.nextFollowUpAt) return label
+  return `${label} · follow-up ${roleQuestionTime(candidate.outreach.nextFollowUpAt)}`
 }
 
 function sourcedCalibrationLabel(status?: string): string {
@@ -2325,7 +2368,7 @@ export default function RecruiterRole() {
           yoe: candidate.candidate?.yoe,
           notes: candidate.candidate?.notes,
         },
-        outreach: candidate.outreach,
+        outreach: roleCandidateOutreachForStage(candidate, stage),
       })
       setSourcedCandidates((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)])
       if (prefilledCandidateId === candidate.id || prefilledCandidateId === candidate.candidateId) {
@@ -2811,6 +2854,7 @@ export default function RecruiterRole() {
                           </em>
                         )}
                         {candidate.linkedSubmissionId && <em>Linked to submission {shortText(candidate.linkedSubmissionId, "submission", 18)}</em>}
+                        <em>{roleCandidateOutreachLabel(candidate)}</em>
                       </span>
                       <div className="rb-role-candidate-actions">
                         <small>{sourcedStageLabel(candidate.stage)}</small>
