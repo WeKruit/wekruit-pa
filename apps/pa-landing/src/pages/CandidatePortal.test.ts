@@ -146,3 +146,12 @@ test("CandidatePortal /me shows recent role activity from real matches", () => {
   assert.match(source, /getCandidateJobStatusDisplay\(match\.status, match\.job\.title\)/)
   assert.doesNotMatch(source, /mock activity|sample activity|fake timeline/i)
 })
+
+test("CandidatePortal /me treats incomplete profile data as an Up Next action", () => {
+  assert.match(source, /function deriveProfileNextAction/)
+  assert.match(source, /const profileNextAction = deriveProfileNextAction\(completeness\)/)
+  assert.match(source, /profileNextAction=\{profileNextAction\}/)
+  assert.match(source, /Complete your Claire profile/)
+  assert.match(source, /href: "\/me\/profile"/)
+  assert.doesNotMatch(source, /<p className="wkv3-wait__meta">No action needed right now\.<\/p>/)
+})

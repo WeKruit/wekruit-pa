@@ -717,6 +717,8 @@ function CandidateMeReady({
       when: meWhen(m.computedAt),
     }
   })
+  const profileNextAction = deriveProfileNextAction(completeness)
+  const actionCount = actions.length + (profileNextAction ? 1 : 0)
 
   return (
     <CandidateShell
@@ -727,10 +729,10 @@ function CandidateMeReady({
       <style>{ME_V3_STYLES}</style>
       <div className="wkv3">
         <MeStatusHeader
-          actionsCount={actions.length}
+          actionsCount={actionCount}
           firstName={firstName}
           visibility={visibility}
-          hasPrimary={actions.length > 0}
+          hasPrimary={actionCount > 0}
         />
 
         <div className="wk-container">
@@ -738,6 +740,7 @@ function CandidateMeReady({
             <div className="wkv3-main">
               <MeUpNext
                 actions={actions}
+                profileNextAction={profileNextAction}
                 loading={matchesLoading}
                 errored={matchesErrored}
                 error={matchesError}
@@ -853,6 +856,24 @@ function deriveCompleteness(profile: CandidateSelfProfile): MeCompleteness {
     .filter((c) => !c.done)
     .map((c) => ({ id: c.id, label: c.label, impact: c.impact, critical: c.critical }))
   return { pct, missing }
+}
+
+function deriveProfileNextAction(completeness: MeCompleteness): MeAction | null {
+  const missing = completeness.missing.find((m) => m.critical) ?? completeness.missing[0]
+  if (!missing) return null
+  return {
+    key: `profile-${missing.id}`,
+    logo: "C",
+    logoBg: "#0D0D0D",
+    urgent: Boolean(missing.critical),
+    meta: `Profile gap · ${missing.label}`,
+    title: "Complete your Claire profile",
+    sub: `${missing.label} — ${missing.impact}`,
+    cta: "Update profile",
+    href: "/me/profile",
+    external: false,
+    when: "",
+  }
 }
 
 // Visibility reflects real candidate-side pipeline activity. We don't have a
@@ -1051,38 +1072,41 @@ function MeStatusHeader({
 
 function MeUpNext({
   actions,
+  profileNextAction,
   loading,
   errored,
   error,
   recommendedCount,
 }: {
   actions: MeAction[]
+  profileNextAction: MeAction | null
   loading: boolean
   errored: boolean
   error: string | null
   recommendedCount: number
 }) {
+  const upNextActions = profileNextAction ? [...actions, profileNextAction] : actions
   return (
     <section className="wkv3-sec" id="up-next">
       <header className="wkv3-sec__head">
         <h2 className="wkv3-sec__h">
           Up next
-          {actions.length > 0 ? <span className="wkv3-sec__count">{actions.length}</span> : null}
+          {upNextActions.length > 0 ? <span className="wkv3-sec__count">{upNextActions.length}</span> : null}
         </h2>
         <span className="wkv3-sec__sub">
-          {actions.length > 0 ? "Only things waiting on you." : "Nothing waiting — WeKruit is working."}
+          {upNextActions.length > 0 ? "Only things waiting on you." : "Nothing waiting — WeKruit is working."}
         </span>
       </header>
-      {loading ? (
-        <div className="wkv3-empty-block">Loading your pipeline…</div>
-      ) : errored ? (
-        <div className="wkv3-empty-block">{error}</div>
-      ) : actions.length > 0 ? (
+      {upNextActions.length > 0 ? (
         <div className="wkv3-actions">
-          {actions.map((a) => (
+          {upNextActions.map((a) => (
             <MeActionRow key={a.key} a={a} />
           ))}
         </div>
+      ) : loading ? (
+        <div className="wkv3-empty-block">Loading your pipeline…</div>
+      ) : errored ? (
+        <div className="wkv3-empty-block">{error}</div>
       ) : (
         <MeWaitingCard recommendedCount={recommendedCount} />
       )}
@@ -1145,7 +1169,7 @@ function MeWaitingCard({ recommendedCount }: { recommendedCount: number }) {
         <div className="wkv3-wait__bar" aria-hidden="true">
           <span />
         </div>
-        <p className="wkv3-wait__meta">No action needed right now.</p>
+        <p className="wkv3-wait__meta">Your profile has enough signal for Claire to keep matching.</p>
       </div>
     </article>
   )
