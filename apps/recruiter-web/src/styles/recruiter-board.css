@@ -6033,6 +6033,193 @@
   padding: 5px 8px;
 }
 
+.rb-calibration-desk {
+  display: grid;
+  gap: 14px;
+  margin: 0 20px 18px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ink-3);
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px;
+}
+
+.rb-calibration-desk.is-live { border-left-color: var(--live); background: var(--live-soft); }
+.rb-calibration-desk.is-info { border-left-color: var(--info); }
+.rb-calibration-desk.is-success { border-left-color: var(--success); background: var(--success-bg); }
+.rb-calibration-desk.is-warn { border-left-color: var(--warning); background: #fffaf1; }
+.rb-calibration-desk.is-mute { border-left-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-calibration-desk > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 0.44fr);
+  gap: 12px;
+}
+
+.rb-calibration-desk > header > div,
+.rb-calibration-desk > header > aside,
+.rb-calibration-desk__cards article,
+.rb-calibration-desk__queue,
+.rb-calibration-desk__queue article,
+.rb-calibration-desk__side section,
+.rb-calibration-desk__side article {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.8);
+  padding: 12px;
+}
+
+.rb-calibration-desk span,
+.rb-calibration-desk__cards span,
+.rb-calibration-desk label span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-calibration-desk strong {
+  color: var(--ink);
+  line-height: 1.12;
+}
+
+.rb-calibration-desk > header strong,
+.rb-calibration-desk__cards strong {
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 400;
+}
+
+.rb-calibration-desk > header > div strong {
+  font-size: 27px;
+}
+
+.rb-calibration-desk p,
+.rb-calibration-desk em {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-style: normal;
+  line-height: 1.45;
+}
+
+.rb-calibration-desk h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.rb-calibration-desk__cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-calibration-desk__cards article,
+.rb-calibration-desk__queue article,
+.rb-calibration-desk__side article {
+  border-top: 3px solid var(--ink-3);
+}
+
+.rb-calibration-desk article.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-calibration-desk article.is-info { border-top-color: var(--info); }
+.rb-calibration-desk article.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-calibration-desk article.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-calibration-desk article.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-calibration-desk__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.rb-calibration-desk__queue,
+.rb-calibration-desk__side {
+  gap: 10px;
+}
+
+.rb-calibration-desk__queue article {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.85fr);
+  align-items: start;
+}
+
+.rb-calibration-desk label {
+  display: grid;
+  gap: 5px;
+}
+
+.rb-calibration-desk textarea {
+  width: 100%;
+  min-height: 82px;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 10px;
+}
+
+.rb-calibration-desk textarea:focus {
+  outline: 2px solid rgba(154, 68, 33, 0.18);
+  border-color: var(--live);
+}
+
+.rb-calibration-desk__queue footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+}
+
+.rb-calibration-desk__queue button,
+.rb-calibration-desk__queue a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--ink);
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  min-height: 34px;
+  padding: 9px 12px;
+  text-decoration: none;
+}
+
+.rb-calibration-desk__queue a {
+  background: transparent;
+  color: var(--ink);
+}
+
+.rb-calibration-desk__queue button:disabled {
+  border-color: var(--border);
+  background: var(--cream-2);
+  color: var(--ink-3);
+  cursor: not-allowed;
+}
+
+.rb-calibration-desk__side {
+  display: grid;
+}
+
+.rb-calibration-desk__side section {
+  align-content: start;
+}
+
 .rb-learning-center {
   display: grid;
   gap: 14px;
@@ -9031,12 +9218,15 @@
   .rb-trust-center__cards,
   .rb-trust-center__gates,
   .rb-trust-center__tiers,
-  .rb-trust-center__unlock-grid {
+  .rb-trust-center__unlock-grid,
+  .rb-calibration-desk__cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .rb-learning-center > header,
   .rb-learning-center__body,
   .rb-trust-center > header,
+  .rb-calibration-desk > header,
+  .rb-calibration-desk__body,
   .rb-reward-ledger > header,
   .rb-reward-ledger__body,
   .rb-payout-readiness > header {
@@ -9229,6 +9419,8 @@
   .rb-trust-center__gates,
   .rb-trust-center__tiers,
   .rb-trust-center__unlock-grid,
+  .rb-calibration-desk__cards,
+  .rb-calibration-desk__queue article,
   .rb-earnings-hero,
   .rb-status-ladder,
   .rb-expectation-list,

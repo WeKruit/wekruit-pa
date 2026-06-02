@@ -96,6 +96,7 @@ const APPROVED_ROLE_LIMIT = 10
 const SINGLE_SUBMISSION_WEEKLY_LIMIT = 5
 const ROLE_PENDING_SUBMISSION_LIMIT = 5
 const WEEKLY_SUBMISSION_TARGET = 8
+const CALIBRATION_SLOT_LIMIT = 3
 const DEFAULT_SUCCESS_FEE = 10_000
 const PREFERRED_INTERVIEW_RATE_TARGET = 50
 const RECRUITER_WEEKLY_CHALLENGE_KEY = "wk-recruiter-weekly-challenge-v1"
@@ -1627,7 +1628,17 @@ export default function RecruiterBoard() {
           />
         )}
         {activeTab === "performance" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "performance" && statusLoaded && <PerformanceTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} primaryRoleIds={primaryRoleIds} roleFeedback={roleFeedback} operatingMetrics={operatingMetrics} />}
+        {activeTab === "performance" && statusLoaded && (
+          <PerformanceTab
+            jobs={openJobs}
+            candidates={sourcedCandidates}
+            submissions={submissions}
+            primaryRoleIds={primaryRoleIds}
+            roleFeedback={roleFeedback}
+            operatingMetrics={operatingMetrics}
+            onCandidateSaved={(saved) => setSourcedCandidates((rows) => sortSourcedCandidates([saved, ...rows.filter((row) => row.id !== saved.id)]))}
+          />
+        )}
         {activeTab === "earnings" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "earnings" && statusLoaded && (
           <EarningsTab
@@ -2496,6 +2507,30 @@ type RecruiterLearningCenter = {
   evidence: RecruiterLearningRule[]
 }
 
+type RecruiterCalibrationRow = {
+  candidate: RecruiterSourcedCandidateItem
+  label: string
+  title: string
+  body: string
+  meta: string
+  tone: OperatingTone
+  canRequest: boolean
+}
+
+type RecruiterCalibrationDesk = {
+  label: string
+  title: string
+  body: string
+  tone: OperatingTone
+  slotsUsed: number
+  slotsLimit: number
+  slotsLeft: number
+  cards: RecruiterLearningCard[]
+  requestQueue: RecruiterCalibrationRow[]
+  waitingQueue: RecruiterCalibrationRow[]
+  feedbackQueue: RecruiterCalibrationRow[]
+}
+
 function countByLabel(labels: string[]): Array<{ label: string; count: number }> {
   const counts = new Map<string, number>()
   for (const label of labels) {
@@ -2513,6 +2548,133 @@ function roleFeedbackReasonLabel(reason: RecruiterRoleFeedbackReason): string {
 function topCountLabel(rows: Array<{ label: string; count: number }>, fallback: string): string {
   const first = rows[0]
   return first ? `${first.label} x${first.count}` : fallback
+}
+
+function sourcedCandidateRoleLabel(candidate: RecruiterSourcedCandidateItem): string {
+  if (candidate.jobTitleSnapshot && candidate.companyLabelSnapshot) {
+    return `${candidate.jobTitleSnapshot} · ${candidate.companyLabelSnapshot}`
+  }
+  return candidate.jobTitleSnapshot || candidate.companyLabelSnapshot || "Role not attached"
+}
+
+function sourcedCandidateProofLabel(candidate: RecruiterSourcedCandidateItem): string {
+  const proof = [
+    candidate.candidate?.email ? "email" : "",
+    candidate.candidate?.link ? "profile" : "",
+    candidate.candidate?.notes?.trim() ? "notes" : "",
+    candidate.outreach?.status && candidate.outreach.status !== "not_contacted" ? "outreach" : "",
+  ].filter(Boolean)
+  return proof.length ? proof.join(" · ") : "no proof yet"
+}
+
+function buildCalibrationRow(candidate: RecruiterSourcedCandidateItem, canRequest: boolean): RecruiterCalibrationRow {
+  const calibration = calibrationMeta(candidate.calibrationStatus)
+  const stage = sourceStageMeta(candidate.stage)
+  const requestedAt = timestampValueMs(candidate.calibrationUpdatedAt ?? candidate.updatedAt ?? candidate.createdAt)
+  const roleLabel = sourcedCandidateRoleLabel(candidate)
+  const note = candidate.calibrationNote || candidate.candidate?.notes
+  return {
+    candidate,
+    label: canRequest ? "Ready to calibrate" : calibration.label,
+    title: candidateName(candidate),
+    body: canRequest
+      ? `${roleLabel}. Ask for feedback before risking the official submission rating.`
+      : note || `${roleLabel}. Waiting for WeKruit feedback to tighten the next shortlist.`,
+    meta: `${stage.label} · ${sourcedCandidateProofLabel(candidate)}${requestedAt ? ` · ${new Date(requestedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : ""}`,
+    tone: canRequest ? (candidate.stage === "ready" ? "live" : "info") : calibration.tone,
+    canRequest,
+  }
+}
+
+function buildRecruiterCalibrationDesk(candidates: RecruiterSourcedCandidateItem[]): RecruiterCalibrationDesk {
+  const active = candidates.filter((candidate) => candidate.stage !== "archived")
+  const waiting = active
+    .filter((candidate) => candidate.calibrationStatus === "calibration_requested")
+    .sort((a, b) => timestampValueMs(a.calibrationUpdatedAt ?? a.updatedAt ?? a.createdAt) - timestampValueMs(b.calibrationUpdatedAt ?? b.updatedAt ?? b.createdAt))
+  const requestable = active
+    .filter(canRequestCandidateCalibration)
+    .sort((a, b) => {
+      const readyDelta = Number(b.stage === "ready") - Number(a.stage === "ready")
+      if (readyDelta) return readyDelta
+      const noteDelta = Number(Boolean(b.candidate?.notes?.trim())) - Number(Boolean(a.candidate?.notes?.trim()))
+      if (noteDelta) return noteDelta
+      return timestampValueMs(b.updatedAt ?? b.createdAt) - timestampValueMs(a.updatedAt ?? a.createdAt)
+    })
+  const feedback = active
+    .filter((candidate) =>
+      candidate.calibrationStatus === "good_fit" ||
+      candidate.calibrationStatus === "bad_fit" ||
+      candidate.calibrationStatus === "suggested",
+    )
+    .sort((a, b) => timestampValueMs(b.calibrationUpdatedAt ?? b.updatedAt ?? b.createdAt) - timestampValueMs(a.calibrationUpdatedAt ?? a.updatedAt ?? a.createdAt))
+  const goodFit = feedback.filter((candidate) => candidate.calibrationStatus === "good_fit").length
+  const badFit = feedback.filter((candidate) => candidate.calibrationStatus === "bad_fit").length
+  const slotsUsed = waiting.length
+  const slotsLeft = Math.max(0, CALIBRATION_SLOT_LIMIT - slotsUsed)
+  const tone: OperatingTone = slotsUsed > CALIBRATION_SLOT_LIMIT
+    ? "warn"
+    : waiting.length
+      ? "info"
+      : requestable.length
+        ? "live"
+        : feedback.length
+          ? "success"
+          : "mute"
+  const title = slotsUsed > CALIBRATION_SLOT_LIMIT
+    ? "Calibration queue is over limit"
+    : requestable.length && slotsLeft > 0
+      ? `${Math.min(requestable.length, slotsLeft)} candidate${Math.min(requestable.length, slotsLeft) === 1 ? "" : "s"} ready for pre-submit feedback`
+      : waiting.length
+        ? `${waiting.length} calibration request${waiting.length === 1 ? "" : "s"} waiting`
+        : feedback.length
+          ? "Calibration feedback is ready to reuse"
+          : "No calibration loop yet"
+  const body = requestable.length && slotsLeft > 0
+    ? "Use the limited calibration slots before formal submission when role fit is uncertain or the packet needs sharper hiring-team signal."
+    : waiting.length
+      ? "Wait for WeKruit feedback before sending lookalike candidates or formal submissions from the same search pattern."
+      : feedback.length
+        ? "Turn good-fit, bad-fit, and suggested-direction notes into the next shortlist before asking for more role volume."
+        : "Attach candidates to roles, collect proof, and request calibration before taking rating risk on uncertain packets."
+
+  return {
+    label: "Pre-submit calibration",
+    title,
+    body,
+    tone,
+    slotsUsed,
+    slotsLimit: CALIBRATION_SLOT_LIMIT,
+    slotsLeft,
+    cards: [
+      {
+        label: "Slots used",
+        value: `${Math.min(slotsUsed, CALIBRATION_SLOT_LIMIT)}/${CALIBRATION_SLOT_LIMIT}`,
+        body: slotsLeft ? `${slotsLeft} calibration slot${slotsLeft === 1 ? "" : "s"} open before the queue should pause.` : "Queue is full; wait for feedback before requesting more.",
+        tone: slotsUsed >= CALIBRATION_SLOT_LIMIT ? "warn" : slotsUsed ? "info" : "success",
+      },
+      {
+        label: "Ready candidates",
+        value: String(requestable.length),
+        body: "Role-attached, not submitted, and eligible for a pre-submission feedback request.",
+        tone: requestable.length ? "live" : "mute",
+      },
+      {
+        label: "Returned signal",
+        value: `${goodFit}/${badFit}`,
+        body: "Good-fit versus bad-fit calibration rows returned by WeKruit.",
+        tone: goodFit ? "success" : badFit ? "warn" : feedback.length ? "info" : "mute",
+      },
+      {
+        label: "Noise avoided",
+        value: String(waiting.length + badFit),
+        body: "Candidates that should not become lookalike volume until feedback is applied.",
+        tone: waiting.length + badFit ? "warn" : "success",
+      },
+    ],
+    requestQueue: requestable.slice(0, 5).map((candidate) => buildCalibrationRow(candidate, true)),
+    waitingQueue: waiting.slice(0, 5).map((candidate) => buildCalibrationRow(candidate, false)),
+    feedbackQueue: feedback.slice(0, 5).map((candidate) => buildCalibrationRow(candidate, false)),
+  }
 }
 
 function buildRecruiterLearningCenter(
@@ -8499,6 +8661,7 @@ function PerformanceTab({
   primaryRoleIds,
   roleFeedback,
   operatingMetrics,
+  onCandidateSaved,
 }: {
   jobs: CollabJob[]
   candidates: RecruiterSourcedCandidateItem[]
@@ -8506,7 +8669,11 @@ function PerformanceTab({
   primaryRoleIds: string[]
   roleFeedback: RecruiterRoleFeedbackItem[]
   operatingMetrics: RecruiterOperatingMetrics
+  onCandidateSaved: (candidate: RecruiterSourcedCandidateItem) => void
 }) {
+  const [calibrationDrafts, setCalibrationDrafts] = useState<Record<string, string>>({})
+  const [calibratingId, setCalibratingId] = useState<string | null>(null)
+  const [calibrationError, setCalibrationError] = useState<string | null>(null)
   const feedbackRows = submissions.filter(submissionHasStructuredFeedback)
   const advanced = submissions.filter((s) => ADVANCED_STATUSES.includes(s.status ?? "")).length
   const pending = submissions.filter((s) => ACTIVE_REVIEW_STATUSES.includes(s.status ?? "submitted")).length
@@ -8518,6 +8685,51 @@ function PerformanceTab({
   const hardRoles = roleFeedback.filter((feedback) => feedback.difficulty === "hard").length
   const trustCenter = computeRecruiterTrustCenter(candidates, submissions, roleFeedback, primaryRoleIds, operatingMetrics)
   const learningCenter = buildRecruiterLearningCenter(jobs, candidates, submissions, roleFeedback)
+  const calibrationDesk = buildRecruiterCalibrationDesk(candidates)
+  const requestCalibration = async (candidate: RecruiterSourcedCandidateItem) => {
+    const jobId = candidate.inboundJobId || candidate.jobId || ""
+    const link = candidate.candidate?.link?.trim()
+    if (!jobId || !link) {
+      setCalibrationError("This saved candidate is missing the role or link needed for calibration.")
+      return
+    }
+    if (calibrationDesk.slotsLeft <= 0) {
+      setCalibrationError("Calibration slots are full. Wait for WeKruit feedback before requesting another candidate.")
+      return
+    }
+    setCalibratingId(candidate.id)
+    setCalibrationError(null)
+    try {
+      const note = calibrationDrafts[candidate.id]?.trim()
+      const saved = await saveRecruiterSourcedCandidate({
+        candidateId: candidate.candidateId || candidate.id,
+        jobId,
+        stage: candidate.stage,
+        candidate: {
+          name: candidate.candidate?.name || candidateName(candidate),
+          email: candidate.candidate?.email,
+          link,
+          currentRole: candidate.candidate?.currentRole,
+          yoe: candidate.candidate?.yoe,
+          notes: candidate.candidate?.notes,
+        },
+        outreach: candidate.outreach,
+        calibrationRequest: {
+          note: note || undefined,
+        },
+      })
+      onCandidateSaved(saved)
+      setCalibrationDrafts((next) => {
+        const copy = { ...next }
+        delete copy[candidate.id]
+        return copy
+      })
+    } catch (error) {
+      setCalibrationError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setCalibratingId(null)
+    }
+  }
   const metrics = [
     { label: "Submitted", value: String(submissions.length), meta: "formal candidates", tone: "live" },
     { label: "Pending review", value: String(pending), meta: "awaiting feedback", tone: "warn" },
@@ -8565,6 +8777,14 @@ function PerformanceTab({
         </div>
       </section>
       <RecruiterTrustCenterPanel model={trustCenter} />
+      <RecruiterCalibrationDeskPanel
+        model={calibrationDesk}
+        calibrationDrafts={calibrationDrafts}
+        calibratingId={calibratingId}
+        error={calibrationError}
+        onDraftChange={(candidateId, note) => setCalibrationDrafts((next) => ({ ...next, [candidateId]: note }))}
+        onRequest={(candidate) => void requestCalibration(candidate)}
+      />
       <RecruiterLearningCenterPanel model={learningCenter} />
       <div className="rb-performance-grid">
         <section className="rb-performance-card">
@@ -8611,6 +8831,127 @@ function PerformanceTab({
           <p>{hardRoles} hard roles and {blockedRoles} blocked roles flagged.</p>
           <p>{roleFeedback.filter((feedback) => feedback.note).length} reports include recruiter notes.</p>
         </section>
+      </div>
+    </section>
+  )
+}
+
+function RecruiterCalibrationDeskPanel({
+  model,
+  calibrationDrafts,
+  calibratingId,
+  error,
+  onDraftChange,
+  onRequest,
+}: {
+  model: RecruiterCalibrationDesk
+  calibrationDrafts: Record<string, string>
+  calibratingId: string | null
+  error: string | null
+  onDraftChange: (candidateId: string, note: string) => void
+  onRequest: (candidate: RecruiterSourcedCandidateItem) => void
+}) {
+  const slotsFull = model.slotsLeft <= 0
+  return (
+    <section className={`rb-calibration-desk is-${model.tone}`} aria-label="Pre-submission calibration desk">
+      <header>
+        <div>
+          <span>{model.label}</span>
+          <strong>{model.title}</strong>
+          <p>{model.body}</p>
+        </div>
+        <aside>
+          <span>Calibration slots</span>
+          <strong>{model.slotsUsed}/{model.slotsLimit}</strong>
+          <p>{slotsFull ? "Wait for returned feedback before requesting another candidate." : `${model.slotsLeft} slot${model.slotsLeft === 1 ? "" : "s"} open for pre-submit feedback.`}</p>
+        </aside>
+      </header>
+
+      <div className="rb-calibration-desk__cards">
+        {model.cards.map((card) => (
+          <article className={`is-${card.tone}`} key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <p>{card.body}</p>
+          </article>
+        ))}
+      </div>
+
+      <div className="rb-calibration-desk__body">
+        <section className="rb-calibration-desk__queue">
+          <div>
+            <h3>Request pre-submit feedback</h3>
+            <p>Use this before a formal submission when the candidate is promising but the fit signal is not sharp enough yet.</p>
+          </div>
+          {error && <p className="rb-access__err">{error}</p>}
+          {model.requestQueue.map((row) => (
+            <article className={`is-${row.tone}`} key={row.candidate.id}>
+              <div>
+                <span>{row.label}</span>
+                <strong>{row.title}</strong>
+                <p>{row.body}</p>
+                <em>{row.meta}</em>
+              </div>
+              <label>
+                <span>Question for WeKruit</span>
+                <textarea
+                  value={calibrationDrafts[row.candidate.id] ?? ""}
+                  onChange={(event) => onDraftChange(row.candidate.id, event.target.value)}
+                  placeholder="Ask what to validate before formal submission."
+                  disabled={calibratingId === row.candidate.id || slotsFull}
+                />
+              </label>
+              <footer>
+                <button
+                  type="button"
+                  onClick={() => onRequest(row.candidate)}
+                  disabled={calibratingId === row.candidate.id || slotsFull}
+                >
+                  {calibratingId === row.candidate.id ? "Requesting..." : slotsFull ? "Slots full" : "Request calibration"}
+                </button>
+                <Link to={`/recruiters/job/${row.candidate.inboundJobId || row.candidate.jobId}?candidateId=${encodeURIComponent(row.candidate.id)}`}>
+                  Open role
+                </Link>
+              </footer>
+            </article>
+          ))}
+          {model.requestQueue.length === 0 && (
+            <p className="rb-empty">No candidate is ready for calibration. Attach a sourced candidate to a role before asking for pre-submit feedback.</p>
+          )}
+        </section>
+
+        <aside className="rb-calibration-desk__side">
+          <section>
+            <div>
+              <h3>Waiting on feedback</h3>
+              <p>Do not turn these into lookalike volume until the note returns.</p>
+            </div>
+            {model.waitingQueue.map((row) => (
+              <article className={`is-${row.tone}`} key={row.candidate.id}>
+                <span>{row.label}</span>
+                <strong>{row.title}</strong>
+                <p>{row.body}</p>
+                <em>{row.meta}</em>
+              </article>
+            ))}
+            {model.waitingQueue.length === 0 && <p className="rb-empty">No open calibration requests.</p>}
+          </section>
+          <section>
+            <div>
+              <h3>Returned signal</h3>
+              <p>Reuse this before requesting more role access or submitting lookalikes.</p>
+            </div>
+            {model.feedbackQueue.map((row) => (
+              <article className={`is-${row.tone}`} key={row.candidate.id}>
+                <span>{row.label}</span>
+                <strong>{row.title}</strong>
+                <p>{row.body}</p>
+                <em>{row.meta}</em>
+              </article>
+            ))}
+            {model.feedbackQueue.length === 0 && <p className="rb-empty">No returned calibration notes yet.</p>}
+          </section>
+        </aside>
       </div>
     </section>
   )
