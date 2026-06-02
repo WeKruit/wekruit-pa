@@ -30,10 +30,10 @@ import { AudienceToggle } from "../components/AudienceToggle.js"
 import { EmployerSequence } from "../components/Sequence.js"
 
 // ────────────────────────────────────────────────────────────────────────────
-// Mock data — one fully-fleshed passed profile (Maya Okafor) plus 4 stubs.
-// Sourced from the 2026-05-26 design handoff. Once the employer dashboard
-// connects to live PASS events from PreScreenPipeline, replace this with a
-// Firestore query against pass-snapshots/{employerId}/{jobId}.
+// Sample preview data — one fully-fleshed passed profile (Maya Okafor) plus
+// 4 stubs. Once the employer dashboard connects to live PASS events from
+// PreScreenPipeline, replace this with a Firestore query against
+// pass-snapshots/{employerId}/{jobId}.
 // ────────────────────────────────────────────────────────────────────────────
 
 type PassedProfile = {
@@ -45,7 +45,7 @@ type PassedProfile = {
   role: string
   pass: "Strong pass" | "Pass" | "Pass with reservations"
   passedMin: number
-  score: number
+  fitLabel: "Strong fit" | "Good fit" | "Watch risks"
   summary?: string
   passReason?: string
   evidence?: { tag: string; source: string }[]
@@ -72,7 +72,7 @@ const EMP_PASSED: PassedProfile[] = [
     role: "Senior Product Manager, Claude APIs",
     pass: "Strong pass",
     passedMin: 14,
-    score: 92,
+    fitLabel: "Strong fit",
     summary:
       "Built and shipped two 0→1 AI platform products at Linear and Replit. " +
       "Owns developer-facing API roadmaps end-to-end and has scaled a billing/tiering surface from " +
@@ -142,7 +142,7 @@ const EMP_PASSED: PassedProfile[] = [
     role: "Staff Software Engineer, Inference",
     pass: "Pass",
     passedMin: 64,
-    score: 87,
+    fitLabel: "Good fit",
   },
   {
     id: "pp-priya-shah",
@@ -153,7 +153,7 @@ const EMP_PASSED: PassedProfile[] = [
     role: "Principal Product Designer, AI",
     pass: "Strong pass",
     passedMin: 180,
-    score: 94,
+    fitLabel: "Strong fit",
   },
   {
     id: "pp-jordan-reyes",
@@ -164,7 +164,7 @@ const EMP_PASSED: PassedProfile[] = [
     role: "GTM Lead, Stablecoin",
     pass: "Pass with reservations",
     passedMin: 320,
-    score: 76,
+    fitLabel: "Watch risks",
   },
   {
     id: "pp-lin-wei",
@@ -175,7 +175,7 @@ const EMP_PASSED: PassedProfile[] = [
     role: "Senior Engineer, Editor Core",
     pass: "Pass",
     passedMin: 1180,
-    score: 84,
+    fitLabel: "Good fit",
   },
 ]
 
@@ -244,7 +244,7 @@ function EmployerShell({ children, signedIn = false }: { children: ReactNode; si
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Hero animated preview — Monica @ Invoko customer-proof card. Drives the
+// Hero animated preview — sample passed-profile card. Drives the
 // staged opacity reveal via a `useEffect` setTimeout chain (no IntersectionObserver
 // needed — the card is above the fold). Match this with the design bundle's
 // EmpPassedPreview timings.
@@ -264,31 +264,31 @@ function EmpPassedPreview() {
   return (
     <div className="wk-emp-prev">
       <div className="wk-emp-prev__top">
-        <Avatar name="Monica Lin" size={44} tone="warm" />
+        <Avatar name="Sample hiring team" size={44} tone="warm" />
         <div className="wk-emp-prev__top-body">
-          <div className="wk-emp-prev__name">Monica Lin</div>
-          <div className="wk-emp-prev__role">Founder · Invoko.ai · Series A</div>
+          <div className="wk-emp-prev__name">Sample role packet</div>
+          <div className="wk-emp-prev__role">Employer view · passed-profile only</div>
         </div>
         <span className={`wk-emp-prev__pass${t >= 1 ? " is-in" : ""}`}>
-          <Icon name="check" size={12} stroke={2.4} /> 13 interviews → 8 hires
+          <Icon name="check" size={12} stroke={2.4} /> Pass record
         </span>
       </div>
 
       <div className={`wk-emp-prev__quote${t >= 2 ? " is-in" : ""}`}>
         <span className="wk-emp-prev__qmark">&ldquo;</span>
-        I never opened a résumé. 13 interviews, 8 hires, 45 days.
+        You receive the pass reason, risks, fit notes, and transcript excerpts before accepting an intro.
       </div>
 
       <ul className={`wk-emp-prev__steps${t >= 3 ? " is-in" : ""}`} aria-label="What Claire did">
-        <li><span className="wk-emp-prev__tick"><Icon name="check" size={9} stroke={2.6} /></span>Sourced</li>
+        <li><span className="wk-emp-prev__tick"><Icon name="check" size={9} stroke={2.6} /></span>Brief approved</li>
         <li><span className="wk-emp-prev__tick"><Icon name="check" size={9} stroke={2.6} /></span>Screened</li>
-        <li><span className="wk-emp-prev__tick"><Icon name="check" size={9} stroke={2.6} /></span>Matched</li>
-        <li><span className="wk-emp-prev__tick"><Icon name="check" size={9} stroke={2.6} /></span>Prescreened</li>
+        <li><span className="wk-emp-prev__tick"><Icon name="check" size={9} stroke={2.6} /></span>Passed</li>
+        <li><span className="wk-emp-prev__tick"><Icon name="check" size={9} stroke={2.6} /></span>Consent confirmed</li>
       </ul>
 
       <div className="wk-emp-prev__foot">
-        <span className="wk-emp-prev__stamp">Claire did all of this · Monica only interviewed</span>
-        <span className="wk-emp-prev__score">$13M Series A</span>
+        <span className="wk-emp-prev__stamp">Sample preview · employers only see consented passes</span>
+        <span className="wk-emp-prev__score">Preview</span>
       </div>
     </div>
   )
@@ -345,14 +345,14 @@ export default function Employers() {
         <div className="wk-container wk-emp-hero__grid">
           <div className="wk-emp-hero__copy">
             <p className="wk-eyebrow">
-              <PulseDot size={7} /> For employers · passed-profile only
+              <PulseDot size={7} /> For employers · Sample passed-profile preview
             </p>
             <h1 className="wk-emp-hero__h1">
               Meet candidates <em className="wk-accent">after</em> the first interview.
             </h1>
             <p className="wk-emp-hero__lede">
-              Cold reach. Screen. Match. Interview. Score. <strong>Claire runs the whole funnel</strong> —
-              you only review the passes and run the final interview yourself.
+              Send us a role. Claire turns the brief into screened, consented pass records —
+              you review the evidence, risks, fit notes, and transcript before deciding who to meet.
             </p>
             <div className="wk-emp-hero__cta">
               <button
@@ -368,10 +368,10 @@ export default function Employers() {
             </div>
             <div className="wk-emp-hero__proof">
               <span className="wk-emp-hero__metric">
-                <strong>1,247</strong> candidates Claire is interviewing this week
+                <strong>Passed profiles only</strong> no ATS, no candidate browser
               </span>
               <span className="wk-emp-hero__metric">
-                <strong>92%</strong> of passes lead to a real intro
+                <strong>Passed profiles plus the transcript</strong> before any intro
               </span>
             </div>
           </div>
@@ -386,20 +386,20 @@ export default function Employers() {
       <section className="wk-emp-band">
         <div className="wk-container wk-emp-band__row">
           <div className="wk-emp-band__stat">
-            <span className="wk-emp-band__num">1,247</span>
-            <span className="wk-emp-band__lbl">In-interview right now</span>
+            <span className="wk-emp-band__num">Brief</span>
+            <span className="wk-emp-band__lbl">Role requirements approved first</span>
           </div>
           <div className="wk-emp-band__stat">
-            <span className="wk-emp-band__num">≈ 6.4 hrs</span>
-            <span className="wk-emp-band__lbl">From role intake to first pass</span>
+            <span className="wk-emp-band__num">Screen</span>
+            <span className="wk-emp-band__lbl">Claire interviews against the brief</span>
           </div>
           <div className="wk-emp-band__stat">
-            <span className="wk-emp-band__num">14%</span>
-            <span className="wk-emp-band__lbl">Of interviewed candidates pass</span>
+            <span className="wk-emp-band__num">Pass</span>
+            <span className="wk-emp-band__lbl">Evidence and risks ship together</span>
           </div>
           <div className="wk-emp-band__stat">
-            <span className="wk-emp-band__num">86%</span>
-            <span className="wk-emp-band__lbl">Pass → onsite conversion</span>
+            <span className="wk-emp-band__num">Consent</span>
+            <span className="wk-emp-band__lbl">Candidate share consent is explicit</span>
           </div>
         </div>
       </section>
@@ -430,10 +430,10 @@ export default function Employers() {
               <div className="wk-emp-compare__pill">With WeKruit</div>
               <h3 className="wk-emp-compare__h">An inbox of passes</h3>
               <ul className="wk-emp-compare__list">
-                <li><span className="wk-emp-compare__check"><Icon name="check" size={11} stroke={2.5} /></span> Three to five passed profiles a week — that&apos;s it.</li>
+                <li><span className="wk-emp-compare__check"><Icon name="check" size={11} stroke={2.5} /></span> A compact queue of passed profiles — that&apos;s it.</li>
                 <li><span className="wk-emp-compare__check"><Icon name="check" size={11} stroke={2.5} /></span> Each one has a transcript and Claire&apos;s verdict.</li>
                 <li><span className="wk-emp-compare__check"><Icon name="check" size={11} stroke={2.5} /></span> Match evidence is cited. Risks are not hidden.</li>
-                <li><span className="wk-emp-compare__check"><Icon name="check" size={11} stroke={2.5} /></span> First intro lands on your calendar in 48 hrs.</li>
+                <li><span className="wk-emp-compare__check"><Icon name="check" size={11} stroke={2.5} /></span> You decide whether to accept the intro.</li>
                 <li><span className="wk-emp-compare__check"><Icon name="check" size={11} stroke={2.5} /></span> NOT_PASS stays in the pool for the next role.</li>
               </ul>
             </article>
@@ -537,8 +537,8 @@ export default function Employers() {
               Less applicant noise. <em className="wk-accent">More</em> first interviews worth taking.
             </h2>
             <p className="wk-emp-peek__sub">
-              Open one of Maya&apos;s pass — the full record Claire shipped to Anthropic after a 38-minute iMessage interview.
-              Summary, pass reason, evidence, risks, comp fit, transcript excerpts. Decide in five minutes.
+              Open a sample pass record: summary, pass reason, evidence, risks, comp fit, and transcript excerpts.
+              The employer sees the candidate only after the screen is complete and share consent is clear.
             </p>
             <button
               type="button"
@@ -567,7 +567,7 @@ export default function Employers() {
                 className="wk-btn wk-btn--primary wk-btn--lg"
                 onClick={() => navigate("/employer")}
               >
-                Get your first 3 passes <Icon name="arrow-right" size={16} stroke={2} />
+                Start with one role <Icon name="arrow-right" size={16} stroke={2} />
               </button>
               <a
                 href="mailto:hello@wekruit.com?subject=Book%20a%2015-min%20call"
@@ -601,7 +601,7 @@ export function EmployersInbox() {
             <div>
               <p className="wk-eyebrow"><PulseDot size={6} /> Inbox · Anthropic · Senior PM, Claude APIs</p>
               <h1 className="wk-emp-inbox__h1">
-                <em className="wk-accent">5</em> passes this week.
+                Sample passed profiles.
               </h1>
             </div>
             <div className="wk-emp-inbox__hint">
@@ -615,7 +615,7 @@ export function EmployersInbox() {
           <aside className="wk-emp-inbox__list">
             <header className="wk-emp-inbox__list-head">
               <span className="wk-eyebrow">Passes</span>
-              <span className="wk-emp-inbox__list-count">5 new</span>
+              <span className="wk-emp-inbox__list-count">Preview</span>
             </header>
             <ul className="wk-emp-inbox__rows">
               {EMP_PASSED.map((p) => (
@@ -636,7 +636,7 @@ export function EmployersInbox() {
                         <span className={`wk-emp-row__pass${p.pass === "Strong pass" ? " is-strong" : ""}`}>
                           {p.pass}
                         </span>
-                        <span className="wk-emp-row__score">Match {p.score}</span>
+                        <span className="wk-emp-row__score">{p.fitLabel}</span>
                       </div>
                     </div>
                   </button>
@@ -646,9 +646,9 @@ export function EmployersInbox() {
             <div className="wk-emp-inbox__pool">
               <Icon name="sparkle" size={14} stroke={1.6} />
               <div>
-                <strong>14 more candidates</strong> are mid-interview with Claire for this role.
+                <strong>Other candidates stay hidden</strong> while Claire screens for this role.
                 <br />
-                <span>You&apos;ll see them here when they pass.</span>
+                <span>You see only passed profiles after consent is ready.</span>
               </div>
             </div>
           </aside>
@@ -676,7 +676,7 @@ function EmpPassedDetail({ c }: { c: PassedProfile }) {
           <span className={`wk-emp-pp__pass${c.pass === "Strong pass" ? " is-strong" : ""}`}>
             <Icon name="check" size={12} stroke={2.4} /> {c.pass}
           </span>
-          <span className="wk-emp-pp__score">Match {c.score}</span>
+          <span className="wk-emp-pp__score">{c.fitLabel}</span>
         </div>
       </header>
 
@@ -815,7 +815,7 @@ function EmpPassedDetailLite({ c }: { c: PassedProfile }) {
           <span className={`wk-emp-pp__pass${c.pass === "Strong pass" ? " is-strong" : ""}`}>
             <Icon name="check" size={12} stroke={2.4} /> {c.pass}
           </span>
-          <span className="wk-emp-pp__score">Match {c.score}</span>
+          <span className="wk-emp-pp__score">{c.fitLabel}</span>
         </div>
       </header>
       <section className="wk-emp-pp__sec wk-emp-pp__lite-body">

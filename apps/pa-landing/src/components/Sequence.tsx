@@ -181,16 +181,16 @@ function ArtCandPrescreens() {
 function ArtCandSkips() {
   const rows = [
     { co: "Stripe", role: "Sr PM, Payments", state: "skip", why: "comp below floor", tone: "ink" },
-    { co: "Anthropic", role: "Sr PM, Claude APIs", state: "match", why: "92 match · forwarded", tone: "warm" },
+    { co: "Anthropic", role: "Sr PM, Claude APIs", state: "match", why: "strong fit · surfaced", tone: "warm" },
     { co: "Snowflake", role: "Staff PM, Warehouse", state: "skip", why: "not your domain", tone: "moss" },
     { co: "Notion", role: "Sr PM, Editor", state: "skip", why: "not a step up", tone: "slate" },
-    { co: "Vercel", role: "Sr PM, Infra", state: "match", why: "87 match · forwarded", tone: "ink" },
+    { co: "Vercel", role: "Sr PM, Infra", state: "match", why: "good fit · surfaced", tone: "ink" },
   ] as const
   return (
     <div className="seq-feed" role="presentation">
       <header className="seq-feed__head">
-        <span className="seq-feed__title">Live feed · Claire</span>
-        <span className="seq-feed__time">Today</span>
+        <span className="seq-feed__title">Sample feed · Claire</span>
+        <span className="seq-feed__time">Preview</span>
       </header>
       <ul className="seq-feed__rows">
         {rows.map((r, i) => (
@@ -218,9 +218,9 @@ function ArtCandSkips() {
         ))}
       </ul>
       <footer className="seq-feed__foot">
-        <span><strong>1,247</strong> skipped</span>
+        <span><strong>Most</strong> skipped</span>
         <span className="seq-feed__foot-sep" />
-        <span><strong>2</strong> forwarded</span>
+        <span><strong>Only clear fits</strong> surfaced</span>
       </footer>
     </div>
   )
@@ -412,7 +412,7 @@ function ArtEmpDelivers() {
         <div className="seq-pp__row">
           <span className="seq-pp__chip">$240k asked · in band</span>
           <span className="seq-pp__chip">SF · 3d/wk OK</span>
-          <span className="seq-pp__match">Match 92</span>
+          <span className="seq-pp__match">Strong fit</span>
         </div>
         <div className="seq-pp__quote">
           &ldquo;I&apos;m done with feature-grid PM. I want a roadmap that ships against safety evals.&rdquo;
@@ -539,8 +539,8 @@ export function EmployerSequence() {
             before="Claire"
             verbIcon="message"
             verbText="interviews"
-            after="every credible candidate, at scale."
-            sub="Hundreds of conversations a week, structured against your rubric, scored for the specific traits your company actually needs."
+            after="against the role brief."
+            sub="Structured conversations, follow-up questions, and scored evidence for the traits your company actually needs."
           >
             <ArtEmpAtScale />
           </SequenceCard>
@@ -551,7 +551,7 @@ export function EmployerSequence() {
             verbIcon="check"
             verbText="few"
             after="who actually passed."
-            sub="Three to five passes a week — each with summary, pass reason, evidence, risks, and the transcript that made Claire call it."
+            sub="Each pass includes summary, pass reason, evidence, risks, and the transcript that made Claire call it."
           >
             <ArtEmpDelivers />
           </SequenceCard>
