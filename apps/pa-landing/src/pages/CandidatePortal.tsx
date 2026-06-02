@@ -1001,11 +1001,11 @@ function deriveVisibility(activeCount: number, matchCount: number): MeVisibility
   return {
     state: "discoverable",
     label: "Open to matches",
-    one: "Claire is matching you with new roles.",
+    one: "Your profile is open for role matching.",
     two:
       matchCount > 0
         ? `${matchCount} new ${matchCount === 1 ? "role" : "roles"} waiting for you.`
-        : "We'll text you the moment a role fits.",
+        : "Update preferences if your target roles or deal-breakers changed.",
     cta: "Request outreach change",
   }
 }
@@ -1161,14 +1161,13 @@ function MeStatusHeader({
                 {actionsCount === 1 ? "s" : ""} you.
               </>
             ) : firstName ? (
-              <>Nothing on your plate, {firstName}. <em className="wkv3-num">Claire is working.</em></>
+              <>Nothing needs you right now, {firstName}.</>
             ) : (
-              <>Nothing on your plate. <em className="wkv3-num">Claire is working.</em></>
+              <>Nothing needs you right now.</>
             )}
           </h1>
           <p className="wkv3-status__sub">
-            Active interviews, new roles, and what&apos;s waiting on you — all in one place. Claire keeps it
-            current.
+            Active interviews, new roles, and profile updates appear here when there is something candidate-visible.
           </p>
         </div>
         {hasPrimary ? (
@@ -1219,7 +1218,7 @@ function MeUpNext({
           {upNextActions.length > 0 ? <span className="wkv3-sec__count">{upNextActions.length}</span> : null}
         </h2>
         <span className="wkv3-sec__sub">
-          {upNextActions.length > 0 ? "Only things waiting on you." : "Nothing waiting — WeKruit is working."}
+          {upNextActions.length > 0 ? "Only things waiting on you." : "Nothing waiting on you."}
         </span>
       </header>
       {upNextActions.length > 0 ? (
@@ -1298,17 +1297,20 @@ function MeWaitingCard({ recommendedCount }: { recommendedCount: number }) {
         <span className="wkv3-wait__core" />
       </div>
       <div className="wkv3-wait__body">
-        <p className="wkv3-wait__kicker">WeKruit is working</p>
-        <h3 className="wkv3-wait__t">Claire is matching you with new roles.</h3>
+        <p className="wkv3-wait__kicker">No action waiting</p>
+        <h3 className="wkv3-wait__t">Your role queue is clear right now.</h3>
         <p className="wkv3-wait__sub">
           {recommendedCount > 0
             ? `${recommendedCount} new ${recommendedCount === 1 ? "role" : "roles"} surfaced — take a look below.`
-            : "We'll text you when Claire finds a role that clearly fits your profile."}
+            : "If this looks wrong, update the target roles, locations, and deal-breakers Claire should use."}
         </p>
+        <Link to="/me/profile#match-preferences" className="wk-btn wk-btn--secondary wk-btn--sm">
+          Review matching preferences <Icon name="arrow-right" size={13} stroke={2} />
+        </Link>
         <div className="wkv3-wait__bar" aria-hidden="true">
           <span />
         </div>
-        <p className="wkv3-wait__meta">Your profile has enough signal for Claire to keep matching.</p>
+        <p className="wkv3-wait__meta">Profile edits keep future matching tied to evidence you can review.</p>
       </div>
     </article>
   )
@@ -1649,8 +1651,7 @@ function MeNewRolesEmptyState({ claireHref }: { claireHref: string | null }) {
     <div className="wkv3-empty-block wkv3-empty-block--actionable">
       <h3>No new roles match your profile yet.</h3>
       <p>
-        Claire is still matching. Update target roles, locations, and deal-breakers so new roles can surface with
-        clearer evidence.
+        Update target roles, locations, and deal-breakers so new roles can surface with clearer evidence.
       </p>
       <div className="wkv3-empty-actions">
         <Link to="/me/profile#match-preferences" className="wk-btn wk-btn--primary wk-btn--sm">
@@ -4425,7 +4426,7 @@ function MatchesEmptyState({
       <p>
         {hasOtherRoles
           ? "This filter is empty. Show all tracked roles or update preferences if this split looks wrong."
-          : "Claire keeps scanning. Tighten target roles, locations, and deal-breakers so roles can surface with clearer evidence."}
+          : "Keep target roles, locations, and deal-breakers current so roles can surface with clearer evidence."}
       </p>
       <div className="wkmp-empty__actions">
         {hasOtherRoles ? (

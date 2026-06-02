@@ -824,7 +824,7 @@ export default function Market(): ReactNode {
                     <tbody>
                       {directJobs.length === 0 ? (
                         <tr><td colSpan={6} className="wk-tbl__empty">
-                          <strong>No direct-line roles yet.</strong> Check tracked roles while Claire keeps scanning for stronger company access.
+                          <strong>No direct-line roles yet.</strong> Check tracked roles and keep your profile preferences current.
                         </td></tr>
                       ) : directJobs.map((r) => (
                         <DirectRow key={r.id} r={r} onTalk={() => onTalkToClaire(r)} />

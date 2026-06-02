@@ -19,3 +19,9 @@ test("Market frames tracked external roles as Claire-managed next steps, not a s
   assert.match(source, /External roles Claire is watching/i)
   assert.match(source, /<th className="wk-tbl__h wk-tbl__h--cta">Next step<\/th>/)
 })
+
+test("Market direct-line empty state avoids unproven background scanning claims", () => {
+  assert.match(source, /<strong>No direct-line roles yet\.<\/strong>/)
+  assert.doesNotMatch(source, /Claire keeps scanning for stronger company access/)
+  assert.match(source, /Check tracked roles and keep your profile preferences current\./)
+})

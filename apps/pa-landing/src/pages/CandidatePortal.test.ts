@@ -67,7 +67,7 @@ test("CandidatePortal roles page disables zero-count filters instead of opening 
 test("CandidatePortal roles page empty state offers real next actions", () => {
   assert.match(source, /function MatchesEmptyState\(/)
   assert.match(source, /No roles match your profile yet\./)
-  assert.match(source, /Claire keeps scanning\. Tighten target roles, locations, and deal-breakers/)
+  assert.match(source, /Keep target roles, locations, and deal-breakers current/)
   assert.match(source, /<Link to="\/me\/profile#match-preferences" className="wk-btn wk-btn--primary wk-btn--sm">[\s\S]*Update matching profile/)
   assert.match(source, /claireHref \? \([\s\S]*Message Claire/)
   assert.doesNotMatch(source, /<h3>Nothing here\.<\/h3>/)
@@ -81,6 +81,20 @@ test("CandidatePortal /me new roles empty state offers real next actions", () =>
   assert.match(source, /<Link to="\/me\/profile#match-preferences" className="wk-btn wk-btn--primary wk-btn--sm">[\s\S]*Update matching profile/)
   assert.match(source, /claireHref \? \([\s\S]*Message Claire/)
   assert.doesNotMatch(source, /<h3>No roles yet\.<\/h3>/)
+})
+
+test("CandidatePortal empty waiting states do not claim unproven Claire background work", () => {
+  assert.doesNotMatch(source, /Claire is working/)
+  assert.doesNotMatch(source, /WeKruit is working/)
+  assert.doesNotMatch(source, /Claire is matching you with new roles/)
+  assert.doesNotMatch(source, /Claire keeps scanning/)
+  assert.doesNotMatch(source, /Claire is still matching/)
+  assert.doesNotMatch(source, /We&apos;ll text you when Claire finds/)
+  assert.match(source, /function MeWaitingCard/)
+  assert.match(
+    source,
+    /<Link to="\/me\/profile#match-preferences" className="wk-btn wk-btn--secondary wk-btn--sm">[\s\S]*Review matching preferences/,
+  )
 })
 
 test("CandidatePortal does not label pipeline reasons as Claire match evidence", () => {
