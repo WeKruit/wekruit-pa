@@ -32,6 +32,7 @@
  *   GET  paRecruiterCandidateConsentConfirm -> candidate confirms submitted interest
  *   GET  paRecruiterSubmissionsList -> recruiter-authenticated status tracker
  *   TRG  paRecruiterRoleReleasedNotify -> emails recruiters when a role is released
+ *   TRG  paRecruiterRoleFeedbackSignalWrite -> appends recruiter role feedback into marketplace flywheel
  *   TRG  paRecruiterRoleApplicationDecisionNotify -> creates recruiter inbox decision notices
  *   TRG  paRecruiterSubmissionFeedbackNotify -> creates recruiter inbox status/feedback, confirmation, and payout notices
  *   GET  paCollabJobsListSchema    -> JSON Schema for the list response shape
@@ -4296,6 +4297,28 @@ interface RecruiterRoleApplicationDecisionEvent {
   createdAt: string
 }
 
+interface RecruiterRoleFeedbackEvent {
+  eventId: string
+  kind: "recruiter_role_feedback"
+  actor: "worker"
+  jobId: string
+  outcome: RecruiterRoleFeedbackDifficulty
+  evidence: Array<{
+    source: "system"
+    summary: string
+    refId: string
+  }>
+  payloadRedacted: {
+    feedbackId: string
+    recruiterId: string
+    difficulty: RecruiterRoleFeedbackDifficulty
+    reasonIds: RecruiterRoleFeedbackReason[]
+    hasNote: boolean
+    source: "recruiter_board"
+  }
+  createdAt: string
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`
   if (value && typeof value === "object") {
@@ -4460,6 +4483,125 @@ export async function writeRecruiterRoleApplicationDecisionEvent(
   const existing = await ref.get()
   if (existing.exists) {
     const data = existing.data() as RecruiterRoleApplicationDecisionEvent
+    if (stableJson(data) !== stableJson(event)) {
+      throw new Error(`conflicting_duplicate_event:${FEEDBACK_EVENTS_COLLECTION}/${event.eventId}`)
+    }
+    return { event: data, created: false }
+  }
+  await ref.set(event as unknown as Record<string, unknown>)
+  await db.collection(AUDIT_EVENTS_COLLECTION).doc(auditId("marketplace_feedback", event.eventId)).set({
+    id: auditId("marketplace_feedback", event.eventId),
+    action: "marketplace.feedback.append",
+    eventId: event.eventId,
+    candidateId: null,
+    jobId: event.jobId,
+    actor: event.actor,
+    createdAt: event.createdAt,
+  })
+  return { event, created: true }
+}
+
+function recruiterRoleFeedbackDifficulty(raw: unknown): RecruiterRoleFeedbackDifficulty | null {
+  return RECRUITER_ROLE_FEEDBACK_DIFFICULTIES.includes(raw as RecruiterRoleFeedbackDifficulty)
+    ? raw as RecruiterRoleFeedbackDifficulty
+    : null
+}
+
+function recruiterRoleFeedbackReasons(raw: unknown): RecruiterRoleFeedbackReason[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<RecruiterRoleFeedbackReason>()
+  const reasons: RecruiterRoleFeedbackReason[] = []
+  for (const item of raw) {
+    if (!RECRUITER_ROLE_FEEDBACK_REASONS.includes(item as RecruiterRoleFeedbackReason)) continue
+    const reason = item as RecruiterRoleFeedbackReason
+    if (seen.has(reason)) continue
+    seen.add(reason)
+    reasons.push(reason)
+  }
+  return reasons
+}
+
+function recruiterRoleFeedbackEventId(triggerEventId: string): string {
+  const safeEventId = triggerEventId.trim().replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 120)
+  if (safeEventId) return `recruiter_role_feedback_${safeEventId}`
+  return `recruiter_role_feedback_${createHash("sha256").update(triggerEventId).digest("hex").slice(0, 24)}`
+}
+
+function recruiterRoleFeedbackSignal(data: Record<string, unknown> | null): {
+  jobId: string
+  recruiterId: string
+  difficulty: RecruiterRoleFeedbackDifficulty
+  reasonIds: RecruiterRoleFeedbackReason[]
+  hasNote: boolean
+} | null {
+  if (!data) return null
+  const jobId = typeof data.jobId === "string" && data.jobId.trim() ? data.jobId.trim() : ""
+  const recruiterId = typeof data.recruiterId === "string" && data.recruiterId.trim() ? data.recruiterId.trim() : ""
+  const difficulty = recruiterRoleFeedbackDifficulty(data.difficulty)
+  if (!jobId || !recruiterId || !difficulty) return null
+  const note = typeof data.note === "string" ? data.note.trim() : ""
+  return {
+    jobId,
+    recruiterId,
+    difficulty,
+    reasonIds: recruiterRoleFeedbackReasons(data.reasons),
+    hasNote: Boolean(note),
+  }
+}
+
+function recruiterRoleFeedbackSignalChanged(
+  before: ReturnType<typeof recruiterRoleFeedbackSignal>,
+  after: NonNullable<ReturnType<typeof recruiterRoleFeedbackSignal>>,
+): boolean {
+  if (!before) return true
+  return stableJson(before) !== stableJson(after)
+}
+
+export function buildRecruiterRoleFeedbackEvent(input: {
+  triggerEventId: string
+  feedbackId: string
+  createdAt: string
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+}): RecruiterRoleFeedbackEvent | null {
+  if (!input.after) return null
+  if (!input.triggerEventId || !input.feedbackId) return null
+  const after = recruiterRoleFeedbackSignal(input.after)
+  if (!after) return null
+  const before = recruiterRoleFeedbackSignal(input.before)
+  if (!recruiterRoleFeedbackSignalChanged(before, after)) return null
+
+  return {
+    eventId: recruiterRoleFeedbackEventId(input.triggerEventId),
+    kind: "recruiter_role_feedback",
+    actor: "worker",
+    jobId: after.jobId,
+    outcome: after.difficulty,
+    evidence: [{
+      source: "system",
+      summary: "Recruiter role feedback submitted",
+      refId: input.feedbackId,
+    }],
+    payloadRedacted: {
+      feedbackId: input.feedbackId,
+      recruiterId: after.recruiterId,
+      difficulty: after.difficulty,
+      reasonIds: after.reasonIds,
+      hasNote: after.hasNote,
+      source: "recruiter_board",
+    },
+    createdAt: input.createdAt,
+  }
+}
+
+export async function writeRecruiterRoleFeedbackEvent(
+  db: Firestore,
+  event: RecruiterRoleFeedbackEvent,
+): Promise<{ event: RecruiterRoleFeedbackEvent; created: boolean }> {
+  const ref = db.collection(FEEDBACK_EVENTS_COLLECTION).doc(event.eventId)
+  const existing = await ref.get()
+  if (existing.exists) {
+    const data = existing.data() as RecruiterRoleFeedbackEvent
     if (stableJson(data) !== stableJson(event)) {
       throw new Error(`conflicting_duplicate_event:${FEEDBACK_EVENTS_COLLECTION}/${event.eventId}`)
     }
@@ -4730,6 +4872,35 @@ export const paRecruiterRoleReleasedNotify = onDocumentWritten(
     if (!shouldNotifyRecruitersForRoleRelease(before, after) || !after) return
     const summary = await notifyRecruitersForReleasedRole(getFirestore(), event.params.jobId, after)
     logger.info("paRecruiterRoleReleasedNotify_done", { jobId: event.params.jobId, ...summary })
+  },
+)
+
+export const paRecruiterRoleFeedbackSignalWrite = onDocumentWritten(
+  {
+    document: `${RECRUITER_ROLE_FEEDBACK_COLLECTION}/{feedbackId}`,
+    region: "us-central1",
+    memory: RECRUITER_BOARD_MEMORY,
+  },
+  async (event) => {
+    const before = event.data?.before.exists ? event.data.before.data() as Record<string, unknown> : null
+    const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null
+    const feedbackEvent = buildRecruiterRoleFeedbackEvent({
+      triggerEventId: event.id,
+      feedbackId: event.params.feedbackId,
+      createdAt: new Date().toISOString(),
+      before,
+      after,
+    })
+    if (!feedbackEvent) return
+    const result = await writeRecruiterRoleFeedbackEvent(getFirestore(), feedbackEvent)
+    if (result.created) {
+      logger.info("paRecruiterRoleFeedbackSignalWrite_done", {
+        feedbackId: event.params.feedbackId,
+        eventId: feedbackEvent.eventId,
+        jobId: feedbackEvent.jobId,
+        outcome: feedbackEvent.outcome,
+      })
+    }
   },
 )
 

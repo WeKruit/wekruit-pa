@@ -178,6 +178,23 @@ describe("runAdminFlywheelEvalSnapshot", () => {
       evidence: [{ source: "admin", summary: "Recruiter role application approved", refId: "app-4" }],
       createdAt: "2026-05-14T10:05:00.000Z",
     })
+    await mfs.collection(PA_COLLECTIONS.feedbackEvents).doc("feedback-5").set({
+      eventId: "feedback-5",
+      kind: "recruiter_role_feedback",
+      actor: "worker",
+      jobId: "job-5",
+      outcome: "hard",
+      payloadRedacted: {
+        feedbackId: "role-feedback-5",
+        recruiterId: "recruiter-1",
+        difficulty: "hard",
+        reasonIds: ["small_candidate_pool"],
+        hasNote: true,
+        source: "recruiter_board",
+      },
+      evidence: [{ source: "system", summary: "Recruiter role feedback submitted", refId: "role-feedback-5" }],
+      createdAt: "2026-05-14T10:06:00.000Z",
+    })
     await mfs.collection(PA_COLLECTIONS.correctionEvents).doc("corr-1").set({
       eventId: "corr-1",
       targetType: "candidate_profile",
@@ -198,27 +215,30 @@ describe("runAdminFlywheelEvalSnapshot", () => {
     assert.equal(result.generatedAt, now)
     assert.deepEqual(result.counts, {
       evalArtifacts: 1,
-      feedbackEvents: 4,
+      feedbackEvents: 5,
       correctionEvents: 1,
       artifactsByKind: { marketplace_simulation: 1 },
       artifactsByStatus: { ready: 1 },
       correctionsByTarget: { candidate_profile: 1 },
       correctionsByActor: { candidate: 1 },
-      feedbackByKind: { candidate_behavior: 1, employer_action: 1, recruiter_submission_feedback: 1, recruiter_role_application_decision: 1 },
-      feedbackByOutcome: { passed: 1, intro_rejected: 1, advanced: 1, approved: 1 },
+      feedbackByKind: { candidate_behavior: 1, employer_action: 1, recruiter_submission_feedback: 1, recruiter_role_application_decision: 1, recruiter_role_feedback: 1 },
+      feedbackByOutcome: { passed: 1, intro_rejected: 1, advanced: 1, approved: 1, hard: 1 },
       employerIntroByOutcome: { intro_rejected: 1 },
     })
     assert.equal(result.recentArtifacts[0]!.artifactId, "artifact-1")
     assert.equal(result.recentCorrections[0]!.eventId, "corr-1")
-    assert.equal(result.recentFeedback[0]!.eventId, "feedback-4")
-    assert.equal(result.recentFeedback[0]!.kind, "recruiter_role_application_decision")
-    assert.doesNotMatch(json(result.recentFeedback[0]), /candidate@example\.com|linkedin\.com|raw admin note|raw pitch/)
-    assert.equal(result.recentFeedback[1]!.eventId, "feedback-3")
-    assert.equal(result.recentFeedback[1]!.kind, "recruiter_submission_feedback")
-    assert.doesNotMatch(json(result.recentFeedback[1]), /candidate@example\.com|linkedin\.com|raw admin note/)
-    assert.equal(result.recentFeedback[2]!.eventId, "feedback-2")
-    assert.deepEqual(result.recentFeedback[2]!.payloadRedacted, { decision: "rejected" })
-    assert.equal(result.recentFeedback[3]!.eventId, "feedback-1")
-    assert.deepEqual(result.recentFeedback[3]!.payloadRedacted, { behavior: "prescreen_pass" })
+    assert.equal(result.recentFeedback[0]!.eventId, "feedback-5")
+    assert.equal(result.recentFeedback[0]!.kind, "recruiter_role_feedback")
+    assert.doesNotMatch(json(result.recentFeedback[0]), /candidate@example\.com|linkedin\.com|raw admin note|raw pitch|raw role feedback/)
+    assert.equal(result.recentFeedback[1]!.eventId, "feedback-4")
+    assert.equal(result.recentFeedback[1]!.kind, "recruiter_role_application_decision")
+    assert.doesNotMatch(json(result.recentFeedback[1]), /candidate@example\.com|linkedin\.com|raw admin note|raw pitch/)
+    assert.equal(result.recentFeedback[2]!.eventId, "feedback-3")
+    assert.equal(result.recentFeedback[2]!.kind, "recruiter_submission_feedback")
+    assert.doesNotMatch(json(result.recentFeedback[2]), /candidate@example\.com|linkedin\.com|raw admin note/)
+    assert.equal(result.recentFeedback[3]!.eventId, "feedback-2")
+    assert.deepEqual(result.recentFeedback[3]!.payloadRedacted, { decision: "rejected" })
+    assert.equal(result.recentFeedback[4]!.eventId, "feedback-1")
+    assert.deepEqual(result.recentFeedback[4]!.payloadRedacted, { behavior: "prescreen_pass" })
   })
 })

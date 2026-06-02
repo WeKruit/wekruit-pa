@@ -565,6 +565,97 @@ test("feedback events model recruiter role application decisions as redacted fly
   )
 })
 
+test("feedback events model recruiter role feedback as redacted flywheel signals", () => {
+  const parsed = FeedbackEventSchema.parse({
+    eventId: "fb-recruiter-role-feedback-1",
+    kind: "recruiter_role_feedback",
+    actor: "worker",
+    jobId: "job-1",
+    outcome: "hard",
+    evidence: [{ source: "system", summary: "Recruiter role feedback submitted", refId: "role-feedback-1" }],
+    payloadRedacted: {
+      feedbackId: "role-feedback-1",
+      recruiterId: "recruiter-1",
+      difficulty: "hard",
+      reasonIds: ["small_candidate_pool", "hiring_team_slow"],
+      hasNote: true,
+      source: "recruiter_board",
+    },
+    createdAt: now,
+  })
+  assert.equal(parsed.kind, "recruiter_role_feedback")
+  assert.equal(parsed.actor, "worker")
+  assert.equal(parsed.jobId, "job-1")
+  assert.equal(parsed.outcome, "hard")
+
+  for (const outcome of ["easy", "medium", "hard", "blocked"]) {
+    FeedbackEventSchema.parse({
+      eventId: `fb-recruiter-role-feedback-${outcome}`,
+      kind: "recruiter_role_feedback",
+      actor: "worker",
+      jobId: "job-1",
+      outcome,
+      payloadRedacted: { feedbackId: `feedback-${outcome}` },
+      createdAt: now,
+    })
+  }
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-recruiter-role-feedback-bad-outcome",
+        kind: "recruiter_role_feedback",
+        actor: "worker",
+        jobId: "job-1",
+        outcome: "impossible",
+        payloadRedacted: { feedbackId: "role-feedback-1" },
+        createdAt: now,
+      }),
+    /outcome/
+  )
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-recruiter-role-feedback-no-job",
+        kind: "recruiter_role_feedback",
+        actor: "worker",
+        outcome: "hard",
+        payloadRedacted: { feedbackId: "role-feedback-1" },
+        createdAt: now,
+      }),
+    /jobId/
+  )
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-recruiter-role-feedback-no-feedback",
+        kind: "recruiter_role_feedback",
+        actor: "worker",
+        jobId: "job-1",
+        outcome: "hard",
+        payloadRedacted: {},
+        createdAt: now,
+      }),
+    /feedbackId/
+  )
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-recruiter-role-feedback-unsafe",
+        kind: "recruiter_role_feedback",
+        actor: "worker",
+        jobId: "job-1",
+        outcome: "hard",
+        payloadRedacted: {
+          feedbackId: "role-feedback-1",
+          note: "Raw role feedback note",
+          recruiterEmail: "recruiter@example.com",
+        },
+        createdAt: now,
+      }),
+    /must not contain raw notes or recruiter PII/
+  )
+})
+
 test("makeJobPresentedEvent builds a writer-ready job_presented event", () => {
   const event = makeJobPresentedEvent({
     eventId: "fb-helper-1",

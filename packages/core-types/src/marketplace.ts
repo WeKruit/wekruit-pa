@@ -880,6 +880,14 @@ export type RecruiterRoleApplicationDecisionOutcome = z.infer<
   typeof RecruiterRoleApplicationDecisionOutcomeSchema
 >
 
+export const RecruiterRoleFeedbackDifficultySchema = z.enum([
+  "easy",
+  "medium",
+  "hard",
+  "blocked",
+])
+export type RecruiterRoleFeedbackDifficulty = z.infer<typeof RecruiterRoleFeedbackDifficultySchema>
+
 const RECRUITER_SUBMISSION_FEEDBACK_FORBIDDEN_PAYLOAD_KEYS = [
   "candidate",
   "candidateEmail",
@@ -903,6 +911,14 @@ const RECRUITER_ROLE_APPLICATION_DECISION_FORBIDDEN_PAYLOAD_KEYS = [
   "candidateProfileUrl",
 ]
 
+const RECRUITER_ROLE_FEEDBACK_FORBIDDEN_PAYLOAD_KEYS = [
+  "note",
+  "rawNote",
+  "feedbackNote",
+  "recruiterEmail",
+  "email",
+]
+
 export const FeedbackEventSchema = z.object({
   eventId: IdSchema,
   kind: z.enum([
@@ -918,6 +934,7 @@ export const FeedbackEventSchema = z.object({
     "job_presented",
     "recruiter_submission_feedback",
     "recruiter_role_application_decision",
+    "recruiter_role_feedback",
   ]),
   actor: MarketplaceActorSchema,
   candidateId: IdSchema.optional(),
@@ -1039,6 +1056,39 @@ export const FeedbackEventSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ["payloadRedacted", forbiddenKey],
         message: "recruiter_role_application_decision payloadRedacted must not contain raw application text or candidate identifiers",
+      })
+    }
+  }
+  if (event.kind === "recruiter_role_feedback") {
+    if (!event.jobId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["jobId"],
+        message: "recruiter_role_feedback feedback events require jobId",
+      })
+    }
+    const outcome = RecruiterRoleFeedbackDifficultySchema.safeParse(event.outcome)
+    if (!outcome.success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["outcome"],
+        message: "recruiter_role_feedback outcome must be a role difficulty",
+      })
+    }
+    const payload = event.payloadRedacted as Record<string, unknown>
+    if (typeof payload.feedbackId !== "string" || !payload.feedbackId.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["payloadRedacted", "feedbackId"],
+        message: "recruiter_role_feedback payload requires feedbackId",
+      })
+    }
+    const forbiddenKey = RECRUITER_ROLE_FEEDBACK_FORBIDDEN_PAYLOAD_KEYS.find((key) => key in payload)
+    if (forbiddenKey) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["payloadRedacted", forbiddenKey],
+        message: "recruiter_role_feedback payloadRedacted must not contain raw notes or recruiter PII",
       })
     }
   }

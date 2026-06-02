@@ -18,6 +18,7 @@ import assert from "node:assert/strict"
 import {
   buildRecruiterRoleIntelligence,
   buildRecruiterRoleApplicationDecisionEvent,
+  buildRecruiterRoleFeedbackEvent,
   buildRecruiterSubmissionFeedbackEvent,
   candidateCalibrationNotification,
   candidateConfirmationNotification,
@@ -55,6 +56,7 @@ import {
   validateRecruiterWorkspacePreferences,
   validateSubmission,
   writeRecruiterRoleApplicationDecisionEvent,
+  writeRecruiterRoleFeedbackEvent,
   writeRecruiterSubmissionFeedbackEvent,
   type RecruiterBoardChecklistGroup,
   type RecruiterBoardPayload,
@@ -649,6 +651,91 @@ describe("recruiter role application decision flywheel events", () => {
     assert.deepEqual(db.get("pa-feedback-events/recruiter_role_application_decision_evt-role-4"), event)
     assert.equal(db.has("pa-audit-events/marketplace_feedback_recruiter_role_application_decision_evt-role-4"), true)
     assert.equal(db.setCount("pa-audit-events/marketplace_feedback_recruiter_role_application_decision_evt-role-4"), 1)
+  })
+})
+
+describe("recruiter role feedback flywheel events", () => {
+  it("builds a redacted feedback event when recruiter reports role difficulty", () => {
+    const event = buildRecruiterRoleFeedbackEvent({
+      triggerEventId: "evt-role-feedback-1",
+      feedbackId: "feedback-1",
+      createdAt: "2026-06-02T12:00:00.000Z",
+      before: null,
+      after: {
+        jobId: "job-1",
+        recruiterId: "recruiter-1",
+        recruiterEmail: "recruiter@example.com",
+        difficulty: "hard",
+        reasons: ["small_candidate_pool", "hiring_team_slow"],
+        note: "Hard because two named candidates declined; recruiter@example.com",
+      },
+    })
+
+    assert.equal(event?.eventId, "recruiter_role_feedback_evt-role-feedback-1")
+    assert.equal(event?.kind, "recruiter_role_feedback")
+    assert.equal(event?.actor, "worker")
+    assert.equal(event?.jobId, "job-1")
+    assert.equal(event?.outcome, "hard")
+    assert.deepEqual(event?.payloadRedacted, {
+      feedbackId: "feedback-1",
+      recruiterId: "recruiter-1",
+      difficulty: "hard",
+      reasonIds: ["small_candidate_pool", "hiring_team_slow"],
+      hasNote: true,
+      source: "recruiter_board",
+    })
+    assert.equal(event?.evidence[0]?.source, "system")
+    assert.equal(event?.evidence[0]?.refId, "feedback-1")
+    const serialized = JSON.stringify(event)
+    assert.doesNotMatch(serialized, /two named candidates/)
+    assert.doesNotMatch(serialized, /recruiter@example\.com/)
+  })
+
+  it("skips event construction when redacted role feedback signal did not change", () => {
+    assert.equal(buildRecruiterRoleFeedbackEvent({
+      triggerEventId: "evt-role-feedback-2",
+      feedbackId: "feedback-2",
+      createdAt: "2026-06-02T12:00:00.000Z",
+      before: {
+        jobId: "job-1",
+        recruiterId: "recruiter-1",
+        difficulty: "medium",
+        reasons: ["role_too_broad"],
+        note: "Initial note",
+      },
+      after: {
+        jobId: "job-1",
+        recruiterId: "recruiter-1",
+        difficulty: "medium",
+        reasons: ["role_too_broad"],
+        note: "Different raw note with the same redacted shape",
+        updatedAt: "2026-06-02T12:00:00.000Z",
+      },
+    }), null)
+  })
+
+  it("writes role feedback events idempotently with one audit row", async () => {
+    const event = buildRecruiterRoleFeedbackEvent({
+      triggerEventId: "evt-role-feedback-3",
+      feedbackId: "feedback-3",
+      createdAt: "2026-06-02T12:00:00.000Z",
+      before: { jobId: "job-1", recruiterId: "recruiter-1", difficulty: "easy", reasons: [] },
+      after: {
+        jobId: "job-1",
+        recruiterId: "recruiter-1",
+        difficulty: "blocked",
+        reasons: ["candidate_interest_low"],
+        note: "Raw note is not copied.",
+      },
+    })
+    assert.ok(event)
+    const db = memoryFirestore()
+
+    assert.equal((await writeRecruiterRoleFeedbackEvent(db as never, event)).created, true)
+    assert.equal((await writeRecruiterRoleFeedbackEvent(db as never, event)).created, false)
+    assert.deepEqual(db.get("pa-feedback-events/recruiter_role_feedback_evt-role-feedback-3"), event)
+    assert.equal(db.has("pa-audit-events/marketplace_feedback_recruiter_role_feedback_evt-role-feedback-3"), true)
+    assert.equal(db.setCount("pa-audit-events/marketplace_feedback_recruiter_role_feedback_evt-role-feedback-3"), 1)
   })
 })
 
