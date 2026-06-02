@@ -1470,7 +1470,7 @@
   position: relative;
 }
 .wk-emp-stack::before {
-  content: "Inbox · 4 passes this week";
+  content: "Inbox · sample pass records";
   display: block;
   font-size: 11.5px;
   font-weight: 500;

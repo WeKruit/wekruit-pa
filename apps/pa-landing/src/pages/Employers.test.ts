@@ -8,6 +8,7 @@ import test from "node:test"
 const here = dirname(fileURLToPath(import.meta.url))
 const employersSource = readFileSync(resolve(here, "Employers.tsx"), "utf8")
 const sequenceSource = readFileSync(resolve(here, "../components/Sequence.tsx"), "utf8")
+const stylesSource = readFileSync(resolve(here, "../styles/wekruit-pages.css"), "utf8")
 const source = `${employersSource}\n${sequenceSource}`
 
 test("Employers page frames passed-profile preview without unsupported traction claims", () => {
@@ -61,4 +62,10 @@ test("Employers sequence does not invent live interview scale", () => {
   assert.match(sequenceSource, /Evidence probes/)
   assert.match(sequenceSource, /Risk follow-ups/)
   assert.match(sequenceSource, /Consent gate/)
+})
+
+test("Employers visual labels do not invent weekly pass volume", () => {
+  assert.doesNotMatch(stylesSource, /4 passes this week/)
+  assert.doesNotMatch(stylesSource, /passes this week/i)
+  assert.match(stylesSource, /Inbox · sample pass records/)
 })

@@ -92,7 +92,7 @@ interface PaJobDoc {
   hiringManagerTitle?: string
   hiringManagerOnline?: boolean
   hiringManagerPhotoUrl?: string
-  /** Optional precomputed seat count; falls back to a small deterministic default. */
+  /** Optional employer-provided interview capacity; never synthesized in candidate copy. */
   interviewSeats?: number
 }
 
@@ -534,11 +534,10 @@ export default function PublicJob() {
       ? {
           name: job.hiringManagerName,
           title: job.hiringManagerTitle,
-          online: job.hiringManagerOnline ?? true,
+          online: job.hiringManagerOnline === true,
           photoUrl: job.hiringManagerPhotoUrl,
         }
       : undefined,
-    interviewSeats: job.interviewSeats ?? ((h % 4) + 1),
     logo: (company[0] ?? "?").toUpperCase(),
     logoBg: LOGO_BG_POOL[h % LOGO_BG_POOL.length],
     tone: TONE_POOL[h % TONE_POOL.length],
@@ -1128,7 +1127,6 @@ interface PaJobView {
     online?: boolean
     photoUrl?: string
   }
-  interviewSeats?: number
   logo: string
   logoBg: string
   tone: "warm" | "moss" | "slate"
@@ -1145,11 +1143,10 @@ interface PublicJobLayoutProps {
 }
 
 export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, signedIn, onApply }: PublicJobLayoutProps) {
-  const seats = job.interviewSeats ?? 3
   const meta = [
     job.location ? `${job.location}${job.jobType ? ` (${job.jobType})` : ""}` : job.jobType,
     job.salary,
-    `${seats} Claire interview ${seats === 1 ? "slot" : "slots"} this week`,
+    "Claire starts with the role interview",
   ].filter((item): item is string => Boolean(item))
 
   return (
@@ -1273,9 +1270,9 @@ export function PublicJob404({ message }: { message?: string }) {
         <h1 className="wk-pj-hero__role">
           That interview <em className="wk-accent">isn't</em> open.
         </h1>
-        <p className="wk-pj-hero__lede">{message ?? "It may have filled or been pulled back."}</p>
+        <p className="wk-pj-hero__lede">{message ?? "This public role is not available right now."}</p>
         <Link to="/" className="wk-btn wk-btn--primary">
-          See Claire-ready roles <Icon name="arrow-right" size={16} stroke={2} />
+          See public roles <Icon name="arrow-right" size={16} stroke={2} />
         </Link>
       </div>
     </CandidateShell>

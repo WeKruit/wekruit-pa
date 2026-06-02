@@ -41,7 +41,7 @@ interface PublicJobListDoc {
   hiringManagerName?: string
   hiringManagerTitle?: string
   hiringManagerOnline?: boolean
-  /** Optional precomputed seat count (we fall back to a small default). */
+  /** Optional employer-provided interview capacity; never synthesized. */
   interviewSeats?: number
 }
 
@@ -54,7 +54,6 @@ interface PublicJobListItem {
   jobType?: string
   collaborated: boolean
   hiringManager: { name?: string; title?: string; online: boolean }
-  seats: number
   /** Deterministic visual props derived from id so the same job always looks the same. */
   logo: string
   logoBg: string
@@ -91,9 +90,8 @@ function normalizeJob(id: string, data: PublicJobListDoc): PublicJobListItem {
     hiringManager: {
       name: data.hiringManagerName,
       title: data.hiringManagerTitle,
-      online: data.hiringManagerOnline ?? (h % 3 !== 0),
+      online: data.hiringManagerOnline === true,
     },
-    seats: data.interviewSeats ?? ((h % 4) + 1),
     logo: (company[0] ?? "?").toUpperCase(),
     logoBg: LOGO_BG_POOL[h % LOGO_BG_POOL.length],
     tone: TONE_POOL[h % TONE_POOL.length],
@@ -174,7 +172,7 @@ export default function Landing() {
         },
         staleTime: 5 * 60 * 1000,
       })
-      // Claire-ready roles — pa-jobs publicVisible. Same query OpenJobs.tsx uses.
+      // Public WeKruit roles — pa-jobs publicVisible. Same query OpenJobs.tsx uses.
       void queryClient.prefetchQuery({
         queryKey: ["pa-jobs-public-openings", 24],
         queryFn: () => listPublicJobOpenings(24),
@@ -189,8 +187,6 @@ export default function Landing() {
   }, [queryClient])
 
   const jobs = state.status === "ready" ? state.jobs : []
-  const claireReadyCount = jobs.filter((j) => j.hiringManager.online).length
-
   return (
     <CandidateShell hero>
       <style>{LANDING_STYLES}</style>
@@ -225,7 +221,7 @@ export default function Landing() {
                   document.getElementById("interviews")?.scrollIntoView({ behavior: "smooth", block: "start" })
                 }}
               >
-                Browse Claire-ready roles <Icon name="arrow-down" size={14} stroke={2} />
+                Browse public roles <Icon name="arrow-down" size={14} stroke={2} />
               </a>
             </div>
             <div className="wk-hero__proof">
@@ -234,7 +230,15 @@ export default function Landing() {
               <Avatar name="PS" size={26} tone="warm" />
               <Avatar name="JR" size={26} tone="moss" />
               <span>
-                <strong>{claireReadyCount || jobs.length || 6} roles</strong> ready for Claire interviews.
+                {state.status === "ready" && jobs.length > 0 ? (
+                  <>
+                    <strong>{jobs.length}</strong> public roles Claire can screen against.
+                  </>
+                ) : (
+                  <>
+                    <strong>Claire interviews against real role briefs</strong> before a passed profile goes out.
+                  </>
+                )}
               </span>
             </div>
           </div>
@@ -247,7 +251,7 @@ export default function Landing() {
                 { from: "user",   text: "Go for it." },
                 { from: "claire", text: "What's your dream role?" },
                 { from: "user",   text: "Senior PM at an AI infra startup. NYC. $180k+." },
-                { from: "claire", text: "I've got 3 roles I can interview you for this week. Want to start with one?" },
+                { from: "claire", text: "When a real role matches, I start the first interview here and attach the evidence." },
               ]}
             />
             <div className="wk-hero__caption">
@@ -267,25 +271,25 @@ export default function Landing() {
         <CandidateSequence />
       </section>
 
-      {/* ── Claire-ready roles ──────────────────────────────── */}
+      {/* ── Public roles ──────────────────────────────── */}
       <section className="wk-section wk-section--live" id="interviews">
         <div className="wk-container">
           <header className="wk-section__head wk-section__head--row">
             <div>
-              <p className="wk-eyebrow"><PulseDot size={6} /> Live now</p>
-              <h2 className="wk-section__h2">Roles Claire can screen now.</h2>
+              <p className="wk-eyebrow"><PulseDot size={6} /> Public roles</p>
+              <h2 className="wk-section__h2">Public roles Claire can screen against.</h2>
             </div>
             {state.status === "ready" ? (
               <p className="wk-section__sub">
-                <strong>{jobs.length} live</strong> · Claire starts the interview, then passed profiles go to the hiring team.
+                <strong>{jobs.length} public roles</strong> · Claire starts the interview, then passed profiles go to the hiring team.
               </p>
             ) : null}
           </header>
 
-          {state.status === "loading" ? <p className="wk-muted">Loading Claire-ready roles…</p> : null}
+          {state.status === "loading" ? <p className="wk-muted">Loading public roles…</p> : null}
           {state.status === "error" ? <p className="wk-error">{state.message}</p> : null}
           {state.status === "ready" && jobs.length === 0 ? (
-            <p className="wk-muted">No Claire-ready roles are open right now. Claire will text you when one opens.</p>
+            <p className="wk-muted">No public WeKruit roles are open right now. Keep your profile current; Claire can screen when a real role opens.</p>
           ) : null}
 
           {state.status === "ready" && jobs.length > 0 ? (
@@ -392,10 +396,10 @@ function JobCard({ job }: { job: PublicJobListItem }) {
       <div className="wk-jobcard__top">
         <CompanyMark logo={job.logo} bg={job.logoBg} size={44} />
         {job.hiringManager.online ? (
-          <LiveStatusPill>Claire-ready role</LiveStatusPill>
+          <LiveStatusPill>Claire role interview</LiveStatusPill>
         ) : (
           <span className="wk-jobcard__offline">
-            <span className="wk-jobcard__dot" /> Review opens tomorrow
+            <span className="wk-jobcard__dot" /> Role brief available
           </span>
         )}
       </div>
@@ -423,7 +427,7 @@ function JobCard({ job }: { job: PublicJobListItem }) {
       ) : null}
       <div className="wk-jobcard__footer">
         <span className="wk-jobcard__seats">
-          {job.seats} Claire interview {job.seats === 1 ? "slot" : "slots"} this week
+          Claire starts with the role interview
         </span>
         <span className="wk-btn wk-btn--primary wk-btn--block wk-jobcard__cta">
           Interview with Claire

@@ -23,3 +23,21 @@ test("Landing frames the candidate promise as Claire-first passed-profile flow",
   assert.match(source, /Claire starts the first interview/i)
   assert.match(source, /passed profile/i)
 })
+
+test("Landing does not invent role availability or interview scarcity", () => {
+  assert.doesNotMatch(landingSource, /claireReadyCount \|\| jobs\.length \|\| 6/)
+  assert.doesNotMatch(landingSource, /data\.hiringManagerOnline \?\? \(h % 3 !== 0\)/)
+  assert.doesNotMatch(landingSource, /data\.interviewSeats \?\? \(\(h % 4\) \+ 1\)/)
+  assert.doesNotMatch(landingSource, /I've got 3 roles I can interview you for this week/)
+  assert.doesNotMatch(landingSource, /Claire-ready roles/)
+  assert.doesNotMatch(landingSource, /Loading Claire-ready roles/)
+  assert.doesNotMatch(landingSource, /No Claire-ready roles are open right now\. Claire will text you when one opens\./)
+  assert.doesNotMatch(landingSource, /Review opens tomorrow/)
+  assert.doesNotMatch(landingSource, /job\.seats/)
+  assert.doesNotMatch(landingSource, /Claire interview \{job\.seats === 1 \? "slot" : "slots"\} this week/)
+
+  assert.match(landingSource, /public roles Claire can screen against/)
+  assert.match(landingSource, /Claire interviews against real role briefs/)
+  assert.match(landingSource, /Claire starts with the role interview/)
+  assert.match(landingSource, /No public WeKruit roles are open right now/)
+})
