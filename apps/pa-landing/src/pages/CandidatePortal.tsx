@@ -19,7 +19,7 @@
  *  rather than mocked — they will light up as the backend grows.
  */
 import { useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
 import { onAuthStateChanged, signOut, type User } from "firebase/auth"
 import { clearSsoCookie } from "../lib/cross-domain-sso.js"
 import { httpsCallable } from "firebase/functions"
@@ -843,8 +843,8 @@ function deriveVisibility(activeCount: number, matchCount: number): MeVisibility
       state: "interviewing",
       label: "Active pipeline",
       one: `${activeCount} active ${activeCount === 1 ? "role" : "roles"} in your pipeline.`,
-      two: "Claire keeps each next step current while you focus.",
-      cta: "Manage availability",
+      two: "Visibility and availability changes go through reviewed requests.",
+      cta: "Request availability change",
     }
   }
   return {
@@ -855,7 +855,7 @@ function deriveVisibility(activeCount: number, matchCount: number): MeVisibility
       matchCount > 0
         ? `${matchCount} new ${matchCount === 1 ? "role" : "roles"} waiting for you.`
         : "We'll text you the moment a role fits.",
-    cta: "Pause for a week",
+    cta: "Request outreach change",
   }
 }
 
@@ -1475,7 +1475,6 @@ function MeCompletenessCard({ completeness }: { completeness: MeCompleteness }) 
 }
 
 function MeVisibilityCard({ visibility }: { visibility: MeVisibility }) {
-  const navigate = useNavigate()
   return (
     <div className={`wkv3-vis wkv3-vis--${visibility.state}`}>
       <div className="wkv3-vis__top">
@@ -1483,28 +1482,26 @@ function MeVisibilityCard({ visibility }: { visibility: MeVisibility }) {
           <span className="wkv3-vis__kicker">Visibility</span>
           <strong className="wkv3-vis__label">{visibility.label}</strong>
         </div>
-        <button
-          type="button"
+        <Link
+          to="/me/profile#privacy-requests"
           className="wkv3-vis__manage"
-          aria-label="Manage visibility"
-          onClick={() => navigate("/me/profile")}
+          aria-label="Review visibility requests"
         >
           <MeIcon name="chevron-right" size={14} stroke={2} />
-        </button>
+        </Link>
       </div>
       <p className="wkv3-vis__one">{visibility.one}</p>
       <p className="wkv3-vis__two">{visibility.two}</p>
       <div className="wkv3-vis__actions">
-        <button type="button" className="wk-btn wk-btn--secondary wk-btn--sm" onClick={() => navigate("/me/profile")}>
+        <Link to="/me/profile#privacy-requests" className="wk-btn wk-btn--secondary wk-btn--sm">
           {visibility.cta}
-        </button>
-        <button
-          type="button"
+        </Link>
+        <Link
+          to="/me/profile#privacy"
           className="wkv3-vis__btn wkv3-vis__btn--quiet"
-          onClick={() => navigate("/me/profile")}
         >
-          Who&apos;s seeing me?
-        </button>
+          Review privacy rules
+        </Link>
       </div>
     </div>
   )
@@ -1877,7 +1874,19 @@ export function CandidateProfile() {
   return <ProfileSurface initial={state.profile} />
 }
 
+function useProfileHashScroll() {
+  const location = useLocation()
+  useEffect(() => {
+    const hash = location.hash.replace(/^#/, "") || window.location.hash.replace(/^#/, "")
+    if (!hash) return
+    window.setTimeout(() => {
+      document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" })
+    }, 0)
+  }, [location.hash])
+}
+
 function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
+  useProfileHashScroll()
   const [profile, setProfile] = useState<CandidateSelfProfile>(initial)
   const [editing, setEditing] = useState(false)
   useEffect(() => setProfile(initial), [initial])
@@ -2471,7 +2480,7 @@ function PrivacyCard() {
     },
   ]
   return (
-    <section className="wkv2-card wk-prof-card">
+    <section id="privacy" className="wkv2-card wk-prof-card">
       <h3 className="wkv2-card__h">Privacy</h3>
       <div className="wk-prof-privacy">
         {rows.map((row) => (
@@ -2576,7 +2585,7 @@ function PrivacyRequestPanel() {
   }
 
   return (
-    <section className="wkv2-card wk-prof-card" aria-labelledby="prof-privacy-title">
+    <section id="privacy-requests" className="wkv2-card wk-prof-card" aria-labelledby="prof-privacy-title">
       <h3 className="wkv2-card__h" id="prof-privacy-title">Privacy requests</h3>
       <p className="wk-prof-card__hint">Binding actions reviewed by a WeKruit operator.</p>
       <form onSubmit={onSubmit} className="wk-prof-form">

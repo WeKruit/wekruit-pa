@@ -62,6 +62,17 @@ test("CandidatePortal does not advertise unavailable account or role actions", (
   assert.match(source, /filter and review/i)
 })
 
+test("CandidatePortal visibility actions route to reviewed privacy requests", () => {
+  assert.doesNotMatch(source, /Pause for a week|Manage availability|Who&apos;s seeing me|Manage visibility/)
+  assert.match(source, /Request outreach change/)
+  assert.match(source, /Request availability change/)
+  assert.match(source, /to="\/me\/profile#privacy-requests"/)
+  assert.match(source, /id="privacy"/)
+  assert.match(source, /id="privacy-requests"/)
+  assert.match(source, /function useProfileHashScroll/)
+  assert.match(source, /document\.getElementById\(hash\)\?\.scrollIntoView/)
+})
+
 test("CandidatePortal renders honest connector data", () => {
   assert.match(source, /linkedinOauthProfile/)
   assert.match(source, /githubOauthProfile/)
