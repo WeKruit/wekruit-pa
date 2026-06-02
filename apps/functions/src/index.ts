@@ -137,6 +137,16 @@ export { paBackfillMatchingJobsAtsUrl } from "./backfill-ats-urls.js"
 // call. Weekly summary CF emails when >$10/wk.
 export { paBackfillAtsUrlsBatch, paCostSummaryWeekly } from "./backfill-ats-urls-batch.js"
 
+// 2026-06-02 — OpenAI key early-warning (incident
+// .planning/INCIDENT-2026-06-01-openai-rotation-hardening.md). Cloud Scheduler
+// every 30 min. Cheap health-ping with the live PA_OPENAI_AGENT_API_KEY: 401
+// invalid_api_key → 🚨 "key DEAD/revoked"; 429 insufficient_quota → 🚨 "quota
+// exhausted" (Slack + Mailgun). Plus a once-daily Costs-API poll that warns at
+// ≥80% of a configurable monthly budget BEFORE the hard credit cap. Deduped via
+// pa-alerts/{yyyy-mm-dd-<kind>}. Fail-open (never throws). Costs poll needs the
+// optional OPENAI_ADMIN_KEY secret; health-ping works without it.
+export { paOpenAiKeyHealth } from "./openai-key-health.js"
+
 // v1.6 Phase 57 (LIVE-01..04) — Daily HEAD-check sweep for matching-jobs.
 // Cloud Scheduler 03:00 UTC. Marks dead on 4xx/5xx/timeout, recovers on
 // HTTP-200 retry, hard-deletes after 30d dead. Inline-wires the Serper
