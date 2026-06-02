@@ -731,8 +731,9 @@ function CandidateMeReady({
       when: meWhen(m.computedAt),
     }
   })
+  const recommendedNextAction = deriveRecommendedRolesAction(recommended.length)
   const profileNextAction = deriveProfileNextAction(completeness)
-  const actionCount = actions.length + (profileNextAction ? 1 : 0)
+  const actionCount = actions.length + (recommendedNextAction ? 1 : 0) + (profileNextAction ? 1 : 0)
 
   return (
     <CandidateShell
@@ -754,6 +755,7 @@ function CandidateMeReady({
             <div className="wkv3-main">
               <MeUpNext
                 actions={actions}
+                recommendedNextAction={recommendedNextAction}
                 profileNextAction={profileNextAction}
                 loading={matchesLoading}
                 errored={matchesErrored}
@@ -886,6 +888,26 @@ function deriveProfileNextAction(completeness: MeCompleteness): MeAction | null 
     sub: `${missing.label} — ${missing.impact}`,
     cta: "Update profile",
     href: profileActionHrefForMissing(missing),
+    external: false,
+    when: "",
+  }
+}
+
+function deriveRecommendedRolesAction(recommendedCount: number): MeAction | null {
+  if (recommendedCount <= 0) return null
+  return {
+    key: "recommended-roles",
+    logo: "R",
+    logoBg: "#1F6FEB",
+    urgent: false,
+    meta: `New roles · ${recommendedCount} ${recommendedCount === 1 ? "role" : "roles"}`,
+    title: "Review new roles Claire found",
+    sub:
+      recommendedCount === 1
+        ? "One role is ready for review."
+        : `${recommendedCount} roles are ready for review.`,
+    cta: "Review roles",
+    href: "/me/matches",
     external: false,
     when: "",
   }
@@ -1126,6 +1148,7 @@ function MeStatusHeader({
 
 function MeUpNext({
   actions,
+  recommendedNextAction,
   profileNextAction,
   loading,
   errored,
@@ -1133,13 +1156,14 @@ function MeUpNext({
   recommendedCount,
 }: {
   actions: MeAction[]
+  recommendedNextAction: MeAction | null
   profileNextAction: MeAction | null
   loading: boolean
   errored: boolean
   error: string | null
   recommendedCount: number
 }) {
-  const upNextActions = profileNextAction ? [...actions, profileNextAction] : actions
+  const upNextActions = [...actions, ...(recommendedNextAction ? [recommendedNextAction] : []), ...(profileNextAction ? [profileNextAction] : [])]
   return (
     <section className="wkv3-sec" id="up-next">
       <header className="wkv3-sec__head">

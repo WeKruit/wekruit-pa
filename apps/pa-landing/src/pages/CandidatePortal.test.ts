@@ -235,6 +235,18 @@ test("CandidatePortal /me treats incomplete profile data as an Up Next action", 
   assert.doesNotMatch(source, /<p className="wkv3-wait__meta">No action needed right now\.<\/p>/)
 })
 
+test("CandidatePortal /me treats new recommended roles as an Up Next action", () => {
+  assert.match(source, /function deriveRecommendedRolesAction\(recommendedCount: number\): MeAction \| null/)
+  assert.match(source, /const recommendedNextAction = deriveRecommendedRolesAction\(recommended\.length\)/)
+  assert.match(source, /recommendedNextAction=\{recommendedNextAction\}/)
+  assert.match(source, /actions\.length \+ \(recommendedNextAction \? 1 : 0\) \+ \(profileNextAction \? 1 : 0\)/)
+  assert.match(source, /key: "recommended-roles"/)
+  assert.match(source, /meta: `New roles · \$\{recommendedCount\} \$\{recommendedCount === 1 \? "role" : "roles"\}`/)
+  assert.match(source, /title: "Review new roles Claire found"/)
+  assert.match(source, /href: "\/me\/matches"/)
+  assert.match(source, /const upNextActions = \[\.\.\.actions, \.\.\.\(recommendedNextAction \? \[recommendedNextAction\] : \[\]\), \.\.\.\(profileNextAction \? \[profileNextAction\] : \[\]\)\]/)
+})
+
 test("CandidatePortal status header CTA labels the scroll action honestly", () => {
   assert.match(source, /document\.getElementById\("up-next"\)\?\.scrollIntoView/)
   assert.match(source, /Review up next <Icon name="arrow-right" size=\{13\} stroke=\{2\} \/>/)
