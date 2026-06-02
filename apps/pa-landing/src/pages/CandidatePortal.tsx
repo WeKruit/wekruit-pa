@@ -4310,7 +4310,7 @@ function MatchesView({
               </h1>
               <p className="wkmp__sub">
                 Claire separates WeKruit-screened roles from external recommendations, shows why each role is here,
-                and uses your profile preferences to keep the next batch sharper.
+                and keeps future matching tied to evidence you can review.
               </p>
             </div>
             <div className="wkmp__action">
