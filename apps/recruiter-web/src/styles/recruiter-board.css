@@ -3036,18 +3036,65 @@
 }
 
 .rb-platform__cta {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
   margin-top: auto;
-  padding: 11px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-left: 4px solid var(--ink);
   border-radius: 11px;
   background: var(--ink);
   color: var(--cream);
-  font-size: 13px;
-  font-weight: 700;
   text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
+
+.rb-platform__cta:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.rb-platform__cta span,
+.rb-platform__cta strong,
+.rb-platform__cta em {
+  min-width: 0;
+}
+
+.rb-platform__cta span {
+  opacity: 0.78;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.rb-platform__cta strong {
+  color: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.rb-platform__cta em {
+  display: -webkit-box;
+  overflow: hidden;
+  color: inherit;
+  opacity: 0.78;
+  font-size: 11.5px;
+  font-style: normal;
+  line-height: 1.25;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.rb-platform__cta.is-live { background: var(--live); border-left-color: var(--live-2); }
+.rb-platform__cta.is-info { background: var(--info); border-left-color: #263a4b; }
+.rb-platform__cta.is-success { background: var(--success); border-left-color: #314725; }
+.rb-platform__cta.is-warn { background: #7e4d12; border-left-color: var(--warning); }
+.rb-platform__cta.is-mute { background: var(--ink); border-left-color: var(--ink-3); }
 
 .rb-platform__signout {
   margin-top: 2px;

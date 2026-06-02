@@ -1455,6 +1455,13 @@ export default function RecruiterBoard() {
     operatingMetrics,
   )
   const inboxSummary = buildRecruiterInboxSummary(submissions, sourcedCandidates, roleQuestions, notifications)
+  const primaryCta = buildRecruiterPrimaryCta({
+    jobs: openJobs,
+    submissions,
+    sourcedCandidates,
+    roleQuestions,
+    notifications,
+  })
   const markAllNotificationsRead = async () => {
     const unread = notifications.filter((notification) => !notification.readAt)
     if (unread.length === 0) return
@@ -1494,8 +1501,14 @@ export default function RecruiterBoard() {
             </button>
           ))}
         </nav>
-        <Link to={openJobs[0] ? `/recruiters/job/${openJobs[0].jobId}` : "#"} className="rb-platform__cta">
-          Submit candidate
+        <Link
+          to={primaryCta.href}
+          className={`rb-platform__cta is-${primaryCta.tone}`}
+          aria-label={`${primaryCta.label}: ${primaryCta.title}`}
+        >
+          <span>{primaryCta.label}</span>
+          <strong>{primaryCta.title}</strong>
+          <em>{primaryCta.body}</em>
         </Link>
         <button
           type="button"
@@ -1692,6 +1705,14 @@ function computeRecruiterStats(
 }
 
 type OperatingTone = "live" | "info" | "success" | "warn" | "mute"
+
+type RecruiterPrimaryCta = {
+  href: string
+  label: string
+  title: string
+  body: string
+  tone: OperatingTone
+}
 
 type RecruiterOperatingMetric = {
   label: string
@@ -1986,6 +2007,97 @@ function selectFocusCandidate(candidates: RecruiterSourcedCandidateItem[]): Recr
         0
       return stageRank(b) - stageRank(a) || timestampValueMs(b.updatedAt ?? b.createdAt) - timestampValueMs(a.updatedAt ?? a.createdAt)
     })[0]
+}
+
+function buildRecruiterPrimaryCta(input: {
+  jobs: CollabJob[]
+  submissions: RecruiterSubmissionItem[]
+  sourcedCandidates: RecruiterSourcedCandidateItem[]
+  roleQuestions: RecruiterRoleQuestionItem[]
+  notifications: RecruiterNotificationItem[]
+}): RecruiterPrimaryCta {
+  const activeCandidates = [...input.sourcedCandidates]
+    .filter((candidate) => candidate.stage !== "archived" && candidate.stage !== "submitted")
+    .sort((a, b) => timestampValueMs(b.updatedAt ?? b.createdAt) - timestampValueMs(a.updatedAt ?? a.createdAt))
+  const readyCandidates = activeCandidates.filter((candidate) => candidate.stage === "ready")
+  const readyWithRole = readyCandidates.find((candidate) => Boolean(rolePathForRow(candidate, candidate.id)))
+  if (readyWithRole) {
+    return {
+      href: rolePathForRow(readyWithRole, readyWithRole.id) ?? "/recruiters?tab=matches",
+      label: "Submit ready candidate",
+      title: candidateName(readyWithRole),
+      body: sourcedCandidateRoleLabel(readyWithRole),
+      tone: "live",
+    }
+  }
+
+  const readyPrivate = readyCandidates[0]
+  if (readyPrivate) {
+    return {
+      href: "/recruiters?tab=matches",
+      label: "Match ready candidate",
+      title: candidateName(readyPrivate),
+      body: "Ready candidate needs a role match before submission.",
+      tone: "live",
+    }
+  }
+
+  const followUp = activeCandidates.find((candidate) => candidateFollowUpState(candidate).needsAction)
+  if (followUp) {
+    const followUpState = candidateFollowUpState(followUp)
+    return {
+      href: "/recruiters?tab=candidates",
+      label: "Follow up candidate",
+      title: candidateName(followUp),
+      body: followUpState.body,
+      tone: followUpState.tone,
+    }
+  }
+
+  const inbox = buildRecruiterInboxSummary(input.submissions, input.sourcedCandidates, input.roleQuestions, input.notifications)
+  if (inbox.needsAction > 0) {
+    const details = [
+      inbox.candidateConfirmationNeeds ? `${inbox.candidateConfirmationNeeds} confirmation${inbox.candidateConfirmationNeeds === 1 ? "" : "s"}` : null,
+      inbox.openQuestions ? `${inbox.openQuestions} role question${inbox.openQuestions === 1 ? "" : "s"}` : null,
+      inbox.unreadNotifications ? `${inbox.unreadNotifications} unread update${inbox.unreadNotifications === 1 ? "" : "s"}` : null,
+      inbox.followUpDue ? `${inbox.followUpDue} follow-up${inbox.followUpDue === 1 ? "" : "s"}` : null,
+    ].filter((detail): detail is string => Boolean(detail))
+    return {
+      href: "/recruiters?tab=inbox",
+      label: "Open next move",
+      title: `${inbox.needsAction} action${inbox.needsAction === 1 ? " needs" : "s need"} owner`,
+      body: details.length ? details.slice(0, 2).join(" + ") : "Review the action queue before new sourcing.",
+      tone: "warn",
+    }
+  }
+
+  if (activeCandidates.length > 0) {
+    return {
+      href: "/recruiters?tab=matches",
+      label: "Open matchboard",
+      title: "Match candidate bench",
+      body: `${activeCandidates.length} active candidate${activeCandidates.length === 1 ? "" : "s"} can be checked against live roles.`,
+      tone: "info",
+    }
+  }
+
+  if (input.jobs.length > 0) {
+    return {
+      href: "/recruiters?tab=roles",
+      label: "Browse roles",
+      title: "Find a role lane",
+      body: `${input.jobs.length} open WeKruit role${input.jobs.length === 1 ? "" : "s"} available for focused sourcing.`,
+      tone: "info",
+    }
+  }
+
+  return {
+    href: "/recruiters?tab=candidates",
+    label: "Start sourcing",
+    title: "Build candidate bench",
+    body: "Save prospects with proof before the first submission.",
+    tone: "mute",
+  }
 }
 
 function buildRecruiterLaunchModel(
