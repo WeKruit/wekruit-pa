@@ -1029,7 +1029,7 @@ function ProcessSteps({ activeStep }: { activeStep: number }) {
 }
 
 function ProcessStrip({ compact = false }: { compact?: boolean }) {
-  const steps = ["Upload your resume", "Interview with Claire", "Meet the hiring manager"]
+  const steps = ["Upload your resume", "Interview with Claire", "Passed profile to hiring team"]
   return (
     <div className={`wk-pj-process-strip${compact ? " wk-pj-process-strip--compact" : ""}`}>
       {steps.map((step, index) => (
@@ -1145,7 +1145,7 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
   const meta = [
     job.location ? `${job.location}${job.jobType ? ` (${job.jobType})` : ""}` : job.jobType,
     job.salary,
-    `${seats} interview ${seats === 1 ? "seat" : "seats"} this week`,
+    `${seats} Claire interview ${seats === 1 ? "slot" : "slots"} this week`,
   ].filter((item): item is string => Boolean(item))
 
   return (
@@ -1205,7 +1205,7 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
                 </div>
                 {!signedIn ? (
                   <button type="button" className="wk-btn wk-btn--ink wk-btn--block" onClick={onApply}>
-                    Interview for this job
+                    Start Claire interview
                   </button>
                 ) : null}
                 {signedIn ? (
@@ -1228,7 +1228,7 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
         {!signedIn ? (
           <div className="wk-pj-mobile-apply">
             <button type="button" className="wk-btn wk-btn--ink wk-btn--block" onClick={onApply}>
-              Interview for this job
+              Start Claire interview
             </button>
           </div>
         ) : null}
@@ -1254,7 +1254,7 @@ export function PublicJobLoading() {
       <div className="wk-pj-loading wk-container">
         <p className="wk-eyebrow">Interview</p>
         <h1 className="wk-pj-hero__role">Loading…</h1>
-        <p className="wk-pj-hero__lede">Pulling the role and your interview status.</p>
+        <p className="wk-pj-hero__lede">Pulling the role and your Claire interview status.</p>
       </div>
     </CandidateShell>
   )
@@ -1271,7 +1271,7 @@ export function PublicJob404({ message }: { message?: string }) {
         </h1>
         <p className="wk-pj-hero__lede">{message ?? "It may have filled or been pulled back."}</p>
         <Link to="/" className="wk-btn wk-btn--primary">
-          See open interviews <Icon name="arrow-right" size={16} stroke={2} />
+          See Claire-ready roles <Icon name="arrow-right" size={16} stroke={2} />
         </Link>
       </div>
     </CandidateShell>
