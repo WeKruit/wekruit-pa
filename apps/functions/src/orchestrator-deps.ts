@@ -2,12 +2,14 @@ import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
 import { initializeApp, getApps } from "firebase-admin/app"
 import { getFirestore } from "firebase-admin/firestore"
+import { getFlag } from "@pa/pa-persistence"
 import {
   collectLiveFirestoreJobRecommendationMessageItems,
   composeJobRecommendationMessage,
   compactJobRecContext,
   hasConcreteJobRequirements,
   resolveJobRecVisibleCount,
+  resolveMaxRecsPerDelivery,
   type JobRecIntroContext,
 } from "./job-rec-copy.js"
 
@@ -353,9 +355,30 @@ function makeGenerateJobRecs(): NonNullable<
           v16Counters: counters,
         }
       }
-      const visibleCount = resolveJobRecVisibleCount(opts?.requestedCount)
+      // Cap the COMBINED (collab + regular) role bubbles a single live
+      // find_match delivery may ship. Default 3, live-tunable via the numeric
+      // `paMaxRecsPerDelivery` flag (clamped [1,6]); partner/collab roles are
+      // prioritized into the cap by collectLive... so the cap never drops a
+      // partner role (which carries the prescreen start line) to surface a
+      // general match. The user may still request a smaller count
+      // (resolveJobRecVisibleCount, max 3) — honor the tighter of the two.
+      // Daily batch does not use this path (caps at jobsPerUser).
+      let maxRecsPerDelivery = resolveMaxRecsPerDelivery(undefined)
+      try {
+        const flagVal = await getFlag(db, "paMaxRecsPerDelivery", { userId, env: process.env }, false)
+        maxRecsPerDelivery = resolveMaxRecsPerDelivery(flagVal)
+      } catch (err) {
+        logger.warn("[job-recs] paMaxRecsPerDelivery flag read failed — using default", {
+          userId,
+          err: err instanceof Error ? err.message : String(err),
+        })
+      }
+      const requestedVisible = resolveJobRecVisibleCount(opts?.requestedCount)
+      const visibleCount = opts?.requestedCount !== undefined
+        ? Math.min(requestedVisible, maxRecsPerDelivery)
+        : maxRecsPerDelivery
       const visibleItems = await collectLiveFirestoreJobRecommendationMessageItems(db, jobs, outputLang, {
-        limit: visibleCount,
+        maxRecs: visibleCount,
         candidateTags: userTagsForJobRec,
         maxCandidates: Math.min(jobs.length, Math.max(10, visibleCount * 5)),
         log: (event, payload) => logger.warn(`[job-recs] ${event}`, payload ?? {}),
