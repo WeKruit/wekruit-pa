@@ -123,3 +123,15 @@ test("CandidatePortal routes Claire message actions through the claimed sender n
   assert.match(source, /href: claireHref/)
   assert.match(source, /<MeMatchFull key=\{m\.matchId\} match=\{m\} claireHref=\{claireHref\} \/>/)
 })
+
+test("CandidatePortal /me surfaces real Claire matching signals from the claimed profile", () => {
+  assert.match(source, /<MeClaireSignalsCard profile=\{profile\} \/>/)
+  assert.match(source, /function MeClaireSignalsCard/)
+  assert.match(source, /deriveClaireSignalRows\(profile\)/)
+  assert.match(source, /What Claire is matching on/)
+  assert.match(source, /Pulled from your resume, tags, and corrections/)
+  assert.match(source, /roleFunction/)
+  assert.match(source, /targetLocations/)
+  assert.match(source, /minSalaryUsd/)
+  assert.doesNotMatch(source, /mock signal|example signal|sample signal/i)
+})

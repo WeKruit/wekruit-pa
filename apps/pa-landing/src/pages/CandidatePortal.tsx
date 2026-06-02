@@ -757,6 +757,7 @@ function CandidateMeReady({
 
             <aside className="wkv3-side">
               <MeCompletenessCard completeness={completeness} />
+              <MeClaireSignalsCard profile={profile} />
               <MeVisibilityCard visibility={visibility} />
             </aside>
           </div>
@@ -795,6 +796,11 @@ type MeVisibility = {
   one: string
   two: string
   cta: string
+}
+
+type MeSignalRow = {
+  label: string
+  value: string
 }
 
 // Relative timestamp for the "when" hints — derived from the match computedAt.
@@ -858,6 +864,43 @@ function deriveVisibility(activeCount: number, matchCount: number): MeVisibility
         : "We'll text you the moment a role fits.",
     cta: "Request outreach change",
   }
+}
+
+function profileTagArray(profile: CandidateSelfProfile, fields: string[]): string[] {
+  const tags = (profile.globalTags ?? {}) as Record<string, unknown>
+  for (const field of fields) {
+    const value = tags[field]
+    if (Array.isArray(value)) return value.map(formatProfileValue).filter(Boolean)
+    if (typeof value === "string" && value.trim()) return [formatProfileValue(value)]
+  }
+  return []
+}
+
+function salarySignal(profile: CandidateSelfProfile): string {
+  const tags = (profile.globalTags ?? {}) as Record<string, unknown>
+  const minSalaryUsd = tags.minSalaryUsd
+  if (typeof minSalaryUsd !== "number" || !Number.isFinite(minSalaryUsd) || minSalaryUsd <= 0) return ""
+  return `$${Math.round(minSalaryUsd).toLocaleString("en-US")}+`
+}
+
+function deriveClaireSignalRows(profile: CandidateSelfProfile): MeSignalRow[] {
+  const rows: MeSignalRow[] = []
+  const roleFunction = profileTagArray(profile, ["targetRoleFunction", "roleFunction"])
+  const targetLocations = profileTagArray(profile, ["targetLocations"])
+  const industrySector = profileTagArray(profile, ["industrySector"])
+  const targetJobType = profileTagArray(profile, ["targetJobType"])
+  const skills = profileTagArray(profile, ["skills"])
+  const minSalaryUsd = salarySignal(profile)
+
+  if (roleFunction.length) rows.push({ label: "Roles", value: roleFunction.slice(0, 3).join(" · ") })
+  if (targetLocations.length) rows.push({ label: "Locations", value: targetLocations.slice(0, 3).join(", ") })
+  if (industrySector.length) rows.push({ label: "Industries", value: industrySector.slice(0, 3).join(" · ") })
+  if (targetJobType.length) rows.push({ label: "Job type", value: targetJobType.slice(0, 2).join(" · ") })
+  if (minSalaryUsd) rows.push({ label: "Comp floor", value: minSalaryUsd })
+  if (skills.length) rows.push({ label: "Skills", value: skills.slice(0, 4).join(" · ") })
+  if (profile.profileSummary && rows.length < 3) rows.push({ label: "Story", value: profile.profileSummary })
+
+  return rows.slice(0, 6)
 }
 
 // Extra glyphs not in the shared Icon set (kept local to this surface).
@@ -1470,6 +1513,36 @@ function MeCompletenessCard({ completeness }: { completeness: MeCompleteness }) 
   )
 }
 
+function MeClaireSignalsCard({ profile }: { profile: CandidateSelfProfile }) {
+  const rows = deriveClaireSignalRows(profile)
+  return (
+    <div className="wkv3-signal">
+      <div className="wkv3-signal__head">
+        <span className="wkv3-signal__kicker">Matching signal</span>
+        <strong>What Claire is matching on</strong>
+      </div>
+      <p className="wkv3-signal__lede">Pulled from your resume, tags, and corrections.</p>
+      {rows.length > 0 ? (
+        <dl className="wkv3-signal__rows">
+          {rows.map((row) => (
+            <div className="wkv3-signal__row" key={row.label}>
+              <dt>{row.label}</dt>
+              <dd>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="wkv3-signal__empty">
+          Claire needs more target-role signal before roles get sharp.
+        </p>
+      )}
+      <Link to="/me/profile" className="wkv3-signal__link">
+        Update matching profile <Icon name="arrow-right" size={12} stroke={2} />
+      </Link>
+    </div>
+  )
+}
+
 function MeVisibilityCard({ visibility }: { visibility: MeVisibility }) {
   return (
     <div className={`wkv3-vis wkv3-vis--${visibility.state}`}>
@@ -1653,6 +1726,76 @@ const ME_V3_STYLES = `
 }
 .wkv3-comp__done strong { color: var(--ink); display: block; }
 .wkv3-comp__done span { color: var(--ink-3); }
+
+/* Sidebar: real matching signal */
+.wkv3-signal {
+  background: var(--candidate-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-card);
+  display: grid;
+  gap: 12px;
+}
+.wkv3-signal__head { display: grid; gap: 4px; }
+.wkv3-signal__kicker {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--live);
+  font-weight: 700;
+}
+.wkv3-signal__head strong {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 21px;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  color: var(--ink);
+}
+.wkv3-signal__lede,
+.wkv3-signal__empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+  line-height: 1.4;
+}
+.wkv3-signal__rows { margin: 0; display: grid; gap: 8px; }
+.wkv3-signal__row {
+  display: grid;
+  grid-template-columns: minmax(76px, 0.36fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.wkv3-signal__row dt {
+  font-size: 11px;
+  color: var(--ink-3);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.wkv3-signal__row dd {
+  margin: 0;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ink);
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.wkv3-signal__link {
+  width: fit-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--live);
+  text-decoration: none;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.wkv3-signal__link:hover { color: var(--ink); }
 
 /* Sidebar: visibility */
 .wkv3-vis {
