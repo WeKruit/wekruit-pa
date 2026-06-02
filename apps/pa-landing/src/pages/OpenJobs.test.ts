@@ -24,3 +24,11 @@ test("OpenJobs routes candidate entry points to onboarding or the job flow", () 
   assert.match(source, /<Link to="\/onboarding" className="btn btn--primary btn--sm">Add your name<\/Link>/)
   assert.match(source, /to=\{jobRoute\(j\)\}/)
 })
+
+test("OpenJobs empty filter state offers real candidate actions instead of unsupported alerts", () => {
+  assert.doesNotMatch(source, /fresh roles drop every night/i)
+  assert.doesNotMatch(source, /Save as alert/)
+  assert.doesNotMatch(source, /<Link to="\/" className="btn btn--primary btn--sm">/)
+  assert.match(source, /add your profile so Claire can keep matching roles to your actual targets/i)
+  assert.match(source, /<Link to="\/onboarding" className="btn btn--primary btn--sm">Add your profile<\/Link>/)
+})

@@ -809,11 +809,11 @@ function EmptyState({ onReset }: { onReset: () => void }) {
         Nothing matches <em style={{ fontStyle: "italic" }}>those filters</em>.
       </h3>
       <p style={{ marginTop: 12, maxWidth: 440, marginInline: "auto", color: "var(--ink-2)" }}>
-        Loosen something, or come back tomorrow — fresh roles drop every night.
+        Loosen something, or add your profile so Claire can keep matching roles to your actual targets.
       </p>
       <div style={{ marginTop: 24, display: "flex", justifyContent: "center", gap: 10 }}>
         <button type="button" className="btn btn--secondary btn--sm" onClick={onReset}>Clear filters</button>
-        <Link to="/" className="btn btn--primary btn--sm">Save as alert</Link>
+        <Link to="/onboarding" className="btn btn--primary btn--sm">Add your profile</Link>
       </div>
     </div>
   )
