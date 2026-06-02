@@ -1704,6 +1704,70 @@
   font-size: 12px;
 }
 
+.rb-role-quick-save {
+  display: grid;
+  gap: 9px;
+  margin-top: 10px;
+  border: 1px solid #eee7dd;
+  border-left: 3px solid var(--live);
+  border-radius: 10px;
+  background: #fffaf5;
+  padding: 12px;
+}
+
+.rb-role-quick-save header {
+  display: grid;
+  gap: 3px;
+}
+
+.rb-role-quick-save header span,
+.rb-role-quick-save label span {
+  color: #6a6a64;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-role-quick-save header strong {
+  color: #1a1a1a;
+  font-size: 13.5px;
+}
+
+.rb-role-quick-save label {
+  display: grid;
+  gap: 4px;
+}
+
+.rb-role-quick-save input,
+.rb-role-quick-save textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 8px 9px;
+}
+
+.rb-role-quick-save textarea {
+  min-height: 66px;
+  resize: vertical;
+}
+
+.rb-role-quick-save > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.rb-role-quick-save .rb-btn {
+  justify-content: center;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
 .rb-role-question-list article {
   display: grid;
   gap: 6px;
@@ -9936,6 +10000,9 @@
   }
   .rb-role-submission-list aside {
     justify-items: start;
+  }
+  .rb-role-quick-save > div {
+    grid-template-columns: 1fr;
   }
   .rb-role-intel__pipeline-preview header {
     align-items: flex-start;

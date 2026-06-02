@@ -23,6 +23,7 @@ import {
   resendRecruiterCandidateConfirmation,
   saveRecruiterRoleApplication,
   saveRecruiterRoleFeedback,
+  saveRecruiterSourcedCandidate,
   submitRecruiterCandidate,
   type CollabJob,
   type RecruiterRoleApplicationInput,
@@ -78,6 +79,24 @@ interface FormState {
   candidateNotes: string
   candidateConsent: boolean
   checklist: Record<string, boolean>
+}
+
+type RoleQuickCandidateDraft = {
+  name: string
+  email: string
+  link: string
+  currentRole: string
+  notes: string
+}
+
+function emptyRoleQuickCandidateDraft(): RoleQuickCandidateDraft {
+  return {
+    name: "",
+    email: "",
+    link: "",
+    currentRole: "",
+    notes: "",
+  }
 }
 
 function emptyForm(): FormState {
@@ -1916,6 +1935,9 @@ export default function RecruiterRole() {
   const [roleApplicationError, setRoleApplicationError] = useState<string | null>(null)
   const [resendingConfirmationId, setResendingConfirmationId] = useState<string | null>(null)
   const [confirmationError, setConfirmationError] = useState<string | null>(null)
+  const [quickCandidate, setQuickCandidate] = useState<RoleQuickCandidateDraft>(emptyRoleQuickCandidateDraft)
+  const [quickCandidateSaving, setQuickCandidateSaving] = useState(false)
+  const [quickCandidateError, setQuickCandidateError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -2214,6 +2236,61 @@ export default function RecruiterRole() {
     setPrefilledCandidateId(candidate.id)
     setSearchParams({ candidateId: candidate.id })
     requestAnimationFrame(() => document.getElementById("submit-candidate")?.scrollIntoView({ behavior: "smooth", block: "start" }))
+  }
+
+  const saveQuickCandidate = async (event: React.FormEvent) => {
+    event.preventDefault()
+    const name = quickCandidate.name.trim()
+    const email = quickCandidate.email.trim().toLowerCase()
+    const link = quickCandidate.link.trim()
+    const currentRole = quickCandidate.currentRole.trim()
+    const notes = quickCandidate.notes.trim()
+    if (!name) {
+      setQuickCandidateError("Candidate name is required.")
+      return
+    }
+    if (!link) {
+      setQuickCandidateError("LinkedIn or resume link is required.")
+      return
+    }
+    if (email && !isValidEmail(email)) {
+      setQuickCandidateError("Candidate email is invalid.")
+      return
+    }
+    setQuickCandidateSaving(true)
+    setQuickCandidateError(null)
+    try {
+      const identity = await checkRecruiterCandidateIdentity({
+        jobId: job.jobId,
+        candidate: {
+          link,
+          ...(email ? { email } : {}),
+        },
+      })
+      if (identity.conflict) {
+        setQuickCandidateError(formatSubmissionFailure(identity.conflict.reason))
+        return
+      }
+      const saved = await saveRecruiterSourcedCandidate({
+        jobId: job.jobId,
+        stage: "sourced",
+        outreach: { status: "not_contacted" },
+        candidate: {
+          name,
+          ...(email ? { email } : {}),
+          link,
+          ...(currentRole ? { currentRole } : {}),
+          ...(notes ? { notes } : {}),
+        },
+      })
+      setSourcedCandidates((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)])
+      setQuickCandidate(emptyRoleQuickCandidateDraft())
+      useSourcedCandidate(saved)
+    } catch (error) {
+      setQuickCandidateError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setQuickCandidateSaving(false)
+    }
   }
 
   const runRoleWorkroomAction = (action: RoleWorkroomAction, candidate?: RecruiterSourcedCandidateItem) => {
@@ -2671,9 +2748,67 @@ export default function RecruiterRole() {
                 ))}
                 {roleCandidates.length === 0 && <p className="rb-side-empty">No sourced candidates for this role yet.</p>}
               </div>
-              <button type="button" className="rb-btn rb-btn--block" onClick={() => navigate("/recruiters?tab=candidates")}>
-                Add sourced candidate
-              </button>
+              <form className="rb-role-quick-save" onSubmit={saveQuickCandidate}>
+                <header>
+                  <span>Quick source</span>
+                  <strong>Save prospect to this role</strong>
+                </header>
+                <label>
+                  <span>Name *</span>
+                  <input
+                    value={quickCandidate.name}
+                    onChange={(event) => setQuickCandidate({ ...quickCandidate, name: event.target.value })}
+                    disabled={quickCandidateSaving}
+                    required
+                  />
+                </label>
+                <label>
+                  <span>Email</span>
+                  <input
+                    type="email"
+                    value={quickCandidate.email}
+                    onChange={(event) => setQuickCandidate({ ...quickCandidate, email: event.target.value })}
+                    disabled={quickCandidateSaving}
+                    placeholder="candidate@company.com"
+                  />
+                </label>
+                <label>
+                  <span>LinkedIn / resume *</span>
+                  <input
+                    value={quickCandidate.link}
+                    onChange={(event) => setQuickCandidate({ ...quickCandidate, link: event.target.value })}
+                    disabled={quickCandidateSaving}
+                    placeholder="https://linkedin.com/in/..."
+                    required
+                  />
+                </label>
+                <label>
+                  <span>Current role</span>
+                  <input
+                    value={quickCandidate.currentRole}
+                    onChange={(event) => setQuickCandidate({ ...quickCandidate, currentRole: event.target.value })}
+                    disabled={quickCandidateSaving}
+                  />
+                </label>
+                <label>
+                  <span>Role / proof note</span>
+                  <textarea
+                    value={quickCandidate.notes}
+                    onChange={(event) => setQuickCandidate({ ...quickCandidate, notes: event.target.value })}
+                    disabled={quickCandidateSaving}
+                    placeholder="Why this prospect may match the hard filters."
+                  />
+                </label>
+                {quickCandidateError && <p className="rb-error">Could not save prospect: {quickCandidateError}</p>}
+                <div>
+                  <button type="submit" className="rb-btn primary" disabled={quickCandidateSaving}>
+                    {quickCandidateSaving ? "Checking..." : "Save and use"}
+                  </button>
+                  <button type="button" className="rb-btn" onClick={() => navigate("/recruiters?tab=candidates")} disabled={quickCandidateSaving}>
+                    Candidate CRM
+                  </button>
+                </div>
+              </form>
             </section>
 
             <section className="rb-side-panel">
