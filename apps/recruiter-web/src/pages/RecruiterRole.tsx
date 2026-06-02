@@ -43,6 +43,7 @@ import {
   type SubmissionResponse,
 } from "../lib/recruiter-board-api.js"
 import { auth } from "../lib/firebase.js"
+import { buildCandidateProofPromptItems } from "./RecruiterRolePacket.helpers.js"
 
 const STORAGE_KEY_PREFIX = "rb-state-v1:"
 const ROLE_PENDING_SUBMISSION_LIMIT = 5
@@ -2400,6 +2401,7 @@ export default function RecruiterRole() {
     approvedForRole,
     application: currentRoleApplication,
   })
+  const proofPromptItems = buildCandidateProofPromptItems({ missingHard: submissionPacket.missingHard })
   const calibrationBrief = buildRoleCalibrationBrief({
     job,
     pendingSlots,
@@ -2617,8 +2619,7 @@ export default function RecruiterRole() {
     document.getElementById("submit-candidate")?.scrollIntoView({ behavior: "smooth", block: "start" })
   }
 
-  const appendProofPrompt = (proofItem: string) => {
-    const prompt = `Proof for "${proofItem}": `
+  const appendProofPrompt = (prompt: string) => {
     setForm((next) => ({
       ...next,
       candidateNotes: next.candidateNotes.includes(prompt)
@@ -2929,16 +2930,26 @@ export default function RecruiterRole() {
                   Prefilled from your sourced candidate queue: {selectedCandidate.candidate?.name || "Candidate"}.
                 </p>
               )}
-              {selectedCandidate && submissionPacket.missingHard.length > 0 && (
-                <section className="rb-proof-helper" aria-label="Next missing candidate proof">
-                  <div>
-                    <span>Next proof gap</span>
-                    <strong>{submissionPacket.missingHard[0]}</strong>
-                    <p>Submission note needs direct evidence before this packet is review-ready.</p>
+              {proofPromptItems.length > 0 && (
+                <section className="rb-proof-helper" aria-label="Candidate proof gaps">
+                  <div className="rb-proof-helper__intro">
+                    <span>Candidate proof gaps</span>
+                    <strong>{proofPromptItems.length === 1 ? "1 hard requirement needs evidence" : `${proofPromptItems.length} hard requirements need evidence`}</strong>
+                    <p>Add concrete proof to the submission note before sending this packet to WeKruit review.</p>
                   </div>
-                  <button type="button" className="rb-btn" onClick={() => appendProofPrompt(submissionPacket.missingHard[0])}>
-                    Add note prompt
-                  </button>
+                  <div className="rb-proof-helper__items">
+                    {proofPromptItems.map((item) => (
+                      <article key={item.id} className="rb-proof-helper__item">
+                        <div className="rb-proof-helper__item-copy">
+                          <span>{item.label}</span>
+                          <strong>{item.detail}</strong>
+                        </div>
+                        <button type="button" className="rb-btn" onClick={() => appendProofPrompt(item.prompt)}>
+                          Add prompt
+                        </button>
+                      </article>
+                    ))}
+                  </div>
                 </section>
               )}
               <div className="field">

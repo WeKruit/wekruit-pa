@@ -2379,6 +2379,7 @@
 @media (max-width: 600px) {
   .rb-form .field { grid-template-columns: 1fr; gap: 4px; }
   .rb-proof-helper { grid-template-columns: 1fr; }
+  .rb-proof-helper__item { grid-template-columns: 1fr; }
   .rb-proof-helper .rb-btn { justify-content: center; }
 }
 
@@ -2513,9 +2514,7 @@
 
 .rb-proof-helper {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
-  align-items: center;
   margin: 0 0 16px;
   border: 1px solid #e7c894;
   border-left: 4px solid #b77c2f;
@@ -2524,10 +2523,27 @@
   padding: 12px;
 }
 
-.rb-proof-helper div {
+.rb-proof-helper__intro,
+.rb-proof-helper__item-copy {
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+
+.rb-proof-helper__items {
+  display: grid;
+  gap: 8px;
+}
+
+.rb-proof-helper__item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #ecdcbf;
+  border-radius: 8px;
+  background: #fffdf8;
+  padding: 10px;
 }
 
 .rb-proof-helper span {
