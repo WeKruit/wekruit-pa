@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
+import { MemoryRouter } from "react-router-dom"
 
 import {
   FLYWHEEL_EVAL_CALLABLE_NAME,
@@ -16,6 +17,10 @@ import {
   redactSensitiveText,
   summarizeRedactedPayload,
 } from "../FlywheelEval.js"
+
+function renderFlywheelEvalSnapshotView(snapshot: FlywheelEvalSnapshot): string {
+  return renderToStaticMarkup(createElement(MemoryRouter, {}, createElement(FlywheelEvalSnapshotView, { snapshot })))
+}
 
 test("FlywheelEval API helpers target the S8 admin snapshot callable", () => {
   assert.equal(FLYWHEEL_EVAL_CALLABLE_NAME, "paAdminFlywheelEvalSnapshot")
@@ -44,7 +49,9 @@ test("FlywheelEval page renders counts and redacted recent rows", () => {
     counts: {
       artifactsByKind: { candidate_profile_correction: 1, marketplace_simulation: 2 },
       artifactsByStatus: { ready: 1, needs_review: 1 },
-      feedbackByKind: { prescreen_outcome: 3 },
+      feedbackByKind: { prescreen_outcome: 3, employer_action: 2 },
+      feedbackByOutcome: { passed: 3, intro_accepted: 1, intro_rejected: 1 },
+      employerIntroByOutcome: { intro_accepted: 1, intro_rejected: 1 },
       correctionsByTarget: { user_tags: 1, job_enrichment_draft: 1 },
       correctionsByActor: { candidate: 1, operator: 1 },
     },
@@ -109,12 +116,15 @@ test("FlywheelEval page renders counts and redacted recent rows", () => {
     ],
   }
 
-  const html = renderToStaticMarkup(createElement(FlywheelEvalSnapshotView, { snapshot }))
+  const html = renderFlywheelEvalSnapshotView(snapshot)
 
   assert.match(html, /Flywheel Overview/)
   assert.match(html, /Artifacts by Kind/)
   assert.match(html, /candidate_profile_correction/)
   assert.match(html, /Corrections by Actor/)
+  assert.match(html, /Employer Intro Outcomes/)
+  assert.match(html, /intro_accepted/)
+  assert.match(html, /intro_rejected/)
   assert.match(html, /Recent Eval Artifacts/)
   assert.match(html, /Recent Corrections/)
   assert.match(html, /Recent Feedback/)
@@ -130,7 +140,7 @@ test("FlywheelEval page renders counts and redacted recent rows", () => {
 
 test("FlywheelEval empty snapshot renders empty states", () => {
   const snapshot = normalizeFlywheelEvalSnapshot(null, { limit: 20 })
-  const html = renderToStaticMarkup(createElement(FlywheelEvalSnapshotView, { snapshot }))
+  const html = renderFlywheelEvalSnapshotView(snapshot)
 
   assert.match(html, /No eval artifacts/)
   assert.match(html, /No correction events/)

@@ -109,8 +109,11 @@ export type FlywheelEvalSnapshot = {
     correctionEvents: number
     artifactsByKind: Record<string, number>
     artifactsByStatus: Record<string, number>
+    correctionsByTarget: Record<string, number>
     correctionsByActor: Record<string, number>
     feedbackByKind: Record<string, number>
+    feedbackByOutcome: Record<string, number>
+    employerIntroByOutcome: Record<string, number>
   }
   recentArtifacts: Array<Pick<EvalArtifact, "artifactId" | "kind" | "status" | "candidateId" | "jobId" | "candidateJobStateId" | "createdBy" | "createdAt" | "updatedAt" | "sourceCorrectionEventIds" | "sourceFeedbackEventIds" | "payloadRedacted" | "evidence" | "latestRunResult">>
   recentCorrections: Array<Pick<CorrectionEvent, "eventId" | "targetType" | "targetId" | "actor" | "candidateId" | "jobId" | "reason" | "beforeRedacted" | "afterRedacted" | "evidence" | "createdAt">>
@@ -317,8 +320,14 @@ export async function runAdminFlywheelEvalSnapshot(
       correctionEvents: corrections.length,
       artifactsByKind: countBy(artifacts, (artifact) => artifact.kind),
       artifactsByStatus: countBy(artifacts, (artifact) => artifact.status),
+      correctionsByTarget: countBy(corrections, (correction) => correction.targetType),
       correctionsByActor: countBy(corrections, (correction) => correction.actor),
       feedbackByKind: countBy(feedback, (event) => event.kind),
+      feedbackByOutcome: countBy(feedback, (event) => event.outcome),
+      employerIntroByOutcome: countBy(
+        feedback.filter((event) => event.kind === "employer_action"),
+        (event) => event.outcome,
+      ),
     },
     recentArtifacts: artifacts.map((artifact) => ({
       artifactId: artifact.artifactId,

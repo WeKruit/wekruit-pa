@@ -72,6 +72,8 @@ export interface FlywheelEvalSnapshot {
     artifactsByKind: CountMap
     artifactsByStatus: CountMap
     feedbackByKind: CountMap
+    feedbackByOutcome: CountMap
+    employerIntroByOutcome: CountMap
     correctionsByTarget: CountMap
     correctionsByActor: CountMap
   }
@@ -111,6 +113,8 @@ export function normalizeFlywheelEvalSnapshot(
       artifactsByKind: normalizeCountMap(snapshot?.counts?.artifactsByKind),
       artifactsByStatus: normalizeCountMap(snapshot?.counts?.artifactsByStatus),
       feedbackByKind: normalizeCountMap(snapshot?.counts?.feedbackByKind),
+      feedbackByOutcome: normalizeCountMap(snapshot?.counts?.feedbackByOutcome),
+      employerIntroByOutcome: normalizeCountMap(snapshot?.counts?.employerIntroByOutcome),
       correctionsByTarget: normalizeCountMap(snapshot?.counts?.correctionsByTarget),
       correctionsByActor: normalizeCountMap(snapshot?.counts?.correctionsByActor),
     },

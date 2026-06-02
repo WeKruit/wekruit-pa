@@ -123,6 +123,18 @@ describe("runAdminFlywheelEvalSnapshot", () => {
       payloadRedacted: { behavior: "prescreen_pass" },
       createdAt: "2026-05-14T10:01:00.000Z",
     })
+    await mfs.collection(PA_COLLECTIONS.feedbackEvents).doc("feedback-2").set({
+      eventId: "feedback-2",
+      kind: "employer_action",
+      actor: "employer",
+      candidateId: "cand-2",
+      jobId: "job-2",
+      candidateJobStateId: "cand-2__job-2",
+      outcome: "intro_rejected",
+      payloadRedacted: { decision: "rejected" },
+      evidence: [{ source: "admin", summary: "Employer rejected intro after review." }],
+      createdAt: "2026-05-14T10:03:00.000Z",
+    })
     await mfs.collection(PA_COLLECTIONS.correctionEvents).doc("corr-1").set({
       eventId: "corr-1",
       targetType: "candidate_profile",
@@ -143,16 +155,21 @@ describe("runAdminFlywheelEvalSnapshot", () => {
     assert.equal(result.generatedAt, now)
     assert.deepEqual(result.counts, {
       evalArtifacts: 1,
-      feedbackEvents: 1,
+      feedbackEvents: 2,
       correctionEvents: 1,
       artifactsByKind: { marketplace_simulation: 1 },
       artifactsByStatus: { ready: 1 },
+      correctionsByTarget: { candidate_profile: 1 },
       correctionsByActor: { candidate: 1 },
-      feedbackByKind: { candidate_behavior: 1 },
+      feedbackByKind: { candidate_behavior: 1, employer_action: 1 },
+      feedbackByOutcome: { passed: 1, intro_rejected: 1 },
+      employerIntroByOutcome: { intro_rejected: 1 },
     })
     assert.equal(result.recentArtifacts[0]!.artifactId, "artifact-1")
     assert.equal(result.recentCorrections[0]!.eventId, "corr-1")
-    assert.equal(result.recentFeedback[0]!.eventId, "feedback-1")
-    assert.deepEqual(result.recentFeedback[0]!.payloadRedacted, { behavior: "prescreen_pass" })
+    assert.equal(result.recentFeedback[0]!.eventId, "feedback-2")
+    assert.deepEqual(result.recentFeedback[0]!.payloadRedacted, { decision: "rejected" })
+    assert.equal(result.recentFeedback[1]!.eventId, "feedback-1")
+    assert.deepEqual(result.recentFeedback[1]!.payloadRedacted, { behavior: "prescreen_pass" })
   })
 })

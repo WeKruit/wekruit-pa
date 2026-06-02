@@ -1,3 +1,4 @@
+import * as React from "react"
 import type { CSSProperties, ReactNode } from "react"
 import { Link } from "react-router-dom"
 

@@ -102,6 +102,8 @@ export function FlywheelEvalSnapshotView({ snapshot }: { snapshot: FlywheelEvalS
           <CountPanel title="Artifacts by Kind" counts={snapshot.counts.artifactsByKind} />
           <CountPanel title="Artifacts by Status" counts={snapshot.counts.artifactsByStatus} />
           <CountPanel title="Feedback by Kind" counts={snapshot.counts.feedbackByKind} />
+          <CountPanel title="Feedback by Outcome" counts={snapshot.counts.feedbackByOutcome} />
+          <CountPanel title="Employer Intro Outcomes" counts={snapshot.counts.employerIntroByOutcome} />
           <CountPanel title="Corrections by Target" counts={snapshot.counts.correctionsByTarget} />
           <CountPanel title="Corrections by Actor" counts={snapshot.counts.correctionsByActor} />
         </div>
