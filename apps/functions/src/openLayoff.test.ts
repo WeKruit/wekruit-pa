@@ -19,6 +19,21 @@ type DocData = Record<string, unknown>
 type Store = Map<string, Map<string, DocData>>
 type Filter = { field: string; op: "==" | ">=" | "in"; value: unknown }
 
+function approvedScreeningPacket(overrides: DocData = {}): DocData {
+  return {
+    version: 1,
+    source: "employer_role_intake",
+    reviewStatus: "approved_for_claire",
+    roleBrief: ["Engineer"],
+    hardFilters: ["Requires US work authorization"],
+    evidenceProbes: ["Describe a platform tradeoff you owned"],
+    calibrationExamples: "Strong pass: shipped a developer platform pricing migration.",
+    feedbackLoop: "Post every accepted or rejected intro reason in the WeKruit thread.",
+    introHandoff: "Route accepted intros to a hiring-manager screen.",
+    ...overrides,
+  }
+}
+
 function deepMerge(base: DocData, patch: DocData): DocData {
   const out: DocData = { ...base }
   for (const [key, value] of Object.entries(patch)) {
@@ -579,6 +594,7 @@ test("runListLayoffCandidates requires a verified employer and returns redacted 
   fake.seed("layoff_employers/emp_verified", {
     workEmailLower: "verified@company.com",
     verificationStatus: "verified",
+    screeningPacket: approvedScreeningPacket(),
   })
   fake.seed(`${PA_COLLECTIONS.users}/layoff_1`, {
     id: "layoff_1",
@@ -624,6 +640,25 @@ test("runListLayoffCandidates requires a verified employer and returns redacted 
   assert.equal(result.data[0]!.lastInitial, "L")
   assert.equal("email" in result.data[0]!, false)
   assert.equal("phoneE164" in result.data[0]!, false)
+})
+
+test("runListLayoffCandidates blocks verified employers until the Claire packet is approved", async () => {
+  const fake = new FakeFirestore()
+  fake.seed("layoff_employers/emp_unreviewed", {
+    workEmailLower: "verified@company.com",
+    verificationStatus: "verified",
+    screeningPacket: approvedScreeningPacket({ reviewStatus: "needs_wekruit_review" }),
+  })
+
+  await assert.rejects(
+    () =>
+      runListLayoffCandidates(
+        {},
+        { uid: "employer_2", token: { email: "verified@company.com" } },
+        deps(fake)
+      ),
+    (err) => err instanceof HttpsError && err.code === "failed-precondition" && err.message === "employer_screening_packet_not_approved"
+  )
 })
 
 test("runRegisterEmployer stores normalized workEmailLower for verification lookup", async () => {

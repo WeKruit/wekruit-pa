@@ -181,11 +181,37 @@ async function requireVerifiedEmployer(
     .where("workEmailLower", "==", workEmailLower)
     .limit(10)
     .get()
-  const verified = snap.docs.find((d) => d.data()?.verificationStatus === "verified")
-  if (!verified) {
+  const verifiedDocs = snap.docs.filter((d) => d.data()?.verificationStatus === "verified")
+  if (verifiedDocs.length === 0) {
     throw new HttpsError("failed-precondition", "employer_not_verified")
   }
-  return { employerId: verified.id, workEmailLower }
+  const approved = verifiedDocs.find((d) => isApprovedEmployerScreeningPacket(d.data()?.screeningPacket))
+  if (!approved) {
+    throw new HttpsError("failed-precondition", "employer_screening_packet_not_approved")
+  }
+  return { employerId: approved.id, workEmailLower }
+}
+
+function hasNonEmptyStrings(value: unknown): value is string[] {
+  return Array.isArray(value) && value.some((item) => typeof item === "string" && item.trim().length > 0)
+}
+
+function hasNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0
+}
+
+function isApprovedEmployerScreeningPacket(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false
+  const packet = value as Record<string, unknown>
+  return (
+    packet.reviewStatus === "approved_for_claire" &&
+    hasNonEmptyStrings(packet.roleBrief) &&
+    hasNonEmptyStrings(packet.hardFilters) &&
+    hasNonEmptyStrings(packet.evidenceProbes) &&
+    hasNonEmptyString(packet.calibrationExamples) &&
+    hasNonEmptyString(packet.feedbackLoop) &&
+    hasNonEmptyString(packet.introHandoff)
+  )
 }
 
 export async function runRegisterLayoffCandidate(
@@ -634,7 +660,7 @@ export type EmployerInput = {
 export type EmployerScreeningPacket = {
   version: 1
   source: "employer_role_intake"
-  reviewStatus: "needs_wekruit_review"
+  reviewStatus: "needs_wekruit_review" | "approved_for_claire" | "rejected_by_wekruit"
   roleBrief: string[]
   hardFilters: string[]
   evidenceProbes: string[]

@@ -65,3 +65,14 @@ test("LayoffEmployers review shows the Claire screening packet before verificati
   assert.doesNotMatch(source, /AI learns automatically/i)
   assert.doesNotMatch(source, /auto-approved/i)
 })
+
+test("LayoffEmployers approval stamps the Claire packet review status", () => {
+  assert.match(source, /approved_for_claire/)
+  assert.match(source, /rejected_by_wekruit/)
+  assert.match(source, /const screeningPacket = row\.screeningPacket/)
+  assert.match(source, /patch\.screeningPacket = screeningPacket/)
+  assert.match(source, /reviewStatus: nextPacketStatus/)
+  assert.match(source, /approved for Claire screening/)
+
+  assert.doesNotMatch(source, /verificationStatus === "verified"[^]*openListLayoffCandidates/)
+})

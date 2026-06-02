@@ -2,11 +2,10 @@
  * `/admin/layoff-employers` — WeKruit Open employer signups.
  *
  * Backs `layoff_employers/{id}` writes from openRegisterEmployer (called by
- * layoff.wekruit.com/employer). Ops reviews each row, flips
- * verificationStatus to "verified" once they've sanity-checked the work
- * email + company. Verified employers can then call
- * openListLayoffCandidates (runListLayoffCandidates filters by
- * `verificationStatus === "verified"`).
+ * layoff.wekruit.com/employer). Ops reviews each row, approves the Claire
+ * screening packet, and only then flips verificationStatus to "verified".
+ * openListLayoffCandidates requires both verified identity and an approved,
+ * complete screening packet before candidate cards are listed.
  */
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import {
@@ -30,6 +29,11 @@ import {
 const COLLECTION = "layoff_employers"
 
 type VerificationStatus = "pending" | "verified" | "rejected" | string
+type ScreeningPacketReviewStatus =
+  | "needs_wekruit_review"
+  | "approved_for_claire"
+  | "rejected_by_wekruit"
+  | string
 
 type EmployerRow = {
   id: string
@@ -48,13 +52,15 @@ type EmployerRow = {
   screeningPacket?: {
     version?: number
     source?: string
-    reviewStatus?: string
+    reviewStatus?: ScreeningPacketReviewStatus
     roleBrief?: string[]
     hardFilters?: string[]
     evidenceProbes?: string[]
     calibrationExamples?: string
     feedbackLoop?: string
     introHandoff?: string
+    reviewedAt?: string
+    reviewedBy?: string
   }
   contactName?: string
   notes?: string
@@ -156,21 +162,37 @@ export default function LayoffEmployers() {
     })
   }, [rows, statusFilter, search])
 
-  async function setStatus(id: string, status: VerificationStatus) {
+  async function setStatus(row: EmployerRow, status: VerificationStatus) {
+    const id = row.id
     if (acting[id]) return
     setActing((prev) => ({ ...prev, [id]: true }))
     try {
+      const reviewedAt = new Date().toISOString()
+      const reviewedBy = operatorEmail()
+      const nextPacketStatus = packetReviewStatusForVerificationStatus(status)
+      if (status === "verified" && !row.screeningPacket) {
+        throw new Error("screening_packet_required")
+      }
+      const screeningPacket = row.screeningPacket
+        ? {
+            ...row.screeningPacket,
+            reviewStatus: nextPacketStatus,
+            reviewedAt,
+            reviewedBy,
+          }
+        : undefined
       const patch: Record<string, unknown> = {
         verificationStatus: status,
-        lastReviewedBy: operatorEmail(),
-        lastReviewedAt: new Date().toISOString(),
+        lastReviewedBy: reviewedBy,
+        lastReviewedAt: reviewedAt,
       }
+      if (screeningPacket) patch.screeningPacket = screeningPacket
       if (status === "verified") {
-        patch.verifiedAt = new Date().toISOString()
-        patch.verifiedBy = operatorEmail()
+        patch.verifiedAt = reviewedAt
+        patch.verifiedBy = reviewedBy
       } else if (status === "rejected") {
-        patch.rejectedAt = new Date().toISOString()
-        patch.rejectedBy = operatorEmail()
+        patch.rejectedAt = reviewedAt
+        patch.rejectedBy = reviewedBy
       }
       await setDoc(doc(db(), COLLECTION, id), patch, { merge: true })
       setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } as EmployerRow : r)))
@@ -198,7 +220,7 @@ export default function LayoffEmployers() {
     <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: 16 }}>
       <PageHeader
         title="Layoff employers"
-        description="layoff.wekruit.com /employer signups. Verify before the marketplace lists their access."
+        description="layoff.wekruit.com /employer signups. Approve the Claire screening packet before the marketplace lists their access."
       />
       <Panel>
         <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
@@ -338,14 +360,14 @@ export default function LayoffEmployers() {
                   <td style={td}>
                     <div style={{ display: "flex", gap: 6 }}>
                       <button
-                        onClick={() => void setStatus(r.id, "verified")}
-                        disabled={r.verificationStatus === "verified" || !!acting[r.id]}
-                        style={btnPrimary(r.verificationStatus === "verified")}
+                        onClick={() => void setStatus(r, "verified")}
+                        disabled={r.verificationStatus === "verified" || !r.screeningPacket || !!acting[r.id]}
+                        style={btnPrimary(r.verificationStatus === "verified" || !r.screeningPacket)}
                       >
-                        Verify
+                        Approve
                       </button>
                       <button
-                        onClick={() => void setStatus(r.id, "rejected")}
+                        onClick={() => void setStatus(r, "rejected")}
                         disabled={r.verificationStatus === "rejected" || !!acting[r.id]}
                         style={btnGhost(r.verificationStatus === "rejected")}
                       >
@@ -365,7 +387,15 @@ export default function LayoffEmployers() {
 
 function screeningPacketStatusLabel(status: string | undefined): string {
   if (status === "needs_wekruit_review") return "needs WeKruit review before Claire screens"
+  if (status === "approved_for_claire") return "approved for Claire screening"
+  if (status === "rejected_by_wekruit") return "rejected by WeKruit"
   return status ?? "needs WeKruit review before Claire screens"
+}
+
+function packetReviewStatusForVerificationStatus(status: VerificationStatus): ScreeningPacketReviewStatus {
+  if (status === "verified") return "approved_for_claire"
+  if (status === "rejected") return "rejected_by_wekruit"
+  return "needs_wekruit_review"
 }
 
 function ScreeningPacketDetails({
