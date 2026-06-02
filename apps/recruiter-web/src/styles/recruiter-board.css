@@ -1663,6 +1663,29 @@
   font-style: normal;
 }
 
+.rb-role-submission-list aside {
+  display: grid;
+  gap: 7px;
+  justify-items: end;
+}
+
+.rb-role-submission-list button {
+  border: 1px solid var(--ink);
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 800;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.rb-role-submission-list button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 .rb-role-submission-list .rb-role-submission-note {
   margin-top: 5px;
   padding: 7px 9px;
@@ -9907,6 +9930,12 @@
   .rb-role-intel__pipeline-preview header,
   .rb-role-intel__pipeline-preview article {
     grid-template-columns: 1fr;
+  }
+  .rb-role-submission-list article {
+    grid-template-columns: 1fr;
+  }
+  .rb-role-submission-list aside {
+    justify-items: start;
   }
   .rb-role-intel__pipeline-preview header {
     align-items: flex-start;

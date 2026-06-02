@@ -20,6 +20,7 @@ import {
   fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissions,
   getRecruiterProfile,
+  resendRecruiterCandidateConfirmation,
   saveRecruiterRoleApplication,
   saveRecruiterRoleFeedback,
   submitRecruiterCandidate,
@@ -221,6 +222,32 @@ function roleSubmissionConsentLabel(row: RecruiterSubmissionItem): string {
     case "confirmation_email_not_configured": return "Confirmation email not configured"
     default: return "Recruiter consent recorded"
   }
+}
+
+function roleSubmissionReceiptId(row: RecruiterSubmissionItem): string {
+  return row.submissionId || row.id
+}
+
+function roleCandidateConfirmationCanResend(row: RecruiterSubmissionItem): boolean {
+  return [
+    "pending_candidate_confirmation",
+    "confirmation_email_failed",
+    "confirmation_email_not_configured",
+  ].includes(row.candidateConsentStatus ?? "")
+}
+
+function roleCandidateConfirmationBody(row: RecruiterSubmissionItem): string {
+  const email = row.candidateConfirmation?.candidateEmail || row.candidate?.email || "the candidate"
+  if (row.candidateConsentStatus === "confirmation_email_failed") {
+    return `Confirmation email to ${email} failed. Resend before assuming the candidate approved this packet.`
+  }
+  if (row.candidateConsentStatus === "confirmation_email_not_configured") {
+    return "Candidate confirmation email is not configured in the current environment."
+  }
+  const count = row.candidateConfirmation?.resendCount ?? 0
+  return count > 0
+    ? `Confirmation is still pending for ${email}. Last resend: ${roleQuestionTime(row.candidateConfirmation?.lastResentAt ?? row.candidateConfirmation?.sentAt)}.`
+    : `Confirmation is pending for ${email}. Resend if the candidate did not receive the email.`
 }
 
 function sourcedStageLabel(stage?: string): string {
@@ -1887,6 +1914,8 @@ export default function RecruiterRole() {
   const [prefilledCandidateId, setPrefilledCandidateId] = useState<string | null>(null)
   const [roleApplicationSaving, setRoleApplicationSaving] = useState(false)
   const [roleApplicationError, setRoleApplicationError] = useState<string | null>(null)
+  const [resendingConfirmationId, setResendingConfirmationId] = useState<string | null>(null)
+  const [confirmationError, setConfirmationError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -2301,6 +2330,21 @@ export default function RecruiterRole() {
     setSubmission(null)
   }
 
+  const resendCandidateConfirmation = async (row: RecruiterSubmissionItem) => {
+    const receiptId = roleSubmissionReceiptId(row)
+    setResendingConfirmationId(row.id)
+    setConfirmationError(null)
+    try {
+      await resendRecruiterCandidateConfirmation(receiptId)
+      const updatedSubmissions = await fetchRecruiterSubmissions()
+      setSubmissions(updatedSubmissions)
+    } catch (error) {
+      setConfirmationError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setResendingConfirmationId(null)
+    }
+  }
+
   return (
     <div className="rb-page">
       <main className="rb-main">
@@ -2667,21 +2711,37 @@ export default function RecruiterRole() {
             <section className="rb-side-panel">
               <h3>My submissions</h3>
               <div className="rb-role-submission-list">
-                {roleSubmissions.slice(0, 6).map((row) => (
-                  <article key={row.id}>
-                    <span>
-                      <strong>{row.candidate?.name || "Candidate"}</strong>
-                      <em>{roleSubmissionStatusLabel(row.status)}</em>
-                      <em>{roleSubmissionConsentLabel(row)}</em>
-                      {row.sourcedCandidateId && <em>From CRM candidate {shortText(row.sourcedCandidateId, "candidate", 18)}</em>}
-                      <em>{roleSubmissionNextAction(row.status)}</em>
-                      {row.recruiterFeedbackNote && <em className="rb-role-submission-note">{row.recruiterFeedbackNote}</em>}
-                    </span>
-                    <small>{roleSubmissionLastActivity(row)}</small>
-                  </article>
-                ))}
+                {roleSubmissions.slice(0, 6).map((row) => {
+                  const canResendConfirmation = roleCandidateConfirmationCanResend(row)
+                  return (
+                    <article key={row.id}>
+                      <span>
+                        <strong>{row.candidate?.name || "Candidate"}</strong>
+                        <em>{roleSubmissionStatusLabel(row.status)}</em>
+                        <em>{roleSubmissionConsentLabel(row)}</em>
+                        {row.sourcedCandidateId && <em>From CRM candidate {shortText(row.sourcedCandidateId, "candidate", 18)}</em>}
+                        <em>{roleSubmissionNextAction(row.status)}</em>
+                        {canResendConfirmation && <em className="rb-role-submission-note">{roleCandidateConfirmationBody(row)}</em>}
+                        {row.recruiterFeedbackNote && <em className="rb-role-submission-note">{row.recruiterFeedbackNote}</em>}
+                      </span>
+                      <aside>
+                        <small>{roleSubmissionLastActivity(row)}</small>
+                        {canResendConfirmation && (
+                          <button
+                            type="button"
+                            onClick={() => void resendCandidateConfirmation(row)}
+                            disabled={resendingConfirmationId === row.id}
+                          >
+                            {resendingConfirmationId === row.id ? "Sending..." : "Resend"}
+                          </button>
+                        )}
+                      </aside>
+                    </article>
+                  )
+                })}
                 {roleSubmissions.length === 0 && <p className="rb-side-empty">No submitted candidates yet.</p>}
               </div>
+              {confirmationError && <p className="rb-error">Candidate confirmation failed: {confirmationError}</p>}
             </section>
           </aside>
         </div>
