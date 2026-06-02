@@ -2441,15 +2441,33 @@ type RecruiterTrustGate = {
   tone: OperatingTone
 }
 
+type RecruiterTrustTierStep = {
+  label: string
+  rank: string
+  requirement: string
+  unlock: string
+  progressLabel: string
+  progressValue: string
+  complete: boolean
+  active: boolean
+  blockedBy: string[]
+  tone: OperatingTone
+}
+
 type RecruiterTrustCenter = {
   statusLabel: string
   statusBody: string
   statusTone: OperatingTone
   score: number
+  tierLabel: string
+  tierProgressLabel: string
+  tierProgressValue: string
   nextActionLabel: string
   nextActionBody: string
   cards: RecruiterTrustGate[]
   gates: RecruiterTrustGate[]
+  tiers: RecruiterTrustTierStep[]
+  unlocks: RecruiterTrustGate[]
 }
 
 type RecruiterLearningCard = {
@@ -3343,12 +3361,168 @@ function computeRecruiterTrustCenter(
           : readyCandidates.length > 0
             ? "Match the strongest ready candidates into role briefs and submit only with consent."
             : "Add email, LinkedIn/resume, notes, outreach status, and follow-up dates to make matching reliable."
+  const advancedSubmissions = submissions.filter((submission) => ADVANCED_STATUSES.includes(submission.status ?? ""))
+  const hiredSubmissions = submissions.filter((submission) => submission.status === "hired")
+  const cleanSubmissions = submissions.filter((submission) => {
+    if (CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? "")) return false
+    if (candidateConfirmationCanResend(submission)) return false
+    const rating = submissionFeedbackRating(submission)
+    return rating === null || rating >= 3
+  })
+  const cleanSubmissionCount = cleanSubmissions.length
+  const interviewRate = submissions.length ? Math.round((advancedSubmissions.length / submissions.length) * 100) : 0
+  const standardBlockers = [
+    ...(oneStarRatings > 0 ? ["Resolve 1-star feedback"] : []),
+    ...(duplicateIds.size > 0 ? ["Merge duplicate identities"] : []),
+    ...(cleanSubmissionCount < 1 && profileCompleteCandidates.length < 3 ? ["Add 3 complete candidates or 1 clean submission"] : []),
+  ]
+  const preferredBlockers = [
+    ...(score < 75 ? ["Raise trust score to 75"] : []),
+    ...(cleanSubmissionCount < 5 ? ["Reach 5 clean submissions"] : []),
+    ...(advancedSubmissions.length < 2 && interviewRate < 35 ? ["Earn 2 advanced signals or 35% movement"] : []),
+    ...(confirmationNeeds.length > 0 ? ["Clear candidate confirmations"] : []),
+    ...(duplicateIds.size > 0 ? ["Merge duplicate identities"] : []),
+    ...(oneStarRatings > 0 ? ["Resolve 1-star feedback"] : []),
+  ]
+  const premierBlockers = [
+    ...(score < 85 ? ["Raise trust score to 85"] : []),
+    ...(cleanSubmissionCount < WEEKLY_SUBMISSION_TARGET ? [`Reach ${WEEKLY_SUBMISSION_TARGET} clean submissions`] : []),
+    ...(hiredSubmissions.length === 0 && (advancedSubmissions.length < 4 || interviewRate < PREFERRED_INTERVIEW_RATE_TARGET)
+      ? [`Show a hire or ${PREFERRED_INTERVIEW_RATE_TARGET}% movement with 4 advanced packets`]
+      : []),
+    ...(lowRatings > 0 ? ["Keep low-rated packets at zero"] : []),
+    ...(confirmationNeeds.length > 0 ? ["Clear candidate confirmations"] : []),
+    ...(duplicateIds.size > 0 ? ["Merge duplicate identities"] : []),
+  ]
+  const tierRules: Array<{
+    label: string
+    rank: string
+    requirement: string
+    unlock: string
+    progressLabel: string
+    progressValue: string
+    blockers: string[]
+  }> = [
+    {
+      label: "Builder",
+      rank: "01",
+      requirement: "Create a proof-rich bench and make the first clean move.",
+      unlock: "Baseline recruiter workspace access.",
+      progressLabel: "Bench proof",
+      progressValue: `${profileCompleteCandidates.length} complete profiles · ${cleanSubmissionCount} clean packets`,
+      blockers: [],
+    },
+    {
+      label: "Standard",
+      rank: "02",
+      requirement: "Three complete active candidates or one clean submission with no duplicate drag.",
+      unlock: "Eligible signal for normal role-access review.",
+      progressLabel: "Clean start",
+      progressValue: `${profileCompleteCandidates.length}/3 profiles · ${cleanSubmissionCount}/1 packet`,
+      blockers: standardBlockers,
+    },
+    {
+      label: "Preferred",
+      rank: "03",
+      requirement: "Trust score 75+, five clean submissions, and real interview movement.",
+      unlock: "Stronger review signal for additional role lanes and recruiter priority.",
+      progressLabel: "Priority proof",
+      progressValue: `${score}/75 trust · ${cleanSubmissionCount}/5 packets · ${interviewRate}% movement`,
+      blockers: preferredBlockers,
+    },
+    {
+      label: "Premier",
+      rank: "04",
+      requirement: "Trust score 85+, weekly-quality volume, and high movement or a hire.",
+      unlock: "Top account signal for priority review and payout confidence.",
+      progressLabel: "Top-tier proof",
+      progressValue: `${score}/85 trust · ${cleanSubmissionCount}/${WEEKLY_SUBMISSION_TARGET} packets · ${hiredSubmissions.length} hires`,
+      blockers: premierBlockers,
+    },
+  ]
+  let currentTierIndex = 0
+  tierRules.forEach((tier, index) => {
+    if (tier.blockers.length === 0) currentTierIndex = index
+  })
+  const tiers = tierRules.map((tier, index): RecruiterTrustTierStep => {
+    const complete = tier.blockers.length === 0
+    const hardBlocked = tier.blockers.some((blocker) =>
+      blocker.startsWith("Resolve") ||
+      blocker.startsWith("Clear") ||
+      blocker.startsWith("Merge") ||
+      blocker.startsWith("Keep"),
+    )
+    const tone: OperatingTone = complete
+      ? "success"
+      : hardBlocked
+        ? "warn"
+        : index === currentTierIndex + 1
+          ? "info"
+          : "mute"
+    return {
+      label: tier.label,
+      rank: tier.rank,
+      requirement: tier.requirement,
+      unlock: tier.unlock,
+      progressLabel: tier.progressLabel,
+      progressValue: tier.progressValue,
+      complete,
+      active: index === currentTierIndex,
+      blockedBy: tier.blockers,
+      tone,
+    }
+  })
+  const currentTier = tiers[currentTierIndex] ?? tiers[0]
+  const nextTier = tiers.find((tier) => !tier.complete)
+  const tierProgressLabel = nextTier ? `Next: ${nextTier.label}` : "Maintain Premier"
+  const tierProgressValue = nextTier?.blockedBy[0] ?? "Keep trust clean, movement high, and candidate consent current."
+  const unlocks: RecruiterTrustGate[] = [
+    {
+      label: "Role access priority",
+      value: currentTierIndex >= 2 ? "Strong signal" : currentTierIndex >= 1 ? "Eligible" : "Build proof",
+      body: currentTierIndex >= 2
+        ? "Use the clean account signal when requesting more approved role lanes."
+        : currentTierIndex >= 1
+          ? "Eligible for normal review; stronger movement unlocks a clearer priority case."
+          : "Complete candidates or send one clean consented packet before asking for more lanes.",
+      tone: currentTierIndex >= 2 ? "success" : currentTierIndex >= 1 ? "info" : "mute",
+    },
+    {
+      label: "Submission queue signal",
+      value: currentTierIndex >= 3 ? "Premier" : currentTierIndex >= 2 ? "Preferred" : "Default",
+      body: currentTierIndex >= 2
+        ? "Quality, consent, and movement now give WeKruit a stronger reason to surface your packets first."
+        : "Submission order should stay conservative until quality proof is visible.",
+      tone: currentTierIndex >= 3 ? "success" : currentTierIndex >= 2 ? "info" : "mute",
+    },
+    {
+      label: "Weekly activity",
+      value: `${Math.min(cleanSubmissionCount, WEEKLY_SUBMISSION_TARGET)}/${WEEKLY_SUBMISSION_TARGET}`,
+      body: cleanSubmissionCount >= WEEKLY_SUBMISSION_TARGET
+        ? "Weekly-quality volume is strong enough for capacity review."
+        : `${Math.max(0, WEEKLY_SUBMISSION_TARGET - cleanSubmissionCount)} more clean packet${WEEKLY_SUBMISSION_TARGET - cleanSubmissionCount === 1 ? "" : "s"} to show full-week operating capacity.`,
+      tone: cleanSubmissionCount >= WEEKLY_SUBMISSION_TARGET ? "success" : cleanSubmissionCount ? "info" : "mute",
+    },
+    {
+      label: "Payout confidence",
+      value: hiredSubmissions.length ? "Placement proof" : advancedSubmissions.length ? "Movement proof" : "No proof yet",
+      body: hiredSubmissions.length
+        ? "A hire gives the account direct payout evidence for future priority review."
+        : advancedSubmissions.length
+          ? "Interview movement helps prove packet quality before a placement closes."
+          : "Payout confidence starts once candidates move beyond initial review.",
+      tone: hiredSubmissions.length ? "success" : advancedSubmissions.length ? "info" : "mute",
+    },
+  ]
 
   return {
     statusLabel,
     statusBody,
     statusTone,
     score,
+    tierLabel: currentTier.label,
+    tierProgressLabel,
+    tierProgressValue,
     nextActionLabel,
     nextActionBody,
     cards: [
@@ -3413,6 +3587,8 @@ function computeRecruiterTrustCenter(
         tone: followUpsDue.length ? "warn" : "success",
       },
     ],
+    tiers,
+    unlocks,
   }
 }
 
@@ -8455,6 +8631,39 @@ function RecruiterTrustCenterPanel({ model }: { model: RecruiterTrustCenter }) {
           <p>{model.nextActionBody}</p>
         </aside>
       </header>
+      <div className="rb-trust-center__ladder" aria-label="Recruiter status ladder">
+        <div className="rb-trust-center__section-head">
+          <span>Status ladder</span>
+          <strong>{model.tierLabel}</strong>
+          <p>{model.tierProgressLabel}: {model.tierProgressValue}</p>
+        </div>
+        <div className="rb-trust-center__tiers">
+          {model.tiers.map((tier) => (
+            <article
+              className={`rb-trust-center__tier is-${tier.tone}${tier.active ? " is-active" : ""}${tier.complete ? " is-complete" : ""}`}
+              key={tier.label}
+            >
+              <header>
+                <span>{tier.rank}</span>
+                <strong>{tier.label}</strong>
+              </header>
+              <p>{tier.requirement}</p>
+              <small>{tier.unlock}</small>
+              <footer>
+                <b>{tier.progressLabel}</b>
+                <span>{tier.progressValue}</span>
+              </footer>
+              {tier.blockedBy.length > 0 && (
+                <div className="rb-trust-center__blockers">
+                  {tier.blockedBy.slice(0, 3).map((blocker) => (
+                    <span key={blocker}>{blocker}</span>
+                  ))}
+                </div>
+              )}
+            </article>
+          ))}
+        </div>
+      </div>
       <div className="rb-trust-center__cards">
         {model.cards.map((card) => (
           <article className={`is-${card.tone}`} key={card.label}>
@@ -8472,6 +8681,22 @@ function RecruiterTrustCenterPanel({ model }: { model: RecruiterTrustCenter }) {
             <p>{gate.body}</p>
           </article>
         ))}
+      </div>
+      <div className="rb-trust-center__unlocks" aria-label="Priority unlocks">
+        <div className="rb-trust-center__section-head">
+          <span>Priority unlocks</span>
+          <strong>Marketplace signal</strong>
+          <p>What the current account record can support in WeKruit review.</p>
+        </div>
+        <div className="rb-trust-center__unlock-grid">
+          {model.unlocks.map((unlock) => (
+            <article className={`is-${unlock.tone}`} key={unlock.label}>
+              <span>{unlock.label}</span>
+              <strong>{unlock.value}</strong>
+              <p>{unlock.body}</p>
+            </article>
+          ))}
+        </div>
       </div>
     </section>
   )
