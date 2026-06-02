@@ -35,6 +35,15 @@ test("CandidatePortal matches inbox does not present local-only feedback as dura
   assert.match(source, /Update matching preferences/)
 })
 
+test("CandidatePortal roles inbox distinguishes WeKruit-screened roles from external recommendations", () => {
+  assert.doesNotMatch(source, /Matches · \{all\.length\} active/)
+  assert.doesNotMatch(source, /You don&apos;t apply cold/)
+  assert.doesNotMatch(source, /WeKruit collab/)
+  assert.match(source, /Roles · \{all\.length\} total/)
+  assert.match(source, /WeKruit-screened roles/)
+  assert.match(source, /external recommendations/)
+})
+
 test("CandidatePortal privacy card does not present local-only toggles as binding controls", () => {
   assert.doesNotMatch(source, /setShowMe|setBlockEmployer|setShareResume|wk-prof-toggle|These toggles read/i)
   assert.doesNotMatch(source, /Visible to employers|Show me to employers/i)

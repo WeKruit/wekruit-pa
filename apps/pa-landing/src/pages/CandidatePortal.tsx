@@ -3640,7 +3640,7 @@ export function CandidateMatches() {
 type MatchesFilter = "all" | "collab" | "rec"
 const MATCHES_FILTERS: Array<{ id: MatchesFilter; label: string }> = [
   { id: "all", label: "All" },
-  { id: "collab", label: "WeKruit collab" },
+  { id: "collab", label: "WeKruit-screened" },
   { id: "rec", label: "Recommended" },
 ]
 
@@ -3702,14 +3702,14 @@ function MatchesView({
           <header className="wkmp__head">
             <div>
               <p className="wkmp__eye">
-                <PulseDot size={6} /> Matches · {all.length} active
+                <PulseDot size={6} /> Roles · {all.length} total
               </p>
               <h1 className="wkmp__h1">
                 <em>Roles</em> Claire matched for you.
               </h1>
               <p className="wkmp__sub">
-                You don&apos;t apply cold. Claire keeps matched roles here, shows why they fit, and uses your profile
-                preferences to keep the next batch sharper.
+                Claire separates WeKruit-screened roles from external recommendations, shows why each matched,
+                and uses your profile preferences to keep the next batch sharper.
               </p>
             </div>
             <div className="wkmp__action">
@@ -3777,7 +3777,7 @@ function MatchesView({
                   </div>
                 </div>
                 <p className="wkmp-side__sub">
-                  For WeKruit collab roles, Claire handles the screening questions with you.
+                  For WeKruit-screened roles, Claire handles the screening questions with you.
                 </p>
                 <a href={CLAIRE_IMESSAGE_HREF} className="wk-btn wk-btn--primary wk-btn--block wk-btn--sm">
                   Continue with Claire <Icon name="arrow-right" size={13} stroke={2} />
@@ -3817,7 +3817,7 @@ function MeMatchFull({ match }: { match: CandidateMatchCard }) {
           <div className="wkv3-match__chiprow">
             {isCollab ? (
               <span className="wkv3-match__chip is-warm">
-                <PulseDot size={5} /> WeKruit collab
+                <PulseDot size={5} /> WeKruit-screened
               </span>
             ) : (
               <span className="wkv3-match__chip">New role</span>
