@@ -106,6 +106,14 @@ export type RunAgentTurnUsage = {
   provider?: "openai" | "siliconflow"
   model?: string
   hostedToolCalls?: { name: string; count: number }[]
+  /**
+   * Cost-guard observability — model-call iterations the SDK agent loop ran this
+   * turn (~= rawResponses length). A distribution pinned at the cap signals a
+   * spin (loop bug) or a too-tight `PA_AGENT_MAX_TURNS`. Best-effort.
+   */
+  turnsUsed?: number
+  /** Set when the loop hit the maxTurns cap (MaxTurnsExceededError was caught). */
+  maxTurnsExceeded?: boolean
 }
 
 export type RunAgentTurnResult = {
