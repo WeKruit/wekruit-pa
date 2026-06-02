@@ -9,12 +9,15 @@ const here = dirname(fileURLToPath(import.meta.url))
 const source = readFileSync(resolve(here, "OpenJobs.tsx"), "utf8")
 
 test("OpenJobs avoids internal pipeline language and unsupported signed-in promises", () => {
-  assert.doesNotMatch(source, /macmini|scraper|companies don&apos;t know us yet|tight shortlist|every Tuesday/i)
+  assert.doesNotMatch(source, /macmini|scraper|scraped roles|collab companies|companies don&apos;t know us yet|tight shortlist|every Tuesday/i)
   assert.doesNotMatch(source, /We pitch them anyway|we&apos;ll pitch them|we'll pitch them/i)
   assert.doesNotMatch(source, /unlock filters, alerts, and one-tap apply/i)
+  assert.doesNotMatch(source, /j\.source \?\? "ATS"/)
   assert.doesNotMatch(source, /Talk to a human within 48h/i)
   assert.match(source, /Sign in to keep your WeKruit profile connected/i)
   assert.match(source, /External roles WeKruit is tracking/i)
+  assert.match(source, /\{totalForTab\} total \{tab === "hunt" \? "tracked roles" : "direct-line roles"\}/)
+  assert.match(source, /j\.source \?\? "source listing"/)
 })
 
 test("OpenJobs routes candidate entry points to onboarding or the job flow", () => {

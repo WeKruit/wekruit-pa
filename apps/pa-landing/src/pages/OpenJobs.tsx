@@ -1,5 +1,5 @@
 /**
- * WeKruit Open — `/open` public job board.
+ * WeKruit Open — `/open` public role surface.
  *
  * Mirrors `wekruit-layoff-design/project/jobs.jsx` from the Claude Design
  * handoff bundle. Lives at:
@@ -303,7 +303,7 @@ export default function OpenJobs() {
 
           {error && (
             <div style={{ padding: 18, border: "1px solid var(--border-strong)", background: "var(--warning-bg)", borderRadius: "var(--r-md)", marginBottom: 24, fontSize: 13, color: "var(--warning)" }}>
-              Couldn't load the hunting list: {error}. Try refreshing in a minute.
+              Couldn't load tracked roles: {error}. Try refreshing in a minute.
             </div>
           )}
 
@@ -334,10 +334,10 @@ export default function OpenJobs() {
               )}
               <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
                 <span className="caption" style={{ color: "var(--ink-3)" }}>
-                  Showing {Math.min(visibleCount, filtered?.length ?? 0)} of {filtered?.length ?? 0} matching · {totalForTab} total {tab === "hunt" ? "scraped roles" : "collab companies"}
+                  Showing {Math.min(visibleCount, filtered?.length ?? 0)} of {filtered?.length ?? 0} matching · {totalForTab} total {tab === "hunt" ? "tracked roles" : "direct-line roles"}
                 </span>
                 <span className="caption" style={{ color: "var(--ink-3)" }}>
-                  {tab === "hunt" ? "Refreshed nightly by the WeKruit pipeline." : "Refreshed by the hiring team daily."}
+                  {tab === "hunt" ? "Refreshed as source listings change." : "Refreshed with hiring-team updates."}
                 </span>
               </div>
             </div>
@@ -644,7 +644,7 @@ function TableRow({ j, tab }: { j: UnifiedJob; tab: TabId }) {
           <CompanyTile name={j.company} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 500, color: "var(--ink)", fontSize: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{j.company}</div>
-            {isDirect ? null : <div style={{ fontSize: 11, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }}>via {j.source ?? "ATS"}</div>}
+            {isDirect ? null : <div style={{ fontSize: 11, color: "var(--ink-3)", fontFamily: "var(--font-mono)" }}>via {j.source ?? "source listing"}</div>}
           </div>
         </div>
         <div style={{ minWidth: 0 }}>
@@ -703,7 +703,7 @@ function Card({ j, tab, variant }: { j: UnifiedJob; tab: TabId; variant: "row" |
           <CompanyTile name={j.company} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 500, fontSize: 15, color: "var(--ink)" }}>{j.company}</div>
-            <div style={{ fontSize: 11, color: "var(--ink-3)" }}>{isDirect ? "Direct line" : <>via <span style={{ fontFamily: "var(--font-mono)" }}>{j.source ?? "ATS"}</span></>}</div>
+            <div style={{ fontSize: 11, color: "var(--ink-3)" }}>{isDirect ? "Direct line" : <>via <span style={{ fontFamily: "var(--font-mono)" }}>{j.source ?? "source listing"}</span></>}</div>
           </div>
         </div>
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", whiteSpace: "nowrap" }}>{j.posted ?? ""}</span>
@@ -736,7 +736,7 @@ function RowCta({ j, tab }: { j: UnifiedJob; tab: TabId }) {
     return <Link to={jobRoute(j)} className="btn btn--secondary btn--sm">View role</Link>
   }
   // Adam directive 2026-05-16 — matching-jobs are external, not collab; the
-  // candidate clicks straight through to the source ATS. No "Pitch me"
+  // candidate clicks straight through to the source listing. No "Pitch me"
   // queue and no implied WeKruit outreach.
   if (j.apply) {
     return (
@@ -745,7 +745,7 @@ function RowCta({ j, tab }: { j: UnifiedJob; tab: TabId }) {
       </a>
     )
   }
-  return <span className="caption" style={{ color: "var(--ink-3)" }}>No apply link</span>
+  return <span className="caption" style={{ color: "var(--ink-3)" }}>Source link unavailable</span>
 }
 
 function jobRoute(j: UnifiedJob): string {
