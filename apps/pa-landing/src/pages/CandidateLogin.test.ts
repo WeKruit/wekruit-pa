@@ -19,3 +19,11 @@ test("CandidateLogin sends first-time candidates into onboarding", () => {
   assert.doesNotMatch(source, /First time\?\s*<Link to="\/"/)
   assert.match(source, /First time\?\s*<Link to=\{onboardingDestination\(peekSource\(\)\)\}/)
 })
+
+test("CandidateShell signed-in nav keeps candidates inside the operating home surfaces", () => {
+  assert.match(source, /\{ to: "\/me", icon: "pipeline", label: "Home" \}/)
+  assert.match(source, /\{ to: "\/me\/matches", icon: "match", label: "Roles" \}/)
+  assert.match(source, /\{ to: "\/me\/profile", icon: "profile", label: "Profile" \}/)
+  assert.match(source, /\{ to: "\/me\/refer", icon: "refer", label: "Refer · \$4k" \}/)
+  assert.doesNotMatch(source, /\{ to: "\/market", icon: "market", label: "Market" \}/)
+})

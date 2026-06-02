@@ -494,11 +494,10 @@ type AppNavItem = { to: string; icon: AppNavIconName; label: string; external?: 
 function appNavItems(claireHref: string | null): AppNavItem[] {
   return [
   { to: "/me", icon: "pipeline", label: "Home" },
-  { to: "/me/matches", icon: "match", label: "Matches" },
+  { to: "/me/matches", icon: "match", label: "Roles" },
   ...(claireHref ? [{ to: claireHref, icon: "claire" as const, label: "Claire", external: true }] : []),
   { to: "/me/profile", icon: "profile", label: "Profile" },
   { to: "/me/refer", icon: "refer", label: "Refer · $4k" },
-  { to: "/market", icon: "market", label: "Market" },
   ]
 }
 
@@ -1642,7 +1641,7 @@ const LEGACY_CANDIDATE_STYLES = `
 `
 
 // ────────────────────────────────────────────────────────────────────────────
-// Signed-in app shell — sticky app bar with Pipeline · Profile · Market.
+// Signed-in app shell — sticky app bar for the candidate operating home.
 // Used by CandidateMe + CandidateProfile (the /me and /me/profile surfaces).
 // ────────────────────────────────────────────────────────────────────────────
 
