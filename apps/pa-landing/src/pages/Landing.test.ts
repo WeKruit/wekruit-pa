@@ -69,3 +69,21 @@ test("Landing sample artifacts avoid borrowed real-company proof", () => {
   assert.match(source, /Developer platform/)
   assert.match(source, /Productivity suite/)
 })
+
+test("Landing explains the candidate operating model without turning into an apply board", () => {
+  assert.match(landingSource, /Candidate operating model/)
+  assert.match(landingSource, /Who sees my profile\?/)
+  assert.match(landingSource, /What if I do not pass a role screen\?/)
+  assert.match(landingSource, /Does Claire apply for me\?/)
+  assert.match(landingSource, /How do corrections stick\?/)
+
+  assert.match(landingSource, /Only employers for roles you pass and consent to share with/)
+  assert.match(landingSource, /Once you enter a role flow, Claire starts the first interview/)
+  assert.match(landingSource, /A not-pass is role-specific/)
+  assert.match(landingSource, /Public roles are role briefs Claire can interview against/)
+  assert.match(landingSource, /Corrections update your durable profile and preferences/)
+
+  assert.doesNotMatch(landingSource, /we apply to every role/i)
+  assert.doesNotMatch(landingSource, /auto-submit/i)
+  assert.doesNotMatch(landingSource, /guaranteed interview/i)
+})

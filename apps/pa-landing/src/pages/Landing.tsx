@@ -341,6 +341,43 @@ export default function Landing() {
             </article>
           </div>
 
+          <section className="wk-candidate-faq" aria-labelledby="wk-candidate-faq-title">
+            <div className="wk-candidate-faq__head">
+              <p className="wk-eyebrow">Candidate operating model</p>
+              <h2 id="wk-candidate-faq-title">What happens after Claire knows you.</h2>
+            </div>
+            <div className="wk-candidate-faq__grid">
+              <article className="wk-candidate-faq__item">
+                <h3>Who sees my profile?</h3>
+                <p>
+                  Only employers for roles you pass and consent to share with. Claire keeps your
+                  profile private until a real role screen creates evidence worth sending.
+                </p>
+              </article>
+              <article className="wk-candidate-faq__item">
+                <h3>What if I do not pass a role screen?</h3>
+                <p>
+                  A not-pass is role-specific. Your global profile stays in the pool, and the
+                  conversation sharpens future matching instead of burning your WeKruit account.
+                </p>
+              </article>
+              <article className="wk-candidate-faq__item">
+                <h3>Does Claire apply for me?</h3>
+                <p>
+                  Public roles are role briefs Claire can interview against, not applications.
+                  Once you enter a role flow, Claire starts the first interview; match score is not a hard stop.
+                </p>
+              </article>
+              <article className="wk-candidate-faq__item">
+                <h3>How do corrections stick?</h3>
+                <p>
+                  Corrections update your durable profile and preferences, so salary, location,
+                  visa, role function, and industry constraints can follow you across future screens.
+                </p>
+              </article>
+            </div>
+          </section>
+
           <div className="wk-final-cta">
             <h3 className="wk-final-cta__h">Stop applying. Start with Claire.</h3>
             <Link to="/onboarding" className="wk-btn wk-btn--primary wk-btn--lg">
@@ -766,6 +803,63 @@ const LANDING_STYLES = `
   line-height: 1.62;
 }
 
+.wk-candidate-faq {
+  max-width: 1040px;
+  margin: 0 auto 64px;
+  padding: 28px 0 0;
+  border-top: 1px solid var(--wk-border);
+}
+.wk-candidate-faq__head {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  text-align: center;
+  margin-bottom: 24px;
+}
+.wk-candidate-faq__head h2 {
+  font-family: 'Newsreader', serif;
+  font-weight: 400;
+  font-size: clamp(30px, 3.8vw, 48px);
+  line-height: 1.08;
+  letter-spacing: 0;
+  color: var(--wk-ink);
+  margin: 0;
+  text-wrap: balance;
+}
+.wk-candidate-faq__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.wk-candidate-faq__item {
+  min-height: 164px;
+  padding: 22px;
+  border: 1px solid var(--wk-border);
+  border-radius: 8px;
+  background: var(--wk-cream-3);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.wk-candidate-faq__item:nth-child(1) { border-color: rgba(38, 91, 77, 0.20); background: rgba(236, 247, 240, 0.74); }
+.wk-candidate-faq__item:nth-child(2) { border-color: rgba(93, 104, 139, 0.20); background: rgba(241, 244, 251, 0.84); }
+.wk-candidate-faq__item:nth-child(3) { border-color: rgba(122, 82, 46, 0.18); background: rgba(255, 249, 239, 0.88); }
+.wk-candidate-faq__item:nth-child(4) { border-color: rgba(127, 82, 100, 0.18); background: rgba(250, 240, 244, 0.70); }
+.wk-candidate-faq__item h3 {
+  margin: 0;
+  color: var(--wk-ink);
+  font-size: 17px;
+  line-height: 1.28;
+  letter-spacing: 0;
+  font-weight: 650;
+}
+.wk-candidate-faq__item p {
+  margin: 0;
+  color: var(--wk-ink-2);
+  font-size: 14.5px;
+  line-height: 1.58;
+}
+
 .wk-final-cta {
   max-width: 560px; margin: 0 auto;
   text-align: center; display: grid; gap: 20px; justify-items: center;
@@ -793,6 +887,9 @@ const LANDING_STYLES = `
   .wk-joblist { grid-template-columns: 1fr; }
   .wk-proof-grid { grid-template-columns: 1fr; margin-bottom: 48px; }
   .wk-proof-card { min-height: 0; }
+  .wk-candidate-faq { margin-bottom: 48px; }
+  .wk-candidate-faq__grid { grid-template-columns: 1fr; }
+  .wk-candidate-faq__item { min-height: 0; }
 }
 @media (max-width: 760px) {
   .wk-hero__grid { grid-template-columns: 1fr; gap: 40px; }
