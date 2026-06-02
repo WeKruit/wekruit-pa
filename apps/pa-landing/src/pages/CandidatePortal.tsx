@@ -1763,7 +1763,7 @@ function MeCompletenessCard({ completeness }: { completeness: MeCompleteness }) 
           <p className="wkv3-comp__lede">
             {missing.some((m) => m.id === "resume")
               ? "Add a résumé so Claire can compare roles with stronger evidence."
-              : "Add a few things — your roles get sharper."}
+              : "Add a few things so Claire has more evidence to compare."}
           </p>
           <ul className="wkv3-comp__list">
             {missing.slice(0, 3).map((m) => (
@@ -1819,7 +1819,7 @@ function MeClaireSignalsCard({ profile }: { profile: CandidateSelfProfile }) {
         </dl>
       ) : (
         <p className="wkv3-signal__empty">
-          Claire needs more target-role signal before roles get sharp.
+          Claire needs more target-role signal before roles can surface with clear evidence.
         </p>
       )}
       <Link to="/me/profile#match-preferences" className="wkv3-signal__link">
@@ -2445,7 +2445,7 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
               <h1 className="wk-prof__h1">Your operating profile.</h1>
               <p className="wk-prof__sub">
                 Everything Claire knows about you, and exactly what she shares on your behalf. The more
-                you fill in, the sharper she matches.
+                complete this is, the more evidence Claire has for role review.
               </p>
             </div>
             <div className="wk-prof__head-actions">
@@ -4394,7 +4394,7 @@ function MatchesView({
                 <ol className="wkmp-how">
                   <li><strong>Claire scans</strong> openings against your profile, tags, and preferences.</li>
                   <li><strong>Matches land here</strong> with the evidence Claire used.</li>
-                  <li><strong>You decide.</strong> Profile edits keep future matching sharper.</li>
+                  <li><strong>You decide.</strong> Profile edits keep future matching tied to evidence you can review.</li>
                 </ol>
               </div>
             </aside>

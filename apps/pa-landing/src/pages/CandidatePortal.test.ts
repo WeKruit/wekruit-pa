@@ -293,6 +293,7 @@ test("CandidatePortal profile guidance avoids unsupported lift and batch promise
   assert.doesNotMatch(source, /2× more roles/)
   assert.doesNotMatch(source, /Claire pitches sharper/)
   assert.doesNotMatch(source, /Better pitch by Claire/)
+  assert.doesNotMatch(source, /\bsharp(?:er)?\b/i)
   assert.doesNotMatch(source, /next batch/i)
   assert.doesNotMatch(source, /next batch has better evidence/)
   assert.match(source, /impact: "Sets Claire's role target"/)
@@ -300,6 +301,10 @@ test("CandidatePortal profile guidance avoids unsupported lift and batch promise
   assert.match(source, /impact: "Adds context for role review"/)
   assert.match(source, /roles can surface with clearer evidence/)
   assert.match(source, /keeps future matching tied to evidence you can review/)
+  assert.match(source, /Add a few things so Claire has more evidence to compare\./)
+  assert.match(source, /The more\s+complete this is, the more evidence Claire has for role review\./)
+  assert.match(source, /Claire needs more target-role signal before roles can surface with clear evidence\./)
+  assert.match(source, /Profile edits keep future matching tied to evidence you can review\./)
 })
 
 test("CandidatePortal /me treats new recommended roles as an Up Next action", () => {
