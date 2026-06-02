@@ -132,7 +132,10 @@ test("runCandidateListMatches includes direct state-only candidate job rows", as
   assert.equal(result.matches[0]!.jobId, "job-direct")
   assert.equal(result.matches[0]!.bucket, "recommended")
   assert.equal(result.matches[0]!.status, "recommended")
-  assert.deepEqual(result.matches[0]!.whyMatched, ["This role matches your saved profile."])
+  assert.deepEqual(result.matches[0]!.whyMatched, [
+    "Backend Engineer at Direct Co is in your WeKruit pipeline; Claire can run the first screen.",
+  ])
+  assert.doesNotMatch(JSON.stringify(result), /This role matches your saved profile/)
   assert.doesNotMatch(JSON.stringify(result), /rawTranscript/)
 })
 

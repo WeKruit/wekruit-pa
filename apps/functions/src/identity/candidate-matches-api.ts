@@ -142,6 +142,10 @@ function projectJobDisplay(jobId: string, job: Record<string, unknown>): Candida
   }
 }
 
+function pipelineFallbackReason(job: CandidateMatchJobDisplay): string {
+  return `${job.title} at ${job.company} is in your WeKruit pipeline; Claire can run the first screen.`
+}
+
 // A pa-jobs doc is pre-screenable only when it carries a non-empty
 // prescreenConfig.questions[]. Mirrors loadCollabPrescreenEligibleJobIds in
 // the V16 matcher so the candidate-facing collab flag matches what the
@@ -235,10 +239,11 @@ function projectMatchCard(args: {
   // "WHY CLAIRE MATCHED YOU" (Adam directive 2026-05-30): prefer the GROUNDED
   // pitch persisted on the match doc (`matchReason`, LLM-composed / rich-
   // deterministic at recommendation time). Fall back to the legacy `reasons`
-  // array only when no stored pitch exists; final fallback is the generic line.
+  // array only when no stored pitch exists; final fallback stays pipeline-specific.
   const storedReason = cleanString(match?.matchReason, 600)
   const legacyReasons = cleanStringArray(match?.reasons, 4, 240)
   const whyMatched = storedReason ? [storedReason] : legacyReasons
+  const jobDisplay = projectJobDisplay(args.jobId, args.job)
   const status = projectStatus(state, hasInvite, args.prescreenTerminal, args.prescreenReviewPending)
   const reviewDecision = projectCandidateReviewDecision(status, args.prescreenSession)
   const activityAt =
@@ -264,8 +269,8 @@ function projectMatchCard(args: {
     // Pipeline matches live in pa-jobs (WeKruit-driven engagement) → pre-screenable.
     collab: true,
     status,
-    job: projectJobDisplay(args.jobId, args.job),
-    whyMatched: whyMatched.length > 0 ? whyMatched : ["This role matches your saved profile."],
+    job: jobDisplay,
+    whyMatched: whyMatched.length > 0 ? whyMatched : [pipelineFallbackReason(jobDisplay)],
     ...(typeof match?.finalRank === "number" && Number.isInteger(match.finalRank) ? { rank: match.finalRank } : {}),
     computedAt: activityAt,
     ...(reviewDecision ? { reviewDecision } : {}),
