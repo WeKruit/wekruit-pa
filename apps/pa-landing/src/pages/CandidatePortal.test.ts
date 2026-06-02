@@ -235,6 +235,13 @@ test("CandidatePortal /me treats incomplete profile data as an Up Next action", 
   assert.doesNotMatch(source, /<p className="wkv3-wait__meta">No action needed right now\.<\/p>/)
 })
 
+test("CandidatePortal missing resume copy treats it as stronger evidence, not the only path to matching", () => {
+  assert.match(source, /impact: "Improves matching evidence"/)
+  assert.match(source, /Add a résumé so Claire can compare roles with stronger evidence\./)
+  assert.doesNotMatch(source, /Unblocks matching/)
+  assert.doesNotMatch(source, /Add a résumé so Claire can match you\./)
+})
+
 test("CandidatePortal /me treats new recommended roles as an Up Next action", () => {
   assert.match(source, /function deriveRecommendedRolesAction\(recommendedCount: number\): MeAction \| null/)
   assert.match(source, /const recommendedNextAction = deriveRecommendedRolesAction\(recommended\.length\)/)

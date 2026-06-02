@@ -854,7 +854,7 @@ function meWhen(iso?: string): string {
 function deriveCompleteness(profile: CandidateSelfProfile): MeCompleteness {
   const tags = profile.globalTags
   const checks: Array<{ id: string; label: string; impact: string; done: boolean; critical?: boolean }> = [
-    { id: "resume", label: "Upload résumé", impact: "Unblocks matching", done: !!profile.latestResumeArtifactId, critical: true },
+    { id: "resume", label: "Upload résumé", impact: "Improves matching evidence", done: !!profile.latestResumeArtifactId, critical: true },
     { id: "targets", label: "Target roles", impact: "Claire pitches sharper", done: !!tags?.roleFunction?.length },
     { id: "locations", label: "Location preferences", impact: "2× more roles", done: !!tags?.targetLocations?.length },
     { id: "industries", label: "Industry preferences", impact: "Sharper comp matching", done: !!tags?.industrySector?.length },
@@ -1697,7 +1697,7 @@ function MeCompletenessCard({ completeness }: { completeness: MeCompleteness }) 
         <>
           <p className="wkv3-comp__lede">
             {missing.some((m) => m.id === "resume")
-              ? "Add a résumé so Claire can match you."
+              ? "Add a résumé so Claire can compare roles with stronger evidence."
               : "Add a few things — your roles get sharper."}
           </p>
           <ul className="wkv3-comp__list">
