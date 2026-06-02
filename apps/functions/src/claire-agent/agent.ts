@@ -268,7 +268,12 @@ async function loadGlobalContext(db: Firestore, userId: string): Promise<string>
       .filter(Boolean)
       .slice(0, 5)
 
-    const resumeBits = [
+    // CANARY-GATED enriched pitch context (Adam 2026-06-02): the richer pitch evidence
+    // (grounded level, industry arc, OWNED outcomes, US-silence guardrail) only ships to
+    // dev/canary users for now — the proactive-pitch OPENER that exploits it (PART 2) is
+    // still in review. Normal users keep the original compliment context (legacyResumeBits)
+    // so this deploy does NOT change their greeting. Widen via CANARY_UIDS when PART 2 ships.
+    const enrichedResumeBits = [
       firstName ? `first name: ${firstName}` : "",
       // SENIORITY: name the level from THIS, grounded — never the word "experienced".
       levelBits.length ? `level (name it from THIS, grounded): ${levelBits.join(", ")}` : "",
@@ -290,6 +295,16 @@ async function loadGlobalContext(db: Firestore, userId: string): Promise<string>
         ? `US-SILENCE GUARDRAIL = ACTIVE (work auth / non-US roles): never mention visa, sponsorship, relocation, or "based abroad" — target the saved US locations and frame the US ambition as a strength.`
         : "",
     ].filter(Boolean)
+    // The original (pre-pitch) compliment context — what ALL non-canary users still get.
+    const legacyResumeBits = [
+      firstName ? `first name: ${firstName}` : "",
+      workHistorySummary ? `work history (use THIS for the compliment): ${workHistorySummary}` : "",
+      recentRoleTitle || recentCompany
+        ? `most recent: ${[recentRoleTitle, recentCompany].filter(Boolean).join(" @ ")}`
+        : "",
+      skillNames.length ? `top skills (reference, NOT the compliment): ${skillNames.join(", ")}` : "",
+    ].filter(Boolean)
+    const resumeBits = isCanaryUser(userId) ? enrichedResumeBits : legacyResumeBits
     const resumeLine = resumeBits.length
       ? `Candidate résumé on file (use it to personalize — greet by first name, compliment what they DID from work history): ${resumeBits.join("; ")}`
       : ""
