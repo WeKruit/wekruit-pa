@@ -684,7 +684,7 @@ function CandidateMeReady({
   )
   const recommended = allMatches.filter((m) => m.status === "recommended")
   const pipelineMatches = allMatches.filter((m) => m.status !== "recommended")
-  const activeInterviewCount = allMatches.filter(
+  const activePipelineCount = allMatches.filter(
     (m) =>
       m.status === "invited" ||
       m.status === "interview_started" ||
@@ -697,7 +697,7 @@ function CandidateMeReady({
 
   const firstName = firstNameOf(profile)
   const completeness = deriveCompleteness(profile)
-  const visibility = deriveVisibility(activeInterviewCount, recommended.length)
+  const visibility = deriveVisibility(activePipelineCount, recommended.length)
 
   const actions: MeAction[] = upNext.map((m) => {
     const display = getCandidateJobStatusDisplay(m.status, m.job.title)
@@ -835,16 +835,16 @@ function deriveCompleteness(profile: CandidateSelfProfile): MeCompleteness {
   return { pct, missing }
 }
 
-// Visibility reflects real interview activity. We don't have a hidden/retained
-// flag yet, so only the two states we can prove are surfaced.
+// Visibility reflects real candidate-side pipeline activity. We don't have a
+// hidden/retained flag yet, so only the two states we can prove are surfaced.
 function deriveVisibility(activeCount: number, matchCount: number): MeVisibility {
   if (activeCount > 0) {
     return {
       state: "interviewing",
-      label: "In active interviews",
-      one: `${activeCount} ${activeCount === 1 ? "employer is" : "employers are"} talking with you.`,
-      two: "Claire keeps your profile current while you focus.",
-      cta: "Pause new roles",
+      label: "Active pipeline",
+      one: `${activeCount} active ${activeCount === 1 ? "role" : "roles"} in your pipeline.`,
+      two: "Claire keeps each next step current while you focus.",
+      cta: "Manage availability",
     }
   }
   return {

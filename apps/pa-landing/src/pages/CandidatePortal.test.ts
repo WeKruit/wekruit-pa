@@ -23,6 +23,11 @@ test("CandidatePortal labels review-pending pipeline state as WeKruit-side revie
   assert.doesNotMatch(source, /With employer/)
 })
 
+test("CandidatePortal visibility copy describes active pipeline without employer-talking implication", () => {
+  assert.match(source, /active .*pipeline/i)
+  assert.doesNotMatch(source, /employers? (?:is|are) talking with you/i)
+})
+
 test("CandidatePortal wires connector buttons through the account OAuth start callable", () => {
   assert.match(source, /label: "LinkedIn"/)
   assert.match(source, /label: "GitHub"/)
