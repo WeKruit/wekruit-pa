@@ -93,6 +93,7 @@ const ROLE_SORTS = [
 type RoleSort = typeof ROLE_SORTS[number]["id"]
 
 const APPROVED_ROLE_LIMIT = 10
+const PENDING_ROLE_APPLICATION_LIMIT = 3
 const SINGLE_SUBMISSION_WEEKLY_LIMIT = 5
 const ROLE_PENDING_SUBMISSION_LIMIT = 5
 const WEEKLY_SUBMISSION_TARGET = 8
@@ -5429,6 +5430,27 @@ type RoleAccessDecision = {
   actionLabel: string
 }
 
+type RoleApprovalProcessItem = {
+  label: string
+  value: string
+  body: string
+  tone: RoleInsightTone
+}
+
+type RoleApprovalProcessCenter = {
+  title: string
+  body: string
+  tone: RoleInsightTone
+  pendingCount: number
+  pendingLimit: number
+  pendingLeft: number
+  approvedCount: number
+  approvedLimit: number
+  cards: RoleApprovalProcessItem[]
+  criteria: RoleApprovalProcessItem[]
+  statuses: RoleApprovalProcessItem[]
+}
+
 function roleAccessDecision(insight: RoleInsight, primarySlotsFull: boolean): RoleAccessDecision {
   if (insight.primary) {
     return {
@@ -5574,6 +5596,124 @@ function roleAccessSummary(decisions: RoleAccessDecision[]) {
   }
 }
 
+function buildRoleApprovalProcessCenter(decisions: RoleAccessDecision[]): RoleApprovalProcessCenter {
+  const summary = roleAccessSummary(decisions)
+  const pendingLeft = Math.max(0, PENDING_ROLE_APPLICATION_LIMIT - summary.pending)
+  const preparedCandidateCount = decisions.reduce((sum, decision) => {
+    const prepared = decision.insight.application?.preparedCandidateCount ?? 0
+    return sum + prepared
+  }, 0)
+  const readyProof = decisions.reduce((sum, decision) => sum + decision.insight.readyCount, 0)
+  const overPendingLimit = summary.pending >= PENDING_ROLE_APPLICATION_LIMIT
+  const overApprovedLimit = summary.approved >= APPROVED_ROLE_LIMIT
+  const tone: RoleInsightTone = overPendingLimit || summary.needsAnswer > 0
+    ? "warn"
+    : summary.candidateProof > 0 || pendingLeft > 0
+      ? "live"
+      : summary.approved > 0
+        ? "success"
+        : "info"
+  const title = overPendingLimit
+    ? "Pending approval limit reached"
+    : summary.candidateProof > 0
+      ? `${summary.candidateProof} candidate-backed access request${summary.candidateProof === 1 ? "" : "s"} ready`
+      : pendingLeft > 0
+        ? `${pendingLeft} approval slot${pendingLeft === 1 ? "" : "s"} open`
+        : "Role access queue is quiet"
+  const body = overPendingLimit
+    ? "Withdraw or wait for a pending role decision before applying to another role. This keeps the approval queue intentional."
+    : "Use role access only when you can prove fit, answer blockers, and commit active coverage instead of spreading effort across too many searches."
+
+  return {
+    title,
+    body,
+    tone,
+    pendingCount: summary.pending,
+    pendingLimit: PENDING_ROLE_APPLICATION_LIMIT,
+    pendingLeft,
+    approvedCount: summary.approved,
+    approvedLimit: APPROVED_ROLE_LIMIT,
+    cards: [
+      {
+        label: "Pending limit",
+        value: `${summary.pending}/${PENDING_ROLE_APPLICATION_LIMIT}`,
+        body: overPendingLimit ? "Approval queue is full; withdraw or wait before applying again." : `${pendingLeft} pending application slot${pendingLeft === 1 ? "" : "s"} left.`,
+        tone: overPendingLimit ? "warn" : summary.pending ? "info" : "success",
+      },
+      {
+        label: "Approved role limit",
+        value: `${summary.approved}/${APPROVED_ROLE_LIMIT}`,
+        body: overApprovedLimit ? "Approved role capacity is full; use single-submit for exceptional one-offs." : "Approved searches should have live candidate motion.",
+        tone: overApprovedLimit ? "warn" : summary.approved ? "success" : "mute",
+      },
+      {
+        label: "Prepared proof",
+        value: String(preparedCandidateCount + readyProof),
+        body: "Prepared and ready candidates are the strongest signal for role approval.",
+        tone: preparedCandidateCount + readyProof ? "live" : "mute",
+      },
+      {
+        label: "Blocked access",
+        value: String(summary.needsAnswer),
+        body: "Open questions or hard market signals should be cleared before more sourcing.",
+        tone: summary.needsAnswer ? "warn" : "success",
+      },
+    ],
+    criteria: [
+      {
+        label: "Trust record",
+        value: "Quality",
+        body: "Submission rating, interview movement, and clean ownership affect whether more role access makes sense.",
+        tone: "info",
+      },
+      {
+        label: "Candidate proof",
+        value: "Prepared",
+        body: "Ready or sourced candidates attached to the role make an access request materially stronger.",
+        tone: readyProof + preparedCandidateCount ? "live" : "mute",
+      },
+      {
+        label: "Role capacity",
+        value: "Not full",
+        body: "WeKruit should avoid adding recruiters when a role is saturated or already has too much pending review.",
+        tone: "info",
+      },
+      {
+        label: "Calibration",
+        value: "Clear",
+        body: "Open role questions and hard/blocked feedback should be resolved before requesting focus access.",
+        tone: summary.needsAnswer ? "warn" : "success",
+      },
+    ],
+    statuses: [
+      {
+        label: "Apply now",
+        value: String(summary.requestReady),
+        body: "Roles where the application path is open if pending slots remain.",
+        tone: summary.requestReady ? "info" : "mute",
+      },
+      {
+        label: "Pending",
+        value: String(summary.pending),
+        body: "Waiting on WeKruit review. Keep building proof or withdraw if the role is no longer meaningful.",
+        tone: overPendingLimit ? "warn" : summary.pending ? "info" : "mute",
+      },
+      {
+        label: "Approved",
+        value: String(summary.approved),
+        body: "Approved to recruit; keep coverage active or switch focus.",
+        tone: summary.approved ? "success" : "mute",
+      },
+      {
+        label: "Not approved",
+        value: String(decisions.filter((decision) => decision.status === "not_approved").length),
+        body: "Improve candidate proof, trust signal, or role fit before reapplying.",
+        tone: decisions.some((decision) => decision.status === "not_approved") ? "warn" : "mute",
+      },
+    ],
+  }
+}
+
 function defaultRoleApplicationPitch(decision: RoleAccessDecision): string {
   if (decision.insight.readyCount > 0) {
     return `I have ${decision.insight.readyCount} ready candidate${decision.insight.readyCount === 1 ? "" : "s"} for this role and can actively source against the hard checks.`
@@ -5699,6 +5839,8 @@ function RoleAccessTab({
     return sortRoleAccessDecisions(insights.map((insight) => roleAccessDecision(insight, primarySlotsFull)))
   }, [jobs, primaryRoleIds, primarySlotsFull, roleApplications, roleFeedback, roleIntelligence, roleQuestions, sourcedCandidates, submissions])
   const summary = roleAccessSummary(decisions)
+  const approvalCenter = buildRoleApprovalProcessCenter(decisions)
+  const pendingSlotsFull = summary.pending >= PENDING_ROLE_APPLICATION_LIMIT
   const singleSubmissions = submissions.filter((submission) => submission.submissionMode === "single_submission").length
   const singleCreditsLeft = Math.max(0, SINGLE_SUBMISSION_WEEKLY_LIMIT - singleSubmissions)
   const proofRoles = decisions
@@ -5713,14 +5855,14 @@ function RoleAccessTab({
   useEffect(() => {
     if (!initialApplicationJobId) return
     const target = decisions.find((decision) => roleKey(decision.insight.job) === initialApplicationJobId)
-    if (!target || target.insight.primary || target.status === "pending" || target.status === "needs_answer") return
+    if (!target || target.insight.primary || target.status === "pending" || target.status === "needs_answer" || pendingSlotsFull) return
     setApplicationDraftJobId(initialApplicationJobId)
     setApplicationPitch((current) => current.trim() ? current : defaultRoleApplicationPitch(target))
     setAnonymizeCandidates(target.insight.application?.anonymizeCandidates ?? false)
-  }, [decisions, initialApplicationJobId])
+  }, [decisions, initialApplicationJobId, pendingSlotsFull])
 
   const submitApplication = () => {
-    if (!selectedApplicationDecision) return
+    if (!selectedApplicationDecision || pendingSlotsFull) return
     const jobId = roleKey(selectedApplicationDecision.insight.job)
     onRoleApplicationSave({
       jobId,
@@ -5752,8 +5894,8 @@ function RoleAccessTab({
         </article>
         <article className="is-info">
           <span>Pending applications</span>
-          <strong>{summary.pending}/3</strong>
-          <p>Role applications waiting on WeKruit review.</p>
+          <strong>{summary.pending}/{PENDING_ROLE_APPLICATION_LIMIT}</strong>
+          <p>{pendingSlotsFull ? "Withdraw or wait before applying again." : "Role applications waiting on WeKruit review."}</p>
         </article>
         <article className="is-live">
           <span>Candidate proof ready</span>
@@ -5776,6 +5918,7 @@ function RoleAccessTab({
           <p>Use only for strong consented candidates outside approved roles.</p>
         </article>
       </section>
+      <RoleApprovalProcessCenterPanel model={approvalCenter} />
 
       <section className="rb-access-command-grid">
         <article className="rb-access-board">
@@ -5788,9 +5931,14 @@ function RoleAccessTab({
               const job = decision.insight.job
               const canApply = !decision.insight.primary &&
                 !primarySlotsFull &&
+                !pendingSlotsFull &&
                 decision.status !== "needs_answer" &&
                 decision.status !== "pending"
               const canWithdraw = decision.status === "pending"
+              const applyBlockedByPendingLimit = pendingSlotsFull &&
+                !decision.insight.primary &&
+                decision.status !== "pending" &&
+                decision.status !== "needs_answer"
               return (
                 <article key={job.jobId} className={`is-${decision.tone}`}>
                   <div>
@@ -5822,6 +5970,8 @@ function RoleAccessTab({
                       >
                         {roleApplicationSavingId === roleKey(job) ? "Saving..." : decision.status === "not_approved" ? "Reapply" : "Apply"}
                       </button>
+                    ) : applyBlockedByPendingLimit ? (
+                      <button type="button" disabled>Pending limit</button>
                     ) : (
                       <Link to={`/recruiters/job/${job.jobId}`}>{decision.actionLabel}</Link>
                     )}
@@ -5858,10 +6008,10 @@ function RoleAccessTab({
               <span>{selectedPreparedCandidates.length} prepared candidate{selectedPreparedCandidates.length === 1 ? "" : "s"} attached</span>
               <button
                 type="button"
-                disabled={applicationPitch.trim().length < 20 || roleApplicationSavingId === roleKey(selectedApplicationDecision.insight.job)}
+                disabled={pendingSlotsFull || applicationPitch.trim().length < 20 || roleApplicationSavingId === roleKey(selectedApplicationDecision.insight.job)}
                 onClick={submitApplication}
               >
-                {roleApplicationSavingId === roleKey(selectedApplicationDecision.insight.job) ? "Submitting..." : "Submit application"}
+                {roleApplicationSavingId === roleKey(selectedApplicationDecision.insight.job) ? "Submitting..." : pendingSlotsFull ? "Pending limit reached" : "Submit application"}
               </button>
             </div>
           </article>
@@ -5873,6 +6023,7 @@ function RoleAccessTab({
             <p>Approved role access means you are committing active coverage. Single submissions are for exceptional candidate-led opportunities.</p>
             <ul>
               <li>Apply only when you can source or submit soon.</li>
+              <li>Keep pending applications at {PENDING_ROLE_APPLICATION_LIMIT} or fewer.</li>
               <li>Attach candidate proof before asking for trusted access.</li>
               <li>Pause roles with open questions until WeKruit answers.</li>
             </ul>
@@ -5901,6 +6052,64 @@ function RoleAccessTab({
           </article>
         </aside>
       </section>
+    </section>
+  )
+}
+
+function RoleApprovalProcessCenterPanel({ model }: { model: RoleApprovalProcessCenter }) {
+  return (
+    <section className={`rb-approval-center is-${model.tone}`} aria-label="Role approval process center">
+      <header>
+        <div>
+          <span>Approval process</span>
+          <strong>{model.title}</strong>
+          <p>{model.body}</p>
+        </div>
+        <aside>
+          <span>Access capacity</span>
+          <strong>{model.approvedCount}/{model.approvedLimit}</strong>
+          <p>{model.pendingCount}/{model.pendingLimit} pending approval slots are currently used.</p>
+        </aside>
+      </header>
+
+      <div className="rb-approval-center__cards">
+        {model.cards.map((card) => (
+          <article className={`is-${card.tone}`} key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <p>{card.body}</p>
+          </article>
+        ))}
+      </div>
+
+      <div className="rb-approval-center__body">
+        <section>
+          <div>
+            <h3>What WeKruit reviews</h3>
+            <p>Access should go to searches where the recruiter has proof, capacity, and a clean role signal.</p>
+          </div>
+          {model.criteria.map((item) => (
+            <article className={`is-${item.tone}`} key={item.label}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+              <p>{item.body}</p>
+            </article>
+          ))}
+        </section>
+        <section>
+          <div>
+            <h3>Status meanings</h3>
+            <p>Keep the queue intentional: pending slots are scarce and approved roles require active coverage.</p>
+          </div>
+          {model.statuses.map((item) => (
+            <article className={`is-${item.tone}`} key={item.label}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+              <p>{item.body}</p>
+            </article>
+          ))}
+        </section>
+      </div>
     </section>
   )
 }
