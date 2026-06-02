@@ -655,7 +655,11 @@ function ConnectorAction({
   }
   if (connector.action === "send_resume") {
     if (!claireHref) {
-      return <span className="wkv2-conn__btn wkv2-conn__btn--muted">Claire pending</span>
+      return (
+        <Link to="/me/profile#profile-corrections" className="wkv2-conn__btn wkv2-conn__btn--connect">
+          Update profile
+        </Link>
+      )
     }
     return (
       <a href={claireHref} className="wkv2-conn__btn wkv2-conn__btn--connect">
@@ -4383,9 +4387,9 @@ function MatchesView({
                     Continue with Claire <Icon name="arrow-right" size={13} stroke={2} />
                   </a>
                 ) : (
-                  <button type="button" className="wk-btn wk-btn--primary wk-btn--block wk-btn--sm" disabled>
-                    Claire line pending
-                  </button>
+                  <Link to="/me/profile#profile-corrections" className="wk-btn wk-btn--secondary wk-btn--block wk-btn--sm">
+                    Update profile <Icon name="arrow-right" size={13} stroke={2} />
+                  </Link>
                 )}
               </div>
 

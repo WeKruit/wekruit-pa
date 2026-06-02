@@ -27,3 +27,16 @@ test("CandidateShell signed-in nav keeps candidates inside the operating home su
   assert.match(source, /\{ to: "\/me\/refer", icon: "refer", label: "Refer · \$4k" \}/)
   assert.doesNotMatch(source, /\{ to: "\/market", icon: "market", label: "Market" \}/)
 })
+
+test("CandidateShell routes missing Claire-line states to a real profile action", () => {
+  assert.doesNotMatch(source, /Claire line pending/)
+  assert.doesNotMatch(source, /wk-sidenav__claire is-pending" aria-disabled="true"/)
+  assert.match(
+    source,
+    /<Link to="\/me\/profile#profile-corrections" className="wk-apptopbar__claire is-pending" aria-label="Update profile">/,
+  )
+  assert.match(
+    source,
+    /<Link[\s\S]*to="\/me\/profile#profile-corrections"[\s\S]*className="wk-sidenav__claire is-pending"[\s\S]*Update profile[\s\S]*Add context for Claire/,
+  )
+})

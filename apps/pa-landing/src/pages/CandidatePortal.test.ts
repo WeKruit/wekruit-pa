@@ -125,10 +125,23 @@ test("CandidatePortal connector rows do not use dead profile links for non-OAuth
   assert.match(source, /buildClaireImessageHref\(profile\.senderNumber\)/)
   assert.match(source, /<ConnectorAction connector=\{c\} claireHref=\{claireHref\} \/>/)
   assert.match(source, /connector\.action === "send_resume"[\s\S]*href=\{claireHref\}[\s\S]*Send PDF/)
-  assert.match(source, /wkv2-conn__btn--muted/)
+  assert.match(
+    source,
+    /connector\.action === "send_resume"[\s\S]*!claireHref[\s\S]*to="\/me\/profile#profile-corrections"[\s\S]*Update profile/,
+  )
   assert.doesNotMatch(
     source,
     /return <Link to="\/me\/profile" className="wkv2-conn__btn wkv2-conn__btn--connect">Connect<\/Link>/,
+  )
+})
+
+test("CandidatePortal avoids dead Claire pending actions when the sender number is missing", () => {
+  assert.doesNotMatch(source, /Claire pending/)
+  assert.doesNotMatch(source, /Claire line pending/)
+  assert.doesNotMatch(source, /<button[^>]*disabled[^>]*>\s*Claire line pending\s*<\/button>/)
+  assert.match(
+    source,
+    /<Link to="\/me\/profile#profile-corrections" className="wk-btn wk-btn--secondary wk-btn--block wk-btn--sm">[\s\S]*Update profile/,
   )
 })
 

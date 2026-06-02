@@ -418,9 +418,9 @@ export function CandidateShell({
               <PulseDot size={6} />
             </a>
           ) : (
-            <span className="wk-apptopbar__claire is-pending" aria-label="Claire line pending">
+            <Link to="/me/profile#profile-corrections" className="wk-apptopbar__claire is-pending" aria-label="Update profile">
               <PulseDot size={6} />
-            </span>
+            </Link>
           )}
         </header>
 
@@ -616,15 +616,19 @@ function CandidateAppNav({
             </span>
           </a>
         ) : (
-          <div className="wk-sidenav__claire is-pending" aria-disabled="true">
+          <Link
+            to="/me/profile#profile-corrections"
+            className="wk-sidenav__claire is-pending"
+            onClick={(e) => { e.preventDefault(); onNavigate("/me/profile#profile-corrections") }}
+          >
             <span className="wk-sidenav__claire-dot" aria-hidden="true">
               <PulseDot size={6} />
             </span>
             <span className="wk-sidenav__claire-body">
-              <strong>Claire line pending</strong>
-              <em>Finish onboarding</em>
+              <strong>Update profile</strong>
+              <em>Add context for Claire</em>
             </span>
-          </div>
+          </Link>
         )}
 
         <div className="wk-sidenav__account">
@@ -1828,10 +1832,10 @@ const APP_SHELL_STYLES = `
 .wk-sidenav__claire.is-pending {
   border-color: var(--border);
   background: var(--cream-2);
-  color: var(--ink-3);
-  cursor: default;
+  color: var(--ink);
+  cursor: pointer;
 }
-.wk-sidenav__claire.is-pending:hover { border-color: var(--border); }
+.wk-sidenav__claire.is-pending:hover { border-color: var(--live-border); }
 .wk-sidenav__claire-dot {
   width: 22px; height: 22px; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
