@@ -102,6 +102,37 @@ test("QR resume-less provisional user cold-starts onboarding (no resume gate) �
   assert.equal(u.sharedOnboarding.currentQuestionId, "main_goal")
 })
 
+test("QR dev re-onboard reset → existing user with tags/resume cold-starts onboarding fresh (non-destructive)", async () => {
+  // Post-reonboardExistingUserViaQr shape: onboardingState / sharedOnboarding /
+  // workSession CLEARED, but tags + resume KEPT. The mode-selector must treat this
+  // as a cold start (NOT complete, NOT active) and bootstrap onboarding fresh.
+  const { db, store } = makeDb({
+    [`pa-users/${UID}`]: {
+      // no onboardingState, no sharedOnboarding, no workSession (deleted by reset)
+      source: "qr_imessage",
+      firstTouchCampaign: "dev-card",
+      senderNumber: "+15550000009",
+      tags: { targetRoleFunction: ["software_engineering"] }, // KEPT
+      latestResumeArtifactId: "resume-abc", // KEPT
+      displayName: "Adam Dev", // KEPT
+    },
+  })
+  const res = await selectClaireMode({ db, userId: UID, inboundText: "Hello, WeKruit! 22222222-3333-4444-5555-666666666666" })
+  assert.equal(res.mode, "onboarding")
+  assert.equal(res.awaitingAnswer, false, "re-onboard kickoff does not record an answer")
+  assert.equal(res.onboardingSlot, "main_goal")
+  const u = store.get(`pa-users/${UID}`) as {
+    sharedOnboarding: Record<string, unknown>
+    tags: Record<string, unknown>
+    latestResumeArtifactId: string
+  }
+  assert.equal(u.sharedOnboarding.status, "active")
+  assert.equal(u.sharedOnboarding.currentQuestionId, "main_goal")
+  // durable data still present after the bootstrap write (merge, non-destructive)
+  assert.deepEqual(u.tags, { targetRoleFunction: ["software_engineering"] })
+  assert.equal(u.latestResumeArtifactId, "resume-abc")
+})
+
 test("active onboarding → awaitingAnswer + current slot + seeded answers; selector writes NO answer", async () => {
   const { db, store } = makeDb({
     [`pa-users/${UID}`]: {

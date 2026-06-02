@@ -915,6 +915,36 @@ async function processBrokerImessageEvent(
       user = await createProvisionalUser(db, payload.participant)
     }
   }
+  // Dev re-onboard bypass (Adam 2026-06-01): an EXISTING known user whose uid is in
+  // QR_REONBOARD_DEV_UIDS, texting a CANARY QR opener, gets NON-DESTRUCTIVELY
+  // re-onboarded — we clear ONLY their conversational onboarding/prescreen process
+  // state so onboarding self-starts fresh next turn (tags / resume / memory KEPT).
+  // A normal known user on a canary QR is NOT re-onboarded (stays in normal flow);
+  // a freshly-created provisional uid is never a dev uid so it's naturally excluded.
+  try {
+    const { resolveQrReonboard } = await import("./qr-onboarding/scan.js")
+    const reonboard = await resolveQrReonboard(db, payload.text, user.id)
+    if (reonboard.shouldReonboard && reonboard.scan) {
+      const { reonboardExistingUserViaQr, claimQrScanPending } = await import("./qr-onboarding/scan.js")
+      const reset = await reonboardExistingUserViaQr(db, user.id, reonboard.scan, nowIso())
+      await claimQrScanPending(db, reonboard.scan.scanToken, user.id, nowIso())
+      logger.info("[onPaInbound] QR dev re-onboard — onboarding state reset (non-destructive)", {
+        eventId: claimed.id,
+        userId: user.id,
+        campaign: reonboard.scan.campaign,
+        prescreenSessionsReset: reset.prescreenSessionsReset,
+      })
+      // Re-read so this turn runs against the cleared state (onboarding cold-start).
+      const refreshed = await db.collection(PA_COLLECTIONS.users).doc(user.id).get()
+      if (refreshed.exists) user = { id: refreshed.id, ...refreshed.data() } as User
+    }
+  } catch (err) {
+    logger.warn("[onPaInbound] QR dev re-onboard check failed (non-fatal)", {
+      eventId: claimed.id,
+      userId: user.id,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
   void markClaireConversationStarted(db, user.id).catch((err: unknown) => {
     logger.warn("[onPaInbound] claireConversationStarted stamp failed", {
       userId: user.id,
