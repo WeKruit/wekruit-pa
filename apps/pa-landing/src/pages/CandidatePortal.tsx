@@ -1310,6 +1310,7 @@ function MePipeline({
     activeDef && activeDef.statuses.length > 0
       ? matches.filter((m) => activeDef.statuses.includes(m.status))
       : matches
+  const hasPipelineRows = matches.length > 0
 
   return (
     <section className="wkv3-sec" id="pipeline">
@@ -1321,7 +1322,7 @@ function MePipeline({
               Clear filter ×
             </button>
           ) : (
-            "Tap a stage to filter."
+            hasPipelineRows ? "Tap a stage to filter." : "Stages appear as roles move forward."
           )}
         </span>
       </header>
@@ -1330,13 +1331,16 @@ function MePipeline({
         {ME_STAGES.map((s) => {
           const n = counts[s.id] ?? 0
           const active = activeStage === s.id
+          const disabled = n === 0 && !active
           return (
             <button
               key={s.id}
               type="button"
               role="tab"
               aria-selected={active}
-              className={`wkv3-stage${active ? " is-active" : ""}`}
+              aria-disabled={disabled}
+              disabled={disabled}
+              className={`wkv3-stage${active ? " is-active" : ""}${disabled ? " is-disabled" : ""}`}
               onClick={() => setActiveStage(active ? null : s.id)}
             >
               <span className="wkv3-stage__top">
@@ -2171,6 +2175,8 @@ const ME_V3_STYLES = `
 .wkv3-stage:hover { background: var(--candidate-card-hover); }
 .wkv3-stage.is-active { background: var(--cream); }
 .wkv3-stage.is-active::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: 0; height: 2px; background: var(--live); border-radius: 2px; }
+.wkv3-stage.is-disabled { cursor: default; opacity: 0.54; }
+.wkv3-stage.is-disabled:hover { background: transparent; }
 .wkv3-stage__top { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: -0.005em; color: var(--ink); white-space: nowrap; }
 .wkv3-stage__sdot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
 .wkv3-stage__n { font-family: var(--font-sans); font-weight: 600; font-size: 20px; letter-spacing: -0.01em; color: var(--ink); line-height: 1; font-variant-numeric: tabular-nums; }

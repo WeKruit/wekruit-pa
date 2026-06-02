@@ -243,3 +243,12 @@ test("CandidatePortal status header CTA labels the scroll action honestly", () =
     /className="wkv3-status__cta"[\s\S]{0,800}Continue with Claire <Icon name="arrow-right" size=\{13\} stroke=\{2\} \/>/,
   )
 })
+
+test("CandidatePortal pipeline stage filters avoid dead zero-count taps", () => {
+  assert.match(source, /const hasPipelineRows = matches\.length > 0/)
+  assert.match(source, /const disabled = n === 0 && !active/)
+  assert.match(source, /disabled=\{disabled\}/)
+  assert.match(source, /aria-disabled=\{disabled\}/)
+  assert.match(source, /hasPipelineRows \? "Tap a stage to filter\." : "Stages appear as roles move forward\."/)
+  assert.doesNotMatch(source, /"Tap a stage to filter\."\s*\)\s*<\/span>/)
+})
