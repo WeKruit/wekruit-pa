@@ -36,6 +36,7 @@ import {
   type RecruiterRoleQuestionItem,
   type RecruiterSession,
   type RecruiterSourcedCandidateItem,
+  type RecruiterSourcedCandidateStage,
   type RecruiterSubmissionItem,
   type RecruiterCandidateIdentityCheckResult,
   type SubmissionResponse,
@@ -278,6 +279,14 @@ function sourcedStageLabel(stage?: string): string {
     case "archived": return "Archived"
     default: return "Sourced"
   }
+}
+
+const ROLE_CANDIDATE_STAGE_FLOW: RecruiterSourcedCandidateStage[] = ["sourced", "contacted", "screened", "ready"]
+
+function nextRoleCandidateStage(stage: RecruiterSourcedCandidateStage): RecruiterSourcedCandidateStage | null {
+  const index = ROLE_CANDIDATE_STAGE_FLOW.indexOf(stage)
+  if (index < 0 || index >= ROLE_CANDIDATE_STAGE_FLOW.length - 1) return null
+  return ROLE_CANDIDATE_STAGE_FLOW[index + 1] ?? null
 }
 
 function sourcedCalibrationLabel(status?: string): string {
@@ -1938,6 +1947,8 @@ export default function RecruiterRole() {
   const [quickCandidate, setQuickCandidate] = useState<RoleQuickCandidateDraft>(emptyRoleQuickCandidateDraft)
   const [quickCandidateSaving, setQuickCandidateSaving] = useState(false)
   const [quickCandidateError, setQuickCandidateError] = useState<string | null>(null)
+  const [stageUpdatingCandidateId, setStageUpdatingCandidateId] = useState<string | null>(null)
+  const [stageUpdateError, setStageUpdateError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -2290,6 +2301,40 @@ export default function RecruiterRole() {
       setQuickCandidateError(error instanceof Error ? error.message : String(error))
     } finally {
       setQuickCandidateSaving(false)
+    }
+  }
+
+  const updateRoleCandidateStage = async (candidate: RecruiterSourcedCandidateItem, stage: RecruiterSourcedCandidateStage) => {
+    const link = candidate.candidate?.link?.trim()
+    if (!link) {
+      setStageUpdateError("This saved candidate is missing the LinkedIn or resume link needed to update the pipeline.")
+      return
+    }
+    setStageUpdatingCandidateId(candidate.id)
+    setStageUpdateError(null)
+    try {
+      const saved = await saveRecruiterSourcedCandidate({
+        candidateId: candidate.candidateId || candidate.id,
+        jobId: candidate.inboundJobId || candidate.jobId || job.jobId,
+        stage,
+        candidate: {
+          name: candidate.candidate?.name || candidateDisplayName(candidate),
+          email: candidate.candidate?.email?.trim().toLowerCase() || undefined,
+          link,
+          currentRole: candidate.candidate?.currentRole,
+          yoe: candidate.candidate?.yoe,
+          notes: candidate.candidate?.notes,
+        },
+        outreach: candidate.outreach,
+      })
+      setSourcedCandidates((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)])
+      if (prefilledCandidateId === candidate.id || prefilledCandidateId === candidate.candidateId) {
+        useSourcedCandidate(saved)
+      }
+    } catch (error) {
+      setStageUpdateError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setStageUpdatingCandidateId(null)
     }
   }
 
@@ -2751,27 +2796,44 @@ export default function RecruiterRole() {
               <h3>Candidate queue</h3>
               <p>Prospects saved in your CRM for this role. Use one to prefill the submit form.</p>
               <div className="rb-role-candidate-list">
-                {roleCandidates.slice(0, 8).map((candidate) => (
-                  <article key={candidate.id}>
-                    <span>
-                      <strong>{candidate.candidate?.name || "Candidate"}</strong>
-                      <em>{candidate.candidate?.currentRole || sourcedStageLabel(candidate.stage)}</em>
-                      {(candidate.calibrationStatus || candidate.calibrationNote) && (
-                        <em>
-                          {sourcedCalibrationLabel(candidate.calibrationStatus)}
-                          {candidate.calibrationNote ? ` - ${candidate.calibrationNote}` : ""}
-                        </em>
-                      )}
-                      {candidate.linkedSubmissionId && <em>Linked to submission {shortText(candidate.linkedSubmissionId, "submission", 18)}</em>}
-                    </span>
-                    <small>{sourcedStageLabel(candidate.stage)}</small>
-                    <button type="button" className="rb-btn" onClick={() => useSourcedCandidate(candidate)}>
-                      Use
-                    </button>
-                  </article>
-                ))}
+                {roleCandidates.slice(0, 8).map((candidate) => {
+                  const nextStage = nextRoleCandidateStage(candidate.stage)
+                  const updating = stageUpdatingCandidateId === candidate.id
+                  return (
+                    <article key={candidate.id}>
+                      <span>
+                        <strong>{candidate.candidate?.name || "Candidate"}</strong>
+                        <em>{candidate.candidate?.currentRole || sourcedStageLabel(candidate.stage)}</em>
+                        {(candidate.calibrationStatus || candidate.calibrationNote) && (
+                          <em>
+                            {sourcedCalibrationLabel(candidate.calibrationStatus)}
+                            {candidate.calibrationNote ? ` - ${candidate.calibrationNote}` : ""}
+                          </em>
+                        )}
+                        {candidate.linkedSubmissionId && <em>Linked to submission {shortText(candidate.linkedSubmissionId, "submission", 18)}</em>}
+                      </span>
+                      <div className="rb-role-candidate-actions">
+                        <small>{sourcedStageLabel(candidate.stage)}</small>
+                        <button type="button" className="rb-btn" onClick={() => useSourcedCandidate(candidate)} disabled={updating}>
+                          Use
+                        </button>
+                        {nextStage && (
+                          <button
+                            type="button"
+                            className="rb-btn"
+                            onClick={() => void updateRoleCandidateStage(candidate, nextStage)}
+                            disabled={updating}
+                          >
+                            {updating ? "Saving..." : `Mark ${sourcedStageLabel(nextStage)}`}
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  )
+                })}
                 {roleCandidates.length === 0 && <p className="rb-side-empty">No sourced candidates for this role yet.</p>}
               </div>
+              {stageUpdateError && <p className="rb-error">Could not update candidate stage: {stageUpdateError}</p>}
               <form className="rb-role-quick-save" onSubmit={saveQuickCandidate}>
                 <header>
                   <span>Quick source</span>

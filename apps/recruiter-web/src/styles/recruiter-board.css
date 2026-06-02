@@ -1634,7 +1634,8 @@
 }
 
 .rb-role-candidate-list article {
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(112px, auto);
+  align-items: start;
 }
 
 .rb-role-candidate-list strong,
@@ -1661,6 +1662,16 @@
   color: #6a6a64;
   font-size: 11.5px;
   font-style: normal;
+}
+
+.rb-role-candidate-actions {
+  display: grid;
+  gap: 5px;
+  justify-items: stretch;
+}
+
+.rb-role-candidate-actions small {
+  justify-self: end;
 }
 
 .rb-role-submission-list aside {
@@ -10040,8 +10051,16 @@
   .rb-role-submission-list article {
     grid-template-columns: 1fr;
   }
+  .rb-role-candidate-list article {
+    grid-template-columns: 1fr;
+  }
   .rb-role-submission-list aside {
     justify-items: start;
+  }
+  .rb-role-candidate-actions,
+  .rb-role-candidate-actions small {
+    justify-items: start;
+    justify-self: stretch;
   }
   .rb-role-quick-save > div {
     grid-template-columns: 1fr;
