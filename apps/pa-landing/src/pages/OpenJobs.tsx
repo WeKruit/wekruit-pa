@@ -623,7 +623,7 @@ function TableView({ jobs, tab }: { jobs: UnifiedJob[]; tab: TabId }) {
         <div>Location</div>
         <div>Comp</div>
         <div>Posted</div>
-        <div style={{ textAlign: "right" }}>{tab === "direct" ? "Apply" : "Pitch"}</div>
+        <div style={{ textAlign: "right" }}>Next step</div>
       </div>
       {jobs.map((j) => <TableRow key={j.id} j={j} tab={tab} />)}
     </div>
@@ -757,7 +757,7 @@ function StatusPill({ j, tab }: { j: UnifiedJob; tab: TabId }) {
     const strong = j.fit === "strong"
     return (
       <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.08em", color: strong ? "var(--success)" : "var(--ink-3)" }}>
-        {strong ? "● Strong match" : "○ Open · apply via us"}
+        {strong ? "● Strong match" : "○ Open role"}
       </span>
     )
   }

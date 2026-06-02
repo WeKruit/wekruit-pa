@@ -32,3 +32,10 @@ test("OpenJobs empty filter state offers real candidate actions instead of unsup
   assert.match(source, /add your profile so Claire can keep matching roles to your actual targets/i)
   assert.match(source, /<Link to="\/onboarding" className="btn btn--primary btn--sm">Add your profile<\/Link>/)
 })
+
+test("OpenJobs table action language stays interview and role centric", () => {
+  assert.doesNotMatch(source, /\{tab === "direct" \? "Apply" : "Pitch"\}/)
+  assert.doesNotMatch(source, /Open · apply via us/)
+  assert.match(source, /<div style=\{\{ textAlign: "right" \}\}>Next step<\/div>/)
+  assert.match(source, /\{strong \? "● Strong match" : "○ Open role"\}/)
+})
