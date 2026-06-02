@@ -13,9 +13,17 @@ import { getEvaluationAttempt, saveHumanReview } from "@pa/pa-persistence"
 import { callWithFallback } from "@pa/pa-resume-parser"
 import { requireExternalSupplyAdmin } from "./external-supply/resolve-identity.js"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
+import { sendProactiveSchedulingInvite } from "./claire-agent/scheduling-invite.js"
 import { markPrescreenTerminalOutcome } from "./prescreen-outcome-service.js"
 import { getAnthropicConfig, getOpenAIConfig } from "./lib/llm-providers.js"
-import { ANTHROPIC_API_KEY } from "./orchestrator-deps.js"
+import {
+  ANTHROPIC_API_KEY,
+  CALCOM_API_KEY,
+  MAILGUN_API_KEY,
+  MAILGUN_DOMAIN,
+  MAILGUN_FROM,
+  MAILGUN_REGION,
+} from "./orchestrator-deps.js"
 
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 
@@ -93,6 +101,12 @@ export interface ReviewEvaluationAttemptDeps {
   now?: () => string
   markPrescreenOutcome?: typeof markPrescreenTerminalOutcome
   sendSms?: typeof sendRuntimeApprovedIMessage
+  /**
+   * Proactive interview-invite seam (Gap 1). Production = the real
+   * sendProactiveSchedulingInvite (gated, idempotent, fail-open); tests inject a
+   * spy. Fires ONLY on a PASS commit; a failure never fails the commit.
+   */
+  sendSchedulingInvite?: typeof sendProactiveSchedulingInvite
 }
 
 export interface DraftPrescreenReviewMessagesDeps {
@@ -182,6 +196,7 @@ export async function runReviewEvaluationAttempt(
         reviewStatus: input.status,
         markPrescreenOutcome: deps.markPrescreenOutcome ?? markPrescreenTerminalOutcome,
         sendSms: deps.sendSms ?? sendRuntimeApprovedIMessage,
+        sendSchedulingInvite: deps.sendSchedulingInvite ?? sendProactiveSchedulingInvite,
       })
       prescreenOutcomeCommitted = committed.committed
       candidateOutboundId = committed.outboundId
@@ -531,6 +546,7 @@ async function commitPrescreenOutcome(args: {
   reviewStatus: "approved" | "overridden"
   markPrescreenOutcome: typeof markPrescreenTerminalOutcome
   sendSms: typeof sendRuntimeApprovedIMessage
+  sendSchedulingInvite: typeof sendProactiveSchedulingInvite
 }): Promise<{ committed: boolean; outboundId?: string; candidateDecision?: PrescreenCandidateDecision }> {
   const terminal = args.finalOutcome?.prescreenTerminal
   if (
@@ -603,6 +619,27 @@ async function commitPrescreenOutcome(args: {
     },
     { merge: true },
   )
+
+  // GAP 1 — proactive interview invite on a PASS commit. Runs AFTER the durable
+  // writes (employer-visible profile now exists → the job is schedulable) and is
+  // gated/idempotent/fail-open inside sendProactiveSchedulingInvite: at the live
+  // default it only fires for the dev uids, NEVER throws, and never double-invites.
+  // A failure must not affect the already-committed PASS, so it is fully isolated.
+  if (terminal === "PASS") {
+    try {
+      await args.sendSchedulingInvite({
+        db: args.db,
+        candidateId: args.attempt.candidateId,
+        jobId: args.attempt.jobId,
+        toE164,
+        sessionId: args.attempt.prescreenSessionId,
+        nowIso: args.reviewedAt,
+      })
+    } catch {
+      /* fail-open — the PASS is already committed; the invite is best-effort. */
+    }
+  }
+
   return { committed: true, outboundId, candidateDecision }
 }
 
@@ -685,8 +722,28 @@ async function commitExternalSupplyProjection(args: {
 }
 
 export const paReviewEvaluationAttempt = onCall(
-  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60 },
+  {
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    // Cal.com + Mailgun power the Gap-1 proactive interview invite on a PASS
+    // commit (sendProactiveSchedulingInvite → buildInterviewOffer reads
+    // process.env.CALCOM_API_KEY; the confirmation/invite path reads MAILGUN_*).
+    // The invite is gated/fail-open: an UNSET CALCOM_API_KEY just makes the offer
+    // return calcom_unavailable → no invite, commit unaffected.
+    secrets: [CALCOM_API_KEY, MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION],
+  },
   async (req): Promise<ReviewEvaluationAttemptResult> => {
+    // Populate process.env so the scheduling offer/invite reads them lazily. A
+    // missing secret is tolerated (fail-open) — never throws into the commit.
+    for (const s of [CALCOM_API_KEY, MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION] as const) {
+      try {
+        const v = s.value().trim()
+        if (v) process.env[s.name] = v
+      } catch {
+        /* secret unset → leave env as-is; invite fails open */
+      }
+    }
     return runReviewEvaluationAttempt(req.data, req.auth, { db: getFirestore() })
   },
 )

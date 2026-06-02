@@ -242,7 +242,11 @@ async function run(db: Firestore): Promise<boolean> {
   ok(!beforeIds.includes(TEST_JOB_ID), "BEFORE: test job NOT yet schedulable", beforeIds)
 
   // (c) COMMIT through the REAL callable body. sendSms stubbed unless --send-sms.
+  // The Gap-1 proactive scheduling invite is ALSO stubbed in the default DRY run
+  // (it would otherwise hit real Cal.com + enqueue a real outbound for Adam's dev
+  // uid, which IS scheduling-eligible). --send-sms lets the real invite fire.
   const sent: Array<Record<string, unknown>> = []
+  const invited: Array<Record<string, unknown>> = []
   const deps = SEND_SMS
     ? { db, now: () => now }
     : {
@@ -252,6 +256,11 @@ async function run(db: Firestore): Promise<boolean> {
           sent.push(args)
           log("(stubbed SMS — NOT sent)", { to: args.to, runtimeSource: args.runtimeSource })
           return { outboundId: "harness-stub-out", created: true } as never
+        },
+        sendSchedulingInvite: async (args: Record<string, unknown>) => {
+          invited.push(args)
+          log("(stubbed proactive invite — NOT sent)", { candidateId: args.candidateId, jobId: args.jobId })
+          return { sent: false, reason: "not_eligible" } as never
         },
       }
   log("COMMIT — runReviewEvaluationAttempt status=approved", SEND_SMS ? "(--send-sms: REAL SMS WILL FIRE)" : "(SMS stubbed)")
