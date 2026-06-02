@@ -482,10 +482,10 @@ describe("recruiter role notifications", () => {
       roleTitle: "Founding Engineer",
       companyLabel: "Co. B",
       location: "San Francisco",
-      roleUrl: "https://candidate.wekruit.com/recruiters/job/role-1",
+      roleUrl: "https://wekruit-recruiters.web.app/recruiters/job/role-1",
     })
     assert.match(email.subject, /Founding Engineer/)
-    assert.match(email.text, /candidate\.wekruit\.com/)
+    assert.match(email.text, /wekruit-recruiters\.web\.app/)
     assert.match(email.text, /turn off new-role emails/i)
   })
 })

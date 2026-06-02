@@ -116,6 +116,20 @@
         "node scripts/inject-pa-landing-vite-env.mjs",
         "npm run build --workspace @pa/landing"
       ],
+      "redirects": [
+        {
+          "_comment": "Recruiter platform is owned by the isolated pa-recruiter SPA. Keep stale candidate-domain recruiter URLs from rendering the pa-landing bundle.",
+          "source": "/recruiters",
+          "destination": "https://wekruit-recruiters.web.app/recruiters",
+          "type": 301
+        },
+        {
+          "_comment": "Preserve recruiter deep links while routing to the single recruiter product surface.",
+          "source": "/recruiters/:rest*",
+          "destination": "https://wekruit-recruiters.web.app/recruiters/:rest*",
+          "type": 301
+        }
+      ],
       "rewrites": [
         {
           "source": "/api/v1/partner/users",

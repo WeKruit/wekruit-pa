@@ -299,7 +299,7 @@ export {
 // Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
 export { paPublicCvIngest } from "./public-cv-ingest.js"
-// Recruiter board (candidate.wekruit.com/recruiters): public list + submission.
+// Recruiter board (wekruit-recruiters.web.app/recruiters): public list + submission.
 // Lives in the `recruiter-board` multi-codebase (apps/recruiter-board-fn) as
 // of 2026-05-26 to keep the pa-orchestrator bundle small. Endpoints:
 // `paCollabJobsList`, `paRecruiterSubmission`, `paCollabJobsListSchema`.

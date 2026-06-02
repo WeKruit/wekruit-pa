@@ -19,8 +19,6 @@ import Onboarding from "./pages/Onboarding.js"
 import EmployerSignup from "./pages/EmployerSignup.js"
 import Employers, { EmployersInbox } from "./pages/Employers.js"
 import ReferPage, { ReferPublicPage } from "./pages/Refer.js"
-import RecruiterBoard from "./pages/RecruiterBoard.js"
-import RecruiterRole from "./pages/RecruiterRole.js"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("Missing #root element")
@@ -94,8 +92,6 @@ const fullRoutes = (
     <Route path="/j/:jobId" element={<PublicJob />} />
     <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
     <Route path="/open" element={<OpenJobs />} />
-    <Route path="/recruiters" element={<RecruiterBoard />} />
-    <Route path="/recruiters/job/:jobId" element={<RecruiterRole />} />
     <Route path="/onboarding" element={<Onboarding />} />
     <Route path="/employer" element={<EmployerSignup />} />
     <Route path="/employers" element={<Employers />} />

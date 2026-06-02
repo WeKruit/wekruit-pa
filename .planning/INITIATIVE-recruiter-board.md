@@ -36,8 +36,8 @@ Out of scope for this pass: recruiter payments, Chrome extension/LinkedIn CRM, A
 
 | Surface | Owner repo | URL | Purpose |
 |---|---|---|---|
-| Recruiter workspace | `apps/pa-landing` | `https://candidate.wekruit.com/recruiters` | Invite gate, overview, role marketplace, submissions tracker, feedback, settings |
-| Per-role page | `apps/pa-landing` | `https://candidate.wekruit.com/recruiters/job/:jobId` | Single role, deep-linkable submission flow |
+| Recruiter workspace | `apps/recruiter-web` | `https://wekruit-recruiters.web.app/recruiters` | Invite gate, overview, role marketplace, submissions tracker, feedback, settings |
+| Per-role page | `apps/recruiter-web` | `https://wekruit-recruiters.web.app/recruiters/job/:jobId` | Single role, deep-linkable submission flow |
 | Recruiter APIs | `apps/recruiter-board-fn` | `paRecruiterInviteCodeCreate`, `paRecruiterAccess`, `paRecruiterMe`, `paRecruiterPreferencesUpdate`, `paRecruiterSubmissionsList`, `paRecruiterSubmission`, `paRecruiterRoleReleasedNotify` | Create codes, register/code-gate recruiter, read profile, update notification prefs, list submissions, accept consented candidates, notify on role release |
 | Public job list API | `apps/recruiter-board-fn` | `paCollabJobsList` (HTTP CF, GET) | Returns active collab jobs from `pa-jobs` as JSON, cached 60s for anonymous callers |
 | Admin review | `apps/dashboard-web` | `https://wekruit-pa.web.app/admin/recruiter-submissions` | All submissions, filter by job/status, drill-down, update recruiter-visible status/feedback |
@@ -312,11 +312,11 @@ Each checklist column holds `TRUE` / `FALSE` (or empty). Each tab is independent
 
 ## pa-landing route plan
 
-- `/recruiters` — invite gate when unauthenticated; recruiter workspace when authenticated.
-- `/recruiters?tab=roles` — role marketplace from `paCollabJobsList`.
-- `/recruiters?tab=submissions` — private status tracker from `paRecruiterSubmissionsList`.
-- `/recruiters?tab=feedback` — recruiter-visible feedback notes.
-- `/recruiters/job/:jobId` — role page with JD, culture, checklist, candidate consent, and authenticated submission.
+- `https://wekruit-recruiters.web.app/recruiters` — invite gate when unauthenticated; recruiter workspace when authenticated.
+- `https://wekruit-recruiters.web.app/recruiters?tab=roles` — role marketplace from `paCollabJobsList`.
+- `https://wekruit-recruiters.web.app/recruiters?tab=submissions` — private status tracker from `paRecruiterSubmissionsList`.
+- `https://wekruit-recruiters.web.app/recruiters?tab=feedback` — recruiter-visible feedback notes.
+- `https://wekruit-recruiters.web.app/recruiters/job/:jobId` — role page with JD, culture, checklist, candidate consent, and authenticated submission.
 
 ## Admin dashboard
 
@@ -328,8 +328,8 @@ Each checklist column holds `TRUE` / `FALSE` (or empty). Each tab is independent
 
 ## Migration / cutover
 
-1. Build everything below `/recruiters` on `candidate.wekruit.com`.
-2. Once deployed + smoke-tested: update `WeKruit/hiring-board/index.html` to a redirect stub (`<meta http-equiv="refresh" content="0;url=https://candidate.wekruit.com/recruiters">` + JS fallback).
+1. Build everything below `/recruiters` in the isolated `apps/recruiter-web` host, `https://wekruit-recruiters.web.app`.
+2. Once deployed + smoke-tested: update `WeKruit/hiring-board/index.html` to a redirect stub (`<meta http-equiv="refresh" content="0;url=https://wekruit-recruiters.web.app/recruiters">` + JS fallback).
 3. Push to main. GH Pages serves redirect.
 4. Old per-role URLs `wekruit.github.io/hiring-board/#/role-N` map to nothing useful → redirect to `/recruiters` landing (no per-role mapping; recruiters re-pick from the new landing).
 
@@ -352,7 +352,7 @@ Operational setup before production use:
 
 1. Create the first recruiter invite code from `/admin/recruiter-submissions`.
 2. Ensure Mailgun secrets are available to the `recruiter-board` codebase.
-3. Deploy Firestore rules, `apps/recruiter-board-fn`, `apps/pa-landing`, and `apps/dashboard-web` from `main`.
+3. Deploy Firestore rules, `apps/recruiter-board-fn`, `apps/recruiter-web`, and `apps/dashboard-web` from `main`.
 4. Run one live smoke with a real invite code: create code → register recruiter → open role → submit consented test candidate → update status in admin → refresh recruiter tracker.
 5. Run one role-release smoke: activate a test `recruiterBoard` role → confirm `pa-recruiter-notifications` doc → confirm recruiter email delivery.
 

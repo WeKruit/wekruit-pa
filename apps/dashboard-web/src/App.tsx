@@ -71,7 +71,7 @@ import PendingOutbound from "./pages/PendingOutbound.js"
 import PassedCandidates from "./pages/PassedCandidates.js"
 // v1.9 Phase 89 — pre-screen feedback aggregate.
 import PrescreenFeedback from "./pages/PrescreenFeedback.js"
-// Recruiter board (candidate.wekruit.com/recruiters) — admin review surface.
+// Recruiter board (wekruit-recruiters.web.app/recruiters) — admin review surface.
 import RecruiterSubmissions from "./pages/RecruiterSubmissions.js"
 // v2.0 External Supply V1 — Wave D admin surfaces (Landing, BatchNew,
 // BatchDetail, Review, Evaluations, EvaluationDetail, Research, Outreach,

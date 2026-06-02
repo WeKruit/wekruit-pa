@@ -1,7 +1,7 @@
 /**
  * Recruiter board HTTP Cloud Functions.
  *
- * Backs the `/recruiters` route on candidate.wekruit.com. Public, CORS-enabled.
+ * Backs the `/recruiters` route on wekruit-recruiters.web.app. Public, CORS-enabled.
  * Lives in the `recruiter-board` multi-codebase (separate from pa-orchestrator)
  * so cold start + bundle stay small and the API stays usable for downstream
  * consumers (e.g. recruiter agents calling the public list endpoint).
@@ -68,7 +68,7 @@ const MAILGUN_DOMAIN = defineSecret("MAILGUN_DOMAIN")
 const MAILGUN_FROM = defineSecret("MAILGUN_FROM")
 const MAILGUN_REGION = defineSecret("MAILGUN_REGION")
 const MAILGUN_SECRETS = [MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION]
-const RECRUITER_PUBLIC_BASE_URL = "https://candidate.wekruit.com"
+const RECRUITER_PUBLIC_BASE_URL = "https://wekruit-recruiters.web.app"
 const RECRUITER_CANDIDATE_CONFIRM_URL =
   "https://us-central1-wekruit-5f89b.cloudfunctions.net/paRecruiterCandidateConsentConfirm"
 
