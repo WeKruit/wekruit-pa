@@ -189,12 +189,22 @@ function extractUsage(
   let inputTokens = 0
   let outputTokens = 0
   let totalTokens = 0
+  let cachedInputTokens = 0
   const hostedCounts = new Map<string, number>()
 
   for (const raw of result.rawResponses ?? []) {
     const r = raw as
       | {
-          usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+          usage?: {
+            inputTokens?: number
+            outputTokens?: number
+            totalTokens?: number
+            // 2A — cached-prefix portion of inputTokens. SDK camelCase
+            // (`inputTokensDetails.cachedTokens`) OR the wire snake_case
+            // (`input_tokens_details.cached_tokens`); read whichever is present.
+            inputTokensDetails?: { cachedTokens?: number }
+            input_tokens_details?: { cached_tokens?: number }
+          }
           output?: ReadonlyArray<{
             type?: string
             name?: string
@@ -208,6 +218,9 @@ function extractUsage(
       if (typeof u.inputTokens === "number") inputTokens += u.inputTokens
       if (typeof u.outputTokens === "number") outputTokens += u.outputTokens
       if (typeof u.totalTokens === "number") totalTokens += u.totalTokens
+      const cached =
+        u.inputTokensDetails?.cachedTokens ?? u.input_tokens_details?.cached_tokens
+      if (typeof cached === "number") cachedInputTokens += cached
     }
     for (const item of r.output ?? []) {
       const t = item?.type
@@ -253,6 +266,7 @@ function extractUsage(
   if (inputTokens > 0) usage.inputTokens = inputTokens
   if (outputTokens > 0) usage.outputTokens = outputTokens
   if (totalTokens > 0) usage.totalTokens = totalTokens
+  if (cachedInputTokens > 0) usage.cachedInputTokens = cachedInputTokens
   if (hostedCounts.size > 0) {
     usage.hostedToolCalls = [...hostedCounts.entries()].map(([name, count]) => ({ name, count }))
   }
@@ -309,6 +323,27 @@ function buildModelSettings(ctx: AgentTurnContext, hasTools: boolean) {
       ? { parallelToolCalls: ctx.parallelToolCalls }
       : {}),
   }
+}
+
+/**
+ * Hard cap on the SDK agent loop (model-call iterations per inbound turn).
+ *
+ * The @openai/agents `run()` defaults to `DEFAULT_MAX_TURNS = 10` when no cap is
+ * passed. Each iteration re-sends the full (currently uncached) ~5-6K system
+ * prompt + the monotonically GROWING transcript + accumulated tool outputs, so a
+ * turn that spirals toward the default ceiling multiplies token cost ~10x on a
+ * compounding context. The 2026-06-01 runaway (1.2B gpt-5.4-nano input tokens in
+ * one day → key auto-revoked) traced to this unbounded loop amplified by the
+ * thin-Claire tool surface. Making the cap EXPLICIT (a) bounds the per-inbound
+ * blast radius and (b) is instantly tightenable via `PA_AGENT_MAX_TURNS` without
+ * a code change. Default 8 leaves headroom for the longest legitimate chain
+ * (matching: set-prefs → find-match → compose; prescreen FSM: load → judge →
+ * record → advance → ask) while staying under the SDK ceiling. Clamped to [2,10].
+ */
+function resolveMaxTurns(): number {
+  const raw = Number(process.env.PA_AGENT_MAX_TURNS)
+  if (!Number.isFinite(raw)) return 8
+  return Math.max(2, Math.min(10, Math.trunc(raw)))
 }
 
 /**
@@ -386,16 +421,24 @@ async function runDefaultAgent(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     inputGuardrails: inputGuardrails as any,
   })
+  // Cost guard — bound the agent loop (see resolveMaxTurns). Applies to BOTH the
+  // session and no-session paths so neither can spiral to the SDK's default 10.
+  const maxTurns = resolveMaxTurns()
   try {
     const sdkResult = ctx.session
-      ? await run(agent, buildAgentsInputItems(ctx), { session: ctx.session })
-      : await run(agent, buildAgentsInput(ctx))
+      ? await run(agent, buildAgentsInputItems(ctx), { session: ctx.session, maxTurns })
+      : await run(agent, buildAgentsInput(ctx), { maxTurns })
     const text = String((sdkResult as { finalOutput?: unknown }).finalOutput ?? "").trim()
     const usage = extractUsage(
       sdkResult as { rawResponses?: ReadonlyArray<unknown> },
       provider,
       model
     )
+    // Observability: model-call iterations this turn (~= rawResponses length) so
+    // pa_turns.usage can surface a spin (runs pinned at the cap = a loop bug or a
+    // too-low cap). Best-effort; absent when the SDK didn't expose rawResponses.
+    const turns = (sdkResult as { rawResponses?: ReadonlyArray<unknown> }).rawResponses?.length
+    if (typeof turns === "number") usage.turnsUsed = turns
     return { text, usage }
   } catch (err) {
     const tripwire = mapTripwire(err)
@@ -403,6 +446,15 @@ async function runDefaultAgent(
       // A safety guardrail halted the turn BEFORE the model produced output.
       // Surface the tripwire so the caller emits the safe canned reply.
       return { text: "", usage: { provider, model }, tripwire }
+    }
+    // The loop hit the cap (MaxTurnsExceededError). Surface a marked, empty-text
+    // result rather than throwing an opaque 500 — the caller already falls back
+    // to a safe reply on empty text, and `turnsUsed` flags that we capped so a
+    // too-tight cap or a spin is visible in pa_turns.usage. (Matched by
+    // constructor name to survive the dual-package boundary, like mapTripwire.)
+    const e = err as { name?: string; constructor?: { name?: string } }
+    if (e?.constructor?.name === "MaxTurnsExceededError" || e?.name === "MaxTurnsExceededError") {
+      return { text: "", usage: { provider, model, turnsUsed: maxTurns, maxTurnsExceeded: true } }
     }
     throw err
   }
@@ -438,4 +490,5 @@ export const __forTesting = {
   buildModelSettings,
   buildInputGuardrails,
   mapTripwire,
+  resolveMaxTurns,
 }

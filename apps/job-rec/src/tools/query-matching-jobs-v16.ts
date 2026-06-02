@@ -122,6 +122,9 @@ const MATCH_LEAN_FIELDS = [
   "salaryMax", "salaryMin", "locationRaw", "locationBuckets", "primaryUrl", "atsApplyUrl",
   "sponsorship", "jobType", "seniorityLevel",
   "requiredSkills", "industry", "industryKey", "industryEnum", "industrySector", "relevantTags",
+  // Cross-source dedup (Option B, 2026-06-01) — both are short strings, read at
+  // match time only by the canonical-signature de-dupe pass. Cheap to include.
+  "canonicalSignature", "canonicalDuplicateOf",
 ] as const
 
 /**
@@ -2780,6 +2783,18 @@ async function runV16Query(
         typeof raw.seniorityLevel === "string"
           ? (normalizeCareerStageToken(raw.seniorityLevel) ?? raw.seniorityLevel)
           : undefined
+      // Cross-source dedup signals (Option B). Read camelCase first (receiver
+      // projection) and fall back to the scraper's snake_case raw passthrough,
+      // so this works whether or not the core-service receiver index-write has
+      // shipped yet. Empty strings are treated as absent.
+      const canonicalSignature =
+        (typeof raw.canonicalSignature === "string" && raw.canonicalSignature) ||
+        (typeof raw.canonical_signature === "string" && raw.canonical_signature) ||
+        undefined
+      const canonicalDuplicateOf =
+        (typeof raw.canonicalDuplicateOf === "string" && raw.canonicalDuplicateOf) ||
+        (typeof raw.canonical_duplicate_of === "string" && raw.canonical_duplicate_of) ||
+        undefined
       const merged: MatchingJob & { embedding?: number[] | null } = {
         ...m,
         ...(roleFunction && roleFunction.length > 0 ? { roleFunction } : {}),
@@ -2787,6 +2802,8 @@ async function runV16Query(
         ...(relevantTags && relevantTags.length > 0 ? { relevantTags } : {}),
         ...(locationBuckets && locationBuckets.length > 0 ? { locationBuckets } : {}),
         ...(seniorityLevel ? { seniorityLevel } : {}),
+        ...(canonicalSignature ? { canonicalSignature } : {}),
+        ...(canonicalDuplicateOf ? { canonicalDuplicateOf } : {}),
       }
       // Validate shape (Zod). Zod will tolerate the new optional fields per
       // the types.ts edits; bad rows still drop loudly.
@@ -3470,6 +3487,64 @@ export async function queryMatchingJobsV16(
     const bf = timestampToMs(b.job.firstSeenAt)
     return bf - af
   })
+
+  // Cross-source dedup, Option B (2026-06-01) — NON-BREAKING.
+  //
+  // `source_repo` is part of the doc-id hash, so the SAME role at the SAME
+  // company scraped from two sources (e.g. `greenhouse:acme` + a `jobright`
+  // mirror) lands as two distinct `matching-jobs` docs with the SAME
+  // `canonicalSignature`. Collapse them here so a candidate never sees the
+  // same role twice. We run this AFTER the score sort, so the array is already
+  // ordered score-desc / freshest-first → the first row encountered for a
+  // signature is the natural primary. Within a signature group we additionally
+  // prefer a row that is NOT marked `canonicalDuplicateOf` (the receiver's
+  // additive index-write designates the primary), but the collapse is robust
+  // even when that field is absent. Rows WITHOUT a `canonicalSignature` are
+  // untouched — they fall through to the existing company|title dedup below.
+  {
+    const before = scored.length
+    const primaryIndexBySig = new Map<string, number>()
+    const droppedDupeIds: string[] = []
+    const collapsed: typeof scored = []
+    for (const s of scored) {
+      const sig = (s.job as { canonicalSignature?: string }).canonicalSignature
+      if (!sig) {
+        collapsed.push(s)
+        continue
+      }
+      const existingIdx = primaryIndexBySig.get(sig)
+      if (existingIdx === undefined) {
+        primaryIndexBySig.set(sig, collapsed.length)
+        collapsed.push(s)
+        continue
+      }
+      // A row with this signature is already kept. Decide which is the primary.
+      const incomingIsDupe = Boolean(
+        (s.job as { canonicalDuplicateOf?: string }).canonicalDuplicateOf,
+      )
+      const keptIsDupe = Boolean(
+        (collapsed[existingIdx]!.job as { canonicalDuplicateOf?: string }).canonicalDuplicateOf,
+      )
+      // Only swap when the kept row is an explicit duplicate AND the incoming
+      // one is not — i.e. the receiver designated the incoming row as the
+      // primary. Otherwise keep the already-chosen (higher-scored/fresher) row.
+      if (keptIsDupe && !incomingIsDupe) {
+        droppedDupeIds.push(collapsed[existingIdx]!.job.id)
+        collapsed[existingIdx] = s
+      } else {
+        droppedDupeIds.push(s.job.id)
+      }
+    }
+    if (collapsed.length !== before) {
+      scored = collapsed
+      log("pa.match.canonical_signature_dedup_applied", {
+        before,
+        after: scored.length,
+        dropped: before - scored.length,
+        droppedJobIds: droppedDupeIds.slice(0, 20),
+      })
+    }
+  }
 
   if (args.collabPrescreenOnly === true && scored.length > 0) {
     const eligible = await loadCollabPrescreenEligibleJobIds(

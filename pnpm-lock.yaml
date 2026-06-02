@@ -112,9 +112,6 @@ importers:
       '@google-cloud/tasks':
         specifier: ^5.5.2
         version: 5.5.2
-      '@openai/agents':
-        specifier: ^0.8.5
-        version: 0.8.5(@cfworker/json-schema@4.1.1)(ws@8.20.0)(zod@3.25.76)
       '@pa/agent-registry':
         specifier: 0.0.1
         version: link:../../packages/agent-registry
@@ -10882,18 +10879,6 @@ snapshots:
     transitivePeerDependencies:
       - '@types/node'
 
-  '@openai/agents-core@0.8.5(@cfworker/json-schema@4.1.1)(ws@8.20.0)(zod@3.25.76)':
-    dependencies:
-      debug: 4.4.3(supports-color@8.1.1)
-      openai: 6.36.0(ws@8.20.0)(zod@3.25.76)
-    optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@3.25.76)
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - supports-color
-      - ws
-
   '@openai/agents-core@0.8.5(@cfworker/json-schema@4.1.1)(ws@8.20.0)(zod@4.4.3)':
     dependencies:
       debug: 4.4.3(supports-color@8.1.1)
@@ -10901,17 +10886,6 @@ snapshots:
     optionalDependencies:
       '@modelcontextprotocol/sdk': 1.29.0(@cfworker/json-schema@4.1.1)(zod@4.4.3)
       zod: 4.4.3
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - supports-color
-      - ws
-
-  '@openai/agents-openai@0.8.5(@cfworker/json-schema@4.1.1)(ws@8.20.0)(zod@3.25.76)':
-    dependencies:
-      '@openai/agents-core': 0.8.5(@cfworker/json-schema@4.1.1)(ws@8.20.0)(zod@3.25.76)
-      debug: 4.4.3(supports-color@8.1.1)
-      openai: 6.36.0(ws@8.20.0)(zod@3.25.76)
-      zod: 3.25.76
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - supports-color
@@ -10928,19 +10902,6 @@ snapshots:
       - supports-color
       - ws
 
-  '@openai/agents-realtime@0.8.5(@cfworker/json-schema@4.1.1)(zod@3.25.76)':
-    dependencies:
-      '@openai/agents-core': 0.8.5(@cfworker/json-schema@4.1.1)(ws@8.20.0)(zod@3.25.76)
-      '@types/ws': 8.18.1
-      debug: 4.4.3(supports-color@8.1.1)
-      ws: 8.20.0
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-
   '@openai/agents-realtime@0.8.5(@cfworker/json-schema@4.1.1)(zod@4.4.3)':
     dependencies:
       '@openai/agents-core': 0.8.5(@cfworker/json-schema@4.1.1)(ws@8.20.0)(zod@4.4.3)
@@ -10953,21 +10914,6 @@ snapshots:
       - bufferutil
       - supports-color
       - utf-8-validate
-
-  '@openai/agents@0.8.5(@cfworker/json-schema@4.1.1)(ws@8.20.0)(zod@3.25.76)':
-    dependencies:
-      '@openai/agents-core': 0.8.5(@cfworker/json-schema@4.1.1)(ws@8.20.0)(zod@3.25.76)
-      '@openai/agents-openai': 0.8.5(@cfworker/json-schema@4.1.1)(ws@8.20.0)(zod@3.25.76)
-      '@openai/agents-realtime': 0.8.5(@cfworker/json-schema@4.1.1)(zod@3.25.76)
-      debug: 4.4.3(supports-color@8.1.1)
-      openai: 6.36.0(ws@8.20.0)(zod@3.25.76)
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - bufferutil
-      - supports-color
-      - utf-8-validate
-      - ws
 
   '@openai/agents@0.8.5(@cfworker/json-schema@4.1.1)(ws@8.20.0)(zod@4.4.3)':
     dependencies:
@@ -15602,6 +15548,7 @@ snapshots:
     optionalDependencies:
       ws: 8.20.0
       zod: 3.25.76
+    optional: true
 
   openai@6.36.0(ws@8.20.0)(zod@4.4.3):
     optionalDependencies:

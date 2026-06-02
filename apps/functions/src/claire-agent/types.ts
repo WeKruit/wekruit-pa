@@ -118,10 +118,27 @@ export interface ClaireToolContext {
   }) => Promise<{ ok: boolean; reason?: string; sessionId: string }>
 }
 
+/**
+ * 2A — per-turn token usage summed from the SDK run() result's rawResponses[*].usage.
+ * The live thin path calls run() directly (NOT @pa/agent-runtime's extractUsage), so this
+ * is the thin path's own usage shape. `cachedInputTokens` is the prompt-cache telemetry
+ * (the cached-prefix portion of inputTokens) — ~0 until byte-stable instructions (2B) cache.
+ */
+export type ClaireTurnUsage = {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  cachedInputTokens?: number
+  /** model-call iterations this turn (~= rawResponses length). */
+  turnsUsed?: number
+}
+
 export type ClaireRunResult = {
   finalText: string
   toolCalls: string[]
   deliveredViaTool: boolean
+  /** 2A — best-effort per-turn token usage (absent on tripwire/error paths). */
+  usage?: ClaireTurnUsage
 }
 
 /** Workstream stub marker — throws so an unfilled seam fails loudly, never silently. */

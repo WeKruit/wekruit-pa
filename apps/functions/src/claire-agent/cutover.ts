@@ -49,10 +49,20 @@ export async function maybeRunThinClaire(
 
   const userId = typeof data.userId === "string" ? data.userId : undefined
   const sessionId = typeof data.sessionId === "string" ? data.sessionId : undefined
-  const text =
+  let text =
     typeof data.body === "string" ? data.body : typeof data.text === "string" ? data.text : ""
   // Thin Claire needs a durable session + a real message. Otherwise fall through to legacy.
   if (!userId || !sessionId || !text.trim()) return false
+
+  // DEV TRIGGER — `__PA_SCHEDULE__` deterministically exercises the thin scheduling
+  // flow (mirrors `__PA_FIND_MATCH__`). We rewrite the sentinel into a natural
+  // scheduling ask so the agent calls offer_interview_slots through its normal turn.
+  // The scheduling tools self-gate to SCHEDULING_DEV_UIDS, so a non-dev sender just
+  // hears "a teammate will lock in a time" — safe to leave the sentinel ungated here.
+  if (text.trim() === "__PA_SCHEDULE__") {
+    text = "I'd like to schedule the interview now — what times do you have open?"
+    log("thin_claire.dev_trigger.schedule", { eventId, userId })
+  }
 
   let enabled = false
   try {
@@ -92,8 +102,12 @@ export async function maybeRunThinClaire(
     // (evals must not touch real Storage). makeV16FindMatch no-ops without these
     // deps, and maybeSendRecCard re-checks the flag internally — so on any
     // init failure we fall through to text-only recs, never blocking delivery.
+    // REC-CARD IMAGE ALLOWLIST (Adam 2026-06-01: "for image let's only send to 4243201960"): even though
+    // thin Claire is on for all users, the card IMAGE only sends to this dev-phone uid for now — everyone
+    // else gets text-only recs. Widen this set to ramp the image. (The text rec + offer are unaffected.)
+    const REC_CARD_UIDS = new Set<string>(["8fEwIduUrzxZsblHHsNz"]) // +14243201960
     let cardDeps: import("./tools/matching-tools.js").V16FindMatchCardDeps | undefined
-    if (!deps.dryRun && toE164) {
+    if (!deps.dryRun && toE164 && REC_CARD_UIDS.has(userId)) {
       try {
         const { isJobRecCardEnabled } = await import("../job-rec-card/job-rec-card.js")
         if (isJobRecCardEnabled()) {
@@ -132,7 +146,7 @@ export async function maybeRunThinClaire(
       log,
       ...(deps.dryRun ? { dryRun: true } : {}),
     })
-    await runClaireTurn(
+    const turnResult = await runClaireTurn(
       {
         userId,
         sessionId,
@@ -168,6 +182,41 @@ export async function maybeRunThinClaire(
       .collection(PA_COLLECTIONS.inboundEvents)
       .doc(eventId)
       .set({ status: "completed", handledBy: "thin_claire" }, { merge: true })
+
+    // 2A — per-turn token usage telemetry (incl cached-prefix tokens) keyed on the inbound event,
+    // tagged by MODE so prompt-cache hit-rate is visible per mode. Fail-open: a write error here
+    // must NEVER fail the turn (the reply already went out). Skipped when no usage surfaced.
+    if (turnResult?.usage) {
+      try {
+        await db
+          .collection(PA_COLLECTIONS.turns)
+          .doc(eventId)
+          .set(
+            {
+              userId,
+              sessionId,
+              mode: decision.mode,
+              handledBy: "thin_claire",
+              usage: turnResult.usage,
+              createdAt: new Date().toISOString(),
+            },
+            { merge: true },
+          )
+        log("thin_claire.turn_usage", {
+          eventId,
+          userId,
+          mode: decision.mode,
+          inputTokens: turnResult.usage.inputTokens,
+          cachedInputTokens: turnResult.usage.cachedInputTokens,
+          turnsUsed: turnResult.usage.turnsUsed,
+        })
+      } catch (usageErr) {
+        log("thin_claire.turn_usage_failed", {
+          eventId,
+          err: usageErr instanceof Error ? usageErr.message : String(usageErr),
+        })
+      }
+    }
     log("thin_claire_handled", { eventId, userId })
     return true
   } catch (e) {

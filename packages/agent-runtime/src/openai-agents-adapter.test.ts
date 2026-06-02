@@ -146,12 +146,71 @@ test("extractUsage sums tokens across rawResponses[].usage and counts web_search
   assert.deepEqual(usage.hostedToolCalls, [{ name: "web_search", count: 2 }])
 })
 
+// 2A — cached-prefix token telemetry. extractUsage sums cachedInputTokens from BOTH the SDK
+// camelCase (inputTokensDetails.cachedTokens) and the wire snake_case (input_tokens_details
+// .cached_tokens), and omits the field entirely when no cached tokens are present.
+test("extractUsage sums cachedInputTokens from camelCase + snake_case shapes (2A)", () => {
+  const fakeResult = {
+    rawResponses: [
+      {
+        usage: {
+          inputTokens: 100,
+          outputTokens: 10,
+          totalTokens: 110,
+          inputTokensDetails: { cachedTokens: 80 },
+        },
+      },
+      {
+        usage: {
+          inputTokens: 50,
+          outputTokens: 5,
+          totalTokens: 55,
+          input_tokens_details: { cached_tokens: 40 },
+        },
+      },
+    ],
+  }
+  const usage = t9ForTesting.extractUsage(fakeResult, "openai", "gpt-5.4-nano")
+  assert.equal(usage.inputTokens, 150)
+  assert.equal(usage.cachedInputTokens, 120)
+})
+
+test("extractUsage omits cachedInputTokens when no cached tokens present (2A)", () => {
+  const fakeResult = {
+    rawResponses: [{ usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } }],
+  }
+  const usage = t9ForTesting.extractUsage(fakeResult, "openai", "gpt-5.4-nano")
+  assert.equal(usage.inputTokens, 10)
+  assert.equal(usage.cachedInputTokens, undefined)
+})
+
 test("extractUsage returns provider+model only when SDK omits usage and tools", () => {
   const usage = t9ForTesting.extractUsage({ rawResponses: [] }, "siliconflow", "deepseek-chat")
   assert.equal(usage.provider, "siliconflow")
   assert.equal(usage.model, "deepseek-chat")
   assert.equal(usage.inputTokens, undefined)
   assert.equal(usage.hostedToolCalls, undefined)
+})
+
+test("resolveMaxTurns: default 8 (cost guard), env override, clamp to [2,10]", () => {
+  const saved = process.env.PA_AGENT_MAX_TURNS
+  try {
+    delete process.env.PA_AGENT_MAX_TURNS
+    assert.equal(t9ForTesting.resolveMaxTurns(), 8) // bounded default (< SDK's 10)
+    process.env.PA_AGENT_MAX_TURNS = "5"
+    assert.equal(t9ForTesting.resolveMaxTurns(), 5)
+    process.env.PA_AGENT_MAX_TURNS = "1" // below floor → clamps up to 2
+    assert.equal(t9ForTesting.resolveMaxTurns(), 2)
+    process.env.PA_AGENT_MAX_TURNS = "99" // above ceiling → clamps to 10 (SDK max)
+    assert.equal(t9ForTesting.resolveMaxTurns(), 10)
+    process.env.PA_AGENT_MAX_TURNS = "garbage" // non-numeric → default 8
+    assert.equal(t9ForTesting.resolveMaxTurns(), 8)
+    process.env.PA_AGENT_MAX_TURNS = "6.9" // truncates to 6
+    assert.equal(t9ForTesting.resolveMaxTurns(), 6)
+  } finally {
+    if (saved === undefined) delete process.env.PA_AGENT_MAX_TURNS
+    else process.env.PA_AGENT_MAX_TURNS = saved
+  }
 })
 
 test("extractUsage tolerates missing rawResponses field entirely (defensive)", () => {

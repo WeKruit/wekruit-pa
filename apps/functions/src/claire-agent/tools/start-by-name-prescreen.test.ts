@@ -11,7 +11,10 @@
  *                                       with the job's canonical tags (matching-jobs back-fill).
  *   find_my_role tool                 — the agent composes the canonical query; the tool ranks.
  *   begin_collab_prescreen({jobId})   — starts the RESOLVED jobId; a non-matched jobId → not_matched.
- *   prescreenStatusFromTerminal / check_prescreen_progress — unchanged.
+ *   prescreenStatusFromTerminal / prescreenStatusFromSession / check_prescreen_progress — HITL-review-aware:
+ *                                       a PASS/FAIL still pending operator commit reports 'under_review',
+ *                                       never 'passed'/'not_passed' (so Claire can't tell a candidate they
+ *                                       passed before a human confirms it).
  *
  * Pure/offline against a Firestore-faithful fake. No SDK/LLM/network — deterministic.
  */
@@ -21,6 +24,7 @@ import {
   scoreRoleAgainstQuery,
   rankRoles,
   prescreenStatusFromTerminal,
+  prescreenStatusFromSession,
   buildMatchingTools,
   type CollabRole,
   type RoleQuery,
@@ -101,13 +105,64 @@ test("scoreRoleAgainstQuery: canonical roleFunction outweighs a raw-text token t
 
 // ── prescreenStatusFromTerminal ──────────────────────────────────────────────
 
-test("prescreenStatusFromTerminal maps PASS→passed, FAIL→not_passed, null/other→in_progress", () => {
+test("prescreenStatusFromTerminal (bare terminal, no review) maps PASS→passed, FAIL→not_passed, null/other→in_progress", () => {
   assert.equal(prescreenStatusFromTerminal("PASS"), "passed")
   assert.equal(prescreenStatusFromTerminal("pass"), "passed")
   assert.equal(prescreenStatusFromTerminal("FAIL"), "not_passed")
+  assert.equal(prescreenStatusFromTerminal("HARD_STOP"), "not_passed")
   assert.equal(prescreenStatusFromTerminal(null), "in_progress")
   assert.equal(prescreenStatusFromTerminal(undefined), "in_progress")
   assert.equal(prescreenStatusFromTerminal("PAUSE"), "in_progress")
+})
+
+test("prescreenStatusFromTerminal: a PENDING-review PASS is under_review, NOT passed (the HIGH-sev bug)", () => {
+  // terminalActionPendingReview === true → Claire's verdict, NOT operator-committed → under_review.
+  assert.equal(prescreenStatusFromTerminal("PASS", { pendingReview: true }), "under_review")
+  assert.equal(prescreenStatusFromTerminal("PASS", { reviewStatus: "pending" }), "under_review")
+  // a pending FAIL/HARD_STOP is likewise operator-gated → under_review (not not_passed yet).
+  assert.equal(prescreenStatusFromTerminal("FAIL", { pendingReview: true }), "under_review")
+  assert.equal(prescreenStatusFromTerminal("HARD_STOP", { reviewStatus: "pending" }), "under_review")
+})
+
+test("prescreenStatusFromTerminal: a COMMITTED PASS/FAIL resolves to the real outcome", () => {
+  // commit flips terminalActionPendingReview→false and review.status→approved|overridden.
+  assert.equal(prescreenStatusFromTerminal("PASS", { pendingReview: false, reviewStatus: "approved" }), "passed")
+  assert.equal(prescreenStatusFromTerminal("PASS", { reviewStatus: "overridden" }), "passed")
+  assert.equal(prescreenStatusFromTerminal("FAIL", { pendingReview: false, reviewStatus: "approved" }), "not_passed")
+})
+
+// ── prescreenStatusFromSession (reads the session's HITL signals) ─────────────
+
+test("prescreenStatusFromSession: pending PASS → under_review", () => {
+  assert.equal(
+    prescreenStatusFromSession({ terminal: "PASS", terminalActionPendingReview: true, review: { status: "pending" } }),
+    "under_review",
+  )
+})
+
+test("prescreenStatusFromSession: committed PASS → passed", () => {
+  assert.equal(
+    prescreenStatusFromSession({ terminal: "PASS", terminalActionPendingReview: false, review: { status: "approved" } }),
+    "passed",
+  )
+})
+
+test("prescreenStatusFromSession: pending FAIL → under_review; committed FAIL → not_passed", () => {
+  assert.equal(
+    prescreenStatusFromSession({ terminal: "FAIL", terminalActionPendingReview: true, review: { status: "pending" } }),
+    "under_review",
+  )
+  assert.equal(
+    prescreenStatusFromSession({ terminal: "FAIL", terminalActionPendingReview: false, review: { status: "overridden" } }),
+    "not_passed",
+  )
+})
+
+test("prescreenStatusFromSession: no terminal → in_progress; missing/empty review with terminal is treated as committed", () => {
+  assert.equal(prescreenStatusFromSession({}), "in_progress")
+  assert.equal(prescreenStatusFromSession({ terminal: null }), "in_progress")
+  // a terminal with NEITHER pending flag (e.g. legacy doc that never went through HITL) → committed outcome.
+  assert.equal(prescreenStatusFromSession({ terminal: "PASS" }), "passed")
 })
 
 // ── fake Firestore ───────────────────────────────────────────────────────────
@@ -200,6 +255,27 @@ test("find_my_role: prescreened session status OVERRIDES 'matched' + back-fills 
   assert.equal(best.status, "passed", "session terminal PASS overrides 'matched' (proves back-fill + merge)")
 })
 
+test("find_my_role: a PENDING-review PASS session reports under_review, NOT passed (live HIGH-sev repro)", async () => {
+  // Mirrors live user QswUyww2PQQdV3EoKrSh / hs-11005308-paradigm-gtm-growth: terminal=PASS but
+  // terminalActionPendingReview=true (operator has NOT committed) → must NOT surface 'passed'.
+  const { db } = makeFakeDb({
+    "pa-users/u1": { lastCollabRoles: [{ jobId: "job-invoko-pm", company: "invoko.ai", title: "Product Manager", roleFunction: ["product_management"], industrySector: ["technology_general"] }] },
+    "pa-prescreen-sessions/sPending": {
+      userId: "u1",
+      jobId: "job-invoko-pm",
+      terminal: "PASS",
+      terminalActionPendingReview: true,
+      review: { status: "pending" },
+      createdAt: "2026-05-31",
+      cfgSnapshot: { company: "invoko.ai", jobTitle: "Product Manager" },
+    },
+  })
+  const out = await call(tool(makeCtx(db), "find_my_role"), { roleFunction: ["product_management"], company: null, industrySector: null, query: "did I pass?" })
+  assert.equal(out.kind, "one", JSON.stringify(out))
+  const best = out.best as Record<string, string>
+  assert.equal(best.status, "under_review", "a PASS still pending HITL review must NOT be reported as passed")
+})
+
 test("find_my_role: no canonical match → no_match (lists their roles so the agent can guide them)", async () => {
   const { db } = makeFakeDb({ "pa-users/u1": { lastCollabRoles: LAST_COLLAB } })
   const out = await call(tool(makeCtx(db), "find_my_role"), { roleFunction: ["legal_and_compliance"], company: null, industrySector: null, query: null })
@@ -258,7 +334,26 @@ test("begin_collab_prescreen: no phone available → no_phone, session-start NOT
   assert.equal(started, false)
 })
 
-// ── check_prescreen_progress (unchanged) ─────────────────────────────────────
+// ── check_prescreen_progress (HITL-review-aware status) ──────────────────────
+
+test("check_prescreen_progress: a PENDING-review PASS is reported under_review, NOT passed", async () => {
+  const { db } = makeFakeDb({
+    "pa-prescreen-sessions/sPend": {
+      userId: "u1",
+      jobId: "job-paradigm",
+      terminal: "PASS",
+      terminalActionPendingReview: true,
+      review: { status: "pending" },
+      createdAt: "2026-05-31",
+      cfgSnapshot: { jobTitle: "GTM Growth", company: "paradigm.study" },
+    },
+  })
+  const out = await call(tool(makeCtx(db), "check_prescreen_progress"), { query: null })
+  assert.equal(out.ok, true)
+  const sessions = out.sessions as Array<Record<string, string>>
+  assert.equal(sessions.length, 1)
+  assert.equal(sessions[0]!.status, "under_review", "pending PASS must surface under_review, never passed")
+})
 
 test("check_prescreen_progress: lists all sessions with mapped status, most-recent first", async () => {
   const { db } = makeFakeDb({

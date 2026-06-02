@@ -65,7 +65,7 @@ describe("sendReaction", () => {
       assert.equal(out.message_handle, "rx-1")
       assert.equal(mock.calls.length, 1)
       const c = mock.calls[0]!
-      assert.equal(c.url, "https://api.sendblue.com/api/send-reaction")
+      assert.equal(c.url, "https://api.sendblue.co/api/send-reaction")
       assert.equal(c.init.method, "POST")
       const headers = c.init.headers as Record<string, string>
       assert.equal(headers["sb-api-key-id"], "key")

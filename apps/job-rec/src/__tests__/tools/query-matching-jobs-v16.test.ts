@@ -1672,6 +1672,188 @@ test("queryMatchingJobsV16: dedup key uses title fallback so multiple roleTitle-
   assert.deepEqual(ids, ["acme-pm", "acme-swe"])
 })
 
+// ---------------------------------------------------------------------------
+// Cross-source dedup, Option B (2026-06-01). `source_repo` is part of the
+// doc-id hash, so the SAME role at the SAME company from two sources lands as
+// two `matching-jobs` docs sharing one `canonicalSignature`. The match read
+// path must collapse them to ONE so the candidate never sees the role twice.
+// Docs WITHOUT the signature must be unaffected (non-breaking).
+// ---------------------------------------------------------------------------
+
+test("queryMatchingJobsV16: two docs with same canonicalSignature collapse to one at match time", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_csig").set({
+    tags: {
+      skills: ["python"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+    },
+  })
+  const SIG = "sha256-acme-swe-sf"
+  // Source A: greenhouse mirror — fresher (so it ranks first → becomes primary).
+  await mfs.collection("matching-jobs").doc("greenhouse-acme-swe").set({
+    id: "greenhouse-acme-swe",
+    status: "active",
+    companyName: "AcmeCo",
+    roleTitle: "Software Engineer",
+    atsApplyUrl: "https://greenhouse.io/acme/swe",
+    primaryUrl: "https://example.com/gh-acme-swe",
+    industry: "tech",
+    industryKey: "tech",
+    sponsorship: null,
+    locationRaw: "San Francisco, CA",
+    firstSeenAt: new Date(NOW - 2 * 24 * 3600 * 1000).toISOString(),
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    canonicalSignature: SIG,
+  })
+  // Source B: jobright mirror — SAME role/company, different source_repo → a
+  // distinct doc id, but the SAME canonicalSignature. Slightly older.
+  await mfs.collection("matching-jobs").doc("jobright-acme-swe").set({
+    id: "jobright-acme-swe",
+    status: "active",
+    companyName: "AcmeCo",
+    roleTitle: "Software Engineer",
+    atsApplyUrl: "https://jobs.lever.co/acme/swe",
+    primaryUrl: "https://example.com/jr-acme-swe",
+    industry: "tech",
+    industryKey: "tech",
+    sponsorship: null,
+    locationRaw: "San Francisco, CA",
+    firstSeenAt: new Date(NOW - 6 * 24 * 3600 * 1000).toISOString(),
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    canonicalSignature: SIG,
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_csig", nowMs: NOW },
+    { db: asFirestore(mfs) },
+  )
+
+  // Exactly ONE survives — the two cross-source dupes collapsed by signature.
+  assert.equal(r.jobs.length, 1)
+  // The freshest (greenhouse, 2d old) is kept as primary; the older (6d) dropped.
+  assert.equal(r.jobs[0]!.id, "greenhouse-acme-swe")
+})
+
+test("queryMatchingJobsV16: canonicalDuplicateOf marks the primary — non-dupe row is kept even if older", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_csig2").set({
+    tags: {
+      skills: ["python"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+    },
+  })
+  const SIG = "sha256-beta-swe-nyc"
+  // The receiver designated `primary-beta-swe` as the canonical primary; the
+  // fresher `dupe-beta-swe` was stamped canonicalDuplicateOf → primary. Even
+  // though the dupe is fresher (would otherwise win the sort), the explicit
+  // primary marker keeps the receiver-designated row.
+  await mfs.collection("matching-jobs").doc("dupe-beta-swe").set({
+    id: "dupe-beta-swe",
+    status: "active",
+    companyName: "BetaCo",
+    roleTitle: "Backend Engineer",
+    atsApplyUrl: "https://greenhouse.io/beta/swe",
+    primaryUrl: "https://example.com/dupe-beta",
+    industry: "tech",
+    industryKey: "tech",
+    sponsorship: null,
+    locationRaw: "New York, NY",
+    firstSeenAt: new Date(NOW - 1 * 24 * 3600 * 1000).toISOString(),
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    canonicalSignature: SIG,
+    canonicalDuplicateOf: "primary-beta-swe",
+  })
+  await mfs.collection("matching-jobs").doc("primary-beta-swe").set({
+    id: "primary-beta-swe",
+    status: "active",
+    companyName: "BetaCo",
+    roleTitle: "Backend Engineer",
+    atsApplyUrl: "https://jobs.lever.co/beta/swe",
+    primaryUrl: "https://example.com/primary-beta",
+    industry: "tech",
+    industryKey: "tech",
+    sponsorship: null,
+    locationRaw: "New York, NY",
+    firstSeenAt: new Date(NOW - 8 * 24 * 3600 * 1000).toISOString(),
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+    canonicalSignature: SIG,
+    // no canonicalDuplicateOf — this IS the primary
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_csig2", nowMs: NOW },
+    { db: asFirestore(mfs) },
+  )
+
+  assert.equal(r.jobs.length, 1)
+  // The receiver-designated primary is kept even though the dupe is fresher.
+  assert.equal(r.jobs[0]!.id, "primary-beta-swe")
+})
+
+test("queryMatchingJobsV16: docs WITHOUT canonicalSignature are unaffected by the dedup (non-breaking)", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_nosig").set({
+    tags: {
+      skills: ["python"],
+      industryEnum: ["tech_software"],
+      schemaVersion: 1,
+      targetRoleFunction: ["software_engineering"],
+    },
+  })
+  // Two DIFFERENT roles at the same company, NEITHER carries a
+  // canonicalSignature. The canonical-signature pass must leave both untouched;
+  // the existing company|title dedup keeps them (distinct titles). Proves the
+  // new field never collapses legacy / un-stamped rows.
+  await mfs.collection("matching-jobs").doc("gamma-swe").set({
+    id: "gamma-swe",
+    status: "active",
+    companyName: "GammaCo",
+    roleTitle: "Software Engineer",
+    atsApplyUrl: "https://greenhouse.io/gamma/swe",
+    primaryUrl: "https://example.com/gamma-swe",
+    industry: "tech",
+    industryKey: "tech",
+    sponsorship: null,
+    locationRaw: "San Francisco, CA",
+    firstSeenAt: FRESH_TS,
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+  })
+  await mfs.collection("matching-jobs").doc("gamma-staff").set({
+    id: "gamma-staff",
+    status: "active",
+    companyName: "GammaCo",
+    roleTitle: "Staff Software Engineer",
+    atsApplyUrl: "https://greenhouse.io/gamma/staff",
+    primaryUrl: "https://example.com/gamma-staff",
+    industry: "tech",
+    industryKey: "tech",
+    sponsorship: null,
+    locationRaw: "San Francisco, CA",
+    firstSeenAt: FRESH_TS,
+    roleFunction: ["software_engineering"],
+    requiredSkills: ["python"],
+  })
+
+  const r = await queryMatchingJobsV16(
+    { userId: "u_nosig", nowMs: NOW },
+    { db: asFirestore(mfs) },
+  )
+
+  // Both survive — no canonicalSignature means no collapse.
+  assert.equal(r.jobs.length, 2)
+  const ids = r.jobs.map((j) => j.id).sort()
+  assert.deepEqual(ids, ["gamma-staff", "gamma-swe"])
+})
+
 test("queryMatchingJobsV16: lang arg overrides stored preferredLang for user-facing reasons", async () => {
   const mfs = new MockFirestore()
   await mfs

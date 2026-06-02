@@ -7,6 +7,7 @@ import type { ClaireToolContext } from "../types.js"
 import { buildMatchingTools } from "./matching-tools.js"
 import { buildDeliveryTools } from "./delivery-tools.js"
 import { buildProcessTools, type PrescreenPrompts } from "./process-tools.js"
+import { buildSchedulingTools } from "./scheduling-tools.js"
 
 /** Prescreen seed the turn forwards into the FSM tools (qId → DIRECTION + qId → judge RUBRIC). */
 export interface BuildClaireToolsOptions {
@@ -22,5 +23,6 @@ export function buildClaireTools(ctx: ClaireToolContext, opts: BuildClaireToolsO
     ...buildMatchingTools(ctx),
     ...buildProcessTools(ctx, opts.prescreenPrompts ?? {}, opts.judgeContext ?? {}),
     ...buildDeliveryTools(ctx),
+    ...buildSchedulingTools(ctx),
   ]
 }

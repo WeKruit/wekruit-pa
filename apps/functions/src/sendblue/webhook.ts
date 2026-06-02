@@ -1241,6 +1241,12 @@ export async function handleSendblueWebhook(
         } catch {
           activePrescreenForCoalesce = false
         }
+        // Coalesce a COMPLETE user's turns (triage incl.) + active prescreen +
+        // active shared-onboarding. This already covers rapid-fire triage from a
+        // complete user (the 2026-06-02 "h"+"Hi" double-reply) once the flag is on
+        // — the bug was the flag being OFF, not the gate. Legacy deterministic
+        // (incomplete, non-shared) onboarding is intentionally EXCLUDED: it has its
+        // own one-question runtime and must not be coalesced (TD-A.2b invariant).
         willCoalesce = coalesceFlag === true && (
           onboardingState === "complete" ||
           activePrescreenForCoalesce ||

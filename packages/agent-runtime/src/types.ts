@@ -103,9 +103,25 @@ export type RunAgentTurnUsage = {
   inputTokens?: number
   outputTokens?: number
   totalTokens?: number
+  /**
+   * Prompt-caching telemetry (2A) — the portion of `inputTokens` that the
+   * provider served from a cached prefix (`usage.input_tokens_details.cached_tokens`
+   * on the Responses API). ~0 until byte-stable instructions (2B) let the static
+   * head + replayed transcript cache; rising toward `inputTokens` on turn 2+ is the
+   * GREEN signal that caching is working. Best-effort; absent when the SDK omits it.
+   */
+  cachedInputTokens?: number
   provider?: "openai" | "siliconflow"
   model?: string
   hostedToolCalls?: { name: string; count: number }[]
+  /**
+   * Cost-guard observability — model-call iterations the SDK agent loop ran this
+   * turn (~= rawResponses length). A distribution pinned at the cap signals a
+   * spin (loop bug) or a too-tight `PA_AGENT_MAX_TURNS`. Best-effort.
+   */
+  turnsUsed?: number
+  /** Set when the loop hit the maxTurns cap (MaxTurnsExceededError was caught). */
+  maxTurnsExceeded?: boolean
 }
 
 export type RunAgentTurnResult = {

@@ -30,6 +30,7 @@ import type { TasksClient, EnqueueInput } from "../tasks-client.js"
 import {
   HARD_CAP_MS,
   DEFAULT_DELAY_MS,
+  TRIAGE_DELAY_MS,
   FORCE_FIRE_MESSAGE_COUNT,
   PRESCREEN_DELAY_MS,
   PRESCREEN_HARD_CAP_MS,
@@ -254,12 +255,11 @@ describe("paMessageCoalescer — case 1: single message creates buffer", () => {
       receivedAt: t0.toISOString(),
     })
     assert.equal(outcome.action, "created")
-    assert.equal(outcome.delayMs, DEFAULT_DELAY_MS)
-    // Bug 4 (2026-05-03): coalesce window bumped 4s→8s to absorb >4s typing
-    // gaps. 2026-05-15 prescreen smoke observed Sendblue delivering two
-    // Apple Messages fragments 8.25s apart even though the local send delay
-    // was 1s. 12s keeps a real multi-text answer in one prescreen turn.
-    assert.equal(DEFAULT_DELAY_MS, 12_000, "prescreen coalesce window must absorb >8s Sendblue delivery gaps")
+    assert.equal(outcome.delayMs, TRIAGE_DELAY_MS)
+    // Generic (non-onboarding, non-prescreen) triage turns use the snappy 4s
+    // window so the common single-message case replies fast. Rapid-gap +
+    // continuation heuristics still extend it, and HARD_CAP_MS bounds the turn.
+    assert.equal(TRIAGE_DELAY_MS, 4_000, "generic triage coalesce window is a snappy 4s")
     assert.equal(tasks.enqueued.length, 1)
     assert.equal(tasks.cancelled.length, 0)
     assert.match(tasks.enqueued[0]!.taskName, /^pa-coalesce-u_adam-1-1$/)
@@ -325,7 +325,7 @@ describe("paMessageCoalescer — case 2: 3 quick messages coalesce", () => {
     assert.match(tasks.enqueued[2]!.taskName, /-1-3$/)
 
     // Now fire (Cloud Tasks would call us)
-    now += DEFAULT_DELAY_MS
+    now += TRIAGE_DELAY_MS
     const fired = await processCoalescedTurn(deps, "u_adam", 1)
     assert.equal(fired.status, "fired")
     assert.equal(fired.buffer?.messageCount, 3)
@@ -367,8 +367,8 @@ describe("paMessageCoalescer — case 2: 3 quick messages coalesce", () => {
     assert.equal(appended.action, "appended")
     assert.equal(tasks.enqueued.length, 2)
     assert.equal(tasks.cancelled.length, 1)
-    assert.equal(tasks.enqueued[0]!.delayMs, DEFAULT_DELAY_MS)
-    assert.equal(tasks.enqueued[1]!.delayMs, DEFAULT_DELAY_MS)
+    assert.equal(tasks.enqueued[0]!.delayMs, TRIAGE_DELAY_MS)
+    assert.equal(tasks.enqueued[1]!.delayMs, TRIAGE_DELAY_MS)
 
     const buf = (db as ReturnType<typeof makeFakeDb>)._stores
       .get("pa-message-coalesce-buffer")
@@ -1067,27 +1067,27 @@ describe("paMessageCoalescer — case 12: rapid-gap heuristic extends delay", ()
       ...BASE_MSG, messageHandle: "msg-1", body: "hi", inboundEventId: "inb_1",
       receivedAt: new Date(now).toISOString(),
     })
-    // First enqueue at t=0 → default delay
-    assert.equal(tasks.enqueued[0]!.delayMs, DEFAULT_DELAY_MS)
+    // First enqueue at t=0 → triage delay
+    assert.equal(tasks.enqueued[0]!.delayMs, TRIAGE_DELAY_MS)
 
-    // Rapid follow-up: 1.5s < 5s threshold → extend to defaultDelay+RAPID_BUMP_MS
+    // Rapid follow-up: 1.5s < 5s threshold → extend to triageDelay+RAPID_BUMP_MS
     now += 1_500
     await enqueueOrCoalesce(deps, {
       ...BASE_MSG, messageHandle: "msg-2", body: "u there", inboundEventId: "inb_2",
       receivedAt: new Date(now).toISOString(),
     })
     const expectedRapidDelay = Math.min(
-      DEFAULT_DELAY_MS + RAPID_BUMP_MS,
+      TRIAGE_DELAY_MS + RAPID_BUMP_MS,
       HARD_CAP_MS - 1_500
     )
     assert.equal(
       tasks.enqueued[1]!.delayMs,
       expectedRapidDelay,
-      `rapid-gap follow-up (1.5s < ${RAPID_MESSAGE_THRESHOLD_MS}ms) extends delay to ${expectedRapidDelay}ms (default+bump, clamped to remaining)`
+      `rapid-gap follow-up (1.5s < ${RAPID_MESSAGE_THRESHOLD_MS}ms) extends delay to ${expectedRapidDelay}ms (triage+bump, clamped to remaining)`
     )
     assert.ok(
-      expectedRapidDelay > DEFAULT_DELAY_MS,
-      "rapid-gap delay MUST be greater than default — proves the bump fired"
+      expectedRapidDelay > TRIAGE_DELAY_MS,
+      "rapid-gap delay MUST be greater than triage default — proves the bump fired"
     )
   })
 
@@ -1111,7 +1111,7 @@ describe("paMessageCoalescer — case 12: rapid-gap heuristic extends delay", ()
       receivedAt: new Date(now).toISOString(),
     })
     const remainingMs = HARD_CAP_MS - (RAPID_MESSAGE_THRESHOLD_MS + 500)
-    const expectedDelay = Math.min(DEFAULT_DELAY_MS, remainingMs)
+    const expectedDelay = Math.min(TRIAGE_DELAY_MS, remainingMs)
     assert.equal(
       tasks.enqueued[1]!.delayMs,
       expectedDelay,
@@ -1216,15 +1216,15 @@ describe("paMessageCoalescer — case 13: continuation-marker bumps delay regard
       receivedAt: new Date(now).toISOString(),
     })
     const remaining = HARD_CAP_MS - (RAPID_MESSAGE_THRESHOLD_MS + 2_000)
-    const expectedDelay = Math.min(DEFAULT_DELAY_MS + RAPID_BUMP_MS, remaining)
+    const expectedDelay = Math.min(TRIAGE_DELAY_MS + RAPID_BUMP_MS, remaining)
     assert.equal(
       tasks.enqueued[1]!.delayMs,
       expectedDelay,
       "continuation-marker (\"actually\") MUST bump delay even when gap exceeds rapid threshold"
     )
     assert.ok(
-      expectedDelay > DEFAULT_DELAY_MS,
-      "bumped delay MUST be > default — proves continuation-marker fired"
+      expectedDelay > TRIAGE_DELAY_MS,
+      "bumped delay MUST be > triage default — proves continuation-marker fired"
     )
   })
 
@@ -1243,7 +1243,7 @@ describe("paMessageCoalescer — case 13: continuation-marker bumps delay regard
       receivedAt: new Date(now).toISOString(),
     })
     const remaining = HARD_CAP_MS - (RAPID_MESSAGE_THRESHOLD_MS + 1_500)
-    const expectedDelay = Math.min(DEFAULT_DELAY_MS + RAPID_BUMP_MS, remaining)
+    const expectedDelay = Math.min(TRIAGE_DELAY_MS + RAPID_BUMP_MS, remaining)
     assert.equal(
       tasks.enqueued[1]!.delayMs,
       expectedDelay,
@@ -1267,15 +1267,15 @@ describe("paMessageCoalescer — case 13: continuation-marker bumps delay regard
       receivedAt: new Date(now).toISOString(),
     })
     const remaining = HARD_CAP_MS - (RAPID_MESSAGE_THRESHOLD_MS + 2_000)
-    const expectedDelay = Math.min(DEFAULT_DELAY_MS, remaining)
+    const expectedDelay = Math.min(TRIAGE_DELAY_MS, remaining)
     assert.equal(
       tasks.enqueued[1]!.delayMs,
       expectedDelay,
-      "non-marker slow follow-up uses default delay (no bump)"
+      "non-marker slow follow-up uses triage default delay (no bump)"
     )
     assert.ok(
-      tasks.enqueued[1]!.delayMs <= DEFAULT_DELAY_MS,
-      "non-bumped delay MUST NOT exceed default"
+      tasks.enqueued[1]!.delayMs <= TRIAGE_DELAY_MS,
+      "non-bumped delay MUST NOT exceed triage default"
     )
   })
 

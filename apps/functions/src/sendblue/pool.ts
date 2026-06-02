@@ -15,7 +15,7 @@
  * Single-number pool produces identical behavior to pre-v1.9.
  */
 
-import type { Firestore } from "firebase-admin/firestore"
+import { FieldValue, type Firestore } from "firebase-admin/firestore"
 
 export type SendbluePoolNumberStatus =
   | "active"
@@ -499,4 +499,131 @@ export async function loadSendbluePool(db: Firestore): Promise<SendbluePoolConfi
 /** Test seam — clear cache. */
 export function _resetPoolCache(): void {
   cached = null
+}
+
+// ─── Scan-time new-user counter (the missing load-balance writer) ──────────────
+//
+// THE GAP (verified, doc §3.2): `hasNewUserCapacity` reads `assignedNewUsers`
+// but no code ever incremented it, so `newUserCap` was inert. The QR scan path
+// hands out a number BEFORE any candidateId exists, so we increment the per-group
+// new-user counter at PICK time (not at inbound) — that defuses the two-scanners-
+// race (doc §3.5 Race A): back-to-back scans each see the post-increment count.
+//
+// B1 (doc §3.4/B1, recommended): counters live in a SIBLING map doc
+// `pa-config/sendblue-pool-counters = { <groupId>: <n> }`, NOT inside the
+// `groups` ARRAY. Firestore `set(..., {merge:true})` on an array REPLACES the
+// whole array (clobbering concurrent writes); a map element-merges cleanly, so
+// `FieldValue.increment` per groupId is race-safe. `loadSendbluePoolWithCounters`
+// overlays the map onto the static pool's `assignedNewUsers` at read time.
+
+export const SENDBLUE_POOL_COUNTERS_DOC = "sendblue-pool-counters"
+
+/** Counter overlay shape: { [groupId]: assignedNewUsers }. */
+export type SendbluePoolCounters = Record<string, number>
+
+let countersCache: { counters: SendbluePoolCounters; expiresAt: number } | null = null
+
+/** Read the per-group new-user counter map (60s TTL — same cadence as the pool). */
+export async function loadSendbluePoolCounters(db: Firestore): Promise<SendbluePoolCounters> {
+  const now = Date.now()
+  if (countersCache && countersCache.expiresAt > now) return countersCache.counters
+  try {
+    const snap = await db.collection("pa-config").doc(SENDBLUE_POOL_COUNTERS_DOC).get()
+    const raw = snap.exists ? (snap.data() as Record<string, unknown>) : {}
+    const counters: SendbluePoolCounters = {}
+    for (const [groupId, value] of Object.entries(raw ?? {})) {
+      const n = typeof value === "number" ? value : Number(value)
+      if (Number.isFinite(n)) counters[groupId] = Math.max(0, Math.trunc(n))
+    }
+    countersCache = { counters, expiresAt: now + POOL_TTL_MS }
+    return counters
+  } catch {
+    countersCache = { counters: {}, expiresAt: now + POOL_TTL_MS }
+    return {}
+  }
+}
+
+/**
+ * Overlay the sibling counter map onto a static pool config so `assignedNewUsers`
+ * reflects the live count `hasNewUserCapacity` checks. Pure — does not mutate `pool`.
+ */
+export function overlaySendbluePoolCounters(
+  pool: SendbluePoolConfig | null,
+  counters: SendbluePoolCounters
+): SendbluePoolConfig | null {
+  if (!pool) return pool
+  if (!counters || Object.keys(counters).length === 0) return pool
+  const applyToGroup = <T extends { groupId?: string; assignedNewUsers?: number }>(g: T): T => {
+    const groupId = g.groupId?.trim()
+    if (!groupId || !(groupId in counters)) return g
+    return { ...g, assignedNewUsers: counters[groupId] }
+  }
+  return {
+    ...pool,
+    ...(Array.isArray(pool.groups) ? { groups: pool.groups.map(applyToGroup) } : {}),
+  }
+}
+
+/** Pool config with the live new-user counters overlaid (use for capacity-aware picks). */
+export async function loadSendbluePoolWithCounters(db: Firestore): Promise<SendbluePoolConfig | null> {
+  const [pool, counters] = await Promise.all([loadSendbluePool(db), loadSendbluePoolCounters(db)])
+  return overlaySendbluePoolCounters(pool, counters)
+}
+
+/**
+ * Atomically bump the new-user counter for `groupId` at scan/pick time.
+ * Map-keyed `FieldValue.increment` element-merges (no array clobber, doc §3.4/B1).
+ */
+export async function incrementAssignedNewUsers(db: Firestore, groupId: string): Promise<void> {
+  const key = groupId.trim()
+  if (!key) return
+  await db
+    .collection("pa-config")
+    .doc(SENDBLUE_POOL_COUNTERS_DOC)
+    .set({ [key]: FieldValue.increment(1) }, { merge: true })
+  countersCache = null
+}
+
+/**
+ * Decrement the new-user counter for `groupId` — used by the abandoned-scan sweep
+ * (doc §3.5 Race A) when a `pa-qr-scan-pending` doc TTLs out still `status:'pending'`
+ * (a scanner who never sent). Keeps capacity from leaking. Never drives below 0 on
+ * read (the overlay clamps), but we still floor the stored value defensively.
+ */
+export async function decrementAssignedNewUsers(db: Firestore, groupId: string): Promise<void> {
+  const key = groupId.trim()
+  if (!key) return
+  await db.runTransaction(async (t) => {
+    const ref = db.collection("pa-config").doc(SENDBLUE_POOL_COUNTERS_DOC)
+    const snap = await t.get(ref)
+    const cur = snap.exists ? Number((snap.data() as Record<string, unknown>)[key] ?? 0) : 0
+    const next = Math.max(0, (Number.isFinite(cur) ? cur : 0) - 1)
+    t.set(ref, { [key]: next }, { merge: true })
+  })
+  countersCache = null
+}
+
+export type PickScanNumberResult = { number: string; groupId: string } | null
+
+/**
+ * Scan-time number pick. Keyed on the `scanToken` (no candidateId exists yet),
+ * capacity-aware (`requireNewUserCapacity`) over the counter-overlaid pool. Returns
+ * the picked number AND its groupId so the caller can persist the sticky number and
+ * bump that group's counter. Pure selection — caller does the increment + write.
+ */
+export function pickScanNumber(
+  pool: SendbluePoolConfig | null,
+  scanToken: string,
+  options: PickFromNumberOptions = { requireNewUserCapacity: true }
+): PickScanNumberResult {
+  const number = pickFromNumber(pool, scanToken, options)
+  if (!number) return null
+  const found = findSendbluePoolNumber(pool, number)
+  const groupId = found ? sendblueGroupId(found) : number
+  return { number, groupId }
+}
+
+/** Test seam — clear the counter cache. */
+export function _resetCountersCache(): void {
+  countersCache = null
 }
