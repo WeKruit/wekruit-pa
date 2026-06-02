@@ -22,6 +22,10 @@ import {
   buildSubmissionChecklistReview,
   type SubmissionReviewTone,
 } from "./RecruiterSubmissionReview.helpers.js"
+import {
+  buildRecruiterRoleOpsRows,
+  type RecruiterRoleOpsRow,
+} from "./RecruiterRoleOps.helpers.js"
 
 interface SubmissionDoc {
   id: string
@@ -351,40 +355,6 @@ interface RecruiterBoardAdminJobDoc {
   }
 }
 
-interface RecruiterRoleOpsRow {
-  id: string
-  publicId: string
-  title: string
-  company: string
-  location: string
-  active: boolean
-  collaborated: boolean
-  readinessScore: number
-  readinessLabel: string
-  readinessTone: Parameters<typeof Badge>[0]["tone"]
-  missingSetup: string[]
-  updatedAtMs: number
-  updatedAt?: unknown
-  sortOrder: number
-  hardChecks: number
-  fitChecks: number
-  bonusChecks: number
-  antiChecks: number
-  approvedRecruiters: number
-  pendingApplications: number
-  sourced: number
-  ready: number
-  submissions: number
-  pendingSubmissions: number
-  advanced: number
-  rejectedOrDuplicate: number
-  openQuestions: number
-  hardFeedback: number
-  blockedFeedback: number
-  compSummary?: string
-  interviewProcess?: string
-}
-
 interface RecruiterQualityRow {
   id: string
   profile: RecruiterProfileDoc
@@ -516,104 +486,6 @@ function recruiterKeyMatches(row: { recruiterId?: string | null; recruiterEmail?
 
 function rowJobKey(row: { inboundJobId?: string; jobId?: string }): string {
   return (row.inboundJobId || row.jobId || "").trim()
-}
-
-function rowMatchesRole(row: { inboundJobId?: string; jobId?: string }, role: RecruiterBoardAdminJobDoc): boolean {
-  const keys = [role.id, role.publicId].filter(Boolean)
-  return keys.some((key) => row.inboundJobId === key || row.jobId === key)
-}
-
-function recruiterBoardChecklistCount(role: RecruiterBoardAdminJobDoc, kind: string): number {
-  return role.recruiterBoard?.checklist?.groups
-    ?.filter((group) => group.kind === kind)
-    .reduce((sum, group) => sum + (group.items?.filter((item) => item.text?.trim()).length ?? 0), 0) ?? 0
-}
-
-function recruiterRoleReadiness(role: RecruiterBoardAdminJobDoc): {
-  score: number
-  label: string
-  tone: Parameters<typeof Badge>[0]["tone"]
-  missing: string[]
-} {
-  const rb = role.recruiterBoard
-  const missing: string[] = []
-  if (role.wekruitCollaborationStatus !== "collaborated") missing.push("not marked collaborated")
-  if (rb?.active !== true) missing.push("board inactive")
-  if (!role.title?.trim()) missing.push("missing title")
-  if (!rb?.label?.company?.trim()) missing.push("missing recruiter company label")
-  if (!rb?.label?.location?.trim()) missing.push("missing location")
-  if (!role.compSummary?.trim()) missing.push("missing comp / fee summary")
-  if (!rb?.interviewProcess?.trim()) missing.push("missing interview process")
-  if (!rb?.culture?.bet?.trim()) missing.push("missing role pitch")
-  if (!rb?.culture?.bullets?.filter((bullet) => bullet.trim()).length) missing.push("missing culture bullets")
-  if (recruiterBoardChecklistCount(role, "hard") < 1) missing.push("missing hard checks")
-  if (recruiterBoardChecklistCount(role, "fit") < 1) missing.push("missing fit checks")
-  const score = Math.max(0, 100 - missing.length * 10)
-  if (score >= 90) return { score, label: "Launch-ready", tone: "ok", missing }
-  if (rb?.active === true && role.wekruitCollaborationStatus === "collaborated") {
-    return { score, label: "Live with gaps", tone: "info", missing }
-  }
-  return { score, label: "Setup needed", tone: "warn", missing }
-}
-
-function buildRecruiterRoleOpsRows(input: {
-  jobs: RecruiterBoardAdminJobDoc[]
-  submissions: SubmissionDoc[]
-  candidates: SourcedCandidateDoc[]
-  applications: RecruiterRoleApplicationDoc[]
-  feedback: RecruiterRoleFeedbackDoc[]
-  questions: RecruiterRoleQuestionDoc[]
-}): RecruiterRoleOpsRow[] {
-  return input.jobs
-    .filter((role) => role.recruiterBoard || role.wekruitCollaborationStatus === "collaborated")
-    .map((role) => {
-      const readiness = recruiterRoleReadiness(role)
-      const roleSubmissions = input.submissions.filter((row) => rowMatchesRole(row, role))
-      const roleCandidates = input.candidates.filter((row) => rowMatchesRole(row, role))
-      const roleApplications = input.applications.filter((row) => rowMatchesRole(row, role))
-      const roleFeedback = input.feedback.filter((row) => rowMatchesRole(row, role))
-      const roleQuestions = input.questions.filter((row) => rowMatchesRole(row, role))
-      const approvedRecruiters = new Set(
-        roleApplications
-          .filter((row) => row.status === "approved")
-          .map((row) => row.recruiterId || row.recruiterEmail)
-          .filter(Boolean),
-      ).size
-      return {
-        id: role.id,
-        publicId: role.publicId || role.id,
-        title: role.title || role.id,
-        company: role.recruiterBoard?.label?.company || "—",
-        location: role.recruiterBoard?.label?.location || "—",
-        active: role.recruiterBoard?.active === true,
-        collaborated: role.wekruitCollaborationStatus === "collaborated",
-        readinessScore: readiness.score,
-        readinessLabel: readiness.label,
-        readinessTone: readiness.tone,
-        missingSetup: readiness.missing,
-        updatedAtMs: Math.max(timestampToMs(role.recruiterBoard?.updatedAt), timestampToMs(role.updatedAt)),
-        updatedAt: role.recruiterBoard?.updatedAt ?? role.updatedAt,
-        sortOrder: Number(role.recruiterBoard?.sortOrder ?? 999),
-        hardChecks: recruiterBoardChecklistCount(role, "hard"),
-        fitChecks: recruiterBoardChecklistCount(role, "fit"),
-        bonusChecks: recruiterBoardChecklistCount(role, "bonus"),
-        antiChecks: recruiterBoardChecklistCount(role, "anti"),
-        approvedRecruiters,
-        pendingApplications: roleApplications.filter((row) => (row.status ?? "pending") === "pending").length,
-        sourced: roleCandidates.filter((row) => row.stage !== "archived").length,
-        ready: roleCandidates.filter((row) => row.stage === "ready").length,
-        submissions: roleSubmissions.length,
-        pendingSubmissions: roleSubmissions.filter((row) => PENDING_SUBMISSION_STATUSES.includes(row.status ?? "submitted")).length,
-        advanced: roleSubmissions.filter((row) => ADVANCED_SUBMISSION_STATUSES.includes(row.status ?? "")).length,
-        rejectedOrDuplicate: roleSubmissions.filter((row) => NEGATIVE_SUBMISSION_STATUSES.includes(row.status ?? "")).length,
-        openQuestions: roleQuestions.filter((row) => (row.status ?? "open") === "open").length,
-        hardFeedback: roleFeedback.filter((row) => row.difficulty === "hard").length,
-        blockedFeedback: roleFeedback.filter((row) => row.difficulty === "blocked").length,
-        compSummary: role.compSummary,
-        interviewProcess: role.recruiterBoard?.interviewProcess,
-      }
-    })
-    .sort((a, b) => Number(b.active) - Number(a.active) || a.sortOrder - b.sortOrder || b.updatedAtMs - a.updatedAtMs)
 }
 
 function computeRecruiterQualityRows(
@@ -1284,6 +1156,19 @@ function RecruiterRolesPanel() {
         ],
       },
       {
+        id: "activation",
+        label: "Activation",
+        multi: true,
+        options: [
+          { key: "needs_recruiter_coverage", label: "Needs coverage", test: (row) => row.activationStage === "needs_recruiter_coverage" },
+          { key: "needs_sourced_supply", label: "Needs supply", test: (row) => row.activationStage === "needs_sourced_supply" },
+          { key: "needs_submission", label: "Needs submission", test: (row) => row.activationStage === "needs_submission" },
+          { key: "needs_review", label: "Needs review", test: (row) => row.activationStage === "needs_review" },
+          { key: "needs_calibration", label: "Needs calibration", test: (row) => row.activationStage === "needs_calibration" },
+          { key: "moving", label: "Moving", test: (row) => row.activationStage === "moving" },
+        ],
+      },
+      {
         id: "blockers",
         label: "Blockers",
         multi: true,
@@ -1302,8 +1187,25 @@ function RecruiterRolesPanel() {
   const activeRows = rows.filter((row) => row.active && row.collaborated)
   const setupGaps = rows.filter((row) => row.active && row.readinessScore < 90)
   const noMotion = rows.filter((row) => row.active && row.sourced === 0 && row.submissions === 0)
+  const activationGaps = rows.filter((row) =>
+    row.active &&
+    row.collaborated &&
+    !["moving"].includes(row.activationStage)
+  )
   const pendingApplications = rows.reduce((sum, row) => sum + row.pendingApplications, 0)
   const columns: Column<RecruiterRoleOpsRow>[] = [
+    {
+      key: "activationStage",
+      label: "Activation",
+      sortable: true,
+      width: 190,
+      render: (row) => (
+        <>
+          <Badge tone={row.activationTone}>{row.activationLabel}</Badge>
+          <div style={{ color: "#777", fontSize: 11, marginTop: 4, lineHeight: 1.35 }}>{row.activationReason}</div>
+        </>
+      ),
+    },
     {
       key: "readinessScore",
       label: "Readiness",
@@ -1418,7 +1320,7 @@ function RecruiterRolesPanel() {
         <OpsMetric label="Live roles" value={activeRows.length} />
         <OpsMetric label="Setup gaps" value={setupGaps.length} />
         <OpsMetric label="Pending applications" value={pendingApplications} />
-        <OpsMetric label="Live roles with no motion" value={noMotion.length} />
+        <OpsMetric label="Activation gaps" value={activationGaps.length} meta={`${noMotion.length} with no motion`} />
       </div>
       <Panel
         title="Recruiter role control"
