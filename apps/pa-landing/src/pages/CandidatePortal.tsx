@@ -4375,9 +4375,7 @@ function MatchesView({
                   <Avatar name="Claire WeKruit" size={36} tone="moss" />
                   <div>
                     <strong className="wkmp-side__claire-name">Claire</strong>
-                    <span className="wkmp-side__claire-meta">
-                      <PulseDot size={5} /> Active · iMessage
-                    </span>
+                    <span className="wkmp-side__claire-meta">iMessage line</span>
                   </div>
                 </div>
                 <p className="wkmp-side__sub">
@@ -4394,14 +4392,7 @@ function MatchesView({
                 )}
               </div>
 
-              <div className="wkmp-side__card wkmp-side__card--quiet">
-                <h3 className="wkmp-side__h">How matching works</h3>
-                <ol className="wkmp-how">
-                  <li><strong>Claire scans</strong> openings against your profile, tags, and preferences.</li>
-                  <li><strong>Matches land here</strong> with the evidence Claire used.</li>
-                  <li><strong>You decide.</strong> Profile edits keep future matching tied to evidence you can review.</li>
-                </ol>
-              </div>
+              <MeClaireSignalsCard profile={profile} />
             </aside>
           </div>
         </div>
@@ -4607,20 +4598,11 @@ const MATCHES_STYLES = `
 
 /* Side rail */
 .wkmp-side__card { background: var(--candidate-card); border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px; display: grid; gap: 10px; }
-.wkmp-side__card--quiet { background: var(--cream-3); border-style: dashed; border-color: var(--border-strong); }
 .wkmp-side__h { margin: 0; font-family: var(--font-sans); font-weight: 600; font-size: 13px; color: var(--ink); }
 .wkmp-side__sub { margin: 0; font-size: 12.5px; color: var(--ink-3); line-height: 1.4; }
 .wkmp-side__claire-id { display: flex; align-items: center; gap: 10px; }
 .wkmp-side__claire-name { display: block; font-family: var(--font-sans); font-weight: 600; font-size: 14px; color: var(--ink); line-height: 1.2; }
 .wkmp-side__claire-meta { display: inline-flex; align-items: center; gap: 6px; margin-top: 2px; font-size: 11.5px; color: var(--ink-3); }
-.wkmp-how { margin: 0; padding: 0 0 0 18px; display: grid; gap: 8px; counter-reset: how; list-style: none; }
-.wkmp-how li { position: relative; font-size: 12.5px; color: var(--ink-2); line-height: 1.5; padding-left: 4px; counter-increment: how; }
-.wkmp-how li::before {
-  content: counter(how); position: absolute; left: -18px; top: 0; width: 14px; height: 14px;
-  border-radius: 50%; background: var(--live-soft); border: 1px solid var(--live-border); color: var(--live);
-  font-size: 9px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; line-height: 1;
-}
-.wkmp-how strong { color: var(--ink); font-weight: 600; }
 
 /* Match card (full) */
 .wkv3-match {

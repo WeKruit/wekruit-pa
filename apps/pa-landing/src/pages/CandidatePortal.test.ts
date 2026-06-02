@@ -346,6 +346,17 @@ test("CandidatePortal /me treats new recommended roles as an Up Next action", ()
   assert.match(source, /recommendedNextAction \? \[recommendedNextAction\] : \[\]/)
 })
 
+test("CandidatePortal /me/matches sidebar shows the real matching basis", () => {
+  assert.match(source, /function MatchesView\([\s\S]*<MeClaireSignalsCard profile=\{profile\} \/>/)
+  assert.match(source, /function deriveClaireSignalRows\(profile: CandidateSelfProfile\): MeSignalRow\[\]/)
+  assert.match(source, /What Claire is matching on/)
+  assert.match(source, /roleFunction/)
+  assert.match(source, /targetLocations/)
+  assert.match(source, /minSalaryUsd/)
+  assert.doesNotMatch(source, /Claire scans/)
+  assert.doesNotMatch(source, /Active · iMessage/)
+})
+
 test("CandidatePortal Up Next orders critical profile blockers before recommended roles", () => {
   assert.match(source, /function buildUpNextActions\(/)
   assert.match(source, /const criticalProfileAction = profileNextAction\?\.urgent \? profileNextAction : null/)
