@@ -684,12 +684,6 @@ function CandidateMeReady({
   )
   const recommended = allMatches.filter((m) => m.status === "recommended")
   const pipelineMatches = allMatches.filter((m) => m.status !== "recommended")
-  const activePipelineCount = allMatches.filter(
-    (m) =>
-      m.status === "invited" ||
-      m.status === "interview_started" ||
-      m.status === "review_pending",
-  ).length
 
   const matchesLoading = matchesState.status === "loading" || matchesState.status === "idle"
   const matchesErrored = matchesState.status === "error"
@@ -697,7 +691,7 @@ function CandidateMeReady({
 
   const firstName = firstNameOf(profile)
   const completeness = deriveCompleteness(profile)
-  const visibility = deriveVisibility(activePipelineCount, recommended.length)
+  const visibility = deriveVisibilityFromMatches(allMatches)
   const claireHref = buildClaireImessageHref(profile.senderNumber)
 
   const actions: MeAction[] = upNext.map((m) => {
@@ -893,6 +887,17 @@ function profileActionHrefForMissing(missing: MeCompleteness["missing"][number])
 
 // Visibility reflects real candidate-side pipeline activity. We don't have a
 // hidden/retained flag yet, so only the two states we can prove are surfaced.
+function deriveVisibilityFromMatches(matches: CandidateMatchCard[]): MeVisibility {
+  const activeCount = matches.filter(
+    (m) =>
+      m.status === "invited" ||
+      m.status === "interview_started" ||
+      m.status === "review_pending",
+  ).length
+  const matchCount = matches.filter((m) => m.status === "recommended").length
+  return deriveVisibility(activeCount, matchCount)
+}
+
 function deriveVisibility(activeCount: number, matchCount: number): MeVisibility {
   if (activeCount > 0) {
     return {
@@ -1692,6 +1697,37 @@ function MeVisibilityCard({ visibility }: { visibility: MeVisibility }) {
   )
 }
 
+function MeVisibilityPendingCard({ error }: { error: string | null }) {
+  return (
+    <div className="wkv3-vis wkv3-vis--pending">
+      <div className="wkv3-vis__top">
+        <div className="wkv3-vis__head">
+          <span className="wkv3-vis__kicker">Visibility</span>
+          <strong className="wkv3-vis__label">
+            {error ? "Pipeline unavailable" : "Checking pipeline"}
+          </strong>
+        </div>
+        <Link
+          to="/me/profile#privacy-requests"
+          className="wkv3-vis__manage"
+          aria-label="Review visibility requests"
+        >
+          <MeIcon name="chevron-right" size={14} stroke={2} />
+        </Link>
+      </div>
+      <p className="wkv3-vis__one">
+        {error ?? "Loading your active roles before showing visibility."}
+      </p>
+      <p className="wkv3-vis__two">Profile edits still save normally.</p>
+      <div className="wkv3-vis__actions">
+        <Link to="/me/profile#privacy-requests" className="wk-btn wk-btn--secondary wk-btn--sm">
+          Request outreach change
+        </Link>
+      </div>
+    </div>
+  )
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // /me — styles (ported from the v3 design bundle; unprefixed design tokens are
 // aliased to the production --wk-* set so the page reads verbatim).
@@ -1931,6 +1967,7 @@ const ME_V3_STYLES = `
   background: var(--live); display: inline-block; box-shadow: 0 0 0 3px rgba(224,116,46,.18);
 }
 .wkv3-vis--interviewing .wkv3-vis__label::after { background: var(--success); box-shadow: 0 0 0 3px rgba(58,138,90,.15); }
+.wkv3-vis--pending .wkv3-vis__label::after { background: var(--ink-3); box-shadow: 0 0 0 3px rgba(45,26,10,.10); }
 .wkv3-vis__manage { appearance: none; border: 0; background: transparent; padding: 4px; cursor: pointer; color: var(--ink-3); border-radius: var(--r-sm); }
 .wkv3-vis__manage:hover { background: rgba(45,26,10,.06); color: var(--ink); }
 .wkv3-vis__one { margin: 0; font-size: 13.5px; color: var(--ink-2); line-height: 1.45; }
@@ -2207,11 +2244,13 @@ function useProfileHashScroll() {
 
 function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
   useProfileHashScroll()
+  const matchesState = useCandidateMatches(true)
   const [profile, setProfile] = useState<CandidateSelfProfile>(initial)
   const [editing, setEditing] = useState(false)
   useEffect(() => setProfile(initial), [initial])
   const completeness = deriveCompleteness(profile)
-  const visibility = deriveVisibility(0, 0)
+  const visibility = matchesState.status === "ready" ? deriveVisibilityFromMatches(matchesState.matches) : null
+  const visibilityError = matchesState.status === "error" ? matchesState.message : null
   const claireHref = buildClaireImessageHref(profile.senderNumber)
   return (
     <CandidateShell signedIn signedInUser={{ name: profile.displayName ?? "You", email: profile.emailMasked }} claireHref={claireHref}>
@@ -2246,7 +2285,7 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
           {/* Top strip: completeness + visibility — first-class state (reused from Home) */}
           <div className="wk-prof__topstrip">
             <MeCompletenessCard completeness={completeness} />
-            <MeVisibilityCard visibility={visibility} />
+            {visibility ? <MeVisibilityCard visibility={visibility} /> : <MeVisibilityPendingCard error={visibilityError} />}
           </div>
 
           <div className="wk-prof__grid">

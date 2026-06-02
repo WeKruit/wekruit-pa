@@ -120,6 +120,20 @@ test("CandidatePortal visibility actions route to reviewed privacy requests", ()
   assert.match(source, /document\.getElementById\(hash\)\?\.scrollIntoView/)
 })
 
+test("CandidateProfile derives visibility from real matches instead of zero-state placeholders", () => {
+  assert.match(source, /function deriveVisibilityFromMatches\(matches: CandidateMatchCard\[\]\): MeVisibility/)
+  assert.match(source, /const visibility = deriveVisibilityFromMatches\(allMatches\)/)
+  assert.match(source, /function ProfileSurface[\s\S]*const matchesState = useCandidateMatches\(true\)/)
+  assert.match(
+    source,
+    /matchesState\.status === "ready" \? deriveVisibilityFromMatches\(matchesState\.matches\) : null/,
+  )
+  assert.match(source, /<MeVisibilityPendingCard error=\{visibilityError\} \/>/)
+  assert.match(source, /<div className="wkv3-vis wkv3-vis--pending">/)
+  assert.match(source, /\.wkv3-vis--pending \.wkv3-vis__label::after/)
+  assert.doesNotMatch(source, /deriveVisibility\(0,\s*0\)/)
+})
+
 test("CandidatePortal renders honest connector data", () => {
   assert.match(source, /linkedinOauthProfile/)
   assert.match(source, /githubOauthProfile/)
