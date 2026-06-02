@@ -135,3 +135,14 @@ test("CandidatePortal /me surfaces real Claire matching signals from the claimed
   assert.match(source, /minSalaryUsd/)
   assert.doesNotMatch(source, /mock signal|example signal|sample signal/i)
 })
+
+test("CandidatePortal /me shows recent role activity from real matches", () => {
+  assert.match(source, /<MeActivityLog matches=\{allMatches\} \/>/)
+  assert.match(source, /function deriveMeActivityRows/)
+  assert.match(source, /function MeActivityLog/)
+  assert.match(source, /Recent activity/)
+  assert.match(source, /computedAt/)
+  assert.match(source, /reviewDecision/)
+  assert.match(source, /getCandidateJobStatusDisplay\(match\.status, match\.job\.title\)/)
+  assert.doesNotMatch(source, /mock activity|sample activity|fake timeline/i)
+})

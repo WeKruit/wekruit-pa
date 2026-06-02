@@ -743,6 +743,7 @@ function CandidateMeReady({
                 error={matchesError}
                 recommendedCount={recommended.length}
               />
+              <MeActivityLog matches={allMatches} />
               <MePipeline
                 matches={pipelineMatches}
                 loading={matchesLoading}
@@ -801,6 +802,18 @@ type MeVisibility = {
 type MeSignalRow = {
   label: string
   value: string
+}
+
+type MeActivityRow = {
+  key: string
+  logo: string
+  logoBg: string
+  event: string
+  role: string
+  company: string
+  detail: string
+  href: string
+  when: string
 }
 
 // Relative timestamp for the "when" hints — derived from the match computedAt.
@@ -901,6 +914,43 @@ function deriveClaireSignalRows(profile: CandidateSelfProfile): MeSignalRow[] {
   if (profile.profileSummary && rows.length < 3) rows.push({ label: "Story", value: profile.profileSummary })
 
   return rows.slice(0, 6)
+}
+
+function activityEventLabel(match: CandidateMatchCard): string {
+  if (match.reviewDecision) {
+    if (match.status === "passed") return "Passed review"
+    if (match.status === "not_passed") return "Role closed after review"
+    return "Review note posted"
+  }
+  const display = getCandidateJobStatusDisplay(match.status, match.job.title)
+  return display.label
+}
+
+function activityDetail(match: CandidateMatchCard): string {
+  if (match.reviewDecision?.decisionReason) return match.reviewDecision.decisionReason
+  const display = getCandidateJobStatusDisplay(match.status, match.job.title)
+  return display.nextStep
+}
+
+function deriveMeActivityRows(matches: CandidateMatchCard[]): MeActivityRow[] {
+  return [...matches]
+    .sort((a, b) => {
+      const at = Date.parse(a.computedAt)
+      const bt = Date.parse(b.computedAt)
+      return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at)
+    })
+    .slice(0, 4)
+    .map((match) => ({
+      key: `${match.matchId}-${match.status}`,
+      logo: (match.job.company[0] ?? "?").toUpperCase(),
+      logoBg: LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length],
+      event: activityEventLabel(match),
+      role: match.job.title,
+      company: match.job.company,
+      detail: activityDetail(match),
+      href: match.job.href,
+      when: meWhen(match.computedAt),
+    }))
 }
 
 // Extra glyphs not in the shared Icon set (kept local to this surface).
@@ -1098,6 +1148,33 @@ function MeWaitingCard({ recommendedCount }: { recommendedCount: number }) {
         <p className="wkv3-wait__meta">No action needed right now.</p>
       </div>
     </article>
+  )
+}
+
+function MeActivityLog({ matches }: { matches: CandidateMatchCard[] }) {
+  const rows = deriveMeActivityRows(matches)
+  if (rows.length === 0) return null
+  return (
+    <section className="wkv3-sec wkv3-activity" id="activity">
+      <header className="wkv3-sec__head">
+        <h2 className="wkv3-sec__h">Recent activity</h2>
+        <span className="wkv3-sec__sub">Latest role updates from Claire and WeKruit.</span>
+      </header>
+      <div className="wkv3-activity__list">
+        {rows.map((row) => (
+          <Link to={row.href} className="wkv3-activity__row" key={row.key}>
+            <span className="wkv3-activity__mark" style={{ background: row.logoBg }}>{row.logo}</span>
+            <span className="wkv3-activity__body">
+              <span className="wkv3-activity__event">{row.event}</span>
+              <strong>{row.role}</strong>
+              <em>{row.company}</em>
+              <span className="wkv3-activity__detail">{row.detail}</span>
+            </span>
+            {row.when ? <span className="wkv3-activity__when">{row.when}</span> : null}
+          </Link>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -1886,6 +1963,69 @@ const ME_V3_STYLES = `
 @keyframes wkv3-wait-shimmer { from { width: 38%; } to { width: 78%; } }
 .wkv3-wait__meta { margin: 8px 0 0; font-size: 11.5px; color: var(--ink-3); }
 
+/* Recent activity */
+.wkv3-activity__list { display: grid; gap: 8px; }
+.wkv3-activity__row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--candidate-card);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color var(--dur-fast) var(--ease), transform var(--dur-base) var(--ease);
+}
+.wkv3-activity__row:hover { border-color: var(--live-border); transform: translateY(-1px); }
+.wkv3-activity__mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cream);
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+}
+.wkv3-activity__body { min-width: 0; display: grid; gap: 3px; }
+.wkv3-activity__event {
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--live);
+}
+.wkv3-activity__body strong {
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.25;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.wkv3-activity__body em {
+  font-style: normal;
+  font-size: 12.5px;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
+}
+.wkv3-activity__detail {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.wkv3-activity__when {
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Stage bar */
 .wkv3-stages {
   display: grid; grid-template-columns: repeat(6, 1fr);
@@ -1986,6 +2126,8 @@ const ME_V3_STYLES = `
   .wkv3-side { grid-template-columns: 1fr; }
   .wkv3-act { grid-template-columns: 44px 1fr; padding: 14px 16px; }
   .wkv3-act__right { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; min-width: 0; gap: 10px; }
+  .wkv3-activity__row { grid-template-columns: 38px minmax(0, 1fr); }
+  .wkv3-activity__when { grid-column: 2; }
   .wkv3-stages { grid-template-columns: repeat(2, 1fr); }
   .wkv3-stage:nth-child(odd) { border-right: 1px solid var(--border); }
   .wkv3-stage:nth-child(even) { border-right: 0; }
