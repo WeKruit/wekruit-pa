@@ -22,7 +22,7 @@ import {
   rememberCandidateProfileSession,
   rememberOnboardingIntentForPath,
 } from "../lib/browser-identity"
-import { resolveSource, SOURCE_RESOLVER_MARKER, stickSourceFromLoginNext, type SignupSource } from "../lib/source"
+import { isLayoffArrival, resolveSource, SOURCE_RESOLVER_MARKER, stickSourceFromLoginNext, type SignupSource } from "../lib/source"
 import { auth } from "../lib/firebase.js"
 import { isLinkedInSignIn } from "../lib/candidate-auth-provider.js"
 import { CandidateVerifyError, readStoredCandidateId, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
@@ -80,11 +80,37 @@ export default function Onboarding() {
     if (returnPath) stickSourceFromLoginNext(returnPath)
     return resolveSource()
   }, [returnPath])
+  // The layoff onboarding VARIANT (laid-off "Job title there"/"Location"
+  // fields, layoff pitch framing, and the "I confirm I was laid off…" consent
+  // gate) renders ONLY for a genuine layoff arrival — an explicit
+  // `?source=layoff` link or the layoff host. It is NOT inherited from the
+  // sticky `wko_source` cookie, so a plain wekruit.com/onboarding visit (even
+  // in a browser that previously touched a layoff link) gets neutral
+  // onboarding with no laid-off confirmation. `source` (profile attribution)
+  // is unchanged. See lib/source.ts isLayoffArrival().
+  const isLayoffVariant = useMemo(() => isLayoffArrival(), [returnPath])
+  // Source the candidate actually experienced. A sticky
+  // `wko_source=WeKruit_Laid_Off` cookie must not stamp a verified-layoff
+  // attribution onto a generic signup who only saw the neutral onboarding and
+  // never confirmed a layoff. Used for registration + magic-link verification +
+  // resume upload tagging. (Raw `source` keeps the cookie value for any
+  // funnel-continuity reads.)
+  const effectiveSource: SignupSource = useMemo(
+    () => (isLayoffVariant ? source : source === "WeKruit_Laid_Off" ? "candidate" : source),
+    [isLayoffVariant, source],
+  )
+  // Destination used for the login round-trip + remembered intent. Derive the
+  // layoff flag from the genuine arrival, NOT the sticky `wko_source` cookie —
+  // otherwise a generic visit in a layoff-tainted browser would synthesize
+  // `/onboarding?source=layoff`, survive login, and re-trigger the layoff
+  // variant via an explicit param. Generic entry must round-trip as plain
+  // `/onboarding`.
+  const onboardingPath = isLayoffVariant ? onboardingDestination("WeKruit_Laid_Off") : "/onboarding"
   const loginNextPath = useMemo(() => {
-    const base = onboardingDestination(source)
+    const base = onboardingPath
     if (!returnPath) return base
     return `${base}${base.includes("?") ? "&" : "?"}next=${encodeURIComponent(returnPath)}`
-  }, [returnPath, source])
+  }, [returnPath, onboardingPath])
   const returnJobId = useMemo(() => {
     if (!returnPath) return null
     const match = returnPath.match(/^\/j\/([^/?#]+)(?:\/cv)?$/)
@@ -100,8 +126,8 @@ export default function Onboarding() {
   }, [navigate, returnPath, searchParams])
 
   useEffect(() => {
-    rememberOnboardingIntentForPath(returnPath ?? onboardingDestination(source))
-  }, [returnPath, source])
+    rememberOnboardingIntentForPath(returnPath ?? onboardingPath)
+  }, [returnPath, onboardingPath])
   const [authUser, setAuthUser] = useState<User | null | undefined>(undefined)
   const [authReady, setAuthReady] = useState(false)
   const [verifyError, setVerifyError] = useState<string | null>(null)
@@ -129,7 +155,7 @@ export default function Onboarding() {
     let cancelled = false
     void (async () => {
       try {
-        const verified = await verifyCandidateMagicLinkSession({ source })
+        const verified = await verifyCandidateMagicLinkSession({ source: effectiveSource })
         if (!cancelled) {
           setVerifyError(null)
           setLinkedinLinkedViaOauth(
@@ -182,7 +208,7 @@ export default function Onboarding() {
     return () => {
       cancelled = true
     }
-  }, [authUser, loginNextPath, navigate, returnPath, source])
+  }, [authUser, effectiveSource, loginNextPath, navigate, returnPath])
 
   if (!authReady || authUser === undefined || (authUser && !intakeChecked)) {
     return (
@@ -205,7 +231,7 @@ export default function Onboarding() {
     setSubmitError(null)
     setBusyText("Creating your WeKruit profile…")
     try {
-      const isLayoff = source === "WeKruit_Laid_Off"
+      const isLayoff = isLayoffVariant
       const lastCompany = formData.lastCompany?.trim()
       const input: RegisterInput = {
         firstName: formData.firstName!,
@@ -224,7 +250,7 @@ export default function Onboarding() {
         resumeFileName: formData.resume?.name,
         candidateId: readStoredCandidateId() ?? undefined,
         mode,
-        source,
+        source: effectiveSource,
       }
       if (lastCompany) input.lastCompany = lastCompany
       const res = await registerCandidate(input)
@@ -248,7 +274,7 @@ export default function Onboarding() {
         browserUid: getBrowserUid(),
       })
       if (formData.resume?.file) {
-        await uploadResumeForCandidate(res.candidateId, formData, sourceToUploadTag(source))
+        await uploadResumeForCandidate(res.candidateId, formData, sourceToUploadTag(effectiveSource))
       }
       // No server-side SMS push here: the candidate opens iMessage and sends
       // the prefilled opener themselves, which also binds their phone.
@@ -322,7 +348,7 @@ export default function Onboarding() {
                     textTransform: "uppercase",
                   }}
                 >
-                  {source === "WeKruit_Laid_Off"
+                  {isLayoffVariant
                     ? "WeKruit Open · for people between things"
                     : "WeKruit · meet your AI recruiter"}
                 </p>
@@ -337,7 +363,7 @@ export default function Onboarding() {
             <FormIntake
               onDone={onFormDone}
               isBusy={Boolean(busyText)}
-              source={source}
+              isLayoff={isLayoffVariant}
               authUser={authUser}
               linkedinLinkedViaOauth={linkedinLinkedViaOauth}
               isJobInterview={Boolean(returnJobId)}
@@ -628,19 +654,18 @@ function splitDisplayName(displayName: string | null | undefined): { first: stri
 function FormIntake({
   onDone,
   isBusy,
-  source,
+  isLayoff,
   authUser,
   linkedinLinkedViaOauth,
   isJobInterview,
 }: {
   onDone: (p: Profile) => void | Promise<void>
   isBusy: boolean
-  source: SignupSource
+  isLayoff: boolean
   authUser: User
   linkedinLinkedViaOauth: boolean
   isJobInterview: boolean
 }) {
-  const isLayoff = source === "WeKruit_Laid_Off"
   const skipLinkedinField = !isLayoff && linkedinLinkedViaOauth
   const ssoNames = splitDisplayName(authUser.displayName)
   const [v, setV] = useState<Profile>({
@@ -715,10 +740,13 @@ function FormIntake({
     if (file) set("resume", { name: file.name, size: file.size, file })
   }
 
-  const consentText =
-    source === "WeKruit_Laid_Off"
-      ? "I confirm I was laid off in the last 6 months and I'm okay with verified WeKruit employers seeing my name, last company, and pitch. I can hide my resume and remove my profile anytime."
-      : "I'm okay with verified WeKruit employers seeing my name, profile details, and pitch. I can hide my resume and remove my profile anytime."
+  // The laid-off confirmation ("I confirm I was laid off in the last 6
+  // months…") renders ONLY for the genuine layoff variant. Generic / organic
+  // onboarding shows the neutral employer-visibility consent — never the
+  // laid-off assertion.
+  const consentText = isLayoff
+    ? "I confirm I was laid off in the last 6 months and I'm okay with verified WeKruit employers seeing my name, last company, and pitch. I can hide my resume and remove my profile anytime."
+    : "I'm okay with verified WeKruit employers seeing my name, profile details, and pitch. I can hide my resume and remove my profile anytime."
 
   return (
     <div className="card card--feature" style={{ background: "var(--cream-3)", borderRadius: "var(--r-lg)" }}>

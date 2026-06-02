@@ -95,3 +95,45 @@ test("peekSource returns layoffhedge from cookie without writing back", async ()
     assert.equal(mod.peekSource(), "layoffhedge")
   })
 })
+
+// ── isLayoffArrival: the laid-off onboarding variant gate ──────────────────
+// Must be TRUE only for a genuine layoff arrival (explicit ?source=layoff or
+// the layoff host), never inherited from the sticky wko_source cookie.
+
+test("isLayoffArrival true for explicit ?source=layoff", async () => {
+  const mod = await import("./source.js?case=arrivalUrlLayoff")
+  withBrowser("https://wekruit.com/onboarding?source=layoff", "", () => {
+    assert.equal(mod.isLayoffArrival(), true)
+  })
+})
+
+test("isLayoffArrival true on the layoff host", async () => {
+  const mod = await import("./source.js?case=arrivalHost")
+  withBrowser("https://layoff.wekruit.com/onboarding", "", () => {
+    assert.equal(mod.isLayoffArrival(), true)
+  })
+})
+
+test("isLayoffArrival FALSE for generic entry with sticky layoff cookie", async () => {
+  // Browser previously touched layoff → sticky .wekruit.com cookie. A later
+  // plain wekruit.com/onboarding must NOT render the laid-off variant.
+  const mod = await import("./source.js?case=arrivalStickyCookieGeneric")
+  withBrowser("https://wekruit.com/onboarding", "wko_source=WeKruit_Laid_Off", () => {
+    assert.equal(mod.isLayoffArrival(), false)
+  })
+})
+
+test("isLayoffArrival FALSE for generic entry with no signal", async () => {
+  const mod = await import("./source.js?case=arrivalGenericNoSignal")
+  withBrowser("https://wekruit.com/onboarding", "", () => {
+    assert.equal(mod.isLayoffArrival(), false)
+  })
+})
+
+test("isLayoffArrival FALSE for ?source=organic", async () => {
+  // Unknown/neutral param → not layoff (sourceFromQueryValue returns null).
+  const mod = await import("./source.js?case=arrivalOrganic")
+  withBrowser("https://wekruit.com/onboarding?source=organic", "", () => {
+    assert.equal(mod.isLayoffArrival(), false)
+  })
+})

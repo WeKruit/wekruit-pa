@@ -689,9 +689,13 @@ export default function CandidateLogin() {
     const intentPath = raw ?? remembered
     if (intentPath) rememberOnboardingIntentForPath(intentPath)
     stickSourceFromLoginNext(intentPath)
-    const fallback = isLayoffHost()
-      ? onboardingDestination("WeKruit_Laid_Off")
-      : onboardingDestination(peekSource())
+    // Genuine layoff arrival = the layoff host only (an explicit
+    // `?source=layoff` link arrives via `raw`/`next`, which outranks this
+    // fallback). Do NOT synthesize a layoff destination from the sticky
+    // `wko_source` cookie — that would route a generic login in a
+    // layoff-tainted browser to `/onboarding?source=layoff` and re-trigger the
+    // laid-off onboarding variant. Generic login → neutral `/onboarding`.
+    const fallback = isLayoffHost() ? onboardingDestination("WeKruit_Laid_Off") : "/onboarding"
     return parseLoginNextPath(raw, fallback)
   }, [searchParams])
   const [email, setEmail] = useState(() => readStoredValue(EMAIL_STORAGE_KEY) ?? "")

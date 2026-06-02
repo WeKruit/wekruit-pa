@@ -80,6 +80,26 @@ export function peekSource(): SignupSource {
   return cookieSource() ?? "candidate"
 }
 
+/**
+ * Whether THIS arrival is a genuine layoff entry — i.e. the visitor actually
+ * came in via a layoff-campaign link (`?source=layoff`) or the layoff host
+ * (`layoff.wekruit.com`). Deliberately does NOT consult the sticky
+ * `wko_source` cookie.
+ *
+ * The cookie is scoped to `.wekruit.com` and lives 180d, so once a browser
+ * brushes any layoff entry point it would otherwise make EVERY later visit —
+ * including a plain `wekruit.com/onboarding` with no param — resolve to
+ * `WeKruit_Laid_Off` and render the layoff onboarding variant + the
+ * "I confirm I was laid off…" consent gate. That laid-off confirmation is a
+ * legal/consent assertion and must only render on a real layoff arrival, never
+ * inherited from a stale cross-subdomain cookie. Generic entry → neutral
+ * onboarding. (`candidate` / `layoffhedge` cookie continuity is unaffected —
+ * neither shows the laid-off variant.)
+ */
+export function isLayoffArrival(): boolean {
+  return urlSource() === "WeKruit_Laid_Off" || hostSource() === "WeKruit_Laid_Off"
+}
+
 /** When login `next` targets layoff onboarding, stick source before OAuth strips the URL. */
 export function stickSourceFromLoginNext(raw: string | null | undefined): void {
   if (!raw) return
