@@ -48,3 +48,16 @@ test("Market default table rows surface source evidence before opening card view
   assert.match(source, /function HuntRow\([\s\S]*<EvidenceBadge evidence=\{r\.evidence\} compact \/>/)
   assert.match(source, /\.wk-tbl__evidence/)
 })
+
+test("Market explains how Claire uses role sources before candidates chase postings", () => {
+  assert.match(source, /How Claire uses this market/)
+  assert.match(source, /Direct-line roles are briefs WeKruit can screen against/)
+  assert.match(source, /Tracked roles are source evidence, not applications/)
+  assert.match(source, /Your profile and preferences decide what Claire can pursue with you/)
+  assert.match(source, /href="\/me\/profile"/)
+  assert.match(source, /href="\/onboarding"/)
+
+  assert.doesNotMatch(source, /apply to every role/i)
+  assert.doesNotMatch(source, /auto-submit/i)
+  assert.doesNotMatch(source, /we pitch you anyway/i)
+})

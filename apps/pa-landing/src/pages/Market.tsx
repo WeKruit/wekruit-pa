@@ -705,6 +705,35 @@ export default function Market(): ReactNode {
                 </p>
               </header>
 
+              <section className="wk-market-contract" aria-labelledby="wk-market-contract-title">
+                <div className="wk-market-contract__copy">
+                  <p className="wk-eyebrow">How Claire uses this market</p>
+                  <h2 id="wk-market-contract-title">Use roles as signal, not another apply queue.</h2>
+                  <p>
+                    The market is a source layer. Claire still needs your durable profile, target constraints,
+                    and interview evidence before any role becomes a real WeKruit path.
+                  </p>
+                </div>
+                <div className="wk-market-contract__grid">
+                  <article className="wk-market-contract__item wk-market-contract__item--direct">
+                    <strong>Direct-line roles</strong>
+                    <span>Direct-line roles are briefs WeKruit can screen against. Claire interviews against the approved role before any passed profile is shared.</span>
+                  </article>
+                  <article className="wk-market-contract__item wk-market-contract__item--tracked">
+                    <strong>Tracked roles</strong>
+                    <span>Tracked roles are source evidence, not applications. Open the original posting when you want to inspect the company or role details.</span>
+                  </article>
+                  <article className="wk-market-contract__item wk-market-contract__item--profile">
+                    <strong>Your profile</strong>
+                    <span>Your profile and preferences decide what Claire can pursue with you. Keep them current before asking Claire to chase a role.</span>
+                  </article>
+                </div>
+                <div className="wk-market-contract__actions">
+                  <a className="wk-btn wk-btn--primary" href="/me/profile">Update preferences</a>
+                  <a className="wk-btn wk-btn--secondary" href="/onboarding">Start with Claire</a>
+                </div>
+              </section>
+
               <div className="wk-market__layout">
                 <FilterRail
                   fn={fnSel} setFn={setFnSel}
@@ -931,6 +960,43 @@ const MARKET_STYLES = String.raw`
   color: var(--wk-ink-2); margin: 0; max-width: 660px; text-wrap: pretty;
 }
 
+.wk-shell .wk-market-contract {
+  display: grid; grid-template-columns: minmax(260px, 0.74fr) minmax(0, 1fr);
+  gap: 28px; align-items: start;
+  padding: 24px 0 28px; margin: 0 0 32px;
+  border-top: 1px solid var(--wk-border); border-bottom: 1px solid var(--wk-border);
+}
+.wk-shell .wk-market-contract__copy h2 {
+  font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
+  font-weight: 400; font-size: clamp(28px, 3.6vw, 44px);
+  line-height: 1.05; letter-spacing: 0;
+  color: var(--wk-ink); margin: 12px 0 12px; text-wrap: balance;
+}
+.wk-shell .wk-market-contract__copy p:last-child {
+  margin: 0; color: var(--wk-ink-2); font-size: 15.5px; line-height: 1.5; max-width: 460px;
+}
+.wk-shell .wk-market-contract__grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;
+}
+.wk-shell .wk-market-contract__item {
+  min-height: 138px; padding: 16px;
+  border: 1px solid var(--wk-border); border-radius: 8px;
+  background: var(--wk-cream-3);
+  display: flex; flex-direction: column; gap: 9px;
+}
+.wk-shell .wk-market-contract__item--direct { border-color: var(--wk-live-border); background: var(--wk-live-soft); }
+.wk-shell .wk-market-contract__item--tracked { border-color: #BCC7E8; background: #F1F4FB; }
+.wk-shell .wk-market-contract__item--profile { border-color: var(--wk-peach-200); background: var(--wk-peach-50); }
+.wk-shell .wk-market-contract__item strong {
+  color: var(--wk-ink); font-size: 14px; font-weight: 650; letter-spacing: 0;
+}
+.wk-shell .wk-market-contract__item span {
+  color: var(--wk-ink-2); font-size: 13.5px; line-height: 1.45;
+}
+.wk-shell .wk-market-contract__actions {
+  grid-column: 2; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: -8px;
+}
+
 .wk-shell .wk-batch {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   padding: 14px 20px; background: var(--wk-peach-50);
@@ -1150,6 +1216,8 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-evidence--compact .wk-evidence__detail { display: none; }
 
 @media (max-width: 1080px) {
+  .wk-shell .wk-market-contract { grid-template-columns: 1fr; gap: 18px; }
+  .wk-shell .wk-market-contract__actions { grid-column: auto; margin-top: 0; }
   .wk-shell .wk-market__layout { grid-template-columns: 1fr; gap: 24px; }
   .wk-shell .wk-filt { position: static; }
   .wk-shell .wk-filt__list { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1162,6 +1230,8 @@ const MARKET_STYLES = String.raw`
   .wk-shell .wk-mtabs { gap: 24px; }
   .wk-shell .wk-mtab__label { font-size: 22px; }
   .wk-shell .wk-mtab__sub { display: none; }
+  .wk-shell .wk-market-contract__grid { grid-template-columns: 1fr; }
+  .wk-shell .wk-market-contract__item { min-height: 0; }
   .wk-shell .wk-batch { flex-direction: column; align-items: flex-start; gap: 8px; }
   .wk-shell .wk-tbl-wrap { overflow-x: auto; }
   .wk-shell .wk-tbl { min-width: 760px; }
