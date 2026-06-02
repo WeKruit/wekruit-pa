@@ -4039,7 +4039,7 @@ function MatchesView({
               </p>
             </div>
             <div className="wkmp__action">
-              <Link to="/me/profile" className="wk-btn wk-btn--primary wk-btn--sm">
+              <Link to="/me/profile#match-preferences" className="wk-btn wk-btn--primary wk-btn--sm">
                 Adjust matching <Icon name="arrow-right" size={12} stroke={1.9} />
               </Link>
             </div>
@@ -4133,7 +4133,6 @@ function MatchesView({
 }
 
 function MeMatchFull({ match, claireHref }: { match: CandidateMatchCard; claireHref: string | null }) {
-  const navigate = useNavigate()
   const isCollab = !!match.collab
   const logo = (match.job.company[0] ?? "?").toUpperCase()
   const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
@@ -4181,16 +4180,9 @@ function MeMatchFull({ match, claireHref }: { match: CandidateMatchCard; claireH
 
       <footer className="wkv3-match__foot">
         <div className="wkv3-match__feedback">
-          <a
-            href="#"
-            className="wkv3-match__prefs"
-            onClick={(e) => {
-              e.preventDefault()
-              navigate("/me/profile")
-            }}
-          >
+          <Link to="/me/profile#match-preferences" className="wkv3-match__prefs">
             Update matching preferences
-          </a>
+          </Link>
         </div>
         <div className="wkv3-match__primaries">
           {isCollab ? (

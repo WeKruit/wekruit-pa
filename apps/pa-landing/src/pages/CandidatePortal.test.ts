@@ -35,6 +35,19 @@ test("CandidatePortal matches inbox does not present local-only feedback as dura
   assert.match(source, /Update matching preferences/)
 })
 
+test("CandidatePortal roles inbox routes preference edits to the match-preferences editor", () => {
+  assert.match(
+    source,
+    /<Link to="\/me\/profile#match-preferences" className="wk-btn wk-btn--primary wk-btn--sm">[\s\S]*Adjust matching/,
+  )
+  assert.match(
+    source,
+    /<Link\s+to="\/me\/profile#match-preferences"\s+className="wkv3-match__prefs">[\s\S]*Update matching preferences/,
+  )
+  assert.doesNotMatch(source, /href="#"\s+className="wkv3-match__prefs"/)
+  assert.doesNotMatch(source, /navigate\("\/me\/profile"\)/)
+})
+
 test("CandidatePortal roles inbox distinguishes WeKruit-screened roles from external recommendations", () => {
   assert.doesNotMatch(source, /Matches · \{all\.length\} active/)
   assert.doesNotMatch(source, /You don&apos;t apply cold/)
