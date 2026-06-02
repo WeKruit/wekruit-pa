@@ -2317,6 +2317,17 @@ export default function RecruiterRole() {
     document.getElementById("submit-candidate")?.scrollIntoView({ behavior: "smooth", block: "start" })
   }
 
+  const appendProofPrompt = (proofItem: string) => {
+    const prompt = `Proof for "${proofItem}": `
+    setForm((next) => ({
+      ...next,
+      candidateNotes: next.candidateNotes.includes(prompt)
+        ? next.candidateNotes
+        : [next.candidateNotes.trim(), prompt].filter(Boolean).join("\n\n"),
+    }))
+    requestAnimationFrame(() => document.getElementById("candidate-proof-note")?.scrollIntoView({ behavior: "smooth", block: "center" }))
+  }
+
   const saveRoleApplication = async (input: RecruiterRoleApplicationInput) => {
     setRoleApplicationSaving(true)
     setRoleApplicationError(null)
@@ -2593,6 +2604,18 @@ export default function RecruiterRole() {
                   Prefilled from your sourced candidate queue: {selectedCandidate.candidate?.name || "Candidate"}.
                 </p>
               )}
+              {selectedCandidate && submissionPacket.missingHard.length > 0 && (
+                <section className="rb-proof-helper" aria-label="Next missing candidate proof">
+                  <div>
+                    <span>Next proof gap</span>
+                    <strong>{submissionPacket.missingHard[0]}</strong>
+                    <p>Submission note needs direct evidence before this packet is review-ready.</p>
+                  </div>
+                  <button type="button" className="rb-btn" onClick={() => appendProofPrompt(submissionPacket.missingHard[0])}>
+                    Add note prompt
+                  </button>
+                </section>
+              )}
               <div className="field">
                 <label>Your name *</label>
                 <input
@@ -2661,6 +2684,7 @@ export default function RecruiterRole() {
           <div className="field">
             <label>Notes for us</label>
             <textarea
+              id="candidate-proof-note"
               value={form.candidateNotes}
               onChange={(e) => setForm({ ...form, candidateNotes: e.target.value })}
             />
