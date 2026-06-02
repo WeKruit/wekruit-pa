@@ -71,3 +71,14 @@ test("EmployerSignup captures the post-pass intro handoff before Claire screens"
   assert.doesNotMatch(source, /WeKruit will figure out the next step/i)
   assert.doesNotMatch(source, /Schedule intro/i)
 })
+
+test("EmployerSignup captures the hiring-team feedback loop before Claire screens", () => {
+  assert.match(source, /Feedback loop \*/)
+  assert.match(source, /pass\/no-pass signal/i)
+  assert.match(source, /one correction signal/i)
+  assert.match(source, /feedbackLoop/)
+
+  assert.doesNotMatch(source, /Feedback loop \(optional\)/i)
+  assert.doesNotMatch(source, /Claire will infer the feedback/i)
+  assert.doesNotMatch(source, /AI learns automatically/i)
+})

@@ -43,3 +43,13 @@ test("LayoffEmployers review shows intro handoff separately from notes", () => {
 
   assert.doesNotMatch(source, /intro handoff is optional/i)
 })
+
+test("LayoffEmployers review shows feedback loop separately from notes", () => {
+  assert.match(source, /feedbackLoop\?: string/)
+  assert.match(source, /Feedback loop/)
+  assert.match(source, /r\.feedbackLoop/)
+  assert.match(source, /Notes/)
+
+  assert.doesNotMatch(source, /feedback loop is optional/i)
+  assert.doesNotMatch(source, /AI learns automatically/i)
+})

@@ -256,6 +256,8 @@ function employer(overrides: Partial<EmployerInput> = {}): EmployerInput {
     ],
     calibrationExamples:
       "Strong pass: shipped a developer platform pricing migration under real customer load.\nFalse positive: only owned internal tooling without external developer users.",
+    feedbackLoop:
+      "After every accepted or rejected intro, Alex posts the pass/no-pass reason and one correction signal in the WeKruit thread.",
     introHandoff:
       "After a passed profile, route accepted intros to Alex for a 30-minute hiring-manager screen within two business days.",
     ...overrides,
@@ -642,9 +644,33 @@ test("runRegisterEmployer stores normalized workEmailLower for verification look
     "Strong pass: shipped a developer platform pricing migration under real customer load.\nFalse positive: only owned internal tooling without external developer users.",
   )
   assert.equal(
+    doc.feedbackLoop,
+    "After every accepted or rejected intro, Alex posts the pass/no-pass reason and one correction signal in the WeKruit thread.",
+  )
+  assert.equal(
     doc.introHandoff,
     "After a passed profile, route accepted intros to Alex for a 30-minute hiring-manager screen within two business days.",
   )
+})
+
+test("runRegisterEmployer reports missing intake fields in visible form order", async () => {
+  const fake = new FakeFirestore()
+
+  await assert.rejects(
+    () =>
+      runRegisterEmployer(
+        employer({
+          hardFilters: [],
+          screeningQuestions: [],
+          calibrationExamples: " ",
+          notes: " ",
+          feedbackLoop: " ",
+        } as never),
+        deps(fake),
+      ),
+    (err) => err instanceof HttpsError && err.code === "invalid-argument" && err.message === "hard_filters_required",
+  )
+  assert.equal(fake.collectionStore("layoff_employers").size, 0)
 })
 
 test("runRegisterEmployer rejects employer intake without hard filters", async () => {
@@ -683,6 +709,16 @@ test("runRegisterEmployer rejects employer intake without calibration examples",
   await assert.rejects(
     () => runRegisterEmployer(employer({ calibrationExamples: " " } as never), deps(fake)),
     (err) => err instanceof HttpsError && err.code === "invalid-argument",
+  )
+  assert.equal(fake.collectionStore("layoff_employers").size, 0)
+})
+
+test("runRegisterEmployer rejects employer intake without a feedback loop", async () => {
+  const fake = new FakeFirestore()
+
+  await assert.rejects(
+    () => runRegisterEmployer(employer({ feedbackLoop: " " } as never), deps(fake)),
+    (err) => err instanceof HttpsError && err.code === "invalid-argument" && err.message === "feedback_loop_required",
   )
   assert.equal(fake.collectionStore("layoff_employers").size, 0)
 })
@@ -809,4 +845,35 @@ test("runRegisterEmployer sends intro handoff in the admin notification", async 
   assert.match(sent[0]!.text, /30-minute hiring-manager screen/)
   assert.match(sent[0]!.html!, /Intro handoff/)
   assert.match(sent[0]!.html!, /two business days/)
+})
+
+test("runRegisterEmployer sends feedback loop in the admin notification", async () => {
+  const fake = new FakeFirestore()
+  const sent: Array<{ text: string; html?: string }> = []
+  const oldApiKey = process.env.MAILGUN_API_KEY
+  const oldDomain = process.env.MAILGUN_DOMAIN
+  process.env.MAILGUN_API_KEY = "test-key"
+  process.env.MAILGUN_DOMAIN = "mail.wekruit.test"
+
+  try {
+    await runRegisterEmployer(
+      employer(),
+      deps(fake, {
+        sendMail: async (_cfg: unknown, input: { text: string; html?: string }) => {
+          sent.push({ text: input.text, html: input.html })
+          return { ok: true, status: 200, messageId: "msg_1" }
+        },
+      } as never),
+    )
+  } finally {
+    if (oldApiKey === undefined) delete process.env.MAILGUN_API_KEY
+    else process.env.MAILGUN_API_KEY = oldApiKey
+    if (oldDomain === undefined) delete process.env.MAILGUN_DOMAIN
+    else process.env.MAILGUN_DOMAIN = oldDomain
+  }
+
+  assert.match(sent[0]!.text, /Feedback loop:/)
+  assert.match(sent[0]!.text, /one correction signal/)
+  assert.match(sent[0]!.html!, /Feedback loop/)
+  assert.match(sent[0]!.html!, /pass\/no-pass reason/)
 })

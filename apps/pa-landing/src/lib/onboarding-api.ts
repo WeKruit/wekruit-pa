@@ -76,6 +76,8 @@ export type EmployerSignupInput = {
   screeningQuestions: string[]
   /** Examples that calibrate the strong-pass bar and false-positive boundary. */
   calibrationExamples: string
+  /** Hiring-team signal loop after accepted/rejected passed-profile intros. */
+  feedbackLoop: string
   /** Employer-owned next step after WeKruit sends an accepted passed-profile intro. */
   introHandoff: string
   /** Free-form notes shown verbatim in the admin notification email. */

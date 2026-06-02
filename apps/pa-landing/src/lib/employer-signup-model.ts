@@ -20,6 +20,7 @@ export type EmployerSignupFormState = {
   hardFilters: string
   screeningQuestions: string
   calibrationExamples: string
+  feedbackLoop: string
   introHandoff: string
   notes: string
 }
@@ -53,6 +54,9 @@ export function validateEmployerSignupForm(form: EmployerSignupFormState): strin
   if (!form.notes.trim()) {
     return "Must-haves are required so Claire can probe the right evidence."
   }
+  if (!form.feedbackLoop.trim()) {
+    return "Feedback loop is required so Claire's pass/no-pass signal can improve after every intro."
+  }
   if (!form.introHandoff.trim()) {
     return "Intro handoff is required so passed candidates have a real next step."
   }
@@ -72,6 +76,7 @@ export function buildEmployerSignupPayload(form: EmployerSignupFormState): Emplo
     hardFilters: splitRoleBriefs(form.hardFilters),
     screeningQuestions: splitRoleBriefs(form.screeningQuestions),
     calibrationExamples: form.calibrationExamples.trim(),
+    feedbackLoop: form.feedbackLoop.trim(),
     introHandoff: form.introHandoff.trim(),
   }
 }

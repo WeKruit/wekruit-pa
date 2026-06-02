@@ -621,6 +621,8 @@ export type EmployerInput = {
   screeningQuestions: string[]
   /** Examples that calibrate the strong-pass bar and false-positive boundary before Claire screens. */
   calibrationExamples: string
+  /** Hiring-team signal loop after accepted/rejected passed-profile intros. */
+  feedbackLoop: string
   /** Employer-owned next step after WeKruit sends an accepted passed-profile intro. */
   introHandoff: string
   /** Submitter name — for the admin notification email. */
@@ -643,14 +645,16 @@ export async function runRegisterEmployer(
   if (!workEmailLower) throw new HttpsError("invalid-argument", "work_email_invalid")
   const rolesHiring = cleanStringList(v.rolesHiring)
   if (rolesHiring.length === 0) throw new HttpsError("invalid-argument", "role_brief_required")
-  const notes = typeof v.notes === "string" ? v.notes.trim() : ""
-  if (!notes) throw new HttpsError("invalid-argument", "must_haves_required")
   const hardFilters = cleanStringList(v.hardFilters)
   if (hardFilters.length === 0) throw new HttpsError("invalid-argument", "hard_filters_required")
   const screeningQuestions = cleanStringList(v.screeningQuestions)
   if (screeningQuestions.length === 0) throw new HttpsError("invalid-argument", "screening_questions_required")
   const calibrationExamples = typeof v.calibrationExamples === "string" ? v.calibrationExamples.trim() : ""
   if (!calibrationExamples) throw new HttpsError("invalid-argument", "calibration_examples_required")
+  const notes = typeof v.notes === "string" ? v.notes.trim() : ""
+  if (!notes) throw new HttpsError("invalid-argument", "must_haves_required")
+  const feedbackLoop = typeof v.feedbackLoop === "string" ? v.feedbackLoop.trim() : ""
+  if (!feedbackLoop) throw new HttpsError("invalid-argument", "feedback_loop_required")
   const introHandoff = typeof v.introHandoff === "string" ? v.introHandoff.trim() : ""
   if (!introHandoff) throw new HttpsError("invalid-argument", "intro_handoff_required")
   const cleanInput: EmployerInput = {
@@ -664,6 +668,7 @@ export async function runRegisterEmployer(
     hardFilters,
     screeningQuestions,
     calibrationExamples,
+    feedbackLoop,
     introHandoff,
     contactName: typeof v.contactName === "string" ? v.contactName.trim() : undefined,
     notes,
@@ -721,6 +726,7 @@ async function notifyAdminOfEmployerSignup(
     `Hard filters: ${v.hardFilters.length ? v.hardFilters.join("; ") : "—"}`,
     `Screening questions: ${v.screeningQuestions.length ? v.screeningQuestions.join("; ") : "—"}`,
     `Calibration examples: ${v.calibrationExamples || "—"}`,
+    `Feedback loop: ${v.feedbackLoop || "—"}`,
     `Intro handoff: ${v.introHandoff || "—"}`,
     v.notes ? `\nNotes:\n${v.notes}` : null,
     `\nFirestore: layoff_employers/${ctx.employerId}`,
@@ -743,6 +749,7 @@ async function notifyAdminOfEmployerSignup(
     `<li><b>Hard filters:</b> ${v.hardFilters.length ? escapeHtml(v.hardFilters.join("; ")) : "—"}</li>` +
     `<li><b>Screening questions:</b> ${v.screeningQuestions.length ? escapeHtml(v.screeningQuestions.join("; ")) : "—"}</li>` +
     `<li><b>Calibration examples:</b> ${escapeHtml(v.calibrationExamples || "—")}</li>` +
+    `<li><b>Feedback loop:</b> ${escapeHtml(v.feedbackLoop || "—")}</li>` +
     `<li><b>Intro handoff:</b> ${escapeHtml(v.introHandoff || "—")}</li>` +
     `</ul>` +
     (v.notes ? `<h3 style="font-family:system-ui;font-size:14px;margin:18px 0 6px">Notes</h3><pre style="font-family:system-ui;font-size:13px;white-space:pre-wrap;background:#f6f3ee;padding:12px;border-radius:6px">${escapeHtml(v.notes)}</pre>` : "") +

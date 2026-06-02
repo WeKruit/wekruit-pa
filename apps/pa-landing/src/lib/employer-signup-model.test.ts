@@ -22,6 +22,8 @@ const VALID_FORM: EmployerSignupFormState = {
     "Describe a platform tradeoff you owned\nWhat evidence proves they can handle infra ambiguity?",
   calibrationExamples:
     "Strong pass: shipped a developer platform pricing migration under real customer load.\nFalse positive: only owned internal tooling without external developer users.",
+  feedbackLoop:
+    "After every accepted or rejected intro, Alex posts the pass/no-pass reason and one correction signal in the WeKruit thread.",
   introHandoff:
     "After a passed profile, route accepted intros to Alex for a 30-minute hiring-manager screen within two business days.",
 }
@@ -68,6 +70,13 @@ test("validateEmployerSignupForm requires the post-pass intro handoff", () => {
   )
 })
 
+test("validateEmployerSignupForm requires the hiring-team feedback loop before Claire screens", () => {
+  assert.equal(
+    validateEmployerSignupForm({ ...VALID_FORM, feedbackLoop: " " }),
+    "Feedback loop is required so Claire's pass/no-pass signal can improve after every intro.",
+  )
+})
+
 test("validateEmployerSignupForm reports missing fields in the visible form order", () => {
   assert.equal(
     validateEmployerSignupForm({
@@ -76,6 +85,7 @@ test("validateEmployerSignupForm reports missing fields in the visible form orde
       screeningQuestions: " ",
       calibrationExamples: " ",
       notes: " ",
+      feedbackLoop: " ",
     }),
     "Hard filters are required so Claire knows what must stop a pass.",
   )
@@ -85,8 +95,18 @@ test("validateEmployerSignupForm reports missing fields in the visible form orde
       ...VALID_FORM,
       calibrationExamples: " ",
       notes: " ",
+      feedbackLoop: " ",
     }),
     "Calibration examples are required so Claire knows what a strong pass and false positive look like.",
+  )
+
+  assert.equal(
+    validateEmployerSignupForm({
+      ...VALID_FORM,
+      feedbackLoop: " ",
+      introHandoff: " ",
+    }),
+    "Feedback loop is required so Claire's pass/no-pass signal can improve after every intro.",
   )
 })
 
@@ -111,6 +131,8 @@ test("buildEmployerSignupPayload normalizes the role brief without inventing sco
     ],
     calibrationExamples:
       "Strong pass: shipped a developer platform pricing migration under real customer load.\nFalse positive: only owned internal tooling without external developer users.",
+    feedbackLoop:
+      "After every accepted or rejected intro, Alex posts the pass/no-pass reason and one correction signal in the WeKruit thread.",
     introHandoff:
       "After a passed profile, route accepted intros to Alex for a 30-minute hiring-manager screen within two business days.",
   })

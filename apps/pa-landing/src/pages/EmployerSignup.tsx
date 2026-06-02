@@ -37,6 +37,7 @@ const EMPTY_FORM: EmployerSignupFormState = {
   hardFilters: "",
   screeningQuestions: "",
   calibrationExamples: "",
+  feedbackLoop: "",
   introHandoff: "",
   notes: "",
 }
@@ -110,8 +111,9 @@ export default function EmployerSignup() {
             }}
           >
             Tell us the role, must-haves, hard filters, evidence probes, calibration examples,
-            and intro handoff behind the brief. WeKruit reviews it, Claire screens against the
-            evidence, and you only see consented passed profiles with the transcript and risks attached.
+            feedback loop, and intro handoff behind the brief. WeKruit reviews it, Claire screens
+            against the evidence, and you only see consented passed profiles with the transcript
+            and risks attached.
           </p>
 
           {done ? <SuccessCard email={form.workEmail} /> : (
@@ -207,6 +209,14 @@ export default function EmployerSignup() {
                 value={form.notes}
                 onChange={(v) => update("notes", v)}
                 placeholder="Founder-mode judgment, API product depth, comp band, location, must-haves Claire should probe."
+                as="textarea"
+              />
+              <Field
+                label="Feedback loop *"
+                value={form.feedbackLoop}
+                onChange={(v) => update("feedbackLoop", v)}
+                placeholder="After every accepted or rejected intro, Alex posts the pass/no-pass reason and one correction signal in the WeKruit thread."
+                helper="Define how the hiring team's pass/no-pass signal gets back to Claire after each passed profile."
                 as="textarea"
               />
               <Field
@@ -371,7 +381,7 @@ function SuccessCard({ email }: { email: string }) {
       <p style={{ color: "var(--ink-2)", margin: "0 0 18px", maxWidth: 440, marginInline: "auto" }}>
         We have sent the role brief to the WeKruit team. We will reach out at <strong>{email}</strong>{" "}
         within a business day to confirm the hard filters, evidence probes, calibration examples,
-        intro handoff, and must-have evidence before Claire screens candidates.
+        feedback loop, intro handoff, and must-have evidence before Claire screens candidates.
       </p>
       <Link to="/" className="btn btn--primary" style={{ textDecoration: "none" }}>
         Back to home
