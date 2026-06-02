@@ -15,6 +15,7 @@
  */
 import { describe, it } from "node:test"
 import assert from "node:assert/strict"
+import * as recruiterBoardEntrypoint from "../index.js"
 import {
   buildRecruiterRoleIntelligence,
   buildRecruiterRoleApplicationDecisionEvent,
@@ -109,6 +110,12 @@ function memoryFirestore() {
     setCount: (key: string) => counts.get(key) ?? 0,
   }
 }
+
+describe("recruiter-board deployed entrypoint", () => {
+  it("exports the role feedback flywheel trigger", () => {
+    assert.equal("paRecruiterRoleFeedbackSignalWrite" in recruiterBoardEntrypoint, true)
+  })
+})
 
 describe("computeSubmissionScore", () => {
   it("counts checked items per group", () => {

@@ -30,6 +30,7 @@ export {
   paRecruiterRoleApplicationSave,
   paRecruiterRoleApplicationsList,
   paRecruiterRoleReleasedNotify,
+  paRecruiterRoleFeedbackSignalWrite,
   paRecruiterRoleFeedbackList,
   paRecruiterRoleFeedbackSave,
   paRecruiterRoleIntelligenceList,
