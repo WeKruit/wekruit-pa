@@ -91,6 +91,23 @@ type RoleQuickCandidateDraft = {
   notes: string
 }
 
+type RoleCandidateCommand = {
+  tone: "good" | "watch" | "blocked" | "quiet"
+  label: string
+  title: string
+  body: string
+  primaryLabel: string
+  primaryAction: "quick_source" | "use" | "stage" | "crm"
+  primaryCandidate?: RecruiterSourcedCandidateItem
+  primaryStage?: RecruiterSourcedCandidateStage
+  counts: {
+    ready: number
+    due: number
+    uncontacted: number
+    active: number
+  }
+}
+
 function emptyRoleQuickCandidateDraft(): RoleQuickCandidateDraft {
   return {
     name: "",
@@ -330,6 +347,97 @@ function roleCandidateOutreachLabel(candidate: RecruiterSourcedCandidateItem): s
         : "Not contacted"
   if (!candidate.outreach?.nextFollowUpAt) return label
   return `${label} · follow-up ${roleQuestionTime(candidate.outreach.nextFollowUpAt)}`
+}
+
+function roleCandidateFollowUpDue(candidate: RecruiterSourcedCandidateItem): boolean {
+  if (candidate.stage === "submitted" || candidate.stage === "archived") return false
+  const ms = timestampMs(candidate.outreach?.nextFollowUpAt)
+  if (!ms) return false
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return ms <= today.getTime() + 86_400_000
+}
+
+function buildRoleCandidateCommand(candidates: RecruiterSourcedCandidateItem[]): RoleCandidateCommand {
+  const active = candidates.filter((candidate) => candidate.stage !== "submitted" && candidate.stage !== "archived")
+  const ready = active.filter((candidate) => candidate.stage === "ready")
+  const due = active.filter(roleCandidateFollowUpDue)
+  const uncontacted = active.filter((candidate) => (candidate.outreach?.status ?? "not_contacted") === "not_contacted")
+  const screened = active.filter((candidate) => candidate.stage === "screened")
+  const contacted = active.filter((candidate) => candidate.stage === "contacted")
+  if (ready[0]) {
+    return {
+      tone: "good",
+      label: "Submit next",
+      title: `${candidateDisplayName(ready[0])} is ready`,
+      body: "Use the candidate, verify hard proof, and submit while the packet is warm.",
+      primaryLabel: "Use ready candidate",
+      primaryAction: "use",
+      primaryCandidate: ready[0],
+      counts: { ready: ready.length, due: due.length, uncontacted: uncontacted.length, active: active.length },
+    }
+  }
+  if (due[0]) {
+    return {
+      tone: "watch",
+      label: "Follow-up due",
+      title: `${candidateDisplayName(due[0])} needs a touch`,
+      body: roleCandidateOutreachLabel(due[0]),
+      primaryLabel: "Use candidate",
+      primaryAction: "use",
+      primaryCandidate: due[0],
+      counts: { ready: ready.length, due: due.length, uncontacted: uncontacted.length, active: active.length },
+    }
+  }
+  if (screened[0]) {
+    return {
+      tone: "watch",
+      label: "Proof to close",
+      title: `${candidateDisplayName(screened[0])} is screened`,
+      body: "Move to ready only after the role-fit proof and candidate consent are clear.",
+      primaryLabel: "Mark Ready",
+      primaryAction: "stage",
+      primaryCandidate: screened[0],
+      primaryStage: "ready",
+      counts: { ready: ready.length, due: due.length, uncontacted: uncontacted.length, active: active.length },
+    }
+  }
+  if (contacted[0]) {
+    return {
+      tone: "watch",
+      label: "Screen next",
+      title: `${candidateDisplayName(contacted[0])} has been contacted`,
+      body: "Use the candidate to add screening evidence before promoting the packet.",
+      primaryLabel: "Use candidate",
+      primaryAction: "use",
+      primaryCandidate: contacted[0],
+      counts: { ready: ready.length, due: due.length, uncontacted: uncontacted.length, active: active.length },
+    }
+  }
+  if (uncontacted[0]) {
+    return {
+      tone: "quiet",
+      label: "Contact next",
+      title: `${candidateDisplayName(uncontacted[0])} is first in queue`,
+      body: "Start outreach and set the role follow-up clock before more sourcing.",
+      primaryLabel: "Mark Contacted",
+      primaryAction: "stage",
+      primaryCandidate: uncontacted[0],
+      primaryStage: "contacted",
+      counts: { ready: ready.length, due: due.length, uncontacted: uncontacted.length, active: active.length },
+    }
+  }
+  return {
+    tone: active.length ? "quiet" : "blocked",
+    label: active.length ? "Queue parked" : "No candidates",
+    title: active.length ? "No active next move" : "Source the first prospect",
+    body: active.length
+      ? "Open Candidate CRM when you need deeper follow-up or archive controls."
+      : "Save a prospect to create role-specific ownership, outreach, and proof tracking.",
+    primaryLabel: active.length ? "Candidate CRM" : "Quick source",
+    primaryAction: active.length ? "crm" : "quick_source",
+    counts: { ready: ready.length, due: due.length, uncontacted: uncontacted.length, active: active.length },
+  }
 }
 
 function sourcedCalibrationLabel(status?: string): string {
@@ -2180,6 +2288,7 @@ export default function RecruiterRole() {
   const roleCandidates = sourcedCandidates
     .filter((candidate) => roleMatches(job, candidate))
     .sort((a, b) => timestampMs(b.updatedAt ?? b.createdAt) - timestampMs(a.updatedAt ?? a.createdAt))
+  const roleCandidateCommand = buildRoleCandidateCommand(roleCandidates)
   const unassignedCandidates = sourcedCandidates
     .filter((candidate) => !candidate.jobId && !candidate.inboundJobId && candidate.stage !== "archived")
     .sort((a, b) => timestampMs(b.updatedAt ?? b.createdAt) - timestampMs(a.updatedAt ?? a.createdAt))
@@ -2378,6 +2487,24 @@ export default function RecruiterRole() {
       setStageUpdateError(error instanceof Error ? error.message : String(error))
     } finally {
       setStageUpdatingCandidateId(null)
+    }
+  }
+
+  const runRoleCandidateCommand = () => {
+    if (roleCandidateCommand.primaryAction === "quick_source") {
+      document.querySelector(".rb-role-quick-save")?.scrollIntoView({ behavior: "smooth", block: "start" })
+      return
+    }
+    if (roleCandidateCommand.primaryAction === "crm") {
+      navigate("/recruiters?tab=candidates")
+      return
+    }
+    if (roleCandidateCommand.primaryAction === "stage" && roleCandidateCommand.primaryCandidate && roleCandidateCommand.primaryStage) {
+      void updateRoleCandidateStage(roleCandidateCommand.primaryCandidate, roleCandidateCommand.primaryStage)
+      return
+    }
+    if (roleCandidateCommand.primaryCandidate) {
+      useSourcedCandidate(roleCandidateCommand.primaryCandidate)
     }
   }
 
@@ -2838,6 +2965,20 @@ export default function RecruiterRole() {
             <section className="rb-side-panel">
               <h3>Candidate queue</h3>
               <p>Prospects saved in your CRM for this role. Use one to prefill the submit form.</p>
+              <section className={`rb-role-candidate-command is-${roleCandidateCommand.tone}`} aria-label="Candidate queue command">
+                <span>{roleCandidateCommand.label}</span>
+                <strong>{roleCandidateCommand.title}</strong>
+                <p>{roleCandidateCommand.body}</p>
+                <div>
+                  <em>{roleCandidateCommand.counts.active} active</em>
+                  <em>{roleCandidateCommand.counts.ready} ready</em>
+                  <em>{roleCandidateCommand.counts.due} due</em>
+                  <em>{roleCandidateCommand.counts.uncontacted} uncontacted</em>
+                </div>
+                <button type="button" className="rb-btn" onClick={runRoleCandidateCommand} disabled={Boolean(roleCandidateCommand.primaryCandidate && stageUpdatingCandidateId === roleCandidateCommand.primaryCandidate.id)}>
+                  {roleCandidateCommand.primaryCandidate && stageUpdatingCandidateId === roleCandidateCommand.primaryCandidate.id ? "Saving..." : roleCandidateCommand.primaryLabel}
+                </button>
+              </section>
               <div className="rb-role-candidate-list">
                 {roleCandidates.slice(0, 8).map((candidate) => {
                   const nextStage = nextRoleCandidateStage(candidate.stage)

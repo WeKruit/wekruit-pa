@@ -1533,6 +1533,74 @@
   gap: 8px;
 }
 
+.rb-role-candidate-command {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid #9b958b;
+  border-radius: 9px;
+  background: #fffaf5;
+  padding: 11px;
+}
+
+.rb-role-candidate-command.is-good {
+  border-left-color: var(--live);
+  background: var(--live-soft);
+}
+
+.rb-role-candidate-command.is-watch {
+  border-left-color: #b77c2f;
+  background: #fffaf1;
+}
+
+.rb-role-candidate-command.is-blocked {
+  border-left-color: #a33a2d;
+  background: #fff8f7;
+}
+
+.rb-role-candidate-command > span {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-role-candidate-command strong {
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.25;
+}
+
+.rb-role-candidate-command p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.rb-role-candidate-command > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.rb-role-candidate-command em {
+  border: 1px solid rgba(42, 42, 38, 0.12);
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  padding: 4px 7px;
+}
+
+.rb-role-candidate-command .rb-btn {
+  justify-content: center;
+}
+
 .rb-role-question-cockpit {
   display: grid;
   gap: 7px;
