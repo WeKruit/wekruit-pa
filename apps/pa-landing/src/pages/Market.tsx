@@ -6,7 +6,7 @@
  *                    authored Claire-fast-track roles (same source Landing uses);
  *                    has hiring-manager, seats, salary, prescreen config. Click
  *                    "Talk to Claire" routes to /j/:jobId (PublicJob page).
- *   · Hunting list — `paPublicOpenJobs` Cloud Function (HTTP). Macmini-scraped
+ *   · Tracked roles — `paPublicOpenJobs` Cloud Function (HTTP). External
  *                    `matching-jobs` projected to a sanitized, paginated row.
  *                    Filters (function/level/location/remote/search) push to
  *                    the CF so the server narrows BEFORE the wire.
@@ -402,32 +402,6 @@ function MarketTab({
   )
 }
 
-function BatchTicker({ queuedCount }: { queuedCount: number }) {
-  const days = useMemo(() => {
-    const now = new Date()
-    const day = now.getUTCDay()
-    let delta = (2 - day + 7) % 7
-    if (delta === 0 && now.getUTCHours() >= 14) delta = 7
-    return delta
-  }, [])
-  return (
-    <div className="wk-batch">
-      <div className="wk-batch__left">
-        <span className="wk-batch__icon"><Icon name="calendar" size={14} stroke={1.8} /></span>
-        <div>
-          <strong>Next batch sends Tuesday 9:00 am ET</strong>
-          <span className="wk-batch__sub"> · {days === 0 ? "today" : `${days} day${days === 1 ? "" : "s"}`} · we email a tight shortlist on your behalf</span>
-        </div>
-      </div>
-      <div className="wk-batch__right">
-        <span className="wk-batch__queued">
-          <em className="wk-accent">{queuedCount}</em> queued for you
-        </span>
-      </div>
-    </div>
-  )
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Rows
 // ────────────────────────────────────────────────────────────────────────────
@@ -682,9 +656,9 @@ export default function Market(): ReactNode {
             <MarketTab
               active={tab === "hunting"}
               onClick={() => setTab("hunting")}
-              label="Hunting list"
+              label="Tracked roles"
               count={hunting.isSuccess ? huntingTotal : "—"}
-              sub="We pitch them on your behalf"
+              sub="External roles Claire is watching"
             />
           </div>
         </div>
@@ -693,16 +667,14 @@ export default function Market(): ReactNode {
           <section className="wk-market__panel wk-market__panel--hunting">
             <div className="wk-container">
               <header className="wk-market__head">
-                <p className="wk-eyebrow">Outbound · We pitch them anyway</p>
+                <p className="wk-eyebrow">External roles · Claire is watching</p>
                 <h1 className="wk-market__h1">
-                  <em className="wk-accent">{hunting.isSuccess ? huntingTotal : "…"}</em> roles we're <em className="wk-accent">hunting</em> for.
+                  <em className="wk-accent">{hunting.isSuccess ? huntingTotal : "…"}</em> roles Claire is <em className="wk-accent">tracking</em>.
                 </h1>
                 <p className="wk-market__lede">
-                  Live from the macmini scrape — fresh in the last 45 days. Click any role to see the full posting.
+                  Fresh external roles from the last 45 days. Open a posting to inspect the source while Claire keeps your profile and target constraints connected.
                 </p>
               </header>
-
-              <BatchTicker queuedCount={0} />
 
               <div className="wk-market__layout">
                 <FilterRail
@@ -740,7 +712,7 @@ export default function Market(): ReactNode {
                   {hunting.isPending ? (
                     <div className="wk-tbl__empty wk-tbl__empty--block">
                       <strong>Loading roles…</strong>
-                      Pulling fresh listings from the macmini scrape.
+                      Checking fresh external roles Claire can track for you.
                     </div>
                   ) : hunting.isError ? (
                     <div className="wk-tbl__empty wk-tbl__empty--block">
@@ -759,7 +731,7 @@ export default function Market(): ReactNode {
                             <th className="wk-tbl__h">Location</th>
                             <th className="wk-tbl__h">Comp</th>
                             <th className="wk-tbl__h">Posted</th>
-                            <th className="wk-tbl__h wk-tbl__h--cta">Apply</th>
+                            <th className="wk-tbl__h wk-tbl__h--cta">Next step</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -852,7 +824,7 @@ export default function Market(): ReactNode {
                     <tbody>
                       {directJobs.length === 0 ? (
                         <tr><td colSpan={6} className="wk-tbl__empty">
-                          <strong>No collaborated roles yet.</strong> Switch to the Hunting list — we'll pitch them for you.
+                          <strong>No direct-line roles yet.</strong> Check tracked roles while Claire keeps scanning for stronger company access.
                         </td></tr>
                       ) : directJobs.map((r) => (
                         <DirectRow key={r.id} r={r} onTalk={() => onTalkToClaire(r)} />
