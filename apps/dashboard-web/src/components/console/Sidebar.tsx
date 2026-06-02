@@ -93,6 +93,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/admin/coresignal-playground", label: "Coresignal · Agentic search" },
       { to: "/admin/voice-test-dial", label: "Voice test dial" },
       { to: "/admin/sendblue-pool", label: "Sendblue pool" },
+      { to: "/admin/qr-campaigns", label: "QR campaigns" },
     ],
   },
   // ───────────── Tier 2: TRAINING / EVAL ─────────────

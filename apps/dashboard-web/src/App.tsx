@@ -63,6 +63,8 @@ import BulkResumes from "./pages/BulkResumes.js"
 import { IdentityConflicts } from "./pages/IdentityConflicts.js"
 // v1.9 Phase 88 — Sendblue number pool admin.
 import SendbluePool from "./pages/SendbluePool.js"
+// QR campaign manager — generate onboarding QR + scan→conversion funnel.
+import { QrCampaigns } from "./pages/QrCampaigns.js"
 // v2.0 S6 - admin outreach readiness snapshot.
 import OutreachOps from "./pages/OutreachOps.js"
 // Batch human-approve-then-send queue (pa-pending-outbound). Send is gated.
@@ -234,6 +236,8 @@ export default function App() {
           <Route path="/admin/pending-outbound" element={<PendingOutbound />} />
           {/* v1.9 Phase 88 — Sendblue number pool admin. */}
           <Route path="/admin/sendblue-pool" element={<SendbluePool />} />
+          {/* QR campaign manager — onboarding QR generator + scan→conversion funnel. */}
+          <Route path="/admin/qr-campaigns" element={<QrCampaigns />} />
           {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}
           <Route path="/admin/prescreen-feedback" element={<PrescreenFeedback />} />
           {/* Recruiter board admin surfaces. */}
