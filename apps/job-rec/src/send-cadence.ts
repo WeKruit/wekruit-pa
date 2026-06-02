@@ -34,9 +34,24 @@
 export const REC_CADENCE_DAYS_FLAG_KEY = "recCadenceDays"
 /** Feature-flag key: minutes over which a batch's sends are spread. Default 120. */
 export const REC_SEND_SPREAD_WINDOW_MINUTES_FLAG_KEY = "recSendSpreadWindowMinutes"
+/**
+ * Feature-flag key: hours of CROSS-SYSTEM rec cooldown (live find_match + daily
+ * batch share it). Default 22h. Tunable live (no deploy) — see
+ * `resolveJobRecCooldownMs`.
+ */
+export const REC_COOLDOWN_HOURS_FLAG_KEY = "paJobRecCooldownHours"
 
 export const DEFAULT_REC_CADENCE_DAYS = 3
 export const DEFAULT_REC_SEND_SPREAD_WINDOW_MINUTES = 120
+/**
+ * Cross-system rec cooldown default: 22h. A user who received ANY rec (live
+ * Claire find_match collab delivery OR a prior daily batch) within this window
+ * is NOT re-sent by the scheduled batch — kills the uncoordinated double-send
+ * where Claire sends collab cards and hours later the cron piles on more.
+ * 22h (not 24h) so a daily cron that drifts a few minutes earlier each day
+ * never skips a user who is genuinely due on the cadence.
+ */
+export const DEFAULT_REC_COOLDOWN_HOURS = 22
 
 /**
  * Resolve `recCadenceDays` from a raw flag value with safe default + clamp.
@@ -60,6 +75,56 @@ export function resolveSendSpreadWindowMinutes(raw: unknown): number {
   const n = Number(raw)
   if (!Number.isFinite(n)) return DEFAULT_REC_SEND_SPREAD_WINDOW_MINUTES
   return Math.max(1, Math.min(720, Math.trunc(n)))
+}
+
+// ---------------------------------------------------------------------------
+// Cross-system rec cooldown (2026-06-02).
+//
+// Two systems send recs with NO shared throttle today: (A) live Claire
+// find_match collab delivery and (B) the scheduled `paJobRecDaily` batch. Each
+// only tracks its OWN marker, so a user can be bombarded by both within hours.
+// The fix: BOTH paths stamp a SHARED `lastAnyJobRecSentAt` on
+// `pa-job-profiles/{userId}` on every successful rec delivery, and the batch
+// consults it via `isWithinRecCooldown` BEFORE composing/sending. The live
+// path never throttles itself (it is user-initiated) — it only WRITES the
+// marker so the batch can see it.
+// ---------------------------------------------------------------------------
+
+/** Hours → ms. */
+const HOUR_MS = 60 * 60 * 1000
+
+/**
+ * Resolve the cross-system rec-cooldown window in MS from a raw flag value
+ * (hours). Default 22h; clamped to [0, 168] (0h..7d). 0 effectively disables
+ * the cooldown (operational escape hatch). Non-finite / garbage → default.
+ */
+export function resolveJobRecCooldownMs(raw: unknown): number {
+  if (raw === null || raw === undefined || raw === "") return DEFAULT_REC_COOLDOWN_HOURS * HOUR_MS
+  const n = Number(raw)
+  if (!Number.isFinite(n)) return DEFAULT_REC_COOLDOWN_HOURS * HOUR_MS
+  const hours = Math.max(0, Math.min(168, n))
+  return Math.trunc(hours * HOUR_MS)
+}
+
+/**
+ * True when ANY rec (from EITHER system) was delivered to this user within the
+ * cooldown window → the batch must SKIP this user to avoid a double-send.
+ *
+ * Fail-OPEN to "not in cooldown" (returns false) when the marker is
+ * absent/empty/unparseable, so a corrupt or missing field never permanently
+ * silences a due user — the cadence due-gate still governs the floor.
+ * `cooldownMs <= 0` disables the cooldown (always false).
+ */
+export function isWithinRecCooldown(
+  lastAnyRecSentIso: string | null | undefined,
+  cooldownMs: number,
+  nowMs: number
+): boolean {
+  if (cooldownMs <= 0) return false
+  if (!lastAnyRecSentIso) return false
+  const lastMs = Date.parse(lastAnyRecSentIso)
+  if (!Number.isFinite(lastMs)) return false
+  return nowMs - lastMs < cooldownMs
 }
 
 // ---------------------------------------------------------------------------

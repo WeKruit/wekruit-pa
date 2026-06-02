@@ -63,11 +63,15 @@ import {
 import {
   REC_CADENCE_DAYS_FLAG_KEY,
   REC_SEND_SPREAD_WINDOW_MINUTES_FLAG_KEY,
+  REC_COOLDOWN_HOURS_FLAG_KEY,
   DEFAULT_REC_CADENCE_DAYS,
   DEFAULT_REC_SEND_SPREAD_WINDOW_MINUTES,
+  DEFAULT_REC_COOLDOWN_HOURS,
   resolveRecCadenceDays,
   resolveSendSpreadWindowMinutes,
+  resolveJobRecCooldownMs,
   isRecSendDue,
+  isWithinRecCooldown,
   planSendSchedule,
 } from "./send-cadence.js"
 // v1.5 / Phase 53.5 — weighted skill match scoring (Adam 2026-05-02 spec).
@@ -197,6 +201,14 @@ export type DailyBatchDeps = {
    * never mutates the pool.
    */
   numberCapacities?: Record<string, { remaining?: number } | undefined>
+  /**
+   * Cross-system rec cooldown (2026-06-02) — optional override (ms) of the
+   * `paJobRecCooldownHours` flag default (22h). Tests inject a fixed value to
+   * pin the cooldown deterministically. When omitted, resolved from the flag.
+   * A user who received ANY rec (live find_match OR a prior batch — tracked by
+   * the SHARED `lastAnyJobRecSentAt` marker) within this window is skipped.
+   */
+  cooldownMs?: number
 }
 
 export type BatchOutcome = {
@@ -207,12 +219,19 @@ export type BatchOutcome = {
   errors: number
   /** Cadence (2026-06-02) — users skipped because last batch < cadence days ago. */
   skippedNotDue?: number
+  /**
+   * Cross-system cooldown (2026-06-02) — users skipped because ANY rec (live
+   * find_match OR a prior batch) was delivered within the cooldown window.
+   */
+  skippedCooldown?: number
   /** Time-spread (2026-06-02) — due users deferred to next run (number at cap). */
   cappedOut?: number
   /** Resolved cadence (days) used this run — surfaced for observability. */
   cadenceDays?: number
   /** Resolved spread window (minutes) used this run. */
   spreadWindowMinutes?: number
+  /** Resolved cross-system cooldown (ms) used this run. */
+  cooldownMs?: number
 }
 
 const DEFAULT_USER_CAP = 100
@@ -1198,17 +1217,36 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
       DEFAULT_REC_SEND_SPREAD_WINDOW_MINUTES
     )
   )
+  // Cross-system rec cooldown (2026-06-02) — shared with live find_match via the
+  // `lastAnyJobRecSentAt` marker. Dep override wins (tests); else resolve the
+  // `paJobRecCooldownHours` flag (default 22h, tunable live, no deploy).
+  const cooldownMs =
+    deps.cooldownMs ??
+    resolveJobRecCooldownMs(
+      await deps.getFlag(
+        deps.db,
+        REC_COOLDOWN_HOURS_FLAG_KEY,
+        { env: process.env },
+        DEFAULT_REC_COOLDOWN_HOURS
+      )
+    )
 
   let delivered = 0
   let skippedFlag = 0
   let skippedNoJobs = 0
   let errors = 0
   let skippedNotDue = 0
+  let skippedCooldown = 0
 
-  // Resolve per-user eligibility (feature flag + due-gate) up front.
+  // Resolve per-user eligibility (feature flag → cross-system cooldown →
+  // cadence due-gate) up front.
   const dueUsers: Array<{ userId: string; fromNumber?: string }> = []
   for (const doc of snap.docs) {
-    const profileDoc = doc.data() as JobProfileDoc & { profile?: unknown; lastJobBatchSentAt?: string | null }
+    const profileDoc = doc.data() as JobProfileDoc & {
+      profile?: unknown
+      lastJobBatchSentAt?: string | null
+      lastAnyJobRecSentAt?: string | null
+    }
     const userId = profileDoc.userId
     if (!userId) continue
     let flagOn = false
@@ -1227,6 +1265,16 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
     }
     if (!flagOn) {
       skippedFlag += 1
+      continue
+    }
+    // Cross-system cooldown (2026-06-02) — BEFORE the cadence gate + before any
+    // compose/send. If ANY rec (live Claire find_match collab delivery OR a
+    // prior batch) was delivered to this user within the cooldown window, skip
+    // so the cron never piles on top of a fresh live send. Reads the SHARED
+    // `lastAnyJobRecSentAt` marker (both paths stamp it). 22h default, tunable
+    // via `paJobRecCooldownHours` (no deploy).
+    if (isWithinRecCooldown(profileDoc.lastAnyJobRecSentAt ?? null, cooldownMs, nowMs)) {
+      skippedCooldown += 1
       continue
     }
     if (!isRecSendDue(profileDoc.lastJobBatchSentAt ?? null, cadenceDays, nowMs)) {
@@ -1253,12 +1301,14 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
   log("[job-rec-daily] cadence_plan", {
     cadenceDays,
     spreadWindowMinutes,
+    cooldownMs,
     active: snap.size,
     flagOn: dueUsers.length + cappedOut,
     due: dueUsers.length,
     scheduled: plan.scheduled.length,
     cappedOut,
     skippedNotDue,
+    skippedCooldown,
   })
 
   // Build a userId → doc map so the loop pulls profiles for scheduled users.
@@ -2230,8 +2280,13 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
           },
           (event, payload) => log("[job-rec-daily]", event, payload ?? {}),
         )
+        // Stamp BOTH markers: `lastJobBatchSentAt` (this system's own per-day
+        // cadence anchor) AND the SHARED `lastAnyJobRecSentAt` (cross-system
+        // cooldown marker the live find_match path also writes). Same value so
+        // the next batch run honors the cooldown against this batch send.
+        const sentAtIso = new Date().toISOString()
         await deps.db.collection(JOB_PROFILES_COLLECTION).doc(userId).set(
-          { lastJobBatchSentAt: new Date().toISOString() },
+          { lastJobBatchSentAt: sentAtIso, lastAnyJobRecSentAt: sentAtIso },
           { merge: true }
         )
       }
@@ -2251,8 +2306,10 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
     skippedNoJobs,
     errors,
     skippedNotDue,
+    skippedCooldown,
     cappedOut,
     cadenceDays,
     spreadWindowMinutes,
+    cooldownMs,
   }
 }

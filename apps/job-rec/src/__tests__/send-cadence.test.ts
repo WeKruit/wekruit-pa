@@ -3,14 +3,18 @@ import assert from "node:assert/strict"
 import {
   resolveRecCadenceDays,
   resolveSendSpreadWindowMinutes,
+  resolveJobRecCooldownMs,
   isRecSendDue,
+  isWithinRecCooldown,
   planSendSchedule,
   DEFAULT_REC_CADENCE_DAYS,
   DEFAULT_REC_SEND_SPREAD_WINDOW_MINUTES,
+  DEFAULT_REC_COOLDOWN_HOURS,
   type SchedulableUser,
 } from "../send-cadence.js"
 
 const DAY_MS = 24 * 60 * 60 * 1000
+const HOUR_MS = 60 * 60 * 1000
 
 // ---------------------------------------------------------------------------
 // (b) config resolvers — defaults + clamps
@@ -77,6 +81,57 @@ test("isRecSendDue: last batch 4 days ago, cadence 3 → due", () => {
 test("isRecSendDue: unparseable timestamp → fail-open (due)", () => {
   const now = Date.parse("2026-06-02T16:00:00.000Z")
   assert.equal(isRecSendDue("not-a-date", 3, now), true)
+})
+
+// ---------------------------------------------------------------------------
+// Cross-system rec cooldown — resolver + predicate.
+// ---------------------------------------------------------------------------
+
+test("resolveJobRecCooldownMs: unset/garbage → default 22h", () => {
+  assert.equal(resolveJobRecCooldownMs(undefined), DEFAULT_REC_COOLDOWN_HOURS * HOUR_MS)
+  assert.equal(resolveJobRecCooldownMs(null), 22 * HOUR_MS)
+  assert.equal(resolveJobRecCooldownMs(""), 22 * HOUR_MS)
+  assert.equal(resolveJobRecCooldownMs("nope"), 22 * HOUR_MS)
+})
+
+test("resolveJobRecCooldownMs: honors live numeric hours + clamps to [0, 168]", () => {
+  assert.equal(resolveJobRecCooldownMs(12), 12 * HOUR_MS)
+  assert.equal(resolveJobRecCooldownMs("6"), 6 * HOUR_MS)
+  assert.equal(resolveJobRecCooldownMs(0), 0) // explicit disable
+  assert.equal(resolveJobRecCooldownMs(-5), 0)
+  assert.equal(resolveJobRecCooldownMs(9999), 168 * HOUR_MS)
+})
+
+test("isWithinRecCooldown: rec 2h ago, window 22h → in cooldown (skip)", () => {
+  const now = Date.parse("2026-06-02T16:00:00.000Z")
+  const twoHoursAgo = new Date(now - 2 * HOUR_MS).toISOString()
+  assert.equal(isWithinRecCooldown(twoHoursAgo, 22 * HOUR_MS, now), true)
+})
+
+test("isWithinRecCooldown: rec 30h ago, window 22h → past cooldown (send)", () => {
+  const now = Date.parse("2026-06-02T16:00:00.000Z")
+  const thirtyHoursAgo = new Date(now - 30 * HOUR_MS).toISOString()
+  assert.equal(isWithinRecCooldown(thirtyHoursAgo, 22 * HOUR_MS, now), false)
+})
+
+test("isWithinRecCooldown: never sent (null/empty/garbage) → fail-open (not in cooldown)", () => {
+  const now = Date.parse("2026-06-02T16:00:00.000Z")
+  assert.equal(isWithinRecCooldown(null, 22 * HOUR_MS, now), false)
+  assert.equal(isWithinRecCooldown(undefined, 22 * HOUR_MS, now), false)
+  assert.equal(isWithinRecCooldown("", 22 * HOUR_MS, now), false)
+  assert.equal(isWithinRecCooldown("not-a-date", 22 * HOUR_MS, now), false)
+})
+
+test("isWithinRecCooldown: window 0 disables the cooldown (always false)", () => {
+  const now = Date.parse("2026-06-02T16:00:00.000Z")
+  const oneMinAgo = new Date(now - 60_000).toISOString()
+  assert.equal(isWithinRecCooldown(oneMinAgo, 0, now), false)
+})
+
+test("isWithinRecCooldown: exactly at the window boundary → past cooldown (>=, send)", () => {
+  const now = Date.parse("2026-06-02T16:00:00.000Z")
+  const exactly22hAgo = new Date(now - 22 * HOUR_MS).toISOString()
+  assert.equal(isWithinRecCooldown(exactly22hAgo, 22 * HOUR_MS, now), false)
 })
 
 // ---------------------------------------------------------------------------

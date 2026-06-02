@@ -50,6 +50,10 @@ import {
   type PreferenceHardnessEntry,
   DEFAULT_SALARY_BUFFER_PCT,
   DEFAULT_ORDINAL_BUFFER_STEPS,
+  locationBucketCountry,
+  bucketsHaveUs,
+  bucketsHaveKnownNonUs,
+  isGlobalRemoteBucket,
 } from "@wekruit/shared-tags"
 import { z } from "zod"
 import {
@@ -974,85 +978,148 @@ function isAnywhereLocation(tags: UserTags): boolean {
 }
 
 /**
- * UNAMBIGUOUS non-US 2-letter country codes (the form scraped `locationRaw` uses, e.g. spate:
- * "RS / RO / MD / BY / PL / CZ / HU / BG / SK / Remote"). Deliberately EXCLUDES codes that collide
- * with US state abbreviations — CA (California≠Canada), MD (Maryland), DE (Delaware), IN (Indiana),
- * GA, LA, MA, MO, OR, OK, etc. — so a US locationRaw is never mis-read as foreign. Canada/those
- * countries are still caught by the full-name hints in isJobRegionLockedNonUs.
+ * US-only platform gate (rebuilt 2026-06-02 — canonical bucket→country map).
+ *
+ * Replaces the prior hardcoded per-city substring arrays (`NON_US_BUCKET_HINTS`
+ * / `US_BUCKET_*` / `NON_US_COUNTRY_CODES_2` / `NON_US_NAME_HINTS`), which had
+ * REGION GAPS — the Middle East was entirely OMITTED, so a Scale AI "Global
+ * Public Sector" role with `locationBuckets:[doha,dubai,riyadh]` leaked to a US
+ * candidate. The country decision now flows through the single canonical data
+ * map `LOCATION_BUCKET_TO_COUNTRY` (in `@wekruit/shared-tags`), covering every
+ * region with zero per-city hardcoding here. Adding a region = one data edit in
+ * the map, never a code change in this filter (Adam no-hardcoded-token rule).
+ *
+ * Policy (Adam 2026-05-30 "by default it will always be US only"): US-required
+ * is the UNIVERSAL default; only an EXPLICIT foreign target lifts it. See
+ * `userAllowsNonUs`.
  */
-const NON_US_COUNTRY_CODES_2 = new Set([
-  "rs", "ro", "by", "pl", "cz", "hu", "bg", "sk", "ua", "gb", "uk", "fr", "es", "it", "nl", "ie",
-  "cn", "jp", "kr", "sg", "au", "br", "mx", "ar", "hk", "pt", "gr", "lt", "lv", "ee", "si", "hr",
-  "ng", "ke", "za", "ae", "il", "tr", "ph", "vn", "th", "my", "rs", "cl", "co", "pe", "uy",
-])
 
 /**
- * A job tagged remote_anywhere whose `locationRaw` clearly names a specific NON-US region (and no US
- * signal) is region-LOCKED, not globally remote — its anywhere-bypass must be revoked so a US/city
- * candidate doesn't match it (locked 2026-05-30: "matcher cross-checks locationRaw"; spate is
- * remote_anywhere but RS/RO/MD/BY/PL/CZ/HU/BG/SK = Eastern Europe only). Conservative: fires only
- * when a non-US signal is present AND no US signal — a generic "Remote"/"Worldwide" raw stays global.
+ * US-eligibility of a JOB, decided ONLY from the canonical bucket→country map +
+ * a conservative `locationRaw` "United States" signal. INDEPENDENT of any
+ * `remote_anywhere` bypass — a job whose buckets are foreign-only is NOT made
+ * US-eligible just because it is also tagged remote_anywhere.
+ *
+ *   US-eligible iff:
+ *     • ≥1 bucket maps to country US (incl. remote_united_states / remote_us), OR
+ *     • locationRaw clearly says "United States" / "USA" / "U.S." with no
+ *       co-listed foreign country.
+ *
+ * A region-AGNOSTIC global-remote bucket (remote_anywhere / remote_global /
+ * worldwide) is NOT US-eligible on its own here — it is handled by the caller
+ * (`jobIsForeignNonUs`): global-remote with no foreign bucket survives the gate
+ * (US-accessible), but global-remote ALONGSIDE a foreign-only locked region is
+ * still dropped.
  */
-function isJobRegionLockedNonUs(job: MatchingJob): boolean {
+function jobBucketsUsEligible(job: MatchingJob): boolean {
+  const buckets = Array.isArray(job.locationBuckets)
+    ? job.locationBuckets.map((b) => String(b))
+    : []
+  if (bucketsHaveUs(buckets)) return true
+  // locationRaw fallback (legacy / unbucketed rows): clear US name with no
+  // co-listed foreign country token. Pure token scan over the canonical map —
+  // not regex classification.
   const raw = (job.locationRaw ?? "").toLowerCase()
   if (!raw) return false
-  const tokens = raw.split(/[/,;|]+/).map((t) => t.trim()).filter(Boolean)
-  let nonUs = false
-  let us = false
-  const US_NAME_HINTS = ["united states", "u.s.", "usa", "u.s.a"]
-  const US_REGION_HINTS = ["san francisco", "new york", "seattle", "los angeles", "boston", "chicago", "austin", "denver", "remote us", "remote united states"]
-  const NON_US_NAME_HINTS = [
-    "bulgaria", "serbia", "romania", "moldova", "belarus", "poland", "czech", "hungary", "slovakia",
-    "ukraine", "london", "united kingdom", "england", "ireland", "germany", "france", "spain", "india",
-    "china", "singapore", "japan", "korea", "australia", "brazil", "mexico", "argentina", "canada",
-    "netherlands", "amsterdam", "hong kong", "philippines", "vietnam", "thailand", "turkey", "israel",
-  ]
-  for (const tok of tokens) {
-    if (tok === "us" || tok === "usa" || US_NAME_HINTS.some((h) => tok.includes(h))) us = true
-    if (US_REGION_HINTS.some((h) => tok.includes(h))) us = true
-    if (NON_US_COUNTRY_CODES_2.has(tok)) nonUs = true
-    if (NON_US_NAME_HINTS.some((h) => tok.includes(h))) nonUs = true
+  const rawTokens = raw.split(/[/,;|]+/).map((t) => t.trim().replace(/\s+/g, "_")).filter(Boolean)
+  let rawUs = false
+  let rawForeign = false
+  for (const tok of rawTokens) {
+    const c = locationBucketCountry(tok)
+    if (c === "US" || tok === "u.s." || tok === "u.s.a") rawUs = true
+    else if (c && c !== "US") rawForeign = true
   }
-  return nonUs && !us
+  return rawUs && !rawForeign
 }
 
 /**
- * US-ONLY PLATFORM (Adam 2026-05-30): "by default it will always be US only … any scope outside of US
- * we don't consider right now … Remote anywhere is considered as within US too." WeKruit serves US
- * roles only, so a job region-locked to a NON-US country is dropped for EVERY candidate — US-only is
- * the universal default, no `targetCountry` signal required. `remote_anywhere` / global-remote COUNTS
- * AS US-accessible and is NEVER dropped for being remote; only a job whose location clearly names a
- * specific foreign region with no US presence is foreign (e.g. spate = remote_anywhere tagged but
- * locationRaw "RS/RO/MD/BY/PL/CZ/HU/BG/SK" = Eastern Europe). Returns true ⇒ drop this job.
+ * A job is foreign (DROP for a US-required candidate) iff it is NOT US-eligible
+ * AND it carries a positively-identified NON-US signal (a known-foreign bucket,
+ * OR a `locationRaw` that names a foreign country with no US presence).
+ *
+ * Crucially INDEPENDENT of `remote_anywhere`: a `[doha,dubai,riyadh]` job that
+ * ALSO has remote_anywhere is still dropped, because its concrete buckets are
+ * foreign-only and none maps to US. A purely global-remote job (no foreign
+ * bucket) is NOT foreign → it survives (US-accessible). An unknown/unmapped
+ * bucket is never treated as foreign (conservative: never drop what we can't
+ * prove is foreign).
  */
-const US_BUCKET_METROS = [
-  "san_francisco_bay_area", "new_york_metro", "new_york_city_metro",
-  "seattle_metro", "los_angeles_metro", "boston_metro", "chicago_metro",
-  "austin_metro", "denver_metro",
-] as const
-const US_BUCKET_EXACT = new Set(["us", "usa", "united_states", "remote_united_states", "remote_us"])
-const NON_US_BUCKET_HINTS = [
-  "bulgaria", "sofia", "london", "uk", "united_kingdom", "england", "ireland", "dublin",
-  "germany", "berlin", "munich", "france", "paris", "spain", "madrid",
-  "india", "bangalore", "hyderabad", "mumbai", "delhi", "pune",
-  "china", "beijing", "shanghai", "singapore", "japan", "tokyo", "korea", "seoul",
-  "australia", "sydney", "melbourne", "brazil", "mexico", "argentina",
-  "canada", "toronto", "vancouver", "montreal",
-  "ukraine", "poland", "warsaw", "netherlands", "amsterdam", "hong_kong",
-]
 function jobIsForeignNonUs(job: MatchingJob): boolean {
+  if (jobBucketsUsEligible(job)) return false
   const buckets = Array.isArray(job.locationBuckets)
-    ? job.locationBuckets.map((b) => String(b).toLowerCase())
+    ? job.locationBuckets.map((b) => String(b))
     : []
-  const hasAnywhere = buckets.some((b) => ANYWHERE_LOCATION_TOKENS.has(b))
-  const hasUsBucket =
-    buckets.some((b) => US_BUCKET_EXACT.has(b) || US_BUCKET_METROS.some((u) => b.includes(u)))
-  const hasForeignBucket = buckets.some((b) => NON_US_BUCKET_HINTS.some((c) => b.includes(c)))
-  // Foreign-only bucket set (a non-US city/country, no US bucket, no global-remote escape) → foreign.
-  // remote_anywhere alone is NOT a foreign hint, so a globally-remote role survives (= US-accessible).
-  if (hasForeignBucket && !hasUsBucket && !hasAnywhere) return true
-  // remote_anywhere / US-looking buckets but a locationRaw region-locked to a specific foreign region.
-  if (isJobRegionLockedNonUs(job)) return true
+  // Known-foreign bucket present (and no US bucket, established above) → drop,
+  // EVEN IF a remote_anywhere/global token is also present (no bypass).
+  if (bucketsHaveKnownNonUs(buckets)) return true
+  // No foreign bucket — only a global-remote / unknown bucket set. Cross-check
+  // locationRaw: a raw that names a specific foreign country with no US signal
+  // is region-locked foreign (e.g. remote_anywhere bucket + raw "Doha, Qatar").
+  return locationRawIsForeignOnly(job)
+}
+
+/**
+ * `locationRaw` names ≥1 KNOWN foreign country and NO US signal → region-locked
+ * foreign. Uses the canonical map for token→country (no per-city hardcoding).
+ * Conservative: a generic "Remote" / "Worldwide" raw (no country token) → false.
+ */
+function locationRawIsForeignOnly(job: MatchingJob): boolean {
+  const raw = (job.locationRaw ?? "").toLowerCase()
+  if (!raw) return false
+  const tokens = raw.split(/[/,;|]+/).map((t) => t.trim().replace(/\s+/g, "_")).filter(Boolean)
+  let foreign = false
+  let us = false
+  for (const tok of tokens) {
+    if (isGlobalRemoteBucket(tok)) continue // region-agnostic, no country signal
+    const c = locationBucketCountry(tok)
+    if (c === "US" || tok === "u.s." || tok === "u.s.a") us = true
+    else if (c && c !== "US") foreign = true
+  }
+  return foreign && !us
+}
+
+/**
+ * Region-locked-foreign predicate retained under its prior name for the two
+ * call sites in the location-intersect bypass (a remote_anywhere JOB loses its
+ * anywhere bypass when its raw is foreign-locked). Now canonical-map-driven.
+ */
+function isJobRegionLockedNonUs(job: MatchingJob): boolean {
+  return locationRawIsForeignOnly(job)
+}
+
+/**
+ * Does the USER explicitly allow a NON-US country? US-required is the universal
+ * default; this returns true ONLY on an EXPLICIT foreign signal:
+ *   • `targetCountry` names a non-US country (mapped via the canonical map, or
+ *     a recognizable non-US full-name / "remote_<region>" token), OR
+ *   • `targetLocations` contains an explicit FOREIGN bucket (a token that maps
+ *     to a non-US country — e.g. "toronto", "london_united_kingdom").
+ *
+ * Absence of any foreign signal ⇒ false ⇒ the US-required gate is enforced.
+ * remote_anywhere / anywhere / a bare US country token do NOT lift US-required.
+ */
+function userAllowsNonUs(tags: UserTags): boolean {
+  const countries = Array.isArray((tags as { targetCountry?: unknown }).targetCountry)
+    ? ((tags as { targetCountry?: unknown[] }).targetCountry as unknown[])
+        .filter((c): c is string => typeof c === "string")
+    : []
+  for (const c of countries) {
+    const t = c.trim().toLowerCase()
+    if (!t) continue
+    const mapped = locationBucketCountry(t)
+    if (mapped && mapped !== "US") return true
+    // Region-remote country targets (remote_canada/remote_europe/…) are foreign.
+    if (mapped && (mapped === "CA" || mapped === "EU" || mapped === "APAC" || mapped === "LATAM" || mapped === "AMER")) return true
+  }
+  const locs = Array.isArray(tags.targetLocations)
+    ? tags.targetLocations.filter((l): l is string => typeof l === "string")
+    : []
+  for (const l of locs) {
+    const t = l.trim().toLowerCase()
+    if (isGlobalRemoteBucket(t)) continue // region-agnostic, not a foreign target
+    const mapped = locationBucketCountry(t)
+    if (mapped && mapped !== "US") return true
+  }
   return false
 }
 
@@ -1545,10 +1612,13 @@ export function applyV16HardFilters(
   // "如果我要在 north america (USA), 就别给我推荐别的国家". Surgical fix:
   // when sponsorshipNeeded=true (OPT/CPT/H1B all need US-side employer),
   // OR targetLocations contains US-specific tokens, treat as US-only.
-  // Drop jobs whose locationBuckets contain ONLY non-US country tokens
-  // (no US bucket present). Job with both "remote_anywhere" AND
-  // "san_francisco_bay_area" → keep. Job with only "sofia,bulgaria" or
-  // "london,uk" → drop.
+  // US-only platform gate (rebuilt 2026-06-02). US-required is the UNIVERSAL
+  // default; only an EXPLICIT foreign target (targetCountry naming a non-US
+  // country, OR a foreign bucket in targetLocations) lifts it. The job-side
+  // decision flows through the canonical bucket→country map (jobIsForeignNonUs)
+  // and is INDEPENDENT of remote_anywhere — a `[doha,dubai,riyadh]` role tagged
+  // remote_anywhere is still dropped for a US-required user.
+  const allowsNonUs = userAllowsNonUs(userTags)
   const kept: MatchingJob[] = []
   for (const job of jobs) {
     // 1. visa intersect — candidate-visible sponsor-needed recommendations
@@ -1558,11 +1628,10 @@ export function applyV16HardFilters(
       continue
     }
 
-    // 1b. US-only platform gate (Adam 2026-05-30 "by default it will always be US only") — drop a job
-    // region-locked to a NON-US country for EVERY candidate. US-only is the universal default (no
-    // targetCountry signal needed). remote_anywhere counts as US-accessible and is kept. See
-    // jobIsForeignNonUs. Counted under `location` (the country axis shares the location drop counter).
-    if (jobIsForeignNonUs(job)) {
+    // 1b. US-only platform gate — drop a foreign-region job UNLESS the user
+    // explicitly targets a non-US country. Counted under `location` (the
+    // country axis shares the location drop counter).
+    if (!allowsNonUs && jobIsForeignNonUs(job)) {
       counters.location++
       continue
     }
@@ -1810,6 +1879,9 @@ export function applyFallbackHardFilters(
       .map((s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
       .filter(Boolean),
   )
+  // US-only platform gate — same US-required-unless-explicit-foreign-target
+  // policy as the strict path. Computed once.
+  const allowsNonUs = userAllowsNonUs(userTags)
 
   const kept: MatchingJob[] = []
   for (const job of jobs) {
@@ -1818,9 +1890,10 @@ export function applyFallbackHardFilters(
       counters.visa++
       continue
     }
-    // US-only platform gate — drop region-locked foreign jobs for EVERY candidate (US-only is the
-    // universal default; remote_anywhere counts as US-accessible). Same gate as the strict path.
-    if (jobIsForeignNonUs(job)) {
+    // US-only platform gate — drop foreign-region jobs UNLESS the user
+    // explicitly targets a non-US country. Same gate as the strict path,
+    // independent of remote_anywhere.
+    if (!allowsNonUs && jobIsForeignNonUs(job)) {
       counters.location++
       continue
     }

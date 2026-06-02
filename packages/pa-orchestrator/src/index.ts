@@ -3945,6 +3945,24 @@ async function handleCompletedUserJobSearchRequest(
   const reply = frame ? [frame, body].filter(Boolean).join("\n") : body
   await sendMemoryReply(store, event, turnId, reply)
   if (recs && recs.recCount > 0 && store.db) {
+    // Cross-system rec cooldown (2026-06-02) — stamp the SHARED
+    // `lastAnyJobRecSentAt` marker on this user's `pa-job-profiles` doc so the
+    // scheduled daily batch (which reads the same field) does NOT pile more
+    // recs on top of this live send within the cooldown window. The daily
+    // batch writes the same marker; this is the live-path half of the contract.
+    // Best-effort: a marker-write failure must never break the user reply.
+    try {
+      await store.db.collection("pa-job-profiles").doc(event.userId).set(
+        { lastAnyJobRecSentAt: store.nowIso() },
+        { merge: true },
+      )
+    } catch (markerErr) {
+      store.log("pa.runtime.job_search.cooldown_marker_failed", {
+        userId: event.userId,
+        turnId,
+        error: markerErr instanceof Error ? markerErr.message : String(markerErr),
+      })
+    }
     await startPostMatchRetentionAfterJobRecs({
       db: store.db,
       userId: event.userId,

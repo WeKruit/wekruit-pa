@@ -334,6 +334,105 @@ test("cadence: defaults to 3 days / 120 min when flags unset", async () => {
   assert.equal(out.skippedNotDue, 1)
 })
 
+// ---------------------------------------------------------------------------
+// Cross-system rec cooldown (2026-06-02) — the daily batch must NOT pile recs
+// on top of a fresh live find_match send. Both systems stamp the SHARED
+// `lastAnyJobRecSentAt` marker; the batch reads it BEFORE compose/send.
+// ---------------------------------------------------------------------------
+
+/**
+ * Seed a flag-on, CADENCE-due (never-batched) user whose SHARED cross-system
+ * marker `lastAnyJobRecSentAt` was stamped `lastAnyRecIso` ago — simulates a
+ * live Claire find_match send that just happened. The cadence gate would let
+ * this user through (lastJobBatchSentAt=null → due); only the cooldown should
+ * stop them.
+ */
+async function seedLiveRecdUser(
+  mfs: MockFirestore,
+  userId: string,
+  phone: string,
+  lastAnyRecIso: string | null,
+): Promise<void> {
+  await seedDeliverableUser(mfs, userId, phone, null)
+  await mfs.collection("pa-job-profiles").doc(userId).set(
+    { lastAnyJobRecSentAt: lastAnyRecIso },
+    { merge: true },
+  )
+}
+
+const HOUR = 60 * 60 * 1000
+
+test("cooldown: live rec 2h ago → batch SKIPS (cooldown), sendImessage NOT called", async () => {
+  const mfs = new MockFirestore()
+  const twoHoursAgo = new Date(NOW_MS - 2 * HOUR).toISOString()
+  await seedLiveRecdUser(mfs, "justrecd", "+15551110020", twoHoursAgo)
+  let syncSends = 0
+  let scheduled = 0
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    // rec flag on; cadence/spread default; cooldown flag = 22h (default).
+    getFlag: async (_db, key, _ctx, defaultValue) =>
+      key === "paJobRecEnabled" ? true : defaultValue,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+    scheduleSend: async () => {
+      scheduled += 1
+      return { ok: true }
+    },
+  })
+  assert.equal(out.skippedCooldown, 1)
+  assert.equal(out.delivered, 0)
+  assert.equal(out.skippedNotDue, 0) // cooldown short-circuits before the cadence gate
+  assert.equal(scheduled, 0, "no send scheduled")
+  // sendImessage path (runtime write) must NOT fire either.
+  assert.equal(jobRecRuntimeWrites(mfs).length, 0)
+  void syncSends
+  // The live marker is untouched (NOT re-stamped by a skipped run).
+  const prof = (await mfs.collection("pa-job-profiles").doc("justrecd").get()).data()
+  assert.equal(prof?.lastAnyJobRecSentAt, twoHoursAgo)
+})
+
+test("cooldown: last rec 30h ago → batch SENDS (past 22h window) + stamps both markers", async () => {
+  const mfs = new MockFirestore()
+  const thirtyHoursAgo = new Date(NOW_MS - 30 * HOUR).toISOString()
+  await seedLiveRecdUser(mfs, "coldenough", "+15551110021", thirtyHoursAgo)
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key, _ctx, defaultValue) =>
+      key === "paJobRecEnabled" ? true : defaultValue,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+  })
+  assert.equal(out.skippedCooldown, 0)
+  assert.equal(out.delivered, 1)
+  const prof = (await mfs.collection("pa-job-profiles").doc("coldenough").get()).data()
+  // BOTH markers re-stamped to "now" (≠ the 30h-ago value), so the next batch
+  // honors the cooldown against THIS send.
+  assert.notEqual(prof?.lastAnyJobRecSentAt, thirtyHoursAgo)
+  assert.ok(prof?.lastJobBatchSentAt)
+  assert.equal(prof?.lastAnyJobRecSentAt, prof?.lastJobBatchSentAt)
+})
+
+test("cooldown: dep override cooldownMs=0 disables the gate (2h-ago user delivers)", async () => {
+  const mfs = new MockFirestore()
+  const twoHoursAgo = new Date(NOW_MS - 2 * HOUR).toISOString()
+  await seedLiveRecdUser(mfs, "nocooldown", "+15551110022", twoHoursAgo)
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key, _ctx, defaultValue) =>
+      key === "paJobRecEnabled" ? true : defaultValue,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+    cooldownMs: 0, // escape hatch
+  })
+  assert.equal(out.cooldownMs, 0)
+  assert.equal(out.skippedCooldown, 0)
+  assert.equal(out.delivered, 1)
+})
+
 test("time-spread: scheduleSend dep receives a delayMs; sync send NOT used", async () => {
   const mfs = new MockFirestore()
   await seedDeliverableUser(mfs, "spread", "+15551110010", null)

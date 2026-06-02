@@ -30,6 +30,11 @@ import {
   LOCATION_VOCAB,
   LocationSchema,
   ANYWHERE_LOCATION_TOKENS,
+  LOCATION_BUCKET_TO_COUNTRY,
+  locationBucketCountry,
+  bucketsHaveUs,
+  bucketsHaveKnownNonUs,
+  isGlobalRemoteBucket,
 } from "../canonical/location.js"
 import {
   RELEVANT_TAG_PATTERN,
@@ -319,6 +324,84 @@ describe("TAG-07: location vocab", () => {
   it("LocationSchema rejects abbreviation `sf`", () => {
     assert.equal(LocationSchema.safeParse("sf").success, false)
     assert.equal(LocationSchema.safeParse("nyc").success, false)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────
+// Canonical bucket→country map (2026-06-02) — non-US leak fix data layer.
+// ─────────────────────────────────────────────────────────────────
+
+describe("location bucket → ISO country map", () => {
+  it("maps every canonical US metro to US", () => {
+    const usMetros = ["san_francisco_bay_area", "new_york_metro", "austin_metro", "denver_metro", "honolulu"]
+    for (const m of usMetros) assert.equal(locationBucketCountry(m), "US", m)
+  })
+
+  it("maps the previously-OMITTED Middle East buckets (the leak region)", () => {
+    assert.equal(locationBucketCountry("doha"), "QA")
+    assert.equal(locationBucketCountry("dubai"), "AE")
+    assert.equal(locationBucketCountry("riyadh"), "SA")
+    assert.equal(locationBucketCountry("abu_dhabi"), "AE")
+    // common scraped (non-canonical) country tokens also resolve
+    assert.equal(locationBucketCountry("uae"), "AE")
+    assert.equal(locationBucketCountry("qatar"), "QA")
+    assert.equal(locationBucketCountry("saudi_arabia"), "SA")
+  })
+
+  it("covers ME / Africa / LatAm / SE-Asia representatives", () => {
+    assert.equal(locationBucketCountry("cairo"), "EG")
+    assert.equal(locationBucketCountry("lagos"), "NG")
+    assert.equal(locationBucketCountry("nairobi"), "KE")
+    assert.equal(locationBucketCountry("sao_paulo"), "BR")
+    assert.equal(locationBucketCountry("bogota"), "CO")
+    assert.equal(locationBucketCountry("jakarta"), "ID")
+    assert.equal(locationBucketCountry("manila"), "PH")
+    assert.equal(locationBucketCountry("ho_chi_minh_city"), "VN")
+  })
+
+  it("is case/whitespace insensitive", () => {
+    assert.equal(locationBucketCountry("  Doha "), "QA")
+    assert.equal(locationBucketCountry("TORONTO"), "CA")
+  })
+
+  it("returns undefined for unknown / region-agnostic tokens", () => {
+    assert.equal(locationBucketCountry("remote_anywhere"), undefined)
+    assert.equal(locationBucketCountry("remote_global"), undefined)
+    assert.equal(locationBucketCountry("worldwide"), undefined)
+    assert.equal(locationBucketCountry("not_a_place"), undefined)
+  })
+
+  it("bucketsHaveUs — true iff a bucket maps to US (incl US-remote)", () => {
+    assert.equal(bucketsHaveUs(["doha", "dubai", "riyadh"]), false)
+    assert.equal(bucketsHaveUs(["doha", "san_francisco_bay_area"]), true)
+    assert.equal(bucketsHaveUs(["remote_united_states"]), true)
+    assert.equal(bucketsHaveUs(["remote_anywhere"]), false) // region-agnostic, not US
+  })
+
+  it("bucketsHaveKnownNonUs — true iff a positively-foreign bucket present", () => {
+    assert.equal(bucketsHaveKnownNonUs(["doha", "dubai", "riyadh"]), true)
+    assert.equal(bucketsHaveKnownNonUs(["san_francisco_bay_area"]), false)
+    assert.equal(bucketsHaveKnownNonUs(["remote_anywhere"]), false) // unknown/agnostic ≠ foreign
+    assert.equal(bucketsHaveKnownNonUs(["not_a_place"]), false)
+  })
+
+  it("isGlobalRemoteBucket — region-agnostic escape tokens only", () => {
+    assert.equal(isGlobalRemoteBucket("remote_anywhere"), true)
+    assert.equal(isGlobalRemoteBucket("remote_global"), true)
+    assert.equal(isGlobalRemoteBucket("worldwide"), true)
+    assert.equal(isGlobalRemoteBucket("doha"), false)
+    assert.equal(isGlobalRemoteBucket("remote_united_states"), false)
+  })
+
+  it("every canonical metro/city bucket has a country (no gap)", () => {
+    const agnostic = new Set(["remote_global", "remote_anywhere"])
+    for (const bucket of LOCATION_VOCAB) {
+      if (agnostic.has(bucket)) continue
+      assert.ok(
+        bucket in LOCATION_BUCKET_TO_COUNTRY,
+        `canonical bucket "${bucket}" missing from LOCATION_BUCKET_TO_COUNTRY`,
+      )
+    }
   })
 })
 
