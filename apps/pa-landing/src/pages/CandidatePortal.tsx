@@ -856,17 +856,17 @@ function deriveCompleteness(profile: CandidateSelfProfile): MeCompleteness {
   const tags = profile.globalTags
   const checks: Array<{ id: string; label: string; impact: string; done: boolean; critical?: boolean }> = [
     { id: "resume", label: "Upload résumé", impact: "Improves matching evidence", done: !!profile.latestResumeArtifactId, critical: true },
-    { id: "targets", label: "Target roles", impact: "Claire pitches sharper", done: !!tags?.roleFunction?.length },
-    { id: "locations", label: "Location preferences", impact: "2× more roles", done: !!tags?.targetLocations?.length },
-    { id: "industries", label: "Industry preferences", impact: "Sharper comp matching", done: !!tags?.industrySector?.length },
-    { id: "skills", label: "Skills", impact: "Better role fit", done: !!tags?.skills?.length },
+    { id: "targets", label: "Target roles", impact: "Sets Claire's role target", done: !!tags?.roleFunction?.length },
+    { id: "locations", label: "Location preferences", impact: "Keeps location filters honest", done: !!tags?.targetLocations?.length },
+    { id: "industries", label: "Industry preferences", impact: "Keeps industry filters honest", done: !!tags?.industrySector?.length },
+    { id: "skills", label: "Skills", impact: "Adds skills evidence", done: !!tags?.skills?.length },
     {
       id: "linkedin",
       label: "Connect LinkedIn",
       impact: "Confirms account",
       done: !!profile.linkedinOauthProfile || hasRealLinkedinUrl(profile.linkedinUrl),
     },
-    { id: "story", label: "Career summary", impact: "Better pitch by Claire", done: !!profile.profileSummary },
+    { id: "story", label: "Career summary", impact: "Adds context for role review", done: !!profile.profileSummary },
   ]
   const done = checks.filter((c) => c.done).length
   const pct = Math.round((done / checks.length) * 100)
@@ -4354,7 +4354,7 @@ function MatchesEmptyState({
       <p>
         {hasOtherRoles
           ? "This filter is empty. Show all tracked roles or update preferences if this split looks wrong."
-          : "Claire keeps scanning. Tighten target roles, locations, and deal-breakers so the next batch has better evidence."}
+          : "Claire keeps scanning. Tighten target roles, locations, and deal-breakers so roles can surface with clearer evidence."}
       </p>
       <div className="wkmp-empty__actions">
         {hasOtherRoles ? (

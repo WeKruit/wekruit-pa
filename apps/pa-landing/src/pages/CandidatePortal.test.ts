@@ -268,6 +268,17 @@ test("CandidatePortal missing resume copy treats it as stronger evidence, not th
   assert.doesNotMatch(source, /Add a résumé so Claire can match you\./)
 })
 
+test("CandidatePortal profile guidance avoids unsupported lift and batch promises", () => {
+  assert.doesNotMatch(source, /2× more roles/)
+  assert.doesNotMatch(source, /Claire pitches sharper/)
+  assert.doesNotMatch(source, /Better pitch by Claire/)
+  assert.doesNotMatch(source, /next batch has better evidence/)
+  assert.match(source, /impact: "Sets Claire's role target"/)
+  assert.match(source, /impact: "Keeps location filters honest"/)
+  assert.match(source, /impact: "Adds context for role review"/)
+  assert.match(source, /roles can surface with clearer evidence/)
+})
+
 test("CandidatePortal /me treats new recommended roles as an Up Next action", () => {
   assert.match(source, /function deriveRecommendedRolesAction\(recommendedCount: number\): MeAction \| null/)
   assert.match(source, /const recommendedNextAction = deriveRecommendedRolesAction\(recommended\.length\)/)
