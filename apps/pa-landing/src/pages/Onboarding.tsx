@@ -90,6 +90,12 @@ export default function Onboarding() {
     const match = returnPath.match(/^\/j\/([^/?#]+)(?:\/cv)?$/)
     return match?.[1] ? canonicalPublicJobId(match[1]) : null
   }, [returnPath])
+  const isJobInterview = Boolean(returnJobId)
+  const sourceEyebrow = isJobInterview
+    ? "Claire keeps the role context attached"
+    : source === "WeKruit_Laid_Off"
+      ? "WeKruit Open · for people between things"
+      : "WeKruit · meet your AI recruiter"
 
   useEffect(() => {
     const rawNext = searchParams.get("next")
@@ -305,11 +311,19 @@ export default function Onboarding() {
                 )}
                 {stage === "intake" && (
                   <>
-                    Introduce yourself <em style={{ fontStyle: "italic" }}>once</em>.
+                    {isJobInterview ? (
+                      <>
+                        Keep this role with <em style={{ fontStyle: "italic" }}>Claire</em>.
+                      </>
+                    ) : (
+                      <>
+                        Build your Claire <em style={{ fontStyle: "italic" }}>profile</em>.
+                      </>
+                    )}
                   </>
                 )}
               </h1>
-              {stage !== "dup-prompt" && <FlowProgress stage={stage} />}
+              {stage !== "dup-prompt" && <FlowProgress stage={stage} isJobInterview={isJobInterview} />}
               {verifyError ? <StepNotice tone="error" text={verifyError} /> : null}
               {stage === "intake" && (
                 <p
@@ -322,9 +336,7 @@ export default function Onboarding() {
                     textTransform: "uppercase",
                   }}
                 >
-                  {source === "WeKruit_Laid_Off"
-                    ? "WeKruit Open · for people between things"
-                    : "WeKruit · meet your AI recruiter"}
+                  {sourceEyebrow}
                 </p>
               )}
             </div>
@@ -340,7 +352,7 @@ export default function Onboarding() {
               source={source}
               authUser={authUser}
               linkedinLinkedViaOauth={linkedinLinkedViaOauth}
-              isJobInterview={Boolean(returnJobId)}
+              isJobInterview={isJobInterview}
             />
           )}
           {stage === "dup-prompt" && dupExisting && (
@@ -530,22 +542,27 @@ function DuplicatePrompt({
         pick up where we left off.
         <br />
         <br />
-        <strong style={{ color: "var(--ink)" }}>Start fresh</strong> — Overwrite your old info with what you just entered.
+        <strong style={{ color: "var(--ink)" }}>Use latest info</strong> — Replace your old info with what you just entered.
       </div>
 
       <div style={{ marginTop: 22, display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-        <button className="btn btn--secondary" onClick={onFresh}>Start fresh</button>
+        <button className="btn btn--secondary" onClick={onFresh}>Use latest info</button>
         <button className="btn btn--primary" onClick={onReuse}>Use previous profile →</button>
       </div>
     </div>
   )
 }
 
-function FlowProgress({ stage }: { stage: Stage }) {
-  const steps = [
-    { id: "intake", label: "Register + resume" },
-    { id: "done", label: "Claire iMessage" },
-  ] as const
+function FlowProgress({ stage, isJobInterview }: { stage: Stage; isJobInterview: boolean }) {
+  const steps = isJobInterview
+    ? ([
+        { id: "intake", label: "Profile + role context" },
+        { id: "done", label: "Claire role interview" },
+      ] as const)
+    : ([
+        { id: "intake", label: "Claire profile" },
+        { id: "done", label: "Claire iMessage" },
+      ] as const)
   const currentIdx = steps.findIndex((s) => s.id === stage)
   return (
     <div
@@ -723,7 +740,9 @@ function FormIntake({
   return (
     <div className="card card--feature" style={{ background: "var(--cream-3)", borderRadius: "var(--r-lg)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 16, marginBottom: 6, flexWrap: "wrap" }}>
-        <span className="eyebrow" style={{ whiteSpace: "nowrap" }}>Step 1 · Register</span>
+        <span className="eyebrow" style={{ whiteSpace: "nowrap" }}>
+          {isJobInterview ? "Step 1 · Role context" : "Step 1 · Claire profile"}
+        </span>
         <span className="caption" style={{ color: "var(--ink-3)", whiteSpace: "nowrap" }}>{filled} of {total} · ~60 sec</span>
       </div>
       <p style={{ marginTop: 4, marginBottom: 18, fontSize: 14, color: "var(--ink-2)" }}>
@@ -731,8 +750,8 @@ function FormIntake({
           ? "Tell us the basics. After you submit, you'll open iMessage to say hello to Claire — that's when we link your phone."
           : isJobInterview
             ? skipLinkedinField
-              ? "Tell us who you are and share a resume or site (LinkedIn is already linked from sign-in). Next you'll open iMessage to interview with Claire for this role."
-              : "Tell us who you are and share a resume, LinkedIn, or site. Next you'll open iMessage to interview with Claire for this role."
+              ? "Claire already has the role path; add the evidence she needs while the role context stays attached. LinkedIn is linked from sign-in, so a resume or site is enough to continue the same role interview in iMessage."
+              : "Claire already has the role path; add the evidence she needs while the role context stays attached. Share a resume, LinkedIn, or site, then continue the same role interview in iMessage."
             : skipLinkedinField
               ? "Tell us who you are and share a resume or site (LinkedIn is already linked from sign-in). Next you'll open iMessage to talk to Claire."
               : "Tell us who you are and share a resume, LinkedIn, or site. Next you'll open iMessage to talk to Claire."}
@@ -889,7 +908,7 @@ function FormIntake({
 
       <div style={{ marginTop: 24, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
         <span className="caption" style={{ color: "var(--ink-3)" }}>
-          Next: {isJobInterview ? "Interview with Claire in iMessage." : "Talk to Claire in iMessage."}
+          Next: {isJobInterview ? "Continue this role interview with Claire in iMessage." : "Talk to Claire in iMessage."}
         </span>
         {formError && (
           <span role="alert" style={{ width: "100%", color: "var(--danger)", fontSize: 13 }}>
@@ -1024,13 +1043,13 @@ function Done({
             margin: 0,
           }}
         >
-          {isJobInterview ? "Now interview with Claire." : "Open Claire in iMessage."}
+          {isJobInterview ? "Continue with Claire in iMessage." : "Open Claire in iMessage."}
         </h1>
         <p className="lead claire-handoff__copy">
           {imessageAvailable ? (
             <>
               {isJobInterview
-                ? "Your profile is ready for this role. Open iMessage and send the pre-filled code exactly as shown; Claire will reply there with the first interview question."
+                ? "Your profile and this role are connected. Send the pre-filled code exactly as shown; Claire will continue the role interview from there."
                 : "Your resume and profile are saved. Open iMessage and send the pre-filled code exactly as shown."}
             </>
           ) : (
@@ -1043,7 +1062,7 @@ function Done({
         <div className="claire-handoff__actions">
           {smsHref ? (
             <a className="btn btn--primary btn--lg" href={smsHref}>
-              {isJobInterview ? "Send code in iMessage" : "Open Claire in iMessage"}
+              {isJobInterview ? "Send code to continue" : "Open Claire in iMessage"}
             </a>
           ) : !imessageAvailable ? (
             <p className="caption claire-handoff__fallback">
