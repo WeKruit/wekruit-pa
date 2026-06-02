@@ -194,7 +194,7 @@ test("CandidateProfile empty profile cards provide real Claire actions", () => {
 })
 
 test("CandidatePortal /me shows recent role activity from real matches", () => {
-  assert.match(source, /<MeActivityLog matches=\{allMatches\} \/>/)
+  assert.match(source, /<MeActivityLog matches=\{allMatches\} claireHref=\{claireHref\} \/>/)
   assert.match(source, /function deriveMeActivityRows/)
   assert.match(source, /function MeActivityLog/)
   assert.match(source, /Recent activity/)
@@ -202,6 +202,17 @@ test("CandidatePortal /me shows recent role activity from real matches", () => {
   assert.match(source, /reviewDecision/)
   assert.match(source, /getCandidateJobStatusDisplay\(match\.status, match\.job\.title\)/)
   assert.doesNotMatch(source, /mock activity|sample activity|fake timeline/i)
+})
+
+test("CandidatePortal recent activity rows route to the real match action target", () => {
+  assert.match(source, /function activityTargetForMatch\(match: CandidateMatchCard, claireHref: string \| null\)/)
+  assert.match(source, /if \(match\.status === "interview_started" && claireHref\)/)
+  assert.match(source, /return matchPrimaryTarget\(match\)/)
+  assert.match(source, /const target = activityTargetForMatch\(match, claireHref\)/)
+  assert.match(source, /external: target\.external/)
+  assert.match(source, /row\.external \? \(/)
+  assert.match(source, /target=\{activityTargetOpensNewTab\(row\.href\) \? "_blank" : undefined\}/)
+  assert.doesNotMatch(source, /rows\.map\(\(row\) => \(\s*<Link to=\{row\.href\}/)
 })
 
 test("CandidatePortal /me treats incomplete profile data as an Up Next action", () => {

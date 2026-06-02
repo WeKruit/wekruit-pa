@@ -760,7 +760,7 @@ function CandidateMeReady({
                 error={matchesError}
                 recommendedCount={recommended.length}
               />
-              <MeActivityLog matches={allMatches} />
+              <MeActivityLog matches={allMatches} claireHref={claireHref} />
               <MePipeline
                 matches={pipelineMatches}
                 loading={matchesLoading}
@@ -830,6 +830,7 @@ type MeActivityRow = {
   company: string
   detail: string
   href: string
+  external: boolean
   when: string
 }
 
@@ -993,7 +994,16 @@ function activityDetail(match: CandidateMatchCard): string {
   return display.nextStep
 }
 
-function deriveMeActivityRows(matches: CandidateMatchCard[]): MeActivityRow[] {
+function activityTargetForMatch(match: CandidateMatchCard, claireHref: string | null) {
+  if (match.status === "interview_started" && claireHref) return { external: true, url: claireHref }
+  return matchPrimaryTarget(match)
+}
+
+function activityTargetOpensNewTab(href: string): boolean {
+  return /^https?:\/\//i.test(href)
+}
+
+function deriveMeActivityRows(matches: CandidateMatchCard[], claireHref: string | null): MeActivityRow[] {
   return [...matches]
     .sort((a, b) => {
       const at = Date.parse(a.computedAt)
@@ -1001,17 +1011,21 @@ function deriveMeActivityRows(matches: CandidateMatchCard[]): MeActivityRow[] {
       return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at)
     })
     .slice(0, 4)
-    .map((match) => ({
-      key: `${match.matchId}-${match.status}`,
-      logo: (match.job.company[0] ?? "?").toUpperCase(),
-      logoBg: LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length],
-      event: activityEventLabel(match),
-      role: match.job.title,
-      company: match.job.company,
-      detail: activityDetail(match),
-      href: match.job.href,
-      when: meWhen(match.computedAt),
-    }))
+    .map((match) => {
+      const target = activityTargetForMatch(match, claireHref)
+      return {
+        key: `${match.matchId}-${match.status}`,
+        logo: (match.job.company[0] ?? "?").toUpperCase(),
+        logoBg: LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length],
+        event: activityEventLabel(match),
+        role: match.job.title,
+        company: match.job.company,
+        detail: activityDetail(match),
+        href: target.url,
+        external: target.external,
+        when: meWhen(match.computedAt),
+      }
+    })
 }
 
 // Extra glyphs not in the shared Icon set (kept local to this surface).
@@ -1215,8 +1229,8 @@ function MeWaitingCard({ recommendedCount }: { recommendedCount: number }) {
   )
 }
 
-function MeActivityLog({ matches }: { matches: CandidateMatchCard[] }) {
-  const rows = deriveMeActivityRows(matches)
+function MeActivityLog({ matches, claireHref }: { matches: CandidateMatchCard[]; claireHref: string | null }) {
+  const rows = deriveMeActivityRows(matches, claireHref)
   if (rows.length === 0) return null
   return (
     <section className="wkv3-sec wkv3-activity" id="activity">
@@ -1226,16 +1240,35 @@ function MeActivityLog({ matches }: { matches: CandidateMatchCard[] }) {
       </header>
       <div className="wkv3-activity__list">
         {rows.map((row) => (
-          <Link to={row.href} className="wkv3-activity__row" key={row.key}>
-            <span className="wkv3-activity__mark" style={{ background: row.logoBg }}>{row.logo}</span>
-            <span className="wkv3-activity__body">
-              <span className="wkv3-activity__event">{row.event}</span>
-              <strong>{row.role}</strong>
-              <em>{row.company}</em>
-              <span className="wkv3-activity__detail">{row.detail}</span>
-            </span>
-            {row.when ? <span className="wkv3-activity__when">{row.when}</span> : null}
-          </Link>
+          row.external ? (
+            <a
+              href={row.href}
+              className="wkv3-activity__row"
+              key={row.key}
+              target={activityTargetOpensNewTab(row.href) ? "_blank" : undefined}
+              rel={activityTargetOpensNewTab(row.href) ? "noopener noreferrer" : undefined}
+            >
+              <span className="wkv3-activity__mark" style={{ background: row.logoBg }}>{row.logo}</span>
+              <span className="wkv3-activity__body">
+                <span className="wkv3-activity__event">{row.event}</span>
+                <strong>{row.role}</strong>
+                <em>{row.company}</em>
+                <span className="wkv3-activity__detail">{row.detail}</span>
+              </span>
+              {row.when ? <span className="wkv3-activity__when">{row.when}</span> : null}
+            </a>
+          ) : (
+            <Link to={row.href} className="wkv3-activity__row" key={row.key}>
+              <span className="wkv3-activity__mark" style={{ background: row.logoBg }}>{row.logo}</span>
+              <span className="wkv3-activity__body">
+                <span className="wkv3-activity__event">{row.event}</span>
+                <strong>{row.role}</strong>
+                <em>{row.company}</em>
+                <span className="wkv3-activity__detail">{row.detail}</span>
+              </span>
+              {row.when ? <span className="wkv3-activity__when">{row.when}</span> : null}
+            </Link>
+          )
         ))}
       </div>
     </section>
