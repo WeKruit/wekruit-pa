@@ -464,7 +464,7 @@ export default function Employers() {
             />
             <EmpFlowStep
               n="05" title="You see only passed profiles"
-              body="Summary, pass reason, evidence, risks, fit, transcript. Decline, schedule, or ask Claire to dig deeper."
+              body="Summary, pass reason, evidence, risks, fit, transcript. Review the pass record and decide whether this candidate should enter your normal interview process."
             />
           </ol>
           <p className="wk-emp-flow__note">
@@ -491,7 +491,7 @@ export default function Employers() {
               <h3>Auditable interviews</h3>
               <p>
                 Every pass ships with the transcript, structured rubric answers, and Claire&apos;s reasoning.
-                Argue with her if you disagree — she&apos;ll re-interview.
+                Calibration goes back to WeKruit before the next pass if the evidence misses your bar.
               </p>
             </article>
             <article className="wk-emp-trust__card">
@@ -678,8 +678,8 @@ function EmpPassedDetail({ c }: { c: PassedProfile }) {
         <span className="wk-emp-pp__action-chip wk-emp-pp__action-chip--primary">
           <Icon name="check" size={14} stroke={2} /> Accept intro after consent
         </span>
-        <span className="wk-emp-pp__action-chip">Decline with note</span>
-        <span className="wk-emp-pp__action-chip">Ask Claire to dig deeper</span>
+        <span className="wk-emp-pp__action-chip">Review evidence</span>
+        <span className="wk-emp-pp__action-chip">Calibration goes back to WeKruit</span>
         <span className="wk-emp-pp__exp">
           <Icon name="lock" size={12} stroke={2} /> Consent shown in sample
         </span>
@@ -692,7 +692,7 @@ function EmpPassedDetail({ c }: { c: PassedProfile }) {
       </section>
 
       <section className="wk-emp-pp__sec">
-        <h3 className="wk-emp-pp__h">Why Claire passed her</h3>
+        <h3 className="wk-emp-pp__h">Why Claire passed this candidate</h3>
         <div className="wk-emp-pp__verdict">
           <div className="wk-emp-pp__verdict-by">
             <Avatar name="Claire" size={28} tone="warm" />

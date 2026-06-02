@@ -47,6 +47,18 @@ test("Employers inbox preview uses non-interactive sample actions", () => {
   assert.match(employersSource, /Sample actions only/)
 })
 
+test("Employers page avoids unsupported employer workflow actions", () => {
+  assert.doesNotMatch(employersSource, /Decline, schedule, or ask Claire to dig deeper/)
+  assert.doesNotMatch(employersSource, /Decline with note/)
+  assert.doesNotMatch(employersSource, /Ask Claire to dig deeper/)
+  assert.doesNotMatch(employersSource, /Argue with her if you disagree/)
+  assert.doesNotMatch(employersSource, /she&apos;ll re-interview/i)
+
+  assert.match(employersSource, /Review the pass record/)
+  assert.match(employersSource, /decide whether this candidate should enter your normal interview process/)
+  assert.match(employersSource, /Calibration goes back to WeKruit/)
+})
+
 test("Employers sequence does not invent live interview scale", () => {
   assert.doesNotMatch(sequenceSource, /4 interviews/)
   assert.doesNotMatch(sequenceSource, /in flight · this hour/)
