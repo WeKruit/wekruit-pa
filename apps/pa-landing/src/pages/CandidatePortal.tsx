@@ -1111,7 +1111,7 @@ function MeStatusHeader({
                 document.getElementById("up-next")?.scrollIntoView({ behavior: "smooth", block: "start" })
               }}
             >
-              Continue with Claire <Icon name="arrow-right" size={13} stroke={2} />
+              Review up next <Icon name="arrow-right" size={13} stroke={2} />
             </button>
           </div>
         ) : null}

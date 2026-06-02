@@ -234,3 +234,12 @@ test("CandidatePortal /me treats incomplete profile data as an Up Next action", 
   assert.match(source, /navigate\(profileActionHrefForMissing\(missing\[0\]\)\)/)
   assert.doesNotMatch(source, /<p className="wkv3-wait__meta">No action needed right now\.<\/p>/)
 })
+
+test("CandidatePortal status header CTA labels the scroll action honestly", () => {
+  assert.match(source, /document\.getElementById\("up-next"\)\?\.scrollIntoView/)
+  assert.match(source, /Review up next <Icon name="arrow-right" size=\{13\} stroke=\{2\} \/>/)
+  assert.doesNotMatch(
+    source,
+    /className="wkv3-status__cta"[\s\S]{0,800}Continue with Claire <Icon name="arrow-right" size=\{13\} stroke=\{2\} \/>/,
+  )
+})
