@@ -48,7 +48,7 @@ export function useCandidatePortalGate(): CandidatePortalGateState {
   useEffect(() => {
     let cancelled = false
     let unsubscribe: (() => void) | null = null
-    const nextPath = `${location.pathname}${location.search}`
+    const nextPath = `${location.pathname}${location.search}${location.hash}`
 
     // Wait for any cross-domain SSO bootstrap to settle before reacting to
     // Firebase auth state. Without this, the gate sees `null` immediately,
@@ -128,7 +128,7 @@ export function useCandidatePortalGate(): CandidatePortalGateState {
       cancelled = true
       unsubscribe?.()
     }
-  }, [location.pathname, location.search, navigate])
+  }, [location.pathname, location.search, location.hash, navigate])
 
   return state
 }

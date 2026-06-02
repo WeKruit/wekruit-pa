@@ -870,9 +870,24 @@ function deriveProfileNextAction(completeness: MeCompleteness): MeAction | null 
     title: "Complete your Claire profile",
     sub: `${missing.label} — ${missing.impact}`,
     cta: "Update profile",
-    href: "/me/profile",
+    href: profileActionHrefForMissing(missing),
     external: false,
     when: "",
+  }
+}
+
+function profileActionHrefForMissing(missing: MeCompleteness["missing"][number]): string {
+  switch (missing.id) {
+    case "resume":
+      return "/me/profile#connector-resume"
+    case "linkedin":
+      return "/me/profile#connector-linkedin"
+    case "skills":
+      return "/me/profile#skills"
+    case "story":
+      return "/me/profile#profile-corrections"
+    default:
+      return "/me/profile#match-preferences"
   }
 }
 
@@ -1594,7 +1609,7 @@ function MeCompletenessCard({ completeness }: { completeness: MeCompleteness }) 
           <button
             type="button"
             className="wk-btn wk-btn--ink wk-btn--block wk-btn--sm"
-            onClick={() => navigate("/me/profile")}
+            onClick={() => navigate(profileActionHrefForMissing(missing[0]))}
           >
             Complete profile <Icon name="arrow-right" size={13} stroke={2} />
           </button>
@@ -2456,7 +2471,7 @@ function MatchPreferencesCard({
   }
 
   return (
-    <section className="wkv2-card wk-prof-card">
+    <section id="match-preferences" className="wkv2-card wk-prof-card">
       <h3 className="wkv2-card__h">
         Match preferences
         <span className="wk-prof-card__src">Claire matches against these</span>
@@ -2675,7 +2690,7 @@ function SkillsCard({ profile, editing }: { profile: CandidateSelfProfile; editi
   const skills = (profile.globalTags?.skills ?? []).map(formatProfileValue).filter(Boolean)
   if (skills.length === 0 && !editing) {
     return (
-      <section className="wkv2-card wk-prof-card">
+      <section id="skills" className="wkv2-card wk-prof-card">
         <h3 className="wkv2-card__h">Skills</h3>
         <p className="wk-prof-card__hint">
           Claire pulls these from your résumé. Upload one on iMessage to see them here.
@@ -2684,7 +2699,7 @@ function SkillsCard({ profile, editing }: { profile: CandidateSelfProfile; editi
     )
   }
   return (
-    <section className="wkv2-card wk-prof-card">
+    <section id="skills" className="wkv2-card wk-prof-card">
       <h3 className="wkv2-card__h">Skills</h3>
       <p className="wk-prof-card__hint">Tags Claire matches against role requirements.</p>
       <div className="wkv2-prof__skills wk-prof-skills">
@@ -2726,11 +2741,11 @@ function ConnectedAccountsCard({ profile }: { profile: CandidateSelfProfile }) {
   const items = deriveConnectors(profile)
   const githubRepos = (profile.githubPublicRepos ?? []).slice(0, 3)
   return (
-    <section className="wkv2-card wk-prof-card">
+    <section id="connected-accounts" className="wkv2-card wk-prof-card">
       <h3 className="wkv2-card__h">Connected accounts</h3>
       <div className="wkv2-conn wk-prof-conn">
         {items.map((c) => (
-          <div key={c.id} className="wkv2-conn__row">
+          <div key={c.id} id={`connector-${c.id}`} className="wkv2-conn__row">
             <span
               className="wkv2-conn__ico"
               style={{ background: c.brand, color: "#fff", fontSize: 11, fontWeight: 600 }}
@@ -2834,7 +2849,7 @@ function UpdatePreferencesPanel({
   }
 
   return (
-    <section className="wkv2-card wk-prof-card" aria-labelledby="prof-update-title">
+    <section id="profile-corrections" className="wkv2-card wk-prof-card" aria-labelledby="prof-update-title">
       <h3 className="wkv2-card__h" id="prof-update-title">Update preferences</h3>
       <p className="wk-prof-card__hint">
         Tell Claire what to change. Free-form is fine — she'll update the canonical tags for you.

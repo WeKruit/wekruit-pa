@@ -33,6 +33,14 @@ test("candidateLoginPath carries the profile destination through login", () => {
   assert.equal(candidateLoginPath("/me/profile"), "/login?next=%2Fme%2Fprofile")
 })
 
+test("parseLoginNextPath preserves candidate profile anchors", () => {
+  const next = parseLoginNextPath("/me/profile#connector-resume")
+  assert.equal(next.pathname, "/me/profile")
+  assert.equal(next.search, "")
+  assert.equal(next.hash, "#connector-resume")
+  assert.equal(next.to, "/me/profile#connector-resume")
+})
+
 test("isLayoffHost recognizes layoff Firebase hosting targets", () => {
   assert.equal(isLayoffHost("layoff.wekruit.com"), true)
   assert.equal(isLayoffHost("layoff-wekruit.web.app"), true)

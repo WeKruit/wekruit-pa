@@ -106,6 +106,7 @@ export function candidateLoginPath(next = candidateProfilePath()): string {
 export type LoginNextDestination = {
   pathname: string
   search: string
+  hash: string
   /** Path + query for redirects (e.g. `/onboarding?source=layoff`). */
   to: string
   /** True when `next` targets onboarding regardless of query string. */
@@ -135,11 +136,14 @@ export type RegistrationEntry = {
   jobId: string
 }
 
-function splitAppPath(path: string): { pathname: string; search: string; to: string } {
-  const q = path.indexOf("?")
-  const pathname = (q >= 0 ? path.slice(0, q) : path) || "/onboarding"
-  const search = q >= 0 ? path.slice(q) : ""
-  return { pathname, search, to: `${pathname}${search}` }
+function splitAppPath(path: string): { pathname: string; search: string; hash: string; to: string } {
+  const h = path.indexOf("#")
+  const beforeHash = h >= 0 ? path.slice(0, h) : path
+  const hash = h >= 0 ? path.slice(h) : ""
+  const q = beforeHash.indexOf("?")
+  const pathname = (q >= 0 ? beforeHash.slice(0, q) : beforeHash) || "/onboarding"
+  const search = q >= 0 ? beforeHash.slice(q) : ""
+  return { pathname, search, hash, to: `${pathname}${search}${hash}` }
 }
 
 /** Persist post-login destination across OAuth redirects that strip query params. */
@@ -212,10 +216,12 @@ export function parseLoginNextPath(
     const url = new URL(candidate, CANDIDATE_ORIGIN)
     const pathname = canonicalizePublicJobPath(url.pathname || "/onboarding")
     const search = url.search
+    const hash = url.hash
     return {
       pathname,
       search,
-      to: `${pathname}${search}`,
+      hash,
+      to: `${pathname}${search}${hash}`,
       isOnboarding: pathname === "/onboarding",
     }
   } catch {
@@ -225,7 +231,7 @@ export function parseLoginNextPath(
       pathname: canonicalizePublicJobPath(rawSplit.pathname),
       to: "",
     }
-    split.to = `${split.pathname}${split.search}`
+    split.to = `${split.pathname}${split.search}${split.hash}`
     return {
       ...split,
       isOnboarding: split.pathname === "/onboarding",
