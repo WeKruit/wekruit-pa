@@ -3674,6 +3674,173 @@
   line-height: 1.45;
 }
 
+.rb-overview-inbox {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+}
+
+.rb-overview-inbox__lead {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rb-overview-inbox__lead article {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--ink-3);
+  border-radius: 10px;
+  background: #fff;
+  padding: 13px;
+}
+
+.rb-overview-inbox__lead article.is-live,
+.rb-overview-inbox__feed button.is-live,
+.rb-overview-inbox__lanes button.is-live {
+  border-color: var(--live-border);
+  border-left-color: var(--live);
+  border-top-color: var(--live);
+  background: var(--live-soft);
+}
+
+.rb-overview-inbox__lead article.is-info,
+.rb-overview-inbox__feed button.is-info,
+.rb-overview-inbox__lanes button.is-info {
+  border-color: #c8d8f6;
+  border-left-color: var(--info);
+  border-top-color: var(--info);
+}
+
+.rb-overview-inbox__lead article.is-success,
+.rb-overview-inbox__feed button.is-success,
+.rb-overview-inbox__lanes button.is-success {
+  border-color: #b8d9c2;
+  border-left-color: var(--success);
+  border-top-color: var(--success);
+  background: var(--success-bg);
+}
+
+.rb-overview-inbox__lead article.is-warn,
+.rb-overview-inbox__feed button.is-warn,
+.rb-overview-inbox__lanes button.is-warn {
+  border-color: #efc56f;
+  border-left-color: var(--warning);
+  border-top-color: var(--warning);
+  background: #fffaf1;
+}
+
+.rb-overview-inbox__lead article.is-mute,
+.rb-overview-inbox__feed button.is-mute,
+.rb-overview-inbox__lanes button.is-mute {
+  border-color: var(--border);
+  border-left-color: var(--ink-3);
+  border-top-color: var(--ink-3);
+  background: var(--cream-3);
+}
+
+.rb-overview-inbox span,
+.rb-overview-inbox__feed header span,
+.rb-overview-inbox em {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-overview-inbox__lead strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-overview-inbox p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-overview-inbox__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.42fr);
+  gap: 0;
+}
+
+.rb-overview-inbox__lanes {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.rb-overview-inbox__lanes button,
+.rb-overview-inbox__feed button {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ink-3);
+  border-radius: 9px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 12px;
+  text-align: left;
+}
+
+.rb-overview-inbox__lanes button:hover,
+.rb-overview-inbox__feed button:hover {
+  background: var(--cream-3);
+}
+
+.rb-overview-inbox__lanes strong {
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 28px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.rb-overview-inbox__feed {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  border-left: 1px solid var(--border);
+  background: #fffaf5;
+  padding: 14px;
+}
+
+.rb-overview-inbox__feed header {
+  display: grid;
+  gap: 3px;
+}
+
+.rb-overview-inbox__feed header strong,
+.rb-overview-inbox__feed button strong {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.22;
+}
+
+.rb-overview-inbox__feed button p {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 .rb-market-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -9802,6 +9969,7 @@
   .rb-access__body,
   .rb-cockpit,
   .rb-launch-sequence,
+  .rb-overview-inbox__grid,
   .rb-workspace__grid,
   .rb-workbench-grid,
   .rb-inbox-grid,
@@ -9821,6 +9989,10 @@
   .rb-role-intake__body,
   .rb-role-dashboard {
     grid-template-columns: 1fr;
+  }
+  .rb-overview-inbox__feed {
+    border-left: 0;
+    border-top: 1px solid var(--border);
   }
   .rb-submissions-hero,
   .rb-submission-receipt {
@@ -10005,6 +10177,8 @@
   .rb-reward-ledger__summary,
   .rb-payout-readiness__cards,
   .rb-payout-readiness__steps,
+  .rb-overview-inbox__lead,
+  .rb-overview-inbox__lanes,
   .rb-inbox-hero,
   .rb-access-command-hero {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -10169,6 +10343,8 @@
   .rb-candidate-board,
   .rb-cockpit__steps,
   .rb-launch-sequence__steps,
+  .rb-overview-inbox__lead,
+  .rb-overview-inbox__lanes,
   .rb-inbox-triage,
   .rb-candidate-dossier__checks,
   .rb-candidate-dossier__body,

@@ -1547,13 +1547,16 @@ export default function RecruiterBoard() {
             roleQuestions={roleQuestions}
             roleIntelligence={roleIntelligence}
             roleApplications={roleApplications}
+            notifications={notifications}
             operatingMetrics={operatingMetrics}
             primaryRoleIds={primaryRoleIds}
+            onInbox={() => setTab("inbox")}
             onRoles={() => setTab("roles")}
             onMatches={() => setTab("matches")}
             onCandidates={() => setTab("candidates")}
             onSubmissions={() => setTab("submissions")}
             onPerformance={() => setTab("performance")}
+            onEarnings={() => setTab("earnings")}
             onAccess={openRoleAccess}
           />
         )}
@@ -4312,13 +4315,16 @@ function OverviewTab({
   roleQuestions,
   roleIntelligence,
   roleApplications,
+  notifications,
   operatingMetrics,
   primaryRoleIds,
+  onInbox,
   onRoles,
   onMatches,
   onCandidates,
   onSubmissions,
   onPerformance,
+  onEarnings,
   onAccess,
 }: {
   stats: Array<{ label: string; value: string; meta: string; signal: string; tone: string }>
@@ -4329,13 +4335,16 @@ function OverviewTab({
   roleQuestions: RecruiterRoleQuestionItem[]
   roleIntelligence: RecruiterRoleIntelligenceItem[]
   roleApplications: RecruiterRoleApplicationItem[]
+  notifications: RecruiterNotificationItem[]
   operatingMetrics: RecruiterOperatingMetrics
   primaryRoleIds: string[]
+  onInbox: () => void
   onRoles: () => void
   onMatches: () => void
   onCandidates: () => void
   onSubmissions: () => void
   onPerformance: () => void
+  onEarnings: () => void
   onAccess: (jobId?: string) => void
 }) {
   const primaryJobs = jobs.filter((job) => isPrimaryRole(job, primaryRoleIds))
@@ -4350,6 +4359,9 @@ function OverviewTab({
   const marketPulse = buildMarketPulse(jobs, roleQuestions, roleIntelligence)
   const cockpit = buildRecruiterCockpitModel(jobs, submissions, sourcedCandidates, roleFeedback, roleQuestions, roleIntelligence, roleApplications, primaryRoleIds)
   const launch = buildRecruiterLaunchModel(jobs, submissions, sourcedCandidates, roleFeedback, primaryRoleIds)
+  const inboxItems = buildRecruiterInboxItems(jobs, submissions, sourcedCandidates, roleFeedback, roleQuestions, notifications)
+  const inboxSummary = buildRecruiterInboxSummary(submissions, sourcedCandidates, roleQuestions, notifications)
+  const inboxTriage = buildRecruiterInboxTriage(inboxItems)
   const routeCockpitAction = (action: RecruiterCockpitAction) => {
     if (action === "roles") onRoles()
     else if (action === "matches") onMatches()
@@ -4358,10 +4370,24 @@ function OverviewTab({
     else if (action === "access") onAccess(cockpit.focusRole?.job.jobId)
     else onCandidates()
   }
+  const routeInboxAction = (action: RecruiterInboxAction) => {
+    if (action === "roles") onRoles()
+    else if (action === "submissions") onSubmissions()
+    else if (action === "matches") onMatches()
+    else if (action === "earnings") onEarnings()
+    else onCandidates()
+  }
   return (
     <div className="rb-workspace">
       <RecruiterCockpit model={cockpit} onAction={routeCockpitAction} />
       {launch.completed < launch.total && <RecruiterLaunchSequence model={launch} onAction={routeCockpitAction} />}
+      <RecruiterOverviewInboxPanel
+        summary={inboxSummary}
+        lanes={inboxTriage}
+        items={inboxItems.slice(0, 3)}
+        onInbox={onInbox}
+        onAction={routeInboxAction}
+      />
       <section className="rb-stats">
         {stats.map((s) => (
           <article className={`rb-stat is-${s.tone}`} key={s.label}>
@@ -4515,6 +4541,90 @@ function RecruiterLaunchSequence({
             <em>{item.complete ? "Complete" : item === model.nextItem ? "Next" : "Queued"}</em>
           </button>
         ))}
+      </div>
+    </section>
+  )
+}
+
+function RecruiterOverviewInboxPanel({
+  summary,
+  lanes,
+  items,
+  onInbox,
+  onAction,
+}: {
+  summary: ReturnType<typeof buildRecruiterInboxSummary>
+  lanes: RecruiterInboxTriageLane[]
+  items: RecruiterInboxItem[]
+  onInbox: () => void
+  onAction: (action: RecruiterInboxAction) => void
+}) {
+  return (
+    <section className="rb-panel rb-overview-inbox" aria-label="Recruiter operating inbox">
+      <header className="rb-panel__head">
+        <div>
+          <h2>Operating inbox</h2>
+          <p>Owner, urgency, and learning signal for the next recruiter move before opening any tab.</p>
+        </div>
+        <button type="button" className="rb-panel__link" onClick={onInbox}>Open full inbox</button>
+      </header>
+
+      <div className="rb-overview-inbox__lead">
+        <article className={summary.needsAction ? "is-warn" : "is-success"}>
+          <span>Needs action</span>
+          <strong>{summary.needsAction}</strong>
+          <p>Recruiter-owned work, unread alerts, ready candidates, follow-ups, and open questions.</p>
+        </article>
+        <article className={summary.followUpDue ? "is-warn" : "is-mute"}>
+          <span>Follow-ups due</span>
+          <strong>{summary.followUpDue}</strong>
+          <p>Prospects that need a touch before the candidate lane goes cold.</p>
+        </article>
+        <article className={summary.openQuestions ? "is-warn" : "is-success"}>
+          <span>Open questions</span>
+          <strong>{summary.openQuestions}</strong>
+          <p>Role-calibration questions that should shape the next shortlist.</p>
+        </article>
+      </div>
+
+      <div className="rb-overview-inbox__grid">
+        <div className="rb-overview-inbox__lanes" aria-label="Inbox triage lanes">
+          {lanes.map((lane) => (
+            <button type="button" className={`is-${lane.tone}`} key={lane.label} onClick={() => onAction(lane.action)}>
+              <span>{lane.label}</span>
+              <strong>{lane.value}</strong>
+              <p>{lane.body}</p>
+              <em>{lane.item ? `${recruiterInboxOwner(lane.item).label} · ${recruiterInboxClock(lane.item).label}` : lane.cta}</em>
+            </button>
+          ))}
+        </div>
+
+        <aside className="rb-overview-inbox__feed">
+          <header>
+            <span>Next three</span>
+            <strong>{items.length ? "Do these first" : "No live inbox work"}</strong>
+          </header>
+          {items.map((item) => {
+            const owner = recruiterInboxOwner(item)
+            const clock = recruiterInboxClock(item)
+            return (
+              <button type="button" className={`is-${item.tone}`} key={item.id} onClick={() => onAction(item.action)}>
+                <span>{item.bucket}</span>
+                <strong>{item.title}</strong>
+                <p>{item.body}</p>
+                <em>{owner.label} · {clock.label} · {recruiterInboxAgeLabel(item)}</em>
+              </button>
+            )
+          })}
+          {items.length === 0 && (
+            <button type="button" className="is-mute" onClick={onInbox}>
+              <span>Inbox empty</span>
+              <strong>Start the feedback loop</strong>
+              <p>Save candidates, ask role questions, or submit a clean packet to create operating signal.</p>
+              <em>Open full inbox</em>
+            </button>
+          )}
+        </aside>
       </div>
     </section>
   )
