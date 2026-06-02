@@ -2628,6 +2628,16 @@ export default function RecruiterRole() {
     requestAnimationFrame(() => document.getElementById("candidate-proof-note")?.scrollIntoView({ behavior: "smooth", block: "center" }))
   }
 
+  const clearSubmissionDraft = () => {
+    const nextForm = withRecruiterDefaults(emptyForm(), session)
+    setForm(nextForm)
+    setPrefilledCandidateId(null)
+    setSubmitError(null)
+    setIdentityCheck({ status: "missing", result: null, error: null, inputKey: null })
+    setSearchParams({}, { replace: true })
+    saveFormState(job.jobId, nextForm)
+  }
+
   const saveRoleApplication = async (input: RecruiterRoleApplicationInput) => {
     setRoleApplicationSaving(true)
     setRoleApplicationError(null)
@@ -2712,7 +2722,7 @@ export default function RecruiterRole() {
       } catch (error) {
         setTrackerError(`Candidate submitted, but the role tracker refresh failed: ${error instanceof Error ? error.message : String(error)}`)
       }
-      saveFormState(job.jobId, withRecruiterDefaults(emptyForm(), session))
+      clearSubmissionDraft()
       window.scrollTo({ top: 0, behavior: "smooth" })
     } catch (error) {
       setSubmitError(formatSubmissionFailure(error instanceof Error ? error.message : String(error)))
@@ -2723,11 +2733,14 @@ export default function RecruiterRole() {
 
   const resetChecklist = () => {
     if (!confirm("Clear this role's checklist and candidate fields?")) return
-    setForm(withRecruiterDefaults(emptyForm(), session))
+    setSubmission(null)
+    clearSubmissionDraft()
   }
 
   const submitAnother = () => {
     setSubmission(null)
+    clearSubmissionDraft()
+    requestAnimationFrame(() => document.getElementById("submit-candidate")?.scrollIntoView({ behavior: "smooth", block: "start" }))
   }
 
   const resendCandidateConfirmation = async (row: RecruiterSubmissionItem) => {
