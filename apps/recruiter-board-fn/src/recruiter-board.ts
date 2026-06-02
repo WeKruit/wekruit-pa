@@ -2849,6 +2849,19 @@ export const paRecruiterSourcedCandidateSave = onRequest(
           return
         }
       }
+      if (realJobId) {
+        const candidateConflict = await findRecruiterCandidateIdentityConflict(db, {
+          realJobId,
+          recruiterId: recruiter.recruiterId,
+          candidateLinkKey,
+          candidateEmailKey,
+          ignoreSourcedCandidateId: candidateId,
+        })
+        if (candidateConflict) {
+          res.status(409).json({ ok: false, reason: candidateConflict.reason })
+          return
+        }
+      }
       const existingData = existing.exists ? existing.data() as Record<string, unknown> : {}
       const existingHasRole =
         typeof existingData.jobId === "string" ||
@@ -3373,6 +3386,7 @@ export interface RecruiterCandidateIdentityConflictInput {
   recruiterId?: string | null
   candidateLinkKey: string
   candidateEmailKey?: string | null
+  ignoreSourcedCandidateId?: string | null
 }
 
 export interface RecruiterCandidateIdentityDoc {
@@ -3419,11 +3433,14 @@ export function recruiterCandidateIdentityConflictForRole(
     const emailMatches = Boolean(input.candidateEmailKey && data.candidateEmailKey === input.candidateEmailKey)
     if (!linkMatches && !emailMatches) continue
     if (doc.collection === "submissions") {
+      const sourcedCandidateId = typeof data.sourcedCandidateId === "string" ? data.sourcedCandidateId : ""
+      if (input.ignoreSourcedCandidateId && sourcedCandidateId === input.ignoreSourcedCandidateId) continue
       return { reason: "candidate_already_submitted_for_role", docId: doc.id }
     }
     const owner = typeof data.recruiterId === "string" ? data.recruiterId : null
     const linkedSubmissionId = typeof data.linkedSubmissionId === "string" ? data.linkedSubmissionId.trim() : ""
     if (linkedSubmissionId) {
+      if (input.ignoreSourcedCandidateId && doc.id === input.ignoreSourcedCandidateId && owner === input.recruiterId) continue
       return { reason: "candidate_already_submitted_for_role", docId: doc.id }
     }
     if (owner && owner !== input.recruiterId) {

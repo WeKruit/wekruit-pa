@@ -759,6 +759,53 @@ describe("recruiter sourced candidates", () => {
     ]), null)
   })
 
+  it("allows source-save updates to ignore the same linked sourced candidate", () => {
+    const linkKey = hashRecruiterCandidateLink("https://linkedin.com/in/ada")
+
+    assert.equal(recruiterCandidateIdentityConflictForRole({
+      realJobId: "role-1",
+      recruiterId: "recruiter-a",
+      candidateLinkKey: linkKey,
+      ignoreSourcedCandidateId: "source-1",
+    }, [
+      {
+        id: "source-1",
+        collection: "sourced",
+        data: {
+          jobId: "role-1",
+          recruiterId: "recruiter-a",
+          candidateLinkKey: linkKey,
+          linkedSubmissionId: "sub-1",
+        },
+      },
+    ]), null)
+  })
+
+  it("blocks source-save updates when a different submitted record owns the candidate", () => {
+    const linkKey = hashRecruiterCandidateLink("https://linkedin.com/in/ada")
+
+    assert.deepEqual(recruiterCandidateIdentityConflictForRole({
+      realJobId: "role-1",
+      recruiterId: "recruiter-a",
+      candidateLinkKey: linkKey,
+      ignoreSourcedCandidateId: "source-1",
+    }, [
+      {
+        id: "sub-2",
+        collection: "submissions",
+        data: {
+          jobId: "role-1",
+          recruiterId: "recruiter-b",
+          candidateLinkKey: linkKey,
+          sourcedCandidateId: "source-2",
+        },
+      },
+    ]), {
+      reason: "candidate_already_submitted_for_role",
+      docId: "sub-2",
+    })
+  })
+
   it("validates recruiter candidate identity checks before submission", () => {
     const result = validateRecruiterCandidateIdentityCheckInput({
       jobId: " public-job-1 ",
