@@ -264,6 +264,31 @@ export const MatchingJobSchema = z.object({
   previouslyRecommended: z.boolean().optional(),
   recommendationCount: z.number().int().nonnegative().optional(),
   lastRecommendedAt: z.string().optional(),
+  /**
+   * Cross-source dedup signal (Option B, 2026-06-01). The scraper computes a
+   * source-INDEPENDENT canonical key — `sha256(company | role | location)`,
+   * `compute_canonical_signature()` in `id_utils.py` — and ships it to
+   * Firestore as `canonical_signature`. Because `source_repo` IS part of the
+   * doc-id hash, the SAME role at the SAME company scraped from two sources
+   * (e.g. `greenhouse:acme` and a `jobright` mirror) lands as TWO distinct
+   * `matching-jobs` docs with the SAME `canonicalSignature`. At match time we
+   * collapse rows sharing this key so a candidate never sees the same role
+   * twice. Optional + back-compat: legacy / un-stamped rows simply lack it and
+   * are unaffected (they fall through to the existing company|title dedup).
+   */
+  canonicalSignature: z.string().optional(),
+  /**
+   * Cross-source dedup marker (Option B, 2026-06-01). When the receiver's
+   * `pa-job-canonical-signature/{sig}` index already maps a signature to a
+   * primary active job, the newer cross-source duplicate doc is stamped with
+   * `canonicalDuplicateOf = <primary jobId>` (an ADDITIVE field — the doc id
+   * never changes, the doc is never deleted). The match read path drops these
+   * rows in favour of their primary. NOTE: writing this field is the receiver
+   * (core-service) responsibility; the match-time de-dupe here is robust on
+   * its own — even with the field absent, rows are collapsed by
+   * `canonicalSignature` keeping the freshest as primary.
+   */
+  canonicalDuplicateOf: z.string().optional(),
 })
 export type MatchingJob = z.infer<typeof MatchingJobSchema>
 

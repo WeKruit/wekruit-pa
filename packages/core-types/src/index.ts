@@ -899,6 +899,18 @@ export {
   type PendingOutboundStatus,
 } from "./pending-outbound.js"
 
+// Cal.com-backed interview booking contract (offer → book → confirm). One doc
+// per (user × job). See ./interview-bookings.ts.
+export {
+  InterviewBookingSchema,
+  InterviewBookingStatusSchema,
+  OfferedSlotSchema,
+  interviewBookingDocId,
+  type InterviewBooking,
+  type InterviewBookingStatus,
+  type OfferedSlot,
+} from "./interview-bookings.js"
+
 // pa-users canonical `source` label allowlist (2026-05-18 cleanup goal).
 export {
   PA_USER_SOURCES,

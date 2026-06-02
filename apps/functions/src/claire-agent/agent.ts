@@ -19,18 +19,42 @@ import type {
   ClaireToolContext,
   ClaireTransport,
   ClaireTurnInput,
+  ClaireTurnUsage,
 } from "./types.js"
 import { buildClaireTools } from "./tools/index.js"
 import { type ProcessSessionStore, type ProcessToolContext } from "./tools/process-tools.js"
-import { buildClairePrompt } from "./prompt.js"
+import { buildClairePrompt, buildClaireTurnContext } from "./prompt.js"
 import { buildClaireGuardrails } from "./guardrails.js"
 import { markReadReflex, wireTypingReflex, deliverBubbles } from "./delivery.js"
+import { isCanaryUser } from "./canary.js"
 import { makeClaireSession } from "./session.js"
 import { appendHotlineIfMissing } from "@pa/pa-safety"
 import { HELLO_WEKRUIT_OPENER_PREFIX } from "@pa/pa-orchestrator"
 
 /** Main conversation model (the per-tool LLM judge model is configured separately). */
 export const CLAIRE_MODEL = "gpt-5.4-nano"
+
+/**
+ * Hard cap on the SDK agent loop (model-call iterations per inbound turn) for the
+ * LIVE thin-Claire path — the `run()` calls in this file + proactive.ts.
+ *
+ * @openai/agents `run()` defaults to `DEFAULT_MAX_TURNS = 10` when no cap is
+ * passed. Each iteration re-sends the full (uncached) ~5-6K system prompt + the
+ * monotonically GROWING transcript + accumulated tool outputs, so a turn that
+ * spirals toward the ceiling multiplies token cost on a compounding context —
+ * the mechanism behind the 2026-06-01 runaway (~1.2B gpt-5.4-nano input tokens
+ * in one day → OpenAI auto-revoked the key). Capping bounds the per-inbound
+ * blast radius. Shares the SAME env knob + default as @pa/agent-runtime's
+ * `resolveMaxTurns` (the OTHER, non-conversation run() path) so a single
+ * `PA_AGENT_MAX_TURNS` governs BOTH. Default 8 (< the SDK's 10, room for the
+ * longest legit chain: matching set-prefs→find-match→compose, or the prescreen
+ * FSM load→judge→record→advance→ask). Clamped to [2,10].
+ */
+export function resolveClaireMaxTurns(): number {
+  const raw = Number(process.env.PA_AGENT_MAX_TURNS)
+  if (!Number.isFinite(raw)) return 8
+  return Math.max(2, Math.min(10, Math.trunc(raw)))
+}
 
 /**
  * Structured reply contract (Adam 2026-05-30) — the agent returns its user-facing reply as an
@@ -115,15 +139,18 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
   const agentConfig = {
     name: "Claire",
     model: CLAIRE_MODEL,
+    // 2B — STATIC HEAD ONLY (byte-stable across turns so the prefix caches). The per-turn
+    // dynamic block (canary tapback / globalContext / prescreenContext / non-onboarding
+    // pendingStep) is re-injected as a trailing system input item in run() below, NOT here.
+    // Onboarding pendingStep/currentStep/slot/awaitingAnswer ARE part of the mode shape and
+    // stay in the head (stable across a given turn's inner loop, which is the cached unit).
     instructions: buildClairePrompt({
       mode: opts.mode,
       lang: opts.lang,
       pendingStep: opts.pendingStep,
       currentStep: opts.currentStep,
-      globalContext: opts.globalContext,
       onboardingSlot: opts.onboardingSlot,
       awaitingAnswer: opts.awaitingAnswer,
-      prescreenContext: opts.prescreenContext,
       prescreenPrompts: opts.prescreenPrompts,
     }),
     tools: buildClaireTools(ctx, {
@@ -219,7 +246,25 @@ async function loadGlobalContext(db: Firestore, userId: string): Promise<string>
             .filter(Boolean)
             .join("; ")
 
-    return [resumeLine, prefsLine].filter(Boolean).join("\n")
+    // Resume-less onboarding (QR / iMessage-first): when NO résumé is on file and
+    // onboarding isn't done, surface a tokenized upload link so Claire can nudge it
+    // ONCE (résumé is OPTIONAL FOREVER — never a gate). Token is reused across turns.
+    let uploadLinkLine = ""
+    const hasResumeOnFile = Boolean(resumeLine) || Boolean(str(data.latestResumeArtifactId))
+    const onboardingDone = data.onboardingStatus === "complete" || data.onboardingStatus === "completed"
+    if (!hasResumeOnFile && !onboardingDone) {
+      try {
+        const { getOrIssueCvUploadLink } = await import("../qr-onboarding/upload-token.js")
+        const link = await getOrIssueCvUploadLink(db, userId)
+        if (link) {
+          uploadLinkLine = `Resume upload link (OPTIONAL nudge — mention once, never require): ${link}`
+        }
+      } catch {
+        /* best-effort — omit the nudge on any failure */
+      }
+    }
+
+    return [resumeLine, prefsLine, uploadLinkLine].filter(Boolean).join("\n")
   } catch {
     return ""
   }
@@ -331,18 +376,46 @@ export async function runClaireTurn(
   // sanitizeInboundForLlm) — otherwise the greeting echoes the internal userId as the candidate's name.
   const turnText = sanitizeInboundForLlm(input.text)
 
+  // 2B — the per-turn DYNAMIC context (canary tapback / globalContext / prescreenContext /
+  // non-onboarding pendingStep). Injected as a TRAILING {role:'system'} item AFTER the
+  // Session-replayed transcript so the byte-stable static head + the growing transcript cache,
+  // and only this small tail is uncached. FirestoreSession.addItems skips system+user items, so
+  // this ephemeral context is NEVER written to the durable transcript (it can't pollute the
+  // next turn's cached prefix). Mirrors the proven default-path shape (buildAgentsInputItems).
+  const turnContext = buildClaireTurnContext({
+    mode: deps.mode ?? "triage",
+    lang,
+    canary: isCanaryUser(ctx.userId),
+    globalContext,
+    pendingStep: deps.pendingStep,
+    prescreenContext: deps.prescreenContext,
+  })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const runInput: any[] = []
+  if (turnContext) runInput.push({ type: "message", role: "system", content: turnContext })
+  runInput.push({ type: "message", role: "user", content: turnText })
+
   let bubbles: string[] = []
   let blocked = false
+  let usage: ClaireTurnUsage | undefined
   try {
     const res = (await Promise.race([
-      run(agent, turnText, { session }),
+      // maxTurns — cost guard against the unbounded agent loop (see
+      // resolveClaireMaxTurns). Without it the SDK runs up to 10 turns, each
+      // re-sending the full prompt + growing transcript (the 1.2B-token runaway).
+      // 2B — array input: [trailing system context (if any), user message]. {session, maxTurns}
+      // unchanged. The system item rides as a per-turn input, NOT persisted (see above).
+      run(agent, runInput, { session, maxTurns: resolveClaireMaxTurns() }),
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error("claire_run_timeout")), RUN_TIMEOUT_MS),
       ),
-    ])) as { finalOutput?: unknown }
+    ])) as { finalOutput?: unknown; rawResponses?: ReadonlyArray<unknown> }
     // finalOutput is the resolved ClaireReplySchema → { messages: string[] }. Each element is one
     // iMessage bubble; deliverBubbles POSTs them in order. extractBubbles is defensive vs shape drift.
     bubbles = extractBubbles(res?.finalOutput)
+    // 2A — sum per-turn token usage (incl cached-prefix tokens) from rawResponses[*].usage. The
+    // thin path uses run() directly (NOT @pa/agent-runtime's extractUsage), so we read it here.
+    usage = extractClaireUsage(res?.rawResponses)
   } catch (e) {
     if (e instanceof InputGuardrailTripwireTriggered) {
       blocked = true
@@ -437,5 +510,49 @@ export async function runClaireTurn(
     }
   }
 
-  return { finalText, toolCalls: [], deliveredViaTool: deliveredViaTool || blocked }
+  return {
+    finalText,
+    toolCalls: [],
+    deliveredViaTool: deliveredViaTool || blocked,
+    ...(usage ? { usage } : {}),
+  }
+}
+
+/**
+ * 2A — best-effort per-turn token usage from the SDK run() result's rawResponses[*].usage.
+ * Sums input/output/total + the cached-prefix portion (camelCase `inputTokensDetails.cachedTokens`
+ * OR wire `input_tokens_details.cached_tokens`). turnsUsed ~= rawResponses length. Returns undefined
+ * when nothing usable surfaced (so we never write an empty usage object). Never throws.
+ */
+function extractClaireUsage(
+  rawResponses: ReadonlyArray<unknown> | undefined,
+): ClaireTurnUsage | undefined {
+  try {
+    const responses = rawResponses ?? []
+    let inputTokens = 0
+    let outputTokens = 0
+    let totalTokens = 0
+    let cachedInputTokens = 0
+    for (const raw of responses) {
+      const u = (raw as { usage?: Record<string, unknown> } | undefined)?.usage
+      if (!u) continue
+      const num = (v: unknown) => (typeof v === "number" ? v : 0)
+      inputTokens += num(u.inputTokens)
+      outputTokens += num(u.outputTokens)
+      totalTokens += num(u.totalTokens)
+      const details = (u.inputTokensDetails ?? u.input_tokens_details) as
+        | { cachedTokens?: unknown; cached_tokens?: unknown }
+        | undefined
+      cachedInputTokens += num(details?.cachedTokens ?? details?.cached_tokens)
+    }
+    const usage: ClaireTurnUsage = {}
+    if (inputTokens > 0) usage.inputTokens = inputTokens
+    if (outputTokens > 0) usage.outputTokens = outputTokens
+    if (totalTokens > 0) usage.totalTokens = totalTokens
+    if (cachedInputTokens > 0) usage.cachedInputTokens = cachedInputTokens
+    if (responses.length > 0) usage.turnsUsed = responses.length
+    return Object.keys(usage).length > 0 ? usage : undefined
+  } catch {
+    return undefined
+  }
 }

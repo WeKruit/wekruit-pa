@@ -31,6 +31,7 @@
  * re-enrich on their next pipeline-sync write and pick up sponsorship.
  */
 
+import { createHash } from "node:crypto"
 import { onDocumentWritten } from "firebase-functions/v2/firestore"
 import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
@@ -43,6 +44,39 @@ const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 
 const ENRICHER_VERSION = "v1.9.0"
+
+/**
+ * Cost fix (2026-06-01): the upstream `contentHash` = sha256(company + RAW title)
+ * churns on cosmetic title drift (emoji/case/punctuation) on every macmini
+ * re-scrape, while the normalized `job_id` stays stable. That asymmetry re-fired
+ * the full enrich + sponsorship pipeline on already-enriched ACTIVE jobs — ~98%
+ * of daily enrichment LLM spend was recomputing the identical answer (294/300
+ * sampled). We instead gate on a STABLE SEMANTIC hash computed here from the
+ * LLM-relevant inputs: normalized title + normalized company + the trimmed JD
+ * BODY. Cosmetic drift no longer fires; a genuine JD-body change (or a title
+ * change reflected in the body) still re-enriches. This changes only WHEN we
+ * enrich — never the enrichment output, any hard filter, or any match score.
+ * `enricherContentHash` is still written so rollback is a one-line gate revert
+ * with zero data migration.
+ */
+function normSemantic(s: string | null | undefined): string {
+  return (s ?? "")
+    .toLowerCase()
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}]+/gu, " ") // collapse non-alphanumeric runs (emoji/punct/space) → single space
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+export function computeSemanticHash(doc: MatchingJobDoc): string {
+  return createHash("sha256")
+    .update(
+      [normSemantic(doc.roleTitle), normSemantic(doc.companyName), (doc.jobDescription ?? "").trim()].join(
+        "",
+      ),
+    )
+    .digest("hex")
+}
 
 interface MatchingJobDoc {
   status?: string
@@ -61,19 +95,24 @@ interface MatchingJobDoc {
   jobType?: string | null
   enricherVersion?: string | null
   enricherContentHash?: string | null
+  enricherSemanticHash?: string | null
   sponsorship?: boolean | null
   sponsorshipSource?: string | null
   sponsorshipConfidence?: number | null
   sponsorshipBackfilledAt?: string | null
+  sponsorshipSemanticHash?: string | null
 }
 
 export function needsEnrichment(doc: MatchingJobDoc | undefined): boolean {
   if (!doc) return false
   if (doc.status !== "active") return false
-  // Already enriched at current version + same content_hash → skip
+  // Already enriched at current version AND the SEMANTIC content is unchanged →
+  // skip. Gating on the stable semantic hash (not the volatile upstream
+  // contentHash) is the cost fix: cosmetic title/company drift on a re-scrape no
+  // longer re-fires the LLM. A real JD-body change flips the hash → re-enriches.
   if (
     doc.enricherVersion === ENRICHER_VERSION &&
-    doc.enricherContentHash === doc.contentHash
+    doc.enricherSemanticHash === computeSemanticHash(doc)
   ) {
     return false
   }
@@ -94,6 +133,14 @@ export function needsEnrichment(doc: MatchingJobDoc | undefined): boolean {
  */
 export function needsSponsorshipInference(doc: MatchingJobDoc | undefined): boolean {
   if (!doc) return false
+  // Already inferred for this exact semantic content (INCLUDING a prior null
+  // verdict) → skip. This co-gates sponsorship on the same stable hash so the
+  // null-sponsorship cohort — which never sets sponsorshipBackfilledAt and thus
+  // re-paid an LLM call on every re-scrape — stops churning. A real JD-body
+  // change flips the hash → re-infers (new sponsorship language is still caught).
+  if (doc.sponsorshipSemanticHash && doc.sponsorshipSemanticHash === computeSemanticHash(doc)) {
+    return false
+  }
   const s = doc.sponsorship
   if (
     (s === true || s === false) &&
@@ -154,7 +201,8 @@ export const paMatchingJobsAutoEnrich = onDocumentWritten(
         locationBuckets: t.locationBuckets ?? after!.locationBuckets ?? [],
         jobType: t.jobType ?? after!.jobType ?? "other",
         enricherVersion: ENRICHER_VERSION,
-        enricherContentHash: after!.contentHash ?? null,
+        enricherContentHash: after!.contentHash ?? null, // KEEP — observability + one-line rollback
+        enricherSemanticHash: computeSemanticHash(after!), // the real skip-gate (stable across cosmetic re-scrapes)
         enricherEnrichedAt: new Date().toISOString(),
         enricherModelUsed: result.modelUsed ?? null,
         enricherTier: result.usedTier ?? null,
@@ -189,6 +237,9 @@ export const paMatchingJobsAutoEnrich = onDocumentWritten(
           update.sponsorshipSource = sp.source
           update.sponsorshipConfidence = sp.confidence
           update.sponsorshipBackfilledAt = new Date().toISOString()
+          // Stamp the semantic hash even on a NULL verdict so the null cohort
+          // stops re-inferring on every cosmetic re-scrape (co-gate, see needsSponsorshipInference).
+          update.sponsorshipSemanticHash = computeSemanticHash(after!)
           if (typeof sp.reasoning === "string" && sp.reasoning.length > 0) {
             update.sponsorshipReasoning = sp.reasoning
           }

@@ -16,6 +16,7 @@ import assert from "node:assert/strict"
 import {
   needsEnrichment,
   needsSponsorshipInference,
+  computeSemanticHash,
 } from "../auto-enrich-matching-jobs.js"
 
 describe("paMatchingJobsAutoEnrich — needsEnrichment", () => {
@@ -30,15 +31,55 @@ describe("paMatchingJobsAutoEnrich — needsEnrichment", () => {
     )
   })
 
-  it("returns false when enricherVersion + contentHash both match current", () => {
-    const out = needsEnrichment({
+  it("returns false when enricherVersion + SEMANTIC hash match (already enriched, content unchanged)", () => {
+    const doc = {
       status: "active",
       roleTitle: "Senior Engineer",
+      companyName: "Acme",
+      jobDescription: "Build things. React, TS.",
       enricherVersion: "v1.9.0",
-      enricherContentHash: "abc",
-      contentHash: "abc",
-    })
+    }
+    const out = needsEnrichment({ ...doc, enricherSemanticHash: computeSemanticHash(doc) })
     assert.equal(out, false)
+  })
+
+  it("COST FIX: cosmetic title drift (emoji/case/punct) with SAME JD body → SKIP (no re-enrich)", () => {
+    // The macmini re-scrape flips contentHash on cosmetic title changes; the
+    // semantic gate must NOT re-enrich when the meaning is unchanged.
+    const original = {
+      status: "active",
+      roleTitle: "Senior Engineer",
+      companyName: "Acme",
+      jobDescription: "Build things. React, TS.",
+      enricherVersion: "v1.9.0",
+    }
+    const stamp = computeSemanticHash(original)
+    // re-scrape rewrites title with emoji + different case/punct + new contentHash
+    const reScraped = {
+      ...original,
+      roleTitle: "🚀 SENIOR  ENGINEER!!!",
+      contentHash: "a-totally-different-churned-hash",
+      enricherContentHash: "old-hash",
+      enricherSemanticHash: stamp,
+    }
+    assert.equal(needsEnrichment(reScraped), false, "cosmetic-only drift must not re-enrich")
+  })
+
+  it("returns true when the JD BODY genuinely changes (semantic hash flips → re-enrich)", () => {
+    const original = {
+      status: "active",
+      roleTitle: "Senior Engineer",
+      companyName: "Acme",
+      jobDescription: "Build things. React, TS.",
+      enricherVersion: "v1.9.0",
+    }
+    const stamp = computeSemanticHash(original)
+    const realChange = {
+      ...original,
+      jobDescription: "Now requires Rust, Kubernetes, and 5 years experience.",
+      enricherSemanticHash: stamp,
+    }
+    assert.equal(needsEnrichment(realChange), true, "real JD-body change must re-enrich")
   })
 
   it("returns true when enricherVersion is stale (v1.8.1 → v1.9.0 bump)", () => {
@@ -90,12 +131,37 @@ describe("paMatchingJobsAutoEnrich — needsSponsorshipInference (P64 wiring)", 
     assert.equal(out, false)
   })
 
-  it("returns true when sponsorship is null (re-attempt allowed)", () => {
+  it("returns true when sponsorship is null (re-attempt allowed) when no semantic stamp yet", () => {
     const out = needsSponsorshipInference({
       sponsorship: null,
       sponsorshipBackfilledAt: "2026-05-08T10:00:00.000Z",
     })
     assert.equal(out, true)
+  })
+
+  it("COST FIX: null-sponsorship cohort SKIPS when sponsorshipSemanticHash matches (no re-infer on re-scrape)", () => {
+    const doc = {
+      status: "active",
+      roleTitle: "Senior Engineer",
+      companyName: "Acme",
+      jobDescription: "Build things.",
+      sponsorship: null, // a prior NULL verdict — used to re-pay on every re-scrape
+    }
+    const out = needsSponsorshipInference({ ...doc, sponsorshipSemanticHash: computeSemanticHash(doc) })
+    assert.equal(out, false, "already inferred (even null) for this content → must not re-infer")
+  })
+
+  it("re-infers when JD body changes even if a prior semantic stamp exists", () => {
+    const doc = {
+      status: "active",
+      roleTitle: "Senior Engineer",
+      companyName: "Acme",
+      jobDescription: "Build things.",
+      sponsorship: null,
+    }
+    const stamp = computeSemanticHash(doc)
+    const changed = { ...doc, jobDescription: "We sponsor H1B visas.", sponsorshipSemanticHash: stamp }
+    assert.equal(needsSponsorshipInference(changed), true, "new JD (sponsorship language) must re-infer")
   })
 
   it("returns true when sponsorship is undefined (never inferred)", () => {

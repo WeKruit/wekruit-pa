@@ -48,6 +48,7 @@ import {
   MAILGUN_REGION,
   ANTHROPIC_API_KEY,
   PA_SLACK_ALERT_WEBHOOK,
+  CALCOM_API_KEY,
   makeOrchestratorDeps,
 } from "./orchestrator-deps.js"
 import {
@@ -299,6 +300,14 @@ export {
 // Frontend (PublicJobCv.tsx) POSTs base64 to this endpoint. ATS inbound
 // webhook (paAtsInboundWebhook) also targets this via PA_CV_INGEST_URL env.
 export { paPublicCvIngest } from "./public-cv-ingest.js"
+// iMessage-first QR onboarding — public GET /start?c=<campaign> picks a
+// capacity-aware Sendblue number, reserves it for a minted scanToken, and 302s
+// to sms:<number>?body=Hello, WeKruit! <scanToken>. See qr-onboarding/.
+export { paQrStartRedirect } from "./qr-onboarding/qr-start-redirect.js"
+// Abandoned-scan sweep — decrements the per-group assignedNewUsers counter for
+// pa-qr-scan-pending docs that never converted (status stays 'pending' past TTL)
+// so the new-user capacity counter doesn't leak.
+export { paQrScanAbandonedSweep } from "./qr-onboarding/abandoned-scan-sweep.js"
 // Recruiter board (wekruit-recruiters.web.app/recruiters): public list + submission.
 // Lives in the `recruiter-board` multi-codebase (apps/recruiter-board-fn) as
 // of 2026-05-26 to keep the pa-orchestrator bundle small. Endpoints:
@@ -635,7 +644,23 @@ async function findUserByParticipant(db: Firestore, participant: string): Promis
   return { id: d.id, ...d.data() } as User
 }
 
-async function createProvisionalUser(db: Firestore, participant: string): Promise<User> {
+async function createProvisionalUser(
+  db: Firestore,
+  participant: string,
+  options?: {
+    /** Override the canonical source label (QR opener stamps `qr_imessage`). */
+    source?: string
+    /** First-touch campaign code (per-card attribution, QR path). */
+    firstTouchCampaign?: string
+    /**
+     * Scan-time sticky Sendblue number to persist as the override (doc §3.4). The
+     * scan-time pick WINS — we do NOT re-pick — so downstream sticky reads
+     * (assignCandidateSenderNumber honors an existing senderNumber) stay consistent.
+     */
+    senderNumber?: string
+    senderGroupId?: string
+  }
+): Promise<User> {
   const id = randomUUID()
   const n = normalizeImessageParticipant(participant)
   const u: User = {
@@ -647,15 +672,40 @@ async function createProvisionalUser(db: Firestore, participant: string): Promis
   }
   // 2026-05-18 cleanup goal — every pa-users initial create must stamp a
   // canonical source label. Broker / sendblue inbound = real candidate flow.
-  ;(u as User & { source?: string }).source = "candidate"
+  // QR opener overrides to `qr_imessage` so the funnel is attributable.
+  ;(u as User & { source?: string }).source = options?.source ?? "candidate"
+  const extra = u as User & {
+    firstTouchCampaign?: string
+    senderNumber?: string
+    senderGroupId?: string
+    senderAssignedAt?: string
+    senderAssignedSource?: string
+  }
+  if (options?.firstTouchCampaign) extra.firstTouchCampaign = options.firstTouchCampaign
+  // Override-first sticky: persist the scan-time number so the per-uid pick never
+  // clobbers it (assignCandidateSenderNumber no-ops when senderNumber is present).
+  if (options?.senderNumber) {
+    extra.senderNumber = options.senderNumber
+    if (options.senderGroupId) extra.senderGroupId = options.senderGroupId
+    extra.senderAssignedAt = nowIso()
+    extra.senderAssignedSource = "qr_scan"
+  }
   await db.collection(PA_COLLECTIONS.users).doc(id).set(u)
   return u
 }
 
 export function shouldCreateProvisionalUserForBrokerPayload(rawPayload: BrokerImessageEvent["rawPayload"] | undefined): boolean {
-  const payload = (rawPayload ?? {}) as BrokerImessageEvent["rawPayload"] & { source?: unknown }
+  const payload = (rawPayload ?? {}) as BrokerImessageEvent["rawPayload"] & { source?: unknown; text?: unknown }
   if (payload.e2eTest === true) return false
-  if (payload.source === "sendblue") return false
+  // Direct-start (Adam 2026-06-02): an unregistered number that sends a REAL text
+  // message (a bare "hi" etc.) now creates a provisional user + onboards — no QR
+  // scan required. Previously source==='sendblue' was hard-blocked (anti-spam).
+  // We still skip non-text events (typing / delivery / line_blocked) so a stray
+  // system webhook can never auto-create a profile. The QR opener path still runs
+  // FIRST in processBrokerImessageEvent, so scanToken + sticky-number binding is
+  // preserved for genuine QR scans (this gate is the fallback for plain text).
+  const text = typeof payload.text === "string" ? payload.text.trim() : ""
+  if (text.length === 0) return false
   return true
 }
 
@@ -800,7 +850,30 @@ async function processBrokerImessageEvent(
     user = await findUserByParticipant(db, payload.participant)
   }
   if (!user) {
-    if (!shouldCreateProvisionalUserForBrokerPayload(payload)) {
+    // Direct-start (Adam 2026-06-02): an unregistered number that sends a real
+    // text now creates a provisional user + onboards (syncGateAllows below).
+    // The QR opener check still runs FIRST and UNCONDITIONALLY so a genuine QR
+    // scan (`Hello, WeKruit! <scanToken>`) keeps its special provisioning —
+    // source='qr_imessage' + scanToken claim + sticky-number reconcile — instead
+    // of falling through to the generic create. Non-text/system events are still
+    // blocked by shouldCreateProvisionalUserForBrokerPayload (empty text → false).
+    const syncGateAllows = shouldCreateProvisionalUserForBrokerPayload(payload)
+    let qrProvision: import("./qr-onboarding/scan.js").QrOpenerProvisionDecision = {
+      shouldProvision: false,
+      scan: null,
+    }
+    {
+      try {
+        const { resolveQrOpenerProvision } = await import("./qr-onboarding/scan.js")
+        qrProvision = await resolveQrOpenerProvision(db, payload.text)
+      } catch (err) {
+        logger.warn("[onPaInbound] QR opener provision check failed (non-fatal)", {
+          eventId: claimed.id,
+          err: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
+    if (!syncGateAllows && !qrProvision.shouldProvision) {
       const externalChatId = normalizeImessageParticipant(payload.participant)
       const isE2eUnbound = payload.e2eTest === true
       logger.warn("[onPaInbound] inbound skipped without bound pa-users profile", {
@@ -825,7 +898,61 @@ async function processBrokerImessageEvent(
       )
       return 1
     }
-    user = await createProvisionalUser(db, payload.participant)
+    if (qrProvision.shouldProvision && qrProvision.scan) {
+      // QR opener — stamp source='qr_imessage' + the campaign, and reconcile the
+      // scan-time sticky number onto the new profile (override-first, doc §3.4).
+      const scan = qrProvision.scan
+      user = await createProvisionalUser(db, payload.participant, {
+        source: "qr_imessage",
+        firstTouchCampaign: scan.campaign,
+        senderNumber: scan.number,
+        senderGroupId: scan.groupId,
+      })
+      // Mark the reservation claimed (dedupe double-scan / webhook retry,
+      // doc §3 Race C/D). Best-effort — never blocks delivery.
+      try {
+        const { claimQrScanPending } = await import("./qr-onboarding/scan.js")
+        await claimQrScanPending(db, scan.scanToken, user.id, nowIso())
+      } catch (err) {
+        logger.warn("[onPaInbound] QR scan-pending claim failed (non-fatal)", {
+          eventId: claimed.id,
+          userId: user.id,
+          err: err instanceof Error ? err.message : String(err),
+        })
+      }
+    } else {
+      user = await createProvisionalUser(db, payload.participant)
+    }
+  }
+  // Dev re-onboard bypass (Adam 2026-06-01): an EXISTING known user whose uid is in
+  // QR_REONBOARD_DEV_UIDS, texting a CANARY QR opener, gets NON-DESTRUCTIVELY
+  // re-onboarded — we clear ONLY their conversational onboarding/prescreen process
+  // state so onboarding self-starts fresh next turn (tags / resume / memory KEPT).
+  // A normal known user on a canary QR is NOT re-onboarded (stays in normal flow);
+  // a freshly-created provisional uid is never a dev uid so it's naturally excluded.
+  try {
+    const { resolveQrReonboard } = await import("./qr-onboarding/scan.js")
+    const reonboard = await resolveQrReonboard(db, payload.text, user.id)
+    if (reonboard.shouldReonboard && reonboard.scan) {
+      const { reonboardExistingUserViaQr, claimQrScanPending } = await import("./qr-onboarding/scan.js")
+      const reset = await reonboardExistingUserViaQr(db, user.id, reonboard.scan, nowIso())
+      await claimQrScanPending(db, reonboard.scan.scanToken, user.id, nowIso())
+      logger.info("[onPaInbound] QR dev re-onboard — onboarding state reset (non-destructive)", {
+        eventId: claimed.id,
+        userId: user.id,
+        campaign: reonboard.scan.campaign,
+        prescreenSessionsReset: reset.prescreenSessionsReset,
+      })
+      // Re-read so this turn runs against the cleared state (onboarding cold-start).
+      const refreshed = await db.collection(PA_COLLECTIONS.users).doc(user.id).get()
+      if (refreshed.exists) user = { id: refreshed.id, ...refreshed.data() } as User
+    }
+  } catch (err) {
+    logger.warn("[onPaInbound] QR dev re-onboard check failed (non-fatal)", {
+      eventId: claimed.id,
+      userId: user.id,
+      err: err instanceof Error ? err.message : String(err),
+    })
   }
   void markClaireConversationStarted(db, user.id).catch((err: unknown) => {
     logger.warn("[onPaInbound] claireConversationStarted stamp failed", {
@@ -1069,6 +1196,15 @@ export const onPaInbound = onDocumentCreated(
       SENDBLUE_API_KEY_ID,
       SENDBLUE_API_SECRET_KEY,
       SENDBLUE_FROM_NUMBER,
+      // Cal.com interview-scheduling (thin Claire offer_interview_slots /
+      // book_interview_slot) + Mailgun confirmation email. Until Adam provisions
+      // CALCOM_API_KEY the scheduling tools fail-open; MAILGUN_* power the
+      // confirmation supplement.
+      CALCOM_API_KEY,
+      MAILGUN_API_KEY,
+      MAILGUN_DOMAIN,
+      MAILGUN_FROM,
+      MAILGUN_REGION,
     ],
     // 2026-05-19 — pinned maxInstances=1 so future deploys can't blow the
     // per-region memory quota by defaulting to 100+ instances * 1GiB. Adam
@@ -1121,6 +1257,34 @@ export const onPaInbound = onDocumentCreated(
     process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
     process.env.SENDBLUE_API_KEY_ID = SENDBLUE_API_KEY_ID.value()
     process.env.SENDBLUE_API_SECRET_KEY = SENDBLUE_API_SECRET_KEY.value()
+    // Cal.com + Mailgun — thin Claire scheduling tools read process.env.CALCOM_API_KEY
+    // / MAILGUN_* lazily. Re-export defensively; an unset CALCOM_API_KEY just makes
+    // the scheduling tools fail-open (a missing key is not an error here).
+    try {
+      process.env.CALCOM_API_KEY = CALCOM_API_KEY.value()
+    } catch {
+      /* optional — scheduling tools fail-open without it */
+    }
+    try {
+      process.env.MAILGUN_API_KEY = MAILGUN_API_KEY.value()
+    } catch {
+      /* optional */
+    }
+    try {
+      process.env.MAILGUN_DOMAIN = MAILGUN_DOMAIN.value()
+    } catch {
+      /* optional — defaults to wekruit.com */
+    }
+    try {
+      process.env.MAILGUN_FROM = MAILGUN_FROM.value()
+    } catch {
+      /* optional — defaults to WeKruit <hi@wekruit.com> */
+    }
+    try {
+      process.env.MAILGUN_REGION = MAILGUN_REGION.value()
+    } catch {
+      /* optional — defaults to us */
+    }
     try {
       const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()
       if (fromNumber) {
@@ -1860,7 +2024,10 @@ function buildSendblueWebhookDeps() {
 export const paMessageCoalescer = onRequest(
   {
     region: "us-central1",
-    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY],
+    // CALCOM_API_KEY + MAILGUN_* added (2026-06-01): thin Claire also runs through the
+    // coalescer inbound path, so its scheduling tools need process.env.CALCOM_API_KEY /
+    // MAILGUN_* populated. A missing CALCOM_API_KEY just makes the tools fail-open.
+    secrets: [SENDBLUE_API_KEY_ID, SENDBLUE_API_SECRET_KEY, SENDBLUE_FROM_NUMBER, SILICONFLOW_API_KEY, PA_OPENAI_AGENT_API_KEY, QDRANT_URL, QDRANT_API_KEY, CALCOM_API_KEY, MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION],
     // 512MiB → 1GiB (2026-05-30): this function hosts thin Claire for COALESCED inbounds (onPaInbound
     // skips them), so a `recommend` turn runs find_match HERE. V16 pulls ~67MB of job docs (1536-float
     // embeddings → ~150-300MB parsed) on top of the @openai/agents + mem0 + Sendblue SDK baseline,
@@ -1880,6 +2047,33 @@ export const paMessageCoalescer = onRequest(
     process.env.SILICONFLOW_API_KEY = SILICONFLOW_API_KEY.value()
     process.env.QDRANT_URL = QDRANT_URL.value()
     process.env.QDRANT_API_KEY = QDRANT_API_KEY.value()
+    // Cal.com + Mailgun — thin Claire's scheduling tools (this CF hosts thin Claire for
+    // coalesced inbounds) read these lazily. A missing CALCOM_API_KEY → tools fail-open.
+    try {
+      process.env.CALCOM_API_KEY = CALCOM_API_KEY.value()
+    } catch {
+      /* optional — scheduling tools fail-open without it */
+    }
+    try {
+      process.env.MAILGUN_API_KEY = MAILGUN_API_KEY.value()
+    } catch {
+      /* optional */
+    }
+    try {
+      process.env.MAILGUN_DOMAIN = MAILGUN_DOMAIN.value()
+    } catch {
+      /* optional — defaults to wekruit.com */
+    }
+    try {
+      process.env.MAILGUN_FROM = MAILGUN_FROM.value()
+    } catch {
+      /* optional — defaults to WeKruit <hi@wekruit.com> */
+    }
+    try {
+      process.env.MAILGUN_REGION = MAILGUN_REGION.value()
+    } catch {
+      /* optional — defaults to us */
+    }
     // 2026-05-07 Adam directive — no more OPENAI_API_KEY = SF aliasing.
     try {
       const fromNumber = SENDBLUE_FROM_NUMBER.value().trim()

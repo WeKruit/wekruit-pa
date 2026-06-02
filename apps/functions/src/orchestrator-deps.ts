@@ -39,6 +39,13 @@ export const MAILGUN_SECRETS: SecretParamHandle[] = [
   MAILGUN_REGION,
 ]
 
+// Cal.com interview-scheduling — Adam/orchestrator-owner provisions via
+// `firebase functions:secrets:set CALCOM_API_KEY --project wekruit-5f89b`. Until
+// then a missing key → getCalcomApiKey() throws CalcomServerError → the
+// scheduling tools fail-open ({ ok:false }) and the chat turn is unaffected.
+export const CALCOM_API_KEY: SecretParamHandle = defineSecret("CALCOM_API_KEY")
+export const CALCOM_SECRETS: SecretParamHandle[] = [CALCOM_API_KEY]
+
 // v1.7 Phase 69 — Adam-action keys. Adam holds these and provisions them via
 // `firebase functions:secrets:set <NAME> --project wekruit-5f89b --data-file=-`
 // (see ops/secrets/SECRETS-PROVISIONING.md). Until provisioned:

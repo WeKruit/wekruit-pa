@@ -68,7 +68,6 @@ import { runPreScreenForUser } from "../../prescreen-session-start.js"
 
 const PA_USERS_COLLECTION = "pa-users"
 const JOB_PROFILES_COLLECTION = "pa-job-profiles"
-const INTERVIEW_BOOKINGS_COLLECTION = "pa-interview-bookings"
 
 /**
  * Read the matching slice of `pa-users/{userId}.tags`. Fail-soft: a missing
@@ -132,8 +131,13 @@ export interface CollabRole {
   roleFunction?: string[]
   /** Canonical industrySector tokens (INDUSTRY_SECTOR_VOCAB). */
   industrySector?: string[]
-  /** Where this role is in the candidate's journey. `matched` = recommended, no screen yet. */
-  status?: "passed" | "not_passed" | "in_progress" | "matched"
+  /**
+   * Where this role is in the candidate's journey. `matched` = recommended, no screen yet.
+   * `under_review` = the screen reached a terminal but it's PENDING human (HITL) confirmation — it is
+   * NOT a real pass/fail until an operator COMMITS it in the dashboard, so the candidate must never be
+   * told they passed while under_review.
+   */
+  status?: "passed" | "not_passed" | "in_progress" | "matched" | "under_review"
 }
 
 /**
@@ -285,7 +289,7 @@ export async function loadCandidateRoles(
         title: existing?.title || (typeof cfg.jobTitle === "string" ? cfg.jobTitle : ""),
         roleFunction: existing?.roleFunction ?? [],
         industrySector: existing?.industrySector ?? [],
-        status: prescreenStatusFromTerminal(d.terminal),
+        status: prescreenStatusFromSession(d),
       })
     }
   } catch (err) {
@@ -340,12 +344,55 @@ async function resolveCandidatePhone(
   }
 }
 
-/** Map a stored prescreen-session terminal (PASS/FAIL/null) to the candidate-facing progress status. */
-export function prescreenStatusFromTerminal(terminal: unknown): "passed" | "not_passed" | "in_progress" {
+/** The candidate-facing progress status of a prescreen. `under_review` = a terminal verdict that is
+ * still pending HITL confirmation (NOT a real pass/fail until an operator commits it). */
+export type PrescreenProgressStatus = "passed" | "not_passed" | "in_progress" | "under_review"
+
+/**
+ * Map a stored prescreen-session terminal (PASS/FAIL/HARD_STOP/null) to the candidate-facing progress
+ * status, taking the HITL REVIEW state into account.
+ *
+ * A terminal verdict (PASS/FAIL/HARD_STOP) is NOT real until an operator COMMITS it in the dashboard.
+ * Until then the session carries `terminalActionPendingReview === true` (and `review.status === "pending"`),
+ * and the candidate's status is **"under_review"** — NEVER "passed"/"not_passed". `commitPrescreenOutcome`
+ * (apps/functions/src/evaluation-attempts.ts) flips `terminalActionPendingReview → false` and
+ * `review.status → "approved"|"overridden"` on commit; only THEN does PASS→passed / FAIL→not_passed.
+ *
+ * The cheap per-session committed signal (no extra reads) is:
+ *   pending  ⇔ pendingReview === true  OR  reviewStatus === "pending"
+ *   committed ⇔ NOT pending
+ * which is exactly what commit writes back.
+ *
+ * `review` is optional so a bare-terminal call (legacy/tests) still resolves, but the session-reading
+ * call sites MUST pass the review state so a pending PASS reports under_review.
+ */
+export function prescreenStatusFromTerminal(
+  terminal: unknown,
+  review?: { pendingReview?: unknown; reviewStatus?: unknown },
+): PrescreenProgressStatus {
   const t = typeof terminal === "string" ? terminal.toUpperCase() : ""
+  if (t !== "PASS" && t !== "FAIL" && t !== "HARD_STOP") return "in_progress"
+  const pending =
+    review?.pendingReview === true ||
+    (typeof review?.reviewStatus === "string" && review.reviewStatus.toLowerCase() === "pending")
+  // A terminal that's awaiting human confirmation is "under review", not a real outcome.
+  if (pending) return "under_review"
   if (t === "PASS") return "passed"
-  if (t === "FAIL") return "not_passed"
-  return "in_progress"
+  return "not_passed" // FAIL / HARD_STOP committed
+}
+
+/**
+ * Map a full prescreen-session doc to the candidate-facing progress status. Reads the per-session HITL
+ * signals (`terminalActionPendingReview` + `review.status`) so a PASS/FAIL still pending operator commit
+ * reports **under_review** (never "passed"). This is the form session-reading call sites should use.
+ */
+export function prescreenStatusFromSession(session: Record<string, unknown> | undefined | null): PrescreenProgressStatus {
+  const d = session ?? {}
+  const review = (d.review ?? {}) as Record<string, unknown>
+  return prescreenStatusFromTerminal(d.terminal, {
+    pendingReview: d.terminalActionPendingReview,
+    reviewStatus: review.status,
+  })
 }
 
 /** Resolve mem0 config from env; null when not configured (tool no-ops fail-open). */
@@ -951,54 +998,12 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     },
   })
 
-  // ── 4. schedule_interview — dedup REDUCER over pa-interview-bookings ──────
-  // Reuses the SAME store + deterministic bookingId scheme as the existing
-  // SCHEDULE_INTERVIEW_CONNECTOR (pa-connectors/schedule-connector.ts): one
-  // booking per (user × job). Atomic dedup via a Firestore transaction so two
-  // concurrent same-turn calls can't double-book.
-  const scheduleInterview = tool({
-    name: "schedule_interview",
-    description:
-      "Book the candidate's interview / pre-screen time slot. DEDUP: if they already have a booking " +
-      "for this opportunity, do NOT rebook. Use when they want to schedule / book / set up an interview " +
-      "or offer their availability (e.g. 'book me in', 'when can I interview?', 'set up a time').",
-    parameters: z.object({ slotIso: z.string() }),
-    async execute({ slotIso }) {
-      const jobId = (ctx.jobId ?? "").trim() || "unknown_job"
-      const bookingId = `booking-${ctx.userId}__${jobId}`
-      const ref = ctx.db.collection(INTERVIEW_BOOKINGS_COLLECTION).doc(bookingId)
-      try {
-        const committed = await ctx.db.runTransaction(async (tx) => {
-          const snap = await tx.get(ref)
-          if (snap.exists) return false
-          tx.set(ref, {
-            bookingId,
-            userId: ctx.userId,
-            jobId,
-            slotIso: (slotIso ?? "").trim() || null,
-            status: "requested",
-            sessionId: ctx.sessionId,
-            createdAt: ctx.nowIso(),
-          })
-          return true
-        })
-        ctx.log("pa.claire.schedule_interview", {
-          userId: ctx.userId,
-          jobId,
-          action: committed ? "committed" : "deduped",
-        })
-        return committed
-          ? { ok: true, action: "committed", bookingId }
-          : { ok: true, action: "deduped", bookingId }
-      } catch (err) {
-        return {
-          ok: false,
-          action: "error",
-          reason: err instanceof Error ? err.message : String(err),
-        }
-      }
-    },
-  })
+  // ── 4. (RETIRED) schedule_interview — superseded by the Cal.com scheduling
+  // tools (offer_interview_slots + book_interview_slot in scheduling-tools.ts).
+  // The legacy stub only wrote a status:"requested" doc and never called
+  // Cal.com; it is no longer built or registered. See the registration array
+  // below + the SCHEDULING prompt section (TRIAGE now routes scheduling →
+  // offer_interview_slots).
 
   // ── 5. privacy — export/delete/stop via runCandidatePrivacyRequest ───────
   // PII-website-lock: there is intentionally NO tool that writes email / phone /
@@ -1223,7 +1228,9 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "company', 'did I pass the fintech one?'). Compose a CANONICAL query from their words: roleFunction " +
       "(closed enum), company (free text), industrySector (closed enum) — map their meaning the same way " +
       "you'd tag a preference. Returns matched+prescreened roles RANKED by canonical fit, each with its " +
-      "status (passed / not_passed / in_progress / matched). kind='one' → the single best is theirs; " +
+      "status (passed / not_passed / in_progress / matched / under_review). under_review = the screen is " +
+      "submitted but awaiting human confirmation — it is NOT a pass; do NOT say they passed for it. " +
+      "kind='one' → the single best is theirs; " +
       "kind='ambiguous' → ASK which of the candidates they mean (never guess); kind='no_match' → they " +
       "haven't been matched to such a role, so guide them to the website to start a new one. Then use " +
       "begin_collab_prescreen with the chosen jobId to START, or just report the status.",
@@ -1336,7 +1343,10 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "Look up the status of the candidate's pre-screens when they ask about their progress " +
       "('how did my screen go?', 'did I pass the Invoko one?', 'what's the status of my interviews?'). " +
       "Optional query = a company/title to filter to (e.g. 'Invoko'); omit to list all their screens. " +
-      "Returns each screen's company, title, and status (passed / not_passed / in_progress). READ-ONLY.",
+      "Returns each screen's company, title, and status (passed / not_passed / in_progress / under_review). " +
+      "under_review = the screen is SUBMITTED and awaiting human confirmation — it is NOT a pass yet; do " +
+      "NOT tell the candidate they passed (or offer a confirmed next step) for an under_review screen; only " +
+      "a 'passed' status is a real, confirmed pass. READ-ONLY.",
     parameters: z.object({ query: z.string().nullable() }),
     async execute({ query }) {
       try {
@@ -1359,7 +1369,7 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
               title,
               jobId,
               createdAt,
-              status: prescreenStatusFromTerminal(d.terminal),
+              status: prescreenStatusFromSession(d),
             }
           })
           // optional company/title filter (in-memory contains; NO regex/enum classification).
@@ -1523,7 +1533,12 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
     findMatch,
     captureMatchFeedback,
     rememberFact,
-    scheduleInterview,
+    // NOTE: the legacy `schedule_interview` stub is RETIRED — the Cal.com
+    // scheduling tools (offer_interview_slots + book_interview_slot, registered
+    // via buildSchedulingTools) supersede it. It only ever wrote a status:
+    // "requested" doc and never called Cal.com; keeping it registered created a
+    // three-way tool-routing conflict where TRIAGE steered "book me an interview"
+    // to the stub, bypassing the entire Cal.com flow. See scheduling-tools.ts.
     privacy,
     saveJobProfile,
     setDailySubscription,
