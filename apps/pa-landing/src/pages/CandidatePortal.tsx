@@ -1046,7 +1046,7 @@ function MeWaitingCard({ recommendedCount }: { recommendedCount: number }) {
         <p className="wkv3-wait__sub">
           {recommendedCount > 0
             ? `${recommendedCount} new ${recommendedCount === 1 ? "role" : "roles"} surfaced — take a look below.`
-            : "We'll text you the moment a hiring manager says yes — usually within 48 hours of completing your profile."}
+            : "We'll text you when a role fits your profile - usually within 48 hours of completing it."}
         </p>
         <div className="wkv3-wait__bar" aria-hidden="true">
           <span />
