@@ -695,9 +695,17 @@ async function createProvisionalUser(
 }
 
 export function shouldCreateProvisionalUserForBrokerPayload(rawPayload: BrokerImessageEvent["rawPayload"] | undefined): boolean {
-  const payload = (rawPayload ?? {}) as BrokerImessageEvent["rawPayload"] & { source?: unknown }
+  const payload = (rawPayload ?? {}) as BrokerImessageEvent["rawPayload"] & { source?: unknown; text?: unknown }
   if (payload.e2eTest === true) return false
-  if (payload.source === "sendblue") return false
+  // Direct-start (Adam 2026-06-02): an unregistered number that sends a REAL text
+  // message (a bare "hi" etc.) now creates a provisional user + onboards — no QR
+  // scan required. Previously source==='sendblue' was hard-blocked (anti-spam).
+  // We still skip non-text events (typing / delivery / line_blocked) so a stray
+  // system webhook can never auto-create a profile. The QR opener path still runs
+  // FIRST in processBrokerImessageEvent, so scanToken + sticky-number binding is
+  // preserved for genuine QR scans (this gate is the fallback for plain text).
+  const text = typeof payload.text === "string" ? payload.text.trim() : ""
+  if (text.length === 0) return false
   return true
 }
 
@@ -842,18 +850,19 @@ async function processBrokerImessageEvent(
     user = await findUserByParticipant(db, payload.participant)
   }
   if (!user) {
-    // iMessage-first QR onboarding (doc §4): a `source==='sendblue'` inbound is
-    // normally NOT allowed to create a pa-users profile (anti-spam). The QR path
-    // is the ONE narrow exception — the text is a `Hello, WeKruit! <scanToken>`
-    // opener whose scanToken resolves to a `pa-qr-scan-pending` doc AND that
-    // scan's campaign is canary-enabled (Adam decision 4). Generic sendblue spam
-    // and non-canary QR scans stay blocked.
+    // Direct-start (Adam 2026-06-02): an unregistered number that sends a real
+    // text now creates a provisional user + onboards (syncGateAllows below).
+    // The QR opener check still runs FIRST and UNCONDITIONALLY so a genuine QR
+    // scan (`Hello, WeKruit! <scanToken>`) keeps its special provisioning —
+    // source='qr_imessage' + scanToken claim + sticky-number reconcile — instead
+    // of falling through to the generic create. Non-text/system events are still
+    // blocked by shouldCreateProvisionalUserForBrokerPayload (empty text → false).
     const syncGateAllows = shouldCreateProvisionalUserForBrokerPayload(payload)
     let qrProvision: import("./qr-onboarding/scan.js").QrOpenerProvisionDecision = {
       shouldProvision: false,
       scan: null,
     }
-    if (!syncGateAllows) {
+    {
       try {
         const { resolveQrOpenerProvision } = await import("./qr-onboarding/scan.js")
         qrProvision = await resolveQrOpenerProvision(db, payload.text)
