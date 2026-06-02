@@ -2207,6 +2207,27 @@ type RecruiterChallenge = {
   action: "roles" | "candidates" | "submissions" | "performance"
 }
 
+type RecruiterStatusBenefit = {
+  label: string
+  value: string
+  body: string
+  tone: OperatingTone
+  locked: boolean
+  action?: "roles" | "candidates" | "submissions" | "performance" | "settings"
+  actionLabel?: string
+}
+
+type RecruiterStatusBenefitsCenter = {
+  label: string
+  title: string
+  body: string
+  tone: OperatingTone
+  currentTier: string
+  nextTier: string
+  benefits: RecruiterStatusBenefit[]
+  gates: RecruiterStatusBenefit[]
+}
+
 type RecruiterPayoutRow = {
   id: string
   candidate: string
@@ -2281,6 +2302,7 @@ type RecruiterEarningsMetrics = {
   payouts: RecruiterPayoutRow[]
   rewardLedger: RecruiterRewardLedger
   payoutReadiness: RecruiterPayoutReadiness
+  statusBenefits: RecruiterStatusBenefitsCenter
   expectations: RecruiterOperatingMetric[]
 }
 
@@ -3333,6 +3355,128 @@ function computeRecruiterEarningsMetrics(
       },
     ],
   }
+  const currentTier = wonValue > 0 && interviewRate >= PREFERRED_INTERVIEW_RATE_TARGET
+    ? "Premier"
+    : statusRank >= 2
+      ? "Preferred"
+      : statusRank === 1
+        ? "Standard"
+        : "Builder"
+  const nextTier = currentTier === "Premier"
+    ? "Maintain Premier"
+    : currentTier === "Preferred"
+      ? "Next: Premier"
+      : currentTier === "Standard"
+        ? "Next: Preferred"
+        : "Next: Standard"
+  const approvalPriorityUnlocked = statusRank >= 2 || wonValue > 0
+  const submissionPriorityUnlocked = statusRank >= 2 || interviewRate >= PREFERRED_INTERVIEW_RATE_TARGET
+  const payoutPriorityUnlocked = invoiceReadySubmissions.length > 0 || paidPayoutSubmissions.length > 0 || wonValue > 0
+  const coverageUnlocked = activePrimaryRoles > 0 && activityCoverage >= 80
+  const cleanCalibration = openQuestions + hardFeedback === 0
+  const ratingGateMet = ratingNumber >= 3
+  const statusBenefits: RecruiterStatusBenefitsCenter = {
+    label: "Status benefits",
+    title: `${currentTier} benefits posture`,
+    body: currentTier === "Premier"
+      ? "Premier-level signal is active: protect movement, clean calibration, and payout evidence so priority posture stays defensible."
+      : currentTier === "Preferred"
+        ? "Preferred signal is active. The next step is placement or payout evidence, not more low-confidence volume."
+        : currentTier === "Standard"
+          ? "Standard posture means the account has movement, but not enough proof for stronger priority treatment yet."
+          : "Builder posture means WeKruit should see proof before promising priority review or payout handling.",
+    tone: currentTier === "Premier" ? "live" : currentTier === "Preferred" ? "success" : currentTier === "Standard" ? "info" : "mute",
+    currentTier,
+    nextTier,
+    benefits: [
+      {
+        label: "Submission priority",
+        value: submissionPriorityUnlocked ? (currentTier === "Premier" ? "Top queue" : "Above default") : "Default queue",
+        body: submissionPriorityUnlocked
+          ? "Advanced movement gives WeKruit a reason to review your packets ahead of lower-signal volume."
+          : `Reach ${PREFERRED_INTERVIEW_RATE_TARGET}% interview movement or Preferred status before promising priority review.`,
+        tone: submissionPriorityUnlocked ? (currentTier === "Premier" ? "live" : "success") : submissions.length ? "info" : "mute",
+        locked: !submissionPriorityUnlocked,
+        action: "submissions",
+        actionLabel: "Open submissions",
+      },
+      {
+        label: "Role approval lane",
+        value: approvalPriorityUnlocked ? "Priority review" : "Managed review",
+        body: approvalPriorityUnlocked
+          ? "Role applications can lean on status, quality, and candidate proof instead of starting cold."
+          : "Role access still needs candidate proof, clean questions, and a focused pitch.",
+        tone: approvalPriorityUnlocked ? "success" : "info",
+        locked: !approvalPriorityUnlocked,
+        action: "roles",
+        actionLabel: "Open roles",
+      },
+      {
+        label: "Payout handling",
+        value: payoutPriorityUnlocked ? (invoiceReadySubmissions.length ? "Invoice ready" : "Ops priority") : "Standard timing",
+        body: payoutPriorityUnlocked
+          ? "Recorded payout or hire evidence gives ops a concrete row to process."
+          : "Payment setup stays ops-assisted until eligible, invoice-ready, paid, or hired evidence exists.",
+        tone: payoutPriorityUnlocked ? "live" : activePipelineValue > 0 ? "warn" : "mute",
+        locked: !payoutPriorityUnlocked,
+        action: payoutPriorityUnlocked ? "submissions" : "settings",
+        actionLabel: payoutPriorityUnlocked ? "Open payout rows" : "Open account",
+      },
+      {
+        label: "Challenge credit",
+        value: challengeDeadlineLabel(),
+        body: "Weekly challenge progress feeds access and status review; it is not cash until payout status is recorded.",
+        tone: challenges.some((challenge) => challenge.tone === "success" || challenge.tone === "live") ? "success" : "info",
+        locked: false,
+        action: challenges[0]?.action,
+        actionLabel: challenges[0]?.actionLabel,
+      },
+    ],
+    gates: [
+      {
+        label: "Movement gate",
+        value: `${interviewRate}%/${PREFERRED_INTERVIEW_RATE_TARGET}%`,
+        body: `${advancedSubmissions.length}/${submissions.length || 0} submissions have advanced, interview, offer, or hired status.`,
+        tone: interviewRate >= PREFERRED_INTERVIEW_RATE_TARGET ? "success" : submissions.length ? "info" : "mute",
+        locked: interviewRate < PREFERRED_INTERVIEW_RATE_TARGET,
+        action: "submissions",
+        actionLabel: "Review pipeline",
+      },
+      {
+        label: "Rating gate",
+        value: ratingLabel,
+        body: ratedSubmissions.length
+          ? `${ratedSubmissions.length} rated submission${ratedSubmissions.length === 1 ? "" : "s"} are included in the current quality read.`
+          : "No rated submissions yet; quality is inferred until feedback arrives.",
+        tone: ratingGateMet ? "success" : ratedSubmissions.length ? "warn" : "mute",
+        locked: !ratingGateMet,
+        action: "performance",
+        actionLabel: "Open feedback",
+      },
+      {
+        label: "Coverage gate",
+        value: activePrimaryRoles ? `${coveredPrimaryRoles}/${activePrimaryRoles}` : "No roles",
+        body: activePrimaryRoles
+          ? "Approved roles should have live sourced candidates or active submissions."
+          : "Apply for role access before coverage can count toward status.",
+        tone: coverageUnlocked ? "success" : activePrimaryRoles ? "warn" : "mute",
+        locked: !coverageUnlocked,
+        action: "roles",
+        actionLabel: activePrimaryRoles ? "Cover roles" : "Apply for access",
+      },
+      {
+        label: "Calibration gate",
+        value: cleanCalibration ? "Clean" : String(openQuestions + hardFeedback),
+        body: cleanCalibration
+          ? "No open role questions or hard blocked market signals are dragging status review."
+          : `${openQuestions} open question${openQuestions === 1 ? "" : "s"} and ${hardFeedback} hard or blocked market signal${hardFeedback === 1 ? "" : "s"} need cleanup.`,
+        tone: cleanCalibration ? "success" : "warn",
+        locked: !cleanCalibration,
+        action: "performance",
+        actionLabel: "Clear blockers",
+      },
+    ],
+  }
   return {
     statusLabel: operatingMetrics.statusLabel,
     ratingLabel,
@@ -3406,6 +3550,7 @@ function computeRecruiterEarningsMetrics(
     payouts: payoutRows,
     rewardLedger,
     payoutReadiness,
+    statusBenefits,
     expectations: [
       {
         label: "Primary coverage",
@@ -9336,10 +9481,12 @@ function EarningsTab({
   onPerformance: () => void
   onSettings: () => void
 }) {
-  const runAction = (action: RecruiterChallenge["action"]) => {
+  const runAction = (action: RecruiterStatusBenefit["action"]) => {
+    if (!action) return
     if (action === "roles") onRoles()
     else if (action === "candidates") onCandidates()
     else if (action === "submissions") onSubmissions()
+    else if (action === "settings") onSettings()
     else onPerformance()
   }
   const recommendedChallenge = metrics.challenges[0]
@@ -9393,6 +9540,8 @@ function EarningsTab({
           <p>Preferred target is {PREFERRED_INTERVIEW_RATE_TARGET}%+ advanced, interviewing, offer, or hired.</p>
         </div>
       </section>
+
+      <StatusBenefitsPanel benefits={metrics.statusBenefits} onAction={runAction} />
 
       <RewardLedgerPanel ledger={metrics.rewardLedger} onAction={runAction} />
 
@@ -9513,12 +9662,71 @@ function EarningsTab({
   )
 }
 
+function StatusBenefitsPanel({
+  benefits,
+  onAction,
+}: {
+  benefits: RecruiterStatusBenefitsCenter
+  onAction: (action: RecruiterStatusBenefit["action"]) => void
+}) {
+  return (
+    <section className={`rb-status-benefits is-${benefits.tone}`} aria-label="Status benefits">
+      <header>
+        <div>
+          <span>{benefits.label}</span>
+          <strong>{benefits.title}</strong>
+          <p>{benefits.body}</p>
+        </div>
+        <aside>
+          <span>Tier path</span>
+          <strong>{benefits.currentTier}</strong>
+          <p>{benefits.nextTier}</p>
+        </aside>
+      </header>
+
+      <div className="rb-status-benefits__body">
+        <section>
+          <h3>Unlocked benefits</h3>
+          {benefits.benefits.map((benefit) => (
+            <article className={`is-${benefit.tone}${benefit.locked ? " is-locked" : ""}`} key={benefit.label}>
+              <div>
+                <span>{benefit.label}</span>
+                <strong>{benefit.value}</strong>
+                <p>{benefit.body}</p>
+              </div>
+              {benefit.action && benefit.actionLabel && (
+                <button type="button" onClick={() => onAction(benefit.action)}>{benefit.actionLabel}</button>
+              )}
+            </article>
+          ))}
+        </section>
+
+        <section>
+          <h3>Qualification gates</h3>
+          {benefits.gates.map((gate) => (
+            <article className={`is-${gate.tone}${gate.locked ? " is-locked" : ""}`} key={gate.label}>
+              <div>
+                <span>{gate.label}</span>
+                <strong>{gate.value}</strong>
+                <p>{gate.body}</p>
+              </div>
+              {gate.action && gate.actionLabel && (
+                <button type="button" onClick={() => onAction(gate.action)}>{gate.actionLabel}</button>
+              )}
+            </article>
+          ))}
+        </section>
+      </div>
+    </section>
+  )
+}
+
 function RewardLedgerPanel({
   ledger,
   onAction,
 }: {
   ledger: RecruiterRewardLedger
-  onAction: (action: RecruiterChallenge["action"]) => void
+  onAction: (action: RecruiterStatusBenefit["action"]) => void
 }) {
   return (
     <section className="rb-reward-ledger">
