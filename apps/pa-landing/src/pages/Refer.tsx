@@ -208,7 +208,7 @@ function ReferHero({
         <div>
           <div className="wk-ref-hero__eyebrow">
             <PulseDot size={6} />
-            <span>Refer · live</span>
+            <span>Refer · tracked</span>
           </div>
           <h1 className="wk-ref-hero__h">
             Refer a friend. Earn up to <em>{fmtMoney(max)}</em> per placement.
@@ -256,7 +256,7 @@ function ReferJourney() {
     <section className="wk-ref-sec" id="journey">
       <div className="wk-ref-sec__head">
         <h2 className="wk-ref-sec__h">How rewards unlock</h2>
-        <span className="wk-ref-sec__sub">Both payments are automatic. You&apos;ll see every step in real time.</span>
+        <span className="wk-ref-sec__sub">Rewards are tracked here after interviews and offers are confirmed.</span>
       </div>
       <div className="wk-ref-journey">
         <div className="wk-ref-journey__rail">
@@ -285,7 +285,7 @@ function ReferJourney() {
             <p className="wk-ref-stop__d">A hiring manager confirms an interview slot with them.</p>
             <p className="wk-ref-stop__reward">
               + {fmtMoney(REWARD_INTERVIEW)}{" "}
-              <span style={{ fontStyle: "normal", fontSize: 12, color: "var(--ink-3)", marginLeft: 4 }}>paid same week</span>
+              <span style={{ fontStyle: "normal", fontSize: 12, color: "var(--ink-3)", marginLeft: 4 }}>tracked after confirmation</span>
             </p>
           </div>
           <div className="wk-ref-stop wk-ref-stop--reward wk-ref-stop--big">
@@ -299,8 +299,8 @@ function ReferJourney() {
           </div>
         </div>
         <div className="wk-ref-journey__foot">
-          <span>No cap on referrals. <strong>$32,400</strong> is the current top earner.</span>
-          <span>Payouts handled by WeKruit ops — same-email referrals only.</span>
+          <span>No cap on referrals. Rewards appear here as each referral moves forward.</span>
+          <span>Payouts are confirmed by WeKruit ops — same-email referrals only.</span>
         </div>
       </div>
     </section>

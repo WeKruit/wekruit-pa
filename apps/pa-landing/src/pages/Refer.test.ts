@@ -14,3 +14,13 @@ test("ReferPage gates the signed-in referral dashboard before rendering connecto
   assert.match(source, /<Navigate to="\/login\?next=%2Fme%2Frefer" replace \/>/)
   assert.doesNotMatch(source, /humanizeSlug/)
 })
+
+test("ReferPage avoids unsupported traction and payout-certainty claims", () => {
+  assert.doesNotMatch(source, /current top earner/i)
+  assert.doesNotMatch(source, /paid same week/i)
+  assert.doesNotMatch(source, /Both payments are automatic/i)
+  assert.doesNotMatch(source, /Refer · live/)
+  assert.match(source, /Refer · tracked/)
+  assert.match(source, /Rewards are tracked here after interviews and offers are confirmed\./)
+  assert.match(source, /Payouts are confirmed by WeKruit ops/)
+})
