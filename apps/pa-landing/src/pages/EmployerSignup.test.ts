@@ -51,6 +51,16 @@ test("EmployerSignup captures evidence probes as a first-class Claire interview 
   assert.doesNotMatch(source, /Claire will infer the questions/i)
 })
 
+test("EmployerSignup captures calibration examples before Claire screens", () => {
+  assert.match(source, /Calibration examples \*/)
+  assert.match(source, /strong pass and false positive/i)
+  assert.match(source, /developer platform pricing migration/i)
+  assert.match(source, /calibrationExamples/)
+
+  assert.doesNotMatch(source, /Calibration examples \(optional\)/i)
+  assert.doesNotMatch(source, /Claire will infer the calibration/i)
+})
+
 test("EmployerSignup captures the post-pass intro handoff before Claire screens", () => {
   assert.match(source, /Intro handoff \*/)
   assert.match(source, /accepted intro/i)

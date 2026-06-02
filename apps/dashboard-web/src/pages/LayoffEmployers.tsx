@@ -42,6 +42,7 @@ type EmployerRow = {
   rolesHiring?: string[]
   hardFilters?: string[]
   screeningQuestions?: string[]
+  calibrationExamples?: string
   introHandoff?: string
   contactName?: string
   notes?: string
@@ -126,6 +127,7 @@ export default function LayoffEmployers() {
         r.stage,
         ...(r.hardFilters ?? []),
         ...(r.screeningQuestions ?? []),
+        r.calibrationExamples,
         r.introHandoff,
       ]
         .filter(Boolean)
@@ -275,6 +277,14 @@ export default function LayoffEmployers() {
                             <li key={question}>{question}</li>
                           ))}
                         </ul>
+                      </details>
+                    ) : null}
+                    {r.calibrationExamples ? (
+                      <details style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
+                        <summary style={{ cursor: "pointer", color: "#3a6ea5" }}>Calibration examples</summary>
+                        <pre style={{ whiteSpace: "pre-wrap", margin: "6px 0 0", fontFamily: "inherit" }}>
+                          {r.calibrationExamples}
+                        </pre>
                       </details>
                     ) : null}
                     {r.introHandoff ? (

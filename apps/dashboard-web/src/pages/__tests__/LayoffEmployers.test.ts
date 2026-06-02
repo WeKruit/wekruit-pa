@@ -26,6 +26,15 @@ test("LayoffEmployers review shows screening questions separately from notes", (
   assert.doesNotMatch(source, /screening questions are optional/i)
 })
 
+test("LayoffEmployers review shows calibration examples separately from notes", () => {
+  assert.match(source, /calibrationExamples\?: string/)
+  assert.match(source, /Calibration examples/)
+  assert.match(source, /r\.calibrationExamples/)
+  assert.match(source, /Notes/)
+
+  assert.doesNotMatch(source, /calibration examples are optional/i)
+})
+
 test("LayoffEmployers review shows intro handoff separately from notes", () => {
   assert.match(source, /introHandoff\?: string/)
   assert.match(source, /Intro handoff/)

@@ -19,6 +19,7 @@ export type EmployerSignupFormState = {
   rolesHiring: string
   hardFilters: string
   screeningQuestions: string
+  calibrationExamples: string
   introHandoff: string
   notes: string
 }
@@ -49,6 +50,9 @@ export function validateEmployerSignupForm(form: EmployerSignupFormState): strin
   if (splitRoleBriefs(form.screeningQuestions).length === 0) {
     return "Screening questions are required so Claire knows what evidence to elicit."
   }
+  if (!form.calibrationExamples.trim()) {
+    return "Calibration examples are required so Claire knows what a strong pass and false positive look like."
+  }
   if (!form.introHandoff.trim()) {
     return "Intro handoff is required so passed candidates have a real next step."
   }
@@ -67,6 +71,7 @@ export function buildEmployerSignupPayload(form: EmployerSignupFormState): Emplo
     notes: form.notes.trim(),
     hardFilters: splitRoleBriefs(form.hardFilters),
     screeningQuestions: splitRoleBriefs(form.screeningQuestions),
+    calibrationExamples: form.calibrationExamples.trim(),
     introHandoff: form.introHandoff.trim(),
   }
 }

@@ -619,6 +619,8 @@ export type EmployerInput = {
   hardFilters: string[]
   /** Specific evidence probes Claire should elicit in the first interview. */
   screeningQuestions: string[]
+  /** Examples that calibrate the strong-pass bar and false-positive boundary before Claire screens. */
+  calibrationExamples: string
   /** Employer-owned next step after WeKruit sends an accepted passed-profile intro. */
   introHandoff: string
   /** Submitter name — for the admin notification email. */
@@ -647,6 +649,8 @@ export async function runRegisterEmployer(
   if (hardFilters.length === 0) throw new HttpsError("invalid-argument", "hard_filters_required")
   const screeningQuestions = cleanStringList(v.screeningQuestions)
   if (screeningQuestions.length === 0) throw new HttpsError("invalid-argument", "screening_questions_required")
+  const calibrationExamples = typeof v.calibrationExamples === "string" ? v.calibrationExamples.trim() : ""
+  if (!calibrationExamples) throw new HttpsError("invalid-argument", "calibration_examples_required")
   const introHandoff = typeof v.introHandoff === "string" ? v.introHandoff.trim() : ""
   if (!introHandoff) throw new HttpsError("invalid-argument", "intro_handoff_required")
   const cleanInput: EmployerInput = {
@@ -659,6 +663,7 @@ export async function runRegisterEmployer(
     rolesHiring,
     hardFilters,
     screeningQuestions,
+    calibrationExamples,
     introHandoff,
     contactName: typeof v.contactName === "string" ? v.contactName.trim() : undefined,
     notes,
@@ -715,6 +720,7 @@ async function notifyAdminOfEmployerSignup(
     `Roles hiring: ${v.rolesHiring?.length ? v.rolesHiring.join(", ") : "—"}`,
     `Hard filters: ${v.hardFilters.length ? v.hardFilters.join("; ") : "—"}`,
     `Screening questions: ${v.screeningQuestions.length ? v.screeningQuestions.join("; ") : "—"}`,
+    `Calibration examples: ${v.calibrationExamples || "—"}`,
     `Intro handoff: ${v.introHandoff || "—"}`,
     v.notes ? `\nNotes:\n${v.notes}` : null,
     `\nFirestore: layoff_employers/${ctx.employerId}`,
@@ -736,6 +742,7 @@ async function notifyAdminOfEmployerSignup(
     `<li><b>Roles hiring:</b> ${v.rolesHiring?.length ? escapeHtml(v.rolesHiring.join(", ")) : "—"}</li>` +
     `<li><b>Hard filters:</b> ${v.hardFilters.length ? escapeHtml(v.hardFilters.join("; ")) : "—"}</li>` +
     `<li><b>Screening questions:</b> ${v.screeningQuestions.length ? escapeHtml(v.screeningQuestions.join("; ")) : "—"}</li>` +
+    `<li><b>Calibration examples:</b> ${escapeHtml(v.calibrationExamples || "—")}</li>` +
     `<li><b>Intro handoff:</b> ${escapeHtml(v.introHandoff || "—")}</li>` +
     `</ul>` +
     (v.notes ? `<h3 style="font-family:system-ui;font-size:14px;margin:18px 0 6px">Notes</h3><pre style="font-family:system-ui;font-size:13px;white-space:pre-wrap;background:#f6f3ee;padding:12px;border-radius:6px">${escapeHtml(v.notes)}</pre>` : "") +

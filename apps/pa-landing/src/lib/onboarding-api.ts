@@ -74,6 +74,8 @@ export type EmployerSignupInput = {
   hardFilters: string[]
   /** Specific evidence probes Claire should elicit in the first interview. */
   screeningQuestions: string[]
+  /** Examples that calibrate the strong-pass bar and false-positive boundary. */
+  calibrationExamples: string
   /** Employer-owned next step after WeKruit sends an accepted passed-profile intro. */
   introHandoff: string
   /** Free-form notes shown verbatim in the admin notification email. */
