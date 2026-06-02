@@ -105,13 +105,19 @@ interface DisplayJob {
   comp: string
   posted: string
   via: string
-  fit: "strong" | "worth" | "stretch"
+  evidence: MarketEvidence
   online: boolean
   seats: number
   hiringManager: { name: string; title: string; tone: "warm" | "moss" | "slate" }
   applyUrl?: string
   logo: string
   logoBg: string
+}
+
+type MarketEvidence = {
+  label: string
+  detail: string
+  tone: "external" | "direct" | "missing"
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -247,17 +253,38 @@ function postedDisplay(s?: string): string {
   return s ?? ""
 }
 
-function fitForId(jobId: string): "strong" | "worth" | "stretch" {
-  const k = djb2(jobId) % 10
-  if (k < 2) return "strong"
-  if (k < 8) return "worth"
-  return "stretch"
+function sourceLine(source?: string): string {
+  return source ? `via ${titleCase(source)}` : "External source"
 }
 
-function viaFromIndustry(industrySector?: string[]): string {
-  if (!industrySector?.length) return "Outbound"
-  const first = industrySector[0]
-  return first ? titleCase(first) : "Outbound"
+function evidenceForOpenJob(r: OpenJobRow): MarketEvidence {
+  if (!r.atsApplyUrl) {
+    return {
+      label: "External source",
+      detail: "Original posting unavailable",
+      tone: "missing",
+    }
+  }
+  return {
+    label: r.source ? "Source listed" : "External source",
+    detail: "Open original posting",
+    tone: "external",
+  }
+}
+
+function evidenceForPaJob(raw: PaJobDoc): MarketEvidence {
+  if (raw.wekruitCollaborationStatus === "collaborated") {
+    return {
+      label: "WeKruit-screened",
+      detail: "Claire interview flow configured",
+      tone: "direct",
+    }
+  }
+  return {
+    label: "Employer-listed",
+    detail: "Start with Claire to verify fit",
+    tone: "direct",
+  }
 }
 
 function fromOpenJob(r: OpenJobRow): DisplayJob {
@@ -272,13 +299,13 @@ function fromOpenJob(r: OpenJobRow): DisplayJob {
     location: locationDisplay(r.location, r.locationRaw),
     comp: r.comp ?? "—",
     posted: postedDisplay(r.posted),
-    via: viaFromIndustry(r.industrySector),
-    fit: fitForId(r.id),
+    via: sourceLine(r.source),
+    evidence: evidenceForOpenJob(r),
     online: false,
     seats: 1,
     hiringManager: {
       name: "Hiring manager",
-      title: r.source ? `via ${titleCase(r.source)}` : "Hiring lead",
+      title: sourceLine(r.source),
       tone: TONE_POOL[h % TONE_POOL.length] ?? "warm",
     },
     applyUrl: r.atsApplyUrl,
@@ -300,7 +327,7 @@ function fromPaJob(id: string, raw: PaJobDoc): DisplayJob {
     comp: raw.prescreenConfig?.level1Reveal?.salaryRange ?? "—",
     posted: "",
     via: raw.wekruitCollaborationStatus === "collaborated" ? "Direct line" : "Inbound",
-    fit: fitForId(id),
+    evidence: evidenceForPaJob(raw),
     online: !!raw.hiringManagerOnline,
     seats: typeof raw.interviewSeats === "number" ? raw.interviewSeats : 2,
     hiringManager: {
@@ -378,12 +405,11 @@ function FilterRail({
 // Atoms
 // ────────────────────────────────────────────────────────────────────────────
 
-function FitDot({ kind }: { kind: "strong" | "worth" | "stretch" }) {
-  const label = kind === "strong" ? "Strong fit" : kind === "stretch" ? "Stretch" : "Worth a shot"
+function EvidenceBadge({ evidence, compact = false }: { evidence: MarketEvidence; compact?: boolean }) {
   return (
-    <span className={`wk-fit wk-fit--${kind}`}>
-      {kind === "strong" ? <Icon name="bolt" size={10} stroke={2.2} /> : null}
-      {label}
+    <span className={`wk-evidence wk-evidence--${evidence.tone}${compact ? " wk-evidence--compact" : ""}`} title={evidence.detail}>
+      <span className="wk-evidence__label">{evidence.label}</span>
+      <span className="wk-evidence__detail">{evidence.detail}</span>
     </span>
   )
 }
@@ -425,6 +451,9 @@ function HuntRow({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
       <td className="wk-tbl__cell wk-tbl__cell--comp">{r.comp}</td>
       <td className="wk-tbl__cell wk-tbl__cell--posted">{r.posted}</td>
       <td className="wk-tbl__cell wk-tbl__cell--cta">
+        <div className="wk-tbl__evidence">
+          <EvidenceBadge evidence={r.evidence} compact />
+        </div>
         <button className="wk-pitchbtn" onClick={onOpen} disabled={!r.applyUrl}>
           View role <Icon name="arrow-right" size={12} stroke={2} />
         </button>
@@ -442,7 +471,7 @@ function HuntCard({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
           <div className="wk-hcard__co">{r.company}</div>
           <div className="wk-hcard__via">{r.via}</div>
         </div>
-        <FitDot kind={r.fit} />
+        <EvidenceBadge evidence={r.evidence} />
       </header>
       <h3 className="wk-hcard__role">{r.title}</h3>
       <p className="wk-hcard__meta">
@@ -1039,6 +1068,7 @@ const MARKET_STYLES = String.raw`
 }
 .wk-shell .wk-tbl__cell--posted { color: var(--wk-ink-3); font-size: 13px; font-variant-numeric: tabular-nums; }
 .wk-shell .wk-tbl__cell--cta { text-align: right; padding-right: 22px; }
+.wk-shell .wk-tbl__evidence { display: flex; justify-content: flex-end; margin-bottom: 7px; }
 .wk-shell .wk-tbl__sep { color: var(--wk-ink-4); margin: 0 4px; }
 
 .wk-shell .wk-tbl__empty {
@@ -1099,14 +1129,25 @@ const MARKET_STYLES = String.raw`
   font-style: italic; font-weight: 500; font-size: 18px; color: var(--wk-ink); letter-spacing: -0.01em;
 }
 
-.wk-shell .wk-fit {
-  display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px;
-  border-radius: var(--wk-r-pill); font-size: 11px; font-weight: 600;
-  letter-spacing: 0.005em; line-height: 1.4; border: 1px solid transparent; white-space: nowrap;
+.wk-shell .wk-evidence {
+  display: inline-flex; flex-direction: column; align-items: flex-end; gap: 2px;
+  padding: 6px 9px; border-radius: var(--wk-r-sm); border: 1px solid var(--wk-border);
+  max-width: 150px; text-align: right; line-height: 1.1;
 }
-.wk-shell .wk-fit--strong { background: var(--wk-live-soft); color: var(--wk-live); border-color: var(--wk-live-border); }
-.wk-shell .wk-fit--worth { background: var(--wk-cream-2); color: var(--wk-ink); border-color: var(--wk-border-strong); }
-.wk-shell .wk-fit--stretch { background: transparent; color: var(--wk-ink-3); border-color: var(--wk-border-strong); border-style: dashed; }
+.wk-shell .wk-evidence__label {
+  font-size: 11px; font-weight: 650; color: var(--wk-ink); white-space: nowrap;
+}
+.wk-shell .wk-evidence__detail {
+  font-size: 10.5px; color: var(--wk-ink-3); white-space: nowrap;
+}
+.wk-shell .wk-evidence--external { background: var(--wk-cream-2); border-color: var(--wk-border-strong); }
+.wk-shell .wk-evidence--direct { background: var(--wk-live-soft); border-color: var(--wk-live-border); }
+.wk-shell .wk-evidence--direct .wk-evidence__label { color: var(--wk-live); }
+.wk-shell .wk-evidence--missing { background: transparent; border-style: dashed; }
+.wk-shell .wk-evidence--compact {
+  display: inline-flex; padding: 4px 7px; max-width: none; border-radius: var(--wk-r-pill);
+}
+.wk-shell .wk-evidence--compact .wk-evidence__detail { display: none; }
 
 @media (max-width: 1080px) {
   .wk-shell .wk-market__layout { grid-template-columns: 1fr; gap: 24px; }

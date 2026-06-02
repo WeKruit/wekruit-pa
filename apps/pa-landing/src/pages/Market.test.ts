@@ -25,3 +25,26 @@ test("Market direct-line empty state avoids unproven background scanning claims"
   assert.doesNotMatch(source, /Claire keeps scanning for stronger company access/)
   assert.match(source, /Check tracked roles and keep your profile preferences current\./)
 })
+
+test("Market does not invent role fit confidence from a hash", () => {
+  assert.doesNotMatch(source, /function fitForId/)
+  assert.doesNotMatch(source, /fit:\s*fitForId/)
+  assert.doesNotMatch(source, /Strong fit|Worth a shot|Stretch/)
+  assert.doesNotMatch(source, /wk-fit/)
+  assert.match(source, /type MarketEvidence/)
+  assert.match(source, /function evidenceForOpenJob/)
+  assert.match(source, /function EvidenceBadge/)
+})
+
+test("Market role cards surface source evidence instead of synthetic fit badges", () => {
+  assert.match(source, /External source/)
+  assert.match(source, /Source listed/)
+  assert.match(source, /Open original posting/)
+  assert.match(source, /WeKruit-screened/)
+  assert.doesNotMatch(source, /return "Outbound"/)
+})
+
+test("Market default table rows surface source evidence before opening card view", () => {
+  assert.match(source, /function HuntRow\([\s\S]*<EvidenceBadge evidence=\{r\.evidence\} compact \/>/)
+  assert.match(source, /\.wk-tbl__evidence/)
+})
