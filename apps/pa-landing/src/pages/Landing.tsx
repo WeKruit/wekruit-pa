@@ -145,7 +145,7 @@ export default function Landing() {
 
   // Idle-prefetch /market and /open data while the user is reading the
   // landing hero. Both surfaces share the QueryClient configured in main.tsx
-  // (staleTime=5min), so clicking "Open market" or "Open interviews" repaints
+  // (staleTime=5min), so clicking "Open market" or "Open roles" repaints
   // instantly from cache instead of waiting on a cold CF + Firestore read.
   // Wrapped in requestIdleCallback so it never competes with the hero paint.
   useEffect(() => {
@@ -174,7 +174,7 @@ export default function Landing() {
         },
         staleTime: 5 * 60 * 1000,
       })
-      // Direct line — pa-jobs publicVisible. Same query OpenJobs.tsx uses.
+      // Claire-ready roles — pa-jobs publicVisible. Same query OpenJobs.tsx uses.
       void queryClient.prefetchQuery({
         queryKey: ["pa-jobs-public-openings", 24],
         queryFn: () => listPublicJobOpenings(24),
@@ -189,7 +189,7 @@ export default function Landing() {
   }, [queryClient])
 
   const jobs = state.status === "ready" ? state.jobs : []
-  const liveCount = jobs.filter((j) => j.hiringManager.online).length
+  const claireReadyCount = jobs.filter((j) => j.hiringManager.online).length
 
   return (
     <CandidateShell hero>
@@ -209,8 +209,8 @@ export default function Landing() {
             </h1>
             <p className="wk-hero__lede">
               Upload your résumé once. Claire — your WeKruit recruiter, on iMessage —
-              gets to know you. When a job matches, you skip the application and
-              interview directly with the hiring manager.
+              gets to know you. When a job matches, Claire starts the first interview;
+              your passed profile goes to the hiring team with evidence, not guesswork.
             </p>
             <div className="wk-hero__cta">
               <Link to="/onboarding" className="wk-btn wk-btn--primary wk-btn--lg">
@@ -225,7 +225,7 @@ export default function Landing() {
                   document.getElementById("interviews")?.scrollIntoView({ behavior: "smooth", block: "start" })
                 }}
               >
-                Browse open interviews <Icon name="arrow-down" size={14} stroke={2} />
+                Browse Claire-ready roles <Icon name="arrow-down" size={14} stroke={2} />
               </a>
             </div>
             <div className="wk-hero__proof">
@@ -234,7 +234,7 @@ export default function Landing() {
               <Avatar name="PS" size={26} tone="warm" />
               <Avatar name="JR" size={26} tone="moss" />
               <span>
-                <strong>{liveCount || jobs.length || 6} hiring managers</strong> taking interviews this week.
+                <strong>{claireReadyCount || jobs.length || 6} roles</strong> ready for Claire interviews.
               </span>
             </div>
           </div>
@@ -247,12 +247,12 @@ export default function Landing() {
                 { from: "user",   text: "Go for it." },
                 { from: "claire", text: "What's your dream role?" },
                 { from: "user",   text: "Senior PM at an AI infra startup. NYC. $180k+." },
-                { from: "claire", text: "I've got 3 hiring managers who want to meet you this week. Want intros?" },
+                { from: "claire", text: "I've got 3 roles I can interview you for this week. Want to start with one?" },
               ]}
             />
             <div className="wk-hero__caption">
               <PulseDot size={6} />
-              <span>Claire texts back within a minute.</span>
+              <span>Claire keeps the interview in iMessage.</span>
             </div>
           </div>
         </div>
@@ -261,31 +261,31 @@ export default function Landing() {
       {/* ── What Claire does — 4-card editorial sequence (2026-05-26 design drop)
            Replaces the older 3-step "How it works" cards. Same conceptual slot,
            richer artifacts (résumé scan, iMessage prescreen, live feed of skips,
-           calendar invite) with the Standout-style inline verb pill.
+           passed profile) with the Standout-style inline verb pill.
            id="how" so the header nav "How it works" → /#how anchor scrolls here. */}
       <section id="how">
         <CandidateSequence />
       </section>
 
-      {/* ── Live interviews ──────────────────────────────── */}
+      {/* ── Claire-ready roles ──────────────────────────────── */}
       <section className="wk-section wk-section--live" id="interviews">
         <div className="wk-container">
           <header className="wk-section__head wk-section__head--row">
             <div>
               <p className="wk-eyebrow"><PulseDot size={6} /> Live now</p>
-              <h2 className="wk-section__h2">Companies interviewing this week.</h2>
+              <h2 className="wk-section__h2">Roles Claire can screen now.</h2>
             </div>
             {state.status === "ready" ? (
               <p className="wk-section__sub">
-                <strong>{jobs.length} live</strong> · interview seats fill up. New roles added daily.
+                <strong>{jobs.length} live</strong> · Claire starts the interview, then passed profiles go to the hiring team.
               </p>
             ) : null}
           </header>
 
-          {state.status === "loading" ? <p className="wk-muted">Loading live interviews…</p> : null}
+          {state.status === "loading" ? <p className="wk-muted">Loading Claire-ready roles…</p> : null}
           {state.status === "error" ? <p className="wk-error">{state.message}</p> : null}
           {state.status === "ready" && jobs.length === 0 ? (
-            <p className="wk-muted">No interviews are open right now. Claire will text you when one opens.</p>
+            <p className="wk-muted">No Claire-ready roles are open right now. Claire will text you when one opens.</p>
           ) : null}
 
           {state.status === "ready" && jobs.length > 0 ? (
@@ -300,7 +300,7 @@ export default function Landing() {
       <section className="wk-section wk-section--trust">
         <div className="wk-container">
           <header className="wk-section__head wk-section__head--center">
-            <p className="wk-eyebrow">Trusted by hiring managers at</p>
+            <p className="wk-eyebrow">Built around hiring-team signal at</p>
           </header>
           <div className="wk-trust-logos" aria-hidden="true">
             {["Anthropic", "Perplexity", "Figma", "Stripe", "Vercel", "Cursor"].map((n) => (
@@ -309,8 +309,8 @@ export default function Landing() {
           </div>
           <figure className="wk-quote">
             <blockquote>
-              "Got <em className="wk-accent">3 interviews</em> in a week without sending a single application.
-              I'd been job-searching for two months. Claire just… handled it."
+              "Claire turned my résumé into a real role conversation without another application.
+              I finally had evidence that matched what the hiring team cared about."
             </blockquote>
             <figcaption>
               <Avatar name="Renée Holloway" size={36} tone="warm" />
@@ -322,7 +322,7 @@ export default function Landing() {
           </figure>
 
           <div className="wk-final-cta">
-            <h3 className="wk-final-cta__h">Stop applying. Start interviewing.</h3>
+            <h3 className="wk-final-cta__h">Stop applying. Start with Claire.</h3>
             <Link to="/onboarding" className="wk-btn wk-btn--primary wk-btn--lg">
               Interview with Claire
               <Icon name="arrow-right" size={16} stroke={2} />
@@ -388,14 +388,14 @@ function StepCard({
 
 function JobCard({ job }: { job: PublicJobListItem }) {
   return (
-    <Link to={`/j/${job.id}`} className="wk-jobcard" aria-label={`Interview for ${job.title} at ${job.company}`}>
+    <Link to={`/j/${job.id}`} className="wk-jobcard" aria-label={`Start Claire interview for ${job.title} at ${job.company}`}>
       <div className="wk-jobcard__top">
         <CompanyMark logo={job.logo} bg={job.logoBg} size={44} />
         {job.hiringManager.online ? (
-          <LiveStatusPill>Hiring manager online</LiveStatusPill>
+          <LiveStatusPill>Claire-ready role</LiveStatusPill>
         ) : (
           <span className="wk-jobcard__offline">
-            <span className="wk-jobcard__dot" /> Reviews tomorrow
+            <span className="wk-jobcard__dot" /> Review opens tomorrow
           </span>
         )}
       </div>
@@ -416,17 +416,17 @@ function JobCard({ job }: { job: PublicJobListItem }) {
         <div className="wk-jobcard__hm">
           <Avatar name={job.hiringManager.name} size={28} tone={job.tone} />
           <span className="wk-jobcard__hm-name">
-            With <strong>{job.hiringManager.name}</strong>
+            Hiring context from <strong>{job.hiringManager.name}</strong>
             {job.hiringManager.title ? ` · ${job.hiringManager.title}` : ""}
           </span>
         </div>
       ) : null}
       <div className="wk-jobcard__footer">
         <span className="wk-jobcard__seats">
-          {job.seats} interview {job.seats === 1 ? "seat" : "seats"} this week
+          {job.seats} Claire interview {job.seats === 1 ? "slot" : "slots"} this week
         </span>
         <span className="wk-btn wk-btn--primary wk-btn--block wk-jobcard__cta">
-          Interview with hiring manager
+          Interview with Claire
           <Icon name="arrow-right" size={16} stroke={2} />
         </span>
       </div>

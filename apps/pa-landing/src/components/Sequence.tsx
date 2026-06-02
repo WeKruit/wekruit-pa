@@ -239,20 +239,20 @@ function ArtCandInterview() {
       </div>
       <div className="seq-cal__slot">
         <div className="seq-cal__slot-time">
-          <span className="seq-cal__hh">2:00<em>PM</em></span>
-          <span className="seq-cal__dur">15 min · with hiring manager</span>
+          <span className="seq-cal__hh">PASS<em>ED</em></span>
+          <span className="seq-cal__dur">Claire interview · evidence ready</span>
         </div>
         <div className="seq-cal__slot-with">
           <span className="seq-cal__ava">M</span>
           <div>
-            <strong>Maya Chen</strong>
-            <span>Head of Product · Anthropic</span>
+            <strong>Maya Okafor</strong>
+            <span>Profile, transcript, and risks prepared</span>
           </div>
         </div>
       </div>
       <span className="seq-pill seq-pill--ok">
         <SeqGlyph name="check" />
-        Confirmed
+        Passed profile
       </span>
     </div>
   )
@@ -432,15 +432,16 @@ export function CandidateSequence() {
       <div className="wk-container">
         <header className="seq__head">
           <p className="wk-eyebrow seq__eyebrow">
-            <PulseDot size={7} /> Direct interviews only
+            <PulseDot size={7} /> Claire-first interviews
           </p>
           <h2 className="seq__h2">
-            Less noise. <em className="wk-accent">More interviews.</em>
+            Less noise. <em className="wk-accent">Better evidence.</em>
           </h2>
           <p className="seq__sub">
             You don&apos;t apply, you don&apos;t job-board, you don&apos;t get spammed.
-            Claire reads what you want, skips the 99% that don&apos;t fit, and lands a
-            direct first interview with the hiring manager — never a recruiter.
+            Claire reads what you want, skips the 99% that don&apos;t fit, and starts
+            the first interview when a role matches. If you pass, WeKruit sends
+            the hiring team your profile, transcript, and evidence.
           </p>
         </header>
         <div className="seq__grid">
@@ -480,10 +481,10 @@ export function CandidateSequence() {
           <SequenceCard
             eyebrow="04 · Sends"
             before="Until one fits — and she"
-            verbIcon="calendar"
+            verbIcon="check"
             verbText="sends"
-            after="you a direct interview."
-            sub="First call: 15 minutes with the hiring manager. No recruiter screen. No take-home tournament. Calendar invite in 48 hours."
+            after="your passed profile."
+            sub="First step: Claire's role interview in iMessage. If you pass, WeKruit sends the profile, transcript, and evidence to the hiring team."
           >
             <ArtCandInterview />
           </SequenceCard>
