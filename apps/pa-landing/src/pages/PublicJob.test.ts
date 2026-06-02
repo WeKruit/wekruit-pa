@@ -22,3 +22,9 @@ test("PublicJob resume upload avoids internal configuration errors", () => {
   assert.doesNotMatch(source, /CV ingest endpoint is not configured/)
   assert.match(source, /Resume upload is temporarily unavailable\. Message Claire and we'll attach it to this role\./)
 })
+
+test("PublicJob resume upload avoids status-code fallback errors", () => {
+  assert.doesNotMatch(source, /Upload failed \(\$\{res\.status\}\)/)
+  assert.doesNotMatch(source, /Upload failed \(\$\{status\}\)\. Try again\./)
+  assert.match(source, /Resume upload did not finish\. Message Claire and we'll attach it to this role\./)
+})

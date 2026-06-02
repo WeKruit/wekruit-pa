@@ -13,6 +13,10 @@ import { canonicalPublicJobId } from "../lib/public-job-slugs.js"
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 const HAS_CV_KEY = "wkr_has_cv"
+const RESUME_UPLOAD_UNAVAILABLE_MESSAGE =
+  "Resume upload is temporarily unavailable. Message Claire and we'll attach it to this role."
+const RESUME_UPLOAD_FAILED_MESSAGE =
+  "Resume upload did not finish. Message Claire and we'll attach it to this role."
 
 function getOrCreateRequestedUserId(_jobId: string): string {
   const existingGlobal = readStoredValue(GLOBAL_UID_KEY)
@@ -92,7 +96,7 @@ export default function PublicJobCv() {
     }
     if (!CV_INGEST_URL) {
       setStatus("err")
-      setErrMsg("Resume upload is temporarily unavailable. Message Claire and we'll attach it to this role.")
+      setErrMsg(RESUME_UPLOAD_UNAVAILABLE_MESSAGE)
       return
     }
     const candidateId = readStoredCandidateId()
@@ -122,7 +126,7 @@ export default function PublicJobCv() {
       })
       if (!res.ok) {
         setStatus("err")
-        setErrMsg(`Upload failed (${res.status})`)
+        setErrMsg(RESUME_UPLOAD_FAILED_MESSAGE)
         return
       }
       try {
@@ -133,7 +137,7 @@ export default function PublicJobCv() {
       setStatus("ok")
     } catch (err) {
       setStatus("err")
-      setErrMsg(err instanceof Error ? err.message : String(err))
+      setErrMsg(RESUME_UPLOAD_FAILED_MESSAGE)
     }
   }
 

@@ -52,6 +52,10 @@ import { peekSource, resolveSource, stickSourceFromLoginNext } from "../lib/sour
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
+const RESUME_UPLOAD_UNAVAILABLE_MESSAGE =
+  "Resume upload is temporarily unavailable. Message Claire and we'll attach it to this role."
+const RESUME_UPLOAD_FAILED_MESSAGE =
+  "Resume upload did not finish. Message Claire and we'll attach it to this role."
 
 interface PrescreenConfig {
   jobTitle?: string
@@ -875,7 +879,7 @@ function InlineCvUpload({ jobId, requestedUserId, uploadUserId, onUploaded }: In
     }
     if (!CV_INGEST_URL) {
       setStatus("err")
-      setErrMsg("Resume upload is temporarily unavailable. Message Claire and we'll attach it to this role.")
+      setErrMsg(RESUME_UPLOAD_UNAVAILABLE_MESSAGE)
       return
     }
     if (!uploadUserId) {
@@ -910,7 +914,7 @@ function InlineCvUpload({ jobId, requestedUserId, uploadUserId, onUploaded }: In
         }),
       })
       if (!res.ok) {
-        let reason = `Upload failed (${res.status})`
+        let reason = RESUME_UPLOAD_FAILED_MESSAGE
         try {
           const body = (await res.json()) as { reason?: string }
           if (body.reason) reason = friendlyUploadError(body.reason, res.status)
@@ -1006,7 +1010,7 @@ function friendlyUploadError(reason: string, status: number): string {
     case "userId_mismatch":
       return "This resume must attach to your signed-in WeKruit profile."
     default:
-      return `Upload failed (${status}). Try again.`
+      return RESUME_UPLOAD_FAILED_MESSAGE
   }
 }
 

@@ -9,6 +9,8 @@ import { rememberStoredValue } from "./browser-identity.js"
 import { readStoredCandidateId } from "./candidate-verify.js"
 
 const HAS_CV_KEY = "wkr_has_cv"
+const RESUME_UPLOAD_FAILED_MESSAGE =
+  "Resume upload did not finish. Message Claire and we'll attach it to your profile."
 
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -65,7 +67,7 @@ export async function uploadResume(
     }),
   })
   if (!res.ok) {
-    let detail = `Upload failed (${res.status})`
+    let detail = RESUME_UPLOAD_FAILED_MESSAGE
     try {
       const data = (await res.json()) as { reason?: string }
       if (data.reason === "auth_required" || data.reason === "invalid_id_token") {
@@ -76,7 +78,7 @@ export async function uploadResume(
         detail = "This resume must attach to your signed-in WeKruit profile."
       }
     } catch {
-      // Keep HTTP fallback.
+      // Keep the candidate-facing fallback.
     }
     throw new Error(detail)
   }
