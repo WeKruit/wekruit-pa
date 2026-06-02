@@ -44,8 +44,7 @@ type PassedProfile = {
   headline: string
   role: string
   pass: "Strong pass" | "Pass" | "Pass with reservations"
-  passedMin: number
-  fitLabel: "Strong fit" | "Good fit" | "Watch risks"
+  reviewBadge: "Evidence ready" | "Risk noted" | "Sample pass record"
   summary?: string
   passReason?: string
   evidence?: { tag: string; source: string }[]
@@ -62,6 +61,8 @@ type PassedProfile = {
   consent?: string
 }
 
+const SAMPLE_PASS_RECORD = "Sample pass record"
+
 const EMP_PASSED: PassedProfile[] = [
   {
     id: "pp-maya-okafor",
@@ -71,8 +72,7 @@ const EMP_PASSED: PassedProfile[] = [
     headline: "Senior PM · AI infrastructure · 7y",
     role: "Senior Product Manager, Claude APIs",
     pass: "Strong pass",
-    passedMin: 14,
-    fitLabel: "Strong fit",
+    reviewBadge: "Evidence ready",
     summary:
       "Built and shipped two 0→1 AI platform products at Linear and Replit. " +
       "Owns developer-facing API roadmaps end-to-end and has scaled a billing/tiering surface from " +
@@ -141,8 +141,7 @@ const EMP_PASSED: PassedProfile[] = [
     headline: "Staff SWE · Inference / GPU",
     role: "Staff Software Engineer, Inference",
     pass: "Pass",
-    passedMin: 64,
-    fitLabel: "Good fit",
+    reviewBadge: SAMPLE_PASS_RECORD,
   },
   {
     id: "pp-priya-shah",
@@ -152,8 +151,7 @@ const EMP_PASSED: PassedProfile[] = [
     headline: "Principal Designer · AI surfaces",
     role: "Principal Product Designer, AI",
     pass: "Strong pass",
-    passedMin: 180,
-    fitLabel: "Strong fit",
+    reviewBadge: SAMPLE_PASS_RECORD,
   },
   {
     id: "pp-jordan-reyes",
@@ -163,8 +161,7 @@ const EMP_PASSED: PassedProfile[] = [
     headline: "GTM · stablecoin · 9y",
     role: "GTM Lead, Stablecoin",
     pass: "Pass with reservations",
-    passedMin: 320,
-    fitLabel: "Watch risks",
+    reviewBadge: "Risk noted",
   },
   {
     id: "pp-lin-wei",
@@ -174,16 +171,9 @@ const EMP_PASSED: PassedProfile[] = [
     headline: "Editor-core SWE · ex-VSCode",
     role: "Senior Engineer, Editor Core",
     pass: "Pass",
-    passedMin: 1180,
-    fitLabel: "Good fit",
+    reviewBadge: SAMPLE_PASS_RECORD,
   },
 ]
-
-function formatPassedAgo(min: number): string {
-  if (min < 60) return `${min}m`
-  if (min < 60 * 24) return `${Math.round(min / 60)}h`
-  return `${Math.round(min / (60 * 24))}d`
-}
 
 // ────────────────────────────────────────────────────────────────────────────
 // EmployerShell — small variant of CandidateShell for /employers/*.
@@ -629,14 +619,16 @@ export function EmployersInbox() {
                     <div className="wk-emp-row__body">
                       <div className="wk-emp-row__top">
                         <span className="wk-emp-row__name">{p.name}</span>
-                        <span className="wk-emp-row__time">{formatPassedAgo(p.passedMin)}</span>
+                        <span className="wk-emp-row__time">{SAMPLE_PASS_RECORD}</span>
                       </div>
                       <div className="wk-emp-row__meta">{p.headline}</div>
                       <div className="wk-emp-row__chips">
                         <span className={`wk-emp-row__pass${p.pass === "Strong pass" ? " is-strong" : ""}`}>
                           {p.pass}
                         </span>
-                        <span className="wk-emp-row__score">{p.fitLabel}</span>
+                        <span className={`wk-emp-row__badge${p.reviewBadge === "Risk noted" ? " is-risk" : ""}`}>
+                          {p.reviewBadge}
+                        </span>
                       </div>
                     </div>
                   </button>
@@ -668,7 +660,7 @@ function EmpPassedDetail({ c }: { c: PassedProfile }) {
       <header className="wk-emp-pp__head">
         <Avatar name={c.name} size={72} tone={c.tone} />
         <div className="wk-emp-pp__head-body">
-          <p className="wk-eyebrow">Passed by Claire · {formatPassedAgo(c.passedMin)} ago</p>
+          <p className="wk-eyebrow">Passed by Claire · {SAMPLE_PASS_RECORD}</p>
           <h2 className="wk-emp-pp__name">{c.name}</h2>
           <p className="wk-emp-pp__meta">{c.headline} · for <strong>{c.role}</strong></p>
         </div>
@@ -676,19 +668,22 @@ function EmpPassedDetail({ c }: { c: PassedProfile }) {
           <span className={`wk-emp-pp__pass${c.pass === "Strong pass" ? " is-strong" : ""}`}>
             <Icon name="check" size={12} stroke={2.4} /> {c.pass}
           </span>
-          <span className="wk-emp-pp__score">{c.fitLabel}</span>
+          <span className={`wk-emp-pp__badge${c.reviewBadge === "Risk noted" ? " is-risk" : ""}`}>
+            {c.reviewBadge}
+          </span>
         </div>
       </header>
 
-      <div className="wk-emp-pp__actions">
-        <button type="button" className="wk-btn wk-btn--primary">
-          <Icon name="calendar" size={14} stroke={2} /> Schedule intro
-        </button>
-        <button type="button" className="wk-btn wk-btn--secondary">Decline with note</button>
-        <button type="button" className="wk-btn wk-btn--ghost">Ask Claire to dig deeper</button>
-        <span className="wk-emp-pp__exp">
-          <Icon name="clock" size={12} stroke={2} /> Consent expires in 5d
+      <div className="wk-emp-pp__actions wk-emp-pp__actions--sample" aria-label="Sample employer actions">
+        <span className="wk-emp-pp__action-chip wk-emp-pp__action-chip--primary">
+          <Icon name="check" size={14} stroke={2} /> Accept intro after consent
         </span>
+        <span className="wk-emp-pp__action-chip">Decline with note</span>
+        <span className="wk-emp-pp__action-chip">Ask Claire to dig deeper</span>
+        <span className="wk-emp-pp__exp">
+          <Icon name="lock" size={12} stroke={2} /> Consent shown in sample
+        </span>
+        <span className="wk-emp-pp__sample">Sample actions only</span>
       </div>
 
       <section className="wk-emp-pp__sec">
@@ -807,7 +802,7 @@ function EmpPassedDetailLite({ c }: { c: PassedProfile }) {
       <header className="wk-emp-pp__head">
         <Avatar name={c.name} size={72} tone={c.tone} />
         <div className="wk-emp-pp__head-body">
-          <p className="wk-eyebrow">Passed · {formatPassedAgo(c.passedMin)} ago</p>
+          <p className="wk-eyebrow">Passed · {SAMPLE_PASS_RECORD}</p>
           <h2 className="wk-emp-pp__name">{c.name}</h2>
           <p className="wk-emp-pp__meta">{c.headline} · for <strong>{c.role}</strong></p>
         </div>
@@ -815,7 +810,9 @@ function EmpPassedDetailLite({ c }: { c: PassedProfile }) {
           <span className={`wk-emp-pp__pass${c.pass === "Strong pass" ? " is-strong" : ""}`}>
             <Icon name="check" size={12} stroke={2.4} /> {c.pass}
           </span>
-          <span className="wk-emp-pp__score">{c.fitLabel}</span>
+          <span className={`wk-emp-pp__badge${c.reviewBadge === "Risk noted" ? " is-risk" : ""}`}>
+            {c.reviewBadge}
+          </span>
         </div>
       </header>
       <section className="wk-emp-pp__sec wk-emp-pp__lite-body">

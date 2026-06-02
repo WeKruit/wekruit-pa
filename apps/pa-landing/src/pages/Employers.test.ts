@@ -22,3 +22,26 @@ test("Employers page frames passed-profile preview without unsupported traction 
   assert.match(source, /Sample passed-profile preview/)
   assert.match(source, /passed profiles plus the transcript/i)
 })
+
+test("Employers sample inbox does not render fake fit scores or live timing", () => {
+  assert.doesNotMatch(employersSource, /fitLabel/)
+  assert.doesNotMatch(source, /Strong fit|Good fit|Watch risks/)
+  assert.doesNotMatch(employersSource, /passedMin/)
+  assert.doesNotMatch(employersSource, /formatPassedAgo/)
+  assert.doesNotMatch(employersSource, /Consent expires in 5d/)
+  assert.match(employersSource, /reviewBadge/)
+  assert.match(employersSource, /Sample pass record/)
+  assert.match(employersSource, /Consent shown in sample/)
+})
+
+test("Employers inbox preview uses non-interactive sample actions", () => {
+  assert.doesNotMatch(
+    employersSource,
+    /<button type="button" className="wk-btn wk-btn--primary">[\s\S]*Schedule intro/,
+  )
+  assert.doesNotMatch(employersSource, /<button type="button" className="wk-btn wk-btn--secondary">Decline with note<\/button>/)
+  assert.doesNotMatch(employersSource, /<button type="button" className="wk-btn wk-btn--ghost">Ask Claire to dig deeper<\/button>/)
+  assert.match(employersSource, /aria-label="Sample employer actions"/)
+  assert.match(employersSource, /Accept intro after consent/)
+  assert.match(employersSource, /Sample actions only/)
+})

@@ -412,7 +412,7 @@ function ArtEmpDelivers() {
         <div className="seq-pp__row">
           <span className="seq-pp__chip">$240k asked · in band</span>
           <span className="seq-pp__chip">SF · 3d/wk OK</span>
-          <span className="seq-pp__match">Strong fit</span>
+          <span className="seq-pp__evidence">Evidence ready</span>
         </div>
         <div className="seq-pp__quote">
           &ldquo;I&apos;m done with feature-grid PM. I want a roadmap that ships against safety evals.&rdquo;
