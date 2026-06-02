@@ -180,6 +180,19 @@ test("CandidatePortal /me surfaces real Claire matching signals from the claimed
   assert.doesNotMatch(source, /mock signal|example signal|sample signal/i)
 })
 
+test("CandidateProfile empty profile cards provide real Claire actions", () => {
+  assert.match(source, /<WhatClairePitchesCard profile=\{profile\} claireHref=\{claireHref\} \/>/)
+  assert.match(source, /<SkillsCard profile=\{profile\} editing=\{editing\} claireHref=\{claireHref\} \/>/)
+  assert.match(source, /function WhatClairePitchesCard\(\{[\s\S]*profile,[\s\S]*claireHref,[\s\S]*\}/)
+  assert.match(source, /function SkillsCard\(\{[\s\S]*profile,[\s\S]*editing,[\s\S]*claireHref,[\s\S]*\}/)
+  assert.match(source, /Claire hasn&apos;t captured these yet/)
+  assert.match(source, /href=\{claireHref\}[\s\S]*Message Claire/)
+  assert.match(source, /href=\{claireHref\}[\s\S]*Send résumé/)
+  assert.match(source, /to="\/me\/profile#profile-corrections"[\s\S]*Update preferences/)
+  assert.doesNotMatch(source, /Tell her on iMessage or use "Update preferences" below/)
+  assert.doesNotMatch(source, /Upload one on iMessage to see them here\./)
+})
+
 test("CandidatePortal /me shows recent role activity from real matches", () => {
   assert.match(source, /<MeActivityLog matches=\{allMatches\} \/>/)
   assert.match(source, /function deriveMeActivityRows/)

@@ -2312,9 +2312,9 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
             <div className="wk-prof__main">
               <IdentityCard profile={profile} />
               <MatchPreferencesCard profile={profile} onSaved={setProfile} />
-              <WhatClairePitchesCard profile={profile} />
+              <WhatClairePitchesCard profile={profile} claireHref={claireHref} />
               <ExperienceHighlightsCard profile={profile} />
-              <SkillsCard profile={profile} editing={editing} />
+              <SkillsCard profile={profile} editing={editing} claireHref={claireHref} />
               <UpdatePreferencesPanel onProfileUpdated={setProfile} />
             </div>
 
@@ -2631,7 +2631,13 @@ function IdentityCard({ profile }: { profile: CandidateSelfProfile }) {
   )
 }
 
-function WhatClairePitchesCard({ profile }: { profile: CandidateSelfProfile }) {
+function WhatClairePitchesCard({
+  profile,
+  claireHref,
+}: {
+  profile: CandidateSelfProfile
+  claireHref: string | null
+}) {
   const tags = profile.globalTags
   const rows: Array<{ label: string; value: string }> = []
   if (tags?.roleFunction?.length) rows.push({ label: "Targets", value: joinTags(tags.roleFunction, 4, " · ") })
@@ -2651,9 +2657,21 @@ function WhatClairePitchesCard({ profile }: { profile: CandidateSelfProfile }) {
       <h3 className="wkv2-card__h">What Claire pitches</h3>
       <p className="wk-prof-card__hint">These are the answers Claire gives any hiring manager who asks.</p>
       {rows.length === 0 ? (
-        <p className="wk-prof-card__hint" style={{ margin: 0 }}>
-          Claire hasn't captured these yet. Tell her on iMessage or use "Update preferences" below.
-        </p>
+        <div className="wk-prof-card__empty">
+          <p className="wk-prof-card__hint" style={{ margin: 0 }}>
+            Claire hasn&apos;t captured these yet.
+          </p>
+          <div className="wk-prof-card__actions">
+            {claireHref ? (
+              <a href={claireHref} className="wk-btn wk-btn--secondary wk-btn--sm">
+                Message Claire
+              </a>
+            ) : null}
+            <Link to="/me/profile#profile-corrections" className="wk-btn wk-btn--primary wk-btn--sm">
+              Update preferences
+            </Link>
+          </div>
+        </div>
       ) : (
         <div className="wk-prof-rows">
           {rows.map((r) => (
@@ -2745,15 +2763,30 @@ function experienceMeta(experience: NonNullable<CandidateSelfProfile["experience
   return meta.filter((item): item is string => Boolean(item))
 }
 
-function SkillsCard({ profile, editing }: { profile: CandidateSelfProfile; editing: boolean }) {
+function SkillsCard({
+  profile,
+  editing,
+  claireHref,
+}: {
+  profile: CandidateSelfProfile
+  editing: boolean
+  claireHref: string | null
+}) {
   const skills = (profile.globalTags?.skills ?? []).map(formatProfileValue).filter(Boolean)
   if (skills.length === 0 && !editing) {
     return (
       <section id="skills" className="wkv2-card wk-prof-card">
         <h3 className="wkv2-card__h">Skills</h3>
-        <p className="wk-prof-card__hint">
-          Claire pulls these from your résumé. Upload one on iMessage to see them here.
-        </p>
+        <div className="wk-prof-card__empty">
+          <p className="wk-prof-card__hint">
+            Claire pulls these from your résumé.
+          </p>
+          {claireHref ? (
+            <a href={claireHref} className="wk-btn wk-btn--secondary wk-btn--sm">
+              Send résumé
+            </a>
+          ) : null}
+        </div>
       </section>
     )
   }
@@ -3765,6 +3798,8 @@ const PROFILE_STYLES = `
   font-size: 12.5px; color: var(--wk-ink-3);
   margin: -6px 0 6px; line-height: 1.45;
 }
+.wk-prof-card__empty { display: grid; gap: 10px; align-items: start; }
+.wk-prof-card__actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 .wk-prof-id { display: flex; align-items: center; gap: 18px; }
 .wk-prof-id__body { min-width: 0; flex: 1; }
