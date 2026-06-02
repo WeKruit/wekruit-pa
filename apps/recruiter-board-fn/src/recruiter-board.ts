@@ -247,6 +247,8 @@ const RECRUITER_SOURCED_CANDIDATES_COLLECTION = "pa-recruiter-sourced-candidates
 const RECRUITER_ROLE_APPLICATIONS_COLLECTION = "pa-recruiter-role-applications"
 const RECRUITER_ROLE_FEEDBACK_COLLECTION = "pa-recruiter-role-feedback"
 const RECRUITER_ROLE_QUESTIONS_COLLECTION = "pa-recruiter-role-questions"
+const FEEDBACK_EVENTS_COLLECTION = "pa-feedback-events"
+const AUDIT_EVENTS_COLLECTION = "pa-audit-events"
 
 export interface RecruiterNotificationPreferences {
   newRolesEmail: boolean
@@ -4218,6 +4220,185 @@ function submissionFeedbackNotification(
   return { title, body }
 }
 
+const RECRUITER_SUBMISSION_FEEDBACK_OUTCOMES = [
+  "submitted",
+  "new",
+  "reviewing",
+  "advanced",
+  "interviewing",
+  "backburner",
+  "offer",
+  "hired",
+  "rejected",
+  "duplicate",
+] as const
+
+type RecruiterSubmissionFeedbackOutcome = (typeof RECRUITER_SUBMISSION_FEEDBACK_OUTCOMES)[number]
+
+interface RecruiterSubmissionFeedbackEvent {
+  eventId: string
+  kind: "recruiter_submission_feedback"
+  actor: "operator"
+  jobId: string
+  outcome: RecruiterSubmissionFeedbackOutcome
+  evidence: Array<{
+    source: "admin"
+    summary: string
+    refId: string
+  }>
+  payloadRedacted: {
+    submissionId: string
+    recruiterId: string
+    status: RecruiterSubmissionFeedbackOutcome
+    previousStatus: RecruiterSubmissionFeedbackOutcome
+    statusChanged: boolean
+    feedbackChanged: boolean
+    rating: number | null
+    reasonIds: string[]
+    hasFeedbackNote: boolean
+    source: "recruiter_board_admin"
+  }
+  createdAt: string
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`)
+      .join(",")}}`
+  }
+  return JSON.stringify(value)
+}
+
+function auditId(prefix: string, eventId: string): string {
+  return `${prefix}_${eventId}`
+}
+
+function recruiterSubmissionFeedbackOutcome(
+  raw: unknown,
+  fallback: RecruiterSubmissionFeedbackOutcome | null = "submitted",
+): RecruiterSubmissionFeedbackOutcome | null {
+  if (raw === undefined || raw === null || raw === "") return fallback
+  return RECRUITER_SUBMISSION_FEEDBACK_OUTCOMES.includes(raw as RecruiterSubmissionFeedbackOutcome)
+    ? raw as RecruiterSubmissionFeedbackOutcome
+    : null
+}
+
+function recruiterSubmissionFeedbackRating(raw: unknown): number | null {
+  if (typeof raw !== "number" || !Number.isInteger(raw)) return null
+  return raw >= 1 && raw <= 4 ? raw : null
+}
+
+function recruiterSubmissionFeedbackReasons(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const reasons: string[] = []
+  for (const item of raw) {
+    if (typeof item !== "string") continue
+    const reason = item.trim()
+    if (!/^[a-z0-9_:-]{1,80}$/i.test(reason) || seen.has(reason)) continue
+    seen.add(reason)
+    reasons.push(reason)
+    if (reasons.length >= 12) break
+  }
+  return reasons
+}
+
+function recruiterSubmissionFeedbackValueChanged(before: Record<string, unknown>, after: Record<string, unknown>): boolean {
+  const keys = ["recruiterFeedbackNote", "recruiterFeedbackRating"]
+  if (keys.some((key) => JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null))) return true
+  return JSON.stringify(before.recruiterFeedbackReasons ?? []) !== JSON.stringify(after.recruiterFeedbackReasons ?? [])
+}
+
+function recruiterSubmissionFeedbackEventId(triggerEventId: string): string {
+  const safeEventId = triggerEventId.trim().replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 120)
+  if (safeEventId) return `recruiter_submission_feedback_${safeEventId}`
+  return `recruiter_submission_feedback_${createHash("sha256").update(triggerEventId).digest("hex").slice(0, 24)}`
+}
+
+export function buildRecruiterSubmissionFeedbackEvent(input: {
+  triggerEventId: string
+  submissionId: string
+  createdAt: string
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+}): RecruiterSubmissionFeedbackEvent | null {
+  if (!input.before || !input.after) return null
+  if (!input.triggerEventId || !input.submissionId) return null
+  const jobId = typeof input.after.jobId === "string" && input.after.jobId.trim()
+    ? input.after.jobId.trim()
+    : ""
+  const recruiterId = typeof input.after.recruiterId === "string" && input.after.recruiterId.trim()
+    ? input.after.recruiterId.trim()
+    : ""
+  if (!jobId || !recruiterId) return null
+
+  const beforeStatus = recruiterSubmissionFeedbackOutcome(input.before.status)
+  const afterStatus = recruiterSubmissionFeedbackOutcome(input.after.status, null)
+  if (!beforeStatus || !afterStatus) return null
+  const statusChanged = beforeStatus !== afterStatus
+  const changedFeedback = recruiterSubmissionFeedbackValueChanged(input.before, input.after)
+  if (!statusChanged && !changedFeedback) return null
+
+  const rating = recruiterSubmissionFeedbackRating(input.after.recruiterFeedbackRating)
+  const reasons = recruiterSubmissionFeedbackReasons(input.after.recruiterFeedbackReasons)
+  const note = typeof input.after.recruiterFeedbackNote === "string" ? input.after.recruiterFeedbackNote.trim() : ""
+
+  return {
+    eventId: recruiterSubmissionFeedbackEventId(input.triggerEventId),
+    kind: "recruiter_submission_feedback",
+    actor: "operator",
+    jobId,
+    outcome: afterStatus,
+    evidence: [{
+      source: "admin",
+      summary: `Recruiter submission review updated to ${recruiterSubmissionStatusLabel(afterStatus)}`,
+      refId: input.submissionId,
+    }],
+    payloadRedacted: {
+      submissionId: input.submissionId,
+      recruiterId,
+      status: afterStatus,
+      previousStatus: beforeStatus,
+      statusChanged,
+      feedbackChanged: changedFeedback,
+      rating,
+      reasonIds: reasons,
+      hasFeedbackNote: Boolean(note),
+      source: "recruiter_board_admin",
+    },
+    createdAt: input.createdAt,
+  }
+}
+
+export async function writeRecruiterSubmissionFeedbackEvent(
+  db: Firestore,
+  event: RecruiterSubmissionFeedbackEvent,
+): Promise<{ event: RecruiterSubmissionFeedbackEvent; created: boolean }> {
+  const ref = db.collection(FEEDBACK_EVENTS_COLLECTION).doc(event.eventId)
+  const existing = await ref.get()
+  if (existing.exists) {
+    const data = existing.data() as RecruiterSubmissionFeedbackEvent
+    if (stableJson(data) !== stableJson(event)) {
+      throw new Error(`conflicting_duplicate_event:${FEEDBACK_EVENTS_COLLECTION}/${event.eventId}`)
+    }
+    return { event: data, created: false }
+  }
+  await ref.set(event as unknown as Record<string, unknown>)
+  await db.collection(AUDIT_EVENTS_COLLECTION).doc(auditId("marketplace_feedback", event.eventId)).set({
+    id: auditId("marketplace_feedback", event.eventId),
+    action: "marketplace.feedback.append",
+    eventId: event.eventId,
+    candidateId: null,
+    jobId: event.jobId,
+    actor: event.actor,
+    createdAt: event.createdAt,
+  })
+  return { event, created: true }
+}
+
 function submissionCandidateName(data: Record<string, unknown>): string {
   const candidate = data.candidate && typeof data.candidate === "object"
     ? data.candidate as Record<string, unknown>
@@ -4498,12 +4679,30 @@ export const paRecruiterSubmissionFeedbackNotify = onDocumentWritten(
     const before = event.data?.before.exists ? event.data.before.data() as Record<string, unknown> : null
     const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null
     const feedbackNotification = submissionFeedbackNotification(before, after)
+    const feedbackEvent = buildRecruiterSubmissionFeedbackEvent({
+      triggerEventId: event.id,
+      submissionId: event.params.submissionId,
+      createdAt: event.time ?? new Date().toISOString(),
+      before,
+      after,
+    })
     const confirmationNotification = candidateConfirmationNotification(before, after)
     const payoutNotification = payoutUpdateNotification(before, after)
-    if ((!feedbackNotification && !confirmationNotification && !payoutNotification) || !after) return
+    if ((!feedbackNotification && !feedbackEvent && !confirmationNotification && !payoutNotification) || !after) return
     const recruiterId = typeof after.recruiterId === "string" ? after.recruiterId : ""
     if (!recruiterId) return
     const db = getFirestore()
+    if (feedbackEvent) {
+      const result = await writeRecruiterSubmissionFeedbackEvent(db, feedbackEvent)
+      if (result.created) {
+        logger.info("paRecruiterSubmissionFeedbackEvent_done", {
+          submissionId: event.params.submissionId,
+          recruiterId,
+          eventId: feedbackEvent.eventId,
+          outcome: feedbackEvent.outcome,
+        })
+      }
+    }
     const common = {
       eventId: event.id,
       recruiterId,

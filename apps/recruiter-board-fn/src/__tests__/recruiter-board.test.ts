@@ -17,6 +17,7 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
   buildRecruiterRoleIntelligence,
+  buildRecruiterSubmissionFeedbackEvent,
   candidateCalibrationNotification,
   candidateConfirmationNotification,
   computeSubmissionScore,
@@ -52,6 +53,7 @@ import {
   validateRecruiterSourcedCandidateInput,
   validateRecruiterWorkspacePreferences,
   validateSubmission,
+  writeRecruiterSubmissionFeedbackEvent,
   type RecruiterBoardChecklistGroup,
   type RecruiterBoardPayload,
 } from "../recruiter-board.js"
@@ -78,6 +80,31 @@ const sampleGroups: RecruiterBoardChecklistGroup[] = [
     { id: "a2", text: "" },
   ] },
 ]
+
+function memoryFirestore() {
+  const docs = new Map<string, unknown>()
+  const counts = new Map<string, number>()
+  return {
+    collection: (collectionName: string) => ({
+      doc: (docId: string) => {
+        const key = `${collectionName}/${docId}`
+        return {
+          get: async () => ({
+            exists: docs.has(key),
+            data: () => docs.get(key),
+          }),
+          set: async (payload: unknown) => {
+            docs.set(key, payload)
+            counts.set(key, (counts.get(key) ?? 0) + 1)
+          },
+        }
+      },
+    }),
+    get: (key: string) => docs.get(key),
+    has: (key: string) => docs.has(key),
+    setCount: (key: string) => counts.get(key) ?? 0,
+  }
+}
 
 describe("computeSubmissionScore", () => {
   it("counts checked items per group", () => {
@@ -524,6 +551,115 @@ describe("recruiter role question answer notifications", () => {
       status: "answered",
       answer: "Target builders with systems ownership.",
     }), null)
+  })
+})
+
+describe("recruiter submission feedback flywheel events", () => {
+  it("builds a redacted append-only feedback event when admin feedback changes", () => {
+    const event = buildRecruiterSubmissionFeedbackEvent({
+      triggerEventId: "evt-1",
+      submissionId: "sub-1",
+      createdAt: "2026-06-02T12:00:00.000Z",
+      before: {
+        status: "reviewing",
+        recruiterFeedbackRating: 2,
+        recruiterFeedbackReasons: ["weak_evidence"],
+      },
+      after: {
+        status: "advanced",
+        jobId: "job-1",
+        recruiterId: "recruiter-1",
+        recruiterEmail: "recruiter@example.com",
+        recruiterFeedbackRating: 4,
+        recruiterFeedbackReasons: ["strong_match", "clear_evidence"],
+        recruiterFeedbackNote: "Ada is excellent; ada@example.com; linkedin.com/in/ada",
+        candidate: {
+          name: "Ada Lovelace",
+          email: "ada@example.com",
+          link: "https://linkedin.com/in/ada",
+        },
+      },
+    })
+
+    assert.equal(event?.eventId, "recruiter_submission_feedback_evt-1")
+    assert.equal(event?.kind, "recruiter_submission_feedback")
+    assert.equal(event?.actor, "operator")
+    assert.equal(event?.jobId, "job-1")
+    assert.equal(event?.outcome, "advanced")
+    assert.deepEqual(event?.payloadRedacted, {
+      submissionId: "sub-1",
+      recruiterId: "recruiter-1",
+      status: "advanced",
+      previousStatus: "reviewing",
+      statusChanged: true,
+      feedbackChanged: true,
+      rating: 4,
+      reasonIds: ["strong_match", "clear_evidence"],
+      hasFeedbackNote: true,
+      source: "recruiter_board_admin",
+    })
+    assert.equal(event?.evidence[0]?.source, "admin")
+    assert.equal(event?.evidence[0]?.refId, "sub-1")
+    const serialized = JSON.stringify(event)
+    assert.doesNotMatch(serialized, /ada@example\.com/)
+    assert.doesNotMatch(serialized, /linkedin\.com\/in\/ada/)
+    assert.doesNotMatch(serialized, /Ada Lovelace/)
+    assert.doesNotMatch(serialized, /Ada is excellent/)
+  })
+
+  it("skips event construction when no admin-visible feedback/status changed", () => {
+    assert.equal(buildRecruiterSubmissionFeedbackEvent({
+      triggerEventId: "evt-2",
+      submissionId: "sub-2",
+      createdAt: "2026-06-02T12:00:00.000Z",
+      before: { status: "reviewing", jobId: "job-1", recruiterId: "recruiter-1" },
+      after: { status: "reviewing", jobId: "job-1", recruiterId: "recruiter-1" },
+    }), null)
+    assert.equal(buildRecruiterSubmissionFeedbackEvent({
+      triggerEventId: "evt-2b",
+      submissionId: "sub-2",
+      createdAt: "2026-06-02T12:00:00.000Z",
+      before: {
+        status: "reviewing",
+        jobId: "job-1",
+        recruiterId: "recruiter-1",
+        recruiterFeedbackNote: "Same note",
+        recruiterFeedbackRating: 3,
+        recruiterFeedbackReasons: ["clear_evidence"],
+      },
+      after: {
+        status: "reviewing",
+        jobId: "job-1",
+        recruiterId: "recruiter-1",
+        recruiterFeedbackNote: "Same note",
+        recruiterFeedbackRating: 3,
+        recruiterFeedbackReasons: ["clear_evidence"],
+        recruiterFeedbackUpdatedAt: "2026-06-02T12:00:00.000Z",
+      },
+    }), null)
+  })
+
+  it("writes feedback events idempotently and appends one audit row", async () => {
+    const event = buildRecruiterSubmissionFeedbackEvent({
+      triggerEventId: "evt-3",
+      submissionId: "sub-3",
+      createdAt: "2026-06-02T12:00:00.000Z",
+      before: { status: "reviewing" },
+      after: {
+        status: "rejected",
+        jobId: "job-1",
+        recruiterId: "recruiter-1",
+        recruiterFeedbackReasons: ["missing_hard_filter"],
+      },
+    })
+    assert.ok(event)
+    const db = memoryFirestore()
+
+    assert.equal((await writeRecruiterSubmissionFeedbackEvent(db as never, event)).created, true)
+    assert.equal((await writeRecruiterSubmissionFeedbackEvent(db as never, event)).created, false)
+    assert.deepEqual(db.get("pa-feedback-events/recruiter_submission_feedback_evt-3"), event)
+    assert.equal(db.has("pa-audit-events/marketplace_feedback_recruiter_submission_feedback_evt-3"), true)
+    assert.equal(db.setCount("pa-audit-events/marketplace_feedback_recruiter_submission_feedback_evt-3"), 1)
   })
 })
 

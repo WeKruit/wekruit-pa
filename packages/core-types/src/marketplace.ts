@@ -857,6 +857,30 @@ export const JobPresentedSourceSchema = z.enum([
 ])
 export type JobPresentedSource = z.infer<typeof JobPresentedSourceSchema>
 
+export const RecruiterSubmissionFeedbackOutcomeSchema = z.enum([
+  "submitted",
+  "new",
+  "reviewing",
+  "advanced",
+  "interviewing",
+  "backburner",
+  "offer",
+  "hired",
+  "rejected",
+  "duplicate",
+])
+export type RecruiterSubmissionFeedbackOutcome = z.infer<typeof RecruiterSubmissionFeedbackOutcomeSchema>
+
+const RECRUITER_SUBMISSION_FEEDBACK_FORBIDDEN_PAYLOAD_KEYS = [
+  "candidate",
+  "candidateEmail",
+  "candidateName",
+  "candidateLink",
+  "candidateProfileUrl",
+  "recruiterFeedbackNote",
+  "note",
+]
+
 export const FeedbackEventSchema = z.object({
   eventId: IdSchema,
   kind: z.enum([
@@ -870,6 +894,7 @@ export const FeedbackEventSchema = z.object({
     "candidate_behavior",
     // Flywheel req #4 — a job was offered to a candidate (see contract above).
     "job_presented",
+    "recruiter_submission_feedback",
   ]),
   actor: MarketplaceActorSchema,
   candidateId: IdSchema.optional(),
@@ -925,6 +950,39 @@ export const FeedbackEventSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ["outcome"],
         message: "employer_action outcome must be intro_accepted or intro_rejected",
+      })
+    }
+  }
+  if (event.kind === "recruiter_submission_feedback") {
+    if (!event.jobId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["jobId"],
+        message: "recruiter_submission_feedback feedback events require jobId",
+      })
+    }
+    const outcome = RecruiterSubmissionFeedbackOutcomeSchema.safeParse(event.outcome)
+    if (!outcome.success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["outcome"],
+        message: "recruiter_submission_feedback outcome must be a recruiter submission status",
+      })
+    }
+    const payload = event.payloadRedacted as Record<string, unknown>
+    if (typeof payload.submissionId !== "string" || !payload.submissionId.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["payloadRedacted", "submissionId"],
+        message: "recruiter_submission_feedback payload requires submissionId",
+      })
+    }
+    const forbiddenKey = RECRUITER_SUBMISSION_FEEDBACK_FORBIDDEN_PAYLOAD_KEYS.find((key) => key in payload)
+    if (forbiddenKey) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["payloadRedacted", forbiddenKey],
+        message: "recruiter_submission_feedback payloadRedacted must not contain candidate PII or raw notes",
       })
     }
   }

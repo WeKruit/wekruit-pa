@@ -399,6 +399,76 @@ test("feedback events model job_presented as a first-class flywheel signal", () 
   })
 })
 
+test("feedback events model recruiter submission review as a redacted flywheel signal", () => {
+  const parsed = FeedbackEventSchema.parse({
+    eventId: "fb-recruiter-submission-1",
+    kind: "recruiter_submission_feedback",
+    actor: "operator",
+    jobId: "job-1",
+    outcome: "advanced",
+    evidence: [{ source: "admin", summary: "Recruiter submission review updated", refId: "sub-1" }],
+    payloadRedacted: {
+      submissionId: "sub-1",
+      recruiterId: "recruiter-1",
+      status: "advanced",
+      previousStatus: "reviewing",
+      statusChanged: true,
+      feedbackChanged: true,
+      rating: 4,
+      reasonIds: ["strong_match"],
+      hasFeedbackNote: true,
+      source: "recruiter_board_admin",
+    },
+    createdAt: now,
+  })
+  assert.equal(parsed.kind, "recruiter_submission_feedback")
+  assert.equal(parsed.jobId, "job-1")
+  assert.equal(parsed.outcome, "advanced")
+
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-recruiter-submission-no-job",
+        kind: "recruiter_submission_feedback",
+        actor: "operator",
+        outcome: "advanced",
+        payloadRedacted: { submissionId: "sub-1" },
+        createdAt: now,
+      }),
+    /jobId/
+  )
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-recruiter-submission-no-submission",
+        kind: "recruiter_submission_feedback",
+        actor: "operator",
+        jobId: "job-1",
+        outcome: "advanced",
+        payloadRedacted: {},
+        createdAt: now,
+      }),
+    /submissionId/
+  )
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-recruiter-submission-pii",
+        kind: "recruiter_submission_feedback",
+        actor: "operator",
+        jobId: "job-1",
+        outcome: "advanced",
+        payloadRedacted: {
+          submissionId: "sub-1",
+          candidateEmail: "ada@example.com",
+          recruiterFeedbackNote: "raw admin note",
+        },
+        createdAt: now,
+      }),
+    /must not contain candidate PII or raw notes/
+  )
+})
+
 test("makeJobPresentedEvent builds a writer-ready job_presented event", () => {
   const event = makeJobPresentedEvent({
     eventId: "fb-helper-1",
