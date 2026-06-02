@@ -2165,6 +2165,68 @@ export const paMessageCoalescer = onRequest(
 )
 
 /**
+ * paJobRecSendTask — Cloud Tasks → CF endpoint (HTTP target) for the
+ * matching-rec time-spread (2026-06-02). paJobRecDaily schedules ONE delayed
+ * task per due user at a jittered offset across the spread window; each task
+ * fires here and hands the already-built runtime context to the job-rec
+ * `sendImessage` tool, which writes the synthetic pa-inbound-events doc the
+ * Claire runtime delivers. This spreads the downstream Sendblue load instead
+ * of an all-at-once burst.
+ *
+ * Internal-only (invoker: private, OIDC-signed by the runtime SA — same trust
+ * model as paMessageCoalescer). Body: { userId, context, idempotencyKey,
+ * fromNumber? }. The job-rec sendImessage tool dedups on idempotencyKey, and
+ * paJobRecDaily already stamped lastJobBatchSentAt at enqueue time, so a Cloud
+ * Tasks retry can never double-deliver.
+ */
+export const paJobRecSendTask = onRequest(
+  {
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    maxInstances: 8,
+    cors: false,
+    invoker: "private",
+  },
+  async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as {
+        userId?: unknown
+        context?: unknown
+        idempotencyKey?: unknown
+      }
+      const userId = typeof body.userId === "string" ? body.userId : ""
+      const context =
+        body.context && typeof body.context === "object"
+          ? (body.context as Record<string, unknown>)
+          : null
+      const idempotencyKey =
+        typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined
+      if (!userId || !context) {
+        logger.warn("paJobRecSendTask bad payload", { hasUser: Boolean(userId), hasCtx: Boolean(context) })
+        res.status(400).json({ ok: false, error: "bad_payload" })
+        return
+      }
+      const db = getFirestore()
+      const { sendImessage } = await import("@pa/job-rec")
+      const result = await sendImessage(
+        { userId, context, idempotencyKey },
+        { db, log: (...args: unknown[]) => logger.info("[job-rec-send-task]", ...args) }
+      )
+      logger.info("paJobRecSendTask processed", { userId, ok: result.ok })
+      // 2xx even on a soft no-op (e.g. missing session) so Cloud Tasks does NOT
+      // retry a non-retryable condition; only true infra errors below 5xx.
+      res.status(200).json({ ok: result.ok })
+    } catch (err) {
+      logger.error("paJobRecSendTask fatal", {
+        err: err instanceof Error ? err.message : String(err),
+      })
+      res.status(500).json({ ok: false, error: "internal" })
+    }
+  }
+)
+
+/**
  * paCoalesceBufferSweep — every 60s scheduled CF (R1 mitigation).
  *
  * Force-fires any pa-message-coalesce-buffer doc whose firstReceivedAt is

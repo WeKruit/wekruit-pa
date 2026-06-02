@@ -59,6 +59,17 @@ import {
 import {
   PA_TAG_CLUSTER_REC_FLAG_KEY,
 } from "./tag-cluster-rec.js"
+// Send cadence + time-spread (2026-06-02, Adam). Pure planner; wired below.
+import {
+  REC_CADENCE_DAYS_FLAG_KEY,
+  REC_SEND_SPREAD_WINDOW_MINUTES_FLAG_KEY,
+  DEFAULT_REC_CADENCE_DAYS,
+  DEFAULT_REC_SEND_SPREAD_WINDOW_MINUTES,
+  resolveRecCadenceDays,
+  resolveSendSpreadWindowMinutes,
+  isRecSendDue,
+  planSendSchedule,
+} from "./send-cadence.js"
 // v1.5 / Phase 53.5 — weighted skill match scoring (Adam 2026-05-02 spec).
 import {
   AI_AGENT_SKILL_WEIGHTS,
@@ -76,8 +87,31 @@ export type FlagChecker = (
   db: Firestore,
   key: string,
   ctx: { userId?: string; env?: NodeJS.ProcessEnv },
-  defaultValue: boolean
+  defaultValue: boolean | number
 ) => Promise<unknown>
+
+/**
+ * Time-spread send scheduler (2026-06-02). When wired (production: Cloud Tasks
+ * delayed enqueue), runDailyJobRecBatch hands each due user's already-built
+ * runtime context to this dep WITH a jittered `delayMs` instead of calling
+ * `sendImessage` synchronously. The task fires later → writes the synthetic
+ * pa-inbound-events doc → Claire runtime delivers → spreads the downstream
+ * Sendblue load across the window. Must be idempotent on `idempotencyKey`
+ * (Cloud Tasks dedups equal task names within its tombstone window).
+ *
+ * Returns ok:true when the send was accepted (enqueued). On ok:false the user
+ * is counted as an error and NOT stamped (so the next run retries) — fail-open.
+ */
+export type ScheduleSendFn = (input: {
+  userId: string
+  context: Record<string, unknown>
+  idempotencyKey: string
+  delayMs: number
+  fromNumber?: string
+}) => Promise<{ ok: boolean }>
+
+/** Resolve a user's sticky Sendblue from-number (pacing bucket key). */
+export type FromNumberResolver = (userId: string) => string | undefined
 
 export type DailyBatchDeps = {
   db: Firestore
@@ -136,6 +170,33 @@ export type DailyBatchDeps = {
    * (zero-regression). See tag-cluster-rec.ts for the production fetcher.
    */
   tagClusterFetcher?: TagClusterFetcher
+  /**
+   * Time-spread (2026-06-02) — optional clock override (ms). Tests inject a
+   * fixed value so the cadence due-gate is deterministic. Defaults to the
+   * batch clock derived from `todayYmd` (end-of-UTC-day), falling back to
+   * `Date.now()`.
+   */
+  nowMs?: number
+  /**
+   * Time-spread (2026-06-02) — when provided, each due user's send is ENQUEUED
+   * at a jittered delay via this fn instead of fired synchronously. Production
+   * wires a Cloud Tasks delayed-enqueue. When omitted, sends remain synchronous
+   * (legacy behavior / tests / fail-open).
+   */
+  scheduleSend?: ScheduleSendFn
+  /**
+   * Time-spread (2026-06-02) — resolve a user's sticky Sendblue from-number so
+   * the planner can pace per-number `dailySendCap`. When omitted, users share a
+   * single unbucketed lane (no per-number pacing).
+   */
+  fromNumberForUser?: FromNumberResolver
+  /**
+   * Time-spread (2026-06-02) — per-from-number remaining capacity for THIS
+   * window (dailySendCap − usedToday). A number absent from the map is treated
+   * as unbounded. Read from the Sendblue pool by the CF wiring; this module
+   * never mutates the pool.
+   */
+  numberCapacities?: Record<string, { remaining?: number } | undefined>
 }
 
 export type BatchOutcome = {
@@ -144,6 +205,14 @@ export type BatchOutcome = {
   skippedFlag: number
   skippedNoJobs: number
   errors: number
+  /** Cadence (2026-06-02) — users skipped because last batch < cadence days ago. */
+  skippedNotDue?: number
+  /** Time-spread (2026-06-02) — due users deferred to next run (number at cap). */
+  cappedOut?: number
+  /** Resolved cadence (days) used this run — surfaced for observability. */
+  cadenceDays?: number
+  /** Resolved spread window (minutes) used this run. */
+  spreadWindowMinutes?: number
 }
 
 const DEFAULT_USER_CAP = 100
@@ -1112,27 +1181,98 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
 
   log("[job-rec-daily] loaded_active_profiles", { count: snap.size })
 
+  // ---------------------------------------------------------------------------
+  // Cadence + time-spread pre-pass (2026-06-02). Resolve runtime config once,
+  // then DUE-gate + per-number pace + jitter EVERY active profile BEFORE the
+  // expensive per-user matching loop. Only scheduled users proceed.
+  // ---------------------------------------------------------------------------
+  const nowMs = deps.nowMs ?? batchClockNowMs(todayYmd)
+  const cadenceDays = resolveRecCadenceDays(
+    await deps.getFlag(deps.db, REC_CADENCE_DAYS_FLAG_KEY, { env: process.env }, DEFAULT_REC_CADENCE_DAYS)
+  )
+  const spreadWindowMinutes = resolveSendSpreadWindowMinutes(
+    await deps.getFlag(
+      deps.db,
+      REC_SEND_SPREAD_WINDOW_MINUTES_FLAG_KEY,
+      { env: process.env },
+      DEFAULT_REC_SEND_SPREAD_WINDOW_MINUTES
+    )
+  )
+
   let delivered = 0
   let skippedFlag = 0
   let skippedNoJobs = 0
   let errors = 0
+  let skippedNotDue = 0
 
+  // Resolve per-user eligibility (feature flag + due-gate) up front.
+  const dueUsers: Array<{ userId: string; fromNumber?: string }> = []
   for (const doc of snap.docs) {
-    const profileDoc = doc.data() as JobProfileDoc & { profile?: unknown }
+    const profileDoc = doc.data() as JobProfileDoc & { profile?: unknown; lastJobBatchSentAt?: string | null }
     const userId = profileDoc.userId
+    if (!userId) continue
+    let flagOn = false
     try {
-      const flagOn = Boolean(
-        await deps.getFlag(
-          deps.db,
-          JOB_REC_FLAG_KEY,
-          { userId, env: process.env },
-          false
-        )
+      flagOn = Boolean(
+        await deps.getFlag(deps.db, JOB_REC_FLAG_KEY, { userId, env: process.env }, false)
       )
-      if (!flagOn) {
-        skippedFlag += 1
-        continue
-      }
+    } catch (err) {
+      // Fail-open is wrong here: a flag-read error must not mass-deliver. Treat
+      // as flag-off so a transient read blip can't spam everyone.
+      log("[job-rec-daily] flag_read_failed", {
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      flagOn = false
+    }
+    if (!flagOn) {
+      skippedFlag += 1
+      continue
+    }
+    if (!isRecSendDue(profileDoc.lastJobBatchSentAt ?? null, cadenceDays, nowMs)) {
+      skippedNotDue += 1
+      continue
+    }
+    dueUsers.push({ userId, fromNumber: deps.fromNumberForUser?.(userId) })
+  }
+
+  // Plan the spread: deterministic jitter across the window + per-number cap.
+  const windowMs = spreadWindowMinutes * 60_000
+  const plan = planSendSchedule({
+    users: dueUsers,
+    windowMs,
+    capacityByNumber: deps.numberCapacities,
+  })
+  const cappedOut = plan.cappedOut.length
+  if (cappedOut > 0) {
+    log("[job-rec-daily] capped_out_users_deferred", {
+      count: cappedOut,
+      userIds: plan.cappedOut.map((u) => u.userId).slice(0, 20),
+    })
+  }
+  log("[job-rec-daily] cadence_plan", {
+    cadenceDays,
+    spreadWindowMinutes,
+    active: snap.size,
+    flagOn: dueUsers.length + cappedOut,
+    due: dueUsers.length,
+    scheduled: plan.scheduled.length,
+    cappedOut,
+    skippedNotDue,
+  })
+
+  // Build a userId → doc map so the loop pulls profiles for scheduled users.
+  const docByUser = new Map<string, JobProfileDoc & { profile?: unknown }>()
+  for (const doc of snap.docs) {
+    const d = doc.data() as JobProfileDoc & { profile?: unknown }
+    if (d.userId) docByUser.set(d.userId, d)
+  }
+
+  for (const scheduledSend of plan.scheduled) {
+    const userId = scheduledSend.userId
+    const profileDoc = docByUser.get(userId)
+    if (!profileDoc) continue
+    try {
 
       // Stream F5 — normalize legacy + new-shape profiles to one filter set.
       const normalized = await normalizeDailyProfile({
@@ -2020,14 +2160,29 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
           jobsPerUser,
         )
       }
-      const sendRes = await sendImessage(
-        {
-          userId,
-          context: runtimeContext,
-          idempotencyKey: `${userId}-${todayYmd}-batch`,
-        },
-        { db: deps.db, log }
-      )
+      const idempotencyKey = `${userId}-${todayYmd}-batch`
+      // Time-spread (2026-06-02) — when a scheduleSend dep is wired, ENQUEUE the
+      // send at the planned jittered delay (Cloud Tasks) instead of firing it
+      // synchronously in this loop. The Cloud Tasks task name is derived from
+      // the idempotency key so a re-run within the tombstone window cannot
+      // double-enqueue the same user's batch. When no dep is wired, fall back
+      // to the legacy synchronous handoff (delay 0).
+      const sendRes = deps.scheduleSend
+        ? await deps.scheduleSend({
+            userId,
+            context: runtimeContext,
+            idempotencyKey,
+            delayMs: scheduledSend.delayMs,
+            fromNumber: scheduledSend.fromNumber,
+          })
+        : await sendImessage(
+            {
+              userId,
+              context: runtimeContext,
+              idempotencyKey,
+            },
+            { db: deps.db, log }
+          )
 
       if (sendRes.ok) {
         delivered += 1
@@ -2095,5 +2250,9 @@ export async function runDailyJobRecBatch(deps: DailyBatchDeps): Promise<BatchOu
     skippedFlag,
     skippedNoJobs,
     errors,
+    skippedNotDue,
+    cappedOut,
+    cadenceDays,
+    spreadWindowMinutes,
   }
 }

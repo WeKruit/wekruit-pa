@@ -185,9 +185,34 @@ export type {
   UserEmbedFetcher,
   UserEmbedComputer,
   CrossEncoderReranker,
+  // Send cadence + time-spread (2026-06-02)
+  ScheduleSendFn,
+  FromNumberResolver,
   // Stream H13
   DailyPushContext,
 } from "./daily-batch.js"
+
+// Send cadence + time-spread planner (2026-06-02, Adam). Pure config +
+// due-gate + jitter/pacing primitives — re-exported so the CF wiring + tests
+// can resolve flags and plan schedules without reaching into the module.
+export {
+  REC_CADENCE_DAYS_FLAG_KEY,
+  REC_SEND_SPREAD_WINDOW_MINUTES_FLAG_KEY,
+  DEFAULT_REC_CADENCE_DAYS,
+  DEFAULT_REC_SEND_SPREAD_WINDOW_MINUTES,
+  resolveRecCadenceDays,
+  resolveSendSpreadWindowMinutes,
+  isRecSendDue,
+  planSendSchedule,
+  hashStringToUint as recHashStringToUint,
+} from "./send-cadence.js"
+export type {
+  SchedulableUser,
+  NumberCapacity,
+  PlanSendScheduleInput,
+  ScheduledSend,
+  PlanSendScheduleResult,
+} from "./send-cadence.js"
 
 export {
   rerankWithCrossEncoder,

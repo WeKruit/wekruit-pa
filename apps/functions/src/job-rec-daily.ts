@@ -23,6 +23,7 @@ import {
 } from "@pa/job-rec"
 import { getFlag } from "@pa/pa-persistence"
 import { computeCvEmbedding } from "./lib/embeddings.js"
+import { buildJobRecSendSpreadDeps } from "./job-rec-send-spread.js"
 
 /**
  * Stream G1 — Production user-embedding computer. When daily-batch's
@@ -107,9 +108,19 @@ export const paJobRecDaily = onSchedule(
   async () => {
     const db = getFirestore()
     try {
+      // Time-spread (2026-06-02) — build the cadence/jitter/pacing deps. Loads
+      // the Sendblue pool for sticky from-number + per-group dailySendCap and
+      // wires Cloud Tasks delayed-enqueue when its env is present. Fail-open:
+      // any gap degrades to the synchronous (still due-gated + paced) path.
+      const spread = await buildJobRecSendSpreadDeps(db, {
+        log: (event, payload) => logger.info("[job-rec-daily][spread]", event, payload ?? {}),
+      })
       const result = await runDailyJobRecBatch({
         db,
         getFlag: (db, key, ctx, defaultValue) => getFlag(db, key, ctx, defaultValue),
+        fromNumberForUser: spread.fromNumberForUser,
+        numberCapacities: spread.numberCapacities,
+        scheduleSend: spread.scheduleSend,
         // Stream G1 — full cascade: fetcher → computer (lazy + cache) → fallback.
         userEmbedFetcher: defaultUserEmbedFetcher,
         userEmbedComputer: defaultUserEmbedComputer,
