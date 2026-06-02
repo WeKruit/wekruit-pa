@@ -10,10 +10,8 @@
  *   • ReferPublicPage   → /refer       (public marketing; "earn up to $4,050")
  *   • ReferPublicPage   → /r/:slug     (inviter-anchored landing; hero "X thinks you'd be a fit")
  *
- * Backend wired in Phase C — for now ReferPage reads from
- * `paReferDashboardList` callable when authed, falls back to a small mock
- * for layout previews. The composer posts to `paReferInviteSend`. The
- * /r/:slug landing resolves the slug → inviter display name via
+ * ReferPage reads from `paReferDashboardList` when authed. The composer posts
+ * to `paReferInviteSend`. The /r/:slug landing resolves the slug → inviter display name via
  * `paReferLinkResolve`.
  *
  * Visual: warm cream/terracotta editorial system (same vocab as /me v2).
@@ -104,8 +102,7 @@ interface DashboardData {
   slug: string | null
 }
 
-// Layout-preview mock used when the backend has nothing yet (new user with 0
-// referrals still sees the empty composer + journey rail). Cheap fallback.
+// Empty initial state used before the referral ledger loads.
 const MOCK_PREVIEW: DashboardData = {
   referrals: [],
   totalEarned: 0,
@@ -122,21 +119,27 @@ function useDashboard(): {
   data: DashboardData
   loading: boolean
   signedIn: boolean | null
+  error: string | null
   reload: () => void
 } {
   const [data, setData] = useState<DashboardData>(MOCK_PREVIEW)
   const [loading, setLoading] = useState(true)
   const [signedIn, setSignedIn] = useState<boolean | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
     let cancelled = false
     const unsub = onAuthStateChanged(auth(), async (user) => {
-      if (!cancelled) setLoading(true)
+      if (!cancelled) {
+        setLoading(true)
+        setError(null)
+      }
       if (!user) {
         if (!cancelled) {
           setSignedIn(false)
           setData(MOCK_PREVIEW)
+          setError(null)
           setLoading(false)
         }
         return
@@ -145,9 +148,14 @@ function useDashboard(): {
       try {
         const call = httpsCallable<unknown, DashboardData>(functions(), "paReferDashboardList")
         const result = await call({})
-        if (!cancelled) setData(result.data ?? MOCK_PREVIEW)
-      } catch {
-        if (!cancelled) setData(MOCK_PREVIEW)
+        if (!cancelled) {
+          setData(result.data ?? MOCK_PREVIEW)
+          setError(null)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(referralDashboardErrorMessage(err))
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -159,7 +167,13 @@ function useDashboard(): {
   }, [tick])
 
   const reload = useCallback(() => setTick((n) => n + 1), [])
-  return { data, loading, signedIn, reload }
+  return { data, loading, signedIn, error, reload }
+}
+
+function referralDashboardErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  if (/unauthenticated|auth/i.test(raw)) return "Sign in again to load your referral dashboard."
+  return "Refresh, or try again in a minute."
 }
 
 async function sendInvites(emails: string[], note: string): Promise<{ sent: number; error?: string }> {
@@ -771,7 +785,7 @@ function ReferFAQItem({ q, a }: { q: string; a: string }) {
 // ────────────────────────────────────────────────────────────────────────────
 
 export default function ReferPage() {
-  const { data, loading, signedIn, reload } = useDashboard()
+  const { data, loading, signedIn, error, reload } = useDashboard()
   const [toast, setToast] = useState<string | null>(null)
 
   function handleSent(count: number) {
@@ -818,6 +832,8 @@ export default function ReferPage() {
               </div>
               {loading ? (
                 <p style={{ color: "var(--ink-3)", fontSize: 14 }}>Loading your referrals…</p>
+              ) : error ? (
+                <ReferralDashboardError message={error} onRetry={reload} />
               ) : data.referrals.length === 0 ? (
                 <div
                   style={{
@@ -921,6 +937,34 @@ export default function ReferPage() {
         <span>{toast}</span>
       </div>
     </CandidateShell>
+  )
+}
+
+function ReferralDashboardError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      style={{
+        padding: 22,
+        border: "1px solid var(--danger)",
+        borderRadius: "var(--r-md)",
+        background: "var(--danger-bg)",
+        color: "var(--danger)",
+        fontSize: 14,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 16,
+        flexWrap: "wrap",
+      }}
+    >
+      <span>
+        <strong>Your referral dashboard couldn&apos;t load.</strong> {message}
+      </span>
+      <button type="button" className="wk-btn wk-btn--secondary wk-btn--sm" onClick={onRetry}>
+        Retry
+      </button>
+    </div>
   )
 }
 

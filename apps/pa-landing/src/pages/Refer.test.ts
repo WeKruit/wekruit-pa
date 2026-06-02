@@ -24,3 +24,13 @@ test("ReferPage avoids unsupported traction and payout-certainty claims", () => 
   assert.match(source, /Rewards are tracked here after interviews and offers are confirmed\./)
   assert.match(source, /Payouts are confirmed by WeKruit ops/)
 })
+
+test("ReferPage surfaces dashboard load failures instead of silently showing an empty ledger", () => {
+  assert.match(source, /error: string \| null/)
+  assert.match(source, /function referralDashboardErrorMessage/)
+  assert.match(source, /setError\(referralDashboardErrorMessage\(err\)\)/)
+  assert.match(source, /function ReferralDashboardError\(/)
+  assert.match(source, /role="alert"/)
+  assert.match(source, /Your referral dashboard couldn&apos;t load/)
+  assert.doesNotMatch(source, /catch \{\s*if \(!cancelled\) setData\(MOCK_PREVIEW\)/)
+})
