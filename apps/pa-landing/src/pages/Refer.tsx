@@ -313,8 +313,8 @@ function ReferJourney() {
           </div>
         </div>
         <div className="wk-ref-journey__foot">
-          <span>No cap on referrals. Rewards appear here as each referral moves forward.</span>
-          <span>Payouts are confirmed by WeKruit ops — same-email referrals only.</span>
+          <span>Personal referrals only; daily safety limits apply.</span>
+          <span>Rewards are confirmed by WeKruit ops after each milestone is verified. Payouts are confirmed by WeKruit ops.</span>
         </div>
       </div>
     </section>
@@ -341,7 +341,7 @@ function ReferComposer({
   const [emails, setEmails] = useState<EmailChip[]>([])
   const [draft, setDraft] = useState("")
   const [note, setNote] = useState(
-    "Hey — I've been using WeKruit and Claire's been smarter about matching me than any recruiter. Worth 2 minutes. If you take an interview, I get a kickback (no cost to you).",
+    "Hey — I thought WeKruit might be useful for you. Claire starts with a short conversation, then tracks roles and interviews from there. I may earn a referral reward if a confirmed interview or offer happens.",
   )
   const [copied, setCopied] = useState(false)
   const [sending, setSending] = useState(false)
@@ -734,11 +734,11 @@ function ReferralRowView({ r }: { r: ReferralRecord }) {
 const REFER_FAQ: { q: string; a: string }[] = [
   {
     q: "When do I actually get paid?",
-    a: "Two payouts. $50 lands the week your friend's first hiring-manager interview is confirmed — usually 1–3 weeks after they join. The $4,000 lands after their offer is signed and they start. WeKruit ops emails you to confirm bank details before each payout.",
+    a: "Two payouts. $50 is tracked after your friend's first hiring-manager interview is confirmed. $4,000 is tracked after their offer is signed and they start. WeKruit ops verifies each milestone and contacts you to confirm payout details.",
   },
   {
     q: "What if my friend is already on WeKruit?",
-    a: "Then they're not a new referral, and you won't earn on them — but if they didn't sign up themselves yet, your invite is the first touch and you'll be credited. Claire will tell you within minutes.",
+    a: "Then they're not a new referral, and you won't earn on them. If your invite is the first verified touch, the dashboard credits it after the backend can attribute the same email or verified referral link.",
   },
   {
     q: "What does my friend see?",
@@ -746,7 +746,7 @@ const REFER_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "Is there a cap on how many people I can refer?",
-    a: "No cap. Just don't paste a list you scraped — Claire flags non-personal invites. Hard limit of 25 invites per day per account.",
+    a: "Keep it to personal referrals. The product enforces daily safety limits and flags non-personal invite patterns.",
   },
   {
     q: "What if my friend interviews but doesn't get the offer?",
@@ -828,7 +828,7 @@ export default function ReferPage() {
                   Your referrals
                   <span className="wk-ref-sec__count">{data.referrals.length}</span>
                 </h2>
-                <span className="wk-ref-sec__sub">Live status. Updated by Claire.</span>
+                <span className="wk-ref-sec__sub">Status from your referral dashboard.</span>
               </div>
               {loading ? (
                 <p style={{ color: "var(--ink-3)", fontSize: 14 }}>Loading your referrals…</p>
@@ -896,9 +896,9 @@ export default function ReferPage() {
 
             <div className="wk-ref-tips">
               <h3 className="wk-ref-tips__h">
-                How top earners <em>actually</em> do it
+                Referral habits that <em>hold up</em>
               </h3>
-              <p className="wk-ref-tips__sub">Patterns we see in $10k+ accounts.</p>
+              <p className="wk-ref-tips__sub">What keeps attribution clean and reviewable.</p>
               <ul className="wk-ref-tips__list">
                 <li>
                   <span className="wk-ref-tips__bullet">1</span>
@@ -972,30 +972,27 @@ function ReferralDashboardError({ message, onRetry }: { message: string; onRetry
 // PUBLIC marketing — /refer + /r/:slug
 // ────────────────────────────────────────────────────────────────────────────
 
-const REFER_TOP_EARNERS = [
+const REFER_PUBLIC_RULES = [
   {
-    name: "Devon C.",
-    role: "Staff Eng, ex-Meta",
-    amount: 32400,
-    placed: 8,
+    title: "Same verified email",
+    detail: "Email invites credit when the friend claims the same lower-cased email. Shared links credit after email verification.",
+    value: "Attribution",
     bg: "linear-gradient(135deg, #E8A988 0%, #C77F58 100%)",
-    initials: "DC",
+    initials: "ID",
   },
   {
-    name: "Priya M.",
-    role: "Design Director",
-    amount: 21050,
-    placed: 5,
+    title: "Confirmed hiring-manager interview",
+    detail: "The interview reward is tracked after WeKruit verifies the first hiring-manager interview milestone.",
+    value: fmtMoney(REWARD_INTERVIEW),
     bg: "linear-gradient(135deg, #B7C7A0 0%, #4F6B3C 100%)",
-    initials: "PM",
+    initials: "HM",
   },
   {
-    name: "Jordan K.",
-    role: "VP Product",
-    amount: 16100,
-    placed: 4,
+    title: "Signed offer and start date",
+    detail: "The placement reward is tracked after the offer is signed and the start milestone is verified.",
+    value: fmtMoney(REWARD_PLACEMENT),
     bg: "linear-gradient(135deg, #B5A595 0%, #5A4636 100%)",
-    initials: "JK",
+    initials: "OF",
   },
 ]
 
@@ -1026,7 +1023,7 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
           ) : (
             <div className="wk-ref-hero__eyebrow">
               <PulseDot size={6} />
-              <span>Referral program · live</span>
+              <span>Referral program · tracked</span>
             </div>
           )}
 
@@ -1051,7 +1048,8 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
             ) : (
               <>
                 The program every candidate gets the day they join. <strong>{fmtMoney(REWARD_INTERVIEW)}</strong> per
-                friend interviewed, <strong>{fmtMoney(REWARD_PLACEMENT)}</strong> per friend placed. No cap. No friction.
+                friend interviewed, <strong>{fmtMoney(REWARD_PLACEMENT)}</strong> per friend placed. Personal referrals
+                only; daily safety limits apply.
               </>
             )}
           </p>
@@ -1068,16 +1066,16 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
 
         <div className="wk-ref-public-stats">
           <div className="wk-ref-public-stat">
-            <div className="wk-ref-public-stat__num">{fmtMoney(2_840_500)}</div>
-            <div className="wk-ref-public-stat__lbl">Paid to candidates in referrals</div>
+            <div className="wk-ref-public-stat__num">{fmtMoney(REWARD_INTERVIEW)}</div>
+            <div className="wk-ref-public-stat__lbl">Confirmed interview reward</div>
           </div>
           <div className="wk-ref-public-stat">
-            <div className="wk-ref-public-stat__num">{fmtMoney(32_400)}</div>
-            <div className="wk-ref-public-stat__lbl">Top single-account earnings</div>
+            <div className="wk-ref-public-stat__num">{fmtMoney(REWARD_PLACEMENT)}</div>
+            <div className="wk-ref-public-stat__lbl">Verified offer reward</div>
           </div>
           <div className="wk-ref-public-stat">
-            <div className="wk-ref-public-stat__num">11d</div>
-            <div className="wk-ref-public-stat__lbl">Median time to first payout</div>
+            <div className="wk-ref-public-stat__num">Email</div>
+            <div className="wk-ref-public-stat__lbl">Same-address attribution</div>
           </div>
         </div>
       </div>
@@ -1085,15 +1083,15 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
   )
 }
 
-function ReferPublicProof() {
+function ReferPublicRules() {
   return (
     <section className="wk-ref-sec wk-ref-sec--wide" id="proof">
       <div className="wk-ref-sec__head">
-        <h2 className="wk-ref-sec__h">Top earners, this quarter</h2>
-        <span className="wk-ref-sec__sub">Real candidates. Real payouts. Anonymized initials.</span>
+        <h2 className="wk-ref-sec__h">Referral rules</h2>
+        <span className="wk-ref-sec__sub">The dashboard tracks only milestones WeKruit can verify.</span>
       </div>
       <div className="wk-ref-earners">
-        {REFER_TOP_EARNERS.map((e, i) => (
+        {REFER_PUBLIC_RULES.map((e, i) => (
           <article key={i} className="wk-ref-earner">
             <span
               className="wk-ref-avatar"
@@ -1102,12 +1100,12 @@ function ReferPublicProof() {
               {e.initials}
             </span>
             <div className="wk-ref-earner__body">
-              <h4 className="wk-ref-earner__name">{e.name}</h4>
-              <p className="wk-ref-earner__role">{e.role}</p>
+              <h4 className="wk-ref-earner__name">{e.title}</h4>
+              <p className="wk-ref-earner__role">{e.detail}</p>
             </div>
             <div className="wk-ref-earner__right">
-              <div className="wk-ref-earner__amount">{fmtMoney(e.amount)}</div>
-              <div className="wk-ref-earner__placed">{e.placed} placed</div>
+              <div className="wk-ref-earner__amount">{e.value}</div>
+              <div className="wk-ref-earner__placed">verified</div>
             </div>
           </article>
         ))}
@@ -1175,7 +1173,7 @@ export function ReferPublicPage() {
 
         <div className="wk-ref-public-body">
           <ReferJourney />
-          <ReferPublicProof />
+          <ReferPublicRules />
           <section className="wk-ref-sec wk-ref-sec--wide" id="faq">
             <div className="wk-ref-sec__head">
               <h2 className="wk-ref-sec__h">Common questions</h2>
