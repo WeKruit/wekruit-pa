@@ -156,6 +156,28 @@ describe("runAdminFlywheelEvalSnapshot", () => {
       evidence: [{ source: "admin", summary: "Recruiter submission review updated", refId: "sub-3" }],
       createdAt: "2026-05-14T10:04:00.000Z",
     })
+    await mfs.collection(PA_COLLECTIONS.feedbackEvents).doc("feedback-4").set({
+      eventId: "feedback-4",
+      kind: "recruiter_role_application_decision",
+      actor: "operator",
+      jobId: "job-4",
+      outcome: "approved",
+      payloadRedacted: {
+        applicationId: "app-4",
+        recruiterId: "recruiter-1",
+        status: "approved",
+        previousStatus: "pending",
+        statusChanged: true,
+        preparedCandidateCount: 2,
+        anonymizeCandidates: false,
+        adminReviewRecommendation: "approve",
+        adminReviewQualityScore: 82,
+        hasAdminNote: true,
+        source: "recruiter_board_admin",
+      },
+      evidence: [{ source: "admin", summary: "Recruiter role application approved", refId: "app-4" }],
+      createdAt: "2026-05-14T10:05:00.000Z",
+    })
     await mfs.collection(PA_COLLECTIONS.correctionEvents).doc("corr-1").set({
       eventId: "corr-1",
       targetType: "candidate_profile",
@@ -176,24 +198,27 @@ describe("runAdminFlywheelEvalSnapshot", () => {
     assert.equal(result.generatedAt, now)
     assert.deepEqual(result.counts, {
       evalArtifacts: 1,
-      feedbackEvents: 3,
+      feedbackEvents: 4,
       correctionEvents: 1,
       artifactsByKind: { marketplace_simulation: 1 },
       artifactsByStatus: { ready: 1 },
       correctionsByTarget: { candidate_profile: 1 },
       correctionsByActor: { candidate: 1 },
-      feedbackByKind: { candidate_behavior: 1, employer_action: 1, recruiter_submission_feedback: 1 },
-      feedbackByOutcome: { passed: 1, intro_rejected: 1, advanced: 1 },
+      feedbackByKind: { candidate_behavior: 1, employer_action: 1, recruiter_submission_feedback: 1, recruiter_role_application_decision: 1 },
+      feedbackByOutcome: { passed: 1, intro_rejected: 1, advanced: 1, approved: 1 },
       employerIntroByOutcome: { intro_rejected: 1 },
     })
     assert.equal(result.recentArtifacts[0]!.artifactId, "artifact-1")
     assert.equal(result.recentCorrections[0]!.eventId, "corr-1")
-    assert.equal(result.recentFeedback[0]!.eventId, "feedback-3")
-    assert.equal(result.recentFeedback[0]!.kind, "recruiter_submission_feedback")
-    assert.doesNotMatch(json(result.recentFeedback[0]), /candidate@example\.com|linkedin\.com|raw admin note/)
-    assert.equal(result.recentFeedback[1]!.eventId, "feedback-2")
-    assert.deepEqual(result.recentFeedback[1]!.payloadRedacted, { decision: "rejected" })
-    assert.equal(result.recentFeedback[2]!.eventId, "feedback-1")
-    assert.deepEqual(result.recentFeedback[2]!.payloadRedacted, { behavior: "prescreen_pass" })
+    assert.equal(result.recentFeedback[0]!.eventId, "feedback-4")
+    assert.equal(result.recentFeedback[0]!.kind, "recruiter_role_application_decision")
+    assert.doesNotMatch(json(result.recentFeedback[0]), /candidate@example\.com|linkedin\.com|raw admin note|raw pitch/)
+    assert.equal(result.recentFeedback[1]!.eventId, "feedback-3")
+    assert.equal(result.recentFeedback[1]!.kind, "recruiter_submission_feedback")
+    assert.doesNotMatch(json(result.recentFeedback[1]), /candidate@example\.com|linkedin\.com|raw admin note/)
+    assert.equal(result.recentFeedback[2]!.eventId, "feedback-2")
+    assert.deepEqual(result.recentFeedback[2]!.payloadRedacted, { decision: "rejected" })
+    assert.equal(result.recentFeedback[3]!.eventId, "feedback-1")
+    assert.deepEqual(result.recentFeedback[3]!.payloadRedacted, { behavior: "prescreen_pass" })
   })
 })

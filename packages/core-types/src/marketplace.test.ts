@@ -469,6 +469,102 @@ test("feedback events model recruiter submission review as a redacted flywheel s
   )
 })
 
+test("feedback events model recruiter role application decisions as redacted flywheel signals", () => {
+  const parsed = FeedbackEventSchema.parse({
+    eventId: "fb-recruiter-role-application-1",
+    kind: "recruiter_role_application_decision",
+    actor: "operator",
+    jobId: "job-1",
+    outcome: "approved",
+    evidence: [{ source: "admin", summary: "Recruiter role application approved", refId: "app-1" }],
+    payloadRedacted: {
+      applicationId: "app-1",
+      recruiterId: "recruiter-1",
+      status: "approved",
+      previousStatus: "pending",
+      statusChanged: true,
+      preparedCandidateCount: 2,
+      anonymizeCandidates: true,
+      adminReviewRecommendation: "approve",
+      adminReviewQualityScore: 82,
+      hasAdminNote: true,
+      source: "recruiter_board_admin",
+    },
+    createdAt: now,
+  })
+  assert.equal(parsed.kind, "recruiter_role_application_decision")
+  assert.equal(parsed.jobId, "job-1")
+  assert.equal(parsed.outcome, "approved")
+
+  for (const outcome of ["approved", "not_approved", "rescinded"]) {
+    FeedbackEventSchema.parse({
+      eventId: `fb-recruiter-role-application-${outcome}`,
+      kind: "recruiter_role_application_decision",
+      actor: "operator",
+      jobId: "job-1",
+      outcome,
+      payloadRedacted: { applicationId: `app-${outcome}` },
+      createdAt: now,
+    })
+  }
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-recruiter-role-application-pending",
+        kind: "recruiter_role_application_decision",
+        actor: "operator",
+        jobId: "job-1",
+        outcome: "pending",
+        payloadRedacted: { applicationId: "app-1" },
+        createdAt: now,
+      }),
+    /outcome/
+  )
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-recruiter-role-application-no-job",
+        kind: "recruiter_role_application_decision",
+        actor: "operator",
+        outcome: "approved",
+        payloadRedacted: { applicationId: "app-1" },
+        createdAt: now,
+      }),
+    /jobId/
+  )
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-recruiter-role-application-no-app",
+        kind: "recruiter_role_application_decision",
+        actor: "operator",
+        jobId: "job-1",
+        outcome: "approved",
+        payloadRedacted: {},
+        createdAt: now,
+      }),
+    /applicationId/
+  )
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-recruiter-role-application-unsafe",
+        kind: "recruiter_role_application_decision",
+        actor: "operator",
+        jobId: "job-1",
+        outcome: "approved",
+        payloadRedacted: {
+          applicationId: "app-1",
+          pitch: "Raw recruiter pitch",
+          adminNote: "Raw admin note",
+          preparedCandidateIds: ["cand-1"],
+        },
+        createdAt: now,
+      }),
+    /must not contain raw application text or candidate identifiers/
+  )
+})
+
 test("makeJobPresentedEvent builds a writer-ready job_presented event", () => {
   const event = makeJobPresentedEvent({
     eventId: "fb-helper-1",

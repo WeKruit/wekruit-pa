@@ -4261,6 +4261,41 @@ interface RecruiterSubmissionFeedbackEvent {
   createdAt: string
 }
 
+const RECRUITER_ROLE_APPLICATION_DECISION_OUTCOMES = [
+  "approved",
+  "not_approved",
+  "rescinded",
+] as const
+
+type RecruiterRoleApplicationDecisionOutcome = (typeof RECRUITER_ROLE_APPLICATION_DECISION_OUTCOMES)[number]
+
+interface RecruiterRoleApplicationDecisionEvent {
+  eventId: string
+  kind: "recruiter_role_application_decision"
+  actor: "operator"
+  jobId: string
+  outcome: RecruiterRoleApplicationDecisionOutcome
+  evidence: Array<{
+    source: "admin"
+    summary: string
+    refId: string
+  }>
+  payloadRedacted: {
+    applicationId: string
+    recruiterId: string
+    status: RecruiterRoleApplicationDecisionOutcome
+    previousStatus: RecruiterRoleApplicationStatus
+    statusChanged: boolean
+    preparedCandidateCount: number
+    anonymizeCandidates: boolean
+    adminReviewRecommendation: string | null
+    adminReviewQualityScore: number | null
+    hasAdminNote: boolean
+    source: "recruiter_board_admin"
+  }
+  createdAt: string
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`
   if (value && typeof value === "object") {
@@ -4316,6 +4351,131 @@ function recruiterSubmissionFeedbackEventId(triggerEventId: string): string {
   const safeEventId = triggerEventId.trim().replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 120)
   if (safeEventId) return `recruiter_submission_feedback_${safeEventId}`
   return `recruiter_submission_feedback_${createHash("sha256").update(triggerEventId).digest("hex").slice(0, 24)}`
+}
+
+function recruiterRoleApplicationDecisionOutcome(raw: unknown): RecruiterRoleApplicationDecisionOutcome | null {
+  return RECRUITER_ROLE_APPLICATION_DECISION_OUTCOMES.includes(raw as RecruiterRoleApplicationDecisionOutcome)
+    ? raw as RecruiterRoleApplicationDecisionOutcome
+    : null
+}
+
+function recruiterRoleApplicationStatus(raw: unknown, fallback: RecruiterRoleApplicationStatus = "pending"): RecruiterRoleApplicationStatus | null {
+  if (raw === undefined || raw === null || raw === "") return fallback
+  return RECRUITER_ROLE_APPLICATION_STATUSES.includes(raw as RecruiterRoleApplicationStatus)
+    ? raw as RecruiterRoleApplicationStatus
+    : null
+}
+
+function recruiterRoleApplicationDecisionEventId(triggerEventId: string): string {
+  const safeEventId = triggerEventId.trim().replace(/[^A-Za-z0-9_.:-]/g, "_").slice(0, 120)
+  if (safeEventId) return `recruiter_role_application_decision_${safeEventId}`
+  return `recruiter_role_application_decision_${createHash("sha256").update(triggerEventId).digest("hex").slice(0, 24)}`
+}
+
+function recruiterRoleApplicationDecisionLabel(outcome: RecruiterRoleApplicationDecisionOutcome): string {
+  switch (outcome) {
+    case "approved": return "approved"
+    case "not_approved": return "not approved"
+    case "rescinded": return "rescinded"
+  }
+}
+
+function recruiterRoleApplicationPreparedCandidateCount(data: Record<string, unknown>): number {
+  const count = data.preparedCandidateCount
+  if (typeof count === "number" && Number.isInteger(count) && count >= 0) return count
+  if (!Array.isArray(data.preparedCandidateIds)) return 0
+  return data.preparedCandidateIds.filter((id): id is string => typeof id === "string" && Boolean(id.trim())).length
+}
+
+function recruiterRoleApplicationReviewRecommendation(raw: unknown): string | null {
+  if (typeof raw !== "string") return null
+  const recommendation = raw.trim()
+  return /^[a-z0-9_:-]{1,80}$/i.test(recommendation) ? recommendation : null
+}
+
+function recruiterRoleApplicationReviewQualityScore(raw: unknown): number | null {
+  if (typeof raw !== "number" || !Number.isInteger(raw)) return null
+  return raw >= 0 && raw <= 100 ? raw : null
+}
+
+export function buildRecruiterRoleApplicationDecisionEvent(input: {
+  triggerEventId: string
+  applicationId: string
+  createdAt: string
+  before: Record<string, unknown> | null
+  after: Record<string, unknown> | null
+}): RecruiterRoleApplicationDecisionEvent | null {
+  if (!input.before || !input.after) return null
+  if (!input.triggerEventId || !input.applicationId) return null
+
+  const beforeStatus = recruiterRoleApplicationStatus(input.before.status)
+  const afterStatus = recruiterRoleApplicationDecisionOutcome(input.after.status)
+  if (!beforeStatus || !afterStatus) return null
+  const statusChanged = beforeStatus !== afterStatus
+  if (!statusChanged) return null
+
+  const jobId = typeof input.after.jobId === "string" && input.after.jobId.trim()
+    ? input.after.jobId.trim()
+    : ""
+  const recruiterId = typeof input.after.recruiterId === "string" && input.after.recruiterId.trim()
+    ? input.after.recruiterId.trim()
+    : ""
+  if (!jobId || !recruiterId) return null
+
+  const adminNote = typeof input.after.adminNote === "string" ? input.after.adminNote.trim() : ""
+
+  return {
+    eventId: recruiterRoleApplicationDecisionEventId(input.triggerEventId),
+    kind: "recruiter_role_application_decision",
+    actor: "operator",
+    jobId,
+    outcome: afterStatus,
+    evidence: [{
+      source: "admin",
+      summary: `Recruiter role application ${recruiterRoleApplicationDecisionLabel(afterStatus)}`,
+      refId: input.applicationId,
+    }],
+    payloadRedacted: {
+      applicationId: input.applicationId,
+      recruiterId,
+      status: afterStatus,
+      previousStatus: beforeStatus,
+      statusChanged,
+      preparedCandidateCount: recruiterRoleApplicationPreparedCandidateCount(input.after),
+      anonymizeCandidates: input.after.anonymizeCandidates === true,
+      adminReviewRecommendation: recruiterRoleApplicationReviewRecommendation(input.after.adminReviewRecommendation),
+      adminReviewQualityScore: recruiterRoleApplicationReviewQualityScore(input.after.adminReviewQualityScore),
+      hasAdminNote: Boolean(adminNote),
+      source: "recruiter_board_admin",
+    },
+    createdAt: input.createdAt,
+  }
+}
+
+export async function writeRecruiterRoleApplicationDecisionEvent(
+  db: Firestore,
+  event: RecruiterRoleApplicationDecisionEvent,
+): Promise<{ event: RecruiterRoleApplicationDecisionEvent; created: boolean }> {
+  const ref = db.collection(FEEDBACK_EVENTS_COLLECTION).doc(event.eventId)
+  const existing = await ref.get()
+  if (existing.exists) {
+    const data = existing.data() as RecruiterRoleApplicationDecisionEvent
+    if (stableJson(data) !== stableJson(event)) {
+      throw new Error(`conflicting_duplicate_event:${FEEDBACK_EVENTS_COLLECTION}/${event.eventId}`)
+    }
+    return { event: data, created: false }
+  }
+  await ref.set(event as unknown as Record<string, unknown>)
+  await db.collection(AUDIT_EVENTS_COLLECTION).doc(auditId("marketplace_feedback", event.eventId)).set({
+    id: auditId("marketplace_feedback", event.eventId),
+    action: "marketplace.feedback.append",
+    eventId: event.eventId,
+    candidateId: null,
+    jobId: event.jobId,
+    actor: event.actor,
+    createdAt: event.createdAt,
+  })
+  return { event, created: true }
 }
 
 export function buildRecruiterSubmissionFeedbackEvent(input: {
@@ -4582,26 +4742,49 @@ export const paRecruiterRoleApplicationDecisionNotify = onDocumentWritten(
   async (event) => {
     const before = event.data?.before.exists ? event.data.before.data() as Record<string, unknown> : null
     const after = event.data?.after.exists ? event.data.after.data() as Record<string, unknown> : null
+    if (!after) return
     const notification = roleApplicationDecisionNotification(before, after)
-    if (!notification || !after) return
+    const decisionEvent = buildRecruiterRoleApplicationDecisionEvent({
+      triggerEventId: event.id,
+      applicationId: event.params.applicationId,
+      createdAt: new Date().toISOString(),
+      before,
+      after,
+    })
+    if (!notification && !decisionEvent) return
     const recruiterId = typeof after.recruiterId === "string" ? after.recruiterId : ""
     if (!recruiterId) return
-    const created = await createRecruiterInAppNotification(getFirestore(), {
-      type: "role_application_decision",
-      eventId: event.id,
-      recruiterId,
-      recruiterEmail: typeof after.recruiterEmail === "string" ? after.recruiterEmail : undefined,
-      entityType: "role_application",
-      entityId: event.params.applicationId,
-      title: notification.title,
-      body: notification.body,
-      jobId: typeof after.jobId === "string" ? after.jobId : undefined,
-      publicJobId: typeof after.inboundJobId === "string" ? after.inboundJobId : undefined,
-      roleTitle: typeof after.jobTitleSnapshot === "string" ? after.jobTitleSnapshot : undefined,
-      companyLabel: typeof after.companyLabelSnapshot === "string" ? after.companyLabelSnapshot : undefined,
-      roleUrl: recruiterNotificationRoleUrl(after),
-    })
-    if (created) logger.info("paRecruiterRoleApplicationDecisionNotify_done", { applicationId: event.params.applicationId, recruiterId })
+    const db = getFirestore()
+    if (decisionEvent) {
+      const result = await writeRecruiterRoleApplicationDecisionEvent(db, decisionEvent)
+      if (result.created) {
+        logger.info("paRecruiterRoleApplicationDecisionEvent_done", {
+          applicationId: event.params.applicationId,
+          eventId: decisionEvent.eventId,
+          jobId: decisionEvent.jobId,
+          outcome: decisionEvent.outcome,
+          recruiterId,
+        })
+      }
+    }
+    if (notification) {
+      const created = await createRecruiterInAppNotification(db, {
+        type: "role_application_decision",
+        eventId: event.id,
+        recruiterId,
+        recruiterEmail: typeof after.recruiterEmail === "string" ? after.recruiterEmail : undefined,
+        entityType: "role_application",
+        entityId: event.params.applicationId,
+        title: notification.title,
+        body: notification.body,
+        jobId: typeof after.jobId === "string" ? after.jobId : undefined,
+        publicJobId: typeof after.inboundJobId === "string" ? after.inboundJobId : undefined,
+        roleTitle: typeof after.jobTitleSnapshot === "string" ? after.jobTitleSnapshot : undefined,
+        companyLabel: typeof after.companyLabelSnapshot === "string" ? after.companyLabelSnapshot : undefined,
+        roleUrl: recruiterNotificationRoleUrl(after),
+      })
+      if (created) logger.info("paRecruiterRoleApplicationDecisionNotify_done", { applicationId: event.params.applicationId, recruiterId })
+    }
   },
 )
 

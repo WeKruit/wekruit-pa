@@ -17,6 +17,7 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import {
   buildRecruiterRoleIntelligence,
+  buildRecruiterRoleApplicationDecisionEvent,
   buildRecruiterSubmissionFeedbackEvent,
   candidateCalibrationNotification,
   candidateConfirmationNotification,
@@ -53,6 +54,7 @@ import {
   validateRecruiterSourcedCandidateInput,
   validateRecruiterWorkspacePreferences,
   validateSubmission,
+  writeRecruiterRoleApplicationDecisionEvent,
   writeRecruiterSubmissionFeedbackEvent,
   type RecruiterBoardChecklistGroup,
   type RecruiterBoardPayload,
@@ -551,6 +553,102 @@ describe("recruiter role question answer notifications", () => {
       status: "answered",
       answer: "Target builders with systems ownership.",
     }), null)
+  })
+})
+
+describe("recruiter role application decision flywheel events", () => {
+  it("builds a redacted feedback event when admin decides role access", () => {
+    const event = buildRecruiterRoleApplicationDecisionEvent({
+      triggerEventId: "evt-role-1",
+      applicationId: "app-1",
+      createdAt: "2026-06-02T12:00:00.000Z",
+      before: {
+        status: "pending",
+        pitch: "I have Ada Lovelace ready for this role.",
+        preparedCandidateIds: ["cand-1"],
+      },
+      after: {
+        status: "approved",
+        jobId: "job-1",
+        recruiterId: "recruiter-1",
+        recruiterEmail: "recruiter@example.com",
+        pitch: "I have Ada Lovelace ready for this role.",
+        adminNote: "Approved because Ada is a strong fit; ada@example.com",
+        preparedCandidateIds: ["cand-1", "cand-2"],
+        preparedCandidateCount: 2,
+        anonymizeCandidates: true,
+        adminReviewRecommendation: "approve",
+        adminReviewQualityScore: 82,
+      },
+    })
+
+    assert.equal(event?.eventId, "recruiter_role_application_decision_evt-role-1")
+    assert.equal(event?.kind, "recruiter_role_application_decision")
+    assert.equal(event?.actor, "operator")
+    assert.equal(event?.jobId, "job-1")
+    assert.equal(event?.outcome, "approved")
+    assert.deepEqual(event?.payloadRedacted, {
+      applicationId: "app-1",
+      recruiterId: "recruiter-1",
+      status: "approved",
+      previousStatus: "pending",
+      statusChanged: true,
+      preparedCandidateCount: 2,
+      anonymizeCandidates: true,
+      adminReviewRecommendation: "approve",
+      adminReviewQualityScore: 82,
+      hasAdminNote: true,
+      source: "recruiter_board_admin",
+    })
+    assert.equal(event?.evidence[0]?.source, "admin")
+    assert.equal(event?.evidence[0]?.refId, "app-1")
+    const serialized = JSON.stringify(event)
+    assert.doesNotMatch(serialized, /Ada Lovelace/)
+    assert.doesNotMatch(serialized, /ada@example\.com/)
+    assert.doesNotMatch(serialized, /cand-1/)
+    assert.doesNotMatch(serialized, /strong fit/)
+  })
+
+  it("skips event construction for pending/no-op role application changes", () => {
+    assert.equal(buildRecruiterRoleApplicationDecisionEvent({
+      triggerEventId: "evt-role-2",
+      applicationId: "app-2",
+      createdAt: "2026-06-02T12:00:00.000Z",
+      before: { status: "pending", jobId: "job-1", recruiterId: "recruiter-1" },
+      after: { status: "pending", jobId: "job-1", recruiterId: "recruiter-1" },
+    }), null)
+    assert.equal(buildRecruiterRoleApplicationDecisionEvent({
+      triggerEventId: "evt-role-3",
+      applicationId: "app-3",
+      createdAt: "2026-06-02T12:00:00.000Z",
+      before: { status: "approved", jobId: "job-1", recruiterId: "recruiter-1" },
+      after: { status: "approved", jobId: "job-1", recruiterId: "recruiter-1", reviewedAt: "2026-06-02T12:00:00.000Z" },
+    }), null)
+  })
+
+  it("writes role application decision events idempotently with one audit row", async () => {
+    const event = buildRecruiterRoleApplicationDecisionEvent({
+      triggerEventId: "evt-role-4",
+      applicationId: "app-4",
+      createdAt: "2026-06-02T12:00:00.000Z",
+      before: { status: "pending" },
+      after: {
+        status: "not_approved",
+        jobId: "job-1",
+        recruiterId: "recruiter-1",
+        preparedCandidateCount: 0,
+        adminReviewRecommendation: "decline",
+        adminReviewQualityScore: 41,
+      },
+    })
+    assert.ok(event)
+    const db = memoryFirestore()
+
+    assert.equal((await writeRecruiterRoleApplicationDecisionEvent(db as never, event)).created, true)
+    assert.equal((await writeRecruiterRoleApplicationDecisionEvent(db as never, event)).created, false)
+    assert.deepEqual(db.get("pa-feedback-events/recruiter_role_application_decision_evt-role-4"), event)
+    assert.equal(db.has("pa-audit-events/marketplace_feedback_recruiter_role_application_decision_evt-role-4"), true)
+    assert.equal(db.setCount("pa-audit-events/marketplace_feedback_recruiter_role_application_decision_evt-role-4"), 1)
   })
 })
 

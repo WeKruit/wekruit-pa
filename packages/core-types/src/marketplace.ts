@@ -871,6 +871,15 @@ export const RecruiterSubmissionFeedbackOutcomeSchema = z.enum([
 ])
 export type RecruiterSubmissionFeedbackOutcome = z.infer<typeof RecruiterSubmissionFeedbackOutcomeSchema>
 
+export const RecruiterRoleApplicationDecisionOutcomeSchema = z.enum([
+  "approved",
+  "not_approved",
+  "rescinded",
+])
+export type RecruiterRoleApplicationDecisionOutcome = z.infer<
+  typeof RecruiterRoleApplicationDecisionOutcomeSchema
+>
+
 const RECRUITER_SUBMISSION_FEEDBACK_FORBIDDEN_PAYLOAD_KEYS = [
   "candidate",
   "candidateEmail",
@@ -879,6 +888,19 @@ const RECRUITER_SUBMISSION_FEEDBACK_FORBIDDEN_PAYLOAD_KEYS = [
   "candidateProfileUrl",
   "recruiterFeedbackNote",
   "note",
+]
+
+const RECRUITER_ROLE_APPLICATION_DECISION_FORBIDDEN_PAYLOAD_KEYS = [
+  "pitch",
+  "adminNote",
+  "note",
+  "preparedCandidateIds",
+  "preparedCandidates",
+  "candidate",
+  "candidateEmail",
+  "candidateName",
+  "candidateLink",
+  "candidateProfileUrl",
 ]
 
 export const FeedbackEventSchema = z.object({
@@ -895,6 +917,7 @@ export const FeedbackEventSchema = z.object({
     // Flywheel req #4 — a job was offered to a candidate (see contract above).
     "job_presented",
     "recruiter_submission_feedback",
+    "recruiter_role_application_decision",
   ]),
   actor: MarketplaceActorSchema,
   candidateId: IdSchema.optional(),
@@ -983,6 +1006,39 @@ export const FeedbackEventSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ["payloadRedacted", forbiddenKey],
         message: "recruiter_submission_feedback payloadRedacted must not contain candidate PII or raw notes",
+      })
+    }
+  }
+  if (event.kind === "recruiter_role_application_decision") {
+    if (!event.jobId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["jobId"],
+        message: "recruiter_role_application_decision feedback events require jobId",
+      })
+    }
+    const outcome = RecruiterRoleApplicationDecisionOutcomeSchema.safeParse(event.outcome)
+    if (!outcome.success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["outcome"],
+        message: "recruiter_role_application_decision outcome must be an admin decision status",
+      })
+    }
+    const payload = event.payloadRedacted as Record<string, unknown>
+    if (typeof payload.applicationId !== "string" || !payload.applicationId.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["payloadRedacted", "applicationId"],
+        message: "recruiter_role_application_decision payload requires applicationId",
+      })
+    }
+    const forbiddenKey = RECRUITER_ROLE_APPLICATION_DECISION_FORBIDDEN_PAYLOAD_KEYS.find((key) => key in payload)
+    if (forbiddenKey) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["payloadRedacted", forbiddenKey],
+        message: "recruiter_role_application_decision payloadRedacted must not contain raw application text or candidate identifiers",
       })
     }
   }
