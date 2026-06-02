@@ -772,6 +772,7 @@ function CandidateMeReady({
                 loading={matchesLoading}
                 errored={matchesErrored}
                 error={matchesError}
+                claireHref={claireHref}
               />
             </div>
 
@@ -1550,11 +1551,13 @@ function MeNewMatches({
   loading,
   errored,
   error,
+  claireHref,
 }: {
   matches: CandidateMatchCard[]
   loading: boolean
   errored: boolean
   error: string | null
+  claireHref: string | null
 }) {
   return (
     <section className="wkv3-sec" id="matches">
@@ -1588,12 +1591,31 @@ function MeNewMatches({
           </Link>
         </>
       ) : (
-        <div className="wkv3-empty-block">
-          <h3>No roles yet.</h3>
-          <p>Claire is matching you. Roles show up here when they clearly fit your profile.</p>
-        </div>
+        <MeNewRolesEmptyState claireHref={claireHref} />
       )}
     </section>
+  )
+}
+
+function MeNewRolesEmptyState({ claireHref }: { claireHref: string | null }) {
+  return (
+    <div className="wkv3-empty-block wkv3-empty-block--actionable">
+      <h3>No new roles match your profile yet.</h3>
+      <p>
+        Claire is still matching. Update target roles, locations, and deal-breakers so new roles can surface with
+        clearer evidence.
+      </p>
+      <div className="wkv3-empty-actions">
+        <Link to="/me/profile#match-preferences" className="wk-btn wk-btn--primary wk-btn--sm">
+          Update matching profile <Icon name="arrow-right" size={13} stroke={2} />
+        </Link>
+        {claireHref ? (
+          <a href={claireHref} className="wk-btn wk-btn--secondary wk-btn--sm">
+            Message Claire <Icon name="message" size={12} stroke={1.9} />
+          </a>
+        ) : null}
+      </div>
+    </div>
   )
 }
 
@@ -2283,6 +2305,9 @@ const ME_V3_STYLES = `
 }
 .wkv3-empty-block h3 { margin: 0 0 6px; font-family: var(--font-serif); font-weight: 400; font-size: 20px; color: var(--ink); letter-spacing: -0.018em; }
 .wkv3-empty-block p { margin: 0 auto; color: var(--ink-2); font-size: 13px; max-width: 460px; }
+.wkv3-empty-actions {
+  margin-top: 16px; display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap;
+}
 
 /* Responsive */
 @media (max-width: 1180px) {

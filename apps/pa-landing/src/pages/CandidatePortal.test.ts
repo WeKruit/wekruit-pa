@@ -73,6 +73,16 @@ test("CandidatePortal roles page empty state offers real next actions", () => {
   assert.doesNotMatch(source, /<h3>Nothing here\.<\/h3>/)
 })
 
+test("CandidatePortal /me new roles empty state offers real next actions", () => {
+  assert.match(source, /<MeNewMatches[\s\S]*claireHref=\{claireHref\}/)
+  assert.match(source, /function MeNewRolesEmptyState\(/)
+  assert.match(source, /No new roles match your profile yet\./)
+  assert.match(source, /Update target roles, locations, and deal-breakers/)
+  assert.match(source, /<Link to="\/me\/profile#match-preferences" className="wk-btn wk-btn--primary wk-btn--sm">[\s\S]*Update matching profile/)
+  assert.match(source, /claireHref \? \([\s\S]*Message Claire/)
+  assert.doesNotMatch(source, /<h3>No roles yet\.<\/h3>/)
+})
+
 test("CandidatePortal does not label pipeline reasons as Claire match evidence", () => {
   assert.doesNotMatch(source, /<em>Roles<\/em> Claire matched for you\./)
   assert.doesNotMatch(source, /Pulling the roles Claire matched for you\./)
