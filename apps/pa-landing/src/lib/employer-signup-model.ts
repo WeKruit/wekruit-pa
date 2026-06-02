@@ -41,9 +41,6 @@ export function validateEmployerSignupForm(form: EmployerSignupFormState): strin
   if (splitRoleBriefs(form.rolesHiring).length === 0) {
     return "Primary role brief is required before Claire can screen candidates."
   }
-  if (!form.notes.trim()) {
-    return "Must-haves are required so Claire can probe the right evidence."
-  }
   if (splitRoleBriefs(form.hardFilters).length === 0) {
     return "Hard filters are required so Claire knows what must stop a pass."
   }
@@ -52,6 +49,9 @@ export function validateEmployerSignupForm(form: EmployerSignupFormState): strin
   }
   if (!form.calibrationExamples.trim()) {
     return "Calibration examples are required so Claire knows what a strong pass and false positive look like."
+  }
+  if (!form.notes.trim()) {
+    return "Must-haves are required so Claire can probe the right evidence."
   }
   if (!form.introHandoff.trim()) {
     return "Intro handoff is required so passed candidates have a real next step."

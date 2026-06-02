@@ -68,6 +68,28 @@ test("validateEmployerSignupForm requires the post-pass intro handoff", () => {
   )
 })
 
+test("validateEmployerSignupForm reports missing fields in the visible form order", () => {
+  assert.equal(
+    validateEmployerSignupForm({
+      ...VALID_FORM,
+      hardFilters: " ",
+      screeningQuestions: " ",
+      calibrationExamples: " ",
+      notes: " ",
+    }),
+    "Hard filters are required so Claire knows what must stop a pass.",
+  )
+
+  assert.equal(
+    validateEmployerSignupForm({
+      ...VALID_FORM,
+      calibrationExamples: " ",
+      notes: " ",
+    }),
+    "Calibration examples are required so Claire knows what a strong pass and false positive look like.",
+  )
+})
+
 test("validateEmployerSignupForm accepts a complete role-intake form", () => {
   assert.equal(validateEmployerSignupForm(VALID_FORM), null)
 })
