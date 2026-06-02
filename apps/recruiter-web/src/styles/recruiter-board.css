@@ -1960,6 +1960,49 @@
   line-height: 1;
 }
 
+.rb-submission-packet__gates {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-submission-packet__gates article {
+  min-width: 0;
+  border: 1px solid #eee7dd;
+  border-top: 3px solid #8d887e;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.76);
+  padding: 11px;
+}
+
+.rb-submission-packet__gates article.is-ready {
+  border-top-color: #1e6b34;
+  background: #f7fcf8;
+}
+
+.rb-submission-packet__gates article.is-watch {
+  border-top-color: #b77c2f;
+  background: #fffaf1;
+}
+
+.rb-submission-packet__gates article.is-blocked {
+  border-top-color: #a33a2d;
+  background: #fff6f4;
+}
+
+.rb-submission-packet__gates span {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-submission-packet__gates strong {
+  display: block;
+  margin-bottom: 5px;
+}
+
 .rb-submission-packet__grid {
   display: grid;
   grid-template-columns: 1.05fr 0.95fr 1fr;
@@ -9459,6 +9502,9 @@
   .rb-submission-packet__grid {
     grid-template-columns: 1fr;
   }
+  .rb-submission-packet__gates {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .rb-submission-packet__checks {
     grid-template-columns: 1fr;
   }
@@ -9841,6 +9887,7 @@
   .rb-match-command__cards,
   .rb-submission-command__cards,
   .rb-submission-deal-room__gates,
+  .rb-submission-packet__gates,
   .rb-role-market-strip,
   .rb-role-cockpit,
   .rb-submissions-empty__steps,

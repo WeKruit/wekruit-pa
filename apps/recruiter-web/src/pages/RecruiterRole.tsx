@@ -262,6 +262,13 @@ function formatSubmissionFailure(reason?: string): string {
 
 type RoleChecklistKind = CollabJob["recruiterBoard"]["checklist"]["groups"][number]["kind"]
 
+type RoleSubmissionPacketGate = {
+  label: string
+  value: string
+  detail: string
+  tone: "ready" | "watch" | "blocked"
+}
+
 type RoleSubmissionPacket = {
   score: number
   label: string
@@ -273,6 +280,9 @@ type RoleSubmissionPacket = {
   nextAction: string
   missingHard: string[]
   antiFlags: string[]
+  gates: RoleSubmissionPacketGate[]
+  canSubmit: boolean
+  submitLabel: string
 }
 
 type CandidateIdentityCheckStatus = "missing" | "checking" | "clear" | "conflict" | "error"
@@ -281,6 +291,11 @@ type CandidateIdentityCheckState = {
   status: CandidateIdentityCheckStatus
   result: RecruiterCandidateIdentityCheckResult | null
   error: string | null
+  inputKey: string | null
+}
+
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
 }
 
 type RoleCalibrationBrief = {
@@ -644,8 +659,11 @@ function buildRoleSubmissionPacket(input: {
   roleFeedback: RecruiterRoleFeedbackItem | null
   roleQuestions: RecruiterRoleQuestionItem[]
   intelligence: RecruiterRoleIntelligenceItem | null
+  identityCheck: CandidateIdentityCheckState
+  approvedForRole: boolean
+  application: RecruiterRoleApplicationItem | null
 }): RoleSubmissionPacket {
-  const { job, form, pendingSlots, selectedCandidate, roleCandidates, roleSubmissions, roleFeedback, roleQuestions, intelligence } = input
+  const { job, form, pendingSlots, selectedCandidate, roleCandidates, roleSubmissions, roleFeedback, roleQuestions, intelligence, identityCheck, approvedForRole, application } = input
   const hardItems = roleChecklistItems(job, "hard")
   const fitItems = roleChecklistItems(job, "fit")
   const bonusItems = roleChecklistItems(job, "bonus")
@@ -660,17 +678,149 @@ function buildRoleSubmissionPacket(input: {
   const blockers: string[] = []
   const warnings: string[] = []
   const proof: string[] = []
-  if (!form.candidateName.trim()) blockers.push("Candidate name is missing.")
-  if (!form.candidateEmail.trim()) blockers.push("Candidate email is missing.")
-  if (!form.candidateLink.trim()) blockers.push("LinkedIn or resume link is missing.")
+  const gates: RoleSubmissionPacketGate[] = []
+  const submitterName = form.submitterName.trim()
+  const submitterEmail = form.submitterEmail.trim()
+  const candidateName = form.candidateName.trim()
+  const candidateEmail = form.candidateEmail.trim().toLowerCase()
+  const candidateLink = form.candidateLink.trim()
+  const candidateNotes = form.candidateNotes.trim()
+  const candidateEmailValid = candidateEmail ? isValidEmail(candidateEmail) : false
+  const submitterEmailValid = submitterEmail ? isValidEmail(submitterEmail) : false
+  const identityInputKey = `${job.jobId}|${candidateEmail}|${candidateLink}`
+  const identityMatchesPacket = identityCheck.inputKey === identityInputKey
+  if (!submitterName) blockers.push("Recruiter name is missing.")
+  if (!submitterEmail) blockers.push("Recruiter email is missing.")
+  else if (!submitterEmailValid) blockers.push("Recruiter email is invalid.")
+  if (!candidateName) blockers.push("Candidate name is missing.")
+  if (!candidateEmail) blockers.push("Candidate email is missing.")
+  else if (!candidateEmailValid) blockers.push("Candidate email is invalid.")
+  if (!candidateLink) blockers.push("LinkedIn or resume link is missing.")
   if (!form.candidateConsent) blockers.push("Candidate consent is not confirmed.")
   if (pendingSlots <= 0) blockers.push("This role has no pending submission slots left.")
-  if (hardItems.length > 0 && hardChecked < hardItems.length) warnings.push(`${hardItems.length - hardChecked} hard check${hardItems.length - hardChecked === 1 ? "" : "s"} still need proof.`)
-  if (antiFlags.length > 0) warnings.push(`${antiFlags.length} anti-signal${antiFlags.length === 1 ? "" : "s"} marked. Add context before submitting.`)
+  if (hardItems.length > 0 && hardChecked < hardItems.length) blockers.push(`${hardItems.length - hardChecked} hard check${hardItems.length - hardChecked === 1 ? "" : "s"} still need proof.`)
+  if (antiFlags.length > 0) blockers.push(`${antiFlags.length} anti-signal${antiFlags.length === 1 ? "" : "s"} marked. Clear the candidate or remove the packet before submitting.`)
+  if (!candidateNotes) blockers.push("Add a fit note explaining why this candidate should enter WeKruit review.")
+  if (application?.status === "not_approved" || application?.status === "rescinded") {
+    blockers.push("Role access was not approved. Reapply with stronger candidate proof before submitting this role.")
+  }
   if (fitItems.length > 0 && fitChecked === 0) warnings.push("No fit checks are verified yet.")
-  if (!form.candidateNotes.trim()) warnings.push("Add notes explaining why this candidate fits the role.")
   if (roleFeedback?.difficulty === "blocked") warnings.push("You marked this role blocked. Ask WeKruit for calibration before adding volume.")
   if (roleQuestions.some((question) => (question.status ?? "open") === "open")) warnings.push("There is an open role question waiting on WeKruit.")
+
+  const roleLaneValue = approvedForRole
+    ? "Approved role"
+    : application?.status === "pending"
+      ? "Access pending"
+      : "Single-submit"
+  const roleLaneDetail = approvedForRole
+    ? "This recruiter account has trusted access for the role."
+    : application?.status === "pending"
+      ? "Role access is under review; this packet is still treated as single-submit until approved."
+      : application?.status === "not_approved" || application?.status === "rescinded"
+        ? "Role access must be repaired before a packet can be sent."
+        : "Allowed only for one exceptional candidate with a complete packet."
+  gates.push({
+    label: "Role lane",
+    value: roleLaneValue,
+    detail: roleLaneDetail,
+    tone: approvedForRole ? "ready" : application?.status === "not_approved" || application?.status === "rescinded" ? "blocked" : "watch",
+  })
+
+  let identityGate: RoleSubmissionPacketGate
+  if (!candidateEmail || !candidateLink || !candidateEmailValid) {
+    identityGate = {
+      label: "Candidate identity",
+      value: !candidateEmail || !candidateLink ? "Incomplete" : "Invalid email",
+      detail: !candidateEmail || !candidateLink
+        ? "Candidate email and LinkedIn or resume link are required before ownership can be checked."
+        : "Fix the candidate email before running the ownership check.",
+      tone: "blocked",
+    }
+  } else if (identityCheck.status === "clear" && identityMatchesPacket) {
+    identityGate = {
+      label: "Candidate identity",
+      value: "Clear",
+      detail: "Email and profile link passed the role ownership preflight.",
+      tone: "ready",
+    }
+  } else if (identityCheck.status === "conflict" && identityMatchesPacket) {
+    const reason = identityCheck.result?.conflict?.reason
+    blockers.push(formatSubmissionFailure(reason))
+    identityGate = {
+      label: "Candidate identity",
+      value: "Conflict",
+      detail: formatSubmissionFailure(reason),
+      tone: "blocked",
+    }
+  } else if (identityCheck.status === "checking" && identityMatchesPacket) {
+    blockers.push("Candidate ownership check is still running.")
+    identityGate = {
+      label: "Candidate identity",
+      value: "Checking",
+      detail: "Wait for the duplicate ownership preflight to finish.",
+      tone: "blocked",
+    }
+  } else if (identityCheck.status === "error" && identityMatchesPacket) {
+    blockers.push(`Candidate ownership preflight failed: ${identityCheck.error || "check unavailable"}`)
+    identityGate = {
+      label: "Candidate identity",
+      value: "Check failed",
+      detail: identityCheck.error || "Run the ownership preflight again before submitting.",
+      tone: "blocked",
+    }
+  } else {
+    blockers.push("Candidate ownership check has not cleared.")
+    identityGate = {
+      label: "Candidate identity",
+      value: "Not cleared",
+      detail: "Complete candidate identity and wait for a clear ownership preflight.",
+      tone: "blocked",
+    }
+  }
+  gates.push(identityGate)
+
+  gates.push({
+    label: "Candidate consent",
+    value: form.candidateConsent ? "Confirmed" : "Missing",
+    detail: form.candidateConsent
+      ? "Recruiter confirmed role-specific candidate consent; WeKruit still sends confirmation."
+      : "Explicit candidate permission is required before every submission.",
+    tone: form.candidateConsent ? "ready" : "blocked",
+  })
+  gates.push({
+    label: "Hard proof",
+    value: hardItems.length ? `${hardChecked}/${hardItems.length}` : "No hard list",
+    detail: missingHard.length
+      ? "Every hard requirement must be verified before this packet can enter review."
+      : "All hard requirements are marked as verified.",
+    tone: missingHard.length ? "blocked" : "ready",
+  })
+  gates.push({
+    label: "Fit note",
+    value: candidateNotes ? "Included" : "Missing",
+    detail: candidateNotes
+      ? "Submission includes recruiter-written role-fit context."
+      : "Add the screening evidence, motivation, compensation, or risk context WeKruit should review.",
+    tone: candidateNotes ? "ready" : "blocked",
+  })
+  gates.push({
+    label: "Review capacity",
+    value: `${pendingSlots}/${ROLE_PENDING_SUBMISSION_LIMIT}`,
+    detail: pendingSlots > 0
+      ? "There is capacity for another open submission in this role lane."
+      : "Wait for WeKruit feedback before adding another pending packet.",
+    tone: pendingSlots > 0 ? "ready" : "blocked",
+  })
+  gates.push({
+    label: "Anti-signal",
+    value: antiFlags.length ? `${antiFlags.length} flagged` : "Clean",
+    detail: antiFlags.length
+      ? "A candidate with anti-signal flags should not be submitted as a clean packet."
+      : "No anti-signal checks are marked.",
+    tone: antiFlags.length ? "blocked" : "ready",
+  })
+
   if (selectedCandidate) proof.push("Pulled from saved candidate queue")
   if (form.candidateCurrentRole.trim()) proof.push(form.candidateCurrentRole.trim())
   if (form.candidateYoe.trim()) proof.push(`${form.candidateYoe.trim()} experience`)
@@ -697,6 +847,7 @@ function buildRoleSubmissionPacket(input: {
       ? "Fix the blocking items before this submission can move cleanly through WeKruit review."
       : "This candidate can become a strong submission once the missing proof is filled in."
   const nextAction = blockers[0] ?? warnings[0] ?? "Submit the candidate, then track review status from the recruiter inbox."
+  const canSubmit = blockers.length === 0
   return {
     score,
     label,
@@ -708,6 +859,9 @@ function buildRoleSubmissionPacket(input: {
     nextAction,
     missingHard: missingHard.slice(0, 4),
     antiFlags: antiFlags.slice(0, 4),
+    gates,
+    canSubmit,
+    submitLabel: canSubmit ? "Submit candidate" : "Complete packet first",
   }
 }
 
@@ -1728,6 +1882,7 @@ export default function RecruiterRole() {
     status: "missing",
     result: null,
     error: null,
+    inputKey: null,
   })
   const [prefilledCandidateId, setPrefilledCandidateId] = useState<string | null>(null)
   const [roleApplicationSaving, setRoleApplicationSaving] = useState(false)
@@ -1809,14 +1964,15 @@ export default function RecruiterRole() {
   useEffect(() => {
     const link = form.candidateLink.trim()
     const email = form.candidateEmail.trim().toLowerCase()
-    const emailReady = !email || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+    const emailReady = !email || isValidEmail(email)
     if (!session || !jobId || !link || !emailReady) {
-      setIdentityCheck({ status: "missing", result: null, error: null })
+      setIdentityCheck({ status: "missing", result: null, error: null, inputKey: null })
       return
     }
+    const inputKey = `${jobId}|${email}|${link}`
 
     let active = true
-    setIdentityCheck((current) => ({ ...current, status: "checking", error: null }))
+    setIdentityCheck({ status: "checking", result: null, error: null, inputKey })
     const timer = window.setTimeout(() => {
       void checkRecruiterCandidateIdentity({
         jobId,
@@ -1831,6 +1987,7 @@ export default function RecruiterRole() {
             status: result.conflict ? "conflict" : "clear",
             result,
             error: null,
+            inputKey,
           })
         })
         .catch((error) => {
@@ -1839,6 +1996,7 @@ export default function RecruiterRole() {
             status: "error",
             result: null,
             error: error instanceof Error ? error.message : String(error),
+            inputKey,
           })
         })
     }, 550)
@@ -1949,6 +2107,9 @@ export default function RecruiterRole() {
     roleFeedback: currentRoleFeedback,
     roleQuestions: currentRoleQuestions,
     intelligence: currentRoleIntelligence,
+    identityCheck,
+    approvedForRole,
+    application: currentRoleApplication,
   })
   const calibrationBrief = buildRoleCalibrationBrief({
     job,
@@ -2009,7 +2170,7 @@ export default function RecruiterRole() {
     roleFeedback: currentRoleFeedback,
     candidateRecommendations,
   })
-  const identityBlocksSubmit = identityCheck.status === "checking" || Boolean(identityCheck.result?.conflict)
+  const packetBlocksSubmit = !submissionPacket.canSubmit
 
   const useSourcedCandidate = (candidate: RecruiterSourcedCandidateItem) => {
     setForm((next) => withRecruiterDefaults({
@@ -2071,24 +2232,8 @@ export default function RecruiterRole() {
       setSubmitError("recruiter_access_required")
       return
     }
-    if (!form.candidateConsent) {
-      setSubmitError("candidate_consent_required")
-      return
-    }
-    if (!form.candidateEmail.trim()) {
-      setSubmitError("missing_candidate_email")
-      return
-    }
-    if (pendingSlots <= 0) {
-      setSubmitError("This role already has 5 pending submissions from your account. Wait for review feedback before submitting more.")
-      return
-    }
-    if (identityCheck.status === "checking") {
-      setSubmitError("Candidate ownership check is still running. Wait for the check to finish before submitting.")
-      return
-    }
-    if (identityCheck.result?.conflict) {
-      setSubmitError(formatSubmissionFailure(identityCheck.result.conflict.reason))
+    if (packetBlocksSubmit) {
+      setSubmitError(submissionPacket.nextAction)
       return
     }
     setSubmitError(null)
@@ -2443,8 +2588,8 @@ export default function RecruiterRole() {
           {submitError && <div className="rb-error">Submission failed: {submitError}</div>}
 
           <div className="rb-actions">
-            <button type="submit" className="rb-btn primary" disabled={submitting || pendingSlots <= 0 || identityBlocksSubmit}>
-              {submitting ? "Submitting…" : identityCheck.status === "checking" ? "Checking candidate..." : "Submit candidate"}
+            <button type="submit" className="rb-btn primary" disabled={submitting || packetBlocksSubmit}>
+              {submitting ? "Submitting…" : identityCheck.status === "checking" ? "Checking candidate..." : submissionPacket.submitLabel}
             </button>
             <button type="button" className="rb-btn" onClick={resetChecklist} disabled={submitting}>
               Reset checklist
@@ -2910,6 +3055,15 @@ function SubmissionPacketPanel({ packet }: { packet: RoleSubmissionPacket }) {
           <em>quality score</em>
         </div>
       </header>
+      <div className="rb-submission-packet__gates" aria-label="Submission readiness gates">
+        {packet.gates.map((gate) => (
+          <article className={`is-${gate.tone}`} key={gate.label}>
+            <span>{gate.label}</span>
+            <strong>{gate.value}</strong>
+            <p>{gate.detail}</p>
+          </article>
+        ))}
+      </div>
       <div className="rb-submission-packet__grid">
         <article>
           <span>Next required move</span>
