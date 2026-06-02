@@ -35,6 +35,7 @@ const EMPTY_FORM: EmployerSignupFormState = {
   stage: "",
   rolesHiring: "",
   hardFilters: "",
+  screeningQuestions: "",
   notes: "",
 }
 
@@ -106,9 +107,9 @@ export default function EmployerSignup() {
               color: "var(--ink-2)",
             }}
           >
-            Tell us the role, must-haves, hard filters, and context behind the brief. WeKruit
-            reviews it, Claire screens against the evidence, and you only see consented
-            passed profiles with the transcript and risks attached.
+            Tell us the role, must-haves, hard filters, and evidence probes behind the brief.
+            WeKruit reviews it, Claire screens against the evidence, and you only see
+            consented passed profiles with the transcript and risks attached.
           </p>
 
           {done ? <SuccessCard email={form.workEmail} /> : (
@@ -181,6 +182,14 @@ export default function EmployerSignup() {
                 onChange={(v) => update("hardFilters", v)}
                 placeholder="Requires US work authorization; SF hybrid three days per week"
                 helper="List what must stop a pass before Claire screens."
+                as="textarea"
+              />
+              <Field
+                label="Screening questions *"
+                value={form.screeningQuestions}
+                onChange={(v) => update("screeningQuestions", v)}
+                placeholder="Describe a platform tradeoff you owned; what evidence proves they can handle infra ambiguity?"
+                helper="List the evidence Claire should elicit in the first interview."
                 as="textarea"
               />
               <Field
@@ -342,8 +351,9 @@ function SuccessCard({ email }: { email: string }) {
         Got it.
       </h2>
       <p style={{ color: "var(--ink-2)", margin: "0 0 18px", maxWidth: 440, marginInline: "auto" }}>
-        We have sent the role brief to the WeKruit team. We will reach out at <strong>{email}</strong> within
-        a business day to confirm the hard filters and must-have evidence before Claire screens candidates.
+        We have sent the role brief to the WeKruit team. We will reach out at <strong>{email}</strong>{" "}
+        within a business day to confirm the hard filters, evidence probes, and must-have evidence
+        before Claire screens candidates.
       </p>
       <Link to="/" className="btn btn--primary" style={{ textDecoration: "none" }}>
         Back to home

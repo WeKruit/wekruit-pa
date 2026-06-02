@@ -250,6 +250,10 @@ function employer(overrides: Partial<EmployerInput> = {}): EmployerInput {
     rolesHiring: ["Engineer"],
     notes: "Must have shipped infrastructure products.",
     hardFilters: ["Requires US work authorization", "SF hybrid three days per week"],
+    screeningQuestions: [
+      "Describe a platform tradeoff you owned",
+      "What evidence proves they can handle infra ambiguity?",
+    ],
     ...overrides,
   }
 }
@@ -625,6 +629,10 @@ test("runRegisterEmployer stores normalized workEmailLower for verification look
   assert.equal(doc.verificationStatus, "pending")
   assert.equal(doc.registeredAt, fixedTimestamp)
   assert.deepEqual(doc.hardFilters, ["Requires US work authorization", "SF hybrid three days per week"])
+  assert.deepEqual(doc.screeningQuestions, [
+    "Describe a platform tradeoff you owned",
+    "What evidence proves they can handle infra ambiguity?",
+  ])
 })
 
 test("runRegisterEmployer rejects employer intake without hard filters", async () => {
@@ -632,6 +640,16 @@ test("runRegisterEmployer rejects employer intake without hard filters", async (
 
   await assert.rejects(
     () => runRegisterEmployer(employer({ hardFilters: [] }), deps(fake)),
+    (err) => err instanceof HttpsError && err.code === "invalid-argument",
+  )
+  assert.equal(fake.collectionStore("layoff_employers").size, 0)
+})
+
+test("runRegisterEmployer rejects employer intake without screening questions", async () => {
+  const fake = new FakeFirestore()
+
+  await assert.rejects(
+    () => runRegisterEmployer(employer({ screeningQuestions: [] }), deps(fake)),
     (err) => err instanceof HttpsError && err.code === "invalid-argument",
   )
   assert.equal(fake.collectionStore("layoff_employers").size, 0)
@@ -666,4 +684,35 @@ test("runRegisterEmployer sends hard filters in the admin notification", async (
   assert.match(sent[0]!.text, /Requires US work authorization/)
   assert.match(sent[0]!.html!, /Hard filters/)
   assert.match(sent[0]!.html!, /SF hybrid three days per week/)
+})
+
+test("runRegisterEmployer sends screening questions in the admin notification", async () => {
+  const fake = new FakeFirestore()
+  const sent: Array<{ text: string; html?: string }> = []
+  const oldApiKey = process.env.MAILGUN_API_KEY
+  const oldDomain = process.env.MAILGUN_DOMAIN
+  process.env.MAILGUN_API_KEY = "test-key"
+  process.env.MAILGUN_DOMAIN = "mail.wekruit.test"
+
+  try {
+    await runRegisterEmployer(
+      employer(),
+      deps(fake, {
+        sendMail: async (_cfg: unknown, input: { text: string; html?: string }) => {
+          sent.push({ text: input.text, html: input.html })
+          return { ok: true, status: 200, messageId: "msg_1" }
+        },
+      } as never),
+    )
+  } finally {
+    if (oldApiKey === undefined) delete process.env.MAILGUN_API_KEY
+    else process.env.MAILGUN_API_KEY = oldApiKey
+    if (oldDomain === undefined) delete process.env.MAILGUN_DOMAIN
+    else process.env.MAILGUN_DOMAIN = oldDomain
+  }
+
+  assert.match(sent[0]!.text, /Screening questions:/)
+  assert.match(sent[0]!.text, /platform tradeoff/)
+  assert.match(sent[0]!.html!, /Screening questions/)
+  assert.match(sent[0]!.html!, /infra ambiguity/)
 })

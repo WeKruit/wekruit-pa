@@ -41,6 +41,7 @@ type EmployerRow = {
   roleAtCompany?: string
   rolesHiring?: string[]
   hardFilters?: string[]
+  screeningQuestions?: string[]
   contactName?: string
   notes?: string
   verificationStatus?: VerificationStatus
@@ -116,7 +117,15 @@ export default function LayoffEmployers() {
     return rows.filter((r) => {
       if (statusFilter !== "all" && (r.verificationStatus ?? "pending") !== statusFilter) return false
       if (!needle) return true
-      const hay = [r.companyName, r.workEmailLower ?? r.workEmail, r.contactName, r.roleAtCompany, r.stage, ...(r.hardFilters ?? [])]
+      const hay = [
+        r.companyName,
+        r.workEmailLower ?? r.workEmail,
+        r.contactName,
+        r.roleAtCompany,
+        r.stage,
+        ...(r.hardFilters ?? []),
+        ...(r.screeningQuestions ?? []),
+      ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
@@ -252,6 +261,16 @@ export default function LayoffEmployers() {
                         <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
                           {r.hardFilters.map((filter) => (
                             <li key={filter}>{filter}</li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
+                    {r.screeningQuestions?.length ? (
+                      <details style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
+                        <summary style={{ cursor: "pointer", color: "#3a6ea5" }}>Screening questions</summary>
+                        <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                          {r.screeningQuestions.map((question) => (
+                            <li key={question}>{question}</li>
                           ))}
                         </ul>
                       </details>

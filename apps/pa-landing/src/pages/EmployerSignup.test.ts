@@ -40,3 +40,13 @@ test("EmployerSignup captures hard filters as a first-class screening constraint
   assert.doesNotMatch(source, /Hard filters \(optional\)/i)
   assert.doesNotMatch(source, /AI learns automatically/i)
 })
+
+test("EmployerSignup captures evidence probes as a first-class Claire interview input", () => {
+  assert.match(source, /Screening questions \*/)
+  assert.match(source, /evidence Claire should elicit/i)
+  assert.match(source, /platform tradeoff/i)
+  assert.match(source, /screeningQuestions/)
+
+  assert.doesNotMatch(source, /Screening questions \(optional\)/i)
+  assert.doesNotMatch(source, /Claire will infer the questions/i)
+})

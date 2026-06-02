@@ -617,6 +617,8 @@ export type EmployerInput = {
   rolesHiring: string[]
   /** Hard-stop filters Claire must enforce before passing a candidate. */
   hardFilters: string[]
+  /** Specific evidence probes Claire should elicit in the first interview. */
+  screeningQuestions: string[]
   /** Submitter name — for the admin notification email. */
   contactName?: string
   /** Free-form notes — appended verbatim to the admin notification body. */
@@ -641,6 +643,8 @@ export async function runRegisterEmployer(
   if (!notes) throw new HttpsError("invalid-argument", "must_haves_required")
   const hardFilters = cleanStringList(v.hardFilters)
   if (hardFilters.length === 0) throw new HttpsError("invalid-argument", "hard_filters_required")
+  const screeningQuestions = cleanStringList(v.screeningQuestions)
+  if (screeningQuestions.length === 0) throw new HttpsError("invalid-argument", "screening_questions_required")
   const cleanInput: EmployerInput = {
     ...v,
     companyName: v.companyName.trim(),
@@ -650,6 +654,7 @@ export async function runRegisterEmployer(
     roleAtCompany: typeof v.roleAtCompany === "string" ? v.roleAtCompany.trim() : "",
     rolesHiring,
     hardFilters,
+    screeningQuestions,
     contactName: typeof v.contactName === "string" ? v.contactName.trim() : undefined,
     notes,
   }
@@ -704,6 +709,7 @@ async function notifyAdminOfEmployerSignup(
     `Work email: ${ctx.workEmailLower}`,
     `Roles hiring: ${v.rolesHiring?.length ? v.rolesHiring.join(", ") : "—"}`,
     `Hard filters: ${v.hardFilters.length ? v.hardFilters.join("; ") : "—"}`,
+    `Screening questions: ${v.screeningQuestions.length ? v.screeningQuestions.join("; ") : "—"}`,
     v.notes ? `\nNotes:\n${v.notes}` : null,
     `\nFirestore: layoff_employers/${ctx.employerId}`,
     `Source: layoff.wekruit.com /employer`,
@@ -723,6 +729,7 @@ async function notifyAdminOfEmployerSignup(
     `<li><b>Work email:</b> <a href="mailto:${escapeHtmlAttr(ctx.workEmailLower)}">${escapeHtml(ctx.workEmailLower)}</a></li>` +
     `<li><b>Roles hiring:</b> ${v.rolesHiring?.length ? escapeHtml(v.rolesHiring.join(", ")) : "—"}</li>` +
     `<li><b>Hard filters:</b> ${v.hardFilters.length ? escapeHtml(v.hardFilters.join("; ")) : "—"}</li>` +
+    `<li><b>Screening questions:</b> ${v.screeningQuestions.length ? escapeHtml(v.screeningQuestions.join("; ")) : "—"}</li>` +
     `</ul>` +
     (v.notes ? `<h3 style="font-family:system-ui;font-size:14px;margin:18px 0 6px">Notes</h3><pre style="font-family:system-ui;font-size:13px;white-space:pre-wrap;background:#f6f3ee;padding:12px;border-radius:6px">${escapeHtml(v.notes)}</pre>` : "") +
     `<p style="font-family:system-ui;font-size:12px;color:#6b6357;margin-top:24px">Firestore: <code>layoff_employers/${escapeHtml(ctx.employerId)}</code><br>Source: <code>layoff.wekruit.com /employer</code></p>`

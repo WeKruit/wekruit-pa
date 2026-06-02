@@ -18,6 +18,8 @@ const VALID_FORM: EmployerSignupFormState = {
   rolesHiring: "Founding infra engineer\nDeveloper platform PM",
   notes: "Must have shipped infrastructure products, can explain tradeoffs, and is SF hybrid.",
   hardFilters: "Requires US work authorization\nSF hybrid three days per week",
+  screeningQuestions:
+    "Describe a platform tradeoff you owned\nWhat evidence proves they can handle infra ambiguity?",
 }
 
 test("validateEmployerSignupForm requires a real primary role brief before Claire screens", () => {
@@ -41,6 +43,13 @@ test("validateEmployerSignupForm requires hard filters before Claire screens", (
   )
 })
 
+test("validateEmployerSignupForm requires screening questions before Claire interviews", () => {
+  assert.equal(
+    validateEmployerSignupForm({ ...VALID_FORM, screeningQuestions: " " }),
+    "Screening questions are required so Claire knows what evidence to elicit.",
+  )
+})
+
 test("validateEmployerSignupForm accepts a complete role-intake form", () => {
   assert.equal(validateEmployerSignupForm(VALID_FORM), null)
 })
@@ -56,5 +65,9 @@ test("buildEmployerSignupPayload normalizes the role brief without inventing sco
     contactName: "Alex Rivera",
     notes: "Must have shipped infrastructure products, can explain tradeoffs, and is SF hybrid.",
     hardFilters: ["Requires US work authorization", "SF hybrid three days per week"],
+    screeningQuestions: [
+      "Describe a platform tradeoff you owned",
+      "What evidence proves they can handle infra ambiguity?",
+    ],
   })
 })

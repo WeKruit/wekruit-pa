@@ -16,3 +16,12 @@ test("LayoffEmployers review shows hard filters separately from notes", () => {
 
   assert.doesNotMatch(source, /hard filters are optional/i)
 })
+
+test("LayoffEmployers review shows screening questions separately from notes", () => {
+  assert.match(source, /screeningQuestions\?: string\[\]/)
+  assert.match(source, /Screening questions/)
+  assert.match(source, /r\.screeningQuestions/)
+  assert.match(source, /Notes/)
+
+  assert.doesNotMatch(source, /screening questions are optional/i)
+})
