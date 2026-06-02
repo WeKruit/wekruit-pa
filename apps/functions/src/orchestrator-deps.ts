@@ -99,14 +99,17 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
     sendReaction: async ({ to, messageHandle, reaction, userId }) => {
       if (!getApps().length) initializeApp()
       const db = getFirestore()
+      // USER↔NUMBER BINDING (2026-06-02): resolve the bound line via the single
+      // source of truth so the tapback rides the SAME thread as the reply
+      // (honor → rebind-if-paused → mint+persist). No bespoke senderNumber read.
       let fromNumber: string | undefined
       if (userId) {
         try {
-          const userSnap = await db.collection("pa-users").doc(userId).get()
-          const senderNumber = userSnap.data()?.senderNumber
-          fromNumber = typeof senderNumber === "string" && senderNumber.trim()
-            ? senderNumber.trim()
-            : undefined
+          const { resolveBoundFromNumber } = await import("./sendblue/resolve-bound-from-number.js")
+          const bound = await resolveBoundFromNumber(db, userId, {
+            log: (event, payload) => logger.info("[collab-tapback]", { event, ...(payload ?? {}) }),
+          })
+          fromNumber = bound.fromNumber
         } catch {
           fromNumber = undefined
         }
@@ -116,7 +119,9 @@ export function makeOrchestratorDeps(): import("@pa/pa-orchestrator").Orchestrat
         to,
         messageHandle,
         reaction,
-        ...(userId ? { userId, db } : {}),
+        // fromNumber resolved above wins; pass userId/db only as a fallback seam
+        // for the (rare) case the reducer returned no line.
+        ...(userId && !fromNumber ? { userId, db } : {}),
         ...(fromNumber ? { fromNumber } : {}),
         allowEnvFromNumberFallback: false,
       })

@@ -689,6 +689,45 @@ async function createProvisionalUser(
     if (options.senderGroupId) extra.senderGroupId = options.senderGroupId
     extra.senderAssignedAt = nowIso()
     extra.senderAssignedSource = "qr_scan"
+  } else {
+    // USER↔NUMBER BINDING (2026-06-02) — TEXT-ONLY provisional users (the
+    // direct-start path: an unregistered number that texts "hi" with NO QR scan)
+    // previously got NO persisted binding, so every later send re-derived the
+    // line by hash and reshuffled when the pool grew. Mint a capacity-aware
+    // sticky binding HERE at create so the user is bound from their very first
+    // outbound (source='inbound_first'). Best-effort: a mint failure leaves
+    // senderNumber unset and the send-path reducer lazily mints later — no drop.
+    try {
+      const {
+        loadSendbluePoolWithCounters,
+        pickFromNumber,
+        findSendbluePoolNumber,
+        sendblueGroupId,
+        incrementAssignedNewUsers,
+      } = await import("./sendblue/pool.js")
+      const pool = await loadSendbluePoolWithCounters(db)
+      const minted = pickFromNumber(pool, id, { requireNewUserCapacity: true })
+      if (minted) {
+        const groupId = sendblueGroupId(
+          findSendbluePoolNumber(pool, minted) ?? { number: minted, status: "active" }
+        )
+        extra.senderNumber = minted
+        extra.senderGroupId = groupId
+        extra.senderAssignedAt = nowIso()
+        extra.senderAssignedSource = "inbound_first"
+        // Keep new-user capacity accounting correct (mirrors the QR scan-time bump).
+        try {
+          await incrementAssignedNewUsers(db, groupId)
+        } catch {
+          /* counter bump is best-effort — overlay clamps on read */
+        }
+      }
+    } catch (err) {
+      logger.warn("[createProvisionalUser] text-only sender binding mint failed (non-fatal)", {
+        userId: id,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
   await db.collection(PA_COLLECTIONS.users).doc(id).set(u)
   return u

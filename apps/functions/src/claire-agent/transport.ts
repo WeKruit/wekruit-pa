@@ -119,16 +119,20 @@ export function createSendblueTransport(
     recordedEvents.push(value === undefined ? { kind } : { kind, value })
   }
 
-  // Resolve the conversation's Sendblue pool line ONCE per turn (memoized). Both the read
+  // Resolve the conversation's BOUND Sendblue line ONCE per turn (memoized). Both the read
   // receipt AND the typing indicator must come FROM this line or Sendblue can't match the
-  // thread → no "Read", no typing bubble. `undefined` (no pool / resolve error) lets the
-  // Sendblue clients fall back to creds.fromNumber — no regression on single-number accounts.
+  // thread → no "Read", no typing bubble. We go through `resolveBoundFromNumber` (the single
+  // source of truth) so typing/read-receipt land on the SAME line as the durable reply
+  // (outbox.ts also honors the binding) instead of a hash that reshuffles when the pool grows.
+  // `undefined` (no pool / resolve error / no eligible line) lets the Sendblue clients fall
+  // back to creds.fromNumber — no regression on single-number accounts.
   let fromNumberCache: string | undefined | "unresolved" = "unresolved"
   const resolveFromNumber = async (): Promise<string | undefined> => {
     if (fromNumberCache !== "unresolved") return fromNumberCache
     try {
-      const { loadSendbluePool, pickFromNumber } = await import("../sendblue/pool.js")
-      fromNumberCache = pickFromNumber(await loadSendbluePool(deps.db), deps.userId) ?? undefined
+      const { resolveBoundFromNumber } = await import("../sendblue/resolve-bound-from-number.js")
+      const bound = await resolveBoundFromNumber(deps.db, deps.userId)
+      fromNumberCache = bound.fromNumber ?? undefined
     } catch {
       fromNumberCache = undefined
     }
