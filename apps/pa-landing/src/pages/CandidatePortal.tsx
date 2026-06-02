@@ -743,7 +743,6 @@ function CandidateMeReady({
               />
               <MePipeline
                 matches={pipelineMatches}
-                recommendedCount={recommended.length}
                 loading={matchesLoading}
               />
               <MeNewMatches
@@ -1064,7 +1063,6 @@ function MeWaitingCard({ recommendedCount }: { recommendedCount: number }) {
 type MeStageDef = { id: string; label: string; dot: string; statuses: CandidateJobStatus[] }
 
 const ME_STAGES: MeStageDef[] = [
-  { id: "new", label: "New", dot: "var(--wk-ink-3)", statuses: [] },
   { id: "invited", label: "Invited", dot: "var(--wk-live-pulse)", statuses: ["invited"] },
   { id: "screening", label: "Screening", dot: "#1f6feb", statuses: ["interview_started"] },
   { id: "passed", label: "Passed", dot: "#1f6feb", statuses: ["passed"] },
@@ -1074,22 +1072,19 @@ const ME_STAGES: MeStageDef[] = [
 
 function MePipeline({
   matches,
-  recommendedCount,
   loading,
 }: {
   matches: CandidateMatchCard[]
-  recommendedCount: number
   loading: boolean
 }) {
   const [activeStage, setActiveStage] = useState<string | null>(null)
   const counts = useMemo(() => {
-    const c: Record<string, number> = { new: recommendedCount }
+    const c: Record<string, number> = {}
     ME_STAGES.forEach((s) => {
-      if (s.id === "new") return
       c[s.id] = matches.filter((m) => s.statuses.includes(m.status)).length
     })
     return c
-  }, [matches, recommendedCount])
+  }, [matches])
 
   const activeDef = activeStage ? ME_STAGES.find((s) => s.id === activeStage) : null
   const filtered =
@@ -1100,7 +1095,7 @@ function MePipeline({
   return (
     <section className="wkv3-sec" id="pipeline">
       <header className="wkv3-sec__head">
-        <h2 className="wkv3-sec__h">Active interviews</h2>
+        <h2 className="wkv3-sec__h">Interview pipeline</h2>
         <span className="wkv3-sec__sub">
           {activeStage ? (
             <button type="button" className="wkv3-sec__clear" onClick={() => setActiveStage(null)}>

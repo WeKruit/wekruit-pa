@@ -44,6 +44,14 @@ test("CandidatePortal roles inbox distinguishes WeKruit-screened roles from exte
   assert.match(source, /external recommendations/)
 })
 
+test("CandidatePortal interview pipeline does not mix recommendation inbox into stage filters", () => {
+  assert.doesNotMatch(source, /\{ id: "new", label: "New"/)
+  assert.doesNotMatch(source, /const c: Record<string, number> = \{ new: recommendedCount \}/)
+  assert.doesNotMatch(source, /<MePipeline[\s\S]*recommendedCount=\{recommended\.length\}/)
+  assert.match(source, /<h2 className="wkv3-sec__h">Interview pipeline<\/h2>/)
+  assert.match(source, /<MeNewMatches\s+matches=\{recommended\}/)
+})
+
 test("CandidatePortal privacy card does not present local-only toggles as binding controls", () => {
   assert.doesNotMatch(source, /setShowMe|setBlockEmployer|setShareResume|wk-prof-toggle|These toggles read/i)
   assert.doesNotMatch(source, /Visible to employers|Show me to employers/i)
