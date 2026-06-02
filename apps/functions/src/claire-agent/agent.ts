@@ -29,7 +29,7 @@ import { markReadReflex, wireTypingReflex, deliverBubbles } from "./delivery.js"
 import { isCanaryUser } from "./canary.js"
 import { makeClaireSession } from "./session.js"
 import { appendHotlineIfMissing } from "@pa/pa-safety"
-import { HELLO_WEKRUIT_OPENER_PREFIX } from "@pa/pa-orchestrator"
+import { HELLO_WEKRUIT_OPENER_PREFIX, VERIFICATION_CODE_OPENER_PREFIX } from "@pa/pa-orchestrator"
 
 /** Main conversation model (the per-tool LLM judge model is configured separately). */
 export const CLAIRE_MODEL = "gpt-5.4-nano"
@@ -368,15 +368,22 @@ export interface RunClaireTurnDeps {
 }
 
 /**
- * "Hello, WeKruit! <candidateId>" is a phone-bind handshake — the bind already ran upstream
+ * The QR opener is a phone-bind handshake — the bind already ran upstream
  * (resolveInboundUserId). The raw text still carries the INTERNAL userId; if it reaches the LLM the
  * greeting echoes the id as the candidate's name (Adam 2026-06-01: "why it's hey with my user id??
- * not my name"). Reduce it to the bare opener so the agent greets résumé-aware with ZERO id leak.
- * Only the "Hello, WeKruit!" form is stripped — the "WeKruit_<jobId>_<userId>_Apply" job token
- * (prescreen kickoff) does NOT start with this prefix, so it passes through untouched.
+ * not my name"). Reduce it to the bare prefix so the agent greets résumé-aware with ZERO id leak.
+ *
+ * Two opener forms are stripped: the current verification-code phrasing
+ * ("Hi, WeKruit, my verification code is <candidateId>") AND the legacy
+ * "Hello, WeKruit! <candidateId>" form (back-compat — in-flight QR links still emit it). The
+ * "WeKruit_<jobId>_<userId>_Apply" job token (prescreen kickoff) starts with neither prefix, so it
+ * passes through untouched.
  */
 export function sanitizeInboundForLlm(text: string): string {
-  return text.trimStart().startsWith(HELLO_WEKRUIT_OPENER_PREFIX) ? HELLO_WEKRUIT_OPENER_PREFIX : text
+  const trimmed = text.trimStart()
+  if (trimmed.startsWith(VERIFICATION_CODE_OPENER_PREFIX)) return VERIFICATION_CODE_OPENER_PREFIX
+  if (trimmed.startsWith(HELLO_WEKRUIT_OPENER_PREFIX)) return HELLO_WEKRUIT_OPENER_PREFIX
+  return text
 }
 
 /**

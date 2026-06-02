@@ -119,7 +119,7 @@ export type WebhookDeps = {
   recordAuditEvent?: typeof recordAuditEvent
   /** Stream D — CV ingest pipeline (fire-and-forget). Inject for tests. */
   ingestCv?: (input: IngestCvInput) => Promise<IngestCvResult>
-  /** Stream D — phone→userId resolver. Optional inboundText enables Hello, WeKruit! uid bind. */
+  /** Stream D — phone→userId resolver. Optional inboundText enables the verification-code (or legacy Hello, WeKruit!) uid bind. */
   lookupUserByPhone?: (db: Firestore, phoneE164: string, inboundText?: string) => Promise<string | null>
   /** WeKruit_LAID_OFF inbound trigger handler. Inject for tests. */
   runLayoffSmsStart?: typeof defaultRunLayoffSmsStart

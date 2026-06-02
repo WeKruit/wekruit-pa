@@ -146,7 +146,7 @@ describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
       opening: true,
     })
 
-    assert.match(intent, /first SMS after the candidate opened with Hello, WeKruit/i)
+    assert.match(intent, /first SMS after the candidate opened with the prefilled verification-code handshake/i)
     assert.match(intent, /first name/i)
     assert.match(intent, /real resume or profile detail/i)
     assert.match(intent, /exactly one resume\/profile detail/i)
@@ -180,7 +180,7 @@ describe("buildOnboardingSurfaceIntent — SMS persona contract", () => {
     assert.match(intent, /Member of Technical Staff, macOS DevOps/i)
     assert.match(intent, /Photon/i)
     assert.match(intent, /Do not use "Saw your resume come through"/i)
-    assert.doesNotMatch(intent, /first SMS after the candidate opened with Hello, WeKruit/i)
+    assert.doesNotMatch(intent, /first SMS after the candidate opened with the prefilled verification-code handshake/i)
   })
 
   it("keeps the final context slot short instead of enumerating categories", () => {

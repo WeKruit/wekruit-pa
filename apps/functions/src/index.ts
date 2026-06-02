@@ -315,7 +315,7 @@ export {
 export { paPublicCvIngest } from "./public-cv-ingest.js"
 // iMessage-first QR onboarding — public GET /start?c=<campaign> picks a
 // capacity-aware Sendblue number, reserves it for a minted scanToken, and 302s
-// to sms:<number>?body=Hello, WeKruit! <scanToken>. See qr-onboarding/.
+// to sms:<number>?body=Hi, WeKruit, my verification code is <scanToken>. See qr-onboarding/.
 export { paQrStartRedirect } from "./qr-onboarding/qr-start-redirect.js"
 // Abandoned-scan sweep — decrements the per-group assignedNewUsers counter for
 // pa-qr-scan-pending docs that never converted (status stays 'pending' past TTL)
@@ -905,7 +905,8 @@ async function processBrokerImessageEvent(
     // Direct-start (Adam 2026-06-02): an unregistered number that sends a real
     // text now creates a provisional user + onboards (syncGateAllows below).
     // The QR opener check still runs FIRST and UNCONDITIONALLY so a genuine QR
-    // scan (`Hello, WeKruit! <scanToken>`) keeps its special provisioning —
+    // scan (`Hi, WeKruit, my verification code is <scanToken>`, or the legacy
+    // `Hello, WeKruit! <scanToken>`) keeps its special provisioning —
     // source='qr_imessage' + scanToken claim + sticky-number reconcile — instead
     // of falling through to the generic create. Non-text/system events are still
     // blocked by shouldCreateProvisionalUserForBrokerPayload (empty text → false).

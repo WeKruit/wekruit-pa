@@ -146,9 +146,27 @@ function normalizeControlText(value: string): string {
     .trim()
 }
 
-/** Visible iMessage opener prefix (Adam 2026-05-19 + user_id bind 2026-05-20). */
+/**
+ * Visible iMessage opener prefix.
+ *
+ * 2026-06-02 reword: the candidate-emitted body is now a verification-code phrasing
+ * ("Hi, WeKruit, my verification code is <token>") so the prefilled SMS reads like a
+ * normal confirmation step instead of an internal handshake. The OLD "Hello, WeKruit!"
+ * phrasing is kept as a back-compat parse form: QR codes already printed/in the wild
+ * still emit the old body, so inbound resolution MUST keep accepting it.
+ *
+ * `VERIFICATION_CODE_OPENER_PREFIX` is what we BUILD today. `HELLO_WEKRUIT_OPENER_PREFIX`
+ * is retained for back-compat (parser + LLM sanitizer) and still exported under its
+ * historical name so downstream imports do not churn.
+ */
+export const VERIFICATION_CODE_OPENER_PREFIX = "Hi, WeKruit, my verification code is"
+/** Legacy opener prefix (Adam 2026-05-19 + user_id bind 2026-05-20). Back-compat only. */
 export const HELLO_WEKRUIT_OPENER_PREFIX = "Hello, WeKruit!"
 
+/** New (built) form: "Hi, WeKruit, my verification code is <token>". */
+const VERIFICATION_CODE_OPENER_RE =
+  /^hi,?\s*wekruit,?\s*my\s+verification\s+code\s+is\s*:?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
+/** Legacy form: "Hello, WeKruit! <token>". Back-compat — in-flight QR links still emit this. */
 const HELLO_WEKRUIT_OPENER_RE =
   /^hello,?\s*wekruit!?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
 const WEKRUIT_JOB_OPENER_RE =
@@ -157,16 +175,20 @@ const WEKRUIT_JOB_OPENER_RE =
 /** Build the sms: deep-link body candidates send to bind phone → pa-users/{candidateId}. */
 export function buildHelloWekruitOpenerBody(candidateId: string): string {
   const id = candidateId.trim()
-  if (!id) return HELLO_WEKRUIT_OPENER_PREFIX
-  return `${HELLO_WEKRUIT_OPENER_PREFIX} ${id}`
+  if (!id) return VERIFICATION_CODE_OPENER_PREFIX
+  return `${VERIFICATION_CODE_OPENER_PREFIX} ${id}`
 }
 
-/** Parse inbound opener; returns candidateId when the suffix is present. */
+/**
+ * Parse inbound opener; returns candidateId when the suffix is present. Accepts the
+ * new verification-code phrasing AND the legacy "Hello, WeKruit!" phrasing (back-compat
+ * for QR codes already in the wild), plus the "WeKruit_<jobId>_<userId>_Job" job token.
+ */
 export function parseHelloWekruitOpener(value: string): { candidateId: string } | null {
   const trimmed = value.trim()
   const jobMatch = trimmed.match(WEKRUIT_JOB_OPENER_RE)
   if (jobMatch?.[2]) return { candidateId: jobMatch[2].trim() }
-  const match = trimmed.match(HELLO_WEKRUIT_OPENER_RE)
+  const match = trimmed.match(VERIFICATION_CODE_OPENER_RE) ?? trimmed.match(HELLO_WEKRUIT_OPENER_RE)
   if (!match) return null
   const candidateId = match[1]?.trim()
   return candidateId ? { candidateId } : null
@@ -179,6 +201,8 @@ export function isSharedOnboardingGreetingOrKickoff(value: string): boolean {
   if (normalized === "pa reset") return true
   if (/^wekruit\s+(?:candidate\s+hi|laid\s+off|rain\s+software\s+engineer)/i.test(normalized)) return true
   if (/^hello wekruit(?: [a-z0-9_-]+)?$/.test(normalized)) return true
+  // New verification-code opener phrasing, normalized: "hi wekruit my verification code is <token>".
+  if (/^hi wekruit my verification code is(?: [a-z0-9_-]+)?$/.test(normalized)) return true
   return /^(?:hello|hi|hey|yo|sup|\u4f60\u597d|\u60a8\u597d|\u54c8\u55bd|\u5728\u5417)(?:\s+(?:wekruit|claire))?$/.test(normalized)
 }
 

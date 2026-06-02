@@ -33,8 +33,9 @@ export const PA_USER_SOURCES = [
   "e2e_run",
   "qa_run",
   "external_supply",
-  // iMessage-first QR onboarding — the first SMS (a `Hello, WeKruit! <scanToken>`
-  // opener) IS the account-creation event; no prior web account / resume.
+  // iMessage-first QR onboarding — the first SMS (a `Hi, WeKruit, my verification
+  // code is <scanToken>` opener; legacy `Hello, WeKruit! <scanToken>` still accepted)
+  // IS the account-creation event; no prior web account / resume.
   "qr_imessage",
 ] as const
 

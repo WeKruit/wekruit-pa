@@ -90,18 +90,35 @@ class FakeFirestore {
   }
 }
 
-test("resolveInboundUserId binds phone from Hello, WeKruit! opener suffix", async () => {
+test("resolveInboundUserId binds phone from the verification-code opener suffix", async () => {
   const fakeDb = new FakeFirestore()
   const candidateId = "cand_opener_bind_01"
   fakeDb.seed(PA_COLLECTIONS.users, candidateId, { id: candidateId, source: "candidate" })
   const db = fakeDb as unknown as Firestore
 
   const opener = buildHelloWekruitOpenerBody(candidateId)
+  // The current built body uses the verification-code phrasing.
+  assert.ok(opener.startsWith("Hi, WeKruit, my verification code is"))
   const resolved = await resolveInboundUserId(db, "+14155550182", opener)
   assert.equal(resolved, candidateId)
 
   const userSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
   assert.equal(userSnap.data()?.phoneE164, "+14155550182")
+})
+
+test("resolveInboundUserId still binds phone from the LEGACY Hello, WeKruit! opener (in-flight QR links)", async () => {
+  const fakeDb = new FakeFirestore()
+  const candidateId = "cand_legacy_opener_bind_01"
+  fakeDb.seed(PA_COLLECTIONS.users, candidateId, { id: candidateId, source: "candidate" })
+  const db = fakeDb as unknown as Firestore
+
+  // Hard-coded OLD body — a QR code already printed/in the wild emits this verbatim.
+  const legacyOpener = `Hello, WeKruit! ${candidateId}`
+  const resolved = await resolveInboundUserId(db, "+14155550199", legacyOpener)
+  assert.equal(resolved, candidateId)
+
+  const userSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+  assert.equal(userSnap.data()?.phoneE164, "+14155550199")
 })
 
 test("resolveInboundUserId binds phone from job interview opener token", async () => {

@@ -190,12 +190,23 @@ describe("resolveQrOpenerProvision (the canary gate)", () => {
     })
   }
 
-  it("QR opener for a CANARY campaign → provision allowed", async () => {
+  it("QR opener for a CANARY campaign → provision allowed (verification-code phrasing)", async () => {
     const { db } = fakeDb()
     await seedScan(db, "11111111-2222-3333-4444-555555555555", "dev-card")
     const out = await resolveQrOpenerProvision(
       db,
-      "Hello, WeKruit! 11111111-2222-3333-4444-555555555555",
+      "Hi, WeKruit, my verification code is 11111111-2222-3333-4444-555555555555",
+    )
+    assert.equal(out.shouldProvision, true)
+    assert.equal(out.scan?.campaign, "dev-card")
+  })
+
+  it("LEGACY Hello, WeKruit! opener for a CANARY campaign → provision allowed (back-compat)", async () => {
+    const { db } = fakeDb()
+    await seedScan(db, "33333333-2222-3333-4444-555555555555", "dev-card")
+    const out = await resolveQrOpenerProvision(
+      db,
+      "Hello, WeKruit! 33333333-2222-3333-4444-555555555555",
     )
     assert.equal(out.shouldProvision, true)
     assert.equal(out.scan?.campaign, "dev-card")
@@ -366,10 +377,12 @@ describe("redirect URL shape", () => {
     assert.ok(link.includes("Hello%2C%20WeKruit!%20tok%20123"))
   })
 
-  it("buildQrStartRedirectLocation embeds the Hello opener with the scanToken", () => {
+  it("buildQrStartRedirectLocation embeds the verification-code opener with the scanToken", () => {
     const loc = buildQrStartRedirectLocation("+15550000001", "tok-xyz")
     assert.ok(loc.startsWith("sms:+15550000001?&body="))
-    assert.ok(decodeURIComponent(loc.split("body=")[1]!) === "Hello, WeKruit! tok-xyz")
+    assert.ok(
+      decodeURIComponent(loc.split("body=")[1]!) === "Hi, WeKruit, my verification code is tok-xyz",
+    )
   })
 })
 

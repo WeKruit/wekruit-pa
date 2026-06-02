@@ -123,6 +123,7 @@ export {
   buildHelloWekruitOpenerBody,
   parseHelloWekruitOpener,
   HELLO_WEKRUIT_OPENER_PREFIX,
+  VERIFICATION_CODE_OPENER_PREFIX,
   isSharedOnboardingGreetingOrKickoff,
   isSharedOnboardingRuntimeEvent,
   judgeSharedOnboardingAnswer,

@@ -20,8 +20,20 @@ import {
 } from "../shared-onboarding.js"
 import { WEKRUIT_CANDIDATE_SOURCE, WEKRUIT_LAYOFF_SOURCE } from "../onboarding.js"
 
-test("Hello, WeKruit! opener includes candidate id for phone binding", () => {
-  assert.equal(buildHelloWekruitOpenerBody("abc_user_99"), "Hello, WeKruit! abc_user_99")
+test("verification-code opener includes candidate id for phone binding", () => {
+  assert.equal(
+    buildHelloWekruitOpenerBody("abc_user_99"),
+    "Hi, WeKruit, my verification code is abc_user_99",
+  )
+  assert.deepEqual(
+    parseHelloWekruitOpener("Hi, WeKruit, my verification code is abc_user_99"),
+    { candidateId: "abc_user_99" },
+  )
+  // bare opener (no token) → no candidate id
+  assert.equal(parseHelloWekruitOpener("Hi, WeKruit, my verification code is"), null)
+})
+
+test("legacy Hello, WeKruit! opener still parses (back-compat for in-flight QR links)", () => {
   assert.deepEqual(parseHelloWekruitOpener("Hello, WeKruit! abc_user_99"), { candidateId: "abc_user_99" })
   assert.equal(parseHelloWekruitOpener("Hello, WeKruit!"), null)
 })
