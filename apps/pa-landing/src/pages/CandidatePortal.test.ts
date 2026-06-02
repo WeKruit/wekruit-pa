@@ -132,6 +132,17 @@ test("CandidatePortal connector rows do not use dead profile links for non-OAuth
   )
 })
 
+test("CandidatePortal connector errors render inline candidate-safe feedback", () => {
+  assert.doesNotMatch(source, /window\.alert/)
+  assert.doesNotMatch(source, /Add the GitHub OAuth app secrets first/)
+  assert.doesNotMatch(source, /Add the Cal\.com OAuth app secrets first/)
+  assert.match(source, /const \[error, setError\] = useState<string \| null>\(null\)/)
+  assert.match(source, /<span className="wkv2-conn__error" role="status">\{error\}<\/span>/)
+  assert.match(source, /setError\(connectorErrorMessage\(err, connector\.provider\)\)/)
+  assert.match(source, /GitHub connection is not available yet\. Message Claire to add your GitHub context\./)
+  assert.match(source, /Cal\.com connection is not available yet\. Message Claire to share scheduling context\./)
+})
+
 test("CandidatePortal does not advertise unavailable account or role actions", () => {
   assert.doesNotMatch(source, /\bManage\s*<\/span>/)
   assert.doesNotMatch(source, /filter,\s*save\s*&\s*decide/i)

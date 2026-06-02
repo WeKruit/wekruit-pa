@@ -611,13 +611,16 @@ async function startCandidateConnectorOAuth(provider: "linkedin" | "github" | "c
 function connectorErrorMessage(err: unknown, provider: ConnectorRow["provider"]): string {
   const raw = err instanceof Error ? err.message : String(err)
   if (raw.includes("github_oauth_config_missing")) {
-    return "GitHub OAuth is not configured yet. Add the GitHub OAuth app secrets first."
+    return "GitHub connection is not available yet. Message Claire to add your GitHub context."
   }
   if (raw.includes("calcom_oauth_config_missing")) {
-    return "Cal.com OAuth is not configured yet. Add the Cal.com OAuth app secrets first."
+    return "Cal.com connection is not available yet. Message Claire to share scheduling context."
   }
   if (raw.includes("linkedin_config_missing")) {
-    return "LinkedIn OAuth is not configured yet."
+    return "LinkedIn connection is not available yet. Add your LinkedIn in the profile update box."
+  }
+  if (raw.includes("connector_auth_url_missing")) {
+    return "The connection did not return a sign-in link. Try again in a moment."
   }
   if (raw.includes("not linked to a candidate profile")) {
     return "Open the profile once it finishes loading, then try connecting again."
@@ -635,6 +638,7 @@ function ConnectorAction({
   withCheck?: boolean
 }) {
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   if (connector.connected) {
     return (
       <span className="wkv2-conn__btn">
@@ -657,21 +661,25 @@ function ConnectorAction({
     return <span className="wkv2-conn__btn wkv2-conn__btn--muted">Not on file</span>
   }
   return (
-    <button
-      type="button"
-      className="wkv2-conn__btn wkv2-conn__btn--connect"
-      disabled={busy}
-      onClick={() => {
-        setBusy(true)
-        void startCandidateConnectorOAuth(connector.provider!)
-          .catch((err) => {
-            window.alert(connectorErrorMessage(err, connector.provider))
-          })
-          .finally(() => setBusy(false))
-      }}
-    >
-      Connect
-    </button>
+    <span className="wkv2-conn__action">
+      <button
+        type="button"
+        className="wkv2-conn__btn wkv2-conn__btn--connect"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true)
+          setError(null)
+          void startCandidateConnectorOAuth(connector.provider!)
+            .catch((err) => {
+              setError(connectorErrorMessage(err, connector.provider))
+            })
+            .finally(() => setBusy(false))
+        }}
+      >
+        Connect
+      </button>
+      {error ? <span className="wkv2-conn__error" role="status">{error}</span> : null}
+    </span>
   )
 }
 
@@ -3808,6 +3816,20 @@ const ME_PORTAL_STYLES = `
   background: transparent;
   color: var(--wk-ink-3);
   cursor: default;
+}
+.wkv2-conn__action {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  max-width: 220px;
+}
+.wkv2-conn__error {
+  color: #8d352c;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: right;
+  white-space: normal;
 }
 .wkv2-conn__check {
   width: 14px; height: 14px; border-radius: 50%;
