@@ -94,6 +94,61 @@ export type FlywheelSimulationResult = {
   }>
 }
 
+const MARKETPLACE_LOOP_COVERAGE_DEFS = [
+  {
+    id: "candidate_interview",
+    label: "Candidate interview outcome",
+    requirement: "Candidate interview and behavior outcomes are feeding the flywheel.",
+  },
+  {
+    id: "employer_intro",
+    label: "Employer intro outcome",
+    requirement: "Employer accept/reject decisions are feeding the flywheel.",
+  },
+  {
+    id: "recruiter_submission_review",
+    label: "Recruiter submission review",
+    requirement: "WeKruit review outcomes for recruiter-submitted candidates are feeding the flywheel.",
+  },
+  {
+    id: "recruiter_role_access",
+    label: "Recruiter role access",
+    requirement: "Recruiter role approval/rejection decisions are feeding the flywheel.",
+  },
+  {
+    id: "recruiter_role_feedback",
+    label: "Recruiter role feedback",
+    requirement: "Recruiter role difficulty feedback is feeding the flywheel.",
+  },
+  {
+    id: "hitl_correction",
+    label: "HITL correction",
+    requirement: "Candidate, operator, or system corrections are feeding eval/regression artifacts.",
+  },
+  {
+    id: "eval_artifact",
+    label: "Eval artifact",
+    requirement: "Generated eval artifacts exist for regression or simulation coverage.",
+  },
+] as const
+
+type MarketplaceLoopCoverageId = typeof MARKETPLACE_LOOP_COVERAGE_DEFS[number]["id"]
+
+export type MarketplaceLoopCoverage = {
+  id: MarketplaceLoopCoverageId
+  label: string
+  status: "covered" | "missing"
+  count: number
+  requirement: string
+}
+
+export type MarketplaceCoverageSummary = {
+  coveredLoops: number
+  totalLoops: number
+  allRequiredLoopsCovered: boolean
+  marketplaceLoops: MarketplaceLoopCoverage[]
+}
+
 const AdminFlywheelEvalSnapshotInputSchema = z.object({
   limit: z.number().int().min(1).max(100).default(25),
   adminToken: z.string().optional(),
@@ -115,6 +170,7 @@ export type FlywheelEvalSnapshot = {
     feedbackByOutcome: Record<string, number>
     employerIntroByOutcome: Record<string, number>
   }
+  coverage: MarketplaceCoverageSummary
   recentArtifacts: Array<Pick<EvalArtifact, "artifactId" | "kind" | "status" | "candidateId" | "jobId" | "candidateJobStateId" | "createdBy" | "createdAt" | "updatedAt" | "sourceCorrectionEventIds" | "sourceFeedbackEventIds" | "payloadRedacted" | "evidence" | "latestRunResult">>
   recentCorrections: Array<Pick<CorrectionEvent, "eventId" | "targetType" | "targetId" | "actor" | "candidateId" | "jobId" | "reason" | "beforeRedacted" | "afterRedacted" | "evidence" | "createdAt">>
   recentFeedback: Array<Pick<FeedbackEvent, "eventId" | "kind" | "actor" | "outcome" | "candidateId" | "jobId" | "candidateJobStateId" | "payloadRedacted" | "evidence" | "createdAt">>
@@ -179,6 +235,39 @@ function countBy<T>(rows: T[], select: (row: T) => string | undefined): Record<s
     out[key] = (out[key] ?? 0) + 1
   }
   return out
+}
+
+function buildMarketplaceCoverage(input: {
+  artifacts: EvalArtifact[]
+  feedback: FeedbackEvent[]
+  corrections: CorrectionEvent[]
+}): MarketplaceCoverageSummary {
+  const counts: Record<MarketplaceLoopCoverageId, number> = {
+    candidate_interview: input.feedback.filter((event) =>
+      event.kind === "candidate_behavior" || event.kind === "prescreen_outcome"
+    ).length,
+    employer_intro: input.feedback.filter((event) => event.kind === "employer_action").length,
+    recruiter_submission_review: input.feedback.filter((event) => event.kind === "recruiter_submission_feedback").length,
+    recruiter_role_access: input.feedback.filter((event) => event.kind === "recruiter_role_application_decision").length,
+    recruiter_role_feedback: input.feedback.filter((event) => event.kind === "recruiter_role_feedback").length,
+    hitl_correction: input.corrections.length,
+    eval_artifact: input.artifacts.length,
+  }
+  const marketplaceLoops = MARKETPLACE_LOOP_COVERAGE_DEFS.map((def) => {
+    const count = counts[def.id]
+    return {
+      ...def,
+      count,
+      status: count > 0 ? "covered" as const : "missing" as const,
+    }
+  })
+  const coveredLoops = marketplaceLoops.filter((loop) => loop.status === "covered").length
+  return {
+    coveredLoops,
+    totalLoops: marketplaceLoops.length,
+    allRequiredLoopsCovered: coveredLoops === marketplaceLoops.length,
+    marketplaceLoops,
+  }
 }
 
 export function buildFlywheelFeedbackEvent(input: FlywheelFeedbackInput): FeedbackEvent {
@@ -329,6 +418,7 @@ export async function runAdminFlywheelEvalSnapshot(
         (event) => event.outcome,
       ),
     },
+    coverage: buildMarketplaceCoverage({ artifacts, feedback, corrections }),
     recentArtifacts: artifacts.map((artifact) => ({
       artifactId: artifact.artifactId,
       kind: artifact.kind,

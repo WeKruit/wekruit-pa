@@ -9,6 +9,7 @@ import {
   buildFlywheelEvalSnapshotRequest,
   getFlywheelEvalSnapshot,
   type CountMap,
+  type FlywheelCoverageSummary,
   type FlywheelEvalArtifactRow,
   type FlywheelEvalCorrectionRow,
   type FlywheelEvalFeedbackRow,
@@ -109,6 +110,8 @@ export function FlywheelEvalSnapshotView({ snapshot }: { snapshot: FlywheelEvalS
         </div>
       </Panel>
 
+      <CoveragePanel coverage={snapshot.coverage} />
+
       <Panel title="Recent Eval Artifacts" eyebrow={`${snapshot.recentArtifacts.length} row(s)`}>
         {snapshot.recentArtifacts.length === 0 ? (
           <EmptyState
@@ -148,6 +151,28 @@ export function FlywheelEvalSnapshotView({ snapshot }: { snapshot: FlywheelEvalS
         )}
       </Panel>
     </>
+  )
+}
+
+function CoveragePanel({ coverage }: { coverage: FlywheelCoverageSummary }) {
+  return (
+    <Panel
+      title="Marketplace Coverage"
+      eyebrow={`${coverage.coveredLoops}/${coverage.totalLoops} loops covered`}
+    >
+      <div style={coverageGridStyle}>
+        {coverage.marketplaceLoops.map((loop) => (
+          <section key={loop.id} style={coverageItemStyle}>
+            <div style={coverageItemHeaderStyle}>
+              <h3 style={countTitleStyle}>{formatSafeText(loop.label, 120)}</h3>
+              <Badge tone={loop.status === "covered" ? "ok" : "warn"}>{loop.status}</Badge>
+            </div>
+            <p style={mutedStyle}>{formatSafeText(loop.requirement, 220)}</p>
+            <Fact label="rows" value={loop.count} />
+          </section>
+        ))}
+      </div>
+    </Panel>
   )
 }
 
@@ -350,6 +375,9 @@ const buttonStyle = (disabled: boolean): CSSProperties => ({
   fontWeight: 700,
 })
 const overviewGridStyle: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12 }
+const coverageGridStyle: CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 12 }
+const coverageItemStyle: CSSProperties = { border: "1px solid #e2e8f0", borderRadius: 8, padding: 12, display: "grid", gap: 8 }
+const coverageItemHeaderStyle: CSSProperties = { display: "flex", justifyContent: "space-between", gap: 10, alignItems: "start" }
 const countPanelStyle: CSSProperties = { border: "1px solid #e2e8f0", borderRadius: 8, padding: 12, display: "grid", gap: 8 }
 const countTitleStyle: CSSProperties = { margin: 0, fontSize: 14 }
 const countListStyle: CSSProperties = { display: "grid", gap: 6 }

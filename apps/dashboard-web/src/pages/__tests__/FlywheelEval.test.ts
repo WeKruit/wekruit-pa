@@ -55,6 +55,27 @@ test("FlywheelEval page renders counts and redacted recent rows", () => {
       correctionsByTarget: { user_tags: 1, job_enrichment_draft: 1 },
       correctionsByActor: { candidate: 1, operator: 1 },
     },
+    coverage: {
+      coveredLoops: 6,
+      totalLoops: 7,
+      allRequiredLoopsCovered: false,
+      marketplaceLoops: [
+        {
+          id: "candidate_interview",
+          label: "Candidate interview outcome",
+          status: "covered",
+          count: 3,
+          requirement: "Candidate interview and behavior outcomes are feeding the flywheel.",
+        },
+        {
+          id: "recruiter_role_feedback",
+          label: "Recruiter role feedback",
+          status: "missing",
+          count: 0,
+          requirement: "Recruiter role difficulty feedback is feeding the flywheel.",
+        },
+      ],
+    },
     recentArtifacts: [
       {
         id: "artifact-1",
@@ -119,6 +140,11 @@ test("FlywheelEval page renders counts and redacted recent rows", () => {
   const html = renderFlywheelEvalSnapshotView(snapshot)
 
   assert.match(html, /Flywheel Overview/)
+  assert.match(html, /Marketplace Coverage/)
+  assert.match(html, /6\/7 loops covered/)
+  assert.match(html, /Candidate interview outcome/)
+  assert.match(html, /Recruiter role feedback/)
+  assert.match(html, /missing/)
   assert.match(html, /Artifacts by Kind/)
   assert.match(html, /candidate_profile_correction/)
   assert.match(html, /Corrections by Actor/)

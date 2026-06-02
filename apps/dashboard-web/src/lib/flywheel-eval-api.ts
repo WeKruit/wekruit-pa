@@ -58,6 +58,21 @@ export interface FlywheelEvalFeedbackRow {
   createdAt?: string
 }
 
+export interface FlywheelMarketplaceLoopCoverage {
+  id: string
+  label: string
+  status: "covered" | "missing"
+  count: number
+  requirement: string
+}
+
+export interface FlywheelCoverageSummary {
+  coveredLoops: number
+  totalLoops: number
+  allRequiredLoopsCovered: boolean
+  marketplaceLoops: FlywheelMarketplaceLoopCoverage[]
+}
+
 export interface FlywheelEvalEvidenceSummary {
   source?: string
   summary: string
@@ -77,10 +92,63 @@ export interface FlywheelEvalSnapshot {
     correctionsByTarget: CountMap
     correctionsByActor: CountMap
   }
+  coverage: FlywheelCoverageSummary
   recentArtifacts: FlywheelEvalArtifactRow[]
   recentCorrections: FlywheelEvalCorrectionRow[]
   recentFeedback: FlywheelEvalFeedbackRow[]
 }
+
+const MARKETPLACE_LOOP_COVERAGE_DEFAULTS: FlywheelMarketplaceLoopCoverage[] = [
+  {
+    id: "candidate_interview",
+    label: "Candidate interview outcome",
+    status: "missing",
+    count: 0,
+    requirement: "Candidate interview and behavior outcomes are feeding the flywheel.",
+  },
+  {
+    id: "employer_intro",
+    label: "Employer intro outcome",
+    status: "missing",
+    count: 0,
+    requirement: "Employer accept/reject decisions are feeding the flywheel.",
+  },
+  {
+    id: "recruiter_submission_review",
+    label: "Recruiter submission review",
+    status: "missing",
+    count: 0,
+    requirement: "WeKruit review outcomes for recruiter-submitted candidates are feeding the flywheel.",
+  },
+  {
+    id: "recruiter_role_access",
+    label: "Recruiter role access",
+    status: "missing",
+    count: 0,
+    requirement: "Recruiter role approval/rejection decisions are feeding the flywheel.",
+  },
+  {
+    id: "recruiter_role_feedback",
+    label: "Recruiter role feedback",
+    status: "missing",
+    count: 0,
+    requirement: "Recruiter role difficulty feedback is feeding the flywheel.",
+  },
+  {
+    id: "hitl_correction",
+    label: "HITL correction",
+    status: "missing",
+    count: 0,
+    requirement: "Candidate, operator, or system corrections are feeding eval/regression artifacts.",
+  },
+  {
+    id: "eval_artifact",
+    label: "Eval artifact",
+    status: "missing",
+    count: 0,
+    requirement: "Generated eval artifacts exist for regression or simulation coverage.",
+  },
+]
 
 export function buildFlywheelEvalSnapshotRequest(limit?: number): FlywheelEvalSnapshotRequest {
   const parsed = Number.isFinite(limit) ? Math.trunc(Number(limit)) : FLYWHEEL_EVAL_DEFAULT_LIMIT
@@ -118,6 +186,7 @@ export function normalizeFlywheelEvalSnapshot(
       correctionsByTarget: normalizeCountMap(snapshot?.counts?.correctionsByTarget),
       correctionsByActor: normalizeCountMap(snapshot?.counts?.correctionsByActor),
     },
+    coverage: normalizeCoverageSummary(snapshot?.coverage),
     recentArtifacts: (snapshot?.recentArtifacts ?? []).map(normalizeArtifactRow),
     recentCorrections: (snapshot?.recentCorrections ?? []).map(normalizeCorrectionRow),
     recentFeedback: (snapshot?.recentFeedback ?? []).map(normalizeFeedbackRow),
@@ -132,6 +201,31 @@ function normalizeCountMap(value: CountMap | undefined): CountMap {
     out[key] = Number.isFinite(numeric) ? numeric : 0
   }
   return out
+}
+
+function normalizeCoverageSummary(value: Partial<FlywheelCoverageSummary> | undefined): FlywheelCoverageSummary {
+  const byId = new Map((value?.marketplaceLoops ?? []).map((loop) => [loop.id, loop]))
+  const marketplaceLoops = MARKETPLACE_LOOP_COVERAGE_DEFAULTS.map((fallback) => {
+    const raw = byId.get(fallback.id)
+    const count = Number(raw?.count ?? fallback.count)
+    const normalizedCount = Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0
+    const status: FlywheelMarketplaceLoopCoverage["status"] =
+      raw?.status === "covered" || normalizedCount > 0 ? "covered" : "missing"
+    return {
+      id: raw?.id ?? fallback.id,
+      label: raw?.label ?? fallback.label,
+      status,
+      count: normalizedCount,
+      requirement: raw?.requirement ?? fallback.requirement,
+    }
+  })
+  const coveredLoops = marketplaceLoops.filter((loop) => loop.status === "covered").length
+  return {
+    coveredLoops,
+    totalLoops: marketplaceLoops.length,
+    allRequiredLoopsCovered: coveredLoops === marketplaceLoops.length,
+    marketplaceLoops,
+  }
 }
 
 function normalizeArtifactRow(row: Partial<FlywheelEvalArtifactRow>): FlywheelEvalArtifactRow {

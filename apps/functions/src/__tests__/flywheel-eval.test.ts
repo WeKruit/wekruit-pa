@@ -225,6 +225,21 @@ describe("runAdminFlywheelEvalSnapshot", () => {
       feedbackByOutcome: { passed: 1, intro_rejected: 1, advanced: 1, approved: 1, hard: 1 },
       employerIntroByOutcome: { intro_rejected: 1 },
     })
+    assert.equal(result.coverage.allRequiredLoopsCovered, true)
+    assert.equal(result.coverage.coveredLoops, 7)
+    assert.equal(result.coverage.totalLoops, 7)
+    assert.deepEqual(
+      result.coverage.marketplaceLoops.map((loop) => [loop.id, loop.status, loop.count]),
+      [
+        ["candidate_interview", "covered", 1],
+        ["employer_intro", "covered", 1],
+        ["recruiter_submission_review", "covered", 1],
+        ["recruiter_role_access", "covered", 1],
+        ["recruiter_role_feedback", "covered", 1],
+        ["hitl_correction", "covered", 1],
+        ["eval_artifact", "covered", 1],
+      ],
+    )
     assert.equal(result.recentArtifacts[0]!.artifactId, "artifact-1")
     assert.equal(result.recentCorrections[0]!.eventId, "corr-1")
     assert.equal(result.recentFeedback[0]!.eventId, "feedback-5")
@@ -240,5 +255,39 @@ describe("runAdminFlywheelEvalSnapshot", () => {
     assert.deepEqual(result.recentFeedback[3]!.payloadRedacted, { decision: "rejected" })
     assert.equal(result.recentFeedback[4]!.eventId, "feedback-1")
     assert.deepEqual(result.recentFeedback[4]!.payloadRedacted, { behavior: "prescreen_pass" })
+  })
+
+  it("marks marketplace coverage gates missing when recent rows lack a loop", async () => {
+    const mfs = new MockFirestore()
+    await mfs.collection(PA_COLLECTIONS.feedbackEvents).doc("feedback-1").set({
+      eventId: "feedback-1",
+      kind: "candidate_behavior",
+      actor: "system",
+      candidateId: "cand-1",
+      outcome: "passed",
+      payloadRedacted: { behavior: "prescreen_pass" },
+      createdAt: "2026-05-14T10:01:00.000Z",
+    })
+
+    const result = await runAdminFlywheelEvalSnapshot(
+      { limit: 10 },
+      { db: asFirestore(mfs), now: () => now },
+    )
+
+    assert.equal(result.coverage.allRequiredLoopsCovered, false)
+    assert.equal(result.coverage.coveredLoops, 1)
+    assert.equal(result.coverage.totalLoops, 7)
+    assert.deepEqual(
+      result.coverage.marketplaceLoops.map((loop) => [loop.id, loop.status, loop.count]),
+      [
+        ["candidate_interview", "covered", 1],
+        ["employer_intro", "missing", 0],
+        ["recruiter_submission_review", "missing", 0],
+        ["recruiter_role_access", "missing", 0],
+        ["recruiter_role_feedback", "missing", 0],
+        ["hitl_correction", "missing", 0],
+        ["eval_artifact", "missing", 0],
+      ],
+    )
   })
 })
