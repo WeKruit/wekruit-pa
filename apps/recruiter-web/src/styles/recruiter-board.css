@@ -1813,6 +1813,131 @@
   font-size: 13.5px;
 }
 
+.rb-role-quick-save header p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.rb-role-quick-stage {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.rb-role-quick-stage button {
+  min-height: 74px;
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  border: 1px solid #eee7dd;
+  border-left: 3px solid #9b958b;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 8px;
+  text-align: left;
+}
+
+.rb-role-quick-stage button:hover {
+  background: #fbfaf5;
+}
+
+.rb-role-quick-stage button.is-selected {
+  border-color: var(--live-border);
+  border-left-color: var(--live);
+  background: var(--live-soft);
+}
+
+.rb-role-quick-stage strong {
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 1.15;
+}
+
+.rb-role-quick-stage em {
+  color: var(--ink-2);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.25;
+}
+
+.rb-role-quick-readiness {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #eee7dd;
+  border-left: 3px solid #9b958b;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.rb-role-quick-readiness.is-good {
+  border-left-color: var(--live);
+  background: var(--live-soft);
+}
+
+.rb-role-quick-readiness.is-watch {
+  border-left-color: #b77c2f;
+  background: #fffaf1;
+}
+
+.rb-role-quick-readiness.is-blocked {
+  border-left-color: #a33a2d;
+  background: #fff8f7;
+}
+
+.rb-role-quick-readiness > span {
+  color: var(--ink-3);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-role-quick-readiness strong {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.rb-role-quick-readiness p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.rb-role-quick-readiness > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.rb-role-quick-readiness em {
+  border: 1px solid rgba(42, 42, 38, 0.12);
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--ink-2);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 800;
+  padding: 4px 7px;
+}
+
+.rb-role-quick-readiness em.is-missing {
+  border-color: rgba(163, 58, 45, 0.26);
+  color: #8b3128;
+}
+
+.rb-role-quick-readiness em.is-done {
+  border-color: rgba(28, 116, 67, 0.22);
+  color: var(--live-2);
+}
+
 .rb-role-quick-save label {
   display: grid;
   gap: 4px;
@@ -10129,6 +10254,9 @@
   .rb-role-candidate-actions small {
     justify-items: start;
     justify-self: stretch;
+  }
+  .rb-role-quick-stage {
+    grid-template-columns: 1fr;
   }
   .rb-role-quick-save > div {
     grid-template-columns: 1fr;

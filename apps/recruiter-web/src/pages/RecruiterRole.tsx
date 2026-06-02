@@ -89,6 +89,19 @@ type RoleQuickCandidateDraft = {
   link: string
   currentRole: string
   notes: string
+  stage: RecruiterSourcedCandidateStage
+}
+
+type RoleQuickCandidateProof = {
+  tone: "good" | "watch" | "blocked" | "quiet"
+  title: string
+  body: string
+  submitLabel: string
+  items: Array<{
+    label: string
+    value: string
+    done: boolean
+  }>
 }
 
 type RoleCandidateCommand = {
@@ -115,6 +128,7 @@ function emptyRoleQuickCandidateDraft(): RoleQuickCandidateDraft {
     link: "",
     currentRole: "",
     notes: "",
+    stage: "sourced",
   }
 }
 
@@ -301,6 +315,13 @@ function sourcedStageLabel(stage?: string): string {
 
 const ROLE_CANDIDATE_STAGE_FLOW: RecruiterSourcedCandidateStage[] = ["sourced", "contacted", "screened", "ready"]
 
+const ROLE_QUICK_CANDIDATE_STAGES: Array<{ id: RecruiterSourcedCandidateStage; label: string; detail: string }> = [
+  { id: "sourced", label: "Sourced", detail: "Saved prospect, no outreach claim yet." },
+  { id: "contacted", label: "Contacted", detail: "Outreach started; follow-up clock opens." },
+  { id: "screened", label: "Screened", detail: "Notes include role-fit evidence." },
+  { id: "ready", label: "Ready", detail: "Email and proof are ready for packet work." },
+]
+
 function nextRoleCandidateStage(stage: RecruiterSourcedCandidateStage): RecruiterSourcedCandidateStage | null {
   const index = ROLE_CANDIDATE_STAGE_FLOW.indexOf(stage)
   if (index < 0 || index >= ROLE_CANDIDATE_STAGE_FLOW.length - 1) return null
@@ -334,6 +355,12 @@ function roleCandidateOutreachForStage(
     }
   }
   return current
+}
+
+function roleQuickCandidateOutreachForStage(stage: RecruiterSourcedCandidateStage): RecruiterCandidateOutreach | undefined {
+  if (stage === "contacted") return { status: "contacted", nextFollowUpAt: roleCandidateFollowUpIso(3) }
+  if (stage === "screened" || stage === "ready") return { status: "responded", nextFollowUpAt: null }
+  return { status: "not_contacted" }
 }
 
 function roleCandidateOutreachLabel(candidate: RecruiterSourcedCandidateItem): string {
@@ -437,6 +464,54 @@ function buildRoleCandidateCommand(candidates: RecruiterSourcedCandidateItem[]):
     primaryLabel: active.length ? "Candidate CRM" : "Quick source",
     primaryAction: active.length ? "crm" : "quick_source",
     counts: { ready: ready.length, due: due.length, uncontacted: uncontacted.length, active: active.length },
+  }
+}
+
+function buildRoleQuickCandidateProof(draft: RoleQuickCandidateDraft): RoleQuickCandidateProof {
+  const name = draft.name.trim()
+  const email = draft.email.trim()
+  const link = draft.link.trim()
+  const notes = draft.notes.trim()
+  const stageLabel = sourcedStageLabel(draft.stage)
+  const hasIdentity = Boolean(name && link)
+  const hasProof = Boolean(notes)
+  const readyNeedsEmail = draft.stage === "ready" && !email
+  const stageNeedsProof = (draft.stage === "screened" || draft.stage === "ready") && !hasProof
+  const blocked = !hasIdentity || readyNeedsEmail || stageNeedsProof
+  const tone: RoleQuickCandidateProof["tone"] = blocked
+    ? "blocked"
+    : draft.stage === "ready"
+      ? "good"
+      : draft.stage === "screened" || draft.stage === "contacted"
+        ? "watch"
+        : "quiet"
+  const title = blocked
+    ? "Add the source proof before saving"
+    : draft.stage === "ready"
+      ? "Ready candidate record"
+      : draft.stage === "screened"
+        ? "Screening evidence captured"
+        : draft.stage === "contacted"
+          ? "Outreach follow-up will be tracked"
+          : "Sourced prospect record"
+  const body = readyNeedsEmail
+    ? "Ready candidates need an email because the submission packet and consent confirmation depend on it."
+    : stageNeedsProof
+      ? "Screened and ready candidates need role-fit evidence in the note before entering that stage."
+      : hasIdentity
+        ? `${stageLabel} will be saved to this role and prefilled into the packet workspace.`
+        : "Name and LinkedIn or resume link are required before this role can own the prospect."
+  return {
+    tone,
+    title,
+    body,
+    submitLabel: `Save ${stageLabel}`,
+    items: [
+      { label: "Identity", value: hasIdentity ? "Name + link" : "Name/link missing", done: hasIdentity },
+      { label: "Reachability", value: email ? "Email present" : draft.stage === "ready" ? "Email required" : "Email optional", done: draft.stage === "ready" ? Boolean(email) : true },
+      { label: "Role proof", value: hasProof ? "Note captured" : draft.stage === "sourced" || draft.stage === "contacted" ? "Add when screened" : "Proof required", done: draft.stage === "sourced" || draft.stage === "contacted" ? true : hasProof },
+      { label: "Starting status", value: stageLabel, done: true },
+    ],
   }
 }
 
@@ -2385,6 +2460,7 @@ export default function RecruiterRole() {
     candidateRecommendations,
   })
   const packetBlocksSubmit = !submissionPacket.canSubmit
+  const quickCandidateProof = buildRoleQuickCandidateProof(quickCandidate)
 
   const useSourcedCandidate = (candidate: RecruiterSourcedCandidateItem) => {
     setForm((next) => withRecruiterDefaults({
@@ -2408,6 +2484,7 @@ export default function RecruiterRole() {
     const link = quickCandidate.link.trim()
     const currentRole = quickCandidate.currentRole.trim()
     const notes = quickCandidate.notes.trim()
+    const stage = quickCandidate.stage
     if (!name) {
       setQuickCandidateError("Candidate name is required.")
       return
@@ -2418,6 +2495,14 @@ export default function RecruiterRole() {
     }
     if (email && !isValidEmail(email)) {
       setQuickCandidateError("Candidate email is invalid.")
+      return
+    }
+    if (stage === "ready" && !email) {
+      setQuickCandidateError("Candidate email is required before saving a ready candidate.")
+      return
+    }
+    if ((stage === "screened" || stage === "ready") && !notes) {
+      setQuickCandidateError("Add a role/proof note before saving this candidate as screened or ready.")
       return
     }
     setQuickCandidateSaving(true)
@@ -2436,8 +2521,8 @@ export default function RecruiterRole() {
       }
       const saved = await saveRecruiterSourcedCandidate({
         jobId: job.jobId,
-        stage: "sourced",
-        outreach: { status: "not_contacted" },
+        stage,
+        outreach: roleQuickCandidateOutreachForStage(stage),
         candidate: {
           name,
           ...(email ? { email } : {}),
@@ -3023,7 +3108,34 @@ export default function RecruiterRole() {
                 <header>
                   <span>Quick source</span>
                   <strong>Save prospect to this role</strong>
+                  <p>Choose the real starting status. Later stages require the proof needed to defend the packet.</p>
                 </header>
+                <section className="rb-role-quick-stage" aria-label="Starting candidate status">
+                  {ROLE_QUICK_CANDIDATE_STAGES.map((stage) => (
+                    <button
+                      type="button"
+                      key={stage.id}
+                      className={quickCandidate.stage === stage.id ? "is-selected" : ""}
+                      onClick={() => setQuickCandidate({ ...quickCandidate, stage: stage.id })}
+                      disabled={quickCandidateSaving}
+                    >
+                      <strong>{stage.label}</strong>
+                      <em>{stage.detail}</em>
+                    </button>
+                  ))}
+                </section>
+                <section className={`rb-role-quick-readiness is-${quickCandidateProof.tone}`} aria-label="Quick source readiness">
+                  <span>Source readiness</span>
+                  <strong>{quickCandidateProof.title}</strong>
+                  <p>{quickCandidateProof.body}</p>
+                  <div>
+                    {quickCandidateProof.items.map((item) => (
+                      <em key={item.label} className={item.done ? "is-done" : "is-missing"}>
+                        {item.label}: {item.value}
+                      </em>
+                    ))}
+                  </div>
+                </section>
                 <label>
                   <span>Name *</span>
                   <input
@@ -3073,7 +3185,7 @@ export default function RecruiterRole() {
                 {quickCandidateError && <p className="rb-error">Could not save prospect: {quickCandidateError}</p>}
                 <div>
                   <button type="submit" className="rb-btn primary" disabled={quickCandidateSaving}>
-                    {quickCandidateSaving ? "Checking..." : "Save and use"}
+                    {quickCandidateSaving ? "Checking..." : quickCandidateProof.submitLabel}
                   </button>
                   <button type="button" className="rb-btn" onClick={() => navigate("/recruiters?tab=candidates")} disabled={quickCandidateSaving}>
                     Candidate CRM
