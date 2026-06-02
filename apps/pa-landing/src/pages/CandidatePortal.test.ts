@@ -57,6 +57,22 @@ test("CandidatePortal roles inbox distinguishes WeKruit-screened roles from exte
   assert.match(source, /external recommendations/)
 })
 
+test("CandidatePortal roles page disables zero-count filters instead of opening dead views", () => {
+  assert.match(source, /const disabled = counts\[f\.id\] === 0 && filter !== f\.id/)
+  assert.match(source, /disabled=\{disabled\}/)
+  assert.match(source, /aria-disabled=\{disabled\}/)
+  assert.match(source, /className=\{`wkmp-chip\$\{filter === f\.id \? " is-on" : ""\}\$\{disabled \? " is-disabled" : ""\}`\}/)
+})
+
+test("CandidatePortal roles page empty state offers real next actions", () => {
+  assert.match(source, /function MatchesEmptyState\(/)
+  assert.match(source, /No roles match your profile yet\./)
+  assert.match(source, /Claire keeps scanning\. Tighten target roles, locations, and deal-breakers/)
+  assert.match(source, /<Link to="\/me\/profile#match-preferences" className="wk-btn wk-btn--primary wk-btn--sm">[\s\S]*Update matching profile/)
+  assert.match(source, /claireHref \? \([\s\S]*Message Claire/)
+  assert.doesNotMatch(source, /<h3>Nothing here\.<\/h3>/)
+})
+
 test("CandidatePortal does not label pipeline reasons as Claire match evidence", () => {
   assert.doesNotMatch(source, /<em>Roles<\/em> Claire matched for you\./)
   assert.doesNotMatch(source, /Pulling the roles Claire matched for you\./)

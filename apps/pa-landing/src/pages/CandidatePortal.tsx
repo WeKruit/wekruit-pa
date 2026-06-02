@@ -4229,19 +4229,24 @@ function MatchesView({
           </header>
 
           <div className="wkmp-filters" role="tablist" aria-label="Filter roles">
-            {MATCHES_FILTERS.map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                role="tab"
-                aria-selected={filter === f.id}
-                className={`wkmp-chip${filter === f.id ? " is-on" : ""}`}
-                onClick={() => setFilter(f.id)}
-              >
-                {f.label}
-                <span className="wkmp-chip__n">{counts[f.id]}</span>
-              </button>
-            ))}
+            {MATCHES_FILTERS.map((f) => {
+              const disabled = counts[f.id] === 0 && filter !== f.id
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={filter === f.id}
+                  aria-disabled={disabled}
+                  disabled={disabled}
+                  className={`wkmp-chip${filter === f.id ? " is-on" : ""}${disabled ? " is-disabled" : ""}`}
+                  onClick={() => setFilter(f.id)}
+                >
+                  {f.label}
+                  <span className="wkmp-chip__n">{counts[f.id]}</span>
+                </button>
+              )
+            })}
           </div>
 
           <div className="wkmp-grid">
@@ -4263,14 +4268,7 @@ function MatchesView({
                   ))}
                 </div>
               ) : (
-                <div className="wkmp-empty">
-                  <h3>Nothing here.</h3>
-                  <p>
-                    {all.length === 0
-                      ? "Claire is still matching you - roles land here when they clearly fit your profile."
-                      : "No roles in this filter — try All."}
-                  </p>
-                </div>
+                <MatchesEmptyState allCount={all.length} claireHref={claireHref} onShowAll={() => setFilter("all")} />
               )}
             </div>
 
@@ -4312,6 +4310,43 @@ function MatchesView({
         </div>
       </div>
     </CandidateShell>
+  )
+}
+
+function MatchesEmptyState({
+  allCount,
+  claireHref,
+  onShowAll,
+}: {
+  allCount: number
+  claireHref: string | null
+  onShowAll: () => void
+}) {
+  const hasOtherRoles = allCount > 0
+  return (
+    <div className="wkmp-empty wkmp-empty--actionable">
+      <h3>{hasOtherRoles ? "No roles in this view yet." : "No roles match your profile yet."}</h3>
+      <p>
+        {hasOtherRoles
+          ? "This filter is empty. Show all tracked roles or update preferences if this split looks wrong."
+          : "Claire keeps scanning. Tighten target roles, locations, and deal-breakers so the next batch has better evidence."}
+      </p>
+      <div className="wkmp-empty__actions">
+        {hasOtherRoles ? (
+          <button type="button" className="wk-btn wk-btn--secondary wk-btn--sm" onClick={onShowAll}>
+            Show all roles
+          </button>
+        ) : null}
+        <Link to="/me/profile#match-preferences" className="wk-btn wk-btn--primary wk-btn--sm">
+          Update matching profile <Icon name="arrow-right" size={13} stroke={2} />
+        </Link>
+        {claireHref ? (
+          <a href={claireHref} className="wk-btn wk-btn--secondary wk-btn--sm">
+            Message Claire <Icon name="message" size={12} stroke={1.9} />
+          </a>
+        ) : null}
+      </div>
+    </div>
   )
 }
 
@@ -4445,6 +4480,12 @@ const MATCHES_STYLES = `
 }
 .wkmp-chip:hover { border-color: var(--ink); color: var(--ink); }
 .wkmp-chip.is-on { background: var(--ink); color: var(--cream); border-color: var(--ink); }
+.wkmp-chip:disabled,
+.wkmp-chip.is-disabled {
+  cursor: default; opacity: .52; border-color: var(--border); color: var(--ink-3);
+}
+.wkmp-chip:disabled:hover,
+.wkmp-chip.is-disabled:hover { border-color: var(--border); color: var(--ink-3); }
 .wkmp-chip__n {
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: var(--r-pill);
@@ -4463,6 +4504,9 @@ const MATCHES_STYLES = `
 }
 .wkmp-empty h3 { margin: 0 0 6px; font-family: var(--font-serif); font-weight: 400; font-size: 22px; color: var(--ink); letter-spacing: -0.02em; }
 .wkmp-empty p { margin: 0 auto; color: var(--ink-2); font-size: 13.5px; max-width: 460px; line-height: 1.5; }
+.wkmp-empty__actions {
+  margin-top: 18px; display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap;
+}
 
 /* Side rail */
 .wkmp-side__card { background: var(--candidate-card); border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px; display: grid; gap: 10px; }
