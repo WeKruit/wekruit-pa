@@ -473,6 +473,49 @@ export default function Employers() {
         </div>
       </section>
 
+      {/* Use-case fit — scope-safe stage and team guidance */}
+      <section className="wk-section wk-section--emp-fit">
+        <div className="wk-container">
+          <header className="wk-section__head wk-section__head--center">
+            <p className="wk-eyebrow">Where WeKruit fits</p>
+            <h2 className="wk-section__h2">Use it where a résumé screen is too weak.</h2>
+          </header>
+
+          <div className="wk-emp-fit">
+            <article className="wk-emp-fit__card">
+              <span className="wk-emp-fit__tag">01</span>
+              <h3>Founder-led or high-context roles</h3>
+              <p>
+                Use WeKruit when candidates need to understand your stage, wedge, and constraints
+                before meeting the hiring team. Start with one approved role brief.
+              </p>
+            </article>
+            <article className="wk-emp-fit__card">
+              <span className="wk-emp-fit__tag">02</span>
+              <h3>Specialized roles where evidence matters</h3>
+              <p>
+                Developer platform, AI infra, risk, design systems, and GTM wedge roles are better after Claire probes for concrete work examples and risks.
+              </p>
+            </article>
+            <article className="wk-emp-fit__card">
+              <span className="wk-emp-fit__tag">03</span>
+              <h3>Teams with an existing interview process</h3>
+              <p>
+                WeKruit sends a pass record into your normal loop. Your team owns scheduling, interview loops, and final decisions.
+              </p>
+            </article>
+            <article className="wk-emp-fit__card wk-emp-fit__card--limit">
+              <span className="wk-emp-fit__tag">Scope</span>
+              <h3>Not bulk requisition filling</h3>
+              <p>
+                WeKruit is not an ATS replacement or a candidate browser. Keep it scoped to roles
+                where the first interview should be earned with evidence.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
       {/* Trust band */}
       <section className="wk-section wk-section--trust">
         <div className="wk-container">

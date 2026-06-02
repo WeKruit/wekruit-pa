@@ -122,3 +122,25 @@ test("Employers page includes a scope-safe operating FAQ", () => {
   assert.doesNotMatch(employersSource, /flat percentage/i)
   assert.doesNotMatch(employersSource, /90 days/i)
 })
+
+test("Employers page explains where WeKruit fits without broad ATS or agency scope", () => {
+  assert.match(employersSource, /Where WeKruit fits/)
+  assert.match(employersSource, /Use it where a résumé screen is too weak/)
+  assert.match(employersSource, /Founder-led or high-context roles/)
+  assert.match(employersSource, /Specialized roles where evidence matters/)
+  assert.match(employersSource, /Teams with an existing interview process/)
+  assert.match(employersSource, /Not bulk requisition filling/)
+
+  assert.match(employersSource, /one approved role brief/)
+  assert.match(employersSource, /Claire probes for concrete work examples and risks/)
+  assert.match(employersSource, /Your team owns scheduling, interview loops, and final decisions/)
+  assert.match(employersSource, /not an ATS replacement or a candidate browser/)
+
+  assert.doesNotMatch(employersSource, /source every open req/i)
+  assert.doesNotMatch(employersSource, /replace your in-house recruiters/i)
+  assert.doesNotMatch(employersSource, /multiple expert recruiters/i)
+})
+
+test("Employers mobile hero grid allows preview columns to shrink inside the viewport", () => {
+  assert.match(stylesSource, /\.wk-emp-hero__copy,\s*\.wk-emp-hero__visual\s*\{\s*min-width: 0;\s*\}/s)
+})
