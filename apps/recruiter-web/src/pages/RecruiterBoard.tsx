@@ -1637,6 +1637,9 @@ export default function RecruiterBoard() {
             primaryRoleIds={primaryRoleIds}
             roleFeedback={roleFeedback}
             operatingMetrics={operatingMetrics}
+            onRoles={() => setTab("roles")}
+            onCandidates={() => setTab("candidates")}
+            onSubmissions={() => setTab("submissions")}
             onCandidateSaved={(saved) => setSourcedCandidates((rows) => sortSourcedCandidates([saved, ...rows.filter((row) => row.id !== saved.id)]))}
           />
         )}
@@ -2502,6 +2505,27 @@ type RecruiterTrustCenter = {
   gates: RecruiterTrustGate[]
   tiers: RecruiterTrustTierStep[]
   unlocks: RecruiterTrustGate[]
+}
+
+type RecruiterGroundRuleAction = "roles" | "candidates" | "submissions"
+
+type RecruiterGroundRuleItem = {
+  label: string
+  value: string
+  body: string
+  tone: OperatingTone
+  action: RecruiterGroundRuleAction
+  actionLabel: string
+}
+
+type RecruiterGroundRulesCenter = {
+  title: string
+  body: string
+  tone: OperatingTone
+  scoreLabel: string
+  cards: RecruiterGroundRuleItem[]
+  rules: RecruiterGroundRuleItem[]
+  risks: RecruiterGroundRuleItem[]
 }
 
 type RecruiterLearningCard = {
@@ -3573,6 +3597,227 @@ function computeRecruiterEarningsMetrics(
         tone: openQuestions + hardFeedback > 0 ? "warn" : "success",
       },
     ],
+  }
+}
+
+function buildRecruiterGroundRulesCenter(
+  candidates: RecruiterSourcedCandidateItem[],
+  submissions: RecruiterSubmissionItem[],
+  roleFeedback: RecruiterRoleFeedbackItem[],
+  primaryRoleIds: string[],
+): RecruiterGroundRulesCenter {
+  const activeCandidates = candidates.filter((candidate) => candidate.stage !== "archived")
+  const duplicateIds = duplicateCandidateIds(activeCandidates)
+  const consentNeeds = submissions.filter(candidateConfirmationCanResend)
+  const nonApprovedRoleOutreach = activeCandidates.filter((candidate) => {
+    const jobId = candidate.inboundJobId || candidate.jobId
+    const outreachStatus = candidate.outreach?.status ?? "not_contacted"
+    return typeof jobId === "string" && jobId.length > 0 &&
+      !primaryRoleIds.includes(jobId) &&
+      outreachStatus !== "not_contacted" &&
+      outreachStatus !== "not_interested"
+  })
+  const notInterestedWithFollowUp = activeCandidates.filter((candidate) =>
+    candidate.outreach?.status === "not_interested" && Boolean(candidate.outreach.nextFollowUpAt),
+  )
+  const followUpsDue = activeCandidates.filter((candidate) => candidateFollowUpState(candidate).needsAction)
+  const lowRatedSubmissions = submissions.filter((submission) => {
+    const rating = submissionFeedbackRating(submission)
+    return rating !== null && rating <= 2
+  })
+  const oneStarSubmissions = lowRatedSubmissions.filter((submission) => submissionFeedbackRating(submission) === 1)
+  const closedNegative = submissions.filter((submission) => CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? ""))
+  const hardOrBlockedFeedback = roleFeedback.filter((feedback) => feedback.difficulty === "hard" || feedback.difficulty === "blocked")
+  const profileProofMissing = activeCandidates.filter((candidate) =>
+    !candidate.candidate?.email?.trim() ||
+    !candidate.candidate?.link?.trim() ||
+    !candidate.candidate?.notes?.trim(),
+  )
+  const measurableRiskCount = duplicateIds.size +
+    consentNeeds.length +
+    nonApprovedRoleOutreach.length +
+    notInterestedWithFollowUp.length +
+    oneStarSubmissions.length +
+    hardOrBlockedFeedback.length
+  const scoreBase = activeCandidates.length || submissions.length ? 100 : 0
+  const score = scoreBase
+    ? clampNumber(
+      100 -
+        duplicateIds.size * 14 -
+        consentNeeds.length * 12 -
+        nonApprovedRoleOutreach.length * 12 -
+        notInterestedWithFollowUp.length * 10 -
+        oneStarSubmissions.length * 18 -
+        Math.min(18, hardOrBlockedFeedback.length * 4) -
+        Math.min(12, profileProofMissing.length * 2),
+      0,
+      100,
+    )
+    : 0
+  const tone: OperatingTone = measurableRiskCount > 0
+    ? "warn"
+    : activeCandidates.length || submissions.length
+      ? "success"
+      : "mute"
+  const title = measurableRiskCount > 0
+    ? `${measurableRiskCount} ground rule risk${measurableRiskCount === 1 ? "" : "s"} need cleanup`
+    : activeCandidates.length || submissions.length
+      ? "Ground rules are clean on current evidence"
+      : "Ground rules start with the first candidate lane"
+  const body = measurableRiskCount > 0
+    ? "Fix consent, duplicate ownership, approval-before-outreach, and feedback issues before scaling recruiter volume."
+    : activeCandidates.length || submissions.length
+      ? "Current recruiter activity has no visible breach signal. Keep every candidate tied to consent, ownership, role approval, and feedback."
+      : "Use the workspace as the source of truth before contacting candidates or submitting packets."
+  const riskRows: RecruiterGroundRuleItem[] = [
+    duplicateIds.size > 0 ? {
+      label: "Duplicate ownership",
+      value: String(duplicateIds.size),
+      body: "Merge or archive duplicate candidate identity records before outreach or submission continues.",
+      tone: "warn",
+      action: "candidates",
+      actionLabel: "Clean candidates",
+    } : null,
+    consentNeeds.length > 0 ? {
+      label: "Consent confirmation",
+      value: String(consentNeeds.length),
+      body: "Candidate packets need confirmation repaired before the submission can be treated as clean.",
+      tone: "warn",
+      action: "submissions",
+      actionLabel: "Repair consent",
+    } : null,
+    nonApprovedRoleOutreach.length > 0 ? {
+      label: "Approval-before-outreach",
+      value: String(nonApprovedRoleOutreach.length),
+      body: "Role-specific outreach is visible on non-approved lanes. Use role access or keep the candidate as a general prospect.",
+      tone: "warn",
+      action: "roles",
+      actionLabel: "Review access",
+    } : null,
+    notInterestedWithFollowUp.length > 0 ? {
+      label: "Stop-after-no",
+      value: String(notInterestedWithFollowUp.length),
+      body: "Candidates marked not interested should not keep scheduled follow-ups unless they re-open the conversation.",
+      tone: "warn",
+      action: "candidates",
+      actionLabel: "Clear follow-ups",
+    } : null,
+    hardOrBlockedFeedback.length + closedNegative.length > 0 ? {
+      label: "Feedback debt",
+      value: String(hardOrBlockedFeedback.length + closedNegative.length),
+      body: "Hard role feedback, rejected packets, or duplicates should change the next shortlist before more volume.",
+      tone: hardOrBlockedFeedback.length || oneStarSubmissions.length ? "warn" : "info",
+      action: "submissions",
+      actionLabel: "Open feedback",
+    } : null,
+    followUpsDue.length > 0 ? {
+      label: "Follow-up hygiene",
+      value: String(followUpsDue.length),
+      body: "Overdue candidate follow-ups should be closed, moved forward, or marked not interested.",
+      tone: "info",
+      action: "candidates",
+      actionLabel: "Update outreach",
+    } : null,
+  ].filter((item): item is RecruiterGroundRuleItem => Boolean(item))
+
+  return {
+    title,
+    body,
+    tone,
+    scoreLabel: scoreBase ? `${score}/100` : "No activity",
+    cards: [
+      {
+        label: "Consent clean",
+        value: `${Math.max(0, submissions.length - consentNeeds.length)}/${submissions.length || 0}`,
+        body: consentNeeds.length
+          ? `${consentNeeds.length} submission${consentNeeds.length === 1 ? "" : "s"} need candidate confirmation repair.`
+          : "Every tracked submission is clean on the visible consent signal.",
+        tone: consentNeeds.length ? "warn" : submissions.length ? "success" : "mute",
+        action: "submissions",
+        actionLabel: "Open submissions",
+      },
+      {
+        label: "Duplicate lanes",
+        value: String(duplicateIds.size),
+        body: duplicateIds.size
+          ? "Candidate identity collisions should be cleaned before more sourcing."
+          : "No duplicate candidate identity signal in the active CRM.",
+        tone: duplicateIds.size ? "warn" : activeCandidates.length ? "success" : "mute",
+        action: "candidates",
+        actionLabel: "Open candidates",
+      },
+      {
+        label: "Approved outreach",
+        value: String(nonApprovedRoleOutreach.length),
+        body: nonApprovedRoleOutreach.length
+          ? "Some contacted prospects are attached to roles without approved access."
+          : "No role-specific outreach is visible outside approved role access.",
+        tone: nonApprovedRoleOutreach.length ? "warn" : activeCandidates.length ? "success" : "mute",
+        action: "roles",
+        actionLabel: "Open roles",
+      },
+      {
+        label: "Feedback applied",
+        value: String(hardOrBlockedFeedback.length + closedNegative.length),
+        body: hardOrBlockedFeedback.length + closedNegative.length
+          ? "Feedback debt exists; do not source lookalikes until the pattern changes."
+          : "No hard-role or closed-negative feedback debt is visible.",
+        tone: hardOrBlockedFeedback.length + closedNegative.length ? "warn" : submissions.length || roleFeedback.length ? "success" : "mute",
+        action: "submissions",
+        actionLabel: "Open feedback",
+      },
+    ],
+    rules: [
+      {
+        label: "Candidate consent",
+        value: "Required",
+        body: "Every formal packet needs explicit candidate permission and a repair path when confirmation is pending or failed.",
+        tone: consentNeeds.length ? "warn" : "success",
+        action: "submissions",
+        actionLabel: "Check packets",
+      },
+      {
+        label: "Ownership first",
+        value: "One record",
+        body: "Use one candidate identity record with email or profile link before any recruiter outreach scales.",
+        tone: duplicateIds.size ? "warn" : "success",
+        action: "candidates",
+        actionLabel: "Check ownership",
+      },
+      {
+        label: "Approval before outreach",
+        value: "No cold role spam",
+        body: "Searching and saving prospects is allowed, but role-specific outreach should follow approved access or a candidate-led single-submit lane.",
+        tone: nonApprovedRoleOutreach.length ? "warn" : "info",
+        action: "roles",
+        actionLabel: "Review access",
+      },
+      {
+        label: "Accurate representation",
+        value: "Role brief only",
+        body: "Represent only what the WeKruit role brief supports. Do not imply exclusivity, preferred status, or unverified compensation detail.",
+        tone: "info",
+        action: "roles",
+        actionLabel: "Read briefs",
+      },
+      {
+        label: "Stop after disinterest",
+        value: notInterestedWithFollowUp.length ? `${notInterestedWithFollowUp.length} risk` : "Clean",
+        body: "Candidates marked not interested should leave the outreach queue unless they explicitly re-open.",
+        tone: notInterestedWithFollowUp.length ? "warn" : activeCandidates.length ? "success" : "mute",
+        action: "candidates",
+        actionLabel: "Check outreach",
+      },
+      {
+        label: "Learn from feedback",
+        value: "Required",
+        body: "Hard feedback, low ratings, rejected packets, and duplicates should change the next shortlist before more submissions.",
+        tone: hardOrBlockedFeedback.length || lowRatedSubmissions.length ? "warn" : "success",
+        action: "submissions",
+        actionLabel: "Open learning",
+      },
+    ],
+    risks: riskRows,
   }
 }
 
@@ -9015,6 +9260,9 @@ function PerformanceTab({
   primaryRoleIds,
   roleFeedback,
   operatingMetrics,
+  onRoles,
+  onCandidates,
+  onSubmissions,
   onCandidateSaved,
 }: {
   jobs: CollabJob[]
@@ -9023,6 +9271,9 @@ function PerformanceTab({
   primaryRoleIds: string[]
   roleFeedback: RecruiterRoleFeedbackItem[]
   operatingMetrics: RecruiterOperatingMetrics
+  onRoles: () => void
+  onCandidates: () => void
+  onSubmissions: () => void
   onCandidateSaved: (candidate: RecruiterSourcedCandidateItem) => void
 }) {
   const [calibrationDrafts, setCalibrationDrafts] = useState<Record<string, string>>({})
@@ -9038,8 +9289,14 @@ function PerformanceTab({
   const blockedRoles = roleFeedback.filter((feedback) => feedback.difficulty === "blocked").length
   const hardRoles = roleFeedback.filter((feedback) => feedback.difficulty === "hard").length
   const trustCenter = computeRecruiterTrustCenter(candidates, submissions, roleFeedback, primaryRoleIds, operatingMetrics)
+  const groundRules = buildRecruiterGroundRulesCenter(candidates, submissions, roleFeedback, primaryRoleIds)
   const learningCenter = buildRecruiterLearningCenter(jobs, candidates, submissions, roleFeedback)
   const calibrationDesk = buildRecruiterCalibrationDesk(candidates)
+  const runGroundRuleAction = (action: RecruiterGroundRuleAction) => {
+    if (action === "roles") onRoles()
+    else if (action === "candidates") onCandidates()
+    else if (action === "submissions") onSubmissions()
+  }
   const requestCalibration = async (candidate: RecruiterSourcedCandidateItem) => {
     const jobId = candidate.inboundJobId || candidate.jobId || ""
     const link = candidate.candidate?.link?.trim()
@@ -9130,6 +9387,7 @@ function PerformanceTab({
           ))}
         </div>
       </section>
+      <RecruiterGroundRulesPanel model={groundRules} onAction={runGroundRuleAction} />
       <RecruiterTrustCenterPanel model={trustCenter} />
       <RecruiterCalibrationDeskPanel
         model={calibrationDesk}
@@ -9184,6 +9442,81 @@ function PerformanceTab({
           <p>{roleFeedback.length} role feedback reports submitted.</p>
           <p>{hardRoles} hard roles and {blockedRoles} blocked roles flagged.</p>
           <p>{roleFeedback.filter((feedback) => feedback.note).length} reports include recruiter notes.</p>
+        </section>
+      </div>
+    </section>
+  )
+}
+
+function RecruiterGroundRulesPanel({
+  model,
+  onAction,
+}: {
+  model: RecruiterGroundRulesCenter
+  onAction: (action: RecruiterGroundRuleAction) => void
+}) {
+  return (
+    <section className={`rb-ground-rules is-${model.tone}`} aria-label="Recruiter ground rules center">
+      <header>
+        <div>
+          <span>Ground rules center</span>
+          <strong>{model.title}</strong>
+          <p>{model.body}</p>
+        </div>
+        <aside>
+          <span>Compliance score</span>
+          <strong>{model.scoreLabel}</strong>
+          <p>Visible workspace evidence only. Manual representation and compensation discipline still matter.</p>
+        </aside>
+      </header>
+
+      <div className="rb-ground-rules__cards">
+        {model.cards.map((card) => (
+          <article className={`is-${card.tone}`} key={card.label}>
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <p>{card.body}</p>
+            <button type="button" onClick={() => onAction(card.action)}>{card.actionLabel}</button>
+          </article>
+        ))}
+      </div>
+
+      <div className="rb-ground-rules__body">
+        <section>
+          <div>
+            <h3>Non-negotiable rules</h3>
+            <p>These are the operating standards before more access, volume, or payout confidence.</p>
+          </div>
+          {model.rules.map((rule) => (
+            <article className={`is-${rule.tone}`} key={rule.label}>
+              <div>
+                <span>{rule.label}</span>
+                <strong>{rule.value}</strong>
+                <p>{rule.body}</p>
+              </div>
+              <button type="button" onClick={() => onAction(rule.action)}>{rule.actionLabel}</button>
+            </article>
+          ))}
+        </section>
+
+        <section>
+          <div>
+            <h3>Visible risk queue</h3>
+            <p>Fix these before scaling sourcing or asking for more trusted role access.</p>
+          </div>
+          {model.risks.map((risk) => (
+            <article className={`is-${risk.tone}`} key={risk.label}>
+              <div>
+                <span>{risk.label}</span>
+                <strong>{risk.value}</strong>
+                <p>{risk.body}</p>
+              </div>
+              <button type="button" onClick={() => onAction(risk.action)}>{risk.actionLabel}</button>
+            </article>
+          ))}
+          {model.risks.length === 0 && (
+            <p className="rb-empty">No visible ground-rule risks in the current recruiter workspace.</p>
+          )}
         </section>
       </div>
     </section>

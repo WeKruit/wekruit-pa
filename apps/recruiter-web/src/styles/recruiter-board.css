@@ -6033,6 +6033,143 @@
   padding: 5px 8px;
 }
 
+.rb-ground-rules {
+  display: grid;
+  gap: 14px;
+  margin: 0 20px 18px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--ink-3);
+  border-radius: 12px;
+  background: #fff;
+  padding: 16px;
+}
+
+.rb-ground-rules.is-live { border-left-color: var(--live); background: var(--live-soft); }
+.rb-ground-rules.is-info { border-left-color: var(--info); }
+.rb-ground-rules.is-success { border-left-color: var(--success); background: var(--success-bg); }
+.rb-ground-rules.is-warn { border-left-color: var(--warning); background: #fffaf1; }
+.rb-ground-rules.is-mute { border-left-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-ground-rules > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 0.4fr);
+  gap: 12px;
+}
+
+.rb-ground-rules > header > div,
+.rb-ground-rules > header > aside,
+.rb-ground-rules__cards article,
+.rb-ground-rules__body section,
+.rb-ground-rules__body article {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 12px;
+}
+
+.rb-ground-rules > header > aside {
+  background: var(--cream-3);
+}
+
+.rb-ground-rules span,
+.rb-ground-rules__cards span,
+.rb-ground-rules__body article span {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.rb-ground-rules strong {
+  color: var(--ink);
+  line-height: 1.15;
+}
+
+.rb-ground-rules > header strong,
+.rb-ground-rules__cards strong {
+  font-family: var(--font-serif);
+  font-size: 24px;
+  font-weight: 400;
+}
+
+.rb-ground-rules > header > div strong {
+  font-size: 28px;
+  line-height: 1.05;
+}
+
+.rb-ground-rules p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.rb-ground-rules h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.rb-ground-rules__cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rb-ground-rules__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.82fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.rb-ground-rules__body section {
+  align-content: start;
+  background: var(--cream-3);
+}
+
+.rb-ground-rules__body article {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  border-top: 3px solid var(--ink-3);
+  background: #fff;
+}
+
+.rb-ground-rules article.is-live { border-top-color: var(--live); background: var(--live-soft); }
+.rb-ground-rules article.is-info { border-top-color: var(--info); }
+.rb-ground-rules article.is-success { border-top-color: var(--success); background: var(--success-bg); }
+.rb-ground-rules article.is-warn { border-top-color: var(--warning); background: #fffaf1; }
+.rb-ground-rules article.is-mute { border-top-color: var(--ink-3); background: var(--cream-3); }
+
+.rb-ground-rules button {
+  justify-self: start;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-pill);
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+.rb-ground-rules__body article button {
+  justify-self: end;
+}
+
+.rb-ground-rules article.is-warn button {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
 .rb-calibration-desk {
   display: grid;
   gap: 14px;
@@ -9461,6 +9598,7 @@
   .rb-trust-center__gates,
   .rb-trust-center__tiers,
   .rb-trust-center__unlock-grid,
+  .rb-ground-rules__cards,
   .rb-calibration-desk__cards,
   .rb-approval-center__cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -9468,6 +9606,8 @@
   .rb-learning-center > header,
   .rb-learning-center__body,
   .rb-trust-center > header,
+  .rb-ground-rules > header,
+  .rb-ground-rules__body,
   .rb-calibration-desk > header,
   .rb-calibration-desk__body,
   .rb-approval-center > header,
@@ -9666,6 +9806,9 @@
   .rb-trust-center__gates,
   .rb-trust-center__tiers,
   .rb-trust-center__unlock-grid,
+  .rb-ground-rules__cards,
+  .rb-ground-rules__body,
+  .rb-ground-rules__body article,
   .rb-calibration-desk__cards,
   .rb-calibration-desk__queue article,
   .rb-earnings-hero,
@@ -9743,6 +9886,11 @@
     justify-self: start;
   }
   .rb-reward-ledger {
+    margin-right: 12px;
+    margin-left: 12px;
+    padding: 12px;
+  }
+  .rb-ground-rules {
     margin-right: 12px;
     margin-left: 12px;
     padding: 12px;
