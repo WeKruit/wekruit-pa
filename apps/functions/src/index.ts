@@ -1041,6 +1041,10 @@ async function processBrokerImessageEvent(
       ...(p.cvParsedTrigger === true ? { cvParsedTrigger: true } : {}),
       ...(typeof p.messageHandle === "string" ? { messageHandle: p.messageHandle } : {}),
       ...(typeof p.source === "string" ? { imessagePayloadSource: p.source } : {}),
+      // BUG #6 — carry the inbound attachment URL (résumé PDF) to the thin read path
+      // so cutover can run the SAME ingestCv wheel the website uses (covers cold users
+      // the webhook Stream-D skips: no userId at webhook time).
+      ...(typeof p.mediaUrl === "string" && p.mediaUrl.trim() ? { mediaUrl: p.mediaUrl.trim() } : {}),
     },
   }
   await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(

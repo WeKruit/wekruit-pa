@@ -80,6 +80,28 @@ export async function maybeRunThinClaire(
     ""
   const inboundMessageHandle =
     typeof rawMeta.messageHandle === "string" ? rawMeta.messageHandle : undefined
+
+  // Inbound résumé (Adam 2026-06-02): a candidate — especially a brand-new cold sender
+  // who never onboarded via QR — can drop a résumé PDF inline. Run the SAME enrichment
+  // wheel the website uses: a direct `ingestCv` call (exactly like public-cv-ingest.ts),
+  // now that the user is resolved/provisioned (cold users were skipped by the webhook
+  // Stream-D ingest, which had no userId at webhook time). ingestCv is sha256-idempotent
+  // + fail-open, so a known user already ingested at webhook time is a cheap no-op.
+  // Fire-and-forget — a parse failure must never block the conversational turn.
+  const inboundMediaUrl = typeof rawMeta.mediaUrl === "string" ? rawMeta.mediaUrl.trim() : ""
+  if (inboundMediaUrl) {
+    void import("../cv-ingest/cv-ingest.js")
+      .then(({ ingestCv }) => ingestCv({ userId, mediaUrl: inboundMediaUrl, sessionId: undefined }))
+      .then((r) => log("thin_claire.resume_ingest.done", { eventId, userId, result: r }))
+      .catch((e) =>
+        log("thin_claire.resume_ingest.failed", {
+          eventId,
+          userId,
+          err: e instanceof Error ? e.message : String(e),
+        })
+      )
+  }
+
   const lang: ClaireLang = data.lang === "zh" ? "zh" : "en"
 
   // Deterministic mode pick from durable state (onboarding/prescreen/triage). An active
