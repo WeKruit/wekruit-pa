@@ -9,16 +9,11 @@
  * Two tabs:
  *   1. "Direct line"   — companies actively collaborating with WeKruit.
  *      Reads from `pa-jobs` where `publicVisible == true`.
- *   2. "Hunting list"  — roles we scraped from the macmini pipeline that
- *      are NOT collab partners. Reads from `matching-jobs` via the
- *      `paPublicOpenJobs` HTTP CF (since the collection has no public
- *      Firestore read rule).
- *
- * The /goal that produced this page focuses on the Hunting list (the
- * scraped, non-collab supply), which defaults to the active tab.
+ *   2. "Tracked roles" — external source listings that are NOT collab
+ *      partners. Reads from `matching-jobs` via the `paPublicOpenJobs`
+ *      HTTP CF (since the collection has no public Firestore read rule).
  *
  * Filters/search/layout-switcher all preserve the design contract.
- * No edit-mode "Tweaks" panel — that was a prototype-only artifact.
  */
 import { useMemo, useState, useEffect } from "react"
 import { Link } from "react-router-dom"
@@ -45,8 +40,6 @@ interface UnifiedJob {
   remote: boolean
   /** Strong-fit signal — only true for the Direct tab on highlighted rows. */
   fit?: "strong" | "good"
-  /** Pitch status — only set for Hunting tab. */
-  pitchStatus?: "queued" | "pitched" | "replied"
 }
 
 type TabId = "hunt" | "direct"
@@ -54,10 +47,10 @@ type LayoutId = "table" | "cards" | "grid"
 
 // ----------------------------------------------------------------- filters
 
-// Token values mirror what actually lands in matching-jobs.roleFunction
-// after macmini scrape + auto-enrich. The canonical shared-tags vocab is
-// a slightly different superset; we align to data-on-the-ground here so
-// the sidebar produces non-empty results out of the box.
+// Token values mirror what actually lands in matching-jobs.roleFunction after
+// job enrichment. The canonical shared-tags vocab is a slightly different
+// superset; we align to data-on-the-ground here so the sidebar produces
+// non-empty results out of the box.
 const FUNCTION_OPTIONS = [
   { value: "software_engineering", label: "Software engineering" },
   { value: "engineering_and_development", label: "Engineering (other)" },
@@ -94,8 +87,7 @@ const EMPTY_FILTERS: FiltersState = { functions: [], locations: [], levels: [], 
 
 // --------------------------------------------------------------- adapters
 
-function fromOpenJobRow(r: OpenJobRow, idx: number): UnifiedJob {
-  const pitchPool: UnifiedJob["pitchStatus"][] = ["queued", "queued", "pitched", "queued", "replied"]
+function fromOpenJobRow(r: OpenJobRow): UnifiedJob {
   return {
     id: r.id,
     company: r.company,
@@ -110,7 +102,6 @@ function fromOpenJobRow(r: OpenJobRow, idx: number): UnifiedJob {
     apply: r.atsApplyUrl,
     industrySector: r.industrySector,
     remote: r.remote,
-    pitchStatus: pitchPool[idx % pitchPool.length],
   }
 }
 
@@ -171,7 +162,7 @@ function Nav() {
         </nav>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <Link to="/login" style={navLinkStyle(false)}>Sign in</Link>
-          <Link to="/" className="btn btn--primary btn--sm">Add your name</Link>
+          <Link to="/onboarding" className="btn btn--primary btn--sm">Add your name</Link>
         </div>
       </div>
     </header>
@@ -196,9 +187,9 @@ function GuestBanner() {
     <div style={{ background: "var(--cream-2)", borderBottom: "1px solid var(--border)" }}>
       <div className="container" style={{ padding: "10px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
         <span className="caption" style={{ color: "var(--ink-2)" }}>
-          Browsing as a guest · <Link to="/login" style={{ color: "var(--ink)" }}>sign in</Link> to unlock filters, alerts, and one-tap apply.
+          Browsing as a guest · <Link to="/login" style={{ color: "var(--ink)" }}>Sign in to keep your WeKruit profile connected</Link> while you review roles.
         </span>
-        <Link to="/" className="btn btn--secondary btn--sm">Add your name →</Link>
+        <Link to="/onboarding" className="btn btn--secondary btn--sm">Add your name →</Link>
       </div>
     </div>
   )
@@ -228,7 +219,7 @@ function Footer() {
 export default function OpenJobs() {
   // Default tab = "direct" — this page is reached via the "Open interviews"
   // nav link on layoff.wekruit.com, which means candidates expect collab
-  // companies (direct line) first. Hunting list is now the canonical home of
+  // companies (direct line) first. Tracked roles are now the canonical home of
   // /market (Open market) and still reachable here as the second tab.
   const [tab, setTab] = useState<TabId>("direct")
   const [filters, setFilters] = useState<FiltersState>(EMPTY_FILTERS)
@@ -247,7 +238,7 @@ export default function OpenJobs() {
     huntQuery.isError ? (huntQuery.error instanceof Error ? huntQuery.error.message : String(huntQuery.error)) : null
 
   const huntJobs = useMemo<UnifiedJob[] | null>(
-    () => (huntQuery.data ? huntQuery.data.map((r, i) => fromOpenJobRow(r, i)) : null),
+    () => (huntQuery.data ? huntQuery.data.map((r) => fromOpenJobRow(r)) : null),
     [huntQuery.data]
   )
   const directJobs = useMemo<UnifiedJob[] | null>(
@@ -403,7 +394,7 @@ function Tabs({ value, onChange, huntCount, directCount, loading }: TabsProps) {
   }
   return (
     <div style={{ display: "flex", gap: 8, borderBottom: "1px solid var(--border)", marginBottom: 32, flexWrap: "wrap" }}>
-      <Tab id="hunt" label="Hunting list" sub="Companies we don't know yet — we'll pitch them" count={huntCount} />
+      <Tab id="hunt" label="Tracked roles" sub="External source listings, not WeKruit-screened yet" count={huntCount} />
       <Tab id="direct" label="Direct line" sub="Companies talking to us today" count={directCount} />
     </div>
   )
@@ -426,19 +417,19 @@ function Header({ tab, count, total, search, setSearch, layout, setLayout }: Hea
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 28 }}>
       <div style={{ flex: "1 1 460px", minWidth: 0 }}>
         <div className="eyebrow" style={{ marginBottom: 10, color: isDirect ? "var(--success)" : "var(--ink-3)" }}>
-          {isDirect ? "● Direct line · Talk to a human within 48h" : "Outbound · We pitch them anyway"}
+          {isDirect ? "● Direct line · Claire starts the first interview" : "External roles · Source listings"}
         </div>
         <h1 style={{ fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: "clamp(32px, 3.6vw, 48px)", lineHeight: 1.05, letterSpacing: "-0.02em", margin: 0 }}>
           {isDirect ? (
             <>{count} companies hiring <em style={{ fontStyle: "italic" }}>through us</em>.</>
           ) : (
-            <>{count} roles we&apos;re <em style={{ fontStyle: "italic" }}>hunting</em> for.</>
+            <>{count} <em style={{ fontStyle: "italic" }}>External roles WeKruit is tracking</em>.</>
           )}
         </h1>
         <p style={{ marginTop: 14, marginBottom: 0, maxWidth: 640, color: "var(--ink-2)", fontSize: 16, lineHeight: 1.55 }}>
           {isDirect
-            ? "These teams pay WeKruit. If you're a strong fit, you skip the application form — we route you straight to a hiring manager."
-            : "These companies don't know us yet. Our scraper (the macmini pipeline) watches their ATS pages; we email a tight shortlist every Tuesday. You don't have to do anything."}
+            ? "These teams work with WeKruit. Claire starts the first interview, then passed profiles go to the hiring team with the transcript and evidence."
+            : "These are external source listings. WeKruit shows the public role, the source link, and the matching context we can verify; they are not WeKruit-screened yet."}
         </p>
         {total > 0 && total !== count && (
           <p style={{ marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-3)" }}>
@@ -740,13 +731,13 @@ function Card({ j, tab, variant }: { j: UnifiedJob; tab: TabId; variant: "row" |
 function RowCta({ j, tab }: { j: UnifiedJob; tab: TabId }) {
   if (tab === "direct") {
     if (j.fit === "strong") {
-      return <Link to="/" className="btn btn--primary btn--sm">Get an interview →</Link>
+      return <Link to={jobRoute(j)} className="btn btn--primary btn--sm">Interview with Claire →</Link>
     }
-    return <Link to="/" className="btn btn--secondary btn--sm">Apply via WeKruit</Link>
+    return <Link to={jobRoute(j)} className="btn btn--secondary btn--sm">View role</Link>
   }
-  // Adam directive 2026-05-16 — matching-jobs are scraped, not collab; the
+  // Adam directive 2026-05-16 — matching-jobs are external, not collab; the
   // candidate clicks straight through to the source ATS. No "Pitch me"
-  // queue, no Tuesday batch — that copy was design-prototype residue.
+  // queue and no implied WeKruit outreach.
   if (j.apply) {
     return (
       <a className="btn btn--primary btn--sm" href={j.apply} target="_blank" rel="noopener noreferrer">
@@ -755,6 +746,10 @@ function RowCta({ j, tab }: { j: UnifiedJob; tab: TabId }) {
     )
   }
   return <span className="caption" style={{ color: "var(--ink-3)" }}>No apply link</span>
+}
+
+function jobRoute(j: UnifiedJob): string {
+  return `/j/${encodeURIComponent(j.id)}`
 }
 
 function StatusPill({ j, tab }: { j: UnifiedJob; tab: TabId }) {

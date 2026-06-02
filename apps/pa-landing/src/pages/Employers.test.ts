@@ -18,6 +18,7 @@ test("Employers page frames passed-profile preview without unsupported traction 
   assert.doesNotMatch(source, /Hundreds of conversations a week|every credible candidate/i)
   assert.doesNotMatch(source, /Three to five passes a week|3 passes|5 passes this week|14 more candidates/i)
   assert.doesNotMatch(source, /Match \{[pc]\.score\}|Match \d+/)
+  assert.doesNotMatch(source, /\bmock(?:ed|s)?\b/i)
   assert.match(source, /Sample passed-profile preview/)
   assert.match(source, /passed profiles plus the transcript/i)
 })

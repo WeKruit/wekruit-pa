@@ -820,7 +820,7 @@ function EmpPassedDetailLite({ c }: { c: PassedProfile }) {
       </header>
       <section className="wk-emp-pp__sec wk-emp-pp__lite-body">
         <p className="wk-emp-pp__lite-msg">
-          We mocked one passed profile end-to-end. Click <strong>Maya Okafor</strong> in the rail to see the
+          This preview follows one passed profile end-to-end. Click <strong>Maya Okafor</strong> in the rail to see the
           full operational view — summary, pass reason, evidence, risks, fit, and transcript excerpts.
         </p>
       </section>
