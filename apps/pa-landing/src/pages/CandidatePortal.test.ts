@@ -115,3 +115,11 @@ test("CandidatePortal renders honest connector data", () => {
   assert.doesNotMatch(source, /Backfills experience/)
   assert.doesNotMatch(source, /oauth-linked/)
 })
+
+test("CandidatePortal routes Claire message actions through the claimed sender number", () => {
+  assert.doesNotMatch(source, /CLAIRE_IMESSAGE_HREF/)
+  assert.match(source, /buildClaireImessageHref\(profile\.senderNumber\)/)
+  assert.match(source, /claireHref=\{claireHref\}/)
+  assert.match(source, /href: claireHref/)
+  assert.match(source, /<MeMatchFull key=\{m\.matchId\} match=\{m\} claireHref=\{claireHref\} \/>/)
+})

@@ -8,6 +8,7 @@ export interface CandidateSelfProfile {
   displayName?: string
   emailMasked?: string
   phoneMasked?: string
+  senderNumber?: string
   latestResumeArtifactId?: string
   profileSummary?: string
   linkedinUrl?: string

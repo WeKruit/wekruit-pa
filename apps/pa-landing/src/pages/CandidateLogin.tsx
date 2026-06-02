@@ -363,11 +363,13 @@ export function CandidateShell({
   hero = false,
   signedIn = false,
   signedInUser,
+  claireHref = null,
 }: {
   children: ReactNode
   hero?: boolean
   signedIn?: boolean
   signedInUser?: { name?: string; src?: string; email?: string }
+  claireHref?: string | null
 }) {
   // Hooks must run unconditionally — used only by the signed-in rail branch.
   const navigate = useNavigate()
@@ -411,14 +413,21 @@ export function CandidateShell({
           <Link to="/me" className="wk-apptopbar__brand" aria-label="WeKruit home">
             <WekruitLogo size={18} />
           </Link>
-          <a href={CLAIRE_IMESSAGE_HREF} className="wk-apptopbar__claire" aria-label="Message Claire">
-            <PulseDot size={6} />
-          </a>
+          {claireHref ? (
+            <a href={claireHref} className="wk-apptopbar__claire" aria-label="Message Claire">
+              <PulseDot size={6} />
+            </a>
+          ) : (
+            <span className="wk-apptopbar__claire is-pending" aria-label="Claire line pending">
+              <PulseDot size={6} />
+            </span>
+          )}
         </header>
 
         <CandidateAppNav
           user={signedInUser}
           pathname={location.pathname}
+          claireHref={claireHref}
           onNavigate={(to) => { navigate(to); setDrawerOpen(false) }}
           onClose={() => setDrawerOpen(false)}
         />
@@ -474,20 +483,24 @@ export function CandidateShell({
   )
 }
 
-// Claire lives on iMessage — the rail's "Claire" item and the mobile top-bar
-// dot both open the Messages handoff rather than a placeholder web route.
-export const CLAIRE_IMESSAGE_HREF = "sms:+18004448888&body=Hi%20Claire"
+export function buildClaireImessageHref(senderNumber?: string | null, body = "Hi Claire"): string | null {
+  const trimmed = typeof senderNumber === "string" ? senderNumber.trim() : ""
+  if (!/^\+\d{8,16}$/.test(trimmed)) return null
+  return `sms:${trimmed}?&body=${encodeURIComponent(body)}`
+}
 
 type AppNavItem = { to: string; icon: AppNavIconName; label: string; external?: boolean }
 
-const APP_NAV_ITEMS: AppNavItem[] = [
+function appNavItems(claireHref: string | null): AppNavItem[] {
+  return [
   { to: "/me", icon: "pipeline", label: "Home" },
   { to: "/me/matches", icon: "match", label: "Matches" },
-  { to: CLAIRE_IMESSAGE_HREF, icon: "claire", label: "Claire", external: true },
+  ...(claireHref ? [{ to: claireHref, icon: "claire" as const, label: "Claire", external: true }] : []),
   { to: "/me/profile", icon: "profile", label: "Profile" },
   { to: "/me/refer", icon: "refer", label: "Refer · $4k" },
   { to: "/market", icon: "market", label: "Market" },
-]
+  ]
+}
 
 type AppNavIconName = "pipeline" | "match" | "claire" | "profile" | "refer" | "market"
 
@@ -519,16 +532,19 @@ function isNavItemActive(pathname: string, to: string, external?: boolean): bool
 function CandidateAppNav({
   user,
   pathname,
+  claireHref,
   onNavigate,
   onClose,
 }: {
   user?: { name?: string; src?: string; email?: string }
   pathname: string
+  claireHref: string | null
   onNavigate: (to: string) => void
   onClose: () => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const name = user?.name ?? "You"
+  const navItems = appNavItems(claireHref)
 
   async function handleSignOut() {
     setMenuOpen(false)
@@ -559,7 +575,7 @@ function CandidateAppNav({
       </div>
 
       <nav className="wk-sidenav__nav" aria-label="App navigation">
-        {APP_NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const active = isNavItemActive(pathname, item.to, item.external)
           const content = (
             <>
@@ -590,15 +606,27 @@ function CandidateAppNav({
       </nav>
 
       <div className="wk-sidenav__bottom">
-        <a href={CLAIRE_IMESSAGE_HREF} className="wk-sidenav__claire" onClick={onClose}>
-          <span className="wk-sidenav__claire-dot" aria-hidden="true">
-            <PulseDot size={6} />
-          </span>
-          <span className="wk-sidenav__claire-body">
-            <strong>Claire is active</strong>
-            <em>On iMessage</em>
-          </span>
-        </a>
+        {claireHref ? (
+          <a href={claireHref} className="wk-sidenav__claire" onClick={onClose}>
+            <span className="wk-sidenav__claire-dot" aria-hidden="true">
+              <PulseDot size={6} />
+            </span>
+            <span className="wk-sidenav__claire-body">
+              <strong>Claire is active</strong>
+              <em>On iMessage</em>
+            </span>
+          </a>
+        ) : (
+          <div className="wk-sidenav__claire is-pending" aria-disabled="true">
+            <span className="wk-sidenav__claire-dot" aria-hidden="true">
+              <PulseDot size={6} />
+            </span>
+            <span className="wk-sidenav__claire-body">
+              <strong>Claire line pending</strong>
+              <em>Finish onboarding</em>
+            </span>
+          </div>
+        )}
 
         <div className="wk-sidenav__account">
           <button
@@ -987,7 +1015,7 @@ export default function CandidateLogin() {
             ) : null}
 
             <p className="wk-login__fine">
-              First time? <Link to="/" className="wk-link">Interview with Claire</Link> — same flow.
+              First time? <Link to={onboardingDestination(peekSource())} className="wk-link">Interview with Claire</Link> — same flow.
             </p>
           </div>
         </div>
@@ -1798,6 +1826,13 @@ const APP_SHELL_STYLES = `
   transition: border-color var(--dur-fast) var(--ease);
 }
 .wk-sidenav__claire:hover { border-color: var(--live); }
+.wk-sidenav__claire.is-pending {
+  border-color: var(--border);
+  background: var(--cream-2);
+  color: var(--ink-3);
+  cursor: default;
+}
+.wk-sidenav__claire.is-pending:hover { border-color: var(--border); }
 .wk-sidenav__claire-dot {
   width: 22px; height: 22px; border-radius: 50%;
   display: inline-flex; align-items: center; justify-content: center;
@@ -1891,6 +1926,11 @@ const APP_SHELL_STYLES = `
     border-radius: 50%;
     background: var(--live-soft); border: 1px solid var(--live-border);
     color: var(--live);
+  }
+  .wk-apptopbar__claire.is-pending {
+    background: var(--cream-2);
+    border-color: var(--border);
+    color: var(--ink-3);
   }
   .wk-sidenav {
     position: fixed; top: 0; left: 0;

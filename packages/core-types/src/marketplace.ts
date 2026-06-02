@@ -292,6 +292,7 @@ export const CandidateSelfProfileSchema = z.object({
   displayName: z.string().min(1).max(200).optional(),
   emailMasked: z.string().min(3).max(320).optional(),
   phoneMasked: z.string().min(3).max(64).optional(),
+  senderNumber: z.string().min(8).max(32).optional(),
   handles: z.array(CandidateSelfProfileHandleSchema).default([]),
   latestResumeArtifactId: z.string().min(1).optional(),
   resumeStatus: ResumeArtifactStatusSchema.optional(),

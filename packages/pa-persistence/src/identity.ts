@@ -581,6 +581,7 @@ export interface WriteCandidateSelfProfileInput {
   candidateId: string
   email?: string | null
   phoneE164?: string | null
+  senderNumber?: string | null
   displayName?: string | null
   marketplaceFields?: CandidateProfileMarketplaceFields
   handles?: Array<Pick<CandidateHandle, "kind" | "verifiedAt" | "source">>
@@ -594,6 +595,12 @@ function stripUndefined<T extends Record<string, unknown>>(value: T): T {
   ) as T
 }
 
+function normalizeSenderNumber(value?: string | null): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return /^\+\d{8,16}$/.test(trimmed) ? trimmed : undefined
+}
+
 export async function writeCandidateSelfProfile(
   db: Firestore,
   input: WriteCandidateSelfProfileInput
@@ -605,6 +612,7 @@ export async function writeCandidateSelfProfile(
     displayName: input.displayName || undefined,
     emailMasked: input.email ? maskEmail(input.email.trim().toLowerCase()) : undefined,
     phoneMasked: input.phoneE164 ? maskPhone(input.phoneE164) : undefined,
+    senderNumber: normalizeSenderNumber(input.senderNumber),
     handles: input.handles ?? [],
     latestResumeArtifactId: input.marketplaceFields?.latestResumeArtifactId,
     profileSummary: input.profileSummary || undefined,
@@ -816,6 +824,7 @@ export async function claimCandidateProfile(
     candidateId,
     email: input.email,
     phoneE164: typeof user.phoneE164 === "string" ? user.phoneE164 : null,
+    senderNumber: typeof user.senderNumber === "string" ? user.senderNumber : null,
     displayName,
     marketplaceFields: user as CandidateProfileMarketplaceFields,
     handles: await loadCandidateSelfProfileHandles(db, candidateId),

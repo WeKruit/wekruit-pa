@@ -46,7 +46,7 @@ import {
   CompanyMark,
   Icon,
   PulseDot,
-  CLAIRE_IMESSAGE_HREF,
+  buildClaireImessageHref,
 } from "./CandidateLogin.js"
 
 const LOGO_BG_POOL = [
@@ -698,6 +698,7 @@ function CandidateMeReady({
   const firstName = firstNameOf(profile)
   const completeness = deriveCompleteness(profile)
   const visibility = deriveVisibility(activePipelineCount, recommended.length)
+  const claireHref = buildClaireImessageHref(profile.senderNumber)
 
   const actions: MeAction[] = upNext.map((m) => {
     const display = getCandidateJobStatusDisplay(m.status, m.job.title)
@@ -710,9 +711,9 @@ function CandidateMeReady({
       meta: `${display.label} · ${m.job.title}`,
       title: display.nextStep,
       sub: [m.job.company, m.job.location].filter(Boolean).join(" · "),
-      cta: claire ? "Continue with Claire" : display.ctaLabel,
-      href: claire ? CLAIRE_IMESSAGE_HREF : m.job.href,
-      external: claire,
+      cta: claire && claireHref ? "Continue with Claire" : display.ctaLabel,
+      href: claireHref && claire ? claireHref : m.job.href,
+      external: Boolean(claireHref && claire),
       when: meWhen(m.computedAt),
     }
   })
@@ -721,6 +722,7 @@ function CandidateMeReady({
     <CandidateShell
       signedIn
       signedInUser={{ name: profile.displayName ?? "You", email: profile.emailMasked }}
+      claireHref={claireHref}
     >
       <style>{ME_V3_STYLES}</style>
       <div className="wkv3">
@@ -1886,8 +1888,9 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
   useEffect(() => setProfile(initial), [initial])
   const completeness = deriveCompleteness(profile)
   const visibility = deriveVisibility(0, 0)
+  const claireHref = buildClaireImessageHref(profile.senderNumber)
   return (
-    <CandidateShell signedIn signedInUser={{ name: profile.displayName ?? "You", email: profile.emailMasked }}>
+    <CandidateShell signedIn signedInUser={{ name: profile.displayName ?? "You", email: profile.emailMasked }} claireHref={claireHref}>
       <style>{ME_PORTAL_STYLES}</style>
       <style>{ME_V3_STYLES}</style>
       <style>{PROFILE_STYLES}</style>
@@ -3647,10 +3650,12 @@ function MatchesSurface({
   // Backend curates the set: WeKruit-collab jobs (pre-screenable) + daily-recommend
   // recs, deduped. Show all; the filter splits collab vs recommended.
   const all = matchesState.status === "ready" ? matchesState.matches : []
+  const claireHref = buildClaireImessageHref(profileState.profile.senderNumber)
   return (
     <MatchesView
       profile={profileState.profile}
       all={all}
+      claireHref={claireHref}
       loading={matchesState.status === "loading" || matchesState.status === "idle"}
       errored={matchesState.status === "error"}
       error={matchesState.status === "error" ? matchesState.message : null}
@@ -3661,12 +3666,14 @@ function MatchesSurface({
 function MatchesView({
   profile,
   all,
+  claireHref,
   loading,
   errored,
   error,
 }: {
   profile: CandidateSelfProfile
   all: CandidateMatchCard[]
+  claireHref: string | null
   loading: boolean
   errored: boolean
   error: string | null
@@ -3688,6 +3695,7 @@ function MatchesView({
     <CandidateShell
       signedIn
       signedInUser={{ name: profile.displayName ?? "You", email: profile.emailMasked }}
+      claireHref={claireHref}
     >
       <style>{ME_V3_STYLES}</style>
       <style>{MATCHES_STYLES}</style>
@@ -3744,7 +3752,7 @@ function MatchesView({
               ) : filtered.length > 0 ? (
                 <div className="wkmp-list">
                   {filtered.map((m) => (
-                    <MeMatchFull key={m.matchId} match={m} />
+                    <MeMatchFull key={m.matchId} match={m} claireHref={claireHref} />
                   ))}
                 </div>
               ) : (
@@ -3773,9 +3781,15 @@ function MatchesView({
                 <p className="wkmp-side__sub">
                   For WeKruit-screened roles, Claire handles the screening questions with you.
                 </p>
-                <a href={CLAIRE_IMESSAGE_HREF} className="wk-btn wk-btn--primary wk-btn--block wk-btn--sm">
-                  Continue with Claire <Icon name="arrow-right" size={13} stroke={2} />
-                </a>
+                {claireHref ? (
+                  <a href={claireHref} className="wk-btn wk-btn--primary wk-btn--block wk-btn--sm">
+                    Continue with Claire <Icon name="arrow-right" size={13} stroke={2} />
+                  </a>
+                ) : (
+                  <button type="button" className="wk-btn wk-btn--primary wk-btn--block wk-btn--sm" disabled>
+                    Claire line pending
+                  </button>
+                )}
               </div>
 
               <div className="wkmp-side__card wkmp-side__card--quiet">
@@ -3794,7 +3808,7 @@ function MatchesView({
   )
 }
 
-function MeMatchFull({ match }: { match: CandidateMatchCard }) {
+function MeMatchFull({ match, claireHref }: { match: CandidateMatchCard; claireHref: string | null }) {
   const navigate = useNavigate()
   const isCollab = !!match.collab
   const logo = (match.job.company[0] ?? "?").toUpperCase()
@@ -3857,9 +3871,11 @@ function MeMatchFull({ match }: { match: CandidateMatchCard }) {
         <div className="wkv3-match__primaries">
           {isCollab ? (
             <>
-              <a href={CLAIRE_IMESSAGE_HREF} className="wk-btn wk-btn--secondary wk-btn--sm">
-                <Icon name="message" size={12} stroke={1.9} /> Continue with Claire
-              </a>
+              {claireHref ? (
+                <a href={claireHref} className="wk-btn wk-btn--secondary wk-btn--sm">
+                  <Icon name="message" size={12} stroke={1.9} /> Continue with Claire
+                </a>
+              ) : null}
               <Link to={match.job.href} className="wk-btn wk-btn--primary wk-btn--sm">
                 {statusDisplay.ctaLabel} <Icon name="arrow-right" size={13} stroke={2} />
               </Link>

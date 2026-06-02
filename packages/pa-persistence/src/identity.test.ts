@@ -628,6 +628,40 @@ test("claimCandidateProfile allowCreate=false succeeds when email matches an exi
   assert.equal(store.get(PA_COLLECTIONS.users)!.size, 1, "no duplicate pa-users created")
 })
 
+test("claimCandidateProfile exposes the assigned Claire sender number on the self profile", async () => {
+  const { db, store } = makeFakeFirestore()
+  await linkCandidateHandle(db, {
+    candidateId: "existing-claire-cand",
+    kind: "email",
+    value: "claire-line@example.com",
+    source: "candidate",
+    deliverable: true,
+    now,
+  })
+  store.get(PA_COLLECTIONS.users)!.set("existing-claire-cand", {
+    id: "existing-claire-cand",
+    email: "claire-line@example.com",
+    senderNumber: "+17174919939",
+    phoneE164: "+14155550100",
+    createdAt: now,
+    updatedAt: now,
+  })
+
+  const claimed = await claimCandidateProfile(db, {
+    firebaseUid: "firebase-claire-line",
+    email: "claire-line@example.com",
+    browserUid: "browser-claire-line",
+    allowCreate: false,
+    now,
+  })
+
+  assert.equal(claimed.candidateId, "existing-claire-cand")
+  assert.equal(claimed.selfProfile.senderNumber, "+17174919939")
+  const stored = store.get(PA_COLLECTIONS.candidateSelfProfiles)!.get("existing-claire-cand")!
+  assert.equal(stored.senderNumber, "+17174919939")
+  assert.equal("phoneE164" in stored, false)
+})
+
 test("claimCandidateProfile defaults allowCreate=true (preserves cv-ingest / OAuth back-compat)", async () => {
   const { db, store } = makeFakeFirestore()
   const claimed = await claimCandidateProfile(db, {
