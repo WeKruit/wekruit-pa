@@ -6,6 +6,7 @@ import {
   formatPercent,
   formatScore,
   marketplaceExternalHref,
+  summarizeMarketplaceLearningLoop,
   marketplaceResumeArtifactFor,
   marketplaceResumeOriginalSource,
   sortRowsByTime,
@@ -80,6 +81,64 @@ test("summarizeMarketplace keeps passed and not-passed job state counts separate
     openIdentityConflicts: 1,
     sourceLinks: 1,
   })
+})
+
+test("summarizeMarketplaceLearningLoop surfaces missing employer feedback after match artifacts", () => {
+  const rows = emptyMarketplaceRows()
+  rows.matches = [
+    { id: "match-1", jobId: "job-1", finalScore: 0.88, recommendedAction: "recommend" },
+    { id: "match-2", jobId: "job-2", finalScore: 0.71, recommendedAction: "watch" },
+  ]
+
+  const summary = summarizeMarketplaceLearningLoop(rows)
+
+  assert.equal(summary.status, "awaiting_feedback")
+  assert.equal(summary.label, "Awaiting employer feedback")
+  assert.equal(summary.metrics.find((metric) => metric.label === "Match artifacts")?.value, "2")
+  assert.equal(summary.metrics.find((metric) => metric.label === "Employer feedback")?.value, "0")
+  assert.match(summary.nextAction, /Record accepted\/rejected intro/i)
+})
+
+test("summarizeMarketplaceLearningLoop flags rejected employer feedback without correction events", () => {
+  const rows = emptyMarketplaceRows()
+  rows.matches = [{ id: "match-1", jobId: "job-1", finalScore: 0.88 }]
+  rows.feedback = [
+    {
+      id: "feedback-1",
+      kind: "employer_action",
+      actor: "operator",
+      outcome: "intro_rejected",
+      payloadRedacted: { decision: "rejected", reason: "Needs deeper infrastructure ownership" },
+    },
+  ]
+
+  const summary = summarizeMarketplaceLearningLoop(rows)
+
+  assert.equal(summary.status, "needs_correction")
+  assert.equal(summary.label, "Feedback needs correction signal")
+  assert.equal(summary.metrics.find((metric) => metric.label === "Employer feedback")?.value, "1")
+  assert.equal(summary.metrics.find((metric) => metric.label === "Corrections")?.value, "0")
+  assert.match(summary.nextAction, /Convert rejection reason into a correction event/i)
+})
+
+test("summarizeMarketplaceLearningLoop treats accepted intro feedback as learning without requiring a correction", () => {
+  const rows = emptyMarketplaceRows()
+  rows.matches = [{ id: "match-1", jobId: "job-1", finalScore: 0.92 }]
+  rows.feedback = [
+    {
+      id: "feedback-1",
+      kind: "employer_action",
+      outcome: "intro_accepted",
+      payloadRedacted: { decision: "accepted", reason: "Strong systems ownership" },
+    },
+  ]
+
+  const summary = summarizeMarketplaceLearningLoop(rows)
+
+  assert.equal(summary.status, "learning")
+  assert.equal(summary.label, "Learning loop active")
+  assert.doesNotMatch(summary.body, /correction signal/i)
+  assert.doesNotMatch(summary.nextAction, /correction evidence/i)
 })
 
 test("marketplaceExternalHref opens web and Cloud Storage refs but ignores inline refs", () => {

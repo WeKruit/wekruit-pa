@@ -14,6 +14,8 @@ import {
   marketplaceResumeOriginalSource,
   sortRowsByTime,
   summarizeMarketplace,
+  summarizeMarketplaceLearningLoop,
+  type MarketplaceLearningLoopSummary,
   type MarketplaceRow,
   type MarketplaceRowsByKey,
   type MarketplaceTableKey,
@@ -96,6 +98,7 @@ export function CandidateMarketplace({
   }, [candidateId])
 
   const summary = useMemo(() => summarizeMarketplace(rows), [rows])
+  const learningLoop = useMemo(() => summarizeMarketplaceLearningLoop(rows), [rows])
   const latestResumeArtifact = useMemo(
     () => marketplaceResumeArtifactFor(rows.resumes, profile.latestResumeArtifactId),
     [profile.latestResumeArtifactId, rows.resumes]
@@ -143,6 +146,7 @@ export function CandidateMarketplace({
         </Panel>
       ) : (
         <>
+          <MarketplaceLearningLoopPanel summary={learningLoop} />
           <MarketplaceTable
             title="Candidate auth mappings"
             rows={rows.authMappings}
@@ -183,6 +187,40 @@ export function CandidateMarketplace({
         </>
       )}
     </>
+  )
+}
+
+function MarketplaceLearningLoopPanel({ summary }: { summary: MarketplaceLearningLoopSummary }) {
+  return (
+    <Panel title="Matching feedback loop" eyebrow={summary.label}>
+      <div style={{ display: "grid", gap: 12, gridTemplateColumns: "minmax(240px, 1.2fr) minmax(260px, 2fr)" }}>
+        <div style={{
+          border: "1px solid #dbeafe",
+          borderLeft: "4px solid #2563eb",
+          borderRadius: 8,
+          background: "#f8fbff",
+          padding: "0.85rem 0.95rem",
+        }}>
+          <div style={{ color: "#1e40af", fontSize: "0.75em", fontWeight: 700, textTransform: "uppercase" }}>
+            {summary.status.replace(/_/g, " ")}
+          </div>
+          <div style={{ color: "#0f172a", fontSize: "1.05em", fontWeight: 700, marginTop: 5 }}>{summary.label}</div>
+          <p style={{ color: "#334155", fontSize: "0.9em", lineHeight: 1.45, margin: "8px 0 0" }}>{summary.body}</p>
+          <p style={{ color: "#475569", fontSize: "0.86em", lineHeight: 1.45, margin: "8px 0 0" }}>
+            <strong style={{ color: "#0f172a" }}>Next:</strong> {summary.nextAction}
+          </p>
+        </div>
+        <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+          {summary.metrics.map((metric) => (
+            <div key={metric.label} style={{ border: "1px solid #e2e8f0", borderRadius: 8, background: "#fff", padding: "0.75rem 0.85rem" }}>
+              <div style={{ color: "#64748b", fontSize: "0.72em", textTransform: "uppercase" }}>{metric.label}</div>
+              <div style={{ color: "#0f172a", fontSize: "1.15em", fontWeight: 650, marginTop: 4 }}>{metric.value}</div>
+              <p style={{ color: "#64748b", fontSize: "0.82em", lineHeight: 1.35, margin: "6px 0 0" }}>{metric.body}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Panel>
   )
 }
 

@@ -35,6 +35,26 @@ export type MarketplaceTableKey =
 
 export type MarketplaceRowsByKey = Record<MarketplaceTableKey, MarketplaceRow[]>
 
+export type MarketplaceLearningLoopStatus =
+  | "missing_matches"
+  | "awaiting_feedback"
+  | "needs_correction"
+  | "learning"
+
+export type MarketplaceLearningLoopMetric = {
+  label: string
+  value: string
+  body: string
+}
+
+export type MarketplaceLearningLoopSummary = {
+  status: MarketplaceLearningLoopStatus
+  label: string
+  body: string
+  nextAction: string
+  metrics: MarketplaceLearningLoopMetric[]
+}
+
 export const MARKETPLACE_TABLES: {
   key: MarketplaceTableKey
   title: string
@@ -206,6 +226,76 @@ export function summarizeMarketplace(rows: MarketplaceRowsByKey): {
   }
 }
 
+export function summarizeMarketplaceLearningLoop(rows: MarketplaceRowsByKey): MarketplaceLearningLoopSummary {
+  const matchCount = rows.matches.length
+  const employerFeedback = rows.feedback.filter(isEmployerFeedbackEvent)
+  const rejectedEmployerFeedback = employerFeedback.filter(isRejectedEmployerFeedbackEvent)
+  const correctionCount = rows.corrections.length
+
+  let status: MarketplaceLearningLoopStatus
+  let label: string
+  let body: string
+  let nextAction: string
+
+  if (matchCount === 0) {
+    status = "missing_matches"
+    label = "No match learning yet"
+    body = "This candidate has no job-match artifacts for the marketplace loop to learn from."
+    nextAction = "Run or review job matching before employer feedback can improve this profile."
+  } else if (employerFeedback.length === 0) {
+    status = "awaiting_feedback"
+    label = "Awaiting employer feedback"
+    body = "Match artifacts exist, but no accepted/rejected intro decision has taught the matcher what worked."
+    nextAction = "Record accepted/rejected intro feedback from Passed Candidates once the hiring team responds."
+  } else if (rejectedEmployerFeedback.length > 0 && correctionCount === 0) {
+    status = "needs_correction"
+    label = "Feedback needs correction signal"
+    body = "Employer rejection feedback exists, but no correction event has converted that miss into durable learning."
+    nextAction = "Convert rejection reason into a correction event so future matching avoids the same miss."
+  } else {
+    status = "learning"
+    label = "Learning loop active"
+    body = correctionCount
+      ? "Match artifacts, employer feedback, and correction signal are connected for this candidate."
+      : "Match artifacts and positive employer feedback are connected for this candidate."
+    nextAction = correctionCount
+      ? "Use the latest feedback and correction evidence before the next pass or outbound decision."
+      : "Use the positive employer feedback before the next pass or outbound decision."
+  }
+
+  return {
+    status,
+    label,
+    body,
+    nextAction,
+    metrics: [
+      {
+        label: "Match artifacts",
+        value: String(matchCount),
+        body: matchCount
+          ? "Job-specific match rows available for this candidate."
+          : "No job-specific match rows found yet.",
+      },
+      {
+        label: "Employer feedback",
+        value: String(employerFeedback.length),
+        body: rejectedEmployerFeedback.length
+          ? `${rejectedEmployerFeedback.length} rejected intro signal${rejectedEmployerFeedback.length === 1 ? "" : "s"} captured.`
+          : employerFeedback.length
+            ? "Accepted intro signal captured."
+            : "No employer intro decision feedback found.",
+      },
+      {
+        label: "Corrections",
+        value: String(correctionCount),
+        body: correctionCount
+          ? "Correction events are available for regression or matching updates."
+          : "No durable correction events are attached to this candidate yet.",
+      },
+    ],
+  }
+}
+
 export function marketplaceExternalHref(value: unknown): string | undefined {
   const raw = firstMarketplaceText(value)
   if (!raw) return undefined
@@ -261,6 +351,29 @@ function firstMarketplaceText(...values: unknown[]): string | undefined {
     if (trimmed) return trimmed
   }
   return undefined
+}
+
+function isEmployerFeedbackEvent(row: MarketplaceRow): boolean {
+  const kind = String(row.kind ?? "").toLowerCase()
+  const outcome = String(row.outcome ?? "").toLowerCase()
+  const payload = row.payloadRedacted && typeof row.payloadRedacted === "object"
+    ? row.payloadRedacted as Record<string, unknown>
+    : {}
+  const decision = String(payload.decision ?? "").toLowerCase()
+  return kind === "employer_action" ||
+    outcome === "intro_accepted" ||
+    outcome === "intro_rejected" ||
+    decision === "accepted" ||
+    decision === "rejected"
+}
+
+function isRejectedEmployerFeedbackEvent(row: MarketplaceRow): boolean {
+  const outcome = String(row.outcome ?? "").toLowerCase()
+  const payload = row.payloadRedacted && typeof row.payloadRedacted === "object"
+    ? row.payloadRedacted as Record<string, unknown>
+    : {}
+  const decision = String(payload.decision ?? "").toLowerCase()
+  return outcome === "intro_rejected" || decision === "rejected"
 }
 
 function marketplaceStorageHref(value: string): string | undefined {
