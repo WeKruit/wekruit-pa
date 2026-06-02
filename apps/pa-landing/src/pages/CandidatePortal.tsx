@@ -476,6 +476,7 @@ type ConnectorRow = {
   brand: string
   letter: string
   provider?: "linkedin" | "github" | "calcom"
+  action?: "send_resume"
 }
 
 function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
@@ -495,6 +496,7 @@ function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
       connected: !!profile.latestResumeArtifactId,
       brand: "#2D1A0A",
       letter: "R",
+      action: "send_resume",
     },
     {
       id: "linkedin",
@@ -617,7 +619,15 @@ function connectorErrorMessage(err: unknown, provider: ConnectorRow["provider"])
   return `Could not connect ${provider ?? "account"}. Try again.`
 }
 
-function ConnectorAction({ connector, withCheck = false }: { connector: ConnectorRow; withCheck?: boolean }) {
+function ConnectorAction({
+  connector,
+  claireHref,
+  withCheck = false,
+}: {
+  connector: ConnectorRow
+  claireHref: string | null
+  withCheck?: boolean
+}) {
   const [busy, setBusy] = useState(false)
   if (connector.connected) {
     return (
@@ -627,8 +637,18 @@ function ConnectorAction({ connector, withCheck = false }: { connector: Connecto
       </span>
     )
   }
+  if (connector.action === "send_resume") {
+    if (!claireHref) {
+      return <span className="wkv2-conn__btn wkv2-conn__btn--muted">Claire pending</span>
+    }
+    return (
+      <a href={claireHref} className="wkv2-conn__btn wkv2-conn__btn--connect">
+        Send PDF
+      </a>
+    )
+  }
   if (!connector.provider) {
-    return <Link to="/me/profile" className="wkv2-conn__btn wkv2-conn__btn--connect">Connect</Link>
+    return <span className="wkv2-conn__btn wkv2-conn__btn--muted">Not on file</span>
   }
   return (
     <button
@@ -2779,6 +2799,7 @@ function ContactCard({ profile }: { profile: CandidateSelfProfile }) {
 function ConnectedAccountsCard({ profile }: { profile: CandidateSelfProfile }) {
   const items = deriveConnectors(profile)
   const githubRepos = (profile.githubPublicRepos ?? []).slice(0, 3)
+  const claireHref = buildClaireImessageHref(profile.senderNumber)
   return (
     <section id="connected-accounts" className="wkv2-card wk-prof-card">
       <h3 className="wkv2-card__h">Connected accounts</h3>
@@ -2795,7 +2816,7 @@ function ConnectedAccountsCard({ profile }: { profile: CandidateSelfProfile }) {
               {c.label}
               <span className="wkv2-conn__meta">{c.meta}</span>
             </span>
-            <ConnectorAction connector={c} />
+            <ConnectorAction connector={c} claireHref={claireHref} />
           </div>
         ))}
         {githubRepos.length > 0 ? (
@@ -3602,6 +3623,12 @@ const ME_PORTAL_STYLES = `
 .wkv2-conn__btn--connect:disabled {
   opacity: 0.65;
   cursor: wait;
+}
+.wkv2-conn__btn--muted,
+.wkv2-conn__btn--muted:hover {
+  background: transparent;
+  color: var(--wk-ink-3);
+  cursor: default;
 }
 .wkv2-conn__check {
   width: 14px; height: 14px; border-radius: 50%;

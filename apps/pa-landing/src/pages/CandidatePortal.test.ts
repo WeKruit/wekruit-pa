@@ -91,7 +91,19 @@ test("CandidatePortal wires connector buttons through the account OAuth start ca
   assert.match(source, /github_oauth_config_missing/)
   assert.match(source, /calcom_oauth_config_missing/)
   assert.match(source, /wkv2-conn__btn--connect/)
-  assert.match(source, />Connect</)
+  assert.match(source, />\s*Connect\s*</)
+})
+
+test("CandidatePortal connector rows do not use dead profile links for non-OAuth actions", () => {
+  assert.match(source, /action: "send_resume"/)
+  assert.match(source, /buildClaireImessageHref\(profile\.senderNumber\)/)
+  assert.match(source, /<ConnectorAction connector=\{c\} claireHref=\{claireHref\} \/>/)
+  assert.match(source, /connector\.action === "send_resume"[\s\S]*href=\{claireHref\}[\s\S]*Send PDF/)
+  assert.match(source, /wkv2-conn__btn--muted/)
+  assert.doesNotMatch(
+    source,
+    /return <Link to="\/me\/profile" className="wkv2-conn__btn wkv2-conn__btn--connect">Connect<\/Link>/,
+  )
 })
 
 test("CandidatePortal does not advertise unavailable account or role actions", () => {
