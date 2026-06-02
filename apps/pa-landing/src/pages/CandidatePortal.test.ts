@@ -55,6 +55,13 @@ test("CandidatePortal wires connector buttons through the account OAuth start ca
   assert.match(source, />Connect</)
 })
 
+test("CandidatePortal does not advertise unavailable account or role actions", () => {
+  assert.doesNotMatch(source, /\bManage\s*<\/span>/)
+  assert.doesNotMatch(source, /filter,\s*save\s*&\s*decide/i)
+  assert.match(source, /\bConnected\s*<\/span>/)
+  assert.match(source, /filter and review/i)
+})
+
 test("CandidatePortal renders honest connector data", () => {
   assert.match(source, /linkedinOauthProfile/)
   assert.match(source, /githubOauthProfile/)

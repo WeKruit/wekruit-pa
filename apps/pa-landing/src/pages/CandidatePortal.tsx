@@ -623,7 +623,7 @@ function ConnectorAction({ connector, withCheck = false }: { connector: Connecto
     return (
       <span className="wkv2-conn__btn">
         {withCheck ? <span className="wkv2-conn__check"><Icon name="check" size={9} stroke={3} /></span> : null}
-        Manage
+        Connected
       </span>
     )
   }
@@ -1322,7 +1322,7 @@ function MeNewMatches({
             ))}
           </div>
           <Link to="/me/matches" className="wkv3-seeall">
-            {matches.length > 2 ? `See all ${matches.length} roles` : "Open all your roles — filter, save & decide"}
+            {matches.length > 2 ? `See all ${matches.length} roles` : "Open all your roles — filter and review"}
             <Icon name="arrow-right" size={13} stroke={2} />
           </Link>
         </>
