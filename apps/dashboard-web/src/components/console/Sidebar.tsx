@@ -92,7 +92,6 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/admin/external-supply/audit", label: "Audit" },
       { to: "/admin/coresignal-playground", label: "Coresignal · Agentic search" },
       { to: "/admin/voice-test-dial", label: "Voice test dial" },
-      { to: "/admin/sendblue-pool", label: "Sendblue pool" },
       { to: "/admin/qr-campaigns", label: "QR campaigns" },
     ],
   },
@@ -145,6 +144,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     label: "Platform",
     icon: "settings",
     items: [
+      { to: "/admin/sendblue-pool", label: "Sendblue numbers" },
       { to: "/admin/flags", label: "Flags" },
       { to: "/triggers", label: "Triggers" },
       { to: "/admin/prescreen-sessions", label: "Prescreen sessions" },
