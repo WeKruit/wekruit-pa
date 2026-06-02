@@ -1451,6 +1451,39 @@
 }
 .wk-emp-trust__card p { color: var(--ink-2); font-size: 14px; line-height: 1.55; margin: 0; }
 
+.wk-emp-faq {
+  max-width: 980px;
+  margin: 34px auto 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.wk-emp-faq__item {
+  background: var(--cream-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 22px 24px;
+  min-height: 156px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.wk-emp-faq__item h3 {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 20px;
+  line-height: 1.2;
+  margin: 0;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.wk-emp-faq__item p {
+  color: var(--ink-2);
+  font-size: 14.5px;
+  line-height: 1.55;
+  margin: 0;
+}
+
 .wk-emp-peek {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1865,6 +1898,8 @@
   .wk-emp-band__row { grid-template-columns: repeat(2, 1fr); row-gap: 18px; }
   .wk-emp-compare { grid-template-columns: 1fr; }
   .wk-emp-trust { grid-template-columns: 1fr; }
+  .wk-emp-faq { grid-template-columns: 1fr; }
+  .wk-emp-faq__item { min-height: 0; }
   .wk-emp-peek { grid-template-columns: 1fr; }
   .wk-emp-inbox__grid { grid-template-columns: 1fr; }
   .wk-emp-inbox__list { position: static; }

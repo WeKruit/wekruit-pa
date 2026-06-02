@@ -544,6 +544,56 @@ export default function Employers() {
         </div>
       </section>
 
+      {/* FAQ — scope-safe operating model */}
+      <section className="wk-section">
+        <div className="wk-container">
+          <header className="wk-section__head wk-section__head--center">
+            <p className="wk-eyebrow">Employer operating model</p>
+            <h2 className="wk-section__h2">
+              What WeKruit is. <em className="wk-accent">And what it is not.</em>
+            </h2>
+          </header>
+
+          <div className="wk-emp-faq" aria-label="Employer operating model FAQ">
+            <article className="wk-emp-faq__item">
+              <h3>What does WeKruit send to employers?</h3>
+              <p>
+                We send consented passed profiles only: summary, pass reason, cited evidence,
+                risks, fit notes, and transcript excerpts tied to the approved role brief.
+              </p>
+            </article>
+            <article className="wk-emp-faq__item">
+              <h3>Can employers browse candidates?</h3>
+              <p>
+                No. WeKruit is not an ATS and not a candidate browser. Candidates stay behind
+                Claire&apos;s wall until they pass a role screen and consent to share.
+              </p>
+            </article>
+            <article className="wk-emp-faq__item">
+              <h3>What happens after we accept a pass?</h3>
+              <p>
+                You decide whether this candidate should enter your normal interview process.
+                Your team owns scheduling, interview loops, and the hiring decision.
+              </p>
+            </article>
+            <article className="wk-emp-faq__item">
+              <h3>How are scope and terms handled?</h3>
+              <p>
+                Start with one role brief. WeKruit confirms scope and terms before Claire screens,
+                then screens only against the approved brief.
+              </p>
+            </article>
+            <article className="wk-emp-faq__item">
+              <h3>What if the evidence misses our bar?</h3>
+              <p>
+                Calibration goes back to WeKruit before the next pass so the role brief, hard
+                filters, and evidence probes get tighter.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
       {/* Final CTA */}
       <section className="wk-section wk-section--trust">
         <div className="wk-container">

@@ -103,3 +103,22 @@ test("Employers page avoids unsupported commercial certainty", () => {
   assert.match(employersSource, /Start with one role brief/)
   assert.match(employersSource, /WeKruit confirms scope and terms/)
 })
+
+test("Employers page includes a scope-safe operating FAQ", () => {
+  assert.match(employersSource, /Employer operating model/)
+  assert.match(employersSource, /What does WeKruit send to employers\?/)
+  assert.match(employersSource, /Can employers browse candidates\?/)
+  assert.match(employersSource, /What happens after we accept a pass\?/)
+  assert.match(employersSource, /How are scope and terms handled\?/)
+  assert.match(employersSource, /What if the evidence misses our bar\?/)
+
+  assert.match(employersSource, /consented passed profiles only/)
+  assert.match(employersSource, /not an ATS and not a candidate browser/)
+  assert.match(employersSource, /normal interview process/)
+  assert.match(employersSource, /before Claire screens/)
+  assert.match(employersSource, /Calibration goes back to WeKruit before the next pass/)
+
+  assert.doesNotMatch(employersSource, /replacement search/i)
+  assert.doesNotMatch(employersSource, /flat percentage/i)
+  assert.doesNotMatch(employersSource, /90 days/i)
+})
