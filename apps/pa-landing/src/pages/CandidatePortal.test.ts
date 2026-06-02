@@ -146,6 +146,11 @@ test("CandidatePortal /me surfaces real Claire matching signals from the claimed
   assert.match(source, /roleFunction/)
   assert.match(source, /targetLocations/)
   assert.match(source, /minSalaryUsd/)
+  assert.match(
+    source,
+    /<Link to="\/me\/profile#match-preferences" className="wkv3-signal__link">[\s\S]*Update matching profile/,
+  )
+  assert.doesNotMatch(source, /<Link to="\/me\/profile" className="wkv3-signal__link">/)
   assert.doesNotMatch(source, /mock signal|example signal|sample signal/i)
 })
 

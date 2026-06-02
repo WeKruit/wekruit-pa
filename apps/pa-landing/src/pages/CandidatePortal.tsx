@@ -1652,7 +1652,7 @@ function MeClaireSignalsCard({ profile }: { profile: CandidateSelfProfile }) {
           Claire needs more target-role signal before roles get sharp.
         </p>
       )}
-      <Link to="/me/profile" className="wkv3-signal__link">
+      <Link to="/me/profile#match-preferences" className="wkv3-signal__link">
         Update matching profile <Icon name="arrow-right" size={12} stroke={2} />
       </Link>
     </div>
