@@ -17,8 +17,14 @@
  */
 import { createRequire } from "node:module"
 import OpenAI from "openai"
-// TYPE-ONLY: erased at runtime — keeps the real generic signatures without a runtime import.
-import type * as Agents from "@openai/agents"
+import type {
+  AgentsSdkAgent,
+  AgentsSdkInputGuardrailTripwireTriggered,
+  AgentsSdkMemorySession,
+  AgentsSdkRun,
+  AgentsSdkTool,
+  AgentsSdkZod,
+} from "@pa/agent-runtime"
 
 // ONE consistent resolution anchor for ALL environments (prod bundle, esbuild evals, AND tsx unit
 // tests): resolve @openai/agents + zod from @pa/agent-runtime's node_modules, where zod@4 lives.
@@ -70,7 +76,7 @@ export const z = new Proxy({} as Record<PropertyKey, unknown>, {
     if (!_z) loadSdk()
     return (_z as Record<PropertyKey, unknown>)[prop]
   },
-}) as unknown as typeof import("zod").z
+}) as unknown as AgentsSdkZod
 
 class LazyAgent {
   constructor(...args: unknown[]) {
@@ -78,13 +84,13 @@ class LazyAgent {
     return new Real(...args) as object
   }
 }
-export const Agent = LazyAgent as unknown as typeof Agents.Agent
+export const Agent = LazyAgent as unknown as AgentsSdkAgent
 
 export const run = ((...args: unknown[]) =>
-  (loadSdk().run as (...a: unknown[]) => unknown)(...args)) as unknown as typeof Agents.run
+  (loadSdk().run as (...a: unknown[]) => unknown)(...args)) as unknown as AgentsSdkRun
 
 export const tool = ((...args: unknown[]) =>
-  (loadSdk().tool as (...a: unknown[]) => unknown)(...args)) as unknown as typeof Agents.tool
+  (loadSdk().tool as (...a: unknown[]) => unknown)(...args)) as unknown as AgentsSdkTool
 
 /** instanceof works lazily via Symbol.hasInstance against the real class. */
 export const InputGuardrailTripwireTriggered = {
@@ -92,7 +98,7 @@ export const InputGuardrailTripwireTriggered = {
     const Real = loadSdk().InputGuardrailTripwireTriggered as (new (...a: unknown[]) => unknown) | undefined
     return Real ? inst instanceof Real : false
   },
-} as unknown as typeof Agents.InputGuardrailTripwireTriggered
+} as unknown as AgentsSdkInputGuardrailTripwireTriggered
 
 /** in-memory Session (eval/test stand-in for FirestoreSession). */
 export const MemorySession = new Proxy(function () {} as unknown as object, {
@@ -100,7 +106,7 @@ export const MemorySession = new Proxy(function () {} as unknown as object, {
     const Real = loadSdk().MemorySession as new (...a: unknown[]) => unknown
     return new Real(...args) as object
   },
-}) as unknown as typeof Agents.MemorySession
+}) as unknown as AgentsSdkMemorySession
 
 let configured = false
 /**

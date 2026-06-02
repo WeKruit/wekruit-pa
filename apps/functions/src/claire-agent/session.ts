@@ -9,8 +9,7 @@
  * `MemorySession` (the POC stand-in) → this. Same interface.
  */
 import type { Firestore } from "firebase-admin/firestore"
-import type { Session } from "@openai/agents"
-import { FirestoreSession } from "@pa/agent-runtime"
+import { FirestoreSession, type AgentsSdkSession as Session } from "@pa/agent-runtime"
 
 export interface ClaireSessionDeps {
   db: Firestore

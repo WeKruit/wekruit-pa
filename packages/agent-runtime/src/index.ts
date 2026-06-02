@@ -23,7 +23,20 @@ export { buildAgentsInput, runOpenAIAgentsTurn } from "./openai-agents-adapter.j
 export { hydrateOpenAiFromAtm, getAtmBearerToken } from "./atm-llm-runtime.js"
 export { FirestoreSession, deriveSessionMessageIdempotencyKey } from "./firestore-session.js"
 export type { FirestoreSessionDeps } from "./firestore-session.js"
-export type { Session as AgentsSdkSession, AgentInputItem } from "@openai/agents"
+export type {
+  AgentInputItem,
+  InputGuardrail as AgentsSdkInputGuardrail,
+  OutputGuardrail as AgentsSdkOutputGuardrail,
+  Session as AgentsSdkSession,
+} from "@openai/agents"
+export type AgentsSdkModule = typeof import("@openai/agents")
+export type AgentsSdkAgent = AgentsSdkModule["Agent"]
+export type AgentsSdkInputGuardrailTripwireTriggered =
+  AgentsSdkModule["InputGuardrailTripwireTriggered"]
+export type AgentsSdkMemorySession = AgentsSdkModule["MemorySession"]
+export type AgentsSdkRun = AgentsSdkModule["run"]
+export type AgentsSdkTool = AgentsSdkModule["tool"]
+export type AgentsSdkZod = typeof import("zod").z
 // Adam iter 19 — prefix-cache moved here from pa-orchestrator/voice/prefix-cache
 // so the main LLM call path (`runWithOpenAI` in openai-provider.ts) can wrap
 // its OpenAI client with the cache. Previously only the small rewriter LLM

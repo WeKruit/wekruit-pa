@@ -23,7 +23,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.94.0",
     "@google-cloud/tasks": "^5.5.2",
-    "@openai/agents": "^0.8.5",
     "@pa/agent-registry": "0.0.1",
     "@pa/agent-runtime": "0.0.1",
     "@pa/core-types": "0.0.1",

@@ -20,7 +20,10 @@
  * - normalizer: `normalizeForIMessage` (@pa/pa-orchestrator) — the ONE kept
  *   post-processor (markdown/code-fence/UTM strip + iMessage length).
  */
-import type { InputGuardrail, OutputGuardrail } from "@openai/agents"
+import type {
+  AgentsSdkInputGuardrail as InputGuardrail,
+  AgentsSdkOutputGuardrail as OutputGuardrail,
+} from "@pa/agent-runtime"
 import { checkPromptInjection, detectCrisisInInput } from "@pa/pa-safety"
 import { normalizeForIMessage } from "@pa/pa-orchestrator"
 
