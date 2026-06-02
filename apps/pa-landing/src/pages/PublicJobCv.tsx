@@ -92,7 +92,7 @@ export default function PublicJobCv() {
     }
     if (!CV_INGEST_URL) {
       setStatus("err")
-      setErrMsg("CV ingest endpoint not configured. Please reach out to support.")
+      setErrMsg("Resume upload is temporarily unavailable. Message Claire and we'll attach it to this role.")
       return
     }
     const candidateId = readStoredCandidateId()

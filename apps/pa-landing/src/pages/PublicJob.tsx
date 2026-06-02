@@ -875,7 +875,7 @@ function InlineCvUpload({ jobId, requestedUserId, uploadUserId, onUploaded }: In
     }
     if (!CV_INGEST_URL) {
       setStatus("err")
-      setErrMsg("CV ingest endpoint is not configured.")
+      setErrMsg("Resume upload is temporarily unavailable. Message Claire and we'll attach it to this role.")
       return
     }
     if (!uploadUserId) {

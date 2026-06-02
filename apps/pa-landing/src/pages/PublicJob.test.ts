@@ -17,3 +17,8 @@ test("PublicJob frames role entry as Claire-first passed-profile flow", () => {
   assert.match(source, /Claire interview \$\{seats === 1 \? "slot" : "slots"\} this week/)
   assert.match(source, /Start Claire interview/)
 })
+
+test("PublicJob resume upload avoids internal configuration errors", () => {
+  assert.doesNotMatch(source, /CV ingest endpoint is not configured/)
+  assert.match(source, /Resume upload is temporarily unavailable\. Message Claire and we'll attach it to this role\./)
+})
