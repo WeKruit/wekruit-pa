@@ -300,30 +300,46 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── Trust signals ────────────────────────────────── */}
+      {/* ── Product proof ────────────────────────────────── */}
       <section className="wk-section wk-section--trust">
         <div className="wk-container">
           <header className="wk-section__head wk-section__head--center">
-            <p className="wk-eyebrow">Built around hiring-team signal at</p>
+            <p className="wk-eyebrow">What Claire can prove</p>
+            <h2 className="wk-section__h2">Evidence before introductions.</h2>
           </header>
-          <div className="wk-trust-logos" aria-hidden="true">
-            {["Anthropic", "Perplexity", "Figma", "Stripe", "Vercel", "Cursor"].map((n) => (
-              <span className="wk-trust-logo" key={n}>{n}</span>
-            ))}
+
+          <div className="wk-proof-grid">
+            <article className="wk-proof-card">
+              <span className="wk-proof-card__icon" aria-hidden="true">
+                <Icon name="check" size={18} stroke={2} />
+              </span>
+              <h3>Evidence packet</h3>
+              <p>
+                Each passed profile carries the pass reason, risks, fit notes, and transcript excerpts
+                the hiring team needs to judge signal without replaying the whole screen.
+              </p>
+            </article>
+            <article className="wk-proof-card">
+              <span className="wk-proof-card__icon" aria-hidden="true">
+                <Icon name="shield" size={18} stroke={2} />
+              </span>
+              <h3>Candidate-controlled sharing</h3>
+              <p>
+                Claire shares a profile only after the role screen is passed and the candidate has
+                enough context to decide whether that employer should see their profile.
+              </p>
+            </article>
+            <article className="wk-proof-card">
+              <span className="wk-proof-card__icon" aria-hidden="true">
+                <Icon name="sparkle" size={18} stroke={2} />
+              </span>
+              <h3>Profile memory</h3>
+              <p>
+                Every role conversation updates the durable candidate profile, so a not-pass can
+                sharpen future matching instead of burning the candidate.
+              </p>
+            </article>
           </div>
-          <figure className="wk-quote">
-            <blockquote>
-              "Claire turned my résumé into a real role conversation without another application.
-              I finally had evidence that matched what the hiring team cared about."
-            </blockquote>
-            <figcaption>
-              <Avatar name="Renée Holloway" size={36} tone="warm" />
-              <div>
-                <strong>Renée Holloway</strong>
-                <span>Senior PM · matched in 9 days</span>
-              </div>
-            </figcaption>
-          </figure>
 
           <div className="wk-final-cta">
             <h3 className="wk-final-cta__h">Stop applying. Start with Claire.</h3>
@@ -708,37 +724,47 @@ const LANDING_STYLES = `
 .wk-jobcard__cta { pointer-events: none; }
 .wk-jobcard:hover .wk-jobcard__cta { background: #1C0F04; }
 
-/* Trust ----------------------------------------------------------------- */
-.wk-trust-logos {
+/* Product proof --------------------------------------------------------- */
+.wk-proof-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 24px; margin: 0 0 64px; align-items: center;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin: 0 0 64px;
 }
-.wk-trust-logo {
-  font-family: 'Newsreader', serif;
-  font-size: 22px; letter-spacing: -0.02em;
-  color: var(--wk-ink-3); text-align: center;
-  padding: 6px 4px; opacity: 0.7;
-  transition: opacity 200ms var(--wk-ease), color 200ms var(--wk-ease);
+.wk-proof-card {
+  min-height: 240px;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding: 24px;
+  border: 1px solid var(--wk-border);
+  border-radius: var(--wk-r-lg);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.88), rgba(255,255,255,0.62)),
+    var(--wk-cream);
+  box-shadow: var(--wk-shadow-soft);
 }
-.wk-trust-logo:hover { opacity: 1; color: var(--wk-ink); }
-
-.wk-quote {
-  max-width: 720px; margin: 0 auto 72px;
-  text-align: center; display: grid; gap: 24px;
+.wk-proof-card__icon {
+  width: 36px; height: 36px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 12px;
+  background: var(--wk-brown-soft);
+  color: var(--wk-brown);
+  border: 1px solid rgba(122, 82, 46, 0.18);
 }
-.wk-quote blockquote {
-  font-family: 'Newsreader', serif; font-weight: 400;
-  font-size: clamp(22px, 2.4vw, 30px);
-  line-height: 1.35; letter-spacing: -0.018em;
-  color: var(--wk-ink); margin: 0; text-wrap: balance;
+.wk-proof-card h3 {
+  margin: 0;
+  color: var(--wk-ink);
+  font-size: 18px;
+  line-height: 1.25;
+  font-weight: 650;
 }
-.wk-quote figcaption {
-  display: inline-flex; align-items: center; gap: 12px;
-  justify-self: center;
+.wk-proof-card p {
+  margin: 0;
+  color: var(--wk-ink-2);
+  font-size: 14.5px;
+  line-height: 1.62;
 }
-.wk-quote figcaption strong { display: block; font-size: 14.5px; color: var(--wk-ink); font-weight: 600; }
-.wk-quote figcaption span { display: block; font-size: 13px; color: var(--wk-ink-3); }
 
 .wk-final-cta {
   max-width: 560px; margin: 0 auto;
@@ -765,7 +791,8 @@ const LANDING_STYLES = `
   .wk-hero__visual .wk-imsg-phone { max-width: 320px; }
   .wk-steps { grid-template-columns: 1fr; }
   .wk-joblist { grid-template-columns: 1fr; }
-  .wk-trust-logos { grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 48px; }
+  .wk-proof-grid { grid-template-columns: 1fr; margin-bottom: 48px; }
+  .wk-proof-card { min-height: 0; }
 }
 @media (max-width: 760px) {
   .wk-hero__grid { grid-template-columns: 1fr; gap: 40px; }
@@ -778,6 +805,6 @@ const LANDING_STYLES = `
 @media (max-width: 600px) {
   .wk-section { padding: 56px 0; }
   .wk-section__head { margin-bottom: 28px; }
-  .wk-trust-logos { grid-template-columns: repeat(2, 1fr); }
+  .wk-proof-card { padding: 20px; }
 }
 `

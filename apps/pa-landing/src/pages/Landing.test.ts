@@ -41,3 +41,19 @@ test("Landing does not invent role availability or interview scarcity", () => {
   assert.match(landingSource, /Claire starts with the role interview/)
   assert.match(landingSource, /No public WeKruit roles are open right now/)
 })
+
+test("Landing trust section uses product proof instead of fake customer proof", () => {
+  assert.doesNotMatch(landingSource, /Anthropic", "Perplexity", "Figma", "Stripe", "Vercel", "Cursor"/)
+  assert.doesNotMatch(landingSource, /Built around hiring-team signal at/)
+  assert.doesNotMatch(landingSource, /Renée Holloway|Renee Holloway/)
+  assert.doesNotMatch(landingSource, /matched in 9 days/)
+  assert.doesNotMatch(landingSource, /Claire turned my résumé into a real role conversation/)
+  assert.doesNotMatch(landingSource, /wk-trust-logos/)
+  assert.doesNotMatch(landingSource, /wk-quote/)
+
+  assert.match(landingSource, /What Claire can prove/)
+  assert.match(landingSource, /Evidence packet/)
+  assert.match(landingSource, /Candidate-controlled sharing/)
+  assert.match(landingSource, /Profile memory/)
+  assert.match(landingSource, /pass reason, risks, fit notes, and transcript excerpts/)
+})
