@@ -35,6 +35,13 @@ test("CandidatePortal matches inbox does not present local-only feedback as dura
   assert.match(source, /Update matching preferences/)
 })
 
+test("CandidatePortal privacy card does not present local-only toggles as binding controls", () => {
+  assert.doesNotMatch(source, /setShowMe|setBlockEmployer|setShareResume|wk-prof-toggle|These toggles read/i)
+  assert.doesNotMatch(source, /Visible to employers|Show me to employers/i)
+  assert.match(source, /Privacy requests/)
+  assert.match(source, /Binding changes go through reviewed privacy requests/)
+})
+
 test("CandidatePortal wires connector buttons through the account OAuth start callable", () => {
   assert.match(source, /label: "LinkedIn"/)
   assert.match(source, /label: "GitHub"/)

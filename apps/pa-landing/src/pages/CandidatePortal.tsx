@@ -1901,7 +1901,7 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
             </div>
             <div className="wk-prof__head-actions">
               <span className="wk-prof__live">
-                <PulseDot size={6} /> {profile.lifecycleState === "claimed" ? "Visible to employers" : formatProfileStatus(profile.lifecycleState)}
+                <PulseDot size={6} /> {profile.lifecycleState === "claimed" ? "Profile active" : formatProfileStatus(profile.lifecycleState)}
               </span>
               <button
                 type="button"
@@ -2456,49 +2456,36 @@ function ConnectedAccountsCard({ profile }: { profile: CandidateSelfProfile }) {
 }
 
 function PrivacyCard() {
-  const [showMe, setShowMe] = useState(true)
-  const [blockEmployer, setBlockEmployer] = useState(true)
-  const [shareResume, setShareResume] = useState(false)
+  const rows = [
+    {
+      label: "Matching visibility",
+      value: "Claire uses your profile for role matching; reviewed requests pause outreach or change visibility rules.",
+    },
+    {
+      label: "Current employer protection",
+      value: "Send a privacy request with the company name if a current or sensitive employer should be blocked.",
+    },
+    {
+      label: "Resume sharing",
+      value: "This profile screen does not publish your full resume; sharing changes go through operator review.",
+    },
+  ]
   return (
     <section className="wkv2-card wk-prof-card">
       <h3 className="wkv2-card__h">Privacy</h3>
       <div className="wk-prof-privacy">
-        <button
-          type="button"
-          className="wk-prof-privacy__row"
-          onClick={() => setShowMe((v) => !v)}
-        >
-          <span>
-            <strong>Show me to employers</strong>
-            <em>Pause if you don't want new roles.</em>
-          </span>
-          <span className={`wk-prof-toggle${showMe ? " is-on" : ""}`} aria-hidden="true"><span /></span>
-        </button>
-        <button
-          type="button"
-          className="wk-prof-privacy__row"
-          onClick={() => setBlockEmployer((v) => !v)}
-        >
-          <span>
-            <strong>Block current employer</strong>
-            <em>Auto-detected from your résumé experience.</em>
-          </span>
-          <span className={`wk-prof-toggle${blockEmployer ? " is-on" : ""}`} aria-hidden="true"><span /></span>
-        </button>
-        <button
-          type="button"
-          className="wk-prof-privacy__row"
-          onClick={() => setShareResume((v) => !v)}
-        >
-          <span>
-            <strong>Share full résumé before screen</strong>
-            <em>Off — only Claire's summary is shared.</em>
-          </span>
-          <span className={`wk-prof-toggle${shareResume ? " is-on" : ""}`} aria-hidden="true"><span /></span>
-        </button>
+        {rows.map((row) => (
+          <div key={row.label} className="wk-prof-privacy__row">
+            <span>
+              <strong>{row.label}</strong>
+              <em>{row.value}</em>
+            </span>
+            <span className="wk-prof-privacy__badge">Reviewed</span>
+          </div>
+        ))}
       </div>
       <p className="wk-prof-card__hint" style={{ marginTop: 8 }}>
-        These toggles read your preference today. Use "Request" below to make a binding change with Claire.
+        Binding changes go through reviewed privacy requests below.
       </p>
     </section>
   )
@@ -3529,7 +3516,7 @@ const PROFILE_STYLES = `
   padding: 12px 0;
   border-bottom: 1px solid var(--wk-border);
   background: transparent; border-left: 0; border-right: 0; border-top: 0;
-  width: 100%; cursor: pointer;
+  width: 100%;
   text-align: left; font-family: inherit;
 }
 .wk-prof-privacy__row:last-child { border-bottom: 0; }
@@ -3544,25 +3531,17 @@ const PROFILE_STYLES = `
   font-size: 12px; color: var(--wk-ink-3);
   margin-top: 2px; line-height: 1.4;
 }
-.wk-prof-toggle {
-  width: 34px; height: 20px;
+.wk-prof-privacy__badge {
+  border: 1px solid var(--wk-border);
   border-radius: 999px;
-  background: var(--wk-cream-3);
-  border: 1px solid var(--wk-border-strong);
-  position: relative;
-  transition: background 180ms var(--wk-ease), border-color 180ms var(--wk-ease);
-  display: inline-block;
+  padding: 4px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--wk-ink-3);
+  background: var(--wk-cream-2);
 }
-.wk-prof-toggle > span {
-  position: absolute; top: 2px; left: 2px;
-  width: 14px; height: 14px;
-  border-radius: 50%;
-  background: var(--wk-ink-3);
-  transition: transform 180ms var(--wk-ease), background 180ms var(--wk-ease);
-  display: block;
-}
-.wk-prof-toggle.is-on { background: var(--wk-ink); border-color: var(--wk-ink); }
-.wk-prof-toggle.is-on > span { transform: translateX(14px); background: var(--wk-cream); }
 
 .wk-prof-form { display: grid; gap: 10px; margin-top: 4px; }
 .wk-prof-form textarea,
