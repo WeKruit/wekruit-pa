@@ -43,6 +43,8 @@ export const CandidateJobStateSchema = z.enum([
   "not_passed",
   "paused",
   "employer_visible",
+  "intro_accepted",
+  "intro_rejected",
   "archived",
 ])
 export type CandidateJobState = z.infer<typeof CandidateJobStateSchema>
@@ -509,6 +511,7 @@ export const CandidateJobStateDocSchema = z.object({
   reason: z.string().max(1_000).optional(),
   prescreenSessionId: z.string().min(1).optional(),
   employerVisibleProfileId: z.string().min(1).optional(),
+  latestEmployerFeedbackEventId: z.string().min(1).optional(),
   outboundInviteId: z.string().min(1).optional(),
   outboundId: z.string().min(1).optional(),
   latestMatchId: z.string().min(1).optional(),
@@ -777,6 +780,13 @@ const EmployerVisibleProfileShape = z.object({
   matchReason: z.string().max(2_000).optional(),
   consentAt: TimestampSchema.optional(),
   piiConsentAt: TimestampSchema.optional(),
+  latestEmployerAction: z.object({
+    status: z.enum(["accepted", "rejected"]),
+    reason: z.string().max(2_000).optional(),
+    decidedAt: TimestampSchema,
+    decidedBy: z.string().min(1).max(320),
+    feedbackEventId: IdSchema,
+  }).optional(),
   createdAt: TimestampSchema,
   createdBy: MarketplaceActorSchema.default("system"),
 })
@@ -793,6 +803,7 @@ function employerVisibleRedactionSurface(snapshot: EmployerVisibleProfileInput):
     transcriptSummary: snapshot.transcriptSummary,
     passReason: snapshot.passReason,
     matchReason: snapshot.matchReason,
+    latestEmployerActionReason: snapshot.latestEmployerAction?.reason,
   }
 }
 
@@ -884,6 +895,36 @@ export const FeedbackEventSchema = z.object({
         code: z.ZodIssueCode.custom,
         path: ["jobId"],
         message: "job_presented feedback events require jobId",
+      })
+    }
+  }
+  if (event.kind === "employer_action") {
+    if (!event.candidateId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["candidateId"],
+        message: "employer_action feedback events require candidateId",
+      })
+    }
+    if (!event.jobId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["jobId"],
+        message: "employer_action feedback events require jobId",
+      })
+    }
+    if (!event.candidateJobStateId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["candidateJobStateId"],
+        message: "employer_action feedback events require candidateJobStateId",
+      })
+    }
+    if (event.outcome !== "intro_accepted" && event.outcome !== "intro_rejected") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["outcome"],
+        message: "employer_action outcome must be intro_accepted or intro_rejected",
       })
     }
   }
@@ -1538,6 +1579,16 @@ export const CandidateJobEventSchema = z.discriminatedUnion("type", [
     prescreenSessionId: IdSchema.optional(),
     employerVisibleProfileId: IdSchema,
   }),
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("employer_intro_accepted"),
+    employerVisibleProfileId: IdSchema,
+    feedbackEventId: IdSchema,
+  }),
+  CandidateJobEventBaseSchema.extend({
+    type: z.literal("employer_intro_rejected"),
+    employerVisibleProfileId: IdSchema,
+    feedbackEventId: IdSchema,
+  }),
   CandidateJobEventBaseSchema.extend({ type: z.literal("candidate_declined") }),
   CandidateJobEventBaseSchema.extend({ type: z.literal("archive") }),
 ])
@@ -1823,6 +1874,22 @@ export function reduceCandidateJobState(
         return reduction(current, current, event.type, event.occurredAt, "employer_visible_requires_passed_state")
       }
       return reduction(current, "employer_visible", event.type, event.occurredAt, "passed_snapshot_created")
+    case "employer_intro_accepted":
+      if (current === "employer_visible") {
+        return reduction(current, "intro_accepted", event.type, event.occurredAt, "employer_intro_accepted")
+      }
+      if (current === "intro_accepted" || current === "intro_rejected") {
+        return reduction(current, current, event.type, event.occurredAt, "intro_decision_already_recorded")
+      }
+      return reduction(current, current, event.type, event.occurredAt, "intro_decision_requires_employer_visible")
+    case "employer_intro_rejected":
+      if (current === "employer_visible") {
+        return reduction(current, "intro_rejected", event.type, event.occurredAt, "employer_intro_rejected_candidate_retained")
+      }
+      if (current === "intro_accepted" || current === "intro_rejected") {
+        return reduction(current, current, event.type, event.occurredAt, "intro_decision_already_recorded")
+      }
+      return reduction(current, current, event.type, event.occurredAt, "intro_decision_requires_employer_visible")
     case "candidate_declined":
     case "archive":
       return reduction(current, "archived", event.type, event.occurredAt, "opportunity_archived")

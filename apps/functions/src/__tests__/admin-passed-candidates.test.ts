@@ -3,7 +3,10 @@ import assert from "node:assert/strict"
 import { HttpsError } from "firebase-functions/v2/https"
 import { createCandidateJobStateId, createEmployerVisibleProfileId, PA_COLLECTIONS } from "@pa/core-types"
 import { MockFirestore, asFirestore } from "../job-rec/__tests__/mock-firestore.js"
-import { runAdminPassedCandidatesSnapshot } from "../admin-passed-candidates.js"
+import {
+  runAdminPassedCandidateIntroDecision,
+  runAdminPassedCandidatesSnapshot,
+} from "../admin-passed-candidates.js"
 
 const now = "2026-05-13T20:00:00.000Z"
 
@@ -130,5 +133,50 @@ describe("runAdminPassedCandidatesSnapshot", () => {
     assert.match(result.rows[0]!.transcript.turns[0]!.body, /\[redacted linkedin\]/)
     assert.match(result.rows[0]!.transcript.turns[0]!.body, /\[redacted handle\]/)
     assert.doesNotMatch(JSON.stringify(result), /candidate@example\.com|\+1 555 555 0100|resume\.pdf|linkedin\.com|@private_handle|wrong session/)
+  })
+
+  it("records employer intro decisions through the passed-profile boundary", async () => {
+    const mfs = new MockFirestore()
+    await seedState(mfs, "cand-1", "job-1", {
+      state: "employer_visible",
+      employerVisibleProfileId: "job-1__cand-1",
+    })
+    await mfs.collection(PA_COLLECTIONS.employerVisibleProfiles).doc("job-1__cand-1").set(snapshot())
+
+    const result = await runAdminPassedCandidateIntroDecision(
+      {
+        snapshotId: "job-1__cand-1",
+        decision: "rejected",
+        reason: "Hiring manager needs deeper distributed systems ownership from candidate@example.com.",
+      },
+      {
+        db: asFirestore(mfs),
+        now: () => now,
+        actorEmail: "operator@wekruit.com",
+      },
+    )
+
+    assert.equal(result.ok, true)
+    assert.equal(result.state, "intro_rejected")
+    assert.equal(result.decision, "rejected")
+    assert.equal(result.feedbackEventId, "fb-employer-intro-rejected-job-1__cand-1")
+
+    const state = mfs.store.get(PA_COLLECTIONS.candidateJobStates)!.get(createCandidateJobStateId("cand-1", "job-1"))!
+    assert.equal(state.state, "intro_rejected")
+    assert.equal(state.latestEmployerFeedbackEventId, result.feedbackEventId)
+
+    const feedback = mfs.store.get(PA_COLLECTIONS.feedbackEvents)!.get(result.feedbackEventId)!
+    assert.equal(feedback.kind, "employer_action")
+    assert.equal(feedback.outcome, "intro_rejected")
+    assert.match(String((feedback.payloadRedacted as Record<string, unknown>).reason), /\[redacted email\]/)
+    assert.doesNotMatch(JSON.stringify(feedback), /candidate@example\.com/)
+
+    const refreshed = await runAdminPassedCandidatesSnapshot(
+      { jobId: "job-1" },
+      { db: asFirestore(mfs), now: () => now },
+    )
+    assert.equal(refreshed.rows[0]!.state, "intro_rejected")
+    assert.equal(refreshed.rows[0]!.latestEmployerAction?.status, "rejected")
+    assert.match(refreshed.rows[0]!.latestEmployerAction?.reason ?? "", /\[redacted email\]/)
   })
 })

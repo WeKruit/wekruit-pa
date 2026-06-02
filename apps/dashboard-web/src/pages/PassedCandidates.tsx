@@ -5,12 +5,17 @@ import { Badge, EmptyState, ErrorState, LoadingState, PageHeader, Panel } from "
 import { AdminJobLink, AdminPrescreenSessionLink, AdminUserLink } from "../components/AdminEntityLink.js"
 import {
   PASSED_CANDIDATES_CALLABLE_NAME,
+  PASSED_CANDIDATE_INTRO_DECISION_CALLABLE_NAME,
   PASSED_CANDIDATES_DEFAULT_LIMIT,
   buildPassedCandidatesRequest,
   formatCount,
+  formatIntroDecision,
   formatSafeJson,
   formatSafeText,
   formatTimestamp,
+  type PassedCandidateIntroDecision,
+  type PassedCandidateIntroDecisionRequest,
+  type PassedCandidateIntroDecisionResult,
   type PassedCandidatesFilters,
   type PassedCandidatesRequest,
   type PassedCandidatesRow,
@@ -18,6 +23,7 @@ import {
 } from "./PassedCandidates.helpers.js"
 
 type SnapshotLoader = (filters: PassedCandidatesRequest) => Promise<PassedCandidatesSnapshot>
+type IntroDecisionSubmitter = (request: PassedCandidateIntroDecisionRequest) => Promise<PassedCandidateIntroDecisionResult>
 
 async function defaultSnapshotLoader(filters: PassedCandidatesRequest): Promise<PassedCandidatesSnapshot> {
   const [{ httpsCallable }, firebase] = await Promise.all([
@@ -32,10 +38,25 @@ async function defaultSnapshotLoader(filters: PassedCandidatesRequest): Promise<
   return result.data
 }
 
+async function defaultIntroDecisionSubmitter(request: PassedCandidateIntroDecisionRequest): Promise<PassedCandidateIntroDecisionResult> {
+  const [{ httpsCallable }, firebase] = await Promise.all([
+    import("firebase/functions"),
+    import("../lib/firebase.js"),
+  ])
+  const fn = httpsCallable<PassedCandidateIntroDecisionRequest, PassedCandidateIntroDecisionResult>(
+    firebase.functions(),
+    PASSED_CANDIDATE_INTRO_DECISION_CALLABLE_NAME,
+  )
+  const result = await fn(request)
+  return result.data
+}
+
 export default function PassedCandidates({
   loadSnapshot = defaultSnapshotLoader,
+  submitIntroDecision = defaultIntroDecisionSubmitter,
 }: {
   loadSnapshot?: SnapshotLoader
+  submitIntroDecision?: IntroDecisionSubmitter
 }) {
   const queryJobId = useMemo(() => readJobIdFromHref(), [])
   const [draft, setDraft] = useState<PassedCandidatesFilters>({
@@ -44,6 +65,7 @@ export default function PassedCandidates({
   })
   const [snapshot, setSnapshot] = useState<PassedCandidatesSnapshot | null>(null)
   const [loading, setLoading] = useState(false)
+  const [decisionBusyId, setDecisionBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   async function refresh(nextFilters: PassedCandidatesFilters): Promise<void> {
@@ -67,6 +89,23 @@ export default function PassedCandidates({
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     void refresh(draft)
+  }
+
+  async function recordIntroDecision(row: PassedCandidatesRow, decision: PassedCandidateIntroDecision, reason: string): Promise<void> {
+    setDecisionBusyId(`${row.snapshotId}:${decision}`)
+    setError(null)
+    try {
+      await submitIntroDecision({
+        snapshotId: row.snapshotId,
+        decision,
+        reason,
+      })
+      await refresh(draft)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setDecisionBusyId(null)
+    }
   }
 
   useEffect(() => {
@@ -124,7 +163,13 @@ export default function PassedCandidates({
         </Panel>
       ) : null}
 
-      {snapshot ? <PassedCandidatesSnapshotView snapshot={snapshot} /> : null}
+      {snapshot ? (
+        <PassedCandidatesSnapshotView
+          snapshot={snapshot}
+          onIntroDecision={recordIntroDecision}
+          decisionBusyId={decisionBusyId}
+        />
+      ) : null}
     </div>
   )
 }
@@ -140,7 +185,15 @@ function readJobIdFromHref(): string {
   return ""
 }
 
-export function PassedCandidatesSnapshotView({ snapshot }: { snapshot: PassedCandidatesSnapshot }) {
+export function PassedCandidatesSnapshotView({
+  snapshot,
+  onIntroDecision,
+  decisionBusyId,
+}: {
+  snapshot: PassedCandidatesSnapshot
+  onIntroDecision?: (row: PassedCandidatesRow, decision: PassedCandidateIntroDecision, reason: string) => Promise<void>
+  decisionBusyId?: string | null
+}) {
   return (
     <>
       <Panel title="Passed Candidates" eyebrow={`generated ${formatTimestamp(snapshot.generatedAt)}`}>
@@ -166,7 +219,14 @@ export function PassedCandidatesSnapshotView({ snapshot }: { snapshot: PassedCan
           />
         ) : (
           <div style={rowStackStyle}>
-            {snapshot.rows.map((row) => <PassedCandidateCard key={row.id} row={row} />)}
+            {snapshot.rows.map((row) => (
+              <PassedCandidateCard
+                key={row.id}
+                row={row}
+                onIntroDecision={onIntroDecision}
+                decisionBusyId={decisionBusyId}
+              />
+            ))}
           </div>
         )}
       </Panel>
@@ -174,7 +234,15 @@ export function PassedCandidatesSnapshotView({ snapshot }: { snapshot: PassedCan
   )
 }
 
-function PassedCandidateCard({ row }: { row: PassedCandidatesRow }) {
+function PassedCandidateCard({
+  row,
+  onIntroDecision,
+  decisionBusyId,
+}: {
+  row: PassedCandidatesRow
+  onIntroDecision?: (row: PassedCandidatesRow, decision: PassedCandidateIntroDecision, reason: string) => Promise<void>
+  decisionBusyId?: string | null
+}) {
   return (
     <article style={candidateCardStyle}>
       <div style={cardHeaderStyle}>
@@ -201,8 +269,66 @@ function PassedCandidateCard({ row }: { row: PassedCandidatesRow }) {
       <SummaryBlock title="Level 1 Signals" value={formatSafeJson(row.level1Snapshot)} />
       <SummaryBlock title="Pass Reason" value={row.passReason} />
       <SummaryBlock title="Match Reason" value={row.matchReason} />
+      <EmployerIntroDecision row={row} onIntroDecision={onIntroDecision} decisionBusyId={decisionBusyId} />
       <Transcript turns={row.transcript.turns} />
     </article>
+  )
+}
+
+function EmployerIntroDecision({
+  row,
+  onIntroDecision,
+  decisionBusyId,
+}: {
+  row: PassedCandidatesRow
+  onIntroDecision?: (row: PassedCandidatesRow, decision: PassedCandidateIntroDecision, reason: string) => Promise<void>
+  decisionBusyId?: string | null
+}) {
+  const [reason, setReason] = useState("")
+  const action = row.latestEmployerAction
+  const hasDecision = Boolean(action)
+  const busyAccepted = decisionBusyId === `${row.snapshotId}:accepted`
+  const busyRejected = decisionBusyId === `${row.snapshotId}:rejected`
+  const canSubmit = Boolean(onIntroDecision) && reason.trim().length > 0 && !hasDecision && !busyAccepted && !busyRejected
+
+  async function submit(decision: PassedCandidateIntroDecision): Promise<void> {
+    if (!onIntroDecision || !canSubmit) return
+    await onIntroDecision(row, decision, reason)
+    setReason("")
+  }
+
+  return (
+    <div style={decisionStyle}>
+      <div style={decisionHeaderStyle}>
+        <strong>Employer feedback</strong>
+        <Badge tone={action?.status === "accepted" ? "ok" : action?.status === "rejected" ? "warn" : "info"}>
+          {formatIntroDecision(action?.status)}
+        </Badge>
+      </div>
+      {action ? (
+        <p style={mutedLineStyle}>
+          {formatTimestamp(action.decidedAt)} · {formatSafeText(action.reason, 420)}
+        </p>
+      ) : onIntroDecision ? (
+        <div style={decisionFormStyle}>
+          <textarea
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Employer reason"
+            rows={3}
+            style={textareaStyle}
+          />
+          <div style={decisionButtonRowStyle}>
+            <button type="button" disabled={!canSubmit} onClick={() => void submit("accepted")} style={buttonStyle(!canSubmit)}>
+              {busyAccepted ? "Saving" : "Accept intro"}
+            </button>
+            <button type="button" disabled={!canSubmit} onClick={() => void submit("rejected")} style={secondaryButtonStyle(!canSubmit)}>
+              {busyRejected ? "Saving" : "Reject intro"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -282,5 +408,22 @@ const cardTitleStyle: CSSProperties = { margin: 0, fontSize: 18 }
 const mutedLineStyle: CSSProperties = { margin: 0, color: "#64748b", fontSize: 13 }
 const factGridStyle: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 8 }
 const summaryBlockStyle: CSSProperties = { display: "grid", gap: 4 }
+const decisionStyle: CSSProperties = { display: "grid", gap: 8, padding: 10, border: "1px solid #e2e8f0", borderRadius: 6 }
+const decisionHeaderStyle: CSSProperties = { display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }
+const decisionFormStyle: CSSProperties = { display: "grid", gap: 8 }
+const textareaStyle: CSSProperties = {
+  width: "100%",
+  minHeight: 76,
+  padding: "10px 12px",
+  border: "1px solid #cbd5e1",
+  borderRadius: 6,
+  resize: "vertical",
+  font: "inherit",
+}
+const decisionButtonRowStyle: CSSProperties = { display: "flex", flexWrap: "wrap", gap: 8 }
+const secondaryButtonStyle = (disabled: boolean): CSSProperties => ({
+  ...buttonStyle(disabled),
+  background: disabled ? "#94a3b8" : "#7f1d1d",
+})
 const transcriptStyle: CSSProperties = { display: "grid", gap: 8, padding: 10, background: "#f8fafc", borderRadius: 6 }
 const turnStyle: CSSProperties = { display: "grid", gap: 4 }

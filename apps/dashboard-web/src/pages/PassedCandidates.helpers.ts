@@ -1,5 +1,6 @@
 export const PASSED_CANDIDATES_ROUTE = "/admin/passed-candidates"
 export const PASSED_CANDIDATES_CALLABLE_NAME = "paAdminPassedCandidatesSnapshot"
+export const PASSED_CANDIDATE_INTRO_DECISION_CALLABLE_NAME = "paAdminPassedCandidateIntroDecision"
 export const PASSED_CANDIDATES_DEFAULT_LIMIT = 50
 export const PASSED_CANDIDATES_MAX_LIMIT = 100
 
@@ -19,13 +20,20 @@ export type PassedCandidatesRow = {
   candidateId: string
   jobId: string
   candidateJobStateId: string
-  state: "passed" | "employer_visible"
+  state: "passed" | "employer_visible" | "intro_accepted" | "intro_rejected"
   displayName: string
   resumeSummary?: string
   level1Snapshot?: Record<string, unknown>
   passReason?: string
   matchReason?: string
   createdAt: string
+  latestEmployerAction?: {
+    status: "accepted" | "rejected"
+    reason?: string
+    decidedAt: string
+    decidedBy: string
+    feedbackEventId: string
+  }
   profile: {
     piiConsentAt?: string
     consentStatus: "granted" | "missing"
@@ -60,6 +68,22 @@ export type PassedCandidatesSnapshot = {
     droppedStateMismatch: number
   }
   rows: PassedCandidatesRow[]
+}
+
+export type PassedCandidateIntroDecision = "accepted" | "rejected"
+
+export type PassedCandidateIntroDecisionRequest = {
+  snapshotId: string
+  decision: PassedCandidateIntroDecision
+  reason: string
+}
+
+export type PassedCandidateIntroDecisionResult = {
+  ok: true
+  snapshotId: string
+  decision: PassedCandidateIntroDecision
+  state: "intro_accepted" | "intro_rejected"
+  feedbackEventId: string
 }
 
 const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi
@@ -118,4 +142,10 @@ export function formatTimestamp(value: unknown): string {
 export function formatCount(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "0"
   return Math.trunc(value).toLocaleString("en-US")
+}
+
+export function formatIntroDecision(value: unknown): string {
+  if (value === "accepted") return "accepted intro"
+  if (value === "rejected") return "rejected intro"
+  return "awaiting employer feedback"
 }

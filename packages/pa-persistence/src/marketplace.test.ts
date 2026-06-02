@@ -34,6 +34,7 @@ import {
   approveJobOpportunityDraft,
   markOutboundInviteDelivery,
   markOutboundInviteQueued,
+  recordEmployerIntroDecision,
   readOutreachStopControl,
   rejectJobOpportunityDraft,
   writeCorrectionEvent,
@@ -1075,6 +1076,76 @@ test("applyCandidateJobEvent does not replace passed session link on invalid pre
   assert.equal(stateDoc.state, "employer_visible")
   assert.equal(stateDoc.reason, "passed_snapshot_created")
   assert.equal(stateDoc.prescreenSessionId, "ps-old")
+})
+
+test("recordEmployerIntroDecision stores accepted intro feedback and advances candidate-job state", async () => {
+  const { db, store } = makeFakeFirestore()
+  const stateId = createCandidateJobStateId("cand-1", "job-1")
+  const snapshotId = createEmployerVisibleProfileId("job-1", "cand-1")
+
+  await applyCandidateJobEvent(db, job("prescreen_started"))
+  await applyCandidateJobEvent(db, job("prescreen_review_pending"))
+  await applyPassedCandidateSnapshot(db, {
+    eventId: "pass-for-intro-decision",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    prescreenSessionId: "ps-job-1-cand-1",
+    occurredAt: now,
+    actor: "system",
+    snapshot: {
+      snapshotId,
+      candidateId: "cand-1",
+      jobId: "job-1",
+      candidateJobStateId: stateId,
+      createdFromState: "passed",
+      sourcePrescreenSessionId: "ps-job-1-cand-1",
+      passReason: "Strong pass.",
+      createdBy: "system",
+      createdAt: now,
+    },
+  })
+
+  const decidedAt = "2026-05-13T14:00:00.000Z"
+  const result = await recordEmployerIntroDecision(db, {
+    snapshotId,
+    decision: "accepted",
+    reason: "Hiring manager wants the intro after backend systems evidence.",
+    decidedAt,
+    decidedBy: "operator@wekruit.com",
+    actor: "operator",
+  })
+
+  assert.equal(result.state, "intro_accepted")
+  assert.equal(result.feedbackCreated, true)
+  assert.equal(result.idempotent, false)
+  assert.equal(result.feedbackEvent.outcome, "intro_accepted")
+
+  const stateDoc = store.get(PA_COLLECTIONS.candidateJobStates)!.get(stateId)!
+  assert.equal(stateDoc.state, "intro_accepted")
+  assert.equal(stateDoc.reason, "employer_intro_accepted")
+  assert.equal(stateDoc.latestEmployerFeedbackEventId, result.feedbackEvent.eventId)
+
+  const snapshot = store.get(PA_COLLECTIONS.employerVisibleProfiles)!.get(snapshotId)!
+  assert.equal((snapshot.latestEmployerAction as Record<string, unknown>).status, "accepted")
+  assert.equal((snapshot.latestEmployerAction as Record<string, unknown>).feedbackEventId, result.feedbackEvent.eventId)
+
+  const feedback = store.get(PA_COLLECTIONS.feedbackEvents)!.get(result.feedbackEvent.eventId)!
+  assert.equal(feedback.kind, "employer_action")
+  assert.equal(feedback.candidateJobStateId, stateId)
+  assert.equal((feedback.payloadRedacted as Record<string, unknown>).reason, "Hiring manager wants the intro after backend systems evidence.")
+  assert.equal(store.get(PA_COLLECTIONS.auditEvents)!.has(`marketplace_feedback_${result.feedbackEvent.eventId}`), true)
+  assert.equal(store.get(PA_COLLECTIONS.auditEvents)!.has(`marketplace_candidate_job_${result.candidateJobEventId}`), true)
+
+  const duplicate = await recordEmployerIntroDecision(db, {
+    snapshotId,
+    decision: "accepted",
+    reason: "Hiring manager wants the intro after backend systems evidence.",
+    decidedAt,
+    decidedBy: "operator@wekruit.com",
+    actor: "operator",
+  })
+  assert.equal(duplicate.idempotent, true)
+  assert.equal(duplicate.feedbackCreated, false)
 })
 
 test("NOT_PASS and PAUSE create no employer-visible snapshots", async () => {

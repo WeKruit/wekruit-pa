@@ -238,7 +238,10 @@ export { paPendingOutboundAdmin } from "./pending-outbound/admin.js"
 // /v2/agentic_search/reasoning. Backs the /admin/coresignal-playground page.
 export { paAdminCoresignalAgenticSearch } from "./admin-coresignal-agentic-search.js"
 export { paAdminOutreachOpsSnapshot } from "./outreach/admin.js"
-export { paAdminPassedCandidatesSnapshot } from "./admin-passed-candidates.js"
+export {
+  paAdminPassedCandidateIntroDecision,
+  paAdminPassedCandidatesSnapshot,
+} from "./admin-passed-candidates.js"
 
 // v2.2 W6 — admin-only callable that seeds outbound-bookings/{id} with
 // voiceState=dialing to trigger the existing S3 dial gate. Backs the

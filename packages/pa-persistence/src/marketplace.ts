@@ -199,6 +199,10 @@ export async function applyCandidateJobEvent(
         event.type === "employer_snapshot_created"
           ? event.employerVisibleProfileId
           : currentDoc?.employerVisibleProfileId,
+      latestEmployerFeedbackEventId:
+        event.type === "employer_intro_accepted" || event.type === "employer_intro_rejected"
+          ? event.feedbackEventId
+          : currentDoc?.latestEmployerFeedbackEventId,
       outboundInviteId:
         event.type === "outbound_queued" || event.type === "outbound_sent"
           ? event.outboundInviteId
@@ -1355,6 +1359,7 @@ export async function applyPassedCandidateSnapshot(
         reason: "passed_snapshot_refreshed",
         prescreenSessionId: input.prescreenSessionId,
         employerVisibleProfileId: snapshot.snapshotId,
+        latestEmployerFeedbackEventId: currentDoc?.latestEmployerFeedbackEventId,
         outboundInviteId: currentDoc?.outboundInviteId,
         outboundId: currentDoc?.outboundId,
         latestMatchId: currentDoc?.latestMatchId,
@@ -1416,6 +1421,7 @@ export async function applyPassedCandidateSnapshot(
       reason: visibleReduced.reason,
       prescreenSessionId: input.prescreenSessionId,
       employerVisibleProfileId: snapshot.snapshotId,
+      latestEmployerFeedbackEventId: currentDoc?.latestEmployerFeedbackEventId,
       outboundInviteId: currentDoc?.outboundInviteId,
       outboundId: currentDoc?.outboundId,
       latestMatchId: currentDoc?.latestMatchId,
@@ -1475,6 +1481,222 @@ export async function applyPassedCandidateSnapshot(
       stateDocId,
       idempotent: false,
       auditEventIds: [passAuditRef.id, employerAuditRef.id, snapshotAuditRef.id],
+    }
+  })
+}
+
+export type EmployerIntroDecision = "accepted" | "rejected"
+
+export type RecordEmployerIntroDecisionInput = {
+  snapshotId: string
+  decision: EmployerIntroDecision
+  reason?: string
+  decidedAt: string
+  decidedBy: string
+  actor?: MarketplaceActor
+}
+
+export type RecordEmployerIntroDecisionResult = {
+  snapshot: EmployerVisibleProfile
+  feedbackEvent: FeedbackEvent
+  feedbackCreated: boolean
+  state: CandidateJobState
+  stateDocId: string
+  candidateJobEventId: string
+  idempotent: boolean
+  auditEventIds: string[]
+}
+
+function employerIntroFeedbackEventId(decision: EmployerIntroDecision, snapshotId: string): string {
+  return `fb-employer-intro-${decision}-${safeAuditPart(snapshotId)}`
+}
+
+function employerIntroCandidateJobEventId(decision: EmployerIntroDecision, snapshotId: string): string {
+  return `employer-intro-${decision}-${safeAuditPart(snapshotId)}`
+}
+
+function cleanDecisionReason(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined
+  const trimmed = value.trim()
+  return trimmed ? trimmed.slice(0, 2_000) : undefined
+}
+
+export async function recordEmployerIntroDecision(
+  db: Firestore,
+  input: RecordEmployerIntroDecisionInput
+): Promise<RecordEmployerIntroDecisionResult> {
+  const snapshotId = input.snapshotId.trim()
+  if (!snapshotId) throw new Error("employer_visible_snapshot_id_required")
+  const decision = input.decision
+  if (decision !== "accepted" && decision !== "rejected") throw new Error("invalid_employer_intro_decision")
+  const decidedBy = input.decidedBy.trim()
+  if (!decidedBy) throw new Error("employer_intro_decided_by_required")
+  const reason = cleanDecisionReason(input.reason)
+  const actor = input.actor ?? "operator"
+  const outcome = decision === "accepted" ? "intro_accepted" : "intro_rejected"
+  const eventType = decision === "accepted" ? "employer_intro_accepted" : "employer_intro_rejected"
+  const stateTarget = decision === "accepted" ? "intro_accepted" : "intro_rejected"
+  const feedbackEventId = employerIntroFeedbackEventId(decision, snapshotId)
+  const candidateJobEventId = employerIntroCandidateJobEventId(decision, snapshotId)
+
+  const snapshotRef = db.collection(PA_COLLECTIONS.employerVisibleProfiles).doc(snapshotId)
+  const feedbackRef = db.collection(PA_COLLECTIONS.feedbackEvents).doc(feedbackEventId)
+  const feedbackAuditRef = db.collection(AUDIT_COLLECTION).doc(auditId("marketplace_feedback", feedbackEventId))
+  const candidateJobAuditRef = db.collection(AUDIT_COLLECTION).doc(auditId("marketplace_candidate_job", candidateJobEventId))
+
+  return await db.runTransaction(async (tx) => {
+    const snapshotSnap = await tx.get(snapshotRef)
+    if (!snapshotSnap.exists) throw new Error("employer_visible_snapshot_missing")
+    const snapshot = EmployerVisibleProfileSchema.parse(snapshotSnap.data())
+    const stateRef = db.collection(PA_COLLECTIONS.candidateJobStates).doc(snapshot.candidateJobStateId)
+
+    const [stateSnap, feedbackSnap, feedbackAuditSnap, candidateJobAuditSnap] = await Promise.all([
+      tx.get(stateRef),
+      tx.get(feedbackRef),
+      tx.get(feedbackAuditRef),
+      tx.get(candidateJobAuditRef),
+    ])
+    if (!stateSnap.exists) throw new Error("candidate_job_state_missing")
+    const stateDoc = CandidateJobStateDocSchema.parse(stateSnap.data())
+    if (
+      stateDoc.id !== snapshot.candidateJobStateId ||
+      stateDoc.candidateId !== snapshot.candidateId ||
+      stateDoc.jobId !== snapshot.jobId ||
+      stateDoc.employerVisibleProfileId !== snapshot.snapshotId
+    ) {
+      throw new Error("employer_intro_candidate_job_link_mismatch")
+    }
+
+    const feedbackEvent = FeedbackEventSchema.parse({
+      eventId: feedbackEventId,
+      kind: "employer_action",
+      actor,
+      candidateId: snapshot.candidateId,
+      jobId: snapshot.jobId,
+      candidateJobStateId: snapshot.candidateJobStateId,
+      outcome,
+      evidence: [{
+        source: "admin",
+        summary: decision === "accepted"
+          ? "Employer accepted the passed-profile intro"
+          : "Employer rejected the passed-profile intro",
+        refId: snapshot.snapshotId,
+      }],
+      payloadRedacted: firestorePayload({
+        decision,
+        reason,
+        snapshotId: snapshot.snapshotId,
+        decidedBy,
+      }),
+      createdAt: input.decidedAt,
+    })
+
+    const candidateJobEvent = CandidateJobEventSchema.parse({
+      eventId: candidateJobEventId,
+      type: eventType,
+      candidateId: snapshot.candidateId,
+      jobId: snapshot.jobId,
+      actor,
+      occurredAt: input.decidedAt,
+      evidence: [{
+        source: "admin",
+        summary: decision === "accepted"
+          ? "Employer accepted the passed-profile intro"
+          : "Employer rejected the passed-profile intro",
+        refId: feedbackEvent.eventId,
+      }],
+      employerVisibleProfileId: snapshot.snapshotId,
+      feedbackEventId: feedbackEvent.eventId,
+    })
+
+    let existingFeedback: FeedbackEvent | null = null
+    if (feedbackSnap.exists) {
+      existingFeedback = FeedbackEventSchema.parse(feedbackSnap.data())
+      if (stableJson(pruneUndefined(existingFeedback)) !== stableJson(pruneUndefined(feedbackEvent))) {
+        throw new Error(`conflicting_duplicate_event:${PA_COLLECTIONS.feedbackEvents}/${feedbackEvent.eventId}`)
+      }
+    }
+
+    if (stateDoc.state === stateTarget && existingFeedback) {
+      return {
+        snapshot,
+        feedbackEvent: existingFeedback,
+        feedbackCreated: false,
+        state: stateDoc.state,
+        stateDocId: stateDoc.id,
+        candidateJobEventId,
+        idempotent: true,
+        auditEventIds: [feedbackAuditRef.id, candidateJobAuditRef.id],
+      }
+    }
+
+    const reduced = reduceCandidateJobState(stateDoc.state, candidateJobEvent)
+    if (reduced.state !== stateTarget) {
+      throw new Error(`candidate_job_intro_decision_not_allowed:${reduced.reason}`)
+    }
+
+    const latestEmployerAction = {
+      status: decision,
+      ...(reason ? { reason } : {}),
+      decidedAt: input.decidedAt,
+      decidedBy,
+      feedbackEventId: feedbackEvent.eventId,
+    }
+    const nextSnapshot = EmployerVisibleProfileSchema.parse({
+      ...snapshot,
+      latestEmployerAction,
+    })
+    const nextDoc = CandidateJobStateDocSchema.parse({
+      ...stateDoc,
+      state: reduced.state,
+      previousState: reduced.transition.from,
+      stateUpdatedAt: input.decidedAt,
+      reason: reduced.reason,
+      latestEmployerFeedbackEventId: feedbackEvent.eventId,
+    })
+
+    tx.set(stateRef, firestorePayload(nextDoc as Record<string, unknown>), { merge: true })
+    tx.set(snapshotRef, firestorePayload(nextSnapshot as Record<string, unknown>))
+    if (!feedbackSnap.exists) {
+      tx.set(feedbackRef, firestorePayload(feedbackEvent as Record<string, unknown>))
+    }
+    if (!feedbackAuditSnap.exists) {
+      tx.set(feedbackAuditRef, firestorePayload({
+        id: feedbackAuditRef.id,
+        action: "marketplace.feedback.append",
+        eventId: feedbackEvent.eventId,
+        candidateId: feedbackEvent.candidateId ?? null,
+        jobId: feedbackEvent.jobId ?? null,
+        actor: feedbackEvent.actor,
+        createdAt: feedbackEvent.createdAt,
+      }))
+    }
+    if (!candidateJobAuditSnap.exists) {
+      tx.set(candidateJobAuditRef, firestorePayload({
+        id: candidateJobAuditRef.id,
+        action: "marketplace.candidate_job.transition",
+        candidateId: candidateJobEvent.candidateId,
+        jobId: candidateJobEvent.jobId,
+        eventId: candidateJobEvent.eventId,
+        eventType: candidateJobEvent.type,
+        from: reduced.transition.from,
+        to: reduced.transition.to,
+        changed: reduced.changed,
+        reason: reduced.reason,
+        actor: candidateJobEvent.actor,
+        createdAt: candidateJobEvent.occurredAt,
+      }))
+    }
+
+    return {
+      snapshot: nextSnapshot,
+      feedbackEvent,
+      feedbackCreated: !feedbackSnap.exists,
+      state: reduced.state,
+      stateDocId: nextDoc.id,
+      candidateJobEventId,
+      idempotent: false,
+      auditEventIds: [feedbackAuditRef.id, candidateJobAuditRef.id],
     }
   })
 }

@@ -1090,6 +1090,39 @@ test("candidate-job reducer requires passed state before employer visibility", (
   assert.equal(visible.state, "employer_visible")
 })
 
+test("candidate-job reducer records employer intro decisions after employer visibility", () => {
+  const accepted = reduceCandidateJobState(
+    "employer_visible",
+    job("employer_intro_accepted" as never, {
+      employerVisibleProfileId: createEmployerVisibleProfileId("job-1", "cand-1"),
+      feedbackEventId: "fb-intro-accepted-job-1-cand-1",
+    } as never),
+  )
+  assert.equal(accepted.state, "intro_accepted")
+  assert.equal(accepted.reason, "employer_intro_accepted")
+
+  const rejected = reduceCandidateJobState(
+    "employer_visible",
+    job("employer_intro_rejected" as never, {
+      employerVisibleProfileId: createEmployerVisibleProfileId("job-1", "cand-1"),
+      feedbackEventId: "fb-intro-rejected-job-1-cand-1",
+    } as never),
+  )
+  assert.equal(rejected.state, "intro_rejected")
+  assert.equal(rejected.reason, "employer_intro_rejected_candidate_retained")
+
+  const premature = reduceCandidateJobState(
+    "passed",
+    job("employer_intro_rejected" as never, {
+      employerVisibleProfileId: createEmployerVisibleProfileId("job-1", "cand-1"),
+      feedbackEventId: "fb-intro-rejected-job-1-cand-1",
+    } as never),
+  )
+  assert.equal(premature.state, "passed")
+  assert.equal(premature.changed, false)
+  assert.equal(premature.reason, "intro_decision_requires_employer_visible")
+})
+
 test("employer-visible profile snapshot rejects raw contact or storage values", () => {
   const base = {
     snapshotId: createEmployerVisibleProfileId("job-1", "cand-1"),
@@ -1146,6 +1179,49 @@ test("employer-visible profile snapshot rejects raw contact or storage values", 
       profileSummary: "Numeric ATS job ids are internal identifiers, not employer-visible contact text.",
     })
   )
+  const decided = EmployerVisibleProfileSchema.parse({
+    ...base,
+    latestEmployerAction: {
+      status: "accepted",
+      reason: "Hiring manager wants the intro after backend systems evidence.",
+      decidedAt: now,
+      decidedBy: "operator@wekruit.com",
+      feedbackEventId: "fb-intro-accepted-job-1-cand-1",
+    },
+  })
+  assert.equal(decided.latestEmployerAction?.status, "accepted")
+})
+
+test("employer-action feedback is candidate-job scoped", () => {
+  assert.throws(
+    () =>
+      FeedbackEventSchema.parse({
+        eventId: "fb-intro-accepted-job-1-cand-1",
+        kind: "employer_action",
+        actor: "operator",
+        jobId: "job-1",
+        candidateJobStateId: createCandidateJobStateId("cand-1", "job-1"),
+        outcome: "intro_accepted",
+        evidence: [{ source: "admin", summary: "Employer accepted the intro" }],
+        payloadRedacted: { reason: "strong match" },
+        createdAt: now,
+      }),
+    /candidateId/,
+  )
+
+  const parsed = FeedbackEventSchema.parse({
+    eventId: "fb-intro-rejected-job-1-cand-1",
+    kind: "employer_action",
+    actor: "operator",
+    candidateId: "cand-1",
+    jobId: "job-1",
+    candidateJobStateId: createCandidateJobStateId("cand-1", "job-1"),
+    outcome: "intro_rejected",
+    evidence: [{ source: "admin", summary: "Employer rejected the intro" }],
+    payloadRedacted: { reason: "needs deeper infra ownership" },
+    createdAt: now,
+  })
+  assert.equal(parsed.outcome, "intro_rejected")
 })
 
 test("eval artifacts require a source and reject unsafe raw payload values", () => {

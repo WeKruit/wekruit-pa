@@ -8,6 +8,7 @@ import {
   PA_COLLECTIONS,
   type EmployerVisibleProfile,
 } from "@pa/core-types"
+import { recordEmployerIntroDecision, type EmployerIntroDecision } from "@pa/pa-persistence"
 import { authorizeAdminCallable } from "./promote-sandbox-tag.js"
 
 const PA_ADMIN_TOKEN = defineSecret("PA_ADMIN_TOKEN")
@@ -35,13 +36,20 @@ export type PassedCandidateRow = {
   candidateId: string
   jobId: string
   candidateJobStateId: string
-  state: "passed" | "employer_visible"
+  state: "passed" | "employer_visible" | "intro_accepted" | "intro_rejected"
   displayName: string
   resumeSummary?: string
   level1Snapshot?: Record<string, unknown>
   passReason?: string
   matchReason?: string
   createdAt: string
+  latestEmployerAction?: {
+    status: "accepted" | "rejected"
+    reason?: string
+    decidedAt: string
+    decidedBy: string
+    feedbackEventId: string
+  }
   profile: {
     piiConsentAt?: string
     consentStatus: "granted" | "missing"
@@ -155,7 +163,7 @@ async function loadTranscript(db: Firestore, prescreenSessionId: string | undefi
 
 function buildRow(args: {
   snapshot: EmployerVisibleProfile
-  state: { state: "passed" | "employer_visible"; prescreenSessionId?: string }
+  state: { state: "passed" | "employer_visible" | "intro_accepted" | "intro_rejected"; prescreenSessionId?: string }
   user?: Record<string, unknown>
   selfProfile?: Record<string, unknown>
   transcript: PassedCandidateTranscriptTurn[]
@@ -179,6 +187,19 @@ function buildRow(args: {
       : {}),
     ...(safeText(args.snapshot.passReason, 1_000) ? { passReason: safeText(args.snapshot.passReason, 1_000) } : {}),
     ...(safeText(args.snapshot.matchReason, 1_000) ? { matchReason: safeText(args.snapshot.matchReason, 1_000) } : {}),
+    ...(args.snapshot.latestEmployerAction
+      ? {
+        latestEmployerAction: {
+          status: args.snapshot.latestEmployerAction.status,
+          ...(safeText(args.snapshot.latestEmployerAction.reason, 1_000)
+            ? { reason: safeText(args.snapshot.latestEmployerAction.reason, 1_000) }
+            : {}),
+          decidedAt: args.snapshot.latestEmployerAction.decidedAt,
+          decidedBy: args.snapshot.latestEmployerAction.decidedBy,
+          feedbackEventId: args.snapshot.latestEmployerAction.feedbackEventId,
+        },
+      }
+      : {}),
     createdAt: args.snapshot.createdAt,
     profile,
     transcript: {
@@ -232,12 +253,17 @@ export async function runAdminPassedCandidatesSnapshot(
       state.success &&
       state.data.candidateId === snapshot.candidateId &&
       state.data.jobId === snapshot.jobId &&
-      (state.data.state === "passed" || state.data.state === "employer_visible")
+      (
+        state.data.state === "passed" ||
+        state.data.state === "employer_visible" ||
+        state.data.state === "intro_accepted" ||
+        state.data.state === "intro_rejected"
+      )
     if (!validState || !state.success) {
       dropped.stateMismatch += 1
       continue
     }
-    const visibleState = state.data.state === "employer_visible" ? "employer_visible" : "passed"
+    const visibleState = state.data.state as PassedCandidateRow["state"]
 
     const [user, selfProfile, transcript] = await Promise.all([
       loadDoc(deps.db, PA_COLLECTIONS.users, snapshot.candidateId),
@@ -273,5 +299,70 @@ export const paAdminPassedCandidatesSnapshot = onCall(
   async (req) => {
     authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
     return runAdminPassedCandidatesSnapshot(req.data, { db: getFirestore() })
+  },
+)
+
+export const AdminPassedCandidateIntroDecisionInputSchema = z.object({
+  snapshotId: z.string().transform((value) => value.trim()).pipe(z.string().min(1)),
+  decision: z.enum(["accepted", "rejected"]),
+  reason: z.string().transform((value) => value.trim()).pipe(z.string().min(1).max(2_000)),
+  adminToken: z.string().optional(),
+})
+
+export type AdminPassedCandidateIntroDecisionInput = z.infer<typeof AdminPassedCandidateIntroDecisionInputSchema>
+
+export type AdminPassedCandidateIntroDecisionResult = {
+  ok: true
+  snapshotId: string
+  decision: EmployerIntroDecision
+  state: "intro_accepted" | "intro_rejected"
+  feedbackEventId: string
+}
+
+export async function runAdminPassedCandidateIntroDecision(
+  raw: unknown,
+  deps: {
+    db: Firestore
+    now?: () => string
+    actorEmail?: string
+  },
+): Promise<AdminPassedCandidateIntroDecisionResult> {
+  const parsed = AdminPassedCandidateIntroDecisionInputSchema.safeParse(raw)
+  if (!parsed.success) {
+    throw new HttpsError("invalid-argument", parsed.error.message)
+  }
+  const reason = safeText(parsed.data.reason, 2_000)
+  if (!reason) throw new HttpsError("invalid-argument", "reason_required")
+  const decidedAt = deps.now?.() ?? new Date().toISOString()
+  const decidedBy = cleanString(deps.actorEmail) ?? "operator"
+  const result = await recordEmployerIntroDecision(deps.db, {
+    snapshotId: parsed.data.snapshotId,
+    decision: parsed.data.decision,
+    reason,
+    decidedAt,
+    decidedBy,
+    actor: "operator",
+  })
+
+  if (result.state !== "intro_accepted" && result.state !== "intro_rejected") {
+    throw new HttpsError("internal", "unexpected_intro_decision_state")
+  }
+  return {
+    ok: true,
+    snapshotId: parsed.data.snapshotId,
+    decision: parsed.data.decision,
+    state: result.state,
+    feedbackEventId: result.feedbackEvent.eventId,
+  }
+}
+
+export const paAdminPassedCandidateIntroDecision = onCall(
+  { region: "us-central1", memory: "256MiB", timeoutSeconds: 60, maxInstances: 1, secrets: [PA_ADMIN_TOKEN] },
+  async (req) => {
+    authorizeAdminCallable(req as { auth?: { token?: { admin?: unknown } }; data?: unknown })
+    return runAdminPassedCandidateIntroDecision(req.data, {
+      db: getFirestore(),
+      actorEmail: cleanString(req.auth?.token?.email),
+    })
   },
 )
