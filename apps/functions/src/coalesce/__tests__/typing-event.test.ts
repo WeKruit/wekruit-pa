@@ -27,7 +27,7 @@ import type { CoalescerDeps } from "../paMessageCoalescer.js"
 import type { TasksClient, EnqueueInput } from "../tasks-client.js"
 import {
   HARD_CAP_MS,
-  DEFAULT_DELAY_MS,
+  TRIAGE_DELAY_MS,
   TYPING_BUMP_DELAY_MS,
   TYPING_STOPPED_TAIL_MS,
 } from "../buffer.js"
@@ -191,13 +191,13 @@ describe("typing-event — case 1: bump during open buffer extends delay", () =>
     let now = t0.getTime()
     const { deps, tasks } = buildDeps({ now: () => new Date(now) })
 
-    // First inbound at t=0 — creates buffer with default 8s delay.
+    // First inbound at t=0 — creates buffer with the generic 4s triage delay.
     await enqueueOrCoalesce(deps, {
       ...BASE_MSG, messageHandle: "msg-1", body: "hi", inboundEventId: "inb_1",
       receivedAt: new Date(now).toISOString(),
     })
     assert.equal(tasks.enqueued.length, 1)
-    assert.equal(tasks.enqueued[0]!.delayMs, DEFAULT_DELAY_MS)
+    assert.equal(tasks.enqueued[0]!.delayMs, TRIAGE_DELAY_MS)
     const firstTaskName = tasks.enqueued[0]!.taskName
 
     // Advance 5s — within the 8s window. User is still typing.

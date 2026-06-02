@@ -88,6 +88,16 @@ export const HARD_CAP_MS = 30_000
  *  answers together while HARD_CAP_MS still bounds a turn at 30s. */
 export const DEFAULT_DELAY_MS = 12_000
 
+/** Triage-phase coalesce delay — snappy ~4s window.
+ *
+ *  The non-onboarding, non-prescreen generic turn used to fall through to the
+ *  12s DEFAULT_DELAY_MS, which feels sluggish for short chat/triage messages.
+ *  A 4s window keeps real multi-text bursts together (the rapid-gap +
+ *  continuation-marker heuristics still extend it to ~10s, and HARD_CAP_MS
+ *  bounds the turn at 30s) while making the common single-message case reply
+ *  fast. ONBOARDING_DELAY_MS (3s) and PRESCREEN_DELAY_MS (25s) are unchanged. */
+export const TRIAGE_DELAY_MS = 4_000
+
 /** Prescreen-phase coalesce delay.
  *
  * Real candidate prescreen answers often arrive as 2-3 iMessages over a
@@ -334,7 +344,7 @@ export async function coalesceTransaction(
       ? ONBOARDING_DELAY_MS
       : msg.isPrescreen
         ? PRESCREEN_DELAY_MS
-        : DEFAULT_DELAY_MS)
+        : TRIAGE_DELAY_MS)
   const hardCap = opts.hardCapMs ?? (msg.isPrescreen ? PRESCREEN_HARD_CAP_MS : HARD_CAP_MS)
   const forceFireCount = opts.forceFireCount ?? FORCE_FIRE_MESSAGE_COUNT
   const rapidThresholdMs = opts.rapidThresholdMs ?? RAPID_MESSAGE_THRESHOLD_MS
