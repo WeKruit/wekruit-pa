@@ -513,10 +513,11 @@ test("time-spread: idempotent — re-running the batch does not double-enqueue (
   const first = await runDailyJobRecBatch(deps as Parameters<typeof runDailyJobRecBatch>[0])
   assert.equal(first.delivered, 1)
   assert.equal(enqueueCount, 1)
-  // Second run on the SAME day — user was just stamped → not due → no re-enqueue.
+  // Second run on the SAME day — user was just stamped (lastAnyJobRecSentAt) →
+  // caught by the cross-system cooldown gate (stronger than the due-gate) → no re-enqueue.
   const second = await runDailyJobRecBatch(deps as Parameters<typeof runDailyJobRecBatch>[0])
   assert.equal(second.delivered, 0)
-  assert.equal(second.skippedNotDue, 1)
+  assert.equal(second.skippedCooldown, 1, "re-run caught by cross-system cooldown")
   assert.equal(enqueueCount, 1, "no double-enqueue on re-run")
 })
 
