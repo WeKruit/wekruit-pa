@@ -1080,7 +1080,7 @@ const ME_STAGES: MeStageDef[] = [
   { id: "invited", label: "Invited", dot: "var(--wk-live-pulse)", statuses: ["invited"] },
   { id: "screening", label: "Screening", dot: "#1f6feb", statuses: ["interview_started"] },
   { id: "passed", label: "Passed", dot: "#1f6feb", statuses: ["passed"] },
-  { id: "sent", label: "With employer", dot: "#3a8a5a", statuses: ["review_pending"] },
+  { id: "reviewing", label: "Reviewing", dot: "#3a8a5a", statuses: ["review_pending"] },
   { id: "closed", label: "Closed", dot: "var(--wk-ink-4)", statuses: ["not_passed", "paused"] },
 ]
 
@@ -1181,7 +1181,7 @@ function meStageChip(status: CandidateJobStatus) {
         </span>
       )
     case "review_pending":
-      return <span className="wkv3-chip wkv3-chip--ink">With employer</span>
+      return <span className="wkv3-chip wkv3-chip--ink">Reviewing</span>
     case "passed":
       return (
         <span className="wkv3-chip wkv3-chip--warm">

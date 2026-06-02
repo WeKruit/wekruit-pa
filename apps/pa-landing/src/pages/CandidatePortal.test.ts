@@ -18,6 +18,11 @@ test("CandidatePortal renders review decisions only inside committed pipeline ro
   assert.doesNotMatch(source, /employer_visible/)
 })
 
+test("CandidatePortal labels review-pending pipeline state as WeKruit-side review", () => {
+  assert.match(source, /Reviewing/)
+  assert.doesNotMatch(source, /With employer/)
+})
+
 test("CandidatePortal wires connector buttons through the account OAuth start callable", () => {
   assert.match(source, /label: "LinkedIn"/)
   assert.match(source, /label: "GitHub"/)
