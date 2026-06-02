@@ -45,6 +45,17 @@ type EmployerRow = {
   calibrationExamples?: string
   feedbackLoop?: string
   introHandoff?: string
+  screeningPacket?: {
+    version?: number
+    source?: string
+    reviewStatus?: string
+    roleBrief?: string[]
+    hardFilters?: string[]
+    evidenceProbes?: string[]
+    calibrationExamples?: string
+    feedbackLoop?: string
+    introHandoff?: string
+  }
   contactName?: string
   notes?: string
   verificationStatus?: VerificationStatus
@@ -128,6 +139,12 @@ export default function LayoffEmployers() {
         r.stage,
         ...(r.hardFilters ?? []),
         ...(r.screeningQuestions ?? []),
+        ...(r.screeningPacket?.roleBrief ?? []),
+        ...(r.screeningPacket?.hardFilters ?? []),
+        ...(r.screeningPacket?.evidenceProbes ?? []),
+        r.screeningPacket?.calibrationExamples,
+        r.screeningPacket?.feedbackLoop,
+        r.screeningPacket?.introHandoff,
         r.calibrationExamples,
         r.feedbackLoop,
         r.introHandoff,
@@ -261,6 +278,7 @@ export default function LayoffEmployers() {
                   </td>
                   <td style={td}>
                     {r.rolesHiring?.length ? r.rolesHiring.join(", ") : "—"}
+                    {r.screeningPacket ? <ScreeningPacketDetails packet={r.screeningPacket} /> : null}
                     {r.hardFilters?.length ? (
                       <details style={{ marginTop: 6, fontSize: 12, color: "#555" }}>
                         <summary style={{ cursor: "pointer", color: "#3a6ea5" }}>Hard filters</summary>
@@ -341,6 +359,68 @@ export default function LayoffEmployers() {
           </table>
         </Panel>
       )}
+    </div>
+  )
+}
+
+function screeningPacketStatusLabel(status: string | undefined): string {
+  if (status === "needs_wekruit_review") return "needs WeKruit review before Claire screens"
+  return status ?? "needs WeKruit review before Claire screens"
+}
+
+function ScreeningPacketDetails({
+  packet,
+}: {
+  packet: NonNullable<EmployerRow["screeningPacket"]>
+}) {
+  return (
+    <details open style={{ marginTop: 8, fontSize: 12, color: "#444" }}>
+      <summary style={{ cursor: "pointer", color: "#1f4f80", fontWeight: 600 }}>
+        Claire screening packet
+      </summary>
+      <div
+        style={{
+          border: "1px solid #d8e3ef",
+          borderRadius: 6,
+          background: "#f7fbff",
+          marginTop: 6,
+          padding: 8,
+        }}
+      >
+        <div style={{ fontWeight: 600, color: "#1f4f80", marginBottom: 6 }}>
+          {screeningPacketStatusLabel(packet.reviewStatus)}
+        </div>
+        <ScreeningPacketList label="Role brief" values={packet.roleBrief} />
+        <ScreeningPacketList label="Hard filters" values={packet.hardFilters} />
+        <ScreeningPacketList label="Evidence probes" values={packet.evidenceProbes} />
+        <ScreeningPacketText label="Calibration examples" value={packet.calibrationExamples} />
+        <ScreeningPacketText label="Feedback loop" value={packet.feedbackLoop} />
+        <ScreeningPacketText label="Intro handoff" value={packet.introHandoff} />
+      </div>
+    </details>
+  )
+}
+
+function ScreeningPacketList({ label, values }: { label: string; values?: string[] }) {
+  if (!values?.length) return null
+  return (
+    <div style={{ marginTop: 6 }}>
+      <strong>{label}</strong>
+      <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+        {values.map((value) => (
+          <li key={value}>{value}</li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function ScreeningPacketText({ label, value }: { label: string; value?: string }) {
+  if (!value) return null
+  return (
+    <div style={{ marginTop: 6 }}>
+      <strong>{label}</strong>
+      <pre style={{ whiteSpace: "pre-wrap", margin: "4px 0 0", fontFamily: "inherit" }}>{value}</pre>
     </div>
   )
 }

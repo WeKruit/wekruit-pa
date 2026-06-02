@@ -53,3 +53,15 @@ test("LayoffEmployers review shows feedback loop separately from notes", () => {
   assert.doesNotMatch(source, /feedback loop is optional/i)
   assert.doesNotMatch(source, /AI learns automatically/i)
 })
+
+test("LayoffEmployers review shows the Claire screening packet before verification", () => {
+  assert.match(source, /screeningPacket\?:/)
+  assert.match(source, /Claire screening packet/)
+  assert.match(source, /needs WeKruit review before Claire screens/)
+  assert.match(source, /evidenceProbes/)
+  assert.match(source, /feedbackLoop/)
+  assert.match(source, /introHandoff/)
+
+  assert.doesNotMatch(source, /AI learns automatically/i)
+  assert.doesNotMatch(source, /auto-approved/i)
+})

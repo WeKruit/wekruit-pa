@@ -631,6 +631,20 @@ export type EmployerInput = {
   notes?: string
 }
 
+export type EmployerScreeningPacket = {
+  version: 1
+  source: "employer_role_intake"
+  reviewStatus: "needs_wekruit_review"
+  roleBrief: string[]
+  hardFilters: string[]
+  evidenceProbes: string[]
+  calibrationExamples: string
+  feedbackLoop: string
+  introHandoff: string
+}
+
+const EMPLOYER_SCREENING_PACKET_STATUS = "needs WeKruit review before Claire screens"
+
 export interface RegisterEmployerDeps extends OpenLayoffDeps {
   sendMail?: (cfg: MailgunConfig, input: { to: string; subject: string; text: string; html?: string }) => Promise<{ ok: boolean; status: number; messageId?: string; rawResponse?: string }>
 }
@@ -673,9 +687,11 @@ export async function runRegisterEmployer(
     contactName: typeof v.contactName === "string" ? v.contactName.trim() : undefined,
     notes,
   }
+  const screeningPacket = buildEmployerScreeningPacket(cleanInput)
   const ref = deps.db.collection("layoff_employers").doc()
   await ref.set({
     ...cleanInput,
+    screeningPacket,
     workEmailLower,
     verificationStatus: "pending",
     registeredByUid: auth?.uid ?? null,
@@ -688,6 +704,20 @@ export async function runRegisterEmployer(
 function cleanStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean)
+}
+
+function buildEmployerScreeningPacket(input: EmployerInput): EmployerScreeningPacket {
+  return {
+    version: 1,
+    source: "employer_role_intake",
+    reviewStatus: "needs_wekruit_review",
+    roleBrief: input.rolesHiring,
+    hardFilters: input.hardFilters,
+    evidenceProbes: input.screeningQuestions,
+    calibrationExamples: input.calibrationExamples,
+    feedbackLoop: input.feedbackLoop,
+    introHandoff: input.introHandoff,
+  }
 }
 
 async function notifyAdminOfEmployerSignup(
@@ -723,6 +753,7 @@ async function notifyAdminOfEmployerSignup(
     `Contact: ${v.contactName ?? "—"} (${v.roleAtCompany || "no role given"})`,
     `Work email: ${ctx.workEmailLower}`,
     `Roles hiring: ${v.rolesHiring?.length ? v.rolesHiring.join(", ") : "—"}`,
+    `Screening packet: ${EMPLOYER_SCREENING_PACKET_STATUS}`,
     `Hard filters: ${v.hardFilters.length ? v.hardFilters.join("; ") : "—"}`,
     `Screening questions: ${v.screeningQuestions.length ? v.screeningQuestions.join("; ") : "—"}`,
     `Calibration examples: ${v.calibrationExamples || "—"}`,
@@ -746,6 +777,7 @@ async function notifyAdminOfEmployerSignup(
     `<li><b>Contact:</b> ${escapeHtml(v.contactName ?? "—")} (${escapeHtml(v.roleAtCompany || "no role given")})</li>` +
     `<li><b>Work email:</b> <a href="mailto:${escapeHtmlAttr(ctx.workEmailLower)}">${escapeHtml(ctx.workEmailLower)}</a></li>` +
     `<li><b>Roles hiring:</b> ${v.rolesHiring?.length ? escapeHtml(v.rolesHiring.join(", ")) : "—"}</li>` +
+    `<li><b>Screening packet:</b> ${escapeHtml(EMPLOYER_SCREENING_PACKET_STATUS)}</li>` +
     `<li><b>Hard filters:</b> ${v.hardFilters.length ? escapeHtml(v.hardFilters.join("; ")) : "—"}</li>` +
     `<li><b>Screening questions:</b> ${v.screeningQuestions.length ? escapeHtml(v.screeningQuestions.join("; ")) : "—"}</li>` +
     `<li><b>Calibration examples:</b> ${escapeHtml(v.calibrationExamples || "—")}</li>` +

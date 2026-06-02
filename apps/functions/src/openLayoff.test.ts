@@ -653,6 +653,30 @@ test("runRegisterEmployer stores normalized workEmailLower for verification look
   )
 })
 
+test("runRegisterEmployer stores one screening packet for Claire review", async () => {
+  const fake = new FakeFirestore()
+  const result = await runRegisterEmployer(employer(), deps(fake))
+  const doc = fake.read(`layoff_employers/${result.employerId}`)!
+
+  assert.deepEqual(doc.screeningPacket, {
+    version: 1,
+    source: "employer_role_intake",
+    reviewStatus: "needs_wekruit_review",
+    roleBrief: ["Engineer"],
+    hardFilters: ["Requires US work authorization", "SF hybrid three days per week"],
+    evidenceProbes: [
+      "Describe a platform tradeoff you owned",
+      "What evidence proves they can handle infra ambiguity?",
+    ],
+    calibrationExamples:
+      "Strong pass: shipped a developer platform pricing migration under real customer load.\nFalse positive: only owned internal tooling without external developer users.",
+    feedbackLoop:
+      "After every accepted or rejected intro, Alex posts the pass/no-pass reason and one correction signal in the WeKruit thread.",
+    introHandoff:
+      "After a passed profile, route accepted intros to Alex for a 30-minute hiring-manager screen within two business days.",
+  })
+})
+
 test("runRegisterEmployer reports missing intake fields in visible form order", async () => {
   const fake = new FakeFirestore()
 
@@ -876,4 +900,34 @@ test("runRegisterEmployer sends feedback loop in the admin notification", async 
   assert.match(sent[0]!.text, /one correction signal/)
   assert.match(sent[0]!.html!, /Feedback loop/)
   assert.match(sent[0]!.html!, /pass\/no-pass reason/)
+})
+
+test("runRegisterEmployer sends the screening packet status in the admin notification", async () => {
+  const fake = new FakeFirestore()
+  const sent: Array<{ text: string; html?: string }> = []
+  const oldApiKey = process.env.MAILGUN_API_KEY
+  const oldDomain = process.env.MAILGUN_DOMAIN
+  process.env.MAILGUN_API_KEY = "test-key"
+  process.env.MAILGUN_DOMAIN = "mail.wekruit.test"
+
+  try {
+    await runRegisterEmployer(
+      employer(),
+      deps(fake, {
+        sendMail: async (_cfg: unknown, input: { text: string; html?: string }) => {
+          sent.push({ text: input.text, html: input.html })
+          return { ok: true, status: 200, messageId: "msg_1" }
+        },
+      } as never),
+    )
+  } finally {
+    if (oldApiKey === undefined) delete process.env.MAILGUN_API_KEY
+    else process.env.MAILGUN_API_KEY = oldApiKey
+    if (oldDomain === undefined) delete process.env.MAILGUN_DOMAIN
+    else process.env.MAILGUN_DOMAIN = oldDomain
+  }
+
+  assert.match(sent[0]!.text, /Screening packet: needs WeKruit review before Claire screens/)
+  assert.match(sent[0]!.html!, /Screening packet/)
+  assert.match(sent[0]!.html!, /needs WeKruit review before Claire screens/)
 })
