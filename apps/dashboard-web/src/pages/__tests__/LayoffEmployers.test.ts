@@ -25,3 +25,12 @@ test("LayoffEmployers review shows screening questions separately from notes", (
 
   assert.doesNotMatch(source, /screening questions are optional/i)
 })
+
+test("LayoffEmployers review shows intro handoff separately from notes", () => {
+  assert.match(source, /introHandoff\?: string/)
+  assert.match(source, /Intro handoff/)
+  assert.match(source, /r\.introHandoff/)
+  assert.match(source, /Notes/)
+
+  assert.doesNotMatch(source, /intro handoff is optional/i)
+})

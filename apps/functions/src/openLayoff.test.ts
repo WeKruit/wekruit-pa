@@ -254,6 +254,8 @@ function employer(overrides: Partial<EmployerInput> = {}): EmployerInput {
       "Describe a platform tradeoff you owned",
       "What evidence proves they can handle infra ambiguity?",
     ],
+    introHandoff:
+      "After a passed profile, route accepted intros to Alex for a 30-minute hiring-manager screen within two business days.",
     ...overrides,
   }
 }
@@ -633,6 +635,10 @@ test("runRegisterEmployer stores normalized workEmailLower for verification look
     "Describe a platform tradeoff you owned",
     "What evidence proves they can handle infra ambiguity?",
   ])
+  assert.equal(
+    doc.introHandoff,
+    "After a passed profile, route accepted intros to Alex for a 30-minute hiring-manager screen within two business days.",
+  )
 })
 
 test("runRegisterEmployer rejects employer intake without hard filters", async () => {
@@ -650,6 +656,16 @@ test("runRegisterEmployer rejects employer intake without screening questions", 
 
   await assert.rejects(
     () => runRegisterEmployer(employer({ screeningQuestions: [] }), deps(fake)),
+    (err) => err instanceof HttpsError && err.code === "invalid-argument",
+  )
+  assert.equal(fake.collectionStore("layoff_employers").size, 0)
+})
+
+test("runRegisterEmployer rejects employer intake without an intro handoff", async () => {
+  const fake = new FakeFirestore()
+
+  await assert.rejects(
+    () => runRegisterEmployer(employer({ introHandoff: " " } as never), deps(fake)),
     (err) => err instanceof HttpsError && err.code === "invalid-argument",
   )
   assert.equal(fake.collectionStore("layoff_employers").size, 0)
@@ -715,4 +731,35 @@ test("runRegisterEmployer sends screening questions in the admin notification", 
   assert.match(sent[0]!.text, /platform tradeoff/)
   assert.match(sent[0]!.html!, /Screening questions/)
   assert.match(sent[0]!.html!, /infra ambiguity/)
+})
+
+test("runRegisterEmployer sends intro handoff in the admin notification", async () => {
+  const fake = new FakeFirestore()
+  const sent: Array<{ text: string; html?: string }> = []
+  const oldApiKey = process.env.MAILGUN_API_KEY
+  const oldDomain = process.env.MAILGUN_DOMAIN
+  process.env.MAILGUN_API_KEY = "test-key"
+  process.env.MAILGUN_DOMAIN = "mail.wekruit.test"
+
+  try {
+    await runRegisterEmployer(
+      employer(),
+      deps(fake, {
+        sendMail: async (_cfg: unknown, input: { text: string; html?: string }) => {
+          sent.push({ text: input.text, html: input.html })
+          return { ok: true, status: 200, messageId: "msg_1" }
+        },
+      } as never),
+    )
+  } finally {
+    if (oldApiKey === undefined) delete process.env.MAILGUN_API_KEY
+    else process.env.MAILGUN_API_KEY = oldApiKey
+    if (oldDomain === undefined) delete process.env.MAILGUN_DOMAIN
+    else process.env.MAILGUN_DOMAIN = oldDomain
+  }
+
+  assert.match(sent[0]!.text, /Intro handoff:/)
+  assert.match(sent[0]!.text, /30-minute hiring-manager screen/)
+  assert.match(sent[0]!.html!, /Intro handoff/)
+  assert.match(sent[0]!.html!, /two business days/)
 })

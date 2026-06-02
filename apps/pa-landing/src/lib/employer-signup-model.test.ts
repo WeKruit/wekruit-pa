@@ -20,6 +20,8 @@ const VALID_FORM: EmployerSignupFormState = {
   hardFilters: "Requires US work authorization\nSF hybrid three days per week",
   screeningQuestions:
     "Describe a platform tradeoff you owned\nWhat evidence proves they can handle infra ambiguity?",
+  introHandoff:
+    "After a passed profile, route accepted intros to Alex for a 30-minute hiring-manager screen within two business days.",
 }
 
 test("validateEmployerSignupForm requires a real primary role brief before Claire screens", () => {
@@ -50,6 +52,13 @@ test("validateEmployerSignupForm requires screening questions before Claire inte
   )
 })
 
+test("validateEmployerSignupForm requires the post-pass intro handoff", () => {
+  assert.equal(
+    validateEmployerSignupForm({ ...VALID_FORM, introHandoff: " " }),
+    "Intro handoff is required so passed candidates have a real next step.",
+  )
+})
+
 test("validateEmployerSignupForm accepts a complete role-intake form", () => {
   assert.equal(validateEmployerSignupForm(VALID_FORM), null)
 })
@@ -69,5 +78,7 @@ test("buildEmployerSignupPayload normalizes the role brief without inventing sco
       "Describe a platform tradeoff you owned",
       "What evidence proves they can handle infra ambiguity?",
     ],
+    introHandoff:
+      "After a passed profile, route accepted intros to Alex for a 30-minute hiring-manager screen within two business days.",
   })
 })

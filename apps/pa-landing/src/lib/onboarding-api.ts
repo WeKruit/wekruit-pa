@@ -74,6 +74,8 @@ export type EmployerSignupInput = {
   hardFilters: string[]
   /** Specific evidence probes Claire should elicit in the first interview. */
   screeningQuestions: string[]
+  /** Employer-owned next step after WeKruit sends an accepted passed-profile intro. */
+  introHandoff: string
   /** Free-form notes shown verbatim in the admin notification email. */
   notes?: string
   /** Submitter's name — displayed in the admin notification email. */

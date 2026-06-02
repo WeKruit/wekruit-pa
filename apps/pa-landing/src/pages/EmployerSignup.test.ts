@@ -50,3 +50,14 @@ test("EmployerSignup captures evidence probes as a first-class Claire interview 
   assert.doesNotMatch(source, /Screening questions \(optional\)/i)
   assert.doesNotMatch(source, /Claire will infer the questions/i)
 })
+
+test("EmployerSignup captures the post-pass intro handoff before Claire screens", () => {
+  assert.match(source, /Intro handoff \*/)
+  assert.match(source, /accepted intro/i)
+  assert.match(source, /real next step/i)
+  assert.match(source, /introHandoff/)
+
+  assert.doesNotMatch(source, /Intro handoff \(optional\)/i)
+  assert.doesNotMatch(source, /WeKruit will figure out the next step/i)
+  assert.doesNotMatch(source, /Schedule intro/i)
+})

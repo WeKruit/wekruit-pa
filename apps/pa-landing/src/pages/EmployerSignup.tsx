@@ -36,6 +36,7 @@ const EMPTY_FORM: EmployerSignupFormState = {
   rolesHiring: "",
   hardFilters: "",
   screeningQuestions: "",
+  introHandoff: "",
   notes: "",
 }
 
@@ -107,9 +108,9 @@ export default function EmployerSignup() {
               color: "var(--ink-2)",
             }}
           >
-            Tell us the role, must-haves, hard filters, and evidence probes behind the brief.
-            WeKruit reviews it, Claire screens against the evidence, and you only see
-            consented passed profiles with the transcript and risks attached.
+            Tell us the role, must-haves, hard filters, evidence probes, and intro handoff
+            behind the brief. WeKruit reviews it, Claire screens against the evidence, and you
+            only see consented passed profiles with the transcript and risks attached.
           </p>
 
           {done ? <SuccessCard email={form.workEmail} /> : (
@@ -197,6 +198,14 @@ export default function EmployerSignup() {
                 value={form.notes}
                 onChange={(v) => update("notes", v)}
                 placeholder="Founder-mode judgment, API product depth, comp band, location, must-haves Claire should probe."
+                as="textarea"
+              />
+              <Field
+                label="Intro handoff *"
+                value={form.introHandoff}
+                onChange={(v) => update("introHandoff", v)}
+                placeholder="If we accept the intro, route the candidate to Alex for a hiring-manager screen within two business days."
+                helper="Define the accepted intro owner and real next step after a pass."
                 as="textarea"
               />
 
@@ -352,8 +361,8 @@ function SuccessCard({ email }: { email: string }) {
       </h2>
       <p style={{ color: "var(--ink-2)", margin: "0 0 18px", maxWidth: 440, marginInline: "auto" }}>
         We have sent the role brief to the WeKruit team. We will reach out at <strong>{email}</strong>{" "}
-        within a business day to confirm the hard filters, evidence probes, and must-have evidence
-        before Claire screens candidates.
+        within a business day to confirm the hard filters, evidence probes, intro handoff,
+        and must-have evidence before Claire screens candidates.
       </p>
       <Link to="/" className="btn btn--primary" style={{ textDecoration: "none" }}>
         Back to home
