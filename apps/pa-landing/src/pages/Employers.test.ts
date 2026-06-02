@@ -144,3 +144,16 @@ test("Employers page explains where WeKruit fits without broad ATS or agency sco
 test("Employers mobile hero grid allows preview columns to shrink inside the viewport", () => {
   assert.match(stylesSource, /\.wk-emp-hero__copy,\s*\.wk-emp-hero__visual\s*\{\s*min-width: 0;\s*\}/s)
 })
+
+test("Employers sample pass record shows a scope-safe calibration packet", () => {
+  assert.match(employersSource, /Calibration packet/)
+  assert.match(employersSource, /Hiring-team feedback captured as evidence/)
+  assert.match(employersSource, /What changes before the next pass/)
+  assert.match(employersSource, /Tighten evidence probes/)
+  assert.match(employersSource, /Update hard filters/)
+  assert.match(employersSource, /Record candidate risk calibration/)
+
+  assert.doesNotMatch(employersSource, /feedback saved live/i)
+  assert.doesNotMatch(employersSource, /AI learns automatically/i)
+  assert.doesNotMatch(employersSource, /replacement search/i)
+})

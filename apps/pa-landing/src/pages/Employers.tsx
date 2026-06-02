@@ -879,6 +879,31 @@ function EmpPassedDetail({ c }: { c: PassedProfile }) {
         </ol>
       </section>
 
+      <section className="wk-emp-pp__sec wk-emp-pp__calibration">
+        <div className="wk-emp-pp__h-row">
+          <h3 className="wk-emp-pp__h">Calibration packet</h3>
+          <span className="wk-emp-pp__sample">Sample calibration</span>
+        </div>
+        <div className="wk-emp-pp__cal-grid">
+          <article className="wk-emp-pp__cal-card">
+            <span className="wk-emp-pp__cal-kicker">Feedback loop</span>
+            <h4>Hiring-team feedback captured as evidence</h4>
+            <p>
+              Accept or reject reasons go back to WeKruit against the approved role brief.
+              Candidate notes stay protected; the next screen gets tighter.
+            </p>
+          </article>
+          <article className="wk-emp-pp__cal-card">
+            <span className="wk-emp-pp__cal-kicker">What changes before the next pass</span>
+            <ul className="wk-emp-pp__cal-list">
+              <li>Tighten evidence probes</li>
+              <li>Update hard filters</li>
+              <li>Record candidate risk calibration</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
       <footer className="wk-emp-pp__consent">
         <Icon name="lock" size={13} stroke={1.8} />
         <span>{c.consent}</span>
