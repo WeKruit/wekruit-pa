@@ -22,6 +22,7 @@ export type RecruiterSubmissionDashboard = {
 const ACTIVE_REVIEW_STATUSES = ["submitted", "new", "reviewing", "backburner"]
 const ADVANCED_STATUSES = ["advanced", "interviewing", "offer", "hired"]
 const CLOSED_NEGATIVE_STATUSES = ["rejected", "duplicate"]
+const OPEN_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "interviewing", "backburner", "offer"]
 const CANDIDATE_CONFIRMATION_RESEND_STATUSES = [
   "pending_candidate_confirmation",
   "confirmation_email_failed",
@@ -32,13 +33,23 @@ export function candidateConfirmationCanResend(submission: Pick<RecruiterSubmiss
   return CANDIDATE_CONFIRMATION_RESEND_STATUSES.includes(submission.candidateConsentStatus ?? "")
 }
 
+export function submissionIsConfirmedActiveReview(
+  submission: Pick<RecruiterSubmissionItem, "status" | "candidateConsentStatus">,
+): boolean {
+  return submissionIsActiveReview(submission) && !candidateConfirmationCanResend(submission)
+}
+
+export function submissionIsConfirmedOpen(
+  submission: Pick<RecruiterSubmissionItem, "status" | "candidateConsentStatus">,
+): boolean {
+  return OPEN_SUBMISSION_STATUSES.includes(submission.status ?? "submitted") && !candidateConfirmationCanResend(submission)
+}
+
 export function buildRecruiterSubmissionDashboard(
   submissions: RecruiterSubmissionItem[],
 ): RecruiterSubmissionDashboard {
   const consentBlocked = submissions.filter(candidateConfirmationCanResend)
-  const active = submissions.filter(
-    (submission) => submissionIsActiveReview(submission) && !candidateConfirmationCanResend(submission),
-  )
+  const active = submissions.filter(submissionIsConfirmedActiveReview)
   const advanced = submissions.filter(submissionIsAdvanced)
   const closed = submissions.filter(submissionIsClosed)
   const feedback = submissions.filter(submissionHasStructuredFeedback)

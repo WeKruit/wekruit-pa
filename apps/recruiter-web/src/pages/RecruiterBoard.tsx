@@ -23,6 +23,8 @@ import {
 import {
   buildRecruiterSubmissionDashboard,
   candidateConfirmationCanResend,
+  submissionIsConfirmedActiveReview,
+  submissionIsConfirmedOpen,
 } from "./RecruiterSubmissionDashboard.helpers.js"
 import {
   fetchCollabJobs,
@@ -1664,7 +1666,7 @@ function computeRecruiterStats(
   submissions: RecruiterSubmissionItem[],
   sourcedCandidates: RecruiterSourcedCandidateItem[],
 ) {
-  const reviewing = submissions.filter((s) => ACTIVE_REVIEW_STATUSES.includes(s.status ?? "submitted")).length
+  const reviewing = submissions.filter(submissionIsConfirmedActiveReview).length
   const advanced = submissions.filter((s) => ADVANCED_STATUSES.includes(s.status ?? "")).length
   const interviews = submissions.filter((s) => LATE_STAGE_STATUSES.includes(s.status ?? "")).length
   const feedback = submissions.filter(submissionHasStructuredFeedback).length
@@ -1673,7 +1675,7 @@ function computeRecruiterStats(
   return [
     { label: "Open roles", value: String(jobs.length), meta: "live WeKruit collab searches", signal: "live", tone: "live" },
     { label: "Sourced candidates", value: String(activeSource), meta: "saved before submission", signal: "+", tone: "info" },
-    { label: "Pending review", value: String(reviewing), meta: "waiting on WeKruit or hiring team", signal: "wait", tone: "warn" },
+    { label: "Pending review", value: String(reviewing), meta: "confirmed packets waiting on WeKruit", signal: "wait", tone: "warn" },
     { label: "Interview rate", value: `${interviewRate}%`, meta: feedback ? `${advanced} advanced - ${feedback} rated/feedback` : `${advanced} advanced`, signal: "rate", tone: "success" },
   ]
 }
@@ -1727,7 +1729,7 @@ function computeRecruiterOperatingMetrics(
 ): RecruiterOperatingMetrics {
   const activeCandidates = sourcedCandidates.filter((candidate) => candidate.stage !== "archived")
   const readyCandidates = activeCandidates.filter((candidate) => candidate.stage === "ready")
-  const pendingSubmissions = submissions.filter((submission) => ACTIVE_REVIEW_STATUSES.includes(submission.status ?? "submitted"))
+  const pendingSubmissions = submissions.filter(submissionIsConfirmedActiveReview)
   const advancedSubmissions = submissions.filter((submission) => ADVANCED_STATUSES.includes(submission.status ?? ""))
   const closedNegative = submissions.filter((submission) => CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? ""))
   const ratedSubmissions = submissions
@@ -2083,7 +2085,7 @@ function buildRecruiterLaunchModel(
 ): RecruiterLaunchModel {
   const activeCandidates = sourcedCandidates.filter((candidate) => candidate.stage !== "archived")
   const readyCandidates = activeCandidates.filter((candidate) => candidate.stage === "ready" || candidate.stage === "submitted")
-  const activeSubmissions = submissions.filter((submission) => OPEN_SUBMISSION_STATUSES.includes(submission.status ?? "submitted"))
+  const activeSubmissions = submissions.filter(submissionIsConfirmedOpen)
   const feedbackSignals = submissions.filter(submissionHasStructuredFeedback).length + roleFeedback.length
   const hasRoleLane = primaryRoleIds.length > 0
   const hasCandidateBench = activeCandidates.length > 0
@@ -2182,7 +2184,7 @@ function buildRecruiterCockpitModel(
   const privateBenchCandidates = sourcedCandidates.filter((candidate) => !candidate.jobId && !candidate.inboundJobId && candidate.stage !== "archived").length
   const candidateConfirmationNeeds = submissions.filter(candidateConfirmationCanResend).length
   const feedbackToRead = submissions.filter(submissionHasStructuredFeedback).length
-  const activeSubmissions = submissions.filter((submission) => OPEN_SUBMISSION_STATUSES.includes(submission.status ?? "submitted")).length
+  const activeSubmissions = submissions.filter(submissionIsConfirmedOpen).length
   const approvedRoleCount = primaryRoleIds.length
   const cleanLaneCount = roleInsights.filter((insight) => insight.cleanLane).length
 
@@ -3264,7 +3266,7 @@ function computeRecruiterEarningsMetrics(
     },
   ]
   const payoutRows = sortSubmissions(submissions)
-    .filter((submission) => OPEN_SUBMISSION_STATUSES.includes(submission.status ?? "submitted") || submission.status === "hired" || Boolean(submission.recruiterPayout?.status && submission.recruiterPayout.status !== "none"))
+    .filter((submission) => submissionIsConfirmedOpen(submission) || submission.status === "hired" || Boolean(submission.recruiterPayout?.status && submission.recruiterPayout.status !== "none"))
     .slice(0, 8)
     .map((submission): RecruiterPayoutRow => {
       const payoutMeta = recruiterPayoutStatusMeta(submission.recruiterPayout?.status)
@@ -5058,7 +5060,7 @@ function buildRecruiterWorkQueue(
   const readyCandidates = sourcedCandidates.filter((c) => c.stage === "ready")
   const newRoles = jobs.filter(isNewRole)
   const feedbackRows = submissions.filter(submissionHasStructuredFeedback)
-  const pending = submissions.filter((s) => ACTIVE_REVIEW_STATUSES.includes(s.status ?? "submitted"))
+  const pending = submissions.filter(submissionIsConfirmedActiveReview)
   const openQuestions = roleQuestions.filter((q) => (q.status ?? "open") === "open")
   const blockedRoles = roleIntelligence.filter((item) => item.feedback.blocked > 0 || item.feedback.hard > 0)
   const noSubmissionRoles = jobs.filter((job) => (roleIntelligence.find((item) => item.jobId === roleKey(job))?.submissionCount ?? 0) === 0)
@@ -5384,9 +5386,7 @@ function buildRecruiterInboxSummary(
   ).length
   const followUpDue = sourcedCandidates.filter((candidate) => candidateFollowUpState(candidate).needsAction).length
   const openQuestions = roleQuestions.filter((question) => (question.status ?? "open") === "open").length
-  const activeSubmissions = submissions.filter((submission) =>
-    OPEN_SUBMISSION_STATUSES.includes(submission.status ?? "submitted"),
-  ).length
+  const activeSubmissions = submissions.filter(submissionIsConfirmedOpen).length
   const unreadNotifications = notifications.filter((notification) => !notification.readAt).length
   return {
     needsAction: rejectedWithFeedback + candidateConfirmationNeeds + readyCandidates + calibrationNeeds + followUpDue + openQuestions + unreadNotifications,
@@ -5850,7 +5850,7 @@ function buildRoleInsight(
   const roleSubmissions = rowsForRole(job, submissions)
   const roleCandidates = rowsForRole(job, sourcedCandidates).filter((candidate) => candidate.stage !== "archived")
   const readyCount = roleCandidates.filter((candidate) => candidate.stage === "ready").length
-  const pendingCount = roleSubmissions.filter((submission) => ACTIVE_REVIEW_STATUSES.includes(submission.status ?? "submitted")).length
+  const pendingCount = roleSubmissions.filter(submissionIsConfirmedActiveReview).length
   const advancedCount = roleSubmissions.filter((submission) => ADVANCED_STATUSES.includes(submission.status ?? "")).length
   const rejectedCount = roleSubmissions.filter((submission) => CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? "")).length
   const feedback = latestRoleFeedback(job, roleFeedback)
@@ -9477,7 +9477,7 @@ function PerformanceTab({
   const [calibrationError, setCalibrationError] = useState<string | null>(null)
   const feedbackRows = submissions.filter(submissionHasStructuredFeedback)
   const advanced = submissions.filter((s) => ADVANCED_STATUSES.includes(s.status ?? "")).length
-  const pending = submissions.filter((s) => ACTIVE_REVIEW_STATUSES.includes(s.status ?? "submitted")).length
+  const pending = submissions.filter(submissionIsConfirmedActiveReview).length
   const ready = candidates.filter((c) => c.stage === "ready").length
   const sourceToSubmit = candidates.length ? Math.round((submissions.length / candidates.length) * 100) : 0
   const singleSubmissions = submissions.filter((submission) => submission.submissionMode === "single_submission").length
