@@ -14,7 +14,7 @@ const UID = "8fEwIduUrzxZsblHHsNz"
 const VCODE_PREFIX = "Hi, WeKruit, my verification code is"
 
 test("strips the candidateId from the verification-code phone-bind opener", () => {
-  assert.equal(sanitizeInboundForLlm(`${VCODE_PREFIX} ${UID}`), VCODE_PREFIX)
+  assert.equal(sanitizeInboundForLlm(`${VCODE_PREFIX} ${UID}`), "Hi, WeKruit!")
   // the internal id must NOT survive into the text handed to the LLM
   assert.ok(!sanitizeInboundForLlm(`${VCODE_PREFIX} ${UID}`).includes(UID))
 })
@@ -25,12 +25,12 @@ test("strips the candidateId from the LEGACY Hello-WeKruit phone-bind opener (ba
 })
 
 test("tolerates leading whitespace before the opener", () => {
-  assert.equal(sanitizeInboundForLlm(`   ${VCODE_PREFIX} ${UID}`), VCODE_PREFIX)
+  assert.equal(sanitizeInboundForLlm(`   ${VCODE_PREFIX} ${UID}`), "Hi, WeKruit!")
   assert.equal(sanitizeInboundForLlm(`   Hello, WeKruit! ${UID}`), "Hello, WeKruit!")
 })
 
 test("leaves the bare opener (no id) unchanged", () => {
-  assert.equal(sanitizeInboundForLlm(VCODE_PREFIX), VCODE_PREFIX)
+  assert.equal(sanitizeInboundForLlm(VCODE_PREFIX), "Hi, WeKruit!")
   assert.equal(sanitizeInboundForLlm("Hello, WeKruit!"), "Hello, WeKruit!")
 })
 

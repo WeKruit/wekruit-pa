@@ -396,7 +396,12 @@ export interface RunClaireTurnDeps {
  */
 export function sanitizeInboundForLlm(text: string): string {
   const trimmed = text.trimStart()
-  if (trimmed.startsWith(VERIFICATION_CODE_OPENER_PREFIX)) return VERIFICATION_CODE_OPENER_PREFIX
+  // The QR handshake opener must be reduced to a NEUTRAL GREETING for the LLM — never the raw
+  // phrasing. Returning the bare "Hi, WeKruit, my verification code is" made the model read it as
+  // a real login/verification-code request and reply "what's the full code? where are you signing
+  // in?" (live regression 2026-06-02). The onboarding kickoff is driven by mode/FSM, not this text,
+  // so a plain greeting is all the LLM needs (and strips the internal token → no uid leak).
+  if (trimmed.startsWith(VERIFICATION_CODE_OPENER_PREFIX)) return "Hi, WeKruit!"
   if (trimmed.startsWith(HELLO_WEKRUIT_OPENER_PREFIX)) return HELLO_WEKRUIT_OPENER_PREFIX
   return text
 }
