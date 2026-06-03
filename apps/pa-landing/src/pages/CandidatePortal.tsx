@@ -801,6 +801,7 @@ function CandidateMeReady({
                 loading={matchesLoading}
                 errored={matchesErrored}
                 error={matchesError}
+                claireHref={claireHref}
               />
               <MeNewMatches
                 matches={recommended}
@@ -1449,11 +1450,13 @@ function MePipeline({
   loading,
   errored,
   error,
+  claireHref,
 }: {
   matches: CandidateMatchCard[]
   loading: boolean
   errored: boolean
   error: string | null
+  claireHref: string | null
 }) {
   const [activeStage, setActiveStage] = useState<string | null>(null)
   const counts = useMemo(() => {
@@ -1525,7 +1528,7 @@ function MePipeline({
       ) : (
         <div className="wkv3-rows">
           {filtered.map((m) => (
-            <MePipelineRow key={m.matchId} match={m} />
+            <MePipelineRow key={m.matchId} match={m} claireHref={claireHref} />
           ))}
         </div>
       )}
@@ -1572,8 +1575,18 @@ function meStageChip(status: CandidateJobStatus) {
   }
 }
 
-function MePipelineRow({ match }: { match: CandidateMatchCard }) {
+function pipelineActionForMatch(match: CandidateMatchCard, claireHref: string | null) {
+  if (match.status === "interview_started" && claireHref) {
+    return { external: true, url: claireHref, label: "Continue with Claire" }
+  }
   const display = getCandidateJobStatusDisplay(match.status, match.job.title)
+  const target = matchPrimaryTarget(match)
+  return { ...target, label: display.ctaLabel }
+}
+
+function MePipelineRow({ match, claireHref }: { match: CandidateMatchCard; claireHref: string | null }) {
+  const display = getCandidateJobStatusDisplay(match.status, match.job.title)
+  const action = pipelineActionForMatch(match, claireHref)
   const logo = (match.job.company[0] ?? "?").toUpperCase()
   const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
   const when = meWhen(match.computedAt)
@@ -1594,9 +1607,15 @@ function MePipelineRow({ match }: { match: CandidateMatchCard }) {
         {showDecision ? <ReviewDecisionBlock match={match} /> : null}
       </div>
       <div className="wkv3-row__right">
-        <Link to={match.job.href} className="wk-btn wk-btn--secondary wk-btn--sm">
-          Open <Icon name="arrow-right" size={12} stroke={2} />
-        </Link>
+        {action.external ? (
+          <a href={action.url} className="wk-btn wk-btn--secondary wk-btn--sm">
+            {action.label} <Icon name="arrow-right" size={12} stroke={2} />
+          </a>
+        ) : (
+          <Link to={action.url} className="wk-btn wk-btn--secondary wk-btn--sm">
+            {action.label} <Icon name="arrow-right" size={12} stroke={2} />
+          </Link>
+        )}
         {when ? <span className="wkv3-row__when">{when}</span> : null}
       </div>
     </article>

@@ -315,6 +315,19 @@ test("CandidatePortal recent activity rows route to the real match action target
   assert.doesNotMatch(source, /rows\.map\(\(row\) => \(\s*<Link to=\{row\.href\}/)
 })
 
+test("CandidatePortal pipeline rows route active Claire interviews to Claire", () => {
+  assert.match(source, /<MePipeline[\s\S]*claireHref=\{claireHref\}/)
+  assert.match(source, /function pipelineActionForMatch\(match: CandidateMatchCard, claireHref: string \| null\)/)
+  assert.match(source, /if \(match\.status === "interview_started" && claireHref\)/)
+  assert.match(source, /label: "Continue with Claire"/)
+  assert.match(source, /<MePipelineRow key=\{m\.matchId\} match=\{m\} claireHref=\{claireHref\} \/>/)
+  assert.match(source, /const action = pipelineActionForMatch\(match, claireHref\)/)
+  assert.match(source, /action\.external \? \(/)
+  assert.match(source, /href=\{action\.url\}[\s\S]*\{action\.label\}/)
+  assert.match(source, /to=\{action\.url\}[\s\S]*\{action\.label\}/)
+  assert.doesNotMatch(source, /<Link to=\{match\.job\.href\} className="wk-btn wk-btn--secondary wk-btn--sm">\s*Open/)
+})
+
 test("CandidatePortal /me treats incomplete profile data as an Up Next action", () => {
   assert.match(source, /function deriveProfileNextAction/)
   assert.match(source, /function profileActionHrefForMissing/)
