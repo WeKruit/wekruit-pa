@@ -522,7 +522,7 @@ const LANDING_STYLES = `
   flex-direction: column;
   gap: 0.12em;
   font-size: clamp(52px, 6.7vw, 86px);
-  line-height: 1.06;
+  line-height: 1.1;
   letter-spacing: 0;
   color: var(--wk-ink);
   margin: 18px 0 24px;
@@ -899,7 +899,7 @@ const LANDING_STYLES = `
     gap: 36px;
     align-items: start;
   }
-  .wk-hero__h1 { font-size: clamp(50px, 6.2vw, 64px); line-height: 1.07; gap: 0.1em; }
+  .wk-hero__h1 { font-size: clamp(50px, 6.2vw, 64px); line-height: 1.12; gap: 0.12em; }
   .wk-hero__visual { padding-top: 32px; }
   .wk-hero__visual .wk-imsg-phone { max-width: 320px; }
   .wk-steps { grid-template-columns: 1fr; }
@@ -922,6 +922,6 @@ const LANDING_STYLES = `
   .wk-section { padding: 56px 0; }
   .wk-section__head { margin-bottom: 28px; }
   .wk-proof-card { padding: 20px; }
-  .wk-hero__h1 { font-size: clamp(48px, 14vw, 64px); line-height: 1.08; gap: 0.1em; }
+  .wk-hero__h1 { font-size: clamp(48px, 14vw, 64px); line-height: 1.14; gap: 0.14em; }
 }
 `

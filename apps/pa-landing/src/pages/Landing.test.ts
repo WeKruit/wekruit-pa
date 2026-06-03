@@ -100,6 +100,18 @@ test("Landing exposes the market source layer without becoming an apply queue", 
   assert.doesNotMatch(landingSource, /we pitch you anyway/i)
 })
 
+test("Landing hero headline keeps wrapped editorial lines separated on mobile", () => {
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*line-height: 1\.1;/)
+  assert.match(
+    landingSource,
+    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: clamp\(50px, 6\.2vw, 64px\); line-height: 1\.12; gap: 0\.12em; \}/,
+  )
+  assert.match(
+    landingSource,
+    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: clamp\(48px, 14vw, 64px\); line-height: 1\.14; gap: 0\.14em; \}/,
+  )
+})
+
 test("Landing formats public job type chips before rendering candidate cards", () => {
   assert.match(landingSource, /import \{ formatPublicJobType \} from "\.\.\/lib\/public-job-labels\.js"/)
   assert.match(landingSource, /jobType: formatPublicJobType\(data\.jobType \?\? data\.prescreenConfig\?\.jobType\)/)
