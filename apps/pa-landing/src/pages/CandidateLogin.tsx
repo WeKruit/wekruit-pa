@@ -765,6 +765,10 @@ function LoginPipelinePreview() {
 function LoginOnboardingPreview() {
   const items = [
     {
+      title: "One durable Claire profile",
+      body: "Sign-in opens the same WeKruit profile Claire uses across role interviews, evidence, and corrections.",
+    },
+    {
       title: "Resume and LinkedIn uptake",
       body: "Claire starts by turning your background into a durable WeKruit profile.",
     },

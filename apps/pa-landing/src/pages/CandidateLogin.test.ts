@@ -55,6 +55,8 @@ test("CandidateLogin frames onboarding login as a first-time Claire start", () =
 test("CandidateLogin previews the first Claire conversation before onboarding auth controls", () => {
   assert.match(source, /function LoginOnboardingPreview\(\)/)
   assert.match(source, /What Claire starts after sign-in/)
+  assert.match(source, /One durable Claire profile/)
+  assert.match(source, /same WeKruit profile Claire uses across role interviews, evidence, and corrections/)
   assert.match(source, /Resume and LinkedIn uptake/)
   assert.match(source, /Target roles and constraints/)
   assert.match(source, /Nearest-work evidence/)
