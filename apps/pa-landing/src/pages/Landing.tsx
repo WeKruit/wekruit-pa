@@ -13,6 +13,7 @@ import { Link } from "react-router-dom"
 import { collection, getDocs, limit, query, where } from "firebase/firestore"
 import { useQueryClient } from "@tanstack/react-query"
 import { db } from "../lib/firebase.js"
+import { formatPublicJobType } from "../lib/public-job-labels.js"
 import { listPublicJobOpenings } from "../lib/public-jobs.js"
 import {
   CandidateShell,
@@ -85,7 +86,7 @@ function normalizeJob(id: string, data: PublicJobListDoc): PublicJobListItem {
     company,
     location: data.location,
     salary: data.prescreenConfig?.level1Reveal?.salaryRange,
-    jobType: data.jobType ?? data.prescreenConfig?.jobType,
+    jobType: formatPublicJobType(data.jobType ?? data.prescreenConfig?.jobType),
     collaborated: data.wekruitCollaborationStatus === "collaborated",
     hiringManager: {
       name: data.hiringManagerName,

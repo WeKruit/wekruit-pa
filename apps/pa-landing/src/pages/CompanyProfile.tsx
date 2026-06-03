@@ -2,6 +2,7 @@ import { useMemo } from "react"
 import { Link, useParams } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { CandidateShell, Icon } from "./CandidateLogin.js"
+import { formatPublicJobType } from "../lib/public-job-labels.js"
 import {
   listPublicJobOpeningsByCompany,
   stripJobSourceSection,
@@ -43,15 +44,6 @@ function extractCompanySummary(jobs: PublicJobOpening[], profile?: PublicCompany
     }
   }
   return "Open roles and company details are shared through the WeKruit interview process."
-}
-
-function formatJobType(value?: string): string | undefined {
-  if (!value) return undefined
-  return value
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1).toLowerCase()}`)
-    .join("-")
 }
 
 function unique(values: Array<string | undefined>): string[] {
@@ -136,7 +128,7 @@ function CompanyProfileLayout({ jobs }: { jobs: PublicJobOpening[] }) {
                     <Link className="wk-company-role" to={`/j/${job.id}`} key={job.id}>
                       <span>
                         <strong>{job.title}</strong>
-                        <em>{[job.location, formatJobType(job.jobType)].filter(Boolean).join("  ")}</em>
+                        <em>{[job.location, formatPublicJobType(job.jobType)].filter(Boolean).join("  ")}</em>
                       </span>
                       <Icon name="arrow-right" size={22} stroke={1.7} />
                     </Link>

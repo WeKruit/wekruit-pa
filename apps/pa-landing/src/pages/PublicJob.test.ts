@@ -78,3 +78,10 @@ test("PublicJob resume gate keeps upload framed as role-interview continuity", (
   assert.doesNotMatch(source, /Upload it to continue/)
   assert.doesNotMatch(source, /Open interview"/)
 })
+
+test("PublicJob formats job type metadata before rendering candidate-visible labels", () => {
+  assert.match(source, /import \{ formatPublicJobType \} from "\.\.\/lib\/public-job-labels\.js"/)
+  assert.match(source, /jobType: formatPublicJobType\(cfg\.jobType\)/)
+  assert.doesNotMatch(source, /jobType: cfg\.jobType/)
+  assert.doesNotMatch(source, /role\.jobType\?\.replace\(\//)
+})

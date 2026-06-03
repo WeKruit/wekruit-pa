@@ -41,6 +41,7 @@ import {
   CandidateShell,
   Icon,
 } from "./CandidateLogin.js"
+import { formatPublicJobType } from "../lib/public-job-labels.js"
 import {
   listPublicJobOpeningsByCompany,
   stripJobSourceSection,
@@ -511,7 +512,7 @@ export default function PublicJob() {
     companyId: job.companyId,
     location,
     salary,
-    jobType: cfg.jobType,
+    jobType: formatPublicJobType(cfg.jobType),
     descriptionMd: job.descriptionMd,
     collaborated: job.wekruitCollaborationStatus === "collaborated",
     otherJobs: (companyJobsQuery.data ?? []).filter((role) => role.id !== publicJobId),
@@ -1202,7 +1203,7 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
                       <Link className="wk-pj-role-card" to={`/j/${role.id}`} key={role.id}>
                         <span>
                           <strong>{role.title}</strong>
-                          <em>{[role.location, role.jobType?.replace(/_/g, " ")].filter(Boolean).join("  ")}</em>
+                          <em>{[role.location, role.jobType].filter(Boolean).join("  ")}</em>
                         </span>
                         <Icon name="arrow-right" size={22} stroke={1.7} />
                       </Link>

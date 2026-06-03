@@ -1,5 +1,6 @@
 import { collection, getDocs, limit, query, where, type DocumentData } from "firebase/firestore"
 import { db } from "./firebase.js"
+import { formatPublicJobType } from "./public-job-labels.js"
 
 export interface PublicCompanyProfile {
   tagline?: string
@@ -59,6 +60,7 @@ interface RawPublicJob {
   prescreenConfig?: {
     jobTitle?: string
     company?: string
+    jobType?: string
     level1Reveal?: {
       salaryRange?: string
     }
@@ -160,7 +162,7 @@ export function toPublicJobOpening(id: string, data: DocumentData): PublicJobOpe
     industrySector: stringArray(raw.industrySector),
     requiredSkills: stringArray(raw.requiredSkills),
     seniorityLevel: raw.seniorityLevel,
-    jobType: raw.jobType,
+    jobType: formatPublicJobType(raw.jobType ?? raw.prescreenConfig?.jobType),
     collaborated,
     companyProfile: raw.companyProfile,
   }

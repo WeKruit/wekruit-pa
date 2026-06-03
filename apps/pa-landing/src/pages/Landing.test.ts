@@ -99,6 +99,12 @@ test("Landing exposes the market source layer without becoming an apply queue", 
   assert.doesNotMatch(landingSource, /we pitch you anyway/i)
 })
 
+test("Landing formats public job type chips before rendering candidate cards", () => {
+  assert.match(landingSource, /import \{ formatPublicJobType \} from "\.\.\/lib\/public-job-labels\.js"/)
+  assert.match(landingSource, /jobType: formatPublicJobType\(data\.jobType \?\? data\.prescreenConfig\?\.jobType\)/)
+  assert.doesNotMatch(landingSource, /jobType: data\.jobType \?\? data\.prescreenConfig\?\.jobType/)
+})
+
 test("Landing sequence avoids rough job-board-as-verb copy", () => {
   assert.doesNotMatch(sequenceSource, /you don&apos;t job-board/i)
   assert.match(sequenceSource, /You don&apos;t apply, you don&apos;t chase job boards, and you don&apos;t get spammed\./)
