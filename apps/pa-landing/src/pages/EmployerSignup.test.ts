@@ -209,6 +209,13 @@ test("EmployerSignup shows a final packet review before the send action", () => 
   assert.doesNotMatch(source, /browse candidates/i)
 })
 
+test("EmployerSignup primary action jumps to missing packet fields until ready", () => {
+  assert.match(source, /readiness\.nextIncompleteItem \? \(/)
+  assert.match(source, /type="button"[\s\S]*onClick=\{\(event\) => handleFieldJump\(event, readiness\.nextIncompleteItem!\.targetId\)\}/)
+  assert.match(source, /Finish \{readiness\.nextIncompleteItem\.label\}/)
+  assert.match(source, /: \([\s\S]*type="submit"[\s\S]*Send role brief/)
+})
+
 test("EmployerSignup post-submit state becomes a role packet receipt", () => {
   assert.match(source, /<SuccessCard form=\{form\} onStartAnother=\{\(\) => \{/)
   assert.match(source, /setForm\(EMPTY_FORM\)/)

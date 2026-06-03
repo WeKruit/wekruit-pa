@@ -51,7 +51,7 @@ const EMPTY_FORM: EmployerSignupFormState = {
   notes: "",
 }
 
-type FieldJumpHandler = (event: MouseEvent<HTMLAnchorElement>, targetId: string) => void
+type FieldJumpHandler = (event: MouseEvent<HTMLElement>, targetId: string) => void
 
 function focusEmployerFieldControl(targetId: string) {
   const target = document.getElementById(targetId)
@@ -59,7 +59,7 @@ function focusEmployerFieldControl(targetId: string) {
   control?.focus({ preventScroll: true })
 }
 
-function handleEmployerFieldJump(event: MouseEvent<HTMLAnchorElement>, targetId: string) {
+function handleEmployerFieldJump(event: MouseEvent<HTMLElement>, targetId: string) {
   event.preventDefault()
   window.history.pushState(null, "", `#${targetId}`)
   document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" })
@@ -326,14 +326,25 @@ export default function EmployerSignup() {
                   <Link to="/employers" className="btn btn--ghost" style={{ textDecoration: "none" }}>
                     Cancel
                   </Link>
-                  <button
-                    type="submit"
-                    className="btn btn--primary"
-                    disabled={submitting}
-                    style={{ minWidth: 160 }}
-                  >
-                    {submitting ? "Sending..." : "Send role brief"}
-                  </button>
+                  {readiness.nextIncompleteItem ? (
+                    <button
+                      type="button"
+                      className="btn btn--primary"
+                      onClick={(event) => handleFieldJump(event, readiness.nextIncompleteItem!.targetId)}
+                      style={{ minWidth: 160 }}
+                    >
+                      Finish {readiness.nextIncompleteItem.label}
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      className="btn btn--primary"
+                      disabled={submitting}
+                      style={{ minWidth: 160 }}
+                    >
+                      {submitting ? "Sending..." : "Send role brief"}
+                    </button>
+                  )}
                 </div>
               </form>
             </>
