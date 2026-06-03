@@ -12,6 +12,7 @@ import {
   layoffSignupLoginPath,
   onboardingDestination,
   parseLoginNextPath,
+  resolveExplicitOnboardingReturnPath,
   readCookieValue,
   resolvePostLoginDestination,
 } from "./browser-identity.js"
@@ -146,6 +147,16 @@ test("deriveRegistrationEntryFromPath captures public job signup entry", () => {
     },
   )
   assert.equal(deriveRegistrationEntryFromPath("/onboarding?source=candidate"), null)
+})
+
+test("resolveExplicitOnboardingReturnPath only honors the current onboarding next", () => {
+  assert.equal(resolveExplicitOnboardingReturnPath(null), null)
+  assert.equal(resolveExplicitOnboardingReturnPath(""), null)
+  assert.equal(resolveExplicitOnboardingReturnPath("/onboarding"), null)
+  assert.equal(
+    resolveExplicitOnboardingReturnPath("/j/standout-37429d02-photon-macos-devops"),
+    "/j/wekruit-37429d02-photon-macos-devops",
+  )
 })
 
 test("onboardingDestination routes layoff source to layoff query", () => {

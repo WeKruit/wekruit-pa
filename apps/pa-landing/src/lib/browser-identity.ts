@@ -286,6 +286,12 @@ export function readRememberedReturnJobPath(): string | null {
   return state.returnPath
 }
 
+export function resolveExplicitOnboardingReturnPath(next: string | null | undefined): string | null {
+  if (!next) return null
+  const dest = parseLoginNextPath(next)
+  return isPublicJobPath(dest.pathname) ? dest.to : null
+}
+
 export function isCandidateHost(hostname = window.location.hostname): boolean {
   const host = hostname.toLowerCase()
   return host.startsWith("candidate.") || host === "wekruit-pa-landing.web.app" || host === "localhost" || host === "127.0.0.1"

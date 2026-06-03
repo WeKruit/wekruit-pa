@@ -13,14 +13,12 @@ import { uploadResume } from "../lib/onboarding-cv"
 import {
   getBrowserUid,
   isCandidateHost,
-  isPublicJobPath,
   layoffSignupLoginPath,
   onboardingDestination,
-  parseLoginNextPath,
-  readRememberedReturnJobPath,
   redirectToCandidatePortal,
   rememberCandidateProfileSession,
   rememberOnboardingIntentForPath,
+  resolveExplicitOnboardingReturnPath,
 } from "../lib/browser-identity"
 import { resolveSource, SOURCE_RESOLVER_MARKER, stickSourceFromLoginNext, type SignupSource } from "../lib/source"
 import { auth } from "../lib/firebase.js"
@@ -70,12 +68,7 @@ type Profile = {
 export default function Onboarding() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const returnPath = useMemo(() => {
-    const raw = searchParams.get("next") ?? readRememberedReturnJobPath()
-    if (!raw) return null
-    const dest = parseLoginNextPath(raw)
-    return isPublicJobPath(dest.pathname) ? dest.to : null
-  }, [searchParams])
+  const returnPath = useMemo(() => resolveExplicitOnboardingReturnPath(searchParams.get("next")), [searchParams])
   const source: SignupSource = useMemo(() => {
     if (returnPath) stickSourceFromLoginNext(returnPath)
     return resolveSource()

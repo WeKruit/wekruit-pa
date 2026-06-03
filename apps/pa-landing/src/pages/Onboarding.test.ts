@@ -34,3 +34,9 @@ test("done handoff continues an existing Claire conversation when verification p
   assert.match(source, /I’ll pick up from our existing thread\./)
   assert.match(source, /Claire thread found/)
 })
+
+test("generic onboarding does not inherit a stale remembered job return path", () => {
+  assert.match(source, /resolveExplicitOnboardingReturnPath/)
+  assert.match(source, /const returnPath = useMemo\(\(\) => resolveExplicitOnboardingReturnPath\(searchParams\.get\("next"\)\), \[searchParams\]\)/)
+  assert.doesNotMatch(source, /readRememberedReturnJobPath/)
+})
