@@ -173,8 +173,8 @@ function CompanyProfileLayout({ jobs }: { jobs: PublicJobOpening[] }) {
               <div className="wk-company-panel wk-company-panel--process">
                 <p className="wk-eyebrow">WeKruit process</p>
                 <ol>
-                  <li>Confirm fit with Claire.</li>
-                  <li>WeKruit shares a concise profile.</li>
+                  <li>Claire confirms role fit with you.</li>
+                  <li>Only candidates who pass and consent get shared.</li>
                   <li>If there is mutual interest, the first chat gets booked.</li>
                 </ol>
               </div>
