@@ -317,7 +317,7 @@ export default function OpenJobs() {
             total={totalForTab}
             search={search}
             setSearch={setSearch}
-            layout={layout}
+            layout={effectiveLayout}
             setLayout={setLayout}
           />
 

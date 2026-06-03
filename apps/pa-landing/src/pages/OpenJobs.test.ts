@@ -49,6 +49,7 @@ test("OpenJobs starts narrow mobile visitors in cards instead of the desktop tab
   assert.match(source, /const \[layout, setLayout\] = useState<LayoutId>\(initialOpenJobsLayout\)/)
   assert.match(source, /const isNarrowViewport = useOpenJobsNarrowViewport\(\)/)
   assert.match(source, /const effectiveLayout = isNarrowViewport && layout === "table" \? "cards" : layout/)
+  assert.match(source, /layout=\{effectiveLayout\}[\s\S]*setLayout=\{setLayout\}/)
   assert.match(source, /<List jobs=\{filtered\.slice\(0, visibleCount\)\} tab=\{tab\} layout=\{effectiveLayout\} \/>/)
   assert.doesNotMatch(source, /const \[layout, setLayout\] = useState<LayoutId>\("table"\)/)
 })
