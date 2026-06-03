@@ -464,7 +464,7 @@ test("CandidatePortal closed review outcomes route to durable profile signal upd
 })
 
 test("CandidatePortal profile corrections can draft role signals from market and closed reviews", () => {
-  assert.match(source, /type ProfileSignalDraft = \{ text: string; sourceLabel: string \}/)
+  assert.match(source, /type ProfileSignalDraft = \{ text: string; sourceLabel: string; structuredFields: Record<string, unknown> \}/)
   assert.match(source, /function useProfileSignalDraft\(\): ProfileSignalDraft \| null/)
   assert.match(source, /new URLSearchParams\(location\.search\)/)
   assert.match(source, /profileRoleSignalTitle/)
@@ -489,6 +489,16 @@ test("CandidatePortal profile corrections can draft role signals from market and
   assert.match(source, /Closed role signal/)
   assert.match(source, /Closed intro signal/)
   assert.match(source, /Tell Claire what to change[\s\S]*market role context/)
+})
+
+test("CandidatePortal role signal corrections persist structured evidence", () => {
+  assert.match(source, /type ProfileSignalDraft = \{ text: string; sourceLabel: string; structuredFields: Record<string, unknown> \}/)
+  assert.match(source, /roleSignal: \{[\s\S]*source: "recommended_role"[\s\S]*title[\s\S]*company[\s\S]*reason/)
+  assert.match(source, /roleSignal: \{[\s\S]*source: "market_role"[\s\S]*title[\s\S]*company[\s\S]*context/)
+  assert.match(source, /roleSignal: \{[\s\S]*source: "closed_role"[\s\S]*outcome: "not_passed"[\s\S]*actions/)
+  assert.match(source, /roleSignal: \{[\s\S]*source: "closed_intro"[\s\S]*outcome: "intro_rejected"/)
+  assert.match(source, /const structuredFields = initialCorrectionDraft\?\.structuredFields/)
+  assert.match(source, /submitCorrection\(\{ correctionText, structuredFields \}\)/)
 })
 
 test("CandidatePortal /me/matches sidebar shows the real matching basis", () => {

@@ -2672,7 +2672,7 @@ function useProfileHashScroll() {
   }, [location.hash])
 }
 
-type ProfileSignalDraft = { text: string; sourceLabel: string }
+type ProfileSignalDraft = { text: string; sourceLabel: string; structuredFields: Record<string, unknown> }
 
 function useProfileSignalDraft(): ProfileSignalDraft | null {
   const location = useLocation()
@@ -2688,16 +2688,38 @@ function useProfileSignalDraft(): ProfileSignalDraft | null {
     if (outcome === "intro_rejected" && reason) {
       return {
         sourceLabel: "Closed intro signal",
+        structuredFields: {
+          roleSignal: {
+            source: "closed_intro",
+            title,
+            company,
+            outcome: "intro_rejected",
+            reason,
+          },
+        },
         text: `Use this closed intro as profile signal: ${title} at ${company}. Employer intro outcome: ${reason}. Update my durable matching preferences or profile evidence if this closure should change future matching. Do not treat this as an automatic application.`,
       }
     }
 
     if (outcome === "not_passed" && reason) {
+      const actionList = actions
+        ? actions.split(/\n+/g).map((a) => a.trim()).filter(Boolean).slice(0, 3)
+        : []
       const actionsText = actions
         ? ` Recommended next profile updates: ${actions.replace(/\n+/g, "; ")}.`
         : ""
       return {
         sourceLabel: "Closed role signal",
+        structuredFields: {
+          roleSignal: {
+            source: "closed_role",
+            title,
+            company,
+            outcome: "not_passed",
+            reason,
+            actions: actionList,
+          },
+        },
         text: `Use this closed role as profile signal: ${title} at ${company}. Claire closed this role because: ${reason}.${actionsText} Update my durable matching preferences or profile evidence to avoid repeating this mismatch. Do not treat this as an automatic application.`,
       }
     }
@@ -2705,6 +2727,14 @@ function useProfileSignalDraft(): ProfileSignalDraft | null {
     if (reason) {
       return {
         sourceLabel: "Recommended role signal",
+        structuredFields: {
+          roleSignal: {
+            source: "recommended_role",
+            title,
+            company,
+            reason,
+          },
+        },
         text: `Use this recommended role as profile signal: ${title} at ${company}. Claire surfaced this role because: ${reason.replace(/\n+/g, "; ")}. If this reflects what I want, update my durable matching preferences. Do not treat this as an automatic application.`,
       }
     }
@@ -2718,6 +2748,14 @@ function useProfileSignalDraft(): ProfileSignalDraft | null {
     const contextText = context.length ? ` (${context.join(", ")})` : ""
     return {
       sourceLabel: "Source role from market",
+      structuredFields: {
+        roleSignal: {
+          source: "market_role",
+          title,
+          company,
+          context,
+        },
+      },
       text: `Use this market role as profile signal: ${title} at ${company}${contextText}. If this reflects what I want, update my durable matching preferences. Do not treat this as an automatic application.`,
     }
   }, [location.search])
@@ -3398,7 +3436,8 @@ function UpdatePreferencesPanel({
     setStatus("submitting")
     try {
       const submitCorrection = createCandidateProfileCorrectionSubmitter(functions())
-      const result = await submitCorrection({ correctionText })
+      const structuredFields = initialCorrectionDraft?.structuredFields
+      const result = await submitCorrection({ correctionText, structuredFields })
       onProfileUpdated(result.selfProfile)
       setCorrectionText("")
       const applied = result.appliedKeys?.length ? ` Updated: ${result.appliedKeys.join(", ")}.` : ""
