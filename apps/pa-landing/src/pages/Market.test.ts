@@ -20,8 +20,8 @@ test("Market frames tracked external roles as Claire-managed next steps, not a s
   assert.match(source, /<th className="wk-tbl__h wk-tbl__h--cta">Next step<\/th>/)
 })
 
-test("Market direct-line empty state avoids unproven background scanning claims", () => {
-  assert.match(source, /<strong>No direct-line roles yet\.<\/strong>/)
+test("Market role-brief empty state avoids unproven background scanning claims", () => {
+  assert.match(source, /<strong>No role briefs yet\.<\/strong>/)
   assert.doesNotMatch(source, /Claire keeps scanning for stronger company access/)
   assert.match(source, /Check tracked roles and keep your profile preferences current\./)
 })
@@ -56,9 +56,23 @@ test("Market defaults mobile tracked roles to cards instead of dense table", () 
   assert.doesNotMatch(source, /useState<"table" \| "cards">\("table"\)/)
 })
 
-test("Market opens on direct-line roles before external tracked roles", () => {
+test("Market opens on role briefs before external tracked roles", () => {
   assert.match(source, /useState<"hunting" \| "direct">\("direct"\)/)
   assert.doesNotMatch(source, /useState<"hunting" \| "direct">\("hunting"\)/)
+})
+
+test("Market role-brief tab does not overclaim mixed inbound briefs as direct-line collab", () => {
+  assert.match(source, /label="Role briefs"/)
+  assert.match(source, /sub="Hiring-team briefs for Claire"/)
+  assert.match(source, /Role briefs <em className="wk-accent">ready<\/em> for Claire\./)
+  assert.match(source, /<strong>No role briefs yet\.<\/strong>/)
+  assert.match(source, /View role briefs/)
+
+  assert.doesNotMatch(source, /label="Direct line"/)
+  assert.doesNotMatch(source, /Inbound · Collaborated with WeKruit/)
+  assert.doesNotMatch(source, /Direct-line role briefs/)
+  assert.doesNotMatch(source, /No direct-line roles yet/)
+  assert.doesNotMatch(source, /View direct-line roles/)
 })
 
 test("Market tracked-role rows connect external source inspection to durable preferences", () => {
@@ -83,12 +97,12 @@ test("Market tracked-role rows connect external source inspection to durable pre
 
 test("Market explains how Claire uses role sources before candidates chase postings", () => {
   assert.match(source, /How Claire uses this market/)
-  assert.match(source, /Direct-line roles are briefs WeKruit can screen against/)
+  assert.match(source, /Role briefs are screens WeKruit can run with Claire/)
   assert.match(source, /Tracked roles are source evidence, not applications/)
   assert.match(source, /Your profile and preferences decide what Claire can pursue with you/)
   assert.match(source, /aria-label="Market primary actions"/)
   assert.match(source, /href="\/me\/profile#profile-corrections"[\s\S]*Update role signals/)
-  assert.match(source, /onClick=\{\(\) => setTab\("direct"\)\}[\s\S]*View direct-line roles/)
+  assert.match(source, /onClick=\{\(\) => setTab\("direct"\)\}[\s\S]*View role briefs/)
   assert.match(source, /href="\/me\/profile"/)
   assert.match(source, /href="\/onboarding"/)
 
@@ -106,22 +120,22 @@ test("Market does not leak unresolved loading counts into candidate-facing chrom
   assert.match(source, /count=\{direct\.isSuccess \? directJobs\.length : undefined\}/)
   assert.match(source, /count=\{hunting\.isSuccess \? huntingTotal : undefined\}/)
   assert.match(source, /Roles Claire is <em className="wk-accent">tracking<\/em>\./)
-  assert.match(source, /Direct-line role briefs <em className="wk-accent">ready<\/em> for Claire\./)
+  assert.match(source, /Role briefs <em className="wk-accent">ready<\/em> for Claire\./)
 })
 
-test("Market direct-line roles do not overpromise employer access or invent interview capacity", () => {
+test("Market role briefs do not overpromise employer access or invent interview capacity", () => {
   assert.doesNotMatch(source, /hiring managers <em className="wk-accent">ready<\/em> to meet you/)
   assert.doesNotMatch(source, /arrange the interview directly/i)
   assert.doesNotMatch(source, /seats:\s*typeof raw\.interviewSeats === "number" \? raw\.interviewSeats : 2/)
   assert.doesNotMatch(source, /\{r\.seats\} \{r\.seats === 1 \? "seat" : "seats"\}/)
 
-  assert.match(source, /role briefs <em className="wk-accent">ready<\/em> for Claire/)
+  assert.match(source, /Role briefs <em className="wk-accent">ready<\/em> for Claire/)
   assert.match(source, /Claire starts the role interview before any passed profile is shared/)
   assert.match(source, /seats:\s*typeof raw\.interviewSeats === "number" \? raw\.interviewSeats : undefined/)
   assert.match(source, /r\.seats === undefined \? "Claire interview" :/)
 })
 
-test("Market direct-line rows do not invent hiring-manager identity when a role only has a brief", () => {
+test("Market role-brief rows do not invent hiring-manager identity when a role only has a brief", () => {
   assert.doesNotMatch(source, /name: raw\.hiringManagerName \?\? "Hiring manager"/)
   assert.doesNotMatch(source, /title: raw\.hiringManagerTitle \?\? "Hiring lead"/)
   assert.doesNotMatch(source, /<th className="wk-tbl__h">Hiring manager<\/th>/)
@@ -134,7 +148,7 @@ test("Market direct-line rows do not invent hiring-manager identity when a role 
   assert.match(source, /<th className="wk-tbl__h">Owner<\/th>/)
 })
 
-test("Market direct-line roles render mobile cards instead of only a wide table", () => {
+test("Market role briefs render mobile cards instead of only a wide table", () => {
   assert.match(source, /function DirectCard\(\{ r, onTalk \}: \{ r: DisplayJob; onTalk: \(\) => void \}\)/)
   assert.match(source, /className="wk-tbl-wrap wk-tbl-wrap--solo wk-direct-table"/)
   assert.match(source, /<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>/)

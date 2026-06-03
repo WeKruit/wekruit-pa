@@ -2,8 +2,8 @@
  * Market.tsx — `/market` Open marketplace.
  *
  * Two real-data tabs, both candidate-public:
- *   · Direct line  — Firestore `pa-jobs` where `publicVisible==true`. Employer-
- *                    authored Claire-fast-track roles (same source Landing uses);
+ *   · Role briefs  — Firestore `pa-jobs` where `publicVisible==true`. Employer-
+ *                    authored Claire-screenable roles (same source Landing uses);
  *                    may include hiring-manager, seats, salary, prescreen config. Click
  *                    "Talk to Claire" routes to /j/:jobId (PublicJob page).
  *   · Tracked roles — `paPublicOpenJobs` Cloud Function (HTTP). External
@@ -73,7 +73,7 @@ interface OpenJobsResp {
 const PAGE_SIZE = 20
 
 // ────────────────────────────────────────────────────────────────────────────
-// Direct line — pa-jobs Firestore doc (employer-authored collab)
+// Role briefs — pa-jobs Firestore doc (employer-authored briefs)
 // ────────────────────────────────────────────────────────────────────────────
 
 interface PaJobDoc {
@@ -593,7 +593,7 @@ function DirectCard({ r, onTalk }: { r: DisplayJob; onTalk: () => void }) {
 // Data hooks — TanStack Query
 //   · Hunting list  → useInfiniteQuery against paPublicOpenJobs (server-side
 //                     paginated, 20/page, CDN-cached 60s, 5min stale)
-//   · Direct line   → useQuery against pa-jobs (publicVisible)
+//   · Role briefs   → useQuery against pa-jobs (publicVisible)
 // ────────────────────────────────────────────────────────────────────────────
 
 interface HuntingFilters {
@@ -748,9 +748,9 @@ export default function Market(): ReactNode {
             <MarketTab
               active={tab === "direct"}
               onClick={() => setTab("direct")}
-              label="Direct line"
+              label="Role briefs"
               count={direct.isSuccess ? directJobs.length : undefined}
-              sub="Companies talking to us"
+              sub="Hiring-team briefs for Claire"
             />
             <MarketTab
               active={tab === "hunting"}
@@ -780,7 +780,7 @@ export default function Market(): ReactNode {
                     className="wk-btn wk-btn--secondary"
                     onClick={() => setTab("direct")}
                   >
-                    View direct-line roles
+                    View role briefs
                   </button>
                 </div>
               </header>
@@ -796,8 +796,8 @@ export default function Market(): ReactNode {
                 </div>
                 <div className="wk-market-contract__grid">
                   <article className="wk-market-contract__item wk-market-contract__item--direct">
-                    <strong>Direct-line roles</strong>
-                    <span>Direct-line roles are briefs WeKruit can screen against. Claire interviews against the approved role before any passed profile is shared.</span>
+                    <strong>Role briefs</strong>
+                    <span>Role briefs are screens WeKruit can run with Claire. Some are collaborated roles; others still need Claire to verify fit before any passed profile is shared.</span>
                   </article>
                   <article className="wk-market-contract__item wk-market-contract__item--tracked">
                     <strong>Tracked roles</strong>
@@ -927,9 +927,9 @@ export default function Market(): ReactNode {
           <section className="wk-market__panel wk-market__panel--direct">
             <div className="wk-container">
               <header className="wk-market__head">
-                <p className="wk-eyebrow"><PulseDot size={6} /> Inbound · Collaborated with WeKruit</p>
+                <p className="wk-eyebrow"><PulseDot size={6} /> Hiring-team briefs · Claire screens first</p>
                 <h1 className="wk-market__h1">
-                  Direct-line role briefs <em className="wk-accent">ready</em> for Claire.
+                  Role briefs <em className="wk-accent">ready</em> for Claire.
                 </h1>
                 <p className="wk-market__lede">
                   These companies gave WeKruit role briefs to screen against. Choose a role to talk to Claire.
@@ -939,16 +939,16 @@ export default function Market(): ReactNode {
 
               {direct.isPending ? (
                 <div className="wk-tbl__empty wk-tbl__empty--block">
-                  <strong>Loading collaborated roles…</strong>
+                  <strong>Loading role briefs…</strong>
                 </div>
               ) : direct.isError ? (
                 <div className="wk-tbl__empty wk-tbl__empty--block">
-                  <strong>Couldn't load direct line.</strong>
+                  <strong>Couldn't load role briefs.</strong>
                   {direct.error.message}
                 </div>
               ) : directJobs.length === 0 ? (
                 <div className="wk-tbl__empty wk-tbl__empty--block">
-                  <strong>No direct-line roles yet.</strong> Check tracked roles and keep your profile preferences current.
+                  <strong>No role briefs yet.</strong> Check tracked roles and keep your profile preferences current.
                 </div>
               ) : (
                 <>
