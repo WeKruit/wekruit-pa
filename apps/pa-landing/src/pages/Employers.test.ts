@@ -157,3 +157,18 @@ test("Employers sample pass record shows a scope-safe calibration packet", () =>
   assert.doesNotMatch(employersSource, /AI learns automatically/i)
   assert.doesNotMatch(employersSource, /replacement search/i)
 })
+
+test("Employers page aligns public CTA copy with the real role-packet intake", () => {
+  assert.doesNotMatch(employersSource, />Sign in<\/Link>/)
+  assert.doesNotMatch(employersSource, /just the role title/i)
+  assert.doesNotMatch(employersSource, /resolve the rest/i)
+
+  assert.match(employersSource, /Role packet before screening/)
+  assert.match(employersSource, /What the first role brief needs/)
+  assert.match(employersSource, /Hard filters/)
+  assert.match(employersSource, /Evidence probes/)
+  assert.match(employersSource, /Calibration examples/)
+  assert.match(employersSource, /Feedback loop/)
+  assert.match(employersSource, /Intro handoff/)
+  assert.match(employersSource, /to="\/employer"[\s\S]*Start role intake/)
+})

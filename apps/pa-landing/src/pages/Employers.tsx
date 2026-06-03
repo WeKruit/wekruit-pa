@@ -175,6 +175,34 @@ const EMP_PASSED: PassedProfile[] = [
   },
 ]
 
+const ROLE_PACKET_ITEMS = [
+  {
+    tag: "01",
+    title: "Hard filters",
+    body: "The constraints that must stop a pass before Claire screens: location, authorization, comp, stage, and true non-negotiables.",
+  },
+  {
+    tag: "02",
+    title: "Evidence probes",
+    body: "The questions Claire should use to pull out concrete work, tradeoffs, and risk signals in the first interview.",
+  },
+  {
+    tag: "03",
+    title: "Calibration examples",
+    body: "What a strong pass looks like, and what false positives should be rejected before they reach the hiring team.",
+  },
+  {
+    tag: "04",
+    title: "Feedback loop",
+    body: "Where accepted or rejected intro feedback goes back to WeKruit so the next pass record gets tighter.",
+  },
+  {
+    tag: "05",
+    title: "Intro handoff",
+    body: "The real owner and next step when your team accepts a consented passed profile.",
+  },
+]
+
 // ────────────────────────────────────────────────────────────────────────────
 // EmployerShell — small variant of CandidateShell for /employers/*.
 // Injects CANDIDATE_STYLES so .wk-btn / .wk-container / .wk-eyebrow /
@@ -203,9 +231,9 @@ function EmployerShell({ children, signedIn = false }: { children: ReactNode; si
               </button>
             ) : (
               <>
-                <Link to="/employer" className="wk-header__signin">Sign in</Link>
+                <Link to="/employer" className="wk-header__signin">Role intake</Link>
                 <Link to="/employer" className="wk-btn wk-btn--ink wk-btn--sm">
-                  Send us a role
+                  Start role intake
                 </Link>
               </>
             )}
@@ -322,6 +350,40 @@ function EmpFlowStep({
   )
 }
 
+function EmployerRolePacketPreview() {
+  return (
+    <section className="wk-section wk-section--emp-packet" aria-label="Role packet before screening">
+      <div className="wk-container">
+        <div className="wk-emp-packet">
+          <div className="wk-emp-packet__intro">
+            <p className="wk-eyebrow">
+              <PulseDot size={7} /> Role packet before screening
+            </p>
+            <h2 className="wk-section__h2">What the first role brief needs.</h2>
+            <p className="wk-emp-packet__copy">
+              Claire should not start from a loose title. The first role starts with the packet
+              WeKruit needs to approve the brief, screen against evidence, and send only consented
+              passed profiles.
+            </p>
+            <Link to="/employer" className="wk-btn wk-btn--primary wk-btn--lg">
+              Start role intake <Icon name="arrow-right" size={16} stroke={2} />
+            </Link>
+          </div>
+          <div className="wk-emp-packet__grid">
+            {ROLE_PACKET_ITEMS.map((item) => (
+              <article key={item.tag} className="wk-emp-packet__item">
+                <span className="wk-emp-packet__tag">{item.tag}</span>
+                <h3>{item.title}</h3>
+                <p>{item.body}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // /employers — marketing landing
 // ────────────────────────────────────────────────────────────────────────────
@@ -350,7 +412,7 @@ export default function Employers() {
                 className="wk-btn wk-btn--primary wk-btn--lg"
                 onClick={() => navigate("/employer")}
               >
-                Send us your first role <Icon name="arrow-right" size={16} stroke={2} />
+                Start role intake <Icon name="arrow-right" size={16} stroke={2} />
               </button>
               <Link to="/employers/inbox" className="wk-link wk-emp-hero__how">
                 See a sample pass <Icon name="arrow-right" size={14} stroke={2} />
@@ -393,6 +455,8 @@ export default function Employers() {
           </div>
         </div>
       </section>
+
+      <EmployerRolePacketPreview />
 
       {/* The shift — pile vs inbox */}
       <section className="wk-section">
@@ -446,11 +510,11 @@ export default function Employers() {
           <ol className="wk-emp-flow">
             <EmpFlowStep
               n="01" title="Role enters WeKruit"
-              body="Send Claire the JD or just the role title. We resolve the rest from your team, stack, and stage."
+              body="Send the role packet: role brief, hard filters, evidence probes, calibration examples, feedback loop, and intro handoff."
             />
             <EmpFlowStep
-              n="02" title="We enrich the brief"
-              body="Level, must-haves, nice-to-haves, comp band, visa stance, deal-breakers. You approve once."
+              n="02" title="WeKruit confirms the packet"
+              body="We verify scope, terms, must-haves, comp band, visa stance, and deal-breakers before Claire screens against the approved brief."
             />
             <EmpFlowStep
               n="03" title="Claire matches existing candidates"
