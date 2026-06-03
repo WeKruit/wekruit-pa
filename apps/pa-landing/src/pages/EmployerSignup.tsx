@@ -304,7 +304,7 @@ export default function EmployerSignup() {
                 )}
 
                 <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginTop: 4 }}>
-                  <Link to="/" className="btn btn--ghost" style={{ textDecoration: "none" }}>
+                  <Link to="/employers" className="btn btn--ghost" style={{ textDecoration: "none" }}>
                     Cancel
                   </Link>
                   <button
@@ -1337,7 +1337,7 @@ function Header() {
         }}
       >
         <Link
-          to="/"
+          to="/employers"
           style={{ textDecoration: "none", display: "inline-flex", alignItems: "baseline", gap: 8, color: "var(--ink)" }}
         >
           <span style={{ fontFamily: "var(--font-serif)", fontSize: 22, letterSpacing: 0, fontWeight: 500 }}>

@@ -104,6 +104,16 @@ test("EmployerSignup connects role intake to the sample passed-profile output", 
   assert.doesNotMatch(source, /instant pass/i)
 })
 
+test("EmployerSignup keeps employer navigation on the employer surface", () => {
+  assert.match(
+    source,
+    /<Link\s+to="\/employers"[\s\S]*?<span[\s\S]*WeKruit[\s\S]*?<em[\s\S]*Employers/,
+  )
+  assert.match(source, /to="\/"[\s\S]*← For candidates/)
+  assert.match(source, /to="\/employers"[\s\S]*Cancel/)
+  assert.doesNotMatch(source, /to="\/" className="btn btn--ghost"[\s\S]*Cancel/)
+})
+
 test("EmployerSignup turns role packet readiness into actionable field jumps", () => {
   assert.match(source, /summary\.nextIncompleteItem/)
   assert.match(source, /Next needed/)
