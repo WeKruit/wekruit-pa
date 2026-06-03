@@ -82,3 +82,12 @@ test("EmployerSignup captures the hiring-team feedback loop before Claire screen
   assert.doesNotMatch(source, /Claire will infer the feedback/i)
   assert.doesNotMatch(source, /AI learns automatically/i)
 })
+
+test("EmployerSignup shows a role packet readiness checklist before the long form", () => {
+  assert.match(source, /EmployerPacketReadiness/)
+  assert.match(source, /deriveEmployerSignupReadiness/)
+  assert.match(source, /aria-label="Role packet readiness"/)
+  assert.match(source, /Before Claire screens/)
+  assert.match(source, /Role packet/)
+  assert.match(source, /Complete these before WeKruit approves the role brief/i)
+})

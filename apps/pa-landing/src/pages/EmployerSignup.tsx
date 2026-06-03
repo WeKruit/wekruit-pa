@@ -13,6 +13,10 @@ import {
   type EmployerSignupFormState,
   type EmployerSignupStage,
 } from "../lib/employer-signup-model.js"
+import {
+  deriveEmployerSignupReadiness,
+  type EmployerSignupReadinessSummary,
+} from "../lib/employer-signup-readiness.js"
 import { registerEmployer } from "../lib/onboarding-api.js"
 import "../styles/wekruit-tokens.css"
 
@@ -47,6 +51,7 @@ export default function EmployerSignup() {
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const readiness = deriveEmployerSignupReadiness(form)
 
   const update = <K extends keyof EmployerSignupFormState>(k: K, v: EmployerSignupFormState[K]) =>
     setForm((prev) => ({ ...prev, [k]: v }))
@@ -117,152 +122,287 @@ export default function EmployerSignup() {
           </p>
 
           {done ? <SuccessCard email={form.workEmail} /> : (
-            <form
-              onSubmit={onSubmit}
-              style={{
-                marginTop: 36,
-                background: "var(--cream-3)",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--r-lg)",
-                boxShadow: "var(--shadow-md)",
-                padding: 28,
-                display: "flex",
-                flexDirection: "column",
-                gap: 16,
-              }}
-            >
-              <Row>
+            <>
+              <EmployerPacketReadiness summary={readiness} />
+              <form
+                onSubmit={onSubmit}
+                style={{
+                  marginTop: 20,
+                  background: "var(--cream-3)",
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--r-lg)",
+                  boxShadow: "var(--shadow-md)",
+                  padding: 28,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 16,
+                }}
+              >
+                <Row>
+                  <Field
+                    label="Company name *"
+                    value={form.companyName}
+                    onChange={(v) => update("companyName", v)}
+                    placeholder="Acme, Inc."
+                  />
+                  <Field
+                    label="Stage"
+                    value={form.stage}
+                    onChange={(v) => update("stage", v as EmployerSignupStage | "")}
+                    as="select"
+                    options={STAGE_OPTIONS}
+                  />
+                </Row>
+                <Row>
+                  <Field
+                    label="Your name *"
+                    value={form.contactName}
+                    onChange={(v) => update("contactName", v)}
+                    placeholder="Jane Doe"
+                  />
+                  <Field
+                    label="Your role"
+                    value={form.roleAtCompany}
+                    onChange={(v) => update("roleAtCompany", v)}
+                    placeholder="Head of Talent"
+                  />
+                </Row>
                 <Field
-                  label="Company name *"
-                  value={form.companyName}
-                  onChange={(v) => update("companyName", v)}
-                  placeholder="Acme, Inc."
+                  label="Work email *"
+                  value={form.workEmail}
+                  onChange={(v) => update("workEmail", v)}
+                  placeholder="jane@acme.com"
+                  type="email"
                 />
                 <Field
-                  label="Stage"
-                  value={form.stage}
-                  onChange={(v) => update("stage", v as EmployerSignupStage | "")}
-                  as="select"
-                  options={STAGE_OPTIONS}
-                />
-              </Row>
-              <Row>
-                <Field
-                  label="Your name *"
-                  value={form.contactName}
-                  onChange={(v) => update("contactName", v)}
-                  placeholder="Jane Doe"
+                  label="Company LinkedIn"
+                  value={form.companyLinkedin}
+                  onChange={(v) => update("companyLinkedin", v)}
+                  placeholder="https://www.linkedin.com/company/acme"
                 />
                 <Field
-                  label="Your role"
-                  value={form.roleAtCompany}
-                  onChange={(v) => update("roleAtCompany", v)}
-                  placeholder="Head of Talent"
+                  label="Primary role brief *"
+                  value={form.rolesHiring}
+                  onChange={(v) => update("rolesHiring", v)}
+                  placeholder="Senior PM for developer platform; SF hybrid; $220k-$290k base"
+                  helper="Start with the one role Claire should screen against first."
                 />
-              </Row>
-              <Field
-                label="Work email *"
-                value={form.workEmail}
-                onChange={(v) => update("workEmail", v)}
-                placeholder="jane@acme.com"
-                type="email"
-              />
-              <Field
-                label="Company LinkedIn"
-                value={form.companyLinkedin}
-                onChange={(v) => update("companyLinkedin", v)}
-                placeholder="https://www.linkedin.com/company/acme"
-              />
-              <Field
-                label="Primary role brief *"
-                value={form.rolesHiring}
-                onChange={(v) => update("rolesHiring", v)}
-                placeholder="Senior PM for developer platform; SF hybrid; $220k-$290k base"
-                helper="Start with the one role Claire should screen against first."
-              />
-              <Field
-                label="Hard filters *"
-                value={form.hardFilters}
-                onChange={(v) => update("hardFilters", v)}
-                placeholder="Requires US work authorization; SF hybrid three days per week"
-                helper="List what must stop a pass before Claire screens."
-                as="textarea"
-              />
-              <Field
-                label="Screening questions *"
-                value={form.screeningQuestions}
-                onChange={(v) => update("screeningQuestions", v)}
-                placeholder="Describe a platform tradeoff you owned; what evidence proves they can handle infra ambiguity?"
-                helper="List the evidence Claire should elicit in the first interview."
-                as="textarea"
-              />
-              <Field
-                label="Calibration examples *"
-                value={form.calibrationExamples}
-                onChange={(v) => update("calibrationExamples", v)}
-                placeholder="Strong pass: shipped a developer platform pricing migration under real customer load. False positive: only owned internal tooling without external developer users."
-                helper="Name what a strong pass and false positive look like before Claire screens."
-                as="textarea"
-              />
-              <Field
-                label="Must-haves *"
-                value={form.notes}
-                onChange={(v) => update("notes", v)}
-                placeholder="Founder-mode judgment, API product depth, comp band, location, must-haves Claire should probe."
-                as="textarea"
-              />
-              <Field
-                label="Feedback loop *"
-                value={form.feedbackLoop}
-                onChange={(v) => update("feedbackLoop", v)}
-                placeholder="After every accepted or rejected intro, Alex posts the pass/no-pass reason and one correction signal in the WeKruit thread."
-                helper="Define how the hiring team's pass/no-pass signal gets back to Claire after each passed profile."
-                as="textarea"
-              />
-              <Field
-                label="Intro handoff *"
-                value={form.introHandoff}
-                onChange={(v) => update("introHandoff", v)}
-                placeholder="If we accept the intro, route the candidate to Alex for a hiring-manager screen within two business days."
-                helper="Define the accepted intro owner and real next step after a pass."
-                as="textarea"
-              />
+                <Field
+                  label="Hard filters *"
+                  value={form.hardFilters}
+                  onChange={(v) => update("hardFilters", v)}
+                  placeholder="Requires US work authorization; SF hybrid three days per week"
+                  helper="List what must stop a pass before Claire screens."
+                  as="textarea"
+                />
+                <Field
+                  label="Screening questions *"
+                  value={form.screeningQuestions}
+                  onChange={(v) => update("screeningQuestions", v)}
+                  placeholder="Describe a platform tradeoff you owned; what evidence proves they can handle infra ambiguity?"
+                  helper="List the evidence Claire should elicit in the first interview."
+                  as="textarea"
+                />
+                <Field
+                  label="Calibration examples *"
+                  value={form.calibrationExamples}
+                  onChange={(v) => update("calibrationExamples", v)}
+                  placeholder="Strong pass: shipped a developer platform pricing migration under real customer load. False positive: only owned internal tooling without external developer users."
+                  helper="Name what a strong pass and false positive look like before Claire screens."
+                  as="textarea"
+                />
+                <Field
+                  label="Must-haves *"
+                  value={form.notes}
+                  onChange={(v) => update("notes", v)}
+                  placeholder="Founder-mode judgment, API product depth, comp band, location, must-haves Claire should probe."
+                  as="textarea"
+                />
+                <Field
+                  label="Feedback loop *"
+                  value={form.feedbackLoop}
+                  onChange={(v) => update("feedbackLoop", v)}
+                  placeholder="After every accepted or rejected intro, Alex posts the pass/no-pass reason and one correction signal in the WeKruit thread."
+                  helper="Define how the hiring team's pass/no-pass signal gets back to Claire after each passed profile."
+                  as="textarea"
+                />
+                <Field
+                  label="Intro handoff *"
+                  value={form.introHandoff}
+                  onChange={(v) => update("introHandoff", v)}
+                  placeholder="If we accept the intro, route the candidate to Alex for a hiring-manager screen within two business days."
+                  helper="Define the accepted intro owner and real next step after a pass."
+                  as="textarea"
+                />
 
-              {error && (
-                <div
-                  role="alert"
-                  style={{
-                    padding: "10px 14px",
-                    background: "var(--danger-bg, #fde8e8)",
-                    border: "1px solid var(--danger, #c0392b)",
-                    color: "var(--danger, #c0392b)",
-                    borderRadius: "var(--r-md)",
-                    fontSize: 14,
-                  }}
-                >
-                  {error}
+                {error && (
+                  <div
+                    role="alert"
+                    style={{
+                      padding: "10px 14px",
+                      background: "var(--danger-bg, #fde8e8)",
+                      border: "1px solid var(--danger, #c0392b)",
+                      color: "var(--danger, #c0392b)",
+                      borderRadius: "var(--r-md)",
+                      fontSize: 14,
+                    }}
+                  >
+                    {error}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginTop: 4 }}>
+                  <Link to="/" className="btn btn--ghost" style={{ textDecoration: "none" }}>
+                    Cancel
+                  </Link>
+                  <button
+                    type="submit"
+                    className="btn btn--primary"
+                    disabled={submitting}
+                    style={{ minWidth: 160 }}
+                  >
+                    {submitting ? "Sending..." : "Send role brief"}
+                  </button>
                 </div>
-              )}
-
-              <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginTop: 4 }}>
-                <Link to="/" className="btn btn--ghost" style={{ textDecoration: "none" }}>
-                  Cancel
-                </Link>
-                <button
-                  type="submit"
-                  className="btn btn--primary"
-                  disabled={submitting}
-                  style={{ minWidth: 160 }}
-                >
-                  {submitting ? "Sending..." : "Send role brief"}
-                </button>
-              </div>
-            </form>
+              </form>
+            </>
           )}
         </div>
       </section>
       <Footer />
     </main>
+  )
+}
+
+function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadinessSummary }) {
+  return (
+    <section
+      aria-label="Role packet readiness"
+      style={{
+        marginTop: 28,
+        background: "rgba(250, 245, 236, 0.78)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-lg)",
+        padding: 18,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 14,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontFamily: "var(--font-sans)",
+              fontSize: 12,
+              color: "var(--ink-3)",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: 0,
+            }}
+          >
+            Before Claire screens
+          </div>
+          <h2
+            style={{
+              margin: "4px 0 0",
+              fontFamily: "var(--font-serif)",
+              fontWeight: 400,
+              fontSize: 24,
+              lineHeight: 1.12,
+              color: "var(--ink)",
+              letterSpacing: 0,
+            }}
+          >
+            Role packet
+          </h2>
+          <p
+            style={{
+              margin: "8px 0 0",
+              fontFamily: "var(--font-sans)",
+              fontSize: 14,
+              lineHeight: 1.45,
+              color: "var(--ink-2)",
+            }}
+          >
+            Complete these before WeKruit approves the role brief and Claire screens candidates.
+          </p>
+        </div>
+        <div
+          aria-label={`${summary.completedCount} of ${summary.totalCount} role packet items ready`}
+          style={{
+            flex: "0 0 auto",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-md)",
+            background: summary.ready ? "var(--success-bg)" : "var(--cream-2)",
+            color: summary.ready ? "var(--success)" : "var(--ink-2)",
+            padding: "8px 10px",
+            fontFamily: "var(--font-sans)",
+            fontSize: 13,
+            fontWeight: 700,
+            lineHeight: 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {summary.completedCount}/{summary.totalCount} ready
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(132px, 1fr))",
+          gap: 8,
+          marginTop: 16,
+        }}
+      >
+        {summary.items.map((item) => (
+          <div
+            key={item.id}
+            style={{
+              minHeight: 44,
+              border: `1px solid ${item.complete ? "var(--success-bg)" : "var(--border)"}`,
+              borderRadius: "var(--r-md)",
+              background: item.complete ? "rgba(230, 233, 217, 0.72)" : "var(--cream-3)",
+              padding: "9px 10px",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              minWidth: 0,
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 999,
+                flex: "0 0 auto",
+                background: item.complete ? "var(--success)" : "var(--ink-4)",
+              }}
+            />
+            <span
+              style={{
+                minWidth: 0,
+                fontFamily: "var(--font-sans)",
+                fontSize: 13,
+                fontWeight: 650,
+                color: item.complete ? "var(--success)" : "var(--ink-2)",
+                lineHeight: 1.2,
+                overflowWrap: "anywhere",
+              }}
+            >
+              {item.label}
+            </span>
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }
 
