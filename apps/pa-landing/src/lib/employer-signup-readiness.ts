@@ -4,6 +4,7 @@ import {
 } from "./employer-signup-model.js"
 
 export type EmployerSignupReadinessItemId =
+  | "company_contact"
   | "role_brief"
   | "hard_filters"
   | "evidence_probes"
@@ -36,10 +37,21 @@ function hasBrief(value: string) {
   return splitRoleBriefs(value).length > 0
 }
 
+function hasContactIdentity(form: EmployerSignupFormState) {
+  return hasText(form.companyName) && hasText(form.contactName) && form.workEmail.trim().includes("@")
+}
+
 export function deriveEmployerSignupReadiness(
   form: EmployerSignupFormState,
 ): EmployerSignupReadinessSummary {
   const items: EmployerSignupReadinessItem[] = [
+    {
+      id: "company_contact",
+      label: "Company contact",
+      description: "Company name, hiring owner, and work email for WeKruit review.",
+      targetId: "employer-company-contact",
+      complete: hasContactIdentity(form),
+    },
     {
       id: "role_brief",
       label: "Role brief",

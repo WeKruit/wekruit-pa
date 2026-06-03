@@ -184,6 +184,7 @@ export default function EmployerSignup() {
               >
                 <Row>
                   <Field
+                    id="employer-company-contact"
                     label="Company name *"
                     value={form.companyName}
                     onChange={(v) => update("companyName", v)}
@@ -865,7 +866,7 @@ function EmployerPacketPreview({ preview }: { preview: EmployerPacketPreviewMode
 function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadinessSummary }) {
   return (
     <section
-      aria-label="Role packet readiness"
+      aria-label="Role intake readiness"
       style={{
         marginTop: 28,
         background: "rgba(250, 245, 236, 0.78)",
@@ -907,7 +908,7 @@ function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadiness
               letterSpacing: 0,
             }}
           >
-            Role packet
+            Role intake
           </h2>
           <p
             style={{
@@ -922,7 +923,7 @@ function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadiness
           </p>
         </div>
         <div
-          aria-label={`${summary.completedCount} of ${summary.totalCount} role packet items ready`}
+          aria-label={`${summary.completedCount} of ${summary.totalCount} role intake items ready`}
           style={{
             flex: "0 0 auto",
             border: "1px solid var(--border)",
@@ -1016,7 +1017,7 @@ function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadiness
             lineHeight: 1.35,
           }}
         >
-          Ready for WeKruit review. Submit the completed role packet when company contact details are filled.
+          Ready for WeKruit review. Submit the completed role packet.
         </div>
       )}
 
