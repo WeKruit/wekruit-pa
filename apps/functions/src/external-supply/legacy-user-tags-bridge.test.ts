@@ -200,6 +200,53 @@ test("P2 (V2.1): existing strong skills are NOT overwritten by sourceTags weak f
   assert.equal(skills[0].name, "rust")
 })
 
+test("bridge fills legacy tags without clobbering existing globalTags skills", async () => {
+  const { db, store } = makeFakeFirestore()
+  store.set(
+    "pa-users",
+    new Map([
+      [
+        "cand-global-strong",
+        {
+          candidateId: "cand-global-strong",
+          globalTags: {
+            skills: [
+              {
+                name: "python",
+                bucket: "programming_languages",
+                proficiency: "expert",
+                evidenceCount: 5,
+                baseWeight: 0.95,
+              },
+            ],
+          },
+        },
+      ],
+    ])
+  )
+  const csRecord = makeRecord({
+    source: "coresignal_collect_v2",
+    sourceTags: ["typescript", "react"],
+  })
+  const result = await dualWriteLegacyUserTagsFromExternal(
+    db,
+    "cand-global-strong",
+    csRecord,
+    { nowIso: NOW }
+  )
+  assert.equal(result.wrote, true)
+  const written = store.get("pa-users")!.get("cand-global-strong") as {
+    tags: Record<string, unknown>
+    globalTags: Record<string, unknown>
+  }
+  const legacySkills = written.tags.skills as Array<{ name: string }>
+  assert.ok(legacySkills.some((s) => s.name === "typescript"))
+  const globalSkills = written.globalTags.skills as Array<{ name: string; baseWeight: number }>
+  assert.equal(globalSkills.length, 1)
+  assert.equal(globalSkills[0].name, "python")
+  assert.equal(globalSkills[0].baseWeight, 0.95)
+})
+
 test("bridge on a record with no useful signal fills only the canonical 'other' industry sentinel", async () => {
   const { db, store } = makeFakeFirestore()
   store.set("pa-users", new Map([["cand-3", { candidateId: "cand-3" }]]))
