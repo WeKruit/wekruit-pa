@@ -250,14 +250,17 @@ test("CandidatePortal external recommendations are source evidence, not apply-bo
   assert.match(source, /\{peekCtaLabel\} <Icon name="arrow-right" size=\{12\} stroke=\{2\} \/>/)
 })
 
-test("CandidatePortal visibility actions route to reviewed privacy requests", () => {
+test("CandidatePortal visibility actions route to the standalone privacy surface", () => {
   assert.doesNotMatch(source, /Pause for a week|Manage availability|Who&apos;s seeing me|Manage visibility/)
   assert.match(source, /Request outreach change/)
   assert.match(source, /Request availability change/)
-  assert.match(source, /to="\/me\/profile#privacy-requests"/)
+  assert.match(source, /to="\/me\/privacy#privacy-requests"/)
+  assert.match(source, /to="\/me\/privacy#privacy"/)
+  assert.doesNotMatch(source, /to="\/me\/profile#privacy/)
   assert.match(source, /id="privacy"/)
   assert.match(source, /id="privacy-requests"/)
   assert.match(source, /function useProfileHashScroll/)
+  assert.match(source, /function PrivacySurface\(\{ profile \}: \{ profile: CandidateSelfProfile \}\)[\s\S]*useProfileHashScroll\(\)/)
   assert.match(source, /document\.getElementById\(hash\)\?\.scrollIntoView/)
 })
 

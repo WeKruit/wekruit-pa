@@ -1979,7 +1979,7 @@ function MeVisibilityCard({ visibility }: { visibility: MeVisibility }) {
           <strong className="wkv3-vis__label">{visibility.label}</strong>
         </div>
         <Link
-          to="/me/profile#privacy-requests"
+          to="/me/privacy#privacy-requests"
           className="wkv3-vis__manage"
           aria-label="Review visibility requests"
         >
@@ -1989,11 +1989,11 @@ function MeVisibilityCard({ visibility }: { visibility: MeVisibility }) {
       <p className="wkv3-vis__one">{visibility.one}</p>
       <p className="wkv3-vis__two">{visibility.two}</p>
       <div className="wkv3-vis__actions">
-        <Link to="/me/profile#privacy-requests" className="wk-btn wk-btn--secondary wk-btn--sm">
+        <Link to="/me/privacy#privacy-requests" className="wk-btn wk-btn--secondary wk-btn--sm">
           {visibility.cta}
         </Link>
         <Link
-          to="/me/profile#privacy"
+          to="/me/privacy#privacy"
           className="wkv3-vis__btn wkv3-vis__btn--quiet"
         >
           Review privacy rules
@@ -2014,7 +2014,7 @@ function MeVisibilityPendingCard({ error }: { error: string | null }) {
           </strong>
         </div>
         <Link
-          to="/me/profile#privacy-requests"
+          to="/me/privacy#privacy-requests"
           className="wkv3-vis__manage"
           aria-label="Review visibility requests"
         >
@@ -2026,7 +2026,7 @@ function MeVisibilityPendingCard({ error }: { error: string | null }) {
       </p>
       <p className="wkv3-vis__two">Profile edits still save normally.</p>
       <div className="wkv3-vis__actions">
-        <Link to="/me/profile#privacy-requests" className="wk-btn wk-btn--secondary wk-btn--sm">
+        <Link to="/me/privacy#privacy-requests" className="wk-btn wk-btn--secondary wk-btn--sm">
           Request outreach change
         </Link>
       </div>
@@ -2858,6 +2858,7 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
 }
 
 function PrivacySurface({ profile }: { profile: CandidateSelfProfile }) {
+  useProfileHashScroll()
   const claireHref = buildClaireImessageHref(profile.senderNumber)
   return (
     <CandidateShell signedIn signedInUser={{ name: profile.displayName ?? "You", email: profile.emailMasked }} claireHref={claireHref}>
