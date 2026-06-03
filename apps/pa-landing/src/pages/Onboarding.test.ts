@@ -24,3 +24,13 @@ test("duplicate onboarding avoids reset-style visible actions", () => {
   assert.doesNotMatch(source, />Start fresh</)
   assert.doesNotMatch(source, /<strong[^>]*>Start fresh<\/strong>/)
 })
+
+test("done handoff continues an existing Claire conversation when verification proves one exists", () => {
+  assert.match(source, /claireConversationStarted=\{claireConversationStarted\}/)
+  assert.match(source, /claireConversationStarted: boolean/)
+  assert.match(source, /const continuingClaireConversation = claireConversationStarted \|\| isJobInterview/)
+  assert.match(source, /Claire already has your thread/)
+  assert.match(source, /continuingClaireConversation \? "Continue with Claire" : "Open Claire in iMessage"/)
+  assert.match(source, /I’ll pick up from our existing thread\./)
+  assert.match(source, /Claire thread found/)
+})

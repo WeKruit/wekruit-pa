@@ -363,6 +363,7 @@ export default function Onboarding() {
               profile={profile}
               showProfileLink={portalReady}
               returnJobId={returnJobId}
+              claireConversationStarted={claireConversationStarted}
               onGo={(r) => {
                 if (r === "dashboard") {
                   if (!portalReady) return
@@ -998,11 +999,13 @@ function Done({
   profile,
   showProfileLink,
   returnJobId,
+  claireConversationStarted,
   onGo,
 }: {
   profile: Profile
   showProfileLink: boolean
   returnJobId: string | null
+  claireConversationStarted: boolean
   onGo: (r: "dashboard" | "landing") => void
 }) {
   const number = profile.listPosition
@@ -1012,11 +1015,13 @@ function Done({
       ? buildHelloWekruitOpenerBody(profile.candidateId)
       : buildHelloWekruitOpenerBody("")
   const isJobInterview = Boolean(returnJobId)
+  const continuingClaireConversation = claireConversationStarted || isJobInterview
   const imessageAvailable = canOpenImessageDeepLink()
   const smsHref =
     imessageAvailable && profile.senderNumber
       ? `sms:${profile.senderNumber}?&body=${encodeURIComponent(openerBody)}`
       : null
+  const primaryActionLabel = continuingClaireConversation ? "Continue with Claire" : "Open Claire in iMessage"
   return (
     <div className="claire-handoff">
       <style>{CANDIDATE_STYLES}</style>
@@ -1043,13 +1048,15 @@ function Done({
             margin: 0,
           }}
         >
-          {isJobInterview ? "Continue with Claire in iMessage." : "Open Claire in iMessage."}
+          {continuingClaireConversation ? "Continue with Claire in iMessage." : "Open Claire in iMessage."}
         </h1>
         <p className="lead claire-handoff__copy">
           {imessageAvailable ? (
             <>
               {isJobInterview
                 ? "Your profile and this role are connected. Send the pre-filled code exactly as shown; Claire will continue the role interview from there."
+                : claireConversationStarted
+                  ? "Claire already has your thread. Send the pre-filled code exactly as shown if this page asks for it; she will pick up from the existing conversation."
                 : "Your resume and profile are saved. Open iMessage and send the pre-filled code exactly as shown."}
             </>
           ) : (
@@ -1062,7 +1069,7 @@ function Done({
         <div className="claire-handoff__actions">
           {smsHref ? (
             <a className="btn btn--primary btn--lg" href={smsHref}>
-              {isJobInterview ? "Send code to continue" : "Open Claire in iMessage"}
+              {primaryActionLabel}
             </a>
           ) : !imessageAvailable ? (
             <p className="caption claire-handoff__fallback">
@@ -1096,7 +1103,7 @@ function Done({
             messages={[
               { from: "user", text: openerBody },
               { from: "claire", text: isJobInterview ? "Got it — I found your profile and this role." : "Got it — I found your profile." },
-              { from: "claire", text: isJobInterview ? "I’ll continue the role interview from here." : "First question: what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?" },
+              { from: "claire", text: isJobInterview ? "I’ll continue the role interview from here." : claireConversationStarted ? "I’ll pick up from our existing thread." : "First question: what matters most in your next company: career growth, compensation, stability, mission, learning, or something else?" },
             ]}
           />
         </div>
@@ -1105,7 +1112,7 @@ function Done({
       <div className="claire-handoff__checks" aria-label="Setup status">
         <span>Resume saved</span>
         <span>Profile linked</span>
-        <span>Claire ready</span>
+        <span>{claireConversationStarted ? "Claire thread found" : "Claire ready"}</span>
       </div>
     </div>
   )
