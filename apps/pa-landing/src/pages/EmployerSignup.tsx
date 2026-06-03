@@ -5,7 +5,7 @@
  * The user-facing frame must match /employers: employers send a role brief,
  * Claire screens candidates, and WeKruit returns consented passed profiles.
  */
-import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
+import { useEffect, useState, type CSSProperties, type FormEvent, type MouseEvent, type ReactNode } from "react"
 import { Link, useLocation } from "react-router-dom"
 import {
   EMPLOYER_PACKET_STARTERS,
@@ -51,6 +51,21 @@ const EMPTY_FORM: EmployerSignupFormState = {
   notes: "",
 }
 
+type FieldJumpHandler = (event: MouseEvent<HTMLAnchorElement>, targetId: string) => void
+
+function focusEmployerFieldControl(targetId: string) {
+  const target = document.getElementById(targetId)
+  const control = target?.querySelector<HTMLElement>("input, textarea, select")
+  control?.focus({ preventScroll: true })
+}
+
+function handleEmployerFieldJump(event: MouseEvent<HTMLAnchorElement>, targetId: string) {
+  event.preventDefault()
+  window.history.pushState(null, "", `#${targetId}`)
+  document.getElementById(targetId)?.scrollIntoView({ behavior: "smooth", block: "start" })
+  window.setTimeout(() => focusEmployerFieldControl(targetId), 280)
+}
+
 export default function EmployerSignup() {
   useEmployerHashScroll()
   const [form, setForm] = useState<EmployerSignupFormState>(EMPTY_FORM)
@@ -59,6 +74,7 @@ export default function EmployerSignup() {
   const [error, setError] = useState<string | null>(null)
   const readiness = deriveEmployerSignupReadiness(form)
   const packetPreview = deriveEmployerPacketPreview(form)
+  const handleFieldJump: FieldJumpHandler = handleEmployerFieldJump
 
   const update = <K extends keyof EmployerSignupFormState>(k: K, v: EmployerSignupFormState[K]) =>
     setForm((prev) => ({ ...prev, [k]: v }))
@@ -139,6 +155,7 @@ export default function EmployerSignup() {
           >
             <a
               href="#employer-company-contact"
+              onClick={(event) => handleFieldJump(event, "employer-company-contact")}
               className="btn btn--primary"
               style={{ textDecoration: "none" }}
             >
@@ -165,7 +182,7 @@ export default function EmployerSignup() {
                   setForm((prev) => applyEmployerPacketStarter(prev, starterId))
                 }}
               />
-              <EmployerPacketReadiness summary={readiness} />
+              <EmployerPacketReadiness summary={readiness} onFieldJump={handleFieldJump} />
               <EmployerPacketPreview preview={packetPreview} />
               <EmployerCalibrationLoop />
               <form
@@ -287,7 +304,7 @@ export default function EmployerSignup() {
                   as="textarea"
                 />
 
-                <EmployerSendReview preview={packetPreview} summary={readiness} />
+                <EmployerSendReview preview={packetPreview} summary={readiness} onFieldJump={handleFieldJump} />
 
                 {error && (
                   <div
@@ -343,7 +360,15 @@ function useEmployerHashScroll() {
   }, [location.hash])
 }
 
-function EmployerSendReview({ preview, summary }: { preview: EmployerPacketPreviewModel; summary: EmployerSignupReadinessSummary }) {
+function EmployerSendReview({
+  preview,
+  summary,
+  onFieldJump,
+}: {
+  preview: EmployerPacketPreviewModel
+  summary: EmployerSignupReadinessSummary
+  onFieldJump: FieldJumpHandler
+}) {
   return (
     <section
       aria-label="Send role packet review"
@@ -412,6 +437,7 @@ function EmployerSendReview({ preview, summary }: { preview: EmployerPacketPrevi
       {summary.nextIncompleteItem ? (
         <a
           href={`#${summary.nextIncompleteItem.targetId}`}
+          onClick={(event) => onFieldJump(event, summary.nextIncompleteItem!.targetId)}
           className="btn btn--ghost btn--sm"
           style={{ justifySelf: "start", textDecoration: "none" }}
         >
@@ -863,7 +889,13 @@ function EmployerPacketPreview({ preview }: { preview: EmployerPacketPreviewMode
   )
 }
 
-function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadinessSummary }) {
+function EmployerPacketReadiness({
+  summary,
+  onFieldJump,
+}: {
+  summary: EmployerSignupReadinessSummary
+  onFieldJump: FieldJumpHandler
+}) {
   return (
     <section
       aria-label="Role intake readiness"
@@ -996,6 +1028,7 @@ function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadiness
           </div>
           <a
             href={`#${summary.nextIncompleteItem.targetId}`}
+            onClick={(event) => onFieldJump(event, summary.nextIncompleteItem!.targetId)}
             className="btn btn--ghost btn--sm"
             style={{ textDecoration: "none", flex: "0 0 auto" }}
           >
@@ -1033,6 +1066,7 @@ function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadiness
           <a
             key={item.id}
             href={`#${item.targetId}`}
+            onClick={(event) => onFieldJump(event, item.targetId)}
             aria-label={`Jump to ${item.label}`}
             style={{
               minHeight: 44,

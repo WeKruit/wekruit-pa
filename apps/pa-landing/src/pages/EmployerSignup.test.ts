@@ -130,6 +130,18 @@ test("EmployerSignup turns role packet readiness into actionable field jumps", (
   assert.match(source, /id="employer-intro-handoff"/)
 })
 
+test("EmployerSignup field jumps focus the target control after the mobile scroll", () => {
+  assert.match(source, /function handleEmployerFieldJump\(/)
+  assert.match(source, /event\.preventDefault\(\)/)
+  assert.match(source, /window\.history\.pushState\(null, "", `#\$\{targetId\}`\)/)
+  assert.match(source, /function focusEmployerFieldControl\(targetId: string\)/)
+  assert.match(source, /querySelector<HTMLElement>\("input, textarea, select"\)/)
+  assert.match(source, /control\?\.focus\(\{ preventScroll: true \}\)/)
+  assert.match(source, /onClick=\{\(event\) => handleFieldJump\(event, "employer-company-contact"\)\}/)
+  assert.match(source, /onClick=\{\(event\) => onFieldJump\(event, summary\.nextIncompleteItem!\.targetId\)\}/)
+  assert.match(source, /onClick=\{\(event\) => onFieldJump\(event, item\.targetId\)\}/)
+})
+
 test("EmployerSignup honors role packet hash targets when the page loads", () => {
   assert.match(source, /function useEmployerHashScroll\(\)/)
   assert.match(source, /export default function EmployerSignup\(\)[\s\S]*useEmployerHashScroll\(\)/)
@@ -183,8 +195,8 @@ test("EmployerSignup renders the live Claire packet contract before submit", () 
 })
 
 test("EmployerSignup shows a final packet review before the send action", () => {
-  assert.match(source, /<EmployerSendReview preview=\{packetPreview\} summary=\{readiness\} \/>/)
-  assert.match(source, /function EmployerSendReview\(\{ preview, summary \}: \{ preview: EmployerPacketPreviewModel; summary: EmployerSignupReadinessSummary \}\)/)
+  assert.match(source, /<EmployerSendReview preview=\{packetPreview\} summary=\{readiness\} onFieldJump=\{handleFieldJump\} \/>/)
+  assert.match(source, /function EmployerSendReview\(\{[\s\S]*preview,[\s\S]*summary,[\s\S]*onFieldJump,[\s\S]*\}: \{[\s\S]*preview: EmployerPacketPreviewModel[\s\S]*summary: EmployerSignupReadinessSummary[\s\S]*onFieldJump: FieldJumpHandler[\s\S]*\}\)/)
   assert.match(source, /aria-label="Send role packet review"/)
   assert.match(source, /Before you send/)
   assert.match(source, /This submits the role packet Claire screens against/)
