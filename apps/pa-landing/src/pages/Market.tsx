@@ -442,6 +442,29 @@ function MarketTab({
   )
 }
 
+function MarketTrackedRolesEmpty({ onViewRoleBriefs }: { onViewRoleBriefs: () => void }) {
+  return (
+    <section className="wk-market-empty" aria-label="Tracked roles empty state">
+      <div className="wk-market-empty__copy">
+        <p className="wk-eyebrow">Tracked roles</p>
+        <h2>No tracked roles in this view yet.</h2>
+        <p>
+          Role briefs are still available for Claire interviews. Use those first, or update role
+          signals so Claire knows what external sources should matter next.
+        </p>
+      </div>
+      <div className="wk-market-empty__actions">
+        <a className="wk-btn wk-btn--primary" href="/me/profile#profile-corrections">
+          Update role signals
+        </a>
+        <button type="button" className="wk-btn wk-btn--secondary" onClick={onViewRoleBriefs}>
+          View role briefs
+        </button>
+      </div>
+    </section>
+  )
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Rows
 // ────────────────────────────────────────────────────────────────────────────
@@ -724,6 +747,7 @@ export default function Market(): ReactNode {
   )
   const huntingTotal = hunting.data?.pages[0]?.total ?? 0
   const directJobs = direct.data ?? []
+  const trackedRolesEmpty = hunting.isSuccess && huntingTotal === 0
 
   const onOpenJob = useCallback((job: DisplayJob) => {
     if (!job.applyUrl) return
@@ -814,113 +838,117 @@ export default function Market(): ReactNode {
                 </div>
               </section>
 
-              <div className="wk-market__layout">
-                <FilterRail
-                  fn={fnSel} setFn={setFnSel}
-                  level={levelSel} setLevel={setLevelSel}
-                  loc={locSel} setLoc={setLocSel}
-                  onClear={clearFilters}
-                />
-                <div className="wk-market__col">
-                  <div className="wk-market__toolbar">
-                    <label className="wk-market__search">
-                      <input
-                        type="search"
-                        placeholder="Search roles, companies…"
-                        value={searchQ}
-                        onChange={(e) => setSearchQ(e.target.value)}
-                      />
-                    </label>
-                    <div className="wk-viewtog" role="tablist" aria-label="View">
-                      {(["table", "cards"] as const).map((v) => (
-                        <button
-                          key={v}
-                          className={`wk-viewtog__btn${view === v ? " is-active" : ""}`}
-                          role="tab"
-                          aria-selected={view === v}
-                          onClick={() => setView(v)}
-                        >
-                          <span className={`wk-viewtog__ico wk-viewtog__ico--${v}`} aria-hidden="true" />
-                          {v === "table" ? "Table" : "Cards"}
-                        </button>
-                      ))}
+              {trackedRolesEmpty ? (
+                <MarketTrackedRolesEmpty onViewRoleBriefs={() => setTab("direct")} />
+              ) : (
+                <div className="wk-market__layout">
+                  <FilterRail
+                    fn={fnSel} setFn={setFnSel}
+                    level={levelSel} setLevel={setLevelSel}
+                    loc={locSel} setLoc={setLocSel}
+                    onClear={clearFilters}
+                  />
+                  <div className="wk-market__col">
+                    <div className="wk-market__toolbar">
+                      <label className="wk-market__search">
+                        <input
+                          type="search"
+                          placeholder="Search roles, companies…"
+                          value={searchQ}
+                          onChange={(e) => setSearchQ(e.target.value)}
+                        />
+                      </label>
+                      <div className="wk-viewtog" role="tablist" aria-label="View">
+                        {(["table", "cards"] as const).map((v) => (
+                          <button
+                            key={v}
+                            className={`wk-viewtog__btn${view === v ? " is-active" : ""}`}
+                            role="tab"
+                            aria-selected={view === v}
+                            onClick={() => setView(v)}
+                          >
+                            <span className={`wk-viewtog__ico wk-viewtog__ico--${v}`} aria-hidden="true" />
+                            {v === "table" ? "Table" : "Cards"}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
 
-                  {hunting.isPending ? (
-                    <div className="wk-tbl__empty wk-tbl__empty--block">
-                      <strong>Loading roles…</strong>
-                      Checking fresh external roles Claire can track for you.
-                    </div>
-                  ) : hunting.isError ? (
-                    <div className="wk-tbl__empty wk-tbl__empty--block">
-                      <strong>Couldn't load roles.</strong>
-                      {hunting.error.message}
-                    </div>
-                  ) : view === "table" ? (
-                    <>
-                    <div className="wk-tbl-wrap">
-                      <table className="wk-tbl">
-                        <thead>
-                          <tr>
-                            <th className="wk-tbl__h">Company</th>
-                            <th className="wk-tbl__h">Role</th>
-                            <th className="wk-tbl__h">Function</th>
-                            <th className="wk-tbl__h">Location</th>
-                            <th className="wk-tbl__h">Comp</th>
-                            <th className="wk-tbl__h">Posted</th>
-                            <th className="wk-tbl__h wk-tbl__h--cta">Next step</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {huntingJobs.length === 0 ? (
-                            <tr><td colSpan={7} className="wk-tbl__empty">
-                              <strong>No roles match.</strong> Try clearing filters or your search.
-                            </td></tr>
-                          ) : huntingJobs.map((r) => (
-                            <HuntRow key={r.id} r={r} onOpen={() => onOpenJob(r)} />
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                    {hunting.hasNextPage ? (
-                      <div className="wk-loadmore">
-                        <button
-                          className="wk-btn wk-btn--secondary"
-                          disabled={hunting.isFetchingNextPage}
-                          onClick={() => { void hunting.fetchNextPage() }}
-                        >
-                          {hunting.isFetchingNextPage ? "Loading…" : `Load more (${huntingTotal - huntingJobs.length} left)`}
-                        </button>
+                    {hunting.isPending ? (
+                      <div className="wk-tbl__empty wk-tbl__empty--block">
+                        <strong>Loading roles…</strong>
+                        Checking fresh external roles Claire can track for you.
                       </div>
-                    ) : null}
-                    </>
-                  ) : (
-                    <>
-                    <div className="wk-hcards">
-                      {huntingJobs.length === 0 ? (
-                        <div className="wk-tbl__empty wk-tbl__empty--block">
-                          <strong>No roles match.</strong> Try clearing filters or your search.
+                    ) : hunting.isError ? (
+                      <div className="wk-tbl__empty wk-tbl__empty--block">
+                        <strong>Couldn't load roles.</strong>
+                        {hunting.error.message}
+                      </div>
+                    ) : view === "table" ? (
+                      <>
+                        <div className="wk-tbl-wrap">
+                          <table className="wk-tbl">
+                            <thead>
+                              <tr>
+                                <th className="wk-tbl__h">Company</th>
+                                <th className="wk-tbl__h">Role</th>
+                                <th className="wk-tbl__h">Function</th>
+                                <th className="wk-tbl__h">Location</th>
+                                <th className="wk-tbl__h">Comp</th>
+                                <th className="wk-tbl__h">Posted</th>
+                                <th className="wk-tbl__h wk-tbl__h--cta">Next step</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {huntingJobs.length === 0 ? (
+                                <tr><td colSpan={7} className="wk-tbl__empty">
+                                  <strong>No roles match.</strong> Try clearing filters or your search.
+                                </td></tr>
+                              ) : huntingJobs.map((r) => (
+                                <HuntRow key={r.id} r={r} onOpen={() => onOpenJob(r)} />
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
-                      ) : huntingJobs.map((r) => (
-                        <HuntCard key={r.id} r={r} onOpen={() => onOpenJob(r)} />
-                      ))}
-                    </div>
-                    {hunting.hasNextPage ? (
-                      <div className="wk-loadmore">
-                        <button
-                          className="wk-btn wk-btn--secondary"
-                          disabled={hunting.isFetchingNextPage}
-                          onClick={() => { void hunting.fetchNextPage() }}
-                        >
-                          {hunting.isFetchingNextPage ? "Loading…" : `Load more (${huntingTotal - huntingJobs.length} left)`}
-                        </button>
-                      </div>
-                    ) : null}
-                    </>
-                  )}
+                        {hunting.hasNextPage ? (
+                          <div className="wk-loadmore">
+                            <button
+                              className="wk-btn wk-btn--secondary"
+                              disabled={hunting.isFetchingNextPage}
+                              onClick={() => { void hunting.fetchNextPage() }}
+                            >
+                              {hunting.isFetchingNextPage ? "Loading…" : `Load more (${huntingTotal - huntingJobs.length} left)`}
+                            </button>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <>
+                        <div className="wk-hcards">
+                          {huntingJobs.length === 0 ? (
+                            <div className="wk-tbl__empty wk-tbl__empty--block">
+                              <strong>No roles match.</strong> Try clearing filters or your search.
+                            </div>
+                          ) : huntingJobs.map((r) => (
+                            <HuntCard key={r.id} r={r} onOpen={() => onOpenJob(r)} />
+                          ))}
+                        </div>
+                        {hunting.hasNextPage ? (
+                          <div className="wk-loadmore">
+                            <button
+                              className="wk-btn wk-btn--secondary"
+                              disabled={hunting.isFetchingNextPage}
+                              onClick={() => { void hunting.fetchNextPage() }}
+                            >
+                              {hunting.isFetchingNextPage ? "Loading…" : `Load more (${huntingTotal - huntingJobs.length} left)`}
+                            </button>
+                          </div>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </section>
         ) : (
@@ -1086,6 +1114,39 @@ const MARKET_STYLES = String.raw`
 }
 .wk-shell .wk-market-contract__actions {
   grid-column: 2; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: -8px;
+}
+
+.wk-shell .wk-market-empty {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 24px;
+  align-items: center;
+  padding: 28px 0;
+  border-top: 1px solid var(--wk-border);
+  border-bottom: 1px solid var(--wk-border);
+  margin-bottom: 28px;
+}
+.wk-shell .wk-market-empty__copy { max-width: 660px; }
+.wk-shell .wk-market-empty__copy h2 {
+  margin: 8px 0;
+  font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
+  font-weight: 400;
+  font-size: 36px;
+  line-height: 1.05;
+  letter-spacing: 0;
+  color: var(--wk-ink);
+}
+.wk-shell .wk-market-empty__copy p:last-child {
+  margin: 0;
+  color: var(--wk-ink-2);
+  font-size: 15px;
+  line-height: 1.5;
+}
+.wk-shell .wk-market-empty__actions {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .wk-shell .wk-batch {
@@ -1377,6 +1438,8 @@ const MARKET_STYLES = String.raw`
 @media (max-width: 1080px) {
   .wk-shell .wk-market-contract { grid-template-columns: 1fr; gap: 18px; }
   .wk-shell .wk-market-contract__actions { grid-column: auto; margin-top: 0; }
+  .wk-shell .wk-market-empty { grid-template-columns: 1fr; align-items: stretch; }
+  .wk-shell .wk-market-empty__actions { justify-content: flex-start; }
   .wk-shell .wk-market__layout { grid-template-columns: 1fr; gap: 24px; }
   .wk-shell .wk-filt { position: static; }
   .wk-shell .wk-filt__list { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1396,6 +1459,7 @@ const MARKET_STYLES = String.raw`
   .wk-shell .wk-tbl { min-width: 760px; }
 }
 @media (max-width: 720px) {
+  .wk-shell .wk-market-empty__copy h2 { font-size: 32px; }
   .wk-shell .wk-direct-table { display: none; }
   .wk-shell .wk-direct-cards { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 8px; }
   .wk-shell .wk-direct-card__head { grid-template-columns: 42px minmax(0, 1fr); }

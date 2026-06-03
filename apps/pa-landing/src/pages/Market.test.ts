@@ -26,6 +26,16 @@ test("Market role-brief empty state avoids unproven background scanning claims",
   assert.match(source, /Check tracked roles and keep your profile preferences current\./)
 })
 
+test("Market tracked-role zero state moves candidates to real next actions before filters", () => {
+  assert.match(source, /function MarketTrackedRolesEmpty\(\{ onViewRoleBriefs \}: \{ onViewRoleBriefs: \(\) => void \}\)/)
+  assert.match(source, /No tracked roles in this view yet/)
+  assert.match(source, /Role briefs are still available for Claire interviews/)
+  assert.match(source, /Update role signals/)
+  assert.match(source, /View role briefs/)
+  assert.match(source, /const trackedRolesEmpty = hunting\.isSuccess && huntingTotal === 0/)
+  assert.match(source, /\{trackedRolesEmpty \? \([\s\S]*<MarketTrackedRolesEmpty onViewRoleBriefs=\{\(\) => setTab\("direct"\)\} \/>[\s\S]*\) : \([\s\S]*<div className="wk-market__layout">/)
+})
+
 test("Market does not invent role fit confidence from a hash", () => {
   assert.doesNotMatch(source, /function fitForId/)
   assert.doesNotMatch(source, /fit:\s*fitForId/)
