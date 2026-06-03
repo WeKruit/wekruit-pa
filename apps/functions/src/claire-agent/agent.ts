@@ -131,6 +131,9 @@ export interface BuildClaireAgentOptions {
   prescreenContext?: string
   /** cv-parsed re-entry: the résumé just parsed → swap the generic kickoff for the PART-2 pitch. */
   postParsePitch?: boolean
+  /** cv-parsed re-entry (BLOCKER 2): the parsed-profile summary from the handoff context, surfaced in
+   *  the turn context so the pitch turn always has the profile (never reads the marker as empty). */
+  postParsePitchSummary?: string
   /** résumé-drop turn (inline media present, no parse yet) → ACK + HOLD, do NOT pitch / find_match. */
   resumeJustDropped?: boolean
 }
@@ -166,11 +169,15 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
       // post-parse pitch + résumé-drop ACK directives (set by cutover for the cv-parsed re-entry /
       // the inline media-drop turn respectively; default off for every other turn).
       postParsePitch: opts.postParsePitch,
+      postParsePitchSummary: opts.postParsePitchSummary,
       resumeJustDropped: opts.resumeJustDropped,
     }),
     tools: buildClaireTools(ctx, {
       prescreenPrompts: opts.prescreenPrompts,
       judgeContext: opts.judgeContext,
+      // BLOCKER 3: on the post-parse pitch turn the pitch MUST be text bubbles — drop the tapback /
+      // no_reply / status tools so a deliveredViaTool short-circuit can't swallow the pitch.
+      forbidSuppressingDelivery: opts.postParsePitch === true,
     }),
     // Multi-bubble reply contract — finalOutput is { messages: string[] }, delivered one send each.
     outputType: ClaireReplySchema,
@@ -424,6 +431,9 @@ export interface RunClaireTurnDeps {
   /** cv-parsed re-entry (Adam 2026-06-02): the résumé just finished parsing → PITCH from the freshly
    *  loaded profile, then offer find_match. Set by cutover for the resume_parse_completed event (canary). */
   postParsePitch?: boolean
+  /** cv-parsed re-entry (BLOCKER 2): the candidateProfileSummary the cutover read off the handoff
+   *  context — threaded into the turn context so the pitch never reads the marker as an empty résumé. */
+  postParsePitchSummary?: string
   /** résumé-drop turn: an inline résumé media is present + not yet parsed → ACK + HOLD (no pitch, no
    *  find_match this turn; the parse runs async, the pitch fires on the resume_parse_completed re-entry). */
   resumeJustDropped?: boolean
@@ -517,6 +527,7 @@ export async function runClaireTurn(
     judgeContext: deps.judgeContext,
     prescreenContext: deps.prescreenContext,
     postParsePitch: deps.postParsePitch,
+    postParsePitchSummary: deps.postParsePitchSummary,
     resumeJustDropped: deps.resumeJustDropped,
   })
   const session = makeClaireSession({
@@ -542,6 +553,10 @@ export async function runClaireTurn(
     globalContext,
     pendingStep: deps.pendingStep,
     prescreenContext: deps.prescreenContext,
+    // BLOCKER 2: surface the parsed-profile summary on the post-parse pitch turn (belt-and-suspenders
+    // vs a loadGlobalContext read that raced the parse write) so the model never reads the marker empty.
+    postParsePitch: deps.postParsePitch,
+    postParsePitchSummary: deps.postParsePitchSummary,
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const runInput: any[] = []
