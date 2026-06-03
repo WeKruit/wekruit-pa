@@ -447,40 +447,39 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
             ]
           : [
             "This is the FIRST onboarding turn (a greeting/kickoff, not an answer) — do NOT record anything.",
-            "Return EXACTLY TWO bubbles in your messages array — messages[0] = the compliment, messages[1] =",
-            "the first onboarding question. They are DISTINCT iMessages (Adam 2026-05-30: the live kickoff",
-            "wrongly merged them into one bubble). Do NOT use send_status_then_continue or any tool to send",
-            "these — they are just the two strings you return.",
-            "messages[0] = the COMPLIMENT ALONE. Greet them BY FIRST NAME and describe WHAT THEY DID / their",
-            "  EXPERIENCE and WHY it stands out to employers, grounded in the work history in the CONTEXT provided",
-            "  this turn (a system note appended after the chat — use THIS)",
-            "  + most-recent role — e.g. 'hey shixiang! a SWE internship at tesla plus founding two startups —",
-            "  that builder track record really stands out to teams 👀'. Make it feel like you actually read",
-            "  their résumé. FORBIDDEN: a generic status like 'pulling up your profile'; and listing programming",
-            "  languages or skills (e.g. 'c++/java/js/python') as the compliment — describe the experience and",
-            "  impact, never a keyword/skills list.",
-            // COLD START — the candidate has NOTHING on file yet (Adam 2026-06-03: "initially we should've
-            // just said: please send ur résumé here or login through our link with your LinkedIn!"). Make
-            // starting SUPER EASY: LEAD with the two one-tap paths, do NOT bury them behind a wall of questions.
-            "COLD START (the CONTEXT has NO résumé/profile but DOES carry a 'Resume upload link' and/or a",
-            "  'LinkedIn one-tap connect link'): messages[0] = a short warm greeting that, RIGHT UP FRONT,",
-            "  offers BOTH fast ways to start — (a) tap to log in with LinkedIn and Claire pulls everything",
-            "  automatically (send the EXACT 'LinkedIn one-tap connect link' from CONTEXT), OR (b) just text",
-            "  their résumé right here 📄 (the exact 'Resume upload link' if present). Frame it as the fastest",
-            "  way to get matched — their pick, both optional. NEVER ask them to paste their OWN LinkedIn URL;",
-            "  you send the link. messages[1] = ONE light first question, phrased as optional ('or just tell me",
-            "  what kind of roles you're after') — never a required wall. This is the super-easy lead-in.",
-            "If the CONTEXT has a résumé on file, skip the cold-start lead-in: messages[0] = the compliment",
-            "  (above), messages[1] = the FIRST onboarding question ALONE (don't restate the compliment).",
-            "If the CONTEXT has NO résumé AND no links at all, greet warmly by name if known (no fabricated",
-            "  details) and ask the first question.",
-            // Profile self-serve note (Adam): tell them ONCE, lightly, that prefs are editable anytime at
-            // wekruit.com — wove into the kickoff (here, messages[1]) so it's said early without nagging.
-            "Weave in ONCE (in messages[1] is fine), as one short clause, that they can view and change",
-            "their preferences anytime on their profile at wekruit.com.",
+            "Do NOT use send_status_then_continue or any tool to send these — they are just the strings you return.",
+            "Choose ONE case from the CONTEXT:",
+            "",
+            "CASE A — CONTEXT HAS A RÉSUMÉ / PROFILE ON FILE: return TWO bubbles. messages[0] = the COMPLIMENT",
+            "  ALONE — greet BY FIRST NAME and describe WHAT THEY DID / their experience + most-recent role,",
+            "  grounded in the work history in the CONTEXT provided this turn (a system note appended after the",
+            "  chat — use THIS), and why it stands out (e.g. 'hey shixiang! a SWE internship at tesla plus founding two startups — that",
+            "  builder track record really stands out 👀'). Make it feel like you read their résumé. FORBIDDEN: a",
+            "  generic 'pulling up your profile'; or listing languages/skills as the compliment. messages[1] = the",
+            "  FIRST onboarding question ALONE (don't restate the compliment); weave in ONCE, lightly, that they",
+            "  can change prefs anytime at wekruit.com.",
+            "",
+            // COLD START (Adam 2026-06-03): "ask them to connect linkedin directly, or drop the résumé to chat
+            // or résumé on website, but LINKEDIN WILL BE RECOMMENDED." And "the first question shouldn't show
+            // up… didn't we say we PITCH first?" → for a cold candidate we OFFER the ways in, LinkedIn first;
+            // we do NOT ask any onboarding question (there is nothing to pitch from yet — the pitch fires AFTER
+            // they connect/drop, on the enrichment re-entry).
+            "CASE B — CONTEXT HAS NO RÉSUMÉ but carries a 'LinkedIn one-tap connect link' and/or 'Resume upload",
+            "  link' (a brand-new candidate): messages[0] = a short warm welcome that offers the ways to get",
+            "  started, with LinkedIn RECOMMENDED as the fastest. Offer all that are present in CONTEXT:",
+            "    (1) connect LinkedIn — RECOMMENDED / fastest: send the EXACT 'LinkedIn one-tap connect link';",
+            "    (2) or just drop their résumé right here in this chat 📄 (they attach the PDF — no link needed);",
+            "    (3) or upload it on the site: the EXACT 'Resume upload link' if present.",
+            "  Keep it tight + friendly. messages[1] (optional, ONE short line) = that you'll take it from there",
+            "  once they do — e.g. 'do any one and I'll pull it together and show you what I'm seeing'.",
+            "  HARD RULES for CASE B: do NOT ask the onboarding question; do NOT ask them to paste their OWN",
+            "  LinkedIn URL (you send the link); do NOT mention changing preferences. Just the offer.",
+            "",
+            "CASE C — CONTEXT HAS NO RÉSUMÉ AND NO links at all: greet warmly by name if known (no fabricated",
+            "  details) and ask the first onboarding question.",
             nextQ
-              ? `The first question to ask as messages[1]: ${nextQ}`
-              : "messages[1] asks the first onboarding question.",
+              ? `The first onboarding question (ONLY for CASE A or CASE C — NEVER ask it in CASE B): ${nextQ}`
+              : "The first onboarding question goes in messages[1] for CASE A / CASE C only (NEVER CASE B).",
           ]
       return [
         "MODE = ONBOARDING. You collect the candidate's profile through the onboarding TOOLS — these write the",

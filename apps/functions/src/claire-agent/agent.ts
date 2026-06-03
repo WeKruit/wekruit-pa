@@ -483,6 +483,11 @@ export interface RunClaireTurnDeps {
   enrichmentInFlight?: boolean
   /** WS-3(b): this turn MAY carry the occasional "connect Gmail on wekruit.com" nudge (canary). */
   gmailNudge?: boolean
+  /** COLD OFFER-FIRST KICKOFF (Adam 2026-06-03): a brand-new candidate with NO profile data. The turn
+   *  sends a DETERMINISTIC offer (connect LinkedIn = recommended / drop résumé in chat / upload on site)
+   *  and NO onboarding question — "pitch first", we don't interrogate; the pitch fires after they
+   *  connect/drop. Set by mode-selector on the cold bootstrap turn. */
+  offerFirstKickoff?: boolean
 }
 
 /**
@@ -568,6 +573,35 @@ export async function runClaireTurn(
   void markReadReflex(ctx).catch((e) => log("markReadReflex_failed", { err: String(e) }))
 
   const globalContext = await loadGlobalContext(deps.db, input.userId, input.toE164)
+
+  // COLD OFFER-FIRST KICKOFF (Adam 2026-06-03: "just ask them to connect linkedin directly, or drop the
+  // résumé to chat or résumé on website, but LINKEDIN WILL BE RECOMMENDED" + "the first question
+  // shouldn't show up… we PITCH first"). A brand-new candidate (no profile data) gets a DETERMINISTIC
+  // offer and NO onboarding question — the pitch fires after they connect/drop (resume_parse_completed /
+  // linkedin re-entry). Deterministic for the same reason as the LINKEDIN-OFFER NET: the one-tap offer
+  // is the whole "super easy to start" thesis and must REACH the candidate verbatim, not depend on the
+  // model (which reliably reverts to asking the onboarding question). Short-circuits the model turn.
+  if (deps.offerFirstKickoff) {
+    const connectUrl = /LinkedIn one-tap connect link = (https:\/\/\S+) —/.exec(globalContext)?.[1] ?? ""
+    const uploadUrl = /Resume upload link[^:]*: (https:\/\/\S+)/.exec(globalContext)?.[1] ?? ""
+    if (connectUrl || uploadUrl) {
+      const greeting = "hey! i'm claire — welcome to wekruit 👋 let's get you matched, fast."
+      const lines: string[] = []
+      if (connectUrl) lines.push(`• connect your LinkedIn (fastest — recommended) 👉 ${connectUrl}`)
+      lines.push("• or just drop your résumé right here in the chat 📄")
+      if (uploadUrl) lines.push(`• or upload it on the site 👉 ${uploadUrl}`)
+      const offer =
+        `easiest way to start — pick whichever:\n${lines.join("\n")}\n\n` +
+        `do any one and i'll pull it together and show you what i'm seeing.`
+      await deps.transport.sendText(greeting).catch((e) => log("offer_first.greeting_failed", { err: String(e) }))
+      await deps.transport.sendText(offer).catch((e) => log("offer_first.offer_failed", { err: String(e) }))
+      log("offer_first_kickoff_sent", { hasConnect: Boolean(connectUrl), hasUpload: Boolean(uploadUrl) })
+      return { finalText: `${greeting}\n\n${offer}`, toolCalls: [], deliveredViaTool: true }
+    }
+    // No links surfaced (edge / non-canary) → fall through to the normal model kickoff.
+    log("offer_first_kickoff_no_links", {})
+  }
+
   const agent = buildClaireAgent(ctx, {
     mode: deps.mode ?? "triage",
     lang,

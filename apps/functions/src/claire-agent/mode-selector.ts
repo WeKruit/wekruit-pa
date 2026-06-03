@@ -82,6 +82,11 @@ export interface ModeDecision {
    *  (deterministic cooldown reducer passed). Canary-only; the agent decides whether to actually surface
    *  it. The stamp is written when this is true so we don't re-nudge inside the cooldown. */
   gmailNudge?: boolean
+  /** COLD OFFER-FIRST KICKOFF (Adam 2026-06-03): a brand-new candidate with NO profile on file. The agent
+   *  sends a DETERMINISTIC offer (connect LinkedIn = recommended / drop résumé in chat / upload on site)
+   *  with NO onboarding question — pitch-first; the pitch fires after they connect/drop. Set on the cold
+   *  bootstrap turn. */
+  offerFirstKickoff?: boolean
 }
 
 export interface SelectModeArgs {
@@ -446,7 +451,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
         // (target_role, 2026-06-02 trim). The inbound is the kickoff/greeting, NOT an answer →
         // awaitingAnswer:false, the agent only asks.
         await bootstrapOnboarding(args.db, args.userId, now)
-        log("mode.onboarding_bootstrap", { userId: args.userId })
+        log("mode.onboarding_bootstrap", { userId: args.userId, offerFirst: isCanaryUser(args.userId) })
         return {
           mode: "onboarding",
           awaitingAnswer: false,
@@ -454,6 +459,10 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
           pendingStep: buildSharedOnboardingPrompt(FIRST_ASKED_SLOT, null),
           currentStep: buildSharedOnboardingPrompt(FIRST_ASKED_SLOT, null),
           processStore: seedStore([]),
+          // COLD OFFER-FIRST (Adam 2026-06-03): a brand-new candidate (no résumé/profile — WS-2 already
+          // diverted résumé-on-file users above) gets the DETERMINISTIC offer + NO onboarding question.
+          // Gated to canary so it tracks the WS-1a link surfacing (the agent falls through if no link).
+          offerFirstKickoff: isCanaryUser(args.userId),
           ...inFlightDecision,
         }
       }

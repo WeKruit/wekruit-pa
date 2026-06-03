@@ -287,6 +287,9 @@ export async function maybeRunThinClaire(
         // WS-3(b): this turn MAY carry the occasional "connect Gmail on wekruit.com" nudge (deterministic
         // cooldown reducer passed; stamp already written). Canary-only by construction.
         ...(decision.gmailNudge ? { gmailNudge: true } : {}),
+        // COLD OFFER-FIRST (Adam 2026-06-03): brand-new candidate → deterministic LinkedIn-recommended /
+        // résumé offer + NO onboarding question (pitch fires after they connect/drop). Canary by construction.
+        ...(decision.offerFirstKickoff ? { offerFirstKickoff: true } : {}),
         // BLOCKER 2: thread the parsed-profile summary from the handoff context onto the pitch turn so
         // the model has the profile THIS turn (defends against a loadGlobalContext read racing the write).
         ...(decision.postParsePitch && postParsePitchSummary ? { postParsePitchSummary } : {}),
