@@ -105,6 +105,16 @@ test("EmployerSignup connects role intake to the sample passed-profile output", 
   assert.doesNotMatch(source, /instant pass/i)
 })
 
+test("EmployerSignup makes the first output preview a product loop, not a lead form", () => {
+  assert.match(source, /EmployerOutputPreview \/>[\s\S]*<EmployerPacketStarters/)
+  assert.match(source, /The packet is not a lead form/)
+  assert.match(source, /Claire screening contract/)
+  assert.match(source, /Passed-profile evidence/)
+  assert.match(source, /Decision feedback loop/)
+  assert.match(source, /Candidate stays hidden until pass \+ consent/)
+  assert.match(source, /Employers do not browse a candidate pool/)
+})
+
 test("EmployerSignup keeps employer navigation on the employer surface", () => {
   assert.match(
     source,

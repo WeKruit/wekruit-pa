@@ -35,6 +35,21 @@ const STAGE_OPTIONS: { value: EmployerSignupStage; label: string }[] = [
   { value: "other", label: "Other" },
 ]
 
+const EMPLOYER_OUTPUT_STEPS = [
+  {
+    label: "Claire screening contract",
+    body: "The role packet locks the must-haves, hard filters, probes, and calibration bar before Claire interviews candidates.",
+  },
+  {
+    label: "Passed-profile evidence",
+    body: "Candidate stays hidden until pass + consent. The employer sees a transcript-backed pass record, risks, and role fit.",
+  },
+  {
+    label: "Decision feedback loop",
+    body: "Every accept, reject, or correction returns hiring-team signal to WeKruit so Claire screens the next pass against the actual bar.",
+  },
+]
+
 const EMPTY_FORM: EmployerSignupFormState = {
   companyName: "",
   companyLinkedin: "",
@@ -531,9 +546,55 @@ function EmployerOutputPreview() {
           color: "var(--ink-2)",
         }}
       >
-        The packet below becomes the evidence lens Claire uses in the sample pass record:
-        pass reason, risks, role fit, transcript excerpts, and the hiring-team calibration loop.
+        The packet is not a lead form. Employers do not browse a candidate pool.{" "}
+        The packet below becomes the evidence lens Claire uses in the sample pass record: pass
+        reason, risks, role fit, transcript excerpts, and the hiring-team calibration loop.
       </p>
+      <div
+        aria-label="Role packet product loop"
+        style={{
+          display: "grid",
+          gap: 0,
+          borderTop: "1px solid var(--border)",
+        }}
+      >
+        {EMPLOYER_OUTPUT_STEPS.map((step) => (
+          <div
+            key={step.label}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(128px, 0.42fr) minmax(0, 1fr)",
+              gap: 12,
+              padding: "12px 0",
+              borderBottom: "1px solid var(--border)",
+              alignItems: "start",
+            }}
+          >
+            <strong
+              style={{
+                minWidth: 0,
+                fontFamily: "var(--font-sans)",
+                fontSize: 13,
+                lineHeight: 1.3,
+                color: "var(--ink)",
+              }}
+            >
+              {step.label}
+            </strong>
+            <span
+              style={{
+                minWidth: 0,
+                fontFamily: "var(--font-sans)",
+                fontSize: 13,
+                lineHeight: 1.42,
+                color: "var(--ink-2)",
+              }}
+            >
+              {step.body}
+            </span>
+          </div>
+        ))}
+      </div>
     </section>
   )
 }
