@@ -353,6 +353,10 @@ function profileCorrectionHrefForRole(r: DisplayJob): string {
   return `/me/profile?${params.toString()}#profile-corrections`
 }
 
+function roleSignalAriaLabel(r: DisplayJob): string {
+  return `Send ${r.title} at ${r.company} as a prefilled role signal to Claire`
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Filter rail
 // ────────────────────────────────────────────────────────────────────────────
@@ -504,6 +508,7 @@ function MarketRoleBriefContract() {
 
 function HuntRow({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
   const profileHref = profileCorrectionHrefForRole(r)
+  const signalLabel = roleSignalAriaLabel(r)
   return (
     <tr className="wk-tbl__row">
       <td className="wk-tbl__cell wk-tbl__cell--company">
@@ -529,8 +534,13 @@ function HuntRow({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
           <button className="wk-pitchbtn" onClick={onOpen} disabled={!r.applyUrl}>
             View source <Icon name="arrow-right" size={12} stroke={2} />
           </button>
-          <a className="wk-roleactions__prefs" href={profileHref}>
-            Use as signal
+          <a
+            className="wk-roleactions__prefs"
+            href={profileHref}
+            aria-label={signalLabel}
+            title="Opens a prefilled Claire role signal for this role"
+          >
+            Send role signal
           </a>
         </div>
       </td>
@@ -540,6 +550,7 @@ function HuntRow({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
 
 function HuntCard({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
   const profileHref = profileCorrectionHrefForRole(r)
+  const signalLabel = roleSignalAriaLabel(r)
   return (
     <article className="wk-hcard">
       <header className="wk-hcard__head">
@@ -562,8 +573,13 @@ function HuntCard({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
           <button className="wk-pitchbtn wk-pitchbtn--lg" onClick={onOpen} disabled={!r.applyUrl}>
             View source <Icon name="arrow-right" size={13} stroke={2} />
           </button>
-          <a className="wk-roleactions__prefs" href={profileHref}>
-            Use as signal
+          <a
+            className="wk-roleactions__prefs"
+            href={profileHref}
+            aria-label={signalLabel}
+            title="Opens a prefilled Claire role signal for this role"
+          >
+            Send role signal
           </a>
         </div>
       </footer>
@@ -869,7 +885,7 @@ export default function Market(): ReactNode {
                   </article>
                   <article className="wk-market-contract__item wk-market-contract__item--profile">
                     <strong>Your profile</strong>
-                    <span>Your profile and preferences decide what Claire can pursue with you. Keep them current before asking Claire to chase a role.</span>
+                    <span>Your profile and preferences decide what Claire can pursue with you. Send role signal opens a Claire draft prefilled with this exact role.</span>
                   </article>
                 </div>
                 <div className="wk-market-contract__actions">
