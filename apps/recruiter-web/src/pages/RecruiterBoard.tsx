@@ -21,6 +21,10 @@ import {
   type RecruiterInboxTone,
 } from "../lib/recruiter-inbox.js"
 import {
+  buildRecruiterSubmissionDashboard,
+  candidateConfirmationCanResend,
+} from "./RecruiterSubmissionDashboard.helpers.js"
+import {
   fetchCollabJobs,
   fetchRecruiterRoleFeedback,
   fetchRecruiterRoleIntelligence,
@@ -464,14 +468,6 @@ function submissionNeedsAction(submission: RecruiterSubmissionItem): boolean {
   )
 }
 
-function candidateConfirmationCanResend(submission: RecruiterSubmissionItem): boolean {
-  return [
-    "pending_candidate_confirmation",
-    "confirmation_email_failed",
-    "confirmation_email_not_configured",
-  ].includes(submission.candidateConsentStatus ?? "")
-}
-
 function candidateConfirmationActionBody(submission: RecruiterSubmissionItem): string {
   const email = submission.candidateConfirmation?.candidateEmail || submission.candidate?.email || "the candidate"
   if (submission.candidateConsentStatus === "confirmation_email_failed") {
@@ -514,28 +510,6 @@ function submissionSearchText(submission: RecruiterSubmissionItem): string {
     submissionFeedbackReasonLabels(submission).join(" "),
     submissionReceiptId(submission),
   ].filter(Boolean).join(" ").toLowerCase()
-}
-
-function buildSubmissionDashboard(submissions: RecruiterSubmissionItem[]) {
-  const active = submissions.filter(submissionIsActiveReview)
-  const advanced = submissions.filter(submissionIsAdvanced)
-  const closed = submissions.filter(submissionIsClosed)
-  const feedback = submissions.filter(submissionHasStructuredFeedback)
-  const rated = submissions.filter((submission) => submissionFeedbackRating(submission) !== null)
-  const needsAction = submissions.filter(submissionNeedsAction)
-  return {
-    active,
-    advanced,
-    closed,
-    feedback,
-    needsAction,
-    hero: [
-      { label: "Active review", value: String(active.length), body: "Submitted, queued, or under WeKruit review.", tone: active.length ? "live" : "mute" },
-      { label: "Advanced", value: String(advanced.length), body: "Sent forward, interviewing, offer, or hired.", tone: advanced.length ? "success" : "mute" },
-      { label: "Rated submissions", value: String(rated.length), body: "WeKruit /4 quality signal plus reasons.", tone: rated.length ? "info" : "mute" },
-      { label: "Needs action", value: String(needsAction.length), body: "Aged reviews or feedback that should change sourcing.", tone: needsAction.length ? "warn" : "success" },
-    ] as Array<{ label: string; value: string; body: string; tone: "live" | "info" | "success" | "warn" | "mute" }>,
-  }
 }
 
 type SubmissionCommandAction = "browse_roles" | "open_submission" | "open_role" | "resend_confirmation"
@@ -9081,7 +9055,7 @@ function SubmissionsTab({
   const [filter, setFilter] = useState<SubmissionFilter>("all")
   const [resendingId, setResendingId] = useState<string | null>(null)
   const [resendError, setResendError] = useState<string | null>(null)
-  const dashboard = useMemo(() => buildSubmissionDashboard(submissions), [submissions])
+  const dashboard = useMemo(() => buildRecruiterSubmissionDashboard(submissions), [submissions])
   const command = useMemo(() => buildSubmissionCommand(submissions), [submissions])
   const dealRoom = useMemo(() => buildSubmissionDealRoom(submissions, jobs), [jobs, submissions])
   const pipelineBoard = useMemo(() => buildSubmissionPipelineBoard(submissions), [submissions])
