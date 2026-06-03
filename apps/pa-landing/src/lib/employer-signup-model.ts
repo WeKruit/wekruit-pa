@@ -53,6 +53,7 @@ export type EmployerPacketPreviewSectionId =
   | "hard_filters"
   | "evidence_probes"
   | "calibration"
+  | "must_haves"
   | "feedback_loop"
   | "intro_handoff"
 
@@ -181,6 +182,7 @@ export function deriveEmployerPacketPreview(form: EmployerSignupFormState): Empl
   const hardFilters = listPreview(form.hardFilters, "Missing hard-stop filters")
   const evidenceProbes = listPreview(form.screeningQuestions, "Missing evidence probes")
   const calibration = textPreview(form.calibrationExamples, "Missing strong-pass calibration")
+  const mustHaves = textPreview(form.notes, "Missing must-haves")
   const feedbackLoop = textPreview(form.feedbackLoop, "Missing feedback loop")
   const introHandoff = textPreview(form.introHandoff, "Missing intro handoff")
 
@@ -189,6 +191,7 @@ export function deriveEmployerPacketPreview(form: EmployerSignupFormState): Empl
     { id: "hard_filters", label: "Hard-stop filters", ...hardFilters },
     { id: "evidence_probes", label: "Evidence probes", ...evidenceProbes },
     { id: "calibration", label: "Strong-pass calibration", ...calibration },
+    { id: "must_haves", label: "Must-haves", ...mustHaves },
     { id: "feedback_loop", label: "Feedback loop", ...feedbackLoop },
     { id: "intro_handoff", label: "Intro handoff", ...introHandoff },
   ]

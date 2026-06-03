@@ -144,8 +144,8 @@ test("buildEmployerSignupPayload normalizes the role brief without inventing sco
 test("deriveEmployerPacketPreview mirrors the Claire screening packet contract", () => {
   const preview = deriveEmployerPacketPreview(VALID_FORM)
 
-  assert.equal(preview.completedCount, 6)
-  assert.equal(preview.totalCount, 6)
+  assert.equal(preview.completedCount, 7)
+  assert.equal(preview.totalCount, 7)
   assert.equal(preview.ready, true)
   assert.deepEqual(
     preview.sections.map((section) => [section.id, section.label, section.complete]),
@@ -154,6 +154,7 @@ test("deriveEmployerPacketPreview mirrors the Claire screening packet contract",
       ["hard_filters", "Hard-stop filters", true],
       ["evidence_probes", "Evidence probes", true],
       ["calibration", "Strong-pass calibration", true],
+      ["must_haves", "Must-haves", true],
       ["feedback_loop", "Feedback loop", true],
       ["intro_handoff", "Intro handoff", true],
     ],
@@ -162,6 +163,7 @@ test("deriveEmployerPacketPreview mirrors the Claire screening packet contract",
   assert.match(preview.sections[1]!.value, /Requires US work authorization/)
   assert.match(preview.sections[2]!.value, /platform tradeoff/)
   assert.match(preview.sections[3]!.value, /False positive/)
+  assert.match(preview.sections[4]!.value, /infrastructure products/)
 })
 
 test("deriveEmployerPacketPreview keeps missing packet sections explicit", () => {
@@ -172,7 +174,7 @@ test("deriveEmployerPacketPreview keeps missing packet sections explicit", () =>
     introHandoff: "",
   })
 
-  assert.equal(preview.completedCount, 3)
+  assert.equal(preview.completedCount, 4)
   assert.equal(preview.ready, false)
   assert.deepEqual(
     preview.sections.map((section) => [section.id, section.complete, section.value]),
@@ -181,6 +183,7 @@ test("deriveEmployerPacketPreview keeps missing packet sections explicit", () =>
       ["hard_filters", false, "Missing hard-stop filters"],
       ["evidence_probes", true, "Describe a platform tradeoff you owned\nWhat evidence proves they can handle infra ambiguity?"],
       ["calibration", true, VALID_FORM.calibrationExamples],
+      ["must_haves", true, VALID_FORM.notes],
       ["feedback_loop", false, "Missing feedback loop"],
       ["intro_handoff", false, "Missing intro handoff"],
     ],
