@@ -120,3 +120,16 @@ test("EmployerSignup offers editable packet starters instead of a blank long-for
   assert.doesNotMatch(source, /one-click candidate/i)
   assert.doesNotMatch(source, /instant candidate matches/i)
 })
+
+test("EmployerSignup renders the live Claire packet contract before submit", () => {
+  assert.match(source, /deriveEmployerPacketPreview/)
+  assert.match(source, /EmployerPacketPreview/)
+  assert.match(source, /aria-label="Live Claire packet preview"/)
+  assert.match(source, /Claire screening contract/)
+  assert.match(source, /What WeKruit reviews/)
+  assert.match(source, /preview\.sections\.map/)
+  assert.match(source, /section\.complete/)
+
+  assert.doesNotMatch(source, /preview is optional/i)
+  assert.doesNotMatch(source, /instant candidate matches/i)
+})

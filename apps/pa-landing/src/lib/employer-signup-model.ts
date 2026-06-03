@@ -48,6 +48,28 @@ export type EmployerPacketStarter = {
   packet: EmployerPacketFields
 }
 
+export type EmployerPacketPreviewSectionId =
+  | "role_brief"
+  | "hard_filters"
+  | "evidence_probes"
+  | "calibration"
+  | "feedback_loop"
+  | "intro_handoff"
+
+export type EmployerPacketPreviewSection = {
+  id: EmployerPacketPreviewSectionId
+  label: string
+  value: string
+  complete: boolean
+}
+
+export type EmployerPacketPreview = {
+  sections: EmployerPacketPreviewSection[]
+  completedCount: number
+  totalCount: number
+  ready: boolean
+}
+
 export const EMPLOYER_PACKET_STARTERS: EmployerPacketStarter[] = [
   {
     id: "founding_engineering",
@@ -128,6 +150,56 @@ export function splitRoleBriefs(rolesHiring: string): string[] {
     .split(/[,\n]+/)
     .map((s) => s.trim())
     .filter(Boolean)
+}
+
+function cleanPreviewText(value: string): string {
+  return value
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n")
+}
+
+function listPreview(value: string, fallback: string): { value: string; complete: boolean } {
+  const items = splitRoleBriefs(value)
+  return {
+    value: items.length ? items.join("\n") : fallback,
+    complete: items.length > 0,
+  }
+}
+
+function textPreview(value: string, fallback: string): { value: string; complete: boolean } {
+  const clean = cleanPreviewText(value)
+  return {
+    value: clean || fallback,
+    complete: clean.length > 0,
+  }
+}
+
+export function deriveEmployerPacketPreview(form: EmployerSignupFormState): EmployerPacketPreview {
+  const roleBrief = listPreview(form.rolesHiring, "Missing role brief")
+  const hardFilters = listPreview(form.hardFilters, "Missing hard-stop filters")
+  const evidenceProbes = listPreview(form.screeningQuestions, "Missing evidence probes")
+  const calibration = textPreview(form.calibrationExamples, "Missing strong-pass calibration")
+  const feedbackLoop = textPreview(form.feedbackLoop, "Missing feedback loop")
+  const introHandoff = textPreview(form.introHandoff, "Missing intro handoff")
+
+  const sections: EmployerPacketPreviewSection[] = [
+    { id: "role_brief", label: "Role brief", ...roleBrief },
+    { id: "hard_filters", label: "Hard-stop filters", ...hardFilters },
+    { id: "evidence_probes", label: "Evidence probes", ...evidenceProbes },
+    { id: "calibration", label: "Strong-pass calibration", ...calibration },
+    { id: "feedback_loop", label: "Feedback loop", ...feedbackLoop },
+    { id: "intro_handoff", label: "Intro handoff", ...introHandoff },
+  ]
+  const completedCount = sections.filter((section) => section.complete).length
+
+  return {
+    sections,
+    completedCount,
+    totalCount: sections.length,
+    ready: completedCount === sections.length,
+  }
 }
 
 export function validateEmployerSignupForm(form: EmployerSignupFormState): string | null {

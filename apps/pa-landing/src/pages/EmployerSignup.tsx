@@ -11,7 +11,9 @@ import {
   EMPLOYER_PACKET_STARTERS,
   applyEmployerPacketStarter,
   buildEmployerSignupPayload,
+  deriveEmployerPacketPreview,
   validateEmployerSignupForm,
+  type EmployerPacketPreview as EmployerPacketPreviewModel,
   type EmployerPacketStarterId,
   type EmployerSignupFormState,
   type EmployerSignupStage,
@@ -55,6 +57,7 @@ export default function EmployerSignup() {
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const readiness = deriveEmployerSignupReadiness(form)
+  const packetPreview = deriveEmployerPacketPreview(form)
 
   const update = <K extends keyof EmployerSignupFormState>(k: K, v: EmployerSignupFormState[K]) =>
     setForm((prev) => ({ ...prev, [k]: v }))
@@ -132,6 +135,7 @@ export default function EmployerSignup() {
                 }}
               />
               <EmployerPacketReadiness summary={readiness} />
+              <EmployerPacketPreview preview={packetPreview} />
               <EmployerCalibrationLoop />
               <form
                 onSubmit={onSubmit}
@@ -513,6 +517,141 @@ function EmployerCalibrationLoop() {
   )
 }
 
+function EmployerPacketPreview({ preview }: { preview: EmployerPacketPreviewModel }) {
+  return (
+    <section
+      aria-label="Live Claire packet preview"
+      style={{
+        marginTop: 14,
+        background: "var(--cream-3)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-lg)",
+        padding: 18,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 14,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontFamily: "var(--font-sans)",
+              fontSize: 12,
+              color: "var(--ink-3)",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: 0,
+            }}
+          >
+            Claire screening contract
+          </div>
+          <h2
+            style={{
+              margin: "4px 0 0",
+              fontFamily: "var(--font-serif)",
+              fontWeight: 400,
+              fontSize: 24,
+              lineHeight: 1.12,
+              color: "var(--ink)",
+              letterSpacing: 0,
+            }}
+          >
+            What WeKruit reviews
+          </h2>
+        </div>
+        <div
+          aria-label={`${preview.completedCount} of ${preview.totalCount} Claire packet sections complete`}
+          style={{
+            flex: "0 0 auto",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-md)",
+            background: preview.ready ? "var(--success-bg)" : "var(--cream-2)",
+            color: preview.ready ? "var(--success)" : "var(--ink-2)",
+            padding: "8px 10px",
+            fontFamily: "var(--font-sans)",
+            fontSize: 13,
+            fontWeight: 700,
+            lineHeight: 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {preview.completedCount}/{preview.totalCount} complete
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gap: 10,
+          marginTop: 16,
+        }}
+      >
+        {preview.sections.map((section) => (
+          <article
+            key={section.id}
+            style={{
+              border: `1px solid ${section.complete ? "rgba(95, 119, 73, 0.26)" : "var(--border)"}`,
+              borderRadius: "var(--r-md)",
+              background: section.complete ? "rgba(255, 255, 255, 0.72)" : "rgba(255, 255, 255, 0.48)",
+              padding: 12,
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                marginBottom: 6,
+              }}
+            >
+              <strong
+                style={{
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 13,
+                  lineHeight: 1.25,
+                  color: "var(--ink)",
+                }}
+              >
+                {section.label}
+              </strong>
+              <span
+                style={{
+                  flex: "0 0 auto",
+                  width: 8,
+                  height: 8,
+                  borderRadius: 999,
+                  background: section.complete ? "var(--success)" : "var(--ink-4)",
+                }}
+              />
+            </div>
+            <pre
+              style={{
+                margin: 0,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+                fontFamily: "var(--font-sans)",
+                fontSize: 13,
+                lineHeight: 1.42,
+                color: section.complete ? "var(--ink-2)" : "var(--ink-3)",
+              }}
+            >
+              {section.value}
+            </pre>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadinessSummary }) {
   return (
     <section
@@ -687,7 +826,7 @@ function Field({ label, value, onChange, placeholder, type = "text", helper, as 
           fontSize: 13,
           color: "var(--ink-2)",
           fontWeight: 500,
-          letterSpacing: "-0.005em",
+          letterSpacing: 0,
         }}
       >
         {label}
@@ -751,7 +890,7 @@ function SuccessCard({ email }: { email: string }) {
           fontFamily: "var(--font-serif)",
           fontWeight: 400,
           fontSize: 28,
-          letterSpacing: "-0.02em",
+          letterSpacing: 0,
           margin: "0 0 12px",
         }}
       >
@@ -798,7 +937,7 @@ function Header() {
           to="/"
           style={{ textDecoration: "none", display: "inline-flex", alignItems: "baseline", gap: 8, color: "var(--ink)" }}
         >
-          <span style={{ fontFamily: "var(--font-serif)", fontSize: 22, letterSpacing: "-0.02em", fontWeight: 500 }}>
+          <span style={{ fontFamily: "var(--font-serif)", fontSize: 22, letterSpacing: 0, fontWeight: 500 }}>
             WeKruit
           </span>
           <span

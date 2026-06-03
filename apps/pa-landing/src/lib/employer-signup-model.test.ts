@@ -6,6 +6,7 @@ import {
   EMPLOYER_PACKET_STARTERS,
   applyEmployerPacketStarter,
   buildEmployerSignupPayload,
+  deriveEmployerPacketPreview,
   validateEmployerSignupForm,
   type EmployerSignupFormState,
 } from "./employer-signup-model.js"
@@ -138,6 +139,52 @@ test("buildEmployerSignupPayload normalizes the role brief without inventing sco
     introHandoff:
       "After a passed profile, route accepted intros to Alex for a 30-minute hiring-manager screen within two business days.",
   })
+})
+
+test("deriveEmployerPacketPreview mirrors the Claire screening packet contract", () => {
+  const preview = deriveEmployerPacketPreview(VALID_FORM)
+
+  assert.equal(preview.completedCount, 6)
+  assert.equal(preview.totalCount, 6)
+  assert.equal(preview.ready, true)
+  assert.deepEqual(
+    preview.sections.map((section) => [section.id, section.label, section.complete]),
+    [
+      ["role_brief", "Role brief", true],
+      ["hard_filters", "Hard-stop filters", true],
+      ["evidence_probes", "Evidence probes", true],
+      ["calibration", "Strong-pass calibration", true],
+      ["feedback_loop", "Feedback loop", true],
+      ["intro_handoff", "Intro handoff", true],
+    ],
+  )
+  assert.match(preview.sections[0]!.value, /Founding infra engineer/)
+  assert.match(preview.sections[1]!.value, /Requires US work authorization/)
+  assert.match(preview.sections[2]!.value, /platform tradeoff/)
+  assert.match(preview.sections[3]!.value, /False positive/)
+})
+
+test("deriveEmployerPacketPreview keeps missing packet sections explicit", () => {
+  const preview = deriveEmployerPacketPreview({
+    ...VALID_FORM,
+    hardFilters: "",
+    feedbackLoop: "",
+    introHandoff: "",
+  })
+
+  assert.equal(preview.completedCount, 3)
+  assert.equal(preview.ready, false)
+  assert.deepEqual(
+    preview.sections.map((section) => [section.id, section.complete, section.value]),
+    [
+      ["role_brief", true, "Founding infra engineer\nDeveloper platform PM"],
+      ["hard_filters", false, "Missing hard-stop filters"],
+      ["evidence_probes", true, "Describe a platform tradeoff you owned\nWhat evidence proves they can handle infra ambiguity?"],
+      ["calibration", true, VALID_FORM.calibrationExamples],
+      ["feedback_loop", false, "Missing feedback loop"],
+      ["intro_handoff", false, "Missing intro handoff"],
+    ],
+  )
 })
 
 test("EMPLOYER_PACKET_STARTERS expose editable Claire packet starters only", () => {
