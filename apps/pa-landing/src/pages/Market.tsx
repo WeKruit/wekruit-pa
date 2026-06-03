@@ -454,9 +454,14 @@ function HuntRow({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
         <div className="wk-tbl__evidence">
           <EvidenceBadge evidence={r.evidence} compact />
         </div>
-        <button className="wk-pitchbtn" onClick={onOpen} disabled={!r.applyUrl}>
-          View role <Icon name="arrow-right" size={12} stroke={2} />
-        </button>
+        <div className="wk-roleactions">
+          <button className="wk-pitchbtn" onClick={onOpen} disabled={!r.applyUrl}>
+            View source <Icon name="arrow-right" size={12} stroke={2} />
+          </button>
+          <a className="wk-roleactions__prefs" href="/me/profile#match-preferences">
+            Tune preferences
+          </a>
+        </div>
       </td>
     </tr>
   )
@@ -481,9 +486,14 @@ function HuntCard({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
       </p>
       <footer className="wk-hcard__foot">
         <span className="wk-hcard__comp">{r.comp}</span>
-        <button className="wk-pitchbtn wk-pitchbtn--lg" onClick={onOpen} disabled={!r.applyUrl}>
-          View role <Icon name="arrow-right" size={13} stroke={2} />
-        </button>
+        <div className="wk-roleactions wk-roleactions--card">
+          <button className="wk-pitchbtn wk-pitchbtn--lg" onClick={onOpen} disabled={!r.applyUrl}>
+            View source <Icon name="arrow-right" size={13} stroke={2} />
+          </button>
+          <a className="wk-roleactions__prefs" href="/me/profile#match-preferences">
+            Tune preferences
+          </a>
+        </div>
       </footer>
     </article>
   )
@@ -1161,6 +1171,27 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-pitchbtn--ink { background: var(--wk-ink); border-color: var(--wk-ink); color: var(--wk-cream); }
 .wk-shell .wk-pitchbtn--ink:hover { background: #1a0f06; }
 .wk-shell .wk-pitchbtn--lg { height: 38px; padding: 0 16px; font-size: 13.5px; }
+
+.wk-shell .wk-roleactions {
+  display: inline-flex; align-items: center; justify-content: flex-end;
+  gap: 8px; flex-wrap: wrap;
+}
+.wk-shell .wk-roleactions--card { justify-content: flex-end; }
+.wk-shell .wk-roleactions__prefs {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 32px; padding: 0 10px;
+  border: 1px solid var(--wk-border); border-radius: var(--wk-r-pill);
+  background: var(--wk-cream-3); color: var(--wk-ink-2);
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  text-decoration: none; white-space: nowrap;
+  transition: all 200ms var(--wk-ease);
+}
+.wk-shell .wk-roleactions__prefs:hover {
+  background: var(--wk-cream); border-color: var(--wk-border-strong); color: var(--wk-ink);
+}
+.wk-shell .wk-roleactions--card .wk-roleactions__prefs {
+  height: 38px; padding: 0 12px; font-size: 13.5px;
+}
 
 .wk-shell .wk-loadmore { display: flex; justify-content: center; padding: 24px 0 8px; }
 .wk-shell .wk-loadmore .wk-btn:disabled { opacity: 0.65; cursor: progress; }

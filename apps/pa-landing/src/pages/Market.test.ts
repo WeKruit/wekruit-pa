@@ -49,6 +49,18 @@ test("Market default table rows surface source evidence before opening card view
   assert.match(source, /\.wk-tbl__evidence/)
 })
 
+test("Market tracked-role rows connect external source inspection to durable preferences", () => {
+  assert.match(source, /View source/)
+  assert.match(source, /Tune preferences/)
+  assert.match(source, /href="\/me\/profile#match-preferences"/)
+  assert.match(source, /function HuntRow\([\s\S]*className="wk-roleactions"/)
+  assert.match(source, /function HuntCard\([\s\S]*className="wk-roleactions wk-roleactions--card"/)
+
+  assert.doesNotMatch(source, /Save role/i)
+  assert.doesNotMatch(source, /Add to pipeline/i)
+  assert.doesNotMatch(source, /Claire is now tracking this/i)
+})
+
 test("Market explains how Claire uses role sources before candidates chase postings", () => {
   assert.match(source, /How Claire uses this market/)
   assert.match(source, /Direct-line roles are briefs WeKruit can screen against/)
