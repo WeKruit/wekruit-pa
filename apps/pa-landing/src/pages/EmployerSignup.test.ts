@@ -86,15 +86,15 @@ test("EmployerSignup captures the hiring-team feedback loop before Claire screen
 test("EmployerSignup shows a role packet readiness checklist before the long form", () => {
   assert.match(source, /EmployerPacketReadiness/)
   assert.match(source, /deriveEmployerSignupReadiness/)
-  assert.match(source, /aria-label="Role packet readiness"/)
+  assert.match(source, /aria-label="Role intake readiness"/)
   assert.match(source, /Before Claire screens/)
-  assert.match(source, /Role packet/)
+  assert.match(source, /Role intake/)
   assert.match(source, /Complete these before WeKruit approves the role brief/i)
 })
 
 test("EmployerSignup connects role intake to the sample passed-profile output", () => {
   assert.match(source, /aria-label="Role intake primary actions"/)
-  assert.match(source, /href="#employer-primary-role-brief"[\s\S]*Start role packet/)
+  assert.match(source, /href="#employer-company-contact"[\s\S]*Start role packet/)
   assert.match(source, /to="\/employers\/inbox"[\s\S]*See sample pass/)
   assert.match(source, /The packet below becomes the evidence lens Claire uses in the sample pass record/)
   assert.match(source, /aria-label="Role intake output preview"/)
@@ -120,6 +120,7 @@ test("EmployerSignup turns role packet readiness into actionable field jumps", (
   assert.match(source, /Jump to field/)
   assert.match(source, /href=\{`#\$\{summary\.nextIncompleteItem\.targetId\}`\}/)
   assert.match(source, /href=\{`#\$\{item\.targetId\}`\}/)
+  assert.match(source, /id="employer-company-contact"/)
   assert.match(source, /id="employer-primary-role-brief"/)
   assert.match(source, /id="employer-hard-filters"/)
   assert.match(source, /id="employer-screening-questions"/)

@@ -138,7 +138,7 @@ export default function EmployerSignup() {
             }}
           >
             <a
-              href="#employer-primary-role-brief"
+              href="#employer-company-contact"
               className="btn btn--primary"
               style={{ textDecoration: "none" }}
             >
