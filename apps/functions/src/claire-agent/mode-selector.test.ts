@@ -118,6 +118,20 @@ test("non-canary cold with NO parsed profile keeps the legacy wall: bootstraps +
   assert.equal(bootstrapped, true, "non-canary keeps the legacy onboarding bootstrap + question")
 })
 
+test("Image #24 fix: COLD canary mid-enrich (LinkedIn-done re-entry) ACKS in triage, does NOT re-offer", async () => {
+  // No active onboarding (cold, just connected LinkedIn) + enrichment in flight → the "I've done
+  // LinkedIn submission" re-entry must ack "one sec", NOT re-fire the offer-first kickoff.
+  const { db } = makeDb({
+    enrichmentInFlight: true,
+    enrichmentStartedAt: new Date().toISOString(),
+    // NO sharedOnboarding → cold; with enrichment in flight this must beat the offer-first branch.
+  })
+  const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "I've done LinkedIn submission tok_abc12345" })
+  assert.equal(decision.mode, "triage", "mid-enrich cold re-entry acks in triage, not onboarding offer")
+  assert.equal(decision.enrichmentInFlight, true, "carries the in-flight ack directive")
+  assert.notEqual(decision.offerFirstKickoff, true, "must NOT re-offer the cold kickoff while enriching")
+})
+
 test("WS-1(b): canary with an in-flight marker (onboarding active) surfaces enrichmentInFlight on the decision", async () => {
   const { db } = makeDb({
     enrichmentInFlight: true,

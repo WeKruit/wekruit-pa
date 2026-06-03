@@ -345,6 +345,19 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     isCanaryUser(args.userId) && !args.cvParsedTrigger && isEnrichmentInFlight(user)
   const inFlightDecision = enrichmentInFlight ? { enrichmentInFlight: true as const } : {}
 
+  // ENRICHMENT-IN-FLIGHT ACK (Adam 2026-06-03, Image #24): the candidate just connected LinkedIn /
+  // dropped a résumé and the enrich is still pulling. The "I've done LinkedIn submission" re-entry of
+  // a COLD user (no active onboarding) must ACK ("still pulling your info, one sec 🔎"), NOT re-offer
+  // the kickoff (the regression) and NOT start a question. The PITCH fires separately on the
+  // resume_parse_completed re-entry (cvParsedTrigger, handled below). Gated to the NON-active path:
+  // an ACTIVE onboarding user mid-enrich keeps their onboarding decision (which already carries
+  // inFlightDecision → ack + the pending question). Triage's in-flight directive (prompt.ts) covers
+  // both LinkedIn + résumé sources.
+  if (enrichmentInFlight && !isSharedOnboardingActiveUser(user)) {
+    log("mode.enrichment_in_flight_ack", { userId: args.userId })
+    return { mode: "triage", ...inFlightDecision }
+  }
+
   // WS-3(b) GMAIL NUDGE (Adam 2026-06-03): occasionally ask the candidate to connect Gmail on
   // wekruit.com (deterministic cooldown reducer — no regex over text). Never while enrichment is in
   // flight (don't pile onto a "one sec" turn) or on the cv-parsed pitch turn. The gate also excludes

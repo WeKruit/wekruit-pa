@@ -11,6 +11,9 @@ export const LINKEDIN_CLIENT_ID: ReturnType<typeof defineSecret> =
   defineSecret("LINKEDIN_CLIENT_ID")
 export const LINKEDIN_CLIENT_SECRET: ReturnType<typeof defineSecret> =
   defineSecret("LINKEDIN_CLIENT_SECRET")
+// Coresignal key — bound to paLinkedinCallback so a LinkedIn LOGIN can enrich work history (the
+// OAuth callback feeds the OIDC profile URL into the existing Coresignal pipeline).
+const CORESIGNAL_API_KEY: ReturnType<typeof defineSecret> = defineSecret("CORESIGNAL_API_KEY")
 export const GITHUB_CLIENT_ID: ReturnType<typeof defineSecret> =
   defineSecret("GITHUB_CLIENT_ID")
 export const GITHUB_CLIENT_SECRET: ReturnType<typeof defineSecret> =
@@ -70,6 +73,10 @@ interface LinkedinUserInfo {
   given_name?: string
   family_name?: string
   picture?: string
+  /** OIDC "Sign In with LinkedIn" returns the member's public profile URL as the root `profile`
+   *  claim (e.g. https://www.linkedin.com/in/<vanity>). We pass this to Coresignal so a LinkedIn
+   *  LOGIN enriches work history — no manual URL paste needed (Adam 2026-06-03). */
+  profile?: string
 }
 
 interface GithubUserInfo {
@@ -895,8 +902,10 @@ export const paLinkedinCallback = onRequest(
   {
     region: "us-central1",
     memory: "512MiB",
-    timeoutSeconds: 30,
-    secrets: [LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET],
+    // 90s — the connect_prospect login runs Coresignal enrich (search + collect) synchronously
+    // before the reroute, so the candidate lands back in iMessage with work history already pulling.
+    timeoutSeconds: 90,
+    secrets: [LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, CORESIGNAL_API_KEY],
   },
   async (req, res) => {
     const clientId = LINKEDIN_CLIENT_ID.value().trim()
@@ -934,6 +943,11 @@ export const paLinkedinCallback = onRequest(
       // straight back into the iMessage thread (sms: deep link). Falls back to a friendly "go back to
       // your texts" page if the phone can't be resolved.
       if (state.mode === "connect_prospect") {
+        // Confirm whether LinkedIn returns the public profile URL for our app (it's the OIDC `profile`
+        // claim). When present, the OAuth LOGIN can enrich work history via Coresignal — no paste.
+        logger.info("linkedin_oauth.userinfo_profile", {
+          hasProfile: typeof info.profile === "string" && info.profile.trim().length > 0,
+        })
         const { connectLinkedinProspectViaOAuth } = await import(
           "./linkedin-connect/linkedin-connect-submit.js"
         )
@@ -943,6 +957,7 @@ export const paLinkedinCallback = onRequest(
           ...(typeof info.name === "string" ? { name: info.name } : {}),
           ...(typeof info.email === "string" ? { email: info.email } : {}),
           ...(typeof info.picture === "string" ? { picture: info.picture } : {}),
+          ...(typeof info.profile === "string" ? { profileUrl: info.profile } : {}),
         })
         res.set("Cache-Control", "no-store")
         res.status(200).type("html").send(renderProspectRerouteHtml(result.smsDeepLink))

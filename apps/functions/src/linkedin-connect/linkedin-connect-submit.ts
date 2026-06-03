@@ -276,8 +276,17 @@ export async function handleLinkedinConnectSubmit(
  */
 export async function connectLinkedinProspectViaOAuth(
   db: Firestore,
-  input: { connectToken: string; sub: string; name?: string; email?: string; picture?: string },
-): Promise<{ ok: boolean; reason?: string; smsDeepLink?: string }> {
+  input: {
+    connectToken: string
+    sub: string
+    name?: string
+    email?: string
+    picture?: string
+    /** The OIDC `profile` claim = the member's REAL public URL. When present, the LOGIN enriches work
+     *  history via Coresignal (no paste). Absent → identity-only marker (back-compat). */
+    profileUrl?: string
+  },
+): Promise<{ ok: boolean; reason?: string; smsDeepLink?: string; enriched?: boolean }> {
   const nowIso = new Date().toISOString()
   const tokenResult = await verifyLinkedinConnectToken(db, input.connectToken)
   if (!tokenResult.ok) {
@@ -286,14 +295,15 @@ export async function connectLinkedinProspectViaOAuth(
   }
   const userId = tokenResult.userId
   const sub = input.sub.trim()
-  // OAuth-verified handle. The "/oauth-linked/" marker is the convention the URL-paste path checks
-  // (persistLinkedinUrlIfEmpty) so a later paste of the REAL URL overwrites this marker for Coresignal.
-  const oauthMarkerUrl = `https://www.linkedin.com/oauth-linked/${sub}`
+  // PREFER the REAL profile URL from OIDC (so Coresignal can enrich). Fall back to the
+  // "/oauth-linked/<sub>" identity marker only when LinkedIn didn't return the URL.
+  const realUrl = canonicalizeLinkedInUrl(input.profileUrl ?? "")
+  const handleUrl = realUrl ?? `https://www.linkedin.com/oauth-linked/${sub}`
   try {
     await linkCandidateHandle(db, {
       candidateId: userId,
       kind: "linkedin",
-      value: oauthMarkerUrl,
+      value: handleUrl,
       source: "candidate",
       verified: true, // OAuth-verified identity
       now: nowIso,
@@ -311,7 +321,7 @@ export async function connectLinkedinProspectViaOAuth(
       linkedinOauthLinked: true,
       linkedinOauthConnectedAt: nowIso,
       linkedinOauthSub: sub,
-      linkedinUrl: oauthMarkerUrl,
+      linkedinUrl: handleUrl,
       updatedAt: nowIso,
     }
     const name = input.name?.trim()
@@ -328,14 +338,66 @@ export async function connectLinkedinProspectViaOAuth(
       err: err instanceof Error ? err.message : String(err),
     })
   }
+
+  // LinkedIn LOGIN → ENRICH (Adam 2026-06-03): with the REAL URL we run the SAME Coresignal pipeline
+  // as the paste path — set the linkedin in-flight marker (drives the "pulling your LinkedIn 👀" ack),
+  // pull work history, then emit the completion event so the re-entry PITCHES. Its OWN source
+  // ("linkedin"), never conflated with résumé parse. Canary-gated; every step fails open (never
+  // dead-ends the reroute).
+  let enriched = false
+  if (realUrl && isCanaryUser(userId)) {
+    try {
+      const { setEnrichmentInFlight } = await import("../claire-agent/enrichment-inflight.js")
+      await setEnrichmentInFlight(db, userId, "linkedin", nowIso)
+    } catch (err) {
+      logger.warn("linkedin_oauth.inflight_mark_failed", { userId, err: String(err) })
+    }
+    const apiKey = CORESIGNAL_API_KEY.value().trim()
+    if (apiKey) {
+      try {
+        const out = await enrichFromCoresignal({ db, userId, canonicalUrl: realUrl, apiKey, nowIso })
+        enriched = out.enriched
+      } catch (err) {
+        const status = err instanceof CoresignalCollectError ? err.status : null
+        logger.warn("linkedin_oauth.enrich_failed_fail_open", { userId, status, err: String(err) })
+      }
+    } else {
+      logger.info("linkedin_oauth.coresignal_key_absent_degrade", { userId })
+    }
+    // Emit the enrichment-complete event (mirrors cv-ingest) so the re-entry pitches. enrichmentSource
+    // "linkedin" keeps this distinct from a résumé parse for the ack copy + analytics.
+    try {
+      const toE164 = await resolvePhone(db, userId, tokenResult.phoneE164)
+      if (toE164) {
+        await enqueueRuntimeEventHandoff(db, {
+          userId,
+          toE164,
+          source: "linkedin_connect",
+          eventKind: "resume_parse_completed",
+          idempotencyKey: `linkedin-oauth-enriched:${userId}:${linkedinHash(realUrl)}`,
+          requireExistingSession: false,
+          context: { cvParsedTrigger: true, enrichmentSource: "linkedin", linkedinEnriched: enriched },
+        })
+      }
+    } catch (err) {
+      logger.warn("linkedin_oauth.runtime_event_failed", { userId, err: String(err) })
+    }
+  }
+
   await markLinkedinConnectTokenUsed(db, input.connectToken, Date.parse(nowIso) || Date.now())
   // Reroute RECIPIENT = the user's WeKruit Sendblue number (NOT their own phone) — see resolveRerouteRecipient.
   const recipient = await resolveRerouteRecipient(db, userId)
   const smsDeepLink = recipient
     ? buildSmsDeepLink(recipient, buildLinkedinDoneOpenerBody(input.connectToken))
     : undefined
-  logger.info("linkedin_oauth.connected", { userId, hasName: Boolean(input.name), hasSms: Boolean(smsDeepLink) })
-  return { ok: true, ...(smsDeepLink ? { smsDeepLink } : {}) }
+  logger.info("linkedin_oauth.connected", {
+    userId,
+    hasName: Boolean(input.name),
+    hasRealUrl: Boolean(realUrl),
+    enriched,
+    hasSms: Boolean(smsDeepLink),
+  })
+  return { ok: true, enriched, ...(smsDeepLink ? { smsDeepLink } : {}) }
 }
 
 function setCors(res: { set: (k: string, v: string) => unknown }): void {
