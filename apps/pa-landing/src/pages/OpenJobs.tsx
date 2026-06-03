@@ -38,8 +38,6 @@ interface UnifiedJob {
   apply?: string
   industrySector?: string[]
   remote: boolean
-  /** Strong-fit signal — only true for the Direct tab on highlighted rows. */
-  fit?: "strong" | "good"
 }
 
 type TabId = "hunt" | "direct"
@@ -123,7 +121,7 @@ function fromOpenJobRow(r: OpenJobRow): UnifiedJob {
   }
 }
 
-function fromPublicOpening(j: PublicJobOpening, idx: number): UnifiedJob {
+function fromPublicOpening(j: PublicJobOpening): UnifiedJob {
   return {
     id: j.id,
     company: j.company,
@@ -135,7 +133,6 @@ function fromPublicOpening(j: PublicJobOpening, idx: number): UnifiedJob {
     summary: j.description,
     industrySector: j.industrySector,
     remote: /remote/i.test(j.location ?? ""),
-    fit: idx % 3 === 0 ? "strong" : "good",
   }
 }
 
@@ -262,7 +259,7 @@ export default function OpenJobs() {
     [huntQuery.data]
   )
   const directJobs = useMemo<UnifiedJob[] | null>(
-    () => (directQuery.data ? directQuery.data.map((j, i) => fromPublicOpening(j, i)) : null),
+    () => (directQuery.data ? directQuery.data.map((j) => fromPublicOpening(j)) : null),
     [directQuery.data]
   )
 
@@ -798,10 +795,7 @@ function Card({ j, tab, variant }: { j: UnifiedJob; tab: TabId; variant: "row" |
 
 function RowCta({ j, tab }: { j: UnifiedJob; tab: TabId }) {
   if (tab === "direct") {
-    if (j.fit === "strong") {
-      return <Link to={jobRoute(j)} className="btn btn--primary btn--sm">Interview with Claire →</Link>
-    }
-    return <Link to={jobRoute(j)} className="btn btn--secondary btn--sm">View role</Link>
+    return <Link to={jobRoute(j)} className="btn btn--primary btn--sm">Interview with Claire →</Link>
   }
   // Adam directive 2026-05-16 — matching-jobs are external, not collab; the
   // candidate clicks straight through to the source listing. No "Pitch me"
@@ -822,10 +816,9 @@ function jobRoute(j: UnifiedJob): string {
 
 function StatusPill({ j, tab }: { j: UnifiedJob; tab: TabId }) {
   if (tab === "direct") {
-    const strong = j.fit === "strong"
     return (
-      <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.08em", color: strong ? "var(--success)" : "var(--ink-3)" }}>
-        {strong ? "● Strong match" : "○ Open role"}
+      <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--success)" }}>
+        ● Claire screen ready
       </span>
     )
   }

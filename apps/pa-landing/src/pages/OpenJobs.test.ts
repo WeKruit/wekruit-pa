@@ -40,7 +40,18 @@ test("OpenJobs table action language stays interview and role centric", () => {
   assert.doesNotMatch(source, /\{tab === "direct" \? "Apply" : "Pitch"\}/)
   assert.doesNotMatch(source, /Open · apply via us/)
   assert.match(source, /<div style=\{\{ textAlign: "right" \}\}>Next step<\/div>/)
-  assert.match(source, /\{strong \? "● Strong match" : "○ Open role"\}/)
+  assert.match(source, /Claire screen ready/)
+  assert.match(source, /Interview with Claire →/)
+})
+
+test("OpenJobs does not invent guest fit labels without a connected profile", () => {
+  assert.doesNotMatch(source, /idx % 3/)
+  assert.doesNotMatch(source, /fit:\s*idx/)
+  assert.doesNotMatch(source, /Strong match/)
+  assert.doesNotMatch(source, /j\.fit === "strong"/)
+  assert.doesNotMatch(source, /○ Open role/)
+  assert.match(source, /Browsing as a guest/)
+  assert.match(source, /Sign in to keep your WeKruit profile connected/)
 })
 
 test("OpenJobs direct-line count is role-scoped instead of inflated as company count", () => {
