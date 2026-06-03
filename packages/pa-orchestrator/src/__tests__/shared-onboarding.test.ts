@@ -109,12 +109,12 @@ test("LinkedIn-done marker is dropped on Q1 + never advances the slot (no token 
   assert.equal(llmCalls, 0, "marker is filtered before any LLM call — token never leaks to the model")
 })
 
-test("buildConnectLinkedinUrl emits a candidate-domain connect link", () => {
+test("buildConnectLinkedinUrl emits an apex-domain connect link", () => {
   assert.equal(
     buildConnectLinkedinUrl("tok_abc"),
-    "https://candidate.wekruit.com/connect-linkedin?token=tok_abc",
+    "https://wekruit.com/connect-linkedin?token=tok_abc",
   )
-  assert.equal(buildConnectLinkedinUrl(""), "https://candidate.wekruit.com/connect-linkedin")
+  assert.equal(buildConnectLinkedinUrl(""), "https://wekruit.com/connect-linkedin")
 })
 
 test("shared onboarding asks ONLY the two hard-filter questions upfront (2026-06-02 trim)", () => {

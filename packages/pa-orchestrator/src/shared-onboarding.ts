@@ -242,8 +242,10 @@ export function buildLinkedinDoneOpenerBody(token: string): string {
   return t ? `${LINKEDIN_DONE_OPENER_PREFIX} ${t}` : LINKEDIN_DONE_OPENER_PREFIX
 }
 
-/** Canonical candidate-domain base for the LinkedIn one-tap connect page (C-end only). */
-export const CONNECT_LINKEDIN_LINK_BASE = "https://candidate.wekruit.com/connect-linkedin"
+/** Canonical candidate-domain base for the LinkedIn one-tap connect page (C-end only).
+ *  Apex wekruit.com serves the SAME pa-landing SPA (candidate./pa. are aliases) — Adam 2026-06-03:
+ *  candidate-facing links use the apex, not the candidate. subdomain. */
+export const CONNECT_LINKEDIN_LINK_BASE = "https://wekruit.com/connect-linkedin"
 
 /**
  * Pure builder for the LinkedIn one-tap connect link the thin agent can utter
@@ -256,8 +258,9 @@ export function buildConnectLinkedinUrl(token: string): string {
   return t ? `${CONNECT_LINKEDIN_LINK_BASE}?token=${encodeURIComponent(t)}` : CONNECT_LINKEDIN_LINK_BASE
 }
 
-/** Canonical candidate-domain login surface (C-end only). The "Continue with Google" CTA lives here. */
-export const CONNECT_GMAIL_LINK_BASE = "https://candidate.wekruit.com/login"
+/** Canonical candidate-domain login surface (C-end only). The "Continue with Google" CTA lives here.
+ *  Apex wekruit.com = same pa-landing SPA (Adam 2026-06-03 — apex over candidate. subdomain). */
+export const CONNECT_GMAIL_LINK_BASE = "https://wekruit.com/login"
 
 /**
  * WS-3(b) pure builder for the connect-Gmail nudge link the thin agent can utter

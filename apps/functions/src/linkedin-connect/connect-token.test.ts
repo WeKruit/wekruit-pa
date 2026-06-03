@@ -94,10 +94,10 @@ describe("issue + verify", () => {
 })
 
 describe("buildConnectLinkedinLink", () => {
-  it("builds a candidate.wekruit.com/connect-linkedin?token= link", () => {
+  it("builds a wekruit.com/connect-linkedin?token= link", () => {
     assert.equal(
       buildConnectLinkedinLink("abc123"),
-      "https://candidate.wekruit.com/connect-linkedin?token=abc123",
+      "https://wekruit.com/connect-linkedin?token=abc123",
     )
   })
 })

@@ -45,7 +45,7 @@ test("not eligible: mid-onboarding question (don't interrupt the wall)", () => {
 test("turn context: gmailNudge emits an optional-clause directive with the login link", () => {
   const ctx = buildClaireTurnContext({ mode: "triage", lang: "en", gmailNudge: true })
   assert.match(ctx, /GMAIL CONNECT/)
-  assert.match(ctx, /candidate\.wekruit\.com\/login/)
+  assert.match(ctx, /\bwekruit\.com\/login/)
   assert.match(ctx, /optional/i)
 })
 

@@ -23,8 +23,9 @@ import { PA_COLLECTIONS } from "@pa/core-types"
 /** Connect tokens are valid for 30 days (generous — links may sit in a text). */
 export const LINKEDIN_CONNECT_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
-/** Canonical candidate-facing base for the LinkedIn connect link (C-end domain). */
-export const LINKEDIN_CONNECT_LINK_BASE = "https://candidate.wekruit.com/connect-linkedin"
+/** Canonical candidate-facing base for the LinkedIn connect link (C-end domain).
+ *  Apex wekruit.com serves the same pa-landing SPA (Adam 2026-06-03 — apex over candidate. subdomain). */
+export const LINKEDIN_CONNECT_LINK_BASE = "https://wekruit.com/connect-linkedin"
 
 export interface LinkedinConnectTokenDoc {
   token: string
