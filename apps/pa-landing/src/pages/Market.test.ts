@@ -81,3 +81,15 @@ test("Market explains how Claire uses role sources before candidates chase posti
   assert.doesNotMatch(source, /auto-submit/i)
   assert.doesNotMatch(source, /we pitch you anyway/i)
 })
+
+test("Market direct-line roles do not overpromise employer access or invent interview capacity", () => {
+  assert.doesNotMatch(source, /hiring managers <em className="wk-accent">ready<\/em> to meet you/)
+  assert.doesNotMatch(source, /arrange the interview directly/i)
+  assert.doesNotMatch(source, /seats:\s*typeof raw\.interviewSeats === "number" \? raw\.interviewSeats : 2/)
+  assert.doesNotMatch(source, /\{r\.seats\} \{r\.seats === 1 \? "seat" : "seats"\}/)
+
+  assert.match(source, /role briefs <em className="wk-accent">ready<\/em> for Claire/)
+  assert.match(source, /Claire starts the role interview before any passed profile is shared/)
+  assert.match(source, /seats:\s*typeof raw\.interviewSeats === "number" \? raw\.interviewSeats : undefined/)
+  assert.match(source, /r\.seats === undefined \? "Claire interview" :/)
+})

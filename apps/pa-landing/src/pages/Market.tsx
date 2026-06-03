@@ -4,7 +4,7 @@
  * Two real-data tabs, both candidate-public:
  *   · Direct line  — Firestore `pa-jobs` where `publicVisible==true`. Employer-
  *                    authored Claire-fast-track roles (same source Landing uses);
- *                    has hiring-manager, seats, salary, prescreen config. Click
+ *                    may include hiring-manager, seats, salary, prescreen config. Click
  *                    "Talk to Claire" routes to /j/:jobId (PublicJob page).
  *   · Tracked roles — `paPublicOpenJobs` Cloud Function (HTTP). External
  *                    `matching-jobs` projected to a sanitized, paginated row.
@@ -107,7 +107,7 @@ interface DisplayJob {
   via: string
   evidence: MarketEvidence
   online: boolean
-  seats: number
+  seats?: number
   hiringManager: { name: string; title: string; tone: "warm" | "moss" | "slate" }
   applyUrl?: string
   logo: string
@@ -329,7 +329,7 @@ function fromPaJob(id: string, raw: PaJobDoc): DisplayJob {
     via: raw.wekruitCollaborationStatus === "collaborated" ? "Direct line" : "Inbound",
     evidence: evidenceForPaJob(raw),
     online: !!raw.hiringManagerOnline,
-    seats: typeof raw.interviewSeats === "number" ? raw.interviewSeats : 2,
+    seats: typeof raw.interviewSeats === "number" ? raw.interviewSeats : undefined,
     hiringManager: {
       name: raw.hiringManagerName ?? "Hiring manager",
       title: raw.hiringManagerTitle ?? "Hiring lead",
@@ -526,7 +526,9 @@ function DirectRow({ r, onTalk }: { r: DisplayJob; onTalk: () => void }) {
       </td>
       <td className="wk-tbl__cell wk-tbl__cell--role">
         <div className="wk-tbl__role">{r.title}</div>
-        <div className="wk-tbl__level">{r.seats} {r.seats === 1 ? "seat" : "seats"}</div>
+        <div className="wk-tbl__level">
+          {r.seats === undefined ? "Claire interview" : `${r.seats} ${r.seats === 1 ? "seat" : "seats"}`}
+        </div>
       </td>
       <td className="wk-tbl__cell wk-tbl__cell--hm">
         <Avatar name={r.hiringManager.name} size={28} tone={r.hiringManager.tone} />
@@ -871,11 +873,11 @@ export default function Market(): ReactNode {
               <header className="wk-market__head">
                 <p className="wk-eyebrow"><PulseDot size={6} /> Inbound · Collaborated with WeKruit</p>
                 <h1 className="wk-market__h1">
-                  <em className="wk-accent">{direct.isSuccess ? directJobs.length : "…"}</em> hiring managers <em className="wk-accent">ready</em> to meet you.
+                  <em className="wk-accent">{direct.isSuccess ? directJobs.length : "…"}</em> role briefs <em className="wk-accent">ready</em> for Claire.
                 </h1>
                 <p className="wk-market__lede">
-                  These companies set us up to find people like you. Tap a row to talk to Claire —
-                  she'll arrange the interview directly.
+                  These companies gave WeKruit role briefs to screen against. Tap a row to talk to Claire.
+                  Claire starts the role interview before any passed profile is shared.
                 </p>
               </header>
 
