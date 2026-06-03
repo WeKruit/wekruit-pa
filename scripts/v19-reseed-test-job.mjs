@@ -110,13 +110,15 @@ const docPath = `pa-jobs/test-swe-screen-001`
 const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/${docPath}`
 const body = {
   fields: v({
-    publicVisible: true,
+    publicVisible: false,
+    candidatePageStatus: "test",
     title: "Senior Frontend Engineer (Test Job)",
     company: "WeKruit Test Inc",
     location: "Remote · US",
     descriptionMd:
       "We're hiring a Senior Frontend Engineer to ship the next iteration of our recruiting platform. React 19 / Next.js 15 / TypeScript / production observability. Remote-first, US time zones.",
     prescreenConfig,
+    hiddenFromPublicReason: "QA test job must not appear on public candidate marketplace",
     updatedAt: new Date().toISOString(),
   }).mapValue.fields,
 }
@@ -130,5 +132,4 @@ if (!res.ok) {
   process.exit(1)
 }
 console.log("✓ pa-jobs/test-swe-screen-001 re-seeded")
-console.log("  publicVisible=true · 2 MUST_HAVE Qs · level1Reveal set · threshold=0.65")
-console.log("\n📌 Smoke URL: https://wekruit-pa.web.app/j/test-swe-screen-001")
+console.log("  publicVisible=false · candidatePageStatus=test · 2 MUST_HAVE Qs · level1Reveal set · threshold=0.65")

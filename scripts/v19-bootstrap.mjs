@@ -2,7 +2,7 @@
 /**
  * v1.9 bootstrap — operator-driven seed via Firestore REST API.
  *
- *   1. Flip pa-jobs/test-swe-screen-001.publicVisible=true + level1Reveal
+ *   1. Seed pa-jobs/test-swe-screen-001 as a private QA job + level1Reveal
  *   2. Seed pa-config/sendblue-pool w/ 2 numbers (1 active, 1 paused placeholder)
  *
  * Auth: refreshes Firebase CLI's stored OAuth refresh_token → access_token.
@@ -76,11 +76,12 @@ async function patch(docPath, data, updatePaths) {
   return res.json()
 }
 
-// ── 1. publicVisible + level1Reveal + description for test job ─────────────
+// ── 1. Private QA job + level1Reveal + description for test job ────────────
 await patch(
   "pa-jobs/test-swe-screen-001",
   {
-    publicVisible: true,
+    publicVisible: false,
+    candidatePageStatus: "test",
     prescreenConfig: {
       jobTitle: "Senior Frontend Engineer (Test Job)",
       company: "WeKruit Test Inc",
@@ -93,11 +94,12 @@ await patch(
     descriptionMd:
       "We're hiring a Senior Frontend Engineer to ship the next iteration of our recruiting platform. React 19 / Next.js 15 / TypeScript / production observability. Remote-first, US time zones.",
     location: "Remote · US",
+    hiddenFromPublicReason: "QA test job must not appear on public candidate marketplace",
     updatedAt: new Date().toISOString(),
   },
-  ["publicVisible", "prescreenConfig", "descriptionMd", "location", "updatedAt"]
+  ["publicVisible", "candidatePageStatus", "prescreenConfig", "descriptionMd", "location", "hiddenFromPublicReason", "updatedAt"]
 )
-console.log("✓ pa-jobs/test-swe-screen-001 publicVisible=true + level1Reveal seeded")
+console.log("✓ pa-jobs/test-swe-screen-001 seeded as private QA job + level1Reveal")
 
 // ── 2. Sendblue pool: 2 numbers ────────────────────────────────────────────
 await patch(
@@ -119,6 +121,5 @@ await patch(
 console.log("✓ pa-config/sendblue-pool seeded (1 active + 1 paused placeholder)")
 
 console.log("\n📌 Smoke routes:")
-console.log("   https://wekruit-pa.web.app/j/test-swe-screen-001")
 console.log("   https://wekruit-pa.web.app/admin/sendblue-pool")
 console.log("   https://wekruit-pa.web.app/admin/job-prescreen")
