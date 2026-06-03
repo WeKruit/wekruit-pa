@@ -85,6 +85,15 @@ test("ReferPublicPage hero explains the friend-side trust contract before cash m
   assert.doesNotMatch(source, /hiring teams see every referred profile/i)
 })
 
+test("ReferPublicPage routes candidate-owner earning CTAs back to the referral dashboard", () => {
+  assert.match(source, /const REFERRAL_DASHBOARD_LOGIN = "\/login\?next=%2Fme%2Frefer"/)
+  assert.match(source, /const primaryHref = inviter \? "\/login" : REFERRAL_DASHBOARD_LOGIN/)
+  assert.match(source, /onClick=\{\(\) => navigate\(primaryHref\)\}/)
+  assert.match(source, /<Link to=\{inviter \? "\/login" : REFERRAL_DASHBOARD_LOGIN\} className="wk-ref-public-cta__alt">/)
+  assert.match(source, /onClick=\{\(\) => navigate\(REFERRAL_DASHBOARD_LOGIN\)\}/)
+  assert.doesNotMatch(source, /Sign up to start earning[\s\S]{0,180}navigate\("\/login"\)/)
+})
+
 test("ReferComposer invite preview keeps friend onboarding profile-first", () => {
   assert.doesNotMatch(source, /No resume required up front/)
   assert.doesNotMatch(source, /matches you with hiring managers directly/i)

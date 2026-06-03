@@ -48,6 +48,7 @@ import {
 
 const REWARD_INTERVIEW = 50
 const REWARD_PLACEMENT = 4000
+const REFERRAL_DASHBOARD_LOGIN = "/login?next=%2Fme%2Frefer"
 
 const REFER_STAGES = ["invited", "joined", "interviewing", "placed"] as const
 type ReferStage = (typeof REFER_STAGES)[number]
@@ -1035,6 +1036,7 @@ function ReferPublicTrustContract() {
 function ReferPublicHero({ inviter }: { inviter: string | null }) {
   const max = REWARD_INTERVIEW + REWARD_PLACEMENT
   const navigate = useNavigate()
+  const primaryHref = inviter ? "/login" : REFERRAL_DASHBOARD_LOGIN
   return (
     <header className="wk-ref-hero wk-ref-hero--public">
       <div className="wk-ref-hero__inner wk-ref-hero__inner--public">
@@ -1093,10 +1095,10 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
           <ReferPublicTrustContract />
 
           <div className="wk-ref-public-cta">
-            <button type="button" className="wk-btn wk-btn--primary wk-btn--lg" onClick={() => navigate("/login")}>
+            <button type="button" className="wk-btn wk-btn--primary wk-btn--lg" onClick={() => navigate(primaryHref)}>
               {inviter ? "Start with Claire" : "Sign up to start earning"} <Icon name="arrow-right" size={14} stroke={2} />
             </button>
-            <Link to="/login" className="wk-ref-public-cta__alt">
+            <Link to={inviter ? "/login" : REFERRAL_DASHBOARD_LOGIN} className="wk-ref-public-cta__alt">
               I already have an account
             </Link>
           </div>
@@ -1167,7 +1169,7 @@ function ReferPublicCallout() {
             should get cut of it — not a recruiter cold-emailing them.
           </p>
         </div>
-        <button type="button" className="wk-btn wk-btn--primary wk-btn--lg" onClick={() => navigate("/login")}>
+        <button type="button" className="wk-btn wk-btn--primary wk-btn--lg" onClick={() => navigate(REFERRAL_DASHBOARD_LOGIN)}>
           Start with Claire <Icon name="arrow-right" size={14} stroke={2} />
         </button>
       </div>
