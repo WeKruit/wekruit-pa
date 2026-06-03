@@ -14,14 +14,20 @@ function mockFetch(
   responses: Array<{ status: number; body?: unknown; throwError?: string }>,
 ): {
   fetchImpl: typeof fetch
-  calls: Array<{ url: string; headers: Record<string, string> }>
+  calls: Array<{ url: string; headers: Record<string, string>; body?: unknown }>
 } {
-  const calls: Array<{ url: string; headers: Record<string, string> }> = []
+  const calls: Array<{ url: string; headers: Record<string, string>; body?: unknown }> = []
   let i = 0
   const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString()
     const headers = (init?.headers ?? {}) as Record<string, string>
-    calls.push({ url, headers })
+    let body: unknown
+    try {
+      body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined
+    } catch {
+      body = undefined
+    }
+    calls.push({ url, headers, body })
     const spec = responses[Math.min(i, responses.length - 1)]
     i++
     if (spec.throwError) {
@@ -216,6 +222,13 @@ test("searchEmployeeIdByLinkedinUrl — POSTs ES-DSL and returns first id (array
     `${CORESIGNAL_DEFAULT_BASE_URL}/employee_multi_source/search/es_dsl`,
   )
   assert.equal(calls[0].headers.apikey, "test-key")
+  // REGRESSION GUARD (2026-06-03): the resolver MUST query field `linkedin_url`
+  // via `match_phrase`. The old `websites_professional_network` query_string
+  // returned ZERO hits live — a silent no-match that broke every LinkedIn-URL
+  // enrichment. Pin the exact body so it can never regress to the dead field.
+  assert.deepEqual(calls[0].body, {
+    query: { match_phrase: { linkedin_url: "https://linkedin.com/in/yue-h" } },
+  })
 })
 
 test("searchEmployeeIdByLinkedinUrl — tolerates {data:[]} and {hits:{hits:[]}} shapes", async () => {

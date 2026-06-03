@@ -257,9 +257,13 @@ export async function fetchEmployeeCollect(
 
 /**
  * The CoreSignal field that holds the canonical LinkedIn profile URL. v2
- * employee records expose the professional-network URL under this term.
+ * `employee_multi_source` records expose the profile URL under `linkedin_url`
+ * (verified live 2026-06-03: `websites_professional_network` is undefined on the
+ * collected record and returns ZERO search hits — the old value was a silent
+ * no-match bug that made every LinkedIn-URL enrichment fail). `match_phrase`
+ * against `linkedin_url` resolves all URL forms (scheme / www / trailing slash).
  */
-const LINKEDIN_URL_SEARCH_FIELD = "websites_professional_network"
+const LINKEDIN_URL_SEARCH_FIELD = "linkedin_url"
 
 async function searchRaw(
   endpoint: string,
@@ -345,9 +349,12 @@ export async function searchEmployeeIdByLinkedinUrl(
 ): Promise<number | null> {
   const url = canonicalLinkedInUrl.trim()
   if (!url) return null
+  // match_phrase (not query_string) — query_string treats the URL's `://` and
+  // `/` as operators; match_phrase analyzes the value and matches regardless of
+  // scheme/www/trailing-slash (all five forms verified live 2026-06-03).
   const raw = await searchRaw(
     "employee_multi_source",
-    { query_string: { query: `${LINKEDIN_URL_SEARCH_FIELD}:"${url}"` } },
+    { match_phrase: { [LINKEDIN_URL_SEARCH_FIELD]: url } },
     config,
   )
   return firstNumericId(raw)
