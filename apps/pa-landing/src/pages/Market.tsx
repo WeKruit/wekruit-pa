@@ -748,6 +748,17 @@ export default function Market(): ReactNode {
   const huntingTotal = hunting.data?.pages[0]?.total ?? 0
   const directJobs = direct.data ?? []
   const trackedRolesEmpty = hunting.isSuccess && huntingTotal === 0
+  const trackedHead = trackedRolesEmpty
+    ? {
+        eyebrow: "Tracked roles",
+        title: <>No tracked roles yet.</>,
+        lede: "Role briefs are still available for Claire interviews. Use those first, or update role signals so Claire knows what external sources should matter next.",
+      }
+    : {
+        eyebrow: "External roles · Claire is watching",
+        title: <>Roles Claire is <em className="wk-accent">tracking</em>.</>,
+        lede: "Fresh external roles from the last 45 days. Open a posting to inspect the source while Claire keeps your profile and target constraints connected.",
+      }
 
   const onOpenJob = useCallback((job: DisplayJob) => {
     if (!job.applyUrl) return
@@ -790,13 +801,9 @@ export default function Market(): ReactNode {
           <section className="wk-market__panel wk-market__panel--hunting">
             <div className="wk-container">
               <header className="wk-market__head">
-                <p className="wk-eyebrow">External roles · Claire is watching</p>
-                <h1 className="wk-market__h1">
-                  Roles Claire is <em className="wk-accent">tracking</em>.
-                </h1>
-                <p className="wk-market__lede">
-                  Fresh external roles from the last 45 days. Open a posting to inspect the source while Claire keeps your profile and target constraints connected.
-                </p>
+                <p className="wk-eyebrow">{trackedHead.eyebrow}</p>
+                <h1 className="wk-market__h1">{trackedHead.title}</h1>
+                <p className="wk-market__lede">{trackedHead.lede}</p>
                 <div className="wk-market__actions" aria-label="Market primary actions">
                   <a className="wk-btn wk-btn--primary" href="/me/profile#profile-corrections">Update role signals</a>
                   <button

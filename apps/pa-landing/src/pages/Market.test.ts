@@ -33,6 +33,7 @@ test("Market tracked-role zero state moves candidates to real next actions befor
   assert.match(source, /Update role signals/)
   assert.match(source, /View role briefs/)
   assert.match(source, /const trackedRolesEmpty = hunting\.isSuccess && huntingTotal === 0/)
+  assert.match(source, /const trackedHead = trackedRolesEmpty[\s\S]*No tracked roles yet\./)
   assert.match(source, /\{trackedRolesEmpty \? \([\s\S]*<MarketTrackedRolesEmpty onViewRoleBriefs=\{\(\) => setTab\("direct"\)\} \/>[\s\S]*\) : \([\s\S]*<div className="wk-market__layout">/)
 })
 
