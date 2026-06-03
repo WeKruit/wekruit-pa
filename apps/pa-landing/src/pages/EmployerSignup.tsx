@@ -194,6 +194,7 @@ export default function EmployerSignup() {
                   placeholder="https://www.linkedin.com/company/acme"
                 />
                 <Field
+                  id="employer-primary-role-brief"
                   label="Primary role brief *"
                   value={form.rolesHiring}
                   onChange={(v) => update("rolesHiring", v)}
@@ -201,6 +202,7 @@ export default function EmployerSignup() {
                   helper="Start with the one role Claire should screen against first."
                 />
                 <Field
+                  id="employer-hard-filters"
                   label="Hard filters *"
                   value={form.hardFilters}
                   onChange={(v) => update("hardFilters", v)}
@@ -209,6 +211,7 @@ export default function EmployerSignup() {
                   as="textarea"
                 />
                 <Field
+                  id="employer-screening-questions"
                   label="Screening questions *"
                   value={form.screeningQuestions}
                   onChange={(v) => update("screeningQuestions", v)}
@@ -217,6 +220,7 @@ export default function EmployerSignup() {
                   as="textarea"
                 />
                 <Field
+                  id="employer-calibration-examples"
                   label="Calibration examples *"
                   value={form.calibrationExamples}
                   onChange={(v) => update("calibrationExamples", v)}
@@ -225,6 +229,7 @@ export default function EmployerSignup() {
                   as="textarea"
                 />
                 <Field
+                  id="employer-must-haves"
                   label="Must-haves *"
                   value={form.notes}
                   onChange={(v) => update("notes", v)}
@@ -232,6 +237,7 @@ export default function EmployerSignup() {
                   as="textarea"
                 />
                 <Field
+                  id="employer-feedback-loop"
                   label="Feedback loop *"
                   value={form.feedbackLoop}
                   onChange={(v) => update("feedbackLoop", v)}
@@ -240,6 +246,7 @@ export default function EmployerSignup() {
                   as="textarea"
                 />
                 <Field
+                  id="employer-intro-handoff"
                   label="Intro handoff *"
                   value={form.introHandoff}
                   onChange={(v) => update("introHandoff", v)}
@@ -731,6 +738,85 @@ function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadiness
         </div>
       </div>
 
+      {summary.nextIncompleteItem ? (
+        <div
+          style={{
+            marginTop: 14,
+            border: "1px solid rgba(203, 127, 88, 0.32)",
+            borderRadius: "var(--r-md)",
+            background: "rgba(255, 255, 255, 0.64)",
+            padding: 12,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div
+              style={{
+                fontFamily: "var(--font-sans)",
+                fontSize: 11,
+                color: "var(--ink-3)",
+                fontWeight: 750,
+                textTransform: "uppercase",
+                letterSpacing: 0,
+              }}
+            >
+              Next needed
+            </div>
+            <strong
+              style={{
+                display: "block",
+                marginTop: 3,
+                fontFamily: "var(--font-sans)",
+                fontSize: 14,
+                color: "var(--ink)",
+                lineHeight: 1.25,
+              }}
+            >
+              {summary.nextIncompleteItem.label}
+            </strong>
+            <p
+              style={{
+                margin: "4px 0 0",
+                fontFamily: "var(--font-sans)",
+                fontSize: 13,
+                color: "var(--ink-2)",
+                lineHeight: 1.35,
+              }}
+            >
+              {summary.nextIncompleteItem.description}
+            </p>
+          </div>
+          <a
+            href={`#${summary.nextIncompleteItem.targetId}`}
+            className="btn btn--ghost btn--sm"
+            style={{ textDecoration: "none", flex: "0 0 auto" }}
+          >
+            Jump to field
+          </a>
+        </div>
+      ) : (
+        <div
+          style={{
+            marginTop: 14,
+            border: "1px solid rgba(95, 119, 73, 0.26)",
+            borderRadius: "var(--r-md)",
+            background: "rgba(230, 233, 217, 0.72)",
+            padding: 12,
+            fontFamily: "var(--font-sans)",
+            fontSize: 14,
+            color: "var(--success)",
+            fontWeight: 700,
+            lineHeight: 1.35,
+          }}
+        >
+          Ready for WeKruit review. Submit the completed role packet when company contact details are filled.
+        </div>
+      )}
+
       <div
         style={{
           display: "grid",
@@ -740,8 +826,10 @@ function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadiness
         }}
       >
         {summary.items.map((item) => (
-          <div
+          <a
             key={item.id}
+            href={`#${item.targetId}`}
+            aria-label={`Jump to ${item.label}`}
             style={{
               minHeight: 44,
               border: `1px solid ${item.complete ? "var(--success-bg)" : "var(--border)"}`,
@@ -749,9 +837,11 @@ function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadiness
               background: item.complete ? "rgba(230, 233, 217, 0.72)" : "var(--cream-3)",
               padding: "9px 10px",
               display: "flex",
-              alignItems: "center",
+              alignItems: "flex-start",
               gap: 8,
               minWidth: 0,
+              color: "inherit",
+              textDecoration: "none",
             }}
           >
             <span
@@ -775,9 +865,21 @@ function EmployerPacketReadiness({ summary }: { summary: EmployerSignupReadiness
                 overflowWrap: "anywhere",
               }}
             >
-              {item.label}
+              <span style={{ display: "block" }}>{item.label}</span>
+              <span
+                style={{
+                  display: "block",
+                  marginTop: 3,
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: "var(--ink-3)",
+                  lineHeight: 1.25,
+                }}
+              >
+                {item.description}
+              </span>
             </span>
-          </div>
+          </a>
         ))}
       </div>
     </section>
@@ -799,6 +901,7 @@ function Row({ children }: { children: ReactNode }) {
 }
 
 type FieldProps = {
+  id?: string
   label: string
   value: string
   onChange: (v: string) => void
@@ -809,7 +912,7 @@ type FieldProps = {
   options?: { value: string; label: string }[]
 }
 
-function Field({ label, value, onChange, placeholder, type = "text", helper, as = "input", options }: FieldProps) {
+function Field({ id, label, value, onChange, placeholder, type = "text", helper, as = "input", options }: FieldProps) {
   // The shared `.input` / `.textarea` / `.select` classes (wekruit-tokens.css)
   // already handle the empty-vs-filled visual: dashed cream border when
   // :placeholder-shown, solid white when filled. Inline overrides only
@@ -819,7 +922,7 @@ function Field({ label, value, onChange, placeholder, type = "text", helper, as 
     boxSizing: "border-box",
   }
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+    <label id={id} style={{ display: "flex", flexDirection: "column", gap: 6, scrollMarginTop: 92 }}>
       <span
         style={{
           fontFamily: "var(--font-sans)",

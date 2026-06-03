@@ -91,11 +91,37 @@ test("deriveEmployerSignupReadiness marks partial employer packet evidence witho
   )
 })
 
+test("deriveEmployerSignupReadiness identifies the next missing field target", () => {
+  const summary = deriveEmployerSignupReadiness({
+    ...EMPTY_FORM,
+    rolesHiring: "Founding infra engineer",
+    hardFilters: "US work authorization",
+    screeningQuestions: "What tradeoff did they own?",
+    feedbackLoop: "Post pass/no-pass feedback in the WeKruit thread",
+  })
+
+  assert.equal(summary.nextIncompleteItem?.id, "calibration")
+  assert.equal(summary.nextIncompleteItem?.targetId, "employer-calibration-examples")
+  assert.deepEqual(
+    summary.items.map((item) => [item.id, item.targetId]),
+    [
+      ["role_brief", "employer-primary-role-brief"],
+      ["hard_filters", "employer-hard-filters"],
+      ["evidence_probes", "employer-screening-questions"],
+      ["calibration", "employer-calibration-examples"],
+      ["must_haves", "employer-must-haves"],
+      ["feedback_loop", "employer-feedback-loop"],
+      ["intro_handoff", "employer-intro-handoff"],
+    ],
+  )
+})
+
 test("deriveEmployerSignupReadiness only marks the packet ready when every Claire prerequisite exists", () => {
   const summary = deriveEmployerSignupReadiness(COMPLETE_FORM)
 
   assert.equal(summary.completedCount, 7)
   assert.equal(summary.totalCount, 7)
   assert.equal(summary.ready, true)
+  assert.equal(summary.nextIncompleteItem, null)
   assert.equal(summary.items.every((item) => item.complete), true)
 })

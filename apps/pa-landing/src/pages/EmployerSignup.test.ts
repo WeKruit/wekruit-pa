@@ -92,6 +92,21 @@ test("EmployerSignup shows a role packet readiness checklist before the long for
   assert.match(source, /Complete these before WeKruit approves the role brief/i)
 })
 
+test("EmployerSignup turns role packet readiness into actionable field jumps", () => {
+  assert.match(source, /summary\.nextIncompleteItem/)
+  assert.match(source, /Next needed/)
+  assert.match(source, /Jump to field/)
+  assert.match(source, /href=\{`#\$\{summary\.nextIncompleteItem\.targetId\}`\}/)
+  assert.match(source, /href=\{`#\$\{item\.targetId\}`\}/)
+  assert.match(source, /id="employer-primary-role-brief"/)
+  assert.match(source, /id="employer-hard-filters"/)
+  assert.match(source, /id="employer-screening-questions"/)
+  assert.match(source, /id="employer-calibration-examples"/)
+  assert.match(source, /id="employer-must-haves"/)
+  assert.match(source, /id="employer-feedback-loop"/)
+  assert.match(source, /id="employer-intro-handoff"/)
+})
+
 test("EmployerSignup explains the post-submit calibration loop before the form", () => {
   assert.match(source, /EmployerCalibrationLoop/)
   assert.match(source, /aria-label="Role calibration loop"/)
