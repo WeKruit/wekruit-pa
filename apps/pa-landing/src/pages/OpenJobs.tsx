@@ -85,6 +85,24 @@ interface FiltersState {
 }
 const EMPTY_FILTERS: FiltersState = { functions: [], locations: [], levels: [], remoteOnly: false }
 
+function initialOpenJobsLayout(): LayoutId {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "table"
+  return window.matchMedia("(max-width: 720px)").matches ? "cards" : "table"
+}
+
+function useOpenJobsNarrowViewport(): boolean {
+  const [isNarrow, setIsNarrow] = useState(() => initialOpenJobsLayout() === "cards")
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return
+    const query = window.matchMedia("(max-width: 720px)")
+    const onChange = () => setIsNarrow(query.matches)
+    onChange()
+    query.addEventListener("change", onChange)
+    return () => query.removeEventListener("change", onChange)
+  }, [])
+  return isNarrow
+}
+
 // --------------------------------------------------------------- adapters
 
 function fromOpenJobRow(r: OpenJobRow): UnifiedJob {
@@ -153,14 +171,14 @@ function Nav() {
         transition: "background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)",
       }}
     >
-      <div className="container" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", height: 72 }}>
+      <div className="container open-nav__inner" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", height: 72 }}>
         <Wordmark />
-        <nav style={{ display: "flex", gap: 28, alignItems: "center" }}>
+        <nav className="open-nav__links" style={{ display: "flex", gap: 28, alignItems: "center" }}>
           <Link to="/" style={navLinkStyle(false)}>For candidates</Link>
           <Link to="/open" style={navLinkStyle(true)}>Open roles</Link>
           <Link to="/legal" style={navLinkStyle(false)}>Privacy</Link>
         </nav>
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <div className="open-nav__actions" style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <Link to="/login" style={navLinkStyle(false)}>Sign in</Link>
           <Link to="/onboarding" className="btn btn--primary btn--sm">Add your name</Link>
         </div>
@@ -185,7 +203,7 @@ function navLinkStyle(active: boolean): React.CSSProperties {
 function GuestBanner() {
   return (
     <div style={{ background: "var(--cream-2)", borderBottom: "1px solid var(--border)" }}>
-      <div className="container" style={{ padding: "10px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+      <div className="container open-guest__inner" style={{ padding: "10px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
         <span className="caption" style={{ color: "var(--ink-2)" }}>
           Browsing as a guest · <Link to="/login" style={{ color: "var(--ink)" }}>Sign in to keep your WeKruit profile connected</Link> while you review roles.
         </span>
@@ -224,7 +242,9 @@ export default function OpenJobs() {
   const [tab, setTab] = useState<TabId>("direct")
   const [filters, setFilters] = useState<FiltersState>(EMPTY_FILTERS)
   const [search, setSearch] = useState("")
-  const [layout, setLayout] = useState<LayoutId>("table")
+  const [layout, setLayout] = useState<LayoutId>(initialOpenJobsLayout)
+  const isNarrowViewport = useOpenJobsNarrowViewport()
+  const effectiveLayout = isNarrowViewport && layout === "table" ? "cards" : layout
 
   // Adam directive 2026-05-16 — TanStack Query replaces the old sessionStorage
   // cache. Both tabs read through the shared QueryClient so a tab flip is a
@@ -283,7 +303,7 @@ export default function OpenJobs() {
   const totalForTab = tab === "hunt" ? huntCount : directCount
 
   return (
-    <main style={{ background: "var(--cream)", minHeight: "100vh", fontFamily: "var(--font-sans)", color: "var(--ink)" }}>
+    <main className="open-page" style={{ background: "var(--cream)", minHeight: "100vh", fontFamily: "var(--font-sans)", color: "var(--ink)" }}>
       <Nav />
       <GuestBanner />
 
@@ -318,7 +338,7 @@ export default function OpenJobs() {
                 <EmptyState onReset={() => { setFilters(EMPTY_FILTERS); setSearch("") }} />
               ) : (
                 <>
-                  <List jobs={filtered.slice(0, visibleCount)} tab={tab} layout={layout} />
+                  <List jobs={filtered.slice(0, visibleCount)} tab={tab} layout={effectiveLayout} />
                   {visibleCount < filtered.length && (
                     <div style={{ marginTop: 24, display: "flex", justifyContent: "center" }}>
                       <button
@@ -348,11 +368,57 @@ export default function OpenJobs() {
       <Footer />
 
       <style>{`
+        .open-page { overflow-x: clip; }
         .open-layout { display: grid; grid-template-columns: 240px 1fr; gap: 56px; align-items: start; }
         .open-sidebar { position: sticky; top: 96px; }
+        .open-main { min-width: 0; }
         @media (max-width: 1024px) {
           .open-layout { grid-template-columns: 1fr; gap: 32px; }
           .open-sidebar { display: none; }
+        }
+        @media (max-width: 720px) {
+          .open-nav__inner {
+            height: auto !important;
+            padding: 14px 20px !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
+            flex-wrap: wrap;
+            gap: 12px;
+          }
+          .open-nav__links {
+            order: 3;
+            width: 100%;
+            gap: 18px !important;
+            overflow-x: auto;
+            padding-bottom: 2px;
+          }
+          .open-nav__actions {
+            margin-left: auto;
+            gap: 8px !important;
+          }
+          .open-nav__actions > a:first-child { display: none; }
+          .open-nav__actions .btn { white-space: nowrap; }
+          .open-guest__inner { padding: 10px 20px !important; }
+          .open-header { align-items: stretch !important; }
+          .open-header__controls {
+            width: 100%;
+            flex: 1 1 100% !important;
+          }
+          .open-search { width: 100% !important; min-width: 0; }
+          .open-layout-switcher {
+            width: 100%;
+            justify-content: space-between;
+          }
+          .open-layout-switcher button {
+            flex: 1;
+            justify-content: center;
+          }
+          .open-card-list--grid { grid-template-columns: 1fr !important; }
+          .open-table-shell {
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch;
+          }
+          .open-table-inner { min-width: 860px; }
         }
       `}</style>
     </main>
@@ -414,7 +480,7 @@ interface HeaderProps {
 function Header({ tab, count, total, search, setSearch, layout, setLayout }: HeaderProps) {
   const isDirect = tab === "direct"
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 28 }}>
+    <div className="open-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 28 }}>
       <div style={{ flex: "1 1 460px", minWidth: 0 }}>
         <div className="eyebrow" style={{ marginBottom: 10, color: isDirect ? "var(--success)" : "var(--ink-3)" }}>
           {isDirect ? "● Direct line · Claire starts the first interview" : "External roles · Source listings"}
@@ -437,7 +503,7 @@ function Header({ tab, count, total, search, setSearch, layout, setLayout }: Hea
           </p>
         )}
       </div>
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
+      <div className="open-header__controls" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
         <SearchInput value={search} onChange={setSearch} />
         <LayoutSwitcher value={layout} onChange={setLayout} />
       </div>
@@ -447,7 +513,7 @@ function Header({ tab, count, total, search, setSearch, layout, setLayout }: Hea
 
 function SearchInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <label style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 14px", background: "var(--cream-3)", border: "1px solid var(--border)", borderRadius: "var(--r-pill)", width: 240 }}>
+    <label className="open-search" style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "8px 14px", background: "var(--cream-3)", border: "1px solid var(--border)", borderRadius: "var(--r-pill)", width: 240 }}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" style={{ color: "var(--ink-3)" }}>
         <circle cx="11" cy="11" r="7" />
         <path d="M21 21l-4.3-4.3" strokeLinecap="round" />
@@ -490,7 +556,7 @@ function LayoutSwitcher({ value, onChange }: { value: LayoutId; onChange: (v: La
     )
   }
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 2, padding: 3, background: "var(--cream-3)", border: "1px solid var(--border)", borderRadius: "var(--r-pill)" }}>
+    <div className="open-layout-switcher" style={{ display: "inline-flex", alignItems: "center", gap: 2, padding: 3, background: "var(--cream-3)", border: "1px solid var(--border)", borderRadius: "var(--r-pill)" }}>
       <Item id="table" label="Table" icon={
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
           <rect x="1.5" y="3" width="13" height="10" rx="1" />
@@ -615,17 +681,19 @@ const TABLE_COLS = "1.4fr 1.7fr 0.9fr 1fr 1.1fr 0.6fr 1.1fr"
 
 function TableView({ jobs, tab }: { jobs: UnifiedJob[]; tab: TabId }) {
   return (
-    <div style={{ background: "var(--cream-3)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden" }}>
-      <div style={{ display: "grid", gridTemplateColumns: TABLE_COLS, padding: "14px 24px", borderBottom: "1px solid var(--border)", background: "var(--cream-2)", fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)" }}>
-        <div>Company</div>
-        <div>Role</div>
-        <div>Function</div>
-        <div>Location</div>
-        <div>Comp</div>
-        <div>Posted</div>
-        <div style={{ textAlign: "right" }}>Next step</div>
+    <div className="open-table-shell" style={{ background: "var(--cream-3)", border: "1px solid var(--border)", borderRadius: "var(--r-lg)", overflow: "hidden" }}>
+      <div className="open-table-inner">
+        <div style={{ display: "grid", gridTemplateColumns: TABLE_COLS, padding: "14px 24px", borderBottom: "1px solid var(--border)", background: "var(--cream-2)", fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--ink-3)" }}>
+          <div>Company</div>
+          <div>Role</div>
+          <div>Function</div>
+          <div>Location</div>
+          <div>Comp</div>
+          <div>Posted</div>
+          <div style={{ textAlign: "right" }}>Next step</div>
+        </div>
+        {jobs.map((j) => <TableRow key={j.id} j={j} tab={tab} />)}
       </div>
-      {jobs.map((j) => <TableRow key={j.id} j={j} tab={tab} />)}
     </div>
   )
 }
@@ -671,7 +739,7 @@ function TableRow({ j, tab }: { j: UnifiedJob; tab: TabId }) {
 
 function CardsList({ jobs, tab, variant }: { jobs: UnifiedJob[]; tab: TabId; variant: "row" | "grid" }) {
   return (
-    <div style={variant === "grid" ? { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 } : { display: "flex", flexDirection: "column", gap: 12 }}>
+    <div className={variant === "grid" ? "open-card-list--grid" : undefined} style={variant === "grid" ? { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 } : { display: "flex", flexDirection: "column", gap: 12 }}>
       {jobs.map((j) => <Card key={j.id} j={j} tab={tab} variant={variant} />)}
     </div>
   )
