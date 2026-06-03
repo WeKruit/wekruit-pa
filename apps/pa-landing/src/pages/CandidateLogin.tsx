@@ -722,6 +722,14 @@ function onboardingRoleReturnPath(next: ReturnType<typeof parseLoginNextPath>): 
   return roleReturnPath && isPublicJobPath(roleReturnPath) ? roleReturnPath : null
 }
 
+function roleInterviewFirstTimeHref(next: ReturnType<typeof parseLoginNextPath>): string | null {
+  const rolePath = onboardingRoleReturnPath(next) ?? (isPublicJobPath(next.pathname) ? next.to : null)
+  if (!rolePath) return null
+  const roleDest = parseLoginNextPath(rolePath, rolePath)
+  if (!isPublicJobPath(roleDest.pathname)) return null
+  return `${roleDest.pathname.replace(/\/cv$/, "")}${roleDest.search}${roleDest.hash}`
+}
+
 function LoginPipelinePreview() {
   const items = [
     {
@@ -1015,7 +1023,8 @@ export default function CandidateLogin() {
   const onboardingNext = nextDest.isOnboarding && !roleInterviewNext
   const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !onboardingNext
   const showOnboardingPreview = !isCompletingLink && onboardingNext
-  const firstTimeHref = roleInterviewNext ? nextDest.to : onboardingNext ? nextDest.to : onboardingDestination(peekSource())
+  const roleFirstTimeHref = roleInterviewFirstTimeHref(nextDest)
+  const firstTimeHref = roleInterviewNext ? roleFirstTimeHref ?? nextDest.to : onboardingNext ? nextDest.to : onboardingDestination(peekSource())
   const loginEyebrow = isCompletingLink
     ? "Finishing sign-in"
     : roleInterviewNext
