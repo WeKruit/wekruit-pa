@@ -87,3 +87,19 @@ test("Landing explains the candidate operating model without turning into an app
   assert.doesNotMatch(landingSource, /auto-submit/i)
   assert.doesNotMatch(landingSource, /guaranteed interview/i)
 })
+
+test("Landing exposes the market source layer without becoming an apply queue", () => {
+  assert.match(landingSource, /<Link to="\/market" className="wk-btn wk-btn--secondary wk-btn--lg">/)
+  assert.match(landingSource, /Open market/)
+  assert.match(landingSource, /Tracked roles are source evidence, not applications/)
+  assert.match(landingSource, /Use roles as signal before Claire chases anything/)
+
+  assert.doesNotMatch(landingSource, /Apply queue/i)
+  assert.doesNotMatch(landingSource, /auto-submit/i)
+  assert.doesNotMatch(landingSource, /we pitch you anyway/i)
+})
+
+test("Landing sequence avoids rough job-board-as-verb copy", () => {
+  assert.doesNotMatch(sequenceSource, /you don&apos;t job-board/i)
+  assert.match(sequenceSource, /You don&apos;t apply, you don&apos;t chase job boards, and you don&apos;t get spammed\./)
+})

@@ -213,6 +213,10 @@ export default function Landing() {
                 Interview with Claire
                 <Icon name="arrow-right" size={16} stroke={2} />
               </Link>
+              <Link to="/market" className="wk-btn wk-btn--secondary wk-btn--lg">
+                Open market
+                <Icon name="arrow-right" size={16} stroke={2} />
+              </Link>
               <a
                 href="#interviews"
                 className="wk-hero__browse"
@@ -241,6 +245,9 @@ export default function Landing() {
                 )}
               </span>
             </div>
+            <p className="wk-hero__market-note">
+              Tracked roles are source evidence, not applications. Use roles as signal before Claire chases anything.
+            </p>
           </div>
 
           <div className="wk-hero__visual">
@@ -542,6 +549,13 @@ const LANDING_STYLES = `
 }
 .wk-hero__proof strong { color: var(--wk-ink-2); font-weight: 600; }
 .wk-hero__proof > .wk-avatar { margin-right: -10px; box-shadow: inset 0 0 0 1px rgba(45,26,10,.08), 0 0 0 2px var(--wk-cream-3); }
+.wk-hero__market-note {
+  max-width: 520px;
+  margin: 14px 0 0;
+  color: var(--wk-ink-3);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
 .wk-alliance-badge {
   display: flex;
   align-items: center;

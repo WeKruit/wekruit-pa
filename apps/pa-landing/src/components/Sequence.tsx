@@ -430,7 +430,7 @@ export function CandidateSequence() {
             Less noise. <em className="wk-accent">Better evidence.</em>
           </h2>
           <p className="seq__sub">
-            You don&apos;t apply, you don&apos;t job-board, you don&apos;t get spammed.
+            You don&apos;t apply, you don&apos;t chase job boards, and you don&apos;t get spammed.
             Claire reads what you want, skips the 99% that don&apos;t fit, and starts
             the first interview when a role matches. If you pass, WeKruit sends
             the hiring team your profile, transcript, and evidence.
