@@ -80,6 +80,33 @@ test("LinkedIn-done marker counts as a kickoff/greeting (never a slot answer)", 
   assert.equal(isSharedOnboardingGreetingOrKickoff("Ive done linkedin submission"), true)
 })
 
+test("LinkedIn-done marker is dropped on Q1 + never advances the slot (no token leak as an answer)", async () => {
+  // Because the marker is a kickoff/greeting, the Q1 (main_goal) duplicate-hello
+  // guard ignores it: it neither advances the slot nor gets stored as an answer.
+  assert.equal(
+    shouldIgnoreSharedOnboardingDuplicateKickoff("main_goal", "I've done LinkedIn submission li_connect_tok_abcdef"),
+    true,
+  )
+  assert.equal(
+    shouldSharedOnboardingAdvanceDespiteJudge("main_goal", "I've done LinkedIn submission li_connect_tok_abcdef"),
+    false,
+  )
+  // And the LLM answer-judge rejects it as irrelevant WITHOUT ever calling the
+  // model — so the connect token never reaches an LLM as candidate-supplied text.
+  let llmCalls = 0
+  const judged = await judgeSharedOnboardingAnswer({
+    questionId: "special_context",
+    answer: "I've done LinkedIn submission li_connect_tok_abcdef",
+    lang: "en",
+    llmCallFactory: () => async () => {
+      llmCalls += 1
+      return JSON.stringify({ intent: "provided", value: "x", confidence: 0.9 })
+    },
+  })
+  assert.equal(judged.accept, false)
+  assert.equal(llmCalls, 0, "marker is filtered before any LLM call — token never leaks to the model")
+})
+
 test("buildConnectLinkedinUrl emits a candidate-domain connect link", () => {
   assert.equal(
     buildConnectLinkedinUrl("tok_abc"),

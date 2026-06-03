@@ -59,6 +59,7 @@ import { normalizeCoresignalCollectV2 } from "../external-supply/adapters/coresi
 import {
   verifyLinkedinConnectToken,
   markLinkedinConnectTokenUsed,
+  type VerifyLinkedinConnectTokenResult,
 } from "./connect-token.js"
 
 const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
@@ -92,6 +93,144 @@ export interface LinkedinConnectSubmitResult {
     | "needs_review"
   enriched?: boolean
   smsDeepLink?: string
+}
+
+/**
+ * Injectable seams for the pure submit handler so the orchestration (token →
+ * link handle → enrich → emit → sms reroute) can be unit-tested with a mocked
+ * CoreSignal + identity layer. The `onRequest` wrapper supplies the real
+ * implementations; tests supply fakes. Keeping these as deps (rather than
+ * direct imports inside the handler) is what makes the canary gate, the
+ * fail-open paths, the runtime-event emit, and the identity-conflict branch
+ * assertable without a live Firestore / CoreSignal / secret.
+ */
+export interface LinkedinConnectSubmitDeps {
+  /** Resolve a connect token to its phone-bound userId (+ optional phone). */
+  verifyToken: (token: string) => Promise<VerifyLinkedinConnectTokenResult>
+  /** Link the LinkedIn handle to the known uid. Throws `identity_conflict:<id>` on A≠B. */
+  linkHandle: (userId: string, canonicalUrl: string, nowIso: string) => Promise<void>
+  /** Persist the canonical URL onto pa-users when empty / an OAuth marker. */
+  persistUrl: (userId: string, canonicalUrl: string, nowIso: string) => Promise<void>
+  /** True when this uid is in the new-behavior canary cohort. */
+  isCanary: (userId: string) => boolean
+  /** Trimmed CoreSignal API key ("" when the secret is absent). */
+  coresignalApiKey: () => string
+  /** Enrich by canonical URL via CoreSignal + mirror + tag bridge. */
+  enrich: (args: {
+    userId: string
+    canonicalUrl: string
+    apiKey: string
+    nowIso: string
+  }) => Promise<{ enriched: boolean }>
+  /** Emit the enrichment-complete runtime event so the thin pitch fires. */
+  emitRuntimeEvent: (args: {
+    userId: string
+    canonicalUrl: string
+    enriched: boolean
+    nowIso: string
+  }) => Promise<void>
+  /** Mark the token single-use after a successful submit. */
+  markUsed: (token: string, nowIso: string) => Promise<void>
+  /** Resolve the candidate phone for the sms: reroute (token phone → pa-users fallback). */
+  resolvePhone: (userId: string, tokenPhone?: string) => Promise<string>
+  /** Build the iOS sms: deep-link reroute body back into the thread. */
+  buildSms: (phone: string, body: string) => string
+  /** Clock (ISO). Defaults to wall clock. */
+  nowIso?: () => string
+}
+
+/**
+ * Pure orchestration for the LinkedIn one-tap connect submit. Mirrors the
+ * documented CF flow exactly and NEVER throws to the caller (every failure
+ * fails open so the candidate is never dead-ended). The `onRequest` wrapper is
+ * a thin adapter over this.
+ */
+export async function handleLinkedinConnectSubmit(
+  deps: LinkedinConnectSubmitDeps,
+  body: LinkedinConnectSubmitBody,
+): Promise<LinkedinConnectSubmitResult> {
+  const nowIso = (deps.nowIso ?? (() => new Date().toISOString()))()
+  const token = typeof body.token === "string" ? body.token.trim() : ""
+  const linkedinUrlRaw = typeof body.linkedinUrl === "string" ? body.linkedinUrl.trim() : ""
+
+  // 1. Resolve the token → the phone-resolved userId (server-trusted identity).
+  const tokenResult = await deps.verifyToken(token)
+  if (!tokenResult.ok) {
+    return { ok: false, reason: tokenResult.reason }
+  }
+  const userId = tokenResult.userId
+
+  // 2. Canonicalize the submitted URL.
+  const canonicalUrl = canonicalizeLinkedInUrl(linkedinUrlRaw)
+  if (!canonicalUrl) {
+    return { ok: false, reason: "invalid_url" }
+  }
+
+  // 3. Link the linkedin handle to the KNOWN uid. A≠B → identity_conflict →
+  //    needs_review, NO enrich, NO merge (v2.0 identity rule).
+  try {
+    await deps.linkHandle(userId, canonicalUrl, nowIso)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (msg.startsWith("identity_conflict:")) {
+      logger.warn("linkedin_connect.identity_conflict", {
+        userId,
+        hash: linkedinHash(canonicalUrl).slice(0, 12),
+      })
+      return { ok: false, reason: "needs_review" }
+    }
+    // Any other handle-link failure must NOT dead-end the candidate — log + continue.
+    logger.error("linkedin_connect.link_handle_failed", { userId, err: msg })
+  }
+
+  // Always persist the URL (covers the no-enrich degrade path).
+  await deps.persistUrl(userId, canonicalUrl, nowIso)
+
+  // 4. Enrich + emit ONLY for canary users (new product behavior gate). A
+  //    non-canary token submit still links the handle + persists the URL and
+  //    reroutes back to SMS — never a dead end, just no enrich/pitch yet.
+  let enriched = false
+  if (deps.isCanary(userId)) {
+    const apiKey = deps.coresignalApiKey()
+    if (apiKey) {
+      try {
+        const out = await deps.enrich({ userId, canonicalUrl, apiKey, nowIso })
+        enriched = out.enriched
+      } catch (err) {
+        // CoreSignal down / rate-limited / bad payload → fail-open. Never 500.
+        const status = err instanceof CoresignalCollectError ? err.status : null
+        logger.warn("linkedin_connect.enrich_failed_fail_open", {
+          userId,
+          status,
+          err: err instanceof Error ? err.message : String(err),
+        })
+      }
+    } else {
+      logger.info("linkedin_connect.coresignal_key_absent_degrade", { userId })
+    }
+
+    // 5. Emit the enrichment-complete runtime event so the thin pitch fires.
+    try {
+      await deps.emitRuntimeEvent({ userId, canonicalUrl, enriched, nowIso })
+    } catch (err) {
+      logger.warn("linkedin_connect.runtime_event_failed", {
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
+  // 6. Mark the token used (single-use) + build the sms: reroute back to thread.
+  await deps.markUsed(token, nowIso)
+
+  const phone = await deps.resolvePhone(userId, tokenResult.phoneE164)
+  const smsDeepLink = phone ? deps.buildSms(phone, buildLinkedinDoneOpenerBody(token)) : undefined
+
+  return {
+    ok: true,
+    enriched,
+    ...(smsDeepLink ? { smsDeepLink } : {}),
+  }
 }
 
 function setCors(res: { set: (k: string, v: string) => unknown }): void {
@@ -207,32 +346,23 @@ export const paLinkedinConnectSubmit = onRequest(
     }
 
     const body = (req.body ?? {}) as LinkedinConnectSubmitBody
-    const token = typeof body.token === "string" ? body.token.trim() : ""
-    const linkedinUrlRaw = typeof body.linkedinUrl === "string" ? body.linkedinUrl.trim() : ""
-
     const db = getFirestore()
-    const nowIso = new Date().toISOString()
 
-    // 1. Resolve the token → the phone-resolved userId (server-trusted identity).
-    const tokenResult = await verifyLinkedinConnectToken(db, token)
-    if (!tokenResult.ok) {
-      res.status(200).json({ ok: false, reason: tokenResult.reason } satisfies LinkedinConnectSubmitResult)
-      return
-    }
-    const userId = tokenResult.userId
+    const result = await handleLinkedinConnectSubmit(makeProdDeps(db), body)
+    res.status(200).json(result satisfies LinkedinConnectSubmitResult)
+  },
+)
 
-    // 2. Canonicalize the submitted URL.
-    const canonicalUrl = canonicalizeLinkedInUrl(linkedinUrlRaw)
-    if (!canonicalUrl) {
-      res.status(200).json({ ok: false, reason: "invalid_url" } satisfies LinkedinConnectSubmitResult)
-      return
-    }
-
-    // 3. Link the linkedin handle to the KNOWN uid. linkCandidateHandle throws
-    //    `identity_conflict:<id>` (and writes the conflict doc) when the same
-    //    LinkedIn hash already maps to a DIFFERENT candidate → needs_review,
-    //    NO enrich, NO merge (v2.0 identity rule).
-    try {
+/**
+ * Wire the pure handler to the live Firestore / identity / CoreSignal / secret
+ * / runtime-event implementations. The emit mirrors the cv-ingest emit exactly
+ * (eventKind="resume_parse_completed", cvParsedTrigger:true, source
+ * "linkedin_connect", requireExistingSession:false, idempotent on the hash).
+ */
+function makeProdDeps(db: Firestore): LinkedinConnectSubmitDeps {
+  return {
+    verifyToken: (token) => verifyLinkedinConnectToken(db, token),
+    linkHandle: async (userId, canonicalUrl, nowIso) => {
       await linkCandidateHandle(db, {
         candidateId: userId,
         kind: "linkedin",
@@ -242,89 +372,35 @@ export const paLinkedinConnectSubmit = onRequest(
         now: nowIso,
         evidence: [{ source: "system", summary: "Candidate self-submitted LinkedIn URL (one-tap connect)" }],
       })
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      if (msg.startsWith("identity_conflict:")) {
-        logger.warn("linkedin_connect.identity_conflict", { userId, hash: linkedinHash(canonicalUrl).slice(0, 12) })
-        res.status(200).json({ ok: false, reason: "needs_review" } satisfies LinkedinConnectSubmitResult)
+    },
+    persistUrl: (userId, canonicalUrl, nowIso) => persistLinkedinUrlIfEmpty(db, userId, canonicalUrl, nowIso),
+    isCanary: (userId) => isCanaryUser(userId),
+    coresignalApiKey: () => CORESIGNAL_API_KEY.value().trim(),
+    enrich: ({ userId, canonicalUrl, apiKey, nowIso }) =>
+      enrichFromCoresignal({ db, userId, canonicalUrl, apiKey, nowIso }),
+    emitRuntimeEvent: async ({ userId, canonicalUrl, enriched, nowIso }) => {
+      const phone = await resolvePhone(db, userId)
+      if (!phone) {
+        logger.warn("linkedin_connect.no_phone_for_runtime_event", { userId })
         return
       }
-      // Any other handle-link failure must NOT dead-end the candidate — log + continue.
-      logger.error("linkedin_connect.link_handle_failed", { userId, err: msg })
-    }
-
-    // Always persist the URL (covers the no-enrich degrade path).
-    await persistLinkedinUrlIfEmpty(db, userId, canonicalUrl, nowIso)
-
-    // 4. Enrich + emit ONLY for canary users (new product behavior gate). A
-    //    non-canary token submit still links the handle + persists the URL and
-    //    reroutes back to SMS — never a dead end, just no enrich/pitch yet.
-    let enriched = false
-    if (isCanaryUser(userId)) {
-      const apiKey = CORESIGNAL_API_KEY.value().trim()
-      if (apiKey) {
-        try {
-          const out = await enrichFromCoresignal({ db, userId, canonicalUrl, apiKey, nowIso })
-          enriched = out.enriched
-        } catch (err) {
-          // CoreSignal down / rate-limited / bad payload → fail-open (handle is
-          // linked, URL persisted, event still fires below). Never 500.
-          const status = err instanceof CoresignalCollectError ? err.status : null
-          logger.warn("linkedin_connect.enrich_failed_fail_open", {
-            userId,
-            status,
-            err: err instanceof Error ? err.message : String(err),
-          })
-        }
-      } else {
-        logger.info("linkedin_connect.coresignal_key_absent_degrade", { userId })
-      }
-
-      // 5. Emit the enrichment-complete runtime event so the thin pitch fires.
-      //    SAME eventKind + cvParsedTrigger the cv-ingest path uses (mirror of
-      //    cv-ingest.ts emit). requireExistingSession:false — the candidate has
-      //    not yet sent the SMS reroute, so no session exists; the event creates
-      //    one and is idempotent on its doc id.
-      try {
-        const phone = await resolvePhone(db, userId, tokenResult.phoneE164)
-        if (phone) {
-          const runtime = await enqueueRuntimeEventHandoff(db, {
-            userId,
-            toE164: phone,
-            source: "linkedin_connect",
-            eventKind: "resume_parse_completed",
-            idempotencyKey: `linkedin-enriched:${userId}:${linkedinHash(canonicalUrl)}`,
-            requireExistingSession: false,
-            context: {
-              cvParsedTrigger: true,
-              enrichmentSource: "linkedin",
-              linkedinEnriched: enriched,
-            },
-          })
-          logger.info("linkedin_connect.runtime_event", { userId, runtime })
-        } else {
-          logger.warn("linkedin_connect.no_phone_for_runtime_event", { userId })
-        }
-      } catch (err) {
-        logger.warn("linkedin_connect.runtime_event_failed", {
-          userId,
-          err: err instanceof Error ? err.message : String(err),
-        })
-      }
-    }
-
-    // 6. Mark the token used (single-use) + build the sms: reroute back to thread.
-    await markLinkedinConnectTokenUsed(db, token, Date.parse(nowIso) || Date.now())
-
-    const phone = await resolvePhone(db, userId, tokenResult.phoneE164)
-    const smsDeepLink = phone
-      ? buildSmsDeepLink(phone, buildLinkedinDoneOpenerBody(token))
-      : undefined
-
-    res.status(200).json({
-      ok: true,
-      enriched,
-      ...(smsDeepLink ? { smsDeepLink } : {}),
-    } satisfies LinkedinConnectSubmitResult)
-  },
-)
+      const runtime = await enqueueRuntimeEventHandoff(db, {
+        userId,
+        toE164: phone,
+        source: "linkedin_connect",
+        eventKind: "resume_parse_completed",
+        idempotencyKey: `linkedin-enriched:${userId}:${linkedinHash(canonicalUrl)}`,
+        requireExistingSession: false,
+        context: {
+          cvParsedTrigger: true,
+          enrichmentSource: "linkedin",
+          linkedinEnriched: enriched,
+        },
+      })
+      logger.info("linkedin_connect.runtime_event", { userId, runtime })
+    },
+    markUsed: (token, nowIso) => markLinkedinConnectTokenUsed(db, token, Date.parse(nowIso) || Date.now()),
+    resolvePhone: (userId, tokenPhone) => resolvePhone(db, userId, tokenPhone),
+    buildSms: (phone, smsBody) => buildSmsDeepLink(phone, smsBody),
+  }
+}
