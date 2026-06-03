@@ -1708,7 +1708,7 @@ export const CANDIDATE_STYLES = `
   .wk-header__brand-meta { display: none; }
   .wk-header__cta { gap: 0; }
   .wk-header__cta .wk-btn { display: none; }
-  .wk-header__signin { font-size: 13.5px; margin-right: 8px; }
+  .wk-header__signin { font-size: 13.5px; margin-right: 0; }
 }
 @media (max-width: 760px) {
   .wk-container, .wk-container--narrow { padding: 0 18px; }

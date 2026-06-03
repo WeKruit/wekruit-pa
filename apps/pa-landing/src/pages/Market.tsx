@@ -648,7 +648,7 @@ function DirectCard({ r, onTalk }: { r: DisplayJob; onTalk: () => void }) {
         <span>{r.location}</span>
       </p>
       <div className="wk-direct-card__owner">
-        <Avatar name={r.hiringManager.name} size={30} tone={r.hiringManager.tone} />
+        <Avatar name={r.hiringManager.name} size={24} tone={r.hiringManager.tone} />
         <div>
           <div className="wk-direct-card__owner-name">{r.hiringManager.name}</div>
           <div className="wk-direct-card__owner-title">{r.hiringManager.title}</div>
@@ -1523,6 +1523,17 @@ const MARKET_STYLES = String.raw`
   .wk-shell .wk-tbl { min-width: 760px; }
 }
 @media (max-width: 720px) {
+  .wk-shell .wk-market__head { margin-bottom: 20px; }
+  .wk-shell .wk-market__h1 {
+    font-size: clamp(38px, 10.8vw, 48px);
+    line-height: 1.06;
+    letter-spacing: 0;
+    margin: 14px 0 14px;
+  }
+  .wk-shell .wk-market__lede {
+    font-size: 16px;
+    line-height: 1.42;
+  }
   .wk-shell .wk-market-empty__copy h2 { font-size: 32px; }
   .wk-shell .wk-market-contract--role-briefs {
     display: block; padding: 14px 0 16px; margin-bottom: 18px;
@@ -1534,13 +1545,73 @@ const MARKET_STYLES = String.raw`
     display: none;
   }
   .wk-shell .wk-direct-table { display: none; }
-  .wk-shell .wk-direct-cards { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 8px; }
-  .wk-shell .wk-direct-card__head { grid-template-columns: 42px minmax(0, 1fr); }
-  .wk-shell .wk-direct-card .wk-evidence {
-    grid-column: 1 / -1; align-items: flex-start; text-align: left; max-width: none;
+  .wk-shell .wk-direct-cards { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 6px; }
+  .wk-shell .wk-direct-card {
+    padding: 14px;
+    gap: 8px;
+    border-color: var(--wk-border);
   }
-  .wk-shell .wk-direct-card__foot { flex-direction: column; align-items: stretch; }
-  .wk-shell .wk-direct-card__comp { white-space: normal; }
-  .wk-shell .wk-direct-card__foot .wk-pitchbtn { width: 100%; justify-content: center; }
+  .wk-shell .wk-direct-card__head {
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: start;
+  }
+  .wk-shell .wk-direct-card .wk-evidence {
+    grid-column: auto;
+    align-items: flex-end;
+    text-align: right;
+    max-width: 130px;
+    padding: 5px 8px;
+    border-radius: var(--wk-r-pill);
+  }
+  .wk-shell .wk-direct-card .wk-evidence__detail {
+    display: none;
+  }
+  .wk-shell .wk-direct-card__role {
+    font-size: 20px;
+    line-height: 1.16;
+    margin-top: 2px;
+  }
+  .wk-shell .wk-direct-card__meta {
+    font-size: 13px;
+    line-height: 1.28;
+  }
+  .wk-shell .wk-direct-card__owner {
+    padding: 8px 0 0;
+    border: 0;
+    border-top: 1px solid var(--wk-border);
+    border-radius: 0;
+    background: transparent;
+    gap: 8px;
+  }
+  .wk-shell .wk-direct-card__owner-name {
+    font-size: 12.5px;
+  }
+  .wk-shell .wk-direct-card__owner-title {
+    font-size: 12px;
+  }
+  .wk-shell .wk-direct-card__foot {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding-top: 0;
+  }
+  .wk-shell .wk-direct-card__comp {
+    font-size: 15.5px;
+    line-height: 1.2;
+    white-space: normal;
+  }
+  .wk-shell .wk-direct-card__foot .wk-pitchbtn {
+    width: auto;
+    height: 34px;
+    padding: 0 12px;
+    justify-content: center;
+  }
+}
+@media (max-width: 420px) {
+  .wk-shell .wk-direct-card .wk-evidence {
+    max-width: 118px;
+  }
 }
 `
