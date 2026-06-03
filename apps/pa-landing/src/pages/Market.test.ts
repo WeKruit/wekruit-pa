@@ -168,3 +168,17 @@ test("Market role briefs render mobile cards instead of only a wide table", () =
   assert.match(source, /Choose a role to talk to Claire\./)
   assert.doesNotMatch(source, /Tap a row to talk to Claire\./)
 })
+
+test("Market default role-brief tab explains the Claire interview contract before role cards", () => {
+  assert.match(source, /function MarketRoleBriefContract\(\)/)
+  assert.match(source, /aria-label="Role brief Claire contract"/)
+  assert.match(source, /What happens when you pick a role brief/)
+  assert.match(source, /Role brief sets Claire's interview/)
+  assert.match(source, /Your profile supplies constraints/)
+  assert.match(source, /Passed profile only after consent/)
+  assert.match(source, /<MarketRoleBriefContract \/>[\s\S]*\{direct\.isPending \? \(/)
+  assert.match(source, /href="\/me\/profile#profile-corrections"[\s\S]*Update profile signals/)
+
+  assert.doesNotMatch(source, /guaranteed interview/i)
+  assert.doesNotMatch(source, /auto-submit/i)
+})

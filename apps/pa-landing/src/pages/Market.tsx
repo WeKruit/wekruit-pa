@@ -465,6 +465,39 @@ function MarketTrackedRolesEmpty({ onViewRoleBriefs }: { onViewRoleBriefs: () =>
   )
 }
 
+function MarketRoleBriefContract() {
+  return (
+    <section className="wk-market-contract wk-market-contract--role-briefs" aria-label="Role brief Claire contract">
+      <div className="wk-market-contract__copy">
+        <p className="wk-eyebrow">How role briefs work</p>
+        <h2>What happens when you pick a role brief?</h2>
+        <p>
+          Choose a role when you want Claire to run the first interview against that company's bar,
+          not when you want another application queue.
+        </p>
+      </div>
+      <div className="wk-market-contract__grid">
+        <article className="wk-market-contract__item wk-market-contract__item--direct">
+          <strong>Role brief sets Claire's interview</strong>
+          <span>Claire screens against the employer's must-haves, hard filters, evidence probes, and calibration bar.</span>
+        </article>
+        <article className="wk-market-contract__item wk-market-contract__item--profile">
+          <strong>Your profile supplies constraints</strong>
+          <span>Target roles, location, compensation, timing, work authorization, and corrections stay attached to the screen.</span>
+        </article>
+        <article className="wk-market-contract__item wk-market-contract__item--tracked">
+          <strong>Passed profile only after consent</strong>
+          <span>A hiring team only sees your evidence after Claire finishes the role screen and you approve sharing.</span>
+        </article>
+      </div>
+      <div className="wk-market-contract__actions">
+        <a className="wk-btn wk-btn--primary" href="/me/profile#profile-corrections">Update profile signals</a>
+        <a className="wk-btn wk-btn--secondary" href="/onboarding">Start with Claire</a>
+      </div>
+    </section>
+  )
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Rows
 // ────────────────────────────────────────────────────────────────────────────
@@ -971,6 +1004,7 @@ export default function Market(): ReactNode {
                   Claire starts the role interview before any passed profile is shared.
                 </p>
               </header>
+              <MarketRoleBriefContract />
 
               {direct.isPending ? (
                 <div className="wk-tbl__empty wk-tbl__empty--block">
