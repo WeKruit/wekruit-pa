@@ -206,7 +206,8 @@ export default function Landing() {
             </h1>
             <p className="wk-hero__lede">
               Upload your résumé once. Claire — your WeKruit recruiter, on iMessage —
-              gets to know you. When a job matches, Claire starts the first interview;
+              builds one WeKruit profile that keeps working across roles. When a role matches,
+              Claire starts the first interview;
               your passed profile goes to the hiring team with evidence, not guesswork.
             </p>
             <div className="wk-hero__cta">

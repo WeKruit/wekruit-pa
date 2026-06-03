@@ -20,6 +20,7 @@ test("Landing frames the candidate promise as Claire-first passed-profile flow",
   assert.doesNotMatch(source, /direct first interview with the hiring manager/i)
   assert.doesNotMatch(source, /No recruiter screen|No take-home tournament|Calendar invite in 48 hours/i)
   assert.doesNotMatch(source, />\s*Interview with hiring manager\s*</i)
+  assert.match(source, /builds one WeKruit profile that keeps working across roles/i)
   assert.match(source, /Claire starts the first interview/i)
   assert.match(source, /passed profile/i)
 })
