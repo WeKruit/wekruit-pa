@@ -39,6 +39,7 @@ test("CandidateLogin frames onboarding login as a first-time Claire start", () =
   assert.match(source, /onboardingNext[\s\S]*\? "Start with Claire"/)
   assert.match(source, /onboardingNext[\s\S]*<>Start with <em className="wk-accent">Claire\.<\/em><\/>/)
   assert.match(source, /Claire will start your profile flow/)
+  assert.match(source, /\{!onboardingNext \? \([\s\S]*<p className="wk-login__fine">/)
 })
 
 test("CandidateLogin only reuses remembered next during an OAuth return", () => {

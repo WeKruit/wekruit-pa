@@ -1054,13 +1054,15 @@ export default function CandidateLogin() {
               </p>
             ) : null}
 
-            <p className="wk-login__fine">
-              {roleInterviewNext ? (
-                <>First time on this role? <Link to={firstTimeHref} className="wk-link">Continue here</Link> and Claire will keep the role attached.</>
-              ) : (
-                <>First time? <Link to={firstTimeHref} className="wk-link">Continue here</Link> and Claire will start the same profile flow.</>
-              )}
-            </p>
+            {!onboardingNext ? (
+              <p className="wk-login__fine">
+                {roleInterviewNext ? (
+                  <>First time on this role? <Link to={firstTimeHref} className="wk-link">Continue here</Link> and Claire will keep the role attached.</>
+                ) : (
+                  <>First time? <Link to={firstTimeHref} className="wk-link">Continue here</Link> and Claire will start the same profile flow.</>
+                )}
+              </p>
+            ) : null}
           </div>
         </div>
       </div>
