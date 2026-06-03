@@ -364,10 +364,18 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
   if (opts?.resumeJustDropped) {
     return [
       "RÉSUMÉ JUST RECEIVED: the candidate just SENT you their résumé and it is parsing in the background",
-      "right now — you do NOT have the parsed data this turn. Reply with ONE short, warm acknowledge bubble",
-      "(e.g. 'got it, reading your résumé 📄' — vary the wording in your voice) and STOP. Do NOT call",
-      "find_match, do NOT pitch, do NOT ask onboarding questions yet — you will pitch from their parsed",
-      "profile the moment it finishes. messages = exactly one short ack string.",
+      "right now — you do NOT have the parsed data this turn, and THAT IS EXPECTED. Reply with ONE short, warm",
+      "acknowledge bubble (e.g. 'got it, reading your résumé 📄' — vary the wording in your voice) and STOP.",
+      "Do NOT call find_match, do NOT pitch, do NOT ask onboarding questions yet — you will pitch from their",
+      "parsed profile the moment it finishes.",
+      // BLOCKER 2 on the ACK turn (Adam 2026-06-03): the parse is in-flight, so the CONTEXT this turn may
+      // show NO résumé fields (or a half-written stub). That is normal mid-parse — it does NOT mean the
+      // upload failed. NEVER tell the candidate you 'can't see it', that it came through 'blank/too short',
+      // or that it 'didn't come through', and NEVER ask them to paste / re-send / upload / share / re-drop /
+      // 'try again' their résumé. You already received the file; just acknowledge and wait.
+      "NEVER say you can't see the résumé / it's blank / too short / didn't come through, and NEVER ask the",
+      "candidate to paste, re-send, upload, share, re-drop, or 'try again' — you already have the file, it is",
+      "simply still parsing. messages = exactly one short ack string.",
     ].join(" ")
   }
   switch (mode) {

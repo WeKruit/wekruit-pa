@@ -362,6 +362,11 @@ async function main() {
   assert.equal(dropEvents.includes("thin_claire.defer_runtime_event"), false, "LEG A: drop is not a runtime event")
 
   // Capture the ACK bubble text (real mode + real turn, resumeJustDropped exactly as cutover sets it).
+  // Re-sample (up to 3x) past a MODEL flake: an empty draw, OR a draw that asks-to-paste / claims-empty
+  // (the BLOCKER-2-on-ack failure). The resumeJustDropped directive now forbids that, but gpt-5.4-nano
+  // occasionally still draws a bad sample; a persistent leak (all 3 bad) still fails the assertion below.
+  const ackLeakRe =
+    /\b(paste|re-?send|upload|send (me )?(your )?(résumé|resume|cv)|share (your )?(résumé|resume|cv)|drop (your )?(résumé|resume|cv)|attach (your )?(résumé|resume|cv)|try again|not seeing|didn'?t come through|blank|too short)\b/i
   const dropDecision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "(sent a résumé)", log: () => {} })
   let dropCap
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -374,8 +379,9 @@ async function main() {
       eventId: dropEventId,
       resumeJustDropped: true,
     })
-    if (dropCap.bubbles.length >= 1) break
-    console.log(`  [ack attempt ${attempt} returned an empty model sample — re-sampling]`)
+    const ack = dropCap.bubbles.join("\n\n")
+    if (dropCap.bubbles.length >= 1 && !ackLeakRe.test(ack)) break
+    console.log(`  [ack attempt ${attempt} bad sample (empty=${dropCap.bubbles.length === 0} leak=${ackLeakRe.test(ack)}) — re-sampling]`)
   }
 
   // ── LEG B — the cv-parsed completion. REAL ingestCv with the LIVE session → REAL handoff doc, then
@@ -476,6 +482,20 @@ async function main() {
     dropCap.statuses.length,
     0,
     `LEG A: no 'one sec' status bubbles on the ack turn (got ${dropCap.statuses.length})`,
+  )
+
+  // BLOCKER 2 on the ACK turn (Adam 2026-06-03): the parse is in-flight, so the ack-turn CONTEXT can be
+  // empty/half-written. The model must NOT read that as a failed upload — it must NOT ask the candidate to
+  // paste/re-send/upload/share/'try again', and must NOT say the résumé is blank / too short / not coming
+  // through. (Pre-fix this leaked ~2/3 of full runs; the resumeJustDropped directive now forbids it.)
+  const ackAsksToPasteOrEmpty =
+    /\b(paste|re-?send|upload|send (me )?(your )?(résumé|resume|cv)|share (your )?(résumé|resume|cv)|drop (your )?(résumé|resume|cv)|attach (your )?(résumé|resume|cv)|try again|not seeing|didn'?t come through|blank|too short)\b/i.test(
+      ackText,
+    )
+  assert.equal(
+    ackAsksToPasteOrEmpty,
+    false,
+    `BLOCKER 2 (ack): the résumé-drop ACK must NOT ask to paste/re-send or claim it can't see/blank the résumé — got: ${ackText}`,
   )
 
   // NO legacy markers anywhere.
