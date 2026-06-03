@@ -912,10 +912,6 @@ export default function CandidateLogin() {
   const busy = status === "google" || status === "linkedin" || status === "sending" || status === "signing_in"
   const onLayoff = isLayoffHost()
   const roleInterviewNext = isPublicJobPath(nextDest.pathname)
-  const onboardingBase = onboardingDestination(peekSource())
-  const firstTimeOnboardingHref = roleInterviewNext
-    ? `${onboardingBase}${onboardingBase.includes("?") ? "&" : "?"}next=${encodeURIComponent(nextDest.to)}`
-    : onboardingBase
   const loginEyebrow = isCompletingLink
     ? "Finishing sign-in"
     : roleInterviewNext
@@ -930,7 +926,6 @@ export default function CandidateLogin() {
       : roleInterviewNext
         ? "Sign in and Claire keeps this role attached to your interview and profile."
         : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."
-  const firstTimeLabel = roleInterviewNext ? "Start this role with Claire" : "Interview with Claire"
 
   if (onLayoff) {
     const layoffStatus =
@@ -1042,7 +1037,9 @@ export default function CandidateLogin() {
             ) : null}
 
             <p className="wk-login__fine">
-              First time? <Link to={firstTimeOnboardingHref} className="wk-link">{firstTimeLabel}</Link> — same flow.
+              {roleInterviewNext
+                ? "First time on this role? Continue here and Claire will keep the role attached."
+                : "First time? Continue here and Claire will start the same profile flow."}
             </p>
           </div>
         </div>
