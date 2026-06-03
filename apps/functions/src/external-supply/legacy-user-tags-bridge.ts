@@ -188,6 +188,7 @@ export async function dualWriteLegacyUserTagsFromExternal(
   const result = await applyPartialUserTags(db, candidateId, delta, {
     source: "migration",
     nowIso: opts.nowIso,
+    projectGlobalTags: false,
     log: opts.log,
   })
 

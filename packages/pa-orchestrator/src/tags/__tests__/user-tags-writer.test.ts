@@ -589,3 +589,24 @@ test("applyPartialUserTags: write lands projected globalTags alongside tags", as
   assert.deepEqual(data.globalTags.companySizePreference, ["no_preference"])
   assert.deepEqual(data.globalTags.skills, [{ name: "python" }])
 })
+
+test("applyPartialUserTags: projectGlobalTags false writes only legacy tags", async () => {
+  const ctx = makeDb({
+    "u-legacy": {
+      tags: { schemaVersion: USER_TAGS_SCHEMA_VERSION },
+      globalTags: {
+        skills: [{ name: "python", bucket: "programming_languages", baseWeight: 0.95 }],
+      },
+    },
+  })
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-legacy",
+    { skills: ["typescript"] } as Record<string, unknown>,
+    { source: "migration", projectGlobalTags: false },
+  )
+  assert.equal(res.ok, true)
+  const data = ctx.writes[0]!.data as { tags: Record<string, unknown>; globalTags?: unknown }
+  assert.ok(data.tags.skills)
+  assert.equal(data.globalTags, undefined)
+})

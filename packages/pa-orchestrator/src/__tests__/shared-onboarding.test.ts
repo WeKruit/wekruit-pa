@@ -171,9 +171,10 @@ test("post-prescreen opening prompt thanks for the role screen and avoids first-
   assert.doesNotMatch(opener, /Saw your resume come through/i)
 })
 
-test("NO-REGEX: projector carries ONLY the LLM's validated canonical tags (no text classification)", () => {
-  // Without LLM-provided tags, the projector classifies NOTHING from free text —
-  // it only produces the memory fact + raw-answer bookkeeping. (Regex projector removed 2026-05-30.)
+test("projector carries LLM canonical tags and avoids broad free-text industry classification", () => {
+  // Without LLM-provided tags, broad semantic tag extraction stays out of this
+  // projector; it only produces the memory fact + raw-answer bookkeeping for
+  // normal axes. Matcher-critical literal fallbacks are covered separately below.
   const noTags = projectSharedOnboardingAnswer(
     "industry_interest",
     "Fintech, AI infrastructure, and maybe crypto infra are the sectors I keep coming back to.",

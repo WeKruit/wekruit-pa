@@ -189,6 +189,11 @@ export interface WriteUserTagsOpts {
    * Logger; default no-op. Receives `pa.user_tags.*` events for telemetry.
    */
   log?: (event: string, payload?: Record<string, unknown>) => void
+  /**
+   * Default true. Set false only for writers that already own the canonical
+   * `pa-users.globalTags` surface and are filling the legacy `tags` store.
+   */
+  projectGlobalTags?: boolean
 }
 
 /**
@@ -445,10 +450,14 @@ export async function applyPartialUserTags(
   }
 
   try {
+    const writeData =
+      opts.projectGlobalTags === false
+        ? { tags: merged }
+        : { tags: merged, globalTags: projectTagsToGlobalTags(merged) }
     await db
       .collection(PA_USERS_COLLECTION)
       .doc(userId)
-      .set({ tags: merged, globalTags: projectTagsToGlobalTags(merged) }, { merge: true })
+      .set(writeData, { merge: true })
     log("pa.user_tags.apply_partial_ok", {
       userId,
       source,

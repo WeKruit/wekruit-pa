@@ -872,6 +872,99 @@ export function isSharedOnboardingActiveUser(user: unknown): boolean {
   return shared?.status === "active"
 }
 
+function hasStringList(value: unknown): boolean {
+  return Array.isArray(value) && value.some((item) => typeof item === "string" && item.trim().length > 0)
+}
+
+function hasNoLocationRestrictionSignal(normalized: string): boolean {
+  return [
+    "open to anything",
+    "open to anywhere",
+    "open to any location",
+    "anywhere",
+    "wherever",
+    "no preference",
+  ].some((phrase) => normalized.includes(phrase))
+}
+
+function hasUsCountrySignal(normalized: string): boolean {
+  const tokens = normalized.split(" ").filter(Boolean)
+  return normalized.includes("united states") ||
+    tokens.includes("usa") ||
+    tokens.includes("states") ||
+    tokens.some((token, index) => token === "u" && tokens[index + 1] === "s")
+}
+
+function hasSponsorshipNeedSignal(normalized: string): boolean {
+  const compact = normalized.replace(/\s+/g, "")
+  const hasNegative =
+    normalized.includes("no sponsorship") ||
+    normalized.includes("do not need sponsorship") ||
+    normalized.includes("dont need sponsorship") ||
+    normalized.includes("don t need sponsorship") ||
+    normalized.includes("no visa sponsorship")
+  if (hasNegative) return false
+  return compact.includes("h1b") ||
+    normalized.includes("sponsorship") ||
+    normalized.includes("need sponsor") ||
+    normalized.includes("visa sponsor")
+}
+
+function parseSalaryFloorUsd(normalized: string): number | undefined {
+  const hasFloorSignal = [
+    "at least",
+    "minimum",
+    "min ",
+    "below that",
+    "below is a no",
+    "salary floor",
+  ].some((phrase) => normalized.includes(phrase))
+  if (!hasFloorSignal) return undefined
+
+  for (const token of normalized.split(" ")) {
+    const rawNumber = token.endsWith("k") ? token.slice(0, -1) : token
+    const value = Number(rawNumber)
+    if (!Number.isFinite(value) || value <= 0) continue
+    const salary = token.endsWith("k") ? value * 1000 : value
+    if (salary >= 30000 && salary <= 1000000) return Math.floor(salary)
+  }
+  return undefined
+}
+
+function applyMatcherCriticalAnswerFallbacks(
+  questionId: SharedOnboardingQuestionId,
+  answer: string,
+  tags: PartialUserTags,
+): void {
+  const normalized = normalizeControlText(answer)
+
+  if (questionId === "location_relocation") {
+    if (!hasStringList(tags.targetLocations) && hasNoLocationRestrictionSignal(normalized)) {
+      tags.targetLocations = ["anywhere"]
+    }
+    if (!hasStringList(tags.targetCountry)) {
+      const countries: string[] = []
+      if (hasUsCountrySignal(normalized)) countries.push("usa")
+      if (hasNoLocationRestrictionSignal(normalized) && !countries.includes("anywhere")) {
+        countries.push("anywhere")
+      }
+      if (countries.length > 0) tags.targetCountry = countries
+    }
+  }
+
+  if (questionId === "special_context") {
+    if (!(tags as { visaStatus?: unknown }).visaStatus && hasSponsorshipNeedSignal(normalized)) {
+      ;(tags as PartialUserTags & { visaStatus?: string }).visaStatus = "sponsor_needed"
+      const existing = Array.isArray(tags.targetCompanyTags) ? tags.targetCompanyTags : []
+      if (!existing.includes("visa_context")) tags.targetCompanyTags = [...existing, "visa_context"]
+    }
+    if (typeof tags.minSalary !== "number") {
+      const salary = parseSalaryFloorUsd(normalized)
+      if (salary !== undefined) tags.minSalary = salary
+    }
+  }
+}
+
 export function currentSharedOnboardingQuestionId(user: unknown): SharedOnboardingQuestionId {
   if (!user || typeof user !== "object") return "main_goal"
   const doc = user as Record<string, unknown>
@@ -892,19 +985,22 @@ export function currentSharedOnboardingQuestionId(user: unknown): SharedOnboardi
  * Project a shared-onboarding answer into a memory fact + canonical tags +
  * stated-preferences bookkeeping.
  *
- * NO-REGEX (2026-05-30, Adam directive): this function does ZERO classification
- * of free-form text into canonical tags. The ONLY source of canonical tags is
- * the LLM-driven extraction (`llmTags`), validated against the
+ * The LLM-driven extraction (`llmTags`), validated against the
  * `@wekruit/shared-tags` closed enums by {@link validateOnboardingCanonicalTags}
- * (off-vocab values dropped). The deterministic FSM still owns slot ORDER; this
- * projector only carries the LLM's validated picks + the durable
- * memoryFact / statedPreferences / evidence the downstream relies on.
+ * (off-vocab values dropped), remains the source for normal tag extraction.
+ * This projector also carries a narrow set of matcher-critical literal
+ * fallbacks for fail-open turns where the model returned no structured tags:
+ * the explicit "anywhere" location bypass, sponsorship-needed, and salary-floor
+ * signals. The deterministic FSM still owns slot ORDER; this projector carries
+ * the validated picks plus the durable memoryFact / statedPreferences / evidence
+ * the downstream relies on.
  *
  * `llmTags` is the agent's STRUCTURED canonical proposal for THIS answer (any
  * subset of axes the answer supports, multi-value = OR). When omitted (e.g. a
- * fail-open path with no model output), tags are empty — the unified-tags
- * extractor (conversation-extractor) remains the authoritative tag writer and
- * the slot still advances on the raw answer.
+ * fail-open path with no model output), only the matcher-critical literal
+ * fallbacks above can populate tags; the unified-tags extractor
+ * (conversation-extractor) remains the broad semantic tag writer and the slot
+ * still advances on the raw answer.
  */
 export function projectSharedOnboardingAnswer(
   questionId: SharedOnboardingQuestionId,
@@ -919,11 +1015,12 @@ export function projectSharedOnboardingAnswer(
   const trimmed = answer.trim()
   const question = getSharedOnboardingQuestion(questionId)
   const tags = validateOnboardingCanonicalTags(llmTags)
+  applyMatcherCriticalAnswerFallbacks(questionId, trimmed, tags)
   const statedPreferences: Record<string, unknown> = {}
   const evidence: Record<string, unknown> = { questionId, answer: trimmed }
 
   // Mirror the validated canonical tags into statedPreferences (the legacy
-  // bag downstream readers still consult). Purely structural — no classification.
+  // bag downstream readers still consult).
   if (tags.targetRoleFunction) statedPreferences.targetRoleFunction = tags.targetRoleFunction
   if (tags.negativeRoleFunction) statedPreferences.negativeRoleFunction = tags.negativeRoleFunction
   if (tags.industrySector) statedPreferences.industrySector = tags.industrySector
