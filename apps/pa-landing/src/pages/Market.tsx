@@ -486,8 +486,8 @@ function MarketRoleBriefContract() {
           <span>Claire screens against the employer's must-haves, hard filters, evidence probes, and calibration bar.</span>
         </article>
         <article className="wk-market-contract__item wk-market-contract__item--profile">
-          <strong>Your profile supplies constraints</strong>
-          <span>Target roles, location, compensation, timing, work authorization, and corrections stay attached to the screen.</span>
+          <strong>Your durable profile supplies constraints</strong>
+          <span>Target roles, location, compensation, timing, work authorization, and corrections stay attached across Claire's role screens.</span>
         </article>
         <article className="wk-market-contract__item wk-market-contract__item--tracked">
           <strong>Passed profile only after consent</strong>
