@@ -127,7 +127,11 @@ export default function EmployerSignup() {
             and risks attached.
           </p>
 
-          {done ? <SuccessCard email={form.workEmail} /> : (
+          {done ? <SuccessCard form={form} onStartAnother={() => {
+            setForm(EMPTY_FORM)
+            setDone(false)
+            setError(null)
+          }} /> : (
             <>
               <EmployerPacketStarters
                 onApply={(starterId) => {
@@ -976,7 +980,15 @@ function Field({ id, label, value, onChange, placeholder, type = "text", helper,
   )
 }
 
-function SuccessCard({ email }: { email: string }) {
+function SuccessCard({ form, onStartAnother }: { form: EmployerSignupFormState; onStartAnother: () => void }) {
+  const preview = deriveEmployerPacketPreview(form)
+  const nextSteps = [
+    "WeKruit reviews the submitted packet before Claire screens.",
+    "We confirm the hard filters, evidence probes, calibration examples, feedback loop, and intro handoff by email.",
+    "Claire screens only after the role packet is approved and candidates consent to share.",
+    "Every accepted or rejected intro returns one calibration signal.",
+  ]
+
   return (
     <div
       style={{
@@ -984,8 +996,7 @@ function SuccessCard({ email }: { email: string }) {
         background: "var(--cream-3)",
         border: "1px solid var(--border)",
         borderRadius: "var(--r-lg)",
-        padding: 32,
-        textAlign: "center",
+        padding: 28,
       }}
     >
       <h2
@@ -994,19 +1005,125 @@ function SuccessCard({ email }: { email: string }) {
           fontWeight: 400,
           fontSize: 28,
           letterSpacing: 0,
-          margin: "0 0 12px",
+          margin: "0 0 10px",
         }}
       >
-        Got it.
+        Role packet received.
       </h2>
-      <p style={{ color: "var(--ink-2)", margin: "0 0 18px", maxWidth: 440, marginInline: "auto" }}>
-        We have sent the role brief to the WeKruit team. We will reach out at <strong>{email}</strong>{" "}
+      <p style={{ color: "var(--ink-2)", margin: "0 0 18px", maxWidth: 560, lineHeight: 1.5 }}>
+        We have sent the role brief to the WeKruit team. We will reach out at <strong>{form.workEmail}</strong>{" "}
         within a business day to confirm the hard filters, evidence probes, calibration examples,
         feedback loop, intro handoff, and must-have evidence before Claire screens candidates.
       </p>
-      <Link to="/" className="btn btn--primary" style={{ textDecoration: "none" }}>
-        Back to home
-      </Link>
+      <section
+        aria-label="Submitted packet"
+        style={{
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-md)",
+          background: "rgba(255, 255, 255, 0.58)",
+          padding: 14,
+        }}
+      >
+        <h3
+          style={{
+            margin: "0 0 10px",
+            fontFamily: "var(--font-sans)",
+            fontSize: 13,
+            fontWeight: 750,
+            color: "var(--ink)",
+            letterSpacing: 0,
+          }}
+        >
+          Submitted packet
+        </h3>
+        <div style={{ display: "grid", gap: 8 }}>
+          {preview.sections.map((section) => (
+            <div
+              key={section.id}
+              style={{
+                border: "1px solid var(--border)",
+                borderRadius: "var(--r-sm)",
+                background: "var(--cream-2)",
+                padding: 10,
+                minWidth: 0,
+              }}
+            >
+              <strong
+                style={{
+                  display: "block",
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 12,
+                  color: "var(--ink)",
+                  lineHeight: 1.2,
+                }}
+              >
+                {section.label}
+              </strong>
+              <span
+                style={{
+                  display: "block",
+                  marginTop: 4,
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 12,
+                  color: "var(--ink-2)",
+                  lineHeight: 1.35,
+                  overflowWrap: "anywhere",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {section.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section
+        aria-label="What happens next"
+        style={{
+          marginTop: 14,
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-md)",
+          background: "rgba(230, 233, 217, 0.5)",
+          padding: 14,
+        }}
+      >
+        <h3
+          style={{
+            margin: "0 0 10px",
+            fontFamily: "var(--font-sans)",
+            fontSize: 13,
+            fontWeight: 750,
+            color: "var(--ink)",
+            letterSpacing: 0,
+          }}
+        >
+          What happens next
+        </h3>
+        <ol
+          style={{
+            margin: 0,
+            paddingLeft: 18,
+            display: "grid",
+            gap: 8,
+            fontFamily: "var(--font-sans)",
+            fontSize: 13,
+            lineHeight: 1.4,
+            color: "var(--ink-2)",
+          }}
+        >
+          {nextSteps.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+      </section>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 18 }}>
+        <button type="button" className="btn btn--primary" onClick={onStartAnother}>
+          Send another role
+        </button>
+        <a href="mailto:hello@wekruit.com" className="btn btn--ghost" style={{ textDecoration: "none" }}>
+          Email WeKruit
+        </a>
+      </div>
     </div>
   )
 }
