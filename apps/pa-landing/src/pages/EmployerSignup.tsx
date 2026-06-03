@@ -155,8 +155,7 @@ export default function EmployerSignup() {
             }}
           >
             <a
-              href="#employer-company-contact"
-              onClick={(event) => handleFieldJump(event, "employer-company-contact")}
+              href="#employer-packet-starters"
               className="btn btn--primary"
               style={{ textDecoration: "none" }}
             >
@@ -552,6 +551,7 @@ function EmployerPacketStarters({
 
   return (
     <section
+      id="employer-packet-starters"
       aria-label="Editable role packet starters"
       style={{
         marginTop: 28,

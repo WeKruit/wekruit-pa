@@ -94,11 +94,12 @@ test("EmployerSignup shows a role packet readiness checklist before the long for
 
 test("EmployerSignup connects role intake to the sample passed-profile output", () => {
   assert.match(source, /aria-label="Role intake primary actions"/)
-  assert.match(source, /href="#employer-company-contact"[\s\S]*Start role packet/)
+  assert.match(source, /href="#employer-packet-starters"[\s\S]*Start role packet/)
   assert.match(source, /to="\/employers\/inbox"[\s\S]*See sample pass/)
   assert.match(source, /The packet below becomes the evidence lens Claire uses in the sample pass record/)
   assert.match(source, /aria-label="Role intake output preview"/)
 
+  assert.doesNotMatch(source, /href="#employer-company-contact"[\s\S]*Start role packet/)
   assert.doesNotMatch(source, /see live candidates/i)
   assert.doesNotMatch(source, /browse candidate/i)
   assert.doesNotMatch(source, /instant pass/i)
@@ -137,7 +138,7 @@ test("EmployerSignup field jumps focus the target control after the mobile scrol
   assert.match(source, /function focusEmployerFieldControl\(targetId: string\)/)
   assert.match(source, /querySelector<HTMLElement>\("input, textarea, select"\)/)
   assert.match(source, /control\?\.focus\(\{ preventScroll: true \}\)/)
-  assert.match(source, /onClick=\{\(event\) => handleFieldJump\(event, "employer-company-contact"\)\}/)
+  assert.match(source, /onClick=\{\(event\) => handleFieldJump\(event, readiness\.nextIncompleteItem!\.targetId\)\}/)
   assert.match(source, /onClick=\{\(event\) => onFieldJump\(event, summary\.nextIncompleteItem!\.targetId\)\}/)
   assert.match(source, /onClick=\{\(event\) => onFieldJump\(event, item\.targetId\)\}/)
 })
@@ -171,6 +172,7 @@ test("EmployerSignup offers editable packet starters instead of a blank long-for
   assert.match(source, /EmployerPacketStarters/)
   assert.match(source, /EMPLOYER_PACKET_STARTERS/)
   assert.match(source, /applyEmployerPacketStarter/)
+  assert.match(source, /id="employer-packet-starters"/)
   assert.match(source, /appliedStarterId/)
   assert.match(source, /setAppliedStarterId\(starterId\)/)
   assert.match(source, /aria-pressed=\{selected\}/)
