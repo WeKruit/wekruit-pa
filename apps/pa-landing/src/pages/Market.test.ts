@@ -151,7 +151,7 @@ test("Market role briefs do not overpromise employer access or invent interview 
   assert.match(source, /r\.seats === undefined \? "Claire interview" :/)
 })
 
-test("Market role-brief rows do not invent hiring-manager identity when a role only has a brief", () => {
+test("Market role-brief cards do not invent hiring-manager identity when a role only has a brief", () => {
   assert.doesNotMatch(source, /name: raw\.hiringManagerName \?\? "Hiring manager"/)
   assert.doesNotMatch(source, /title: raw\.hiringManagerTitle \?\? "Hiring lead"/)
   assert.doesNotMatch(source, /<th className="wk-tbl__h">Hiring manager<\/th>/)
@@ -161,20 +161,28 @@ test("Market role-brief rows do not invent hiring-manager identity when a role o
   assert.match(source, /online: !!hiringManagerName && !!raw\.hiringManagerOnline/)
   assert.match(source, /name: hiringManagerName \?\? "Role brief"/)
   assert.match(source, /title: hiringManagerName \? \(hiringManagerTitle \?\? "Hiring lead"\) : "Employer-approved screen"/)
-  assert.match(source, /<th className="wk-tbl__h">Owner<\/th>/)
+  assert.match(source, /className="wk-direct-card__owner"/)
 })
 
-test("Market role briefs render mobile cards instead of only a wide table", () => {
+test("Market role briefs use action cards as the primary inventory", () => {
   assert.match(source, /function DirectCard\(\{ r, onTalk \}: \{ r: DisplayJob; onTalk: \(\) => void \}\)/)
-  assert.match(source, /className="wk-tbl-wrap wk-tbl-wrap--solo wk-direct-table"/)
   assert.match(source, /<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>/)
-  assert.match(source, /\.wk-shell \.wk-direct-cards \{ display: none; \}/)
-  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-direct-table \{ display: none; \}[\s\S]*\.wk-shell \.wk-direct-cards \{ display: grid;/)
+  assert.match(source, /\.wk-shell \.wk-direct-cards \{[\s\S]*display: grid; grid-template-columns: repeat\(auto-fit, minmax\(300px, 1fr\)\);[\s\S]*gap: 14px; margin-top: 8px;/)
+  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-direct-cards \{ display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 6px; \}/)
   assert.match(source, /Choose a role to talk to Claire\./)
   assert.doesNotMatch(source, /Tap a row to talk to Claire\./)
+  assert.doesNotMatch(source, /function DirectRow/)
+  assert.doesNotMatch(source, /wk-direct-table/)
+  assert.doesNotMatch(source, /wk-tbl--direct/)
 })
 
-test("Market default role-brief tab explains the Claire interview contract before role cards", () => {
+test("Market desktop role-brief cards keep the Claire action in each role block", () => {
+  assert.match(source, /className="wk-direct-card__foot"[\s\S]*<button className="wk-pitchbtn wk-pitchbtn--ink wk-pitchbtn--lg" onClick=\{onTalk\}>/)
+  assert.match(source, /<Icon name="message" size=\{13\} stroke=\{2\} \/> Talk to Claire/)
+  assert.match(source, /\.wk-shell \.wk-direct-card__foot \{[\s\S]*display: flex; align-items: center; justify-content: space-between;/)
+})
+
+test("Market default role-brief tab shows role inventory before the supporting Claire contract", () => {
   assert.match(source, /function MarketRoleBriefContract\(\)/)
   assert.match(source, /aria-label="Role brief Claire contract"/)
   assert.match(source, /What happens when you pick a role brief/)
@@ -182,17 +190,18 @@ test("Market default role-brief tab explains the Claire interview contract befor
   assert.match(source, /Your durable profile supplies constraints/)
   assert.match(source, /corrections stay attached across Claire's role screens/)
   assert.match(source, /Passed profile only after consent/)
-  assert.match(source, /<MarketRoleBriefContract \/>[\s\S]*\{direct\.isPending \? \(/)
+  assert.match(source, /\{direct\.isPending \? \([\s\S]*<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>[\s\S]*\)\}[\s\S]*<MarketRoleBriefContract \/>/)
   assert.match(source, /href="\/me\/profile#profile-corrections"[\s\S]*Update profile signals/)
 
   assert.doesNotMatch(source, /guaranteed interview/i)
   assert.doesNotMatch(source, /auto-submit/i)
 })
 
-test("Market keeps mobile role briefs actionable before the first scroll", () => {
+test("Market keeps mobile role cards primary while preserving the compact support contract", () => {
   assert.match(source, /wk-market-contract__mobile-brief/)
   assert.match(source, /Claire screens first\. Hiring teams see a passed profile only after you approve sharing\./)
-  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \{[\s\S]*display: block; padding: 14px 0 16px; margin-bottom: 18px;/)
+  assert.match(source, /<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>[\s\S]*<MarketRoleBriefContract \/>/)
+  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \{[\s\S]*display: block; padding: 14px 0 16px; margin: 16px 0 18px;/)
   assert.match(source, /\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__copy,[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__grid,[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__actions \{[\s\S]*display: none;/)
 })
 

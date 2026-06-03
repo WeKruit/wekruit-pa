@@ -590,43 +590,6 @@ function HuntCard({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
   )
 }
 
-function DirectRow({ r, onTalk }: { r: DisplayJob; onTalk: () => void }) {
-  return (
-    <tr className="wk-tbl__row">
-      <td className="wk-tbl__cell wk-tbl__cell--company">
-        <CompanyMark logo={r.logo} bg={r.logoBg} size={38} />
-        <div className="wk-tbl__co">
-          <div className="wk-tbl__co-name">{r.company}</div>
-          <div className="wk-tbl__co-via wk-tbl__co-via--live">
-            {r.online ? <PulseDot size={5} /> : null}
-            {r.online ? "Online now" : r.via}
-          </div>
-        </div>
-      </td>
-      <td className="wk-tbl__cell wk-tbl__cell--role">
-        <div className="wk-tbl__role">{r.title}</div>
-        <div className="wk-tbl__level">
-          {r.seats === undefined ? "Claire interview" : `${r.seats} ${r.seats === 1 ? "seat" : "seats"}`}
-        </div>
-      </td>
-      <td className="wk-tbl__cell wk-tbl__cell--hm">
-        <Avatar name={r.hiringManager.name} size={28} tone={r.hiringManager.tone} />
-        <div className="wk-tbl__hm">
-          <div className="wk-tbl__hm-name">{r.hiringManager.name}</div>
-          <div className="wk-tbl__hm-title">{r.hiringManager.title}</div>
-        </div>
-      </td>
-      <td className="wk-tbl__cell"><span className="wk-tbl__muted">{r.location}</span></td>
-      <td className="wk-tbl__cell wk-tbl__cell--comp">{r.comp}</td>
-      <td className="wk-tbl__cell wk-tbl__cell--cta">
-        <button className="wk-pitchbtn wk-pitchbtn--ink" onClick={onTalk}>
-          <Icon name="message" size={12} stroke={2} /> Talk to Claire
-        </button>
-      </td>
-    </tr>
-  )
-}
-
 function DirectCard({ r, onTalk }: { r: DisplayJob; onTalk: () => void }) {
   const seatText = r.seats === undefined ? "Claire interview" : `${r.seats} ${r.seats === 1 ? "seat" : "seats"}`
   return (
@@ -1023,8 +986,6 @@ export default function Market(): ReactNode {
                   Claire starts the role interview before any passed profile is shared.
                 </p>
               </header>
-              <MarketRoleBriefContract />
-
               {direct.isPending ? (
                 <div className="wk-tbl__empty wk-tbl__empty--block">
                   <strong>Loading role briefs…</strong>
@@ -1039,33 +1000,13 @@ export default function Market(): ReactNode {
                   <strong>No role briefs yet.</strong> Check tracked roles and keep your profile preferences current.
                 </div>
               ) : (
-                <>
-                <div className="wk-tbl-wrap wk-tbl-wrap--solo wk-direct-table">
-                  <table className="wk-tbl wk-tbl--direct">
-                    <thead>
-                      <tr>
-                        <th className="wk-tbl__h">Company</th>
-                        <th className="wk-tbl__h">Role</th>
-                        <th className="wk-tbl__h">Owner</th>
-                        <th className="wk-tbl__h">Location</th>
-                        <th className="wk-tbl__h">Comp</th>
-                        <th className="wk-tbl__h wk-tbl__h--cta">Interview</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {directJobs.map((r) => (
-                        <DirectRow key={r.id} r={r} onTalk={() => onTalkToClaire(r)} />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
                 <div className="wk-direct-cards">
                   {directJobs.map((r) => (
                     <DirectCard key={r.id} r={r} onTalk={() => onTalkToClaire(r)} />
                   ))}
                 </div>
-                </>
               )}
+              <MarketRoleBriefContract />
             </div>
           </section>
         )}
@@ -1145,6 +1086,7 @@ const MARKET_STYLES = String.raw`
   padding: 24px 0 28px; margin: 0 0 32px;
   border-top: 1px solid var(--wk-border); border-bottom: 1px solid var(--wk-border);
 }
+.wk-shell .wk-market__panel--direct .wk-market-contract--role-briefs { margin-top: 32px; }
 .wk-shell .wk-market-contract__mobile-brief {
   display: none;
   margin: 0; color: var(--wk-ink-2); font-size: 14.5px; line-height: 1.45;
@@ -1399,7 +1341,10 @@ const MARKET_STYLES = String.raw`
   height: 38px; padding: 0 12px; font-size: 13.5px;
 }
 
-.wk-shell .wk-direct-cards { display: none; }
+.wk-shell .wk-direct-cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px; margin-top: 8px;
+}
 .wk-shell .wk-direct-card {
   background: var(--wk-cream-3); border: 1px solid var(--wk-live-border);
   border-radius: var(--wk-r-md); padding: 18px;
@@ -1536,7 +1481,7 @@ const MARKET_STYLES = String.raw`
   }
   .wk-shell .wk-market-empty__copy h2 { font-size: 32px; }
   .wk-shell .wk-market-contract--role-briefs {
-    display: block; padding: 14px 0 16px; margin-bottom: 18px;
+    display: block; padding: 14px 0 16px; margin: 16px 0 18px;
   }
   .wk-shell .wk-market-contract--role-briefs .wk-market-contract__mobile-brief { display: block; }
   .wk-shell .wk-market-contract--role-briefs .wk-market-contract__copy,
@@ -1544,7 +1489,6 @@ const MARKET_STYLES = String.raw`
   .wk-shell .wk-market-contract--role-briefs .wk-market-contract__actions {
     display: none;
   }
-  .wk-shell .wk-direct-table { display: none; }
   .wk-shell .wk-direct-cards { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 6px; }
   .wk-shell .wk-direct-card {
     padding: 14px;
