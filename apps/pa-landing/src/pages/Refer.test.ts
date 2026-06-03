@@ -70,3 +70,17 @@ test("ReferPublicPage does not promise resume-free matching", () => {
   assert.match(source, /They start with <strong>Claire<\/strong>/)
   assert.match(source, /Claire picks up the profile and resume context before any role-specific screen\./)
 })
+
+test("ReferPublicPage hero explains the friend-side trust contract before cash mechanics", () => {
+  assert.match(source, /function ReferPublicTrustContract/)
+  assert.match(source, /What your friend gets/)
+  assert.match(source, /Personal note, not a blast/)
+  assert.match(source, /Claire starts with profile and resume context/)
+  assert.match(source, /No blind sharing/)
+  assert.match(source, /passed evidence only after consent/)
+  assert.match(source, /<ReferPublicTrustContract \/>[\s\S]*<div className="wk-ref-public-cta">/)
+
+  assert.doesNotMatch(source, /spray invites/i)
+  assert.doesNotMatch(source, /we submit your friend automatically/i)
+  assert.doesNotMatch(source, /hiring teams see every referred profile/i)
+})

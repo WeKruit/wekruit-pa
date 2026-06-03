@@ -996,6 +996,42 @@ const REFER_PUBLIC_RULES = [
   },
 ]
 
+function ReferPublicTrustContract() {
+  const items = [
+    {
+      title: "Personal note, not a blast",
+      body: "Your friend sees who invited them and why WeKruit may fit.",
+    },
+    {
+      title: "Claire starts with profile and resume context",
+      body: "The first step is a candidate-owned profile conversation before any role-specific screen.",
+    },
+    {
+      title: "No blind sharing",
+      body: "Hiring teams see passed evidence only after consent.",
+    },
+  ]
+
+  return (
+    <section className="wk-ref-public-trust" aria-label="What your friend gets">
+      <p className="wk-ref-public-trust__eyebrow">What your friend gets</p>
+      <div className="wk-ref-public-trust__grid">
+        {items.map((item) => (
+          <article className="wk-ref-public-trust__item" key={item.title}>
+            <span className="wk-ref-public-trust__mark">
+              <Icon name="check" size={12} stroke={2.4} />
+            </span>
+            <div>
+              <strong>{item.title}</strong>
+              <p>{item.body}</p>
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function ReferPublicHero({ inviter }: { inviter: string | null }) {
   const max = REWARD_INTERVIEW + REWARD_PLACEMENT
   const navigate = useNavigate()
@@ -1053,6 +1089,8 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
               </>
             )}
           </p>
+
+          <ReferPublicTrustContract />
 
           <div className="wk-ref-public-cta">
             <button type="button" className="wk-btn wk-btn--primary wk-btn--lg" onClick={() => navigate("/login")}>
