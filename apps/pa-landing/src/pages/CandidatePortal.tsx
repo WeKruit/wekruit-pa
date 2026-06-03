@@ -1798,6 +1798,17 @@ function profileSignalHrefForMatch(match: CandidateMatchCard): string | null {
   return null
 }
 
+function profileSignalHrefForRecommendedMatch(match: CandidateMatchCard): string {
+  const params = new URLSearchParams()
+  params.set("profileRoleSignalTitle", match.job.title)
+  params.set("profileRoleSignalCompany", match.job.company)
+  if (match.job.location) params.set("profileRoleSignalLocation", match.job.location)
+  if (match.whyMatched.length > 0) {
+    params.set("profileRoleSignalReason", match.whyMatched.slice(0, 3).join("\n"))
+  }
+  return `/me/profile?${params.toString()}#profile-corrections`
+}
+
 function matchPrimaryTarget(match: CandidateMatchCard): { external: boolean; url: string } {
   if (!match.collab && match.job.applyUrl) return { external: true, url: match.job.applyUrl }
   return { external: false, url: match.job.href }
@@ -2678,6 +2689,13 @@ function useProfileSignalDraft(): ProfileSignalDraft | null {
       return {
         sourceLabel: "Closed role signal",
         text: `Use this closed role as profile signal: ${title} at ${company}. Claire closed this role because: ${reason}.${actionsText} Update my durable matching preferences or profile evidence to avoid repeating this mismatch. Do not treat this as an automatic application.`,
+      }
+    }
+
+    if (reason) {
+      return {
+        sourceLabel: "Recommended role signal",
+        text: `Use this recommended role as profile signal: ${title} at ${company}. Claire surfaced this role because: ${reason.replace(/\n+/g, "; ")}. If this reflects what I want, update my durable matching preferences. Do not treat this as an automatic application.`,
       }
     }
 
@@ -4784,6 +4802,7 @@ function MeMatchFull({ match, claireHref }: { match: CandidateMatchCard; claireH
   const showStatus = isCollab && match.status !== "recommended"
   const activeClaireHref = match.status === "interview_started" ? claireHref : null
   const profileSignalHref = profileSignalHrefForMatch(match)
+  const recommendedSignalHref = match.status === "recommended" ? profileSignalHrefForRecommendedMatch(match) : null
   return (
     <article className={`wkv3-match${isCollab ? " is-invite" : ""}`}>
       <header className="wkv3-match__head">
@@ -4823,8 +4842,8 @@ function MeMatchFull({ match, claireHref }: { match: CandidateMatchCard; claireH
 
       <footer className="wkv3-match__foot">
         <div className="wkv3-match__feedback">
-          <Link to="/me/profile#match-preferences" className="wkv3-match__prefs">
-            Update matching preferences
+          <Link to={recommendedSignalHref ?? "/me/profile#match-preferences"} className="wkv3-match__prefs">
+            {recommendedSignalHref ? "Use as profile signal" : "Update matching preferences"}
           </Link>
         </div>
         <div className="wkv3-match__primaries">

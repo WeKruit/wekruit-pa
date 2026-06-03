@@ -32,17 +32,23 @@ test("CandidatePortal matches inbox does not present local-only feedback as dura
   assert.doesNotMatch(source, /Mark\s+each\s+one\s+so\s+she\s+learns/i)
   assert.doesNotMatch(source, /hiring managers? says? yes|employers say yes/i)
   assert.doesNotMatch(source, /setVote|wkv3-fb--yes|wkv3-fb--no|No teaches Claire/)
-  assert.match(source, /Update matching preferences/)
+  assert.match(source, /Use as profile signal/)
 })
 
-test("CandidatePortal roles inbox routes preference edits to the match-preferences editor", () => {
+test("CandidatePortal roles inbox routes role preference edits with role context", () => {
   assert.match(
     source,
     /<Link to="\/me\/profile#match-preferences" className="wk-btn wk-btn--primary wk-btn--sm">[\s\S]*Adjust matching/,
   )
+  assert.match(source, /function profileSignalHrefForRecommendedMatch\(match: CandidateMatchCard\): string/)
+  assert.match(source, /params\.set\("profileRoleSignalTitle", match\.job\.title\)/)
+  assert.match(source, /params\.set\("profileRoleSignalCompany", match\.job\.company\)/)
+  assert.match(source, /params\.set\("profileRoleSignalLocation", match\.job\.location\)/)
+  assert.match(source, /params\.set\("profileRoleSignalReason", match\.whyMatched\.slice\(0, 3\)\.join\("\\n"\)\)/)
+  assert.match(source, /const recommendedSignalHref = match\.status === "recommended" \? profileSignalHrefForRecommendedMatch\(match\) : null/)
   assert.match(
     source,
-    /<Link\s+to="\/me\/profile#match-preferences"\s+className="wkv3-match__prefs">[\s\S]*Update matching preferences/,
+    /<Link\s+to=\{recommendedSignalHref \?\? "\/me\/profile#match-preferences"\}\s+className="wkv3-match__prefs">[\s\S]*recommendedSignalHref \? "Use as profile signal" : "Update matching preferences"/,
   )
   assert.doesNotMatch(source, /href="#"\s+className="wkv3-match__prefs"/)
   assert.doesNotMatch(source, /navigate\("\/me\/profile"\)/)
@@ -443,6 +449,9 @@ test("CandidatePortal profile corrections can draft role signals from market and
   assert.match(source, /profileRoleSignalOutcome/)
   assert.match(source, /profileRoleSignalReason/)
   assert.match(source, /profileRoleSignalActions/)
+  assert.match(source, /Recommended role signal/)
+  assert.match(source, /Use this recommended role as profile signal/)
+  assert.match(source, /Claire surfaced this role because/)
   assert.match(source, /Use this market role as profile signal/)
   assert.match(source, /Use this closed role as profile signal/)
   assert.match(source, /Use this closed intro as profile signal/)
