@@ -743,14 +743,14 @@ function CandidateMeReady({
   const operatingLoop = deriveCandidateOperatingLoop(allMatches)
   const claireHref = buildClaireImessageHref(profile.senderNumber)
 
-  const actions: MeAction[] = upNext.map((m) => {
+  const interviewActions: MeAction[] = upNext.map((m) => {
     const display = getCandidateJobStatusDisplay(m.status, m.job.title)
     const claire = m.status === "interview_started"
     return {
       key: m.matchId,
       logo: (m.job.company[0] ?? "?").toUpperCase(),
       logoBg: LOGO_BG_POOL[djb2(m.jobId || m.job.company) % LOGO_BG_POOL.length],
-      urgent: m.status === "invited",
+      urgent: m.status === "invited" || m.status === "interview_started",
       meta: `${display.label} · ${m.job.title}`,
       title: display.nextStep,
       sub: [m.job.company, m.job.location].filter(Boolean).join(" · "),
@@ -760,6 +760,8 @@ function CandidateMeReady({
       when: meWhen(m.computedAt),
     }
   })
+  const roleFollowupActions = deriveRoleFollowupActions(allMatches)
+  const actions: MeAction[] = [...interviewActions, ...roleFollowupActions]
   const recommendedNextAction = deriveRecommendedRolesAction(recommended.length)
   const profileNextAction = deriveProfileNextAction(completeness)
   const actionCount = actions.length + (recommendedNextAction ? 1 : 0) + (profileNextAction ? 1 : 0)
@@ -947,6 +949,35 @@ function deriveRecommendedRolesAction(recommendedCount: number): MeAction | null
   }
 }
 
+function deriveRoleFollowupActions(matches: CandidateMatchCard[]): MeAction[] {
+  return [...matches]
+    .filter((m) => m.status === "passed" || m.status === "intro_accepted")
+    .sort((a, b) => {
+      const at = Date.parse(a.computedAt)
+      const bt = Date.parse(b.computedAt)
+      return (Number.isNaN(bt) ? 0 : bt) - (Number.isNaN(at) ? 0 : at)
+    })
+    .slice(0, 2)
+    .map((match) => {
+      const accepted = match.status === "intro_accepted"
+      const display = getCandidateJobStatusDisplay(match.status, match.job.title)
+      const target = matchPrimaryTarget(match)
+      return {
+        key: `followup-${match.matchId}-${match.status}`,
+        logo: (match.job.company[0] ?? "?").toUpperCase(),
+        logoBg: LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length],
+        urgent: false,
+        meta: accepted ? "Intro accepted · next step" : "Passed profile · review",
+        title: match.job.title,
+        sub: match.reviewDecision?.decisionReason || display.nextStep,
+        cta: accepted ? "Review intro" : "Review pass note",
+        href: target.url,
+        external: target.external,
+        when: meWhen(match.computedAt),
+      }
+    })
+}
+
 function buildUpNextActions({
   actions,
   recommendedNextAction,
@@ -956,11 +987,14 @@ function buildUpNextActions({
   recommendedNextAction: MeAction | null
   profileNextAction: MeAction | null
 }): MeAction[] {
+  const urgentActions = actions.filter((a) => a.urgent)
+  const nonUrgentActions = actions.filter((a) => !a.urgent)
   const criticalProfileAction = profileNextAction?.urgent ? profileNextAction : null
   const nonCriticalProfileAction = profileNextAction && !profileNextAction.urgent ? profileNextAction : null
   return [
-    ...actions,
+    ...urgentActions,
     ...(criticalProfileAction ? [criticalProfileAction] : []),
+    ...nonUrgentActions,
     ...(recommendedNextAction ? [recommendedNextAction] : []),
     ...(nonCriticalProfileAction ? [nonCriticalProfileAction] : []),
   ]

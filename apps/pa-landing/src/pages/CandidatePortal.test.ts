@@ -358,6 +358,18 @@ test("CandidatePortal /me treats new recommended roles as an Up Next action", ()
   assert.match(source, /recommendedNextAction \? \[recommendedNextAction\] : \[\]/)
 })
 
+test("CandidatePortal /me turns passed and accepted-intro outcomes into follow-up actions", () => {
+  assert.match(source, /function deriveRoleFollowupActions\(matches: CandidateMatchCard\[\]\): MeAction\[\]/)
+  assert.match(source, /m\.status === "passed" \|\| m\.status === "intro_accepted"/)
+  assert.match(source, /const roleFollowupActions = deriveRoleFollowupActions\(allMatches\)/)
+  assert.match(source, /const actions: MeAction\[\] = \[\.\.\.interviewActions, \.\.\.roleFollowupActions\]/)
+  assert.match(source, /actions=\{actions\}/)
+  assert.match(source, /meta: accepted \? "Intro accepted · next step" : "Passed profile · review"/)
+  assert.match(source, /cta: accepted \? "Review intro" : "Review pass note"/)
+  assert.match(source, /sub: match\.reviewDecision\?\.decisionReason \|\| display\.nextStep/)
+  assert.doesNotMatch(source, /employer will reach out directly/i)
+})
+
 test("CandidatePortal /me/matches sidebar shows the real matching basis", () => {
   assert.match(source, /function MatchesView\([\s\S]*<MeClaireSignalsCard profile=\{profile\} \/>/)
   assert.match(source, /function deriveClaireSignalRows\(profile: CandidateSelfProfile\): MeSignalRow\[\]/)
@@ -371,11 +383,13 @@ test("CandidatePortal /me/matches sidebar shows the real matching basis", () => 
 
 test("CandidatePortal Up Next orders critical profile blockers before recommended roles", () => {
   assert.match(source, /function buildUpNextActions\(/)
+  assert.match(source, /const urgentActions = actions\.filter\(\(a\) => a\.urgent\)/)
+  assert.match(source, /const nonUrgentActions = actions\.filter\(\(a\) => !a\.urgent\)/)
   assert.match(source, /const criticalProfileAction = profileNextAction\?\.urgent \? profileNextAction : null/)
   assert.match(source, /const nonCriticalProfileAction = profileNextAction && !profileNextAction\.urgent \? profileNextAction : null/)
   assert.match(
     source,
-    /return \[\s*\.\.\.actions,\s*\.\.\.\(criticalProfileAction \? \[criticalProfileAction\] : \[\]\),\s*\.\.\.\(recommendedNextAction \? \[recommendedNextAction\] : \[\]\),\s*\.\.\.\(nonCriticalProfileAction \? \[nonCriticalProfileAction\] : \[\]\),\s*\]/,
+    /return \[\s*\.\.\.urgentActions,\s*\.\.\.\(criticalProfileAction \? \[criticalProfileAction\] : \[\]\),\s*\.\.\.nonUrgentActions,\s*\.\.\.\(recommendedNextAction \? \[recommendedNextAction\] : \[\]\),\s*\.\.\.\(nonCriticalProfileAction \? \[nonCriticalProfileAction\] : \[\]\),\s*\]/,
   )
   assert.match(source, /const upNextActions = buildUpNextActions\(\{ actions, recommendedNextAction, profileNextAction \}\)/)
   assert.doesNotMatch(source, /const upNextActions = \[\.\.\.actions, \.\.\.\(recommendedNextAction \? \[recommendedNextAction\] : \[\]\), \.\.\.\(profileNextAction \? \[profileNextAction\] : \[\]\)\]/)
