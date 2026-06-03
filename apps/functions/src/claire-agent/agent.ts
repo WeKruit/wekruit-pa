@@ -220,8 +220,9 @@ function trackTransport(inner: ClaireTransport): {
   return { transport, handledViaTool: () => viaTool }
 }
 
-/** Read canonical pa-users.tags → a one-line global context so "what's saved" reads tags (RC3). */
-async function loadGlobalContext(db: Firestore, userId: string, toE164?: string): Promise<string> {
+/** Read canonical pa-users.tags → a one-line global context so "what's saved" reads tags (RC3).
+ *  Exported for the WS-1a gate regression test (the no-résumé upload/LinkedIn-connect offers). */
+export async function loadGlobalContext(db: Firestore, userId: string, toE164?: string): Promise<string> {
   try {
     const snap = await db.collection("pa-users").doc(userId).get()
     const data = (snap.data() ?? {}) as Record<string, unknown>
@@ -385,7 +386,15 @@ async function loadGlobalContext(db: Firestore, userId: string, toE164?: string)
     // onboarding isn't done, surface a tokenized upload link so Claire can nudge it
     // ONCE (résumé is OPTIONAL FOREVER — never a gate). Token is reused across turns.
     let uploadLinkLine = ""
-    const hasResumeOnFile = Boolean(resumeLine) || Boolean(str(data.latestResumeArtifactId))
+    // A first name alone makes `resumeLine` truthy (it always leads with "first name: …"),
+    // so `Boolean(resumeLine)` over-reports "has résumé" for EVERY named candidate and wrongly
+    // suppresses the no-résumé upload + LinkedIn-connect offers (WS-1a). Gate on ACTUAL résumé
+    // evidence: a stored artifact OR résumé-derived content (work history, recent role/company,
+    // skills, owned highlights) — never the displayName-only case.
+    const hasResumeContent = Boolean(
+      workHistorySummary || recentRoleTitle || recentCompany || skillNames.length || ownedLines.length,
+    )
+    const hasResumeOnFile = hasResumeContent || Boolean(str(data.latestResumeArtifactId))
     const onboardingDone = data.onboardingStatus === "complete" || data.onboardingStatus === "completed"
     if (!hasResumeOnFile && !onboardingDone) {
       try {
@@ -413,9 +422,10 @@ async function loadGlobalContext(db: Firestore, userId: string, toE164?: string)
         const link = await getOrIssueLinkedinConnectLink(db, userId, toE164)
         if (link) {
           connectLinkLine =
-            "LinkedIn one-tap connect link (OPTIONAL — offer this as an alternative to the résumé " +
-            "when they have no résumé or would rather connect LinkedIn; one tap, never required): " +
-            link
+            `LinkedIn one-tap connect link = ${link} — when they have no résumé or would rather use LinkedIn, paste ` +
+            "THIS exact link into your reply for them to tap (it imports their LinkedIn automatically). CRITICAL: " +
+            "do NOT ask them to send/paste/share THEIR OWN LinkedIn URL or profile — that is wrong; you send " +
+            "the link above to them. Optional, never required, never repeated."
         }
       } catch {
         /* best-effort — omit the offer on any failure (matches uploadLink pattern) */
@@ -692,6 +702,42 @@ export async function runClaireTurn(
       log("onboarding.ask_net_sent", { slot: deps.onboardingSlot, recorded })
     } else {
       log("onboarding.ask_net_no_pending", { slot: deps.onboardingSlot })
+    }
+  }
+
+  // WS-1(a) LINKEDIN-OFFER NET (Adam 2026-06-03) — "super easy: résumé OR LinkedIn, whichever; résumé
+  // OPTIONAL if LinkedIn." loadGlobalContext surfaces a one-tap LinkedIn connect link in the CONTEXT
+  // for a canary, no-résumé, onboarding-not-done user, and the prompt INVITES the model to offer it —
+  // but gpt-5.4-nano, focused on the onboarding question, near-never emits the tokenized URL and
+  // instead deflects to "paste your LinkedIn" (verified 0/N in sim). The one-tap link is the entire
+  // "super easy to start" thesis, so it must actually REACH the candidate, not depend on model whim.
+  // Mirror the proven ONBOARDING ASK-NET above: a DETERMINISTIC append (canonical content, not a
+  // fabricated reply). Gate tightly by STRUCTURED STATE (no text→enum regex): the cold-start KICKOFF
+  // turn ONLY (awaitingAnswer === false → "mention once"), canary-gated by loadGlobalContext already
+  // (the link is absent from globalContext for non-canary, so the extract below is empty for them),
+  // and only when the model didn't already include the link. One extra optional bubble, once.
+  if (
+    deps.mode === "onboarding" &&
+    deps.awaitingAnswer === false &&
+    sent &&
+    !deliveredViaTool &&
+    !blocked
+  ) {
+    // The link rides in globalContext on the stable "...connect link = <url> —" prefix the
+    // connectLinkLine writer above emits. Extract deterministically (a controlled machine-authored
+    // string — NOT candidate text→enum, so the no-regex-tagging rule does not apply); empty for
+    // non-canary / résumé-on-file (no link line in their context).
+    const m = /connect link = (https:\/\/\S+) —/.exec(globalContext)
+    const connectUrl = m?.[1] ?? ""
+    const already = bubbles.some((b) => b.includes("connect-linkedin?token="))
+    if (connectUrl && !already) {
+      const offer =
+        `oh — and if you'd rather not dig up a résumé, just tap this to connect your LinkedIn and i'll ` +
+        `pull everything automatically (totally optional): ${connectUrl}`
+      await deps.transport
+        .sendText(offer)
+        .catch((e) => log("onboarding.linkedin_offer_net_failed", { err: String(e) }))
+      log("onboarding.linkedin_offer_net_sent", {})
     }
   }
 

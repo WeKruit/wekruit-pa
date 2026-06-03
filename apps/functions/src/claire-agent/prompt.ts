@@ -420,6 +420,18 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
             "  'I don't know / skip'): do NOT call record_onboarding_answer and do NOT invent an answer.",
             "  Briefly reply to what they said, then warmly RE-ASK — in natural language, NEVER the slot id:",
             `  "${curQ ?? nextQ ?? "the question you just asked"}".`,
+            // WS-1(a) PHONE DUAL-PATH (Adam 2026-06-03): "super easy — résumé OR LinkedIn, whichever".
+            // The "can I just use my LinkedIn?" / "I don't have my résumé handy" ask lands HERE (a
+            // non-answer mid-onboarding), so the offer must be available on the active branch too — NOT
+            // only the kickoff. If (and ONLY if) the CONTEXT carries a 'LinkedIn one-tap connect link'
+            // and they have no résumé or would rather use LinkedIn, offer THAT EXACT URL in ONE light
+            // optional clause (e.g. 'just connect your LinkedIn and I'll pull everything: <link>') — this
+            // is the WeKruit one-tap link, do NOT ask them to paste their own LinkedIn URL. Never required,
+            // never repeated; if no such link is in the CONTEXT, don't mention it. Still re-ask the
+            // pending question after.
+            "If the CONTEXT carries a 'LinkedIn one-tap connect link' and they have no résumé or would rather",
+            "  connect LinkedIn, you MAY offer that EXACT link (the one-tap URL from the CONTEXT — never ask",
+            "  them to paste their own LinkedIn) as an optional alternative to a résumé, in one light clause.",
           ]
         : opts?.canary && opts?.postParsePitch
           ? [
