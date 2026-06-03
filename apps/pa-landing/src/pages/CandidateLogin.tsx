@@ -71,7 +71,7 @@ function formatAuthError(err: unknown): string {
     case "auth/popup-closed-by-user":
       return "Google sign-in was cancelled. Try again when you're ready."
     case "auth/popup-blocked":
-      return "Your browser blocked the Google sign-in popup. Allow popups for layoff.wekruit.com and try again."
+      return "Your browser blocked the Google sign-in popup. Allow popups for this site and try again."
     case "auth/cancelled-popup-request":
       return "Sign-in was interrupted. Try again."
     default:
@@ -822,7 +822,7 @@ export default function CandidateLogin() {
         if (oauthPending) {
           setStatus("error")
           setError(
-            "Google sign-in didn't finish after redirect. Click Try again — on layoff we open Google in a popup instead.",
+            "Google sign-in didn't finish after redirect. Click Try again — we will open Google in a popup instead.",
           )
           return
         }
