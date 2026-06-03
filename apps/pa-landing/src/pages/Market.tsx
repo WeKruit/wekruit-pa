@@ -317,6 +317,8 @@ function fromOpenJob(r: OpenJobRow): DisplayJob {
 function fromPaJob(id: string, raw: PaJobDoc): DisplayJob {
   const company = raw.companyName ?? "Confidential"
   const h = djb2(id || company)
+  const hiringManagerName = raw.hiringManagerName?.trim()
+  const hiringManagerTitle = raw.hiringManagerTitle?.trim()
   return {
     id,
     title: raw.title ?? "Open role",
@@ -328,11 +330,11 @@ function fromPaJob(id: string, raw: PaJobDoc): DisplayJob {
     posted: "",
     via: raw.wekruitCollaborationStatus === "collaborated" ? "Direct line" : "Inbound",
     evidence: evidenceForPaJob(raw),
-    online: !!raw.hiringManagerOnline,
+    online: !!hiringManagerName && !!raw.hiringManagerOnline,
     seats: typeof raw.interviewSeats === "number" ? raw.interviewSeats : undefined,
     hiringManager: {
-      name: raw.hiringManagerName ?? "Hiring manager",
-      title: raw.hiringManagerTitle ?? "Hiring lead",
+      name: hiringManagerName ?? "Role brief",
+      title: hiringManagerName ? (hiringManagerTitle ?? "Hiring lead") : "Employer-approved screen",
       tone: TONE_POOL[h % TONE_POOL.length] ?? "warm",
     },
     applyUrl: undefined,
@@ -897,7 +899,7 @@ export default function Market(): ReactNode {
                       <tr>
                         <th className="wk-tbl__h">Company</th>
                         <th className="wk-tbl__h">Role</th>
-                        <th className="wk-tbl__h">Hiring manager</th>
+                        <th className="wk-tbl__h">Owner</th>
                         <th className="wk-tbl__h">Location</th>
                         <th className="wk-tbl__h">Comp</th>
                         <th className="wk-tbl__h wk-tbl__h--cta">Interview</th>

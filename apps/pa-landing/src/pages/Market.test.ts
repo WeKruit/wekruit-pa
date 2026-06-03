@@ -93,3 +93,16 @@ test("Market direct-line roles do not overpromise employer access or invent inte
   assert.match(source, /seats:\s*typeof raw\.interviewSeats === "number" \? raw\.interviewSeats : undefined/)
   assert.match(source, /r\.seats === undefined \? "Claire interview" :/)
 })
+
+test("Market direct-line rows do not invent hiring-manager identity when a role only has a brief", () => {
+  assert.doesNotMatch(source, /name: raw\.hiringManagerName \?\? "Hiring manager"/)
+  assert.doesNotMatch(source, /title: raw\.hiringManagerTitle \?\? "Hiring lead"/)
+  assert.doesNotMatch(source, /<th className="wk-tbl__h">Hiring manager<\/th>/)
+
+  assert.match(source, /const hiringManagerName = raw\.hiringManagerName\?\.trim\(\)/)
+  assert.match(source, /const hiringManagerTitle = raw\.hiringManagerTitle\?\.trim\(\)/)
+  assert.match(source, /online: !!hiringManagerName && !!raw\.hiringManagerOnline/)
+  assert.match(source, /name: hiringManagerName \?\? "Role brief"/)
+  assert.match(source, /title: hiringManagerName \? \(hiringManagerTitle \?\? "Hiring lead"\) : "Employer-approved screen"/)
+  assert.match(source, /<th className="wk-tbl__h">Owner<\/th>/)
+})
