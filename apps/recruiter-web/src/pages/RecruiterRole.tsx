@@ -231,6 +231,20 @@ function roleApplicationStatusTone(status?: RecruiterRoleApplicationStatus): "su
   }
 }
 
+function roleApplicationBlocksSubmission(application: RecruiterRoleApplicationItem | null): boolean {
+  return application?.status === "not_approved" || application?.status === "rescinded"
+}
+
+function roleBlockedAccessMessage(application: RecruiterRoleApplicationItem | null): string {
+  if (application?.status === "not_approved") {
+    return "Role access was not approved. Reapply with stronger candidate proof before submitting this role."
+  }
+  if (application?.status === "rescinded") {
+    return "Role access was rescinded. Reapply after the role lane is fixed before submitting this role."
+  }
+  return "Role access must be repaired before this role can accept recruiter submissions."
+}
+
 function roleSubmissionStatusLabel(status?: string): string {
   switch (status) {
     case "reviewing": return "WeKruit review"
@@ -983,8 +997,8 @@ function buildRoleSubmissionPacket(input: {
   if (hardItems.length > 0 && hardChecked < hardItems.length) blockers.push(`${hardItems.length - hardChecked} hard check${hardItems.length - hardChecked === 1 ? "" : "s"} still need proof.`)
   if (antiFlags.length > 0) blockers.push(`${antiFlags.length} anti-signal${antiFlags.length === 1 ? "" : "s"} marked. Clear the candidate or remove the packet before submitting.`)
   if (!candidateNotes) blockers.push("Add a fit note explaining why this candidate should enter WeKruit review.")
-  if (application?.status === "not_approved" || application?.status === "rescinded") {
-    blockers.push("Role access was not approved. Reapply with stronger candidate proof before submitting this role.")
+  if (roleApplicationBlocksSubmission(application)) {
+    blockers.push(roleBlockedAccessMessage(application))
   }
   if (fitItems.length > 0 && fitChecked === 0) warnings.push("No fit checks are verified yet.")
   if (roleFeedback?.difficulty === "blocked") warnings.push("You marked this role blocked. Ask WeKruit for calibration before adding volume.")
@@ -994,19 +1008,21 @@ function buildRoleSubmissionPacket(input: {
     ? "Approved role"
     : application?.status === "pending"
       ? "Access pending"
-      : "Single-submit"
+      : roleApplicationBlocksSubmission(application)
+        ? "Access blocked"
+        : "Single-submit"
   const roleLaneDetail = approvedForRole
     ? "This recruiter account has trusted access for the role."
     : application?.status === "pending"
       ? "Role access is under review; this packet is still treated as single-submit until approved."
-      : application?.status === "not_approved" || application?.status === "rescinded"
-        ? "Role access must be repaired before a packet can be sent."
+      : roleApplicationBlocksSubmission(application)
+        ? roleBlockedAccessMessage(application)
         : "Allowed only for one exceptional candidate with a complete packet."
   gates.push({
     label: "Role lane",
     value: roleLaneValue,
     detail: roleLaneDetail,
-    tone: approvedForRole ? "ready" : application?.status === "not_approved" || application?.status === "rescinded" ? "blocked" : "watch",
+    tone: approvedForRole ? "ready" : roleApplicationBlocksSubmission(application) ? "blocked" : "watch",
   })
 
   let identityGate: RoleSubmissionPacketGate
@@ -1398,6 +1414,7 @@ function buildRoleWorkroomModel(input: {
   const negativeSubmissions = roleSubmissions.filter((row) => ROLE_NEGATIVE_SUBMISSION_STATUSES.includes(row.status ?? "")).length
   const readyRecommendation = candidateRecommendations.find((item) => item.candidate.stage === "ready")
   const topRecommendation = candidateRecommendations[0]
+  const accessBlocked = roleApplicationBlocksSubmission(application)
 
   let tone: RoleWorkroomModel["tone"] = "quiet"
   let label = "Role workroom"
@@ -1407,7 +1424,14 @@ function buildRoleWorkroomModel(input: {
   let actionLabel = "Open candidate CRM"
   let actionCandidate: RecruiterSourcedCandidateItem | undefined
 
-  if (pendingSlots <= 0) {
+  if (accessBlocked) {
+    tone = "blocked"
+    label = "Access blocked"
+    title = application?.status === "rescinded" ? "Role access was rescinded" : "Role access was not approved"
+    body = roleBlockedAccessMessage(application)
+    action = "access"
+    actionLabel = "Reapply for access"
+  } else if (pendingSlots <= 0) {
     tone = "blocked"
     label = "Hold submissions"
     title = "This role has no pending slots left"
@@ -1487,13 +1511,15 @@ function buildRoleWorkroomModel(input: {
     cards: [
       {
         label: "Access lane",
-        value: approvedForRole ? "Approved" : application?.status === "pending" ? "Pending" : "Single-submit",
+        value: approvedForRole ? "Approved" : application?.status === "pending" ? "Pending" : accessBlocked ? "Blocked" : "Single-submit",
         body: approvedForRole
           ? "Expected active coverage for this role."
           : application?.status === "pending"
             ? "WeKruit is reviewing your request."
-            : "Use for exceptional candidates or apply with proof.",
-        tone: approvedForRole ? "good" : application?.status === "pending" ? "watch" : "quiet",
+            : accessBlocked
+              ? roleBlockedAccessMessage(application)
+              : "Use for exceptional candidates or apply with proof.",
+        tone: approvedForRole ? "good" : application?.status === "pending" ? "watch" : accessBlocked ? "blocked" : "quiet",
         action: "access",
       },
       {
@@ -1561,18 +1587,25 @@ function buildRoleDealDeskModel(input: {
   const negativeCount = roleSubmissions.filter((row) => ROLE_NEGATIVE_SUBMISSION_STATUSES.includes(row.status ?? "")).length
   const topCandidate = candidateRecommendations[0]
   const readyCandidate = candidateRecommendations.find((item) => item.candidate.stage === "ready")
-  const blocked = pendingSlots <= 0 || roleFeedback?.difficulty === "blocked" || brief.tone === "blocked"
+  const accessBlocked = roleApplicationBlocksSubmission(application)
+  const accessPending = application?.status === "pending"
+  const blocked = accessBlocked || pendingSlots <= 0 || roleFeedback?.difficulty === "blocked" || brief.tone === "blocked"
   const watch = openQuestions.length > 0 || packet.tone !== "ready" || negativeCount > 0
 
   let tone: RoleDealDeskModel["tone"] = blocked ? "blocked" : watch ? "watch" : topCandidate ? "good" : "quiet"
-  let mode = approvedForRole ? "Trusted role lane" : application?.status === "pending" ? "Access pending" : "Single-submit lane"
+  let mode = approvedForRole ? "Trusted role lane" : accessPending ? "Access pending" : accessBlocked ? "Access blocked" : "Single-submit lane"
   let title = "Run this role from evidence, not guesses"
   let body = "Work the role as a sequence: build candidate inventory, screen to proof, submit only clean packets, then adjust from WeKruit feedback."
   let primaryAction: RoleWorkroomAction = "candidates"
   let primaryLabel = "Open candidate CRM"
   let primaryCandidate: RecruiterSourcedCandidateItem | undefined
 
-  if (pendingSlots <= 0) {
+  if (accessBlocked) {
+    title = application?.status === "rescinded" ? "Role access was rescinded" : "Role access was not approved"
+    body = roleBlockedAccessMessage(application)
+    primaryAction = "access"
+    primaryLabel = "Reapply for access"
+  } else if (pendingSlots <= 0) {
     title = "Submission lane is full"
     body = "Pause new submissions until WeKruit moves the review queue. Use feedback and questions to prepare the next sourcing pass."
     primaryAction = "feedback"
@@ -1612,7 +1645,7 @@ function buildRoleDealDeskModel(input: {
     primaryAction = "candidate"
     primaryLabel = "Use candidate"
     primaryCandidate = topCandidate.candidate
-  } else if (!approvedForRole && application?.status !== "pending") {
+  } else if (!approvedForRole && !accessPending) {
     title = "Earn access with candidate proof"
     body = "This role is in single-submit mode. Build proof in the CRM, then apply for trusted role access or submit one exceptional candidate."
     primaryAction = "access"
@@ -1739,7 +1772,9 @@ function buildRoleIntakeMemo(input: {
   const rejectedOrDuplicate = roleSubmissions.filter((row) => ROLE_NEGATIVE_SUBMISSION_STATUSES.includes(row.status ?? ""))
   const advanced = roleSubmissions.filter((row) => ROLE_ADVANCED_SUBMISSION_STATUSES.includes(row.status ?? ""))
   const readyCandidates = roleCandidates.filter((candidate) => candidate.stage === "ready")
-  const blocked = brief.tone === "blocked" || roleFeedback?.difficulty === "blocked" || pendingSlots === 0
+  const accessBlocked = roleApplicationBlocksSubmission(application)
+  const accessPending = application?.status === "pending"
+  const blocked = accessBlocked || brief.tone === "blocked" || roleFeedback?.difficulty === "blocked" || pendingSlots === 0
   const watch = openQuestions.length > 0 || roleFeedback?.difficulty === "hard" || rejectedOrDuplicate.length > 0
   const tone: RoleIntakeMemo["tone"] = blocked
     ? "blocked"
@@ -1755,15 +1790,19 @@ function buildRoleIntakeMemo(input: {
   const firstAnti = antiItems[0] ?? "weak-fit submissions without hard-check proof"
   const accessLabel = approvedForRole
     ? "Approved lane"
-    : application?.status === "pending"
+    : accessPending
       ? "Access pending"
-      : "Single-submit"
+      : accessBlocked
+        ? "Access blocked"
+        : "Single-submit"
   const reviewLabel = pendingSlots === 0
     ? "Queue full"
     : openQuestions.length
       ? "Answer needed"
       : `${pendingSlots}/5 open`
-  const title = blocked
+  const title = accessBlocked
+    ? "Repair role access before submitting candidates"
+    : blocked
     ? "Resolve role intake risk before sending more candidates"
     : openQuestions.length
       ? "Use WeKruit answers before sourcing through uncertainty"
@@ -1772,12 +1811,16 @@ function buildRoleIntakeMemo(input: {
         : roleCandidates.length
           ? "Screen the bench against the intake memo"
           : "Source against the intake memo before submitting"
-  const body = blocked
+  const body = accessBlocked
+    ? roleBlockedAccessMessage(application)
+    : blocked
     ? "This search has a capacity or calibration blocker. Recruiters should tighten the role lane before adding volume."
     : openQuestions.length
       ? "A recruiter question is waiting on WeKruit. Treat the answer as intake context before making more outreach promises."
       : "Use this memo as the private role-intake brief: what to sell, what to prove, what to avoid, and when to ask WeKruit."
-  const action: RoleWorkroomAction = blocked || openQuestions.length
+  const action: RoleWorkroomAction = accessBlocked
+    ? "access"
+    : blocked || openQuestions.length
     ? "questions"
     : readyCandidates.length
       ? "submit"
@@ -1811,10 +1854,12 @@ function buildRoleIntakeMemo(input: {
       value: accessLabel,
       detail: approvedForRole
         ? "Expected to actively cover this lane."
-        : application?.status === "pending"
+        : accessPending
           ? "Access request is waiting on WeKruit."
+          : accessBlocked
+            ? roleBlockedAccessMessage(application)
           : "Use candidate-led proof before asking for trusted access.",
-      tone: approvedForRole ? "good" : application?.status === "pending" ? "watch" : "quiet",
+      tone: approvedForRole ? "good" : accessPending ? "watch" : accessBlocked ? "blocked" : "quiet",
       action: "access",
     },
   ]
@@ -1953,6 +1998,8 @@ function buildRoleRewardCenter(input: {
   candidateRecommendations: RoleCandidateRecommendation[]
 }): RoleRewardCenter {
   const { job, approvedForRole, application, pendingSlots, roleCandidates, roleSubmissions, roleFeedback, candidateRecommendations } = input
+  const accessBlocked = roleApplicationBlocksSubmission(application)
+  const accessPending = application?.status === "pending"
   const readyCandidates = roleCandidates.filter((candidate) => candidate.stage === "ready")
   const screenedCandidates = roleCandidates.filter((candidate) => candidate.stage === "screened" || candidate.stage === "ready")
   const pendingSubmissions = roleSubmissions.filter((row) => ROLE_PENDING_SUBMISSION_STATUSES.includes(row.status ?? "submitted"))
@@ -1992,20 +2039,26 @@ function buildRoleRewardCenter(input: {
       : "No exact role reward is stored yet; treat this as estimated until WeKruit records payout status."
   const accessDetail = approvedForRole
     ? "Trusted access approved for active coverage."
-    : application?.status === "pending"
+    : accessPending
       ? "Access request is waiting on WeKruit."
+      : accessBlocked
+        ? roleBlockedAccessMessage(application)
       : "Single-submit route is open when you have a consented candidate with proof."
-  const title = pendingSlots === 0
+  const title = accessBlocked
+    ? "Reward lane needs access repair"
+    : pendingSlots === 0
     ? "Reward lane is full until review moves"
     : readyCandidates.length
       ? "Turn ready candidates into reward exposure"
       : qualityCandidates.length
         ? "Prioritize suggested candidates before more cold sourcing"
         : "Build candidate proof before this role has earning value"
-  const body = pendingSlots === 0
+  const body = accessBlocked
+    ? roleBlockedAccessMessage(application)
+    : pendingSlots === 0
     ? "This role has hit the pending submission limit. Wait for review feedback before creating more candidate risk."
     : "A recruiter marketplace needs visible upside and exact next actions. This role view ties the reward story to candidates, review capacity, and payout movement."
-  const tone: RoleRewardCenter["tone"] = pendingSlots === 0
+  const tone: RoleRewardCenter["tone"] = accessBlocked || pendingSlots === 0
     ? "blocked"
     : readyCandidates.length || advancedSubmissions.length || recordedPayouts.length
       ? "good"
@@ -2017,8 +2070,8 @@ function buildRoleRewardCenter(input: {
     tone,
     title,
     body,
-    primaryAction: pendingSlots === 0 ? "feedback" : readyCandidates.length ? "submit" : "candidates",
-    primaryLabel: pendingSlots === 0 ? "Check feedback" : readyCandidates.length ? "Submit ready candidate" : "Build candidate proof",
+    primaryAction: accessBlocked ? "access" : pendingSlots === 0 ? "feedback" : readyCandidates.length ? "submit" : "candidates",
+    primaryLabel: accessBlocked ? "Reapply for access" : pendingSlots === 0 ? "Check feedback" : readyCandidates.length ? "Submit ready candidate" : "Build candidate proof",
     cards: [
       {
         label: "Success fee",
@@ -2057,7 +2110,7 @@ function buildRoleRewardCenter(input: {
       {
         label: "Get the right to work the lane",
         detail: accessDetail,
-        tone: approvedForRole ? "good" : application?.status === "pending" ? "watch" : "quiet",
+        tone: approvedForRole ? "good" : accessPending ? "watch" : accessBlocked ? "blocked" : "quiet",
         action: "access",
       },
       {
@@ -2374,6 +2427,7 @@ export default function RecruiterRole() {
   const currentRoleApplication = latestRoleApplication(job, roleApplications)
   const legacyApprovedRole = session.recruiter.workspacePreferences?.primaryRoleIds?.includes(job.jobId) ?? false
   const approvedForRole = legacyApprovedRole || currentRoleApplication?.status === "approved"
+  const roleAccessBlocked = roleApplicationBlocksSubmission(currentRoleApplication)
   const preparedApplicationCandidates = [...roleCandidates, ...unassignedCandidates]
     .filter((candidate) => candidate.stage !== "archived")
     .slice(0, 10)
@@ -2903,12 +2957,19 @@ export default function RecruiterRole() {
             </div>
 
             <div className="rb-banner">
-              <strong>{approvedForRole ? "Approved role lane: submit qualified candidates with proof." : "Single-submit lane: use this only for exceptional candidate-led opportunities."}</strong>
+              <strong>
+                {approvedForRole
+                  ? "Approved role lane: submit qualified candidates with proof."
+                  : roleAccessBlocked
+                    ? roleBlockedAccessMessage(currentRoleApplication)
+                    : "Single-submit lane: use this only for exceptional candidate-led opportunities."}
+              </strong>
               <span className="small">
-                Use the role queue to prefill a sourced candidate, tick every verified requirement, then submit.
-                The role allows up to {ROLE_PENDING_SUBMISSION_LIMIT} pending submissions before waiting for feedback.
+                {roleAccessBlocked
+                  ? "Reapply with stronger candidate proof in Role access before using the submit packet. Keep candidates in the CRM until access is repaired."
+                  : <>Use the role queue to prefill a sourced candidate, tick every verified requirement, then submit. The role allows up to {ROLE_PENDING_SUBMISSION_LIMIT} pending submissions before waiting for feedback.</>}
               </span>
-              <span className="chip">{approvedForRole ? "Approved access" : "Single-submit credit"}</span>
+              <span className="chip">{approvedForRole ? "Approved access" : roleAccessBlocked ? "Access blocked" : "Single-submit credit"}</span>
               <span className="chip">{pendingSlots} pending slots open</span>
             </div>
 
@@ -3758,6 +3819,7 @@ function RoleAccessPanel({
   }, [job.jobId, application?.id, application?.status])
 
   const preparedCandidateIds = preparedCandidates.map((candidate) => candidate.id)
+  const accessBlocked = !approvedByLegacySlot && roleApplicationBlocksSubmission(application)
   const canWithdraw = application?.status === "pending" && !approvedByLegacySlot
   const canApply = !approvedByLegacySlot && applicationStatus !== "approved" && applicationStatus !== "pending"
   const lastTouched = application ? roleQuestionTime(application.updatedAt ?? application.createdAt) : "Not requested"
@@ -3843,8 +3905,8 @@ function RoleAccessPanel({
         </article>
         <article>
           <span>Submission lane</span>
-          <strong>{applicationStatus === "approved" ? "Approved role" : "Single-submit"}</strong>
-          <em>{applicationStatus === "approved" ? "Expected active coverage" : "Candidate-led only"}</em>
+          <strong>{applicationStatus === "approved" ? "Approved role" : accessBlocked ? "Access blocked" : "Single-submit"}</strong>
+          <em>{applicationStatus === "approved" ? "Expected active coverage" : accessBlocked ? "Reapply before submitting" : "Candidate-led only"}</em>
         </article>
         <article>
           <span>Last decision</span>
