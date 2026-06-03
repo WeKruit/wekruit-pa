@@ -108,9 +108,11 @@ test("CandidatePortal /me new role preview exposes role signal action", () => {
   assert.match(source, /const recommendedSignalHref = profileSignalHrefForRecommendedMatch\(match\)/)
   assert.match(source, /const target = matchPrimaryTarget\(match\)/)
   assert.match(source, /target\.external \? \(/)
+  assert.match(source, /const peekCtaLabel = isCollab \? statusDisplay\.ctaLabel : "View source"/)
   assert.match(source, /href=\{target\.url\}[\s\S]*\{peekCtaLabel\}/)
   assert.match(source, /to=\{target\.url\}[\s\S]*\{peekCtaLabel\}/)
   assert.match(source, /<Link to=\{recommendedSignalHref\} className="wkv3-peek__signal">[\s\S]*Use as signal/)
+  assert.doesNotMatch(source, /const peekCtaLabel = isCollab \? statusDisplay\.ctaLabel : "See role"/)
   assert.doesNotMatch(source, /className="wkv3-peek"[\s\S]{0,160}role="link"/)
   assert.doesNotMatch(source, /const go = \(\) =>/)
 })
@@ -236,7 +238,16 @@ test("CandidatePortal recommendation cards avoid unsupported timing and internal
   assert.doesNotMatch(source, />\s*See match\s*</)
   assert.doesNotMatch(source, /<PulseDot size=\{5\} \/>\s*Collab/)
   assert.match(source, /WeKruit-screened/)
-  assert.match(source, /const peekCtaLabel = isCollab \? statusDisplay\.ctaLabel : "See role"/)
+  assert.match(source, /const peekCtaLabel = isCollab \? statusDisplay\.ctaLabel : "View source"/)
+})
+
+test("CandidatePortal external recommendations are source evidence, not apply-board actions", () => {
+  assert.doesNotMatch(source, /you apply there/i)
+  assert.doesNotMatch(source, /non-collab "See role"/)
+  assert.doesNotMatch(source, />\s*See role\s*<Icon name="arrow-right" size=\{13\} stroke=\{2\} \/>/)
+  assert.match(source, /External source listing — non-collab recommendations open this for inspection/)
+  assert.match(source, /View source <Icon name="arrow-right" size=\{13\} stroke=\{2\} \/>/)
+  assert.match(source, /\{peekCtaLabel\} <Icon name="arrow-right" size=\{12\} stroke=\{2\} \/>/)
 })
 
 test("CandidatePortal visibility actions route to reviewed privacy requests", () => {

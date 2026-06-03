@@ -223,7 +223,7 @@ export type CandidateMatchCard = {
     location?: string
     salaryRange?: string
     href: string
-    /** External ATS listing — non-collab "See role" opens this (collab uses href). */
+    /** External source listing — non-collab recommendations open this for inspection. */
     applyUrl?: string
   }
   whyMatched: string[]
@@ -1771,7 +1771,7 @@ function MeNewRolesEmptyState({ claireHref }: { claireHref: string | null }) {
 
 // Where a match card's primary action points:
 //  - collab     → our internal page (/j/:jobId): WeKruit listing + pre-screen.
-//  - non-collab → the real external ATS listing (you apply there). Falls back to
+//  - non-collab → the real external source listing for inspection. Falls back to
 //    the internal page only when applyUrl is absent (atsApplyUrl is a V16 hard
 //    filter, so recommended recs effectively always carry it).
 function profileSignalHrefForMatch(match: CandidateMatchCard): string | null {
@@ -1821,7 +1821,7 @@ function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
   const recommendedSignalHref = profileSignalHrefForRecommendedMatch(match)
   const target = matchPrimaryTarget(match)
   const statusDisplay = getCandidateJobStatusDisplay(match.status, match.job.title)
-  const peekCtaLabel = isCollab ? statusDisplay.ctaLabel : "See role"
+  const peekCtaLabel = isCollab ? statusDisplay.ctaLabel : "View source"
   return (
     <article className="wkv3-peek">
       <CompanyMark logo={logo} bg={logoBg} size={44} />
@@ -4895,11 +4895,11 @@ function MeMatchFull({ match, claireHref }: { match: CandidateMatchCard; claireH
               rel="noopener noreferrer"
               className="wk-btn wk-btn--primary wk-btn--sm"
             >
-              See role <Icon name="arrow-right" size={13} stroke={2} />
+              View source <Icon name="arrow-right" size={13} stroke={2} />
             </a>
           ) : (
             <Link to={match.job.href} className="wk-btn wk-btn--primary wk-btn--sm">
-              See role <Icon name="arrow-right" size={13} stroke={2} />
+              View source <Icon name="arrow-right" size={13} stroke={2} />
             </Link>
           )}
         </div>
