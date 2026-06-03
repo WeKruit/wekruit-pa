@@ -36,7 +36,7 @@ import { MatchExplainerTest } from "./pages/MatchExplainerTest.js"
 import { CanonicalTags } from "./pages/CanonicalTags.js"
 // Phase A4 (WEK-yc) — /admin/companies CRUD over pa-companies collection.
 import { Companies } from "./pages/Companies.js"
-// WeKruit Open — /admin/layoff-employers reviews layoff.wekruit.com /employer signups.
+// Employer role packets — /admin/layoff-employers reviews candidate.wekruit.com /employer submissions.
 import LayoffEmployers from "./pages/LayoffEmployers.js"
 // Coresignal Agentic Search playground — calls /v2/agentic_search/reasoning via CF proxy.
 import CoresignalPlayground from "./pages/CoresignalPlayground.js"
@@ -178,7 +178,7 @@ export default function App() {
           <Route path="/admin/canonical-tags" element={<CanonicalTags />} />
           {/* Phase A4 (WEK-yc) — centralized company directory CRUD. */}
           <Route path="/admin/companies" element={<Companies />} />
-          {/* WeKruit Open — review layoff.wekruit.com /employer signups. */}
+          {/* Employer role packets — review candidate.wekruit.com /employer submissions. */}
           <Route path="/admin/layoff-employers" element={<LayoffEmployers />} />
           {/* Coresignal Agentic Search playground — admin-only, CF proxy. */}
           <Route path="/admin/coresignal-playground" element={<CoresignalPlayground />} />

@@ -966,3 +966,43 @@ test("runRegisterEmployer sends the screening packet status in the admin notific
   assert.match(sent[0]!.html!, /Screening packet/)
   assert.match(sent[0]!.html!, /needs WeKruit review before Claire screens/)
 })
+
+test("runRegisterEmployer frames the admin notification as employer role packet intake", async () => {
+  const fake = new FakeFirestore()
+  const sent: Array<{ cfg: { from: string }; subject: string; text: string; html?: string }> = []
+  const oldApiKey = process.env.MAILGUN_API_KEY
+  const oldDomain = process.env.MAILGUN_DOMAIN
+  const oldFrom = process.env.MAILGUN_FROM
+  process.env.MAILGUN_API_KEY = "test-key"
+  process.env.MAILGUN_DOMAIN = "mail.wekruit.test"
+  delete process.env.MAILGUN_FROM
+
+  try {
+    await runRegisterEmployer(
+      employer(),
+      deps(fake, {
+        sendMail: async (cfg: { from: string }, input: { subject: string; text: string; html?: string }) => {
+          sent.push({ cfg, subject: input.subject, text: input.text, html: input.html })
+          return { ok: true, status: 200, messageId: "msg_1" }
+        },
+      } as never),
+    )
+  } finally {
+    if (oldApiKey === undefined) delete process.env.MAILGUN_API_KEY
+    else process.env.MAILGUN_API_KEY = oldApiKey
+    if (oldDomain === undefined) delete process.env.MAILGUN_DOMAIN
+    else process.env.MAILGUN_DOMAIN = oldDomain
+    if (oldFrom === undefined) delete process.env.MAILGUN_FROM
+    else process.env.MAILGUN_FROM = oldFrom
+  }
+
+  assert.equal(sent[0]!.cfg.from, "WeKruit Employer Intake <noreply@mail.wekruit.test>")
+  assert.equal(sent[0]!.subject, "New employer role packet — Hiring Co")
+  assert.match(sent[0]!.text, /Source: candidate\.wekruit\.com \/employer/)
+  assert.match(sent[0]!.html!, /New employer role packet/)
+  assert.match(sent[0]!.html!, /Source: <code>candidate\.wekruit\.com \/employer<\/code>/)
+
+  assert.doesNotMatch(sent[0]!.text, /layoff\.wekruit\.com \/employer/)
+  assert.doesNotMatch(sent[0]!.html!, /layoff\.wekruit\.com \/employer/)
+  assert.doesNotMatch(sent[0]!.cfg.from, /WeKruit Open/)
+})

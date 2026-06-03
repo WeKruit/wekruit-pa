@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
+import { MemoryRouter } from "react-router-dom"
 
 import {
   OUTREACH_OPS_CALLABLE_NAME,
@@ -136,7 +137,9 @@ test("OutreachOps page renders snapshot sections without raw contact fields", ()
     ],
   }
 
-  const html = renderToStaticMarkup(createElement(OutreachOpsSnapshotView, { snapshot }))
+  const html = renderToStaticMarkup(
+    createElement(MemoryRouter, null, createElement(OutreachOpsSnapshotView, { snapshot })),
+  )
 
   assert.match(html, /Outreach Ops/)
   assert.match(html, /Pending Review/)

@@ -28,7 +28,7 @@ export type NavSectionDef = {
 //   2) TRAINING / EVAL — improve Claire (Matching, Eval, Claire content)
 //   3) PLATFORM — rare admin (Flags, Triggers, Launch readiness, Beta, Abuse)
 // Each section caps at ≤8 items; previously the 16-item Platform group bloat
-// hid Layoff employers + Companies + Agents content inside one wall.
+// hid Employer role packets + Companies + Agents content inside one wall.
 export const CONSOLE_NAV: NavSectionDef[] = [
   // ───────────── Tier 1: OPERATIONS ─────────────
   {
@@ -78,7 +78,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     icon: "shield",
     defaultOpen: true,
     items: [
-      { to: "/admin/layoff-employers", label: "Layoff signups", hitl: true },
+      { to: "/admin/layoff-employers", label: "Role packets", hitl: true },
       { to: "/admin/companies", label: "Companies directory" },
     ],
   },

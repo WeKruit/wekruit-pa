@@ -1,4 +1,4 @@
-// WeKruit Open — Cloud Function handlers.
+// WeKruit candidate and employer intake Cloud Function handlers.
 //
 // Co-located with pa-orchestrator. Reuses existing PA modules:
 //   - sendblue/pool.ts        — pickFromNumber load-balancer
@@ -51,6 +51,7 @@ import {
 const EMPLOYER_SIGNUP_ADMIN_INBOX = "admin1@wekruit.com, adam.ylol@wekruit.com, noah.liu@wekruit.com"
 /** Deep link operators get in the notification email to jump straight to review. */
 const EMPLOYER_DASHBOARD_URL = "https://wekruit-pa.web.app/admin/layoff-employers"
+const EMPLOYER_ROLE_PACKET_SOURCE_LABEL = "candidate.wekruit.com /employer"
 
 /** Source tag — drives Claire's opener variant + listing filter + analytics. */
 export const LAYOFF_SOURCE_TAG = WEKRUIT_LAYOFF_SOURCE
@@ -760,7 +761,7 @@ async function notifyAdminOfEmployerSignup(
   })
   const apiKey = process.env.MAILGUN_API_KEY ?? ""
   const domain = process.env.MAILGUN_DOMAIN ?? ""
-  const from = process.env.MAILGUN_FROM ?? `WeKruit Open <noreply@${domain || "wekruit.com"}>`
+  const from = process.env.MAILGUN_FROM ?? `WeKruit Employer Intake <noreply@${domain || "wekruit.com"}>`
   const region = (process.env.MAILGUN_REGION === "eu" ? "eu" : "us") as "us" | "eu"
   if (!apiKey || !domain) {
     logger.warn("openRegisterEmployer.notify_admin.skipped", {
@@ -787,11 +788,11 @@ async function notifyAdminOfEmployerSignup(
     `Intro handoff: ${v.introHandoff || "—"}`,
     v.notes ? `\nNotes:\n${v.notes}` : null,
     `\nFirestore: layoff_employers/${ctx.employerId}`,
-    `Source: layoff.wekruit.com /employer`,
+    `Source: ${EMPLOYER_ROLE_PACKET_SOURCE_LABEL}`,
   ].filter((s): s is string => s !== null)
   const text = lines.join("\n")
   const html =
-    `<h2 style="font-family:system-ui;margin:0 0 12px">New employer signup — ${escapeHtml(v.companyName)}</h2>` +
+    `<h2 style="font-family:system-ui;margin:0 0 12px">New employer role packet — ${escapeHtml(v.companyName)}</h2>` +
     `<p style="font-family:system-ui;font-size:14px;margin:0 0 18px">` +
     `  <a href="${escapeHtmlAttr(reviewUrl)}" style="display:inline-block;background:#2d1a0a;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px;font-weight:500">` +
     `    Open in dashboard →` +
@@ -811,13 +812,13 @@ async function notifyAdminOfEmployerSignup(
     `<li><b>Intro handoff:</b> ${escapeHtml(v.introHandoff || "—")}</li>` +
     `</ul>` +
     (v.notes ? `<h3 style="font-family:system-ui;font-size:14px;margin:18px 0 6px">Notes</h3><pre style="font-family:system-ui;font-size:13px;white-space:pre-wrap;background:#f6f3ee;padding:12px;border-radius:6px">${escapeHtml(v.notes)}</pre>` : "") +
-    `<p style="font-family:system-ui;font-size:12px;color:#6b6357;margin-top:24px">Firestore: <code>layoff_employers/${escapeHtml(ctx.employerId)}</code><br>Source: <code>layoff.wekruit.com /employer</code></p>`
+    `<p style="font-family:system-ui;font-size:12px;color:#6b6357;margin-top:24px">Firestore: <code>layoff_employers/${escapeHtml(ctx.employerId)}</code><br>Source: <code>${escapeHtml(EMPLOYER_ROLE_PACKET_SOURCE_LABEL)}</code></p>`
   try {
     const res = await send(
       { apiKey, domain, from, region },
       {
         to: EMPLOYER_SIGNUP_ADMIN_INBOX,
-        subject: `New employer signup — ${v.companyName}`,
+        subject: `New employer role packet — ${v.companyName}`,
         text,
         html,
       },

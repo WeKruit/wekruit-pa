@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import test from "node:test"
 import * as React from "react"
 import { renderToStaticMarkup } from "react-dom/server"
+import { MemoryRouter } from "react-router-dom"
 
 import {
   LAUNCH_READINESS_ROUTE,
@@ -87,7 +88,13 @@ test("LaunchReadiness page renders readiness status request queue and stop contr
     ],
   }
 
-  const html = renderToStaticMarkup(React.createElement(LaunchReadinessSnapshotView, { snapshot }))
+  const html = renderToStaticMarkup(
+    React.createElement(
+      MemoryRouter,
+      null,
+      React.createElement(LaunchReadinessSnapshotView, { snapshot }),
+    ),
+  )
 
   assert.match(html, /Readiness Overview/)
   assert.match(html, /yellow/)
@@ -103,7 +110,13 @@ test("LaunchReadiness page renders readiness status request queue and stop contr
 
 test("LaunchReadiness normalization creates empty snapshot state", () => {
   const result = normalizeLaunchReadinessResult(null, { limit: 25, persistSnapshot: true })
-  const html = renderToStaticMarkup(React.createElement(LaunchReadinessSnapshotView, { snapshot: result.snapshot }))
+  const html = renderToStaticMarkup(
+    React.createElement(
+      MemoryRouter,
+      null,
+      React.createElement(LaunchReadinessSnapshotView, { snapshot: result.snapshot }),
+    ),
+  )
 
   assert.equal(result.ok, true)
   assert.equal(result.snapshot.status, "unknown")

@@ -7,6 +7,25 @@ import test from "node:test"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const source = readFileSync(resolve(here, "../LayoffEmployers.tsx"), "utf8")
+const appSource = readFileSync(resolve(here, "../../App.tsx"), "utf8")
+const sidebarSource = readFileSync(resolve(here, "../../components/console/Sidebar.tsx"), "utf8")
+
+test("LayoffEmployers review is framed as employer role packet intake", () => {
+  assert.match(source, /title="Employer role packets"/)
+  assert.match(source, /candidate\.wekruit\.com \/employer role packets/)
+  assert.match(source, /No employer role packets/)
+
+  assert.doesNotMatch(source, /title="Layoff employers"/)
+  assert.doesNotMatch(source, /layoff\.wekruit\.com \/employer signups/)
+})
+
+test("sidebar and route comments name the employer packet review surface", () => {
+  assert.match(sidebarSource, /to: "\/admin\/layoff-employers", label: "Role packets"/)
+  assert.match(appSource, /Employer role packets/)
+
+  assert.doesNotMatch(sidebarSource, /Layoff signups/)
+  assert.doesNotMatch(appSource, /WeKruit Open — .*layoff\.wekruit\.com \/employer signups/)
+})
 
 test("LayoffEmployers review shows hard filters separately from notes", () => {
   assert.match(source, /hardFilters\?: string\[\]/)

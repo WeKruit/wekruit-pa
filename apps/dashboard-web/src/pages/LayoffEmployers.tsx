@@ -1,11 +1,11 @@
 /**
- * `/admin/layoff-employers` — WeKruit Open employer signups.
+ * `/admin/layoff-employers` — employer role-packet review.
  *
  * Backs `layoff_employers/{id}` writes from openRegisterEmployer (called by
- * layoff.wekruit.com/employer). Ops reviews each row, approves the Claire
- * screening packet, and only then flips verificationStatus to "verified".
- * openListLayoffCandidates requires both verified identity and an approved,
- * complete screening packet before candidate cards are listed.
+ * candidate.wekruit.com/employer). Ops reviews each role packet, approves the
+ * Claire screening packet, and only then flips verificationStatus to
+ * "verified". openListLayoffCandidates requires both verified identity and an
+ * approved, complete screening packet before candidate cards are listed.
  */
 import { useEffect, useMemo, useState, type CSSProperties } from "react"
 import {
@@ -219,8 +219,8 @@ export default function LayoffEmployers() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: 16 }}>
       <PageHeader
-        title="Layoff employers"
-        description="layoff.wekruit.com /employer signups. Approve the Claire screening packet before the marketplace lists their access."
+        title="Employer role packets"
+        description="Review candidate.wekruit.com /employer role packets. Approve the Claire screening packet before the marketplace lists candidate cards."
       />
       <Panel>
         <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
@@ -256,11 +256,11 @@ export default function LayoffEmployers() {
       </Panel>
 
       {loading ? (
-        <LoadingState label="Loading employer signups…" />
+        <LoadingState label="Loading employer role packets…" />
       ) : error ? (
         <ErrorState message={error} />
       ) : filtered.length === 0 ? (
-        <EmptyState title="No employer signups" body="Once someone fills /employer on layoff.wekruit.com they'll show up here." />
+        <EmptyState title="No employer role packets" body="Once a company submits /employer on candidate.wekruit.com, its Claire role packet shows up here." />
       ) : (
         <Panel>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
