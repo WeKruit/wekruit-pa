@@ -128,6 +128,11 @@ test("CandidateShell signed-in nav keeps candidates inside the operating home an
   assert.match(source, /if \(to === "\/me\/privacy"\) return pathname === "\/me\/privacy"/)
 })
 
+test("CandidateShell mobile header does not push the sign-in link past the viewport", () => {
+  assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-header__inner \{ padding: 12px; \}/)
+  assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-header__signin \{ font-size: 13\.5px; margin-right: 0; \}/)
+})
+
 test("CandidateShell footer routes employers to the actual employer surface", () => {
   assert.match(source, /<Link to="\/employers">For employers<\/Link>/)
   assert.doesNotMatch(source, /href="https:\/\/wekruit\.com"[\s\S]*For employers/)

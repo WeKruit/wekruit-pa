@@ -195,3 +195,12 @@ test("Market keeps mobile role briefs actionable before the first scroll", () =>
   assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \{[\s\S]*display: block; padding: 14px 0 16px; margin-bottom: 18px;/)
   assert.match(source, /\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__copy,[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__grid,[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__actions \{[\s\S]*display: none;/)
 })
+
+test("Market mobile role brief cards stay compact enough to compare options", () => {
+  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-direct-cards \{ display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 6px; \}/)
+  assert.match(source, /\.wk-shell \.wk-direct-card \{[\s\S]*padding: 14px;[\s\S]*gap: 8px;[\s\S]*border-color: var\(--wk-border\);/)
+  assert.match(source, /\.wk-shell \.wk-direct-card \.wk-evidence \{[\s\S]*grid-column: auto;[\s\S]*max-width: 130px;/)
+  assert.match(source, /\.wk-shell \.wk-direct-card \.wk-evidence__detail \{[\s\S]*display: none;/)
+  assert.match(source, /\.wk-shell \.wk-direct-card__foot \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto;/)
+  assert.doesNotMatch(source, /\.wk-shell \.wk-direct-card__foot \.wk-pitchbtn \{ width: 100%;/)
+})
