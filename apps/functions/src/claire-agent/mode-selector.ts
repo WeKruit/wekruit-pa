@@ -24,7 +24,7 @@ import type { Firestore } from "firebase-admin/firestore"
 import {
   isSharedOnboardingActiveUser,
   currentSharedOnboardingQuestionId,
-  resolveNextSharedOnboardingQuestionId,
+  resolveNextAskedSharedOnboardingQuestionId,
   buildSharedOnboardingPrompt,
   SHARED_ONBOARDING_WORK_SESSION_KIND,
   type SharedOnboardingQuestionId,
@@ -127,7 +127,8 @@ async function bootstrapOnboarding(db: Firestore, userId: string, now: string): 
           status: "active",
           startedAt: now,
           updatedAt: now,
-          currentQuestionId: "main_goal",
+          // 2026-06-02 trim: cold-start seeds the first ASKED slot (target_role).
+          currentQuestionId: DEFAULT_ONBOARDING_SLOTS[0],
           questionOrder: [...DEFAULT_ONBOARDING_SLOTS],
           answers: {},
           completed: false,
@@ -136,7 +137,7 @@ async function bootstrapOnboarding(db: Firestore, userId: string, now: string): 
           kind: SHARED_ONBOARDING_WORK_SESSION_KIND,
           status: "active",
           startedAt: now,
-          currentQuestionId: "main_goal",
+          currentQuestionId: DEFAULT_ONBOARDING_SLOTS[0],
           boundary: "shared_onboarding",
         },
       },
@@ -153,6 +154,30 @@ function seedStore(answeredSlots: string[]): ProcessSessionStore {
     complete: false,
   }
   return store
+}
+
+/**
+ * The first ASKED onboarding slot (2026-06-02 trim). `DEFAULT_ONBOARDING_SLOTS` derives
+ * from the trimmed ASKED array (`SHARED_ONBOARDING_QUESTIONS` = [target_role,
+ * location_relocation]), so this is `target_role`. Used for cold-start seeds + the in-flight
+ * rescue, so the literal slot name lives in ONE place.
+ */
+const FIRST_ASKED_SLOT = (DEFAULT_ONBOARDING_SLOTS[0] ?? "target_role") as SharedOnboardingQuestionId
+
+/**
+ * IN-FLIGHT RESCUE (2026-06-02 trim): if a user's durable currentQuestionId is a slot that is
+ * no longer ASKED (one of the 5 dropped soft-signal slots), don't re-ask that stale question —
+ * resolve to the earliest UNANSWERED slot in the trimmed ASKED set instead. A stored slot that
+ * IS still asked is returned unchanged. Worst case: one short re-ask of an asked slot.
+ */
+function rescueOnboardingSlot(
+  stored: SharedOnboardingQuestionId,
+  answeredSlots: string[],
+): SharedOnboardingQuestionId {
+  if (DEFAULT_ONBOARDING_SLOTS.includes(stored)) return stored
+  const answered = new Set(answeredSlots)
+  const firstUnanswered = DEFAULT_ONBOARDING_SLOTS.find((s) => !answered.has(s))
+  return (firstUnanswered ?? FIRST_ASKED_SLOT) as SharedOnboardingQuestionId
 }
 
 /**
@@ -246,22 +271,26 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     if (!onboardingComplete) {
       try {
         if (!isSharedOnboardingActiveUser(user)) {
-          // Cold start that just got a résumé: seed durable state, then pitch + ask main_goal.
+          // Cold start that just got a résumé: seed durable state, then pitch + ask the first ASKED
+          // slot (target_role, 2026-06-02 trim).
           await bootstrapOnboarding(args.db, args.userId, now)
           log("mode.cv_parsed_pitch_bootstrap", { userId: args.userId })
           return {
             mode: "onboarding",
             awaitingAnswer: false,
             postParsePitch: true,
-            onboardingSlot: "main_goal",
-            pendingStep: buildSharedOnboardingPrompt("main_goal", null),
-            currentStep: buildSharedOnboardingPrompt("main_goal", null),
+            onboardingSlot: FIRST_ASKED_SLOT,
+            pendingStep: buildSharedOnboardingPrompt(FIRST_ASKED_SLOT, null),
+            currentStep: buildSharedOnboardingPrompt(FIRST_ASKED_SLOT, null),
             processStore: seedStore([]),
           }
         }
-        const cur = currentSharedOnboardingQuestionId(user) as SharedOnboardingQuestionId
         const answeredSlots = Object.keys((shared?.answers as Record<string, unknown>) ?? {})
-        const next = resolveNextSharedOnboardingQuestionId(cur)
+        const cur = rescueOnboardingSlot(
+          currentSharedOnboardingQuestionId(user) as SharedOnboardingQuestionId,
+          answeredSlots,
+        )
+        const next = resolveNextAskedSharedOnboardingQuestionId(cur)
         log("mode.cv_parsed_pitch_active", { userId: args.userId, currentSlot: cur, next: next.nextQuestionId })
         return {
           mode: "onboarding",
@@ -293,16 +322,17 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   if (!onboardingComplete) {
     try {
       if (!isSharedOnboardingActiveUser(user)) {
-        // Cold start (e.g. just reinitialized): seed durable state + ask main_goal. The inbound is
-        // the kickoff/greeting, NOT an answer → awaitingAnswer:false, the agent only asks.
+        // Cold start (e.g. just reinitialized): seed durable state + ask the first ASKED slot
+        // (target_role, 2026-06-02 trim). The inbound is the kickoff/greeting, NOT an answer →
+        // awaitingAnswer:false, the agent only asks.
         await bootstrapOnboarding(args.db, args.userId, now)
         log("mode.onboarding_bootstrap", { userId: args.userId })
         return {
           mode: "onboarding",
           awaitingAnswer: false,
-          onboardingSlot: "main_goal",
-          pendingStep: buildSharedOnboardingPrompt("main_goal", null),
-          currentStep: buildSharedOnboardingPrompt("main_goal", null),
+          onboardingSlot: FIRST_ASKED_SLOT,
+          pendingStep: buildSharedOnboardingPrompt(FIRST_ASKED_SLOT, null),
+          currentStep: buildSharedOnboardingPrompt(FIRST_ASKED_SLOT, null),
           processStore: seedStore([]),
         }
       }
@@ -311,9 +341,17 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
       // question (positional advance, matching the tool's resolver) so the agent-records path and
       // the deterministic net-records path BOTH leave the agent asking what durable now points to;
       // undefined on the last slot → the directive tells the agent to wrap up after recording.
-      const cur = currentSharedOnboardingQuestionId(user) as SharedOnboardingQuestionId
+      //
+      // IN-FLIGHT RESCUE (2026-06-02 trim): a user whose durable currentQuestionId is a now-DROPPED
+      // slot (e.g. culture_stage) must NOT be re-asked that stale question. If the stored slot is not
+      // in the ASKED set, treat onboarding as at the earliest UNANSWERED asked slot instead. Worst
+      // case is one short re-ask of an asked slot; never a stall or data loss, and no Firestore backfill.
       const answeredSlots = Object.keys((shared?.answers as Record<string, unknown>) ?? {})
-      const next = resolveNextSharedOnboardingQuestionId(cur)
+      const cur = rescueOnboardingSlot(
+        currentSharedOnboardingQuestionId(user) as SharedOnboardingQuestionId,
+        answeredSlots,
+      )
+      const next = resolveNextAskedSharedOnboardingQuestionId(cur)
       log("mode.onboarding_active", { userId: args.userId, currentSlot: cur, next: next.nextQuestionId, answered: answeredSlots.length })
       return {
         mode: "onboarding",

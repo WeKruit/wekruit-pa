@@ -7,6 +7,7 @@ import {
   buildHelloWekruitOpenerBody,
   parseHelloWekruitOpener,
   SHARED_ONBOARDING_QUESTIONS,
+  ALL_SHARED_ONBOARDING_QUESTIONS,
   buildSharedOnboardingPrompt,
   buildSharedOnboardingPromptContext,
   buildSharedOnboardingStartedState,
@@ -14,6 +15,7 @@ import {
   judgeSharedOnboardingAnswer,
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
+  resolveNextAskedSharedOnboardingQuestionId,
   shouldIgnoreSharedOnboardingDuplicateKickoff,
   shouldSharedOnboardingAdvanceDespiteJudge,
   sharedOnboardingSignupSource,
@@ -49,8 +51,31 @@ test("job interview opener binds the inbound phone to the candidate id", () => {
   )
 })
 
-test("shared onboarding asks the seven conversational questions in launch order", () => {
+test("shared onboarding asks ONLY the two hard-filter questions upfront (2026-06-02 trim)", () => {
+  // Adam #1 friction ("too many questions / minimal upfront / super easy to start"): the ASKED
+  // flow is now ONLY the two HARD-filter axes — target_role (forward intent + warm opener) then
+  // location_relocation (targetLocations + the only place US-only is surfaced).
   assert.deepEqual(SHARED_ONBOARDING_QUESTIONS.map((q) => q.id), [
+    "target_role",
+    "location_relocation",
+  ])
+  // target_role (Adam 2026-05-30): confirm forward role intent (résumé only seeds
+  // targetRoleFunction from history; this asks what they want NEXT). Now the FIRST asked slot.
+  assert.match(getSharedOnboardingQuestion("target_role").prompt, /what kind of roles are you going for next/i)
+  assert.match(getSharedOnboardingQuestion("target_role").prompt, /product, data, or design/i)
+  assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote within the US, onsite, or relocating/i)
+  assert.doesNotMatch(
+    SHARED_ONBOARDING_QUESTIONS.map((q) => q.prompt).join("\n"),
+    /email|e-mail|what email|why are you looking/i,
+  )
+})
+
+test("ALL 7 question definitions stay resolvable via the map (in-flight migration safety)", () => {
+  // KEYSTONE: the 5 dropped slots (main_goal / culture_stage / industry_interest / seniority_comp /
+  // special_context) are no longer ASKED but MUST still resolve a prompt — an in-flight user whose
+  // durable currentQuestionId is one of them cannot stall. getSharedOnboardingQuestion reads the FULL
+  // map, so every one resolves.
+  assert.deepEqual(ALL_SHARED_ONBOARDING_QUESTIONS.map((q) => q.id), [
     "main_goal",
     "culture_stage",
     "target_role",
@@ -59,26 +84,12 @@ test("shared onboarding asks the seven conversational questions in launch order"
     "seniority_comp",
     "special_context",
   ])
+  for (const id of ["main_goal", "culture_stage", "industry_interest", "seniority_comp", "special_context"] as const) {
+    assert.ok(getSharedOnboardingQuestion(id).prompt.length > 0, `${id} still resolves a prompt`)
+  }
   assert.match(getSharedOnboardingQuestion("main_goal").prompt, /career growth, compensation, stability, mission, learning/i)
-  // target_role (Adam 2026-05-30): confirm forward role intent (résumé only
-  // seeds targetRoleFunction from history; this asks what they want NEXT).
-  assert.match(getSharedOnboardingQuestion("target_role").prompt, /what kind of roles are you going for next/i)
-  assert.match(getSharedOnboardingQuestion("target_role").prompt, /product, data, or design/i)
-  assert.match(getSharedOnboardingQuestion("location_relocation").prompt, /remote within the US, onsite, or relocating/i)
-  // seniority_comp (Adam 2026-05-30): one warm question covering intern-vs-full-time +
-  // seniority + expected salary + whether those are negotiable or firm.
   assert.match(getSharedOnboardingQuestion("seniority_comp").prompt, /internships or full-time/i)
-  assert.match(getSharedOnboardingQuestion("seniority_comp").prompt, /salary/i)
-  assert.match(getSharedOnboardingQuestion("seniority_comp").prompt, /flexible\/negotiable or pretty firm/i)
   assert.match(getSharedOnboardingQuestion("special_context").prompt, /non-negotiables/i)
-  assert.doesNotMatch(
-    getSharedOnboardingQuestion("special_context").prompt,
-    /constraints, strengths, dealbreakers, timing/i,
-  )
-  assert.doesNotMatch(
-    SHARED_ONBOARDING_QUESTIONS.map((q) => q.prompt).join("\n"),
-    /email|e-mail|what email|why are you looking/i,
-  )
 })
 
 test("normal and laid-off website starts create the same shared SMS onboarding state", () => {
@@ -87,6 +98,9 @@ test("normal and laid-off website starts create the same shared SMS onboarding s
 
   assert.equal((layoff.workSession as Record<string, unknown>).kind, "shared_onboarding")
   assert.equal((candidate.workSession as Record<string, unknown>).kind, "shared_onboarding")
+  // buildSharedOnboardingStartedState is the LEGACY website-start seeder — still seeds main_goal
+  // (the legacy deterministic flow walks the FULL 7-slot set). The thin trim lives in the thin
+  // cold-start (mode-selector) + the ASKED SHARED_ONBOARDING_QUESTIONS, not this legacy seeder.
   assert.equal((layoff.workSession as Record<string, unknown>).currentQuestionId, "main_goal")
   assert.equal((candidate.workSession as Record<string, unknown>).currentQuestionId, "main_goal")
   assert.equal((layoff.sharedOnboarding as Record<string, unknown>).source, WEKRUIT_LAYOFF_SOURCE)
@@ -154,6 +168,7 @@ test("shared onboarding opening prompt carries Claire persona guidance without c
   assert.match(opener, /Before I match roles/i)
   assert.match(opener, /https:\/\/wekruit\.com\/me\/profile/i)
   assert.match(opener, /just tell me here/i)
+  // LEGACY website-start opener leads with main_goal (the thin path uses its own PART-2 pitch).
   assert.match(opener, /career growth, compensation, stability, mission, learning/i)
   assert.doesNotMatch(opener, /I am Claire|How may I assist|software_and_saas|job_title|tech_swe|timeline|dealbreaker/i)
 })
@@ -179,6 +194,7 @@ test("post-prescreen opening prompt thanks for the role screen and avoids first-
   assert.match(opener, /completing the role screen/i)
   assert.match(opener, /Member of Technical Staff, macOS DevOps/i)
   assert.match(opener, /Photon/i)
+  // LEGACY post-prescreen opener leads with main_goal.
   assert.match(opener, /career growth, compensation, stability, mission, learning/i)
   assert.doesNotMatch(opener, /Saw your resume come through/i)
 })
@@ -284,25 +300,46 @@ test("live-bug capture fix: Q4 open-to-anything → anywhere bypass on both axes
   assert.equal(salary.tags.minSalary, 120000)
 })
 
-test("recommendations become eligible only after the final slot is collected", () => {
-  // main_goal still hands off to culture_stage (indices 0→1 unchanged).
+test("LEGACY full-set walker: main_goal → culture_stage … special_context → done (unchanged by the trim)", () => {
+  // resolveNextSharedOnboardingQuestionId is the LEGACY walker — it still traverses the FULL 7-slot
+  // set (the legacy deterministic onboarding path depends on this). The thin trim does NOT touch it.
   assert.deepEqual(resolveNextSharedOnboardingQuestionId("main_goal"), {
     nextQuestionId: "culture_stage",
     completed: false,
     shouldRecommend: false,
   })
-  // location_relocation now hands off to the new seniority_comp slot (Adam 2026-05-30).
   assert.deepEqual(resolveNextSharedOnboardingQuestionId("location_relocation"), {
     nextQuestionId: "seniority_comp",
     completed: false,
     shouldRecommend: false,
   })
-  // special_context remains the terminal slot — completing it unlocks recs.
   assert.deepEqual(resolveNextSharedOnboardingQuestionId("special_context"), {
     nextQuestionId: null,
     completed: true,
     shouldRecommend: true,
   })
+})
+
+test("THIN asked-set walker + in-flight rescue (2026-06-02 trim)", () => {
+  // resolveNextAskedSharedOnboardingQuestionId is the THIN-path walker over the trimmed ASKED set:
+  // target_role → location_relocation → complete.
+  assert.deepEqual(resolveNextAskedSharedOnboardingQuestionId("target_role"), {
+    nextQuestionId: "location_relocation",
+    completed: false,
+    shouldRecommend: false,
+  })
+  assert.deepEqual(resolveNextAskedSharedOnboardingQuestionId("location_relocation"), {
+    nextQuestionId: null,
+    completed: true,
+    shouldRecommend: true,
+  })
+  // In-flight rescue: a now-dropped stored slot resolves back to the first ASKED slot (target_role),
+  // never null/stall — so an in-flight user re-asks at most one short slot.
+  for (const dropped of ["main_goal", "culture_stage", "industry_interest", "seniority_comp", "special_context"] as const) {
+    const r = resolveNextAskedSharedOnboardingQuestionId(dropped)
+    assert.equal(r.nextQuestionId, "target_role", `${dropped} rescues to target_role`)
+    assert.equal(r.completed, false)
+  }
 })
 
 test("shared onboarding never re-asks — judge rejections still advance except Q1 duplicate hello", () => {

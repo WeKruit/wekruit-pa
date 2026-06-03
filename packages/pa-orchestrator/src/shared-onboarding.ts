@@ -75,7 +75,26 @@ type FirestoreLike = {
   collection: (name: string) => FirestoreCollectionLike
 }
 
-export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = [
+/**
+ * FULL definition set — ALL 7 onboarding question slots, with their canonical
+ * prompts. This is the source of `QUESTION_BY_ID`, `getSharedOnboardingQuestion`,
+ * and the `SharedOnboardingQuestionId` union — so every slot (including the 5 that
+ * are NO LONGER ASKED upfront) STAYS resolvable. An in-flight user whose durable
+ * `currentQuestionId` is e.g. `culture_stage` must still resolve a prompt via the
+ * map; that is why we never delete these definitions.
+ *
+ * 2026-06-02 onboarding trim (Adam #1 friction — "too many questions / minimal
+ * upfront / super easy to start"): the ASKED upfront flow (`SHARED_ONBOARDING_QUESTIONS`
+ * below) is now only the TWO hard-filter axes — `target_role` then
+ * `location_relocation`. The other 5 (`main_goal` / `culture_stage` /
+ * `industry_interest` / `seniority_comp` / `special_context`) are SOFT score
+ * signals and become EXTRACT-ONLY: `record_onboarding_answer` already pulls every
+ * canonical enum (roleFunction / industrySector / companySize / careerStage /
+ * minSalary / locations / visa + per-axis hardness) from ANY free-text turn via
+ * applyPartialUserTags, so no capture is lost — they're just no longer a wall of
+ * upfront questions. GLOBAL trim (all users), migration-safe for in-flight sessions.
+ */
+export const ALL_SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = [
   {
     id: "main_goal",
     label: "main goal for next company",
@@ -132,8 +151,29 @@ export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = 
   },
 ]
 
+/**
+ * The ASKED upfront flow (Adam 2026-06-02 trim). Only the two HARD-filter axes the
+ * matcher actually gates on — `target_role` (targetRoleFunction, also the warm
+ * forward-intent opener) then `location_relocation` (targetLocations + the only place
+ * US-only is surfaced). The FSM walks THIS array, so onboarding COMPLETES after
+ * `location_relocation`; every other question stays definition-only (extract-only).
+ *
+ * This is the array `DEFAULT_ONBOARDING_SLOTS` (onboarding-fsm.ts) derives from, so the
+ * thin FSM default slot set becomes length 2 automatically. `QUESTION_BY_ID` /
+ * `getSharedOnboardingQuestion` / the union are built from the FULL set above so dropped
+ * slots still resolve for in-flight users.
+ */
+export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = [
+  ALL_SHARED_ONBOARDING_QUESTIONS.find((q) => q.id === "target_role")!,
+  ALL_SHARED_ONBOARDING_QUESTIONS.find((q) => q.id === "location_relocation")!,
+]
+
+/** ASKED-flow ids (length 2) — the positional walker (`resolveNext…`) advances over THESE. */
 const QUESTION_IDS = SHARED_ONBOARDING_QUESTIONS.map((q) => q.id)
-const QUESTION_BY_ID = new Map(SHARED_ONBOARDING_QUESTIONS.map((q) => [q.id, q]))
+/** VALID ids (all 7) — every dropped slot must still resolve a prompt for in-flight users. */
+const ALL_QUESTION_IDS = ALL_SHARED_ONBOARDING_QUESTIONS.map((q) => q.id)
+/** Map covers ALL 7 (built from the FULL set) so `getSharedOnboardingQuestion` never strands a slot. */
+const QUESTION_BY_ID = new Map(ALL_SHARED_ONBOARDING_QUESTIONS.map((q) => [q.id, q]))
 const PARSED_CANDIDATE_RESUMES = "parsedCandidateResumes"
 
 function normalizeControlText(value: string): string {
@@ -654,6 +694,8 @@ export function buildSharedOnboardingOpeningPrompt(
     `${greeting}${resumeLine}`,
     "If there's a strong fit, I'll connect you with the hiring manager.",
     `You can also update ${CANDIDATE_PROFILE_URL}, or just tell me here.`,
+    // LEGACY website-start opener (dead on the thin path, which uses its own PART-2 pitch). The
+    // legacy deterministic flow walks the FULL set from main_goal, so the opener leads with it.
     getSharedOnboardingQuestion("main_goal").prompt,
   ].join(" ")
 }
@@ -682,6 +724,7 @@ export function buildSharedOnboardingPostPrescreenOpeningPrompt(
   return [
     `${greeting} Thanks for completing the role screen${roleText}.`,
     "By the way, I can keep looking for jobs that meet your expectations, but I need one bit of broader context first.",
+    // LEGACY post-prescreen opener (dead on the thin path). Leads with main_goal like the legacy flow.
     getSharedOnboardingQuestion("main_goal").prompt,
   ].join(" ")
 }
@@ -782,7 +825,36 @@ export function isSharedOnboardingQuestionId(value: unknown): value is SharedOnb
   return typeof value === "string" && QUESTION_BY_ID.has(value as SharedOnboardingQuestionId)
 }
 
+/**
+ * LEGACY positional walker — traverses the FULL 7-slot set. This is shared by the legacy
+ * deterministic onboarding path (index.ts) which still walks all 7 questions. The thin path does
+ * NOT route its asked-flow completion through this; the thin trim is driven by the ASKED
+ * `DEFAULT_ONBOARDING_SLOTS` in the FSM (onboarding-fsm.ts / process-tools.ts) and the thin
+ * next-asked-slot in mode-selector. Keeping this on the FULL set preserves legacy behavior +
+ * the regression chain. (For thin's ASKED next-slot, see `resolveNextAskedSharedOnboardingQuestionId`.)
+ */
 export function resolveNextSharedOnboardingQuestionId(id: SharedOnboardingQuestionId): {
+  nextQuestionId: SharedOnboardingQuestionId | null
+  completed: boolean
+  shouldRecommend: boolean
+} {
+  const index = ALL_QUESTION_IDS.indexOf(id)
+  const nextQuestionId = index >= 0 ? ALL_QUESTION_IDS[index + 1] ?? null : ALL_QUESTION_IDS[0]
+  return {
+    nextQuestionId,
+    completed: nextQuestionId === null,
+    shouldRecommend: nextQuestionId === null,
+  }
+}
+
+/**
+ * THIN-path positional walker — traverses ONLY the trimmed ASKED set (target_role ->
+ * location_relocation -> complete). Used by the thin mode-selector to compute the next ASKED
+ * question to display, so it agrees with the FSM completion (which keys off the same ASKED
+ * `SHARED_ONBOARDING_QUESTIONS`). A stored id that is NOT in the ASKED set (an in-flight user on a
+ * now-dropped slot) resolves to the FIRST asked slot — the in-flight rescue, never a stall.
+ */
+export function resolveNextAskedSharedOnboardingQuestionId(id: SharedOnboardingQuestionId): {
   nextQuestionId: SharedOnboardingQuestionId | null
   completed: boolean
   shouldRecommend: boolean
@@ -833,9 +905,13 @@ export function resolveNextMissingSharedOnboardingQuestionId(
   tags: Record<string, unknown> | null | undefined,
   statedPreferences: Record<string, unknown> | null | undefined,
 ): { nextQuestionId: SharedOnboardingQuestionId | null; completed: boolean; shouldRecommend: boolean } {
-  const startIdx = QUESTION_IDS.indexOf(fromId)
-  for (let i = startIdx + 1; i < QUESTION_IDS.length; i++) {
-    const candidate = QUESTION_IDS[i]!
+  // LEGACY (dead on the thin path — only the legacy deterministic onboarding turn in
+  // index.ts calls this). It still walks the FULL 7-slot set so legacy semantics are
+  // unchanged; the thin trim lives in the ASKED `QUESTION_IDS` used by the positional
+  // resolver below.
+  const startIdx = ALL_QUESTION_IDS.indexOf(fromId)
+  for (let i = startIdx + 1; i < ALL_QUESTION_IDS.length; i++) {
+    const candidate = ALL_QUESTION_IDS[i]!
     if (!isSharedOnboardingSlotSatisfied(candidate, tags, statedPreferences)) {
       return { nextQuestionId: candidate, completed: false, shouldRecommend: false }
     }
@@ -857,6 +933,9 @@ export function buildSharedOnboardingStartedState(
       status: "active",
       startedAt: nowIso,
       boundary: SHARED_ONBOARDING_BOUNDARY,
+      // LEGACY website-start seeder (dead on the thin path; the thin cold start uses
+      // mode-selector's own bootstrapOnboarding, seeded to the first ASKED slot). The legacy
+      // deterministic onboarding path still walks the FULL 7-slot set from main_goal.
       currentQuestionId: "main_goal",
     },
     sharedOnboarding: {
@@ -865,7 +944,8 @@ export function buildSharedOnboardingStartedState(
       startedAt: nowIso,
       updatedAt: nowIso,
       currentQuestionId: "main_goal",
-      questionOrder: QUESTION_IDS,
+      // FULL ordered ids for the legacy walker (this seeder is the legacy path).
+      questionOrder: ALL_QUESTION_IDS,
       answers: {},
       ...(Object.keys(cleanContext).length > 0 ? { promptContext: cleanContext } : {}),
       completed: false,
@@ -909,6 +989,10 @@ export function isSharedOnboardingActiveUser(user: unknown): boolean {
 }
 
 export function currentSharedOnboardingQuestionId(user: unknown): SharedOnboardingQuestionId {
+  // Returns the stored slot when present (ANY valid id, incl. now-dropped slots — the FULL map
+  // still resolves them, so an in-flight user is never stranded). The cold/unknown fallback stays
+  // main_goal for the LEGACY path; the THIN path resolves cold start via mode-selector's
+  // FIRST_ASKED_SLOT and rescues an in-flight dropped slot onto the ASKED set (rescueOnboardingSlot).
   if (!user || typeof user !== "object") return "main_goal"
   const doc = user as Record<string, unknown>
   const shared = doc.sharedOnboarding && typeof doc.sharedOnboarding === "object"

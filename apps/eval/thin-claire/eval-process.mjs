@@ -240,8 +240,10 @@ function runL1() {
     assert.equal(stray.reason, "already_complete")
   })
 
-  add("onboarding: default slots = SHARED_ONBOARDING_QUESTIONS (6)", () => {
-    assert.equal(DEFAULT_ONBOARDING_SLOTS.length, 7)
+  add("onboarding: default slots = ASKED SHARED_ONBOARDING_QUESTIONS (2 after 2026-06-02 trim)", () => {
+    // Trim (Adam #1 friction): the asked upfront flow is only the two hard-filter axes —
+    // target_role then location_relocation. The other 5 stay extract-only (no upfront ask).
+    assert.equal(DEFAULT_ONBOARDING_SLOTS.length, 2)
     const s = { slots: [], answers: {}, complete: false }
     assert.equal(nextOnboardingSlot(s).pending, DEFAULT_ONBOARDING_SLOTS[0])
   })
