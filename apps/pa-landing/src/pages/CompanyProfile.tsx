@@ -127,12 +127,19 @@ function CompanyProfileLayout({ jobs }: { jobs: PublicJobOpening[] }) {
                 </div>
                 <div className="wk-company-role-list">
                   {jobs.map((job) => (
-                    <Link className="wk-company-role" to={`/j/${job.id}`} key={job.id}>
+                    <Link
+                      className="wk-company-role"
+                      to={`/j/${job.id}`}
+                      key={job.id}
+                      aria-label={`Start Claire interview for ${job.title}`}
+                    >
                       <span>
                         <strong>{job.title}</strong>
                         <em>{[job.location, formatPublicJobType(job.jobType)].filter(Boolean).join("  ")}</em>
                       </span>
-                      <Icon name="arrow-right" size={22} stroke={1.7} />
+                      <span className="wk-company-role__action">
+                        Start Claire interview <Icon name="arrow-right" size={15} stroke={1.8} />
+                      </span>
                     </Link>
                   ))}
                 </div>
@@ -439,6 +446,22 @@ const COMPANY_PROFILE_STYLES = `
   font-size: 14px;
   line-height: 1.35;
 }
+.wk-company-role__action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid var(--wk-peach-200);
+  border-radius: var(--wk-r-pill);
+  background: var(--wk-peach-100);
+  color: var(--wk-ink);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.1;
+  white-space: nowrap;
+}
 .wk-company-side {
   display: grid;
   gap: 16px;
@@ -533,6 +556,7 @@ const COMPANY_PROFILE_STYLES = `
   .wk-company-screen { padding: 24px 0; }
   .wk-company-screen h2 { font-size: 29px; }
   .wk-company-screen__row { grid-template-columns: 1fr; gap: 7px; }
-  .wk-company-role { padding: 16px; min-height: 78px; }
+  .wk-company-role { grid-template-columns: 1fr; padding: 16px; min-height: 78px; }
+  .wk-company-role__action { justify-self: start; white-space: normal; text-align: left; }
 }
 `

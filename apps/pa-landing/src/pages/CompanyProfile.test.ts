@@ -25,3 +25,13 @@ test("CompanyProfile shows Claire's company-specific screening contract before r
   assert.match(source, /company-specific screen/)
   assert.match(source, /<CompanyScreeningContract company=\{company\} roleTitle=\{firstJob\.title\} \/>[\s\S]*<section className="wk-company-roles"/)
 })
+
+test("CompanyProfile role cards expose the Claire interview action", () => {
+  assert.match(source, /aria-label=\{`Start Claire interview for \$\{job\.title\}`\}/)
+  assert.match(source, /className="wk-company-role__action"/)
+  assert.match(source, /Start Claire interview/)
+  assert.match(source, /Open the role when you want Claire to start the company-specific screen/)
+
+  assert.doesNotMatch(source, /Apply now/i)
+  assert.doesNotMatch(source, /Browse role/i)
+})
