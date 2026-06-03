@@ -4412,12 +4412,50 @@ export function CandidateMatches() {
   return <MatchesSurface profileState={profileState} />
 }
 
-type MatchesFilter = "all" | "collab" | "rec"
+type MatchesFilter = "all" | "action" | "review" | "outcome" | "collab" | "rec"
 const MATCHES_FILTERS: Array<{ id: MatchesFilter; label: string }> = [
   { id: "all", label: "All" },
+  { id: "action", label: "Needs action" },
+  { id: "review", label: "In review" },
+  { id: "outcome", label: "Outcomes" },
   { id: "collab", label: "WeKruit-screened" },
   { id: "rec", label: "Recommended" },
 ]
+
+function matchNeedsCandidateAction(match: CandidateMatchCard): boolean {
+  return (
+    match.status === "recommended" ||
+    match.status === "invited" ||
+    match.status === "interview_started"
+  )
+}
+
+function matchHasCandidateOutcome(match: CandidateMatchCard): boolean {
+  return (
+    match.status === "passed" ||
+    match.status === "intro_accepted" ||
+    match.status === "intro_rejected" ||
+    match.status === "not_passed" ||
+    match.status === "paused"
+  )
+}
+
+function matchesForFilter(matches: CandidateMatchCard[], filter: MatchesFilter): CandidateMatchCard[] {
+  switch (filter) {
+    case "action":
+      return matches.filter(matchNeedsCandidateAction)
+    case "review":
+      return matches.filter((m) => m.status === "review_pending")
+    case "outcome":
+      return matches.filter(matchHasCandidateOutcome)
+    case "collab":
+      return matches.filter((m) => m.collab)
+    case "rec":
+      return matches.filter((m) => !m.collab)
+    case "all":
+      return matches
+  }
+}
 
 function MatchesSurface({
   profileState,
@@ -4457,17 +4495,14 @@ function MatchesView({
   error: string | null
 }) {
   const [filter, setFilter] = useState<MatchesFilter>("all")
-  const counts: Record<MatchesFilter, number> = {
-    all: all.length,
-    collab: all.filter((m) => m.collab).length,
-    rec: all.filter((m) => !m.collab).length,
-  }
-  const filtered =
-    filter === "collab"
-      ? all.filter((m) => m.collab)
-      : filter === "rec"
-        ? all.filter((m) => !m.collab)
-        : all
+  const counts = MATCHES_FILTERS.reduce(
+    (acc, f) => {
+      acc[f.id] = matchesForFilter(all, f.id).length
+      return acc
+    },
+    {} as Record<MatchesFilter, number>,
+  )
+  const filtered = matchesForFilter(all, filter)
 
   return (
     <CandidateShell

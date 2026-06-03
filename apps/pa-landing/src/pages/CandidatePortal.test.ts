@@ -64,6 +64,20 @@ test("CandidatePortal roles page disables zero-count filters instead of opening 
   assert.match(source, /className=\{`wkmp-chip\$\{filter === f\.id \? " is-on" : ""\}\$\{disabled \? " is-disabled" : ""\}`\}/)
 })
 
+test("CandidatePortal roles inbox exposes action-first state filters", () => {
+  assert.match(source, /type MatchesFilter = "all" \| "action" \| "review" \| "outcome" \| "collab" \| "rec"/)
+  assert.match(source, /\{ id: "action", label: "Needs action" \}/)
+  assert.match(source, /\{ id: "review", label: "In review" \}/)
+  assert.match(source, /\{ id: "outcome", label: "Outcomes" \}/)
+  assert.match(source, /function matchNeedsCandidateAction\(match: CandidateMatchCard\): boolean/)
+  assert.match(source, /match\.status === "recommended" \|\|[\s\S]*match\.status === "invited" \|\|[\s\S]*match\.status === "interview_started"/)
+  assert.match(source, /function matchHasCandidateOutcome\(match: CandidateMatchCard\): boolean/)
+  assert.match(source, /match\.status === "passed" \|\|[\s\S]*match\.status === "intro_accepted" \|\|[\s\S]*match\.status === "intro_rejected" \|\|[\s\S]*match\.status === "not_passed"/)
+  assert.match(source, /function matchesForFilter\(matches: CandidateMatchCard\[\], filter: MatchesFilter\): CandidateMatchCard\[\]/)
+  assert.match(source, /const filtered = matchesForFilter\(all, filter\)/)
+  assert.match(source, /const counts = MATCHES_FILTERS\.reduce/)
+})
+
 test("CandidatePortal roles page empty state offers real next actions", () => {
   assert.match(source, /function MatchesEmptyState\(/)
   assert.match(source, /No roles match your profile yet\./)
