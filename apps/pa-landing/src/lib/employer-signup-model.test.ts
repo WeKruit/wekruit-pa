@@ -144,8 +144,8 @@ test("buildEmployerSignupPayload normalizes the role brief without inventing sco
 test("deriveEmployerPacketPreview mirrors the Claire screening packet contract", () => {
   const preview = deriveEmployerPacketPreview(VALID_FORM)
 
-  assert.equal(preview.completedCount, 8)
-  assert.equal(preview.totalCount, 8)
+  assert.equal(preview.completedCount, 7)
+  assert.equal(preview.totalCount, 7)
   assert.equal(preview.ready, true)
   assert.deepEqual(
     preview.sections.map((section) => [section.id, section.label, section.complete]),
@@ -176,7 +176,8 @@ test("deriveEmployerPacketPreview keeps missing packet sections explicit", () =>
     introHandoff: "",
   })
 
-  assert.equal(preview.completedCount, 5)
+  assert.equal(preview.completedCount, 4)
+  assert.equal(preview.totalCount, 7)
   assert.equal(preview.ready, false)
   assert.deepEqual(
     preview.sections.map((section) => [section.id, section.complete, section.value]),

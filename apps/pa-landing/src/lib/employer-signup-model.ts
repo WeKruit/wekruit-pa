@@ -203,13 +203,14 @@ export function deriveEmployerPacketPreview(form: EmployerSignupFormState): Empl
       complete: true,
     },
   ]
-  const completedCount = sections.filter((section) => section.complete).length
+  const requiredSections = sections.filter((section) => section.id !== "candidate_share_boundary")
+  const completedCount = requiredSections.filter((section) => section.complete).length
 
   return {
     sections,
     completedCount,
-    totalCount: sections.length,
-    ready: completedCount === sections.length,
+    totalCount: requiredSections.length,
+    ready: completedCount === requiredSections.length,
   }
 }
 
