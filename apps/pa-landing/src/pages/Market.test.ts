@@ -188,3 +188,10 @@ test("Market default role-brief tab explains the Claire interview contract befor
   assert.doesNotMatch(source, /guaranteed interview/i)
   assert.doesNotMatch(source, /auto-submit/i)
 })
+
+test("Market keeps mobile role briefs actionable before the first scroll", () => {
+  assert.match(source, /wk-market-contract__mobile-brief/)
+  assert.match(source, /Claire screens first\. Hiring teams see a passed profile only after you approve sharing\./)
+  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \{[\s\S]*display: block; padding: 14px 0 16px; margin-bottom: 18px;/)
+  assert.match(source, /\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__copy,[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__grid,[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__actions \{[\s\S]*display: none;/)
+})

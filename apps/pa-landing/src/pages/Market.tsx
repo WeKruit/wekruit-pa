@@ -472,6 +472,9 @@ function MarketTrackedRolesEmpty({ onViewRoleBriefs }: { onViewRoleBriefs: () =>
 function MarketRoleBriefContract() {
   return (
     <section className="wk-market-contract wk-market-contract--role-briefs" aria-label="Role brief Claire contract">
+      <p className="wk-market-contract__mobile-brief">
+        Claire screens first. Hiring teams see a passed profile only after you approve sharing.
+      </p>
       <div className="wk-market-contract__copy">
         <p className="wk-eyebrow">How role briefs work</p>
         <h2>What happens when you pick a role brief?</h2>
@@ -1142,6 +1145,10 @@ const MARKET_STYLES = String.raw`
   padding: 24px 0 28px; margin: 0 0 32px;
   border-top: 1px solid var(--wk-border); border-bottom: 1px solid var(--wk-border);
 }
+.wk-shell .wk-market-contract__mobile-brief {
+  display: none;
+  margin: 0; color: var(--wk-ink-2); font-size: 14.5px; line-height: 1.45;
+}
 .wk-shell .wk-market-contract__copy h2 {
   font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
   font-weight: 400; font-size: clamp(28px, 3.6vw, 44px);
@@ -1517,6 +1524,15 @@ const MARKET_STYLES = String.raw`
 }
 @media (max-width: 720px) {
   .wk-shell .wk-market-empty__copy h2 { font-size: 32px; }
+  .wk-shell .wk-market-contract--role-briefs {
+    display: block; padding: 14px 0 16px; margin-bottom: 18px;
+  }
+  .wk-shell .wk-market-contract--role-briefs .wk-market-contract__mobile-brief { display: block; }
+  .wk-shell .wk-market-contract--role-briefs .wk-market-contract__copy,
+  .wk-shell .wk-market-contract--role-briefs .wk-market-contract__grid,
+  .wk-shell .wk-market-contract--role-briefs .wk-market-contract__actions {
+    display: none;
+  }
   .wk-shell .wk-direct-table { display: none; }
   .wk-shell .wk-direct-cards { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 8px; }
   .wk-shell .wk-direct-card__head { grid-template-columns: 42px minmax(0, 1fr); }
