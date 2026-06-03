@@ -120,7 +120,7 @@ test("EmployerSignup keeps employer navigation on the employer surface", () => {
     source,
     /<Link\s+to="\/employers"[\s\S]*?<span[\s\S]*WeKruit[\s\S]*?<em[\s\S]*Employers/,
   )
-  assert.match(source, /to="\/"[\s\S]*← For candidates/)
+  assert.match(source, /to="\/employers"[\s\S]*← Employer overview/)
   assert.match(source, /to="\/employers"[\s\S]*Cancel/)
   assert.doesNotMatch(source, /to="\/" className="btn btn--ghost"[\s\S]*Cancel/)
 })

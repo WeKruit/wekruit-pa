@@ -1594,8 +1594,8 @@ function Header() {
             Employers
           </em>
         </Link>
-        <Link to="/" className="btn btn--ghost btn--sm" style={{ textDecoration: "none" }}>
-          ← For candidates
+        <Link to="/employers" className="btn btn--ghost btn--sm" style={{ textDecoration: "none" }}>
+          ← Employer overview
         </Link>
       </div>
     </header>
