@@ -98,6 +98,16 @@ export async function maybeRunThinClaire(
   // DIFFERENT runtimeEventKind, so they still defer → the onboarding dup-send fix stays intact.
   const cvParsedReentry =
     runtimeEventKind === "resume_parse_completed" && isCanaryUser(userId)
+  // BLOCKER 2 (Adam 2026-06-03): the resume_parse_completed handoff carries the parsed-profile summary
+  // (buildCvFactBody) on rawMeta.context.candidateProfileSummary. Read it here and thread it into the
+  // turn so the pitch turn ALWAYS has the profile in context — even if loadGlobalContext's read of the
+  // freshly-written parsedCandidateResumes row lagged the parse. The model then pitches FROM this and
+  // never mistakes the "[resume just finished parsing]" marker for an empty résumé.
+  const handoffContext = (rawMeta.context ?? {}) as Record<string, unknown>
+  const postParsePitchSummary =
+    cvParsedReentry && typeof handoffContext.candidateProfileSummary === "string"
+      ? handoffContext.candidateProfileSummary.trim()
+      : ""
   if (rawMeta.runtimeEvent === true && !cvParsedReentry) {
     log("thin_claire.defer_runtime_event", {
       eventId,
@@ -253,6 +263,9 @@ export async function maybeRunThinClaire(
         // Threaded so prompt.ts swaps the generic kickoff for the PART-2 pitch. Canary-only by construction
         // (cvParsedReentry requires isCanaryUser); default off for everyone else.
         ...(decision.postParsePitch ? { postParsePitch: true } : {}),
+        // BLOCKER 2: thread the parsed-profile summary from the handoff context onto the pitch turn so
+        // the model has the profile THIS turn (defends against a loadGlobalContext read racing the write).
+        ...(decision.postParsePitch && postParsePitchSummary ? { postParsePitchSummary } : {}),
         // résumé-DROP turn: an inline résumé media is present + this is NOT the parse re-entry → ACK + HOLD
         // (no pitch, no find_match this turn; the cutover:114 fire-and-forget runs the parse async, and the
         // pitch fires on the resume_parse_completed re-entry). Canary-gated to match the pitch behavior.

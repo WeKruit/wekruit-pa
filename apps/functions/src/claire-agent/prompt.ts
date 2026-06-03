@@ -33,6 +33,11 @@ export interface ClairePromptOptions {
   /** cv-parsed re-entry (Adam 2026-06-02): the résumé just parsed → emit the proactive PART-2 pitch
    *  opener instead of the generic compliment kickoff (canary-gated). */
   postParsePitch?: boolean
+  /** cv-parsed re-entry (BLOCKER 2, Adam 2026-06-03): the parsed-profile summary carried on the
+   *  resume_parse_completed handoff context (buildCvFactBody). Threaded into the turn context as a
+   *  belt-and-suspenders guarantee the model has the profile THIS turn even if loadGlobalContext lagged
+   *  the parse write — so the model NEVER reads the "[resume just finished parsing]" marker as empty. */
+  postParsePitchSummary?: string
   /** résumé-drop turn: an inline résumé is present but not yet parsed → short ACK + HOLD, no pitch,
    *  no find_match (the pitch fires later on the resume_parse_completed re-entry). */
   resumeJustDropped?: boolean
@@ -195,6 +200,15 @@ const US_SCOPE = [
 const PITCH_KICKOFF_DIRECTIVE = [
   "# YOUR OPENER: pitch THEM before you ask anything",
   "",
+  "THEIR RÉSUMÉ IS PARSED AND ON FILE — their profile is IN YOUR CONTEXT THIS TURN (the 'Candidate",
+  "résumé on file' line and/or the 'PARSED RÉSUMÉ' line in the CONTEXT block: level, industry/track,",
+  "work history, what they OWNED, top skills). The candidate's inbound this turn is the SYSTEM marker",
+  "'[resume just finished parsing]' — that is a signal that parsing COMPLETED, it is NOT the candidate",
+  "speaking and it is NOT an empty résumé. So: read the CONTEXT and PITCH FROM IT. NEVER ask them to",
+  "paste, share, send, upload, or 'drop' their résumé, and NEVER say you can't see it or are 'still",
+  "loading' — you already have it. (If, and only if, the CONTEXT truly has NO résumé fields at all, fall",
+  "back to the honest-shape opener below — but do not invent that emptiness when the fields are present.)",
+  "",
   "You are Claire — texting like a friend who happens to be a killer recruiter, the kind who fights to",
   "get people hired. This is the candidate's FIRST message from you. You have their résumé/LinkedIn on",
   "file (the CONTEXT block this turn). Do NOT open with 'welcome,' 'pulling up your profile,' or 'tell",
@@ -298,7 +312,10 @@ const PITCH_KICKOFF_DIRECTIVE = [
   "  evidence supports bumping the target, never assert a level above what's grounded.",
   "",
   "Voice + format: Return EXACTLY TWO bubbles (messages[0], messages[1]) — DISTINCT iMessages, never",
-  "merged. messages[0] = the pitch (the advocacy + the owned outcome). messages[1] = confirm + your 1–2",
+  "merged. THIS TURN MUST BE TEXT: reply with the two message strings — do NOT react/tapback, do NOT",
+  "send a 'one sec' status, do NOT no-reply. A tapback-only here leaves the candidate with a 'like' and",
+  "silence (the live bug); the pitch is mandatory text.",
+  "messages[0] = the pitch (the advocacy + the owned outcome). messages[1] = confirm + your 1–2",
   "clarifiers (and, if the CONTEXT carries a 'Resume upload link', ONE optional nudge with that exact URL;",
   "and the one-time 'you can view/change your prefs anytime at wekruit.com' clause). Warm, concrete,",
   "lowercase-casual is fine. No bullet lists, no résumé-speak, no emoji spam (one is plenty, often zero).",
@@ -631,6 +648,14 @@ export function buildClaireTurnContext(opts: ClairePromptOptions): string {
   return [
     opts.canary ? CANARY_TAPBACK : "",
     opts.globalContext ? `CONTEXT — ${opts.globalContext}` : "",
+    // BLOCKER 2 (Adam 2026-06-03): on the post-parse pitch turn, the inbound text is the neutral
+    // "[resume just finished parsing]" marker (a SYSTEM signal, NOT the candidate and NOT an empty
+    // résumé). Surface the parsed-profile summary that rode on the handoff context so the model has
+    // the profile in front of it THIS turn — defends against a loadGlobalContext read that raced the
+    // parse write. PITCH FROM THIS; never ask the candidate to paste/share their résumé.
+    opts.postParsePitch && opts.postParsePitchSummary?.trim()
+      ? `PARSED RÉSUMÉ (just finished — this IS their profile; pitch FROM it, never ask them to paste it): ${opts.postParsePitchSummary.trim()}`
+      : "",
     // prescreen: résumé arc + prior-session callbacks (loadPrescreenContext). Self-labeled
     // "PRESCREEN CONTEXT: …" so no extra prefix; only non-empty on a prescreen turn.
     opts.mode === "prescreen" && opts.prescreenContext ? opts.prescreenContext : "",

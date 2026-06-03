@@ -1503,6 +1503,113 @@ async function defaultIsParserV2Enabled(
   }
 }
 
+/**
+ * Build a candidateProfileSummary (the same shape `buildCvFactBody(parsed)` emits) from an
+ * ALREADY-STORED parsedCandidateResumes row. Used on the sha256 idempotent-hit return path, where
+ * `parsed` was never computed this run (the early return short-circuits before LLM extraction) — the
+ * row that caused the hit carries `candidateProfile`/`experiences`/`education`, so we reconstruct the
+ * summary from it instead of re-parsing. NEVER throws — returns "" on any read/shape error.
+ */
+async function summaryFromStoredResume(db: Firestore, resumeId: string): Promise<string> {
+  try {
+    const snap = await db.collection(PARSED_RESUMES_COLLECTION).doc(resumeId).get()
+    if (!snap.exists) return ""
+    const row = (snap.data() ?? {}) as Record<string, unknown>
+    const cp = (row.candidateProfile ?? {}) as Record<string, unknown>
+    const reconstructed = {
+      candidateProfile: {
+        name: typeof cp.name === "string" ? cp.name : null,
+        email: typeof cp.email === "string" ? cp.email : null,
+        phone: typeof cp.phone === "string" ? cp.phone : null,
+        linkedIn: typeof cp.linkedIn === "string" ? cp.linkedIn : null,
+        location: typeof cp.location === "string" ? cp.location : null,
+        skills: Array.isArray(cp.skills)
+          ? (cp.skills as unknown[]).map((s) => (typeof s === "string" ? s : "")).filter(Boolean)
+          : [],
+      },
+      experiences: Array.isArray(row.experiences) ? (row.experiences as never[]) : [],
+      education: Array.isArray(row.education) ? (row.education as never[]) : [],
+      industryTags: Array.isArray(row.industryTags) ? (row.industryTags as never[]) : [],
+    } as unknown as StructuredCv
+    return buildCvFactBody(reconstructed)
+  } catch {
+    return ""
+  }
+}
+
+/**
+ * BLOCKER 1 FIX (Adam 2026-06-03 — "silent pitch loss" race): fire the resume_parse_completed runtime
+ * handoff EXACTLY ONCE for a (user, pdf), even on the sha256 idempotent-hit early-return path.
+ *
+ * WHY: the webhook (Stream-D) ingest is now parse-only (followupDeliveryMode:"none") but it STILL writes
+ * the parsedCandidateResumes row WITH its sha256 ~1-2s before the cutover (runtime) ingest. The cutover
+ * ingest's sha256 lookup then HITS that row and returns early (cv-ingest.ts idempotent-hit) BEFORE
+ * reaching the main resume_parse_completed handoff → ZERO pitch, no fallback. So we fire the handoff
+ * here too, on the early return. The handoff is idempotent on the SAME sha-keyed idempotencyKey the main
+ * path uses (`cv-parsed:${userId}:${pdfSha256||resumeId}`), so firing it from BOTH the early-return path
+ * and the main path collapses to ONE inbound doc (existingEvent.exists → created:false). Firing twice is
+ * safe; firing AT LEAST once is now guaranteed regardless of which invocation wins the sha256 race.
+ *
+ * NEVER throws — the idempotent-hit return must stay ok:true even if the handoff write fails.
+ */
+async function fireResumeParsedHandoffOnIdempotentHit(input: {
+  db: Firestore
+  userId: string
+  resumeId: string
+  pdfSha256: string
+  sessionId?: string
+  followupDeliveryMode: CvFollowupDeliveryMode
+  candidateProfileSummary?: string
+  lookupUserForFollowup: (db: Firestore, userId: string) => Promise<CvFollowupUser | null>
+  log: (event: string, payload?: Record<string, unknown>) => void
+}): Promise<void> {
+  if (input.followupDeliveryMode !== "runtime") return
+  try {
+    const user = await input.lookupUserForFollowup(input.db, input.userId).catch(() => null)
+    const phone = user?.toE164
+    if (!phone) {
+      input.log("pa.cv_followup.idempotent_hit_handoff_skipped", {
+        userId: input.userId,
+        resumeId: input.resumeId,
+        reason: "no_phone",
+      })
+      return
+    }
+    // Same shape buildCvFactBody emits — prefer the caller-provided summary (identity path has `parsed`),
+    // otherwise reconstruct from the already-stored row (non-identity path returns before LLM extraction).
+    const summary =
+      input.candidateProfileSummary && input.candidateProfileSummary.trim()
+        ? input.candidateProfileSummary
+        : await summaryFromStoredResume(input.db, input.resumeId)
+    const handoffIdempotencyKey = `cv-parsed:${input.userId}:${input.pdfSha256 || input.resumeId}`
+    const runtime = await enqueueRuntimeEventHandoff(input.db, {
+      userId: input.userId,
+      toE164: phone,
+      sessionId: input.sessionId,
+      requireExistingSession: false,
+      source: "cv_ingest",
+      eventKind: "resume_parse_completed",
+      idempotencyKey: handoffIdempotencyKey,
+      context: {
+        resumeId: input.resumeId,
+        candidateProfileSummary: summary,
+        cvParsedTrigger: true,
+      },
+    })
+    input.log("pa.cv_followup.idempotent_hit_handoff", {
+      userId: input.userId,
+      resumeId: input.resumeId,
+      runtime,
+    })
+  } catch (err) {
+    input.log("pa.cv_followup.idempotent_hit_handoff_failed", {
+      userId: input.userId,
+      resumeId: input.resumeId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
@@ -1734,6 +1841,20 @@ export async function ingestCv(
   if (!identityEnabled) {
     const existingId = await lookupExistingResumeBySha256(userId)
     if (existingId) {
+      // BLOCKER 1 FIX — the sha256 row already exists (the parse-only webhook ingest, or a prior run,
+      // wrote it). The early return below skips the main resume_parse_completed handoff, so fire it
+      // HERE (sha-keyed → dedups against the main path). `parsed` isn't computed on this path, so the
+      // helper reconstructs the summary from the stored row.
+      await fireResumeParsedHandoffOnIdempotentHit({
+        db: dbHandle,
+        userId,
+        resumeId: existingId,
+        pdfSha256,
+        sessionId: args.sessionId,
+        followupDeliveryMode,
+        lookupUserForFollowup,
+        log,
+      })
       return { ok: true, resumeId: existingId, userId }
     }
   }
@@ -1882,6 +2003,19 @@ export async function ingestCv(
 
     const existingId = await lookupExistingResumeBySha256(userId)
     if (existingId) {
+      // BLOCKER 1 FIX — same as the non-identity path, but `parsed` IS available here (LLM extraction
+      // already ran before identity resolution), so thread its summary straight through (no row re-read).
+      await fireResumeParsedHandoffOnIdempotentHit({
+        db: dbHandle,
+        userId,
+        resumeId: existingId,
+        pdfSha256,
+        sessionId: args.sessionId,
+        followupDeliveryMode,
+        candidateProfileSummary: buildCvFactBody(parsed),
+        lookupUserForFollowup,
+        log,
+      })
       return {
         ok: true,
         resumeId: existingId,

@@ -317,6 +317,85 @@ test("DEDUP wiring: a parse-only ingest (followupDeliveryMode none) emits NO han
   }
 })
 
+// ── BLOCKER 1 — webhook-parse-only THEN cutover, SEQUENTIAL, SAME pdf + SAME db → ONE handoff ──
+// This is the regression the fresh-DB-per-ingest tests above CANNOT see (the stub blind spot Adam
+// called out): in production the parse-only webhook ingest writes the sha256 row ~1-2s AHEAD, so the
+// SUBSEQUENT cutover (runtime) ingest HITS the sha256 idempotent-guard and returns EARLY — before the
+// main resume_parse_completed handoff. The pre-fix behavior was HANDOFF_COUNT_AFTER_CUTOVER=0 (silent
+// pitch loss). The fix fires the handoff on the idempotent-hit return path too (sha-keyed → dedups), so
+// the cutover ingest STILL produces exactly ONE pitch even though it short-circuited the parse.
+test("BLOCKER 1: webhook-parse-only THEN cutover (runtime) SEQUENTIALLY on the SAME pdf+db → HANDOFF_COUNT===1 (pitch never lost to the sha256 race)", async () => {
+  const { db, col } = makeFirestore()
+  seedThinFlag(col, CANARY_UID)
+  seedUser(col, CANARY_UID)
+  const sessionId = seedSession(col, CANARY_UID)
+
+  // 1) Webhook Path A FIRST: parse-only (followupDeliveryMode "none"). It writes the parsedCandidateResume
+  //    row WITH sha256 but enqueues NO handoff. This is what races ~1-2s ahead of the cutover in prod.
+  const a = ingestDeps(db, col)
+  const ra = await ingestCv(
+    { userId: CANARY_UID, mediaUrl: "https://example.com/adam.pdf", sessionId: undefined },
+    { ...(a.deps as object), followupDeliveryMode: "none" } as never,
+  )
+  assert.equal(ra.ok, true, "webhook parse-only ingest must succeed")
+  assert.equal(countHandoffDocs(col), 0, "webhook parse-only ingest enqueues NO handoff (parse-only)")
+  // The sha256 row now exists → the cutover ingest below WILL hit the idempotent guard.
+  const rowCount = [...col(RESUME_COLLECTION).values()].filter((d) => d.userId === CANARY_UID).length
+  assert.equal(rowCount, 1, "the parse-only ingest wrote exactly one parsedCandidateResumes row (with sha256)")
+
+  // 2) Cutover Path B SECOND, SAME db + SAME pdf, followupDeliveryMode "runtime", live session. Its
+  //    sha256 lookup HITS the row from step 1 → early return. WITHOUT the fix this emits NO handoff
+  //    (the live HANDOFF_COUNT_AFTER_CUTOVER=0). WITH the fix the idempotent-hit path fires it.
+  const b = ingestDeps(db, col)
+  const rb = await ingestCv({ userId: CANARY_UID, mediaUrl: "https://example.com/adam.pdf", sessionId }, b.deps)
+  assert.equal(rb.ok, true, "cutover runtime ingest must succeed (idempotent hit, ok:true)")
+
+  // THE BAR: exactly ONE resume_parse_completed handoff — never lost (was 0 pre-fix), never doubled.
+  assert.equal(
+    countHandoffDocs(col),
+    1,
+    "BLOCKER 1: the cutover ingest MUST still produce exactly ONE pitch handoff even when the sha256 row already exists",
+  )
+  // And the surviving handoff threads the LIVE session (the cutover passed it) + carries the pitch context.
+  const handoffId = firstHandoffId(col)!
+  const handoffDoc = col(PA_COLLECTIONS.inboundEvents).get(handoffId)!
+  assert.equal(handoffDoc.sessionId, sessionId, "idempotent-hit handoff threads the live cutover session")
+  const meta = (handoffDoc.rawMeta ?? {}) as Record<string, unknown>
+  const hctx = (meta.context ?? {}) as Record<string, unknown>
+  assert.equal(hctx.cvParsedTrigger, true, "handoff context marks cvParsedTrigger")
+  assert.equal(
+    typeof hctx.candidateProfileSummary === "string" && (hctx.candidateProfileSummary as string).length > 0,
+    true,
+    "the idempotent-hit handoff still carries a candidateProfileSummary (reconstructed from the stored row)",
+  )
+
+  // 3) The cutover seam routes THAT handoff to thin (the pitch turn), not legacy — proving the pitch is delivered.
+  const events: string[] = []
+  const handled = await maybeRunThinClaire(db, handoffId, { dryRun: true, log: (e: string) => events.push(e) })
+  assert.equal(handled, true, "the recovered handoff routes to thin (the pitch turn)")
+  assert.ok(events.includes("thin_claire.cv_parsed_reentry"), `expected cv_parsed_reentry; got ${JSON.stringify(events)}`)
+})
+
+// ── BLOCKER 1 (identity path) — a re-upload of the SAME pdf with a live session re-fires ONE handoff ──
+test("BLOCKER 1: a SEQUENTIAL same-pdf runtime re-ingest (sha256 hit) still fires the handoff (idempotent, total stays 1)", async () => {
+  const { db, col } = makeFirestore()
+  seedThinFlag(col, CANARY_UID)
+  seedUser(col, CANARY_UID)
+  const sessionId = seedSession(col, CANARY_UID)
+
+  // First runtime ingest: normal path, writes row + fires the handoff once.
+  const a = ingestDeps(db, col)
+  await ingestCv({ userId: CANARY_UID, mediaUrl: "https://example.com/adam.pdf", sessionId }, a.deps)
+  assert.equal(countHandoffDocs(col), 1, "first runtime ingest fires exactly one handoff")
+
+  // Second runtime ingest of the SAME pdf (a redelivery / re-drop): sha256 HITS → early return. The
+  // idempotent-hit path fires the handoff again, but the SAME sha-keyed idempotencyKey collapses it.
+  const b = ingestDeps(db, col)
+  const rb = await ingestCv({ userId: CANARY_UID, mediaUrl: "https://example.com/adam.pdf", sessionId }, b.deps)
+  assert.equal(rb.ok, true)
+  assert.equal(countHandoffDocs(col), 1, "the re-ingest's idempotent-hit handoff collapses to the SAME doc → total stays 1")
+})
+
 // ── DISCRIMINATOR 1 — non-canary cv-parsed still DEFERS to legacy (invariant 3) ───────────────
 test("DISCRIMINATOR: a NON-canary user's resume_parse_completed event DEFERS to legacy (no thin pitch until ramp)", async () => {
   const { db, col } = makeFirestore()
