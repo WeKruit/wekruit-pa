@@ -18,10 +18,23 @@ test("PublicJob frames role entry as Claire-first passed-profile flow", () => {
   assert.doesNotMatch(source, /It may have filled or been pulled back\./)
   assert.doesNotMatch(source, />\s*Interview for this job\s*</)
   assert.doesNotMatch(source, /See open interviews/)
-  assert.match(source, /Passed profile to hiring team/)
+  assert.match(source, /Passed profile shared with consent/)
   assert.match(source, /Claire starts with the role interview/)
   assert.match(source, /See public roles/)
   assert.match(source, /Start Claire interview/)
+})
+
+test("PublicJob first-viewport process strip shows the role interview contract, not a generic apply funnel", () => {
+  assert.doesNotMatch(source, /const steps = \["Upload your resume", "Interview with Claire", "Passed profile to hiring team"\]/)
+  assert.match(source, /label: "Attach resume signals"/)
+  assert.match(source, /body: "Claire keeps this role tied to your durable WeKruit profile\."/)
+  assert.match(source, /label: "Prove nearest work"/)
+  assert.match(source, /body: "Claire probes for the closest evidence before any hard stop\."/)
+  assert.match(source, /label: "Passed profile shared with consent"/)
+  assert.match(source, /body: "Only passed, candidate-approved evidence reaches the hiring team\."/)
+
+  assert.doesNotMatch(source, /<p className="wk-eyebrow">How it works<\/p>/)
+  assert.match(source, /<p className="wk-eyebrow">Role interview plan<\/p>/)
 })
 
 test("PublicJob exposes Claire's role interview contract before signup", () => {

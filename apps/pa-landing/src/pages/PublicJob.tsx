@@ -1017,13 +1017,29 @@ function ProcessSteps({ activeStep }: { activeStep: number }) {
 }
 
 function ProcessStrip({ compact = false }: { compact?: boolean }) {
-  const steps = ["Upload your resume", "Interview with Claire", "Passed profile to hiring team"]
+  const steps = [
+    {
+      label: "Attach resume signals",
+      body: "Claire keeps this role tied to your durable WeKruit profile.",
+    },
+    {
+      label: "Prove nearest work",
+      body: "Claire probes for the closest evidence before any hard stop.",
+    },
+    {
+      label: "Passed profile shared with consent",
+      body: "Only passed, candidate-approved evidence reaches the hiring team.",
+    },
+  ]
   return (
     <div className={`wk-pj-process-strip${compact ? " wk-pj-process-strip--compact" : ""}`}>
       {steps.map((step, index) => (
-        <div className="wk-pj-process-strip__step" key={step}>
+        <div className="wk-pj-process-strip__step" key={step.label}>
           <span>{index + 1}</span>
-          {step}
+          <strong className="wk-pj-process-strip__body">
+            {step.label}
+            <em>{step.body}</em>
+          </strong>
         </div>
       ))}
     </div>
@@ -1185,7 +1201,7 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
                 {meta.map((item) => <span key={item}>{item}</span>)}
               </div>
               <div className="wk-pj-hero__process">
-                <p className="wk-eyebrow">How it works</p>
+                <p className="wk-eyebrow">Role interview plan</p>
                 <ProcessStrip />
               </div>
               <div className="wk-pj-description-panel">
@@ -1349,10 +1365,11 @@ export const PUBLIC_JOB_STYLES = `
   gap: 12px;
 }
 .wk-pj-process-strip__step {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
   gap: 12px;
-  min-height: 58px;
+  min-height: 74px;
   padding: 12px 14px;
   background: var(--wk-cream);
   border: 1px solid var(--wk-border);
@@ -1373,6 +1390,19 @@ export const PUBLIC_JOB_STYLES = `
   color: var(--wk-cream);
   font-size: 13px;
 }
+.wk-pj-process-strip__body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  font-weight: 650;
+}
+.wk-pj-process-strip__body em {
+  color: var(--wk-ink-3);
+  font-size: 12.5px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 1.4;
+}
 .wk-pj-process-strip--compact {
   grid-template-columns: 1fr;
   margin: 4px 0 8px;
@@ -1381,6 +1411,9 @@ export const PUBLIC_JOB_STYLES = `
   min-height: 38px;
   padding: 8px 10px;
   font-size: 14px;
+}
+.wk-pj-process-strip--compact .wk-pj-process-strip__body em {
+  display: none;
 }
 .wk-pj-process-strip--compact .wk-pj-process-strip__step span {
   width: 22px;
