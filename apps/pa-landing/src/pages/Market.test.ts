@@ -51,10 +51,18 @@ test("Market default table rows surface source evidence before opening card view
 
 test("Market tracked-role rows connect external source inspection to durable preferences", () => {
   assert.match(source, /View source/)
-  assert.match(source, /Tune preferences/)
-  assert.match(source, /href="\/me\/profile#match-preferences"/)
+  assert.match(source, /function profileCorrectionHrefForRole\(r: DisplayJob\): string/)
+  assert.match(source, /profileRoleSignalTitle/)
+  assert.match(source, /profileRoleSignalCompany/)
+  assert.match(source, /profileRoleSignalFunction/)
+  assert.match(source, /profileRoleSignalLevel/)
+  assert.match(source, /profileRoleSignalLocation/)
+  assert.match(source, /const profileHref = profileCorrectionHrefForRole\(r\)/)
+  assert.match(source, /href=\{profileHref\}/)
+  assert.match(source, /Use as signal/)
   assert.match(source, /function HuntRow\([\s\S]*className="wk-roleactions"/)
   assert.match(source, /function HuntCard\([\s\S]*className="wk-roleactions wk-roleactions--card"/)
+  assert.doesNotMatch(source, /href="\/me\/profile#match-preferences"/)
 
   assert.doesNotMatch(source, /Save role/i)
   assert.doesNotMatch(source, /Add to pipeline/i)

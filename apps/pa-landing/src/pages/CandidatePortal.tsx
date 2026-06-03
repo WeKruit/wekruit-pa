@@ -2630,8 +2630,28 @@ function useProfileHashScroll() {
   }, [location.hash])
 }
 
+function useMarketRoleSignalDraft(): string | null {
+  const location = useLocation()
+  return useMemo(() => {
+    const params = new URLSearchParams(location.search)
+    const title = params.get("profileRoleSignalTitle")?.trim()
+    const company = params.get("profileRoleSignalCompany")?.trim()
+    if (!title || !company) return null
+
+    const context = [
+      params.get("profileRoleSignalFunction")?.trim(),
+      params.get("profileRoleSignalLevel")?.trim(),
+      params.get("profileRoleSignalLocation")?.trim(),
+    ].filter((v): v is string => Boolean(v))
+
+    const contextText = context.length ? ` (${context.join(", ")})` : ""
+    return `Use this market role as profile signal: ${title} at ${company}${contextText}. If this reflects what I want, update my durable matching preferences. Do not treat this as an automatic application.`
+  }, [location.search])
+}
+
 function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
   useProfileHashScroll()
+  const marketRoleSignalDraft = useMarketRoleSignalDraft()
   const matchesState = useCandidateMatches(true)
   const [profile, setProfile] = useState<CandidateSelfProfile>(initial)
   const [editing, setEditing] = useState(false)
@@ -2683,7 +2703,7 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
               <WhatClairePitchesCard profile={profile} claireHref={claireHref} />
               <ExperienceHighlightsCard profile={profile} />
               <SkillsCard profile={profile} editing={editing} claireHref={claireHref} />
-              <UpdatePreferencesPanel onProfileUpdated={setProfile} />
+              <UpdatePreferencesPanel onProfileUpdated={setProfile} initialCorrectionText={marketRoleSignalDraft} />
             </div>
 
             <aside className="wk-prof__side">
@@ -3283,13 +3303,19 @@ function PrivacyCard() {
 }
 
 function UpdatePreferencesPanel({
+  initialCorrectionText,
   onProfileUpdated,
 }: {
+  initialCorrectionText?: string | null
   onProfileUpdated: (profile: CandidateSelfProfile) => void
 }) {
-  const [correctionText, setCorrectionText] = useState("")
+  const [correctionText, setCorrectionText] = useState(() => initialCorrectionText ?? "")
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle")
   const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (initialCorrectionText) setCorrectionText(initialCorrectionText)
+  }, [initialCorrectionText])
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -3313,8 +3339,14 @@ function UpdatePreferencesPanel({
     <section id="profile-corrections" className="wkv2-card wk-prof-card" aria-labelledby="prof-update-title">
       <h3 className="wkv2-card__h" id="prof-update-title">Update preferences</h3>
       <p className="wk-prof-card__hint">
-        Tell Claire what to change. Free-form is fine — she'll update the canonical tags for you.
+        Tell Claire what to change. Free-form is fine — she'll update the canonical tags for you. Edit any market role context before sending.
       </p>
+      {initialCorrectionText ? (
+        <div className="wk-prof-card__signal" aria-label="Source role from market">
+          <strong>Source role from market</strong>
+          <span>Review this as preference evidence, then send it to Claire if it reflects what you want.</span>
+        </div>
+      ) : null}
       <form onSubmit={onSubmit} className="wk-prof-form">
         <textarea
           value={correctionText}
@@ -4179,6 +4211,24 @@ const PROFILE_STYLES = `
 .wk-prof-card__hint {
   font-size: 12.5px; color: var(--wk-ink-3);
   margin: -6px 0 6px; line-height: 1.45;
+}
+.wk-prof-card__signal {
+  display: grid; gap: 3px;
+  margin: 8px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid #BCC7E8;
+  border-radius: var(--wk-r-sm);
+  background: #F1F4FB;
+}
+.wk-prof-card__signal strong {
+  color: var(--wk-ink);
+  font-size: 12.5px;
+  line-height: 1.3;
+}
+.wk-prof-card__signal span {
+  color: var(--wk-ink-2);
+  font-size: 12px;
+  line-height: 1.4;
 }
 .wk-prof-card__empty { display: grid; gap: 10px; align-items: start; }
 .wk-prof-card__actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

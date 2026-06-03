@@ -421,6 +421,20 @@ test("CandidatePortal closed review outcomes route to durable profile signal upd
   assert.match(source, /<Link to=\{match\.job\.href\} className="wk-btn wk-btn--secondary wk-btn--sm">[\s\S]*View role/)
 })
 
+test("CandidatePortal profile corrections can draft a market role as durable signal", () => {
+  assert.match(source, /function useMarketRoleSignalDraft\(\): string \| null/)
+  assert.match(source, /new URLSearchParams\(location\.search\)/)
+  assert.match(source, /profileRoleSignalTitle/)
+  assert.match(source, /profileRoleSignalCompany/)
+  assert.match(source, /Use this market role as profile signal/)
+  assert.match(source, /<UpdatePreferencesPanel onProfileUpdated=\{setProfile\} initialCorrectionText=\{marketRoleSignalDraft\} \/>/)
+  assert.match(source, /initialCorrectionText,?[\s\S]*onProfileUpdated/)
+  assert.match(source, /useState\(\(\) => initialCorrectionText \?\? ""\)/)
+  assert.match(source, /setCorrectionText\(initialCorrectionText\)/)
+  assert.match(source, /Source role from market/)
+  assert.match(source, /Tell Claire what to change[\s\S]*market role context/)
+})
+
 test("CandidatePortal /me/matches sidebar shows the real matching basis", () => {
   assert.match(source, /function MatchesView\([\s\S]*<MeClaireSignalsCard profile=\{profile\} \/>/)
   assert.match(source, /function deriveClaireSignalRows\(profile: CandidateSelfProfile\): MeSignalRow\[\]/)

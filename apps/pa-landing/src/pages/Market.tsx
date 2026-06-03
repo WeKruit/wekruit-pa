@@ -341,6 +341,16 @@ function fromPaJob(id: string, raw: PaJobDoc): DisplayJob {
   }
 }
 
+function profileCorrectionHrefForRole(r: DisplayJob): string {
+  const params = new URLSearchParams()
+  params.set("profileRoleSignalTitle", r.title)
+  params.set("profileRoleSignalCompany", r.company)
+  params.set("profileRoleSignalFunction", r.fnLabel)
+  params.set("profileRoleSignalLevel", r.levelLabel)
+  params.set("profileRoleSignalLocation", r.location)
+  return `/me/profile?${params.toString()}#profile-corrections`
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Filter rail
 // ────────────────────────────────────────────────────────────────────────────
@@ -433,6 +443,7 @@ function MarketTab({
 // ────────────────────────────────────────────────────────────────────────────
 
 function HuntRow({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
+  const profileHref = profileCorrectionHrefForRole(r)
   return (
     <tr className="wk-tbl__row">
       <td className="wk-tbl__cell wk-tbl__cell--company">
@@ -458,8 +469,8 @@ function HuntRow({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
           <button className="wk-pitchbtn" onClick={onOpen} disabled={!r.applyUrl}>
             View source <Icon name="arrow-right" size={12} stroke={2} />
           </button>
-          <a className="wk-roleactions__prefs" href="/me/profile#match-preferences">
-            Tune preferences
+          <a className="wk-roleactions__prefs" href={profileHref}>
+            Use as signal
           </a>
         </div>
       </td>
@@ -468,6 +479,7 @@ function HuntRow({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
 }
 
 function HuntCard({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
+  const profileHref = profileCorrectionHrefForRole(r)
   return (
     <article className="wk-hcard">
       <header className="wk-hcard__head">
@@ -490,8 +502,8 @@ function HuntCard({ r, onOpen }: { r: DisplayJob; onOpen: () => void }) {
           <button className="wk-pitchbtn wk-pitchbtn--lg" onClick={onOpen} disabled={!r.applyUrl}>
             View source <Icon name="arrow-right" size={13} stroke={2} />
           </button>
-          <a className="wk-roleactions__prefs" href="/me/profile#match-preferences">
-            Tune preferences
+          <a className="wk-roleactions__prefs" href={profileHref}>
+            Use as signal
           </a>
         </div>
       </footer>
