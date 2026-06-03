@@ -42,6 +42,17 @@ test("CandidateLogin frames onboarding login as a first-time Claire start", () =
   assert.match(source, /\{!onboardingNext \? \([\s\S]*<p className="wk-login__fine">/)
 })
 
+test("CandidateLogin /me sign-in previews the operating home before auth controls", () => {
+  assert.match(source, /function LoginPipelinePreview/)
+  assert.match(source, /What opens after sign-in/)
+  assert.match(source, /Active role interviews/)
+  assert.match(source, /Claire session history/)
+  assert.match(source, /Profile signals and corrections/)
+  assert.match(source, /Passed-profile consent/)
+  assert.match(source, /const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !onboardingNext/)
+  assert.match(source, /\{showPipelinePreview \? <LoginPipelinePreview \/> : null\}[\s\S]*<div className="wk-login__providers">/)
+})
+
 test("CandidateLogin only reuses remembered next during an OAuth return", () => {
   assert.match(source, /safeRaw\s*=\s*raw && raw\.startsWith\("\/"\) && !raw\.startsWith\("\/\/"\) \? raw : null/)
   assert.match(source, /oauthPendingForNext\s*=\s*window\.sessionStorage\.getItem\(OAUTH_PENDING_KEY\) === "1"/)

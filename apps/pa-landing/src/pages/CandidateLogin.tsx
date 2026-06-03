@@ -715,6 +715,46 @@ function signupSourceForLoginNext(next: ReturnType<typeof parseLoginNextPath>): 
   return fromCookie === "WeKruit_Laid_Off" ? "WeKruit_Laid_Off" : undefined
 }
 
+function LoginPipelinePreview() {
+  const items = [
+    {
+      title: "Active role interviews",
+      body: "See the roles Claire is screening with you and what needs your next answer.",
+    },
+    {
+      title: "Claire session history",
+      body: "Pick up prior conversations without losing resume, preference, or interview context.",
+    },
+    {
+      title: "Profile signals and corrections",
+      body: "Review the facts Claire uses before she pursues or rules out a role.",
+    },
+    {
+      title: "Passed-profile consent",
+      body: "Control when evidence is ready to share with a hiring team.",
+    },
+  ]
+
+  return (
+    <section className="wk-login-preview" aria-label="What opens after sign-in">
+      <p className="wk-login-preview__k">What opens after sign-in</p>
+      <ul className="wk-login-preview__list">
+        {items.map((item) => (
+          <li className="wk-login-preview__item" key={item.title}>
+            <span className="wk-login-preview__icon">
+              <Icon name="check" size={11} stroke={2.4} />
+            </span>
+            <span>
+              <strong>{item.title}</strong>
+              <em>{item.body}</em>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 export default function CandidateLogin() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -921,6 +961,7 @@ export default function CandidateLogin() {
   const onLayoff = isLayoffHost()
   const roleInterviewNext = isPublicJobPath(nextDest.pathname)
   const onboardingNext = nextDest.isOnboarding && !roleInterviewNext
+  const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !onboardingNext
   const firstTimeHref = roleInterviewNext ? nextDest.to : onboardingNext ? nextDest.to : onboardingDestination(peekSource())
   const loginEyebrow = isCompletingLink
     ? "Finishing sign-in"
@@ -988,6 +1029,8 @@ export default function CandidateLogin() {
             <p className="wk-login__sub">
               {loginSub}
             </p>
+
+            {showPipelinePreview ? <LoginPipelinePreview /> : null}
 
             {status === "signing_in" && !isCompletingLink ? (
               <p className="wk-success">Signing you in…</p>
@@ -1443,6 +1486,58 @@ export const CANDIDATE_STYLES = `
   margin: 4px 0 0; color: var(--wk-ink);
 }
 .wk-login__sub { color: var(--wk-ink-2); font-size: 15px; line-height: 1.5; margin: 0; }
+.wk-login-preview {
+  display: grid;
+  gap: 10px;
+  padding: 14px 0;
+  border-top: 1px solid var(--wk-border);
+  border-bottom: 1px solid var(--wk-border);
+}
+.wk-login-preview__k {
+  margin: 0;
+  color: var(--wk-ink-3);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.wk-login-preview__list {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.wk-login-preview__item {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+.wk-login-preview__icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--wk-ink);
+  color: var(--wk-cream);
+}
+.wk-login-preview__item strong {
+  display: block;
+  color: var(--wk-ink);
+  font-size: 13.5px;
+  line-height: 1.25;
+}
+.wk-login-preview__item em {
+  display: block;
+  margin-top: 2px;
+  color: var(--wk-ink-3);
+  font-style: normal;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
 .wk-login__providers { display: grid; gap: 10px; margin-top: 8px; }
 .wk-login__divider {
   display: flex; align-items: center; gap: 10px;
