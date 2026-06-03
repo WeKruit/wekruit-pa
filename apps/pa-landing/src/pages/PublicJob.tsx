@@ -617,6 +617,7 @@ export default function PublicJob() {
             Create or confirm your WeKruit profile so Claire carries your resume and this role context into the interview.
           </p>
           <ProcessStrip compact />
+          <ClaireInterviewContract />
           {renderLoginControls("modal")}
           <p className="wk-pj-modal__sub">
             By interviewing, you agree to our privacy &amp; terms.
@@ -1045,6 +1046,40 @@ function ProcessStrip({ compact = false }: { compact?: boolean }) {
   )
 }
 
+function ClaireInterviewContract() {
+  const checks = [
+    {
+      label: "Nearest matching work",
+      body: "Claire asks for nearest-overlap evidence before any hard stop.",
+    },
+    {
+      label: "Role constraints",
+      body: "Salary, location, work authorization, timing, and must-have evidence are checked against this role.",
+    },
+    {
+      label: "Candidate-controlled sharing",
+      body: "A passed profile is shared only after the screen and consent. A not-pass stays role-specific and improves future matching.",
+    },
+  ]
+
+  return (
+    <section className="wk-pj-contract" aria-label="Claire interview contract">
+      <h3 className="wk-pj-contract__title">Claire will check</h3>
+      <ol className="wk-pj-contract__list">
+        {checks.map((check, index) => (
+          <li className="wk-pj-contract__item" key={check.label}>
+            <span className="wk-pj-contract__num">{index + 1}</span>
+            <span>
+              <strong>{check.label}</strong>
+              <em>{check.body}</em>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
 function renderJobDescription(descriptionMd?: string, company?: string, hideSource = false): ReactNode {
   const raw = (hideSource ? stripJobSourceSection(descriptionMd) : descriptionMd)?.trim()
   if (!raw) {
@@ -1204,6 +1239,7 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
                   <p className="wk-eyebrow">Role interview</p>
                   <h2 className="wk-pj-card__title">Interview with Claire</h2>
                 </div>
+                <ClaireInterviewContract />
                 {!signedIn ? (
                   <button type="button" className="wk-btn wk-btn--ink wk-btn--block" onClick={onApply}>
                     Start Claire interview
@@ -1551,6 +1587,60 @@ export const PUBLIC_JOB_STYLES = `
 .wk-pj-card__slot { display: grid; gap: 10px; }
 .wk-pj-card__copy { color: var(--wk-ink-2); font-size: 14.5px; line-height: 1.5; margin: 0; }
 .wk-pj-card__note { color: var(--wk-ink-3); font-size: 13px; margin: 0; }
+.wk-pj-contract {
+  display: grid;
+  gap: 10px;
+  padding: 2px 0 4px;
+}
+.wk-pj-contract__title {
+  margin: 0;
+  color: var(--wk-ink);
+  font-size: 14.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.wk-pj-contract__list {
+  list-style: none;
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+}
+.wk-pj-contract__item {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+}
+.wk-pj-contract__num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--wk-cream-2);
+  border: 1px solid var(--wk-border);
+  color: var(--wk-ink-2);
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.wk-pj-contract__item strong {
+  display: block;
+  color: var(--wk-ink);
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.wk-pj-contract__item em {
+  display: block;
+  margin-top: 2px;
+  color: var(--wk-ink-3);
+  font-size: 12.5px;
+  font-style: normal;
+  line-height: 1.4;
+}
 .wk-pj-sms-manual {
   display: grid;
   gap: 8px;

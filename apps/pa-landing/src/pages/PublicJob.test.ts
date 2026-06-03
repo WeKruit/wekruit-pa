@@ -24,6 +24,20 @@ test("PublicJob frames role entry as Claire-first passed-profile flow", () => {
   assert.match(source, /Start Claire interview/)
 })
 
+test("PublicJob exposes Claire's role interview contract before signup", () => {
+  assert.match(source, /function ClaireInterviewContract/)
+  assert.match(source, /Claire will check/)
+  assert.match(source, /Nearest matching work/)
+  assert.match(source, /Role constraints/)
+  assert.match(source, /Candidate-controlled sharing/)
+  assert.match(source, /Claire asks for nearest-overlap evidence before any hard stop/)
+  assert.match(source, /A not-pass stays role-specific and improves future matching/)
+  assert.equal((source.match(/<ClaireInterviewContract \/>/g) ?? []).length, 2)
+
+  assert.doesNotMatch(source, /we submit you automatically/i)
+  assert.doesNotMatch(source, /hiring team sees every candidate/i)
+})
+
 test("PublicJob resume upload avoids internal configuration errors", () => {
   assert.doesNotMatch(source, /CV ingest endpoint is not configured/)
   assert.match(source, /Resume upload is temporarily unavailable\. Message Claire and we'll attach it to this role\./)
