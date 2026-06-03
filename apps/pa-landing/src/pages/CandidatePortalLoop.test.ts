@@ -18,6 +18,7 @@ test("candidate operating loop prioritizes interview action over recommendations
       ["New roles", "1"],
       ["Interview", "2"],
       ["Review", "0"],
+      ["Feedback", "0"],
       ["Retained", "0"],
     ],
   )
@@ -33,4 +34,19 @@ test("candidate operating loop keeps closed role outcomes as retained profile hi
   assert.equal(loop.primaryLabel, "Profile active")
   assert.match(loop.body, /profile stays active/i)
   assert.equal(loop.stats.find((stat) => stat.label === "Retained")?.value, "2")
+})
+
+test("candidate operating loop surfaces accepted and closed intro feedback as durable signal", () => {
+  const loop = deriveCandidateOperatingLoop([
+    { status: "intro_accepted" },
+    { status: "intro_rejected" },
+    { status: "not_passed" },
+  ])
+
+  assert.equal(loop.state, "intro_signal")
+  assert.equal(loop.primaryLabel, "Intro feedback")
+  assert.match(loop.body, /2 intro outcomes/)
+  assert.match(loop.nextAction, /future matching/i)
+  assert.equal(loop.stats.find((stat) => stat.label === "Feedback")?.value, "2")
+  assert.equal(loop.stats.find((stat) => stat.label === "Retained")?.value, "1")
 })

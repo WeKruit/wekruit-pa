@@ -4,6 +4,8 @@ export type CandidateJobStatus =
   | "interview_started"
   | "review_pending"
   | "passed"
+  | "intro_accepted"
+  | "intro_rejected"
   | "not_passed"
   | "paused"
 
@@ -55,6 +57,21 @@ export function getCandidateJobStatusDisplay(
         label: "Passed",
         nextStep: "You passed Claire's first screen. WeKruit will keep your profile ready for the next step.",
         tone: "positive",
+        ctaLabel: "View role",
+      }
+    case "intro_accepted":
+      return {
+        label: "Intro accepted",
+        nextStep: "The hiring team accepted the passed-profile intro. WeKruit will coordinate the next real step.",
+        tone: "positive",
+        ctaLabel: "View role",
+      }
+    case "intro_rejected":
+      return {
+        label: "Intro closed",
+        nextStep:
+          "The hiring team did not move this intro forward. Your profile stays active, and WeKruit uses the signal for stronger matches.",
+        tone: "muted",
         ctaLabel: "View role",
       }
     case "not_passed":

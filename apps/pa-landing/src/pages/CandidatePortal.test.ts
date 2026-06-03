@@ -114,6 +114,18 @@ test("CandidatePortal interview pipeline does not mix recommendation inbox into 
   assert.match(source, /<MeNewMatches\s+matches=\{recommended\}/)
 })
 
+test("CandidatePortal surfaces employer intro outcomes without leaking private feedback records", () => {
+  assert.match(source, /intro_accepted/)
+  assert.match(source, /intro_rejected/)
+  assert.match(source, /label: "Intro"/)
+  assert.match(source, /Intro accepted/)
+  assert.match(source, /Intro closed/)
+  assert.match(source, /feedback signals/)
+  assert.match(source, /future matching/)
+  assert.doesNotMatch(source, /latestEmployerFeedbackEventId/)
+  assert.doesNotMatch(source, /private employer feedback/i)
+})
+
 test("CandidatePortal privacy card does not present local-only toggles as binding controls", () => {
   assert.doesNotMatch(source, /setShowMe|setBlockEmployer|setShareResume|wk-prof-toggle|These toggles read/i)
   assert.doesNotMatch(source, /Visible to employers|Show me to employers/i)
@@ -406,7 +418,7 @@ test("CandidatePortal /me summarizes the real candidate operating loop", () => {
   assert.match(source, /<MeOperatingLoopPanel loop=\{operatingLoop\} \/>/)
   assert.match(source, /function MeOperatingLoopPanel/)
   assert.match(source, /WeKruit loop/)
-  assert.match(source, /Candidate-visible role states in one place\./)
+  assert.match(source, /Candidate-visible role states and feedback signals in one place\./)
   assert.match(source, /stat\.label/)
   assert.doesNotMatch(source, /WeKruit is working/)
   assert.doesNotMatch(source, /Claire keeps scanning/)

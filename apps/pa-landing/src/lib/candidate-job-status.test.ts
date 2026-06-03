@@ -45,3 +45,19 @@ test("getCandidateJobStatusDisplay keeps not-pass role-specific and global-pool 
   assert.match(display.nextStep, /profile stays active/)
   assert.doesNotMatch(display.nextStep, /rejected|removed|closed/i)
 })
+
+test("getCandidateJobStatusDisplay renders employer intro outcomes without exposing private feedback", () => {
+  const accepted = getCandidateJobStatusDisplay("intro_accepted", "Founding Engineer")
+  const rejected = getCandidateJobStatusDisplay("intro_rejected", "Product Designer")
+
+  assert.deepEqual(accepted, {
+    label: "Intro accepted",
+    nextStep: "The hiring team accepted the passed-profile intro. WeKruit will coordinate the next real step.",
+    tone: "positive",
+    ctaLabel: "View role",
+  })
+  assert.equal(rejected.label, "Intro closed")
+  assert.match(rejected.nextStep, /did not move this intro forward/i)
+  assert.match(rejected.nextStep, /profile stays active/i)
+  assert.doesNotMatch(rejected.nextStep, /rejected|private feedback|reason/i)
+})

@@ -1327,7 +1327,7 @@ function MeOperatingLoopPanel({ loop }: { loop: CandidateOperatingLoop }) {
     <section className={`wkv3-sec wkv3-loop is-${loop.state}`} aria-label="WeKruit loop">
       <header className="wkv3-sec__head">
         <h2 className="wkv3-sec__h">WeKruit loop</h2>
-        <span className="wkv3-sec__sub">Candidate-visible role states in one place.</span>
+        <span className="wkv3-sec__sub">Candidate-visible role states and feedback signals in one place.</span>
       </header>
       <div className="wkv3-loop__body">
         <div className="wkv3-loop__summary">
@@ -1406,6 +1406,7 @@ const ME_STAGES: MeStageDef[] = [
   { id: "screening", label: "Screening", dot: "#1f6feb", statuses: ["interview_started"] },
   { id: "passed", label: "Passed", dot: "#1f6feb", statuses: ["passed"] },
   { id: "reviewing", label: "Reviewing", dot: "#3a8a5a", statuses: ["review_pending"] },
+  { id: "intro", label: "Intro", dot: "#3a8a5a", statuses: ["intro_accepted", "intro_rejected"] },
   { id: "closed", label: "Closed", dot: "var(--wk-ink-4)", statuses: ["not_passed", "paused"] },
 ]
 
@@ -1520,6 +1521,14 @@ function meStageChip(status: CandidateJobStatus) {
           <Icon name="check" size={11} stroke={2.4} /> Passed
         </span>
       )
+    case "intro_accepted":
+      return (
+        <span className="wkv3-chip wkv3-chip--warm">
+          <Icon name="check" size={11} stroke={2.4} /> Intro accepted
+        </span>
+      )
+    case "intro_rejected":
+      return <span className="wkv3-chip wkv3-chip--muted">Intro closed</span>
     case "not_passed":
       return <span className="wkv3-chip wkv3-chip--muted">Closed</span>
     case "paused":
@@ -2068,6 +2077,7 @@ const ME_V3_STYLES = `
 .wkv3-loop.is-action_needed .wkv3-loop__summary::before { background: var(--live); }
 .wkv3-loop.is-in_review .wkv3-loop__summary::before { background: var(--success); }
 .wkv3-loop.is-roles_to_review .wkv3-loop__summary::before { background: #1F6FEB; }
+.wkv3-loop.is-intro_signal .wkv3-loop__summary::before { background: var(--success); }
 .wkv3-loop__kicker {
   margin: 0;
   font-size: 10.5px;
@@ -2078,6 +2088,7 @@ const ME_V3_STYLES = `
 }
 .wkv3-loop.is-in_review .wkv3-loop__kicker { color: var(--success); }
 .wkv3-loop.is-roles_to_review .wkv3-loop__kicker { color: #1F6FEB; }
+.wkv3-loop.is-intro_signal .wkv3-loop__kicker { color: var(--success); }
 .wkv3-loop.is-profile_active .wkv3-loop__kicker { color: var(--ink-3); }
 .wkv3-loop__text {
   margin: 0;

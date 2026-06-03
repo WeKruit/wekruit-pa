@@ -4,12 +4,13 @@ export type CandidateOperatingLoopState =
   | "action_needed"
   | "in_review"
   | "roles_to_review"
+  | "intro_signal"
   | "profile_active"
 
 export type CandidateOperatingLoopTone = "live" | "blue" | "green" | "muted"
 
 export type CandidateOperatingLoopStat = {
-  label: "New roles" | "Interview" | "Review" | "Retained"
+  label: "New roles" | "Interview" | "Review" | "Feedback" | "Retained"
   value: string
   detail: string
   tone: CandidateOperatingLoopTone
@@ -34,6 +35,7 @@ export function deriveCandidateOperatingLoop(
     recommended: countByStatus(matches, ["recommended"]),
     interview: countByStatus(matches, ["invited", "interview_started"]),
     review: countByStatus(matches, ["review_pending", "passed"]),
+    feedback: countByStatus(matches, ["intro_accepted", "intro_rejected"]),
     retained: countByStatus(matches, ["not_passed", "paused"]),
   }
   const stats: CandidateOperatingLoopStat[] = [
@@ -54,6 +56,12 @@ export function deriveCandidateOperatingLoop(
       value: String(counts.review),
       detail: "WeKruit-side review",
       tone: counts.review > 0 ? "green" : "muted",
+    },
+    {
+      label: "Feedback",
+      value: String(counts.feedback),
+      detail: "Intro outcomes captured",
+      tone: counts.feedback > 0 ? "green" : "muted",
     },
     {
       label: "Retained",
@@ -89,6 +97,16 @@ export function deriveCandidateOperatingLoop(
       primaryLabel: "Roles to review",
       body: `${counts.recommended} new ${roleWord(counts.recommended)} ${beWord(counts.recommended)} ready for you to review.`,
       nextAction: "Open New roles and choose what Claire should pursue.",
+      stats,
+    }
+  }
+
+  if (counts.feedback > 0) {
+    return {
+      state: "intro_signal",
+      primaryLabel: "Intro feedback",
+      body: `${counts.feedback} intro ${counts.feedback === 1 ? "outcome" : "outcomes"} captured after passed-profile sharing.`,
+      nextAction: "Claire and WeKruit use this signal for future matching while your profile stays active.",
       stats,
     }
   }

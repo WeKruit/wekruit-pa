@@ -42,7 +42,16 @@ export type CandidateMatchCard = {
   matchId: string
   jobId: string
   bucket: "recommended" | "invited"
-  status: "recommended" | "invited" | "interview_started" | "review_pending" | "passed" | "not_passed" | "paused"
+  status:
+    | "recommended"
+    | "invited"
+    | "interview_started"
+    | "review_pending"
+    | "passed"
+    | "intro_accepted"
+    | "intro_rejected"
+    | "not_passed"
+    | "paused"
   /** WeKruit-collaborated job → candidate can pre-screen (CTA + session + status). */
   collab: boolean
   job: CandidateMatchJobDisplay
@@ -178,6 +187,8 @@ function projectStatus(
   if (stateValue === "prescreen_review_pending" || prescreenReviewPending) return "review_pending"
   if (stateValue === "passed") return "passed"
   if (stateValue === "employer_visible") return "passed"
+  if (stateValue === "intro_accepted") return "intro_accepted"
+  if (stateValue === "intro_rejected") return "intro_rejected"
   if (stateValue === "not_passed") return "not_passed"
   if (stateValue === "paused") return "paused"
   if (prescreenTerminal === "PASS") return "passed"

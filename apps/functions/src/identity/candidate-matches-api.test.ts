@@ -455,6 +455,49 @@ test("runCandidateListMatches lets committed state win over stale proposed termi
   assert.doesNotMatch(JSON.stringify(result), /out-internal|decisionOutboundId|terminalActionPendingReview|ps-pass/)
 })
 
+test("runCandidateListMatches exposes employer intro outcomes as candidate-visible pipeline states", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
+    firebaseUid: "firebase-1",
+    candidateId: "cand-1",
+  })
+  await mfs.collection("pa-candidate-job-states").doc("cand-1__job-accepted").set({
+    id: "cand-1__job-accepted",
+    candidateId: "cand-1",
+    jobId: "job-accepted",
+    state: "intro_accepted",
+    stateUpdatedAt: "2026-05-21T00:00:00.000Z",
+    latestEmployerFeedbackEventId: "employer-feedback-accepted",
+  })
+  await mfs.collection("pa-candidate-job-states").doc("cand-1__job-rejected").set({
+    id: "cand-1__job-rejected",
+    candidateId: "cand-1",
+    jobId: "job-rejected",
+    state: "intro_rejected",
+    stateUpdatedAt: "2026-05-22T00:00:00.000Z",
+    latestEmployerFeedbackEventId: "employer-feedback-rejected",
+  })
+  await mfs.collection("pa-jobs").doc("job-accepted").set({
+    publicVisible: true,
+    prescreenConfig: { jobTitle: "Founding Engineer", company: "Northstar" },
+  })
+  await mfs.collection("pa-jobs").doc("job-rejected").set({
+    publicVisible: true,
+    prescreenConfig: { jobTitle: "Product Lead", company: "Orbit" },
+  })
+
+  const result = await runCandidateListMatches({}, { uid: "firebase-1" }, { db: asFirestore(mfs) })
+
+  assert.deepEqual(
+    result.matches.map((match) => [match.jobId, match.status]),
+    [
+      ["job-rejected", "intro_rejected"],
+      ["job-accepted", "intro_accepted"],
+    ],
+  )
+  assert.doesNotMatch(JSON.stringify(result), /latestEmployerFeedbackEventId|employer-feedback-/)
+})
+
 test("runCandidateListMatches never exposes candidate decision while review is pending", async () => {
   const mfs = new MockFirestore()
   await mfs.collection("pa-candidate-auth").doc("firebase-1").set({
