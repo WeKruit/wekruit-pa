@@ -201,8 +201,8 @@ export default function Landing() {
               <PulseDot size={7} /> Skip the application. Interview.
             </p>
             <h1 className="wk-hero__h1">
-              You don't <em className="wk-accent">apply.</em><br/>
-              You interview.
+              <span>You don't <em className="wk-accent">apply.</em></span>
+              <span>You interview.</span>
             </h1>
             <p className="wk-hero__lede">
               Upload your résumé once. Claire — your WeKruit recruiter, on iMessage —
@@ -518,13 +518,16 @@ const LANDING_STYLES = `
 .wk-hero__h1 {
   font-family: 'Newsreader', serif;
   font-weight: 400;
-  font-size: clamp(54px, 7.2vw, 92px);
-  line-height: 0.98;
-  letter-spacing: -0.028em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12em;
+  font-size: clamp(52px, 6.7vw, 86px);
+  line-height: 1.06;
+  letter-spacing: 0;
   color: var(--wk-ink);
-  margin: 18px 0 22px;
-  text-wrap: balance;
+  margin: 18px 0 24px;
 }
+.wk-hero__h1 > span { display: block; }
 .wk-hero__lede {
   font-size: clamp(17px, 1.5vw, 19.5px);
   line-height: 1.5;
@@ -896,7 +899,7 @@ const LANDING_STYLES = `
     gap: 36px;
     align-items: start;
   }
-  .wk-hero__h1 { font-size: clamp(54px, 6.7vw, 68px); }
+  .wk-hero__h1 { font-size: clamp(50px, 6.2vw, 64px); line-height: 1.07; gap: 0.1em; }
   .wk-hero__visual { padding-top: 32px; }
   .wk-hero__visual .wk-imsg-phone { max-width: 320px; }
   .wk-steps { grid-template-columns: 1fr; }
@@ -919,5 +922,6 @@ const LANDING_STYLES = `
   .wk-section { padding: 56px 0; }
   .wk-section__head { margin-bottom: 28px; }
   .wk-proof-card { padding: 20px; }
+  .wk-hero__h1 { font-size: clamp(48px, 14vw, 64px); line-height: 1.08; gap: 0.1em; }
 }
 `
