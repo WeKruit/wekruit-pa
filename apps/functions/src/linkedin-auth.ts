@@ -54,10 +54,13 @@ type CandidateConnectorProvider = "linkedin" | "github" | "calcom"
 interface LinkedinAuthState {
   returnTo: string
   ts: number
-  mode?: "login" | "connect"
+  mode?: "login" | "connect" | "connect_prospect"
   provider?: CandidateConnectorProvider
   firebaseUid?: string
   candidateId?: string
+  /** connect_prospect (Adam 2026-06-03): one-tap "Login with LinkedIn" for a TEXTED prospect who has
+   *  NO Firebase session — the connect token (pa-linkedin-connect-tokens) IS the identity. */
+  connectToken?: string
 }
 
 interface LinkedinUserInfo {
@@ -171,7 +174,12 @@ export function parseLinkedinState(
   try {
     const parsed = JSON.parse(base64UrlDecode(payloadB64).toString("utf8")) as LinkedinAuthState
     if (typeof parsed.returnTo !== "string" || typeof parsed.ts !== "number") return null
-    if (parsed.mode !== undefined && parsed.mode !== "login" && parsed.mode !== "connect") {
+    if (
+      parsed.mode !== undefined &&
+      parsed.mode !== "login" &&
+      parsed.mode !== "connect" &&
+      parsed.mode !== "connect_prospect"
+    ) {
       return null
     }
     if (parsed.provider !== undefined && !parseCandidateConnectorProvider(parsed.provider)) return null
@@ -179,6 +187,10 @@ export function parseLinkedinState(
       if (!parsed.provider) return null
       if (typeof parsed.firebaseUid !== "string" || !parsed.firebaseUid.trim()) return null
       if (typeof parsed.candidateId !== "string" || !parsed.candidateId.trim()) return null
+    }
+    // connect_prospect: the single-use connect token IS the identity (no Firebase session).
+    if (parsed.mode === "connect_prospect") {
+      if (typeof parsed.connectToken !== "string" || !parsed.connectToken.trim()) return null
     }
     if (Math.abs(nowMs - parsed.ts) > STATE_MAX_AGE_MS) return null
     return parsed
@@ -805,6 +817,42 @@ export const paCandidateConnectorOAuthStart = onCall(
   },
 )
 
+/**
+ * Mobile-friendly "you're connected → back to your texts" page for the connect_prospect flow.
+ * Auto-redirects to the sms: deep link (drops the candidate back into the iMessage thread with the
+ * "I've done LinkedIn submission <token>" body prefilled) + a big tap target as a fallback (iOS
+ * sometimes blocks an auto sms: navigation, so the visible button is the reliable path).
+ */
+function renderProspectRerouteHtml(smsDeepLink?: string): string {
+  const safe = typeof smsDeepLink === "string" ? smsDeepLink.trim() : ""
+  const esc = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+  const cta = safe
+    ? `<a class="btn" href="${esc(safe)}">Back to your texts with Claire →</a>`
+    : `<p class="sub">Head back to your iMessage thread with Claire — your LinkedIn is connected. 🎉</p>`
+  const auto = safe ? `<script>setTimeout(function(){location.href=${JSON.stringify(safe)}},500)</script>` : ""
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>WeKruit — LinkedIn connected</title>
+<style>
+  :root{color-scheme:light}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f7f5f0;color:#1b1f17}
+  main{max-width:460px;margin:0 auto;padding:max(2.5rem,8vh) 1.5rem;text-align:center}
+  .mark{font-size:3rem;line-height:1;margin-bottom:1rem}
+  h1{font-size:1.5rem;margin:.25rem 0 .5rem}
+  .sub{color:#5f665b;margin:.25rem 0 1.75rem;font-size:1.05rem;line-height:1.5}
+  .btn{display:block;width:100%;padding:1rem 1.25rem;font-size:1.05rem;font-weight:600;color:#fff;background:#1b1f17;border-radius:12px;text-decoration:none}
+  .btn:active{opacity:.85}
+</style></head>
+<body><main>
+  <div class="mark">✅</div>
+  <h1>LinkedIn connected</h1>
+  <p class="sub">All set — head back to your texts with Claire and she'll take it from here.</p>
+  ${cta}
+</main>${auto}</body></html>`
+}
+
 export const paLinkedinAuthStart = onRequest(
   {
     region: "us-central1",
@@ -824,7 +872,14 @@ export const paLinkedinAuthStart = onRequest(
       res.status(500).type("text/plain").send("linkedin_config_missing")
       return
     }
-    const state = buildLinkedinState({ returnTo, ts: Date.now() }, clientSecret)
+    // connect_prospect (Adam 2026-06-03): a texted prospect taps wekruit.com/connect-linkedin?token=
+    // → that page redirects here with ?connectToken=. We carry the token through OAuth state so the
+    // callback can bind the verified LinkedIn identity to THAT prospect (no Firebase session needed).
+    const connectToken =
+      typeof req.query.connectToken === "string" ? req.query.connectToken.trim() : ""
+    const state = connectToken
+      ? buildLinkedinState({ returnTo, ts: Date.now(), mode: "connect_prospect", connectToken }, clientSecret)
+      : buildLinkedinState({ returnTo, ts: Date.now() }, clientSecret)
     const authUrl = new URL(LINKEDIN_AUTH_URL)
     authUrl.searchParams.set("response_type", "code")
     authUrl.searchParams.set("client_id", clientId)
@@ -874,6 +929,25 @@ export const paLinkedinCallback = onRequest(
       const info = await fetchLinkedinUserInfo(accessToken)
       const sub = info.sub?.trim()
       if (!sub) throw new Error("linkedin_userinfo_failed:missing_sub")
+      // connect_prospect (Adam 2026-06-03): one-tap "Login with LinkedIn" for a texted prospect.
+      // Bind the verified identity to the connect-token's userId, then redirect the MOBILE browser
+      // straight back into the iMessage thread (sms: deep link). Falls back to a friendly "go back to
+      // your texts" page if the phone can't be resolved.
+      if (state.mode === "connect_prospect") {
+        const { connectLinkedinProspectViaOAuth } = await import(
+          "./linkedin-connect/linkedin-connect-submit.js"
+        )
+        const result = await connectLinkedinProspectViaOAuth(getFirestore(), {
+          connectToken: state.connectToken!,
+          sub,
+          ...(typeof info.name === "string" ? { name: info.name } : {}),
+          ...(typeof info.email === "string" ? { email: info.email } : {}),
+          ...(typeof info.picture === "string" ? { picture: info.picture } : {}),
+        })
+        res.set("Cache-Control", "no-store")
+        res.status(200).type("html").send(renderProspectRerouteHtml(result.smsDeepLink))
+        return
+      }
       if (state.mode === "connect") {
         await connectLinkedinToCandidate({
           db: getFirestore(),

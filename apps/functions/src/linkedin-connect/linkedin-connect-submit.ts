@@ -242,6 +242,81 @@ export async function handleLinkedinConnectSubmit(
   }
 }
 
+/**
+ * connectLinkedinProspectViaOAuth — the ONE-TAP "Login with LinkedIn" path (Adam 2026-06-03:
+ * "redirect us to a LinkedIn login page directly… route back to user… mobile friendly").
+ *
+ * Called by paLinkedinCallback (mode="connect_prospect") AFTER LinkedIn OAuth verified the
+ * candidate. Unlike the URL-paste submit, OAuth gives us a verified sub/name/email but NOT the
+ * profile URL or work history (LinkedIn's "openid profile email" scope) — so this binds the
+ * VERIFIED IDENTITY + sets displayName (→ Claire greets by their real name) and reroutes back into
+ * the iMessage thread. Work-history depth still comes from the résumé drop OR the paste-URL flow
+ * (Coresignal-by-URL) — Adam's chosen split. NEVER throws; always returns a reroute so the
+ * candidate is never dead-ended.
+ */
+export async function connectLinkedinProspectViaOAuth(
+  db: Firestore,
+  input: { connectToken: string; sub: string; name?: string; email?: string; picture?: string },
+): Promise<{ ok: boolean; reason?: string; smsDeepLink?: string }> {
+  const nowIso = new Date().toISOString()
+  const tokenResult = await verifyLinkedinConnectToken(db, input.connectToken)
+  if (!tokenResult.ok) {
+    logger.warn("linkedin_oauth.token_invalid", { reason: tokenResult.reason })
+    return { ok: false, reason: tokenResult.reason }
+  }
+  const userId = tokenResult.userId
+  const sub = input.sub.trim()
+  // OAuth-verified handle. The "/oauth-linked/" marker is the convention the URL-paste path checks
+  // (persistLinkedinUrlIfEmpty) so a later paste of the REAL URL overwrites this marker for Coresignal.
+  const oauthMarkerUrl = `https://www.linkedin.com/oauth-linked/${sub}`
+  try {
+    await linkCandidateHandle(db, {
+      candidateId: userId,
+      kind: "linkedin",
+      value: oauthMarkerUrl,
+      source: "candidate",
+      verified: true, // OAuth-verified identity
+      now: nowIso,
+      evidence: [{ source: "system", summary: "LinkedIn OAuth sign-in (one-tap connect)" }],
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    // identity_conflict is rare for an OAuth sub; either way never dead-end — log + still reroute.
+    logger.warn("linkedin_oauth.link_handle_noted", { userId, err: msg })
+  }
+  // Persist the verified identity. displayName drives loadGlobalContext's by-name greeting; the
+  // linkedinOauth* fields mirror the existing OAuth-connected shape (CandidatePortal reads them).
+  try {
+    const patch: Record<string, unknown> = {
+      linkedinOauthLinked: true,
+      linkedinOauthConnectedAt: nowIso,
+      linkedinOauthSub: sub,
+      linkedinUrl: oauthMarkerUrl,
+      updatedAt: nowIso,
+    }
+    const name = input.name?.trim()
+    if (name) {
+      patch.displayName = name
+      patch.linkedinOauthName = name
+    }
+    if (input.email?.trim()) patch.linkedinOauthEmail = input.email.trim()
+    if (input.picture?.trim()) patch.linkedinOauthPicture = input.picture.trim()
+    await db.collection(PA_COLLECTIONS.users).doc(userId).set(patch, { merge: true })
+  } catch (err) {
+    logger.warn("linkedin_oauth.persist_failed", {
+      userId,
+      err: err instanceof Error ? err.message : String(err),
+    })
+  }
+  await markLinkedinConnectTokenUsed(db, input.connectToken, Date.parse(nowIso) || Date.now())
+  const phone = await resolvePhone(db, userId, tokenResult.phoneE164)
+  const smsDeepLink = phone
+    ? buildSmsDeepLink(phone, buildLinkedinDoneOpenerBody(input.connectToken))
+    : undefined
+  logger.info("linkedin_oauth.connected", { userId, hasName: Boolean(input.name), hasSms: Boolean(smsDeepLink) })
+  return { ok: true, ...(smsDeepLink ? { smsDeepLink } : {}) }
+}
+
 function setCors(res: { set: (k: string, v: string) => unknown }): void {
   res.set("Access-Control-Allow-Origin", "*")
   res.set("Access-Control-Allow-Methods", "POST, OPTIONS")

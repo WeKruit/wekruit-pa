@@ -23,15 +23,20 @@
  *
  * Never 500s the candidate — every error path falls back to the URL form.
  */
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 
 // Same-origin Hosting rewrite → paLinkedinConnectSubmit (see firebase.json).
 const CONNECT_SUBMIT_URL = "/_li/connect"
 
-// UPGRADE flag — only show the OAuth button when the LinkedIn app is configured.
-const OAUTH_ENABLED =
-  (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_LINKEDIN_OAUTH_ENABLED === "true"
+// One-tap "Login with LinkedIn" (Adam 2026-06-03): the page redirects STRAIGHT to LinkedIn's OAuth
+// login, carrying the connect token, then routes back to the iMessage thread. The URL-paste form
+// below is the FALLBACK ("use your LinkedIn URL instead") for full work-history depth via Coresignal.
+const LINKEDIN_AUTH_START_URL =
+  (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_LINKEDIN_AUTH_START_URL ??
+  "https://us-central1-wekruit-5f89b.cloudfunctions.net/paLinkedinAuthStart"
+// where LinkedIn returns to (allow-listed in linkedin-auth.ts); the apex serves this same SPA.
+const CONNECT_RETURN_TO = "https://wekruit.com/connect-linkedin"
 
 interface ConnectSubmitResult {
   ok: boolean
@@ -51,8 +56,27 @@ export default function ConnectLinkedin() {
   const [linkedinUrl, setLinkedinUrl] = useState("")
   const [status, setStatus] = useState<"idle" | "submitting" | "ok" | "review" | "err">("idle")
   const [errMsg, setErrMsg] = useState<string | null>(null)
+  // ONE-TAP "Login with LinkedIn": when false (default) the page bounces straight to LinkedIn's OAuth
+  // login; the candidate can switch to the URL-paste fallback ("use your LinkedIn URL instead").
+  const [useUrlFallback, setUseUrlFallback] = useState(false)
 
   const tokenMissing = !token
+
+  // As soon as we have a token, redirect to LinkedIn's OAuth login (full-page, mobile-friendly — no
+  // popup) carrying the connect token. The callback binds the verified identity + routes back to the
+  // iMessage thread. Skipped when the candidate explicitly chose the URL-paste fallback.
+  useEffect(() => {
+    if (!token || useUrlFallback) return
+    try {
+      const u = new URL(LINKEDIN_AUTH_START_URL)
+      u.searchParams.set("connectToken", token)
+      u.searchParams.set("returnTo", CONNECT_RETURN_TO)
+      window.location.href = u.toString()
+    } catch {
+      // Bad auth-start URL config → fall back to the paste form rather than dead-ending.
+      setUseUrlFallback(true)
+    }
+  }, [token, useUrlFallback])
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -115,21 +139,36 @@ export default function ConnectLinkedin() {
     }
   }
 
-  function onOauthClick() {
-    // The verified-login UPGRADE wires the existing LinkedIn OAuth connector.
-    // It is only shown when VITE_LINKEDIN_OAUTH_ENABLED is set AND requires a
-    // token-scoped connect mode (a texted prospect has no Firebase session).
-    // Until that lands, fall back to the URL form rather than dead-ending.
-    setErrMsg("LinkedIn sign-in isn't available yet — paste your profile link below.")
-  }
-
   return (
     <div style={{ maxWidth: 480, margin: "0 auto", padding: "2.25rem 1.25rem" }}>
       <header style={{ marginBottom: "1.5rem" }}>
         <strong style={{ fontSize: "1.1rem", letterSpacing: "-0.02em" }}>WeKruit</strong>
       </header>
 
-      {status === "ok" ? (
+      {token && !useUrlFallback && status === "idle" ? (
+        <>
+          <h1 style={{ marginBottom: "0.25rem" }}>Connecting your LinkedIn…</h1>
+          <p style={{ color: "#5f665b", marginTop: 0 }}>
+            Taking you to LinkedIn to sign in — you'll come right back to your texts with Claire.
+          </p>
+          <button
+            type="button"
+            onClick={() => setUseUrlFallback(true)}
+            style={{
+              marginTop: "1.25rem",
+              background: "none",
+              border: "none",
+              color: "#5f665b",
+              textDecoration: "underline",
+              fontSize: 14,
+              cursor: "pointer",
+              padding: 0,
+            }}
+          >
+            Having trouble? Paste your LinkedIn URL instead
+          </button>
+        </>
+      ) : status === "ok" ? (
         <>
           <h1 style={{ marginBottom: "0.25rem" }}>You're all set 🎉</h1>
           <p style={{ color: "#5f665b", marginTop: 0 }}>
@@ -152,29 +191,7 @@ export default function ConnectLinkedin() {
             It only takes a second.
           </p>
 
-          {OAUTH_ENABLED && (
-            <button
-              type="button"
-              onClick={onOauthClick}
-              style={{
-                display: "block",
-                width: "100%",
-                marginTop: "1.25rem",
-                padding: "0.85rem 1rem",
-                fontSize: 16,
-                fontWeight: 600,
-                color: "#fff",
-                background: "#0a66c2",
-                border: "none",
-                borderRadius: 10,
-                cursor: "pointer",
-              }}
-            >
-              Sign in with LinkedIn
-            </button>
-          )}
-
-          <form onSubmit={onSubmit} style={{ marginTop: OAUTH_ENABLED ? "1rem" : "1.5rem" }}>
+          <form onSubmit={onSubmit} style={{ marginTop: "1.5rem" }}>
             <label htmlFor="li-url" style={{ display: "block", fontSize: 14, color: "#5f665b", marginBottom: 6 }}>
               Your LinkedIn profile URL
             </label>
