@@ -585,18 +585,30 @@ export async function runClaireTurn(
     const connectUrl = /LinkedIn one-tap connect link = (https:\/\/\S+) —/.exec(globalContext)?.[1] ?? ""
     const uploadUrl = /Resume upload link[^:]*: (https:\/\/\S+)/.exec(globalContext)?.[1] ?? ""
     if (connectUrl || uploadUrl) {
-      const greeting = "hey! i'm claire — welcome to wekruit 👋 let's get you matched, fast."
-      const lines: string[] = []
-      if (connectUrl) lines.push(`• connect your LinkedIn (fastest — recommended) 👉 ${connectUrl}`)
-      lines.push("• or just drop your résumé right here in the chat 📄")
-      if (uploadUrl) lines.push(`• or upload it on the site 👉 ${uploadUrl}`)
-      const offer =
-        `easiest way to start — pick whichever:\n${lines.join("\n")}\n\n` +
-        `do any one and i'll pull it together and show you what i'm seeing.`
-      await deps.transport.sendText(greeting).catch((e) => log("offer_first.greeting_failed", { err: String(e) }))
-      await deps.transport.sendText(offer).catch((e) => log("offer_first.offer_failed", { err: String(e) }))
-      log("offer_first_kickoff_sent", { hasConnect: Boolean(connectUrl), hasUpload: Boolean(uploadUrl) })
-      return { finalText: `${greeting}\n\n${offer}`, toolCalls: [], deliveredViaTool: true }
+      // Adam 2026-06-03 (tone + ORDER): warmer, outcome-framed — "log in with LinkedIn and i'll see
+      // your experiences… or give me your résumé… then i'll pitch you to the hiring managers we have
+      // connections with." ONE atomic message: two rapid Sendblue sends (greeting then offer) were
+      // arriving OUT OF ORDER on-device (the greeting landed AFTER the offer). A single send is the
+      // only ordering guarantee — Sendblue does not preserve order for back-to-back POSTs.
+      const parts: string[] = ["hey! i'm claire, your recruiter at wekruit 👋 so glad you're here."]
+      if (connectUrl) {
+        parts.push(`quickest way to get going — log in with LinkedIn and i'll pull your experience for you 👉 ${connectUrl}`)
+        parts.push(
+          uploadUrl
+            ? `or just drop your résumé right here in the chat 📄, or upload it on the site 👉 ${uploadUrl} — whatever's easiest.`
+            : "or just drop your résumé right here in the chat 📄 — whatever's easiest.",
+        )
+      } else {
+        parts.push("quickest way to get going — just drop your résumé right here in the chat 📄")
+        if (uploadUrl) parts.push(`or upload it on the site 👉 ${uploadUrl} — whatever's easiest.`)
+      }
+      parts.push(
+        "then i'll get to work matching you and pitching you straight to the hiring managers we've got connections with 🙌",
+      )
+      const message = parts.join("\n\n")
+      await deps.transport.sendText(message).catch((e) => log("offer_first.send_failed", { err: String(e) }))
+      log("offer_first_kickoff_sent", { hasConnect: Boolean(connectUrl), hasUpload: Boolean(uploadUrl), bubbles: 1 })
+      return { finalText: message, toolCalls: [], deliveredViaTool: true }
     }
     // No links surfaced (edge / non-canary) → fall through to the normal model kickoff.
     log("offer_first_kickoff_no_links", {})
