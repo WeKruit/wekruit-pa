@@ -5,8 +5,8 @@
  * The user-facing frame must match /employers: employers send a role brief,
  * Claire screens candidates, and WeKruit returns consented passed profiles.
  */
-import { useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
-import { Link } from "react-router-dom"
+import { useEffect, useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
+import { Link, useLocation } from "react-router-dom"
 import {
   EMPLOYER_PACKET_STARTERS,
   applyEmployerPacketStarter,
@@ -52,6 +52,7 @@ const EMPTY_FORM: EmployerSignupFormState = {
 }
 
 export default function EmployerSignup() {
+  useEmployerHashScroll()
   const [form, setForm] = useState<EmployerSignupFormState>(EMPTY_FORM)
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
@@ -324,6 +325,21 @@ export default function EmployerSignup() {
       <Footer />
     </main>
   )
+}
+
+function useEmployerHashScroll() {
+  const location = useLocation()
+  useEffect(() => {
+    const hash = location.hash.replace(/^#/, "") || window.location.hash.replace(/^#/, "")
+    if (!hash) return
+
+    function scrollTarget() {
+      document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" })
+    }
+
+    window.requestAnimationFrame(scrollTarget)
+    window.setTimeout(scrollTarget, 250)
+  }, [location.hash])
 }
 
 function EmployerSendReview({ preview, summary }: { preview: EmployerPacketPreviewModel; summary: EmployerSignupReadinessSummary }) {

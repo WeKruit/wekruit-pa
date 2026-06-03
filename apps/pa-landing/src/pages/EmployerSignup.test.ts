@@ -129,6 +129,16 @@ test("EmployerSignup turns role packet readiness into actionable field jumps", (
   assert.match(source, /id="employer-intro-handoff"/)
 })
 
+test("EmployerSignup honors role packet hash targets when the page loads", () => {
+  assert.match(source, /function useEmployerHashScroll\(\)/)
+  assert.match(source, /export default function EmployerSignup\(\)[\s\S]*useEmployerHashScroll\(\)/)
+  assert.match(source, /const hash = location\.hash\.replace\(\/\^#\/, ""\) \|\| window\.location\.hash\.replace\(\/\^#\/, ""\)/)
+  assert.match(source, /function scrollTarget\(\)/)
+  assert.match(source, /window\.requestAnimationFrame\(scrollTarget\)/)
+  assert.match(source, /window\.setTimeout\(scrollTarget, 250\)/)
+  assert.match(source, /document\.getElementById\(hash\)\?\.scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/)
+})
+
 test("EmployerSignup explains the post-submit calibration loop before the form", () => {
   assert.match(source, /EmployerCalibrationLoop/)
   assert.match(source, /aria-label="Role calibration loop"/)
