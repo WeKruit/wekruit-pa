@@ -118,6 +118,7 @@ export default function EmployerSignup() {
   return (
     <main style={{ background: "var(--cream)", minHeight: "100vh" }}>
       <Header />
+      {!done ? <EmployerRolePacketProgressDock summary={readiness} onFieldJump={handleFieldJump} /> : null}
       <section
         style={{
           paddingTop: 56,
@@ -389,6 +390,82 @@ function useEmployerHashScroll() {
   }, [location.hash])
 }
 
+function EmployerRolePacketProgressDock({ summary, onFieldJump }: { summary: EmployerSignupReadinessSummary; onFieldJump: FieldJumpHandler }) {
+  const targetId = summary.nextIncompleteItem?.targetId ?? "employer-send-review"
+  const nextLabel = summary.nextIncompleteItem ? `Next: ${summary.nextIncompleteItem.label}` : "Ready for review"
+  const actionLabel = summary.nextIncompleteItem ? `Finish ${summary.nextIncompleteItem.label}` : "Review packet"
+
+  return (
+    <aside
+      aria-label="Role intake progress"
+      style={{
+        position: "sticky",
+        top: 72,
+        zIndex: 45,
+        background: "rgba(250, 245, 236, 0.92)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        borderBottom: "1px solid var(--border)",
+      }}
+    >
+      <div
+        className="container-narrow"
+        style={{
+          maxWidth: 640,
+          marginInline: "auto",
+          padding: "10px 24px",
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) auto",
+          gap: 12,
+          alignItems: "center",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "baseline",
+              gap: 8,
+              flexWrap: "wrap",
+              fontFamily: "var(--font-sans)",
+              lineHeight: 1.2,
+            }}
+          >
+            <strong style={{ color: "var(--ink)", fontSize: 13, fontWeight: 750 }}>
+              Role packet
+            </strong>
+            <span style={{ color: summary.ready ? "var(--success)" : "var(--ink-3)", fontSize: 12, fontWeight: 700 }}>
+              {summary.completedCount}/{summary.totalCount} ready
+            </span>
+          </div>
+          <p
+            style={{
+              margin: "3px 0 0",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              color: "var(--ink-2)",
+              fontFamily: "var(--font-sans)",
+              fontSize: 13,
+              lineHeight: 1.28,
+            }}
+          >
+            {nextLabel}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="btn btn--primary btn--sm"
+          onClick={(event) => onFieldJump(event, targetId)}
+          style={{ minWidth: 120, justifyContent: "center", whiteSpace: "nowrap" }}
+        >
+          {actionLabel}
+        </button>
+      </div>
+    </aside>
+  )
+}
+
 function EmployerSendReview({
   preview,
   summary,
@@ -400,6 +477,7 @@ function EmployerSendReview({
 }) {
   return (
     <section
+      id="employer-send-review"
       aria-label="Send role packet review"
       style={{
         borderTop: "1px solid var(--border)",

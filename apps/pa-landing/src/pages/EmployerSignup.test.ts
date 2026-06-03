@@ -254,3 +254,19 @@ test("EmployerSignup post-submit state becomes a role packet receipt", () => {
   assert.doesNotMatch(source, /instant candidate matches/i)
   assert.doesNotMatch(source, /browse candidates/i)
 })
+
+test("EmployerSignup keeps long mobile intake oriented with a sticky packet progress dock", () => {
+  assert.match(source, /<EmployerRolePacketProgressDock summary=\{readiness\} onFieldJump=\{handleFieldJump\} \/>/)
+  assert.match(source, /function EmployerRolePacketProgressDock\(\{ summary, onFieldJump \}: \{ summary: EmployerSignupReadinessSummary; onFieldJump: FieldJumpHandler \}\)/)
+  assert.match(source, /aria-label="Role intake progress"/)
+  assert.match(source, /position: "sticky"/)
+  assert.match(source, /top: 72/)
+  assert.match(source, /\{summary\.completedCount\}\/\{summary\.totalCount\} ready/)
+  assert.match(source, /summary\.nextIncompleteItem \? `Next: \$\{summary\.nextIncompleteItem\.label\}` : "Ready for review"/)
+  assert.match(source, /summary\.nextIncompleteItem \? `Finish \$\{summary\.nextIncompleteItem\.label\}` : "Review packet"/)
+  assert.match(source, /const targetId = summary\.nextIncompleteItem\?\.targetId \?\? "employer-send-review"/)
+  assert.match(source, /id="employer-send-review"/)
+
+  assert.doesNotMatch(source, /progress saved live/i)
+  assert.doesNotMatch(source, /auto-submit/i)
+})
