@@ -789,7 +789,7 @@ export default function CandidateLogin() {
       let oauthPending = false
       try {
         oauthPending = window.sessionStorage.getItem(OAUTH_PENDING_KEY) === "1"
-        // Layoff Google uses popup (not redirect); drop stale redirect flags from older attempts.
+        // Layoff auth uses popup/provider windows; drop stale redirect flags from older attempts.
         if (isLayoffHost() && oauthPending) {
           window.sessionStorage.removeItem(OAUTH_PENDING_KEY)
           oauthPending = false
@@ -822,7 +822,7 @@ export default function CandidateLogin() {
         if (oauthPending) {
           setStatus("error")
           setError(
-            "Google sign-in didn't finish after redirect. Click Try again — we will open Google in a popup instead.",
+            "Sign-in didn't finish after redirect. Choose Google or LinkedIn again, or use Try again if the provider already completed.",
           )
           return
         }

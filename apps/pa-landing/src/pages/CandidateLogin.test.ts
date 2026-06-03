@@ -51,10 +51,11 @@ test("CandidateLogin only reuses remembered next during an OAuth return", () => 
 
 test("CandidateLogin keeps stale OAuth retry copy domain-neutral", () => {
   assert.doesNotMatch(source, /on layoff we open Google in a popup instead/)
+  assert.doesNotMatch(source, /Google sign-in didn't finish after redirect/)
   assert.doesNotMatch(source, /Allow popups for layoff\.wekruit\.com/)
   assert.match(
     source,
-    /Google sign-in didn't finish after redirect\. Click Try again — we will open Google in a popup instead\./,
+    /Sign-in didn't finish after redirect\. Choose Google or LinkedIn again, or use Try again if the provider already completed\./,
   )
   assert.match(source, /Your browser blocked the Google sign-in popup\. Allow popups for this site and try again\./)
 })
