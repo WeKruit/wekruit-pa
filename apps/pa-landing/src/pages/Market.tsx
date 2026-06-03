@@ -640,13 +640,18 @@ function useDirectLine() {
   })
 }
 
+function initialMarketViewMode(): "table" | "cards" {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return "table"
+  return window.matchMedia("(max-width: 720px)").matches ? "cards" : "table"
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Page
 // ────────────────────────────────────────────────────────────────────────────
 
 export default function Market(): ReactNode {
   const [tab, setTab] = useState<"hunting" | "direct">("hunting")
-  const [view, setView] = useState<"table" | "cards">("table")
+  const [view, setView] = useState<"table" | "cards">(initialMarketViewMode)
   const [searchQ, setSearchQ] = useState("")
   const [fnSel, setFnSel] = useState<Set<string>>(new Set())
   const [levelSel, setLevelSel] = useState<Set<string>>(new Set())

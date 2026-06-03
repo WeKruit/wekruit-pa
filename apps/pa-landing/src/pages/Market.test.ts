@@ -49,6 +49,13 @@ test("Market default table rows surface source evidence before opening card view
   assert.match(source, /\.wk-tbl__evidence/)
 })
 
+test("Market defaults mobile tracked roles to cards instead of dense table", () => {
+  assert.match(source, /function initialMarketViewMode\(\): "table" \| "cards"/)
+  assert.match(source, /window\.matchMedia\("\(max-width: 720px\)"\)\.matches \? "cards" : "table"/)
+  assert.match(source, /useState<"table" \| "cards">\(initialMarketViewMode\)/)
+  assert.doesNotMatch(source, /useState<"table" \| "cards">\("table"\)/)
+})
+
 test("Market tracked-role rows connect external source inspection to durable preferences", () => {
   assert.match(source, /View source/)
   assert.match(source, /function profileCorrectionHrefForRole\(r: DisplayJob\): string/)
