@@ -328,6 +328,14 @@ test("CandidatePortal pipeline rows route active Claire interviews to Claire", (
   assert.doesNotMatch(source, /<Link to=\{match\.job\.href\} className="wk-btn wk-btn--secondary wk-btn--sm">\s*Open/)
 })
 
+test("CandidatePortal roles inbox makes active Claire interviews the primary action", () => {
+  assert.match(source, /const activeClaireHref = match\.status === "interview_started" \? claireHref : null/)
+  assert.match(source, /activeClaireHref \? \(/)
+  assert.match(source, /href=\{activeClaireHref\}[\s\S]*className="wk-btn wk-btn--primary wk-btn--sm"[\s\S]*Continue with Claire/)
+  assert.match(source, /<Link to=\{match\.job\.href\} className="wk-btn wk-btn--secondary wk-btn--sm">[\s\S]*View role/)
+  assert.doesNotMatch(source, /<a href=\{claireHref\} className="wk-btn wk-btn--secondary wk-btn--sm">\s*<Icon name="message"[^>]*\/> Continue with Claire/)
+})
+
 test("CandidatePortal /me treats incomplete profile data as an Up Next action", () => {
   assert.match(source, /function deriveProfileNextAction/)
   assert.match(source, /function profileActionHrefForMissing/)

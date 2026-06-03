@@ -4675,6 +4675,7 @@ function MeMatchFull({ match, claireHref }: { match: CandidateMatchCard; claireH
   const statusDisplay = getCandidateJobStatusDisplay(match.status, match.job.title)
   // Collab jobs let the candidate view their pre-screen / job status.
   const showStatus = isCollab && match.status !== "recommended"
+  const activeClaireHref = match.status === "interview_started" ? claireHref : null
   return (
     <article className={`wkv3-match${isCollab ? " is-invite" : ""}`}>
       <header className="wkv3-match__head">
@@ -4720,16 +4721,27 @@ function MeMatchFull({ match, claireHref }: { match: CandidateMatchCard; claireH
         </div>
         <div className="wkv3-match__primaries">
           {isCollab ? (
-            <>
-              {claireHref ? (
-                <a href={claireHref} className="wk-btn wk-btn--secondary wk-btn--sm">
+            activeClaireHref ? (
+              <>
+                <Link to={match.job.href} className="wk-btn wk-btn--secondary wk-btn--sm">
+                  View role <Icon name="arrow-right" size={13} stroke={2} />
+                </Link>
+                <a href={activeClaireHref} className="wk-btn wk-btn--primary wk-btn--sm">
                   <Icon name="message" size={12} stroke={1.9} /> Continue with Claire
                 </a>
-              ) : null}
-              <Link to={match.job.href} className="wk-btn wk-btn--primary wk-btn--sm">
-                {statusDisplay.ctaLabel} <Icon name="arrow-right" size={13} stroke={2} />
-              </Link>
-            </>
+              </>
+            ) : (
+              <>
+                {claireHref ? (
+                  <a href={claireHref} className="wk-btn wk-btn--secondary wk-btn--sm">
+                    <Icon name="message" size={12} stroke={1.9} /> Message Claire
+                  </a>
+                ) : null}
+                <Link to={match.job.href} className="wk-btn wk-btn--primary wk-btn--sm">
+                  {statusDisplay.ctaLabel} <Icon name="arrow-right" size={13} stroke={2} />
+                </Link>
+              </>
+            )
           ) : match.job.applyUrl ? (
             <a
               href={match.job.applyUrl}
