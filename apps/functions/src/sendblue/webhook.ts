@@ -31,7 +31,7 @@ import { getFlag, checkAndIncrementRateLimit } from "@pa/pa-persistence"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { verifySendblueSignature, extractSendblueSignatureHeader } from "./hmac.js"
 // Stream D — CV ingestion side-effect (fire-and-forget) on attachment receipt.
-import { ingestCv as defaultIngestCv, type IngestCvInput, type IngestCvResult } from "../cv-ingest/cv-ingest.js"
+import { ingestCv as defaultIngestCv, type IngestCvResult } from "../cv-ingest/cv-ingest.js"
 import {
   isInboundReceiveEvent,
   normalizeSendblueInbound,
@@ -117,8 +117,12 @@ export type WebhookDeps = {
   createInboundEvent?: typeof createInboundEvent
   /** Inject for tests; defaults to recordAuditEvent. */
   recordAuditEvent?: typeof recordAuditEvent
-  /** Stream D — CV ingest pipeline (fire-and-forget). Inject for tests. */
-  ingestCv?: (input: IngestCvInput) => Promise<IngestCvResult>
+  /**
+   * Stream D — CV ingest pipeline (fire-and-forget). Inject for tests.
+   * Accepts the optional deps 2nd arg (e.g. followupDeliveryMode) so the webhook can run
+   * a parse-only ingest while the cutover ingest owns the candidate-facing re-entry.
+   */
+  ingestCv?: typeof defaultIngestCv
   /** Stream D — phone→userId resolver. Optional inboundText enables the verification-code (or legacy Hello, WeKruit!) uid bind. */
   lookupUserByPhone?: (db: Firestore, phoneE164: string, inboundText?: string) => Promise<string | null>
   /** WeKruit_LAID_OFF inbound trigger handler. Inject for tests. */
@@ -1390,7 +1394,14 @@ export async function handleSendblueWebhook(
             log("[sendblue][cv-ingest] skipped — no userId for phone", { phone: normalized.fromNumber })
             return { ok: false, reason: "no_user" } as IngestCvResult
           }
-          return ingestFn({ userId, mediaUrl, sessionId: undefined })
+          // BUG 2 FIX (Adam 2026-06-02): the SAME résumé inbound also reaches cutover (Path B,
+          // claire-agent/cutover.ts) via the broker doc's rawMeta.mediaUrl — and that ingest fires
+          // with the LIVE conversation session. To guarantee exactly ONE post-parse pitch we make the
+          // CUTOVER ingest the single producer of the candidate-facing re-entry, and the webhook ingest
+          // (this Path A) parse-only: followupDeliveryMode:"none" skips its resume_parse_completed
+          // handoff entirely. This is independent of (and stacks under) the sha256-keyed handoff dedup in
+          // cv-ingest, so even a webhook RETRY racing the cutover ingest cannot double-emit the pitch.
+          return ingestFn({ userId, mediaUrl, sessionId: undefined }, { followupDeliveryMode: "none" })
         })
         .then((res) => {
           log("[sendblue][cv-ingest] done", res)

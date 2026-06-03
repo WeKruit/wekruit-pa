@@ -2444,13 +2444,29 @@ export async function ingestCv(
       try {
         const phone = user.toE164
         if (phone) {
+          // BUG 2 FIX (Adam 2026-06-02): the post-parse pitch must fire AT MOST ONCE per (user, PDF).
+          // One résumé drop triggers TWO concurrent ingestCv runs (webhook Stream-D + cutover); on a
+          // first upload both miss the lock-free sha256 guard, each writes a DISTINCT parsedCandidateResume
+          // (distinct resumeId), and a resumeId-scoped idempotencyKey produced TWO handoff docs → TWO pitch
+          // turns (the "same/similar text sent twice"). Scope the handoff key to the pdf sha256 (identical
+          // across both runs, computed at line ~1703) so enqueueRuntimeEventHandoff's existingEvent.exists
+          // check collapses the second run to created:false → exactly ONE resume_parse_completed event →
+          // ONE pitch. Fall back to resumeId only if hashing failed (empty sha would alias DISTINCT résumés).
+          const handoffIdempotencyKey = `cv-parsed:${userId}:${pdfSha256 || resumeId}`
+          // BUG 1 FIX (defensive): when the LIVE session is threaded in (cutover passes the real sessionId),
+          // the session always exists, so requireExistingSession is moot. When NO sessionId is supplied (the
+          // webhook Stream-D producer for an already-onboarded user), the derived session may not exist yet —
+          // do NOT silently drop the candidate-facing re-entry: allow the handoff to attach the derived
+          // session (requireExistingSession:false) so the pitch is never lost to a race. Either way exactly
+          // one handoff doc is created (sha256-keyed above).
           const runtime = await enqueueRuntimeEventHandoff(dbHandle, {
             userId,
             toE164: phone,
             sessionId: args.sessionId,
+            requireExistingSession: false,
             source: "cv_ingest",
             eventKind: "resume_parse_completed",
-            idempotencyKey: `cv-parsed:${userId}:${resumeId}`,
+            idempotencyKey: handoffIdempotencyKey,
             context: {
               resumeId,
               candidateProfileSummary: buildCvFactBody(parsed),

@@ -131,9 +131,17 @@ export async function maybeRunThinClaire(
     // "not_invited") is for unsolicited uploads from non-invited users; it must NOT reject an
     // onboarding/conversation upload — that produced the live "they didn't move forward / resume
     // was shared" rejection (2026-06-02, +18147696202). Bypass the gate; ingestCv stays idempotent.
+    // BUG 1 FIX (Adam 2026-06-02): pass the LIVE conversation sessionId (read off the inbound doc at
+    // line 52, back-filled by processBrokerImessageEvent at index.ts:1054) into ingestCv. The
+    // resume_parse_completed handoff (cv-ingest.ts) threads THIS session, so the handoff's
+    // requireExistingSession gate sees a session that already exists (created at index.ts:1020 before
+    // this turn ran) instead of re-deriving one from the phone — which (a) could fail `no_existing_session`
+    // and silently drop the thin re-entry → NO pitch, and (b) diverged for email-Apple-ID senders.
+    // Without this, the cv-parsed completion never reached thin and LEGACY composed the post-parse turn
+    // ("scratch that, they weren't invited") through the imperfection injector.
     void import("../cv-ingest/cv-ingest.js")
       .then(({ ingestCv }) =>
-        ingestCv({ userId, mediaUrl: inboundMediaUrl, sessionId: undefined }, { skipLimitEnforcement: true }),
+        ingestCv({ userId, mediaUrl: inboundMediaUrl, sessionId }, { skipLimitEnforcement: true }),
       )
       .then((r) => log("thin_claire.resume_ingest.done", { eventId, userId, result: r }))
       .catch((e) =>
