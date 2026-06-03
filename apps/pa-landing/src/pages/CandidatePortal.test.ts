@@ -103,6 +103,18 @@ test("CandidatePortal /me new roles empty state offers real next actions", () =>
   assert.doesNotMatch(source, /<h3>No roles yet\.<\/h3>/)
 })
 
+test("CandidatePortal /me new role preview exposes role signal action", () => {
+  assert.match(source, /function MeMatchPeek\(\{ match \}: \{ match: CandidateMatchCard \}\)/)
+  assert.match(source, /const recommendedSignalHref = profileSignalHrefForRecommendedMatch\(match\)/)
+  assert.match(source, /const target = matchPrimaryTarget\(match\)/)
+  assert.match(source, /target\.external \? \(/)
+  assert.match(source, /href=\{target\.url\}[\s\S]*\{peekCtaLabel\}/)
+  assert.match(source, /to=\{target\.url\}[\s\S]*\{peekCtaLabel\}/)
+  assert.match(source, /<Link to=\{recommendedSignalHref\} className="wkv3-peek__signal">[\s\S]*Use as signal/)
+  assert.doesNotMatch(source, /className="wkv3-peek"[\s\S]{0,160}role="link"/)
+  assert.doesNotMatch(source, /const go = \(\) =>/)
+})
+
 test("CandidatePortal empty waiting states do not claim unproven Claire background work", () => {
   assert.doesNotMatch(source, /Claire is working/)
   assert.doesNotMatch(source, /WeKruit is working/)

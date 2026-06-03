@@ -1815,27 +1815,15 @@ function matchPrimaryTarget(match: CandidateMatchCard): { external: boolean; url
 }
 
 function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
-  const navigate = useNavigate()
   const logo = (match.job.company[0] ?? "?").toUpperCase()
   const logoBg = LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length]
   const isCollab = !!match.collab
+  const recommendedSignalHref = profileSignalHrefForRecommendedMatch(match)
   const target = matchPrimaryTarget(match)
   const statusDisplay = getCandidateJobStatusDisplay(match.status, match.job.title)
   const peekCtaLabel = isCollab ? statusDisplay.ctaLabel : "See role"
-  const go = () => {
-    if (target.external) window.open(target.url, "_blank", "noopener,noreferrer")
-    else navigate(target.url)
-  }
   return (
-    <article
-      className="wkv3-peek"
-      role="link"
-      tabIndex={0}
-      onClick={go}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") go()
-      }}
-    >
+    <article className="wkv3-peek">
       <CompanyMark logo={logo} bg={logoBg} size={44} />
       <div className="wkv3-peek__body">
         <div className="wkv3-peek__head">
@@ -1855,9 +1843,20 @@ function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
       </div>
       <div className="wkv3-peek__right">
         <span className="wkv3-peek__salary">{match.job.salaryRange ?? "By interview"}</span>
-        <span className="wkv3-peek__go">
-          {peekCtaLabel} <Icon name="arrow-right" size={12} stroke={2} />
-        </span>
+        <div className="wkv3-peek__actions">
+          {target.external ? (
+            <a className="wkv3-peek__go" href={target.url} target="_blank" rel="noreferrer">
+              {peekCtaLabel} <Icon name="arrow-right" size={12} stroke={2} />
+            </a>
+          ) : (
+            <Link className="wkv3-peek__go" to={target.url}>
+              {peekCtaLabel} <Icon name="arrow-right" size={12} stroke={2} />
+            </Link>
+          )}
+          <Link to={recommendedSignalHref} className="wkv3-peek__signal">
+            Use as signal
+          </Link>
+        </div>
       </div>
     </article>
   )
@@ -2557,10 +2556,9 @@ const ME_V3_STYLES = `
 .wkv3-peek {
   display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 14px; align-items: center;
   padding: 13px 18px; background: var(--candidate-card); border: 1px solid var(--border);
-  border-radius: var(--r-md); cursor: pointer; transition: border-color var(--dur-fast) var(--ease), transform var(--dur-base) var(--ease);
+  border-radius: var(--r-md); transition: border-color var(--dur-fast) var(--ease), transform var(--dur-base) var(--ease);
 }
 .wkv3-peek:hover { border-color: var(--live-border); transform: translateY(-1px); }
-.wkv3-peek:focus-visible { outline: 2px solid var(--live); outline-offset: 2px; }
 .wkv3-peek__body { min-width: 0; }
 .wkv3-peek__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; }
 .wkv3-peek__t { margin: 0; font-family: var(--font-sans); font-weight: 600; font-size: 14.5px; color: var(--ink); letter-spacing: -0.005em; line-height: 1.3; }
@@ -2568,7 +2566,16 @@ const ME_V3_STYLES = `
 .wkv3-peek__co b { color: var(--ink-2); font-weight: 600; }
 .wkv3-peek__right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; white-space: nowrap; }
 .wkv3-peek__salary { font-size: 12.5px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
-.wkv3-peek__go { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600; color: var(--live); }
+.wkv3-peek__actions { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.wkv3-peek__go,
+.wkv3-peek__signal {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600;
+  text-decoration: none; line-height: 1.2;
+}
+.wkv3-peek__go { color: var(--live); }
+.wkv3-peek__signal { color: var(--ink-3); }
+.wkv3-peek__go:hover,
+.wkv3-peek__signal:hover { color: var(--ink); }
 .wkv3-seeall {
   display: inline-flex; align-items: center; gap: 6px; justify-self: start;
   padding: 9px 15px; font-family: var(--font-sans); font-size: 13px; font-weight: 600;
@@ -2618,6 +2625,9 @@ const ME_V3_STYLES = `
   .wkv3-status__cta { justify-items: stretch; text-align: left; }
   .wkv3-status__cta .wk-btn { justify-content: space-between; }
   .wkv3-side { grid-template-columns: 1fr; }
+  .wkv3-peek { grid-template-columns: 44px minmax(0, 1fr); padding: 13px 14px; }
+  .wkv3-peek__right { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; min-width: 0; gap: 10px; }
+  .wkv3-peek__actions { flex-direction: row; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
   .wkv3-act { grid-template-columns: 44px 1fr; padding: 14px 16px; }
   .wkv3-act__right { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; min-width: 0; gap: 10px; }
   .wkv3-activity__row { grid-template-columns: 38px minmax(0, 1fr); }
