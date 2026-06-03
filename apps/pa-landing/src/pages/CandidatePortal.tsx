@@ -1773,7 +1773,17 @@ function MeNewRolesEmptyState({ claireHref }: { claireHref: string | null }) {
 //    the internal page only when applyUrl is absent (atsApplyUrl is a V16 hard
 //    filter, so recommended recs effectively always carry it).
 function profileSignalHrefForMatch(match: CandidateMatchCard): string | null {
-  if (match.status === "not_passed" && match.reviewDecision) return "/me/profile#profile-corrections"
+  if (match.status === "not_passed" && match.reviewDecision) {
+    const params = new URLSearchParams()
+    params.set("profileRoleSignalTitle", match.job.title)
+    params.set("profileRoleSignalCompany", match.job.company)
+    params.set("profileRoleSignalOutcome", "not_passed")
+    params.set("profileRoleSignalReason", match.reviewDecision.decisionReason)
+    if (match.reviewDecision.recommendedActions.length > 0) {
+      params.set("profileRoleSignalActions", match.reviewDecision.recommendedActions.slice(0, 3).join("\n"))
+    }
+    return `/me/profile?${params.toString()}#profile-corrections`
+  }
   return null
 }
 
@@ -2630,13 +2640,28 @@ function useProfileHashScroll() {
   }, [location.hash])
 }
 
-function useMarketRoleSignalDraft(): string | null {
+type ProfileSignalDraft = { text: string; sourceLabel: string }
+
+function useProfileSignalDraft(): ProfileSignalDraft | null {
   const location = useLocation()
   return useMemo(() => {
     const params = new URLSearchParams(location.search)
     const title = params.get("profileRoleSignalTitle")?.trim()
     const company = params.get("profileRoleSignalCompany")?.trim()
     if (!title || !company) return null
+
+    const outcome = params.get("profileRoleSignalOutcome")?.trim()
+    const reason = params.get("profileRoleSignalReason")?.trim()
+    const actions = params.get("profileRoleSignalActions")?.trim()
+    if (outcome === "not_passed" && reason) {
+      const actionsText = actions
+        ? ` Recommended next profile updates: ${actions.replace(/\n+/g, "; ")}.`
+        : ""
+      return {
+        sourceLabel: "Closed role signal",
+        text: `Use this closed role as profile signal: ${title} at ${company}. Claire closed this role because: ${reason}.${actionsText} Update my durable matching preferences or profile evidence to avoid repeating this mismatch. Do not treat this as an automatic application.`,
+      }
+    }
 
     const context = [
       params.get("profileRoleSignalFunction")?.trim(),
@@ -2645,13 +2670,16 @@ function useMarketRoleSignalDraft(): string | null {
     ].filter((v): v is string => Boolean(v))
 
     const contextText = context.length ? ` (${context.join(", ")})` : ""
-    return `Use this market role as profile signal: ${title} at ${company}${contextText}. If this reflects what I want, update my durable matching preferences. Do not treat this as an automatic application.`
+    return {
+      sourceLabel: "Source role from market",
+      text: `Use this market role as profile signal: ${title} at ${company}${contextText}. If this reflects what I want, update my durable matching preferences. Do not treat this as an automatic application.`,
+    }
   }, [location.search])
 }
 
 function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
   useProfileHashScroll()
-  const marketRoleSignalDraft = useMarketRoleSignalDraft()
+  const profileSignalDraft = useProfileSignalDraft()
   const matchesState = useCandidateMatches(true)
   const [profile, setProfile] = useState<CandidateSelfProfile>(initial)
   const [editing, setEditing] = useState(false)
@@ -2703,7 +2731,7 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
               <WhatClairePitchesCard profile={profile} claireHref={claireHref} />
               <ExperienceHighlightsCard profile={profile} />
               <SkillsCard profile={profile} editing={editing} claireHref={claireHref} />
-              <UpdatePreferencesPanel onProfileUpdated={setProfile} initialCorrectionText={marketRoleSignalDraft} />
+              <UpdatePreferencesPanel onProfileUpdated={setProfile} initialCorrectionDraft={profileSignalDraft} />
             </div>
 
             <aside className="wk-prof__side">
@@ -3303,12 +3331,13 @@ function PrivacyCard() {
 }
 
 function UpdatePreferencesPanel({
-  initialCorrectionText,
+  initialCorrectionDraft,
   onProfileUpdated,
 }: {
-  initialCorrectionText?: string | null
+  initialCorrectionDraft?: ProfileSignalDraft | null
   onProfileUpdated: (profile: CandidateSelfProfile) => void
 }) {
+  const initialCorrectionText = initialCorrectionDraft?.text ?? null
   const [correctionText, setCorrectionText] = useState(() => initialCorrectionText ?? "")
   const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle")
   const [message, setMessage] = useState<string | null>(null)
@@ -3339,11 +3368,11 @@ function UpdatePreferencesPanel({
     <section id="profile-corrections" className="wkv2-card wk-prof-card" aria-labelledby="prof-update-title">
       <h3 className="wkv2-card__h" id="prof-update-title">Update preferences</h3>
       <p className="wk-prof-card__hint">
-        Tell Claire what to change. Free-form is fine — she'll update the canonical tags for you. Edit any market role context before sending.
+        Tell Claire what to change. Free-form is fine — she'll update the canonical tags for you. Edit any market role context or closed role context before sending.
       </p>
-      {initialCorrectionText ? (
-        <div className="wk-prof-card__signal" aria-label="Source role from market">
-          <strong>Source role from market</strong>
+      {initialCorrectionDraft ? (
+        <div className="wk-prof-card__signal" aria-label={initialCorrectionDraft.sourceLabel}>
+          <strong>{initialCorrectionDraft.sourceLabel}</strong>
           <span>Review this as preference evidence, then send it to Claire if it reflects what you want.</span>
         </div>
       ) : null}
