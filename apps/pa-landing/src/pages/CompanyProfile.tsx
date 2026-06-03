@@ -206,6 +206,10 @@ function CompanyScreeningContract({ company, roleTitle }: { company: string; rol
       body: "Location, compensation, timing, work authorization, and must-have evidence are checked before any pass.",
     },
     {
+      title: "Durable profile context",
+      body: "Claire carries your WeKruit profile, constraints, and corrections into this company screen instead of starting from a fresh application.",
+    },
+    {
       title: "Consent before sharing",
       body: "Hiring teams only see candidate-approved evidence after Claire completes the role screen.",
     },

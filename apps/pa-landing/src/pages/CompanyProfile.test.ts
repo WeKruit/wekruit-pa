@@ -21,6 +21,8 @@ test("CompanyProfile shows Claire's company-specific screening contract before r
   assert.match(source, /What Claire will test/)
   assert.match(source, /Nearest-work evidence/)
   assert.match(source, /Role constraints/)
+  assert.match(source, /Durable profile context/)
+  assert.match(source, /Claire carries your WeKruit profile, constraints, and corrections into this company screen/)
   assert.match(source, /Consent before sharing/)
   assert.match(source, /company-specific screen/)
   assert.match(source, /<CompanyScreeningContract company=\{company\} roleTitle=\{firstJob\.title\} \/>[\s\S]*<section className="wk-company-roles"/)
