@@ -129,6 +129,10 @@ export interface BuildClaireAgentOptions {
   judgeContext?: Record<string, string>
   /** prescreen: résumé + prior-session context the prompt grounds probing questions in. */
   prescreenContext?: string
+  /** cv-parsed re-entry: the résumé just parsed → swap the generic kickoff for the PART-2 pitch. */
+  postParsePitch?: boolean
+  /** résumé-drop turn (inline media present, no parse yet) → ACK + HOLD, do NOT pitch / find_match. */
+  resumeJustDropped?: boolean
 }
 
 /** Construct the single Claire agent (tools + guardrails + persona). */
@@ -156,6 +160,13 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
       onboardingSlot: opts.onboardingSlot,
       awaitingAnswer: opts.awaitingAnswer,
       prescreenPrompts: opts.prescreenPrompts,
+      // canary gate for the PART 2 proactive-pitch opener (prompt.ts modeDirective). Per-user-stable,
+      // so the prefix cache correctly splits canary vs non-canary cohorts. isCanaryUser already imported.
+      canary: isCanaryUser(ctx.userId),
+      // post-parse pitch + résumé-drop ACK directives (set by cutover for the cv-parsed re-entry /
+      // the inline media-drop turn respectively; default off for every other turn).
+      postParsePitch: opts.postParsePitch,
+      resumeJustDropped: opts.resumeJustDropped,
     }),
     tools: buildClaireTools(ctx, {
       prescreenPrompts: opts.prescreenPrompts,
@@ -233,11 +244,37 @@ async function loadGlobalContext(db: Firestore, userId: string): Promise<string>
     const industrySector = arr("industrySector").map(str).filter(Boolean).map(prettyIndustry)
     const relevantIndustry = arr("relevantIndustry").map(str).filter(Boolean).map(prettyIndustry)
 
-    // IMPACT NARRATIVE — the field the pitch MUST cite. Walk the top 2 experienceHighlights and
-    // emit "title @ company (Nyr, industry) — description". THIS is what fixes skillsImpact + swap-test.
-    const highlightsRaw = Array.isArray(data.experienceHighlights)
+    // IMPACT NARRATIVE — the field the pitch MUST cite. Prefer root experienceHighlights[];
+    // when absent (résumé-only / QR cohort, highlights not yet promoted to root), fall back to the
+    // parsedCandidateResumes collection (a SEPARATE collection keyed by an auto-id with userId==X;
+    // items carry {company,title,description} and NOT the durationMonths/companyIndustry/companyHqCountry
+    // meta). THIS is what fixes skillsImpact + swap-test for the thin/résumé-only cohort (Adam 2026-06-02).
+    let highlightsRaw: Array<Record<string, unknown>> = Array.isArray(data.experienceHighlights)
       ? (data.experienceHighlights as Array<Record<string, unknown>>)
       : []
+    if (!highlightsRaw.some((h) => str(h?.description))) {
+      try {
+        const parsedSnap = await db
+          .collection("parsedCandidateResumes")
+          .where("userId", "==", userId)
+          .orderBy("createdAt", "desc")
+          .limit(1)
+          .get()
+        const parsed = (parsedSnap.docs[0]?.data() ?? {}) as Record<string, unknown>
+        const exps = Array.isArray(parsed.experiences)
+          ? (parsed.experiences as Array<Record<string, unknown>>)
+          : []
+        if (exps.some((e) => str(e?.description))) {
+          // {company,title,description}; meta fields absent → the ownedLines mapper just omits them
+          // (the `meta` join filters falsy) and roleCountries stays empty (usSilenceActive then leans
+          // on visaStatus only). No schema change needed downstream.
+          highlightsRaw = exps
+        }
+      } catch {
+        /* best-effort — keep root highlights (possibly empty) on any read error (missing composite
+           index, stub db in evals, etc.) → the pitch degrades to the honest-shape opener, never crashes */
+      }
+    }
     const ownedLines = highlightsRaw
       .filter((h) => str(h?.description)) // only roles that carry a real impact description
       .slice(0, 2)
@@ -384,6 +421,12 @@ export interface RunClaireTurnDeps {
   prescreenResumeSnippet?: string
   /** prescreen: the REAL pa-prescreen-sessions doc id (for score write-back + the terminal-action fire). */
   prescreenSessionId?: string
+  /** cv-parsed re-entry (Adam 2026-06-02): the résumé just finished parsing → PITCH from the freshly
+   *  loaded profile, then offer find_match. Set by cutover for the resume_parse_completed event (canary). */
+  postParsePitch?: boolean
+  /** résumé-drop turn: an inline résumé media is present + not yet parsed → ACK + HOLD (no pitch, no
+   *  find_match this turn; the parse runs async, the pitch fires on the resume_parse_completed re-entry). */
+  resumeJustDropped?: boolean
 }
 
 /**
@@ -400,6 +443,15 @@ export interface RunClaireTurnDeps {
  */
 export function sanitizeInboundForLlm(text: string): string {
   const trimmed = text.trimStart()
+  // CV-PARSED RE-ENTRY (Adam 2026-06-02): the body of the resume_parse_completed runtime event is the
+  // generic handoff directive '[system-event:cv_ingest:resume_parse_completed]\n…'. The LLM must NOT
+  // read raw system text (and must NOT treat it as the candidate speaking). The real 'pitch now'
+  // instruction is carried by the postParsePitch PROMPT directive + the freshly-loaded globalContext,
+  // NOT by this body. Collapse it to a single neutral, non-empty marker (an empty user turn confuses
+  // the SDK): zero raw system wording, zero uid leak. Body-format routing of a system-generated
+  // marker — NOT tagging of candidate free text, so the no-regex-in-tagging rule does not apply.
+  if (trimmed.startsWith("[system-event:") && trimmed.includes("resume_parse_completed"))
+    return "[resume just finished parsing]"
   // The QR handshake opener must be reduced to a NEUTRAL GREETING for the LLM — never the raw
   // phrasing. Returning the bare "Hi, WeKruit, my verification code is" made the model read it as
   // a real login/verification-code request and reply "what's the full code? where are you signing
@@ -464,6 +516,8 @@ export async function runClaireTurn(
     prescreenPrompts: deps.prescreenPrompts,
     judgeContext: deps.judgeContext,
     prescreenContext: deps.prescreenContext,
+    postParsePitch: deps.postParsePitch,
+    resumeJustDropped: deps.resumeJustDropped,
   })
   const session = makeClaireSession({
     db: deps.db,

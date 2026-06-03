@@ -112,6 +112,82 @@ test("runtime-event handoff (rawMeta.runtimeEvent=true) is DEFERRED to legacy �
   )
 })
 
+test("cv-parsed re-entry (resume_parse_completed) for a NON-canary user still DEFERS to legacy (invariant 3)", async () => {
+  // The event-kind-aware exemption is scoped to canary users ONLY — a non-canary user's
+  // resume_parse_completed runtime event must keep deferring to the legacy cv-followup until ramp.
+  const eventId = "evt_cv_parsed_noncanary"
+  const uid = `u_noncanary_${Date.now()}_c` // NOT in CANARY_UIDS
+  const db = makeDb({
+    eventId,
+    thinEnabledForUser: uid,
+    inboundDoc: {
+      userId: uid,
+      sessionId: "ses_cv",
+      body: "[system-event:cv_ingest:resume_parse_completed]\nAn external product event arrived.",
+      fromNumber: "+14243201960",
+      rawMeta: {
+        source: "runtime_event_handoff",
+        runtimeEvent: true,
+        runtimeEventSource: "cv_ingest",
+        runtimeEventKind: "resume_parse_completed",
+      },
+    },
+  })
+  const { events, log } = spyLog()
+
+  const handled = await maybeRunThinClaire(db, eventId, { log })
+
+  assert.equal(handled, false, "non-canary cv-parsed event must DEFER to legacy")
+  assert.ok(
+    events.includes("thin_claire.defer_runtime_event"),
+    `expected defer log for non-canary cv-parsed; got ${JSON.stringify(events)}`
+  )
+  assert.equal(
+    events.includes("thin_claire.cv_parsed_reentry"),
+    false,
+    "the cv-parsed exemption must NOT fire for a non-canary user"
+  )
+})
+
+test("cv-parsed re-entry (resume_parse_completed) for a CANARY user is EXEMPTED — falls through to thin, NOT deferred", async () => {
+  // Adam dev phone +14243201960 (in CANARY_UIDS). The resume_parse_completed runtime event must NOT
+  // be deferred — it falls through so thin composes the proactive PART-2 pitch. The heavy agent path
+  // is not exercised here (the stub lacks .where()/.set() support → selectClaireMode/agent degrade and
+  // maybeRunThinClaire returns false via its fail-safe catch); the load-bearing assertion is that the
+  // runtime-event DEFER guard did NOT fire and the exemption log DID.
+  const eventId = "evt_cv_parsed_canary"
+  const uid = "8fEwIduUrzxZsblHHsNz" // Adam — in CANARY_UIDS
+  const db = makeDb({
+    eventId,
+    thinEnabledForUser: uid,
+    inboundDoc: {
+      userId: uid,
+      sessionId: "ses_cv",
+      body: "[system-event:cv_ingest:resume_parse_completed]\nAn external product event arrived.",
+      fromNumber: "+14243201960",
+      rawMeta: {
+        source: "runtime_event_handoff",
+        runtimeEvent: true,
+        runtimeEventSource: "cv_ingest",
+        runtimeEventKind: "resume_parse_completed",
+      },
+    },
+  })
+  const { events, log } = spyLog()
+
+  await maybeRunThinClaire(db, eventId, { log })
+
+  assert.equal(
+    events.includes("thin_claire.defer_runtime_event"),
+    false,
+    "canary cv-parsed event must NOT hit the runtime-event defer guard (it is exempted)"
+  )
+  assert.ok(
+    events.includes("thin_claire.cv_parsed_reentry"),
+    `expected the cv-parsed exemption log for the canary user; got ${JSON.stringify(events)}`
+  )
+})
+
 test("real candidate turn (no rawMeta.runtimeEvent) does NOT hit the runtime-event guard", async () => {
   const eventId = "evt_real_turn"
   const userId = "u_real_turn"

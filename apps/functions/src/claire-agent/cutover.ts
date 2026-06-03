@@ -14,6 +14,7 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { isThinClaireEnabled } from "./flags.js"
+import { isCanaryUser } from "./canary.js"
 import { createSendblueTransport } from "./transport.js"
 import { selectClaireMode } from "./mode-selector.js"
 import type { ClaireLang } from "./types.js"
@@ -85,15 +86,28 @@ export async function maybeRunThinClaire(
   // real broker "Hello, WeKruit!" handshake produced the first). Defer ALL runtime events
   // to legacy so exactly one path composes one opener. The candidate's real handshake flows
   // via the broker path (no runtimeEvent marker) and is unaffected by this guard.
-  if (rawMeta.runtimeEvent === true) {
+  const runtimeEventKind =
+    typeof rawMeta.runtimeEventKind === "string" ? rawMeta.runtimeEventKind : undefined
+  // CV-PARSED RE-ENTRY (Adam 2026-06-02): the cv-ingest post-parse completion event is ALSO a
+  // runtimeEvent (enqueueRuntimeEventHandoff eventKind="resume_parse_completed"), so the blanket guard
+  // below was deferring the THIN proactive pitch to legacy too — which is why the pitch read surface
+  // even after PART 1 shipped. Let THIS one kind fall through to thin so Claire composes the enriched
+  // pitch from the freshly-parsed profile — but ONLY for canary users (invariant 3: non-canary keep the
+  // legacy cv-followup until ramp). The producer contract is unchanged; legacy still consumes the same
+  // event for everyone else. The onboarding-kickoff / nurture / cv-reject runtime events carry a
+  // DIFFERENT runtimeEventKind, so they still defer → the onboarding dup-send fix stays intact.
+  const cvParsedReentry =
+    runtimeEventKind === "resume_parse_completed" && isCanaryUser(userId)
+  if (rawMeta.runtimeEvent === true && !cvParsedReentry) {
     log("thin_claire.defer_runtime_event", {
       eventId,
       userId,
       source: typeof rawMeta.runtimeEventSource === "string" ? rawMeta.runtimeEventSource : undefined,
-      kind: typeof rawMeta.runtimeEventKind === "string" ? rawMeta.runtimeEventKind : undefined,
+      kind: runtimeEventKind,
     })
     return false
   }
+  if (cvParsedReentry) log("thin_claire.cv_parsed_reentry", { eventId, userId })
 
   const toE164 =
     (typeof data.fromNumber === "string" && data.fromNumber) ||
@@ -136,7 +150,7 @@ export async function maybeRunThinClaire(
   // Deterministic mode pick from durable state (onboarding/prescreen/triage). An active
   // prescreen DEFERS this turn to the proven legacy runner (return false → legacy handles it).
   // Fail-safe: selectClaireMode never throws — any read error degrades to triage.
-  const decision = await selectClaireMode({ db, userId, inboundText: text, log })
+  const decision = await selectClaireMode({ db, userId, inboundText: text, log, cvParsedTrigger: cvParsedReentry })
   if (decision.deferToLegacy) {
     log("thin_claire_defer_legacy", { eventId, userId, mode: decision.mode, jobId: decision.jobId })
     return false
@@ -227,6 +241,14 @@ export async function maybeRunThinClaire(
         ...(decision.prescreenContext ? { prescreenContext: decision.prescreenContext } : {}),
         ...(decision.prescreenResumeSnippet ? { prescreenResumeSnippet: decision.prescreenResumeSnippet } : {}),
         ...(decision.prescreenSessionId ? { prescreenSessionId: decision.prescreenSessionId } : {}),
+        // cv-parsed re-entry: this turn is the post-parse PITCH turn (mode-selector set postParsePitch).
+        // Threaded so prompt.ts swaps the generic kickoff for the PART-2 pitch. Canary-only by construction
+        // (cvParsedReentry requires isCanaryUser); default off for everyone else.
+        ...(decision.postParsePitch ? { postParsePitch: true } : {}),
+        // résumé-DROP turn: an inline résumé media is present + this is NOT the parse re-entry → ACK + HOLD
+        // (no pitch, no find_match this turn; the cutover:114 fire-and-forget runs the parse async, and the
+        // pitch fires on the resume_parse_completed re-entry). Canary-gated to match the pitch behavior.
+        ...(inboundMediaUrl && !cvParsedReentry && isCanaryUser(userId) ? { resumeJustDropped: true } : {}),
       },
     )
     await db

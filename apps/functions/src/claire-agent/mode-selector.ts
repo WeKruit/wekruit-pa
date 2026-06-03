@@ -66,6 +66,10 @@ export interface ModeDecision {
   prescreenResumeSnippet?: string
   /** prescreen (thin): the REAL pa-prescreen-sessions doc id (score write-back + terminal fire). */
   prescreenSessionId?: string
+  /** cv-parsed re-entry (Adam 2026-06-02): this turn is the post-parse pitch turn — swap the generic
+   *  kickoff for the PART-2 proactive pitch (consumed by prompt.ts). Set only for the resume_parse_completed
+   *  re-entry (canary), never on a normal onboarding/triage turn. */
+  postParsePitch?: boolean
 }
 
 export interface SelectModeArgs {
@@ -74,6 +78,9 @@ export interface SelectModeArgs {
   inboundText: string
   log?: (event: string, payload?: Record<string, unknown>) => void
   nowIso?: () => string
+  /** cv-parsed re-entry (Adam 2026-06-02): the cutover sets this when the inbound is the
+   *  resume_parse_completed runtime event (canary only) so this turn becomes the post-parse pitch turn. */
+  cvParsedTrigger?: boolean
 }
 
 /**
@@ -227,6 +234,62 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
 
   const shared = (user.sharedOnboarding ?? null) as Record<string, unknown> | null
   const onboardingComplete = shared?.completed === true || user.onboardingState === "complete"
+
+  // CV-PARSED RE-ENTRY (Adam 2026-06-02): this turn is the resume_parse_completed runtime event (the
+  // cutover only sets cvParsedTrigger for canary users). The résumé just parsed → the agent should
+  // PITCH from the freshly-loaded profile (postParsePitch), then offer/run find_match AFTER. Runs AFTER
+  // the active-prescreen block above (a late parse must never hijack a live screen) and after the user
+  // read. For an UNFINISHED profile we ride the onboarding kickoff shape (postParsePitch swaps the
+  // generic compliment for the pitch; messages[1] weaves the next onboarding question). For a COMPLETE/
+  // returning profile we ride triage with postParsePitch (the pitch then OFFERs find_match).
+  if (args.cvParsedTrigger) {
+    if (!onboardingComplete) {
+      try {
+        if (!isSharedOnboardingActiveUser(user)) {
+          // Cold start that just got a résumé: seed durable state, then pitch + ask main_goal.
+          await bootstrapOnboarding(args.db, args.userId, now)
+          log("mode.cv_parsed_pitch_bootstrap", { userId: args.userId })
+          return {
+            mode: "onboarding",
+            awaitingAnswer: false,
+            postParsePitch: true,
+            onboardingSlot: "main_goal",
+            pendingStep: buildSharedOnboardingPrompt("main_goal", null),
+            currentStep: buildSharedOnboardingPrompt("main_goal", null),
+            processStore: seedStore([]),
+          }
+        }
+        const cur = currentSharedOnboardingQuestionId(user) as SharedOnboardingQuestionId
+        const answeredSlots = Object.keys((shared?.answers as Record<string, unknown>) ?? {})
+        const next = resolveNextSharedOnboardingQuestionId(cur)
+        log("mode.cv_parsed_pitch_active", { userId: args.userId, currentSlot: cur, next: next.nextQuestionId })
+        return {
+          mode: "onboarding",
+          // kickoff shape (ask, don't record) so the PART-2 pitch fires + the clarifier lands the
+          // next onboarding question for an unfinished profile (the parse event is not an answer).
+          awaitingAnswer: false,
+          postParsePitch: true,
+          onboardingSlot: cur,
+          currentStep: buildSharedOnboardingPrompt(cur, null),
+          ...(next.nextQuestionId
+            ? { pendingStep: buildSharedOnboardingPrompt(next.nextQuestionId, null) }
+            : { pendingStep: buildSharedOnboardingPrompt(cur, null) }),
+          processStore: seedStore(answeredSlots),
+        }
+      } catch (err) {
+        log("mode.cv_parsed_pitch_error", {
+          userId: args.userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        // Fall through to the normal onboarding/triage resolution below on any read error.
+      }
+    } else {
+      // Returning user re-uploaded a résumé → pitch in triage, then OFFER find_match.
+      log("mode.cv_parsed_pitch_triage", { userId: args.userId })
+      return { mode: "triage", postParsePitch: true }
+    }
+  }
+
   if (!onboardingComplete) {
     try {
       if (!isSharedOnboardingActiveUser(user)) {
