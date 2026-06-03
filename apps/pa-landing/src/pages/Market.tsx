@@ -650,7 +650,7 @@ function initialMarketViewMode(): "table" | "cards" {
 // ────────────────────────────────────────────────────────────────────────────
 
 export default function Market(): ReactNode {
-  const [tab, setTab] = useState<"hunting" | "direct">("hunting")
+  const [tab, setTab] = useState<"hunting" | "direct">("direct")
   const [view, setView] = useState<"table" | "cards">(initialMarketViewMode)
   const [searchQ, setSearchQ] = useState("")
   const [fnSel, setFnSel] = useState<Set<string>>(new Set())

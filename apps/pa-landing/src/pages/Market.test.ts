@@ -56,6 +56,11 @@ test("Market defaults mobile tracked roles to cards instead of dense table", () 
   assert.doesNotMatch(source, /useState<"table" \| "cards">\("table"\)/)
 })
 
+test("Market opens on direct-line roles before external tracked roles", () => {
+  assert.match(source, /useState<"hunting" \| "direct">\("direct"\)/)
+  assert.doesNotMatch(source, /useState<"hunting" \| "direct">\("hunting"\)/)
+})
+
 test("Market tracked-role rows connect external source inspection to durable preferences", () => {
   assert.match(source, /View source/)
   assert.match(source, /function profileCorrectionHrefForRole\(r: DisplayJob\): string/)
