@@ -962,6 +962,8 @@ function deriveRoleFollowupActions(matches: CandidateMatchCard[]): MeAction[] {
     .map((match) => {
       const accepted = match.status === "intro_accepted"
       const profileSignalHref = profileSignalHrefForMatch(match)
+      const introRejectedSignal = match.status === "intro_rejected" && Boolean(profileSignalHref)
+      const profileSignalMeta = introRejectedSignal ? "Intro closed · profile signal" : "Role closed · profile signal"
       const display = getCandidateJobStatusDisplay(match.status, match.job.title)
       const target = matchPrimaryTarget(match)
       return {
@@ -969,7 +971,7 @@ function deriveRoleFollowupActions(matches: CandidateMatchCard[]): MeAction[] {
         logo: (match.job.company[0] ?? "?").toUpperCase(),
         logoBg: LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length],
         urgent: false,
-        meta: profileSignalHref ? "Role closed · profile signal" : accepted ? "Intro accepted · next step" : "Passed profile · review",
+        meta: profileSignalHref ? profileSignalMeta : accepted ? "Intro accepted · next step" : "Passed profile · review",
         title: match.job.title,
         sub: match.reviewDecision?.decisionReason || display.nextStep,
         cta: profileSignalHref ? "Update profile signal" : accepted ? "Review intro" : "Review pass note",
@@ -1773,10 +1775,11 @@ function MeNewRolesEmptyState({ claireHref }: { claireHref: string | null }) {
 //    the internal page only when applyUrl is absent (atsApplyUrl is a V16 hard
 //    filter, so recommended recs effectively always carry it).
 function profileSignalHrefForMatch(match: CandidateMatchCard): string | null {
+  const params = new URLSearchParams()
+  params.set("profileRoleSignalTitle", match.job.title)
+  params.set("profileRoleSignalCompany", match.job.company)
+
   if (match.status === "not_passed" && match.reviewDecision) {
-    const params = new URLSearchParams()
-    params.set("profileRoleSignalTitle", match.job.title)
-    params.set("profileRoleSignalCompany", match.job.company)
     params.set("profileRoleSignalOutcome", "not_passed")
     params.set("profileRoleSignalReason", match.reviewDecision.decisionReason)
     if (match.reviewDecision.recommendedActions.length > 0) {
@@ -1784,6 +1787,14 @@ function profileSignalHrefForMatch(match: CandidateMatchCard): string | null {
     }
     return `/me/profile?${params.toString()}#profile-corrections`
   }
+
+  if (match.status === "intro_rejected") {
+    const display = getCandidateJobStatusDisplay(match.status, match.job.title)
+    params.set("profileRoleSignalOutcome", "intro_rejected")
+    params.set("profileRoleSignalReason", display.nextStep)
+    return `/me/profile?${params.toString()}#profile-corrections`
+  }
+
   return null
 }
 
@@ -2653,6 +2664,13 @@ function useProfileSignalDraft(): ProfileSignalDraft | null {
     const outcome = params.get("profileRoleSignalOutcome")?.trim()
     const reason = params.get("profileRoleSignalReason")?.trim()
     const actions = params.get("profileRoleSignalActions")?.trim()
+    if (outcome === "intro_rejected" && reason) {
+      return {
+        sourceLabel: "Closed intro signal",
+        text: `Use this closed intro as profile signal: ${title} at ${company}. Employer intro outcome: ${reason}. Update my durable matching preferences or profile evidence if this closure should change future matching. Do not treat this as an automatic application.`,
+      }
+    }
+
     if (outcome === "not_passed" && reason) {
       const actionsText = actions
         ? ` Recommended next profile updates: ${actions.replace(/\n+/g, "; ")}.`
@@ -3368,7 +3386,7 @@ function UpdatePreferencesPanel({
     <section id="profile-corrections" className="wkv2-card wk-prof-card" aria-labelledby="prof-update-title">
       <h3 className="wkv2-card__h" id="prof-update-title">Update preferences</h3>
       <p className="wk-prof-card__hint">
-        Tell Claire what to change. Free-form is fine — she'll update the canonical tags for you. Edit any market role context or closed role context before sending.
+        Tell Claire what to change. Free-form is fine — she'll update the canonical tags for you. Edit any market role context, closed role context, or closed intro context before sending.
       </p>
       {initialCorrectionDraft ? (
         <div className="wk-prof-card__signal" aria-label={initialCorrectionDraft.sourceLabel}>
