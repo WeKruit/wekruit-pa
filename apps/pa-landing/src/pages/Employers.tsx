@@ -65,6 +65,7 @@ type InboxRolePacket = {
   role: string
   scope: string
   hardFilters: string
+  mustHaves: string
   evidenceProbes: string
   calibrationBar: string
   introOwner: string
@@ -76,6 +77,7 @@ const SAMPLE_INBOX_ROLE_PACKET: InboxRolePacket = {
   role: "Founder-mode product platform lead",
   scope: "Developer platform role where Claire must prove API product judgment, billing/tiering ownership, and SF hybrid fit before any pass reaches the hiring team.",
   hardFilters: "5+y product ownership, developer-facing APIs, SF hybrid availability, comp inside approved band, no sponsorship required.",
+  mustHaves: "API product depth, billing/tiering ownership, SF hybrid fit, and a concrete roadmap tradeoff tied to customer evidence.",
   evidenceProbes: "Roadmap tradeoff, tiering decision, customer evidence, and what the candidate would cut from this brief.",
   calibrationBar: "Strong pass ties platform depth, customer evidence, P&L ownership, and role-specific tradeoffs together. False positive lists launches without decision ownership.",
   introOwner: "Product lead reviews the pass record and owns the next interview step within two business days.",
@@ -833,6 +835,7 @@ export function EmployersInbox() {
 function EmployerInboxRolePacket({ packet }: { packet: InboxRolePacket }) {
   const rows = [
     ["Hard filters before pass", packet.hardFilters],
+    ["Must-haves Claire verified", packet.mustHaves],
     ["Evidence probes Claire asked", packet.evidenceProbes],
     ["Calibration bar", packet.calibrationBar],
     ["Intro owner", packet.introOwner],

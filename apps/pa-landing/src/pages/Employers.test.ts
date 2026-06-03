@@ -165,6 +165,7 @@ test("Employers inbox preview connects a passed profile back to the approved rol
   assert.match(employersSource, /What Claire screened against/)
   assert.match(employersSource, /Founder-mode product platform lead/)
   assert.match(employersSource, /Hard filters before pass/)
+  assert.match(employersSource, /Must-haves Claire verified/)
   assert.match(employersSource, /Evidence probes Claire asked/)
   assert.match(employersSource, /Calibration bar/)
   assert.match(employersSource, /Intro owner/)
