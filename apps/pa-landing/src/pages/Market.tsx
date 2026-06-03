@@ -552,6 +552,43 @@ function DirectRow({ r, onTalk }: { r: DisplayJob; onTalk: () => void }) {
   )
 }
 
+function DirectCard({ r, onTalk }: { r: DisplayJob; onTalk: () => void }) {
+  const seatText = r.seats === undefined ? "Claire interview" : `${r.seats} ${r.seats === 1 ? "seat" : "seats"}`
+  return (
+    <article className="wk-direct-card">
+      <header className="wk-direct-card__head">
+        <CompanyMark logo={r.logo} bg={r.logoBg} size={42} />
+        <div>
+          <div className="wk-direct-card__co">{r.company}</div>
+          <div className="wk-direct-card__via">
+            {r.online ? <PulseDot size={5} /> : null}
+            {r.online ? "Online now" : r.via}
+          </div>
+        </div>
+        <EvidenceBadge evidence={r.evidence} />
+      </header>
+      <h3 className="wk-direct-card__role">{r.title}</h3>
+      <p className="wk-direct-card__meta">
+        <span>{seatText}</span><span className="wk-tbl__sep">·</span>
+        <span>{r.location}</span>
+      </p>
+      <div className="wk-direct-card__owner">
+        <Avatar name={r.hiringManager.name} size={30} tone={r.hiringManager.tone} />
+        <div>
+          <div className="wk-direct-card__owner-name">{r.hiringManager.name}</div>
+          <div className="wk-direct-card__owner-title">{r.hiringManager.title}</div>
+        </div>
+      </div>
+      <footer className="wk-direct-card__foot">
+        <span className="wk-direct-card__comp">{r.comp}</span>
+        <button className="wk-pitchbtn wk-pitchbtn--ink wk-pitchbtn--lg" onClick={onTalk}>
+          <Icon name="message" size={13} stroke={2} /> Talk to Claire
+        </button>
+      </footer>
+    </article>
+  )
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Data hooks — TanStack Query
 //   · Hunting list  → useInfiniteQuery against paPublicOpenJobs (server-side
@@ -895,7 +932,7 @@ export default function Market(): ReactNode {
                   Direct-line role briefs <em className="wk-accent">ready</em> for Claire.
                 </h1>
                 <p className="wk-market__lede">
-                  These companies gave WeKruit role briefs to screen against. Tap a row to talk to Claire.
+                  These companies gave WeKruit role briefs to screen against. Choose a role to talk to Claire.
                   Claire starts the role interview before any passed profile is shared.
                 </p>
               </header>
@@ -909,8 +946,13 @@ export default function Market(): ReactNode {
                   <strong>Couldn't load direct line.</strong>
                   {direct.error.message}
                 </div>
+              ) : directJobs.length === 0 ? (
+                <div className="wk-tbl__empty wk-tbl__empty--block">
+                  <strong>No direct-line roles yet.</strong> Check tracked roles and keep your profile preferences current.
+                </div>
               ) : (
-                <div className="wk-tbl-wrap wk-tbl-wrap--solo">
+                <>
+                <div className="wk-tbl-wrap wk-tbl-wrap--solo wk-direct-table">
                   <table className="wk-tbl wk-tbl--direct">
                     <thead>
                       <tr>
@@ -923,16 +965,18 @@ export default function Market(): ReactNode {
                       </tr>
                     </thead>
                     <tbody>
-                      {directJobs.length === 0 ? (
-                        <tr><td colSpan={6} className="wk-tbl__empty">
-                          <strong>No direct-line roles yet.</strong> Check tracked roles and keep your profile preferences current.
-                        </td></tr>
-                      ) : directJobs.map((r) => (
+                      {directJobs.map((r) => (
                         <DirectRow key={r.id} r={r} onTalk={() => onTalkToClaire(r)} />
                       ))}
                     </tbody>
                   </table>
                 </div>
+                <div className="wk-direct-cards">
+                  {directJobs.map((r) => (
+                    <DirectCard key={r.id} r={r} onTalk={() => onTalkToClaire(r)} />
+                  ))}
+                </div>
+                </>
               )}
             </div>
           </section>
@@ -1230,6 +1274,53 @@ const MARKET_STYLES = String.raw`
   height: 38px; padding: 0 12px; font-size: 13.5px;
 }
 
+.wk-shell .wk-direct-cards { display: none; }
+.wk-shell .wk-direct-card {
+  background: var(--wk-cream-3); border: 1px solid var(--wk-live-border);
+  border-radius: var(--wk-r-md); padding: 18px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.wk-shell .wk-direct-card__head {
+  display: grid; grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 12px; align-items: center;
+}
+.wk-shell .wk-direct-card__co {
+  font-weight: 650; font-size: 14.5px; color: var(--wk-ink); letter-spacing: -0.005em;
+}
+.wk-shell .wk-direct-card__via {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--wk-live); font-size: 12px; font-weight: 600; margin-top: 2px;
+}
+.wk-shell .wk-direct-card__role {
+  font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
+  font-weight: 400; font-size: 23px; line-height: 1.15; letter-spacing: 0;
+  color: var(--wk-ink); margin: 2px 0 0; text-wrap: balance;
+}
+.wk-shell .wk-direct-card__meta {
+  margin: -2px 0 0; display: flex; flex-wrap: wrap; gap: 4px;
+  color: var(--wk-ink-2); font-size: 13.5px; line-height: 1.35;
+}
+.wk-shell .wk-direct-card__owner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px; border: 1px solid var(--wk-border); border-radius: var(--wk-r-sm);
+  background: var(--wk-cream);
+}
+.wk-shell .wk-direct-card__owner-name {
+  font-weight: 650; font-size: 13.5px; color: var(--wk-ink);
+}
+.wk-shell .wk-direct-card__owner-title {
+  font-size: 12.5px; color: var(--wk-ink-3); margin-top: 1px;
+}
+.wk-shell .wk-direct-card__foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding-top: 4px;
+}
+.wk-shell .wk-direct-card__comp {
+  font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
+  font-style: italic; font-weight: 500; font-size: 18px;
+  color: var(--wk-ink); letter-spacing: -0.01em;
+}
+
 .wk-shell .wk-loadmore { display: flex; justify-content: center; padding: 24px 0 8px; }
 .wk-shell .wk-loadmore .wk-btn:disabled { opacity: 0.65; cursor: progress; }
 
@@ -1303,5 +1394,16 @@ const MARKET_STYLES = String.raw`
   .wk-shell .wk-batch { flex-direction: column; align-items: flex-start; gap: 8px; }
   .wk-shell .wk-tbl-wrap { overflow-x: auto; }
   .wk-shell .wk-tbl { min-width: 760px; }
+}
+@media (max-width: 720px) {
+  .wk-shell .wk-direct-table { display: none; }
+  .wk-shell .wk-direct-cards { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 8px; }
+  .wk-shell .wk-direct-card__head { grid-template-columns: 42px minmax(0, 1fr); }
+  .wk-shell .wk-direct-card .wk-evidence {
+    grid-column: 1 / -1; align-items: flex-start; text-align: left; max-width: none;
+  }
+  .wk-shell .wk-direct-card__foot { flex-direction: column; align-items: stretch; }
+  .wk-shell .wk-direct-card__comp { white-space: normal; }
+  .wk-shell .wk-direct-card__foot .wk-pitchbtn { width: 100%; justify-content: center; }
 }
 `

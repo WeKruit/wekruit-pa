@@ -133,3 +133,13 @@ test("Market direct-line rows do not invent hiring-manager identity when a role 
   assert.match(source, /title: hiringManagerName \? \(hiringManagerTitle \?\? "Hiring lead"\) : "Employer-approved screen"/)
   assert.match(source, /<th className="wk-tbl__h">Owner<\/th>/)
 })
+
+test("Market direct-line roles render mobile cards instead of only a wide table", () => {
+  assert.match(source, /function DirectCard\(\{ r, onTalk \}: \{ r: DisplayJob; onTalk: \(\) => void \}\)/)
+  assert.match(source, /className="wk-tbl-wrap wk-tbl-wrap--solo wk-direct-table"/)
+  assert.match(source, /<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>/)
+  assert.match(source, /\.wk-shell \.wk-direct-cards \{ display: none; \}/)
+  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-direct-table \{ display: none; \}[\s\S]*\.wk-shell \.wk-direct-cards \{ display: grid;/)
+  assert.match(source, /Choose a role to talk to Claire\./)
+  assert.doesNotMatch(source, /Tap a row to talk to Claire\./)
+})
