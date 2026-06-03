@@ -31,6 +31,7 @@ import {
   CLAIM_EMAIL_KEY,
   clearRememberedLoginNext,
   isLayoffHost,
+  isPublicJobPath,
   onboardingDestination,
   parseLoginNextPath,
   readRememberedLoginNext,
@@ -905,6 +906,26 @@ export default function CandidateLogin() {
 
   const busy = status === "google" || status === "linkedin" || status === "sending" || status === "signing_in"
   const onLayoff = isLayoffHost()
+  const roleInterviewNext = isPublicJobPath(nextDest.pathname)
+  const onboardingBase = onboardingDestination(peekSource())
+  const firstTimeOnboardingHref = roleInterviewNext
+    ? `${onboardingBase}${onboardingBase.includes("?") ? "&" : "?"}next=${encodeURIComponent(nextDest.to)}`
+    : onboardingBase
+  const loginEyebrow = isCompletingLink
+    ? "Finishing sign-in"
+    : roleInterviewNext
+      ? "Role interview"
+      : "Pick up where you left off"
+  const loginSub = isCompletingLink
+    ? "One sec — confirming your email and pulling up your pipeline."
+    : status === "signing_in"
+      ? roleInterviewNext
+        ? "One sec — confirming your sign-in and reopening this role with Claire."
+        : "One sec — confirming your sign-in and opening onboarding."
+      : roleInterviewNext
+        ? "Sign in and Claire keeps this role attached to your interview and profile."
+        : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."
+  const firstTimeLabel = roleInterviewNext ? "Start this role with Claire" : "Interview with Claire"
 
   if (onLayoff) {
     const layoffStatus =
@@ -937,19 +958,17 @@ export default function CandidateLogin() {
         <div className="wk-container">
           <div className="wk-login__card">
             <p className="wk-eyebrow">
-              {isCompletingLink ? "Finishing sign-in" : "Pick up where you left off"}
+              {loginEyebrow}
             </p>
             <h1 className="wk-login__h">
               {isCompletingLink
                 ? <>Finishing <em className="wk-accent">sign-in.</em></>
+                : roleInterviewNext
+                  ? <>Continue this <em className="wk-accent">role.</em></>
                 : <>Already talked to <em className="wk-accent">Claire?</em></>}
             </h1>
             <p className="wk-login__sub">
-              {isCompletingLink
-                ? "One sec — confirming your email and pulling up your pipeline."
-                : status === "signing_in"
-                  ? "One sec — confirming your sign-in and opening onboarding."
-                  : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."}
+              {loginSub}
             </p>
 
             {status === "signing_in" && !isCompletingLink ? (
@@ -1018,7 +1037,7 @@ export default function CandidateLogin() {
             ) : null}
 
             <p className="wk-login__fine">
-              First time? <Link to={onboardingDestination(peekSource())} className="wk-link">Interview with Claire</Link> — same flow.
+              First time? <Link to={firstTimeOnboardingHref} className="wk-link">{firstTimeLabel}</Link> — same flow.
             </p>
           </div>
         </div>

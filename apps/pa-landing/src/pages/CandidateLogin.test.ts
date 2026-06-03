@@ -17,7 +17,17 @@ test("CandidateShell does not hardcode a fake Claire SMS handoff", () => {
 
 test("CandidateLogin sends first-time candidates into onboarding", () => {
   assert.doesNotMatch(source, /First time\?\s*<Link to="\/"/)
-  assert.match(source, /First time\?\s*<Link to=\{onboardingDestination\(peekSource\(\)\)\}/)
+  assert.match(source, /onboardingBase\s*=\s*onboardingDestination\(peekSource\(\)\)/)
+  assert.match(source, /: onboardingBase/)
+  assert.match(source, /First time\?\s*<Link to=\{firstTimeOnboardingHref\}/)
+})
+
+test("CandidateLogin preserves role interview context for first-time job candidates", () => {
+  assert.match(source, /isPublicJobPath/)
+  assert.match(source, /roleInterviewNext\s*=\s*isPublicJobPath\(nextDest\.pathname\)/)
+  assert.match(source, /firstTimeOnboardingHref\s*=\s*roleInterviewNext[\s\S]*encodeURIComponent\(nextDest\.to\)/)
+  assert.match(source, /Role interview/)
+  assert.match(source, /Start this role with Claire/)
 })
 
 test("CandidateShell signed-in nav keeps candidates inside the operating home surfaces", () => {
