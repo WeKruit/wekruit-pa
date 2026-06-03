@@ -51,6 +51,9 @@ export interface ClairePromptOptions {
   /** WS-3(b) (Adam 2026-06-03): this turn MAY carry the occasional "connect Gmail on wekruit.com" nudge
    *  (cooldown-gated upstream). The directive says you MAY — the agent decides whether to surface it. */
   gmailNudge?: boolean
+  /** LINKEDIN-DONE re-entry (Adam 2026-06-03): they just logged in with LinkedIn — identity + name
+   *  verified, but no work history (OIDC can't return it) → ack by name + ask for résumé/URL. */
+  linkedinJustConnected?: boolean
 }
 
 const PERSONA = [
@@ -734,6 +737,16 @@ export function buildClaireTurnContext(opts: ClairePromptOptions): string {
     // never pushy. Skip it entirely if the turn is busy (a pitch, a match, a real question to answer).
     opts.gmailNudge
       ? `GMAIL CONNECT (optional, low-priority): if it fits naturally — NOT if the turn is already busy — you MAY add ONE light clause inviting them to connect Gmail on wekruit.com so their profile follows them across devices, with this exact link: ${buildConnectGmailUrl()}. Never required, never pushy, never the main point of the message.`
+      : "",
+    // LINKEDIN JUST CONNECTED (Adam 2026-06-03): they tapped "log in with LinkedIn" and came back. You
+    // now have their VERIFIED identity + their real name (in CONTEXT) — but NOT their work history yet
+    // (LinkedIn's login doesn't hand it over). So: warmly acknowledge by their REAL name that they're
+    // connected, then ask them — in your own voice — to either drop their résumé right here or paste
+    // their LinkedIn profile URL so you can pull their experience and start matching. ONE short, warm
+    // message. CRITICAL: do NOT re-introduce yourself, do NOT re-send the original 3-option offer, do
+    // NOT ask a generic onboarding question. This is a continuation, not a fresh start.
+    opts.linkedinJustConnected
+      ? "LINKEDIN CONNECTED: the candidate just logged in with LinkedIn — their identity + real name are verified (see CONTEXT), but you do NOT have their work history yet. In ONE short warm message: acknowledge them by their real name + that they're connected, then ask them to drop their résumé here OR paste their LinkedIn profile URL so you can pull their experience and start matching. Do NOT re-introduce yourself, do NOT re-send the original options, do NOT ask a generic question — this is a continuation."
       : "",
   ]
     .filter(Boolean)

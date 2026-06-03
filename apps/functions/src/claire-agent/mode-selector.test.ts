@@ -132,6 +132,17 @@ test("Image #24 fix: COLD canary mid-enrich (LinkedIn-done re-entry) ACKS in tri
   assert.notEqual(decision.offerFirstKickoff, true, "must NOT re-offer the cold kickoff while enriching")
 })
 
+test("Image #25 fix: LINKEDIN-DONE opener with NO enrich (OAuth name-only) → triage ack, NOT re-offer", async () => {
+  // Cold canary, NO enrichmentInFlight (LinkedIn login bound identity but couldn't pull the URL/enrich)
+  // → the "I've done LinkedIn submission <tok>" re-entry must route to triage with linkedinJustConnected,
+  // never the cold offer-first kickoff.
+  const { db } = makeDb({}) // cold, no enrich
+  const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "I've done LinkedIn submission tok_abc12345" })
+  assert.equal(decision.mode, "triage")
+  assert.equal(decision.linkedinJustConnected, true, "acks the connection + asks for résumé/URL")
+  assert.notEqual(decision.offerFirstKickoff, true, "must NOT re-offer the cold kickoff after they connected")
+})
+
 test("WS-1(b): canary with an in-flight marker (onboarding active) surfaces enrichmentInFlight on the decision", async () => {
   const { db } = makeDb({
     enrichmentInFlight: true,

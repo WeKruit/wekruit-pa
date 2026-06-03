@@ -936,6 +936,18 @@ export const paLinkedinCallback = onRequest(
     try {
       const accessToken = await exchangeLinkedinCodeForAccessToken({ code, clientId, clientSecret })
       const info = await fetchLinkedinUserInfo(accessToken)
+      // DEBUG (Adam 2026-06-03): persist the RAW userinfo so we can read EXACTLY what LinkedIn returns
+      // for our app (gcloud logs are unauthed locally) — settles whether the `profile` URL claim exists.
+      try {
+        await getFirestore().collection("pa-debug").doc("linkedin-oauth-last").set({
+          rawKeys: Object.keys(info as Record<string, unknown>),
+          raw: JSON.parse(JSON.stringify(info)),
+          mode: state.mode,
+          at: new Date().toISOString(),
+        })
+      } catch (dbgErr) {
+        logger.warn("linkedin_oauth.debug_persist_failed", { err: String(dbgErr) })
+      }
       const sub = info.sub?.trim()
       if (!sub) throw new Error("linkedin_userinfo_failed:missing_sub")
       // connect_prospect (Adam 2026-06-03): one-tap "Login with LinkedIn" for a texted prospect.

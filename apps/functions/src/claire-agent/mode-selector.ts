@@ -27,6 +27,7 @@ import {
   resolveNextAskedSharedOnboardingQuestionId,
   buildSharedOnboardingPrompt,
   SHARED_ONBOARDING_WORK_SESSION_KIND,
+  parseLinkedinDoneOpener,
   type SharedOnboardingQuestionId,
 } from "@pa/pa-orchestrator"
 import type { ClaireMode } from "./types.js"
@@ -87,6 +88,11 @@ export interface ModeDecision {
    *  with NO onboarding question — pitch-first; the pitch fires after they connect/drop. Set on the cold
    *  bootstrap turn. */
   offerFirstKickoff?: boolean
+  /** LinkedIn-DONE re-entry (Adam 2026-06-03, Image #25): the candidate tapped "log in with LinkedIn"
+   *  and came back via "I've done LinkedIn submission <token>", but OAuth bound IDENTITY ONLY (our app
+   *  can't get the profile URL yet, so no Coresignal enrich fired). The turn-context directive makes
+   *  Claire ACK by name + ask for résumé/URL to pull experience — NEVER re-offer the cold kickoff. */
+  linkedinJustConnected?: boolean
 }
 
 export interface SelectModeArgs {
@@ -356,6 +362,18 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   if (enrichmentInFlight && !isSharedOnboardingActiveUser(user)) {
     log("mode.enrichment_in_flight_ack", { userId: args.userId })
     return { mode: "triage", ...inFlightDecision }
+  }
+
+  // LINKEDIN-DONE RE-ENTRY (Adam 2026-06-03, Image #25): the candidate tapped "log in with LinkedIn"
+  // and came back via "I've done LinkedIn submission <token>". OAuth verified their IDENTITY (we know
+  // their name) but — confirmed via LinkedIn docs — OIDC never returns the profile URL, so NO Coresignal
+  // enrich could fire (enrichmentInFlight is false → the branch above didn't catch it). This re-entry
+  // must NEVER fall through to the cold offer-first re-offer (the bug). Route to triage with the
+  // linkedinJustConnected directive → Claire acks by name + asks for their LinkedIn URL or résumé so
+  // she can pull experience and start matching. Canary-gated to mirror the offer-first cohort.
+  if (isCanaryUser(args.userId) && parseLinkedinDoneOpener(args.inboundText)) {
+    log("mode.linkedin_just_connected", { userId: args.userId })
+    return { mode: "triage", linkedinJustConnected: true }
   }
 
   // WS-3(b) GMAIL NUDGE (Adam 2026-06-03): occasionally ask the candidate to connect Gmail on

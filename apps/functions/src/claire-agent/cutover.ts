@@ -290,6 +290,9 @@ export async function maybeRunThinClaire(
         // COLD OFFER-FIRST (Adam 2026-06-03): brand-new candidate → deterministic LinkedIn-recommended /
         // résumé offer + NO onboarding question (pitch fires after they connect/drop). Canary by construction.
         ...(decision.offerFirstKickoff ? { offerFirstKickoff: true } : {}),
+        // LINKEDIN-DONE re-entry (Adam 2026-06-03): they tapped "log in with LinkedIn" + came back, but
+        // OAuth can't enrich (OIDC has no profile URL) → ack by name + ask for résumé/URL, never re-offer.
+        ...(decision.linkedinJustConnected ? { linkedinJustConnected: true } : {}),
         // BLOCKER 2: thread the parsed-profile summary from the handoff context onto the pitch turn so
         // the model has the profile THIS turn (defends against a loadGlobalContext read racing the write).
         ...(decision.postParsePitch && postParsePitchSummary ? { postParsePitchSummary } : {}),

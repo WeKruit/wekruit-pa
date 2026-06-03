@@ -483,6 +483,9 @@ export interface RunClaireTurnDeps {
   enrichmentInFlight?: boolean
   /** WS-3(b): this turn MAY carry the occasional "connect Gmail on wekruit.com" nudge (canary). */
   gmailNudge?: boolean
+  /** LINKEDIN-DONE re-entry (Adam 2026-06-03): they just logged in with LinkedIn (identity verified,
+   *  name known) but OAuth can't pull work history → directive: ack by name + ask for résumé/URL. */
+  linkedinJustConnected?: boolean
   /** COLD OFFER-FIRST KICKOFF (Adam 2026-06-03): a brand-new candidate with NO profile data. The turn
    *  sends a DETERMINISTIC offer (connect LinkedIn = recommended / drop résumé in chat / upload on site)
    *  and NO onboarding question — "pitch first", we don't interrogate; the pitch fires after they
@@ -663,6 +666,8 @@ export async function runClaireTurn(
     enrichmentInFlight: deps.enrichmentInFlight,
     // WS-3(b): the occasional Gmail-connect nudge is a per-turn directive (cooldown-gated), turn-context only.
     gmailNudge: deps.gmailNudge,
+    // LINKEDIN-DONE re-entry directive — per-turn, trailing only (ack by name + ask for résumé/URL).
+    linkedinJustConnected: deps.linkedinJustConnected,
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const runInput: any[] = []
