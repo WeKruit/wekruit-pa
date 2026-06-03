@@ -92,6 +92,16 @@ test("EmployerSignup shows a role packet readiness checklist before the long for
   assert.match(source, /Complete these before WeKruit approves the role brief/i)
 })
 
+test("EmployerSignup connects role intake to the sample passed-profile output", () => {
+  assert.match(source, /to="\/employers\/inbox"[\s\S]*See sample pass/)
+  assert.match(source, /The packet below becomes the evidence lens Claire uses in the sample pass record/)
+  assert.match(source, /aria-label="Role intake output preview"/)
+
+  assert.doesNotMatch(source, /see live candidates/i)
+  assert.doesNotMatch(source, /browse candidate/i)
+  assert.doesNotMatch(source, /instant pass/i)
+})
+
 test("EmployerSignup turns role packet readiness into actionable field jumps", () => {
   assert.match(source, /summary\.nextIncompleteItem/)
   assert.match(source, /Next needed/)

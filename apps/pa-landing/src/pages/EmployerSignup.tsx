@@ -126,6 +126,7 @@ export default function EmployerSignup() {
             against the evidence, and you only see consented passed profiles with the transcript
             and risks attached.
           </p>
+          <EmployerOutputPreview />
 
           {done ? <SuccessCard form={form} onStartAnother={() => {
             setForm(EMPTY_FORM)
@@ -295,6 +296,56 @@ export default function EmployerSignup() {
       </section>
       <Footer />
     </main>
+  )
+}
+
+function EmployerOutputPreview() {
+  return (
+    <section
+      aria-label="Role intake output preview"
+      style={{
+        marginTop: 22,
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-lg)",
+        background: "var(--cream-3)",
+        boxShadow: "var(--shadow-sm)",
+        padding: 18,
+        display: "grid",
+        gap: 12,
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "var(--font-sans)",
+          fontSize: 12,
+          color: "var(--ink-3)",
+          fontWeight: 700,
+          textTransform: "uppercase",
+          letterSpacing: 0,
+        }}
+      >
+        What this creates
+      </div>
+      <p
+        style={{
+          margin: 0,
+          fontFamily: "var(--font-sans)",
+          fontSize: 14,
+          lineHeight: 1.48,
+          color: "var(--ink-2)",
+        }}
+      >
+        The packet below becomes the evidence lens Claire uses in the sample pass record:
+        pass reason, risks, role fit, transcript excerpts, and the hiring-team calibration loop.
+      </p>
+      <Link
+        to="/employers/inbox"
+        className="btn btn--secondary"
+        style={{ justifySelf: "start", textDecoration: "none" }}
+      >
+        See sample pass
+      </Link>
+    </section>
   )
 }
 
