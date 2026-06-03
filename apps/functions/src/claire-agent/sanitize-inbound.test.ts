@@ -49,3 +49,54 @@ test("passes ordinary candidate messages through untouched", () => {
   assert.equal(sanitizeInboundForLlm("hi"), "hi")
   assert.equal(sanitizeInboundForLlm("I want SWE roles in NYC"), "I want SWE roles in NYC")
 })
+
+/**
+ * CV-PARSED RE-ENTRY (c1b8782d). The resume_parse_completed runtime event is enqueued by
+ * enqueueRuntimeEventHandoff, so its body is the verbatim buildRuntimeEventBody directive:
+ *   "[system-event:cv_ingest:resume_parse_completed]\n…\nContext: {…resumeId…candidateProfileSummary…}"
+ * Pre-fix sanitizeInboundForLlm had NO cv-parsed branch → it returned this WHOLE raw body, so the LLM
+ * read internal system wording (and any uid embedded in the context JSON) and could treat it as the
+ * candidate speaking. The fix collapses any "[system-event:…resume_parse_completed…]" body to a single
+ * neutral marker. The real "pitch now" instruction rides the postParsePitch PROMPT directive + the
+ * freshly-loaded globalContext — NOT this body. These assertions are RED before the fix (full raw body
+ * survives, uid leaks) and GREEN after (clean marker, no system text, no uid).
+ */
+const CV_PARSED_BODY =
+  `[system-event:cv_ingest:resume_parse_completed]\n` +
+  `An external product event arrived. Decide whether Claire should send the candidate a message now.\n` +
+  `If no candidate-facing message should be sent, reply exactly __NO_SEND__.\n` +
+  `Context: {"resumeId":"res_${UID}_42","candidateProfileSummary":"Senior SWE; Tesla; React/TypeScript","cvParsedTrigger":true}`
+
+test("collapses the resume_parse_completed runtime-event body to a clean post-parse marker", () => {
+  assert.equal(sanitizeInboundForLlm(CV_PARSED_BODY), "[resume just finished parsing]")
+})
+
+test("the collapsed cv-parsed marker carries NO raw system wording", () => {
+  const out = sanitizeInboundForLlm(CV_PARSED_BODY)
+  assert.ok(!out.includes("[system-event:"), "must not leak the system-event tag")
+  assert.ok(!out.includes("resume_parse_completed"), "must not leak the raw event kind")
+  assert.ok(!out.includes("__NO_SEND__"), "must not leak the runtime control token")
+  assert.ok(!out.toLowerCase().includes("context:"), "must not leak the structured context blob")
+  assert.ok(!out.includes("candidateProfileSummary"), "must not leak internal context field names")
+})
+
+test("the collapsed cv-parsed marker leaks NO uid (it is embedded in the context JSON)", () => {
+  // The raw body embeds the uid inside the resumeId — the regression we must not reintroduce.
+  assert.ok(CV_PARSED_BODY.includes(UID), "fixture sanity: the raw body DOES contain the uid")
+  assert.ok(
+    !sanitizeInboundForLlm(CV_PARSED_BODY).includes(UID),
+    "the uid must NOT survive into the text handed to the LLM",
+  )
+})
+
+test("collapses the cv-parsed body even with leading whitespace (trimStart parity with the openers)", () => {
+  assert.equal(sanitizeInboundForLlm(`   ${CV_PARSED_BODY}`), "[resume just finished parsing]")
+})
+
+test("a NON-cv-parsed system-event body is NOT collapsed by the cv-parsed branch", () => {
+  // The collapse is scoped to resume_parse_completed — other runtime events are deferred to legacy at
+  // the cutover (they never reach sanitize on the thin path), so this body must pass through unchanged
+  // rather than be mistaken for a cv-parse marker.
+  const onboardingBody = "[system-event:shared_onboarding:onboarding_started]\nAn external product event arrived."
+  assert.equal(sanitizeInboundForLlm(onboardingBody), onboardingBody)
+})

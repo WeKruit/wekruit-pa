@@ -227,7 +227,11 @@ async function runPrescreenFsm(fx, R) {
 // 2) ONBOARDING SLOTS — canonical order, no skip, completes; durable projection.
 async function runOnboardingSlots(fx, R) {
   const fails = []
-  const { SHARED_ONBOARDING_QUESTIONS, resolveNextSharedOnboardingQuestionId, projectSharedOnboardingAnswer } = R.onboarding
+  // 2026-06-02 trim: the LIVE thin onboarding flow walks the ASKED set via the ASKED resolver
+  // (resolveNextAskedSharedOnboardingQuestionId), NOT the legacy full-7 walker. Use the asked
+  // resolver so the smoke walk matches the trimmed [target_role -> location_relocation -> complete].
+  const { SHARED_ONBOARDING_QUESTIONS, resolveNextAskedSharedOnboardingQuestionId, projectSharedOnboardingAnswer } =
+    R.onboarding
   const order = SHARED_ONBOARDING_QUESTIONS.map((q) => q.id)
   if (fx.expect.slot_order && !jsonEq(order, fx.expect.slot_order)) {
     fails.push(`slot order mismatch: got ${JSON.stringify(order)}`)
@@ -236,7 +240,7 @@ async function runOnboardingSlots(fx, R) {
   let cur = order[0]
   for (let i = 0; i < order.length + 2 && cur; i++) {
     walk.push(cur)
-    const nx = resolveNextSharedOnboardingQuestionId(cur)
+    const nx = resolveNextAskedSharedOnboardingQuestionId(cur)
     if (nx.completed || nx.nextQuestionId == null) {
       if (nx.completed) walk.push("__complete__")
       break
