@@ -181,6 +181,40 @@ function rescueOnboardingSlot(
 }
 
 /**
+ * IN-FLIGHT STALL GUARD (2026-06-02 trim): a user durable-paused at a now-DROPPED slot that the
+ * OLD order placed AFTER both surviving asked slots (e.g. seniority_comp / special_context, old
+ * positions 6/7, after location_relocation@5) has ALREADY answered both ASKED slots (target_role +
+ * location_relocation). Without this guard the rescue falls back to FIRST_ASKED_SLOT and re-asks a
+ * question whose answer already exists → recordOnboardingAnswer returns already_complete → the
+ * durable `completed` flag never flips → INFINITE re-ask. When every asked slot is satisfied,
+ * onboarding is effectively done: complete it + route to triage (where the agent can pitch + match).
+ */
+function allAskedOnboardingSlotsSatisfied(answeredSlots: string[]): boolean {
+  if (DEFAULT_ONBOARDING_SLOTS.length === 0) return false
+  const answered = new Set(answeredSlots)
+  return DEFAULT_ONBOARDING_SLOTS.every((s) => answered.has(s))
+}
+
+/** Best-effort durable mark-complete (mirrors bootstrapOnboarding's shape). Never throws upward. */
+async function markSharedOnboardingComplete(db: Firestore, userId: string, now: string): Promise<void> {
+  try {
+    await db
+      .collection(USERS)
+      .doc(userId)
+      .set(
+        {
+          onboardingState: "complete",
+          updatedAt: now,
+          sharedOnboarding: { status: "complete", completed: true, updatedAt: now },
+        },
+        { merge: true },
+      )
+  } catch {
+    // Routing to triage already breaks the stall this turn; the write is just the durable self-heal.
+  }
+}
+
+/**
  * Pick the mode for this turn from durable state + seed the process store. ALWAYS resolves
  * (never throws) — any read/write error degrades to triage so the turn still gets a reply.
  */
@@ -286,6 +320,13 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
           }
         }
         const answeredSlots = Object.keys((shared?.answers as Record<string, unknown>) ?? {})
+        if (allAskedOnboardingSlotsSatisfied(answeredSlots)) {
+          // Both asked slots already answered (paused at a dropped late slot) → don't re-ask; the
+          // résumé just parsed, so pitch in triage then OFFER find_match.
+          await markSharedOnboardingComplete(args.db, args.userId, now)
+          log("mode.cv_parsed_pitch_complete", { userId: args.userId })
+          return { mode: "triage", postParsePitch: true }
+        }
         const cur = rescueOnboardingSlot(
           currentSharedOnboardingQuestionId(user) as SharedOnboardingQuestionId,
           answeredSlots,
@@ -347,6 +388,13 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
       // in the ASKED set, treat onboarding as at the earliest UNANSWERED asked slot instead. Worst
       // case is one short re-ask of an asked slot; never a stall or data loss, and no Firestore backfill.
       const answeredSlots = Object.keys((shared?.answers as Record<string, unknown>) ?? {})
+      if (allAskedOnboardingSlotsSatisfied(answeredSlots)) {
+        // STALL GUARD: every asked slot is answered (in-flight user paused at a dropped late slot) →
+        // onboarding is effectively done. Complete it + route to triage instead of re-asking forever.
+        await markSharedOnboardingComplete(args.db, args.userId, now)
+        log("mode.onboarding_already_satisfied_complete", { userId: args.userId, answered: answeredSlots.length })
+        return { mode: "triage" }
+      }
       const cur = rescueOnboardingSlot(
         currentSharedOnboardingQuestionId(user) as SharedOnboardingQuestionId,
         answeredSlots,

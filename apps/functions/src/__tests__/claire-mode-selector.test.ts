@@ -65,23 +65,23 @@ test("terminal prescreen is NOT active → does not defer", async () => {
   assert.equal(res.mode, "triage")
 })
 
-test("cold start → bootstrap + onboarding (ask main_goal, awaitingAnswer=false, kickoff NOT recorded)", async () => {
+test("cold start → bootstrap + onboarding (ask target_role, awaitingAnswer=false, kickoff NOT recorded)", async () => {
   const { db, store } = makeDb({ [`pa-users/${UID}`]: { onboardingState: "pending" } })
   const res = await selectClaireMode({ db, userId: UID, inboundText: "Hello, WeKruit! TOKEN123" })
   assert.equal(res.mode, "onboarding")
   assert.equal(res.awaitingAnswer, false, "kickoff turn does not record an answer")
-  assert.equal(res.onboardingSlot, "main_goal")
+  assert.equal(res.onboardingSlot, "target_role")
   assert.ok(res.pendingStep && res.pendingStep.length > 0)
   assert.ok(res.processStore, "seeds the per-turn process store")
   assert.deepEqual(res.processStore!.onboarding.answers, {}, "no answers seeded on cold start")
   // bootstrap wrote the durable started-state, but recorded NO answer (the tool does that).
   const u = store.get(`pa-users/${UID}`) as { sharedOnboarding: Record<string, unknown> }
   assert.equal(u.sharedOnboarding.status, "active")
-  assert.equal(u.sharedOnboarding.currentQuestionId, "main_goal")
+  assert.equal(u.sharedOnboarding.currentQuestionId, "target_role")
   assert.deepEqual(u.sharedOnboarding.answers, {})
 })
 
-test("QR resume-less provisional user cold-starts onboarding (no resume gate) — bootstrap + main_goal", async () => {
+test("QR resume-less provisional user cold-starts onboarding (no resume gate) — bootstrap + target_role", async () => {
   // Mirror the iMessage-first QR path: a freshly created provisional user with
   // source='qr_imessage', NO resume, NO tags. bootstrapOnboarding must still cold-
   // start (résumé is OPTIONAL FOREVER — Adam) with the same main_goal kickoff.
@@ -96,10 +96,10 @@ test("QR resume-less provisional user cold-starts onboarding (no resume gate) �
   const res = await selectClaireMode({ db, userId: UID, inboundText: "Hello, WeKruit! 11111111-2222-3333-4444-555555555555" })
   assert.equal(res.mode, "onboarding")
   assert.equal(res.awaitingAnswer, false, "kickoff turn does not record an answer")
-  assert.equal(res.onboardingSlot, "main_goal")
+  assert.equal(res.onboardingSlot, "target_role")
   const u = store.get(`pa-users/${UID}`) as { sharedOnboarding: Record<string, unknown> }
   assert.equal(u.sharedOnboarding.status, "active")
-  assert.equal(u.sharedOnboarding.currentQuestionId, "main_goal")
+  assert.equal(u.sharedOnboarding.currentQuestionId, "target_role")
 })
 
 test("QR dev re-onboard reset → existing user with tags/resume cold-starts onboarding fresh (non-destructive)", async () => {
@@ -120,14 +120,14 @@ test("QR dev re-onboard reset → existing user with tags/resume cold-starts onb
   const res = await selectClaireMode({ db, userId: UID, inboundText: "Hello, WeKruit! 22222222-3333-4444-5555-666666666666" })
   assert.equal(res.mode, "onboarding")
   assert.equal(res.awaitingAnswer, false, "re-onboard kickoff does not record an answer")
-  assert.equal(res.onboardingSlot, "main_goal")
+  assert.equal(res.onboardingSlot, "target_role")
   const u = store.get(`pa-users/${UID}`) as {
     sharedOnboarding: Record<string, unknown>
     tags: Record<string, unknown>
     latestResumeArtifactId: string
   }
   assert.equal(u.sharedOnboarding.status, "active")
-  assert.equal(u.sharedOnboarding.currentQuestionId, "main_goal")
+  assert.equal(u.sharedOnboarding.currentQuestionId, "target_role")
   // durable data still present after the bootstrap write (merge, non-destructive)
   assert.deepEqual(u.tags, { targetRoleFunction: ["software_engineering"] })
   assert.equal(u.latestResumeArtifactId, "resume-abc")
@@ -148,7 +148,11 @@ test("active onboarding → awaitingAnswer + current slot + seeded answers; sele
   const res = await selectClaireMode({ db, userId: UID, inboundText: "early-stage startup" })
   assert.equal(res.mode, "onboarding")
   assert.equal(res.awaitingAnswer, true)
-  assert.equal(res.onboardingSlot, "culture_stage", "the inbound answers the CURRENT slot")
+  assert.equal(
+    res.onboardingSlot,
+    "target_role",
+    "dropped slot (culture_stage) rescues to the first UNANSWERED asked slot (target_role)",
+  )
   assert.ok(res.pendingStep && res.pendingStep.length > 0)
   // seeded store reflects already-answered slots so the reducer enforces order.
   assert.ok("main_goal" in res.processStore!.onboarding.answers)
@@ -156,6 +160,36 @@ test("active onboarding → awaitingAnswer + current slot + seeded answers; sele
   // selector is READ-ONLY for answers: durable culture_stage answer is NOT written here (the tool writes it).
   const u = store.get(`pa-users/${UID}`) as { sharedOnboarding: { answers: Record<string, unknown> } }
   assert.ok(!("culture_stage" in u.sharedOnboarding.answers), "selector did not record the answer (tool does)")
+})
+
+test("in-flight STALL GUARD: paused at a dropped LATE slot with both asked slots answered → complete+triage (no re-ask loop)", async () => {
+  // Pre-trim, special_context was position 7 (after location_relocation@5), so a user paused there
+  // had ALREADY answered both surviving asked slots (target_role@3, location_relocation@5). Without
+  // the guard, rescue falls back to target_role and re-asks forever (answer already recorded →
+  // already_complete → durable `completed` never flips). The guard must complete + route to triage.
+  const { db, store } = makeDb({
+    [`pa-users/${UID}`]: {
+      onboardingState: "pending",
+      sharedOnboarding: {
+        status: "active",
+        currentQuestionId: "special_context",
+        answers: {
+          target_role: { answer: "swe", questionId: "target_role" },
+          location_relocation: { answer: "nyc or remote", questionId: "location_relocation" },
+        },
+        completed: false,
+      },
+    },
+  })
+  const res = await selectClaireMode({ db, userId: UID, inboundText: "ok what's next" })
+  assert.equal(res.mode, "triage", "all asked slots answered → triage, NOT a re-ask")
+  // durable self-heal: onboarding is marked complete so the user exits the onboarding path for good.
+  const u = store.get(`pa-users/${UID}`) as {
+    onboardingState: string
+    sharedOnboarding: { completed: boolean; status: string }
+  }
+  assert.equal(u.onboardingState, "complete")
+  assert.equal(u.sharedOnboarding.completed, true)
 })
 
 test("onboarding already complete → triage", async () => {
