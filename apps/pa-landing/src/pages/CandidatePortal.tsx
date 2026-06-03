@@ -3018,7 +3018,7 @@ function MatchPreferencesCard({
       : "Match preferences cleared."
     try {
       const submit = createCandidateProfileCorrectionSubmitter(functions())
-      const result = await submit({ correctionText, structuredFields })
+      const result = await submit({ correctionText, targetType: "user_tags", structuredFields })
       onSaved(result.selfProfile)
       setDirty(false)
       setStatus("success")

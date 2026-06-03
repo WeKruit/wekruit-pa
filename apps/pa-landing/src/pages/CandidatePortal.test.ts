@@ -501,6 +501,12 @@ test("CandidatePortal role signal corrections persist structured evidence", () =
   assert.match(source, /submitCorrection\(\{ correctionText, structuredFields \}\)/)
 })
 
+test("CandidatePortal match preference saves route canonical tags as user tag corrections", () => {
+  assert.match(source, /const result = await submit\(\{ correctionText, targetType: "user_tags", structuredFields \}\)/)
+  assert.match(source, /submitCorrection\(\{ correctionText, structuredFields \}\)/)
+  assert.doesNotMatch(source, /submitCorrection\(\{ correctionText, targetType: "user_tags", structuredFields \}\)/)
+})
+
 test("CandidatePortal role signal success copy is candidate-facing", () => {
   assert.match(source, /const roleSignalSubmitted = Boolean\(initialCorrectionDraft\?\.structuredFields\.roleSignal\)/)
   assert.match(source, /Role signal saved — Claire will use it as matching evidence\./)

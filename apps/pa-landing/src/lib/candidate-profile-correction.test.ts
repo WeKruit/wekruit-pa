@@ -39,6 +39,42 @@ test("submitCandidateProfileCorrection trims open-ended correction text and uses
   assert.deepEqual(result.appliedKeys, ["targetLocations"])
 })
 
+test("submitCandidateProfileCorrection forwards target routing fields to Firebase", async () => {
+  const calls: Array<{ name: string; data: unknown }> = []
+
+  await submitCandidateProfileCorrection(
+    async (name, data) => {
+      calls.push({ name, data })
+      return {
+        ok: true,
+        candidateId: "pa-user-1",
+        selfProfile: {
+          candidateId: "pa-user-1",
+          lifecycleState: "active",
+        },
+      }
+    },
+    {
+      correctionText: "  Match me against fintech product roles.  ",
+      targetType: "user_tags",
+      targetId: " pa-user-1 ",
+      jobId: " job-1 ",
+      structuredFields: { roleFunction: ["product_management"], industrySector: ["financial_technology"] },
+    }
+  )
+
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].name, CANDIDATE_PROFILE_CORRECTION_CALLABLE)
+  assert.deepEqual(calls[0].data, {
+    correctionText: "Match me against fintech product roles.",
+    sourceSurface: "me_profile",
+    targetType: "user_tags",
+    targetId: "pa-user-1",
+    jobId: "job-1",
+    structuredFields: { roleFunction: ["product_management"], industrySector: ["financial_technology"] },
+  })
+})
+
 test("submitCandidateProfileCorrection rejects blank correction text before calling Firebase", async () => {
   let called = false
 

@@ -76,14 +76,26 @@ export interface CandidateSelfProfile {
   }
 }
 
+export type CandidateProfileCorrectionTargetType =
+  | "candidate_profile"
+  | "user_tags"
+  | "candidate_job_state"
+  | "candidate_job_match"
+
 export interface CandidateProfileCorrectionInput {
   correctionText: string
+  targetType?: CandidateProfileCorrectionTargetType
+  targetId?: string
+  jobId?: string
   structuredFields?: Record<string, unknown>
 }
 
 export interface CandidateProfileCorrectionPayload {
   correctionText: string
   sourceSurface: "me_profile"
+  targetType?: CandidateProfileCorrectionTargetType
+  targetId?: string
+  jobId?: string
   structuredFields?: Record<string, unknown>
 }
 
@@ -112,6 +124,15 @@ export async function submitCandidateProfileCorrection(
   const payload: CandidateProfileCorrectionPayload = {
     correctionText,
     sourceSurface: "me_profile",
+  }
+  if (input.targetType) {
+    payload.targetType = input.targetType
+  }
+  if (input.targetId?.trim()) {
+    payload.targetId = input.targetId.trim()
+  }
+  if (input.jobId?.trim()) {
+    payload.jobId = input.jobId.trim()
   }
   if (input.structuredFields) {
     payload.structuredFields = input.structuredFields
