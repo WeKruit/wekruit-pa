@@ -177,7 +177,7 @@ function Nav() {
         </nav>
         <div className="open-nav__actions" style={{ display: "flex", gap: 12, alignItems: "center" }}>
           <Link to="/login" style={navLinkStyle(false)}>Sign in</Link>
-          <Link to="/onboarding" className="btn btn--primary btn--sm">Add your name</Link>
+          <Link to="/onboarding" className="btn btn--primary btn--sm">Start with Claire</Link>
         </div>
       </div>
     </header>
@@ -204,7 +204,7 @@ function GuestBanner() {
         <span className="caption" style={{ color: "var(--ink-2)" }}>
           Browsing as a guest · <Link to="/login" style={{ color: "var(--ink)" }}>Sign in to keep your WeKruit profile connected</Link> while you review roles.
         </span>
-        <Link to="/onboarding" className="btn btn--secondary btn--sm">Add your name →</Link>
+        <Link to="/onboarding" className="btn btn--secondary btn--sm">Start Claire profile →</Link>
       </div>
     </div>
   )
@@ -216,7 +216,7 @@ function Footer() {
       <div className="container" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "40px 24px", gap: 24, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 16 }}>
           <Wordmark />
-          <span className="caption" style={{ color: "var(--ink-3)" }}>A quiet list for people between things.</span>
+          <span className="caption" style={{ color: "var(--ink-3)" }}>Claire-first role interviews from WeKruit.</span>
         </div>
         <div style={{ display: "flex", gap: 28, alignItems: "center" }}>
           <span className="caption">Built by WeKruit</span>
