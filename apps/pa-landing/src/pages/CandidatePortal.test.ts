@@ -399,3 +399,15 @@ test("CandidatePortal /me surfaces role load failures instead of treating them a
   assert.match(source, /errored \? \([\s\S]*<div className="wkv3-empty-block wkv3-empty-block--error">\{error\}<\/div>/)
   assert.doesNotMatch(source, /matchesErrored[\s\S]{0,400}<MeWaitingCard/)
 })
+
+test("CandidatePortal /me summarizes the real candidate operating loop", () => {
+  assert.match(source, /deriveCandidateOperatingLoop/)
+  assert.match(source, /const operatingLoop = deriveCandidateOperatingLoop\(allMatches\)/)
+  assert.match(source, /<MeOperatingLoopPanel loop=\{operatingLoop\} \/>/)
+  assert.match(source, /function MeOperatingLoopPanel/)
+  assert.match(source, /WeKruit loop/)
+  assert.match(source, /Candidate-visible role states in one place\./)
+  assert.match(source, /stat\.label/)
+  assert.doesNotMatch(source, /WeKruit is working/)
+  assert.doesNotMatch(source, /Claire keeps scanning/)
+})

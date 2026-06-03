@@ -41,6 +41,10 @@ import {
 import { GLOBAL_UID_KEY, readStoredValue } from "../lib/browser-identity"
 import { useCandidatePortalGate } from "../lib/candidate-portal-gate.js"
 import {
+  deriveCandidateOperatingLoop,
+  type CandidateOperatingLoop,
+} from "./CandidatePortalLoop.helpers.js"
+import {
   CandidateShell,
   Avatar,
   CompanyMark,
@@ -736,6 +740,7 @@ function CandidateMeReady({
   const firstName = firstNameOf(profile)
   const completeness = deriveCompleteness(profile)
   const visibility = deriveVisibilityFromMatches(allMatches)
+  const operatingLoop = deriveCandidateOperatingLoop(allMatches)
   const claireHref = buildClaireImessageHref(profile.senderNumber)
 
   const actions: MeAction[] = upNext.map((m) => {
@@ -787,6 +792,7 @@ function CandidateMeReady({
                 recommendedCount={recommended.length}
               />
               {matchesErrored ? <MeRoleDashboardError message={matchesError} onRetry={matchesState.reload} /> : null}
+              <MeOperatingLoopPanel loop={operatingLoop} />
               <MeActivityLog matches={allMatches} claireHref={claireHref} />
               <MePipeline
                 matches={pipelineMatches}
@@ -1313,6 +1319,33 @@ function MeWaitingCard({ recommendedCount }: { recommendedCount: number }) {
         <p className="wkv3-wait__meta">Profile edits keep future matching tied to evidence you can review.</p>
       </div>
     </article>
+  )
+}
+
+function MeOperatingLoopPanel({ loop }: { loop: CandidateOperatingLoop }) {
+  return (
+    <section className={`wkv3-sec wkv3-loop is-${loop.state}`} aria-label="WeKruit loop">
+      <header className="wkv3-sec__head">
+        <h2 className="wkv3-sec__h">WeKruit loop</h2>
+        <span className="wkv3-sec__sub">Candidate-visible role states in one place.</span>
+      </header>
+      <div className="wkv3-loop__body">
+        <div className="wkv3-loop__summary">
+          <p className="wkv3-loop__kicker">{loop.primaryLabel}</p>
+          <p className="wkv3-loop__text">{loop.body}</p>
+          <p className="wkv3-loop__next">{loop.nextAction}</p>
+        </div>
+        <dl className="wkv3-loop__stats" aria-label="Candidate role state counts">
+          {loop.stats.map((stat) => (
+            <div className={`wkv3-loop__stat is-${stat.tone}`} key={stat.label}>
+              <dt>{stat.label}</dt>
+              <dd>{stat.value}</dd>
+              <span>{stat.detail}</span>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </section>
   )
 }
 
@@ -2007,6 +2040,99 @@ const ME_V3_STYLES = `
 }
 .wkv3-sec__viewall:hover { text-decoration: underline; }
 
+/* Candidate operating loop */
+.wkv3-loop__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.84fr);
+  gap: 14px;
+  align-items: stretch;
+}
+.wkv3-loop__summary {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--candidate-card);
+  padding: 17px 18px;
+  display: grid;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+}
+.wkv3-loop__summary::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--ink-3);
+}
+.wkv3-loop.is-action_needed .wkv3-loop__summary::before { background: var(--live); }
+.wkv3-loop.is-in_review .wkv3-loop__summary::before { background: var(--success); }
+.wkv3-loop.is-roles_to_review .wkv3-loop__summary::before { background: #1F6FEB; }
+.wkv3-loop__kicker {
+  margin: 0;
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--live);
+}
+.wkv3-loop.is-in_review .wkv3-loop__kicker { color: var(--success); }
+.wkv3-loop.is-roles_to_review .wkv3-loop__kicker { color: #1F6FEB; }
+.wkv3-loop.is-profile_active .wkv3-loop__kicker { color: var(--ink-3); }
+.wkv3-loop__text {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 20px;
+  line-height: 1.22;
+  letter-spacing: -0.016em;
+}
+.wkv3-loop__next {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.wkv3-loop__stats {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.wkv3-loop__stat {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--candidate-card);
+  padding: 13px 12px;
+  display: grid;
+  gap: 4px;
+}
+.wkv3-loop__stat.is-live { border-color: var(--live-border); background: var(--live-soft); }
+.wkv3-loop__stat.is-blue { border-color: rgba(31,111,235,.22); background: rgba(31,111,235,.07); }
+.wkv3-loop__stat.is-green { border-color: rgba(58,138,90,.24); background: var(--success-bg); }
+.wkv3-loop__stat dt {
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 1.1;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.wkv3-loop__stat dd {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 28px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.wkv3-loop__stat span {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.25;
+}
+
 /* Sidebar: completeness */
 .wkv3-comp {
   background: var(--candidate-card); border: 1px solid var(--border);
@@ -2373,6 +2499,7 @@ const ME_V3_STYLES = `
   .wkv3-side { position: static; grid-template-columns: 1fr 1fr; gap: 14px; }
 }
 @media (max-width: 820px) {
+  .wkv3-loop__body { grid-template-columns: 1fr; }
   .wkv3-stages { grid-template-columns: repeat(3, 1fr); }
   .wkv3-stage:nth-child(3) { border-right: 0; }
   .wkv3-stage:nth-child(n+4) { border-top: 1px solid var(--border); }
@@ -2389,6 +2516,8 @@ const ME_V3_STYLES = `
   .wkv3-act__right { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; min-width: 0; gap: 10px; }
   .wkv3-activity__row { grid-template-columns: 38px minmax(0, 1fr); }
   .wkv3-activity__when { grid-column: 2; }
+  .wkv3-loop__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wkv3-loop__text { font-size: 18px; }
   .wkv3-stages { grid-template-columns: repeat(2, 1fr); }
   .wkv3-stage:nth-child(odd) { border-right: 1px solid var(--border); }
   .wkv3-stage:nth-child(even) { border-right: 0; }
