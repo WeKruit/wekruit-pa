@@ -84,3 +84,12 @@ test("ReferPublicPage hero explains the friend-side trust contract before cash m
   assert.doesNotMatch(source, /we submit your friend automatically/i)
   assert.doesNotMatch(source, /hiring teams see every referred profile/i)
 })
+
+test("ReferComposer invite preview keeps friend onboarding profile-first", () => {
+  assert.doesNotMatch(source, /No resume required up front/)
+  assert.doesNotMatch(source, /matches you with hiring managers directly/i)
+  assert.doesNotMatch(source, /Claire matches you with hiring managers/i)
+
+  assert.match(source, /Claire picks up profile and resume context before any role-specific screen/)
+  assert.match(source, /Try WeKruit — Claire starts with your profile and screens role briefs with you/)
+})

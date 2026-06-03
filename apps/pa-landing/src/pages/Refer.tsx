@@ -510,8 +510,8 @@ function ReferComposer({
                 <div className="wk-ref-preview__body">
                   <p className="wk-ref-preview__h">What your friend gets</p>
                   <p className="wk-ref-preview__t">
-                    A short email from <em>you</em> with your note above, plus one tap to join. No resume
-                    required up front — Claire picks up the conversation on iMessage.
+                    A short email from <em>you</em> with your note above, plus one tap to join.
+                    Claire picks up profile and resume context before any role-specific screen.
                   </p>
                 </div>
               </div>
@@ -611,7 +611,7 @@ function ShareLinkBtn({
   icon?: "message"
 }) {
   const url = `https://wekruit.com/r/${slug ?? ""}`
-  const text = encodeURIComponent(`Try WeKruit — Claire matches you with hiring managers directly: ${url}`)
+  const text = encodeURIComponent(`Try WeKruit — Claire starts with your profile and screens role briefs with you: ${url}`)
   const targets: Record<string, string> = {
     LinkedIn: `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(url)}`,
     X: `https://x.com/intent/post?text=${text}`,
