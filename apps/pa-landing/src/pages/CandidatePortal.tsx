@@ -739,7 +739,8 @@ function CandidateMeReady({
 
   const firstName = firstNameOf(profile)
   const completeness = deriveCompleteness(profile)
-  const visibility = deriveVisibilityFromMatches(allMatches)
+  const visibility = matchesState.status === "ready" ? deriveVisibilityFromMatches(allMatches) : null
+  const visibilityLabel = visibility?.label ?? (matchesErrored ? "Pipeline unavailable" : "Checking pipeline")
   const operatingLoop = deriveCandidateOperatingLoop(allMatches)
   const claireHref = buildClaireImessageHref(profile.senderNumber)
 
@@ -777,7 +778,7 @@ function CandidateMeReady({
         <MeStatusHeader
           actionsCount={actionCount}
           firstName={firstName}
-          visibility={visibility}
+          visibilityLabel={visibilityLabel}
           hasPrimary={actionCount > 0}
         />
 
@@ -815,7 +816,7 @@ function CandidateMeReady({
             <aside className="wkv3-side">
               <MeCompletenessCard completeness={completeness} />
               <MeClaireSignalsCard profile={profile} />
-              <MeVisibilityCard visibility={visibility} />
+              {visibility ? <MeVisibilityCard visibility={visibility} /> : <MeVisibilityPendingCard error={matchesError} />}
             </aside>
           </div>
         </div>
@@ -1184,12 +1185,12 @@ function MeIcon({
 function MeStatusHeader({
   actionsCount,
   firstName,
-  visibility,
+  visibilityLabel,
   hasPrimary,
 }: {
   actionsCount: number
   firstName: string
-  visibility: MeVisibility
+  visibilityLabel: string
   hasPrimary: boolean
 }) {
   return (
@@ -1198,7 +1199,7 @@ function MeStatusHeader({
         <div className="wkv3-status__copy">
           <div className="wkv3-status__eyebrow">
             <span className="wkv3-status__dot"><PulseDot size={6} /></span>
-            <span>Home · <strong>{visibility.label.toLowerCase()}</strong></span>
+            <span>Home · <strong>{visibilityLabel.toLowerCase()}</strong></span>
           </div>
           <h1 className="wkv3-status__h1">
             {actionsCount > 0 ? (

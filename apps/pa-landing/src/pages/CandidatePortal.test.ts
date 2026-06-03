@@ -266,7 +266,11 @@ test("CandidatePortal visibility actions route to the standalone privacy surface
 
 test("CandidateProfile derives visibility from real matches instead of zero-state placeholders", () => {
   assert.match(source, /function deriveVisibilityFromMatches\(matches: CandidateMatchCard\[\]\): MeVisibility/)
-  assert.match(source, /const visibility = deriveVisibilityFromMatches\(allMatches\)/)
+  assert.match(source, /const visibility = matchesState\.status === "ready" \? deriveVisibilityFromMatches\(allMatches\) : null/)
+  assert.match(source, /const visibilityLabel = visibility\?\.label \?\? \(matchesErrored \? "Pipeline unavailable" : "Checking pipeline"\)/)
+  assert.match(source, /visibilityLabel=\{visibilityLabel\}/)
+  assert.match(source, /\{visibility \? <MeVisibilityCard visibility=\{visibility\} \/> : <MeVisibilityPendingCard error=\{matchesError\} \/>\}/)
+  assert.doesNotMatch(source, /<MeStatusHeader[\s\S]{0,300}visibility=\{visibility\}/)
   assert.match(source, /function ProfileSurface[\s\S]*const matchesState = useCandidateMatches\(true\)/)
   assert.match(
     source,
