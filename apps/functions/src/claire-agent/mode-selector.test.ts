@@ -95,12 +95,27 @@ test("WS-2: NON-canary with the SAME parsed-profile fixture still cold-starts th
   assert.equal(bootstrapped, true, "non-canary must still hit the cold-start bootstrap")
 })
 
-test("WS-2: canary with NO parsed profile (resume-less QR cohort) still cold-starts the wall — short path is parsed-profile-gated", async () => {
+test("WS-2 / regression-fix: canary cold with NO parsed profile gets the OFFER and does NOT bootstrap (no state poison)", async () => {
   const { db, writes } = makeDb({}) // no resume artifact, no tags
   const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "hi" })
   assert.equal(decision.mode, "onboarding")
+  assert.equal(decision.offerFirstKickoff, true, "canary cold-start must send the deterministic offer, NOT ask a question")
+  // CRITICAL (2026-06-03 "Hi → 👍, no reply" regression): the offer turn must NOT bootstrap
+  // onboarding. bootstrapOnboarding writes onboardingState:"pending" + marks sharedOnboarding
+  // "active" — i.e. "a question was asked". The offer asks NO question, so marking it active
+  // poisoned the state: a re-entry/coalesced re-run routed to onboarding_active, treated the next
+  // inbound as an ANSWER, and the offer never re-fired. Offer-first leaves the user cold.
   const bootstrapped = writes().some((w) => w.onboardingState === "pending")
-  assert.equal(bootstrapped, true, "resume-less canary must keep the onboarding bootstrap")
+  assert.equal(bootstrapped, false, "offer-first must NOT bootstrap/poison onboarding state")
+})
+
+test("non-canary cold with NO parsed profile keeps the legacy wall: bootstraps + asks, NO offer", async () => {
+  const { db, writes } = makeDb({}) // no resume artifact, no tags
+  const decision = await selectClaireMode({ db, userId: "z_non_canary_uid", inboundText: "hi" })
+  assert.equal(decision.mode, "onboarding")
+  assert.notEqual(decision.offerFirstKickoff, true, "non-canary must NOT get the offer (dev-phone only)")
+  const bootstrapped = writes().some((w) => w.onboardingState === "pending")
+  assert.equal(bootstrapped, true, "non-canary keeps the legacy onboarding bootstrap + question")
 })
 
 test("WS-1(b): canary with an in-flight marker (onboarding active) surfaces enrichmentInFlight on the decision", async () => {

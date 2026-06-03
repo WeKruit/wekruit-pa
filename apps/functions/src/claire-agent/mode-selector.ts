@@ -447,11 +447,23 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   if (!onboardingComplete) {
     try {
       if (!isSharedOnboardingActiveUser(user)) {
-        // Cold start (e.g. just reinitialized): seed durable state + ask the first ASKED slot
-        // (target_role, 2026-06-02 trim). The inbound is the kickoff/greeting, NOT an answer →
-        // awaitingAnswer:false, the agent only asks.
-        await bootstrapOnboarding(args.db, args.userId, now)
-        log("mode.onboarding_bootstrap", { userId: args.userId, offerFirst: isCanaryUser(args.userId) })
+        const offerFirst = isCanaryUser(args.userId)
+        // Cold start (e.g. just reinitialized): ask the first ASKED slot (target_role, 2026-06-02
+        // trim) — UNLESS offer-first (canary), which sends the DETERMINISTIC offer (LinkedIn/résumé/
+        // upload) and asks NO question.
+        //
+        // REGRESSION FIX (Adam 2026-06-03, "Hi → 👍, no reply"): only bootstrapOnboarding on the
+        // NON-offer path. bootstrapOnboarding marks sharedOnboarding.status="active" — i.e. "a
+        // question was asked, the next inbound is an ANSWER". But the offer turn asks NO question,
+        // so marking it active POISONED the state: the next inbound (or a coalesced re-run / recovery
+        // sweep) routed to the onboarding_active branch, treated "Hi" as an answer, and the offer
+        // never re-fired (the candidate fell into the question wall). Offer-first must leave the user
+        // COLD so a re-entry simply re-offers; real progression is resume_parse_completed (connect/
+        // drop résumé) → pitch (the cv-parsed branch above bootstraps its own state). The slot/prompt
+        // below stay set only so agent.ts has a question to ask IF the offer short-circuit falls
+        // through (no link surfaced) — a non-fatal degrade, and still no durable poison.
+        if (!offerFirst) await bootstrapOnboarding(args.db, args.userId, now)
+        log("mode.onboarding_bootstrap", { userId: args.userId, offerFirst })
         return {
           mode: "onboarding",
           awaitingAnswer: false,
@@ -459,10 +471,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
           pendingStep: buildSharedOnboardingPrompt(FIRST_ASKED_SLOT, null),
           currentStep: buildSharedOnboardingPrompt(FIRST_ASKED_SLOT, null),
           processStore: seedStore([]),
-          // COLD OFFER-FIRST (Adam 2026-06-03): a brand-new candidate (no résumé/profile — WS-2 already
-          // diverted résumé-on-file users above) gets the DETERMINISTIC offer + NO onboarding question.
-          // Gated to canary so it tracks the WS-1a link surfacing (the agent falls through if no link).
-          offerFirstKickoff: isCanaryUser(args.userId),
+          offerFirstKickoff: offerFirst,
           ...inFlightDecision,
         }
       }

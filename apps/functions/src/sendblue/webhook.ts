@@ -111,8 +111,9 @@ export type FindMatchTriggerResult = {
 export type WebhookDeps = {
   db: Firestore
   secret: string
-  /** Best-effort bot typing hint for accepted inbound messages. */
-  sendTypingIndicator?: (input: { to: string }) => Promise<void>
+  /** Best-effort bot typing hint for accepted inbound messages. `fromNumber` = the pool line the
+   *  thread is on (required so Sendblue matches it to the conversation on multi-number pools). */
+  sendTypingIndicator?: (input: { to: string; fromNumber?: string }) => Promise<void>
   /** Inject for tests; defaults to @pa/pa-broker createInboundEvent. */
   createInboundEvent?: typeof createInboundEvent
   /** Inject for tests; defaults to recordAuditEvent. */
@@ -204,14 +205,19 @@ function isBotTypingHintEnabled(): boolean {
 
 async function sendAcceptedInboundTypingHint(
   deps: WebhookDeps,
-  input: { to: string; correlationId?: string },
+  input: { to: string; fromNumber?: string; correlationId?: string },
   log: (...args: unknown[]) => void,
 ): Promise<void> {
   if (!deps.sendTypingIndicator || !isBotTypingHintEnabled()) return
   try {
-    await deps.sendTypingIndicator({ to: input.to })
+    // fromNumber = the pool line this thread is on. Adam 2026-06-03 ("8s to read"): without it the
+    // typing/read came from the DEFAULT creds line, which Sendblue couldn't match to a pool thread
+    // (e.g. +17174919939) → the early read silently no-op'd and "Read" only appeared once
+    // markReadReflex ran post-trigger (the ~8s). Passing the thread line makes "Read" fire on receipt.
+    await deps.sendTypingIndicator({ to: input.to, ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}) })
     log("[sendblue][webhook] bot_typing_hint_sent", {
       toNumber: input.to,
+      fromNumber: input.fromNumber,
       correlationId: input.correlationId,
     })
   } catch (err) {
@@ -670,7 +676,9 @@ export async function handleSendblueWebhook(
 
   await sendAcceptedInboundTypingHint(
     deps,
-    { to: normalized.fromNumber, correlationId: normalized.messageHandle },
+    // to = the candidate; fromNumber = the WeKruit pool line the inbound arrived ON (= the thread's
+    // line) so Sendblue matches the typing/read to THIS conversation and "Read" fires immediately.
+    { to: normalized.fromNumber, fromNumber: normalized.toNumber, correlationId: normalized.messageHandle },
     log,
   )
 
