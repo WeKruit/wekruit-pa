@@ -93,6 +93,11 @@ export interface ModeDecision {
    *  can't get the profile URL yet, so no Coresignal enrich fired). The turn-context directive makes
    *  Claire ACK by name + ask for résumé/URL to pull experience — NEVER re-offer the cold kickoff. */
   linkedinJustConnected?: boolean
+  /** SUPPRESS the reply entirely (Adam 2026-06-03): a vestigial system echo with nothing new to say —
+   *  e.g. the "I've done LinkedIn submission" reroute that lands AFTER the callback already enriched +
+   *  pushed the pitch. cutover marks the inbound handled and sends NOTHING (no duplicate re-ask). */
+  suppressReply?: boolean
+  suppressReason?: string
 }
 
 export interface SelectModeArgs {
@@ -372,6 +377,15 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // linkedinJustConnected directive → Claire acks by name + asks for their LinkedIn URL or résumé so
   // she can pull experience and start matching. Canary-gated to mirror the offer-first cohort.
   if (isCanaryUser(args.userId) && parseLinkedinDoneOpener(args.inboundText)) {
+    // No-paste photo-enrich (2026-06-03) now resolves the profile IN the callback and server-pushes
+    // the pitch. By the time this "I've done LinkedIn submission" echo arrives, enrichment is DONE
+    // (skills/highlights on file) → the echo is vestigial. SUPPRESS it (no duplicate "drop résumé/URL"
+    // re-ask). Only when enrichment did NOT land (candidate not in Coresignal's dataset) do we ack +
+    // ask for résumé/URL as the fallback.
+    if (hasParsedProfileOnFile(user)) {
+      log("mode.linkedin_done_suppress_already_enriched", { userId: args.userId })
+      return { mode: "triage", suppressReply: true, suppressReason: "linkedin_done_already_enriched" }
+    }
     log("mode.linkedin_just_connected", { userId: args.userId })
     return { mode: "triage", linkedinJustConnected: true }
   }
@@ -395,6 +409,20 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // returning profile we ride triage with postParsePitch (the pitch then OFFERs find_match).
   if (args.cvParsedTrigger) {
     if (!onboardingComplete) {
+      // PITCH-FIRST ON RICH ENRICHMENT (Adam 2026-06-03: "we want to pitch & conversation first, why
+      // ask the onboarding question now?"): LinkedIn/résumé enrich already filled a real profile
+      // (skills + experienceHighlights). Skip the onboarding WALL entirely — mark complete + pitch in
+      // triage (pitch + OPEN conversation, NO target_role question). Only a profile-LESS cold start
+      // (Coresignal miss + no résumé) still rides the bootstrap+ask path below. Mirrors WS-2.
+      if (hasParsedProfileOnFile(user)) {
+        try {
+          await markSharedOnboardingComplete(args.db, args.userId, now)
+        } catch (err) {
+          log("mode.cv_parsed_enriched_markcomplete_failed", { userId: args.userId, error: String(err) })
+        }
+        log("mode.cv_parsed_pitch_enriched_no_wall", { userId: args.userId })
+        return { mode: "triage", postParsePitch: true }
+      }
       try {
         if (!isSharedOnboardingActiveUser(user)) {
           // Cold start that just got a résumé: seed durable state, then pitch + ask the first ASKED

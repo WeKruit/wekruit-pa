@@ -190,6 +190,14 @@ export async function maybeRunThinClaire(
     log("thin_claire_defer_legacy", { eventId, userId, mode: decision.mode, jobId: decision.jobId })
     return false
   }
+  // SUPPRESS (Adam 2026-06-03): a vestigial system echo with nothing to say — e.g. the
+  // "I've done LinkedIn submission <token>" reroute that arrives AFTER the callback already
+  // enriched + server-pushed the pitch. Mark the inbound handled (thin owns it) and send NOTHING,
+  // so the candidate doesn't get a duplicate "drop your résumé/URL" re-ask.
+  if (decision.suppressReply) {
+    log("thin_claire_suppress_reply", { eventId, userId, reason: decision.suppressReason })
+    return true
+  }
 
   try {
     // Heavy agent + tools (and their @pa/agent-runtime/zod@4 SDK) load lazily here —

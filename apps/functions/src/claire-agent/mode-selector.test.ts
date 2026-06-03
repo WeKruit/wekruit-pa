@@ -143,6 +143,35 @@ test("Image #25 fix: LINKEDIN-DONE opener with NO enrich (OAuth name-only) → t
   assert.notEqual(decision.offerFirstKickoff, true, "must NOT re-offer the cold kickoff after they connected")
 })
 
+test("2026-06-03 fix: ENRICHED cv-parsed re-entry (LinkedIn photo-enrich filled skills) → triage + postParsePitch, NO onboarding wall", async () => {
+  // The login enriched a real profile (skills on file) → the pitch turn must NOT bootstrap the
+  // target_role question; it pitches + opens conversation (Adam: "pitch & conversation first").
+  const { db, writes } = makeDb({ tags: { skills: ["typescript", "react"] } })
+  const decision = await selectClaireMode({
+    db,
+    userId: CANARY_UID,
+    inboundText: "[linkedin just finished enriching]",
+    cvParsedTrigger: true,
+  })
+  assert.equal(decision.mode, "triage")
+  assert.equal(decision.postParsePitch, true)
+  const bootstrapped = writes().some((w) => w.onboardingState === "pending")
+  assert.equal(bootstrapped, false, "enriched pitch must NOT bootstrap the target_role wall")
+})
+
+test("2026-06-03 fix: LinkedIn-done echo AFTER enrichment landed → suppressReply (no duplicate 'drop résumé/URL')", async () => {
+  // Photo-enrich already pulled the profile + server-pushed the pitch. The vestigial
+  // "I've done LinkedIn submission" reroute echo must be SUPPRESSED, not re-ask for data we have.
+  const { db } = makeDb({ tags: { skills: ["typescript"] } })
+  const decision = await selectClaireMode({
+    db,
+    userId: CANARY_UID,
+    inboundText: "I've done LinkedIn submission tok_abc12345",
+  })
+  assert.equal(decision.suppressReply, true, "enriched LinkedIn-done echo must be suppressed")
+  assert.notEqual(decision.linkedinJustConnected, true, "must NOT re-ask résumé/URL when already enriched")
+})
+
 test("WS-1(b): canary with an in-flight marker (onboarding active) surfaces enrichmentInFlight on the decision", async () => {
   const { db } = makeDb({
     enrichmentInFlight: true,
