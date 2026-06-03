@@ -5,12 +5,13 @@ export type CandidateOperatingLoopState =
   | "in_review"
   | "roles_to_review"
   | "intro_signal"
+  | "profile_signal"
   | "profile_active"
 
 export type CandidateOperatingLoopTone = "live" | "blue" | "green" | "muted"
 
 export type CandidateOperatingLoopStat = {
-  label: "New roles" | "Interview" | "Review" | "Feedback" | "Retained"
+  label: "New roles" | "Interview" | "Review" | "Feedback" | "Profile signal" | "Retained"
   value: string
   detail: string
   tone: CandidateOperatingLoopTone
@@ -26,6 +27,7 @@ export type CandidateOperatingLoop = {
 
 export type CandidateOperatingLoopMatch = {
   status: CandidateJobStatus
+  reviewDecision?: unknown
 }
 
 export function deriveCandidateOperatingLoop(
@@ -36,7 +38,8 @@ export function deriveCandidateOperatingLoop(
     interview: countByStatus(matches, ["invited", "interview_started"]),
     review: countByStatus(matches, ["review_pending", "passed"]),
     feedback: countByStatus(matches, ["intro_accepted", "intro_rejected"]),
-    retained: countByStatus(matches, ["not_passed", "paused"]),
+    profileSignal: matches.filter(matchNeedsProfileSignal).length,
+    retained: matches.filter(isRetainedHistory).length,
   }
   const stats: CandidateOperatingLoopStat[] = [
     {
@@ -62,6 +65,12 @@ export function deriveCandidateOperatingLoop(
       value: String(counts.feedback),
       detail: "Intro outcomes captured",
       tone: counts.feedback > 0 ? "green" : "muted",
+    },
+    {
+      label: "Profile signal",
+      value: String(counts.profileSignal),
+      detail: "Ready to review",
+      tone: counts.profileSignal > 0 ? "green" : "muted",
     },
     {
       label: "Retained",
@@ -111,6 +120,16 @@ export function deriveCandidateOperatingLoop(
     }
   }
 
+  if (counts.profileSignal > 0) {
+    return {
+      state: "profile_signal",
+      primaryLabel: "Profile signal",
+      body: `${counts.profileSignal} closed ${roleWord(counts.profileSignal)} ${counts.profileSignal === 1 ? "outcome is" : "outcomes are"} ready to review as durable matching evidence.`,
+      nextAction: "Use Update profile signal to tell Claire what should change before future matching.",
+      stats,
+    }
+  }
+
   return {
     state: "profile_active",
     primaryLabel: "Profile active",
@@ -121,6 +140,16 @@ export function deriveCandidateOperatingLoop(
     nextAction: "Review matching preferences if your target changed.",
     stats,
   }
+}
+
+function matchNeedsProfileSignal(match: CandidateOperatingLoopMatch): boolean {
+  if (match.status === "intro_rejected") return true
+  return match.status === "not_passed" && Boolean(match.reviewDecision)
+}
+
+function isRetainedHistory(match: CandidateOperatingLoopMatch): boolean {
+  if (match.status === "paused") return true
+  return match.status === "not_passed" && !matchNeedsProfileSignal(match)
 }
 
 function countByStatus(

@@ -2172,6 +2172,7 @@ const ME_V3_STYLES = `
 .wkv3-loop.is-in_review .wkv3-loop__summary::before { background: var(--success); }
 .wkv3-loop.is-roles_to_review .wkv3-loop__summary::before { background: #1F6FEB; }
 .wkv3-loop.is-intro_signal .wkv3-loop__summary::before { background: var(--success); }
+.wkv3-loop.is-profile_signal .wkv3-loop__summary::before { background: var(--success); }
 .wkv3-loop__kicker {
   margin: 0;
   font-size: 10.5px;
@@ -2183,6 +2184,7 @@ const ME_V3_STYLES = `
 .wkv3-loop.is-in_review .wkv3-loop__kicker { color: var(--success); }
 .wkv3-loop.is-roles_to_review .wkv3-loop__kicker { color: #1F6FEB; }
 .wkv3-loop.is-intro_signal .wkv3-loop__kicker { color: var(--success); }
+.wkv3-loop.is-profile_signal .wkv3-loop__kicker { color: var(--success); }
 .wkv3-loop.is-profile_active .wkv3-loop__kicker { color: var(--ink-3); }
 .wkv3-loop__text {
   margin: 0;
@@ -2201,7 +2203,7 @@ const ME_V3_STYLES = `
 .wkv3-loop__stats {
   margin: 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 .wkv3-loop__stat {
