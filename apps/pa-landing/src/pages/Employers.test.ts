@@ -184,6 +184,13 @@ test("Employers inbox pass rows expose selected preview state", () => {
   assert.match(employersSource, /aria-pressed=\{p\.id === activeId\}/)
 })
 
+test("Employers inbox lite rows keep the selected candidate context", () => {
+  assert.match(employersSource, /function EmpPassedDetailLite\(\{ c \}: \{ c: PassedProfile \}\)/)
+  assert.match(employersSource, /<strong>\{c\.name\}<\/strong> is an abbreviated sample row/)
+  assert.match(employersSource, /without inventing a full transcript for every placeholder/)
+  assert.doesNotMatch(employersSource, /Click <strong>Platform PM \(anon\)<\/strong> in the rail/)
+})
+
 test("Employers page aligns public CTA copy with the real role-packet intake", () => {
   assert.doesNotMatch(employersSource, />Sign in<\/Link>/)
   assert.doesNotMatch(employersSource, /just the role title/i)

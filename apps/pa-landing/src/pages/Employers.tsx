@@ -1055,8 +1055,8 @@ function EmpPassedDetailLite({ c }: { c: PassedProfile }) {
       </header>
       <section className="wk-emp-pp__sec wk-emp-pp__lite-body">
         <p className="wk-emp-pp__lite-msg">
-          This preview follows one passed profile end-to-end. Click <strong>Platform PM (anon)</strong> in the rail to see the
-          full operational view — summary, pass reason, evidence, risks, fit, and transcript excerpts.
+          <strong>{c.name}</strong> is an abbreviated sample row. The full passed-profile record includes summary,
+          pass reason, evidence, risks, fit, and transcript excerpts without inventing a full transcript for every placeholder.
         </p>
       </section>
     </article>
