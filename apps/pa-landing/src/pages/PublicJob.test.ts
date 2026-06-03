@@ -62,3 +62,19 @@ test("PublicJob resume upload avoids status-code fallback errors", () => {
   assert.doesNotMatch(source, /Upload failed \(\$\{status\}\)\. Try again\./)
   assert.match(source, /Resume upload did not finish\. Message Claire and we'll attach it to this role\./)
 })
+
+test("PublicJob resume gate keeps upload framed as role-interview continuity", () => {
+  assert.match(source, /Checking the resume Claire needs for this role interview\./)
+  assert.match(source, /Upload your resume to keep this role attached\./)
+  assert.match(source, /unlock Claire's role interview/)
+  assert.match(source, /Role context is saved while your resume is parsed and labeled\./)
+  assert.match(source, /We will use it to keep this role attached to Claire's interview\./)
+  assert.match(source, /Resume parsed\. Rechecking this role interview\./)
+  assert.match(source, /selected\. Upload it to keep this role attached\./)
+  assert.match(source, /Open role interview/)
+
+  assert.doesNotMatch(source, /Checking resume…/)
+  assert.doesNotMatch(source, /Upload resume to continue/)
+  assert.doesNotMatch(source, /Upload it to continue/)
+  assert.doesNotMatch(source, /Open interview"/)
+})

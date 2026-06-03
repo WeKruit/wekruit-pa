@@ -676,8 +676,8 @@ function PrescreenStartGate({
   if (gateState.status === "loading" || gateState.status === "idle") {
     return (
       <>
-        <p className="wk-pj-card__copy">Checking your candidate profile and resume status.</p>
-        <div className="wk-pj-disabled">Checking resume…</div>
+        <p className="wk-pj-card__copy">Checking the resume Claire needs for this role interview.</p>
+        <div className="wk-pj-disabled">Checking role interview access…</div>
       </>
     )
   }
@@ -701,10 +701,10 @@ function PrescreenStartGate({
     return (
       <>
         <p className="wk-pj-card__copy">
-          Add your resume first. We'll parse it, label your profile, then unlock the
-          iMessage interview for this role.
+          Upload your resume to keep this role attached. We'll parse it, label your profile,
+          then unlock Claire's role interview.
         </p>
-        <div className="wk-pj-disabled">Upload resume to continue</div>
+        <div className="wk-pj-disabled">Upload resume for role interview</div>
       </>
     )
   }
@@ -712,8 +712,8 @@ function PrescreenStartGate({
     return (
       <>
         <p className="wk-pj-card__copy">
-          Your resume is being parsed and labeled. Claire's iMessage interview unlocks after that
-          finishes.
+          Role context is saved while your resume is parsed and labeled. Claire's iMessage
+          interview opens after that finishes.
         </p>
         <ProcessSteps activeStep={3} />
         <button className="wk-btn wk-btn--secondary wk-btn--block" type="button" onClick={onRefresh}>
@@ -814,7 +814,7 @@ function InlineCvSection({
     return (
       <div className="wk-pj-cv">
         <p className="wk-eyebrow">Resume</p>
-        <p className="wk-pj-card__copy">Resume uploaded. We are finishing parsing and labeling before the Claire interview opens.</p>
+        <p className="wk-pj-card__copy">Resume uploaded. Role context is saved while we finish parsing and labeling before Claire's interview opens.</p>
         <ProcessSteps activeStep={3} />
       </div>
     )
@@ -822,7 +822,7 @@ function InlineCvSection({
   return (
     <div className="wk-pj-cv">
       <p className="wk-eyebrow">Resume</p>
-      <p className="wk-pj-card__copy">PDF or DOCX, under 5 MB. We will use it to ground Claire's interview.</p>
+      <p className="wk-pj-card__copy">PDF or DOCX, under 5 MB. We will use it to keep this role attached to Claire's interview.</p>
       <InlineCvUpload
         jobId={jobId}
         requestedUserId={requestedUserId}
@@ -958,15 +958,15 @@ function uploadStatusText(
   uploadResult: { resumeId?: string; resumeArtifactId?: string } | null
 ): string {
   if (status === "uploading") {
-    return "Uploading, parsing, and labeling your resume. This can take around 20-40 seconds."
+    return "Uploading, parsing, and labeling your resume while this role stays attached. This can take around 20-40 seconds."
   }
   if (status === "ok") {
     return uploadResult?.resumeId
-      ? "Resume parsed. Checking whether Claire's interview is ready to unlock."
-      : "Upload received. Checking whether Claire's interview is ready to unlock."
+      ? "Resume parsed. Rechecking this role interview."
+      : "Upload received. Rechecking this role interview."
   }
   if (status === "err") return "Resume upload did not finish."
-  return file ? `${file.name} selected. Upload it to continue.` : "Choose a PDF or DOCX resume to continue."
+  return file ? `${file.name} selected. Upload it to keep this role attached.` : "Choose a PDF or DOCX resume to attach to this role interview."
 }
 
 function friendlyUploadError(reason: string, status: number): string {
@@ -998,7 +998,7 @@ function friendlyUploadError(reason: string, status: number): string {
 }
 
 function ProcessSteps({ activeStep }: { activeStep: number }) {
-  const steps = ["Select file", "Upload", "Parse resume", "Open interview"]
+  const steps = ["Select file", "Upload", "Parse resume", "Open role interview"]
   return (
     <ol className="wk-pj-steps" aria-label="Resume upload progress">
       {steps.map((step, index) => {
