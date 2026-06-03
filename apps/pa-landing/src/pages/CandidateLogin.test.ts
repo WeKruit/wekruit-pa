@@ -45,6 +45,11 @@ test("CandidateShell signed-in nav keeps candidates inside the operating home an
   assert.match(source, /if \(to === "\/me\/privacy"\) return pathname === "\/me\/privacy"/)
 })
 
+test("CandidateShell footer routes employers to the actual employer surface", () => {
+  assert.match(source, /<Link to="\/employers">For employers<\/Link>/)
+  assert.doesNotMatch(source, /href="https:\/\/wekruit\.com"[\s\S]*For employers/)
+})
+
 test("CandidateShell routes missing Claire-line states to a real profile action", () => {
   assert.doesNotMatch(source, /Claire line pending/)
   assert.doesNotMatch(source, /wk-sidenav__claire is-pending" aria-disabled="true"/)

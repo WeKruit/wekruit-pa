@@ -473,7 +473,7 @@ export function CandidateShell({
             <span className="wk-footer__tag">The agentic talent marketplace.</span>
           </div>
           <nav className="wk-footer__nav">
-            <a href="https://wekruit.com">For employers</a>
+            <Link to="/employers">For employers</Link>
             <Link to="/legal">Privacy</Link>
             <Link to="/legal">Terms</Link>
             <a href="mailto:noahliu@wekruit.com">noahliu@wekruit.com</a>
