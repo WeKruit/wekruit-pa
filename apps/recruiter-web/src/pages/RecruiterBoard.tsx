@@ -4306,7 +4306,7 @@ function RecruiterAccessGate({
           <span className="rb-platform__logo">W</span>
           <span><strong>WeKruit</strong><em>Recruiter</em></span>
         </Link>
-        <Link to="/" className="rb-access__link">Back to WeKruit</Link>
+        <a href="https://candidate.wekruit.com/" className="rb-access__link">Back to WeKruit</a>
       </div>
       <main className="rb-access__body">
         <section className="rb-access__copy">
