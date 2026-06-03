@@ -762,6 +762,46 @@ function LoginPipelinePreview() {
   )
 }
 
+function LoginOnboardingPreview() {
+  const items = [
+    {
+      title: "Resume and LinkedIn uptake",
+      body: "Claire starts by turning your background into a durable WeKruit profile.",
+    },
+    {
+      title: "Target roles and constraints",
+      body: "Capture the roles, locations, salary range, timing, visa, and company shapes that matter.",
+    },
+    {
+      title: "Nearest-work evidence",
+      body: "Claire asks for closest-overlap proof before a role becomes a fit decision.",
+    },
+    {
+      title: "Profile corrections stay editable",
+      body: "You can correct facts and preferences before Claire pursues or rules out a role.",
+    },
+  ]
+
+  return (
+    <section className="wk-login-preview" aria-label="What Claire starts after sign-in">
+      <p className="wk-login-preview__k">What Claire starts after sign-in</p>
+      <ul className="wk-login-preview__list">
+        {items.map((item) => (
+          <li className="wk-login-preview__item" key={item.title}>
+            <span className="wk-login-preview__icon">
+              <Icon name="message" size={11} stroke={2.4} />
+            </span>
+            <span>
+              <strong>{item.title}</strong>
+              <em>{item.body}</em>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 export default function CandidateLogin() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -970,6 +1010,7 @@ export default function CandidateLogin() {
   const roleInterviewNext = isPublicJobPath(nextDest.pathname) || Boolean(onboardingRoleReturn)
   const onboardingNext = nextDest.isOnboarding && !roleInterviewNext
   const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !onboardingNext
+  const showOnboardingPreview = !isCompletingLink && onboardingNext
   const firstTimeHref = roleInterviewNext ? nextDest.to : onboardingNext ? nextDest.to : onboardingDestination(peekSource())
   const loginEyebrow = isCompletingLink
     ? "Finishing sign-in"
@@ -1043,6 +1084,7 @@ export default function CandidateLogin() {
             </p>
 
             {showPipelinePreview ? <LoginPipelinePreview /> : null}
+            {showOnboardingPreview ? <LoginOnboardingPreview /> : null}
 
             {status === "signing_in" && !isCompletingLink ? (
               <p className="wk-success">Signing you in…</p>

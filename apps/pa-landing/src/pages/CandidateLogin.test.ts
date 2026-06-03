@@ -52,6 +52,17 @@ test("CandidateLogin frames onboarding login as a first-time Claire start", () =
   assert.match(source, /\{!onboardingNext \? \([\s\S]*<p className="wk-login__fine">/)
 })
 
+test("CandidateLogin previews the first Claire conversation before onboarding auth controls", () => {
+  assert.match(source, /function LoginOnboardingPreview\(\)/)
+  assert.match(source, /What Claire starts after sign-in/)
+  assert.match(source, /Resume and LinkedIn uptake/)
+  assert.match(source, /Target roles and constraints/)
+  assert.match(source, /Nearest-work evidence/)
+  assert.match(source, /Profile corrections stay editable/)
+  assert.match(source, /const showOnboardingPreview = !isCompletingLink && onboardingNext/)
+  assert.match(source, /\{showOnboardingPreview \? <LoginOnboardingPreview \/> : null\}[\s\S]*<div className="wk-login__providers">/)
+})
+
 test("CandidateLogin /me sign-in previews the operating home before auth controls", () => {
   assert.match(source, /function LoginPipelinePreview/)
   assert.match(source, /What opens after sign-in/)
