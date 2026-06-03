@@ -3,6 +3,8 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  EMPLOYER_PACKET_STARTERS,
+  applyEmployerPacketStarter,
   buildEmployerSignupPayload,
   validateEmployerSignupForm,
   type EmployerSignupFormState,
@@ -136,4 +138,60 @@ test("buildEmployerSignupPayload normalizes the role brief without inventing sco
     introHandoff:
       "After a passed profile, route accepted intros to Alex for a 30-minute hiring-manager screen within two business days.",
   })
+})
+
+test("EMPLOYER_PACKET_STARTERS expose editable Claire packet starters only", () => {
+  assert.deepEqual(
+    EMPLOYER_PACKET_STARTERS.map((starter) => [starter.id, starter.label]),
+    [
+      ["founding_engineering", "Founding engineering"],
+      ["product_leadership", "Product leadership"],
+      ["gtm_growth", "GTM growth"],
+    ],
+  )
+
+  for (const starter of EMPLOYER_PACKET_STARTERS) {
+    assert.equal(typeof starter.label, "string")
+    assert.equal(starter.packet.rolesHiring.trim().length > 0, true)
+    assert.equal(starter.packet.hardFilters.trim().length > 0, true)
+    assert.equal(starter.packet.screeningQuestions.trim().length > 0, true)
+    assert.equal(starter.packet.calibrationExamples.trim().length > 0, true)
+    assert.equal(starter.packet.notes.trim().length > 0, true)
+    assert.equal(starter.packet.feedbackLoop.trim().length > 0, true)
+    assert.equal(starter.packet.introHandoff.trim().length > 0, true)
+    assert.equal("companyName" in starter.packet, false)
+    assert.equal("workEmail" in starter.packet, false)
+    assert.equal("contactName" in starter.packet, false)
+  }
+})
+
+test("applyEmployerPacketStarter fills the screening packet without overwriting employer identity", () => {
+  const draft: EmployerSignupFormState = {
+    companyName: "Operator Labs",
+    companyLinkedin: "https://www.linkedin.com/company/operator-labs",
+    workEmail: "Hiring@OperatorLabs.com",
+    contactName: "Maya Chen",
+    roleAtCompany: "VP Talent",
+    stage: "series-a",
+    rolesHiring: "",
+    notes: "",
+    hardFilters: "",
+    screeningQuestions: "",
+    calibrationExamples: "",
+    feedbackLoop: "",
+    introHandoff: "",
+  }
+
+  const filled = applyEmployerPacketStarter(draft, "gtm_growth")
+
+  assert.equal(filled.companyName, draft.companyName)
+  assert.equal(filled.companyLinkedin, draft.companyLinkedin)
+  assert.equal(filled.workEmail, draft.workEmail)
+  assert.equal(filled.contactName, draft.contactName)
+  assert.equal(filled.roleAtCompany, draft.roleAtCompany)
+  assert.equal(filled.stage, draft.stage)
+  assert.match(filled.rolesHiring, /GTM/)
+  assert.match(filled.hardFilters, /sales-led/)
+  assert.match(filled.screeningQuestions, /pipeline/)
+  assert.equal(validateEmployerSignupForm(filled), null)
 })

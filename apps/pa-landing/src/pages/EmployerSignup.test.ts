@@ -106,3 +106,17 @@ test("EmployerSignup explains the post-submit calibration loop before the form",
   assert.doesNotMatch(source, /automatic submissions/i)
   assert.doesNotMatch(source, /browse all candidates/i)
 })
+
+test("EmployerSignup offers editable packet starters instead of a blank long-form only path", () => {
+  assert.match(source, /EmployerPacketStarters/)
+  assert.match(source, /EMPLOYER_PACKET_STARTERS/)
+  assert.match(source, /applyEmployerPacketStarter/)
+  assert.match(source, /Use as editable structure/)
+  assert.match(source, /starter\.label/)
+  assert.match(source, /starter\.summary/)
+  assert.match(source, /onApply\(starter\.id\)/)
+
+  assert.doesNotMatch(source, /autofill.*company/i)
+  assert.doesNotMatch(source, /one-click candidate/i)
+  assert.doesNotMatch(source, /instant candidate matches/i)
+})

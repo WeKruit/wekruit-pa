@@ -8,8 +8,11 @@
 import { useState, type CSSProperties, type FormEvent, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import {
+  EMPLOYER_PACKET_STARTERS,
+  applyEmployerPacketStarter,
   buildEmployerSignupPayload,
   validateEmployerSignupForm,
+  type EmployerPacketStarterId,
   type EmployerSignupFormState,
   type EmployerSignupStage,
 } from "../lib/employer-signup-model.js"
@@ -95,9 +98,9 @@ export default function EmployerSignup() {
             style={{
               fontFamily: "var(--font-serif)",
               fontWeight: 400,
-              fontSize: "clamp(36px, 4.4vw, 56px)",
+              fontSize: 44,
               lineHeight: 1.05,
-              letterSpacing: "-0.02em",
+              letterSpacing: 0,
               color: "var(--ink)",
               margin: 0,
               textWrap: "balance",
@@ -110,7 +113,7 @@ export default function EmployerSignup() {
               marginTop: 18,
               maxWidth: 520,
               fontFamily: "var(--font-sans)",
-              fontSize: "clamp(16px, 1.3vw, 18px)",
+              fontSize: 17,
               lineHeight: 1.5,
               color: "var(--ink-2)",
             }}
@@ -123,6 +126,11 @@ export default function EmployerSignup() {
 
           {done ? <SuccessCard email={form.workEmail} /> : (
             <>
+              <EmployerPacketStarters
+                onApply={(starterId) => {
+                  setForm((prev) => applyEmployerPacketStarter(prev, starterId))
+                }}
+              />
               <EmployerPacketReadiness summary={readiness} />
               <EmployerCalibrationLoop />
               <form
@@ -272,6 +280,105 @@ export default function EmployerSignup() {
       </section>
       <Footer />
     </main>
+  )
+}
+
+function EmployerPacketStarters({ onApply }: { onApply: (starterId: EmployerPacketStarterId) => void }) {
+  return (
+    <section
+      aria-label="Editable role packet starters"
+      style={{
+        marginTop: 28,
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-lg)",
+        background: "var(--cream-3)",
+        padding: 18,
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "var(--font-sans)",
+          fontSize: 12,
+          color: "var(--ink-3)",
+          fontWeight: 700,
+          textTransform: "uppercase",
+          letterSpacing: 0,
+        }}
+      >
+        Start from a screenable packet
+      </div>
+      <h2
+        style={{
+          margin: "4px 0 0",
+          fontFamily: "var(--font-serif)",
+          fontWeight: 400,
+          fontSize: 24,
+          lineHeight: 1.12,
+          color: "var(--ink)",
+          letterSpacing: 0,
+        }}
+      >
+        Pick the closest role shape, then edit the details.
+      </h2>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(168px, 1fr))",
+          gap: 10,
+          marginTop: 14,
+        }}
+      >
+        {EMPLOYER_PACKET_STARTERS.map((starter) => (
+          <article
+            key={starter.id}
+            style={{
+              minWidth: 0,
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-md)",
+              background: "rgba(255, 255, 255, 0.66)",
+              padding: 12,
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            <strong
+              style={{
+                fontFamily: "var(--font-sans)",
+                fontSize: 14,
+                lineHeight: 1.25,
+                color: "var(--ink)",
+              }}
+            >
+              {starter.label}
+            </strong>
+            <p
+              style={{
+                margin: 0,
+                fontFamily: "var(--font-sans)",
+                fontSize: 13,
+                lineHeight: 1.42,
+                color: "var(--ink-2)",
+              }}
+            >
+              {starter.summary}
+            </p>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              onClick={() => onApply(starter.id)}
+              style={{
+                marginTop: "auto",
+                width: "100%",
+                justifyContent: "center",
+              }}
+            >
+              Use as editable structure
+            </button>
+          </article>
+        ))}
+      </div>
+    </section>
   )
 }
 
