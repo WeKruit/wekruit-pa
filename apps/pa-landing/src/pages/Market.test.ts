@@ -74,6 +74,9 @@ test("Market explains how Claire uses role sources before candidates chase posti
   assert.match(source, /Direct-line roles are briefs WeKruit can screen against/)
   assert.match(source, /Tracked roles are source evidence, not applications/)
   assert.match(source, /Your profile and preferences decide what Claire can pursue with you/)
+  assert.match(source, /aria-label="Market primary actions"/)
+  assert.match(source, /href="\/me\/profile#profile-corrections"[\s\S]*Update role signals/)
+  assert.match(source, /onClick=\{\(\) => setTab\("direct"\)\}[\s\S]*View direct-line roles/)
   assert.match(source, /href="\/me\/profile"/)
   assert.match(source, /href="\/onboarding"/)
 

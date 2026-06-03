@@ -729,6 +729,16 @@ export default function Market(): ReactNode {
                 <p className="wk-market__lede">
                   Fresh external roles from the last 45 days. Open a posting to inspect the source while Claire keeps your profile and target constraints connected.
                 </p>
+                <div className="wk-market__actions" aria-label="Market primary actions">
+                  <a className="wk-btn wk-btn--primary" href="/me/profile#profile-corrections">Update role signals</a>
+                  <button
+                    type="button"
+                    className="wk-btn wk-btn--secondary"
+                    onClick={() => setTab("direct")}
+                  >
+                    View direct-line roles
+                  </button>
+                </div>
               </header>
 
               <section className="wk-market-contract" aria-labelledby="wk-market-contract-title">
@@ -984,6 +994,10 @@ const MARKET_STYLES = String.raw`
   font-family: inherit; font-size: clamp(16.5px, 1.4vw, 19px);
   line-height: 1.5; letter-spacing: -0.005em;
   color: var(--wk-ink-2); margin: 0; max-width: 660px; text-wrap: pretty;
+}
+.wk-shell .wk-market__actions {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  align-items: center; margin-top: 20px;
 }
 
 .wk-shell .wk-market-contract {
