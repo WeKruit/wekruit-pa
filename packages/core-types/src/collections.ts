@@ -180,6 +180,15 @@ export const PA_COLLECTIONS = {
    * web account yet on the QR path).
    */
   cvUploadTokens: "pa-cv-upload-tokens",
+  /**
+   * LinkedIn one-tap connect tokens. Doc id == opaque token; doc maps
+   * token -> userId (the phone-resolved candidate). `/connect-linkedin?token=`
+   * resolves token -> userId server-side so the connect CF links the LinkedIn
+   * handle + enriches for THAT user without a Firebase ID token (texted
+   * prospect has no web account). Single-use, 30-day TTL. Mirror of
+   * cvUploadTokens. Server-only (deny-all in firestore.rules).
+   */
+  linkedinConnectTokens: "pa-linkedin-connect-tokens",
 } as const
 
 /**

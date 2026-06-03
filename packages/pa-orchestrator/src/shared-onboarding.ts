@@ -181,6 +181,52 @@ const HELLO_WEKRUIT_OPENER_RE =
 const WEKRUIT_JOB_OPENER_RE =
   /(?:^|\s)wekruit_([a-z0-9][a-z0-9-]{1,160})_([a-z0-9][a-z0-9_-]{7,127})_job(?:\s|$)/i
 
+/**
+ * LinkedIn one-tap re-entry marker (2026-06-03). After the candidate connects
+ * LinkedIn on the candidate-domain page, the page reroutes back to iMessage
+ * with the body "I've done LinkedIn submission <token>" and the candidate taps
+ * Send. The trailing token is the single-use CONNECT token (maps token ->
+ * userId server-side via verifyLinkedinConnectToken), NOT a candidateId — so it
+ * is parsed SEPARATELY from `parseHelloWekruitOpener` (which returns a
+ * candidateId). Inbound resolution stays phone-keyed; this marker only signals
+ * "candidate is back in-thread after connecting LinkedIn" (a kickoff/greeting,
+ * never a slot answer). The token must be STRIPPED before any LLM sees it.
+ */
+export const LINKEDIN_DONE_OPENER_PREFIX = "I've done LinkedIn submission"
+const LINKEDIN_DONE_OPENER_RE =
+  /^i'?ve\s+done\s+linkedin\s+submission\s*:?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
+
+/** Build the sms: reroute body the connect page sends after LinkedIn connect. */
+export function buildLinkedinDoneOpenerBody(token: string): string {
+  const t = token.trim()
+  return t ? `${LINKEDIN_DONE_OPENER_PREFIX} ${t}` : LINKEDIN_DONE_OPENER_PREFIX
+}
+
+/** Canonical candidate-domain base for the LinkedIn one-tap connect page (C-end only). */
+export const CONNECT_LINKEDIN_LINK_BASE = "https://candidate.wekruit.com/connect-linkedin"
+
+/**
+ * Pure builder for the LinkedIn one-tap connect link the thin agent can utter
+ * as a bubble. The page reads `?token=` and resolves it to the user server-side.
+ * Exposed here (and re-exported from the barrel) so a future deterministic thin
+ * step can emit the link without this branch touching agent.ts/prompt.ts.
+ */
+export function buildConnectLinkedinUrl(token: string): string {
+  const t = token.trim()
+  return t ? `${CONNECT_LINKEDIN_LINK_BASE}?token=${encodeURIComponent(t)}` : CONNECT_LINKEDIN_LINK_BASE
+}
+
+/**
+ * Parse the LinkedIn-done re-entry marker; returns the CONNECT token (NOT a
+ * candidateId) when present. Returns `{ token: "" }` when the bare phrase is
+ * sent with no token. Returns `null` when the text isn't this marker at all.
+ */
+export function parseLinkedinDoneOpener(value: string): { token: string } | null {
+  const match = value.trim().match(LINKEDIN_DONE_OPENER_RE)
+  if (!match) return null
+  return { token: match[1]?.trim() ?? "" }
+}
+
 /** Build the sms: deep-link body candidates send to bind phone → pa-users/{candidateId}. */
 export function buildHelloWekruitOpenerBody(candidateId: string): string {
   const id = candidateId.trim()
@@ -208,9 +254,12 @@ export function parseHelloWekruitOpener(value: string): { candidateId: string } 
 
 export function isSharedOnboardingGreetingOrKickoff(value: string): boolean {
   if (parseHelloWekruitOpener(value)) return true
+  if (parseLinkedinDoneOpener(value)) return true
   const normalized = normalizeControlText(value)
   if (!normalized) return true
   if (normalized === "pa reset") return true
+  // LinkedIn one-tap re-entry marker, normalized: "i ve done linkedin submission <token>".
+  if (/^i ?ve done linkedin submission(?: [a-z0-9_-]+)?$/.test(normalized)) return true
   if (/^wekruit\s+(?:candidate\s+hi|laid\s+off|rain\s+software\s+engineer)/i.test(normalized)) return true
   if (/^hello wekruit(?: [a-z0-9_-]+)?$/.test(normalized)) return true
   // New verification-code opener phrasing, normalized: "hi wekruit my verification code is <token>".
