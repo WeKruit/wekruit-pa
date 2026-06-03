@@ -742,7 +742,7 @@ const REFER_FAQ: { q: string; a: string }[] = [
   },
   {
     q: "What does my friend see?",
-    a: "A short note from you (which you can edit), plus a one-tap sign-up. They don't have to upload a resume to be matched — Claire picks up the conversation from there. No spam.",
+    a: "A short note from you (which you can edit), plus a one-tap sign-up. Claire picks up the profile and resume context before any role-specific screen. No spam.",
   },
   {
     q: "Is there a cap on how many people I can refer?",
@@ -1041,7 +1041,7 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
           <p className="wk-ref-hero__sub" style={{ maxWidth: 580 }}>
             {inviter ? (
               <>
-                They get matched by <strong>Claire</strong> — same flow they do. If you take an interview,{" "}
+                They start with <strong>Claire</strong> — same flow they do. If you take an interview,{" "}
                 {inviter.split(/\s+/)[0]} earns {fmtMoney(REWARD_INTERVIEW)}. If you sign an offer,{" "}
                 {fmtMoney(REWARD_PLACEMENT)}. Costs you nothing.
               </>

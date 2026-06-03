@@ -61,3 +61,12 @@ test("ReferPage avoids payout timing certainty and contradictory cap language", 
   assert.match(source, /Personal referrals only; daily safety limits apply\./)
   assert.match(source, /Status from your referral dashboard\./)
 })
+
+test("ReferPublicPage does not promise resume-free matching", () => {
+  assert.doesNotMatch(source, /They don&apos;t have to upload a resume to be matched/)
+  assert.doesNotMatch(source, /They don't have to upload a resume to be matched/)
+  assert.doesNotMatch(source, /They get matched by <strong>Claire<\/strong>/)
+
+  assert.match(source, /They start with <strong>Claire<\/strong>/)
+  assert.match(source, /Claire picks up the profile and resume context before any role-specific screen\./)
+})
