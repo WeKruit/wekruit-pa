@@ -126,6 +126,31 @@ export default function EmployerSignup() {
             against the evidence, and you only see consented passed profiles with the transcript
             and risks attached.
           </p>
+          <div
+            aria-label="Role intake primary actions"
+            style={{
+              marginTop: 22,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <a
+              href="#employer-primary-role-brief"
+              className="btn btn--primary"
+              style={{ textDecoration: "none" }}
+            >
+              Start role packet
+            </a>
+            <Link
+              to="/employers/inbox"
+              className="btn btn--secondary"
+              style={{ textDecoration: "none" }}
+            >
+              See sample pass
+            </Link>
+          </div>
           <EmployerOutputPreview />
 
           {done ? <SuccessCard form={form} onStartAnother={() => {
@@ -452,13 +477,6 @@ function EmployerOutputPreview() {
         The packet below becomes the evidence lens Claire uses in the sample pass record:
         pass reason, risks, role fit, transcript excerpts, and the hiring-team calibration loop.
       </p>
-      <Link
-        to="/employers/inbox"
-        className="btn btn--secondary"
-        style={{ justifySelf: "start", textDecoration: "none" }}
-      >
-        See sample pass
-      </Link>
     </section>
   )
 }

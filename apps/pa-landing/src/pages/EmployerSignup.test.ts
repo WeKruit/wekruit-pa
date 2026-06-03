@@ -93,6 +93,8 @@ test("EmployerSignup shows a role packet readiness checklist before the long for
 })
 
 test("EmployerSignup connects role intake to the sample passed-profile output", () => {
+  assert.match(source, /aria-label="Role intake primary actions"/)
+  assert.match(source, /href="#employer-primary-role-brief"[\s\S]*Start role packet/)
   assert.match(source, /to="\/employers\/inbox"[\s\S]*See sample pass/)
   assert.match(source, /The packet below becomes the evidence lens Claire uses in the sample pass record/)
   assert.match(source, /aria-label="Role intake output preview"/)
