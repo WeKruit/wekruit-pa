@@ -31,10 +31,15 @@ export const CANARY_UIDS: ReadonlySet<string> = new Set<string>([
  * without a live phone, so the new behavior is RELEASED TO ALL USERS. This is the single ramp 抓手.
  * To REVERT to dev-phone-only, set RAMPED_TO_ALL=false (the CANARY_UIDS set is preserved) + redeploy.
  */
-const RAMPED_TO_ALL = true
+// Env-gated so the canary-SPLIT unit tests (which assert non-canary fallthrough) keep their two
+// cohorts by DEFAULT (env unset → false), while PROD sets PA_ONBOARDING_RAMP_ALL=1
+// (.env.wekruit-5f89b) → everyone. Reversible by clearing the env var + redeploy. One ramp 抓手.
+function isRampedToAll(): boolean {
+  return process.env.PA_ONBOARDING_RAMP_ALL === "1"
+}
 
-/** True when `userId` should get the new behavior. RAMPED_TO_ALL → everyone; else the dev cohort. */
+/** True when `userId` should get the new behavior. Ramped (prod) → everyone; else the dev cohort. */
 export function isCanaryUser(userId: string | null | undefined): boolean {
-  if (RAMPED_TO_ALL) return true
+  if (isRampedToAll()) return true
   return typeof userId === "string" && CANARY_UIDS.has(userId)
 }
