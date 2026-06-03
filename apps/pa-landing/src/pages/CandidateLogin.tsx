@@ -496,6 +496,7 @@ function appNavItems(claireHref: string | null): AppNavItem[] {
   return [
   { to: "/me", icon: "pipeline", label: "Home" },
   { to: "/me/matches", icon: "match", label: "Roles" },
+  { to: "/market", icon: "market", label: "Market" },
   ...(claireHref ? [{ to: claireHref, icon: "claire" as const, label: "Claire", external: true }] : []),
   { to: "/me/profile", icon: "profile", label: "Profile" },
   { to: "/me/refer", icon: "refer", label: "Refer · $4k" },
@@ -526,6 +527,7 @@ function isNavItemActive(pathname: string, to: string, external?: boolean): bool
   if (external) return false
   if (to === "/me") return pathname === "/me"
   if (to === "/me/matches") return pathname === "/me/matches" || pathname.startsWith("/me/match")
+  if (to === "/market") return pathname === "/market"
   return pathname === to || pathname.startsWith(to + "/")
 }
 

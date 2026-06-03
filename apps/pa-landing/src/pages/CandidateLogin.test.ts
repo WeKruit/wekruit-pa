@@ -30,12 +30,13 @@ test("CandidateLogin preserves role interview context for first-time job candida
   assert.match(source, /Start this role with Claire/)
 })
 
-test("CandidateShell signed-in nav keeps candidates inside the operating home surfaces", () => {
+test("CandidateShell signed-in nav keeps candidates inside the operating home and market source surfaces", () => {
   assert.match(source, /\{ to: "\/me", icon: "pipeline", label: "Home" \}/)
   assert.match(source, /\{ to: "\/me\/matches", icon: "match", label: "Roles" \}/)
+  assert.match(source, /\{ to: "\/market", icon: "market", label: "Market" \}/)
   assert.match(source, /\{ to: "\/me\/profile", icon: "profile", label: "Profile" \}/)
   assert.match(source, /\{ to: "\/me\/refer", icon: "refer", label: "Refer · \$4k" \}/)
-  assert.doesNotMatch(source, /\{ to: "\/market", icon: "market", label: "Market" \}/)
+  assert.match(source, /if \(to === "\/market"\) return pathname === "\/market"/)
 })
 
 test("CandidateShell routes missing Claire-line states to a real profile action", () => {
