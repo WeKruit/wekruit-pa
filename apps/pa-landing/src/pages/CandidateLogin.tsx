@@ -715,6 +715,13 @@ function signupSourceForLoginNext(next: ReturnType<typeof parseLoginNextPath>): 
   return fromCookie === "WeKruit_Laid_Off" ? "WeKruit_Laid_Off" : undefined
 }
 
+function onboardingRoleReturnPath(next: ReturnType<typeof parseLoginNextPath>): string | null {
+  if (!next.isOnboarding) return null
+  const params = new URLSearchParams(next.search.replace(/^\?/, ""))
+  const roleReturnPath = params.get("next")
+  return roleReturnPath && isPublicJobPath(roleReturnPath) ? roleReturnPath : null
+}
+
 function LoginPipelinePreview() {
   const items = [
     {
@@ -959,7 +966,8 @@ export default function CandidateLogin() {
 
   const busy = status === "google" || status === "linkedin" || status === "sending" || status === "signing_in"
   const onLayoff = isLayoffHost()
-  const roleInterviewNext = isPublicJobPath(nextDest.pathname)
+  const onboardingRoleReturn = onboardingRoleReturnPath(nextDest)
+  const roleInterviewNext = isPublicJobPath(nextDest.pathname) || Boolean(onboardingRoleReturn)
   const onboardingNext = nextDest.isOnboarding && !roleInterviewNext
   const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !onboardingNext
   const firstTimeHref = roleInterviewNext ? nextDest.to : onboardingNext ? nextDest.to : onboardingDestination(peekSource())
@@ -973,13 +981,17 @@ export default function CandidateLogin() {
   const loginSub = isCompletingLink
     ? "One sec — confirming your email and pulling up your pipeline."
     : status === "signing_in"
-      ? roleInterviewNext
+      ? onboardingRoleReturn
+        ? "One sec — confirming your sign-in and keeping this role attached to Claire's profile flow."
+        : roleInterviewNext
         ? "One sec — confirming your sign-in and reopening this role with Claire."
         : onboardingNext
           ? "One sec — confirming your sign-in and opening Claire's profile flow."
           : "One sec — confirming your sign-in and opening onboarding."
-      : roleInterviewNext
-        ? "Sign in and Claire keeps this role attached to your interview and profile."
+      : onboardingRoleReturn
+        ? "Sign in once and Claire will keep this role attached to your profile flow. Magic-link, Google, or LinkedIn — your choice."
+        : roleInterviewNext
+          ? "Sign in and Claire keeps this role attached to your interview and profile."
         : onboardingNext
           ? "Sign in once and Claire will start your profile flow. Magic-link, Google, or LinkedIn — your choice."
           : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."

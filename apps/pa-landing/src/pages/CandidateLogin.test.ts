@@ -34,6 +34,16 @@ test("CandidateLogin preserves role interview context for first-time job candida
   assert.match(source, /First time on this role\? <Link to=\{firstTimeHref\} className="wk-link">Continue here<\/Link> and Claire will keep the role attached\./)
 })
 
+test("CandidateLogin preserves role context when onboarding carries a public job return path", () => {
+  assert.match(source, /function onboardingRoleReturnPath\(next: ReturnType<typeof parseLoginNextPath>\): string \| null/)
+  assert.match(source, /const roleReturnPath = params\.get\("next"\)/)
+  assert.match(source, /return roleReturnPath && isPublicJobPath\(roleReturnPath\) \? roleReturnPath : null/)
+  assert.match(source, /const onboardingRoleReturn = onboardingRoleReturnPath\(nextDest\)/)
+  assert.match(source, /const roleInterviewNext = isPublicJobPath\(nextDest\.pathname\) \|\| Boolean\(onboardingRoleReturn\)/)
+  assert.match(source, /Sign in once and Claire will keep this role attached to your profile flow/)
+  assert.match(source, /First time on this role\? <Link to=\{firstTimeHref\} className="wk-link">Continue here<\/Link> and Claire will keep the role attached\./)
+})
+
 test("CandidateLogin frames onboarding login as a first-time Claire start", () => {
   assert.match(source, /onboardingNext\s*=\s*nextDest\.isOnboarding && !roleInterviewNext/)
   assert.match(source, /onboardingNext[\s\S]*\? "Start with Claire"/)
