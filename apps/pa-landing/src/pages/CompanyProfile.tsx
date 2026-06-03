@@ -118,6 +118,8 @@ function CompanyProfileLayout({ jobs }: { jobs: PublicJobOpening[] }) {
                 </a>
               ) : null}
 
+              <CompanyScreeningContract company={company} roleTitle={firstJob.title} />
+
               <section className="wk-company-roles" aria-labelledby="company-open-roles">
                 <div className="wk-company-section-head">
                   <p className="wk-eyebrow">Open positions</p>
@@ -183,6 +185,41 @@ function CompanyProfileLayout({ jobs }: { jobs: PublicJobOpening[] }) {
         </section>
       </main>
     </CandidateShell>
+  )
+}
+
+function CompanyScreeningContract({ company, roleTitle }: { company: string; roleTitle: string }) {
+  const checks = [
+    {
+      title: "Nearest-work evidence",
+      body: `Claire asks for the closest shipped work before treating ${roleTitle} as a fit.`,
+    },
+    {
+      title: "Role constraints",
+      body: "Location, compensation, timing, work authorization, and must-have evidence are checked before any pass.",
+    },
+    {
+      title: "Consent before sharing",
+      body: "Hiring teams only see candidate-approved evidence after Claire completes the role screen.",
+    },
+  ]
+
+  return (
+    <section className="wk-company-screen" aria-label="Claire company screening contract">
+      <div className="wk-company-screen__intro">
+        <p className="wk-eyebrow">What Claire will test</p>
+        <h2>{company} is not a browse card.</h2>
+        <p>Open the role when you want Claire to start the company-specific screen against this company's bar.</p>
+      </div>
+      <div className="wk-company-screen__list">
+        {checks.map((check) => (
+          <div className="wk-company-screen__row" key={check.title}>
+            <strong>{check.title}</strong>
+            <p>{check.body}</p>
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }
 
@@ -302,6 +339,49 @@ const COMPANY_PROFILE_STYLES = `
   background: rgba(255, 252, 247, 0.72);
   color: var(--wk-ink-2);
   font-size: 14px;
+}
+.wk-company-screen {
+  display: grid;
+  gap: 20px;
+  padding: 28px 0;
+  border-top: 1px solid var(--wk-border);
+  border-bottom: 1px solid var(--wk-border);
+}
+.wk-company-screen__intro {
+  display: grid;
+  gap: 8px;
+}
+.wk-company-screen h2 {
+  margin: 0;
+  color: var(--wk-ink);
+  font-family: 'Newsreader', serif;
+  font-size: 34px;
+  font-weight: 400;
+  line-height: 1.04;
+}
+.wk-company-screen__intro p:not(.wk-eyebrow),
+.wk-company-screen__row p {
+  margin: 0;
+  color: var(--wk-ink-2);
+  font-size: 15px;
+  line-height: 1.55;
+}
+.wk-company-screen__list {
+  display: grid;
+  border-top: 1px solid var(--wk-border);
+}
+.wk-company-screen__row {
+  display: grid;
+  grid-template-columns: minmax(136px, 0.42fr) minmax(0, 1fr);
+  gap: 18px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--wk-border);
+}
+.wk-company-screen__row strong {
+  color: var(--wk-ink);
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
 }
 .wk-company-roles {
   display: grid;
@@ -450,6 +530,9 @@ const COMPANY_PROFILE_STYLES = `
 @media (max-width: 560px) {
   .wk-company-title-row { grid-template-columns: 1fr; gap: 14px; }
   .wk-company-logo { width: 50px; height: 50px; border-radius: 12px; font-size: 26px; }
+  .wk-company-screen { padding: 24px 0; }
+  .wk-company-screen h2 { font-size: 29px; }
+  .wk-company-screen__row { grid-template-columns: 1fr; gap: 7px; }
   .wk-company-role { padding: 16px; min-height: 78px; }
 }
 `

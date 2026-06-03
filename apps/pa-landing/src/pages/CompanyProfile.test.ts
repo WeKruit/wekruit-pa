@@ -15,3 +15,13 @@ test("CompanyProfile keeps the employer process copy consent-safe", () => {
 
   assert.doesNotMatch(source, /WeKruit shares a concise profile\./)
 })
+
+test("CompanyProfile shows Claire's company-specific screening contract before role cards", () => {
+  assert.match(source, /function CompanyScreeningContract\(\{ company, roleTitle \}: \{ company: string; roleTitle: string \}\)/)
+  assert.match(source, /What Claire will test/)
+  assert.match(source, /Nearest-work evidence/)
+  assert.match(source, /Role constraints/)
+  assert.match(source, /Consent before sharing/)
+  assert.match(source, /company-specific screen/)
+  assert.match(source, /<CompanyScreeningContract company=\{company\} roleTitle=\{firstJob\.title\} \/>[\s\S]*<section className="wk-company-roles"/)
+})
