@@ -43,6 +43,13 @@ test("OpenJobs table action language stays interview and role centric", () => {
   assert.match(source, /\{strong \? "● Strong match" : "○ Open role"\}/)
 })
 
+test("OpenJobs direct-line count is role-scoped instead of inflated as company count", () => {
+  assert.doesNotMatch(source, /Companies talking to us today/)
+  assert.doesNotMatch(source, /companies hiring <em style=\{\{ fontStyle: "italic" \}\}>through us<\/em>/)
+  assert.match(source, /direct-line roles <em style=\{\{ fontStyle: "italic" \}\}>through us<\/em>/)
+  assert.match(source, /Roles from hiring teams today/)
+})
+
 test("OpenJobs starts narrow mobile visitors in cards instead of the desktop table", () => {
   assert.match(source, /function initialOpenJobsLayout\(\): LayoutId/)
   assert.match(source, /window\.matchMedia\("\(max-width: 720px\)"\)\.matches \? "cards" : "table"/)

@@ -461,7 +461,7 @@ function Tabs({ value, onChange, huntCount, directCount, loading }: TabsProps) {
   return (
     <div style={{ display: "flex", gap: 8, borderBottom: "1px solid var(--border)", marginBottom: 32, flexWrap: "wrap" }}>
       <Tab id="hunt" label="Tracked roles" sub="External source listings, not WeKruit-screened yet" count={huntCount} />
-      <Tab id="direct" label="Direct line" sub="Companies talking to us today" count={directCount} />
+      <Tab id="direct" label="Direct line" sub="Roles from hiring teams today" count={directCount} />
     </div>
   )
 }
@@ -487,7 +487,7 @@ function Header({ tab, count, total, search, setSearch, layout, setLayout }: Hea
         </div>
         <h1 style={{ fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: "clamp(32px, 3.6vw, 48px)", lineHeight: 1.05, letterSpacing: "-0.02em", margin: 0 }}>
           {isDirect ? (
-            <>{count} companies hiring <em style={{ fontStyle: "italic" }}>through us</em>.</>
+            <>{count} direct-line roles <em style={{ fontStyle: "italic" }}>through us</em>.</>
           ) : (
             <>{count} <em style={{ fontStyle: "italic" }}>External roles WeKruit is tracking</em>.</>
           )}
