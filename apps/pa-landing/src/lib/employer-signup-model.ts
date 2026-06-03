@@ -56,6 +56,7 @@ export type EmployerPacketPreviewSectionId =
   | "must_haves"
   | "feedback_loop"
   | "intro_handoff"
+  | "candidate_share_boundary"
 
 export type EmployerPacketPreviewSection = {
   id: EmployerPacketPreviewSectionId
@@ -194,6 +195,13 @@ export function deriveEmployerPacketPreview(form: EmployerSignupFormState): Empl
     { id: "must_haves", label: "Must-haves", ...mustHaves },
     { id: "feedback_loop", label: "Feedback loop", ...feedbackLoop },
     { id: "intro_handoff", label: "Intro handoff", ...introHandoff },
+    {
+      id: "candidate_share_boundary",
+      label: "Candidate share boundary",
+      value:
+        "Passed profiles are shared only after the candidate has passed Claire's role screen and explicitly consented to share.",
+      complete: true,
+    },
   ]
   const completedCount = sections.filter((section) => section.complete).length
 

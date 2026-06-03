@@ -144,8 +144,8 @@ test("buildEmployerSignupPayload normalizes the role brief without inventing sco
 test("deriveEmployerPacketPreview mirrors the Claire screening packet contract", () => {
   const preview = deriveEmployerPacketPreview(VALID_FORM)
 
-  assert.equal(preview.completedCount, 7)
-  assert.equal(preview.totalCount, 7)
+  assert.equal(preview.completedCount, 8)
+  assert.equal(preview.totalCount, 8)
   assert.equal(preview.ready, true)
   assert.deepEqual(
     preview.sections.map((section) => [section.id, section.label, section.complete]),
@@ -157,6 +157,7 @@ test("deriveEmployerPacketPreview mirrors the Claire screening packet contract",
       ["must_haves", "Must-haves", true],
       ["feedback_loop", "Feedback loop", true],
       ["intro_handoff", "Intro handoff", true],
+      ["candidate_share_boundary", "Candidate share boundary", true],
     ],
   )
   assert.match(preview.sections[0]!.value, /Founding infra engineer/)
@@ -164,6 +165,7 @@ test("deriveEmployerPacketPreview mirrors the Claire screening packet contract",
   assert.match(preview.sections[2]!.value, /platform tradeoff/)
   assert.match(preview.sections[3]!.value, /False positive/)
   assert.match(preview.sections[4]!.value, /infrastructure products/)
+  assert.match(preview.sections[7]!.value, /passed Claire's role screen and explicitly consented to share/i)
 })
 
 test("deriveEmployerPacketPreview keeps missing packet sections explicit", () => {
@@ -174,7 +176,7 @@ test("deriveEmployerPacketPreview keeps missing packet sections explicit", () =>
     introHandoff: "",
   })
 
-  assert.equal(preview.completedCount, 4)
+  assert.equal(preview.completedCount, 5)
   assert.equal(preview.ready, false)
   assert.deepEqual(
     preview.sections.map((section) => [section.id, section.complete, section.value]),
@@ -186,6 +188,11 @@ test("deriveEmployerPacketPreview keeps missing packet sections explicit", () =>
       ["must_haves", true, VALID_FORM.notes],
       ["feedback_loop", false, "Missing feedback loop"],
       ["intro_handoff", false, "Missing intro handoff"],
+      [
+        "candidate_share_boundary",
+        true,
+        "Passed profiles are shared only after the candidate has passed Claire's role screen and explicitly consented to share.",
+      ],
     ],
   )
 })
