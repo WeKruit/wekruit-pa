@@ -32,23 +32,6 @@ const host = typeof window !== "undefined" ? window.location.hostname.toLowerCas
 const IS_LAYOFF_HOST = host.startsWith("layoff.") || host === "layoff-wekruit.web.app"
 const HomeLanding = IS_LAYOFF_HOST ? LayoffLanding : Landing
 
-// Canonical host = apex `wekruit.com`. Adam directive 2026-05-27 — partner
-// API now emits `wekruitUrl: https://wekruit.com/j/<id>` instead of
-// `candidate.wekruit.com/j/<id>`. Stale partner caches still link to the
-// old `candidate.` subdomain; transparently bounce those to apex so the
-// address bar never leaks the internal subdomain. Skip during SSR
-// (`typeof window`), skip if the path doesn't start with `/j/` (the
-// candidate portal at /me etc. stays on candidate. for now), skip in
-// dev/preview hosts.
-if (
-  typeof window !== "undefined" &&
-  host === "candidate.wekruit.com" &&
-  window.location.pathname.startsWith("/j/")
-) {
-  const target = `https://wekruit.com${window.location.pathname}${window.location.search}${window.location.hash}`
-  window.location.replace(target)
-}
-
 // Adam directive 2026-05-16: "tanstack / cache / paginated job load". Single
 // shared QueryClient — 5 min staleTime means revisits to /open and /market
 // paint instantly from cache; 30 min gcTime keeps freed entries around for

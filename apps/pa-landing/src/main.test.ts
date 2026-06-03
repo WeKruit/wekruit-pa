@@ -12,3 +12,9 @@ test("candidate routes expose privacy as a first-class signed-in surface", () =>
   assert.match(source, /import \{ CandidateMe, CandidateProfile, CandidateMatches, CandidatePrivacy \} from "\.\/pages\/CandidatePortal\.js"/)
   assert.match(source, /<Route path="\/me\/privacy" element=\{<CandidatePrivacy \/>\} \/>/)
 })
+
+test("candidate public job routes stay on the candidate host", () => {
+  assert.match(source, /<Route path="\/j\/:jobId" element=\{<PublicJob \/>\} \/>/)
+  assert.doesNotMatch(source, /Canonical host = apex `wekruit\.com`/)
+  assert.doesNotMatch(source, /host === "candidate\.wekruit\.com"[\s\S]*window\.location\.pathname\.startsWith\("\/j\/"\)[\s\S]*window\.location\.replace\(target\)/)
+})
