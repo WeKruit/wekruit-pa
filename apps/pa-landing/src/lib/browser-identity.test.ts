@@ -8,6 +8,7 @@ import {
   deriveOnboardingIntentFromPath,
   deriveRegistrationEntryFromPath,
   isLayoffHost,
+  isProfileRoleSignalPath,
   isPublicJobPath,
   layoffSignupLoginPath,
   onboardingDestination,
@@ -105,6 +106,22 @@ test("resolvePostLoginDestination blocks /me until portal ready", () => {
   )
 })
 
+test("resolvePostLoginDestination preserves market role signal through onboarding", () => {
+  const roleSignalNext = parseLoginNextPath(
+    "/me/profile?profileRoleSignalTitle=Backend%20Engineer&profileRoleSignalCompany=Rain#profile-corrections",
+  )
+
+  assert.equal(
+    isProfileRoleSignalPath(roleSignalNext.pathname, roleSignalNext.search, roleSignalNext.hash),
+    true,
+  )
+  assert.equal(
+    resolvePostLoginDestination(roleSignalNext, false, "candidate"),
+    "/onboarding?next=%2Fme%2Fprofile%3FprofileRoleSignalTitle%3DBackend%2520Engineer%26profileRoleSignalCompany%3DRain%23profile-corrections",
+  )
+  assert.equal(resolvePostLoginDestination(roleSignalNext, true, "candidate"), roleSignalNext.to)
+})
+
 test("resolvePostLoginDestination preserves public job routes before portal ready", () => {
   const jobNext = parseLoginNextPath("/j/wekruit-37429d02-photon-macos-devops")
   const cvNext = parseLoginNextPath("/j/wekruit-37429d02-photon-macos-devops/cv")
@@ -153,9 +170,16 @@ test("resolveExplicitOnboardingReturnPath only honors the current onboarding nex
   assert.equal(resolveExplicitOnboardingReturnPath(null), null)
   assert.equal(resolveExplicitOnboardingReturnPath(""), null)
   assert.equal(resolveExplicitOnboardingReturnPath("/onboarding"), null)
+  assert.equal(resolveExplicitOnboardingReturnPath("/me/profile#connector-resume"), null)
   assert.equal(
     resolveExplicitOnboardingReturnPath("/j/standout-37429d02-photon-macos-devops"),
     "/j/wekruit-37429d02-photon-macos-devops",
+  )
+  assert.equal(
+    resolveExplicitOnboardingReturnPath(
+      "/me/profile?profileRoleSignalTitle=Backend%20Engineer&profileRoleSignalCompany=Rain#profile-corrections",
+    ),
+    "/me/profile?profileRoleSignalTitle=Backend%20Engineer&profileRoleSignalCompany=Rain#profile-corrections",
   )
 })
 

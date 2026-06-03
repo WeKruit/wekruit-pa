@@ -31,8 +31,10 @@ import {
   CLAIM_EMAIL_KEY,
   clearRememberedLoginNext,
   isLayoffHost,
+  isProfileRoleSignalPath,
   isPublicJobPath,
   onboardingDestination,
+  onboardingDestinationWithReturnPath,
   parseLoginNextPath,
   readRememberedLoginNext,
   readStoredValue,
@@ -730,6 +732,14 @@ function roleInterviewFirstTimeHref(next: ReturnType<typeof parseLoginNextPath>)
   return `${roleDest.pathname.replace(/\/cv$/, "")}${roleDest.search}${roleDest.hash}`
 }
 
+function profileRoleSignalSummary(next: ReturnType<typeof parseLoginNextPath>): { title: string; company: string } | null {
+  if (!isProfileRoleSignalPath(next.pathname, next.search, next.hash)) return null
+  const params = new URLSearchParams(next.search.replace(/^\?/, ""))
+  const title = params.get("profileRoleSignalTitle")?.trim()
+  const company = params.get("profileRoleSignalCompany")?.trim()
+  return title && company ? { title, company } : null
+}
+
 function LoginPipelinePreview() {
   const items = [
     {
@@ -753,6 +763,42 @@ function LoginPipelinePreview() {
   return (
     <section className="wk-login-preview" aria-label="What opens after sign-in">
       <p className="wk-login-preview__k">What opens after sign-in</p>
+      <ul className="wk-login-preview__list">
+        {items.map((item) => (
+          <li className="wk-login-preview__item" key={item.title}>
+            <span className="wk-login-preview__icon">
+              <Icon name="check" size={11} stroke={2.4} />
+            </span>
+            <span>
+              <strong>{item.title}</strong>
+              <em>{item.body}</em>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function LoginRoleSignalPreview({ title, company }: { title: string; company: string }) {
+  const items = [
+    {
+      title: "Role signal waiting",
+      body: `${title} at ${company} stays attached so Claire can turn it into profile evidence.`,
+    },
+    {
+      title: "Durable preference update",
+      body: "Claire uses the role to update target roles, constraints, and corrections instead of treating it as an application.",
+    },
+    {
+      title: "No automatic submission",
+      body: "This only updates your WeKruit profile signal; hiring teams still see evidence only after a role screen and consent.",
+    },
+  ]
+
+  return (
+    <section className="wk-login-preview" aria-label="Role signal after sign-in">
+      <p className="wk-login-preview__k">Role signal after sign-in</p>
       <ul className="wk-login-preview__list">
         {items.map((item) => (
           <li className="wk-login-preview__item" key={item.title}>
@@ -1019,16 +1065,28 @@ export default function CandidateLogin() {
   const busy = status === "google" || status === "linkedin" || status === "sending" || status === "signing_in"
   const onLayoff = isLayoffHost()
   const onboardingRoleReturn = onboardingRoleReturnPath(nextDest)
+  const profileRoleSignal = profileRoleSignalSummary(nextDest)
   const roleInterviewNext = isPublicJobPath(nextDest.pathname) || Boolean(onboardingRoleReturn)
+  const roleSignalNext = Boolean(profileRoleSignal)
   const onboardingNext = nextDest.isOnboarding && !roleInterviewNext
-  const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !onboardingNext
+  const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !roleSignalNext && !onboardingNext
+  const showRoleSignalPreview = !isCompletingLink && roleSignalNext
   const showOnboardingPreview = !isCompletingLink && onboardingNext
   const roleFirstTimeHref = roleInterviewFirstTimeHref(nextDest)
-  const firstTimeHref = roleInterviewNext ? roleFirstTimeHref ?? nextDest.to : onboardingNext ? nextDest.to : onboardingDestination(peekSource())
+  const roleSignalFirstTimeHref = roleSignalNext ? onboardingDestinationWithReturnPath(nextDest.to, peekSource()) : null
+  const firstTimeHref = roleInterviewNext
+    ? roleFirstTimeHref ?? nextDest.to
+    : roleSignalNext
+      ? roleSignalFirstTimeHref ?? onboardingDestination(peekSource())
+      : onboardingNext
+        ? nextDest.to
+        : onboardingDestination(peekSource())
   const loginEyebrow = isCompletingLink
     ? "Finishing sign-in"
     : roleInterviewNext
       ? "Role interview"
+      : roleSignalNext
+        ? "Role signal"
       : onboardingNext
         ? "Start with Claire"
         : "Pick up where you left off"
@@ -1039,6 +1097,8 @@ export default function CandidateLogin() {
         ? "One sec — confirming your sign-in and keeping this role attached to Claire's profile flow."
         : roleInterviewNext
         ? "One sec — confirming your sign-in and reopening this role with Claire."
+        : roleSignalNext
+        ? "One sec — confirming your sign-in and saving this role as durable profile signal."
         : onboardingNext
           ? "One sec — confirming your sign-in and opening Claire's profile flow."
           : "One sec — confirming your sign-in and opening onboarding."
@@ -1046,6 +1106,8 @@ export default function CandidateLogin() {
         ? "Sign in once and Claire will keep this role attached to your profile flow. Magic-link, Google, or LinkedIn — your choice."
         : roleInterviewNext
           ? "Sign in and Claire keeps this role attached to your interview and profile."
+        : roleSignalNext
+          ? "Sign in and Claire will add this role to your durable profile signals."
         : onboardingNext
           ? "Sign in once and Claire will start your profile flow. Magic-link, Google, or LinkedIn — your choice."
           : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."
@@ -1088,6 +1150,8 @@ export default function CandidateLogin() {
                 ? <>Finishing <em className="wk-accent">sign-in.</em></>
                 : roleInterviewNext
                   ? <>Continue this <em className="wk-accent">role.</em></>
+                : roleSignalNext
+                  ? <>Save this <em className="wk-accent">role signal.</em></>
                 : onboardingNext
                   ? <>Start with <em className="wk-accent">Claire.</em></>
                 : <>Already talked to <em className="wk-accent">Claire?</em></>}
@@ -1097,6 +1161,7 @@ export default function CandidateLogin() {
             </p>
 
             {showPipelinePreview ? <LoginPipelinePreview /> : null}
+            {showRoleSignalPreview && profileRoleSignal ? <LoginRoleSignalPreview title={profileRoleSignal.title} company={profileRoleSignal.company} /> : null}
             {showOnboardingPreview ? <LoginOnboardingPreview /> : null}
 
             {status === "signing_in" && !isCompletingLink ? (
@@ -1168,6 +1233,8 @@ export default function CandidateLogin() {
               <p className="wk-login__fine">
                 {roleInterviewNext ? (
                   <>First time on this role? <Link to={firstTimeHref} className="wk-link">Continue here</Link> and Claire will keep the role attached.</>
+                ) : roleSignalNext ? (
+                  <>First time? <Link to={firstTimeHref} className="wk-link">Continue here</Link> and Claire will start your profile with this role signal.</>
                 ) : (
                   <>First time? <Link to={firstTimeHref} className="wk-link">Continue here</Link> and Claire will start the same profile flow.</>
                 )}

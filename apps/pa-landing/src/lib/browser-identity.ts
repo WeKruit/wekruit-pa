@@ -123,6 +123,21 @@ export function isPublicJobPath(pathname: string): boolean {
   return /^\/j\/[^/]+(?:\/cv)?$/.test(pathname)
 }
 
+export function isProfileRoleSignalPath(pathname: string, search = "", hash = ""): boolean {
+  if (pathname !== "/me/profile") return false
+  if (hash && hash !== "#profile-corrections") return false
+  const params = new URLSearchParams(search.replace(/^\?/, ""))
+  return Boolean(params.get("profileRoleSignalTitle")?.trim() && params.get("profileRoleSignalCompany")?.trim())
+}
+
+export function onboardingDestinationWithReturnPath(
+  returnPath: string,
+  source: SignupSource = peekSource(),
+): string {
+  const base = onboardingDestination(source)
+  return `${base}${base.includes("?") ? "&" : "?"}next=${encodeURIComponent(returnPath)}`
+}
+
 export type OnboardingIntent = "generic_onboarding" | "job_prescreen"
 
 export type OnboardingIntentState = {
@@ -189,6 +204,9 @@ export function resolvePostLoginDestination(
     return nextDest.to
   }
   if (isPublicJobPath(nextDest.pathname)) return nextDest.to
+  if (isProfileRoleSignalPath(nextDest.pathname, nextDest.search, nextDest.hash)) {
+    return onboardingDestinationWithReturnPath(nextDest.to, source)
+  }
   if (nextDest.isOnboarding) return nextDest.to
   if (isCandidatePortalPath(nextDest.pathname)) return onboardingDestination(source)
   return onboardingDestination(source)
@@ -289,7 +307,9 @@ export function readRememberedReturnJobPath(): string | null {
 export function resolveExplicitOnboardingReturnPath(next: string | null | undefined): string | null {
   if (!next) return null
   const dest = parseLoginNextPath(next)
-  return isPublicJobPath(dest.pathname) ? dest.to : null
+  if (isPublicJobPath(dest.pathname)) return dest.to
+  if (isProfileRoleSignalPath(dest.pathname, dest.search, dest.hash)) return dest.to
+  return null
 }
 
 export function isCandidateHost(hostname = window.location.hostname): boolean {
