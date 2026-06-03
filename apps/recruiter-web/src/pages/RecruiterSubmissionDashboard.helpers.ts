@@ -45,6 +45,12 @@ export function submissionIsConfirmedOpen(
   return OPEN_SUBMISSION_STATUSES.includes(submission.status ?? "submitted") && !candidateConfirmationCanResend(submission)
 }
 
+export function submissionCountsTowardRecruiterMetrics(
+  submission: Pick<RecruiterSubmissionItem, "candidateConsentStatus">,
+): boolean {
+  return !candidateConfirmationCanResend(submission)
+}
+
 export function buildRecruiterSubmissionDashboard(
   submissions: RecruiterSubmissionItem[],
 ): RecruiterSubmissionDashboard {

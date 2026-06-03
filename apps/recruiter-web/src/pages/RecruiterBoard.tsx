@@ -23,6 +23,7 @@ import {
 import {
   buildRecruiterSubmissionDashboard,
   candidateConfirmationCanResend,
+  submissionCountsTowardRecruiterMetrics,
   submissionIsConfirmedActiveReview,
   submissionIsConfirmedOpen,
 } from "./RecruiterSubmissionDashboard.helpers.js"
@@ -1666,12 +1667,13 @@ function computeRecruiterStats(
   submissions: RecruiterSubmissionItem[],
   sourcedCandidates: RecruiterSourcedCandidateItem[],
 ) {
+  const metricSubmissions = submissions.filter(submissionCountsTowardRecruiterMetrics)
   const reviewing = submissions.filter(submissionIsConfirmedActiveReview).length
-  const advanced = submissions.filter((s) => ADVANCED_STATUSES.includes(s.status ?? "")).length
-  const interviews = submissions.filter((s) => LATE_STAGE_STATUSES.includes(s.status ?? "")).length
-  const feedback = submissions.filter(submissionHasStructuredFeedback).length
+  const advanced = metricSubmissions.filter((s) => ADVANCED_STATUSES.includes(s.status ?? "")).length
+  const interviews = metricSubmissions.filter((s) => LATE_STAGE_STATUSES.includes(s.status ?? "")).length
+  const feedback = metricSubmissions.filter(submissionHasStructuredFeedback).length
   const activeSource = sourcedCandidates.filter((c) => c.stage !== "archived").length
-  const interviewRate = submissions.length ? Math.round((interviews / submissions.length) * 100) : 0
+  const interviewRate = metricSubmissions.length ? Math.round((interviews / metricSubmissions.length) * 100) : 0
   return [
     { label: "Open roles", value: String(jobs.length), meta: "live WeKruit collab searches", signal: "live", tone: "live" },
     { label: "Sourced candidates", value: String(activeSource), meta: "saved before submission", signal: "+", tone: "info" },
@@ -1729,10 +1731,11 @@ function computeRecruiterOperatingMetrics(
 ): RecruiterOperatingMetrics {
   const activeCandidates = sourcedCandidates.filter((candidate) => candidate.stage !== "archived")
   const readyCandidates = activeCandidates.filter((candidate) => candidate.stage === "ready")
+  const metricSubmissions = submissions.filter(submissionCountsTowardRecruiterMetrics)
   const pendingSubmissions = submissions.filter(submissionIsConfirmedActiveReview)
-  const advancedSubmissions = submissions.filter((submission) => ADVANCED_STATUSES.includes(submission.status ?? ""))
-  const closedNegative = submissions.filter((submission) => CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? ""))
-  const ratedSubmissions = submissions
+  const advancedSubmissions = metricSubmissions.filter((submission) => ADVANCED_STATUSES.includes(submission.status ?? ""))
+  const closedNegative = metricSubmissions.filter((submission) => CLOSED_NEGATIVE_STATUSES.includes(submission.status ?? ""))
+  const ratedSubmissions = metricSubmissions
     .map(submissionFeedbackRating)
     .filter((rating): rating is number => rating !== null)
   const averageRating = ratedSubmissions.length
@@ -1748,14 +1751,14 @@ function computeRecruiterOperatingMetrics(
     return rowsForRole(job, submissions).length > 0 || rowsForRole(job, sourcedCandidates).some((candidate) => candidate.stage !== "archived")
   }).length
   const slotUtilization = activePrimaryRoles ? Math.round((primaryRolesWithActivity / activePrimaryRoles) * 100) : 0
-  const sourceToSubmitRate = activeCandidates.length ? Math.round((submissions.length / activeCandidates.length) * 100) : 0
-  const firstRoundRate = submissions.length ? Math.round((advancedSubmissions.length / submissions.length) * 100) : 0
-  const rejectionRate = submissions.length ? Math.round((closedNegative.length / submissions.length) * 100) : 0
+  const sourceToSubmitRate = activeCandidates.length ? Math.round((metricSubmissions.length / activeCandidates.length) * 100) : 0
+  const firstRoundRate = metricSubmissions.length ? Math.round((advancedSubmissions.length / metricSubmissions.length) * 100) : 0
+  const rejectionRate = metricSubmissions.length ? Math.round((closedNegative.length / metricSubmissions.length) * 100) : 0
   const hardOrBlockedRoles = roleIntelligence.length
     ? roleIntelligence.filter((item) => item.feedback.hard > 0 || item.feedback.blocked > 0).length
     : roleFeedback.filter((feedback) => feedback.difficulty === "hard" || feedback.difficulty === "blocked").length
-  const remainingWeeklySubmissions = Math.min(WEEKLY_SUBMISSION_TARGET, Math.max(1, WEEKLY_SUBMISSION_TARGET - submissions.length))
-  const qualityScore = submissions.length
+  const remainingWeeklySubmissions = Math.min(WEEKLY_SUBMISSION_TARGET, Math.max(1, WEEKLY_SUBMISSION_TARGET - metricSubmissions.length))
+  const qualityScore = metricSubmissions.length
     ? clampNumber(Math.round(
       averageRating !== null
         ? 32 + (averageRating / 4) * 60 + Math.min(8, firstRoundRate / 10) - Math.min(12, rejectionRate / 5)
@@ -1764,9 +1767,9 @@ function computeRecruiterOperatingMetrics(
     : activeCandidates.length
       ? clampNumber(44 + readyCandidates.length * 7 + Math.min(14, activeCandidates.length * 2), 44, 74)
       : null
-  const statusLabel = submissions.length >= WEEKLY_SUBMISSION_TARGET && firstRoundRate >= 30 && rejectionRate <= 40
+  const statusLabel = metricSubmissions.length >= WEEKLY_SUBMISSION_TARGET && firstRoundRate >= 30 && rejectionRate <= 40
     ? "Preferred track"
-    : submissions.length >= 3 || activeCandidates.length >= 6
+    : metricSubmissions.length >= 3 || activeCandidates.length >= 6
       ? "Standard track"
       : "Builder track"
   const statusBody = statusLabel === "Preferred track"
@@ -1780,12 +1783,12 @@ function computeRecruiterOperatingMetrics(
     ? "Save prospects and submit with consent to start a quality signal."
     : averageRating !== null
       ? `${averageRating.toFixed(1)}/4 average submission rating across ${ratedSubmissions.length} rated submission${ratedSubmissions.length === 1 ? "" : "s"}.`
-    : submissions.length < 3
+    : metricSubmissions.length < 3
       ? "Early signal only. More submissions and feedback will make this meaningful."
       : `${firstRoundRate}% advanced/interview/offer signal with ${rejectionRate}% rejected or duplicate.`
-  const reviewTone: OperatingTone = activeCandidates.length === 0 && submissions.length === 0
+  const reviewTone: OperatingTone = activeCandidates.length === 0 && metricSubmissions.length === 0
     ? "mute"
-    : rejectionRate >= 50 && submissions.length >= 3
+    : rejectionRate >= 50 && metricSubmissions.length >= 3
       ? "warn"
       : hardOrBlockedRoles > 0 || openQuestions > 0
         ? "info"
@@ -1861,9 +1864,9 @@ function computeRecruiterOperatingMetrics(
       },
       {
         label: "Weekly pace",
-        value: `${submissions.length}/${WEEKLY_SUBMISSION_TARGET}`,
+        value: `${metricSubmissions.length}/${WEEKLY_SUBMISSION_TARGET}`,
         body: `${pendingSubmissions.length} pending, ${advancedSubmissions.length} advanced, ${cleanLanes} clean lanes open.`,
-        tone: submissions.length >= WEEKLY_SUBMISSION_TARGET ? "success" : submissions.length ? "info" : "mute",
+        tone: metricSubmissions.length >= WEEKLY_SUBMISSION_TARGET ? "success" : metricSubmissions.length ? "info" : "mute",
       },
     ],
     targets: [
@@ -1877,7 +1880,7 @@ function computeRecruiterOperatingMetrics(
         label: "Submission quality",
         value: `${firstRoundRate}%`,
         body: "Keep the advanced/interview/offer signal moving before asking for more role volume.",
-        tone: firstRoundRate >= 30 ? "success" : submissions.length ? "info" : "mute",
+        tone: firstRoundRate >= 30 ? "success" : metricSubmissions.length ? "info" : "mute",
       },
       {
         label: "Calibration debt",
@@ -9475,13 +9478,14 @@ function PerformanceTab({
   const [calibrationDrafts, setCalibrationDrafts] = useState<Record<string, string>>({})
   const [calibratingId, setCalibratingId] = useState<string | null>(null)
   const [calibrationError, setCalibrationError] = useState<string | null>(null)
-  const feedbackRows = submissions.filter(submissionHasStructuredFeedback)
-  const advanced = submissions.filter((s) => ADVANCED_STATUSES.includes(s.status ?? "")).length
+  const metricSubmissions = submissions.filter(submissionCountsTowardRecruiterMetrics)
+  const feedbackRows = metricSubmissions.filter(submissionHasStructuredFeedback)
+  const advanced = metricSubmissions.filter((s) => ADVANCED_STATUSES.includes(s.status ?? "")).length
   const pending = submissions.filter(submissionIsConfirmedActiveReview).length
   const ready = candidates.filter((c) => c.stage === "ready").length
-  const sourceToSubmit = candidates.length ? Math.round((submissions.length / candidates.length) * 100) : 0
-  const singleSubmissions = submissions.filter((submission) => submission.submissionMode === "single_submission").length
-  const primarySubmissions = submissions.filter((submission) => submission.submissionMode === "primary_role").length
+  const sourceToSubmit = candidates.length ? Math.round((metricSubmissions.length / candidates.length) * 100) : 0
+  const singleSubmissions = metricSubmissions.filter((submission) => submission.submissionMode === "single_submission").length
+  const primarySubmissions = metricSubmissions.filter((submission) => submission.submissionMode === "primary_role").length
   const blockedRoles = roleFeedback.filter((feedback) => feedback.difficulty === "blocked").length
   const hardRoles = roleFeedback.filter((feedback) => feedback.difficulty === "hard").length
   const trustCenter = computeRecruiterTrustCenter(candidates, submissions, roleFeedback, primaryRoleIds, operatingMetrics)
@@ -9538,7 +9542,7 @@ function PerformanceTab({
     }
   }
   const metrics = [
-    { label: "Submitted", value: String(submissions.length), meta: "formal candidates", tone: "live" },
+    { label: "Submitted", value: String(metricSubmissions.length), meta: "confirmed formal candidates", tone: "live" },
     { label: "Pending review", value: String(pending), meta: "awaiting feedback", tone: "warn" },
     { label: "Advanced", value: String(advanced), meta: "sent forward / interview / offer", tone: "success" },
     { label: "Source to submit", value: `${sourceToSubmit}%`, meta: `${ready} ready now`, tone: "info" },

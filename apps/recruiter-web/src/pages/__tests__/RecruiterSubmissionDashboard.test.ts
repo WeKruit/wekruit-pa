@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   buildRecruiterSubmissionDashboard,
+  submissionCountsTowardRecruiterMetrics,
   submissionIsConfirmedActiveReview,
   submissionIsConfirmedOpen,
 } from "../RecruiterSubmissionDashboard.helpers.js"
@@ -44,5 +45,21 @@ test("submission metric predicates keep consent-blocked packets out of review an
   assert.deepEqual(submissions.filter(submissionIsConfirmedOpen).map((submission) => submission.id), [
     "ready-review",
     "advanced",
+  ])
+})
+
+test("recruiter performance metrics count only consent-confirmed submission packets", () => {
+  const submissions = [
+    { id: "pending-consent", status: "submitted", candidateConsentStatus: "pending_candidate_confirmation" },
+    { id: "failed-consent", status: "reviewing", candidateConsentStatus: "confirmation_email_failed" },
+    { id: "ready-review", status: "reviewing", candidateConsentStatus: "candidate_confirmed" },
+    { id: "advanced", status: "advanced", candidateConsentStatus: "candidate_confirmed" },
+    { id: "closed", status: "rejected", candidateConsentStatus: "candidate_confirmed" },
+  ]
+
+  assert.deepEqual(submissions.filter(submissionCountsTowardRecruiterMetrics).map((submission) => submission.id), [
+    "ready-review",
+    "advanced",
+    "closed",
   ])
 })
