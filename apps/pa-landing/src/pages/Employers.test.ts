@@ -88,8 +88,11 @@ test("Employers sample proof avoids borrowed real-company specificity", () => {
   assert.doesNotMatch(source, /Linear|Replit/)
   assert.doesNotMatch(employersSource, /Open full transcript \(38 min\)/)
   assert.doesNotMatch(employersSource, /href="#full-transcript"/)
+  assert.doesNotMatch(employersSource, /name: "Sample (candidate|engineer|designer|GTM lead|systems engineer)"/)
+  assert.doesNotMatch(employersSource, /Click <strong>Sample candidate<\/strong>/)
 
-  assert.match(source, /Sample candidate/)
+  assert.match(source, /Platform PM \(anon\)/)
+  assert.match(source, /Inference SWE \(anon\)/)
   assert.match(source, /Sample hiring team/)
   assert.match(source, /Developer platform lead/)
   assert.match(employersSource, /Open sample transcript excerpt/)

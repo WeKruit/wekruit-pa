@@ -86,8 +86,8 @@ const SAMPLE_INBOX_ROLE_PACKET: InboxRolePacket = {
 const EMP_PASSED: PassedProfile[] = [
   {
     id: "pp-sample-candidate",
-    name: "Sample candidate",
-    initials: "SC",
+    name: "Platform PM (anon)",
+    initials: "AP",
     tone: "warm",
     headline: "Senior PM · developer platform · 7y",
     role: "Developer platform lead",
@@ -151,12 +151,12 @@ const EMP_PASSED: PassedProfile[] = [
           "the actual job, not a feature backlog.",
       },
     ],
-    consent: "Sample candidate consented to share this profile with this hiring team only.",
+    consent: "Platform PM (anon) consented to share this sample profile with this hiring team only.",
   },
   {
     id: "pp-sample-engineer",
-    name: "Sample engineer",
-    initials: "SE",
+    name: "Inference SWE (anon)",
+    initials: "AI",
     tone: "slate",
     headline: "Staff SWE · Inference / GPU",
     role: "Staff Software Engineer, Inference",
@@ -165,8 +165,8 @@ const EMP_PASSED: PassedProfile[] = [
   },
   {
     id: "pp-sample-designer",
-    name: "Sample designer",
-    initials: "SD",
+    name: "Product designer (anon)",
+    initials: "AD",
     tone: "warm",
     headline: "Principal Designer · AI surfaces",
     role: "Principal Product Designer, AI",
@@ -175,8 +175,8 @@ const EMP_PASSED: PassedProfile[] = [
   },
   {
     id: "pp-sample-gtm",
-    name: "Sample GTM lead",
-    initials: "SG",
+    name: "GTM lead (anon)",
+    initials: "AG",
     tone: "moss",
     headline: "GTM · stablecoin · 9y",
     role: "GTM Lead, Stablecoin",
@@ -185,8 +185,8 @@ const EMP_PASSED: PassedProfile[] = [
   },
   {
     id: "pp-sample-systems-engineer",
-    name: "Sample systems engineer",
-    initials: "SS",
+    name: "Systems SWE (anon)",
+    initials: "AS",
     tone: "slate",
     headline: "Editor-core SWE · ex-VSCode",
     role: "Senior Engineer, Editor Core",
@@ -1055,7 +1055,7 @@ function EmpPassedDetailLite({ c }: { c: PassedProfile }) {
       </header>
       <section className="wk-emp-pp__sec wk-emp-pp__lite-body">
         <p className="wk-emp-pp__lite-msg">
-          This preview follows one passed profile end-to-end. Click <strong>Sample candidate</strong> in the rail to see the
+          This preview follows one passed profile end-to-end. Click <strong>Platform PM (anon)</strong> in the rail to see the
           full operational view — summary, pass reason, evidence, risks, fit, and transcript excerpts.
         </p>
       </section>
