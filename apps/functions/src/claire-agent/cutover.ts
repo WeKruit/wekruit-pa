@@ -112,8 +112,15 @@ export async function maybeRunThinClaire(
   // Fire-and-forget — a parse failure must never block the conversational turn.
   const inboundMediaUrl = typeof rawMeta.mediaUrl === "string" ? rawMeta.mediaUrl.trim() : ""
   if (inboundMediaUrl) {
+    // skipLimitEnforcement: a candidate who TEXTS US their résumé during onboarding is exactly the
+    // resume-first flow (resume → pitch → find_match). The cv-ingest invite-gate (checkGate →
+    // "not_invited") is for unsolicited uploads from non-invited users; it must NOT reject an
+    // onboarding/conversation upload — that produced the live "they didn't move forward / resume
+    // was shared" rejection (2026-06-02, +18147696202). Bypass the gate; ingestCv stays idempotent.
     void import("../cv-ingest/cv-ingest.js")
-      .then(({ ingestCv }) => ingestCv({ userId, mediaUrl: inboundMediaUrl, sessionId: undefined }))
+      .then(({ ingestCv }) =>
+        ingestCv({ userId, mediaUrl: inboundMediaUrl, sessionId: undefined }, { skipLimitEnforcement: true }),
+      )
       .then((r) => log("thin_claire.resume_ingest.done", { eventId, userId, result: r }))
       .catch((e) =>
         log("thin_claire.resume_ingest.failed", {

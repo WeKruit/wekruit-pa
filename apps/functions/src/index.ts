@@ -1263,16 +1263,21 @@ export const onPaInbound = onDocumentCreated(
       MAILGUN_FROM,
       MAILGUN_REGION,
     ],
-    // 2026-05-19 — pinned maxInstances=1 so future deploys can't blow the
-    // per-region memory quota by defaulting to 100+ instances * 1GiB. Adam
-    // freed ~38 GiB on the demo-heavy services around the same time, so
-    // the 1 GiB allocation stays intact for the orchestrator + mem0 +
-    // Sendblue SDK baseline (which lives around 300-400 MiB plus per-turn
-    // working set).
+    // LATENCY FIX (Adam 2026-06-02): maxInstances:1 + concurrency:1 serialized EVERY inbound
+    // globally — one turn at a time, plus a cold-start on the first message after idle (the live
+    // "10s to read + 20s to reply"). The thin turn is IO-bound (waiting on the model), so:
+    //   - concurrency 1→6: one instance serves 6 concurrent turns in parallel (the big win; base
+    //     ~300-400MiB + per-turn working set fits 1GiB; the per-turn max-turns cap (8) bounds cost,
+    //     so concurrency cannot re-trigger the 2026-06-01 token runaway).
+    //   - minInstances 0→1: keep ONE instance warm → no cold-start on the first message (~$, worth
+    //     it for a live product).
+    //   - maxInstances 1→3: burst headroom (3 × 1GiB = 3GiB max; within the ~38GiB Adam freed),
+    //     still bounded so a deploy can't default to 100+ instances and blow the region quota.
     memory: "1GiB",
-    maxInstances: 1,
+    minInstances: 1,
+    maxInstances: 3,
     timeoutSeconds: 300,
-    concurrency: 1,
+    concurrency: 6,
   },
   async (event) => {
     const snap = event.data
