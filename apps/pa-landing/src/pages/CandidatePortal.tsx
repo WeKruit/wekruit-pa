@@ -952,7 +952,7 @@ function deriveRecommendedRolesAction(recommendedCount: number): MeAction | null
 
 function deriveRoleFollowupActions(matches: CandidateMatchCard[]): MeAction[] {
   return [...matches]
-    .filter((m) => m.status === "passed" || m.status === "intro_accepted")
+    .filter((m) => m.status === "passed" || m.status === "intro_accepted" || Boolean(profileSignalHrefForMatch(m)))
     .sort((a, b) => {
       const at = Date.parse(a.computedAt)
       const bt = Date.parse(b.computedAt)
@@ -961,6 +961,7 @@ function deriveRoleFollowupActions(matches: CandidateMatchCard[]): MeAction[] {
     .slice(0, 2)
     .map((match) => {
       const accepted = match.status === "intro_accepted"
+      const profileSignalHref = profileSignalHrefForMatch(match)
       const display = getCandidateJobStatusDisplay(match.status, match.job.title)
       const target = matchPrimaryTarget(match)
       return {
@@ -968,12 +969,12 @@ function deriveRoleFollowupActions(matches: CandidateMatchCard[]): MeAction[] {
         logo: (match.job.company[0] ?? "?").toUpperCase(),
         logoBg: LOGO_BG_POOL[djb2(match.jobId || match.job.company) % LOGO_BG_POOL.length],
         urgent: false,
-        meta: accepted ? "Intro accepted · next step" : "Passed profile · review",
+        meta: profileSignalHref ? "Role closed · profile signal" : accepted ? "Intro accepted · next step" : "Passed profile · review",
         title: match.job.title,
         sub: match.reviewDecision?.decisionReason || display.nextStep,
-        cta: accepted ? "Review intro" : "Review pass note",
-        href: target.url,
-        external: target.external,
+        cta: profileSignalHref ? "Update profile signal" : accepted ? "Review intro" : "Review pass note",
+        href: profileSignalHref ?? target.url,
+        external: profileSignalHref ? false : target.external,
         when: meWhen(match.computedAt),
       }
     })
@@ -1106,6 +1107,8 @@ function activityDetail(match: CandidateMatchCard): string {
 
 function activityTargetForMatch(match: CandidateMatchCard, claireHref: string | null) {
   if (match.status === "interview_started" && claireHref) return { external: true, url: claireHref }
+  const profileSignalHref = profileSignalHrefForMatch(match)
+  if (profileSignalHref) return { external: false, url: profileSignalHref }
   return matchPrimaryTarget(match)
 }
 
@@ -1579,6 +1582,8 @@ function pipelineActionForMatch(match: CandidateMatchCard, claireHref: string | 
   if (match.status === "interview_started" && claireHref) {
     return { external: true, url: claireHref, label: "Continue with Claire" }
   }
+  const profileSignalHref = profileSignalHrefForMatch(match)
+  if (profileSignalHref) return { external: false, url: profileSignalHref, label: "Update profile signal" }
   const display = getCandidateJobStatusDisplay(match.status, match.job.title)
   const target = matchPrimaryTarget(match)
   return { ...target, label: display.ctaLabel }
@@ -1767,6 +1772,11 @@ function MeNewRolesEmptyState({ claireHref }: { claireHref: string | null }) {
 //  - non-collab → the real external ATS listing (you apply there). Falls back to
 //    the internal page only when applyUrl is absent (atsApplyUrl is a V16 hard
 //    filter, so recommended recs effectively always carry it).
+function profileSignalHrefForMatch(match: CandidateMatchCard): string | null {
+  if (match.status === "not_passed" && match.reviewDecision) return "/me/profile#profile-corrections"
+  return null
+}
+
 function matchPrimaryTarget(match: CandidateMatchCard): { external: boolean; url: string } {
   if (!match.collab && match.job.applyUrl) return { external: true, url: match.job.applyUrl }
   return { external: false, url: match.job.href }
@@ -4676,6 +4686,7 @@ function MeMatchFull({ match, claireHref }: { match: CandidateMatchCard; claireH
   // Collab jobs let the candidate view their pre-screen / job status.
   const showStatus = isCollab && match.status !== "recommended"
   const activeClaireHref = match.status === "interview_started" ? claireHref : null
+  const profileSignalHref = profileSignalHrefForMatch(match)
   return (
     <article className={`wkv3-match${isCollab ? " is-invite" : ""}`}>
       <header className="wkv3-match__head">
@@ -4729,6 +4740,15 @@ function MeMatchFull({ match, claireHref }: { match: CandidateMatchCard; claireH
                 <a href={activeClaireHref} className="wk-btn wk-btn--primary wk-btn--sm">
                   <Icon name="message" size={12} stroke={1.9} /> Continue with Claire
                 </a>
+              </>
+            ) : profileSignalHref ? (
+              <>
+                <Link to={match.job.href} className="wk-btn wk-btn--secondary wk-btn--sm">
+                  View role <Icon name="arrow-right" size={13} stroke={2} />
+                </Link>
+                <Link to={profileSignalHref} className="wk-btn wk-btn--primary wk-btn--sm">
+                  Update profile signal <Icon name="arrow-right" size={13} stroke={2} />
+                </Link>
               </>
             ) : (
               <>

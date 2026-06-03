@@ -399,10 +399,26 @@ test("CandidatePortal /me turns passed and accepted-intro outcomes into follow-u
   assert.match(source, /const roleFollowupActions = deriveRoleFollowupActions\(allMatches\)/)
   assert.match(source, /const actions: MeAction\[\] = \[\.\.\.interviewActions, \.\.\.roleFollowupActions\]/)
   assert.match(source, /actions=\{actions\}/)
-  assert.match(source, /meta: accepted \? "Intro accepted · next step" : "Passed profile · review"/)
-  assert.match(source, /cta: accepted \? "Review intro" : "Review pass note"/)
+  assert.match(source, /meta: profileSignalHref \? "Role closed · profile signal" : accepted \? "Intro accepted · next step" : "Passed profile · review"/)
+  assert.match(source, /cta: profileSignalHref \? "Update profile signal" : accepted \? "Review intro" : "Review pass note"/)
   assert.match(source, /sub: match\.reviewDecision\?\.decisionReason \|\| display\.nextStep/)
   assert.doesNotMatch(source, /employer will reach out directly/i)
+})
+
+test("CandidatePortal closed review outcomes route to durable profile signal updates", () => {
+  assert.match(source, /function profileSignalHrefForMatch\(match: CandidateMatchCard\): string \| null/)
+  assert.match(source, /match\.status === "not_passed" && match\.reviewDecision/)
+  assert.match(source, /return "\/me\/profile#profile-corrections"/)
+  assert.match(source, /profileSignalHrefForMatch\(m\)/)
+  assert.match(source, /const profileSignalHref = profileSignalHrefForMatch\(match\)/)
+  assert.match(source, /meta: profileSignalHref \? "Role closed · profile signal"/)
+  assert.match(source, /cta: profileSignalHref \? "Update profile signal"/)
+  assert.match(source, /href: profileSignalHref \?\? target\.url/)
+  assert.match(source, /if \(profileSignalHref\) return \{ external: false, url: profileSignalHref \}/)
+  assert.match(source, /label: "Update profile signal"/)
+  assert.match(source, /profileSignalHref \? \(/)
+  assert.match(source, /to=\{profileSignalHref\}[\s\S]*className="wk-btn wk-btn--primary wk-btn--sm"[\s\S]*Update profile signal/)
+  assert.match(source, /<Link to=\{match\.job\.href\} className="wk-btn wk-btn--secondary wk-btn--sm">[\s\S]*View role/)
 })
 
 test("CandidatePortal /me/matches sidebar shows the real matching basis", () => {
