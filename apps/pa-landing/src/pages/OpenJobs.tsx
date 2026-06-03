@@ -306,7 +306,7 @@ export default function OpenJobs() {
 
       <section style={{ paddingTop: 32, paddingBottom: 96 }}>
         <div className="container" style={{ maxWidth: 1280 }}>
-          <Tabs value={tab} onChange={setTab} huntCount={huntCount} directCount={directCount} loading={huntJobs === null} />
+          <Tabs value={tab} onChange={setTab} huntCount={huntJobs?.length} directCount={directJobs?.length} />
 
           <Header
             tab={tab}
@@ -424,9 +424,9 @@ export default function OpenJobs() {
 
 // --------------------------------------------------------------- tabs ----
 
-interface TabsProps { value: TabId; onChange: (v: TabId) => void; huntCount: number; directCount: number; loading: boolean }
-function Tabs({ value, onChange, huntCount, directCount, loading }: TabsProps) {
-  const Tab = ({ id, label, sub, count }: { id: TabId; label: string; sub: string; count: number }) => {
+interface TabsProps { value: TabId; onChange: (v: TabId) => void; huntCount?: number; directCount?: number }
+function Tabs({ value, onChange, huntCount, directCount }: TabsProps) {
+  const Tab = ({ id, label, sub, count }: { id: TabId; label: string; sub: string; count?: number }) => {
     const active = value === id
     return (
       <button
@@ -447,9 +447,11 @@ function Tabs({ value, onChange, huntCount, directCount, loading }: TabsProps) {
       >
         <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontFamily: "var(--font-serif)", fontSize: 22, fontWeight: 400, letterSpacing: "-0.01em" }}>{label}</span>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "2px 7px", borderRadius: 999, background: active ? "var(--cream-2)" : "transparent", border: "1px solid var(--border)" }}>
-            {loading ? "…" : count}
-          </span>
+          {typeof count === "number" ? (
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "2px 7px", borderRadius: 999, background: active ? "var(--cream-2)" : "transparent", border: "1px solid var(--border)" }}>
+              {count}
+            </span>
+          ) : null}
         </span>
         <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{sub}</span>
       </button>

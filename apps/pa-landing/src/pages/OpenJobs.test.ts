@@ -65,6 +65,15 @@ test("OpenJobs direct-line count is role-scoped instead of inflated as company c
   assert.match(source, /Roles from hiring teams today/)
 })
 
+test("OpenJobs tab counts do not expose loading placeholders", () => {
+  assert.match(source, /interface TabsProps \{ value: TabId; onChange: \(v: TabId\) => void; huntCount\?: number; directCount\?: number \}/)
+  assert.match(source, /huntCount=\{huntJobs\?\.length\}/)
+  assert.match(source, /directCount=\{directJobs\?\.length\}/)
+  assert.match(source, /typeof count === "number"/)
+  assert.doesNotMatch(source, /\{loading \? "…" : count\}/)
+  assert.doesNotMatch(source, /loading=\{huntJobs === null\}/)
+})
+
 test("OpenJobs starts narrow mobile visitors in cards instead of the desktop table", () => {
   assert.match(source, /function initialOpenJobsLayout\(\): LayoutId/)
   assert.match(source, /window\.matchMedia\("\(max-width: 720px\)"\)\.matches \? "cards" : "table"/)
