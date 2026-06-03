@@ -159,6 +159,21 @@ test("EmployerSignup renders the live Claire packet contract before submit", () 
   assert.doesNotMatch(source, /instant candidate matches/i)
 })
 
+test("EmployerSignup shows a final packet review before the send action", () => {
+  assert.match(source, /<EmployerSendReview preview=\{packetPreview\} summary=\{readiness\} \/>/)
+  assert.match(source, /function EmployerSendReview\(\{ preview, summary \}: \{ preview: EmployerPacketPreviewModel; summary: EmployerSignupReadinessSummary \}\)/)
+  assert.match(source, /aria-label="Send role packet review"/)
+  assert.match(source, /Before you send/)
+  assert.match(source, /This submits the role packet Claire screens against/)
+  assert.match(source, /preview\.completedCount/)
+  assert.match(source, /summary\.nextIncompleteItem/)
+  assert.match(source, /WeKruit reviews it before Claire screens/)
+  assert.match(source, /No candidate is shared until they pass and consent/)
+
+  assert.doesNotMatch(source, /instant candidate matches/i)
+  assert.doesNotMatch(source, /browse candidates/i)
+})
+
 test("EmployerSignup post-submit state becomes a role packet receipt", () => {
   assert.match(source, /<SuccessCard form=\{form\} onStartAnother=\{\(\) => \{/)
   assert.match(source, /setForm\(EMPTY_FORM\)/)

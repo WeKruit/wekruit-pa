@@ -260,6 +260,8 @@ export default function EmployerSignup() {
                   as="textarea"
                 />
 
+                <EmployerSendReview preview={packetPreview} summary={readiness} />
+
                 {error && (
                   <div
                     role="alert"
@@ -296,6 +298,118 @@ export default function EmployerSignup() {
       </section>
       <Footer />
     </main>
+  )
+}
+
+function EmployerSendReview({ preview, summary }: { preview: EmployerPacketPreviewModel; summary: EmployerSignupReadinessSummary }) {
+  return (
+    <section
+      aria-label="Send role packet review"
+      style={{
+        borderTop: "1px solid var(--border)",
+        borderBottom: "1px solid var(--border)",
+        padding: "16px 0",
+        display: "grid",
+        gap: 12,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontFamily: "var(--font-sans)",
+              fontSize: 12,
+              color: "var(--ink-3)",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: 0,
+            }}
+          >
+            Before you send
+          </div>
+          <p
+            style={{
+              margin: "5px 0 0",
+              fontFamily: "var(--font-sans)",
+              fontSize: 14,
+              lineHeight: 1.45,
+              color: "var(--ink-2)",
+            }}
+          >
+            This submits the role packet Claire screens against.
+          </p>
+        </div>
+        <div
+          aria-label={`${preview.completedCount} of ${preview.totalCount} submitted packet sections complete`}
+          style={{
+            flex: "0 0 auto",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-md)",
+            background: preview.ready ? "var(--success-bg)" : "var(--cream-2)",
+            color: preview.ready ? "var(--success)" : "var(--ink-2)",
+            padding: "8px 10px",
+            fontFamily: "var(--font-sans)",
+            fontSize: 13,
+            fontWeight: 700,
+            lineHeight: 1,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {preview.completedCount}/{preview.totalCount} packet
+        </div>
+      </div>
+
+      {summary.nextIncompleteItem ? (
+        <a
+          href={`#${summary.nextIncompleteItem.targetId}`}
+          className="btn btn--ghost btn--sm"
+          style={{ justifySelf: "start", textDecoration: "none" }}
+        >
+          Finish {summary.nextIncompleteItem.label}
+        </a>
+      ) : (
+        <div
+          style={{
+            justifySelf: "start",
+            borderRadius: "var(--r-md)",
+            background: "rgba(230, 233, 217, 0.72)",
+            color: "var(--success)",
+            padding: "8px 10px",
+            fontFamily: "var(--font-sans)",
+            fontSize: 13,
+            fontWeight: 700,
+            lineHeight: 1.2,
+          }}
+        >
+          Ready for WeKruit review
+        </div>
+      )}
+
+      <ul
+        style={{
+          margin: 0,
+          paddingLeft: 18,
+          display: "grid",
+          gap: 6,
+          fontFamily: "var(--font-sans)",
+          fontSize: 13,
+          lineHeight: 1.4,
+          color: "var(--ink-2)",
+        }}
+      >
+        <li>WeKruit reviews it before Claire screens.</li>
+        <li>Claire screens against the approved packet.</li>
+        <li>No candidate is shared until they pass and consent.</li>
+      </ul>
+    </section>
   )
 }
 
