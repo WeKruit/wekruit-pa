@@ -360,6 +360,37 @@ export async function searchEmployeeIdByLinkedinUrl(
   return firstNumericId(raw)
 }
 
+/**
+ * Resolve a candidate's OIDC profile-photo to a CoreSignal employee id — the
+ * NO-PASTE enrichment path. "Sign in with LinkedIn" (OIDC) returns a `picture`
+ * URL but no profile URL; `picture_url` is indexed on the `employee_clean`
+ * dataset (NOT `employee_multi_source`), so we search there. We match on the
+ * licdn ASSET ID alone (a single analyzed token shared across photo sizes /
+ * signatures) so the OIDC photo (e.g. `shrink_100_100`) resolves the same id as
+ * the stored photo (`shrink_200_200`) — verified live 2026-06-03: asset id
+ * `D5603AQFBF9xN99YgeQ` → id 633147031 (collects on BOTH datasets, shared id
+ * space). Pass the bare asset id (no scheme/size/signature). `is_deleted` is
+ * filtered out. Returns null when the candidate isn't in CoreSignal's dataset.
+ */
+export async function searchEmployeeIdByPhotoAssetId(
+  licdnAssetId: string,
+  config: CoresignalCollectClientConfig,
+): Promise<number | null> {
+  const assetId = licdnAssetId.trim()
+  if (!assetId) return null
+  const raw = await searchRaw(
+    "employee_clean",
+    {
+      bool: {
+        must: [{ match_phrase: { picture_url: assetId } }],
+        filter: [{ term: { is_deleted: 0 } }],
+      },
+    },
+    config,
+  )
+  return firstNumericId(raw)
+}
+
 /** Pull the first numeric id out of the lenient ES-DSL response shapes. */
 function firstNumericId(raw: unknown): number | null {
   const fromArray = (arr: unknown[]): number | null => {

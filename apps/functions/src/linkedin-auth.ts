@@ -424,6 +424,25 @@ async function connectLinkedinToCandidate(args: {
     extraProfilePatch: { linkedinOauthProfile: oauthProfile },
     now,
   })
+
+  // /me CONNECTOR → ENRICH, PHOTO-FIRST (Adam 2026-06-03): the OIDC `picture` resolves the candidate
+  // on Coresignal's employee_clean (no URL needed) → mirror experienceHighlights + canonical tags so
+  // the profile page shows real work history right after "Connect LinkedIn". Same shared enrich the
+  // iMessage login uses. Canary-gated; fail-open (a connector that errors must still report connected).
+  try {
+    const { isCanaryUser } = await import("./claire-agent/canary.js")
+    const picture = cleanString(args.info.picture, 2_000)
+    if (picture && isCanaryUser(args.candidateId)) {
+      const apiKey = CORESIGNAL_API_KEY.value().trim()
+      if (apiKey) {
+        const { enrichFromCoresignal } = await import("./linkedin-connect/linkedin-connect-submit.js")
+        const out = await enrichFromCoresignal({ db: args.db, userId: args.candidateId, apiKey, nowIso: now, picture })
+        logger.info("linkedin_connector.enrich_done", { candidateId: args.candidateId, enriched: out.enriched })
+      }
+    }
+  } catch (err) {
+    logger.warn("linkedin_connector.enrich_failed_fail_open", { candidateId: args.candidateId, err: String(err) })
+  }
 }
 
 async function connectGithubToCandidate(args: {

@@ -44,6 +44,8 @@ import {
   linkedinHash,
   fetchEmployeeCollect,
   searchEmployeeIdByLinkedinUrl,
+  searchEmployeeIdByPhotoAssetId,
+  licdnAssetKey,
   CoresignalCollectError,
 } from "@pa/external-supply"
 import { buildLinkedinDoneOpenerBody } from "@pa/pa-orchestrator"
@@ -344,8 +346,13 @@ export async function connectLinkedinProspectViaOAuth(
   // pull work history, then emit the completion event so the re-entry PITCHES. Its OWN source
   // ("linkedin"), never conflated with résumé parse. Canary-gated; every step fails open (never
   // dead-ends the reroute).
+  // LOGIN → ENRICH, PHOTO-FIRST (Adam 2026-06-03): OIDC always returns the profile `picture` but
+  // never a URL — the licdn asset id in that photo resolves the candidate on Coresignal's
+  // `employee_clean` (no paste, no URL, no partner gate). Falls back to the real URL when present.
+  // Fires whenever we have EITHER signal (photo is effectively always there). Canary-gated.
   let enriched = false
-  if (realUrl && isCanaryUser(userId)) {
+  const hasEnrichSignal = Boolean(input.picture?.trim() || realUrl)
+  if (hasEnrichSignal && isCanaryUser(userId)) {
     try {
       const { setEnrichmentInFlight } = await import("../claire-agent/enrichment-inflight.js")
       await setEnrichmentInFlight(db, userId, "linkedin", nowIso)
@@ -355,7 +362,14 @@ export async function connectLinkedinProspectViaOAuth(
     const apiKey = CORESIGNAL_API_KEY.value().trim()
     if (apiKey) {
       try {
-        const out = await enrichFromCoresignal({ db, userId, canonicalUrl: realUrl, apiKey, nowIso })
+        const out = await enrichFromCoresignal({
+          db,
+          userId,
+          apiKey,
+          nowIso,
+          ...(realUrl ? { canonicalUrl: realUrl } : {}),
+          ...(input.picture?.trim() ? { picture: input.picture.trim() } : {}),
+        })
         enriched = out.enriched
       } catch (err) {
         const status = err instanceof CoresignalCollectError ? err.status : null
@@ -374,7 +388,7 @@ export async function connectLinkedinProspectViaOAuth(
           toE164,
           source: "linkedin_connect",
           eventKind: "resume_parse_completed",
-          idempotencyKey: `linkedin-oauth-enriched:${userId}:${linkedinHash(realUrl)}`,
+          idempotencyKey: `linkedin-oauth-enriched:${userId}:${linkedinHash(realUrl ?? sub)}`,
           requireExistingSession: false,
           context: { cvParsedTrigger: true, enrichmentSource: "linkedin", linkedinEnriched: enriched },
         })
@@ -413,19 +427,59 @@ function setCors(res: { set: (k: string, v: string) => unknown }): void {
  * pinned to the KNOWN uid (no auto-create, no admin gate). Returns whether
  * experienceHighlights were written.
  */
-async function enrichFromCoresignal(args: {
+/**
+ * Resolve a candidate's CoreSignal employee id from whatever LinkedIn signal we have, PHOTO-FIRST.
+ * "Sign in with LinkedIn" (OIDC) always returns a profile `picture` but never a URL — the licdn
+ * asset id in that photo resolves on `employee_clean` (verified live 2026-06-03), giving us the
+ * no-paste enrich path. Falls back to the canonical profile URL (paste flow) when no photo match.
+ * Returns the id + which signal matched (for audit), or null when the candidate isn't in CoreSignal.
+ */
+export async function resolveLinkedinEmployeeId(input: {
+  apiKey: string
+  picture?: string | null
+  canonicalUrl?: string | null
+}): Promise<{ employeeId: number; via: "photo" | "url" } | null> {
+  const { apiKey } = input
+  const assetId = licdnAssetKey(input.picture ?? undefined)?.split(":")[0]
+  if (assetId) {
+    const byPhoto = await searchEmployeeIdByPhotoAssetId(assetId, { apiKey })
+    if (byPhoto !== null) return { employeeId: byPhoto, via: "photo" }
+  }
+  const url = (input.canonicalUrl ?? "").trim()
+  if (url) {
+    const byUrl = await searchEmployeeIdByLinkedinUrl(url, { apiKey })
+    if (byUrl !== null) return { employeeId: byUrl, via: "url" }
+  }
+  return null
+}
+
+/**
+ * SHARED LinkedIn → Coresignal enrichment. Resolves the candidate (photo-first, URL-fallback),
+ * collects their profile, and mirrors experienceHighlights + canonical tags onto pa-users. Used by
+ * EVERY LinkedIn entry point: iMessage onboarding one-tap login, the /me profile connector, and the
+ * paste-URL flow. No-throw contract is the caller's (each wraps in try/fail-open).
+ */
+export async function enrichFromCoresignal(args: {
   db: Firestore
   userId: string
-  canonicalUrl: string
   apiKey: string
   nowIso: string
+  /** Resolve by URL (paste) and/or photo (OIDC login) — photo wins. At least one required. */
+  canonicalUrl?: string
+  picture?: string
 }): Promise<{ enriched: boolean }> {
-  const { db, userId, canonicalUrl, apiKey, nowIso } = args
-  const employeeId = await searchEmployeeIdByLinkedinUrl(canonicalUrl, { apiKey })
-  if (employeeId === null) {
+  const { db, userId, apiKey, nowIso } = args
+  const resolved = await resolveLinkedinEmployeeId({
+    apiKey,
+    picture: args.picture,
+    canonicalUrl: args.canonicalUrl,
+  })
+  if (resolved === null) {
     logger.info("linkedin_connect.coresignal_no_match", { userId })
     return { enriched: false }
   }
+  const employeeId = resolved.employeeId
+  logger.info("linkedin_connect.coresignal_resolved", { userId, employeeId, via: resolved.via })
   const employee = await fetchEmployeeCollect(employeeId, { apiKey })
   const draft = normalizeCoresignalCollectV2(employee)
   const record: ExternalCandidateRecord = {
