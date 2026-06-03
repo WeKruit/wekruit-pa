@@ -5,11 +5,12 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 import { ApplyTrigger } from "./apply.js"
 
-function makeCtx(overrides: Partial<{ text: string; fromNumber: string; hasMedia: boolean }> = {}) {
+function makeCtx(overrides: Partial<{ text: string; fromNumber: string; toNumber: string; messageHandle: string; hasMedia: boolean }> = {}) {
   return {
     text: overrides.text ?? "WeKruit_jobA_user42_Apply",
     fromNumber: overrides.fromNumber ?? "+15555550000",
-    messageHandle: "h1",
+    toNumber: overrides.toNumber,
+    messageHandle: overrides.messageHandle ?? "h1",
     receivedAtIso: "2026-05-12T10:00:00Z",
     log: () => undefined,
     hasMedia: overrides.hasMedia ?? false,
@@ -18,9 +19,19 @@ function makeCtx(overrides: Partial<{ text: string; fromNumber: string; hasMedia
 
 function makeDeps(over: Partial<ConstructorParameters<typeof ApplyTrigger>[0]> = {}) {
   const audit: Array<Record<string, unknown>> = []
+  const accessNotices: Array<{
+    targetUserId: string
+    jobId: string
+    toE164: string
+    fromNumber?: string
+    messageHandle: string
+    content: string
+    reason: string
+  }> = []
   const idem = new Map<string, number>()
   return {
     audit,
+    accessNotices,
     idem,
     deps: {
       lookupUserByPhone: over.lookupUserByPhone ?? (async () => "user42"),
@@ -34,6 +45,11 @@ function makeDeps(over: Partial<ConstructorParameters<typeof ApplyTrigger>[0]> =
           idem.set(`${j}|${u}`, ms)
         }),
       clearLastFiredMs: over.clearLastFiredMs,
+      sendAccessIssueNotice:
+        over.sendAccessIssueNotice ??
+        (async (notice) => {
+          accessNotices.push(notice)
+        }),
       audit: async (e: Record<string, unknown>) => {
         audit.push(e)
       },
@@ -135,20 +151,46 @@ describe("ApplyTrigger.handle — fallback branch", () => {
 })
 
 describe("ApplyTrigger.handle — auth", () => {
-  it("rejects when sender userId mismatch", async () => {
-    const { deps, audit } = makeDeps({
+  it("notifies instead of silently rejecting when sender userId mismatches", async () => {
+    const { deps, audit, accessNotices, idem } = makeDeps({
       lookupUserByPhone: async () => "user99",
     })
     const t = new ApplyTrigger(deps)
-    const r = await t.handle(makeCtx())
-    assert.equal(r.kind, "unauthorized")
+    const r = await t.handle(makeCtx({
+      toNumber: "+15557654321",
+      messageHandle: "msg-apply-wrong-user-1",
+    }))
+    assert.deepEqual(r, { kind: "handled", action: "apply_access_issue_notified" })
     assert.ok(audit.some((a) => a.kind === "trigger.apply.unauthorized"))
+    assert.equal(idem.size, 0)
+    assert.deepEqual(accessNotices[0], {
+      targetUserId: "user42",
+      jobId: "jobA",
+      toE164: "+15555550000",
+      fromNumber: "+15557654321",
+      messageHandle: "msg-apply-wrong-user-1",
+      content: "I can't continue this WeKruit apply step from this phone yet. Use the Claire thread that completed the interview, or reopen the job page from the phone you want Claire to text.",
+      reason: "sender_userId_mismatch",
+    })
   })
-  it("rejects when sender unknown", async () => {
-    const { deps } = makeDeps({ lookupUserByPhone: async () => null })
+  it("notifies instead of silently rejecting when sender is unknown", async () => {
+    const { deps, accessNotices, idem } = makeDeps({ lookupUserByPhone: async () => null })
     const t = new ApplyTrigger(deps)
-    const r = await t.handle(makeCtx())
-    assert.equal(r.kind, "unauthorized")
+    const r = await t.handle(makeCtx({
+      toNumber: "+15557654321",
+      messageHandle: "msg-apply-unknown-1",
+    }))
+    assert.deepEqual(r, { kind: "handled", action: "apply_access_issue_notified" })
+    assert.equal(idem.size, 0)
+    assert.deepEqual(accessNotices[0], {
+      targetUserId: "user42",
+      jobId: "jobA",
+      toE164: "+15555550000",
+      fromNumber: "+15557654321",
+      messageHandle: "msg-apply-unknown-1",
+      content: "I can't continue this WeKruit apply step from this phone yet. Use the Claire thread that completed the interview, or reopen the job page from the phone you want Claire to text.",
+      reason: "sender_userId_mismatch",
+    })
   })
 })
 

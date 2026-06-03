@@ -19,6 +19,7 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
   const rateLimit = new Map<string, DocData>()
   const tapbacks: DocData[] = []
   const users = new Map<string, DocData>()
+  const outbound = new Map<string, DocData>()
   const prescreenIdempotency = new Map<string, DocData>()
   const layoffIdempotency = new Map<string, DocData>()
   const applyIdempotency = new Map<string, DocData>()
@@ -103,6 +104,24 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
       return Promise.resolve({ id: `tap_${tapbacks.length}` })
     },
   }
+  const outboundCollection = {
+    doc(id: string) {
+      return {
+        async create(data: DocData) {
+          if (outbound.has(id)) {
+            const err: Error & { code?: number } = new Error("ALREADY_EXISTS")
+            err.code = 6
+            throw err
+          }
+          outbound.set(id, { ...data })
+        },
+        async get() {
+          const data = outbound.get(id)
+          return { exists: data !== undefined, data: () => data, id }
+        },
+      }
+    },
+  }
   const collections: Record<string, unknown> = {
     // Phase 23+ kebab-case migration. Old snake-case keys retained as
     // aliases so any stale code path during transition still resolves.
@@ -111,6 +130,7 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
     "pa-feature-flags": flagsCollection,
     "pa-rate-limits": rateLimitCollection,
     "pa-users": { doc(id: string) { return genericDocRef(users, id) } },
+    "pa-outbound": outboundCollection,
     "pa-prescreen-trigger-idempotency": { doc(id: string) { return genericDocRef(prescreenIdempotency, id) } },
     "pa-layoff-trigger-idempotency": { doc(id: string) { return genericDocRef(layoffIdempotency, id) } },
     "pa-apply-trigger-idempotency": { doc(id: string) { return genericDocRef(applyIdempotency, id) } },
@@ -150,6 +170,7 @@ function makeFakeDb(opts: { rateLimitFlag?: boolean } = {}) {
   return {
     db,
     inbound,
+    outbound,
     audit,
     flags,
     rateLimit,
@@ -1044,6 +1065,78 @@ describe("handleSendblueWebhook", () => {
       row.reason === "identity_conflict" &&
       row.fromNumber === "+17167509332"
     ), true)
+  })
+
+  it("Test 17c (entrypoints): prescreen token from an unresolved phone queues a default same-thread notice", async () => {
+    const { db, inbound, outbound, prescreenIdempotency } = makeFakeDb()
+    const prescreenCalls: Array<{ jobId: string; userId: string; toE164: string }> = []
+    const body = JSON.stringify(basePayload({
+      content: "WeKruit_hs-11005308-paradigm-gtm-growth_mGuQxsTGkisKtptNjg4b_Job",
+      from_number: "+17167509332",
+      to_number: "+17174919939",
+      message_handle: "msg-entry-phone-unresolved",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => null,
+      runPreScreenForUser: async (args) => {
+        prescreenCalls.push(args)
+        return { ok: true, sessionId: "should_not_start" }
+      },
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "prescreen_access_issue_notified" })
+    assert.equal(inbound.size, 0, "unresolved trigger token must not fall through to normal Claire runtime")
+    assert.equal(prescreenCalls.length, 0, "unresolved trigger token must not start the interview")
+    assert.equal(prescreenIdempotency.size, 0, "unresolved trigger token must not stamp prescreen idempotency")
+    assert.equal(outbound.size, 1)
+    const notice = [...outbound.values()][0]!
+    assert.equal(notice.toE164, "+17167509332")
+    assert.equal(notice.fromNumber, "+17174919939")
+    assert.equal(notice.userId, "mGuQxsTGkisKtptNjg4b")
+    assert.equal(notice.runtimeSource, "pa_identity_notice")
+    assert.match(String(notice.body), /can't start this WeKruit interview from this phone yet/)
+  })
+
+  it("Test 17d (entrypoints): apply token from a wrong phone queues a default same-thread notice", async () => {
+    const { db, inbound, outbound, applyIdempotency } = makeFakeDb()
+    const prescreenCalls: Array<{ jobId: string; userId: string; toE164: string }> = []
+    const body = JSON.stringify(basePayload({
+      content: "WeKruit_hs-11005308-paradigm-gtm-growth_mGuQxsTGkisKtptNjg4b_Apply",
+      from_number: "+17167509332",
+      to_number: "+17174919939",
+      message_handle: "msg-entry-apply-wrong-phone",
+    }))
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "different_user",
+      runPreScreenForUser: async (args) => {
+        prescreenCalls.push(args)
+        return { ok: true, sessionId: "should_not_start" }
+      },
+    })
+
+    assert.equal(res.statusCode, 200)
+    assert.deepEqual(res.bodyOut, { ok: true, action: "apply_access_issue_notified" })
+    assert.equal(inbound.size, 0, "unauthorized apply token must not fall through to normal Claire runtime")
+    assert.equal(prescreenCalls.length, 0, "unauthorized apply token must not start fallback prescreen")
+    assert.equal(applyIdempotency.size, 0, "unauthorized apply token must not stamp apply idempotency")
+    assert.equal(outbound.size, 1)
+    const notice = [...outbound.values()][0]!
+    assert.equal(notice.toE164, "+17167509332")
+    assert.equal(notice.fromNumber, "+17174919939")
+    assert.equal(notice.userId, "mGuQxsTGkisKtptNjg4b")
+    assert.equal(notice.runtimeSource, "pa_identity_notice")
+    assert.match(String(notice.body), /can't continue this WeKruit apply step from this phone yet/)
   })
 
   it("Test 18 (entrypoints): WeKruit_LAID_OFF no longer starts manual layoff onboarding", async () => {

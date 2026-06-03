@@ -8,7 +8,7 @@
  *   - PrescreenTrigger: regex matching, jobId/userId extraction, char-class
  *   - PrescreenTrigger: idempotency 60-min window
  *   - PrescreenTrigger: media → unauthorized
- *   - PrescreenTrigger: phone unresolved → unauthorized
+ *   - PrescreenTrigger: phone unresolved / wrong phone → same-thread notice
  *   - PrescreenTrigger: self vs admin authorization
  *   - PrescreenTrigger: idempotency stamp BEFORE dispatch
  *   - CompactTrigger: admin-only check, target= override
@@ -20,6 +20,7 @@ import {
   CompactTrigger,
   extractInitialPrescreenReply,
   PrescreenTrigger,
+  PRESCREEN_ACCESS_ISSUE_NOTICE,
   PRESCREEN_IDEMPOTENCY_WINDOW_MS,
   PRESCREEN_IDENTITY_CONFLICT_NOTICE,
   TriggerRouter,
@@ -217,21 +218,50 @@ test("Phase 77: PrescreenTrigger refuses media-attached messages", async () => {
   assert.equal(deps.runs.length, 0)
 })
 
-test("Phase 77: PrescreenTrigger unauthorized when phone unresolved", async () => {
+test("Phase 77: PrescreenTrigger notifies instead of silently rejecting when phone unresolved", async () => {
   const deps = makePrescreenDeps({ phoneToUser: { "+15551234": null } })
   const trig = new PrescreenTrigger(deps)
-  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job"))
-  assert.equal(r.kind, "unauthorized")
-  if (r.kind === "unauthorized") assert.equal(r.reason, "phone_not_resolved")
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job", {
+    toNumber: "+15557654321",
+    messageHandle: "msg-unresolved-1",
+  }))
+  assert.deepEqual(r, { kind: "handled", action: "prescreen_access_issue_notified" })
+  assert.equal(deps.runs.length, 0)
+  assert.equal(deps.setLastCalls.length, 0)
   assert.equal(deps.audits[0].type, "trigger_unauthorized")
+  assert.equal(deps.audits[0].reason, "phone_not_resolved")
+  assert.deepEqual(deps.identityNotices[0], {
+    targetUserId: "user123",
+    jobId: "j1",
+    toE164: "+15551234",
+    fromNumber: "+15557654321",
+    messageHandle: "msg-unresolved-1",
+    content: "I can't start this WeKruit interview from this phone yet. Reopen the job page from the phone you want Claire to text, or continue in the original Claire thread.",
+    conflictCode: "phone_not_resolved",
+  })
 })
 
-test("Phase 77: PrescreenTrigger unauthorized when sender is neither self nor admin", async () => {
+test("Phase 77: PrescreenTrigger notifies instead of silently rejecting when sender is neither self nor admin", async () => {
   const deps = makePrescreenDeps({ phoneToUser: { "+15551234": "different_user" }, adminIds: [] })
   const trig = new PrescreenTrigger(deps)
-  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job"))
-  assert.equal(r.kind, "unauthorized")
-  if (r.kind === "unauthorized") assert.equal(r.reason, "not_self_or_admin")
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job", {
+    toNumber: "+15557654321",
+    messageHandle: "msg-wrong-user-1",
+  }))
+  assert.deepEqual(r, { kind: "handled", action: "prescreen_access_issue_notified" })
+  assert.equal(deps.runs.length, 0)
+  assert.equal(deps.setLastCalls.length, 0)
+  assert.equal(deps.audits[0].type, "trigger_unauthorized")
+  assert.equal(deps.audits[0].reason, "not_self_or_admin")
+  assert.deepEqual(deps.identityNotices[0], {
+    targetUserId: "user123",
+    jobId: "j1",
+    toE164: "+15551234",
+    fromNumber: "+15557654321",
+    messageHandle: "msg-wrong-user-1",
+    content: "I can't start this WeKruit interview from this phone yet. Reopen the job page from the phone you want Claire to text, or continue in the original Claire thread.",
+    conflictCode: "not_self_or_admin",
+  })
 })
 
 test("Phase 77: PrescreenTrigger queues a clear notice when token phone binding conflicts", async () => {
@@ -533,7 +563,7 @@ test("v1.9 hotfix: pending-invite binds session to phone-resolved real userId (n
   assert.equal(fired!.sourceRequestedUserId, "wkrAAA")
 })
 
-test("v1.9 hotfix: pending-invite rejected when TTL expired", async () => {
+test("v1.9 hotfix: pending-invite TTL expiry notifies without binding a session", async () => {
   const nowMs = 1_700_000_000_000
   const createdAt = new Date(nowMs - 25 * 60 * 60 * 1000).toISOString() // 25h ago, expired
   const deps = makePrescreenDepsWithPending({
@@ -543,13 +573,28 @@ test("v1.9 hotfix: pending-invite rejected when TTL expired", async () => {
     now: nowMs,
   })
   const trig = new PrescreenTrigger(deps)
-  const r = await trig.handle(makeCtx("WeKruit_j1_wkrAAA_Job", { fromNumber: "+15551234" }))
-  assert.equal(r.kind, "unauthorized")
+  const r = await trig.handle(makeCtx("WeKruit_j1_wkrAAA_Job", {
+    fromNumber: "+15551234",
+    toNumber: "+15557654321",
+    messageHandle: "msg-expired-pending",
+  }))
+  assert.deepEqual(r, { kind: "handled", action: "prescreen_access_issue_notified" })
   assert.equal(deps.runs.length, 0)
+  assert.equal(deps.setLastCalls.length, 0)
   assert.equal(deps.consumed.length, 0, "do not consume expired pending invite")
+  assert.equal(deps.audits[0].reason, "not_self_or_admin")
+  assert.deepEqual(deps.identityNotices[0], {
+    targetUserId: "wkrAAA",
+    jobId: "j1",
+    toE164: "+15551234",
+    fromNumber: "+15557654321",
+    messageHandle: "msg-expired-pending",
+    content: PRESCREEN_ACCESS_ISSUE_NOTICE,
+    conflictCode: "not_self_or_admin",
+  })
 })
 
-test("v1.9 hotfix: pending-invite rejected when jobId mismatches", async () => {
+test("v1.9 hotfix: pending-invite jobId mismatch notifies without binding a session", async () => {
   const nowMs = 1_700_000_000_000
   const createdAt = new Date(nowMs - 60 * 1000).toISOString()
   const deps = makePrescreenDepsWithPending({
@@ -559,11 +604,25 @@ test("v1.9 hotfix: pending-invite rejected when jobId mismatches", async () => {
     now: nowMs,
   })
   const trig = new PrescreenTrigger(deps)
-  const r = await trig.handle(makeCtx("WeKruit_j1_wkrAAA_Job", { fromNumber: "+15551234" }))
-  assert.equal(r.kind, "unauthorized")
-  if (r.kind === "unauthorized") assert.equal(r.reason, "not_self_or_admin")
+  const r = await trig.handle(makeCtx("WeKruit_j1_wkrAAA_Job", {
+    fromNumber: "+15551234",
+    toNumber: "+15557654321",
+    messageHandle: "msg-mismatch-pending",
+  }))
+  assert.deepEqual(r, { kind: "handled", action: "prescreen_access_issue_notified" })
   assert.equal(deps.runs.length, 0)
+  assert.equal(deps.setLastCalls.length, 0)
   assert.equal(deps.consumed.length, 0)
+  assert.equal(deps.audits[0].reason, "not_self_or_admin")
+  assert.deepEqual(deps.identityNotices[0], {
+    targetUserId: "wkrAAA",
+    jobId: "j1",
+    toE164: "+15551234",
+    fromNumber: "+15557654321",
+    messageHandle: "msg-mismatch-pending",
+    content: PRESCREEN_ACCESS_ISSUE_NOTICE,
+    conflictCode: "not_self_or_admin",
+  })
 })
 
 test("v1.9 hotfix: admin sender with public-page pending-invite uses phone-resolved (not body) userId", async () => {

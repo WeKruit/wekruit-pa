@@ -21,6 +21,8 @@ const APPLY_RE = /WeKruit_([A-Za-z0-9_-]+)_([A-Za-z0-9_-]+)_Apply/
 
 export const APPLY_IDEMPOTENCY_WINDOW_MS = 60 * 60 * 1000
 export const PASS_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000
+export const APPLY_ACCESS_ISSUE_NOTICE =
+  "I can't continue this WeKruit apply step from this phone yet. Use the Claire thread that completed the interview, or reopen the job page from the phone you want Claire to text."
 
 type PrescreenRunResult = { ok: boolean; reason?: string }
 
@@ -48,6 +50,16 @@ export interface ApplyTriggerDeps {
   clearLastFiredMs?(jobId: string, userId: string): Promise<void>
   /** Audit emitter. */
   audit(event: Record<string, unknown>): Promise<void>
+  /** Queue a candidate-safe same-thread notice when the token cannot be authorized. */
+  sendAccessIssueNotice(args: {
+    targetUserId: string
+    jobId: string
+    toE164: string
+    fromNumber?: string
+    messageHandle: string
+    content: string
+    reason: string
+  }): Promise<void>
   /** Optional clock seam for tests. */
   now?(): number
 }
@@ -94,7 +106,25 @@ export class ApplyTrigger implements Trigger {
         senderUserId,
         fromNumber: ctx.fromNumber,
       })
-      return { kind: "unauthorized", reason: "sender_userId_mismatch" }
+      try {
+        await this.deps.sendAccessIssueNotice({
+          targetUserId: userId,
+          jobId,
+          toE164: ctx.fromNumber,
+          ...(ctx.toNumber ? { fromNumber: ctx.toNumber } : {}),
+          messageHandle: ctx.messageHandle,
+          content: APPLY_ACCESS_ISSUE_NOTICE,
+          reason: "sender_userId_mismatch",
+        })
+      } catch (noticeErr) {
+        ctx.log("trigger.apply.access_notice_failed", {
+          jobId,
+          targetUserId: userId,
+          reason: "sender_userId_mismatch",
+          error: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
+        })
+      }
+      return { kind: "handled", action: "apply_access_issue_notified" }
     }
 
     // Look up prior PASS within 30d.

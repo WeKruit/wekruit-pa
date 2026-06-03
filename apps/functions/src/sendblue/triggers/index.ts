@@ -17,6 +17,7 @@ export {
   extractInitialPrescreenReply,
   PrescreenTrigger,
   PRESCREEN_IDEMPOTENCY_WINDOW_MS,
+  PRESCREEN_ACCESS_ISSUE_NOTICE,
   PRESCREEN_IDENTITY_CONFLICT_NOTICE,
   type PrescreenTriggerDeps,
 } from "./prescreen.js"
@@ -32,6 +33,7 @@ export { CompactTrigger, type CompactTriggerDeps } from "./compact.js"
 // v1.9 Phase 85 — Apply trigger (PASS-verified candidates skip prescreen).
 export {
   ApplyTrigger,
+  APPLY_ACCESS_ISSUE_NOTICE,
   APPLY_IDEMPOTENCY_WINDOW_MS,
   PASS_LOOKBACK_MS,
   type ApplyTriggerDeps,

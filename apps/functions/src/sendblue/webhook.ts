@@ -67,6 +67,30 @@ import { resolveInboundUserId } from "../candidate-inbound-resolve.js"
 function prescreenTriggerIdempotencyDocId(jobId: string, userId: string, messageHandle: string): string {
   return `${jobId}_${userId}_${encodeURIComponent(messageHandle || "missing_message_handle")}`
 }
+
+async function enqueueTriggerAccessNotice(
+  deps: WebhookDeps,
+  input: {
+    trigger: "prescreen" | "apply"
+    targetUserId: string
+    jobId: string
+    toE164: string
+    fromNumber?: string
+    messageHandle: string
+    content: string
+    code: string
+  },
+): Promise<void> {
+  await enqueueOutbound(deps.db, {
+    userId: input.targetUserId,
+    toE164: input.toE164,
+    ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}),
+    body: input.content,
+    idempotencyKey: `out-sendblue-${input.trigger}-access-${input.code}-${input.messageHandle}`,
+    runtimeApproved: true,
+    runtimeSource: "pa_identity_notice",
+  })
+}
 // v1.5 Stream-D — message coalescer dispatch (flag-gated; default off).
 import {
   enqueueOrCoalesce as defaultEnqueueOrCoalesce,
@@ -863,17 +887,18 @@ export async function handleSendblueWebhook(
           audit: async (evt) => {
             await safeAudit(deps, evt as AuditEventInput, log)
           },
-          sendIdentityConflictNotice: deps.sendIdentityConflictNotice
+          sendAccessIssueNotice: deps.sendIdentityConflictNotice
             ? async (input) => deps.sendIdentityConflictNotice!(input)
             : async (input) => {
-              await enqueueOutbound(deps.db, {
-                userId: input.targetUserId,
+              await enqueueTriggerAccessNotice(deps, {
+                trigger: "prescreen",
+                targetUserId: input.targetUserId,
+                jobId: input.jobId,
                 toE164: input.toE164,
                 ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}),
-                body: input.content,
-                idempotencyKey: `out-sendblue-prescreen-identity-conflict-${input.messageHandle}`,
-                runtimeApproved: true,
-                runtimeSource: "pa_identity_notice",
+                messageHandle: input.messageHandle,
+                content: input.content,
+                code: input.conflictCode,
               })
             },
           // v1.9 hotfix 2026-05-13 — pending-invite binding for public-page flow.
@@ -969,6 +994,18 @@ export async function handleSendblueWebhook(
           },
           audit: async (evt) => {
             await safeAudit(deps, evt as AuditEventInput, log)
+          },
+          sendAccessIssueNotice: async (input) => {
+            await enqueueTriggerAccessNotice(deps, {
+              trigger: "apply",
+              targetUserId: input.targetUserId,
+              jobId: input.jobId,
+              toE164: input.toE164,
+              ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}),
+              messageHandle: input.messageHandle,
+              content: input.content,
+              code: input.reason,
+            })
           },
         }),
         new CompactTrigger({

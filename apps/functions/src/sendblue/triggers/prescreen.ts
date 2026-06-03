@@ -16,7 +16,7 @@
  * Authorization (PS7 + PS15):
  *   - Trigger sender phone must resolve to a userId that EITHER matches the
  *     parsed userId (the candidate themselves) OR is in admin allowlist.
- *   - Anonymous / unrecognized sender → unauthorized + audit row.
+ *   - Anonymous / unrecognized sender → audit row + same-thread notice.
  *
  * Runs `runPreScreenForUser({jobId, userId, toE164})` before the HTTP reply.
  * The reply is not a valid delivery guarantee until the session row and
@@ -29,6 +29,8 @@ const PRESCREEN_RE = /WeKruit_([A-Za-z0-9-]+)_([A-Za-z0-9_-]+)_Job/i
 
 export const PRESCREEN_IDENTITY_CONFLICT_NOTICE =
   "This interview link is already tied to a different phone/account. If this is you, continue from that message thread, or reopen the job page and use the phone you want Claire to text."
+export const PRESCREEN_ACCESS_ISSUE_NOTICE =
+  "I can't start this WeKruit interview from this phone yet. Reopen the job page from the phone you want Claire to text, or continue in the original Claire thread."
 
 /** Per-pair idempotency window. */
 export const PRESCREEN_IDEMPOTENCY_WINDOW_MS = 60 * 60 * 1000 // 60 minutes
@@ -78,6 +80,16 @@ export interface PrescreenTriggerDeps {
     allowMatchedBypass?: boolean
   }): Promise<void | PrescreenRunResult>
   /** Queue a short candidate-safe notice when the token is valid but the sender phone cannot own it. */
+  sendAccessIssueNotice?(args: {
+    targetUserId: string
+    jobId: string
+    toE164: string
+    fromNumber?: string
+    messageHandle: string
+    content: string
+    conflictCode: string
+  }): Promise<void>
+  /** @deprecated Use sendAccessIssueNotice; kept for older tests/callers. */
   sendIdentityConflictNotice?(args: {
     targetUserId: string
     jobId: string
@@ -133,6 +145,24 @@ function identityConflictCode(err: unknown): string | null {
   return err.message.split(":")[1]?.trim() || "unknown"
 }
 
+type PrescreenAccessNoticeInput = {
+  targetUserId: string
+  jobId: string
+  toE164: string
+  fromNumber?: string
+  messageHandle: string
+  content: string
+  conflictCode: string
+}
+
+async function sendPrescreenAccessNotice(
+  deps: PrescreenTriggerDeps,
+  input: PrescreenAccessNoticeInput,
+): Promise<void> {
+  const sendNotice = deps.sendAccessIssueNotice ?? deps.sendIdentityConflictNotice
+  await sendNotice?.(input)
+}
+
 export class PrescreenTrigger implements Trigger {
   readonly name = "prescreen"
 
@@ -172,7 +202,7 @@ export class PrescreenTrigger implements Trigger {
         payload: { jobId, targetUserId: userId, conflictCode },
       })
       try {
-        await this.deps.sendIdentityConflictNotice?.({
+        await sendPrescreenAccessNotice(this.deps, {
           targetUserId: userId,
           jobId,
           toE164: ctx.fromNumber,
@@ -199,7 +229,25 @@ export class PrescreenTrigger implements Trigger {
         fromNumber: ctx.fromNumber,
         correlationId: ctx.messageHandle,
       })
-      return { kind: "unauthorized", reason: "phone_not_resolved" }
+      try {
+        await sendPrescreenAccessNotice(this.deps, {
+          targetUserId: userId,
+          jobId,
+          toE164: ctx.fromNumber,
+          ...(ctx.toNumber ? { fromNumber: ctx.toNumber } : {}),
+          messageHandle: ctx.messageHandle,
+          content: PRESCREEN_ACCESS_ISSUE_NOTICE,
+          conflictCode: "phone_not_resolved",
+        })
+      } catch (noticeErr) {
+        ctx.log("trigger.prescreen.access_notice_failed", {
+          jobId,
+          targetUserId: userId,
+          reason: "phone_not_resolved",
+          error: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
+        })
+      }
+      return { kind: "handled", action: "prescreen_access_issue_notified" }
     }
     const isSelf = resolvedUserId === userId
     const isAdmin = this.deps.isAdmin ? await this.deps.isAdmin(resolvedUserId) : false
@@ -245,7 +293,25 @@ export class PrescreenTrigger implements Trigger {
         targetUserId: userId,
         correlationId: ctx.messageHandle,
       })
-      return { kind: "unauthorized", reason: "not_self_or_admin" }
+      try {
+        await sendPrescreenAccessNotice(this.deps, {
+          targetUserId: userId,
+          jobId,
+          toE164: ctx.fromNumber,
+          ...(ctx.toNumber ? { fromNumber: ctx.toNumber } : {}),
+          messageHandle: ctx.messageHandle,
+          content: PRESCREEN_ACCESS_ISSUE_NOTICE,
+          conflictCode: "not_self_or_admin",
+        })
+      } catch (noticeErr) {
+        ctx.log("trigger.prescreen.access_notice_failed", {
+          jobId,
+          targetUserId: userId,
+          reason: "not_self_or_admin",
+          error: noticeErr instanceof Error ? noticeErr.message : String(noticeErr),
+        })
+      }
+      return { kind: "handled", action: "prescreen_access_issue_notified" }
     }
 
     // Session userId selection:
