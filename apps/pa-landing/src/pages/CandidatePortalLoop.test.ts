@@ -52,18 +52,43 @@ test("candidate operating loop keeps paused roles out of profile-signal evidence
   assert.equal(loop.stats.find((stat) => stat.label === "Retained")?.value, "2")
 })
 
-test("candidate operating loop surfaces accepted and closed intro feedback as durable signal", () => {
+test("candidate operating loop surfaces accepted intro feedback as retained signal", () => {
   const loop = deriveCandidateOperatingLoop([
     { status: "intro_accepted" },
-    { status: "intro_rejected" },
     { status: "not_passed" },
   ])
 
   assert.equal(loop.state, "intro_signal")
   assert.equal(loop.primaryLabel, "Intro feedback")
-  assert.match(loop.body, /2 intro outcomes/)
+  assert.match(loop.body, /1 intro outcome/)
   assert.match(loop.nextAction, /future matching/i)
+  assert.equal(loop.stats.find((stat) => stat.label === "Feedback")?.value, "1")
+  assert.equal(loop.stats.find((stat) => stat.label === "Profile signal")?.value, "0")
+  assert.equal(loop.stats.find((stat) => stat.label === "Retained")?.value, "1")
+})
+
+test("candidate operating loop prioritizes rejected intros as profile signal work", () => {
+  const loop = deriveCandidateOperatingLoop([
+    { status: "intro_rejected" },
+    { status: "intro_accepted" },
+  ])
+
+  assert.equal(loop.state, "profile_signal")
+  assert.equal(loop.primaryLabel, "Profile signal")
+  assert.match(loop.body, /closed intro outcome/i)
+  assert.match(loop.nextAction, /Update profile signal/i)
   assert.equal(loop.stats.find((stat) => stat.label === "Feedback")?.value, "2")
   assert.equal(loop.stats.find((stat) => stat.label === "Profile signal")?.value, "1")
-  assert.equal(loop.stats.find((stat) => stat.label === "Retained")?.value, "1")
+})
+
+test("candidate operating loop labels mixed closed outcomes without pretending they are all intros", () => {
+  const loop = deriveCandidateOperatingLoop([
+    { status: "intro_rejected" },
+    { status: "not_passed", reviewDecision: { decisionReason: "Needs deeper API ownership" } },
+  ])
+
+  assert.equal(loop.state, "profile_signal")
+  assert.match(loop.body, /2 closed outcomes are ready/)
+  assert.doesNotMatch(loop.body, /2 closed intro outcomes/)
+  assert.equal(loop.stats.find((stat) => stat.label === "Profile signal")?.value, "2")
 })

@@ -110,22 +110,30 @@ export function deriveCandidateOperatingLoop(
     }
   }
 
+  if (counts.profileSignal > 0) {
+    const introSignals = matches.filter((match) => match.status === "intro_rejected").length
+    const roleSignals = counts.profileSignal - introSignals
+    const source =
+      introSignals > 0 && roleSignals > 0
+        ? ""
+        : introSignals > 0
+          ? "intro "
+          : "role "
+    return {
+      state: "profile_signal",
+      primaryLabel: "Profile signal",
+      body: `${counts.profileSignal} closed ${source}${counts.profileSignal === 1 ? "outcome is" : "outcomes are"} ready to review as durable matching evidence.`,
+      nextAction: "Use Update profile signal to tell Claire what should change before future matching.",
+      stats,
+    }
+  }
+
   if (counts.feedback > 0) {
     return {
       state: "intro_signal",
       primaryLabel: "Intro feedback",
       body: `${counts.feedback} intro ${counts.feedback === 1 ? "outcome" : "outcomes"} captured after passed-profile sharing.`,
       nextAction: "Claire and WeKruit use this signal for future matching while your profile stays active.",
-      stats,
-    }
-  }
-
-  if (counts.profileSignal > 0) {
-    return {
-      state: "profile_signal",
-      primaryLabel: "Profile signal",
-      body: `${counts.profileSignal} closed ${roleWord(counts.profileSignal)} ${counts.profileSignal === 1 ? "outcome is" : "outcomes are"} ready to review as durable matching evidence.`,
-      nextAction: "Use Update profile signal to tell Claire what should change before future matching.",
       stats,
     }
   }
