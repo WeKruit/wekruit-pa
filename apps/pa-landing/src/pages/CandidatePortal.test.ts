@@ -501,6 +501,13 @@ test("CandidatePortal role signal corrections persist structured evidence", () =
   assert.match(source, /submitCorrection\(\{ correctionText, structuredFields \}\)/)
 })
 
+test("CandidatePortal role signal success copy is candidate-facing", () => {
+  assert.match(source, /const roleSignalSubmitted = Boolean\(initialCorrectionDraft\?\.structuredFields\.roleSignal\)/)
+  assert.match(source, /Role signal saved — Claire will use it as matching evidence\./)
+  assert.doesNotMatch(source, /Updated: \$\{result\.appliedKeys\.join\(", "\)\}/)
+  assert.doesNotMatch(source, /Updated: roleSignal/)
+})
+
 test("CandidatePortal /me/matches sidebar shows the real matching basis", () => {
   assert.match(source, /function MatchesView\([\s\S]*<MeClaireSignalsCard profile=\{profile\} \/>/)
   assert.match(source, /function deriveClaireSignalRows\(profile: CandidateSelfProfile\): MeSignalRow\[\]/)

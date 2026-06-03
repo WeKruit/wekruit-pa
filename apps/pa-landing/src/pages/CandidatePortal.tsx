@@ -3440,8 +3440,12 @@ function UpdatePreferencesPanel({
       const result = await submitCorrection({ correctionText, structuredFields })
       onProfileUpdated(result.selfProfile)
       setCorrectionText("")
-      const applied = result.appliedKeys?.length ? ` Updated: ${result.appliedKeys.join(", ")}.` : ""
-      setMessage(`Correction submitted.${applied}`)
+      const roleSignalSubmitted = Boolean(initialCorrectionDraft?.structuredFields.roleSignal)
+      setMessage(
+        roleSignalSubmitted
+          ? "Role signal saved — Claire will use it as matching evidence."
+          : "Correction submitted. Claire will review it for future matching.",
+      )
       setStatus("success")
     } catch (err) {
       setMessage(callableSubmitErrorMessage(err))
