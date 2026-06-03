@@ -461,7 +461,10 @@ export function CandidateShell({
             ) : (
               <>
                 <Link to="/login" className="wk-header__signin">Sign in</Link>
-                <Link to="/login" className="wk-btn wk-btn--ink wk-btn--sm">Start with Claire</Link>
+                <Link to="/login" className="wk-btn wk-btn--ink wk-btn--sm wk-header__primary" aria-label="Start with Claire">
+                  <span className="wk-header__primary-full" aria-hidden="true">Start with Claire</span>
+                  <span className="wk-header__primary-short" aria-hidden="true">Start</span>
+                </Link>
               </>
             )}
           </div>
@@ -1377,6 +1380,7 @@ export const CANDIDATE_STYLES = `
   transition: color 200ms var(--wk-ease);
 }
 .wk-header__signin:hover { color: var(--wk-ink); }
+.wk-header__primary-short { display: none; }
 .wk-main { flex: 1; }
 .wk-footer {
   margin-top: 80px;
@@ -1702,13 +1706,22 @@ export const CANDIDATE_STYLES = `
 @media (max-width: 820px) {
   .wk-header__inner { gap: 8px; padding: 12px 16px; }
   .wk-nav { display: none; }
+  .wk-header__inner > .wk-header__cta { margin-left: auto; }
 }
 @media (max-width: 480px) {
   .wk-header__inner { padding: 12px; }
   .wk-header__brand-meta { display: none; }
   .wk-header__cta { gap: 0; }
   .wk-header__cta .wk-btn { display: none; }
-  .wk-header__signin { font-size: 13.5px; margin-right: 0; }
+  .wk-header__signin { display: none; font-size: 13.5px; margin-right: 0; }
+  .wk-header__primary {
+    display: inline-flex !important;
+    height: 32px;
+    padding: 0 12px;
+    font-size: 13px;
+  }
+  .wk-header__primary-full { display: none; }
+  .wk-header__primary-short { display: inline; }
 }
 @media (max-width: 760px) {
   .wk-container, .wk-container--narrow { padding: 0 18px; }
