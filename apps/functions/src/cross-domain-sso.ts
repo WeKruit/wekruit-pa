@@ -23,8 +23,8 @@
  *      both origins with the same Firebase uid.
  *
  *   3. On sign-out the client calls `paSsoLogout` which clears the shared
- *      cookie. The next bootstrap attempt on any subdomain returns 401, so
- *      no other tab can restore the dead session.
+ *      cookie. The next bootstrap attempt on any subdomain quietly returns no
+ *      custom token, so no other tab can restore the dead session.
  *
  * Security posture:
  *   - `wkr_session` is `HttpOnly` so XSS scripts cannot read or steal it.
@@ -193,7 +193,7 @@ export async function handleSsoBootstrap(
   const cookieHeader = typeof req.headers.cookie === "string" ? req.headers.cookie : undefined
   const cookie = parseCookieHeader(cookieHeader, SSO_COOKIE_NAME)
   if (!cookie) {
-    res.status(401).json({ error: "no_session" })
+    res.status(204).send("")
     return
   }
   try {

@@ -204,15 +204,25 @@ describe("handleSsoBootstrap", () => {
     assert.equal(res.statusCode, 405)
   })
 
-  it("returns 401 no_session when cookie is absent", async () => {
+  it("returns quiet 204 no-session when cookie is absent", async () => {
+    let verified = false
     const res = mockRes()
     await handleSsoBootstrap(
       { method: "GET", headers: { origin: "https://wekruit.com", cookie: "other=1" } },
       res,
-      { admin: fakeAdmin(), allowedOrigins: ALLOWED },
+      {
+        admin: fakeAdmin({
+          async verifySessionCookie() {
+            verified = true
+            throw new Error("should not verify missing cookie")
+          },
+        }),
+        allowedOrigins: ALLOWED,
+      },
     )
-    assert.equal(res.statusCode, 401)
-    assert.deepEqual(res.body, { error: "no_session" })
+    assert.equal(res.statusCode, 204)
+    assert.equal(res.body, "")
+    assert.equal(verified, false)
   })
 
   it("returns customToken on valid cookie", async () => {
