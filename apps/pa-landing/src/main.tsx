@@ -19,6 +19,7 @@ import Onboarding from "./pages/Onboarding.js"
 import EmployerSignup from "./pages/EmployerSignup.js"
 import Employers, { EmployersInbox } from "./pages/Employers.js"
 import ReferPage, { ReferPublicPage } from "./pages/Refer.js"
+import ConnectLinkedin from "./pages/ConnectLinkedin.js"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("Missing #root element")
@@ -83,6 +84,7 @@ const fullRoutes = (
     <Route path="/refer" element={<ReferPublicPage />} />
     <Route path="/r/:slug" element={<ReferPublicPage />} />
     <Route path="/me/refer" element={<ReferPage />} />
+    <Route path="/connect-linkedin" element={<ConnectLinkedin />} />
     <Route path="*" element={<HomeLanding />} />
   </Routes>
 )
