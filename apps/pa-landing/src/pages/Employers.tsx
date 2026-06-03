@@ -869,6 +869,44 @@ function EmployerInboxRolePacket({ packet }: { packet: InboxRolePacket }) {
   )
 }
 
+function EmpSampleDecisionLoop() {
+  const decisions = [
+    {
+      label: "Accept intro",
+      body: "Confirms candidate consent and intro owner, then your team moves the pass into its own interview loop.",
+    },
+    {
+      label: "Reject with reason",
+      body: "Sends one reason back to WeKruit and updates the approved role packet before the next screen.",
+    },
+    {
+      label: "Ask for sharper evidence",
+      body: "Names the missing signal and tightens Claire's next probe without exposing hidden candidates.",
+    },
+  ]
+
+  return (
+    <section className="wk-emp-pp__decision" aria-labelledby="wk-emp-sample-decision-title">
+      <div className="wk-emp-pp__decision-head">
+        <p className="wk-eyebrow">Sample decision loop</p>
+        <h3 id="wk-emp-sample-decision-title">What this pass would trigger.</h3>
+        <span className="wk-emp-pp__sample">Sample actions only</span>
+      </div>
+      <ol className="wk-emp-pp__decision-list">
+        {decisions.map((decision, i) => (
+          <li key={decision.label}>
+            <span className="wk-emp-pp__decision-num">{String(i + 1).padStart(2, "0")}</span>
+            <div>
+              <strong>{decision.label}</strong>
+              <p>{decision.body}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
 function EmpPassedDetail({ c }: { c: PassedProfile }) {
   return (
     <article className="wk-emp-pp">
@@ -900,6 +938,8 @@ function EmpPassedDetail({ c }: { c: PassedProfile }) {
         </span>
         <span className="wk-emp-pp__sample">Sample actions only</span>
       </div>
+
+      <EmpSampleDecisionLoop />
 
       <section className="wk-emp-pp__sec">
         <h3 className="wk-emp-pp__h">Summary</h3>

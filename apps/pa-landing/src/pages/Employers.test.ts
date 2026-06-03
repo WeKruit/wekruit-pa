@@ -47,6 +47,22 @@ test("Employers inbox preview uses non-interactive sample actions", () => {
   assert.match(employersSource, /Sample actions only/)
 })
 
+test("Employers inbox sample actions explain the accepted and rejected intro loop", () => {
+  assert.match(employersSource, /function EmpSampleDecisionLoop/)
+  assert.match(employersSource, /Sample decision loop/)
+  assert.match(employersSource, /Accept intro/)
+  assert.match(employersSource, /candidate consent and intro owner/)
+  assert.match(employersSource, /Reject with reason/)
+  assert.match(employersSource, /updates the approved role packet/)
+  assert.match(employersSource, /Ask for sharper evidence/)
+  assert.match(employersSource, /tightens Claire's next probe/)
+  assert.match(employersSource, /<EmpSampleDecisionLoop \/>/)
+
+  assert.doesNotMatch(employersSource, /feedback saved live/i)
+  assert.doesNotMatch(employersSource, /Schedule intro/)
+  assert.doesNotMatch(employersSource, /Ask Claire to dig deeper/)
+})
+
 test("Employers page avoids unsupported employer workflow actions", () => {
   assert.doesNotMatch(employersSource, /Decline, schedule, or ask Claire to dig deeper/)
   assert.doesNotMatch(employersSource, /Decline with note/)
