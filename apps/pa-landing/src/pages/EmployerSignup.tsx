@@ -72,6 +72,7 @@ export default function EmployerSignup() {
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [appliedStarterId, setAppliedStarterId] = useState<EmployerPacketStarterId | null>(null)
   const readiness = deriveEmployerSignupReadiness(form)
   const packetPreview = deriveEmployerPacketPreview(form)
   const handleFieldJump: FieldJumpHandler = handleEmployerFieldJump
@@ -173,13 +174,16 @@ export default function EmployerSignup() {
 
           {done ? <SuccessCard form={form} onStartAnother={() => {
             setForm(EMPTY_FORM)
+            setAppliedStarterId(null)
             setDone(false)
             setError(null)
           }} /> : (
             <>
               <EmployerPacketStarters
+                appliedStarterId={appliedStarterId}
                 onApply={(starterId) => {
                   setForm((prev) => applyEmployerPacketStarter(prev, starterId))
+                  setAppliedStarterId(starterId)
                 }}
               />
               <EmployerPacketReadiness summary={readiness} onFieldJump={handleFieldJump} />
@@ -535,7 +539,17 @@ function EmployerOutputPreview() {
   )
 }
 
-function EmployerPacketStarters({ onApply }: { onApply: (starterId: EmployerPacketStarterId) => void }) {
+function EmployerPacketStarters({
+  appliedStarterId,
+  onApply,
+}: {
+  appliedStarterId: EmployerPacketStarterId | null
+  onApply: (starterId: EmployerPacketStarterId) => void
+}) {
+  const appliedStarter = appliedStarterId
+    ? EMPLOYER_PACKET_STARTERS.find((starter) => starter.id === appliedStarterId)
+    : null
+
   return (
     <section
       aria-label="Editable role packet starters"
@@ -572,6 +586,21 @@ function EmployerPacketStarters({ onApply }: { onApply: (starterId: EmployerPack
       >
         Pick the closest role shape, then edit the details.
       </h2>
+      {appliedStarter ? (
+        <p
+          role="status"
+          style={{
+            margin: "10px 0 0",
+            fontFamily: "var(--font-sans)",
+            fontSize: 13,
+            lineHeight: 1.42,
+            color: "var(--success)",
+            fontWeight: 700,
+          }}
+        >
+          {appliedStarter.label} loaded into the packet preview. Review and edit the fields below.
+        </p>
+      ) : null}
       <div
         style={{
           display: "grid",
@@ -580,55 +609,60 @@ function EmployerPacketStarters({ onApply }: { onApply: (starterId: EmployerPack
           marginTop: 14,
         }}
       >
-        {EMPLOYER_PACKET_STARTERS.map((starter) => (
-          <article
-            key={starter.id}
-            style={{
-              minWidth: 0,
-              border: "1px solid var(--border)",
-              borderRadius: "var(--r-md)",
-              background: "rgba(255, 255, 255, 0.66)",
-              padding: 12,
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-            }}
-          >
-            <strong
+        {EMPLOYER_PACKET_STARTERS.map((starter) => {
+          const selected = starter.id === appliedStarterId
+          return (
+            <article
+              key={starter.id}
               style={{
-                fontFamily: "var(--font-sans)",
-                fontSize: 14,
-                lineHeight: 1.25,
-                color: "var(--ink)",
+                minWidth: 0,
+                border: `1px solid ${selected ? "rgba(95, 119, 73, 0.48)" : "var(--border)"}`,
+                borderRadius: "var(--r-md)",
+                background: selected ? "rgba(230, 233, 217, 0.52)" : "rgba(255, 255, 255, 0.66)",
+                boxShadow: selected ? "inset 0 0 0 1px rgba(95, 119, 73, 0.16)" : undefined,
+                padding: 12,
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
               }}
             >
-              {starter.label}
-            </strong>
-            <p
-              style={{
-                margin: 0,
-                fontFamily: "var(--font-sans)",
-                fontSize: 13,
-                lineHeight: 1.42,
-                color: "var(--ink-2)",
-              }}
-            >
-              {starter.summary}
-            </p>
-            <button
-              type="button"
-              className="btn btn--ghost btn--sm"
-              onClick={() => onApply(starter.id)}
-              style={{
-                marginTop: "auto",
-                width: "100%",
-                justifyContent: "center",
-              }}
-            >
-              Use as editable structure
-            </button>
-          </article>
-        ))}
+              <strong
+                style={{
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 14,
+                  lineHeight: 1.25,
+                  color: "var(--ink)",
+                }}
+              >
+                {starter.label}
+              </strong>
+              <p
+                style={{
+                  margin: 0,
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 13,
+                  lineHeight: 1.42,
+                  color: "var(--ink-2)",
+                }}
+              >
+                {starter.summary}
+              </p>
+              <button
+                type="button"
+                className={`btn ${selected ? "btn--primary" : "btn--ghost"} btn--sm`}
+                aria-pressed={selected}
+                onClick={() => onApply(starter.id)}
+                style={{
+                  marginTop: "auto",
+                  width: "100%",
+                  justifyContent: "center",
+                }}
+              >
+                {selected ? <>{starter.label} loaded</> : <>Use {starter.label} structure</>}
+              </button>
+            </article>
+          )
+        })}
       </div>
     </section>
   )
