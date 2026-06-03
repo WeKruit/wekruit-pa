@@ -128,9 +128,16 @@ test("CandidateShell signed-in nav keeps candidates inside the operating home an
   assert.match(source, /if \(to === "\/me\/privacy"\) return pathname === "\/me\/privacy"/)
 })
 
-test("CandidateShell mobile header does not push the sign-in link past the viewport", () => {
+test("CandidateShell mobile header keeps the primary candidate start action visible", () => {
+  assert.match(source, /className="wk-btn wk-btn--ink wk-btn--sm wk-header__primary" aria-label="Start with Claire"/)
+  assert.match(source, /className="wk-header__primary-full" aria-hidden="true">Start with Claire<\/span>/)
+  assert.match(source, /className="wk-header__primary-short" aria-hidden="true">Start<\/span>/)
+  assert.match(source, /@media \(max-width: 820px\) \{[\s\S]*\.wk-header__inner > \.wk-header__cta \{ margin-left: auto; \}/)
   assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-header__inner \{ padding: 12px; \}/)
-  assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-header__signin \{ font-size: 13\.5px; margin-right: 0; \}/)
+  assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-header__signin \{ display: none; font-size: 13\.5px; margin-right: 0; \}/)
+  assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-header__primary \{[\s\S]*display: inline-flex !important;[\s\S]*height: 32px;/)
+  assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-header__primary-full \{ display: none; \}/)
+  assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-header__primary-short \{ display: inline; \}/)
 })
 
 test("CandidateShell footer routes employers to the actual employer surface", () => {

@@ -23,8 +23,10 @@ export function AudienceToggle() {
         aria-selected={!isEmployer}
         className={`wk-aud__tab${!isEmployer ? " is-active" : ""}`}
         onClick={() => navigate("/")}
+        aria-label="For candidates"
       >
-        For candidates
+        <span className="wk-aud__full">For candidates</span>
+        <span className="wk-aud__short" aria-hidden="true">Candidates</span>
       </button>
       <button
         type="button"
@@ -32,8 +34,10 @@ export function AudienceToggle() {
         aria-selected={isEmployer}
         className={`wk-aud__tab${isEmployer ? " is-active" : ""}`}
         onClick={() => navigate("/employers")}
+        aria-label="For companies"
       >
-        For companies
+        <span className="wk-aud__full">For companies</span>
+        <span className="wk-aud__short" aria-hidden="true">Companies</span>
       </button>
     </div>
   )
