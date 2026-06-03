@@ -269,7 +269,8 @@ test("Phase 77: PrescreenTrigger fires for self (sender matches target userId)",
   assert.equal(r.kind, "handled")
   if (r.kind === "handled") assert.equal(r.action, "prescreen_triggered")
   assert.equal(deps.runs.length, 1)
-  assert.deepEqual(deps.runs[0], { jobId: "j1", userId: "user123", toE164: "+15551234" })
+  // STRING-TOKEN START self-authorizes → allowMatchedBypass:true (Adam 2026-06-03 string→start=everyone).
+  assert.deepEqual(deps.runs[0], { jobId: "j1", userId: "user123", toE164: "+15551234", allowMatchedBypass: true })
 })
 
 test("Phase 77: PrescreenTrigger passes text after token as the initial prescreen reply", async () => {
@@ -617,4 +618,30 @@ test("v1.9 hotfix: self path unchanged when body userId matches phone-resolved u
   assert.equal(deps.runs[0].userId, "user123")
   const fired = deps.audits.find((a) => a.type === "trigger_fired")
   assert.equal(fired!.role, "self")
+})
+
+test("STRING-TOKEN START bypasses the matched-gate (Adam 2026-06-03: string → start = everyone)", async () => {
+  // A self copy-paste of the exact WeKruit_<jobId>_<userId>_Job string is self-authorizing — the
+  // matched-gate (was this job recommended to them) must NOT block it. Regression for the live
+  // 2026-06-03 ghost: a candidate pasted a token for a job never recommended to them → not_matched
+  // → silent no-reply. The trigger must forward allowMatchedBypass:true so runPreScreenForUser starts.
+  const deps = makePrescreenDepsWithPending({ phoneToUser: { "+15551234": "user123" }, adminIds: [] })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_user123_Job", { fromNumber: "+15551234" }))
+  assert.equal(r.kind, "handled")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(deps.runs[0].userId, "user123")
+  assert.equal((deps.runs[0] as { allowMatchedBypass?: boolean }).allowMatchedBypass, true, "self string-token start bypasses the matched-gate")
+})
+
+test("admin string-token start also forwards the bypass", async () => {
+  const deps = makePrescreenDepsWithPending({
+    phoneToUser: { "+15551234": "adam_admin_real" },
+    adminIds: ["adam_admin_real"],
+  })
+  const trig = new PrescreenTrigger(deps)
+  const r = await trig.handle(makeCtx("WeKruit_j1_targetCandidate_Job", { fromNumber: "+15551234" }))
+  assert.equal(r.kind, "handled")
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal((deps.runs[0] as { allowMatchedBypass?: boolean }).allowMatchedBypass, true)
 })
