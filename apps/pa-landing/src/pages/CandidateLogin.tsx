@@ -499,11 +499,12 @@ function appNavItems(claireHref: string | null): AppNavItem[] {
   { to: "/market", icon: "market", label: "Market" },
   ...(claireHref ? [{ to: claireHref, icon: "claire" as const, label: "Claire", external: true }] : []),
   { to: "/me/profile", icon: "profile", label: "Profile" },
+  { to: "/me/privacy", icon: "privacy", label: "Privacy" },
   { to: "/me/refer", icon: "refer", label: "Refer · $4k" },
   ]
 }
 
-type AppNavIconName = "pipeline" | "match" | "claire" | "profile" | "refer" | "market"
+type AppNavIconName = "pipeline" | "match" | "claire" | "profile" | "privacy" | "refer" | "market"
 
 // Rail glyphs — kept local so the shared Icon set stays lean.
 function AppNavIcon({ name, size = 17 }: { name: AppNavIconName; size?: number }) {
@@ -518,6 +519,7 @@ function AppNavIcon({ name, size = 17 }: { name: AppNavIconName; size?: number }
     case "match": return (<svg {...p}><path d="M12 3v6M12 15v6M3 12h6M15 12h6M6 6l4 4M14 14l4 4M6 18l4-4M14 10l4-4" /></svg>)
     case "claire": return (<svg {...p}><path d="M21 12c0 4.4-4 8-9 8-1.4 0-2.7-.3-3.8-.7L3 21l1.5-4.2C3.6 15.5 3 13.8 3 12c0-4.4 4-8 9-8s9 3.6 9 8z" /></svg>)
     case "profile": return (<svg {...p}><circle cx="12" cy="9" r="4" /><path d="M4 21c0-4 4-7 8-7s8 3 8 7" /></svg>)
+    case "privacy": return (<svg {...p}><path d="M12 3l7 3v5c0 4.3-2.8 8-7 10-4.2-2-7-5.7-7-10V6z" /><path d="M9.5 12.5l1.7 1.7 3.4-4" /></svg>)
     case "refer": return (<svg {...p}><rect x="3" y="8" width="18" height="13" rx="2" /><path d="M3 12h18M12 8v13M12 8s-3-5-5-3 0 5 5 3M12 8s3-5 5-3 0 5-5 3" /></svg>)
     case "market": return (<svg {...p}><circle cx="12" cy="12" r="9" /><path d="M16 8l-2 6-6 2 2-6z" /></svg>)
   }
@@ -528,6 +530,7 @@ function isNavItemActive(pathname: string, to: string, external?: boolean): bool
   if (to === "/me") return pathname === "/me"
   if (to === "/me/matches") return pathname === "/me/matches" || pathname.startsWith("/me/match")
   if (to === "/market") return pathname === "/market"
+  if (to === "/me/privacy") return pathname === "/me/privacy"
   return pathname === to || pathname.startsWith(to + "/")
 }
 

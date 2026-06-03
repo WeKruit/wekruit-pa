@@ -9,7 +9,7 @@ import Landing from "./pages/Landing.js"
 import LayoffLanding from "./pages/LayoffLanding.js"
 import Legal from "./pages/Legal.js"
 import CandidateLogin from "./pages/CandidateLogin.js"
-import { CandidateMe, CandidateProfile, CandidateMatches } from "./pages/CandidatePortal.js"
+import { CandidateMe, CandidateProfile, CandidateMatches, CandidatePrivacy } from "./pages/CandidatePortal.js"
 import Market from "./pages/Market.js"
 import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
@@ -86,6 +86,7 @@ const fullRoutes = (
     <Route path="/me" element={<CandidateMe />} />
     <Route path="/me/matches" element={<CandidateMatches />} />
     <Route path="/me/profile" element={<CandidateProfile />} />
+    <Route path="/me/privacy" element={<CandidatePrivacy />} />
     <Route path="/market" element={<Market />} />
     <Route path="/jobs" element={<Market />} />
     <Route path="/companies/:companyId" element={<CompanyProfile />} />

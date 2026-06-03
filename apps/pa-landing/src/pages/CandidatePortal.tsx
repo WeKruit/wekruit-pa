@@ -2663,6 +2663,20 @@ export function CandidateProfile() {
   return <ProfileSurface initial={state.profile} />
 }
 
+export function CandidatePrivacy() {
+  const gate = useCandidatePortalGate()
+  const state = useClaimedProfile()
+
+  if (gate.status !== "ready") {
+    return <PortalGatePending gate={gate} kicker="Privacy" />
+  }
+
+  if (state.status === "signed_out") return <SignInRequired kicker="Privacy" />
+  if (state.status === "loading") return <PortalLoading kicker="Privacy" />
+  if (state.status === "error") return <PortalError kicker="Privacy" message={state.message} />
+  return <PrivacySurface profile={state.profile} />
+}
+
 function useProfileHashScroll() {
   const location = useLocation()
   useEffect(() => {
@@ -2836,6 +2850,39 @@ function ProfileSurface({ initial }: { initial: CandidateSelfProfile }) {
                 Sign out
               </button>
             </aside>
+          </div>
+        </div>
+      </div>
+    </CandidateShell>
+  )
+}
+
+function PrivacySurface({ profile }: { profile: CandidateSelfProfile }) {
+  const claireHref = buildClaireImessageHref(profile.senderNumber)
+  return (
+    <CandidateShell signedIn signedInUser={{ name: profile.displayName ?? "You", email: profile.emailMasked }} claireHref={claireHref}>
+      <style>{ME_PORTAL_STYLES}</style>
+      <style>{PROFILE_STYLES}</style>
+      <div className="wk-prof wk-privacy">
+        <div className="wk-container">
+          <header className="wk-prof__head">
+            <div>
+              <p className="wk-eyebrow">Candidate privacy</p>
+              <h1 className="wk-prof__h1">Your privacy requests.</h1>
+              <p className="wk-prof__sub">
+                Export, deletion, outreach, and employer-block requests stay reviewed before anything binding changes.
+              </p>
+            </div>
+            <div className="wk-prof__head-actions">
+              <Link to="/me/profile" className="wk-btn wk-btn--secondary wk-btn--sm">
+                <Icon name="arrow-left" size={13} stroke={2} /> Back to profile
+              </Link>
+            </div>
+          </header>
+
+          <div className="wk-privacy__grid">
+            <PrivacyCard />
+            <PrivacyRequestPanel />
           </div>
         </div>
       </div>
@@ -4326,6 +4373,12 @@ const PROFILE_STYLES = `
 }
 .wk-prof__main { display: grid; gap: 18px; min-width: 0; }
 .wk-prof__side { display: grid; gap: 18px; position: sticky; top: 88px; }
+.wk-privacy__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(320px, 1.05fr);
+  gap: 18px;
+  align-items: start;
+}
 
 .wk-prof-card { padding: 22px 22px 20px; }
 .wk-prof-card__hint {
@@ -4548,6 +4601,7 @@ const PROFILE_STYLES = `
 @media (max-width: 960px) {
   .wk-prof__grid { grid-template-columns: 1fr; }
   .wk-prof__side { position: static; }
+  .wk-privacy__grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
   .wk-prof__head { grid-template-columns: 1fr; align-items: start; }
