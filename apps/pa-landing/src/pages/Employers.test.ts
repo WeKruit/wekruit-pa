@@ -158,6 +158,23 @@ test("Employers sample pass record shows a scope-safe calibration packet", () =>
   assert.doesNotMatch(employersSource, /replacement search/i)
 })
 
+test("Employers inbox preview connects a passed profile back to the approved role packet", () => {
+  assert.match(employersSource, /const SAMPLE_INBOX_ROLE_PACKET/)
+  assert.match(employersSource, /function EmployerInboxRolePacket/)
+  assert.match(employersSource, /Approved role packet/)
+  assert.match(employersSource, /What Claire screened against/)
+  assert.match(employersSource, /Founder-mode product platform lead/)
+  assert.match(employersSource, /Hard filters before pass/)
+  assert.match(employersSource, /Evidence probes Claire asked/)
+  assert.match(employersSource, /Calibration bar/)
+  assert.match(employersSource, /Intro owner/)
+  assert.match(employersSource, /<EmployerInboxRolePacket packet=\{SAMPLE_INBOX_ROLE_PACKET\} \/>/)
+  assert.match(employersSource, /to="\/employer"[\s\S]*Start role intake/)
+
+  assert.doesNotMatch(employersSource, /Save this packet live/i)
+  assert.doesNotMatch(employersSource, /auto-create a role/i)
+})
+
 test("Employers page aligns public CTA copy with the real role-packet intake", () => {
   assert.doesNotMatch(employersSource, />Sign in<\/Link>/)
   assert.doesNotMatch(employersSource, /just the role title/i)

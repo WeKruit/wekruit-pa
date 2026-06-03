@@ -61,7 +61,25 @@ type PassedProfile = {
   consent?: string
 }
 
+type InboxRolePacket = {
+  role: string
+  scope: string
+  hardFilters: string
+  evidenceProbes: string
+  calibrationBar: string
+  introOwner: string
+}
+
 const SAMPLE_PASS_RECORD = "Sample pass record"
+
+const SAMPLE_INBOX_ROLE_PACKET: InboxRolePacket = {
+  role: "Founder-mode product platform lead",
+  scope: "Developer platform role where Claire must prove API product judgment, billing/tiering ownership, and SF hybrid fit before any pass reaches the hiring team.",
+  hardFilters: "5+y product ownership, developer-facing APIs, SF hybrid availability, comp inside approved band, no sponsorship required.",
+  evidenceProbes: "Roadmap tradeoff, tiering decision, customer evidence, and what the candidate would cut from this brief.",
+  calibrationBar: "Strong pass ties platform depth, customer evidence, P&L ownership, and role-specific tradeoffs together. False positive lists launches without decision ownership.",
+  introOwner: "Product lead reviews the pass record and owns the next interview step within two business days.",
+}
 
 const EMP_PASSED: PassedProfile[] = [
   {
@@ -803,11 +821,46 @@ export function EmployersInbox() {
           </aside>
 
           <section className="wk-emp-detail">
+            <EmployerInboxRolePacket packet={SAMPLE_INBOX_ROLE_PACKET} />
             {active.summary ? <EmpPassedDetail c={active} /> : <EmpPassedDetailLite c={active} />}
           </section>
         </div>
       </div>
     </EmployerShell>
+  )
+}
+
+function EmployerInboxRolePacket({ packet }: { packet: InboxRolePacket }) {
+  const rows = [
+    ["Hard filters before pass", packet.hardFilters],
+    ["Evidence probes Claire asked", packet.evidenceProbes],
+    ["Calibration bar", packet.calibrationBar],
+    ["Intro owner", packet.introOwner],
+  ] as const
+
+  return (
+    <section className="wk-emp-inbox-packet" aria-labelledby="wk-emp-inbox-packet-title">
+      <div className="wk-emp-inbox-packet__head">
+        <div>
+          <p className="wk-eyebrow">Approved role packet</p>
+          <h2 id="wk-emp-inbox-packet-title">What Claire screened against</h2>
+          <p>{packet.role}</p>
+        </div>
+        <Link to="/employer" className="wk-btn wk-btn--primary wk-btn--sm">
+          Start role intake <Icon name="arrow-right" size={14} stroke={2} />
+        </Link>
+      </div>
+      <p className="wk-emp-inbox-packet__scope">{packet.scope}</p>
+      <dl className="wk-emp-inbox-packet__rows">
+        {rows.map(([label, value]) => (
+          <div key={label} className="wk-emp-inbox-packet__row">
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="wk-emp-inbox-packet__note">Sample packet only. The real product starts by collecting this role packet before Claire screens.</p>
+    </section>
   )
 }
 
