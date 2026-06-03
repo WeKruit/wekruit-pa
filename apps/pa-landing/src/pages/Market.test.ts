@@ -85,6 +85,18 @@ test("Market explains how Claire uses role sources before candidates chase posti
   assert.doesNotMatch(source, /we pitch you anyway/i)
 })
 
+test("Market does not leak unresolved loading counts into candidate-facing chrome", () => {
+  assert.doesNotMatch(source, /count=\{direct\.isSuccess \? directJobs\.length : "—"\}/)
+  assert.doesNotMatch(source, /count=\{hunting\.isSuccess \? huntingTotal : "—"\}/)
+  assert.doesNotMatch(source, /\{hunting\.isSuccess \? huntingTotal : "…"\}<\/em> roles Claire/)
+  assert.doesNotMatch(source, /\{direct\.isSuccess \? directJobs\.length : "…"\}<\/em> role briefs/)
+
+  assert.match(source, /count=\{direct\.isSuccess \? directJobs\.length : undefined\}/)
+  assert.match(source, /count=\{hunting\.isSuccess \? huntingTotal : undefined\}/)
+  assert.match(source, /Roles Claire is <em className="wk-accent">tracking<\/em>\./)
+  assert.match(source, /Direct-line role briefs <em className="wk-accent">ready<\/em> for Claire\./)
+})
+
 test("Market direct-line roles do not overpromise employer access or invent interview capacity", () => {
   assert.doesNotMatch(source, /hiring managers <em className="wk-accent">ready<\/em> to meet you/)
   assert.doesNotMatch(source, /arrange the interview directly/i)

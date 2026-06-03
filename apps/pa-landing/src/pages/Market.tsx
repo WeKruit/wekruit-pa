@@ -428,12 +428,14 @@ function EvidenceBadge({ evidence, compact = false }: { evidence: MarketEvidence
 
 function MarketTab({
   active, count, sub, label, onClick,
-}: { active: boolean; count: number | string; sub: string; label: string; onClick: () => void }) {
+}: { active: boolean; count?: number; sub: string; label: string; onClick: () => void }) {
   return (
     <button className={`wk-mtab${active ? " is-active" : ""}`} onClick={onClick} role="tab" aria-selected={active}>
       <span className="wk-mtab__top">
         <span className="wk-mtab__label">{label}</span>
-        <span className="wk-mtab__count">{count}</span>
+        {count !== undefined ? (
+          <span className="wk-mtab__count">{count}</span>
+        ) : null}
       </span>
       <span className="wk-mtab__sub">{sub}</span>
     </button>
@@ -705,14 +707,14 @@ export default function Market(): ReactNode {
               active={tab === "direct"}
               onClick={() => setTab("direct")}
               label="Direct line"
-              count={direct.isSuccess ? directJobs.length : "—"}
+              count={direct.isSuccess ? directJobs.length : undefined}
               sub="Companies talking to us"
             />
             <MarketTab
               active={tab === "hunting"}
               onClick={() => setTab("hunting")}
               label="Tracked roles"
-              count={hunting.isSuccess ? huntingTotal : "—"}
+              count={hunting.isSuccess ? huntingTotal : undefined}
               sub="External roles Claire is watching"
             />
           </div>
@@ -724,7 +726,7 @@ export default function Market(): ReactNode {
               <header className="wk-market__head">
                 <p className="wk-eyebrow">External roles · Claire is watching</p>
                 <h1 className="wk-market__h1">
-                  <em className="wk-accent">{hunting.isSuccess ? huntingTotal : "…"}</em> roles Claire is <em className="wk-accent">tracking</em>.
+                  Roles Claire is <em className="wk-accent">tracking</em>.
                 </h1>
                 <p className="wk-market__lede">
                   Fresh external roles from the last 45 days. Open a posting to inspect the source while Claire keeps your profile and target constraints connected.
@@ -885,7 +887,7 @@ export default function Market(): ReactNode {
               <header className="wk-market__head">
                 <p className="wk-eyebrow"><PulseDot size={6} /> Inbound · Collaborated with WeKruit</p>
                 <h1 className="wk-market__h1">
-                  <em className="wk-accent">{direct.isSuccess ? directJobs.length : "…"}</em> role briefs <em className="wk-accent">ready</em> for Claire.
+                  Direct-line role briefs <em className="wk-accent">ready</em> for Claire.
                 </h1>
                 <p className="wk-market__lede">
                   These companies gave WeKruit role briefs to screen against. Tap a row to talk to Claire.
