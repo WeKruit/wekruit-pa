@@ -721,15 +721,23 @@ export default function CandidateLogin() {
   const isCompletingLink = useMemo(() => isSignInWithEmailLink(auth(), window.location.href), [])
   const nextDest = useMemo(() => {
     const raw = searchParams.get("next")
-    if (raw) rememberLoginNext(raw)
-    const remembered = readRememberedLoginNext()
-    const intentPath = raw ?? remembered
+    const safeRaw = raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : null
+    if (safeRaw) rememberLoginNext(safeRaw)
+    let oauthPendingForNext = false
+    try {
+      oauthPendingForNext = window.sessionStorage.getItem(OAUTH_PENDING_KEY) === "1"
+    } catch {
+      // ignore private mode
+    }
+    const remembered = oauthPendingForNext ? readRememberedLoginNext() : null
+    const intentPath = safeRaw ?? remembered
     if (intentPath) rememberOnboardingIntentForPath(intentPath)
     stickSourceFromLoginNext(intentPath)
     const fallback = isLayoffHost()
       ? onboardingDestination("WeKruit_Laid_Off")
       : onboardingDestination(peekSource())
-    return parseLoginNextPath(raw, fallback)
+    const nextInput = safeRaw ?? remembered ?? fallback
+    return parseLoginNextPath(nextInput, fallback)
   }, [searchParams])
   const [email, setEmail] = useState(() => readStoredValue(EMAIL_STORAGE_KEY) ?? "")
   const [status, setStatus] = useState<

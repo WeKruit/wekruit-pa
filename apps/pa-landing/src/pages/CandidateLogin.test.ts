@@ -22,7 +22,7 @@ test("CandidateLogin sends first-time candidates into onboarding", () => {
   assert.doesNotMatch(source, /onboardingBase/)
   assert.match(source, /fallback\s*=\s*isLayoffHost\(\)/)
   assert.match(source, /: onboardingDestination\(peekSource\(\)\)/)
-  assert.match(source, /return parseLoginNextPath\(raw, fallback\)/)
+  assert.match(source, /return parseLoginNextPath\(nextInput, fallback\)/)
   assert.match(source, /First time\? Continue here and Claire will start the same profile flow\./)
 })
 
@@ -39,6 +39,14 @@ test("CandidateLogin frames onboarding login as a first-time Claire start", () =
   assert.match(source, /onboardingNext[\s\S]*\? "Start with Claire"/)
   assert.match(source, /onboardingNext[\s\S]*<>Start with <em className="wk-accent">Claire\.<\/em><\/>/)
   assert.match(source, /Claire will start your profile flow/)
+})
+
+test("CandidateLogin only reuses remembered next during an OAuth return", () => {
+  assert.match(source, /safeRaw\s*=\s*raw && raw\.startsWith\("\/"\) && !raw\.startsWith\("\/\/"\) \? raw : null/)
+  assert.match(source, /oauthPendingForNext\s*=\s*window\.sessionStorage\.getItem\(OAUTH_PENDING_KEY\) === "1"/)
+  assert.match(source, /const remembered\s*=\s*oauthPendingForNext \? readRememberedLoginNext\(\) : null/)
+  assert.match(source, /const nextInput\s*=\s*safeRaw \?\? remembered \?\? fallback/)
+  assert.match(source, /return parseLoginNextPath\(nextInput, fallback\)/)
 })
 
 test("CandidateShell signed-in nav keeps candidates inside the operating home and market source surfaces", () => {
