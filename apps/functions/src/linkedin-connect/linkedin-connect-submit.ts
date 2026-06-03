@@ -49,6 +49,7 @@ import {
 import { buildLinkedinDoneOpenerBody } from "@pa/pa-orchestrator"
 import { isCanaryUser } from "../claire-agent/canary.js"
 import { buildSmsDeepLink } from "../qr-onboarding/qr-start-redirect.js"
+import { assignCandidateSenderNumber } from "../identity/candidate-sender-number.js"
 import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
 import {
   runCoresignalExperiencesMirror,
@@ -64,7 +65,7 @@ import {
 
 const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
 
-/** Resolve a candidate's E.164 phone for the sms: reroute (pa-users fallback). */
+/** Resolve a candidate's E.164 phone (used as the runtime-event `toE164`, NOT the sms recipient). */
 async function resolvePhone(db: Firestore, userId: string, tokenPhone?: string): Promise<string> {
   if (tokenPhone && tokenPhone.trim()) return tokenPhone.trim()
   try {
@@ -72,6 +73,25 @@ async function resolvePhone(db: Firestore, userId: string, tokenPhone?: string):
     const data = (snap.data() ?? {}) as { phoneE164?: string; phone?: string }
     const raw = data.phoneE164 ?? data.phone ?? ""
     return typeof raw === "string" ? raw.trim() : ""
+  } catch {
+    return ""
+  }
+}
+
+/**
+ * Resolve the RECIPIENT for the sms: reroute back into the iMessage thread.
+ *
+ * BUGFIX (Adam 2026-06-03, Image #21): the reroute was `sms:<candidate own phone>` — opening it
+ * composed a message TO the candidate's OWN number, never reaching Claire. The recipient MUST be
+ * the user's assigned WeKruit Sendblue number (the number Claire texts them FROM), so tapping Send
+ * lands the "I've done LinkedIn submission <token>" opener back in the Claire thread. Honors an
+ * existing senderNumber; mints a capacity-aware one for a website-origin candidate with none yet.
+ */
+async function resolveRerouteRecipient(db: Firestore, userId: string): Promise<string> {
+  try {
+    const snap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+    const { senderNumber } = await assignCandidateSenderNumber(db, userId, snap.data() ?? null)
+    return (senderNumber ?? "").trim()
   } catch {
     return ""
   }
@@ -134,10 +154,10 @@ export interface LinkedinConnectSubmitDeps {
   markEnrichmentInFlight?: (userId: string, nowIso: string) => Promise<void>
   /** Mark the token single-use after a successful submit. */
   markUsed: (token: string, nowIso: string) => Promise<void>
-  /** Resolve the candidate phone for the sms: reroute (token phone → pa-users fallback). */
-  resolvePhone: (userId: string, tokenPhone?: string) => Promise<string>
+  /** Resolve the sms: reroute RECIPIENT = the user's WeKruit Sendblue number (NOT their own phone). */
+  resolveRerouteRecipient: (userId: string) => Promise<string>
   /** Build the iOS sms: deep-link reroute body back into the thread. */
-  buildSms: (phone: string, body: string) => string
+  buildSms: (recipient: string, body: string) => string
   /** Clock (ISO). Defaults to wall clock. */
   nowIso?: () => string
 }
@@ -232,8 +252,8 @@ export async function handleLinkedinConnectSubmit(
   // 6. Mark the token used (single-use) + build the sms: reroute back to thread.
   await deps.markUsed(token, nowIso)
 
-  const phone = await deps.resolvePhone(userId, tokenResult.phoneE164)
-  const smsDeepLink = phone ? deps.buildSms(phone, buildLinkedinDoneOpenerBody(token)) : undefined
+  const recipient = await deps.resolveRerouteRecipient(userId)
+  const smsDeepLink = recipient ? deps.buildSms(recipient, buildLinkedinDoneOpenerBody(token)) : undefined
 
   return {
     ok: true,
@@ -309,9 +329,10 @@ export async function connectLinkedinProspectViaOAuth(
     })
   }
   await markLinkedinConnectTokenUsed(db, input.connectToken, Date.parse(nowIso) || Date.now())
-  const phone = await resolvePhone(db, userId, tokenResult.phoneE164)
-  const smsDeepLink = phone
-    ? buildSmsDeepLink(phone, buildLinkedinDoneOpenerBody(input.connectToken))
+  // Reroute RECIPIENT = the user's WeKruit Sendblue number (NOT their own phone) — see resolveRerouteRecipient.
+  const recipient = await resolveRerouteRecipient(db, userId)
+  const smsDeepLink = recipient
+    ? buildSmsDeepLink(recipient, buildLinkedinDoneOpenerBody(input.connectToken))
     : undefined
   logger.info("linkedin_oauth.connected", { userId, hasName: Boolean(input.name), hasSms: Boolean(smsDeepLink) })
   return { ok: true, ...(smsDeepLink ? { smsDeepLink } : {}) }
@@ -488,7 +509,7 @@ function makeProdDeps(db: Firestore): LinkedinConnectSubmitDeps {
       await setEnrichmentInFlight(db, userId, "linkedin", nowIso)
     },
     markUsed: (token, nowIso) => markLinkedinConnectTokenUsed(db, token, Date.parse(nowIso) || Date.now()),
-    resolvePhone: (userId, tokenPhone) => resolvePhone(db, userId, tokenPhone),
-    buildSms: (phone, smsBody) => buildSmsDeepLink(phone, smsBody),
+    resolveRerouteRecipient: (userId) => resolveRerouteRecipient(db, userId),
+    buildSms: (recipient, smsBody) => buildSmsDeepLink(recipient, smsBody),
   }
 }

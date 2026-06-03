@@ -49,13 +49,16 @@ function makeSpies(overrides: {
   enrichResult?: { enriched: boolean }
   enrichThrows?: Error
   linkHandleThrows?: Error
-  phone?: string
+  /** sms: reroute RECIPIENT = the user's WeKruit Sendblue number (NOT the candidate's own phone). */
+  senderNumber?: string
 } = {}): Spies {
   const verify: VerifyLinkedinConnectTokenResult =
     overrides.verify ?? { ok: true, userId: "user-1", phoneE164: "+14243201960" }
   const isCanary = overrides.isCanary ?? true
   const apiKey = overrides.apiKey ?? "csk-test"
-  const phone = overrides.phone ?? "+14243201960"
+  // The candidate's own phone is +14243201960 (verify.phoneE164); the reroute must target the
+  // WeKruit sender number instead, so they're intentionally DIFFERENT here.
+  const senderNumber = overrides.senderNumber ?? "+17174919939"
   const calls: Spies["calls"] = { linkHandle: [], persistUrl: [], enrich: [], emit: [], markUsed: [] }
 
   const deps: LinkedinConnectSubmitDeps = {
@@ -81,8 +84,8 @@ function makeSpies(overrides: {
     markUsed: async (token) => {
       calls.markUsed.push(token)
     },
-    resolvePhone: async () => phone,
-    buildSms: (p, body) => `sms:${p}?&body=${encodeURIComponent(body)}`,
+    resolveRerouteRecipient: async () => senderNumber,
+    buildSms: (recipient, body) => `sms:${recipient}?&body=${encodeURIComponent(body)}`,
   }
   return { deps, calls }
 }
@@ -118,7 +121,10 @@ describe("handleLinkedinConnectSubmit — happy path (canary, enrich, emit, rero
     assert.equal(result.ok, true)
     assert.equal(result.enriched, true)
     assert.ok(result.smsDeepLink, "must return an sms: reroute")
-    assert.match(result.smsDeepLink!, /^sms:\+14243201960\?&body=/)
+    // Reroute targets the WeKruit SENDER number (so Send lands in Claire's thread), NOT the
+    // candidate's own phone (+14243201960). This is the Image #21 bug, locked against regression.
+    assert.match(result.smsDeepLink!, /^sms:\+17174919939\?&body=/)
+    assert.ok(!result.smsDeepLink!.includes("+14243201960"), "must NOT reroute to the candidate's own phone")
     // The reroute body is the LinkedIn-done marker carrying the connect TOKEN.
     const decoded = decodeURIComponent(result.smsDeepLink!.split("body=")[1]!)
     assert.equal(decoded, `${LINKEDIN_DONE_OPENER_PREFIX} tok_abc12345`)
@@ -244,8 +250,8 @@ describe("handleLinkedinConnectSubmit — graceful degrade (never 500)", () => {
     assert.equal(calls.emit[0].enriched, false)
   })
 
-  it("no resolvable phone: ok with NO sms reroute (page falls back), token still consumed", async () => {
-    const { deps, calls } = makeSpies({ phone: "" })
+  it("no resolvable sender number: ok with NO sms reroute (page falls back), token still consumed", async () => {
+    const { deps, calls } = makeSpies({ senderNumber: "" })
     const result = await handleLinkedinConnectSubmit(deps, {
       token: "tok_nophone12",
       linkedinUrl: "https://linkedin.com/in/jane",
