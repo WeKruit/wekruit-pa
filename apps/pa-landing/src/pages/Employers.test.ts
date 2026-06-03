@@ -164,6 +164,25 @@ test("Employers mobile hero grid allows preview columns to shrink inside the vie
   assert.match(stylesSource, /\.wk-emp-hero__copy,\s*\.wk-emp-hero__visual\s*\{\s*min-width: 0;\s*\}/s)
 })
 
+test("Employers mobile hero keeps the sample pass preview inside the viewport", () => {
+  assert.match(
+    stylesSource,
+    /@media \(max-width: 640px\) \{[\s\S]*\.wk-emp-hero \{\s*padding: 30px 0 28px;/,
+  )
+  assert.match(
+    stylesSource,
+    /@media \(max-width: 640px\) \{[\s\S]*\.wk-emp-hero__proof \{[\s\S]*display: grid;[\s\S]*grid-template-columns: 1fr;[\s\S]*gap: 8px;/,
+  )
+  assert.match(
+    stylesSource,
+    /@media \(max-width: 640px\) \{[\s\S]*\.wk-emp-prev__steps \{\s*display: none;\s*\}/,
+  )
+  assert.match(
+    stylesSource,
+    /@media \(max-width: 640px\) \{[\s\S]*\.wk-emp-prev__foot \{\s*display: none;\s*\}/,
+  )
+})
+
 test("Employers sample pass record shows a scope-safe calibration packet", () => {
   assert.match(employersSource, /Calibration packet/)
   assert.match(employersSource, /Hiring-team feedback captured as evidence/)
