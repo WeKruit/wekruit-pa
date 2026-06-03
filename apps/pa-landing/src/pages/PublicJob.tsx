@@ -600,7 +600,7 @@ export default function PublicJob() {
             Create or confirm your WeKruit profile so Claire carries your resume and this role context into the interview.
           </p>
           <ProcessStrip compact />
-          <ClaireInterviewContract />
+          <ClaireInterviewContract compact />
           {renderLoginControls("modal")}
           <p className="wk-pj-modal__sub">
             By interviewing, you agree to our privacy &amp; terms.
@@ -1029,7 +1029,7 @@ function ProcessStrip({ compact = false }: { compact?: boolean }) {
   )
 }
 
-function ClaireInterviewContract() {
+function ClaireInterviewContract({ compact = false }: { compact?: boolean }) {
   const checks = [
     {
       label: "Nearest matching work",
@@ -1046,7 +1046,7 @@ function ClaireInterviewContract() {
   ]
 
   return (
-    <section className="wk-pj-contract" aria-label="Claire interview contract">
+    <section className={`wk-pj-contract${compact ? " wk-pj-contract--compact" : ""}`} aria-label="Claire interview contract">
       <h3 className="wk-pj-contract__title">Claire will check</h3>
       <ol className="wk-pj-contract__list">
         {checks.map((check, index) => (
@@ -1623,6 +1623,19 @@ export const PUBLIC_JOB_STYLES = `
   font-size: 12.5px;
   font-style: normal;
   line-height: 1.4;
+}
+.wk-pj-contract--compact {
+  gap: 8px;
+  padding: 0;
+}
+.wk-pj-contract--compact .wk-pj-contract__list {
+  gap: 7px;
+}
+.wk-pj-contract--compact .wk-pj-contract__item {
+  align-items: center;
+}
+.wk-pj-contract--compact .wk-pj-contract__item em {
+  display: none;
 }
 .wk-pj-sms-manual {
   display: grid;

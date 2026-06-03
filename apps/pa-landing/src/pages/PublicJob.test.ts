@@ -32,10 +32,16 @@ test("PublicJob exposes Claire's role interview contract before signup", () => {
   assert.match(source, /Candidate-controlled sharing/)
   assert.match(source, /Claire asks for nearest-overlap evidence before any hard stop/)
   assert.match(source, /A not-pass stays role-specific and improves future matching/)
-  assert.equal((source.match(/<ClaireInterviewContract \/>/g) ?? []).length, 2)
+  assert.equal((source.match(/<ClaireInterviewContract \/>/g) ?? []).length, 1)
+  assert.equal((source.match(/<ClaireInterviewContract compact \/>/g) ?? []).length, 1)
 
   assert.doesNotMatch(source, /we submit you automatically/i)
   assert.doesNotMatch(source, /hiring team sees every candidate/i)
+})
+
+test("PublicJob keeps both interview entry methods reachable in the mobile sign-in modal", () => {
+  assert.match(source, /<ClaireInterviewContract compact \/>[\s\S]*\{renderLoginControls\("modal"\)\}/)
+  assert.match(source, /\.wk-pj-contract--compact[\s\S]*\.wk-pj-contract__item em\s*\{\s*display: none;/)
 })
 
 test("PublicJob keeps the role page visible until the candidate starts Claire", () => {
