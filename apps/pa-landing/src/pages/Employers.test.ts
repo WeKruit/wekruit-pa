@@ -176,6 +176,11 @@ test("Employers inbox preview connects a passed profile back to the approved rol
   assert.doesNotMatch(employersSource, /auto-create a role/i)
 })
 
+test("Employers inbox pass rows expose selected preview state", () => {
+  assert.match(employersSource, /aria-label=\{`Preview \$\{p\.name\} pass record`\}/)
+  assert.match(employersSource, /aria-pressed=\{p\.id === activeId\}/)
+})
+
 test("Employers page aligns public CTA copy with the real role-packet intake", () => {
   assert.doesNotMatch(employersSource, />Sign in<\/Link>/)
   assert.doesNotMatch(employersSource, /just the role title/i)

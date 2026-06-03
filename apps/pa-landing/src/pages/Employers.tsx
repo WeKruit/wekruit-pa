@@ -790,6 +790,8 @@ export function EmployersInbox() {
                   <button
                     type="button"
                     className={`wk-emp-row${p.id === activeId ? " is-active" : ""}`}
+                    aria-label={`Preview ${p.name} pass record`}
+                    aria-pressed={p.id === activeId}
                     onClick={() => setActiveId(p.id)}
                   >
                     <Avatar name={p.name} size={36} tone={p.tone} />
