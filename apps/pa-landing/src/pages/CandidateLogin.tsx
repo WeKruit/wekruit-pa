@@ -921,6 +921,7 @@ export default function CandidateLogin() {
   const onLayoff = isLayoffHost()
   const roleInterviewNext = isPublicJobPath(nextDest.pathname)
   const onboardingNext = nextDest.isOnboarding && !roleInterviewNext
+  const firstTimeHref = roleInterviewNext ? nextDest.to : onboardingNext ? nextDest.to : onboardingDestination(peekSource())
   const loginEyebrow = isCompletingLink
     ? "Finishing sign-in"
     : roleInterviewNext
@@ -1054,9 +1055,11 @@ export default function CandidateLogin() {
             ) : null}
 
             <p className="wk-login__fine">
-              {roleInterviewNext
-                ? "First time on this role? Continue here and Claire will keep the role attached."
-                : "First time? Continue here and Claire will start the same profile flow."}
+              {roleInterviewNext ? (
+                <>First time on this role? <Link to={firstTimeHref} className="wk-link">Continue here</Link> and Claire will keep the role attached.</>
+              ) : (
+                <>First time? <Link to={firstTimeHref} className="wk-link">Continue here</Link> and Claire will start the same profile flow.</>
+              )}
             </p>
           </div>
         </div>

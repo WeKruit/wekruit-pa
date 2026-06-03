@@ -17,21 +17,21 @@ test("CandidateShell does not hardcode a fake Claire SMS handoff", () => {
 
 test("CandidateLogin sends first-time candidates into onboarding", () => {
   assert.doesNotMatch(source, /First time\?\s*<Link to="\/"/)
-  assert.doesNotMatch(source, /First time\?\s*<Link/)
   assert.doesNotMatch(source, /firstTimeOnboardingHref/)
-  assert.doesNotMatch(source, /onboardingBase/)
   assert.match(source, /fallback\s*=\s*isLayoffHost\(\)/)
   assert.match(source, /: onboardingDestination\(peekSource\(\)\)/)
   assert.match(source, /return parseLoginNextPath\(nextInput, fallback\)/)
-  assert.match(source, /First time\? Continue here and Claire will start the same profile flow\./)
+  assert.match(source, /const firstTimeHref = roleInterviewNext \? nextDest\.to : onboardingNext \? nextDest\.to : onboardingDestination\(peekSource\(\)\)/)
+  assert.match(source, /First time\? <Link to=\{firstTimeHref\} className="wk-link">Continue here<\/Link> and Claire will start the same profile flow\./)
 })
 
 test("CandidateLogin preserves role interview context for first-time job candidates", () => {
   assert.match(source, /isPublicJobPath/)
   assert.match(source, /roleInterviewNext\s*=\s*isPublicJobPath\(nextDest\.pathname\)/)
   assert.doesNotMatch(source, /Start this role with Claire/)
+  assert.match(source, /roleInterviewNext \? nextDest\.to/)
   assert.match(source, /Role interview/)
-  assert.match(source, /First time on this role\? Continue here and Claire will keep the role attached\./)
+  assert.match(source, /First time on this role\? <Link to=\{firstTimeHref\} className="wk-link">Continue here<\/Link> and Claire will keep the role attached\./)
 })
 
 test("CandidateLogin frames onboarding login as a first-time Claire start", () => {
