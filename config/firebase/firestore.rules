@@ -582,6 +582,12 @@ service cloud.firestore {
       // connect CF reads/writes via the admin SDK). Never client-readable.
       allow read, write: if false;
     }
+    match /pa-connect-phone-codes/{token} {
+      // WS-3 connect-phone verification codes — server-only (Admin SDK). The
+      // doc maps a code hash → the phone-resolved userId; a client read would
+      // leak the binding (and the doc never holds the plaintext code anyway).
+      allow read, write: if false;
+    }
 
     // ─── Default deny ────────────────────────────────────────────────
     match /{document=**} {

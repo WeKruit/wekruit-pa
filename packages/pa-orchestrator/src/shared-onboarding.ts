@@ -256,6 +256,20 @@ export function buildConnectLinkedinUrl(token: string): string {
   return t ? `${CONNECT_LINKEDIN_LINK_BASE}?token=${encodeURIComponent(t)}` : CONNECT_LINKEDIN_LINK_BASE
 }
 
+/** Canonical candidate-domain login surface (C-end only). The "Continue with Google" CTA lives here. */
+export const CONNECT_GMAIL_LINK_BASE = "https://candidate.wekruit.com/login"
+
+/**
+ * WS-3(b) pure builder for the connect-Gmail nudge link the thin agent can utter
+ * as a bubble. Points at the existing candidate login surface ("Continue with
+ * Google"); no new auth flow. Sibling of buildConnectLinkedinUrl; re-exported
+ * from the barrel so a deterministic thin step can emit the link without this
+ * branch touching agent.ts/prompt.ts.
+ */
+export function buildConnectGmailUrl(): string {
+  return CONNECT_GMAIL_LINK_BASE
+}
+
 /**
  * Parse the LinkedIn-done re-entry marker; returns the CONNECT token (NOT a
  * candidateId) when present. Returns `{ token: "" }` when the bare phrase is

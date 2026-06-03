@@ -189,6 +189,16 @@ export const PA_COLLECTIONS = {
    * cvUploadTokens. Server-only (deny-all in firestore.rules).
    */
   linkedinConnectTokens: "pa-linkedin-connect-tokens",
+  /**
+   * v2.0 WS-3 — connect-phone verification codes (the INVERSE of the QR opener:
+   * phone-first → website bind). A web-authed candidate who already chatted on
+   * phone requests a short code; it's texted to their iMessage thread; entering
+   * it on the website links the web session to the phone-resolved pa-users/{uid}.
+   * Doc id is a RANDOM token (never raw PII); the 6-digit code is stored as a
+   * sha256 hash. Single outstanding code per webFirebaseUid, 10-min TTL, attempt
+   * cap 5. Server-only (deny-all in firestore.rules — Admin SDK only).
+   */
+  connectPhoneCodes: "pa-connect-phone-codes",
 } as const
 
 /**

@@ -327,6 +327,14 @@ export { paQrScanAbandonedSweep } from "./qr-onboarding/abandoned-scan-sweep.js"
 // emits the resume_parse_completed runtime event (thin pitch), and returns the
 // sms: reroute back to the iMessage thread. Canary-gated; degrades gracefully.
 export { paLinkedinConnectSubmit } from "./linkedin-connect/linkedin-connect-submit.js"
+// WS-3 connect-phone (Adam 2026-06-03): the INVERSE of the QR opener — a candidate who
+// registered FIRST via phone (iMessage) and later visits the website binds the two via a
+// 6-digit verification code texted to their thread. paCandidateConnectPhoneStart issues +
+// texts the code; paCandidateConnectPhoneVerify verifies it + links the web session to the
+// existing pa-users/{uid} (deterministic, audited identity merge). Canary-gated; PR-FIRST
+// (committed, NOT deployed). No new secret (reuses Sendblue creds + the bound pool line).
+export { paCandidateConnectPhoneStart } from "./connect-phone/connect-phone-start.js"
+export { paCandidateConnectPhoneVerify } from "./connect-phone/connect-phone-verify.js"
 // Recruiter board (candidate.wekruit.com/recruiters): public list + submission.
 // Lives in the `recruiter-board` multi-codebase (apps/recruiter-board-fn) as
 // of 2026-05-26 to keep the pa-orchestrator bundle small. Endpoints:

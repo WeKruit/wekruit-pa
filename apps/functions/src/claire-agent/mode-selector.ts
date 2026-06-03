@@ -35,6 +35,9 @@ import { emptyProcessStore, type ProcessSessionStore } from "./tools/process-too
 import { isThinPrescreenEnabled } from "./flags.js"
 import { buildThinPrescreenSeed } from "./prescreen-config.js"
 import { loadPrescreenContext } from "./prescreen-context.js"
+import { isCanaryUser } from "./canary.js"
+import { isEnrichmentInFlight } from "./enrichment-inflight.js"
+import { shouldNudgeGmail } from "./gmail-nudge.js"
 
 const USERS = "pa-users"
 const PRESCREEN_SESSIONS = "pa-prescreen-sessions"
@@ -70,6 +73,15 @@ export interface ModeDecision {
    *  kickoff for the PART-2 proactive pitch (consumed by prompt.ts). Set only for the resume_parse_completed
    *  re-entry (canary), never on a normal onboarding/triage turn. */
   postParsePitch?: boolean
+  /** WS-1(b) (Adam 2026-06-03): the durable enrichmentInFlight marker is set (résumé parse / LinkedIn
+   *  import still running from an EARLIER turn) → the turn-context directive tells Claire to say "still
+   *  pulling your info, one sec" instead of pitching on empty data. Canary-only; NEVER set on the
+   *  cv-parsed re-entry turn (that turn IS the completion). */
+  enrichmentInFlight?: boolean
+  /** WS-3(b) (Adam 2026-06-03): this turn MAY carry the occasional "connect Gmail on wekruit.com" nudge
+   *  (deterministic cooldown reducer passed). Canary-only; the agent decides whether to actually surface
+   *  it. The stamp is written when this is true so we don't re-nudge inside the cooldown. */
+  gmailNudge?: boolean
 }
 
 export interface SelectModeArgs {
@@ -214,6 +226,31 @@ async function markSharedOnboardingComplete(db: Firestore, userId: string, now: 
   }
 }
 
+/** WS-3(b) best-effort durable stamp so the Gmail nudge respects its cooldown. Never throws upward. */
+async function stampGmailNudge(db: Firestore, userId: string, now: string): Promise<void> {
+  try {
+    await db.collection(USERS).doc(userId).set({ lastGmailNudgeAt: now, updatedAt: now }, { merge: true })
+  } catch {
+    /* best-effort — a missed stamp just allows one extra nudge next eligible turn */
+  }
+}
+
+/**
+ * WS-2: does this user already have a PARSED résumé/profile on file? (website / ATS / bulk-resume
+ * cohort.) True when a parsed resume artifact is recorded (latestResumeArtifactId) OR resume-derived
+ * tags exist (skills / recentRoleTitle) — both written by the website upload's mergeUserTags. Pure
+ * structured-field read over the already-fetched pa-users doc; NO LLM, NO text→enum regex.
+ */
+function hasParsedProfileOnFile(user: Record<string, unknown>): boolean {
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "")
+  if (str(user.latestResumeArtifactId)) return true
+  const tags = (user.tags ?? {}) as Record<string, unknown>
+  const skills = Array.isArray(tags.skills) ? tags.skills : []
+  if (skills.length > 0) return true
+  if (str(tags.recentRoleTitle)) return true
+  return false
+}
+
 /**
  * Pick the mode for this turn from durable state + seed the process store. ALWAYS resolves
  * (never throws) — any read/write error degrades to triage so the turn still gets a reply.
@@ -294,6 +331,25 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   const shared = (user.sharedOnboarding ?? null) as Record<string, unknown> | null
   const onboardingComplete = shared?.completed === true || user.onboardingState === "complete"
 
+  // WS-1(b) ENRICHMENT-AWARENESS (Adam 2026-06-03): read the durable enrichmentInFlight marker off the
+  // SAME pa-users snapshot (zero extra read). True only when résumé parse / LinkedIn import is still
+  // running from an EARLIER turn (TTL self-heals a dropped completion event — see enrichment-inflight.ts).
+  // NEVER flag in-flight on the cv-parsed re-entry turn: that turn IS the completion (it CLEARs the marker
+  // in cutover) and must pitch, not say "one sec". Canary-only so non-canary mode picks are unchanged.
+  const enrichmentInFlight =
+    isCanaryUser(args.userId) && !args.cvParsedTrigger && isEnrichmentInFlight(user)
+  const inFlightDecision = enrichmentInFlight ? { enrichmentInFlight: true as const } : {}
+
+  // WS-3(b) GMAIL NUDGE (Adam 2026-06-03): occasionally ask the candidate to connect Gmail on
+  // wekruit.com (deterministic cooldown reducer — no regex over text). Never while enrichment is in
+  // flight (don't pile onto a "one sec" turn) or on the cv-parsed pitch turn. The gate also excludes
+  // an active onboarding question (computed below as awaitingAnswer). Surfaced on TRIAGE turns only;
+  // we stamp lastGmailNudgeAt when it passes so the cooldown holds. Canary-only.
+  const gmailNudgeEligible =
+    !enrichmentInFlight &&
+    !args.cvParsedTrigger &&
+    shouldNudgeGmail({ user, isCanary: isCanaryUser(args.userId) })
+
   // CV-PARSED RE-ENTRY (Adam 2026-06-02): this turn is the resume_parse_completed runtime event (the
   // cutover only sets cvParsedTrigger for canary users). The résumé just parsed → the agent should
   // PITCH from the freshly-loaded profile (postParsePitch), then offer/run find_match AFTER. Runs AFTER
@@ -360,6 +416,29 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
     }
   }
 
+  // WS-2 WEBSITE-ORIGIN SHORT PATH (Adam 2026-06-03): a candidate who entered via the WEBSITE
+  // (public-cv-ingest → ingestCv with followupDeliveryMode "none") already has a PARSED profile but
+  // was NEVER bootstrapped into sharedOnboarding (no resume_parse_completed event fired for them). When
+  // they later TEXT Claire, the cold-start block below would put them through the two-question wall
+  // despite a complete profile. Instead: if a parsed résumé is on file (latestResumeArtifactId) — or
+  // resume-derived tags exist — AND onboarding was never started/completed, SKIP the wall: mark
+  // onboarding complete + route straight to the PART-2 pitch (triage + postParsePitch), which pitches
+  // FROM the parsed data and then confirms tags + offers find_match (mirrors what S1 did for phone).
+  // Reuses the postParsePitch directive + loadGlobalContext's parsedCandidateResumes fallback (the
+  // website-upload shape). Canary-only; non-canary falls through to the existing bootstrap unchanged.
+  // Sits AFTER the active-prescreen + cv-parsed blocks (a live screen / fresh parse must always win)
+  // and BEFORE the onboarding cold-start (line below). Deterministic — NO LLM, NO text→enum regex.
+  if (
+    isCanaryUser(args.userId) &&
+    !onboardingComplete &&
+    !isSharedOnboardingActiveUser(user) &&
+    hasParsedProfileOnFile(user)
+  ) {
+    await markSharedOnboardingComplete(args.db, args.userId, now)
+    log("mode.website_profile_pitch", { userId: args.userId })
+    return { mode: "triage", postParsePitch: true }
+  }
+
   if (!onboardingComplete) {
     try {
       if (!isSharedOnboardingActiveUser(user)) {
@@ -375,6 +454,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
           pendingStep: buildSharedOnboardingPrompt(FIRST_ASKED_SLOT, null),
           currentStep: buildSharedOnboardingPrompt(FIRST_ASKED_SLOT, null),
           processStore: seedStore([]),
+          ...inFlightDecision,
         }
       }
       // Active: a question was already asked → this inbound answers the current slot. The agent
@@ -408,6 +488,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
         currentStep: buildSharedOnboardingPrompt(cur, null),
         ...(next.nextQuestionId ? { pendingStep: buildSharedOnboardingPrompt(next.nextQuestionId, null) } : {}),
         processStore: seedStore(answeredSlots),
+        ...inFlightDecision,
       }
     } catch (err) {
       log("mode.onboarding_error", {
@@ -419,5 +500,12 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   }
 
   // 3. TRIAGE.
-  return { mode: "triage" }
+  // WS-3(b): a plain conversational triage turn is the right place for the occasional Gmail nudge
+  // (not mid-onboarding, not a pitch, not enrichment-in-flight). Stamp the cooldown when it fires.
+  if (gmailNudgeEligible) {
+    await stampGmailNudge(args.db, args.userId, now)
+    log("mode.gmail_nudge", { userId: args.userId })
+    return { mode: "triage", ...inFlightDecision, gmailNudge: true }
+  }
+  return { mode: "triage", ...inFlightDecision }
 }

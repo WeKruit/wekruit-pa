@@ -129,6 +129,9 @@ export interface LinkedinConnectSubmitDeps {
     enriched: boolean
     nowIso: string
   }) => Promise<void>
+  /** WS-1(b): set the durable enrichment-in-flight marker so a mid-enrich inbound holds.
+   *  Optional so existing tests don't have to stub it. */
+  markEnrichmentInFlight?: (userId: string, nowIso: string) => Promise<void>
   /** Mark the token single-use after a successful submit. */
   markUsed: (token: string, nowIso: string) => Promise<void>
   /** Resolve the candidate phone for the sms: reroute (token phone → pa-users fallback). */
@@ -191,6 +194,12 @@ export async function handleLinkedinConnectSubmit(
   //    reroutes back to SMS — never a dead end, just no enrich/pitch yet.
   let enriched = false
   if (deps.isCanary(userId)) {
+    // WS-1(b) ENRICHMENT-AWARENESS (Adam 2026-06-03): CoreSignal enrich runs synchronously here
+    // but the candidate's sms: reroute fires AFTER this returns — so a fast candidate could already
+    // be back in-thread. SET the durable in-flight marker so a mid-enrich inbound routes through the
+    // "still pulling your info, one sec" directive. CLEARED by the resume_parse_completed re-entry
+    // this CF emits (cutover clears on that turn). Best-effort; marker self-heals via TTL.
+    await deps.markEnrichmentInFlight?.(userId, nowIso)
     const apiKey = deps.coresignalApiKey()
     if (apiKey) {
       try {
@@ -398,6 +407,10 @@ function makeProdDeps(db: Firestore): LinkedinConnectSubmitDeps {
         },
       })
       logger.info("linkedin_connect.runtime_event", { userId, runtime })
+    },
+    markEnrichmentInFlight: async (userId, nowIso) => {
+      const { setEnrichmentInFlight } = await import("../claire-agent/enrichment-inflight.js")
+      await setEnrichmentInFlight(db, userId, "linkedin", nowIso)
     },
     markUsed: (token, nowIso) => markLinkedinConnectTokenUsed(db, token, Date.parse(nowIso) || Date.now()),
     resolvePhone: (userId, tokenPhone) => resolvePhone(db, userId, tokenPhone),

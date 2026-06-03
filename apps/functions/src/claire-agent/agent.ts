@@ -137,6 +137,12 @@ export interface BuildClaireAgentOptions {
   postParsePitchSummary?: string
   /** résumé-drop turn (inline media present, no parse yet) → ACK + HOLD, do NOT pitch / find_match. */
   resumeJustDropped?: boolean
+  /** WS-1(b): enrichment (résumé parse / LinkedIn import) is STILL running from an EARLIER turn →
+   *  the turn-context directive tells Claire to say "still pulling your info, one sec" instead of
+   *  pitching/find_match/answering blind. Turn-context only (NOT the cached head). */
+  enrichmentInFlight?: boolean
+  /** WS-3(b): this turn MAY carry the occasional "connect Gmail on wekruit.com" nudge directive. */
+  gmailNudge?: boolean
 }
 
 /** Construct the single Claire agent (tools + guardrails + persona). */
@@ -215,7 +221,7 @@ function trackTransport(inner: ClaireTransport): {
 }
 
 /** Read canonical pa-users.tags → a one-line global context so "what's saved" reads tags (RC3). */
-async function loadGlobalContext(db: Firestore, userId: string): Promise<string> {
+async function loadGlobalContext(db: Firestore, userId: string, toE164?: string): Promise<string> {
   try {
     const snap = await db.collection("pa-users").doc(userId).get()
     const data = (snap.data() ?? {}) as Record<string, unknown>
@@ -393,7 +399,30 @@ async function loadGlobalContext(db: Firestore, userId: string): Promise<string>
       }
     }
 
-    return [resumeLine, prefsLine, uploadLinkLine].filter(Boolean).join("\n")
+    // WS-1(a) PHONE DUAL-PATH (Adam 2026-06-03): "super easy — résumé OR LinkedIn login,
+    // whichever; résumé OPTIONAL if LinkedIn." Under the SAME no-résumé / onboarding-not-done
+    // guard as the upload link (+ canary), surface a one-tap LinkedIn connect link so Claire can
+    // offer it as the alternative to the résumé. EXACT precedent = uploadLinkLine above. The
+    // connect-token is reused across turns (getOrIssueLinkedinConnectLink), and the candidate's
+    // phone is carried on the token so the connect CF can sms: reroute back into THIS thread.
+    // Canary-gated (dev phones only) so non-canary CONTEXT stays byte-identical.
+    let connectLinkLine = ""
+    if (!hasResumeOnFile && !onboardingDone && isCanaryUser(userId)) {
+      try {
+        const { getOrIssueLinkedinConnectLink } = await import("../linkedin-connect/connect-token.js")
+        const link = await getOrIssueLinkedinConnectLink(db, userId, toE164)
+        if (link) {
+          connectLinkLine =
+            "LinkedIn one-tap connect link (OPTIONAL — offer this as an alternative to the résumé " +
+            "when they have no résumé or would rather connect LinkedIn; one tap, never required): " +
+            link
+        }
+      } catch {
+        /* best-effort — omit the offer on any failure (matches uploadLink pattern) */
+      }
+    }
+
+    return [resumeLine, prefsLine, uploadLinkLine, connectLinkLine].filter(Boolean).join("\n")
   } catch {
     return ""
   }
@@ -438,6 +467,12 @@ export interface RunClaireTurnDeps {
   /** résumé-drop turn: an inline résumé media is present + not yet parsed → ACK + HOLD (no pitch, no
    *  find_match this turn; the parse runs async, the pitch fires on the resume_parse_completed re-entry). */
   resumeJustDropped?: boolean
+  /** WS-1(b): enrichment (résumé parse / LinkedIn import) kicked on an EARLIER turn is STILL running
+   *  (between the ack and the resume_parse_completed event). Set by cutover from the durable
+   *  enrichmentInFlight marker (canary). Drives the "still pulling your info, one sec" turn directive. */
+  enrichmentInFlight?: boolean
+  /** WS-3(b): this turn MAY carry the occasional "connect Gmail on wekruit.com" nudge (canary). */
+  gmailNudge?: boolean
 }
 
 /**
@@ -522,7 +557,7 @@ export async function runClaireTurn(
   // parallel with loadGlobalContext + run(); run() outlives them so the handler flushes them.
   void markReadReflex(ctx).catch((e) => log("markReadReflex_failed", { err: String(e) }))
 
-  const globalContext = await loadGlobalContext(deps.db, input.userId)
+  const globalContext = await loadGlobalContext(deps.db, input.userId, input.toE164)
   const agent = buildClaireAgent(ctx, {
     mode: deps.mode ?? "triage",
     lang,
@@ -537,6 +572,8 @@ export async function runClaireTurn(
     postParsePitch: deps.postParsePitch,
     postParsePitchSummary: deps.postParsePitchSummary,
     resumeJustDropped: deps.resumeJustDropped,
+    enrichmentInFlight: deps.enrichmentInFlight,
+    gmailNudge: deps.gmailNudge,
   })
   const session = makeClaireSession({
     db: deps.db,
@@ -565,6 +602,11 @@ export async function runClaireTurn(
     // vs a loadGlobalContext read that raced the parse write) so the model never reads the marker empty.
     postParsePitch: deps.postParsePitch,
     postParsePitchSummary: deps.postParsePitchSummary,
+    // WS-1(b): the enrichment-in-flight directive is a PER-TURN signal (turn-specific durable marker),
+    // so it lives in the turn context (highest-salience trailing system item), NOT the cached head.
+    enrichmentInFlight: deps.enrichmentInFlight,
+    // WS-3(b): the occasional Gmail-connect nudge is a per-turn directive (cooldown-gated), turn-context only.
+    gmailNudge: deps.gmailNudge,
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const runInput: any[] = []

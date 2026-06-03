@@ -10,6 +10,7 @@
  * (AGENTIC-ARCHITECTURE §1) and the flexibility (interrupt+resume) rule.
  */
 import type { ClaireLang, ClaireMode } from "./types.js"
+import { buildConnectGmailUrl } from "@pa/pa-orchestrator"
 
 export interface ClairePromptOptions {
   mode: ClaireMode
@@ -41,6 +42,15 @@ export interface ClairePromptOptions {
   /** résumé-drop turn: an inline résumé is present but not yet parsed → short ACK + HOLD, no pitch,
    *  no find_match (the pitch fires later on the resume_parse_completed re-entry). */
   resumeJustDropped?: boolean
+  /** WS-1(b) (Adam 2026-06-03): enrichment (résumé parse / LinkedIn import) kicked on an EARLIER turn
+   *  is STILL running. Unlike resumeJustDropped (the SAME-turn media drop), this fires when the
+   *  candidate sends ANOTHER message mid-enrichment → a turn-context directive telling Claire to say
+   *  "still pulling your info, one sec" instead of pitching/find_match/answering blind. A DIRECTIVE
+   *  (turn context), NOT a hard short-circuit — an UNRELATED question may still be answered. */
+  enrichmentInFlight?: boolean
+  /** WS-3(b) (Adam 2026-06-03): this turn MAY carry the occasional "connect Gmail on wekruit.com" nudge
+   *  (cooldown-gated upstream). The directive says you MAY — the agent decides whether to surface it. */
+  gmailNudge?: boolean
 }
 
 const PERSONA = [
@@ -447,6 +457,11 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
             // CONTEXT, do NOT invent one and do NOT mention uploading.
             "If the CONTEXT includes a 'Resume upload link', mention it ONCE in messages[1] as an OPTIONAL",
             "  nudge with that exact URL — never required, never repeated. If no such link is present, skip it.",
+            // WS-1(a) PHONE DUAL-PATH (Adam 2026-06-03): résumé OR LinkedIn, whichever — résumé optional.
+            "If the CONTEXT carries a 'LinkedIn one-tap connect link', you MAY offer it as an alternative to",
+            "  the résumé — ONE light optional clause (e.g. 'or just connect your LinkedIn and I'll pull",
+            "  everything: <link>'), never required, never repeated. Mention EITHER the résumé upload link OR",
+            "  the LinkedIn link, not both in one breath; if neither link is in the CONTEXT, mention neither.",
             // Profile self-serve note (Adam): tell them ONCE, lightly, that prefs are editable anytime at
             // wekruit.com — wove into the kickoff (here, messages[1]) so it's said early without nagging.
             "Weave in ONCE (in messages[1] is fine), as one short clause, that they can view and change",
@@ -582,6 +597,13 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
         "When the candidate REACTS to roles you recommended ('these are off',",
         "'love these', 'too junior', 'all fintech') → call capture_match_feedback (fill sentiment + reasonCategory +",
         "any tagDeltas); it records the feedback + updates their preferences. If nothing fits, just reply warmly.",
+        // WS-1(a) PHONE DUAL-PATH (Adam 2026-06-03): if the CONTEXT carries a 'LinkedIn one-tap connect
+        // link' (no résumé on file yet) and the candidate has no résumé or signals they'd rather connect
+        // LinkedIn ('can I just use my linkedin?', 'I don't have my résumé handy') → offer that exact link
+        // in ONE light optional clause. Never required, never repeated; mention EITHER the résumé upload
+        // link OR the LinkedIn link, not both. If no such link is in the CONTEXT, don't mention it.",
+        "If the CONTEXT carries a 'LinkedIn one-tap connect link' and the candidate has no résumé or would",
+        "rather connect LinkedIn, you MAY offer that exact link as an optional alternative to a résumé.",
       ].join(" ")
     }
   }
@@ -659,6 +681,24 @@ export function buildClairePrompt(opts: ClairePromptOptions): string {
  */
 export function buildClaireTurnContext(opts: ClairePromptOptions): string {
   return [
+    // WS-1(b) ENRICHMENT IN PROGRESS (Adam 2026-06-03) — highest salience this turn. The candidate's
+    // résumé is parsing OR their LinkedIn is importing right now (kicked on an EARLIER message), so you
+    // do NOT have the full profile THIS turn. Reuses the resumeJustDropped never-say-X language but,
+    // unlike that hard short-circuit, ALLOWS answering an unrelated question — so it lives here as a
+    // directive, not an early-return in modeDirective.
+    opts.enrichmentInFlight
+      ? [
+          "ENRICHMENT IN PROGRESS: you are still pulling this candidate's info — their résumé is parsing",
+          "or their LinkedIn is importing right now from an earlier message — so you do NOT have the full",
+          "profile THIS turn. If their message needs that data (a pitch, find_match, or a question about",
+          "their profile/roles), reply with ONE short warm holding bubble — e.g. 'still pulling your info,",
+          "one sec 🔎' (vary the wording in your voice) — and do NOT pitch, do NOT call find_match, do NOT",
+          "answer blind, and NEVER say you can't see it / it failed / it came through blank / ask them to",
+          "re-send or re-upload. If their message is UNRELATED (a simple question you CAN answer right now),",
+          "answer it briefly, then add that you're still loading their stuff and will have the full picture",
+          "in a moment.",
+        ].join(" ")
+      : "",
     opts.canary ? CANARY_TAPBACK : "",
     opts.globalContext ? `CONTEXT — ${opts.globalContext}` : "",
     // BLOCKER 2 (Adam 2026-06-03): on the post-parse pitch turn, the inbound text is the neutral
@@ -676,6 +716,13 @@ export function buildClaireTurnContext(opts: ClairePromptOptions): string {
     // surface it as a resume-after-tangent reminder.
     opts.pendingStep && opts.mode !== "onboarding"
       ? `PENDING STEP to resume after any tangent: ${opts.pendingStep}.`
+      : "",
+    // WS-3(b) GMAIL NUDGE (Adam 2026-06-03): low-friction, OCCASIONAL. The cooldown gate upstream
+    // already decided this turn is eligible; here we just give Claire the option + the link. The agent
+    // DECIDES whether it fits this turn — keep it to ONE light optional clause, never the main message,
+    // never pushy. Skip it entirely if the turn is busy (a pitch, a match, a real question to answer).
+    opts.gmailNudge
+      ? `GMAIL CONNECT (optional, low-priority): if it fits naturally — NOT if the turn is already busy — you MAY add ONE light clause inviting them to connect Gmail on wekruit.com so their profile follows them across devices, with this exact link: ${buildConnectGmailUrl()}. Never required, never pushy, never the main point of the message.`
       : "",
   ]
     .filter(Boolean)

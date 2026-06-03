@@ -17,6 +17,7 @@ import { isThinClaireEnabled } from "./flags.js"
 import { isCanaryUser } from "./canary.js"
 import { createSendblueTransport } from "./transport.js"
 import { selectClaireMode } from "./mode-selector.js"
+import { setEnrichmentInFlight, clearEnrichmentInFlight } from "./enrichment-inflight.js"
 import type { ClaireLang } from "./types.js"
 // NOTE: agent.js + tools/matching-tools.js are NOT imported statically — they pull
 // the @pa/agent-runtime/zod@4 SDK, which crashes the deployed container at boot.
@@ -117,7 +118,13 @@ export async function maybeRunThinClaire(
     })
     return false
   }
-  if (cvParsedReentry) log("thin_claire.cv_parsed_reentry", { eventId, userId })
+  if (cvParsedReentry) {
+    log("thin_claire.cv_parsed_reentry", { eventId, userId })
+    // WS-1(b): the resume_parse_completed event = enrichment FINISHED. CLEAR the in-flight marker
+    // (best-effort, never blocks) so the NEXT turn after the pitch doesn't keep saying "one sec".
+    // This is the pitch turn (postParsePitch), so the directive is never active here regardless.
+    void clearEnrichmentInFlight(db, userId, new Date().toISOString()).catch(() => {})
+  }
 
   const toE164 =
     (typeof data.fromNumber === "string" && data.fromNumber) ||
@@ -136,6 +143,16 @@ export async function maybeRunThinClaire(
   // Fire-and-forget — a parse failure must never block the conversational turn.
   const inboundMediaUrl = typeof rawMeta.mediaUrl === "string" ? rawMeta.mediaUrl.trim() : ""
   if (inboundMediaUrl) {
+    // WS-1(b) ENRICHMENT-AWARENESS (Adam 2026-06-03): the résumé parse runs async (the
+    // fire-and-forget ingestCv below) and only completes on the resume_parse_completed re-entry.
+    // SET the durable in-flight marker NOW (best-effort, never blocks) so a SECOND inbound that
+    // arrives mid-parse routes through the "still pulling your info, one sec" directive instead of
+    // pitching on empty data. Cleared on the cv-parsed re-entry (below). Canary-only — the
+    // directive only fires for canary users (mode-selector gates the read), and the LinkedIn path
+    // sets its own marker server-side in linkedin-connect-submit. Marker self-heals via TTL.
+    if (isCanaryUser(userId)) {
+      void setEnrichmentInFlight(db, userId, "resume", new Date().toISOString()).catch(() => {})
+    }
     // skipLimitEnforcement: a candidate who TEXTS US their résumé during onboarding is exactly the
     // resume-first flow (resume → pitch → find_match). The cv-ingest invite-gate (checkGate →
     // "not_invited") is for unsolicited uploads from non-invited users; it must NOT reject an
@@ -263,6 +280,13 @@ export async function maybeRunThinClaire(
         // Threaded so prompt.ts swaps the generic kickoff for the PART-2 pitch. Canary-only by construction
         // (cvParsedReentry requires isCanaryUser); default off for everyone else.
         ...(decision.postParsePitch ? { postParsePitch: true } : {}),
+        // WS-1(b): enrichment (résumé parse / LinkedIn import) is STILL running from an earlier turn →
+        // the turn-context directive tells Claire to hold ("still pulling your info, one sec") instead of
+        // pitching on empty data. Canary-only by construction (mode-selector gates the marker read).
+        ...(decision.enrichmentInFlight ? { enrichmentInFlight: true } : {}),
+        // WS-3(b): this turn MAY carry the occasional "connect Gmail on wekruit.com" nudge (deterministic
+        // cooldown reducer passed; stamp already written). Canary-only by construction.
+        ...(decision.gmailNudge ? { gmailNudge: true } : {}),
         // BLOCKER 2: thread the parsed-profile summary from the handoff context onto the pitch turn so
         // the model has the profile THIS turn (defends against a loadGlobalContext read racing the write).
         ...(decision.postParsePitch && postParsePitchSummary ? { postParsePitchSummary } : {}),

@@ -131,6 +131,8 @@ export {
   parseLinkedinDoneOpener,
   buildConnectLinkedinUrl,
   CONNECT_LINKEDIN_LINK_BASE,
+  buildConnectGmailUrl,
+  CONNECT_GMAIL_LINK_BASE,
   isSharedOnboardingGreetingOrKickoff,
   isSharedOnboardingRuntimeEvent,
   judgeSharedOnboardingAnswer,
