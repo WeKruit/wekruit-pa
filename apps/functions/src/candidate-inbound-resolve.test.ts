@@ -97,8 +97,8 @@ test("resolveInboundUserId binds phone from the verification-code opener suffix"
   const db = fakeDb as unknown as Firestore
 
   const opener = buildHelloWekruitOpenerBody(candidateId)
-  // The current built body uses the verification-code phrasing.
-  assert.ok(opener.startsWith("Hi, WeKruit, my verification code is"))
+  // The current built body is a start-greeting (2026-06-02 #2); token = QR tracking, not a code.
+  assert.ok(opener.startsWith("Hi, WeKruit!"))
   const resolved = await resolveInboundUserId(db, "+14155550182", opener)
   assert.equal(resolved, candidateId)
 

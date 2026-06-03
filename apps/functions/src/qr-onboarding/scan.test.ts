@@ -377,12 +377,10 @@ describe("redirect URL shape", () => {
     assert.ok(link.includes("Hello%2C%20WeKruit!%20tok%20123"))
   })
 
-  it("buildQrStartRedirectLocation embeds the verification-code opener with the scanToken", () => {
+  it("buildQrStartRedirectLocation embeds the start-greeting opener with the scanToken", () => {
     const loc = buildQrStartRedirectLocation("+15550000001", "tok-xyz")
     assert.ok(loc.startsWith("sms:+15550000001?&body="))
-    assert.ok(
-      decodeURIComponent(loc.split("body=")[1]!) === "Hi, WeKruit, my verification code is tok-xyz",
-    )
+    assert.ok(decodeURIComponent(loc.split("body=")[1]!) === "Hi, WeKruit! tok-xyz")
   })
 })
 

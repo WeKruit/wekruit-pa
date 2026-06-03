@@ -11,9 +11,15 @@ import { test } from "node:test"
 import { sanitizeInboundForLlm } from "./agent.js"
 
 const UID = "8fEwIduUrzxZsblHHsNz"
+const HI_PREFIX = "Hi, WeKruit!"
 const VCODE_PREFIX = "Hi, WeKruit, my verification code is"
 
-test("strips the candidateId from the verification-code phone-bind opener", () => {
+test("strips the candidateId from the CURRENT start-greeting opener (2026-06-02 #2)", () => {
+  assert.equal(sanitizeInboundForLlm(`${HI_PREFIX} ${UID}`), "Hi, WeKruit!")
+  assert.ok(!sanitizeInboundForLlm(`${HI_PREFIX} ${UID}`).includes(UID))
+})
+
+test("strips the candidateId from the verification-code phone-bind opener (back-compat)", () => {
   assert.equal(sanitizeInboundForLlm(`${VCODE_PREFIX} ${UID}`), "Hi, WeKruit!")
   // the internal id must NOT survive into the text handed to the LLM
   assert.ok(!sanitizeInboundForLlm(`${VCODE_PREFIX} ${UID}`).includes(UID))

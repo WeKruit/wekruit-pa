@@ -122,6 +122,7 @@ export {
   isSharedOnboardingActiveUser,
   buildHelloWekruitOpenerBody,
   parseHelloWekruitOpener,
+  HI_WEKRUIT_OPENER_PREFIX,
   HELLO_WEKRUIT_OPENER_PREFIX,
   VERIFICATION_CODE_OPENER_PREFIX,
   isSharedOnboardingGreetingOrKickoff,

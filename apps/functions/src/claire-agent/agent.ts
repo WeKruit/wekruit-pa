@@ -29,7 +29,11 @@ import { markReadReflex, wireTypingReflex, deliverBubbles } from "./delivery.js"
 import { isCanaryUser } from "./canary.js"
 import { makeClaireSession } from "./session.js"
 import { appendHotlineIfMissing } from "@pa/pa-safety"
-import { HELLO_WEKRUIT_OPENER_PREFIX, VERIFICATION_CODE_OPENER_PREFIX } from "@pa/pa-orchestrator"
+import {
+  HELLO_WEKRUIT_OPENER_PREFIX,
+  HI_WEKRUIT_OPENER_PREFIX,
+  VERIFICATION_CODE_OPENER_PREFIX,
+} from "@pa/pa-orchestrator"
 
 /** Main conversation model (the per-tool LLM judge model is configured separately). */
 export const CLAIRE_MODEL = "gpt-5.4-nano"
@@ -401,7 +405,10 @@ export function sanitizeInboundForLlm(text: string): string {
   // a real login/verification-code request and reply "what's the full code? where are you signing
   // in?" (live regression 2026-06-02). The onboarding kickoff is driven by mode/FSM, not this text,
   // so a plain greeting is all the LLM needs (and strips the internal token → no uid leak).
-  if (trimmed.startsWith(VERIFICATION_CODE_OPENER_PREFIX)) return "Hi, WeKruit!"
+  // Current built form (2026-06-02 #2): "Hi, WeKruit! <trackingId>" — a plain start greeting.
+  if (trimmed.startsWith(HI_WEKRUIT_OPENER_PREFIX)) return HI_WEKRUIT_OPENER_PREFIX
+  // Back-compat forms still in the wild from prior QR prints.
+  if (trimmed.startsWith(VERIFICATION_CODE_OPENER_PREFIX)) return HI_WEKRUIT_OPENER_PREFIX
   if (trimmed.startsWith(HELLO_WEKRUIT_OPENER_PREFIX)) return HELLO_WEKRUIT_OPENER_PREFIX
   return text
 }

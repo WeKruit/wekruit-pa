@@ -149,21 +149,30 @@ function normalizeControlText(value: string): string {
 /**
  * Visible iMessage opener prefix.
  *
- * 2026-06-02 reword: the candidate-emitted body is now a verification-code phrasing
- * ("Hi, WeKruit, my verification code is <token>") so the prefilled SMS reads like a
- * normal confirmation step instead of an internal handshake. The OLD "Hello, WeKruit!"
- * phrasing is kept as a back-compat parse form: QR codes already printed/in the wild
- * still emit the old body, so inbound resolution MUST keep accepting it.
+ * 2026-06-02 reword #2 (Adam): the candidate-emitted body is a START GREETING
+ * ("Hi, WeKruit! <token>"). The trailing token is QR-campaign TRACKING, not a
+ * verification code — the prior "my verification code is" framing both read wrong to
+ * the user AND confused the LLM into treating it as a login step. The opener must look
+ * like the candidate simply saying hi. Two OLD phrasings are kept ONLY as back-compat
+ * parse forms — QR codes already printed/in the wild still emit them, so inbound
+ * resolution MUST keep accepting both:
+ *   - "Hi, WeKruit, my verification code is <token>" (2026-06-02 reword #1)
+ *   - "Hello, WeKruit! <token>"                      (original 2026-05-19 form)
  *
- * `VERIFICATION_CODE_OPENER_PREFIX` is what we BUILD today. `HELLO_WEKRUIT_OPENER_PREFIX`
- * is retained for back-compat (parser + LLM sanitizer) and still exported under its
- * historical name so downstream imports do not churn.
+ * `HI_WEKRUIT_OPENER_PREFIX` is what we BUILD today. The other two prefixes are retained
+ * for back-compat (parser + LLM sanitizer) and still exported under their historical
+ * names so downstream imports do not churn.
  */
+export const HI_WEKRUIT_OPENER_PREFIX = "Hi, WeKruit!"
+/** Back-compat (2026-06-02 reword #1). No longer BUILT; still parsed + sanitized. */
 export const VERIFICATION_CODE_OPENER_PREFIX = "Hi, WeKruit, my verification code is"
 /** Legacy opener prefix (Adam 2026-05-19 + user_id bind 2026-05-20). Back-compat only. */
 export const HELLO_WEKRUIT_OPENER_PREFIX = "Hello, WeKruit!"
 
-/** New (built) form: "Hi, WeKruit, my verification code is <token>". */
+/** New (built) form: "Hi, WeKruit! <token>". Token = QR campaign tracking id. */
+const HI_WEKRUIT_OPENER_RE =
+  /^hi,?\s*wekruit!?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
+/** Back-compat form: "Hi, WeKruit, my verification code is <token>". */
 const VERIFICATION_CODE_OPENER_RE =
   /^hi,?\s*wekruit,?\s*my\s+verification\s+code\s+is\s*:?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
 /** Legacy form: "Hello, WeKruit! <token>". Back-compat — in-flight QR links still emit this. */
@@ -175,8 +184,8 @@ const WEKRUIT_JOB_OPENER_RE =
 /** Build the sms: deep-link body candidates send to bind phone → pa-users/{candidateId}. */
 export function buildHelloWekruitOpenerBody(candidateId: string): string {
   const id = candidateId.trim()
-  if (!id) return VERIFICATION_CODE_OPENER_PREFIX
-  return `${VERIFICATION_CODE_OPENER_PREFIX} ${id}`
+  if (!id) return HI_WEKRUIT_OPENER_PREFIX
+  return `${HI_WEKRUIT_OPENER_PREFIX} ${id}`
 }
 
 /**
@@ -188,7 +197,10 @@ export function parseHelloWekruitOpener(value: string): { candidateId: string } 
   const trimmed = value.trim()
   const jobMatch = trimmed.match(WEKRUIT_JOB_OPENER_RE)
   if (jobMatch?.[2]) return { candidateId: jobMatch[2].trim() }
-  const match = trimmed.match(VERIFICATION_CODE_OPENER_RE) ?? trimmed.match(HELLO_WEKRUIT_OPENER_RE)
+  const match =
+    trimmed.match(HI_WEKRUIT_OPENER_RE) ??
+    trimmed.match(VERIFICATION_CODE_OPENER_RE) ??
+    trimmed.match(HELLO_WEKRUIT_OPENER_RE)
   if (!match) return null
   const candidateId = match[1]?.trim()
   return candidateId ? { candidateId } : null
