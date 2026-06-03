@@ -34,6 +34,13 @@ test("CandidateLogin preserves role interview context for first-time job candida
   assert.match(source, /First time on this role\? Continue here and Claire will keep the role attached\./)
 })
 
+test("CandidateLogin frames onboarding login as a first-time Claire start", () => {
+  assert.match(source, /onboardingNext\s*=\s*nextDest\.isOnboarding && !roleInterviewNext/)
+  assert.match(source, /onboardingNext[\s\S]*\? "Start with Claire"/)
+  assert.match(source, /onboardingNext[\s\S]*<>Start with <em className="wk-accent">Claire\.<\/em><\/>/)
+  assert.match(source, /Claire will start your profile flow/)
+})
+
 test("CandidateShell signed-in nav keeps candidates inside the operating home and market source surfaces", () => {
   assert.match(source, /\{ to: "\/me", icon: "pipeline", label: "Home" \}/)
   assert.match(source, /\{ to: "\/me\/matches", icon: "match", label: "Roles" \}/)

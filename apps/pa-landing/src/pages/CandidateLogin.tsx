@@ -912,20 +912,27 @@ export default function CandidateLogin() {
   const busy = status === "google" || status === "linkedin" || status === "sending" || status === "signing_in"
   const onLayoff = isLayoffHost()
   const roleInterviewNext = isPublicJobPath(nextDest.pathname)
+  const onboardingNext = nextDest.isOnboarding && !roleInterviewNext
   const loginEyebrow = isCompletingLink
     ? "Finishing sign-in"
     : roleInterviewNext
       ? "Role interview"
-      : "Pick up where you left off"
+      : onboardingNext
+        ? "Start with Claire"
+        : "Pick up where you left off"
   const loginSub = isCompletingLink
     ? "One sec — confirming your email and pulling up your pipeline."
     : status === "signing_in"
       ? roleInterviewNext
         ? "One sec — confirming your sign-in and reopening this role with Claire."
-        : "One sec — confirming your sign-in and opening onboarding."
+        : onboardingNext
+          ? "One sec — confirming your sign-in and opening Claire's profile flow."
+          : "One sec — confirming your sign-in and opening onboarding."
       : roleInterviewNext
         ? "Sign in and Claire keeps this role attached to your interview and profile."
-        : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."
+        : onboardingNext
+          ? "Sign in once and Claire will start your profile flow. Magic-link, Google, or LinkedIn — your choice."
+          : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."
 
   if (onLayoff) {
     const layoffStatus =
@@ -965,6 +972,8 @@ export default function CandidateLogin() {
                 ? <>Finishing <em className="wk-accent">sign-in.</em></>
                 : roleInterviewNext
                   ? <>Continue this <em className="wk-accent">role.</em></>
+                : onboardingNext
+                  ? <>Start with <em className="wk-accent">Claire.</em></>
                 : <>Already talked to <em className="wk-accent">Claire?</em></>}
             </h1>
             <p className="wk-login__sub">
