@@ -28,6 +28,7 @@ function approvedScreeningPacket(overrides: DocData = {}): DocData {
     hardFilters: ["Requires US work authorization"],
     evidenceProbes: ["Describe a platform tradeoff you owned"],
     calibrationExamples: "Strong pass: shipped a developer platform pricing migration.",
+    mustHaves: "Must have shipped infrastructure products.",
     feedbackLoop: "Post every accepted or rejected intro reason in the WeKruit thread.",
     introHandoff: "Route accepted intros to a hiring-manager screen.",
     ...overrides,
@@ -661,6 +662,25 @@ test("runListLayoffCandidates blocks verified employers until the Claire packet 
   )
 })
 
+test("runListLayoffCandidates blocks approved packets missing must-have evidence", async () => {
+  const fake = new FakeFirestore()
+  fake.seed("layoff_employers/emp_without_must_haves", {
+    workEmailLower: "verified@company.com",
+    verificationStatus: "verified",
+    screeningPacket: approvedScreeningPacket({ mustHaves: "" }),
+  })
+
+  await assert.rejects(
+    () =>
+      runListLayoffCandidates(
+        {},
+        { uid: "employer_2", token: { email: "verified@company.com" } },
+        deps(fake)
+      ),
+    (err) => err instanceof HttpsError && err.code === "failed-precondition" && err.message === "employer_screening_packet_not_approved"
+  )
+})
+
 test("runRegisterEmployer stores normalized workEmailLower for verification lookup", async () => {
   const fake = new FakeFirestore()
   const result = await runRegisterEmployer(employer(), deps(fake))
@@ -705,6 +725,7 @@ test("runRegisterEmployer stores one screening packet for Claire review", async 
     ],
     calibrationExamples:
       "Strong pass: shipped a developer platform pricing migration under real customer load.\nFalse positive: only owned internal tooling without external developer users.",
+    mustHaves: "Must have shipped infrastructure products.",
     feedbackLoop:
       "After every accepted or rejected intro, Alex posts the pass/no-pass reason and one correction signal in the WeKruit thread.",
     introHandoff:

@@ -210,6 +210,7 @@ function isApprovedEmployerScreeningPacket(value: unknown): boolean {
     hasNonEmptyStrings(packet.hardFilters) &&
     hasNonEmptyStrings(packet.evidenceProbes) &&
     hasNonEmptyString(packet.calibrationExamples) &&
+    hasNonEmptyString(packet.mustHaves) &&
     hasNonEmptyString(packet.feedbackLoop) &&
     hasNonEmptyString(packet.introHandoff)
   )
@@ -666,6 +667,7 @@ export type EmployerScreeningPacket = {
   hardFilters: string[]
   evidenceProbes: string[]
   calibrationExamples: string
+  mustHaves: string
   feedbackLoop: string
   introHandoff: string
 }
@@ -742,6 +744,7 @@ function buildEmployerScreeningPacket(input: EmployerInput): EmployerScreeningPa
     hardFilters: input.hardFilters,
     evidenceProbes: input.screeningQuestions,
     calibrationExamples: input.calibrationExamples,
+    mustHaves: input.notes ?? "",
     feedbackLoop: input.feedbackLoop,
     introHandoff: input.introHandoff,
   }

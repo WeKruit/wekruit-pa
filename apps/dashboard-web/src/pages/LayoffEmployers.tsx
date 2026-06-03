@@ -57,6 +57,7 @@ type EmployerRow = {
     hardFilters?: string[]
     evidenceProbes?: string[]
     calibrationExamples?: string
+    mustHaves?: string
     feedbackLoop?: string
     introHandoff?: string
     reviewedAt?: string
@@ -149,6 +150,7 @@ export default function LayoffEmployers() {
         ...(r.screeningPacket?.hardFilters ?? []),
         ...(r.screeningPacket?.evidenceProbes ?? []),
         r.screeningPacket?.calibrationExamples,
+        r.screeningPacket?.mustHaves,
         r.screeningPacket?.feedbackLoop,
         r.screeningPacket?.introHandoff,
         r.calibrationExamples,
@@ -424,6 +426,7 @@ function ScreeningPacketDetails({
         <ScreeningPacketList label="Hard filters" values={packet.hardFilters} />
         <ScreeningPacketList label="Evidence probes" values={packet.evidenceProbes} />
         <ScreeningPacketText label="Calibration examples" value={packet.calibrationExamples} />
+        <ScreeningPacketText label="Must-haves" value={packet.mustHaves} />
         <ScreeningPacketText label="Feedback loop" value={packet.feedbackLoop} />
         <ScreeningPacketText label="Intro handoff" value={packet.introHandoff} />
       </div>
