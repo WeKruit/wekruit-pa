@@ -6,6 +6,11 @@ import {
   buildSharedOnboardingPostPrescreenOpeningPrompt,
   buildHelloWekruitOpenerBody,
   parseHelloWekruitOpener,
+  buildLinkedinDoneOpenerBody,
+  parseLinkedinDoneOpener,
+  buildConnectLinkedinUrl,
+  isSharedOnboardingGreetingOrKickoff,
+  LINKEDIN_DONE_OPENER_PREFIX,
   SHARED_ONBOARDING_QUESTIONS,
   ALL_SHARED_ONBOARDING_QUESTIONS,
   buildSharedOnboardingPrompt,
@@ -49,6 +54,67 @@ test("job interview opener binds the inbound phone to the candidate id", () => {
     parseHelloWekruitOpener("Wekruit_photon-macos-devops_abc-user-99_Job"),
     { candidateId: "abc-user-99" },
   )
+})
+
+test("LinkedIn-done re-entry marker round-trips the connect TOKEN (not a candidateId)", () => {
+  const token = "li_connect_tok_abcdef"
+  const body = buildLinkedinDoneOpenerBody(token)
+  assert.equal(body, `${LINKEDIN_DONE_OPENER_PREFIX} ${token}`)
+  assert.deepEqual(parseLinkedinDoneOpener(body), { token })
+  // case/apostrophe-insensitive, optional colon, bare phrase (no token).
+  assert.deepEqual(parseLinkedinDoneOpener("Ive done linkedin submission li_connect_tok_abcdef"), {
+    token,
+  })
+  assert.deepEqual(parseLinkedinDoneOpener("I've done LinkedIn submission"), { token: "" })
+  assert.equal(buildLinkedinDoneOpenerBody(""), LINKEDIN_DONE_OPENER_PREFIX)
+})
+
+test("LinkedIn-done marker does NOT collide with the candidateId opener parser", () => {
+  // The marker token must NEVER be routed through parseHelloWekruitOpener as a uid.
+  assert.equal(parseHelloWekruitOpener("I've done LinkedIn submission li_connect_tok_abcdef"), null)
+  // Non-marker text is not a LinkedIn-done marker.
+  assert.equal(parseLinkedinDoneOpener("Hi, WeKruit! abc_user_99"), null)
+  assert.equal(parseLinkedinDoneOpener("hello there"), null)
+})
+
+test("LinkedIn-done marker counts as a kickoff/greeting (never a slot answer)", () => {
+  assert.equal(isSharedOnboardingGreetingOrKickoff("I've done LinkedIn submission li_connect_tok_abcdef"), true)
+  assert.equal(isSharedOnboardingGreetingOrKickoff("Ive done linkedin submission"), true)
+})
+
+test("LinkedIn-done marker is dropped on Q1 + never advances the slot (no token leak as an answer)", async () => {
+  // Because the marker is a kickoff/greeting, the Q1 (main_goal) duplicate-hello
+  // guard ignores it: it neither advances the slot nor gets stored as an answer.
+  assert.equal(
+    shouldIgnoreSharedOnboardingDuplicateKickoff("main_goal", "I've done LinkedIn submission li_connect_tok_abcdef"),
+    true,
+  )
+  assert.equal(
+    shouldSharedOnboardingAdvanceDespiteJudge("main_goal", "I've done LinkedIn submission li_connect_tok_abcdef"),
+    false,
+  )
+  // And the LLM answer-judge rejects it as irrelevant WITHOUT ever calling the
+  // model — so the connect token never reaches an LLM as candidate-supplied text.
+  let llmCalls = 0
+  const judged = await judgeSharedOnboardingAnswer({
+    questionId: "special_context",
+    answer: "I've done LinkedIn submission li_connect_tok_abcdef",
+    lang: "en",
+    llmCallFactory: () => async () => {
+      llmCalls += 1
+      return JSON.stringify({ intent: "provided", value: "x", confidence: 0.9 })
+    },
+  })
+  assert.equal(judged.accept, false)
+  assert.equal(llmCalls, 0, "marker is filtered before any LLM call — token never leaks to the model")
+})
+
+test("buildConnectLinkedinUrl emits a candidate-domain connect link", () => {
+  assert.equal(
+    buildConnectLinkedinUrl("tok_abc"),
+    "https://candidate.wekruit.com/connect-linkedin?token=tok_abc",
+  )
+  assert.equal(buildConnectLinkedinUrl(""), "https://candidate.wekruit.com/connect-linkedin")
 })
 
 test("shared onboarding asks ONLY the two hard-filter questions upfront (2026-06-02 trim)", () => {

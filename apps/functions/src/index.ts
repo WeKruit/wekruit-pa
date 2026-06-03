@@ -321,6 +321,12 @@ export { paQrStartRedirect } from "./qr-onboarding/qr-start-redirect.js"
 // pa-qr-scan-pending docs that never converted (status stays 'pending' past TTL)
 // so the new-user capacity counter doesn't leak.
 export { paQrScanAbandonedSweep } from "./qr-onboarding/abandoned-scan-sweep.js"
+// LinkedIn one-tap connect — public POST {token, linkedinUrl} from the
+// candidate-domain /connect-linkedin page. Resolves token→userId, links the
+// LinkedIn handle, enriches by URL via CoreSignal (experienceHighlights + tags),
+// emits the resume_parse_completed runtime event (thin pitch), and returns the
+// sms: reroute back to the iMessage thread. Canary-gated; degrades gracefully.
+export { paLinkedinConnectSubmit } from "./linkedin-connect/linkedin-connect-submit.js"
 // Recruiter board (candidate.wekruit.com/recruiters): public list + submission.
 // Lives in the `recruiter-board` multi-codebase (apps/recruiter-board-fn) as
 // of 2026-05-26 to keep the pa-orchestrator bundle small. Endpoints:

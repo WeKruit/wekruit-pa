@@ -32,6 +32,7 @@ import { appendHotlineIfMissing } from "@pa/pa-safety"
 import {
   HELLO_WEKRUIT_OPENER_PREFIX,
   HI_WEKRUIT_OPENER_PREFIX,
+  LINKEDIN_DONE_OPENER_PREFIX,
   VERIFICATION_CODE_OPENER_PREFIX,
 } from "@pa/pa-orchestrator"
 
@@ -462,6 +463,13 @@ export function sanitizeInboundForLlm(text: string): string {
   // marker — NOT tagging of candidate free text, so the no-regex-in-tagging rule does not apply.
   if (trimmed.startsWith("[system-event:") && trimmed.includes("resume_parse_completed"))
     return "[resume just finished parsing]"
+  // LINKEDIN-DONE RE-ENTRY (2026-06-03): the candidate-emitted sms deep-link body is
+  // "I've done LinkedIn submission <connectToken>". The trailing token is an opaque server-only
+  // connect token (NOT PII, NOT a uid) — it MUST NOT reach the LLM (the branch's own contract).
+  // Collapse to a neutral, token-free confirmation; the LinkedIn enrichment fires the same
+  // resume_parse_completed event that drives the pitch (postParsePitch), so the LLM needs only
+  // the plain "they connected LinkedIn" signal here. Body-format routing, not text→enum tagging.
+  if (trimmed.startsWith(LINKEDIN_DONE_OPENER_PREFIX)) return "I've connected my LinkedIn."
   // The QR handshake opener must be reduced to a NEUTRAL GREETING for the LLM — never the raw
   // phrasing. Returning the bare "Hi, WeKruit, my verification code is" made the model read it as
   // a real login/verification-code request and reply "what's the full code? where are you signing

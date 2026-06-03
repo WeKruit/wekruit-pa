@@ -577,6 +577,11 @@ service cloud.firestore {
       // Tokens map to a userId — never client-readable (would leak the binding).
       allow read, write: if false;
     }
+    match /pa-linkedin-connect-tokens/{token} {
+      // LinkedIn one-tap connect tokens map to a userId — server-only (the
+      // connect CF reads/writes via the admin SDK). Never client-readable.
+      allow read, write: if false;
+    }
 
     // ─── Default deny ────────────────────────────────────────────────
     match /{document=**} {

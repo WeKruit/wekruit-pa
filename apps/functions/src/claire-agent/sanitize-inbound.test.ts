@@ -50,6 +50,13 @@ test("passes ordinary candidate messages through untouched", () => {
   assert.equal(sanitizeInboundForLlm("I want SWE roles in NYC"), "I want SWE roles in NYC")
 })
 
+test("strips the opaque connect token from the LinkedIn-done re-entry marker", () => {
+  const out = sanitizeInboundForLlm("I've done LinkedIn submission li_connect_tok_abcdef")
+  assert.equal(out, "I've connected my LinkedIn.")
+  // the server-only connect token must NEVER reach the LLM
+  assert.ok(!out.includes("li_connect_tok_abcdef"))
+})
+
 /**
  * CV-PARSED RE-ENTRY (c1b8782d). The resume_parse_completed runtime event is enqueued by
  * enqueueRuntimeEventHandoff, so its body is the verbatim buildRuntimeEventBody directive:

@@ -13,6 +13,7 @@ import { CandidateMe, CandidateProfile, CandidateMatches } from "./pages/Candida
 import Market from "./pages/Market.js"
 import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
+import ConnectLinkedin from "./pages/ConnectLinkedin.js"
 import CompanyProfile from "./pages/CompanyProfile.js"
 import OpenJobs from "./pages/OpenJobs.js"
 import Onboarding from "./pages/Onboarding.js"
@@ -93,6 +94,7 @@ const fullRoutes = (
     <Route path="/companies/:companyId" element={<CompanyProfile />} />
     <Route path="/j/:jobId" element={<PublicJob />} />
     <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
+    <Route path="/connect-linkedin" element={<ConnectLinkedin />} />
     <Route path="/open" element={<OpenJobs />} />
     <Route path="/recruiters" element={<RecruiterBoard />} />
     <Route path="/recruiters/job/:jobId" element={<RecruiterRole />} />
