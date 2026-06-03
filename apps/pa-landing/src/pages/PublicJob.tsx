@@ -178,8 +178,6 @@ export default function PublicJob() {
   const [smsClicked, setSmsClicked] = useState(false)
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const [loginPromptOpen, setLoginPromptOpen] = useState(false)
-  const [loginPromptDismissed, setLoginPromptDismissed] = useState(false)
-  const [loginPromptAutoOpened, setLoginPromptAutoOpened] = useState(false)
   const [loginEmail, setLoginEmail] = useState("")
   const [loginStatus, setLoginStatus] = useState<LoginStatus>("idle")
   const [loginError, setLoginError] = useState<string | null>(null)
@@ -216,7 +214,6 @@ export default function PublicJob() {
           setUser(result.user)
           setLoginStatus("idle")
           setLoginPromptOpen(false)
-          setLoginPromptDismissed(true)
         }
       } catch (err) {
         if (!cancelled) {
@@ -230,7 +227,6 @@ export default function PublicJob() {
       if (nextUser) {
         setLoginStatus("idle")
         setLoginPromptOpen(false)
-        setLoginPromptDismissed(true)
       }
     })
     return () => {
@@ -304,16 +300,6 @@ export default function PublicJob() {
     enabled: Boolean(job?.companyId),
     staleTime: 5 * 60 * 1000,
   })
-
-  useEffect(() => {
-    if (user) {
-      setLoginPromptOpen(false)
-      return
-    }
-    if (loading || !job || user !== null || loginPromptDismissed || loginPromptAutoOpened) return
-    setLoginPromptOpen(true)
-    setLoginPromptAutoOpened(true)
-  }, [job, loading, loginPromptAutoOpened, loginPromptDismissed, user])
 
   async function refreshResumeGate() {
     if (!user) {
@@ -414,7 +400,6 @@ export default function PublicJob() {
       setUser(cred.user)
       setLoginStatus("idle")
       setLoginPromptOpen(false)
-      setLoginPromptDismissed(true)
     } catch (err) {
       const code =
         err && typeof err === "object" && "code" in err
@@ -584,7 +569,6 @@ export default function PublicJob() {
           type="button"
           aria-label="Close sign-in prompt"
           onClick={() => {
-            setLoginPromptDismissed(true)
             setLoginPromptOpen(false)
           }}
         />
@@ -599,7 +583,6 @@ export default function PublicJob() {
             type="button"
             aria-label="Close"
             onClick={() => {
-              setLoginPromptDismissed(true)
               setLoginPromptOpen(false)
             }}
           >

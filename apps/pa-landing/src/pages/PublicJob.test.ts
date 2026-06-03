@@ -38,6 +38,14 @@ test("PublicJob exposes Claire's role interview contract before signup", () => {
   assert.doesNotMatch(source, /hiring team sees every candidate/i)
 })
 
+test("PublicJob keeps the role page visible until the candidate starts Claire", () => {
+  assert.doesNotMatch(source, /loginPromptAutoOpened/)
+  assert.doesNotMatch(source, /loginPromptDismissed/)
+  assert.doesNotMatch(source, /loading \|\| !job \|\| user !== null[\s\S]*setLoginPromptOpen\(true\)/)
+  assert.match(source, /onApply=\{\(\) => \{[\s\S]*if \(!user\) \{[\s\S]*setLoginPromptOpen\(true\)/)
+  assert.match(source, /loginPromptOpen && !user/)
+})
+
 test("PublicJob resume upload avoids internal configuration errors", () => {
   assert.doesNotMatch(source, /CV ingest endpoint is not configured/)
   assert.match(source, /Resume upload is temporarily unavailable\. Message Claire and we'll attach it to this role\./)
