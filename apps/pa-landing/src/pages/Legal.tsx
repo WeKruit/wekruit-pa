@@ -18,9 +18,11 @@ body.legal-bg {
 .legal-header { border-bottom: 1px solid #e2e8f0; padding-bottom: 1rem; margin-bottom: 1.5rem; }
 .legal-eyebrow { color: #64748b; font-size: 0.85em; margin: 0; text-transform: uppercase; letter-spacing: 0.04em; }
 .legal-h1 { margin: 0.4rem 0 0 0; font-size: 1.7em; }
+.legal-h1, .legal-h2 { color: #0f172a; }
 .legal-meta { margin: 0.4rem 0 0 0; color: #64748b; font-size: 0.85em; }
 .legal-section { margin-bottom: 1.6rem; }
 .legal-h2 { font-size: 1.15em; margin-bottom: 0.4rem; }
+.legal-section p, .legal-section li { color: #1e293b; }
 .legal-link { color: #0369a1; }
 .legal-footer {
   margin-top: 2rem;
@@ -28,13 +30,6 @@ body.legal-bg {
   border-top: 1px solid #e2e8f0;
   color: #94a3b8;
   font-size: 0.85em;
-}
-@media (prefers-color-scheme: dark) {
-  body.legal-bg { background: #0a0a0a; color: #fafafa; }
-  .legal-header { border-bottom-color: rgba(255,255,255,0.12); }
-  .legal-eyebrow, .legal-meta { color: rgba(255,255,255,0.55); }
-  .legal-link { color: #60a5fa; }
-  .legal-footer { border-top-color: rgba(255,255,255,0.12); color: rgba(255,255,255,0.4); }
 }
 `
 
