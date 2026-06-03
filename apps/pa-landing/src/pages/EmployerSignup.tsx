@@ -124,6 +124,7 @@ export default function EmployerSignup() {
           {done ? <SuccessCard email={form.workEmail} /> : (
             <>
               <EmployerPacketReadiness summary={readiness} />
+              <EmployerCalibrationLoop />
               <form
                 onSubmit={onSubmit}
                 style={{
@@ -271,6 +272,137 @@ export default function EmployerSignup() {
       </section>
       <Footer />
     </main>
+  )
+}
+
+function EmployerCalibrationLoop() {
+  const steps = [
+    {
+      label: "Review the role packet",
+      body: "WeKruit checks the role brief, hard filters, evidence probes, calibration examples, feedback loop, and intro handoff before Claire screens.",
+    },
+    {
+      label: "Screen with Claire",
+      body: "No candidate is shared until they pass the role screen and consent.",
+    },
+    {
+      label: "Return hiring-team signal",
+      body: "Each accepted or rejected intro feeds one correction back into Claire so the next pass/no-pass boundary gets sharper.",
+    },
+  ]
+
+  return (
+    <section
+      aria-label="Role calibration loop"
+      style={{
+        marginTop: 14,
+        background: "var(--cream-3)",
+        border: "1px solid var(--border)",
+        borderRadius: "var(--r-lg)",
+        padding: 18,
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "var(--font-sans)",
+          fontSize: 12,
+          color: "var(--ink-3)",
+          fontWeight: 700,
+          textTransform: "uppercase",
+          letterSpacing: 0,
+        }}
+      >
+        After you send the packet
+      </div>
+      <h2
+        style={{
+          margin: "4px 0 0",
+          fontFamily: "var(--font-serif)",
+          fontWeight: 400,
+          fontSize: 24,
+          lineHeight: 1.12,
+          color: "var(--ink)",
+          letterSpacing: 0,
+        }}
+      >
+        Calibration loop
+      </h2>
+      <p
+        style={{
+          margin: "8px 0 0",
+          fontFamily: "var(--font-sans)",
+          fontSize: 14,
+          lineHeight: 1.45,
+          color: "var(--ink-2)",
+        }}
+      >
+        The packet becomes the working contract for Claire, the hiring team, and WeKruit review.
+      </p>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+          gap: 10,
+          marginTop: 14,
+        }}
+      >
+        {steps.map((step, index) => (
+          <article
+            key={step.label}
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-md)",
+              background: "rgba(255, 255, 255, 0.62)",
+              padding: 12,
+              minWidth: 0,
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                display: "inline-flex",
+                width: 24,
+                height: 24,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: "999px",
+                background: "var(--ink)",
+                color: "var(--cream-1)",
+                fontFamily: "var(--font-sans)",
+                fontSize: 12,
+                fontWeight: 700,
+                lineHeight: 1,
+              }}
+            >
+              {index + 1}
+            </span>
+            <strong
+              style={{
+                display: "block",
+                marginTop: 10,
+                fontFamily: "var(--font-sans)",
+                fontSize: 14,
+                lineHeight: 1.25,
+                color: "var(--ink)",
+              }}
+            >
+              {step.label}
+            </strong>
+            <p
+              style={{
+                margin: "6px 0 0",
+                fontFamily: "var(--font-sans)",
+                fontSize: 13,
+                lineHeight: 1.42,
+                color: "var(--ink-2)",
+              }}
+            >
+              {step.body}
+            </p>
+          </article>
+        ))}
+      </div>
+    </section>
   )
 }
 

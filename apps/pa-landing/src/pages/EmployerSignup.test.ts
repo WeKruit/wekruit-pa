@@ -91,3 +91,18 @@ test("EmployerSignup shows a role packet readiness checklist before the long for
   assert.match(source, /Role packet/)
   assert.match(source, /Complete these before WeKruit approves the role brief/i)
 })
+
+test("EmployerSignup explains the post-submit calibration loop before the form", () => {
+  assert.match(source, /EmployerCalibrationLoop/)
+  assert.match(source, /aria-label="Role calibration loop"/)
+  assert.match(source, /After you send the packet/)
+  assert.match(source, /Review the role packet/)
+  assert.match(source, /Screen with Claire/)
+  assert.match(source, /Return hiring-team signal/)
+  assert.match(source, /accepted or rejected intro feeds one correction back into Claire/)
+  assert.match(source, /No candidate is shared until they pass the role screen and consent/)
+
+  assert.doesNotMatch(source, /instant candidate matches/i)
+  assert.doesNotMatch(source, /automatic submissions/i)
+  assert.doesNotMatch(source, /browse all candidates/i)
+})
