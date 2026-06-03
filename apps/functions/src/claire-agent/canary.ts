@@ -25,7 +25,16 @@ export const CANARY_UIDS: ReadonlySet<string> = new Set<string>([
   "UKFaKdsMzzfPW2CDl5ve", // Noah  +12154034668
 ])
 
-/** True when `userId` is in the new-behavior canary cohort (dev phones today). */
+/**
+ * RAMP (Adam 2026-06-03, explicit "ramp"): the onboarding program (résumé/LinkedIn dual-path,
+ * enrichment+pitch, website-short, Gmail-nudge, connect-phone) is verified to the limit possible
+ * without a live phone, so the new behavior is RELEASED TO ALL USERS. This is the single ramp 抓手.
+ * To REVERT to dev-phone-only, set RAMPED_TO_ALL=false (the CANARY_UIDS set is preserved) + redeploy.
+ */
+const RAMPED_TO_ALL = true
+
+/** True when `userId` should get the new behavior. RAMPED_TO_ALL → everyone; else the dev cohort. */
 export function isCanaryUser(userId: string | null | undefined): boolean {
+  if (RAMPED_TO_ALL) return true
   return typeof userId === "string" && CANARY_UIDS.has(userId)
 }
