@@ -87,7 +87,8 @@ test("Market opens on role briefs before external tracked roles", () => {
 test("Market role-brief tab does not overclaim mixed inbound briefs as direct-line collab", () => {
   assert.match(source, /label="Role briefs"/)
   assert.match(source, /sub="Hiring-team briefs for Claire"/)
-  assert.match(source, /Role briefs <em className="wk-accent">ready<\/em> for Claire\./)
+  assert.match(source, /<h1 className="wk-market__h1 wk-market__h1--direct" aria-label="Role briefs ready for Claire\.">/)
+  assert.match(source, /<span>Role briefs<\/span>\s*<span><em className="wk-accent">ready<\/em> for Claire\.<\/span>/)
   assert.match(source, /<strong>No role briefs yet\.<\/strong>/)
   assert.match(source, /View role briefs/)
 
@@ -148,7 +149,8 @@ test("Market does not leak unresolved loading counts into candidate-facing chrom
   assert.match(source, /count=\{direct\.isSuccess \? directJobs\.length : undefined\}/)
   assert.match(source, /count=\{hunting\.isSuccess \? huntingTotal : undefined\}/)
   assert.match(source, /Roles Claire is <em className="wk-accent">tracking<\/em>\./)
-  assert.match(source, /Role briefs <em className="wk-accent">ready<\/em> for Claire\./)
+  assert.match(source, /<h1 className="wk-market__h1 wk-market__h1--direct" aria-label="Role briefs ready for Claire\.">/)
+  assert.match(source, /<span><em className="wk-accent">ready<\/em> for Claire\.<\/span>/)
 })
 
 test("Market role cards explain missing compensation instead of rendering a bare dash", () => {
@@ -167,7 +169,7 @@ test("Market role briefs do not overpromise employer access or invent interview 
   assert.doesNotMatch(source, /seats:\s*typeof raw\.interviewSeats === "number" \? raw\.interviewSeats : 2/)
   assert.doesNotMatch(source, /\{r\.seats\} \{r\.seats === 1 \? "seat" : "seats"\}/)
 
-  assert.match(source, /Role briefs <em className="wk-accent">ready<\/em> for Claire/)
+  assert.match(source, /<span>Role briefs<\/span>\s*<span><em className="wk-accent">ready<\/em> for Claire\.<\/span>/)
   assert.match(source, /Claire starts the role interview before any passed profile is shared/)
   assert.match(source, /seats:\s*typeof raw\.interviewSeats === "number" \? raw\.interviewSeats : undefined/)
   assert.match(source, /r\.seats === undefined \? "Claire interview" :/)
@@ -261,7 +263,10 @@ test("Market keeps mobile role cards primary while preserving the compact suppor
 test("Market mobile headlines leave enough line height for two-line Newsreader italics", () => {
   assert.match(source, /\.wk-shell \.wk-market__h1 \{[\s\S]*line-height: 1\.12; letter-spacing: 0;/)
   assert.match(source, /\.wk-shell \.wk-market__h1 \.wk-accent \{ line-height: inherit; \}/)
+  assert.match(source, /\.wk-shell \.wk-market__h1--direct \{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*gap: 4px;/)
+  assert.match(source, /\.wk-shell \.wk-market__h1--direct > span \{[\s\S]*display: block;[\s\S]*line-height: inherit;/)
   assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market__h1 \{[\s\S]*font-size: clamp\(36px, 10vw, 44px\);[\s\S]*line-height: 1\.24;[\s\S]*letter-spacing: 0;[\s\S]*margin: 14px 0 18px;/)
+  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-market__h1 \{[\s\S]*font-size: 38px;[\s\S]*line-height: 1\.2;[\s\S]*\.wk-shell \.wk-market__h1--direct \{[\s\S]*gap: 2px;/)
   assert.doesNotMatch(source, /\.wk-shell \.wk-market__h1 \{[\s\S]*line-height: 1\.02; letter-spacing: -0\.028em;/)
 })
 
@@ -280,10 +285,11 @@ test("Market tab chrome separates labels, counts, and subtitles on narrow screen
   assert.doesNotMatch(source, /letter-spacing: -0\.01em; color: inherit;/)
 })
 
-test("Market narrow phone breakpoint stacks tabs and restores readable workflow rows", () => {
-  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-mtabs \{[\s\S]*grid-template-columns: 1fr;[\s\S]*gap: 0;/)
+test("Market narrow phone breakpoint keeps compact tabs and restores readable workflow rows", () => {
+  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-mtabs \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);[\s\S]*gap: 10px;/)
+  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-mtab \{[\s\S]*min-height: 86px;[\s\S]*border: 1px solid var\(--wk-border\);[\s\S]*border-radius: 10px;/)
   assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-mtab__top \{[\s\S]*justify-content: space-between;/)
-  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-mtab__label \{[\s\S]*white-space: nowrap;/)
+  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-mtab__label \{[\s\S]*font-size: 19\.5px;[\s\S]*white-space: normal;/)
   assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-roleflow__steps \{[\s\S]*display: grid;[\s\S]*grid-template-columns: 1fr;/)
   assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-roleflow__steps span \{[\s\S]*display: block;/)
   assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-direct-card__head \{[\s\S]*grid-template-columns: 38px minmax\(0, 1fr\);/)
