@@ -208,6 +208,12 @@ test("CandidateShell mobile header keeps the primary candidate start action visi
   assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-header__primary-short \{ display: inline; \}/)
 })
 
+test("CandidateShell auth-aware marketing header exposes only one My WeKruit entry", () => {
+  assert.match(source, /\{!isAuthed \? <Link to="\/me" className="wk-nav__link">My WeKruit<\/Link> : null\}/)
+  assert.match(source, /isAuthed \? \([\s\S]*<Link to="\/me" className="wk-btn wk-btn--ink wk-btn--sm">My WeKruit<\/Link>/)
+  assert.doesNotMatch(source, /<Link to="\/me" className="wk-nav__link">My WeKruit<\/Link>\s*<\/nav>[\s\S]*isAuthed \? \(/)
+})
+
 test("CandidateShell footer routes employers to the actual employer surface", () => {
   assert.match(source, /<Link to="\/employers">For employers<\/Link>/)
   assert.doesNotMatch(source, /href="https:\/\/wekruit\.com"[\s\S]*For employers/)
