@@ -505,6 +505,33 @@ function MarketRoleBriefContract() {
   )
 }
 
+function MarketRoleBriefWorkflow({ count }: { count?: number }) {
+  const countText = count === undefined ? "Role briefs" : `${count} role ${count === 1 ? "brief" : "briefs"}`
+  return (
+    <section className="wk-roleflow" aria-label="Claire role brief workflow">
+      <div className="wk-roleflow__intro">
+        <p className="wk-eyebrow">{countText} · candidate-controlled</p>
+        <h2>Pick a brief. Claire runs the first screen.</h2>
+      </div>
+      <ol className="wk-roleflow__steps">
+        <li>
+          <strong>Employer bar</strong>
+          <span>Hard filters and evidence probes set the interview.</span>
+        </li>
+        <li>
+          <strong>Claire interview</strong>
+          <span>Your profile and answers become role-specific evidence.</span>
+        </li>
+        <li>
+          <strong>Consent gate</strong>
+          <span>The hiring team sees a passed profile only after approval.</span>
+        </li>
+      </ol>
+      <a className="wk-roleflow__link" href="/me/profile#profile-corrections">Tune profile signals</a>
+    </section>
+  )
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Rows
 // ────────────────────────────────────────────────────────────────────────────
@@ -1000,11 +1027,14 @@ export default function Market(): ReactNode {
                   <strong>No role briefs yet.</strong> Check tracked roles and keep your profile preferences current.
                 </div>
               ) : (
-                <div className="wk-direct-cards">
-                  {directJobs.map((r) => (
-                    <DirectCard key={r.id} r={r} onTalk={() => onTalkToClaire(r)} />
-                  ))}
-                </div>
+                <>
+                  <MarketRoleBriefWorkflow count={direct.isSuccess ? directJobs.length : undefined} />
+                  <div className="wk-direct-cards">
+                    {directJobs.map((r) => (
+                      <DirectCard key={r.id} r={r} onTalk={() => onTalkToClaire(r)} />
+                    ))}
+                  </div>
+                </>
               )}
               <MarketRoleBriefContract />
             </div>
@@ -1121,6 +1151,42 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-market-contract__actions {
   grid-column: 2; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: -8px;
 }
+
+.wk-shell .wk-roleflow {
+  display: grid; grid-template-columns: minmax(220px, 0.55fr) minmax(0, 1fr) auto;
+  gap: 22px; align-items: center;
+  padding: 18px 0; margin: 0 0 14px;
+  border-top: 1px solid var(--wk-live-border);
+  border-bottom: 1px solid var(--wk-live-border);
+}
+.wk-shell .wk-roleflow__intro h2 {
+  margin: 8px 0 0;
+  font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
+  font-weight: 400; font-size: clamp(24px, 2.4vw, 34px);
+  line-height: 1.08; letter-spacing: 0; color: var(--wk-ink);
+}
+.wk-shell .wk-roleflow__steps {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px;
+}
+.wk-shell .wk-roleflow__steps li {
+  min-height: 86px; padding: 12px 13px;
+  border: 1px solid var(--wk-border); border-radius: 8px;
+  background: var(--wk-cream-3);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.wk-shell .wk-roleflow__steps strong {
+  color: var(--wk-ink); font-size: 13.5px; font-weight: 650; letter-spacing: 0;
+}
+.wk-shell .wk-roleflow__steps span {
+  color: var(--wk-ink-2); font-size: 12.5px; line-height: 1.35;
+}
+.wk-shell .wk-roleflow__link {
+  align-self: center;
+  color: var(--wk-ink); font-size: 13.5px; font-weight: 650;
+  text-decoration: underline; text-underline-offset: 4px; white-space: nowrap;
+}
+.wk-shell .wk-roleflow__link:hover { color: var(--wk-live); }
 
 .wk-shell .wk-market-empty {
   display: grid;
@@ -1447,6 +1513,10 @@ const MARKET_STYLES = String.raw`
 @media (max-width: 1080px) {
   .wk-shell .wk-market-contract { grid-template-columns: 1fr; gap: 18px; }
   .wk-shell .wk-market-contract__actions { grid-column: auto; margin-top: 0; }
+  .wk-shell .wk-roleflow { grid-template-columns: 1fr; gap: 14px; }
+  .wk-shell .wk-roleflow__steps { grid-template-columns: 1fr; }
+  .wk-shell .wk-roleflow__steps li { min-height: 0; }
+  .wk-shell .wk-roleflow__link { justify-self: start; }
   .wk-shell .wk-market-empty { grid-template-columns: 1fr; align-items: stretch; }
   .wk-shell .wk-market-empty__actions { justify-content: flex-start; }
   .wk-shell .wk-market__layout { grid-template-columns: 1fr; gap: 24px; }
@@ -1487,6 +1557,40 @@ const MARKET_STYLES = String.raw`
   .wk-shell .wk-market-contract--role-briefs .wk-market-contract__copy,
   .wk-shell .wk-market-contract--role-briefs .wk-market-contract__grid,
   .wk-shell .wk-market-contract--role-briefs .wk-market-contract__actions {
+    display: none;
+  }
+  .wk-shell .wk-roleflow {
+    padding: 12px 0;
+    margin: 0 0 10px;
+    display: block;
+  }
+  .wk-shell .wk-roleflow__intro h2 {
+    font-size: 22px;
+    line-height: 1.18;
+  }
+  .wk-shell .wk-roleflow__steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .wk-shell .wk-roleflow__steps li {
+    flex: 1 1 calc(33.333% - 6px);
+    min-width: 104px;
+    min-height: 42px;
+    padding: 8px 9px;
+    border: 1px solid var(--wk-border);
+    border-radius: 8px;
+    background: var(--wk-cream-3);
+  }
+  .wk-shell .wk-roleflow__steps strong {
+    font-size: 12.5px;
+    line-height: 1.18;
+  }
+  .wk-shell .wk-roleflow__steps span {
+    display: none;
+  }
+  .wk-shell .wk-roleflow__link {
     display: none;
   }
   .wk-shell .wk-direct-cards { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 6px; }
