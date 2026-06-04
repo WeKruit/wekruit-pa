@@ -521,9 +521,9 @@ const LANDING_STYLES = `
   font-weight: 400;
   display: flex;
   flex-direction: column;
-  gap: 0.14em;
+  gap: 0.2em;
   font-size: clamp(52px, 6.7vw, 86px);
-  line-height: 1.08;
+  line-height: 1.14;
   letter-spacing: 0;
   color: var(--wk-ink);
   margin: 18px 0 24px;
@@ -900,7 +900,7 @@ const LANDING_STYLES = `
     gap: 36px;
     align-items: start;
   }
-  .wk-hero__h1 { font-size: clamp(50px, 6.2vw, 64px); line-height: 1.12; gap: 0.16em; }
+  .wk-hero__h1 { font-size: clamp(50px, 6.2vw, 64px); line-height: 1.16; gap: 0.2em; }
   .wk-hero__visual { padding-top: 32px; }
   .wk-hero__visual .wk-imsg-phone { max-width: 320px; }
   .wk-steps { grid-template-columns: 1fr; }
@@ -923,6 +923,8 @@ const LANDING_STYLES = `
   .wk-section { padding: 56px 0; }
   .wk-section__head { margin-bottom: 28px; }
   .wk-proof-card { padding: 20px; }
-  .wk-hero__h1 { font-size: clamp(46px, 13vw, 58px); line-height: 1.14; gap: 0.16em; }
+  .wk-hero__h1 { font-size: clamp(44px, 12.4vw, 54px); line-height: 1.18; gap: 0.2em; }
+  .wk-hero__cta { gap: 12px; }
+  .wk-hero__browse { flex-basis: 100%; }
 }
 `

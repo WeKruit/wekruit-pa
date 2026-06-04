@@ -31,7 +31,7 @@
   font-weight: 400;
   font-size: clamp(32px, 4.4vw, 56px);
   letter-spacing: -0.025em;
-  line-height: 1.04;
+  line-height: 1.1;
   color: var(--ink);
   margin: 0;
   text-wrap: balance;
@@ -142,7 +142,7 @@
   font-weight: 400;
   font-size: clamp(32px, 4.4vw, 56px);
   letter-spacing: -0.025em;
-  line-height: 1.04;
+  line-height: 1.1;
   color: var(--ink);
   margin: 0;
   text-wrap: balance;
