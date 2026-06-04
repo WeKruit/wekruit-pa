@@ -77,7 +77,9 @@ test("OpenJobs explains Claire's role loop before showing the role list", () => 
   assert.match(source, /Consent gate/)
   assert.match(source, /Only passed evidence you approve reaches the hiring team\./)
   assert.match(source, /\.open-claire-loop \{[\s\S]*grid-template-columns: minmax\(220px, 0\.86fr\) minmax\(0, 1\.9fr\);/)
-  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-claire-loop__steps \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-claire-loop__steps \{[\s\S]*grid-template-columns: 1fr;/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-claire-loop__step \{[\s\S]*display: flex;[\s\S]*align-items: center;/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-claire-loop__step span \{[\s\S]*white-space: nowrap;/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-claire-loop__step p \{ display: none; \}/)
 })
 
@@ -143,6 +145,7 @@ test("OpenJobs mobile layout gets candidates to real role cards before filter ch
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-tab__sub[\s\S]*display: none !important/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-header[\s\S]*margin-bottom: 16px !important/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-header__title[\s\S]*font-size: clamp\(28px, 8vw, 34px\) !important/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-header__title[\s\S]*line-height: 1\.15 !important/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-layout \{ gap: 16px !important; \}/)
   assert.match(source, /className=\{variant === "grid" \? "open-card-list open-card-list--grid" : "open-card-list"\}/)
   assert.match(source, /className="open-role-card"/)

@@ -545,7 +545,7 @@ export default function OpenJobs() {
           .open-header__copy { flex: 1 1 100% !important; }
           .open-header__title {
             font-size: clamp(28px, 8vw, 34px) !important;
-            line-height: 1.08 !important;
+            line-height: 1.15 !important;
           }
           .open-header__lede {
             margin-top: 10px !important;
@@ -561,27 +561,30 @@ export default function OpenJobs() {
           .open-claire-loop {
             grid-template-columns: 1fr;
             gap: 8px;
-            margin: -4px 0 14px;
-            padding: 10px 0 0;
-            border-width: 1px 0 0;
+            margin: 2px 0 16px;
+            padding: 12px 0;
+            border-width: 1px 0;
             border-radius: 0;
             background: transparent;
           }
           .open-claire-loop__intro { display: none; }
           .open-claire-loop__steps {
-            grid-template-columns: repeat(3, minmax(0, 1fr));
+            grid-template-columns: 1fr;
             gap: 6px;
           }
           .open-claire-loop__step {
-            min-height: 40px;
-            padding: 8px 7px;
+            min-height: 0;
+            padding: 9px 10px;
             border-radius: 10px;
             background: var(--cream-3);
+            display: flex;
+            align-items: center;
           }
           .open-claire-loop__step span {
-            font-size: 10px;
-            line-height: 1.18;
-            letter-spacing: 0.05em;
+            font-size: 10.5px;
+            line-height: 1.25;
+            letter-spacing: 0.04em;
+            white-space: nowrap;
           }
           .open-claire-loop__step p { display: none; }
           .open-search { width: 100% !important; min-width: 0; }
@@ -693,7 +696,7 @@ function Header({ tab, count, total, loading, search, setSearch, layout, setLayo
         <div className="eyebrow" style={{ marginBottom: 10, color: isDirect ? "var(--success)" : "var(--ink-3)" }}>
           {isDirect ? "● Direct line · Claire interviews first" : "External roles · Source listings"}
         </div>
-        <h1 className="open-header__title" style={{ fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: "clamp(32px, 3.6vw, 48px)", lineHeight: 1.05, letterSpacing: "-0.02em", margin: 0 }}>
+        <h1 className="open-header__title" style={{ fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: "clamp(32px, 3.6vw, 48px)", lineHeight: 1.12, letterSpacing: "-0.012em", margin: 0 }}>
           {isDirect ? (
             <>
               {loading ? "Direct-line roles" : `${count} direct-line roles`} Claire can <em style={{ fontStyle: "italic" }}>screen first</em>.
