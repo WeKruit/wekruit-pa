@@ -105,19 +105,20 @@ test("Landing hero headline keeps editorial lines separated across breakpoints",
   assert.match(landingSource, /<span>You don't <em className="wk-accent">apply\.<\/em><\/span>/)
   assert.match(landingSource, /<span>You interview\.<\/span>/)
   assert.doesNotMatch(landingSource, /<span><em className="wk-accent">apply\.<\/em><\/span>/)
-  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*font-size: 78px;[\s\S]*line-height: 1\.12;/)
-  assert.match(landingSource, /\.wk-hero__h1 > span \{[\s\S]*line-height: 1\.12;/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*display: grid;[\s\S]*gap: clamp\(12px, 1\.1vw, 18px\);/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*font-size: clamp\(52px, 5\.4vw, 74px\);[\s\S]*line-height: 1\.08;/)
+  assert.match(landingSource, /\.wk-hero__h1 > span \{[\s\S]*line-height: 1\.08;/)
   assert.match(landingSource, /\.wk-hero__h1 \.wk-accent \{[\s\S]*line-height: inherit;/)
   assert.match(landingSource, /\.wk-hero__h1 > span:first-child \{ white-space: nowrap; \}/)
   assert.match(
     landingSource,
-    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 58px; line-height: 1\.12; gap: 0\.14em; \}/,
+    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: clamp\(46px, 6vw, 58px\); line-height: 1\.1; gap: 12px; \}/,
   )
   assert.match(
     landingSource,
-    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 44px; line-height: 1\.16; gap: 0\.18em; \}/,
+    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: clamp\(38px, 11\.4vw, 46px\); line-height: 1\.14; gap: 10px; \}/,
   )
-  assert.match(landingSource, /@media \(max-width: 360px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 38px; \}/)
+  assert.match(landingSource, /@media \(max-width: 360px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 36px; \}/)
   assert.match(landingSource, /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__browse \{ flex-basis: 100%; \}/)
 })
 
