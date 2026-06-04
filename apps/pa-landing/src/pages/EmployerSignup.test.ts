@@ -94,12 +94,14 @@ test("EmployerSignup shows a role packet readiness checklist before the long for
 
 test("EmployerSignup connects role intake to the sample passed-profile output", () => {
   assert.match(source, /aria-label="Role intake primary actions"/)
-  assert.match(source, /href="#employer-packet-starters"[\s\S]*Start role packet/)
+  assert.match(source, /const primaryStartTargetId = readiness\.nextIncompleteItem\?\.targetId \?\? "employer-send-review"/)
+  assert.match(source, /href=\{`#\$\{primaryStartTargetId\}`\}[\s\S]*Start role packet/)
+  assert.match(source, /onClick=\{\(event\) => handleFieldJump\(event, primaryStartTargetId\)\}/)
   assert.match(source, /to="\/employers\/inbox"[\s\S]*See sample pass/)
   assert.match(source, /The packet below becomes the evidence lens Claire uses in the sample pass record/)
   assert.match(source, /aria-label="Role intake output preview"/)
 
-  assert.doesNotMatch(source, /href="#employer-company-contact"[\s\S]*Start role packet/)
+  assert.doesNotMatch(source, /href="#employer-packet-starters"[\s\S]*Start role packet/)
   assert.doesNotMatch(source, /see live candidates/i)
   assert.doesNotMatch(source, /browse candidate/i)
   assert.doesNotMatch(source, /instant pass/i)
