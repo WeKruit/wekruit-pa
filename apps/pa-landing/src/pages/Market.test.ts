@@ -270,6 +270,16 @@ test("Market tab chrome separates labels, counts, and subtitles on narrow screen
   assert.doesNotMatch(source, /letter-spacing: -0\.01em; color: inherit;/)
 })
 
+test("Market narrow phone breakpoint stacks tabs and restores readable workflow rows", () => {
+  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-mtabs \{[\s\S]*grid-template-columns: 1fr;[\s\S]*gap: 0;/)
+  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-mtab__top \{[\s\S]*justify-content: space-between;/)
+  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-mtab__label \{[\s\S]*white-space: nowrap;/)
+  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-roleflow__steps \{[\s\S]*display: grid;[\s\S]*grid-template-columns: 1fr;/)
+  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-roleflow__steps span \{[\s\S]*display: block;/)
+  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-direct-card__head \{[\s\S]*grid-template-columns: 38px minmax\(0, 1fr\);/)
+  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-direct-card \.wk-evidence \{[\s\S]*grid-column: 1 \/ -1;[\s\S]*max-width: 100%;/)
+})
+
 test("Market mobile role brief cards stay compact enough to compare options", () => {
   assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-direct-cards \{ display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 6px; \}/)
   assert.match(source, /\.wk-shell \.wk-direct-card \{[\s\S]*padding: 14px;[\s\S]*gap: 8px;[\s\S]*border-color: var\(--wk-border\);/)

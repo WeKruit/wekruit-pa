@@ -1773,8 +1773,90 @@ const MARKET_STYLES = String.raw`
   }
 }
 @media (max-width: 420px) {
+  .wk-shell .wk-mtabs {
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding-top: 14px;
+    margin-bottom: 28px;
+  }
+  .wk-shell .wk-mtab {
+    padding: 12px 0 15px;
+    gap: 6px;
+  }
+  .wk-shell .wk-mtab + .wk-mtab {
+    border-top: 1px solid var(--wk-border);
+  }
+  .wk-shell .wk-mtab__top {
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .wk-shell .wk-mtab__label {
+    font-size: 24px;
+    line-height: 1.12;
+    white-space: nowrap;
+  }
+  .wk-shell .wk-mtab__count {
+    margin-top: 0;
+  }
+  .wk-shell .wk-mtab__sub {
+    font-size: 12.5px;
+    line-height: 1.42;
+  }
+  .wk-shell .wk-market__h1 {
+    font-size: 38px;
+    line-height: 1.28;
+  }
+  .wk-shell .wk-roleflow {
+    padding: 16px 0;
+    margin-bottom: 12px;
+  }
+  .wk-shell .wk-roleflow__intro h2 {
+    font-size: 24px;
+    line-height: 1.18;
+  }
+  .wk-shell .wk-roleflow__steps {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .wk-shell .wk-roleflow__steps li {
+    display: grid;
+    justify-content: stretch;
+    align-items: start;
+    min-width: 0;
+    min-height: 0;
+    padding: 11px 12px;
+  }
+  .wk-shell .wk-roleflow__steps strong {
+    font-size: 13px;
+    line-height: 1.25;
+    text-align: left;
+  }
+  .wk-shell .wk-roleflow__steps span {
+    display: block;
+    color: var(--wk-ink-2);
+    font-size: 12.25px;
+    line-height: 1.35;
+  }
+  .wk-shell .wk-direct-cards {
+    gap: 10px;
+  }
+  .wk-shell .wk-direct-card {
+    padding: 15px;
+    gap: 10px;
+  }
+  .wk-shell .wk-direct-card__head {
+    grid-template-columns: 38px minmax(0, 1fr);
+    align-items: center;
+  }
   .wk-shell .wk-direct-card .wk-evidence {
-    max-width: 118px;
+    grid-column: 1 / -1;
+    justify-self: start;
+    align-items: flex-start;
+    text-align: left;
+    max-width: 100%;
   }
 }
 `
