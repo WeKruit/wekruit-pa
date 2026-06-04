@@ -201,8 +201,7 @@ export default function Landing() {
               <PulseDot size={7} /> Skip the application. Interview.
             </p>
             <h1 className="wk-hero__h1" aria-label="You don't apply. You interview.">
-              <span>You don't</span>
-              <span><em className="wk-accent">apply.</em></span>
+              <span>You don&apos;t <em className="wk-accent">apply.</em></span>
               <span>You interview.</span>
             </h1>
             <p className="wk-hero__lede">
@@ -518,7 +517,7 @@ const LANDING_STYLES = `
 }
 .wk-hero__h1 {
   --wk-hero-title-leading: 1.16;
-  --wk-hero-title-row-gap: 22px;
+  --wk-hero-title-row-gap: 4px;
   font-family: 'Newsreader', serif;
   font-weight: 400;
   display: flex;
@@ -916,7 +915,7 @@ const LANDING_STYLES = `
     gap: 36px;
     align-items: start;
   }
-  .wk-hero__h1 { --wk-hero-title-leading: 1.17; --wk-hero-title-row-gap: 18px; font-size: 48px; }
+  .wk-hero__h1 { --wk-hero-title-leading: 1.17; --wk-hero-title-row-gap: 3px; font-size: 48px; }
   .wk-hero__visual { padding-top: 32px; }
   .wk-hero__visual .wk-imsg-phone { max-width: 320px; }
   .wk-steps { grid-template-columns: 1fr; }
@@ -939,7 +938,7 @@ const LANDING_STYLES = `
   .wk-section { padding: 56px 0; }
   .wk-section__head { margin-bottom: 28px; }
   .wk-proof-card { padding: 20px; }
-  .wk-hero__h1 { --wk-hero-title-leading: 1.18; --wk-hero-title-row-gap: 14px; font-size: 38px; }
+  .wk-hero__h1 { --wk-hero-title-leading: 1.18; --wk-hero-title-row-gap: 2px; font-size: 38px; }
   .wk-hero__cta { gap: 12px; }
   .wk-hero__browse { flex-basis: 100%; }
 }
