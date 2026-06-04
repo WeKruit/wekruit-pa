@@ -203,7 +203,8 @@ export default function Landing() {
             <h1 className="wk-hero__h1" aria-label="You don't apply. You interview.">
               <span>You don't</span>
               <span><em className="wk-accent">apply.</em></span>
-              <span>You interview.</span>
+              <span>You</span>
+              <span>interview.</span>
             </h1>
             <p className="wk-hero__lede">
               Upload your résumé once. Claire — your WeKruit recruiter, on iMessage —
