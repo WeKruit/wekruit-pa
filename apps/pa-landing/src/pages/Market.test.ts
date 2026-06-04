@@ -188,6 +188,24 @@ test("Market role briefs use action cards as the primary inventory", () => {
   assert.doesNotMatch(source, /wk-tbl--direct/)
 })
 
+test("Market role briefs can be searched before candidates scan the full inventory", () => {
+  assert.match(source, /const \[directSearchQ, setDirectSearchQ\] = useState\(""\)/)
+  assert.match(source, /function roleBriefSearchTokens\(s: string\): string\[\]/)
+  assert.match(source, /function roleBriefMatchesSearch\(r: DisplayJob, search: string\): boolean/)
+  assert.match(source, /token\.startsWith\(term\)/)
+  assert.match(source, /const directSearch = directSearchQ\.trim\(\)\.toLowerCase\(\)/)
+  assert.match(source, /const filteredDirectJobs = useMemo\(\(\) => \{[\s\S]*if \(!directSearch\) return directJobs[\s\S]*roleBriefMatchesSearch\(r, directSearch\)/)
+  assert.doesNotMatch(source, /haystack\.includes\(directSearch\)/)
+  assert.match(source, /aria-label="Role brief search"/)
+  assert.match(source, /placeholder="Search role, company, location…"/)
+  assert.match(source, /Showing \{filteredDirectJobs\.length\} of \{directJobs\.length\} role briefs/)
+  assert.match(source, /setDirectSearchQ\(""\)[\s\S]*Clear/)
+  assert.match(source, /filteredDirectJobs\.length === 0 \? \([\s\S]*No role briefs match\./)
+  assert.match(source, /filteredDirectJobs\.map\(\(r\) => \([\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>/)
+  assert.match(source, /\.wk-shell \.wk-direct-toolbar \{[\s\S]*grid-template-columns: minmax\(240px, 360px\) minmax\(0, 1fr\) auto;/)
+  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-direct-toolbar \{[\s\S]*grid-template-columns: 1fr auto;/)
+})
+
 test("Market desktop role-brief cards keep the Claire action in each role block", () => {
   assert.match(source, /className="wk-direct-card__foot"[\s\S]*<button className="wk-pitchbtn wk-pitchbtn--ink wk-pitchbtn--lg" onClick=\{onTalk\}>/)
   assert.match(source, /<Icon name="message" size=\{13\} stroke=\{2\} \/> Talk to Claire/)
