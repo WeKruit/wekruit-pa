@@ -819,6 +819,28 @@ function LoginRoleSignalPreview({ title, company }: { title: string; company: st
   )
 }
 
+type LoginContextKind = "role" | "signal" | "onboarding" | "pipeline"
+
+function LoginContextStrip({ kind }: { kind: LoginContextKind }) {
+  const items: Record<LoginContextKind, string[]> = {
+    role: ["Role attached", "Profile evidence", "Consent gate"],
+    signal: ["Signal saved", "Preferences updated", "No auto-apply"],
+    onboarding: ["Profile memory", "Role targets", "Consent gate"],
+    pipeline: ["Active interviews", "Corrections", "Consent gate"],
+  }
+
+  return (
+    <section className="wk-login-context" aria-label="What Claire keeps through sign-in">
+      <span className="wk-login-context__label">Claire keeps</span>
+      <div className="wk-login-context__items">
+        {items[kind].map((item) => (
+          <span key={item} className="wk-login-context__item">{item}</span>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function LoginOnboardingPreview() {
   const items = [
     {
@@ -1075,6 +1097,8 @@ export default function CandidateLogin() {
   const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !roleSignalNext && !onboardingNext
   const showRoleSignalPreview = !isCompletingLink && roleSignalNext
   const showOnboardingPreview = !isCompletingLink && onboardingNext
+  const loginContextKind: LoginContextKind =
+    roleInterviewNext ? "role" : roleSignalNext ? "signal" : onboardingNext ? "onboarding" : "pipeline"
   const roleFirstTimeHref = roleInterviewFirstTimeHref(nextDest)
   const roleSignalFirstTimeHref = roleSignalNext ? onboardingDestinationWithReturnPath(nextDest.to, peekSource()) : null
   const firstTimeHref = roleInterviewNext
@@ -1162,6 +1186,8 @@ export default function CandidateLogin() {
             <p className="wk-login__sub">
               {loginSub}
             </p>
+
+            {!isCompletingLink ? <LoginContextStrip kind={loginContextKind} /> : null}
 
             {showRoleSignalPreview && profileRoleSignal ? <LoginRoleSignalPreview title={profileRoleSignal.title} company={profileRoleSignal.company} /> : null}
 
@@ -1625,6 +1651,37 @@ export const CANDIDATE_STYLES = `
   margin: 4px 0 0; color: var(--wk-ink);
 }
 .wk-login__sub { color: var(--wk-ink-2); font-size: 15px; line-height: 1.5; margin: 0; }
+.wk-login-context {
+  display: grid;
+  gap: 9px;
+  padding: 12px 0 2px;
+}
+.wk-login-context__label {
+  color: var(--wk-ink-3);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.wk-login-context__items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.wk-login-context__item {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 6px 10px;
+  border: 1px solid var(--wk-border);
+  border-radius: var(--wk-r-pill);
+  background: var(--wk-cream);
+  color: var(--wk-ink-2);
+  font-size: 12.5px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
 .wk-login-preview {
   display: grid;
   gap: 10px;
@@ -1727,6 +1784,9 @@ export const CANDIDATE_STYLES = `
   .wk-login__card { padding: 28px 32px; gap: 14px; }
   .wk-login__h { font-size: clamp(30px, 9vw, 36px); line-height: 1.07; }
   .wk-login__sub { font-size: 14px; line-height: 1.45; }
+  .wk-login-context { gap: 8px; padding-top: 10px; }
+  .wk-login-context__items { gap: 4px; }
+  .wk-login-context__item { min-height: 26px; padding: 5px 8px; font-size: 12px; }
   .wk-login-preview { gap: 8px; padding: 12px 0; }
   .wk-login-preview__list { gap: 8px; }
   .wk-login__providers { margin-top: 2px; }

@@ -121,7 +121,9 @@ export default function ConnectLinkedin() {
           data.reason === "missing_token"
         ) {
           setStatus("err")
-          setErrMsg("This link has expired or was already used. Text Claire and we'll send a fresh one.")
+          setErrMsg(
+            "This link has expired or was already used. Text Claire and we'll send a fresh one.",
+          )
           return
         }
         setStatus("err")
@@ -140,110 +142,240 @@ export default function ConnectLinkedin() {
   }
 
   return (
-    <div style={{ maxWidth: 480, margin: "0 auto", padding: "2.25rem 1.25rem" }}>
-      <header style={{ marginBottom: "1.5rem" }}>
-        <strong style={{ fontSize: "1.1rem", letterSpacing: "-0.02em" }}>WeKruit</strong>
-      </header>
+    <main className="wk-li-connect">
+      <style>{LINKEDIN_CONNECT_STYLES}</style>
+      <section className="wk-li-connect__panel" aria-label="Connect LinkedIn to Claire">
+        <header className="wk-li-connect__brand">
+          <strong>WeKruit</strong>
+          <span>Claire profile update</span>
+        </header>
 
-      {token && !useUrlFallback && status === "idle" ? (
-        <>
-          <h1 style={{ marginBottom: "0.25rem" }}>Connecting your LinkedIn…</h1>
-          <p style={{ color: "#5f665b", marginTop: 0 }}>
-            Taking you to LinkedIn to sign in — you'll come right back to your texts with Claire.
-          </p>
-          <button
-            type="button"
-            onClick={() => setUseUrlFallback(true)}
-            style={{
-              marginTop: "1.25rem",
-              background: "none",
-              border: "none",
-              color: "#5f665b",
-              textDecoration: "underline",
-              fontSize: 14,
-              cursor: "pointer",
-              padding: 0,
-            }}
-          >
-            Having trouble? Paste your LinkedIn URL instead
-          </button>
-        </>
-      ) : status === "ok" ? (
-        <>
-          <h1 style={{ marginBottom: "0.25rem" }}>You're all set 🎉</h1>
-          <p style={{ color: "#5f665b", marginTop: 0 }}>
-            Head back to your texts with Claire — we've got your profile.
-          </p>
-        </>
-      ) : status === "review" ? (
-        <>
-          <h1 style={{ marginBottom: "0.25rem" }}>Thanks — we're double-checking</h1>
-          <p style={{ color: "#5f665b", marginTop: 0 }}>
-            That LinkedIn profile is already linked to another account, so our team
-            will take a quick look. No action needed — Claire will follow up by text.
-          </p>
-        </>
-      ) : (
-        <>
-          <h1 style={{ marginBottom: "0.25rem" }}>Connect your LinkedIn</h1>
-          <p style={{ color: "#5f665b", marginTop: 0 }}>
-            This lets Claire pull in your experience automatically — no resume needed.
-            It only takes a second.
-          </p>
-
-          <form onSubmit={onSubmit} style={{ marginTop: "1.5rem" }}>
-            <label htmlFor="li-url" style={{ display: "block", fontSize: 14, color: "#5f665b", marginBottom: 6 }}>
-              Your LinkedIn profile URL
-            </label>
-            <input
-              id="li-url"
-              type="url"
-              inputMode="url"
-              autoComplete="url"
-              placeholder="https://www.linkedin.com/in/your-name"
-              value={linkedinUrl}
-              onChange={(e) => setLinkedinUrl(e.target.value)}
-              disabled={status === "submitting"}
-              style={{
-                width: "100%",
-                boxSizing: "border-box",
-                padding: "0.8rem 0.9rem",
-                fontSize: 16,
-                border: "1px solid #d4d8ce",
-                borderRadius: 10,
-              }}
-            />
-            <button
-              type="submit"
-              disabled={status === "submitting" || tokenMissing}
-              style={{
-                display: "block",
-                width: "100%",
-                marginTop: "1rem",
-                padding: "0.85rem 1rem",
-                fontSize: 16,
-                fontWeight: 600,
-                color: "#fff",
-                background: status === "submitting" || tokenMissing ? "#9aa295" : "#1b1f17",
-                border: "none",
-                borderRadius: 10,
-                cursor: status === "submitting" || tokenMissing ? "default" : "pointer",
-              }}
-            >
-              {status === "submitting" ? "Connecting…" : "Connect"}
-            </button>
-          </form>
-
-          {tokenMissing && (
-            <p style={{ color: "#b4452f", fontSize: 14, marginTop: "0.75rem" }}>
-              This link looks incomplete. Please reopen the link from your text message.
+        {token && !useUrlFallback && status === "idle" ? (
+          <>
+            <p className="wk-li-connect__eyebrow">Taking you to LinkedIn</p>
+            <h1 className="wk-li-connect__title">
+              <span>Connecting</span>
+              <span>LinkedIn</span>
+            </h1>
+            <p className="wk-li-connect__copy">
+              Taking you to LinkedIn to sign in — you'll come right back to your texts with Claire.
             </p>
-          )}
-          {errMsg && (
-            <p style={{ color: "#b4452f", fontSize: 14, marginTop: "0.75rem" }}>{errMsg}</p>
-          )}
-        </>
-      )}
-    </div>
+            <button
+              type="button"
+              onClick={() => setUseUrlFallback(true)}
+              className="wk-li-connect__link"
+            >
+              Having trouble? Paste your LinkedIn URL instead
+            </button>
+          </>
+        ) : status === "ok" ? (
+          <>
+            <p className="wk-li-connect__eyebrow">Profile connected</p>
+            <h1 className="wk-li-connect__title">
+              <span>You're</span>
+              <span>all set</span>
+            </h1>
+            <p className="wk-li-connect__copy">
+              Head back to your texts with Claire — we've got your profile.
+            </p>
+          </>
+        ) : status === "review" ? (
+          <>
+            <p className="wk-li-connect__eyebrow">Manual check</p>
+            <h1 className="wk-li-connect__title">
+              <span>Thanks.</span>
+              <span>We're checking.</span>
+            </h1>
+            <p className="wk-li-connect__copy">
+              That LinkedIn profile is already linked to another account, so our team will take a
+              quick look. No action needed — Claire will follow up by text.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="wk-li-connect__eyebrow">Add work history for Claire</p>
+            <h1 className="wk-li-connect__title">
+              <span>Connect your</span>
+              <span>LinkedIn</span>
+            </h1>
+            <p className="wk-li-connect__copy">
+              This lets Claire pull in your experience automatically — no resume needed. It only
+              takes a second.
+            </p>
+
+            <form onSubmit={onSubmit} className="wk-li-connect__form">
+              <label htmlFor="li-url" className="wk-li-connect__label">
+                Your LinkedIn profile URL
+              </label>
+              <input
+                id="li-url"
+                type="url"
+                inputMode="url"
+                autoComplete="url"
+                placeholder="https://www.linkedin.com/in/your-name"
+                value={linkedinUrl}
+                onChange={(e) => setLinkedinUrl(e.target.value)}
+                disabled={status === "submitting"}
+                className="wk-li-connect__input"
+              />
+              <button
+                type="submit"
+                disabled={status === "submitting" || tokenMissing}
+                className="wk-li-connect__submit"
+              >
+                {status === "submitting" ? "Connecting…" : "Connect"}
+              </button>
+            </form>
+
+            {tokenMissing && (
+              <p className="wk-li-connect__error">
+                This link looks incomplete. Please reopen the link from your text message.
+              </p>
+            )}
+            {errMsg && <p className="wk-li-connect__error">{errMsg}</p>}
+          </>
+        )}
+      </section>
+    </main>
   )
 }
+
+const LINKEDIN_CONNECT_STYLES = `
+.wk-li-connect {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: clamp(28px, 5vw, 72px) clamp(18px, 4vw, 56px);
+  background:
+    radial-gradient(circle at 52% 16%, rgba(229, 126, 54, 0.14), transparent 34%),
+    linear-gradient(180deg, #f6eee4 0%, #f2eadf 100%);
+  color: #2d1a0a;
+}
+.wk-li-connect__panel {
+  width: min(100%, 520px);
+  margin: 0 auto;
+}
+.wk-li-connect__brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: clamp(34px, 5vw, 58px);
+  font-size: 15px;
+}
+.wk-li-connect__brand strong {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 23px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.wk-li-connect__brand span,
+.wk-li-connect__eyebrow,
+.wk-li-connect__label {
+  color: #75695d;
+}
+.wk-li-connect__brand span {
+  font-size: 13px;
+}
+.wk-li-connect__eyebrow {
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+.wk-li-connect__title {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(8px, 1.2vw, 14px);
+  margin: 0 0 22px;
+  font-family: 'Newsreader', Georgia, serif;
+  font-size: clamp(48px, 6vw, 72px);
+  line-height: 1.08;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.wk-li-connect__title > span {
+  display: block;
+  line-height: 1.08;
+}
+.wk-li-connect__copy {
+  max-width: 440px;
+  margin: 0;
+  color: #61584f;
+  font-size: 17px;
+  line-height: 1.55;
+}
+.wk-li-connect__form {
+  margin-top: 26px;
+}
+.wk-li-connect__label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.wk-li-connect__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 15px;
+  font-size: 16px;
+  color: #2d1a0a;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(45, 26, 10, 0.18);
+  border-radius: 8px;
+  outline: none;
+}
+.wk-li-connect__input:focus {
+  border-color: rgba(45, 26, 10, 0.58);
+  box-shadow: 0 0 0 3px rgba(229, 126, 54, 0.18);
+}
+.wk-li-connect__submit {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
+  padding: 15px 18px;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fffaf2;
+  background: #2d1a0a;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.wk-li-connect__submit:disabled {
+  color: #fffaf2;
+  background: #9da495;
+  cursor: default;
+}
+.wk-li-connect__link {
+  margin-top: 22px;
+  padding: 0;
+  color: #4f463e;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid currentColor;
+  font-size: 14px;
+  cursor: pointer;
+}
+.wk-li-connect__error {
+  margin: 12px 0 0;
+  color: #b4452f;
+  font-size: 14px;
+  line-height: 1.45;
+}
+@media (max-width: 520px) {
+  .wk-li-connect {
+    padding: 22px 18px 40px;
+  }
+  .wk-li-connect__brand {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 32px;
+  }
+  .wk-li-connect__title {
+    font-size: clamp(42px, 14vw, 54px);
+    gap: 8px;
+  }
+}
+`

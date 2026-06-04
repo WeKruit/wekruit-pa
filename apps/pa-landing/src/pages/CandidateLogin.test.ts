@@ -60,6 +60,10 @@ test("CandidateLogin frames onboarding login as a first-time Claire start", () =
 
 test("CandidateLogin keeps onboarding auth controls before the explanatory preview", () => {
   assert.match(source, /function LoginOnboardingPreview\(\)/)
+  assert.match(source, /function LoginContextStrip\(\{ kind \}: \{ kind: LoginContextKind \}\)/)
+  assert.match(source, /aria-label="What Claire keeps through sign-in"/)
+  assert.match(source, /Claire keeps/)
+  assert.match(source, /onboarding: \["Profile memory", "Role targets", "Consent gate"\]/)
   assert.match(source, /What Claire starts after sign-in/)
   assert.match(source, /One durable Claire profile/)
   assert.match(source, /same WeKruit profile Claire uses across role interviews, evidence, and corrections/)
@@ -69,10 +73,14 @@ test("CandidateLogin keeps onboarding auth controls before the explanatory previ
   assert.match(source, /Profile corrections stay editable/)
   assert.match(source, /const showOnboardingPreview = !isCompletingLink && onboardingNext/)
   const providerIndex = source.indexOf('<div className="wk-login__providers">')
+  const contextStripIndex = source.indexOf("<LoginContextStrip kind={loginContextKind} />")
   const onboardingPreviewIndex = source.indexOf("{showOnboardingPreview ? <LoginOnboardingPreview /> : null}")
   assert.ok(providerIndex > 0)
+  assert.ok(contextStripIndex > 0)
+  assert.ok(contextStripIndex < providerIndex)
   assert.ok(onboardingPreviewIndex > providerIndex)
   assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login \{ padding: 32px 0 72px; \}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login-context__item \{ min-height: 26px; padding: 5px 8px; font-size: 12px; \}/)
   assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login__providers \{ margin-top: 2px; \}/)
 })
 
