@@ -112,6 +112,7 @@ function CompanyProfileLayout({ jobs }: { jobs: PublicJobOpening[] }) {
               <div className="wk-company-chips">
                 {heroMeta.map((item) => <span key={item}>{item}</span>)}
               </div>
+              <CompanyHeroRoleCta job={firstJob} company={company} roleCount={jobs.length} />
               {profile?.websiteUrl ? (
                 <a className="wk-company-website" href={profile.websiteUrl} target="_blank" rel="noreferrer">
                   Company website <Icon name="arrow-right" size={15} stroke={1.8} />
@@ -195,6 +196,28 @@ function CompanyProfileLayout({ jobs }: { jobs: PublicJobOpening[] }) {
   )
 }
 
+function CompanyHeroRoleCta({ job, company, roleCount }: { job: PublicJobOpening; company: string; roleCount: number }) {
+  return (
+    <section className="wk-company-hero-cta" aria-label={`Start Claire interview for ${company}`}>
+      <div>
+        <p className="wk-eyebrow">Claire-ready role</p>
+        <strong>{job.title}</strong>
+        <em>{[job.location, formatPublicJobType(job.jobType)].filter(Boolean).join("  ")}</em>
+      </div>
+      <div className="wk-company-hero-cta__actions">
+        <Link className="wk-btn wk-btn--primary wk-company-hero-cta__primary" to={`/j/${job.id}`}>
+          Start Claire interview <Icon name="arrow-right" size={16} stroke={1.8} />
+        </Link>
+        {roleCount > 1 ? (
+          <a className="wk-company-hero-cta__secondary" href="#company-open-roles">
+            See {roleCount} roles
+          </a>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
 function CompanyScreeningContract({ company, roleTitle }: { company: string; roleTitle: string }) {
   const checks = [
     {
@@ -219,8 +242,8 @@ function CompanyScreeningContract({ company, roleTitle }: { company: string; rol
     <section className="wk-company-screen" aria-label="Claire company screening contract">
       <div className="wk-company-screen__intro">
         <p className="wk-eyebrow">What Claire will test</p>
-        <h2>{company} is not a browse card.</h2>
-        <p>Open the role when you want Claire to start the company-specific screen against this company's bar.</p>
+        <h2>{company} becomes a Claire screen.</h2>
+        <p>Start a role when you want Claire to test your profile against this company's actual bar.</p>
       </div>
       <div className="wk-company-screen__list">
         {checks.map((check) => (
@@ -351,6 +374,50 @@ const COMPANY_PROFILE_STYLES = `
   color: var(--wk-ink-2);
   font-size: 14px;
 }
+.wk-company-hero-cta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 18px 20px;
+  border: 1px solid var(--wk-border);
+  border-radius: var(--wk-r-md);
+  background: rgba(255, 252, 247, 0.78);
+  box-shadow: 0 10px 28px -18px rgba(45, 26, 10, 0.22);
+}
+.wk-company-hero-cta > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+}
+.wk-company-hero-cta strong {
+  color: var(--wk-ink);
+  font-family: 'Newsreader', serif;
+  font-size: clamp(24px, 2.4vw, 32px);
+  font-weight: 400;
+  line-height: 1.05;
+}
+.wk-company-hero-cta em {
+  color: var(--wk-ink-3);
+  font-style: normal;
+  font-size: 13.5px;
+  line-height: 1.35;
+}
+.wk-company-hero-cta__actions {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+.wk-company-hero-cta__primary {
+  white-space: nowrap;
+}
+.wk-company-hero-cta__secondary {
+  color: var(--wk-ink-3);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.wk-company-hero-cta__secondary:hover { color: var(--wk-ink); }
 .wk-company-screen {
   display: grid;
   gap: 20px;
@@ -557,6 +624,13 @@ const COMPANY_PROFILE_STYLES = `
 @media (max-width: 560px) {
   .wk-company-title-row { grid-template-columns: 1fr; gap: 14px; }
   .wk-company-logo { width: 50px; height: 50px; border-radius: 12px; font-size: 26px; }
+  .wk-company-hero-cta {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 16px;
+  }
+  .wk-company-hero-cta__actions { justify-items: stretch; }
+  .wk-company-hero-cta__primary { width: 100%; justify-content: center; }
   .wk-company-screen { padding: 24px 0; }
   .wk-company-screen h2 { font-size: 29px; }
   .wk-company-screen__row { grid-template-columns: 1fr; gap: 7px; }
