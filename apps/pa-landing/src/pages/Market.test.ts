@@ -151,6 +151,16 @@ test("Market does not leak unresolved loading counts into candidate-facing chrom
   assert.match(source, /Role briefs <em className="wk-accent">ready<\/em> for Claire\./)
 })
 
+test("Market role cards explain missing compensation instead of rendering a bare dash", () => {
+  assert.match(source, /function compDisplay\(value: string \| undefined, missingLabel: string\): string/)
+  assert.match(source, /trimmed && trimmed !== "—" \? trimmed : missingLabel/)
+  assert.match(source, /comp: compDisplay\(r\.comp, "Comp not listed at source"\)/)
+  assert.match(source, /comp: compDisplay\(raw\.prescreenConfig\?\.level1Reveal\?\.salaryRange, "Comp not listed in brief"\)/)
+
+  assert.doesNotMatch(source, /comp: r\.comp \?\? "—"/)
+  assert.doesNotMatch(source, /comp: raw\.prescreenConfig\?\.level1Reveal\?\.salaryRange \?\? "—"/)
+})
+
 test("Market role briefs do not overpromise employer access or invent interview capacity", () => {
   assert.doesNotMatch(source, /hiring managers <em className="wk-accent">ready<\/em> to meet you/)
   assert.doesNotMatch(source, /arrange the interview directly/i)
