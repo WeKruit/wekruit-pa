@@ -1090,7 +1090,6 @@ export default function Market(): ReactNode {
                 </div>
               ) : (
                 <>
-                  <MarketRoleBriefWorkflow count={direct.isSuccess ? directJobs.length : undefined} />
                   <div className="wk-direct-toolbar" aria-label="Role brief search">
                     <label className="wk-market__search wk-direct-toolbar__search">
                       <input
@@ -1120,6 +1119,7 @@ export default function Market(): ReactNode {
                       <DirectCard key={r.id} r={r} onTalk={() => onTalkToClaire(r)} />
                     ))}
                   </div>
+                  <MarketRoleBriefWorkflow count={direct.isSuccess ? directJobs.length : undefined} />
                 </>
               )}
               <MarketRoleBriefContract />

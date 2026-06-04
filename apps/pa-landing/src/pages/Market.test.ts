@@ -245,7 +245,7 @@ test("Market default role-brief tab shows role inventory before the supporting C
   assert.match(source, /Your durable profile supplies constraints/)
   assert.match(source, /corrections stay attached across Claire's role screens/)
   assert.match(source, /Passed profile only after consent/)
-  assert.match(source, /\{direct\.isPending \? \([\s\S]*<MarketRoleBriefWorkflow count=\{direct\.isSuccess \? directJobs\.length : undefined\} \/>[\s\S]*<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>[\s\S]*\)\}[\s\S]*<MarketRoleBriefContract \/>/)
+  assert.match(source, /\{direct\.isPending \? \([\s\S]*<div className="wk-direct-toolbar" aria-label="Role brief search">[\s\S]*<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>[\s\S]*<MarketRoleBriefWorkflow count=\{direct\.isSuccess \? directJobs\.length : undefined\} \/>[\s\S]*\)\}[\s\S]*<MarketRoleBriefContract \/>/)
   assert.match(source, /href="\/me\/profile#profile-corrections"[\s\S]*Update profile signals/)
 
   assert.doesNotMatch(source, /guaranteed interview/i)
@@ -255,7 +255,7 @@ test("Market default role-brief tab shows role inventory before the supporting C
 test("Market keeps mobile role cards primary while preserving the compact support contract", () => {
   assert.match(source, /wk-market-contract__mobile-brief/)
   assert.match(source, /Claire screens first\. Hiring teams see a passed profile only after you approve sharing\./)
-  assert.match(source, /<MarketRoleBriefWorkflow count=\{direct\.isSuccess \? directJobs\.length : undefined\} \/>[\s\S]*<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>[\s\S]*<MarketRoleBriefContract \/>/)
+  assert.match(source, /<div className="wk-direct-toolbar" aria-label="Role brief search">[\s\S]*<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>[\s\S]*<MarketRoleBriefWorkflow count=\{direct\.isSuccess \? directJobs\.length : undefined\} \/>[\s\S]*<MarketRoleBriefContract \/>/)
   assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \{[\s\S]*display: block; padding: 14px 0 16px; margin: 16px 0 18px;/)
   assert.match(source, /\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__copy,[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__grid,[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__actions \{[\s\S]*display: none;/)
   assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-roleflow \{[\s\S]*padding: 14px 0 12px;[\s\S]*display: block;/)
