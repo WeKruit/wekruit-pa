@@ -735,6 +735,60 @@ function roleInterviewFirstTimeHref(next: ReturnType<typeof parseLoginNextPath>)
   return `${roleDest.pathname.replace(/\/cv$/, "")}${roleDest.search}${roleDest.hash}`
 }
 
+function publicJobPathForLoginNext(next: ReturnType<typeof parseLoginNextPath>): string | null {
+  const rolePath = onboardingRoleReturnPath(next) ?? (isPublicJobPath(next.pathname) ? next.to : null)
+  if (!rolePath) return null
+  const roleDest = parseLoginNextPath(rolePath, rolePath)
+  return isPublicJobPath(roleDest.pathname) ? roleDest.pathname.replace(/\/cv$/, "") : null
+}
+
+const JOB_SLUG_LABELS: Record<string, string> = {
+  ai: "AI",
+  api: "API",
+  apis: "APIs",
+  ciso: "CISO",
+  devops: "DevOps",
+  evm: "EVM",
+  gtm: "GTM",
+  ios: "iOS",
+  llm: "LLM",
+  macos: "macOS",
+  ml: "ML",
+  qa: "QA",
+  ui: "UI",
+  ux: "UX",
+}
+
+function humanizeJobSlugToken(token: string): string {
+  const lower = token.toLowerCase()
+  return JOB_SLUG_LABELS[lower] ?? lower.charAt(0).toUpperCase() + lower.slice(1)
+}
+
+function humanizeRoleSlugTokens(tokens: string[]): string {
+  if (!tokens.length) return "Open role"
+  const fullstack = tokens[tokens.length - 1]?.toLowerCase() === "fullstack"
+  const core = fullstack ? tokens.slice(0, -1) : tokens
+  const title = core.map(humanizeJobSlugToken).join(" ").trim() || "Open role"
+  return fullstack ? `${title} (Full-Stack)` : title
+}
+
+function roleInterviewSummary(next: ReturnType<typeof parseLoginNextPath>): { title: string; company: string } | null {
+  const rolePath = publicJobPathForLoginNext(next)
+  const slug = rolePath?.match(/^\/j\/([^/]+)$/)?.[1]
+  if (!slug) return null
+  const decodedSlug = decodeURIComponent(slug)
+    .replace(/^(?:wekruit|standout)-[a-f0-9]{8}-/i, "")
+    .replace(/[^a-z0-9-]/gi, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+  const [companyToken, ...roleTokens] = decodedSlug.split("-").filter(Boolean)
+  if (!companyToken || roleTokens.length === 0) return null
+  return {
+    company: humanizeJobSlugToken(companyToken),
+    title: humanizeRoleSlugTokens(roleTokens),
+  }
+}
+
 function profileRoleSignalSummary(next: ReturnType<typeof parseLoginNextPath>): { title: string; company: string } | null {
   if (!isProfileRoleSignalPath(next.pathname, next.search, next.hash)) return null
   const params = new URLSearchParams(next.search.replace(/^\?/, ""))
@@ -779,6 +833,20 @@ function LoginPipelinePreview() {
           </li>
         ))}
       </ul>
+    </section>
+  )
+}
+
+function LoginRoleInterviewSummary({ title, company, href }: { title: string; company: string; href: string }) {
+  return (
+    <section className="wk-login-role" aria-label="Selected role for this interview">
+      <span className="wk-login-role__mark" aria-hidden="true">{company.charAt(0).toUpperCase()}</span>
+      <span className="wk-login-role__body">
+        <span className="wk-login-role__k">Selected role</span>
+        <strong>{title}</strong>
+        <em>{company} · Claire role interview</em>
+      </span>
+      <Link className="wk-login-role__link" to={href}>Brief</Link>
     </section>
   )
 }
@@ -1114,6 +1182,7 @@ export default function CandidateLogin() {
   const busy = status === "google" || status === "linkedin" || status === "sending" || status === "signing_in"
   const onLayoff = isLayoffHost()
   const onboardingRoleReturn = onboardingRoleReturnPath(nextDest)
+  const roleInterview = roleInterviewSummary(nextDest)
   const profileRoleSignal = profileRoleSignalSummary(nextDest)
   const roleInterviewNext = isPublicJobPath(nextDest.pathname) || Boolean(onboardingRoleReturn)
   const roleSignalNext = Boolean(profileRoleSignal)
@@ -1210,6 +1279,10 @@ export default function CandidateLogin() {
             <p className="wk-login__sub">
               {loginSub}
             </p>
+
+            {roleInterviewNext && roleInterview ? (
+              <LoginRoleInterviewSummary title={roleInterview.title} company={roleInterview.company} href={roleFirstTimeHref ?? nextDest.to} />
+            ) : null}
 
             {!isCompletingLink ? <LoginContextStrip kind={loginContextKind} /> : null}
 
@@ -1675,6 +1748,59 @@ export const CANDIDATE_STYLES = `
   margin: 4px 0 0; color: var(--wk-ink);
 }
 .wk-login__sub { color: var(--wk-ink-2); font-size: 15px; line-height: 1.5; margin: 0; }
+.wk-login-role {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 0;
+  border-top: 1px solid var(--wk-border);
+  border-bottom: 1px solid var(--wk-border);
+}
+.wk-login-role__mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--wk-peach-200);
+  color: var(--wk-ink);
+  font-weight: 750;
+  font-size: 14px;
+  box-shadow: inset 0 0 0 1px rgba(45,26,10,.08);
+}
+.wk-login-role__body {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.wk-login-role__k {
+  color: var(--wk-ink-3);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.wk-login-role__body strong {
+  color: var(--wk-ink);
+  font-size: 14.5px;
+  line-height: 1.2;
+  font-weight: 750;
+}
+.wk-login-role__body em {
+  color: var(--wk-ink-3);
+  font-style: normal;
+  font-size: 12.5px;
+  line-height: 1.25;
+}
+.wk-login-role__link {
+  color: var(--wk-ink);
+  font-size: 12.5px;
+  font-weight: 700;
+  text-decoration: none;
+  border-bottom: 1px solid rgba(45,26,10,.45);
+}
 .wk-login-context {
   display: grid;
   gap: 10px;
@@ -1829,6 +1955,10 @@ export const CANDIDATE_STYLES = `
   .wk-login__card { padding: 28px 32px; gap: 14px; }
   .wk-login__h { font-size: clamp(30px, 9vw, 36px); line-height: 1.07; }
   .wk-login__sub { font-size: 14px; line-height: 1.45; }
+  .wk-login-role { grid-template-columns: 30px minmax(0, 1fr) auto; gap: 9px; padding: 10px 0; }
+  .wk-login-role__mark { width: 30px; height: 30px; font-size: 13px; }
+  .wk-login-role__body strong { font-size: 14px; }
+  .wk-login-role__body em { font-size: 12px; }
   .wk-login-context { gap: 9px; padding-top: 10px; }
   .wk-login-context__items { grid-template-columns: 1fr; gap: 8px; }
   .wk-login-context__item { grid-template-columns: 20px minmax(0, 1fr); gap: 8px; }
