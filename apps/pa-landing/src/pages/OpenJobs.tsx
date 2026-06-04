@@ -304,7 +304,7 @@ export default function OpenJobs() {
       <Nav />
       <GuestBanner />
 
-      <section style={{ paddingTop: 32, paddingBottom: 96 }}>
+      <section className="open-main-section" style={{ paddingTop: 32, paddingBottom: 96 }}>
         <div className="container" style={{ maxWidth: 1280 }}>
           <Tabs value={tab} onChange={setTab} huntCount={huntJobs?.length} directCount={directJobs?.length} />
 
@@ -374,6 +374,10 @@ export default function OpenJobs() {
           .open-sidebar { display: none; }
         }
         @media (max-width: 720px) {
+          .open-main-section {
+            padding-top: 18px !important;
+            padding-bottom: 64px !important;
+          }
           .open-nav__inner {
             height: auto !important;
             padding: 14px 20px !important;
@@ -395,11 +399,65 @@ export default function OpenJobs() {
           }
           .open-nav__actions > a:first-child { display: none; }
           .open-nav__actions .btn { white-space: nowrap; }
-          .open-guest__inner { padding: 10px 20px !important; }
-          .open-header { align-items: stretch !important; }
+          .open-guest__inner {
+            padding: 8px 20px !important;
+            gap: 8px !important;
+          }
+          .open-guest__inner .btn { display: none; }
+          .open-tabs {
+            display: grid !important;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 8px !important;
+            border-bottom: 0 !important;
+            margin-bottom: 18px !important;
+          }
+          .open-tab {
+            min-width: 0;
+            padding: 11px 12px 12px !important;
+            border: 1px solid var(--border) !important;
+            border-radius: 14px;
+            background: var(--cream-3);
+            white-space: normal !important;
+          }
+          .open-tab.is-active {
+            border-color: var(--ink) !important;
+            background: var(--cream-2);
+          }
+          .open-tab__top {
+            width: 100%;
+            justify-content: space-between;
+            gap: 8px !important;
+          }
+          .open-tab__label { font-size: 19px !important; }
+          .open-tab__count {
+            padding: 1px 6px !important;
+            font-size: 10px !important;
+          }
+          .open-tab__sub {
+            white-space: normal;
+            font-size: 11px !important;
+            line-height: 1.28;
+          }
+          .open-header {
+            align-items: stretch !important;
+            gap: 14px !important;
+            margin-bottom: 16px !important;
+          }
+          .open-header__copy { flex: 1 1 100% !important; }
+          .open-header__title {
+            font-size: clamp(28px, 8vw, 34px) !important;
+            line-height: 1.08 !important;
+          }
+          .open-header__lede {
+            margin-top: 10px !important;
+            font-size: 14px !important;
+            line-height: 1.45 !important;
+          }
+          .open-header__total { display: none; }
           .open-header__controls {
             width: 100%;
             flex: 1 1 100% !important;
+            gap: 8px !important;
           }
           .open-search { width: 100% !important; min-width: 0; }
           .open-layout-switcher {
@@ -409,6 +467,30 @@ export default function OpenJobs() {
           .open-layout-switcher button {
             flex: 1;
             justify-content: center;
+          }
+          .open-layout { gap: 16px !important; }
+          .open-card-list { gap: 10px !important; }
+          .open-role-card {
+            padding: 16px !important;
+            gap: 12px !important;
+            border-radius: 16px !important;
+          }
+          .open-role-card__title {
+            font-size: 22px !important;
+            line-height: 1.14 !important;
+          }
+          .open-role-card__summary {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            font-size: 13px !important;
+            line-height: 1.45 !important;
+          }
+          .open-role-card__footer {
+            padding-top: 10px !important;
+            gap: 8px !important;
+            align-items: flex-start !important;
           }
           .open-card-list--grid { grid-template-columns: 1fr !important; }
           .open-table-shell {
@@ -430,6 +512,7 @@ function Tabs({ value, onChange, huntCount, directCount }: TabsProps) {
     const active = value === id
     return (
       <button
+        className={`open-tab${active ? " is-active" : ""}`}
         type="button"
         onClick={() => onChange(id)}
         style={{
@@ -445,20 +528,20 @@ function Tabs({ value, onChange, huntCount, directCount }: TabsProps) {
           transition: "color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)",
         }}
       >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontFamily: "var(--font-serif)", fontSize: 22, fontWeight: 400, letterSpacing: "-0.01em" }}>{label}</span>
+        <span className="open-tab__top" style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+          <span className="open-tab__label" style={{ fontFamily: "var(--font-serif)", fontSize: 22, fontWeight: 400, letterSpacing: "-0.01em" }}>{label}</span>
           {typeof count === "number" ? (
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "2px 7px", borderRadius: 999, background: active ? "var(--cream-2)" : "transparent", border: "1px solid var(--border)" }}>
+            <span className="open-tab__count" style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", padding: "2px 7px", borderRadius: 999, background: active ? "var(--cream-2)" : "transparent", border: "1px solid var(--border)" }}>
               {count}
             </span>
           ) : null}
         </span>
-        <span style={{ fontSize: 12, color: "var(--ink-3)" }}>{sub}</span>
+        <span className="open-tab__sub" style={{ fontSize: 12, color: "var(--ink-3)" }}>{sub}</span>
       </button>
     )
   }
   return (
-    <div style={{ display: "flex", gap: 8, borderBottom: "1px solid var(--border)", marginBottom: 32, flexWrap: "wrap" }}>
+    <div className="open-tabs" style={{ display: "flex", gap: 8, borderBottom: "1px solid var(--border)", marginBottom: 32, flexWrap: "wrap" }}>
       <Tab id="hunt" label="Tracked roles" sub="External source listings, not WeKruit-screened yet" count={huntCount} />
       <Tab id="direct" label="Direct line" sub="Roles from hiring teams today" count={directCount} />
     </div>
@@ -480,24 +563,24 @@ function Header({ tab, count, total, search, setSearch, layout, setLayout }: Hea
   const isDirect = tab === "direct"
   return (
     <div className="open-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 28 }}>
-      <div style={{ flex: "1 1 460px", minWidth: 0 }}>
+      <div className="open-header__copy" style={{ flex: "1 1 460px", minWidth: 0 }}>
         <div className="eyebrow" style={{ marginBottom: 10, color: isDirect ? "var(--success)" : "var(--ink-3)" }}>
           {isDirect ? "● Direct line · Claire starts the first interview" : "External roles · Source listings"}
         </div>
-        <h1 style={{ fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: "clamp(32px, 3.6vw, 48px)", lineHeight: 1.05, letterSpacing: "-0.02em", margin: 0 }}>
+        <h1 className="open-header__title" style={{ fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: "clamp(32px, 3.6vw, 48px)", lineHeight: 1.05, letterSpacing: "-0.02em", margin: 0 }}>
           {isDirect ? (
             <>{count} direct-line roles <em style={{ fontStyle: "italic" }}>through us</em>.</>
           ) : (
             <>{count} <em style={{ fontStyle: "italic" }}>External roles WeKruit is tracking</em>.</>
           )}
         </h1>
-        <p style={{ marginTop: 14, marginBottom: 0, maxWidth: 640, color: "var(--ink-2)", fontSize: 16, lineHeight: 1.55 }}>
+        <p className="open-header__lede" style={{ marginTop: 14, marginBottom: 0, maxWidth: 640, color: "var(--ink-2)", fontSize: 16, lineHeight: 1.55 }}>
           {isDirect
             ? "These teams work with WeKruit. Claire starts the first interview, then passed profiles go to the hiring team with the transcript and evidence."
             : "These are external source listings. WeKruit shows the public role, the source link, and the matching context we can verify; they are not WeKruit-screened yet."}
         </p>
         {total > 0 && total !== count && (
-          <p style={{ marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-3)" }}>
+          <p className="open-header__total" style={{ marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-3)" }}>
             ({total} total before filters)
           </p>
         )}
@@ -738,7 +821,7 @@ function TableRow({ j, tab }: { j: UnifiedJob; tab: TabId }) {
 
 function CardsList({ jobs, tab, variant }: { jobs: UnifiedJob[]; tab: TabId; variant: "row" | "grid" }) {
   return (
-    <div className={variant === "grid" ? "open-card-list--grid" : undefined} style={variant === "grid" ? { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 } : { display: "flex", flexDirection: "column", gap: 12 }}>
+    <div className={variant === "grid" ? "open-card-list open-card-list--grid" : "open-card-list"} style={variant === "grid" ? { display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 } : { display: "flex", flexDirection: "column", gap: 12 }}>
       {jobs.map((j) => <Card key={j.id} j={j} tab={tab} variant={variant} />)}
     </div>
   )
@@ -750,6 +833,7 @@ function Card({ j, tab, variant }: { j: UnifiedJob; tab: TabId; variant: "row" |
   const isGrid = variant === "grid"
   return (
     <article
+      className="open-role-card"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
@@ -776,9 +860,9 @@ function Card({ j, tab, variant }: { j: UnifiedJob; tab: TabId; variant: "row" |
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--ink-3)", whiteSpace: "nowrap" }}>{j.posted ?? ""}</span>
       </div>
       <div>
-        <h3 style={{ margin: 0, fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: isGrid ? 22 : 26, lineHeight: 1.15, letterSpacing: "-0.015em", color: "var(--ink)" }}>{j.title}</h3>
+        <h3 className="open-role-card__title" style={{ margin: 0, fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: isGrid ? 22 : 26, lineHeight: 1.15, letterSpacing: "-0.015em", color: "var(--ink)" }}>{j.title}</h3>
         {j.summary && (
-          <p style={{ margin: "10px 0 0", fontSize: 14, color: "var(--ink-2)", lineHeight: 1.55 }}>{j.summary}</p>
+          <p className="open-role-card__summary" style={{ margin: "10px 0 0", fontSize: 14, color: "var(--ink-2)", lineHeight: 1.55 }}>{j.summary}</p>
         )}
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -787,7 +871,7 @@ function Card({ j, tab, variant }: { j: UnifiedJob; tab: TabId; variant: "row" |
         {j.location && <Chip>{j.location}</Chip>}
         {j.comp && <Chip>{j.comp}</Chip>}
       </div>
-      <div style={{ marginTop: "auto", paddingTop: 14, borderTop: "1px dashed var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+      <div className="open-role-card__footer" style={{ marginTop: "auto", paddingTop: 14, borderTop: "1px dashed var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <StatusPill j={j} tab={tab} />
         <RowCta j={j} tab={tab} />
       </div>
