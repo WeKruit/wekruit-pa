@@ -150,7 +150,23 @@ test("OpenJobs mobile layout gets candidates to real role cards before filter ch
   assert.match(source, /className=\{variant === "grid" \? "open-card-list open-card-list--grid" : "open-card-list"\}/)
   assert.match(source, /className="open-role-card"/)
   assert.match(source, /className="open-role-card__summary"/)
+  assert.match(source, /className="open-role-card__mobile-action"/)
+  assert.match(source, /className="open-role-card__footer-action"/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-role-card__summary[\s\S]*-webkit-line-clamp: 2/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-role-card__mobile-action[\s\S]*display: flex;/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-role-card__mobile-action \.btn[\s\S]*width: 100%;/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-role-card__footer-action[\s\S]*display: none !important;/)
+})
+
+test("OpenJobs mobile role cards surface the interview action before metadata", () => {
+  assert.match(
+    source,
+    /<div className="open-role-card__mobile-action">[\s\S]*<RowCta j=\{j\} tab=\{tab\} \/>[\s\S]*<\/div>[\s\S]*<div style=\{\{ display: "flex", gap: 6, flexWrap: "wrap" \}\}>/,
+  )
+  assert.match(
+    source,
+    /<span className="open-role-card__footer-action">[\s\S]*<RowCta j=\{j\} tab=\{tab\} \/>[\s\S]*<\/span>/,
+  )
 })
 
 test("OpenJobs role cards suppress summaries that only repeat the title", () => {
