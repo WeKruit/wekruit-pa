@@ -1272,7 +1272,7 @@ export default function CandidateLogin() {
           ? "One sec — confirming your sign-in and opening Claire's profile flow."
         : referralNext
           ? "One sec — confirming your sign-in and opening the referral ledger."
-          : "One sec — confirming your sign-in and opening onboarding."
+          : "One sec — confirming your sign-in and pulling up your active pipeline."
       : onboardingRoleReturn
         ? "Sign in once and Claire will keep this role attached to your profile flow. Magic-link, Google, or LinkedIn — your choice."
         : roleInterviewNext

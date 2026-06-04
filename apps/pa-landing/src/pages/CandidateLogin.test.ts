@@ -124,6 +124,11 @@ test("CandidateLogin /me sign-in keeps auth controls before the operating-home p
   assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login__card--pipeline \.wk-login-preview \{ gap: 7px; padding: 10px 0; \}/)
 })
 
+test("CandidateLogin /me signing-in status opens the pipeline, not onboarding", () => {
+  assert.match(source, /: "One sec — confirming your sign-in and pulling up your active pipeline\."/)
+  assert.doesNotMatch(source, /: "One sec — confirming your sign-in and opening onboarding\."/)
+})
+
 test("CandidateLogin frames referral dashboard auth around rewards and invite tracking", () => {
   assert.match(source, /const referralNext = nextDest\.pathname === "\/me\/refer"/)
   assert.match(source, /referralNext \? "referral" : "pipeline"/)
