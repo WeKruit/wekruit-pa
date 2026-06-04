@@ -51,3 +51,15 @@ test("CompanyProfile role cards expose the Claire interview action", () => {
   assert.doesNotMatch(source, /Apply now/i)
   assert.doesNotMatch(source, /Browse role/i)
 })
+
+test("CompanyProfile routes market navigation to the canonical market surface", () => {
+  assert.match(source, /Role briefs and company details are shared through the WeKruit interview process\./)
+  assert.match(source, /<Link className="wk-company-back" to="\/market">/)
+  assert.match(source, /<Icon name="arrow-left" size=\{16\} stroke=\{1\.8\} \/> Market/)
+  assert.match(source, /<Link className="wk-btn wk-btn--primary" to="\/market">/)
+  assert.match(source, /Open market <Icon name="arrow-right" size=\{16\} stroke=\{1\.8\} \/>/)
+
+  assert.doesNotMatch(source, /to="\/open"/)
+  assert.doesNotMatch(source, /See open roles/)
+  assert.doesNotMatch(source, /Open roles and company details/)
+})

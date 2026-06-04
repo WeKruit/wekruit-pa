@@ -14,7 +14,6 @@ import Market from "./pages/Market.js"
 import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
 import CompanyProfile from "./pages/CompanyProfile.js"
-import OpenJobs from "./pages/OpenJobs.js"
 import Onboarding from "./pages/Onboarding.js"
 import EmployerSignup from "./pages/EmployerSignup.js"
 import Employers, { EmployersInbox } from "./pages/Employers.js"
@@ -34,10 +33,10 @@ const IS_LAYOFF_HOST = host.startsWith("layoff.") || host === "layoff-wekruit.we
 const HomeLanding = IS_LAYOFF_HOST ? LayoffLanding : Landing
 
 // Adam directive 2026-05-16: "tanstack / cache / paginated job load". Single
-// shared QueryClient — 5 min staleTime means revisits to /open and /market
-// paint instantly from cache; 30 min gcTime keeps freed entries around for
-// back/forward navigation. Disable refetchOnWindowFocus to avoid burning a
-// Firestore read every time the user tabs back.
+// shared QueryClient — 5 min staleTime means revisits to the market and role
+// pages paint instantly from cache; 30 min gcTime keeps freed entries around
+// for back/forward navigation. Disable refetchOnWindowFocus to avoid burning
+// a Firestore read every time the user tabs back.
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -76,7 +75,7 @@ const fullRoutes = (
     <Route path="/companies/:companyId" element={<CompanyProfile />} />
     <Route path="/j/:jobId" element={<PublicJob />} />
     <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
-    <Route path="/open" element={<OpenJobs />} />
+    <Route path="/open" element={<Navigate to="/market" replace />} />
     <Route path="/onboarding" element={<Onboarding />} />
     <Route path="/employer" element={<EmployerSignup />} />
     <Route path="/employers" element={<Employers />} />

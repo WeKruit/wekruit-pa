@@ -18,3 +18,11 @@ test("candidate public job routes stay on the candidate host", () => {
   assert.doesNotMatch(source, /Canonical host = apex `wekruit\.com`/)
   assert.doesNotMatch(source, /host === "candidate\.wekruit\.com"[\s\S]*window\.location\.pathname\.startsWith\("\/j\/"\)[\s\S]*window\.location\.replace\(target\)/)
 })
+
+test("legacy open route resolves to the canonical candidate market", () => {
+  assert.match(source, /<Route path="\/market" element=\{<Market \/>\} \/>/)
+  assert.match(source, /<Route path="\/jobs" element=\{<Market \/>\} \/>/)
+  assert.match(source, /<Route path="\/open" element=\{<Navigate to="\/market" replace \/>\} \/>/)
+  assert.doesNotMatch(source, /import OpenJobs from "\.\/pages\/OpenJobs\.js"/)
+  assert.doesNotMatch(source, /<Route path="\/open" element=\{<OpenJobs \/>\} \/>/)
+})
