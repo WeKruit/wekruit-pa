@@ -153,7 +153,7 @@ export default function ConnectLinkedin() {
         {token && !useUrlFallback && status === "idle" ? (
           <>
             <p className="wk-li-connect__eyebrow">Taking you to LinkedIn</p>
-            <h1 className="wk-li-connect__title">
+            <h1 className="wk-li-connect__title" aria-label="Connecting LinkedIn">
               <span>Connecting</span>
               <span>LinkedIn</span>
             </h1>
@@ -171,7 +171,7 @@ export default function ConnectLinkedin() {
         ) : status === "ok" ? (
           <>
             <p className="wk-li-connect__eyebrow">Profile connected</p>
-            <h1 className="wk-li-connect__title">
+            <h1 className="wk-li-connect__title" aria-label="You're all set">
               <span>You're</span>
               <span>all set</span>
             </h1>
@@ -182,7 +182,7 @@ export default function ConnectLinkedin() {
         ) : status === "review" ? (
           <>
             <p className="wk-li-connect__eyebrow">Manual check</p>
-            <h1 className="wk-li-connect__title">
+            <h1 className="wk-li-connect__title" aria-label="Thanks. We're checking.">
               <span>Thanks.</span>
               <span>We're checking.</span>
             </h1>
@@ -194,7 +194,7 @@ export default function ConnectLinkedin() {
         ) : (
           <>
             <p className="wk-li-connect__eyebrow">Add work history for Claire</p>
-            <h1 className="wk-li-connect__title">
+            <h1 className="wk-li-connect__title" aria-label="Connect your LinkedIn">
               <span>Connect your</span>
               <span>LinkedIn</span>
             </h1>
@@ -242,16 +242,16 @@ export default function ConnectLinkedin() {
 
 const LINKEDIN_CONNECT_STYLES = `
 .wk-li-connect {
-  min-height: 100vh;
+  min-height: 100dvh;
   box-sizing: border-box;
-  padding: clamp(28px, 5vw, 72px) clamp(18px, 4vw, 56px);
-  background:
-    radial-gradient(circle at 52% 16%, rgba(229, 126, 54, 0.14), transparent 34%),
-    linear-gradient(180deg, #f6eee4 0%, #f2eadf 100%);
+  display: grid;
+  place-items: start center;
+  padding: clamp(30px, 5vw, 68px) clamp(18px, 4vw, 56px);
+  background: linear-gradient(180deg, #f7efe6 0%, #f1e8dc 100%);
   color: #2d1a0a;
 }
 .wk-li-connect__panel {
-  width: min(100%, 520px);
+  width: min(100%, 548px);
   margin: 0 auto;
 }
 .wk-li-connect__brand {
@@ -286,14 +286,15 @@ const LINKEDIN_CONNECT_STYLES = `
 .wk-li-connect__title {
   display: flex;
   flex-direction: column;
-  gap: clamp(12px, 1.4vw, 18px);
-  margin: 0 0 22px;
+  gap: clamp(6px, 0.8vw, 10px);
+  margin: 0 0 18px;
   font-family: 'Newsreader', Georgia, serif;
-  font-size: clamp(48px, 6vw, 72px);
-  line-height: 1.24;
+  font-size: clamp(40px, 5vw, 62px);
+  line-height: 1.16;
   font-weight: 400;
   letter-spacing: 0;
   text-wrap: balance;
+  overflow-wrap: anywhere;
 }
 .wk-li-connect__title > span {
   display: block;
@@ -303,11 +304,11 @@ const LINKEDIN_CONNECT_STYLES = `
   max-width: 440px;
   margin: 0;
   color: #61584f;
-  font-size: 17px;
-  line-height: 1.55;
+  font-size: 16px;
+  line-height: 1.5;
 }
 .wk-li-connect__form {
-  margin-top: 26px;
+  margin-top: 24px;
 }
 .wk-li-connect__label {
   display: block;
@@ -345,7 +346,7 @@ const LINKEDIN_CONNECT_STYLES = `
 }
 .wk-li-connect__submit:disabled {
   color: #fffaf2;
-  background: #9da495;
+  background: #8f9388;
   cursor: default;
 }
 .wk-li-connect__link {
@@ -366,18 +367,21 @@ const LINKEDIN_CONNECT_STYLES = `
 }
 @media (max-width: 520px) {
   .wk-li-connect {
-    padding: 22px 18px 40px;
+    padding: 22px 18px 36px;
   }
   .wk-li-connect__brand {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 6px;
-    margin-bottom: 32px;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 26px;
   }
+  .wk-li-connect__brand span { font-size: 12.5px; }
   .wk-li-connect__title {
-    font-size: clamp(42px, 14vw, 54px);
-    line-height: 1.28;
-    gap: 10px;
+    font-size: clamp(34px, 11vw, 42px);
+    line-height: 1.2;
+    gap: 6px;
+    margin-bottom: 16px;
   }
+  .wk-li-connect__copy { font-size: 15.5px; line-height: 1.52; }
+  .wk-li-connect__form { margin-top: 22px; }
 }
 `
