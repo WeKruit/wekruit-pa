@@ -7,8 +7,8 @@
  *
  * Three surfaces:
  *   • ReferPage         → /me/refer   (signed-in dashboard: ledger + composer + list)
- *   • ReferPublicPage   → /refer       (public marketing; "earn up to $4,050")
- *   • ReferPublicPage   → /r/:slug     (inviter-anchored landing; hero "X thinks you'd be a fit")
+ *   • ReferPublicPage   → /refer       (public marketing; candidate loop first)
+ *   • ReferPublicPage   → /r/:slug     (inviter-anchored landing; hero opens Claire's loop)
  *
  * ReferPage reads from `paReferDashboardList` when authed. The composer posts
  * to `paReferInviteSend`. The /r/:slug landing resolves the slug → inviter display name via
@@ -270,8 +270,8 @@ function ReferJourney() {
   return (
     <section className="wk-ref-sec" id="journey">
       <div className="wk-ref-sec__head">
-        <h2 className="wk-ref-sec__h">How rewards unlock</h2>
-        <span className="wk-ref-sec__sub">Rewards are tracked here after interviews and offers are confirmed.</span>
+        <h2 className="wk-ref-sec__h">What happens after an invite</h2>
+        <span className="wk-ref-sec__sub">Claire handles profile, role screens, and verified milestone tracking.</span>
       </div>
       <div className="wk-ref-journey">
         <div className="wk-ref-journey__rail">
@@ -281,23 +281,23 @@ function ReferJourney() {
               <span className="wk-ref-stop__dot">1</span>
             </div>
             <p className="wk-ref-stop__t">You invite</p>
-            <p className="wk-ref-stop__d">Paste an email or share your link. Your friend gets a warm note.</p>
+            <p className="wk-ref-stop__d">Paste an email or share your link. Your friend sees who opened the door.</p>
           </div>
           <div className="wk-ref-stop">
             <div className="wk-ref-stop__top">
               <span className="wk-ref-stop__line" />
               <span className="wk-ref-stop__dot">2</span>
             </div>
-            <p className="wk-ref-stop__t">They join</p>
-            <p className="wk-ref-stop__d">One tap. Claire takes the resume conversation from there.</p>
+            <p className="wk-ref-stop__t">Claire builds context</p>
+            <p className="wk-ref-stop__d">Profile and resume signal become a reusable candidate record.</p>
           </div>
           <div className="wk-ref-stop wk-ref-stop--reward">
             <div className="wk-ref-stop__top">
               <span className="wk-ref-stop__line" />
               <span className="wk-ref-stop__dot"><Icon name="check" size={14} stroke={2.6} /></span>
             </div>
-            <p className="wk-ref-stop__t">Interview booked</p>
-            <p className="wk-ref-stop__d">A hiring manager confirms an interview slot with them.</p>
+            <p className="wk-ref-stop__t">Role screen clears</p>
+            <p className="wk-ref-stop__d">A hiring manager confirms the first interview milestone.</p>
             <p className="wk-ref-stop__reward">
               + {fmtMoney(REWARD_INTERVIEW)}{" "}
               <span style={{ fontStyle: "normal", fontSize: 12, color: "var(--ink-3)", marginLeft: 4 }}>tracked after confirmation</span>
@@ -309,7 +309,7 @@ function ReferJourney() {
               <span className="wk-ref-stop__dot"><Icon name="check" size={18} stroke={2.6} /></span>
             </div>
             <p className="wk-ref-stop__t">Offer signed</p>
-            <p className="wk-ref-stop__d">They start the job. Both sides happy. Both sides paid.</p>
+            <p className="wk-ref-stop__d">They start the job. WeKruit ops verifies the placement milestone.</p>
             <p className="wk-ref-stop__reward">+ {fmtMoney(REWARD_PLACEMENT)}</p>
           </div>
         </div>
@@ -1000,22 +1000,22 @@ const REFER_PUBLIC_RULES = [
 function ReferPublicTrustContract() {
   const items = [
     {
-      title: "Personal note, not a blast",
-      body: "Your friend sees who invited them and why WeKruit may fit.",
+      title: "Personal note opens the door",
+      body: "Your friend sees who invited them before Claire asks for profile and resume context.",
     },
     {
-      title: "Claire starts with profile and resume context",
-      body: "The first step is a candidate-owned profile conversation before any role-specific screen.",
+      title: "Claire builds the reusable profile",
+      body: "The first conversation captures durable signal before any role-specific screen.",
     },
     {
-      title: "No blind sharing",
-      body: "Hiring teams see passed evidence only after consent.",
+      title: "Role screens stay consent-gated",
+      body: "Claire can screen role briefs, but hiring teams see passed evidence only after approval.",
     },
   ]
 
   return (
-    <section className="wk-ref-public-trust" aria-label="What your friend gets">
-      <p className="wk-ref-public-trust__eyebrow">What your friend gets</p>
+    <section className="wk-ref-public-trust" aria-label="Friend-side referral loop">
+      <p className="wk-ref-public-trust__eyebrow">Friend-side loop</p>
       <div className="wk-ref-public-trust__grid">
         {items.map((item) => (
           <article className="wk-ref-public-trust__item" key={item.title}>
@@ -1034,7 +1034,6 @@ function ReferPublicTrustContract() {
 }
 
 function ReferPublicHero({ inviter }: { inviter: string | null }) {
-  const max = REWARD_INTERVIEW + REWARD_PLACEMENT
   const navigate = useNavigate()
   const primaryHref = inviter ? "/login" : REFERRAL_DASHBOARD_LOGIN
   return (
@@ -1068,26 +1067,26 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
           <h1 className="wk-ref-hero__h">
             {inviter ? (
               <>
-                {inviter.split(/\s+/)[0]} thinks you&apos;d be a fit. <em>Worth a look.</em>
+                {inviter.split(/\s+/)[0]} opened Claire&apos;s loop for you. <em>Worth a look.</em>
               </>
             ) : (
               <>
-                Send a friend to WeKruit. Earn up to <em>{fmtMoney(max)}</em> when they&apos;re hired.
+                Refer a friend into Claire&apos;s <em>interview loop.</em>
               </>
             )}
           </h1>
           <p className="wk-ref-hero__sub" style={{ maxWidth: 580 }}>
             {inviter ? (
               <>
-                They start with <strong>Claire</strong> — same flow they do. If you take an interview,{" "}
-                {inviter.split(/\s+/)[0]} earns {fmtMoney(REWARD_INTERVIEW)}. If you sign an offer,{" "}
-                {fmtMoney(REWARD_PLACEMENT)}. Costs you nothing.
+                Start with <strong>Claire</strong>: profile conversation first, role screens second, sharing only after
+                consent. If verified interview or placement milestones happen, {inviter.split(/\s+/)[0]} can earn the
+                referral rewards. Costs you nothing.
               </>
             ) : (
               <>
-                The program every candidate gets the day they join. <strong>{fmtMoney(REWARD_INTERVIEW)}</strong> per
-                friend interviewed, <strong>{fmtMoney(REWARD_PLACEMENT)}</strong> per friend placed. Personal referrals
-                only; daily safety limits apply.
+                They get a candidate-owned profile conversation, role screens Claire can run, and consent-gated
+                sharing. You can earn <strong>{fmtMoney(REWARD_INTERVIEW)}</strong> after a verified hiring-manager
+                interview and <strong>{fmtMoney(REWARD_PLACEMENT)}</strong> after a verified offer/start.
               </>
             )}
           </p>
@@ -1096,7 +1095,7 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
 
           <div className="wk-ref-public-cta">
             <button type="button" className="wk-btn wk-btn--primary wk-btn--lg" onClick={() => navigate(primaryHref)}>
-              {inviter ? "Start with Claire" : "Sign up to start earning"} <Icon name="arrow-right" size={14} stroke={2} />
+              {inviter ? "Start with Claire" : "Open referral dashboard"} <Icon name="arrow-right" size={14} stroke={2} />
             </button>
             <Link to={inviter ? "/login" : REFERRAL_DASHBOARD_LOGIN} className="wk-ref-public-cta__alt">
               I already have an account
@@ -1106,16 +1105,16 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
 
         <div className="wk-ref-public-stats">
           <div className="wk-ref-public-stat">
-            <div className="wk-ref-public-stat__num">{fmtMoney(REWARD_INTERVIEW)}</div>
-            <div className="wk-ref-public-stat__lbl">Confirmed interview reward</div>
+            <div className="wk-ref-public-stat__num">Profile</div>
+            <div className="wk-ref-public-stat__lbl">Claire starts with a candidate-owned record.</div>
           </div>
           <div className="wk-ref-public-stat">
-            <div className="wk-ref-public-stat__num">{fmtMoney(REWARD_PLACEMENT)}</div>
-            <div className="wk-ref-public-stat__lbl">Verified offer reward</div>
+            <div className="wk-ref-public-stat__num">Screens</div>
+            <div className="wk-ref-public-stat__lbl">Role briefs become evidence-first conversations.</div>
           </div>
           <div className="wk-ref-public-stat">
-            <div className="wk-ref-public-stat__num">Email</div>
-            <div className="wk-ref-public-stat__lbl">Same-address attribution</div>
+            <div className="wk-ref-public-stat__num">Ledger</div>
+            <div className="wk-ref-public-stat__lbl">Rewards track only verified interview and offer milestones.</div>
           </div>
         </div>
       </div>
@@ -1162,11 +1161,11 @@ function ReferPublicCallout() {
         <div className="wk-ref-callout__body">
           <p className="wk-ref-callout__eyebrow">No catch</p>
           <h2 className="wk-ref-callout__h">
-            The same money companies pay <em>head&#8209;hunters</em> — we pay you.
+            Referral credit follows <em>verified outcomes</em>, not spam.
           </h2>
           <p className="wk-ref-callout__sub">
-            Companies pay placement fees either way. We just think the person who knew your friend was a fit
-            should get cut of it — not a recruiter cold-emailing them.
+            Your friend keeps the candidate relationship with Claire. You see attribution and rewards only when
+            WeKruit can verify the email, interview, and offer milestones.
           </p>
         </div>
         <button type="button" className="wk-btn wk-btn--primary wk-btn--lg" onClick={() => navigate(REFERRAL_DASHBOARD_LOGIN)}>
