@@ -98,8 +98,9 @@ test("CandidateLogin keeps onboarding auth controls before the explanatory previ
   assert.ok(onboardingPreviewIndex > providerIndex)
   assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login \{ padding: 32px 0 72px; \}/)
   assert.match(source, /\.wk-login-context__items \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/)
-  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login-context__items \{ grid-template-columns: 1fr; gap: 8px; \}/)
-  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login-context__item em \{ font-size: 12px; line-height: 1\.3; \}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login-context__items \{[\s\S]*display: flex;[\s\S]*flex-wrap: wrap;[\s\S]*gap: 6px;[\s\S]*\}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login-context__item \{[\s\S]*display: inline-flex;[\s\S]*border-radius: var\(--wk-r-pill\);[\s\S]*\}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login-context__item em \{ display: none; \}/)
   assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login__providers \{ margin-top: 2px; \}/)
 })
 
