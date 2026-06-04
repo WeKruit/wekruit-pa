@@ -27,3 +27,14 @@ test("ConnectLinkedin uses controlled headline rows instead of an overlapping ra
   )
   assert.doesNotMatch(source, /font-size: clamp\(42px, 14vw, 54px\)/)
 })
+
+test("ConnectLinkedin missing-token state does not render a dead URL form", () => {
+  assert.match(source, /function MissingConnectToken\(\)/)
+  assert.match(source, /<h1 className="wk-li-connect__title" aria-label="Open your Claire link">/)
+  assert.match(source, /This page needs the secure LinkedIn link Claire texted you\./)
+  assert.match(source, /href="\/me"[\s\S]*Go to My WeKruit/)
+  assert.match(source, /href="\/onboarding"[\s\S]*Start with Claire instead/)
+  assert.match(source, /\{tokenMissing \? \(\s*<MissingConnectToken \/>[\s\S]*\) : token && !useUrlFallback && status === "idle" \?/)
+  assert.doesNotMatch(source, /disabled=\{status === "submitting" \|\| tokenMissing\}/)
+  assert.doesNotMatch(source, /This link looks incomplete\. Please reopen the link from your text message\./)
+})

@@ -50,6 +50,30 @@ function looksLikeLinkedinUrl(value: string): boolean {
   return t.includes("linkedin.com/in/") || t.includes("linkedin.com/pub/")
 }
 
+function MissingConnectToken() {
+  return (
+    <>
+      <p className="wk-li-connect__eyebrow">Secure link missing</p>
+      <h1 className="wk-li-connect__title" aria-label="Open your Claire link">
+        <span>Open your</span>
+        <span>Claire link</span>
+      </h1>
+      <p className="wk-li-connect__copy">
+        This page needs the secure LinkedIn link Claire texted you. Reopen that
+        message so the profile update attaches to the right WeKruit account.
+      </p>
+      <div className="wk-li-connect__actions">
+        <a className="wk-li-connect__button" href="/me">
+          Go to My WeKruit
+        </a>
+        <a className="wk-li-connect__link" href="/onboarding">
+          Start with Claire instead
+        </a>
+      </div>
+    </>
+  )
+}
+
 export default function ConnectLinkedin() {
   const [searchParams] = useSearchParams()
   const token = useMemo(() => (searchParams.get("token") ?? "").trim(), [searchParams])
@@ -150,7 +174,9 @@ export default function ConnectLinkedin() {
           <span>Claire profile update</span>
         </header>
 
-        {token && !useUrlFallback && status === "idle" ? (
+        {tokenMissing ? (
+          <MissingConnectToken />
+        ) : token && !useUrlFallback && status === "idle" ? (
           <>
             <p className="wk-li-connect__eyebrow">Taking you to LinkedIn</p>
             <h1 className="wk-li-connect__title" aria-label="Connecting LinkedIn">
@@ -220,18 +246,13 @@ export default function ConnectLinkedin() {
               />
               <button
                 type="submit"
-                disabled={status === "submitting" || tokenMissing}
+                disabled={status === "submitting"}
                 className="wk-li-connect__submit"
               >
                 {status === "submitting" ? "Connecting…" : "Connect"}
               </button>
             </form>
 
-            {tokenMissing && (
-              <p className="wk-li-connect__error">
-                This link looks incomplete. Please reopen the link from your text message.
-              </p>
-            )}
             {errMsg && <p className="wk-li-connect__error">{errMsg}</p>}
           </>
         )}
@@ -310,6 +331,13 @@ const LINKEDIN_CONNECT_STYLES = `
 .wk-li-connect__form {
   margin-top: 24px;
 }
+.wk-li-connect__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-top: 26px;
+}
 .wk-li-connect__label {
   display: block;
   margin-bottom: 8px;
@@ -343,6 +371,19 @@ const LINKEDIN_CONNECT_STYLES = `
   border: 0;
   border-radius: 8px;
   cursor: pointer;
+}
+.wk-li-connect__button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 48px;
+  padding: 0 20px;
+  color: #fffaf2;
+  background: #2d1a0a;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
 }
 .wk-li-connect__submit:disabled {
   color: #fffaf2;
@@ -383,5 +424,17 @@ const LINKEDIN_CONNECT_STYLES = `
   }
   .wk-li-connect__copy { font-size: 15.5px; line-height: 1.52; }
   .wk-li-connect__form { margin-top: 22px; }
+  .wk-li-connect__actions {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .wk-li-connect__button {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .wk-li-connect__actions .wk-li-connect__link {
+    align-self: flex-start;
+  }
 }
 `
