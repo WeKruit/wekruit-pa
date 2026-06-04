@@ -1041,8 +1041,9 @@ export default function Market(): ReactNode {
             <div className="wk-container">
               <header className="wk-market__head">
                 <p className="wk-eyebrow"><PulseDot size={6} /> Hiring-team briefs · Claire screens first</p>
-                <h1 className="wk-market__h1">
-                  Role briefs <em className="wk-accent">ready</em> for Claire.
+                <h1 className="wk-market__h1 wk-market__h1--direct" aria-label="Role briefs ready for Claire.">
+                  <span>Role briefs</span>
+                  <span><em className="wk-accent">ready</em> for Claire.</span>
                 </h1>
                 <p className="wk-market__lede">
                   These companies gave WeKruit role briefs to screen against. Choose a role to talk to Claire.
@@ -1163,6 +1164,15 @@ const MARKET_STYLES = String.raw`
   color: var(--wk-ink); margin: 18px 0 22px; text-wrap: balance;
 }
 .wk-shell .wk-market__h1 .wk-accent { line-height: inherit; }
+.wk-shell .wk-market__h1--direct {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.wk-shell .wk-market__h1--direct > span {
+  display: block;
+  line-height: inherit;
+}
 .wk-shell .wk-market__lede {
   font-family: inherit; font-size: clamp(16.5px, 1.4vw, 19px);
   line-height: 1.5; letter-spacing: -0.005em;
@@ -1779,38 +1789,49 @@ const MARKET_STYLES = String.raw`
 }
 @media (max-width: 420px) {
   .wk-shell .wk-mtabs {
-    grid-template-columns: 1fr;
-    gap: 0;
-    padding-top: 14px;
-    margin-bottom: 28px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding-top: 12px;
+    margin-bottom: 24px;
+    border-bottom: 0;
   }
   .wk-shell .wk-mtab {
-    padding: 12px 0 15px;
-    gap: 6px;
+    min-height: 86px;
+    padding: 11px 10px 12px;
+    gap: 5px;
+    border: 1px solid var(--wk-border);
+    border-radius: 10px;
+    background: var(--wk-cream-2);
   }
   .wk-shell .wk-mtab + .wk-mtab {
     border-top: 1px solid var(--wk-border);
   }
   .wk-shell .wk-mtab__top {
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
-    gap: 12px;
+    gap: 6px;
   }
   .wk-shell .wk-mtab__label {
-    font-size: 24px;
-    line-height: 1.12;
-    white-space: nowrap;
+    font-size: 19.5px;
+    line-height: 1.1;
+    white-space: normal;
   }
   .wk-shell .wk-mtab__count {
     margin-top: 0;
+    min-width: 24px;
+    height: 21px;
+    padding: 0 6px;
   }
   .wk-shell .wk-mtab__sub {
-    font-size: 12.5px;
-    line-height: 1.42;
+    font-size: 11.5px;
+    line-height: 1.28;
   }
   .wk-shell .wk-market__h1 {
     font-size: 38px;
-    line-height: 1.28;
+    line-height: 1.2;
+  }
+  .wk-shell .wk-market__h1--direct {
+    gap: 2px;
   }
   .wk-shell .wk-roleflow {
     padding: 16px 0;
