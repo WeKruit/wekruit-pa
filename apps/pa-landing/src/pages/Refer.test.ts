@@ -21,7 +21,7 @@ test("ReferPage avoids unsupported traction and payout-certainty claims", () => 
   assert.doesNotMatch(source, /Both payments are automatic/i)
   assert.doesNotMatch(source, /Refer · live/)
   assert.match(source, /Refer · tracked/)
-  assert.match(source, /Rewards are tracked here after interviews and offers are confirmed\./)
+  assert.match(source, /Claire handles profile, role screens, and verified milestone tracking\./)
   assert.match(source, /Payouts are confirmed by WeKruit ops/)
 })
 
@@ -67,22 +67,46 @@ test("ReferPublicPage does not promise resume-free matching", () => {
   assert.doesNotMatch(source, /They don't have to upload a resume to be matched/)
   assert.doesNotMatch(source, /They get matched by <strong>Claire<\/strong>/)
 
-  assert.match(source, /They start with <strong>Claire<\/strong>/)
+  assert.match(source, /Start with <strong>Claire<\/strong>: profile conversation first, role screens second/)
   assert.match(source, /Claire picks up the profile and resume context before any role-specific screen\./)
 })
 
-test("ReferPublicPage hero explains the friend-side trust contract before cash mechanics", () => {
+test("ReferPublicPage hero explains the friend-side Claire loop before cash mechanics", () => {
   assert.match(source, /function ReferPublicTrustContract/)
-  assert.match(source, /What your friend gets/)
-  assert.match(source, /Personal note, not a blast/)
-  assert.match(source, /Claire starts with profile and resume context/)
-  assert.match(source, /No blind sharing/)
-  assert.match(source, /passed evidence only after consent/)
+  assert.match(source, /Friend-side loop/)
+  assert.match(source, /Refer a friend into Claire&apos;s <em>interview loop\.<\/em>/)
+  assert.match(source, /candidate-owned profile conversation/)
+  assert.match(source, /role screens Claire can run/)
+  assert.match(source, /consent-gated/)
+  assert.match(source, /Personal note opens the door/)
+  assert.match(source, /Claire builds the reusable profile/)
+  assert.match(source, /Role screens stay consent-gated/)
+  assert.match(source, /passed evidence only after approval/)
   assert.match(source, /<ReferPublicTrustContract \/>[\s\S]*<div className="wk-ref-public-cta">/)
+  assert.match(source, /Open referral dashboard/)
+  assert.match(source, /Profile<\/div>[\s\S]*candidate-owned record/)
+  assert.match(source, /Screens<\/div>[\s\S]*evidence-first conversations/)
+  assert.match(source, /Ledger<\/div>[\s\S]*verified interview and offer milestones/)
 
+  assert.doesNotMatch(source, /Send a friend to WeKruit\. Earn up to/)
+  assert.doesNotMatch(source, /Sign up to start earning/)
   assert.doesNotMatch(source, /spray invites/i)
   assert.doesNotMatch(source, /we submit your friend automatically/i)
   assert.doesNotMatch(source, /hiring teams see every referred profile/i)
+})
+
+test("ReferPublicPage keeps reward details in verified milestone sections, not the top product panel", () => {
+  assert.match(source, /What happens after an invite/)
+  assert.match(source, /Claire handles profile, role screens, and verified milestone tracking\./)
+  assert.match(source, /Role screen clears/)
+  assert.match(source, /A hiring manager confirms the first interview milestone\./)
+  assert.match(source, /WeKruit ops verifies the placement milestone\./)
+  assert.match(source, /Referral credit follows <em>verified outcomes<\/em>, not spam\./)
+  assert.match(source, /Referral rules/)
+  assert.match(source, /Confirmed hiring-manager interview/)
+  assert.match(source, /Signed offer and start date/)
+  assert.match(source, /You can earn <strong>\{fmtMoney\(REWARD_INTERVIEW\)\}<\/strong> after a verified hiring-manager/)
+  assert.match(source, /<strong>\{fmtMoney\(REWARD_PLACEMENT\)\}<\/strong> after a verified offer\/start/)
 })
 
 test("ReferPublicPage routes candidate-owner earning CTAs back to the referral dashboard", () => {

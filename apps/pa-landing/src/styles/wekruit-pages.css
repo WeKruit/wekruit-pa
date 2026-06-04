@@ -3241,3 +3241,23 @@
   .wk-ref-public-trust__grid { grid-template-columns: 1fr; }
   .wk-ref-callout { grid-template-columns: 1fr; padding: 32px; gap: 24px; }
 }
+
+@media (max-width: 720px) {
+  .wk-ref-hero--public { padding: 44px 0 36px; }
+  .wk-ref-hero--public .wk-ref-hero__h {
+    font-size: clamp(44px, 13vw, 54px);
+    line-height: 1.03;
+  }
+  .wk-ref-public-trust { margin-top: 16px; }
+  .wk-ref-public-trust__grid { gap: 8px; }
+  .wk-ref-public-trust__item {
+    grid-template-columns: 20px minmax(0, 1fr);
+    gap: 8px;
+    padding: 10px;
+    align-items: center;
+  }
+  .wk-ref-public-trust__mark { width: 20px; height: 20px; }
+  .wk-ref-public-trust__item strong { font-size: 12.5px; line-height: 1.18; }
+  .wk-ref-public-trust__item p { display: none; }
+  .wk-ref-public-cta { margin-top: 18px; }
+}
