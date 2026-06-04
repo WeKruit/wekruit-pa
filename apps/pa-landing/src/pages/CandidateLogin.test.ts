@@ -115,6 +115,11 @@ test("CandidateLogin /me sign-in keeps auth controls before the operating-home p
   const pipelinePreviewIndex = source.indexOf("{showPipelinePreview ? <LoginPipelinePreview /> : null}")
   assert.ok(providerIndex > 0)
   assert.ok(pipelinePreviewIndex > providerIndex)
+  assert.match(source, /className=\{`wk-login__card\$\{showPipelinePreview \? " wk-login__card--pipeline" : ""\}`\}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login__card--pipeline \{ padding-top: 24px; padding-bottom: 24px; gap: 12px; \}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login__card--pipeline \.wk-login-context__items \{ gap: 6px; \}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login__card--pipeline \.wk-login__providers \{ gap: 8px; margin-top: 0; \}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login__card--pipeline \.wk-login-preview \{ gap: 7px; padding: 10px 0; \}/)
 })
 
 test("CandidateLogin preserves market role signal context through auth", () => {

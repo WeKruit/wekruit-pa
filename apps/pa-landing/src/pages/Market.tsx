@@ -1069,8 +1069,8 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-mtab__top { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
 .wk-shell .wk-mtab__label {
   font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
-  font-weight: 400; font-size: clamp(24px, 2.6vw, 32px); line-height: 1.08;
-  letter-spacing: -0.01em; color: inherit;
+  font-weight: 400; font-size: clamp(24px, 2.6vw, 32px); line-height: 1.14;
+  letter-spacing: 0; color: inherit;
   overflow-wrap: normal;
 }
 .wk-shell .wk-mtab__count {
@@ -1084,7 +1084,7 @@ const MARKET_STYLES = String.raw`
 }
 .wk-shell .wk-mtab__sub {
   font-family: inherit; font-weight: 400; font-size: 13.5px;
-  line-height: 1.28; color: var(--wk-ink-3); letter-spacing: 0;
+  line-height: 1.32; color: var(--wk-ink-3); letter-spacing: 0;
 }
 .wk-shell .wk-mtab.is-active { color: var(--wk-ink); }
 .wk-shell .wk-mtab.is-active::after {
@@ -1100,9 +1100,10 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-market__h1 {
   font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
   font-weight: 400; font-size: clamp(44px, 6vw, 84px);
-  line-height: 1.02; letter-spacing: -0.028em;
+  line-height: 1.12; letter-spacing: 0;
   color: var(--wk-ink); margin: 18px 0 22px; text-wrap: balance;
 }
+.wk-shell .wk-market__h1 .wk-accent { line-height: inherit; }
 .wk-shell .wk-market__lede {
   font-family: inherit; font-size: clamp(16.5px, 1.4vw, 19px);
   line-height: 1.5; letter-spacing: -0.005em;
@@ -1543,9 +1544,9 @@ const MARKET_STYLES = String.raw`
   }
   .wk-shell .wk-mtab { padding: 8px 0 14px; gap: 4px; }
   .wk-shell .wk-mtab__top { gap: 8px; }
-  .wk-shell .wk-mtab__label { font-size: 21px; line-height: 1.12; }
+  .wk-shell .wk-mtab__label { font-size: 21px; line-height: 1.16; }
   .wk-shell .wk-mtab__count { height: 22px; min-width: 26px; padding: 0 7px; margin-top: 2px; font-size: 11.5px; }
-  .wk-shell .wk-mtab__sub { display: block; font-size: 11.75px; line-height: 1.24; }
+  .wk-shell .wk-mtab__sub { display: block; font-size: 11.75px; line-height: 1.3; }
   .wk-shell .wk-market-contract__grid { grid-template-columns: 1fr; }
   .wk-shell .wk-market-contract__item { min-height: 0; }
   .wk-shell .wk-batch { flex-direction: column; align-items: flex-start; gap: 8px; }
@@ -1556,7 +1557,7 @@ const MARKET_STYLES = String.raw`
   .wk-shell .wk-market__head { margin-bottom: 20px; }
   .wk-shell .wk-market__h1 {
     font-size: clamp(36px, 10vw, 44px);
-    line-height: 1.14;
+    line-height: 1.18;
     letter-spacing: 0;
     margin: 14px 0 16px;
   }
