@@ -1163,7 +1163,6 @@ export default function CandidateLogin() {
               {loginSub}
             </p>
 
-            {showPipelinePreview ? <LoginPipelinePreview /> : null}
             {showRoleSignalPreview && profileRoleSignal ? <LoginRoleSignalPreview title={profileRoleSignal.title} company={profileRoleSignal.company} /> : null}
 
             {status === "signing_in" && !isCompletingLink ? (
@@ -1231,6 +1230,7 @@ export default function CandidateLogin() {
               </p>
             ) : null}
 
+            {showPipelinePreview ? <LoginPipelinePreview /> : null}
             {showOnboardingPreview ? <LoginOnboardingPreview /> : null}
 
             {!onboardingNext ? (
