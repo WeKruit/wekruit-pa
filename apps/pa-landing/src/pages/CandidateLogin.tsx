@@ -2016,12 +2016,31 @@ export const CANDIDATE_STYLES = `
   .wk-login-role__mark { width: 30px; height: 30px; font-size: 13px; }
   .wk-login-role__body strong { font-size: 14px; }
   .wk-login-role__body em { font-size: 12px; }
-  .wk-login-context { gap: 9px; padding-top: 10px; }
-  .wk-login-context__items { grid-template-columns: 1fr; gap: 8px; }
-  .wk-login-context__item { grid-template-columns: 20px minmax(0, 1fr); gap: 8px; }
-  .wk-login-context__dot { width: 20px; height: 20px; }
-  .wk-login-context__item strong { font-size: 12.5px; }
-  .wk-login-context__item em { font-size: 12px; line-height: 1.3; }
+  .wk-login-context { gap: 8px; padding-top: 8px; padding-bottom: 0; }
+  .wk-login-context__items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .wk-login-context__item {
+    display: inline-flex;
+    align-items: center;
+    grid-template-columns: none;
+    gap: 6px;
+    min-height: 30px;
+    padding: 5px 8px;
+    border: 1px solid var(--wk-border);
+    border-radius: var(--wk-r-pill);
+    background: var(--wk-cream);
+  }
+  .wk-login-context__dot { width: 16px; height: 16px; margin-top: 0; }
+  .wk-login-context__dot svg { width: 9px; height: 9px; }
+  .wk-login-context__item strong {
+    font-size: 12px;
+    line-height: 1.15;
+    white-space: nowrap;
+  }
+  .wk-login-context__item em { display: none; }
   .wk-login__card--pipeline .wk-login-context { gap: 7px; padding-top: 6px; }
   .wk-login__card--pipeline .wk-login-context__items { gap: 6px; }
   .wk-login__card--pipeline .wk-login-context__item { gap: 7px; }
