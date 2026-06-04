@@ -2990,19 +2990,30 @@
 .wk-ref-faq__item {
   border-bottom: 1px solid var(--border);
   padding: 16px 4px;
-  cursor: pointer;
 }
 .wk-ref-faq__item:first-child { padding-top: 4px; }
 .wk-ref-faq__item:last-child { border-bottom: 0; }
 .wk-ref-faq__q {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  font-family: inherit;
   font-size: 15px;
   font-weight: 500;
   color: var(--ink);
   letter-spacing: -0.005em;
+  text-align: left;
+}
+.wk-ref-faq__q:focus-visible {
+  outline: 2px solid var(--live);
+  outline-offset: 5px;
+  border-radius: 6px;
 }
 .wk-ref-faq__q::after {
   content: "+";
