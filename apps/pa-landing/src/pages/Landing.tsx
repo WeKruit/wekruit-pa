@@ -201,7 +201,8 @@ export default function Landing() {
               <PulseDot size={7} /> Skip the application. Interview.
             </p>
             <h1 className="wk-hero__h1" aria-label="You don't apply. You interview.">
-              <span>You don't <em className="wk-accent">apply.</em></span>
+              <span>You don't</span>
+              <span><em className="wk-accent">apply.</em></span>
               <span>You interview.</span>
             </h1>
             <p className="wk-hero__lede">
@@ -518,11 +519,12 @@ const LANDING_STYLES = `
 .wk-hero__h1 {
   font-family: 'Newsreader', serif;
   font-weight: 400;
-  display: grid;
-  gap: 28px;
-  max-width: min(100%, 660px);
-  font-size: 64px;
-  line-height: 1.34;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(100%, 620px);
+  font-size: 60px;
+  line-height: 1.08;
   letter-spacing: 0;
   color: var(--wk-ink);
   margin: 18px 0 24px;
@@ -531,13 +533,12 @@ const LANDING_STYLES = `
 }
 .wk-hero__h1 > span {
   display: block;
-  line-height: inherit;
+  line-height: 1.08;
   text-wrap: balance;
 }
-.wk-hero__h1 > span:first-child { white-space: nowrap; }
 .wk-hero__h1 .wk-accent {
   display: inline-block;
-  line-height: inherit;
+  line-height: 1.08;
 }
 .wk-hero__lede {
   font-size: clamp(17px, 1.5vw, 19.5px);
@@ -905,7 +906,7 @@ const LANDING_STYLES = `
 
 /* Mobile ---------------------------------------------------------------- */
 @media (max-width: 1180px) {
-  .wk-hero__h1 { font-size: 60px; }
+  .wk-hero__h1 { font-size: 56px; }
 }
 @media (max-width: 980px) {
   .wk-hero { padding: 36px 0 64px; }
@@ -914,8 +915,8 @@ const LANDING_STYLES = `
     gap: 36px;
     align-items: start;
   }
-  .wk-hero__h1 { font-size: 52px; line-height: 1.34; gap: 22px; }
-  .wk-hero__h1 > span { line-height: inherit; }
+  .wk-hero__h1 { font-size: 48px; line-height: 1.1; gap: 9px; }
+  .wk-hero__h1 > span { line-height: 1.1; }
   .wk-hero__visual { padding-top: 32px; }
   .wk-hero__visual .wk-imsg-phone { max-width: 320px; }
   .wk-steps { grid-template-columns: 1fr; }
@@ -938,8 +939,8 @@ const LANDING_STYLES = `
   .wk-section { padding: 56px 0; }
   .wk-section__head { margin-bottom: 28px; }
   .wk-proof-card { padding: 20px; }
-  .wk-hero__h1 { font-size: 40px; line-height: 1.36; gap: 18px; }
-  .wk-hero__h1 > span { line-height: inherit; }
+  .wk-hero__h1 { font-size: 38px; line-height: 1.12; gap: 8px; }
+  .wk-hero__h1 > span { line-height: 1.12; }
   .wk-hero__cta { gap: 12px; }
   .wk-hero__browse { flex-basis: 100%; }
 }
