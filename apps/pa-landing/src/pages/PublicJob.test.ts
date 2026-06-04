@@ -35,6 +35,9 @@ test("PublicJob first-viewport process strip shows the role interview contract, 
 
   assert.doesNotMatch(source, /<p className="wk-eyebrow">How it works<\/p>/)
   assert.match(source, /<p className="wk-eyebrow">Role interview plan<\/p>/)
+  assert.match(source, /@media \(max-width: 980px\) \{[\s\S]*\.wk-pj-process-strip \{[\s\S]*grid-template-columns: 1fr;[\s\S]*gap: 8px;[\s\S]*\}/)
+  assert.match(source, /@media \(max-width: 980px\) \{[\s\S]*\.wk-pj-process-strip__step \{[\s\S]*min-height: 0;[\s\S]*padding: 9px 10px;[\s\S]*align-items: center;[\s\S]*\}/)
+  assert.match(source, /@media \(max-width: 980px\) \{[\s\S]*\.wk-pj-process-strip__body em \{[\s\S]*display: none;[\s\S]*\}/)
 })
 
 test("PublicJob exposes Claire's role interview contract before signup", () => {
