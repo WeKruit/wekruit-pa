@@ -216,6 +216,19 @@ test("Market keeps mobile role cards primary while preserving the compact suppor
   assert.match(source, /\.wk-shell \.wk-roleflow__steps span \{[\s\S]*display: none;/)
 })
 
+test("Market tab chrome separates labels, counts, and subtitles on narrow screens", () => {
+  assert.match(source, /<button type="button" className=\{`wk-mtab\$\{active \? " is-active" : ""\}`\}/)
+  assert.match(source, /\.wk-shell \.wk-mtab \{[\s\S]*min-width: 0;/)
+  assert.match(source, /\.wk-shell \.wk-mtab__top \{ display: flex; align-items: flex-start; gap: 10px; min-width: 0; \}/)
+  assert.match(source, /\.wk-shell \.wk-mtab__label \{[\s\S]*line-height: 1\.08;[\s\S]*letter-spacing: -0\.01em;/)
+  assert.match(source, /\.wk-shell \.wk-mtab__count \{[\s\S]*line-height: 1;[\s\S]*flex: 0 0 auto; margin-top: 4px;/)
+  assert.match(source, /\.wk-shell \.wk-mtab__sub \{[\s\S]*line-height: 1\.28;[\s\S]*letter-spacing: 0;/)
+  assert.match(source, /@media \(max-width: 860px\) \{[\s\S]*\.wk-shell \.wk-mtabs \{[\s\S]*display: grid;[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/)
+  assert.match(source, /@media \(max-width: 860px\) \{[\s\S]*\.wk-shell \.wk-mtab__sub \{ display: block; font-size: 11\.75px; line-height: 1\.24; \}/)
+  assert.doesNotMatch(source, /\.wk-shell \.wk-mtab__sub \{ display: none; \}/)
+  assert.doesNotMatch(source, /letter-spacing: -0\.02em; color: inherit;/)
+})
+
 test("Market mobile role brief cards stay compact enough to compare options", () => {
   assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-direct-cards \{ display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 6px; \}/)
   assert.match(source, /\.wk-shell \.wk-direct-card \{[\s\S]*padding: 14px;[\s\S]*gap: 8px;[\s\S]*border-color: var\(--wk-border\);/)
