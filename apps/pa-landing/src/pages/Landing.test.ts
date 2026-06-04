@@ -105,15 +105,16 @@ test("Landing hero headline keeps wrapped editorial lines separated on mobile", 
   assert.match(landingSource, /<span>You don't<\/span>/)
   assert.match(landingSource, /<span><em className="wk-accent">apply\.<\/em><\/span>/)
   assert.match(landingSource, /<span>You interview\.<\/span>/)
-  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*line-height: 1\.08;/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*line-height: 1\.14;/)
   assert.match(
     landingSource,
-    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: clamp\(50px, 6\.2vw, 64px\); line-height: 1\.12; gap: 0\.16em; \}/,
+    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: clamp\(50px, 6\.2vw, 64px\); line-height: 1\.16; gap: 0\.2em; \}/,
   )
   assert.match(
     landingSource,
-    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: clamp\(46px, 13vw, 58px\); line-height: 1\.14; gap: 0\.16em; \}/,
+    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: clamp\(44px, 12\.4vw, 54px\); line-height: 1\.18; gap: 0\.2em; \}/,
   )
+  assert.match(landingSource, /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__browse \{ flex-basis: 100%; \}/)
 })
 
 test("Landing formats public job type chips before rendering candidate cards", () => {

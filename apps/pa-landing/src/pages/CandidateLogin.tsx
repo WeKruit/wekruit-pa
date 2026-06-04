@@ -1165,7 +1165,6 @@ export default function CandidateLogin() {
 
             {showPipelinePreview ? <LoginPipelinePreview /> : null}
             {showRoleSignalPreview && profileRoleSignal ? <LoginRoleSignalPreview title={profileRoleSignal.title} company={profileRoleSignal.company} /> : null}
-            {showOnboardingPreview ? <LoginOnboardingPreview /> : null}
 
             {status === "signing_in" && !isCompletingLink ? (
               <p className="wk-success">Signing you in…</p>
@@ -1231,6 +1230,8 @@ export default function CandidateLogin() {
                 </button>
               </p>
             ) : null}
+
+            {showOnboardingPreview ? <LoginOnboardingPreview /> : null}
 
             {!onboardingNext ? (
               <p className="wk-login__fine">
@@ -1722,6 +1723,13 @@ export const CANDIDATE_STYLES = `
   }
   .wk-header__primary-full { display: none; }
   .wk-header__primary-short { display: inline; }
+  .wk-login { padding: 32px 0 72px; }
+  .wk-login__card { padding: 28px 32px; gap: 14px; }
+  .wk-login__h { font-size: clamp(30px, 9vw, 36px); line-height: 1.07; }
+  .wk-login__sub { font-size: 14px; line-height: 1.45; }
+  .wk-login-preview { gap: 8px; padding: 12px 0; }
+  .wk-login-preview__list { gap: 8px; }
+  .wk-login__providers { margin-top: 2px; }
 }
 @media (max-width: 760px) {
   .wk-container, .wk-container--narrow { padding: 0 18px; }

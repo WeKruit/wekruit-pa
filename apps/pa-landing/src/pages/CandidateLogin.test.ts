@@ -58,7 +58,7 @@ test("CandidateLogin frames onboarding login as a first-time Claire start", () =
   assert.match(source, /\{!onboardingNext \? \([\s\S]*<p className="wk-login__fine">/)
 })
 
-test("CandidateLogin previews the first Claire conversation before onboarding auth controls", () => {
+test("CandidateLogin keeps onboarding auth controls before the explanatory preview", () => {
   assert.match(source, /function LoginOnboardingPreview\(\)/)
   assert.match(source, /What Claire starts after sign-in/)
   assert.match(source, /One durable Claire profile/)
@@ -68,7 +68,12 @@ test("CandidateLogin previews the first Claire conversation before onboarding au
   assert.match(source, /Nearest-work evidence/)
   assert.match(source, /Profile corrections stay editable/)
   assert.match(source, /const showOnboardingPreview = !isCompletingLink && onboardingNext/)
-  assert.match(source, /\{showOnboardingPreview \? <LoginOnboardingPreview \/> : null\}[\s\S]*<div className="wk-login__providers">/)
+  const providerIndex = source.indexOf('<div className="wk-login__providers">')
+  const onboardingPreviewIndex = source.indexOf("{showOnboardingPreview ? <LoginOnboardingPreview /> : null}")
+  assert.ok(providerIndex > 0)
+  assert.ok(onboardingPreviewIndex > providerIndex)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login \{ padding: 32px 0 72px; \}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login__providers \{ margin-top: 2px; \}/)
 })
 
 test("CandidateLogin /me sign-in previews the operating home before auth controls", () => {
