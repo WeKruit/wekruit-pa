@@ -3094,7 +3094,7 @@
 }
 .wk-ref-public-inviter__name { font-size: 14px; font-weight: 600; color: var(--ink); margin: 0; line-height: 1.2; }
 
-.wk-ref-public-cta { margin-top: 28px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.wk-ref-public-cta { margin-top: 24px; margin-bottom: 24px; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
 .wk-ref-public-cta__alt {
   font-size: 14px;
   font-weight: 500;
@@ -3257,8 +3257,8 @@
 @media (max-width: 720px) {
   .wk-ref-hero--public { padding: 44px 0 36px; }
   .wk-ref-hero--public .wk-ref-hero__h {
-    font-size: clamp(44px, 13vw, 54px);
-    line-height: 1.03;
+    font-size: clamp(40px, 12vw, 50px);
+    line-height: 1.08;
   }
   .wk-ref-public-trust { margin-top: 16px; }
   .wk-ref-public-trust__grid { gap: 8px; }
@@ -3271,5 +3271,5 @@
   .wk-ref-public-trust__mark { width: 20px; height: 20px; }
   .wk-ref-public-trust__item strong { font-size: 12.5px; line-height: 1.18; }
   .wk-ref-public-trust__item p { display: none; }
-  .wk-ref-public-cta { margin-top: 18px; }
+  .wk-ref-public-cta { margin-top: 18px; margin-bottom: 18px; }
 }
