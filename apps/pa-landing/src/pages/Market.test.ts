@@ -184,13 +184,19 @@ test("Market desktop role-brief cards keep the Claire action in each role block"
 
 test("Market default role-brief tab shows role inventory before the supporting Claire contract", () => {
   assert.match(source, /function MarketRoleBriefContract\(\)/)
+  assert.match(source, /function MarketRoleBriefWorkflow\(\{ count \}: \{ count\?: number \}\)/)
+  assert.match(source, /aria-label="Claire role brief workflow"/)
+  assert.match(source, /Pick a brief\. Claire runs the first screen\./)
+  assert.match(source, /Employer bar/)
+  assert.match(source, /Claire interview/)
+  assert.match(source, /Consent gate/)
   assert.match(source, /aria-label="Role brief Claire contract"/)
   assert.match(source, /What happens when you pick a role brief/)
   assert.match(source, /Role brief sets Claire's interview/)
   assert.match(source, /Your durable profile supplies constraints/)
   assert.match(source, /corrections stay attached across Claire's role screens/)
   assert.match(source, /Passed profile only after consent/)
-  assert.match(source, /\{direct\.isPending \? \([\s\S]*<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>[\s\S]*\)\}[\s\S]*<MarketRoleBriefContract \/>/)
+  assert.match(source, /\{direct\.isPending \? \([\s\S]*<MarketRoleBriefWorkflow count=\{direct\.isSuccess \? directJobs\.length : undefined\} \/>[\s\S]*<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>[\s\S]*\)\}[\s\S]*<MarketRoleBriefContract \/>/)
   assert.match(source, /href="\/me\/profile#profile-corrections"[\s\S]*Update profile signals/)
 
   assert.doesNotMatch(source, /guaranteed interview/i)
@@ -200,9 +206,12 @@ test("Market default role-brief tab shows role inventory before the supporting C
 test("Market keeps mobile role cards primary while preserving the compact support contract", () => {
   assert.match(source, /wk-market-contract__mobile-brief/)
   assert.match(source, /Claire screens first\. Hiring teams see a passed profile only after you approve sharing\./)
-  assert.match(source, /<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>[\s\S]*<MarketRoleBriefContract \/>/)
+  assert.match(source, /<MarketRoleBriefWorkflow count=\{direct\.isSuccess \? directJobs\.length : undefined\} \/>[\s\S]*<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>[\s\S]*<MarketRoleBriefContract \/>/)
   assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \{[\s\S]*display: block; padding: 14px 0 16px; margin: 16px 0 18px;/)
   assert.match(source, /\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__copy,[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__grid,[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__actions \{[\s\S]*display: none;/)
+  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-roleflow \{[\s\S]*padding: 12px 0;[\s\S]*display: block;/)
+  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-roleflow__steps \{[\s\S]*display: flex;[\s\S]*flex-wrap: wrap;/)
+  assert.match(source, /\.wk-shell \.wk-roleflow__steps span \{[\s\S]*display: none;/)
 })
 
 test("Market mobile role brief cards stay compact enough to compare options", () => {
