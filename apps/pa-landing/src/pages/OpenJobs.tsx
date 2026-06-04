@@ -417,18 +417,22 @@ export default function OpenJobs() {
           }
           .open-guest__inner .btn { display: none; }
           .open-tabs {
-            display: grid !important;
-            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-            gap: 8px !important;
+            display: flex !important;
+            flex-direction: column;
+            gap: 6px !important;
             border-bottom: 0 !important;
             margin-bottom: 14px !important;
           }
           .open-tab {
             min-width: 0;
-            padding: 10px 12px 11px !important;
+            min-height: 48px;
+            padding: 10px 12px !important;
             border: 1px solid var(--border) !important;
             border-radius: 14px;
             background: var(--cream-3);
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: space-between !important;
             white-space: normal !important;
           }
           .open-tab.is-active {
@@ -436,24 +440,29 @@ export default function OpenJobs() {
             background: var(--cream-2);
           }
           .open-tab__top {
-            width: 100%;
-            justify-content: space-between;
+            width: auto;
             gap: 8px !important;
           }
-          .open-tab__label { font-size: 19px !important; }
+          .open-tab__label {
+            font-size: 19px !important;
+            line-height: 1.1 !important;
+          }
           .open-tab__count {
             padding: 1px 6px !important;
             font-size: 10px !important;
           }
           .open-tab__sub {
-            white-space: normal;
-            font-size: 11px !important;
-            line-height: 1.28;
+            display: none !important;
           }
           .open-header {
             align-items: stretch !important;
             gap: 14px !important;
             margin-bottom: 16px !important;
+          }
+          .open-header .eyebrow {
+            font-size: 11px !important;
+            line-height: 1.45 !important;
+            letter-spacing: 0.08em !important;
           }
           .open-header__copy { flex: 1 1 100% !important; }
           .open-header__title {
@@ -577,7 +586,7 @@ function Header({ tab, count, total, search, setSearch, layout, setLayout }: Hea
     <div className="open-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 28 }}>
       <div className="open-header__copy" style={{ flex: "1 1 460px", minWidth: 0 }}>
         <div className="eyebrow" style={{ marginBottom: 10, color: isDirect ? "var(--success)" : "var(--ink-3)" }}>
-          {isDirect ? "● Direct line · Claire starts the first interview" : "External roles · Source listings"}
+          {isDirect ? "● Direct line · Claire interviews first" : "External roles · Source listings"}
         </div>
         <h1 className="open-header__title" style={{ fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: "clamp(32px, 3.6vw, 48px)", lineHeight: 1.05, letterSpacing: "-0.02em", margin: 0 }}>
           {isDirect ? (

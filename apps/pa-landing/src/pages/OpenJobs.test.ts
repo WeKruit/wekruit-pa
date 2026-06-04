@@ -108,14 +108,16 @@ test("OpenJobs mobile chrome uses responsive wrappers instead of forcing page-wi
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-header__controls[\s\S]*width: 100%/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-search[\s\S]*width: 100%/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-layout-switcher[\s\S]*width: 100%/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-header \.eyebrow[\s\S]*line-height: 1\.45 !important/)
 })
 
 test("OpenJobs mobile layout gets candidates to real role cards before filter chrome dominates", () => {
   assert.match(source, /<Tab id="direct" label="Direct line" sub="Roles from hiring teams today" count=\{directCount\} \/>[\s\S]*<Tab id="hunt" label="Tracked roles"/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-main-section[\s\S]*padding-top: 14px !important/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-guest__inner \.btn \{ display: none; \}/)
-  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-tabs[\s\S]*grid-template-columns: minmax\(0, 1fr\) minmax\(0, 1fr\)/)
-  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-tab[\s\S]*padding: 10px 12px 11px !important/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-tabs[\s\S]*flex-direction: column/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-tab[\s\S]*padding: 10px 12px !important/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-tab__sub[\s\S]*display: none !important/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-header[\s\S]*margin-bottom: 16px !important/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-header__title[\s\S]*font-size: clamp\(28px, 8vw, 34px\) !important/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-layout \{ gap: 16px !important; \}/)
