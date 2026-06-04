@@ -1262,7 +1262,7 @@ const MARKET_STYLES = String.raw`
   margin: 8px 0 0;
   font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
   font-weight: 400; font-size: clamp(24px, 2.4vw, 34px);
-  line-height: 1.08; letter-spacing: 0; color: var(--wk-ink);
+  line-height: 1.22; letter-spacing: 0; color: var(--wk-ink);
 }
 .wk-shell .wk-roleflow__steps {
   list-style: none; margin: 0; padding: 0;
@@ -1697,7 +1697,7 @@ const MARKET_STYLES = String.raw`
   }
   .wk-shell .wk-roleflow__intro h2 {
     font-size: 21px;
-    line-height: 1.24;
+    line-height: 1.32;
     margin-top: 7px;
   }
   .wk-shell .wk-roleflow__steps {
@@ -1864,8 +1864,9 @@ const MARKET_STYLES = String.raw`
     margin-bottom: 12px;
   }
   .wk-shell .wk-roleflow__intro h2 {
-    font-size: 24px;
-    line-height: 1.18;
+    font-size: 23px;
+    line-height: 1.34;
+    max-width: 13em;
   }
   .wk-shell .wk-roleflow__steps {
     display: grid;
