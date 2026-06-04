@@ -1494,9 +1494,9 @@ export const PUBLIC_JOB_STYLES = `
 .wk-pj-hero__role {
   font-family: 'Newsreader', serif;
   font-weight: 400;
-  font-size: clamp(46px, 5.8vw, 76px);
-  line-height: 0.98;
-  letter-spacing: -0.024em;
+  font-size: 68px;
+  line-height: 1.08;
+  letter-spacing: 0;
   color: var(--wk-ink);
   margin: 6px 0 0;
   text-wrap: balance;
@@ -2065,6 +2065,7 @@ export const PUBLIC_JOB_STYLES = `
 /* Mobile --------------------------------------------------------------- */
 @media (max-width: 980px) {
   .wk-pj-hero__grid { grid-template-columns: 1fr; gap: 32px; }
+  .wk-pj-hero__role { font-size: 44px; line-height: 1.14; }
   .wk-pj-body__grid { grid-template-columns: 1fr; gap: 32px; }
   .wk-pj-body__aside { position: static; }
   .wk-pj-side { position: static; }
@@ -2097,11 +2098,16 @@ export const PUBLIC_JOB_STYLES = `
   }
 }
 
+@media (max-width: 480px) {
+  .wk-pj-hero__role { font-size: 38px; line-height: 1.16; }
+}
+
 @media (min-width: 981px) and (max-width: 1180px) {
   .wk-pj-hero__grid {
     grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
     gap: 32px;
   }
+  .wk-pj-hero__role { font-size: 58px; line-height: 1.1; }
   .wk-pj-card { padding: 20px; }
   .wk-pj-process-strip { gap: 8px; }
   .wk-pj-process-strip__step {

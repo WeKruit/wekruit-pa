@@ -99,6 +99,28 @@ test("PublicJob mobile Claire CTA is inline and does not cover role content", ()
   assert.doesNotMatch(source, /\.wk-pj \{ padding-bottom: 108px; \}/)
 })
 
+test("PublicJob role hero title keeps long job names readable on mobile", () => {
+  assert.match(
+    source,
+    /\.wk-pj-hero__role \{[\s\S]*font-size: 68px;[\s\S]*line-height: 1\.08;[\s\S]*letter-spacing: 0;/,
+  )
+  assert.match(
+    source,
+    /@media \(max-width: 980px\) \{[\s\S]*\.wk-pj-hero__role \{ font-size: 44px; line-height: 1\.14; \}/,
+  )
+  assert.match(
+    source,
+    /@media \(max-width: 480px\) \{[\s\S]*\.wk-pj-hero__role \{ font-size: 38px; line-height: 1\.16; \}/,
+  )
+  assert.match(
+    source,
+    /@media \(min-width: 981px\) and \(max-width: 1180px\) \{[\s\S]*\.wk-pj-hero__role \{ font-size: 58px; line-height: 1\.1; \}/,
+  )
+  assert.doesNotMatch(source, /\.wk-pj-hero__role \{[\s\S]*font-size: clamp\(46px, 5\.8vw, 76px\);/)
+  assert.doesNotMatch(source, /\.wk-pj-hero__role \{[\s\S]*line-height: 0\.98;/)
+  assert.doesNotMatch(source, /\.wk-pj-hero__role \{[\s\S]*letter-spacing: -0\.024em;/)
+})
+
 test("PublicJob resume upload avoids internal configuration errors", () => {
   assert.doesNotMatch(source, /CV ingest endpoint is not configured/)
   assert.match(source, /Resume upload is temporarily unavailable\. Message Claire and we'll attach it to this role\./)
