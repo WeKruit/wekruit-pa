@@ -1261,7 +1261,7 @@ export default function CandidateLogin() {
   const loginBody = (
       <div className="wk-login">
         <div className="wk-container">
-          <div className="wk-login__card">
+          <div className={`wk-login__card${showPipelinePreview ? " wk-login__card--pipeline" : ""}`}>
             <p className="wk-eyebrow">
               {loginEyebrow}
             </p>
@@ -1953,6 +1953,7 @@ export const CANDIDATE_STYLES = `
   .wk-header__primary-short { display: inline; }
   .wk-login { padding: 32px 0 72px; }
   .wk-login__card { padding: 28px 32px; gap: 14px; }
+  .wk-login__card--pipeline { padding-top: 24px; padding-bottom: 24px; gap: 12px; }
   .wk-login__h { font-size: clamp(30px, 9vw, 36px); line-height: 1.07; }
   .wk-login__sub { font-size: 14px; line-height: 1.45; }
   .wk-login-role { grid-template-columns: 30px minmax(0, 1fr) auto; gap: 9px; padding: 10px 0; }
@@ -1965,6 +1966,15 @@ export const CANDIDATE_STYLES = `
   .wk-login-context__dot { width: 20px; height: 20px; }
   .wk-login-context__item strong { font-size: 12.5px; }
   .wk-login-context__item em { font-size: 12px; line-height: 1.3; }
+  .wk-login__card--pipeline .wk-login-context { gap: 7px; padding-top: 6px; }
+  .wk-login__card--pipeline .wk-login-context__items { gap: 6px; }
+  .wk-login__card--pipeline .wk-login-context__item { gap: 7px; }
+  .wk-login__card--pipeline .wk-login-context__item em { margin-top: 1px; font-size: 11.5px; line-height: 1.22; }
+  .wk-login__card--pipeline .wk-login__providers { gap: 8px; margin-top: 0; }
+  .wk-login__card--pipeline .wk-login__divider { margin: 0; }
+  .wk-login__card--pipeline .wk-login__form { gap: 10px; }
+  .wk-login__card--pipeline .wk-login-preview { gap: 7px; padding: 10px 0; }
+  .wk-login__card--pipeline .wk-login-preview__list { gap: 7px; }
   .wk-login-preview { gap: 8px; padding: 12px 0; }
   .wk-login-preview__list { gap: 8px; }
   .wk-login__providers { margin-top: 2px; }
