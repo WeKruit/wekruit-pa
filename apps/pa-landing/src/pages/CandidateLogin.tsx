@@ -822,19 +822,43 @@ function LoginRoleSignalPreview({ title, company }: { title: string; company: st
 type LoginContextKind = "role" | "signal" | "onboarding" | "pipeline"
 
 function LoginContextStrip({ kind }: { kind: LoginContextKind }) {
-  const items: Record<LoginContextKind, string[]> = {
-    role: ["Role attached", "Profile evidence", "Consent gate"],
-    signal: ["Signal saved", "Preferences updated", "No auto-apply"],
-    onboarding: ["Profile memory", "Role targets", "Consent gate"],
-    pipeline: ["Active interviews", "Corrections", "Consent gate"],
+  const items: Record<LoginContextKind, { title: string; body: string }[]> = {
+    role: [
+      { title: "Role screen", body: "Claire keeps this brief attached." },
+      { title: "Profile evidence", body: "Resume and answers follow the interview." },
+      { title: "Consent gate", body: "Only passed evidence can be shared." },
+    ],
+    signal: [
+      { title: "Saved signal", body: "This role updates your profile targets." },
+      { title: "Preference memory", body: "Corrections stay attached for future screens." },
+      { title: "No auto-apply", body: "Nothing goes to a hiring team yet." },
+    ],
+    onboarding: [
+      { title: "Profile home", body: "Resume, LinkedIn, targets, corrections." },
+      { title: "Active screens", body: "Claire turns fit into interview evidence." },
+      { title: "Consent gate", body: "Only passed evidence can be shared." },
+    ],
+    pipeline: [
+      { title: "Active interviews", body: "Resume where Claire needs your answer." },
+      { title: "Session memory", body: "Prior roles and corrections stay attached." },
+      { title: "Share control", body: "Passed evidence waits for consent." },
+    ],
   }
 
   return (
     <section className="wk-login-context" aria-label="What Claire keeps through sign-in">
-      <span className="wk-login-context__label">Claire keeps</span>
+      <span className="wk-login-context__label">After sign-in, Claire keeps</span>
       <div className="wk-login-context__items">
         {items[kind].map((item) => (
-          <span key={item} className="wk-login-context__item">{item}</span>
+          <span key={item.title} className="wk-login-context__item">
+            <span className="wk-login-context__dot">
+              <Icon name="check" size={10} stroke={2.4} />
+            </span>
+            <span>
+              <strong>{item.title}</strong>
+              <em>{item.body}</em>
+            </span>
+          </span>
         ))}
       </div>
     </section>
@@ -1653,8 +1677,8 @@ export const CANDIDATE_STYLES = `
 .wk-login__sub { color: var(--wk-ink-2); font-size: 15px; line-height: 1.5; margin: 0; }
 .wk-login-context {
   display: grid;
-  gap: 9px;
-  padding: 12px 0 2px;
+  gap: 10px;
+  padding: 12px 0 4px;
 }
 .wk-login-context__label {
   color: var(--wk-ink-3);
@@ -1664,23 +1688,44 @@ export const CANDIDATE_STYLES = `
   text-transform: uppercase;
 }
 .wk-login-context__items {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 .wk-login-context__item {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 7px;
+  align-items: start;
+  color: var(--wk-ink-2);
+  line-height: 1.2;
+}
+.wk-login-context__dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
   display: inline-flex;
   align-items: center;
-  min-height: 28px;
-  padding: 6px 10px;
-  border: 1px solid var(--wk-border);
-  border-radius: var(--wk-r-pill);
-  background: var(--wk-cream);
-  color: var(--wk-ink-2);
+  justify-content: center;
+  background: var(--wk-ink);
+  color: var(--wk-cream);
+  margin-top: 1px;
+}
+.wk-login-context__item strong {
+  display: block;
+  color: var(--wk-ink);
   font-size: 12.5px;
-  font-weight: 650;
-  line-height: 1;
-  white-space: nowrap;
+  line-height: 1.2;
+  font-weight: 750;
+}
+.wk-login-context__item em {
+  display: block;
+  margin-top: 3px;
+  color: var(--wk-ink-3);
+  font-style: normal;
+  font-size: 11.5px;
+  line-height: 1.28;
 }
 .wk-login-preview {
   display: grid;
@@ -1784,9 +1829,12 @@ export const CANDIDATE_STYLES = `
   .wk-login__card { padding: 28px 32px; gap: 14px; }
   .wk-login__h { font-size: clamp(30px, 9vw, 36px); line-height: 1.07; }
   .wk-login__sub { font-size: 14px; line-height: 1.45; }
-  .wk-login-context { gap: 8px; padding-top: 10px; }
-  .wk-login-context__items { gap: 4px; }
-  .wk-login-context__item { min-height: 26px; padding: 5px 8px; font-size: 12px; }
+  .wk-login-context { gap: 9px; padding-top: 10px; }
+  .wk-login-context__items { grid-template-columns: 1fr; gap: 8px; }
+  .wk-login-context__item { grid-template-columns: 20px minmax(0, 1fr); gap: 8px; }
+  .wk-login-context__dot { width: 20px; height: 20px; }
+  .wk-login-context__item strong { font-size: 12.5px; }
+  .wk-login-context__item em { font-size: 12px; line-height: 1.3; }
   .wk-login-preview { gap: 8px; padding: 12px 0; }
   .wk-login-preview__list { gap: 8px; }
   .wk-login__providers { margin-top: 2px; }
