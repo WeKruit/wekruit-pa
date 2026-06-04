@@ -2070,7 +2070,27 @@ export const PUBLIC_JOB_STYLES = `
   .wk-pj-side { position: static; }
   .wk-pj-hm { grid-template-columns: auto 1fr; }
   .wk-pj-hm .wk-live-pill { grid-column: 1 / -1; justify-self: start; }
-  .wk-pj-process-strip { grid-template-columns: 1fr; }
+  .wk-pj-process-strip {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .wk-pj-process-strip__step {
+    min-height: 0;
+    padding: 9px 10px;
+    align-items: center;
+  }
+  .wk-pj-process-strip__step span {
+    width: 22px;
+    height: 22px;
+    font-size: 12px;
+  }
+  .wk-pj-process-strip__body {
+    gap: 0;
+    font-size: 14px;
+  }
+  .wk-pj-process-strip__body em {
+    display: none;
+  }
   .wk-pj-mobile-apply {
     display: block;
     margin-top: -4px;
