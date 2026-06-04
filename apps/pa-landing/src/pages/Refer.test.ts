@@ -106,6 +106,7 @@ test("ReferPublicPage hero explains the friend-side Claire loop before cash mech
 test("ReferPublicPage keeps reward details in verified milestone sections, not the top product panel", () => {
   assert.match(source, /What happens after an invite/)
   assert.match(source, /Claire handles profile, role screens, and verified milestone tracking\./)
+  assert.match(source, /role screens only from real briefs\.\s*\{" "\}\s*\{inviter\.split\(/)
   assert.match(source, /Role screen clears/)
   assert.match(source, /A hiring manager confirms the first interview milestone\./)
   assert.match(source, /WeKruit ops verifies the placement milestone\./)
@@ -121,10 +122,15 @@ test("ReferPublicPage keeps reward details in verified milestone sections, not t
 
 test("ReferPublicPage routes candidate-owner earning CTAs back to the referral dashboard", () => {
   assert.match(source, /const REFERRAL_DASHBOARD_LOGIN = "\/login\?next=%2Fme%2Frefer"/)
-  assert.match(source, /const primaryHref = inviter \? "\/login" : REFERRAL_DASHBOARD_LOGIN/)
+  assert.match(source, /const primaryHref = inviter \? "\/onboarding" : REFERRAL_DASHBOARD_LOGIN/)
+  assert.match(source, /const secondaryHref = inviter \? "\/login" : "\/onboarding"/)
+  assert.match(source, /const secondaryLabel = inviter \? "I already have an account" : "Start with Claire"/)
   assert.match(source, /onClick=\{\(\) => navigate\(primaryHref\)\}/)
-  assert.match(source, /<Link to=\{inviter \? "\/login" : REFERRAL_DASHBOARD_LOGIN\} className="wk-ref-public-cta__alt">/)
+  assert.match(source, /<Link to=\{secondaryHref\} className="wk-ref-public-cta__alt">/)
+  assert.match(source, /\{secondaryLabel\}/)
   assert.match(source, /onClick=\{\(\) => navigate\(REFERRAL_DASHBOARD_LOGIN\)\}/)
+  assert.match(source, /if \(res\.valid\) rememberReferralSlug\(slug\)/)
+  assert.doesNotMatch(source, /<Link to=\{inviter \? "\/login" : REFERRAL_DASHBOARD_LOGIN\} className="wk-ref-public-cta__alt">/)
   assert.doesNotMatch(source, /Sign up to start earning[\s\S]{0,180}navigate\("\/login"\)/)
 })
 
