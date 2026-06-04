@@ -243,6 +243,11 @@ function locationDisplay(slug?: string, raw?: string): string {
   return titleCase(slug)
 }
 
+function compDisplay(value: string | undefined, missingLabel: string): string {
+  const trimmed = value?.trim()
+  return trimmed && trimmed !== "—" ? trimmed : missingLabel
+}
+
 const LOC_TO_TOKENS: Record<string, string[]> = {
   "San Francisco": ["san_francisco_bay_area", "san_francisco"],
   "New York": ["new_york_city_metro", "new_york"],
@@ -297,7 +302,7 @@ function fromOpenJob(r: OpenJobRow): DisplayJob {
     fnLabel: fnLabel(r.function),
     levelLabel: levelLabel(r.level),
     location: locationDisplay(r.location, r.locationRaw),
-    comp: r.comp ?? "—",
+    comp: compDisplay(r.comp, "Comp not listed at source"),
     posted: postedDisplay(r.posted),
     via: sourceLine(r.source),
     evidence: evidenceForOpenJob(r),
@@ -326,7 +331,7 @@ function fromPaJob(id: string, raw: PaJobDoc): DisplayJob {
     fnLabel: "Product", // pa-jobs are heterogeneous; treat as N/A in filter rail
     levelLabel: "Senior",
     location: raw.location ?? "—",
-    comp: raw.prescreenConfig?.level1Reveal?.salaryRange ?? "—",
+    comp: compDisplay(raw.prescreenConfig?.level1Reveal?.salaryRange, "Comp not listed in brief"),
     posted: "",
     via: raw.wekruitCollaborationStatus === "collaborated" ? "Direct line" : "Inbound",
     evidence: evidenceForPaJob(raw),
