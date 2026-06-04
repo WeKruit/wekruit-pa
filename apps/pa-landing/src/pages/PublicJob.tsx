@@ -1200,6 +1200,13 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
               <div className="wk-pj-meta-row">
                 {meta.map((item) => <span key={item}>{item}</span>)}
               </div>
+              {!signedIn ? (
+                <div className="wk-pj-mobile-apply">
+                  <button type="button" className="wk-btn wk-btn--ink wk-btn--block" onClick={onApply}>
+                    Start Claire interview
+                  </button>
+                </div>
+              ) : null}
               <div className="wk-pj-hero__process">
                 <p className="wk-eyebrow">Role interview plan</p>
                 <ProcessStrip />
@@ -1262,13 +1269,6 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
           </div>
         </section>
 
-        {!signedIn ? (
-          <div className="wk-pj-mobile-apply">
-            <button type="button" className="wk-btn wk-btn--ink wk-btn--block" onClick={onApply}>
-              Start Claire interview
-            </button>
-          </div>
-        ) : null}
       </div>
       {overlay}
     </CandidateShell>
@@ -2022,19 +2022,9 @@ export const PUBLIC_JOB_STYLES = `
   .wk-pj-hm .wk-live-pill { grid-column: 1 / -1; justify-self: start; }
   .wk-pj-process-strip { grid-template-columns: 1fr; }
   .wk-pj-mobile-apply {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 35;
     display: block;
-    padding: 12px 20px calc(12px + env(safe-area-inset-bottom));
-    background: rgba(245,237,227,0.92);
-    border-top: 1px solid var(--wk-border);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    margin-top: -4px;
   }
-  .wk-pj { padding-bottom: 108px; }
 }
 
 @media (min-width: 981px) and (max-width: 1180px) {

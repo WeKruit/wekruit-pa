@@ -65,6 +65,17 @@ test("PublicJob keeps the role page visible until the candidate starts Claire", 
   assert.match(source, /loginPromptOpen && !user/)
 })
 
+test("PublicJob mobile Claire CTA is inline and does not cover role content", () => {
+  assert.match(
+    source,
+    /<div className="wk-pj-meta-row">[\s\S]*\{!signedIn \? \([\s\S]*<div className="wk-pj-mobile-apply">[\s\S]*Start Claire interview[\s\S]*<div className="wk-pj-hero__process">/,
+  )
+  assert.match(source, /@media \(max-width: 980px\) \{[\s\S]*\.wk-pj-mobile-apply \{[\s\S]*display: block;[\s\S]*margin-top: -4px;/)
+  assert.doesNotMatch(source, /\.wk-pj-mobile-apply \{[^}]*position: fixed;/)
+  assert.doesNotMatch(source, /\.wk-pj-mobile-apply \{[^}]*bottom: 0;/)
+  assert.doesNotMatch(source, /\.wk-pj \{ padding-bottom: 108px; \}/)
+})
+
 test("PublicJob resume upload avoids internal configuration errors", () => {
   assert.doesNotMatch(source, /CV ingest endpoint is not configured/)
   assert.match(source, /Resume upload is temporarily unavailable\. Message Claire and we'll attach it to this role\./)
