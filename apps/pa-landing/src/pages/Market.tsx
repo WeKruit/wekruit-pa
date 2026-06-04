@@ -1828,10 +1828,10 @@ const MARKET_STYLES = String.raw`
   }
   .wk-shell .wk-market__h1 {
     font-size: 38px;
-    line-height: 1.2;
+    line-height: 1.24;
   }
   .wk-shell .wk-market__h1--direct {
-    gap: 2px;
+    gap: 8px;
   }
   .wk-shell .wk-roleflow {
     padding: 16px 0;
