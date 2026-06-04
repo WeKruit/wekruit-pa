@@ -458,10 +458,20 @@ function EvidenceBadge({ evidence, compact = false }: { evidence: MarketEvidence
 }
 
 function MarketTab({
-  active, count, sub, label, onClick,
-}: { active: boolean; count?: number; sub: string; label: string; onClick: () => void }) {
+  active, count, sub, label, onClick, id, controls,
+}: { active: boolean; count?: number; sub: string; label: string; onClick: () => void; id: string; controls: string }) {
+  const accessibleLabel = `${label}${count !== undefined ? `, ${count}` : ""}. ${sub}.`
   return (
-    <button type="button" className={`wk-mtab${active ? " is-active" : ""}`} onClick={onClick} role="tab" aria-selected={active}>
+    <button
+      id={id}
+      type="button"
+      className={`wk-mtab${active ? " is-active" : ""}`}
+      onClick={onClick}
+      role="tab"
+      aria-selected={active}
+      aria-controls={controls}
+      aria-label={accessibleLabel}
+    >
       <span className="wk-mtab__top">
         <span className="wk-mtab__label">{label}</span>
         {count !== undefined ? (
@@ -857,13 +867,15 @@ export default function Market(): ReactNode {
       <style>{MARKET_STYLES}</style>
       <div className="wk-market">
         <div className="wk-container">
-          <div className="wk-mtabs" role="tablist">
+          <div className="wk-mtabs" role="tablist" aria-label="Market role source">
             <MarketTab
               active={tab === "direct"}
               onClick={() => setTab("direct")}
               label="Role briefs"
               count={direct.isSuccess ? directJobs.length : undefined}
               sub="Hiring-team briefs for Claire"
+              id="market-tab-direct"
+              controls="market-panel-direct"
             />
             <MarketTab
               active={tab === "hunting"}
@@ -871,12 +883,19 @@ export default function Market(): ReactNode {
               label="Tracked roles"
               count={hunting.isSuccess ? huntingTotal : undefined}
               sub="External roles Claire is watching"
+              id="market-tab-hunting"
+              controls="market-panel-hunting"
             />
           </div>
         </div>
 
         {tab === "hunting" ? (
-          <section className="wk-market__panel wk-market__panel--hunting">
+          <section
+            id="market-panel-hunting"
+            className="wk-market__panel wk-market__panel--hunting"
+            role="tabpanel"
+            aria-labelledby="market-tab-hunting"
+          >
             <div className="wk-container">
               <header className="wk-market__head">
                 <p className="wk-eyebrow">{trackedHead.eyebrow}</p>
@@ -909,6 +928,7 @@ export default function Market(): ReactNode {
                       <label className="wk-market__search">
                         <input
                           type="search"
+                          aria-label="Search tracked roles"
                           placeholder="Search roles, companies…"
                           value={searchQ}
                           onChange={(e) => setSearchQ(e.target.value)}
@@ -1037,7 +1057,12 @@ export default function Market(): ReactNode {
             </div>
           </section>
         ) : (
-          <section className="wk-market__panel wk-market__panel--direct">
+          <section
+            id="market-panel-direct"
+            className="wk-market__panel wk-market__panel--direct"
+            role="tabpanel"
+            aria-labelledby="market-tab-direct"
+          >
             <div className="wk-container">
               <header className="wk-market__head">
                 <p className="wk-eyebrow"><PulseDot size={6} /> Hiring-team briefs · Claire screens first</p>
@@ -1070,6 +1095,7 @@ export default function Market(): ReactNode {
                     <label className="wk-market__search wk-direct-toolbar__search">
                       <input
                         type="search"
+                        aria-label="Search role briefs"
                         placeholder="Search role, company, location…"
                         value={directSearchQ}
                         onChange={(e) => setDirectSearchQ(e.target.value)}
