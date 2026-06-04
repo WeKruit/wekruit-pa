@@ -37,6 +37,18 @@ test("Market tracked-role zero state moves candidates to real next actions befor
   assert.match(source, /\{trackedRolesEmpty \? \([\s\S]*<MarketTrackedRolesEmpty onViewRoleBriefs=\{\(\) => setTab\("direct"\)\} \/>[\s\S]*\) : \([\s\S]*<div className="wk-market__layout">/)
 })
 
+test("Market tracked-role tab shows role inventory before the supporting source contract", () => {
+  assert.match(
+    source,
+    /\{trackedRolesEmpty \? \([\s\S]*<MarketTrackedRolesEmpty onViewRoleBriefs=\{\(\) => setTab\("direct"\)\} \/>[\s\S]*\) : \([\s\S]*<div className="wk-market__layout">[\s\S]*<HuntCard key=\{r\.id\} r=\{r\} onOpen=\{\(\) => onOpenJob\(r\)\} \/>[\s\S]*\)\}[\s\S]*<section className="wk-market-contract" aria-labelledby="wk-market-contract-title">/,
+  )
+  assert.match(source, /@media \(max-width: 1280px\) \{[\s\S]*\.wk-shell \.wk-market__layout \{ grid-template-columns: 1fr; gap: 24px; \}/)
+  assert.match(source, /\.wk-shell \.wk-market__col \{ order: 1; \}/)
+  assert.match(source, /\.wk-shell \.wk-filt \{ position: static; order: 2; \}/)
+  assert.match(source, /How Claire uses this market/)
+  assert.match(source, /Use roles as signal, not another apply queue\./)
+})
+
 test("Market does not invent role fit confidence from a hash", () => {
   assert.doesNotMatch(source, /function fitForId/)
   assert.doesNotMatch(source, /fit:\s*fitForId/)
@@ -214,6 +226,10 @@ test("Market keeps mobile role cards primary while preserving the compact suppor
   assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-roleflow \{[\s\S]*padding: 12px 0;[\s\S]*display: block;/)
   assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-roleflow__steps \{[\s\S]*display: flex;[\s\S]*flex-wrap: wrap;/)
   assert.match(source, /\.wk-shell \.wk-roleflow__steps span \{[\s\S]*display: none;/)
+})
+
+test("Market mobile headlines leave enough line height for two-line Newsreader italics", () => {
+  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market__h1 \{[\s\S]*font-size: clamp\(36px, 10vw, 44px\);[\s\S]*line-height: 1\.14;[\s\S]*letter-spacing: 0;[\s\S]*margin: 14px 0 16px;/)
 })
 
 test("Market tab chrome separates labels, counts, and subtitles on narrow screens", () => {

@@ -858,35 +858,6 @@ export default function Market(): ReactNode {
                 </div>
               </header>
 
-              <section className="wk-market-contract" aria-labelledby="wk-market-contract-title">
-                <div className="wk-market-contract__copy">
-                  <p className="wk-eyebrow">How Claire uses this market</p>
-                  <h2 id="wk-market-contract-title">Use roles as signal, not another apply queue.</h2>
-                  <p>
-                    The market is a source layer. Claire still needs your durable profile, target constraints,
-                    and interview evidence before any role becomes a real WeKruit path.
-                  </p>
-                </div>
-                <div className="wk-market-contract__grid">
-                  <article className="wk-market-contract__item wk-market-contract__item--direct">
-                    <strong>Role briefs</strong>
-                    <span>Role briefs are screens WeKruit can run with Claire. Some are collaborated roles; others still need Claire to verify fit before any passed profile is shared.</span>
-                  </article>
-                  <article className="wk-market-contract__item wk-market-contract__item--tracked">
-                    <strong>Tracked roles</strong>
-                    <span>Tracked roles are source evidence, not applications. Open the original posting when you want to inspect the company or role details.</span>
-                  </article>
-                  <article className="wk-market-contract__item wk-market-contract__item--profile">
-                    <strong>Your profile</strong>
-                    <span>Your profile and preferences decide what Claire can pursue with you. Send role signal opens a Claire draft prefilled with this exact role.</span>
-                  </article>
-                </div>
-                <div className="wk-market-contract__actions">
-                  <a className="wk-btn wk-btn--primary" href="/me/profile">Update preferences</a>
-                  <a className="wk-btn wk-btn--secondary" href="/onboarding">Start with Claire</a>
-                </div>
-              </section>
-
               {trackedRolesEmpty ? (
                 <MarketTrackedRolesEmpty onViewRoleBriefs={() => setTab("direct")} />
               ) : (
@@ -998,6 +969,35 @@ export default function Market(): ReactNode {
                   </div>
                 </div>
               )}
+
+              <section className="wk-market-contract" aria-labelledby="wk-market-contract-title">
+                <div className="wk-market-contract__copy">
+                  <p className="wk-eyebrow">How Claire uses this market</p>
+                  <h2 id="wk-market-contract-title">Use roles as signal, not another apply queue.</h2>
+                  <p>
+                    The market is a source layer. Claire still needs your durable profile, target constraints,
+                    and interview evidence before any role becomes a real WeKruit path.
+                  </p>
+                </div>
+                <div className="wk-market-contract__grid">
+                  <article className="wk-market-contract__item wk-market-contract__item--direct">
+                    <strong>Role briefs</strong>
+                    <span>Role briefs are screens WeKruit can run with Claire. Some are collaborated roles; others still need Claire to verify fit before any passed profile is shared.</span>
+                  </article>
+                  <article className="wk-market-contract__item wk-market-contract__item--tracked">
+                    <strong>Tracked roles</strong>
+                    <span>Tracked roles are source evidence, not applications. Open the original posting when you want to inspect the company or role details.</span>
+                  </article>
+                  <article className="wk-market-contract__item wk-market-contract__item--profile">
+                    <strong>Your profile</strong>
+                    <span>Your profile and preferences decide what Claire can pursue with you. Send role signal opens a Claire draft prefilled with this exact role.</span>
+                  </article>
+                </div>
+                <div className="wk-market-contract__actions">
+                  <a className="wk-btn wk-btn--primary" href="/me/profile">Update preferences</a>
+                  <a className="wk-btn wk-btn--secondary" href="/onboarding">Start with Claire</a>
+                </div>
+              </section>
             </div>
           </section>
         ) : (
@@ -1513,6 +1513,16 @@ const MARKET_STYLES = String.raw`
 }
 .wk-shell .wk-evidence--compact .wk-evidence__detail { display: none; }
 
+@media (max-width: 1280px) {
+  .wk-shell .wk-market__layout { grid-template-columns: 1fr; gap: 24px; }
+  .wk-shell .wk-market__col { order: 1; }
+  .wk-shell .wk-filt { position: static; order: 2; }
+  .wk-shell .wk-filt__list { display: flex; flex-wrap: wrap; gap: 6px; }
+  .wk-shell .wk-filt__row {
+    background: var(--wk-cream-3); border: 1px solid var(--wk-border);
+    padding: 6px 10px; border-radius: var(--wk-r-pill);
+  }
+}
 @media (max-width: 1080px) {
   .wk-shell .wk-market-contract { grid-template-columns: 1fr; gap: 18px; }
   .wk-shell .wk-market-contract__actions { grid-column: auto; margin-top: 0; }
@@ -1522,13 +1532,6 @@ const MARKET_STYLES = String.raw`
   .wk-shell .wk-roleflow__link { justify-self: start; }
   .wk-shell .wk-market-empty { grid-template-columns: 1fr; align-items: stretch; }
   .wk-shell .wk-market-empty__actions { justify-content: flex-start; }
-  .wk-shell .wk-market__layout { grid-template-columns: 1fr; gap: 24px; }
-  .wk-shell .wk-filt { position: static; }
-  .wk-shell .wk-filt__list { display: flex; flex-wrap: wrap; gap: 6px; }
-  .wk-shell .wk-filt__row {
-    background: var(--wk-cream-3); border: 1px solid var(--wk-border);
-    padding: 6px 10px; border-radius: var(--wk-r-pill);
-  }
 }
 @media (max-width: 860px) {
   .wk-shell .wk-mtabs {
@@ -1552,10 +1555,10 @@ const MARKET_STYLES = String.raw`
 @media (max-width: 720px) {
   .wk-shell .wk-market__head { margin-bottom: 20px; }
   .wk-shell .wk-market__h1 {
-    font-size: clamp(38px, 10.8vw, 48px);
-    line-height: 1.06;
+    font-size: clamp(36px, 10vw, 44px);
+    line-height: 1.14;
     letter-spacing: 0;
-    margin: 14px 0 14px;
+    margin: 14px 0 16px;
   }
   .wk-shell .wk-market__lede {
     font-size: 16px;
