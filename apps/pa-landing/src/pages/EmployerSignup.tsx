@@ -91,6 +91,7 @@ export default function EmployerSignup() {
   const readiness = deriveEmployerSignupReadiness(form)
   const packetPreview = deriveEmployerPacketPreview(form)
   const handleFieldJump: FieldJumpHandler = handleEmployerFieldJump
+  const primaryStartTargetId = readiness.nextIncompleteItem?.targetId ?? "employer-send-review"
 
   const update = <K extends keyof EmployerSignupFormState>(k: K, v: EmployerSignupFormState[K]) =>
     setForm((prev) => ({ ...prev, [k]: v }))
@@ -170,7 +171,8 @@ export default function EmployerSignup() {
             }}
           >
             <a
-              href="#employer-packet-starters"
+              href={`#${primaryStartTargetId}`}
+              onClick={(event) => handleFieldJump(event, primaryStartTargetId)}
               className="btn btn--primary"
               style={{ textDecoration: "none" }}
             >
