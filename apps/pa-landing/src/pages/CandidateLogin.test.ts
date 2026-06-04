@@ -76,7 +76,7 @@ test("CandidateLogin keeps onboarding auth controls before the explanatory previ
   assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login__providers \{ margin-top: 2px; \}/)
 })
 
-test("CandidateLogin /me sign-in previews the operating home before auth controls", () => {
+test("CandidateLogin /me sign-in keeps auth controls before the operating-home preview", () => {
   assert.match(source, /function LoginPipelinePreview/)
   assert.match(source, /What opens after sign-in/)
   assert.match(source, /Active role interviews/)
@@ -84,7 +84,10 @@ test("CandidateLogin /me sign-in previews the operating home before auth control
   assert.match(source, /Profile signals and corrections/)
   assert.match(source, /Passed-profile consent/)
   assert.match(source, /const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !roleSignalNext && !onboardingNext/)
-  assert.match(source, /\{showPipelinePreview \? <LoginPipelinePreview \/> : null\}[\s\S]*<div className="wk-login__providers">/)
+  const providerIndex = source.indexOf('<div className="wk-login__providers">')
+  const pipelinePreviewIndex = source.indexOf("{showPipelinePreview ? <LoginPipelinePreview /> : null}")
+  assert.ok(providerIndex > 0)
+  assert.ok(pipelinePreviewIndex > providerIndex)
 })
 
 test("CandidateLogin preserves market role signal context through auth", () => {
