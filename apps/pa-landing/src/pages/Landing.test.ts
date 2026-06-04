@@ -106,8 +106,9 @@ test("Landing hero headline keeps editorial lines separated across breakpoints",
   assert.match(landingSource, /<span>You don't <em className="wk-accent">apply\.<\/em><\/span>/)
   assert.match(landingSource, /<span>You interview\.<\/span>/)
   assert.doesNotMatch(landingSource, /<span><em className="wk-accent">apply\.<\/em><\/span>/)
-  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*display: grid;[\s\S]*gap: clamp\(18px, 1\.4vw, 28px\);/)
-  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*font-size: clamp\(50px, 4\.95vw, 68px\);[\s\S]*line-height: 1\.28;/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*display: grid;[\s\S]*gap: 24px;/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*max-width: min\(100%, 660px\);[\s\S]*font-size: 64px;[\s\S]*line-height: 1\.34;/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*overflow: visible;/)
   assert.match(landingSource, /\.wk-hero__h1 > span \{[\s\S]*line-height: inherit;/)
   assert.match(landingSource, /\.wk-hero__h1 \.wk-accent \{[\s\S]*line-height: inherit;/)
   assert.match(landingSource, /\.wk-hero__h1 > span:first-child \{ white-space: nowrap; \}/)
@@ -115,13 +116,13 @@ test("Landing hero headline keeps editorial lines separated across breakpoints",
   assert.match(source, /\.seq__h2 \{[\s\S]*letter-spacing: 0;[\s\S]*line-height: 1\.14;/)
   assert.match(
     landingSource,
-    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: clamp\(44px, 5\.8vw, 56px\); line-height: 1\.3; gap: 16px; \}/,
+    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 52px; line-height: 1\.34; gap: 18px; \}/,
   )
   assert.match(
     landingSource,
-    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: clamp\(38px, 10\.8vw, 44px\); line-height: 1\.32; gap: 14px; \}/,
+    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 40px; line-height: 1\.36; gap: 16px; \}/,
   )
-  assert.match(landingSource, /@media \(max-width: 360px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 36px; \}/)
+  assert.match(landingSource, /@media \(max-width: 360px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 34px; \}/)
   assert.match(landingSource, /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__browse \{ flex-basis: 100%; \}/)
 })
 
