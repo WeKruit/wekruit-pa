@@ -169,7 +169,8 @@ test("CandidateShell signed-in nav keeps candidates inside the operating home an
 })
 
 test("CandidateShell mobile header keeps the primary candidate start action visible", () => {
-  assert.match(source, /className="wk-btn wk-btn--ink wk-btn--sm wk-header__primary" aria-label="Start with Claire"/)
+  assert.match(source, /<Link to="\/onboarding" className="wk-btn wk-btn--ink wk-btn--sm wk-header__primary" aria-label="Start with Claire">/)
+  assert.doesNotMatch(source, /<Link to="\/login" className="wk-btn wk-btn--ink wk-btn--sm wk-header__primary" aria-label="Start with Claire">/)
   assert.match(source, /className="wk-header__primary-full" aria-hidden="true">Start with Claire<\/span>/)
   assert.match(source, /className="wk-header__primary-short" aria-hidden="true">Start<\/span>/)
   assert.match(source, /@media \(max-width: 820px\) \{[\s\S]*\.wk-header__inner > \.wk-header__cta \{ margin-left: auto; \}/)
