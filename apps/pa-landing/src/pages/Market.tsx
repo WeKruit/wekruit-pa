@@ -357,6 +357,28 @@ function roleSignalAriaLabel(r: DisplayJob): string {
   return `Send ${r.title} at ${r.company} as a prefilled role signal to Claire`
 }
 
+function roleBriefSearchTokens(s: string): string[] {
+  return s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+}
+
+function roleBriefMatchesSearch(r: DisplayJob, search: string): boolean {
+  const terms = roleBriefSearchTokens(search)
+  if (terms.length === 0) return true
+  const fields = [
+    r.title,
+    r.company,
+    r.location,
+    r.comp,
+    r.via,
+    r.evidence.label,
+    r.evidence.detail,
+    r.hiringManager.name,
+    r.hiringManager.title,
+  ]
+  const tokens = roleBriefSearchTokens(fields.join(" "))
+  return terms.every((term) => tokens.some((token) => token.startsWith(term)))
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Filter rail
 // ────────────────────────────────────────────────────────────────────────────
@@ -755,6 +777,7 @@ export default function Market(): ReactNode {
   const [tab, setTab] = useState<"hunting" | "direct">("direct")
   const [view, setView] = useState<"table" | "cards">(initialMarketViewMode)
   const [searchQ, setSearchQ] = useState("")
+  const [directSearchQ, setDirectSearchQ] = useState("")
   const [fnSel, setFnSel] = useState<Set<string>>(new Set())
   const [levelSel, setLevelSel] = useState<Set<string>>(new Set())
   const [locSel, setLocSel] = useState<Set<string>>(new Set())
@@ -789,6 +812,11 @@ export default function Market(): ReactNode {
   )
   const huntingTotal = hunting.data?.pages[0]?.total ?? 0
   const directJobs = direct.data ?? []
+  const directSearch = directSearchQ.trim().toLowerCase()
+  const filteredDirectJobs = useMemo(() => {
+    if (!directSearch) return directJobs
+    return directJobs.filter((r) => roleBriefMatchesSearch(r, directSearch))
+  }, [directJobs, directSearch])
   const trackedRolesEmpty = hunting.isSuccess && huntingTotal === 0
   const trackedHead = trackedRolesEmpty
     ? {
@@ -1029,8 +1057,31 @@ export default function Market(): ReactNode {
               ) : (
                 <>
                   <MarketRoleBriefWorkflow count={direct.isSuccess ? directJobs.length : undefined} />
+                  <div className="wk-direct-toolbar" aria-label="Role brief search">
+                    <label className="wk-market__search wk-direct-toolbar__search">
+                      <input
+                        type="search"
+                        placeholder="Search role, company, location…"
+                        value={directSearchQ}
+                        onChange={(e) => setDirectSearchQ(e.target.value)}
+                      />
+                    </label>
+                    <p className="wk-direct-toolbar__count">
+                      Showing {filteredDirectJobs.length} of {directJobs.length} role briefs
+                    </p>
+                    {directSearch ? (
+                      <button type="button" className="wk-direct-toolbar__clear" onClick={() => setDirectSearchQ("")}>
+                        Clear
+                      </button>
+                    ) : null}
+                  </div>
                   <div className="wk-direct-cards">
-                    {directJobs.map((r) => (
+                    {filteredDirectJobs.length === 0 ? (
+                      <div className="wk-tbl__empty wk-tbl__empty--block wk-direct-empty">
+                        <strong>No role briefs match.</strong>
+                        Search by company, role, location, compensation, or clear the search.
+                      </div>
+                    ) : filteredDirectJobs.map((r) => (
                       <DirectCard key={r.id} r={r} onTalk={() => onTalkToClaire(r)} />
                     ))}
                   </div>
@@ -1288,6 +1339,24 @@ const MARKET_STYLES = String.raw`
   font-family: inherit; font-size: 13.5px; color: var(--wk-ink);
 }
 .wk-shell .wk-market__search input::placeholder { color: var(--wk-ink-4); }
+.wk-shell .wk-direct-toolbar {
+  display: grid; grid-template-columns: minmax(240px, 360px) minmax(0, 1fr) auto;
+  align-items: center; gap: 12px; margin: 0 0 10px;
+}
+.wk-shell .wk-direct-toolbar__search { max-width: none; }
+.wk-shell .wk-direct-toolbar__count {
+  margin: 0; color: var(--wk-ink-3); font-size: 13px; line-height: 1.35;
+}
+.wk-shell .wk-direct-toolbar__clear {
+  height: 32px; padding: 0 11px;
+  border: 1px solid var(--wk-border); border-radius: var(--wk-r-pill);
+  background: var(--wk-cream-3); color: var(--wk-ink-2);
+  font-family: inherit; font-size: 12.5px; font-weight: 650;
+  cursor: pointer;
+}
+.wk-shell .wk-direct-toolbar__clear:hover {
+  border-color: var(--wk-border-strong); color: var(--wk-ink); background: var(--wk-cream);
+}
 
 .wk-shell .wk-viewtog {
   display: inline-flex; background: var(--wk-cream-3);
@@ -1415,6 +1484,7 @@ const MARKET_STYLES = String.raw`
   display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 14px; margin-top: 8px;
 }
+.wk-shell .wk-direct-empty { grid-column: 1 / -1; }
 .wk-shell .wk-direct-card {
   background: var(--wk-cream-3); border: 1px solid var(--wk-live-border);
   border-radius: var(--wk-r-md); padding: 18px;
@@ -1608,6 +1678,22 @@ const MARKET_STYLES = String.raw`
   }
   .wk-shell .wk-roleflow__link {
     display: none;
+  }
+  .wk-shell .wk-direct-toolbar {
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .wk-shell .wk-direct-toolbar__search {
+    grid-column: 1 / -1;
+    height: 36px;
+  }
+  .wk-shell .wk-direct-toolbar__count {
+    font-size: 12.5px;
+  }
+  .wk-shell .wk-direct-toolbar__clear {
+    height: 30px;
+    padding: 0 10px;
   }
   .wk-shell .wk-direct-cards { display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 6px; }
   .wk-shell .wk-direct-card {
