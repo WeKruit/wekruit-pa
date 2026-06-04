@@ -121,7 +121,7 @@ export default function EmployerSignup() {
       {!done ? <EmployerRolePacketProgressDock summary={readiness} onFieldJump={handleFieldJump} /> : null}
       <section
         style={{
-          paddingTop: 56,
+          paddingTop: "clamp(36px, 7vw, 56px)",
           paddingBottom: 96,
           background: "var(--halo-hero, var(--cream))",
         }}
@@ -135,8 +135,8 @@ export default function EmployerSignup() {
             style={{
               fontFamily: "var(--font-serif)",
               fontWeight: 400,
-              fontSize: 44,
-              lineHeight: 1.05,
+              fontSize: "clamp(36px, 8vw, 44px)",
+              lineHeight: 1.04,
               letterSpacing: 0,
               color: "var(--ink)",
               margin: 0,
@@ -147,23 +147,22 @@ export default function EmployerSignup() {
           </h1>
           <p
             style={{
-              marginTop: 18,
+              marginTop: 16,
               maxWidth: 520,
               fontFamily: "var(--font-sans)",
-              fontSize: 17,
-              lineHeight: 1.5,
+              fontSize: "clamp(15.5px, 3.8vw, 17px)",
+              lineHeight: 1.45,
               color: "var(--ink-2)",
             }}
           >
-            Tell us the role, must-haves, hard filters, evidence probes, calibration examples,
-            feedback loop, and intro handoff behind the brief. WeKruit reviews it, Claire screens
-            against the evidence, and you only see consented passed profiles with the transcript
-            and risks attached.
+            Tell us the role, hard filters, evidence probes, calibration bar, feedback loop,
+            and intro handoff. Claire screens against that evidence; you only see consented
+            passed profiles with transcript and risk context.
           </p>
           <div
             aria-label="Role intake primary actions"
             style={{
-              marginTop: 22,
+              marginTop: 18,
               display: "flex",
               alignItems: "center",
               gap: 12,
@@ -185,8 +184,6 @@ export default function EmployerSignup() {
               See sample pass
             </Link>
           </div>
-          <EmployerOutputPreview />
-
           {done ? <SuccessCard form={form} onStartAnother={() => {
             setForm(EMPTY_FORM)
             setAppliedStarterId(null)
@@ -201,6 +198,7 @@ export default function EmployerSignup() {
                   setAppliedStarterId(starterId)
                 }}
               />
+              <EmployerOutputPreview />
               <EmployerPacketReadiness summary={readiness} onFieldJump={handleFieldJump} />
               <EmployerPacketPreview preview={packetPreview} />
               <EmployerCalibrationLoop />
@@ -693,7 +691,7 @@ function EmployerPacketStarters({
       id="employer-packet-starters"
       aria-label="Editable role packet starters"
       style={{
-        marginTop: 28,
+        marginTop: 22,
         border: "1px solid var(--border)",
         borderRadius: "var(--r-lg)",
         background: "var(--cream-3)",

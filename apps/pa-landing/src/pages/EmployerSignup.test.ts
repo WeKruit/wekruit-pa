@@ -105,8 +105,8 @@ test("EmployerSignup connects role intake to the sample passed-profile output", 
   assert.doesNotMatch(source, /instant pass/i)
 })
 
-test("EmployerSignup makes the first output preview a product loop, not a lead form", () => {
-  assert.match(source, /EmployerOutputPreview \/>[\s\S]*<EmployerPacketStarters/)
+test("EmployerSignup makes the output preview a product loop, not a lead form", () => {
+  assert.match(source, /function EmployerOutputPreview\(\)/)
   assert.match(source, /The packet is not a lead form/)
   assert.match(source, /Claire screening contract/)
   assert.match(source, /Passed-profile evidence/)
@@ -197,6 +197,19 @@ test("EmployerSignup offers editable packet starters instead of a blank long-for
   assert.doesNotMatch(source, /autofill.*company/i)
   assert.doesNotMatch(source, /one-click candidate/i)
   assert.doesNotMatch(source, /instant candidate matches/i)
+})
+
+test("EmployerSignup puts editable packet starters before product explanation", () => {
+  const starterIndex = source.indexOf("<EmployerPacketStarters")
+  const outputPreviewIndex = source.indexOf("<EmployerOutputPreview />")
+  const readinessIndex = source.indexOf("<EmployerPacketReadiness")
+  assert.ok(starterIndex > 0)
+  assert.ok(outputPreviewIndex > starterIndex)
+  assert.ok(readinessIndex > outputPreviewIndex)
+  assert.match(source, /paddingTop: "clamp\(36px, 7vw, 56px\)"/)
+  assert.match(source, /fontSize: "clamp\(36px, 8vw, 44px\)"/)
+  assert.match(source, /Tell us the role, hard filters, evidence probes, calibration bar/)
+  assert.match(source, /passed profiles with transcript and risk context/)
 })
 
 test("EmployerSignup renders the live Claire packet contract before submit", () => {
