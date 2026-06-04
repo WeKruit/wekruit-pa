@@ -344,6 +344,7 @@ export default function OpenJobs() {
             setSearch={setSearch}
             layout={effectiveLayout}
             setLayout={setLayout}
+            showLayoutSwitcher={!isNarrowViewport}
           />
           <OpenClaireLoop tab={tab} />
 
@@ -590,14 +591,6 @@ export default function OpenJobs() {
           }
           .open-claire-loop__step p { display: none; }
           .open-search { width: 100% !important; min-width: 0; }
-          .open-layout-switcher {
-            width: 100%;
-            justify-content: space-between;
-          }
-          .open-layout-switcher button {
-            flex: 1;
-            justify-content: center;
-          }
           .open-layout { gap: 16px !important; }
           .open-card-list { gap: 10px !important; }
           .open-role-card {
@@ -699,8 +692,9 @@ interface HeaderProps {
   setSearch: (v: string) => void
   layout: LayoutId
   setLayout: (v: LayoutId) => void
+  showLayoutSwitcher: boolean
 }
-function Header({ tab, count, total, loading, search, setSearch, layout, setLayout }: HeaderProps) {
+function Header({ tab, count, total, loading, search, setSearch, layout, setLayout, showLayoutSwitcher }: HeaderProps) {
   const isDirect = tab === "direct"
   return (
     <div className="open-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 28 }}>
@@ -732,7 +726,7 @@ function Header({ tab, count, total, loading, search, setSearch, layout, setLayo
       </div>
       <div className="open-header__controls" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", flexShrink: 0 }}>
         <SearchInput value={search} onChange={setSearch} />
-        <LayoutSwitcher value={layout} onChange={setLayout} />
+        {showLayoutSwitcher ? <LayoutSwitcher value={layout} onChange={setLayout} /> : null}
       </div>
     </div>
   )
@@ -814,6 +808,7 @@ function LayoutSwitcher({ value, onChange }: { value: LayoutId; onChange: (v: La
         type="button"
         onClick={() => onChange(id)}
         title={label}
+        aria-pressed={active}
         style={{
           all: "unset",
           cursor: "pointer",
@@ -834,7 +829,7 @@ function LayoutSwitcher({ value, onChange }: { value: LayoutId; onChange: (v: La
     )
   }
   return (
-    <div className="open-layout-switcher" style={{ display: "inline-flex", alignItems: "center", gap: 2, padding: 3, background: "var(--cream-3)", border: "1px solid var(--border)", borderRadius: "var(--r-pill)" }}>
+    <div className="open-layout-switcher" role="group" aria-label="Role list layout" style={{ display: "inline-flex", alignItems: "center", gap: 2, padding: 3, background: "var(--cream-3)", border: "1px solid var(--border)", borderRadius: "var(--r-pill)" }}>
       <Item id="table" label="Table" icon={
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4">
           <rect x="1.5" y="3" width="13" height="10" rx="1" />
