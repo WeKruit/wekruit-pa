@@ -140,10 +140,17 @@ function fromPublicOpening(j: PublicJobOpening): UnifiedJob {
 
 function Wordmark() {
   return (
-    <Link to="/" style={{ textDecoration: "none", display: "inline-flex", alignItems: "baseline", gap: 8, color: "var(--ink)" }}>
+    <Link
+      to="/"
+      className="open-wordmark"
+      aria-label="WeKruit open roles"
+      style={{ textDecoration: "none", display: "inline-flex", alignItems: "baseline", gap: 8, color: "var(--ink)" }}
+    >
       <span style={{ fontFamily: "var(--font-serif)", fontSize: 22, letterSpacing: "-0.02em", fontWeight: 500 }}>WeKruit</span>
-      <span aria-hidden style={{ display: "inline-block", width: 4, height: 4, borderRadius: 999, background: "var(--peach-300)", alignSelf: "center" }} />
-      <em style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontStyle: "italic", fontWeight: 400, color: "var(--ink-2)" }}>Open</em>
+      <span className="open-wordmark__suffix" aria-hidden style={{ display: "inline-flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{ display: "inline-block", width: 4, height: 4, borderRadius: 999, background: "var(--peach-300)", alignSelf: "center" }} />
+        <em style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontStyle: "italic", fontWeight: 400, color: "var(--ink-2)" }}>Open</em>
+      </span>
     </Link>
   )
 }
@@ -202,7 +209,7 @@ function GuestBanner() {
     <div style={{ background: "var(--cream-2)", borderBottom: "1px solid var(--border)" }}>
       <div className="container open-guest__inner" style={{ padding: "10px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
         <span className="caption" style={{ color: "var(--ink-2)" }}>
-          Browsing as a guest · <Link to="/login" style={{ color: "var(--ink)" }}>Sign in to keep your WeKruit profile connected</Link> while you review roles.
+          Guest mode · <Link to="/login" style={{ color: "var(--ink)" }}>Sign in</Link> to keep Claire&apos;s role context attached.
         </span>
         <Link to="/onboarding" className="btn btn--secondary btn--sm">Start Claire profile →</Link>
       </div>
@@ -375,23 +382,21 @@ export default function OpenJobs() {
         }
         @media (max-width: 720px) {
           .open-main-section {
-            padding-top: 18px !important;
+            padding-top: 14px !important;
             padding-bottom: 64px !important;
           }
           .open-nav__inner {
-            height: auto !important;
-            padding: 14px 20px !important;
+            height: 60px !important;
+            box-sizing: border-box;
+            padding: 12px 20px !important;
             align-items: center !important;
-            justify-content: flex-start !important;
-            flex-wrap: wrap;
+            justify-content: space-between !important;
+            flex-wrap: nowrap;
             gap: 12px;
           }
+          .open-wordmark__suffix { display: none !important; }
           .open-nav__links {
-            order: 3;
-            width: 100%;
-            gap: 18px !important;
-            overflow-x: auto;
-            padding-bottom: 2px;
+            display: none !important;
           }
           .open-nav__actions {
             margin-left: auto;
@@ -400,8 +405,15 @@ export default function OpenJobs() {
           .open-nav__actions > a:first-child { display: none; }
           .open-nav__actions .btn { white-space: nowrap; }
           .open-guest__inner {
-            padding: 8px 20px !important;
+            min-height: 36px;
+            box-sizing: border-box;
+            padding: 7px 20px !important;
             gap: 8px !important;
+            flex-wrap: nowrap !important;
+          }
+          .open-guest__inner .caption {
+            font-size: 12px !important;
+            line-height: 1.3 !important;
           }
           .open-guest__inner .btn { display: none; }
           .open-tabs {
@@ -409,11 +421,11 @@ export default function OpenJobs() {
             grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
             gap: 8px !important;
             border-bottom: 0 !important;
-            margin-bottom: 18px !important;
+            margin-bottom: 14px !important;
           }
           .open-tab {
             min-width: 0;
-            padding: 11px 12px 12px !important;
+            padding: 10px 12px 11px !important;
             border: 1px solid var(--border) !important;
             border-radius: 14px;
             background: var(--cream-3);
@@ -542,8 +554,8 @@ function Tabs({ value, onChange, huntCount, directCount }: TabsProps) {
   }
   return (
     <div className="open-tabs" style={{ display: "flex", gap: 8, borderBottom: "1px solid var(--border)", marginBottom: 32, flexWrap: "wrap" }}>
-      <Tab id="hunt" label="Tracked roles" sub="External source listings, not WeKruit-screened yet" count={huntCount} />
       <Tab id="direct" label="Direct line" sub="Roles from hiring teams today" count={directCount} />
+      <Tab id="hunt" label="Tracked roles" sub="External source listings, not WeKruit-screened yet" count={huntCount} />
     </div>
   )
 }
