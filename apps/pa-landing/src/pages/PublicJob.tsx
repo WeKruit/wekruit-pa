@@ -18,6 +18,7 @@ import {
   getRedirectResult,
   onAuthStateChanged,
   sendSignInLinkToEmail,
+  signInWithCustomToken,
   signInWithPopup,
   signInWithRedirect,
   type User,
@@ -53,6 +54,9 @@ import { peekSource, resolveSource, stickSourceFromLoginNext } from "../lib/sour
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
+const LINKEDIN_AUTH_START_URL =
+  import.meta.env.VITE_LINKEDIN_AUTH_START_URL ??
+  "https://us-central1-wekruit-5f89b.cloudfunctions.net/paLinkedinAuthStart"
 const RESUME_UPLOAD_UNAVAILABLE_MESSAGE =
   "Resume upload is temporarily unavailable. Message Claire and we'll attach it to this role."
 const RESUME_UPLOAD_FAILED_MESSAGE =
@@ -97,7 +101,7 @@ interface PaJobDoc {
   interviewSeats?: number
 }
 
-type LoginStatus = "idle" | "google" | "email" | "sent" | "error"
+type LoginStatus = "idle" | "google" | "linkedin" | "email" | "sent" | "error"
 type ResumeGateStatus = "needs_resume_upload" | "resume_processing" | "ready"
 type ResumeGateState =
   | { status: "idle" | "loading" }
@@ -155,6 +159,25 @@ function createGoogleProvider(): GoogleAuthProvider {
   return provider
 }
 
+function takeLinkedinAuthPayload(): { ok: true; customToken: string } | { ok: false; error: string } | null {
+  const prefix = "pa_linkedin_auth:"
+  if (!window.name.startsWith(prefix)) return null
+  const raw = window.name.slice(prefix.length)
+  window.name = ""
+  try {
+    const payload = JSON.parse(raw) as Record<string, unknown>
+    if (payload.ok === true && typeof payload.customToken === "string") {
+      return { ok: true, customToken: payload.customToken }
+    }
+    return {
+      ok: false,
+      error: typeof payload.error === "string" ? payload.error : "linkedin_auth_failed",
+    }
+  } catch {
+    return { ok: false, error: "linkedin_auth_payload_invalid" }
+  }
+}
+
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader()
@@ -210,6 +233,18 @@ export default function PublicJob() {
     let cancelled = false
     void (async () => {
       try {
+        const linkedinPayload = takeLinkedinAuthPayload()
+        if (linkedinPayload?.ok) {
+          const cred = await signInWithCustomToken(auth(), linkedinPayload.customToken)
+          if (!cancelled) {
+            setUser(cred.user)
+            setLoginStatus("idle")
+            setLoginPromptOpen(false)
+          }
+          return
+        }
+        if (linkedinPayload && !linkedinPayload.ok) throw new Error(linkedinPayload.error)
+
         const result = await getRedirectResult(auth())
         if (!cancelled && result?.user) {
           setUser(result.user)
@@ -418,6 +453,14 @@ export default function PublicJob() {
     }
   }
 
+  function startLinkedInSignIn() {
+    setLoginStatus("linkedin")
+    setLoginError(null)
+    rememberOnboardingIntentForPath(nextPath)
+    const returnTo = `${window.location.origin}${nextPath}`
+    window.location.assign(`${LINKEDIN_AUTH_START_URL}?returnTo=${encodeURIComponent(returnTo)}`)
+  }
+
   async function sendEmailLink(e: FormEvent) {
     e.preventDefault()
     const email = cleanEmail(loginEmail)
@@ -444,7 +487,7 @@ export default function PublicJob() {
 
   function renderLoginControls(location: "panel" | "modal") {
     const busy =
-      loginStatus === "google" || loginStatus === "email"
+      loginStatus === "google" || loginStatus === "linkedin" || loginStatus === "email"
     return (
       <div className={`wk-pj-login wk-pj-login--${location}`}>
         <div className="wk-pj-login__providers">
@@ -455,6 +498,14 @@ export default function PublicJob() {
             disabled={busy}
           >
             {loginStatus === "google" ? "Opening Google…" : "Continue with Google"}
+          </button>
+          <button
+            type="button"
+            className="wk-btn wk-btn--linkedin wk-btn--block"
+            onClick={() => startLinkedInSignIn()}
+            disabled={busy}
+          >
+            {loginStatus === "linkedin" ? "Opening LinkedIn…" : "Continue with LinkedIn"}
           </button>
         </div>
         <div className="wk-pj-login__divider"><span>OR MAGIC LINK</span></div>

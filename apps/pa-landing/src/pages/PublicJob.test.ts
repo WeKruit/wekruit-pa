@@ -57,6 +57,19 @@ test("PublicJob keeps both interview entry methods reachable in the mobile sign-
   assert.match(source, /\.wk-pj-contract--compact[\s\S]*\.wk-pj-contract__item em\s*\{\s*display: none;/)
 })
 
+test("PublicJob role sign-in modal offers LinkedIn at the exact interview entry point", () => {
+  assert.match(source, /const LINKEDIN_AUTH_START_URL =/)
+  assert.match(source, /type LoginStatus = "idle" \| "google" \| "linkedin" \| "email" \| "sent" \| "error"/)
+  assert.match(source, /function takeLinkedinAuthPayload\(\)/)
+  assert.match(source, /signInWithCustomToken\(auth\(\), linkedinPayload\.customToken\)/)
+  assert.match(source, /function startLinkedInSignIn\(\)/)
+  assert.match(source, /const returnTo = `\$\{window\.location\.origin\}\$\{nextPath\}`/)
+  assert.match(source, /window\.location\.assign\(`\$\{LINKEDIN_AUTH_START_URL\}\?returnTo=\$\{encodeURIComponent\(returnTo\)\}`\)/)
+  assert.match(source, /className="wk-btn wk-btn--linkedin wk-btn--block"/)
+  assert.match(source, /\{loginStatus === "linkedin" \? "Opening LinkedIn…" : "Continue with LinkedIn"\}/)
+  assert.match(source, /loginStatus === "google" \|\| loginStatus === "linkedin" \|\| loginStatus === "email"/)
+})
+
 test("PublicJob modal stays focused on role context and login controls", () => {
   assert.doesNotMatch(source, /<ProcessStrip compact \/>/)
   assert.match(source, /<div className="wk-pj-modal__job" aria-label="Selected role">/)
