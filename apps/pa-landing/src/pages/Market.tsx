@@ -434,7 +434,7 @@ function MarketTab({
   active, count, sub, label, onClick,
 }: { active: boolean; count?: number; sub: string; label: string; onClick: () => void }) {
   return (
-    <button className={`wk-mtab${active ? " is-active" : ""}`} onClick={onClick} role="tab" aria-selected={active}>
+    <button type="button" className={`wk-mtab${active ? " is-active" : ""}`} onClick={onClick} role="tab" aria-selected={active}>
       <span className="wk-mtab__top">
         <span className="wk-mtab__label">{label}</span>
         {count !== undefined ? (
@@ -1063,13 +1063,15 @@ const MARKET_STYLES = String.raw`
   display: flex; flex-direction: column; gap: 6px; position: relative;
   font-family: inherit; color: var(--wk-ink-3);
   transition: color 200ms var(--wk-ease);
+  min-width: 0;
 }
 .wk-shell .wk-mtab:hover { color: var(--wk-ink); }
-.wk-shell .wk-mtab__top { display: inline-flex; align-items: center; gap: 12px; }
+.wk-shell .wk-mtab__top { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
 .wk-shell .wk-mtab__label {
   font-family: 'Newsreader', 'Tiempos Headline', Georgia, serif;
-  font-weight: 400; font-size: clamp(24px, 2.6vw, 32px); line-height: 1;
-  letter-spacing: -0.02em; color: inherit;
+  font-weight: 400; font-size: clamp(24px, 2.6vw, 32px); line-height: 1.08;
+  letter-spacing: -0.01em; color: inherit;
+  overflow-wrap: normal;
 }
 .wk-shell .wk-mtab__count {
   display: inline-flex; align-items: center; justify-content: center;
@@ -1077,11 +1079,12 @@ const MARKET_STYLES = String.raw`
   border-radius: var(--wk-r-pill);
   background: var(--wk-cream-2); border: 1px solid var(--wk-border); color: var(--wk-ink-2);
   font-family: inherit; font-weight: 600; font-size: 12.5px;
-  letter-spacing: -0.005em; font-variant-numeric: tabular-nums;
+  line-height: 1; letter-spacing: 0; font-variant-numeric: tabular-nums;
+  flex: 0 0 auto; margin-top: 4px;
 }
 .wk-shell .wk-mtab__sub {
   font-family: inherit; font-weight: 400; font-size: 13.5px;
-  color: var(--wk-ink-3); letter-spacing: -0.005em;
+  line-height: 1.28; color: var(--wk-ink-3); letter-spacing: 0;
 }
 .wk-shell .wk-mtab.is-active { color: var(--wk-ink); }
 .wk-shell .wk-mtab.is-active::after {
@@ -1528,9 +1531,18 @@ const MARKET_STYLES = String.raw`
   }
 }
 @media (max-width: 860px) {
-  .wk-shell .wk-mtabs { gap: 24px; }
-  .wk-shell .wk-mtab__label { font-size: 22px; }
-  .wk-shell .wk-mtab__sub { display: none; }
+  .wk-shell .wk-mtabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+    padding-top: 18px;
+    margin-bottom: 30px;
+  }
+  .wk-shell .wk-mtab { padding: 8px 0 14px; gap: 4px; }
+  .wk-shell .wk-mtab__top { gap: 8px; }
+  .wk-shell .wk-mtab__label { font-size: 21px; line-height: 1.12; }
+  .wk-shell .wk-mtab__count { height: 22px; min-width: 26px; padding: 0 7px; margin-top: 2px; font-size: 11.5px; }
+  .wk-shell .wk-mtab__sub { display: block; font-size: 11.75px; line-height: 1.24; }
   .wk-shell .wk-market-contract__grid { grid-template-columns: 1fr; }
   .wk-shell .wk-market-contract__item { min-height: 0; }
   .wk-shell .wk-batch { flex-direction: column; align-items: flex-start; gap: 8px; }
