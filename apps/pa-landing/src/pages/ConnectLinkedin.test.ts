@@ -17,11 +17,11 @@ test("ConnectLinkedin uses controlled headline rows instead of an overlapping ra
   )
   assert.match(
     source,
-    /\.wk-li-connect__title \{[\s\S]*font-size: clamp\(48px, 6vw, 72px\);[\s\S]*line-height: 1\.08;/,
+    /\.wk-li-connect__title \{[\s\S]*font-size: clamp\(48px, 6vw, 72px\);[\s\S]*line-height: 1\.16;/,
   )
-  assert.match(source, /\.wk-li-connect__title > span \{[\s\S]*line-height: 1\.08;/)
+  assert.match(source, /\.wk-li-connect__title > span \{[\s\S]*line-height: inherit;/)
   assert.match(
     source,
-    /@media \(max-width: 520px\) \{[\s\S]*\.wk-li-connect__title \{[\s\S]*font-size: clamp\(42px, 14vw, 54px\);/,
+    /@media \(max-width: 520px\) \{[\s\S]*\.wk-li-connect__title \{[\s\S]*font-size: clamp\(42px, 14vw, 54px\);[\s\S]*line-height: 1\.18;/,
   )
 })

@@ -290,13 +290,14 @@ const LINKEDIN_CONNECT_STYLES = `
   margin: 0 0 22px;
   font-family: 'Newsreader', Georgia, serif;
   font-size: clamp(48px, 6vw, 72px);
-  line-height: 1.08;
+  line-height: 1.16;
   font-weight: 400;
   letter-spacing: 0;
+  text-wrap: balance;
 }
 .wk-li-connect__title > span {
   display: block;
-  line-height: 1.08;
+  line-height: inherit;
 }
 .wk-li-connect__copy {
   max-width: 440px;
@@ -375,6 +376,7 @@ const LINKEDIN_CONNECT_STYLES = `
   }
   .wk-li-connect__title {
     font-size: clamp(42px, 14vw, 54px);
+    line-height: 1.18;
     gap: 8px;
   }
 }
