@@ -519,7 +519,7 @@ const LANDING_STYLES = `
   font-family: 'Newsreader', serif;
   font-weight: 400;
   display: grid;
-  gap: 24px;
+  gap: 28px;
   max-width: min(100%, 660px);
   font-size: 64px;
   line-height: 1.34;
@@ -914,7 +914,7 @@ const LANDING_STYLES = `
     gap: 36px;
     align-items: start;
   }
-  .wk-hero__h1 { font-size: 52px; line-height: 1.34; gap: 18px; }
+  .wk-hero__h1 { font-size: 52px; line-height: 1.34; gap: 22px; }
   .wk-hero__h1 > span { line-height: inherit; }
   .wk-hero__visual { padding-top: 32px; }
   .wk-hero__visual .wk-imsg-phone { max-width: 320px; }
@@ -938,7 +938,7 @@ const LANDING_STYLES = `
   .wk-section { padding: 56px 0; }
   .wk-section__head { margin-bottom: 28px; }
   .wk-proof-card { padding: 20px; }
-  .wk-hero__h1 { font-size: 40px; line-height: 1.36; gap: 16px; }
+  .wk-hero__h1 { font-size: 40px; line-height: 1.36; gap: 18px; }
   .wk-hero__h1 > span { line-height: inherit; }
   .wk-hero__cta { gap: 12px; }
   .wk-hero__browse { flex-basis: 100%; }

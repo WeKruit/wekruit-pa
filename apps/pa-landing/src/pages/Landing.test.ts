@@ -106,7 +106,7 @@ test("Landing hero headline keeps editorial lines separated across breakpoints",
   assert.match(landingSource, /<span>You don't <em className="wk-accent">apply\.<\/em><\/span>/)
   assert.match(landingSource, /<span>You interview\.<\/span>/)
   assert.doesNotMatch(landingSource, /<span><em className="wk-accent">apply\.<\/em><\/span>/)
-  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*display: grid;[\s\S]*gap: 24px;/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*display: grid;[\s\S]*gap: 28px;/)
   assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*max-width: min\(100%, 660px\);[\s\S]*font-size: 64px;[\s\S]*line-height: 1\.34;/)
   assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*overflow: visible;/)
   assert.match(landingSource, /\.wk-hero__h1 > span \{[\s\S]*line-height: inherit;/)
@@ -116,14 +116,24 @@ test("Landing hero headline keeps editorial lines separated across breakpoints",
   assert.match(source, /\.seq__h2 \{[\s\S]*letter-spacing: 0;[\s\S]*line-height: 1\.14;/)
   assert.match(
     landingSource,
-    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 52px; line-height: 1\.34; gap: 18px; \}/,
+    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 52px; line-height: 1\.34; gap: 22px; \}/,
   )
   assert.match(
     landingSource,
-    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 40px; line-height: 1\.36; gap: 16px; \}/,
+    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 40px; line-height: 1\.36; gap: 18px; \}/,
   )
   assert.match(landingSource, /@media \(max-width: 360px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 34px; \}/)
   assert.match(landingSource, /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__browse \{ flex-basis: 100%; \}/)
+})
+
+test("Landing hero lede keeps readable paragraph rhythm", () => {
+  const ledeBlock = landingSource.match(/\.wk-hero__lede \{([\s\S]*?)\n\}/)?.[1] ?? ""
+  assert.match(ledeBlock, /line-height: 1\.5;/)
+  assert.match(ledeBlock, /color: var\(--wk-ink-2\);/)
+  assert.match(ledeBlock, /margin: 0 0 28px;/)
+  assert.doesNotMatch(ledeBlock, /line-height: 1\.14/)
+  assert.doesNotMatch(ledeBlock, /letter-spacing: 0/)
+  assert.doesNotMatch(ledeBlock, /color: var\(--wk-ink\); margin: 0/)
 })
 
 test("Landing sequence feed has enough mobile art height for its own rows", () => {
