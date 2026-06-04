@@ -39,6 +39,7 @@ import { loadPrescreenContext } from "./prescreen-context.js"
 import { isCanaryUser } from "./canary.js"
 import { isEnrichmentInFlight } from "./enrichment-inflight.js"
 import { shouldNudgeGmail } from "./gmail-nudge.js"
+import { needsLocationSalaryAsk, LOCATION_SALARY_ASKED_AT } from "./reducers/location-salary-gate.js"
 
 const USERS = "pa-users"
 const PRESCREEN_SESSIONS = "pa-prescreen-sessions"
@@ -98,6 +99,10 @@ export interface ModeDecision {
    *  pushed the pitch. cutover marks the inbound handled and sends NOTHING (no duplicate re-ask). */
   suppressReply?: boolean
   suppressReason?: string
+  /** Canonical flow Step 4 (Adam-LOCKED): the ONE conditional pre-match ask. Set when location AND
+   *  salary are both missing and never asked — prompt asks for both in one short message, defers
+   *  find_match one turn. Once-only (stamped by mode-selector). */
+  locationSalaryAsk?: boolean
 }
 
 export interface SelectModeArgs {
@@ -577,6 +582,25 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   }
 
   // 3. TRIAGE.
+  // CANONICAL FLOW STEP 4 (Adam-LOCKED 2026-06-03): the ONE conditional pre-match ask. If location AND
+  // salary are BOTH missing and never asked, ask for both in ONE short message before matching, then
+  // defer find_match one turn. Once-only (stamp). Beats the Gmail nudge. Canary-gated; fail-open (a
+  // stamp write error still returns a normal triage turn). Skipped on the pitch turn + while enriching.
+  if (
+    isCanaryUser(args.userId) &&
+    !enrichmentInFlight &&
+    !args.cvParsedTrigger &&
+    needsLocationSalaryAsk(user)
+  ) {
+    try {
+      await args.db.collection(USERS).doc(args.userId).set({ [LOCATION_SALARY_ASKED_AT]: now }, { merge: true })
+    } catch (err) {
+      log("mode.location_salary_stamp_failed", { userId: args.userId, error: String(err) })
+    }
+    log("mode.location_salary_ask", { userId: args.userId })
+    return { mode: "triage", ...inFlightDecision, locationSalaryAsk: true }
+  }
+
   // WS-3(b): a plain conversational triage turn is the right place for the occasional Gmail nudge
   // (not mid-onboarding, not a pitch, not enrichment-in-flight). Stamp the cooldown when it fires.
   if (gmailNudgeEligible) {

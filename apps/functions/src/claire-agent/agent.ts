@@ -143,6 +143,10 @@ export interface BuildClaireAgentOptions {
   enrichmentInFlight?: boolean
   /** WS-3(b): this turn MAY carry the occasional "connect Gmail on wekruit.com" nudge directive. */
   gmailNudge?: boolean
+  /** LINKEDIN-DONE re-entry directive — ack by name + ask for résumé/URL (turn-context only). */
+  linkedinJustConnected?: boolean
+  /** CANONICAL STEP 4: the conditional pre-match location+salary ask (turn-context only). */
+  locationSalaryAsk?: boolean
 }
 
 /** Construct the single Claire agent (tools + guardrails + persona). */
@@ -486,6 +490,9 @@ export interface RunClaireTurnDeps {
   /** LINKEDIN-DONE re-entry (Adam 2026-06-03): they just logged in with LinkedIn (identity verified,
    *  name known) but OAuth can't pull work history → directive: ack by name + ask for résumé/URL. */
   linkedinJustConnected?: boolean
+  /** CANONICAL STEP 4 (Adam-LOCKED): conditional pre-match location+salary ask (set by cutover from the
+   *  mode-selector only-if-both-missing gate). Drives the one short pre-match ask; defers find_match. */
+  locationSalaryAsk?: boolean
   /** COLD OFFER-FIRST KICKOFF (Adam 2026-06-03): a brand-new candidate with NO profile data. The turn
    *  sends a DETERMINISTIC offer (connect LinkedIn = recommended / drop résumé in chat / upload on site)
    *  and NO onboarding question — "pitch first", we don't interrogate; the pitch fires after they
@@ -668,6 +675,8 @@ export async function runClaireTurn(
     gmailNudge: deps.gmailNudge,
     // LINKEDIN-DONE re-entry directive — per-turn, trailing only (ack by name + ask for résumé/URL).
     linkedinJustConnected: deps.linkedinJustConnected,
+    // CANONICAL STEP 4 — per-turn conditional pre-match ask (location+salary), trailing only.
+    locationSalaryAsk: deps.locationSalaryAsk,
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const runInput: any[] = []

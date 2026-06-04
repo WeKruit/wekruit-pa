@@ -1439,13 +1439,16 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
   const captureMatchFeedback = tool({
     name: "capture_match_feedback",
     description:
-      "Capture the candidate's reaction to the jobs you just recommended (the 'are you happy with these? why or " +
-      "why not?' signal). YOU map their reply to: sentiment (positive/negative/ambiguous), reasonCategory (closed " +
-      "enum — why a NEGATIVE batch was off, e.g. wrong_seniority / wrong_industry / salary_too_low; use 'none' if no " +
-      "reason, 'other' if unclear), and tagDeltas (canonical preference changes the reason implies — e.g. 'too junior' " +
-      "→ careerStage:senior; 'all fintech, I want healthcare' → industrySector:[healthcare_and_life_sciences], " +
+      "Capture the candidate's reaction to recommended jobs OR an unprompted PROFILE CORRECTION/ADDITION they " +
+      "volunteer in chat (e.g. mid-onboarding 'actually I work in the Autopilot group, more ML infra than web' → " +
+      "industrySector:[artificial_intelligence_and_machine_learning]). YOU map their reply to: sentiment " +
+      "(positive/negative/ambiguous — use 'ambiguous' for a neutral correction), reasonCategory (closed enum for why a " +
+      "NEGATIVE batch was off, e.g. wrong_seniority / wrong_industry / salary_too_low; use 'none' for a pure profile " +
+      "addition with no complaint), and tagDeltas (canonical preference changes implied — e.g. 'too junior' → " +
+      "careerStage:senior; 'all fintech, I want healthcare' → industrySector:[healthcare_and_life_sciences], " +
       "negativeIndustrySector:[financial_technology]). Multi-value = OR. The tool persists a feedback event + any tag " +
-      "deltas. Use right after find_match when the candidate reacts to the roles.",
+      "deltas (via the canonical writer, no regex). Use after find_match when they react to roles, OR mid-chat when " +
+      "they correct/add a profile fact — confirm just that one delta in your voice, do NOT re-pitch.",
     parameters: z.object({
       sentiment: FeedbackSentimentEnum,
       reasonCategory: FeedbackReasonCategoryEnum,

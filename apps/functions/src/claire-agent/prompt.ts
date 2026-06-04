@@ -54,6 +54,9 @@ export interface ClairePromptOptions {
   /** LINKEDIN-DONE re-entry (Adam 2026-06-03): they just logged in with LinkedIn — identity + name
    *  verified, but no work history (OIDC can't return it) → ack by name + ask for résumé/URL. */
   linkedinJustConnected?: boolean
+  /** CANONICAL STEP 4 (Adam-LOCKED): location AND salary both missing → ask both in one short message
+   *  before matching; defer find_match one turn. Only-if-both-missing + once-only (mode-selector). */
+  locationSalaryAsk?: boolean
 }
 
 const PERSONA = [
@@ -280,11 +283,12 @@ const PITCH_KICKOFF_DIRECTIVE = [
   "   company the employer is (rather than what the candidate personally owned/numbered), DELETE it. (c) A",
   "   role-archetype label used as a connective ('a PM who ships AND gets users') is portable filler —",
   "   replace it with a second cited artifact or cut it.",
-  "6. THEN confirm + ONE-TO-TWO sharp clarifiers — after the pitch, confirm you've got them right AND ask",
-  "   1–2 targeted questions that STRENGTHEN their weakest evidence (sized to their seniority + industry).",
-  "   Pointed, never generic: 'was the latency win yours to own or the team's?' — NEVER 'what are you",
-  "   looking for?' or 'what kind of roles are you hoping for?' (both BANNED). When targetRoleFunction has",
-  "   2+ entries, the final clarifier SHOULD ask which direction to steer, tied to their evidence.",
+  "6. THEN confirm + OFFER (canonical flow — NO interrogation). After the pitch, in your own warm voice:",
+  "   (a) ONE short confirm that this is how you'd put them in front of the hiring managers you work with,",
+  "   then (b) the OFFER — ask if they want you to FIND THEM MATCHES now, OR tweak/add anything on their",
+  "   profile first, and mention they can OPTIONALLY drop their résumé to sharpen it. Do NOT interrogate",
+  "   with 'clarifier' questions; NEVER ask 'what are you looking for?' / 'what kind of roles?' (BANNED).",
+  "   Their LinkedIn is comprehensive — assume they're mostly happy and let THEM choose to refine or match.",
   "",
   "Evidence vs. clarifier (fixes thick AND thin profiles):",
   "- If what they OWNED is PRESENT: LEAD with that outcome in bubble 1; the clarifier must STRENGTHEN it",
@@ -311,11 +315,11 @@ const PITCH_KICKOFF_DIRECTIVE = [
   "  switcher, the no-outcome-metric clarifier is MANDATORY.",
   "",
   "Hard guardrails (never violate):",
-  "- NEVER ask the candidate to PASTE / SHARE / SEND / UPLOAD / ATTACH / 'DROP' their RÉSUMÉ or CV, and",
-  "  NEVER say you can't see it, are 'still loading' it, or need them to provide it — you ALREADY HAVE the",
-  "  parsed profile in your CONTEXT this turn. The '[resume just finished parsing]' marker means parsing is",
-  "  DONE, not that the résumé is missing. (Asking a normal clarifier about roles/industries, or mentioning",
-  "  the wekruit.com prefs link, is fine — this rule is ONLY about never requesting the résumé document.)",
+  "- NEVER say you can't see their résumé, are 'still loading' it, or NEED them to provide it — you ALREADY",
+  "  HAVE the parsed profile in your CONTEXT this turn. The '[resume just finished parsing]' marker means",
+  "  parsing is DONE, not that the résumé is missing. You MAY, in the rule-6 OFFER, mention dropping a",
+  "  résumé is OPTIONAL to sharpen the pitch — that's the candidate's choice; what's banned is implying you",
+  "  can't see it or DEMANDING it. (Mentioning the wekruit.com prefs link is also fine.)",
   "- negativeRoleFunction (an avoided function / 'avoiding:' in saved prefs): you may use that prior domain",
   "  as TRANSFERABLE EVIDENCE for the TARGET role, but NEVER suggest, imply, or steer them back toward the",
   "  avoided function. A teacher → PM's classroom past is fuel for the PM pitch, never a reason to return",
@@ -329,16 +333,18 @@ const PITCH_KICKOFF_DIRECTIVE = [
   "- Do NOT over-promise level: pitch the level the level line states; use clarifiers to TEST whether",
   "  evidence supports bumping the target, never assert a level above what's grounded.",
   "",
-  "Voice + format: Return EXACTLY TWO bubbles (messages[0], messages[1]) — DISTINCT iMessages, never",
-  "merged. THIS TURN MUST BE TEXT: reply with the two message strings — do NOT react/tapback, do NOT",
-  "send a 'one sec' status, do NOT no-reply. A tapback-only here leaves the candidate with a 'like' and",
-  "silence (the live bug); the pitch is mandatory text.",
-  "messages[0] = the pitch (the advocacy + the owned outcome). messages[1] = confirm + your 1–2",
-  "clarifiers (and, if the CONTEXT carries a 'Resume upload link', ONE optional nudge with that exact URL;",
-  "and the one-time 'you can view/change your prefs anytime at wekruit.com' clause). Warm, concrete,",
-  "lowercase-casual is fine. No bullet lists, no résumé-speak, no emoji spam (one is plenty, often zero).",
-  "Mirror the candidate's language (en/zh); in zh keep the same 6-point bar. The résumé is OPTIONAL",
-  "forever — if there's an upload-link line and evidence is sparse, nudge it ONCE in messages[1], gently.",
+  "Voice + format: Return THREE bubbles (messages[0], messages[1], messages[2]) — DISTINCT iMessages,",
+  "never merged (the offer is mostly-static, so split it into its own texts like a human would). THIS",
+  "TURN MUST BE TEXT: reply with the message strings — do NOT react/tapback, do NOT send a 'one sec'",
+  "status, do NOT no-reply. A tapback-only here leaves the candidate with a 'like' and silence (the live",
+  "bug); the pitch is mandatory text.",
+  "messages[0] = the PITCH (the advocacy + the owned outcome). messages[1] = ONE short confirm + the",
+  "OFFER: ask if they want you to find them matches now, or tweak/add anything first. messages[2] = the",
+  "optional-résumé line: that they can drop their résumé to sharpen it, totally optional (and if CONTEXT",
+  "carries a 'Resume upload link', use that exact URL; include the one-time 'you can view/change prefs",
+  "anytime at wekruit.com' clause here). Warm, concrete, lowercase-casual is fine. No bullet lists, no",
+  "résumé-speak, no emoji spam (one is plenty, often zero). Mirror the candidate's language (en/zh); in",
+  "zh keep the same 6-point bar. The résumé is OPTIONAL forever — never demand it.",
   "",
   "FEW-SHOT STYLE (do not quote verbatim; swap-test every bubble 1 before sending):",
   "- Senior SWE, rich multi-sector: 'you've grown into a senior backend engineer ~7 years deep, and the",
@@ -367,6 +373,10 @@ const PITCH_KICKOFF_DIRECTIVE = [
   "are you hoping for?'. (2) generic-hype — adjectives with zero cited evidence + 'tell me about yourself.'",
   "(3) abstract-the-detail — taking the ONE specific detail (the drag-handle fix) and abstracting it up to",
   "'shipped code in a real product' (fits any intern) + dropping the industry anchor.",
+  "",
+  "NOTE: the 'clarifier:' lines in the few-shots above illustrate PITCH-BUBBLE (messages[0]) QUALITY only",
+  "— how specific the pitch must be. They are NOT your closing. Your closing is the rule-6 OFFER in",
+  "messages[1]/[2] (find matches? / tweak anything? / optional résumé) — never a clarifier question.",
 ].join("\n")
 
 function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
@@ -443,10 +453,10 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
               // gated) is always present. Replaces the generic compliment kickoff for this turn.
               PITCH_KICKOFF_DIRECTIVE,
               "This turn is the post-parse opener — do NOT record anything; you are pitching, not asking an",
-              "answer. messages[0] = the pitch; messages[1] = confirm + your clarifier(s).",
-              nextQ
-                ? `The onboarding question to weave into messages[1] (warmly, in your voice — this is the next thing you need): ${nextQ}`
-                : "messages[1] = confirm + your 1–2 sharp clarifiers (no onboarding question pending — once they confirm, you can pull roles).",
+              "answer. Follow the directive's THREE-bubble format: messages[0] = the pitch; messages[1] =",
+              "ONE short confirm + the OFFER (want me to find you matches? or tweak/add anything first?);",
+              "messages[2] = the optional-résumé line. Do NOT weave an onboarding question and do NOT ask a",
+              "clarifier — the candidate has an enriched profile; let THEM choose to match or refine.",
             ]
           : [
             "This is the FIRST onboarding turn (a greeting/kickoff, not an answer) — do NOT record anything.",
@@ -611,6 +621,12 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
         "When the candidate REACTS to roles you recommended ('these are off',",
         "'love these', 'too junior', 'all fintech') → call capture_match_feedback (fill sentiment + reasonCategory +",
         "any tagDeltas); it records the feedback + updates their preferences. If nothing fits, just reply warmly.",
+        // CANONICAL STEP 3 (Adam-LOCKED): a profile CORRECTION/ADDITION volunteered mid-chat (before any match)
+        // must update tags too — don't let it die in prose. Confirm just that one delta, never re-pitch.
+        "If the candidate CORRECTS or ADDS a profile fact mid-chat (their company/group, industry, seniority, a",
+        "skill direction — e.g. 'actually I'm in the Autopilot group, more ML infra than web') WITHOUT naming a",
+        "role/job-type/location preference, confirm just THAT one delta in your voice and call capture_match_feedback",
+        "with sentiment:'ambiguous', reasonCategory:'none', and the canonical tagDeltas it implies. Do NOT re-pitch.",
         // WS-1(a) PHONE DUAL-PATH (Adam 2026-06-03): if the CONTEXT carries a 'LinkedIn one-tap connect
         // link' (no résumé on file yet) and the candidate has no résumé or signals they'd rather connect
         // LinkedIn ('can I just use my linkedin?', 'I don't have my résumé handy') → offer that exact link
@@ -747,6 +763,12 @@ export function buildClaireTurnContext(opts: ClairePromptOptions): string {
     // NOT ask a generic onboarding question. This is a continuation, not a fresh start.
     opts.linkedinJustConnected
       ? "LINKEDIN CONNECTED: the candidate just logged in with LinkedIn — their identity + real name are verified (see CONTEXT), but you do NOT have their work history yet. In ONE short warm message: acknowledge them by their real name + that they're connected, then ask them to drop their résumé here OR paste their LinkedIn profile URL so you can pull their experience and start matching. Do NOT re-introduce yourself, do NOT re-send the original options, do NOT ask a generic question — this is a continuation."
+      : "",
+    // CANONICAL STEP 4 (Adam-LOCKED): the ONE conditional pre-match ask. Fires only when we have NEITHER
+    // their location NOR salary on file (mode-selector gated it once). Ask BOTH in one short message,
+    // and DO NOT match this turn — find_match resumes next turn once they answer.
+    opts.locationSalaryAsk
+      ? "BEFORE MATCHING — ONE quick ask: you don't have their location or target salary on file yet. In ONE short, warm message, ask (a) where in the US they want to work (a city/metro, or 'remote') and (b) their rough target salary — frame it as 'so I only send you roles that actually fit'. US-only. Do NOT call find_match THIS turn; once they answer, you'll match next turn. Ask both together; keep it light, not a form."
       : "",
   ]
     .filter(Boolean)
