@@ -62,8 +62,31 @@ test("OpenJobs does not invent guest fit labels without a connected profile", ()
 test("OpenJobs direct-line count is role-scoped instead of inflated as company count", () => {
   assert.doesNotMatch(source, /Companies talking to us today/)
   assert.doesNotMatch(source, /companies hiring <em style=\{\{ fontStyle: "italic" \}\}>through us<\/em>/)
-  assert.match(source, /direct-line roles <em style=\{\{ fontStyle: "italic" \}\}>through us<\/em>/)
+  assert.doesNotMatch(source, /direct-line roles <em style=\{\{ fontStyle: "italic" \}\}>through us<\/em>/)
+  assert.match(source, /direct-line roles`\} Claire can <em style=\{\{ fontStyle: "italic" \}\}>screen first<\/em>/)
   assert.match(source, /Roles from hiring teams today/)
+})
+
+test("OpenJobs explains Claire's role loop before showing the role list", () => {
+  assert.match(source, /function OpenClaireLoop\(\{ tab \}: \{ tab: TabId \}\)/)
+  assert.match(source, /<OpenClaireLoop tab=\{tab\} \/>[\s\S]*\{error &&/)
+  assert.match(source, /aria-label="How Claire uses open roles"/)
+  assert.match(source, /A role becomes a Claire screen, not an application\./)
+  assert.match(source, /Role brief/)
+  assert.match(source, /Claire interview/)
+  assert.match(source, /Consent gate/)
+  assert.match(source, /Only passed evidence you approve reaches the hiring team\./)
+  assert.match(source, /\.open-claire-loop \{[\s\S]*grid-template-columns: minmax\(220px, 0\.86fr\) minmax\(0, 1\.9fr\);/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-claire-loop__steps \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/)
+  assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-claire-loop__step p \{ display: none; \}/)
+})
+
+test("OpenJobs header avoids showing zero roles while tab data is still loading", () => {
+  assert.match(source, /count=\{filtered\?\.length \?\? null\}/)
+  assert.match(source, /loading=\{allForTab === null\}/)
+  assert.match(source, /count: number \| null/)
+  assert.match(source, /loading \? "Direct-line roles" : `\$\{count\} direct-line roles`/)
+  assert.doesNotMatch(source, /count=\{filtered\?\.length \?\? 0\}/)
 })
 
 test("OpenJobs tab counts do not expose loading placeholders", () => {

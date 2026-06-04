@@ -337,13 +337,15 @@ export default function OpenJobs() {
 
           <Header
             tab={tab}
-            count={filtered?.length ?? 0}
+            count={filtered?.length ?? null}
             total={totalForTab}
+            loading={allForTab === null}
             search={search}
             setSearch={setSearch}
             layout={effectiveLayout}
             setLayout={setLayout}
           />
+          <OpenClaireLoop tab={tab} />
 
           {error && (
             <div style={{ padding: 18, border: "1px solid var(--border-strong)", background: "var(--warning-bg)", borderRadius: "var(--r-md)", marginBottom: 24, fontSize: 13, color: "var(--warning)" }}>
@@ -396,6 +398,62 @@ export default function OpenJobs() {
         .open-layout { display: grid; grid-template-columns: 240px 1fr; gap: 56px; align-items: start; }
         .open-sidebar { position: sticky; top: 96px; }
         .open-main { min-width: 0; }
+        .open-claire-loop {
+          display: grid;
+          grid-template-columns: minmax(220px, 0.86fr) minmax(0, 1.9fr);
+          gap: 14px;
+          margin: -6px 0 26px;
+          padding: 14px;
+          border: 1px solid var(--border);
+          border-radius: 18px;
+          background: color-mix(in srgb, var(--cream-3) 76%, white 24%);
+        }
+        .open-claire-loop__intro {
+          min-width: 0;
+          padding: 4px;
+        }
+        .open-claire-loop__intro strong {
+          display: block;
+          font-family: var(--font-serif);
+          font-size: 20px;
+          font-weight: 400;
+          line-height: 1.12;
+          color: var(--ink);
+          letter-spacing: -0.01em;
+        }
+        .open-claire-loop__intro p {
+          margin: 8px 0 0;
+          color: var(--ink-2);
+          font-size: 13px;
+          line-height: 1.45;
+        }
+        .open-claire-loop__steps {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 8px;
+        }
+        .open-claire-loop__step {
+          min-width: 0;
+          padding: 11px 12px;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          background: var(--cream);
+        }
+        .open-claire-loop__step span {
+          display: block;
+          font-family: var(--font-mono);
+          font-size: 10.5px;
+          letter-spacing: 0.08em;
+          line-height: 1.2;
+          text-transform: uppercase;
+          color: var(--ink);
+        }
+        .open-claire-loop__step p {
+          margin: 6px 0 0;
+          color: var(--ink-2);
+          font-size: 12.5px;
+          line-height: 1.42;
+        }
         @media (max-width: 1024px) {
           .open-layout { grid-template-columns: 1fr; gap: 32px; }
           .open-sidebar { display: none; }
@@ -500,6 +558,32 @@ export default function OpenJobs() {
             flex: 1 1 100% !important;
             gap: 8px !important;
           }
+          .open-claire-loop {
+            grid-template-columns: 1fr;
+            gap: 8px;
+            margin: -4px 0 14px;
+            padding: 10px 0 0;
+            border-width: 1px 0 0;
+            border-radius: 0;
+            background: transparent;
+          }
+          .open-claire-loop__intro { display: none; }
+          .open-claire-loop__steps {
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 6px;
+          }
+          .open-claire-loop__step {
+            min-height: 40px;
+            padding: 8px 7px;
+            border-radius: 10px;
+            background: var(--cream-3);
+          }
+          .open-claire-loop__step span {
+            font-size: 10px;
+            line-height: 1.18;
+            letter-spacing: 0.05em;
+          }
+          .open-claire-loop__step p { display: none; }
           .open-search { width: 100% !important; min-width: 0; }
           .open-layout-switcher {
             width: 100%;
@@ -593,14 +677,15 @@ function Tabs({ value, onChange, huntCount, directCount }: TabsProps) {
 
 interface HeaderProps {
   tab: TabId
-  count: number
+  count: number | null
   total: number
+  loading: boolean
   search: string
   setSearch: (v: string) => void
   layout: LayoutId
   setLayout: (v: LayoutId) => void
 }
-function Header({ tab, count, total, search, setSearch, layout, setLayout }: HeaderProps) {
+function Header({ tab, count, total, loading, search, setSearch, layout, setLayout }: HeaderProps) {
   const isDirect = tab === "direct"
   return (
     <div className="open-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: 24, flexWrap: "wrap", marginBottom: 28 }}>
@@ -610,17 +695,21 @@ function Header({ tab, count, total, search, setSearch, layout, setLayout }: Hea
         </div>
         <h1 className="open-header__title" style={{ fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: "clamp(32px, 3.6vw, 48px)", lineHeight: 1.05, letterSpacing: "-0.02em", margin: 0 }}>
           {isDirect ? (
-            <>{count} direct-line roles <em style={{ fontStyle: "italic" }}>through us</em>.</>
+            <>
+              {loading ? "Direct-line roles" : `${count} direct-line roles`} Claire can <em style={{ fontStyle: "italic" }}>screen first</em>.
+            </>
           ) : (
-            <>{count} <em style={{ fontStyle: "italic" }}>External roles WeKruit is tracking</em>.</>
+            <>
+              {loading ? "Tracked roles" : `${count}`} <em style={{ fontStyle: "italic" }}>External roles WeKruit is tracking</em>.
+            </>
           )}
         </h1>
         <p className="open-header__lede" style={{ marginTop: 14, marginBottom: 0, maxWidth: 640, color: "var(--ink-2)", fontSize: 16, lineHeight: 1.55 }}>
           {isDirect
-            ? "These teams work with WeKruit. Claire starts the first interview, then passed profiles go to the hiring team with the transcript and evidence."
+            ? "These teams work with WeKruit. Pick a role and Claire runs the first interview against the brief; passed evidence reaches the hiring team only after the role screen and consent."
             : "These are external source listings. WeKruit shows the public role, the source link, and the matching context we can verify; they are not WeKruit-screened yet."}
         </p>
-        {total > 0 && total !== count && (
+        {!loading && total > 0 && total !== count && (
           <p className="open-header__total" style={{ marginTop: 6, fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-3)" }}>
             ({total} total before filters)
           </p>
@@ -631,6 +720,57 @@ function Header({ tab, count, total, search, setSearch, layout, setLayout }: Hea
         <LayoutSwitcher value={layout} onChange={setLayout} />
       </div>
     </div>
+  )
+}
+
+function OpenClaireLoop({ tab }: { tab: TabId }) {
+  const isDirect = tab === "direct"
+  const steps = isDirect ? [
+    {
+      title: "Role brief",
+      body: "The hiring team defines the must-have evidence Claire should probe.",
+    },
+    {
+      title: "Claire interview",
+      body: "Your answers become role-specific evidence attached to your profile.",
+    },
+    {
+      title: "Consent gate",
+      body: "Only passed evidence you approve reaches the hiring team.",
+    },
+  ] : [
+    {
+      title: "Source role",
+      body: "Inspect the public posting before treating it as a target.",
+    },
+    {
+      title: "Profile signal",
+      body: "Send the role to Claire so preferences and corrections stick.",
+    },
+    {
+      title: "Claire pursuit",
+      body: "Claire needs your durable profile before any outreach or screen.",
+    },
+  ]
+  return (
+    <section className="open-claire-loop" aria-label="How Claire uses open roles">
+      <div className="open-claire-loop__intro">
+        <strong>{isDirect ? "A role becomes a Claire screen, not an application." : "A tracked role becomes signal for Claire."}</strong>
+        <p>
+          {isDirect
+            ? "Start with the role that fits. Claire keeps the interview in your thread and shares only approved passed evidence."
+            : "Use external roles to sharpen your target profile before Claire chases anything."}
+        </p>
+      </div>
+      <div className="open-claire-loop__steps">
+        {steps.map((step) => (
+          <div key={step.title} className="open-claire-loop__step">
+            <span>{step.title}</span>
+            <p>{step.body}</p>
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }
 
