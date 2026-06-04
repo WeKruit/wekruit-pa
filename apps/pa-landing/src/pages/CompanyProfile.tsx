@@ -5,43 +5,18 @@ import { CandidateShell, Icon } from "./CandidateLogin.js"
 import { formatPublicJobType } from "../lib/public-job-labels.js"
 import {
   listPublicJobOpeningsByCompany,
-  stripJobSourceSection,
   type PublicCompanyProfile,
   type PublicJobOpening,
 } from "../lib/public-jobs.js"
 
-function cleanMarkdownLine(value: string): string {
-  return value
-    .replace(/^#{1,6}\s*/, "")
-    .replace(/\*\*/g, "")
-    .replace(/[_`]/g, "")
-    .trim()
-}
-
-function isMarkdownHeading(value: string): boolean {
-  return /^#{1,6}\s+\S/.test(value.trim()) || /^\*\*[^*]+\*\*$/.test(value.trim())
-}
-
 function extractCompanySummary(jobs: PublicJobOpening[], profile?: PublicCompanyProfile): string {
   if (profile?.tagline) return profile.tagline
   if (profile?.about) return profile.about
-  for (const job of jobs) {
-    const markdown = stripJobSourceSection(job.descriptionMd)
-    if (!markdown) continue
-    const lines = markdown.split(/\r?\n/)
-    let inCompanySection = false
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-      const normalized = cleanMarkdownLine(trimmed).toLowerCase()
-      if (normalized.startsWith("about ") || normalized.includes("why this role exists")) {
-        inCompanySection = true
-        continue
-      }
-      if (inCompanySection && isMarkdownHeading(trimmed)) break
-      if (/^[-*]\s+/.test(trimmed)) continue
-      if (inCompanySection || normalized.length > 80) return cleanMarkdownLine(trimmed)
-    }
+  const company = jobs[0]?.company
+  const roleCount = jobs.length
+  if (company) {
+    const roleText = roleCount === 1 ? "public role" : "public roles"
+    return `Explore ${roleCount} ${roleText} at ${company}. Choose a role when you want Claire to screen your profile against that team's actual bar.`
   }
   return "Role briefs and company details are shared through the WeKruit interview process."
 }
@@ -119,7 +94,7 @@ function CompanyProfileLayout({ jobs }: { jobs: PublicJobOpening[] }) {
                 </a>
               ) : null}
 
-              <CompanyScreeningContract company={company} roleTitle={firstJob.title} />
+              <CompanyScreeningContract company={company} />
 
               <section className="wk-company-roles" aria-labelledby="company-open-roles">
                 <div className="wk-company-section-head">
@@ -218,11 +193,11 @@ function CompanyHeroRoleCta({ job, company, roleCount }: { job: PublicJobOpening
   )
 }
 
-function CompanyScreeningContract({ company, roleTitle }: { company: string; roleTitle: string }) {
+function CompanyScreeningContract({ company }: { company: string }) {
   const checks = [
     {
       title: "Nearest-work evidence",
-      body: `Claire asks for the closest shipped work before treating ${roleTitle} as a fit.`,
+      body: "Claire asks for the closest shipped work before treating a selected role as a fit.",
     },
     {
       title: "Role constraints",

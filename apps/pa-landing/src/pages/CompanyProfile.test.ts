@@ -17,7 +17,7 @@ test("CompanyProfile keeps the employer process copy consent-safe", () => {
 })
 
 test("CompanyProfile shows Claire's company-specific screening contract before role cards", () => {
-  assert.match(source, /function CompanyScreeningContract\(\{ company, roleTitle \}: \{ company: string; roleTitle: string \}\)/)
+  assert.match(source, /function CompanyScreeningContract\(\{ company \}: \{ company: string \}\)/)
   assert.match(source, /What Claire will test/)
   assert.match(source, /\{company\} becomes a Claire screen\./)
   assert.match(source, /Nearest-work evidence/)
@@ -26,7 +26,10 @@ test("CompanyProfile shows Claire's company-specific screening contract before r
   assert.match(source, /Claire carries your WeKruit profile, constraints, and corrections into this company screen/)
   assert.match(source, /Consent before sharing/)
   assert.match(source, /test your profile against this company's actual bar/)
-  assert.match(source, /<CompanyScreeningContract company=\{company\} roleTitle=\{firstJob\.title\} \/>[\s\S]*<section className="wk-company-roles"/)
+  assert.match(source, /closest shipped work before treating a selected role as a fit/)
+  assert.match(source, /<CompanyScreeningContract company=\{company\} \/>[\s\S]*<section className="wk-company-roles"/)
+  assert.doesNotMatch(source, /roleTitle=\{firstJob\.title\}/)
+  assert.doesNotMatch(source, /treating \$\{roleTitle\} as a fit/)
 })
 
 test("CompanyProfile surfaces the first Claire interview action in the hero", () => {
@@ -62,4 +65,22 @@ test("CompanyProfile routes market navigation to the canonical market surface", 
   assert.doesNotMatch(source, /to="\/open"/)
   assert.doesNotMatch(source, /See open roles/)
   assert.doesNotMatch(source, /Open roles and company details/)
+})
+
+test("CompanyProfile does not use a first role sentence as the company summary", () => {
+  assert.match(source, /if \(profile\?\.tagline\) return profile\.tagline/)
+  assert.match(source, /if \(profile\?\.about\) return profile\.about/)
+  assert.match(source, /const roleText = roleCount === 1 \? "public role" : "public roles"/)
+  assert.match(source, /Explore \$\{roleCount\} \$\{roleText\} at \$\{company\}/)
+  assert.match(source, /Choose a role when you want Claire to screen your profile against that team's actual bar/)
+
+  assert.doesNotMatch(source, /stripJobSourceSection/)
+  assert.doesNotMatch(source, /job\.descriptionMd/)
+  assert.doesNotMatch(source, /if \(inCompanySection \|\| normalized\.length > 80\) return cleanMarkdownLine\(trimmed\)/)
+  assert.doesNotMatch(source, /if \(inCompanySection\) return cleanMarkdownLine\(trimmed\)/)
+  assert.doesNotMatch(source, /normalized\.includes\("why this role exists"\)/)
+  assert.doesNotMatch(source, /Android Engineer at Rain is a mid level software engineering opportunity/)
+  assert.doesNotMatch(source, /You'll be the lead Android engineer at Rain/)
+  assert.doesNotMatch(source, /Own the entire Android development lifecycle/)
+  assert.doesNotMatch(source, /Bonus attributes:/)
 })
