@@ -1035,7 +1035,9 @@ function ReferPublicTrustContract() {
 
 function ReferPublicHero({ inviter }: { inviter: string | null }) {
   const navigate = useNavigate()
-  const primaryHref = inviter ? "/login" : REFERRAL_DASHBOARD_LOGIN
+  const primaryHref = inviter ? "/onboarding" : REFERRAL_DASHBOARD_LOGIN
+  const secondaryHref = inviter ? "/login" : "/onboarding"
+  const secondaryLabel = inviter ? "I already have an account" : "Start with Claire"
   return (
     <header className="wk-ref-hero wk-ref-hero--public">
       <div className="wk-ref-hero__inner wk-ref-hero__inner--public">
@@ -1079,6 +1081,7 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
             {inviter ? (
               <>
                 Start with <strong>Claire</strong>: one profile conversation, then role screens only from real briefs.
+                {" "}
                 {inviter.split(/\s+/)[0]} sees reward attribution only after verified milestones. Costs you nothing.
               </>
             ) : (
@@ -1093,8 +1096,8 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
             <button type="button" className="wk-btn wk-btn--primary wk-btn--lg" onClick={() => navigate(primaryHref)}>
               {inviter ? "Start with Claire" : "Open referral dashboard"} <Icon name="arrow-right" size={14} stroke={2} />
             </button>
-            <Link to={inviter ? "/login" : REFERRAL_DASHBOARD_LOGIN} className="wk-ref-public-cta__alt">
-              I already have an account
+            <Link to={secondaryHref} className="wk-ref-public-cta__alt">
+              {secondaryLabel}
             </Link>
           </div>
 
