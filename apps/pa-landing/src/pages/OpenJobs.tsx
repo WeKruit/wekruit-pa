@@ -398,6 +398,8 @@ export default function OpenJobs() {
         .open-layout { display: grid; grid-template-columns: 240px 1fr; gap: 56px; align-items: start; }
         .open-sidebar { position: sticky; top: 96px; }
         .open-main { min-width: 0; }
+        .open-role-card__mobile-action { display: none; }
+        .open-role-card__footer-action { display: inline-flex; }
         .open-claire-loop {
           display: grid;
           grid-template-columns: minmax(220px, 0.86fr) minmax(0, 1.9fr);
@@ -615,10 +617,20 @@ export default function OpenJobs() {
             font-size: 13px !important;
             line-height: 1.45 !important;
           }
+          .open-role-card__mobile-action {
+            display: flex;
+          }
+          .open-role-card__mobile-action .btn {
+            width: 100%;
+            justify-content: center;
+          }
           .open-role-card__footer {
             padding-top: 10px !important;
             gap: 8px !important;
             align-items: flex-start !important;
+          }
+          .open-role-card__footer-action {
+            display: none !important;
           }
           .open-card-list--grid { grid-template-columns: 1fr !important; }
           .open-table-shell {
@@ -1051,6 +1063,9 @@ function Card({ j, tab, variant }: { j: UnifiedJob; tab: TabId; variant: "row" |
           <p className="open-role-card__summary" style={{ margin: "10px 0 0", fontSize: 14, color: "var(--ink-2)", lineHeight: 1.55 }}>{displaySummary}</p>
         )}
       </div>
+      <div className="open-role-card__mobile-action">
+        <RowCta j={j} tab={tab} />
+      </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
         {j.function && <Chip>{j.function}</Chip>}
         {j.level && <Chip>{j.level}</Chip>}
@@ -1059,7 +1074,9 @@ function Card({ j, tab, variant }: { j: UnifiedJob; tab: TabId; variant: "row" |
       </div>
       <div className="open-role-card__footer" style={{ marginTop: "auto", paddingTop: 14, borderTop: "1px dashed var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <StatusPill j={j} tab={tab} />
-        <RowCta j={j} tab={tab} />
+        <span className="open-role-card__footer-action">
+          <RowCta j={j} tab={tab} />
+        </span>
       </div>
     </article>
   )
