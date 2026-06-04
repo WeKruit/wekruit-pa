@@ -126,3 +126,13 @@ test("OpenJobs mobile layout gets candidates to real role cards before filter ch
   assert.match(source, /className="open-role-card__summary"/)
   assert.match(source, /@media \(max-width: 720px\)[\s\S]*\.open-role-card__summary[\s\S]*-webkit-line-clamp: 2/)
 })
+
+test("OpenJobs role cards suppress summaries that only repeat the title", () => {
+  assert.match(source, /function displaySummaryForRole\(j: UnifiedJob\): string \| undefined/)
+  assert.match(source, /const summaryKey = comparableRoleCopy\(summary\)/)
+  assert.match(source, /const titleKey = comparableRoleCopy\(j\.title\)/)
+  assert.match(source, /if \(summaryKey === titleKey \|\| summaryKey === companyTitleKey\) return undefined/)
+  assert.match(source, /const displaySummary = displaySummaryForRole\(j\)/)
+  assert.match(source, /\{displaySummary && \([\s\S]*className="open-role-card__summary"[\s\S]*\{displaySummary\}/)
+  assert.doesNotMatch(source, /\{j\.summary && \([\s\S]*className="open-role-card__summary"[\s\S]*\{j\.summary\}/)
+})

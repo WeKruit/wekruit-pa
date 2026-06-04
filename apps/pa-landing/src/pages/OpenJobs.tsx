@@ -136,6 +136,26 @@ function fromPublicOpening(j: PublicJobOpening): UnifiedJob {
   }
 }
 
+function comparableRoleCopy(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+}
+
+function displaySummaryForRole(j: UnifiedJob): string | undefined {
+  const summary = j.summary?.replace(/\s+/g, " ").trim()
+  if (!summary) return undefined
+
+  const summaryKey = comparableRoleCopy(summary)
+  const titleKey = comparableRoleCopy(j.title)
+  const companyTitleKey = comparableRoleCopy(`${j.company} ${j.title}`)
+  if (summaryKey === titleKey || summaryKey === companyTitleKey) return undefined
+
+  return summary
+}
+
 // --------------------------------------------------------------- shell ---
 
 function Wordmark() {
@@ -804,6 +824,7 @@ function TableView({ jobs, tab }: { jobs: UnifiedJob[]; tab: TabId }) {
 function TableRow({ j, tab }: { j: UnifiedJob; tab: TabId }) {
   const [hover, setHover] = useState(false)
   const isDirect = tab === "direct"
+  const displaySummary = displaySummaryForRole(j)
   return (
     <div
       onMouseEnter={() => setHover(true)}
@@ -830,9 +851,9 @@ function TableRow({ j, tab }: { j: UnifiedJob; tab: TabId }) {
           <RowCta j={j} tab={tab} />
         </div>
       </div>
-      {hover && j.summary && (
+      {hover && displaySummary && (
         <div style={{ padding: "0 24px 18px 80px", display: "grid", gridTemplateColumns: "1fr auto", gap: 24, alignItems: "center" }}>
-          <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink-2)", maxWidth: 720, lineHeight: 1.55 }}>{j.summary}</p>
+          <p style={{ margin: 0, fontSize: 13.5, color: "var(--ink-2)", maxWidth: 720, lineHeight: 1.55 }}>{displaySummary}</p>
           <StatusPill j={j} tab={tab} />
         </div>
       )}
@@ -852,6 +873,7 @@ function Card({ j, tab, variant }: { j: UnifiedJob; tab: TabId; variant: "row" |
   const [hover, setHover] = useState(false)
   const isDirect = tab === "direct"
   const isGrid = variant === "grid"
+  const displaySummary = displaySummaryForRole(j)
   return (
     <article
       className="open-role-card"
@@ -882,8 +904,8 @@ function Card({ j, tab, variant }: { j: UnifiedJob; tab: TabId; variant: "row" |
       </div>
       <div>
         <h3 className="open-role-card__title" style={{ margin: 0, fontFamily: "var(--font-serif)", fontWeight: 400, fontSize: isGrid ? 22 : 26, lineHeight: 1.15, letterSpacing: "-0.015em", color: "var(--ink)" }}>{j.title}</h3>
-        {j.summary && (
-          <p className="open-role-card__summary" style={{ margin: "10px 0 0", fontSize: 14, color: "var(--ink-2)", lineHeight: 1.55 }}>{j.summary}</p>
+        {displaySummary && (
+          <p className="open-role-card__summary" style={{ margin: "10px 0 0", fontSize: 14, color: "var(--ink-2)", lineHeight: 1.55 }}>{displaySummary}</p>
         )}
       </div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
