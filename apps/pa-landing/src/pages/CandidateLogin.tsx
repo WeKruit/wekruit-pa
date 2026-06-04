@@ -453,7 +453,7 @@ export function CandidateShell({
           <nav className="wk-nav" aria-label="Candidate navigation">
             <HowItWorksLink />
             <Link to="/refer" className="wk-nav__link">Earn $4k</Link>
-            <Link to="/me" className="wk-nav__link">My WeKruit</Link>
+            {!isAuthed ? <Link to="/me" className="wk-nav__link">My WeKruit</Link> : null}
           </nav>
           <div className="wk-header__cta">
             {isAuthed ? (
