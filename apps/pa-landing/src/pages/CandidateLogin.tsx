@@ -887,7 +887,7 @@ function LoginRoleSignalPreview({ title, company }: { title: string; company: st
   )
 }
 
-type LoginContextKind = "role" | "signal" | "onboarding" | "pipeline"
+type LoginContextKind = "role" | "signal" | "onboarding" | "referral" | "pipeline"
 
 function LoginContextStrip({ kind }: { kind: LoginContextKind }) {
   const items: Record<LoginContextKind, { title: string; body: string }[]> = {
@@ -905,6 +905,11 @@ function LoginContextStrip({ kind }: { kind: LoginContextKind }) {
       { title: "Profile home", body: "Resume, LinkedIn, targets, corrections." },
       { title: "Active screens", body: "Claire turns fit into interview evidence." },
       { title: "Consent gate", body: "Only passed evidence can be shared." },
+    ],
+    referral: [
+      { title: "Invite ledger", body: "Your friend and milestone status stay attached." },
+      { title: "$50 interview reward", body: "Tracked after a verified hiring-manager interview." },
+      { title: "$4k placement reward", body: "Tracked after a verified offer/start." },
     ],
     pipeline: [
       { title: "Active interviews", body: "Resume where Claire needs your answer." },
@@ -965,6 +970,46 @@ function LoginOnboardingPreview() {
           <li className="wk-login-preview__item" key={item.title}>
             <span className="wk-login-preview__icon">
               <Icon name="message" size={11} stroke={2.4} />
+            </span>
+            <span>
+              <strong>{item.title}</strong>
+              <em>{item.body}</em>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function LoginReferralPreview() {
+  const items = [
+    {
+      title: "Invite tracking",
+      body: "See which referrals are linked to you and whether they have claimed the invite.",
+    },
+    {
+      title: "Verified milestones",
+      body: "Interview and placement rewards only move when WeKruit can verify the milestone.",
+    },
+    {
+      title: "Candidate-first loop",
+      body: "Friends still get Claire's profile conversation and consent-gated role screens.",
+    },
+    {
+      title: "Payout status",
+      body: "Keep the reward ledger separate from the candidate's interview evidence.",
+    },
+  ]
+
+  return (
+    <section className="wk-login-preview" aria-label="What the referral dashboard opens after sign-in">
+      <p className="wk-login-preview__k">Referral dashboard after sign-in</p>
+      <ul className="wk-login-preview__list">
+        {items.map((item) => (
+          <li className="wk-login-preview__item" key={item.title}>
+            <span className="wk-login-preview__icon">
+              <Icon name="check" size={11} stroke={2.4} />
             </span>
             <span>
               <strong>{item.title}</strong>
@@ -1187,11 +1232,13 @@ export default function CandidateLogin() {
   const roleInterviewNext = isPublicJobPath(nextDest.pathname) || Boolean(onboardingRoleReturn)
   const roleSignalNext = Boolean(profileRoleSignal)
   const onboardingNext = nextDest.isOnboarding && !roleInterviewNext
-  const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !roleSignalNext && !onboardingNext
+  const referralNext = nextDest.pathname === "/me/refer"
+  const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !roleSignalNext && !onboardingNext && !referralNext
   const showRoleSignalPreview = !isCompletingLink && roleSignalNext
   const showOnboardingPreview = !isCompletingLink && onboardingNext
+  const showReferralPreview = !isCompletingLink && referralNext
   const loginContextKind: LoginContextKind =
-    roleInterviewNext ? "role" : roleSignalNext ? "signal" : onboardingNext ? "onboarding" : "pipeline"
+    roleInterviewNext ? "role" : roleSignalNext ? "signal" : onboardingNext ? "onboarding" : referralNext ? "referral" : "pipeline"
   const roleFirstTimeHref = roleInterviewFirstTimeHref(nextDest)
   const roleSignalFirstTimeHref = roleSignalNext ? onboardingDestinationWithReturnPath(nextDest.to, peekSource()) : null
   const firstTimeHref = roleInterviewNext
@@ -1209,6 +1256,8 @@ export default function CandidateLogin() {
         ? "Role signal"
       : onboardingNext
         ? "Start with Claire"
+      : referralNext
+        ? "Referral dashboard"
         : "Pick up where you left off"
   const loginSub = isCompletingLink
     ? "One sec — confirming your email and pulling up your pipeline."
@@ -1221,6 +1270,8 @@ export default function CandidateLogin() {
         ? "One sec — confirming your sign-in and saving this role as durable profile signal."
         : onboardingNext
           ? "One sec — confirming your sign-in and opening Claire's profile flow."
+        : referralNext
+          ? "One sec — confirming your sign-in and opening the referral ledger."
           : "One sec — confirming your sign-in and opening onboarding."
       : onboardingRoleReturn
         ? "Sign in once and Claire will keep this role attached to your profile flow. Magic-link, Google, or LinkedIn — your choice."
@@ -1230,6 +1281,8 @@ export default function CandidateLogin() {
           ? "Sign in and Claire will add this role to your durable profile signals."
         : onboardingNext
           ? "Sign in once and Claire will start your profile flow. Magic-link, Google, or LinkedIn — your choice."
+        : referralNext
+          ? "Sign in once to track referral invites, verified interview rewards, and offer/start payouts."
           : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."
 
   if (onLayoff) {
@@ -1274,6 +1327,8 @@ export default function CandidateLogin() {
                   ? <>Save this <em className="wk-accent">role signal.</em></>
                 : onboardingNext
                   ? <>Start with <em className="wk-accent">Claire.</em></>
+                : referralNext
+                  ? <>Open referral <em className="wk-accent">dashboard.</em></>
                 : <>Already talked to <em className="wk-accent">Claire?</em></>}
             </h1>
             <p className="wk-login__sub">
@@ -1355,6 +1410,7 @@ export default function CandidateLogin() {
 
             {showPipelinePreview ? <LoginPipelinePreview /> : null}
             {showOnboardingPreview ? <LoginOnboardingPreview /> : null}
+            {showReferralPreview ? <LoginReferralPreview /> : null}
 
             {!onboardingNext ? (
               <p className="wk-login__fine">
