@@ -54,6 +54,7 @@ import {
   acceptableCareerStages,
   ANYWHERE_LOCATION_TOKENS,
   type CareerStage,
+  type Skill,
 } from "@wekruit/shared-tags"
 
 // ---------------------------------------------------------------------------
@@ -225,7 +226,7 @@ function tags(profile: CandidateProfile): CandidateGlobalTags | undefined {
 function profileSkillTokens(profile: CandidateProfile): string[] {
   const t = tags(profile)
   if (!t?.skills) return []
-  return normalizeTokens(t.skills.map((s) => s.name))
+  return normalizeTokens(t.skills.map((s: Skill) => s.name))
 }
 
 function recordExperienceCompanies(record: ExternalCandidateRecord): string[] {

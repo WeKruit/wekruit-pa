@@ -2273,6 +2273,52 @@
   .wk-emp-pp__tx-q, .wk-emp-pp__tx-a { grid-template-columns: 1fr; gap: 4px; }
 }
 @media (max-width: 640px) {
+  .wk-emp-hero {
+    padding: 30px 0 28px;
+  }
+  .wk-emp-hero__grid {
+    gap: 18px;
+  }
+  .wk-emp-hero__copy {
+    gap: 14px;
+  }
+  .wk-emp-hero__h1 {
+    font-size: clamp(34px, 11.5vw, 46px);
+    line-height: 1.04;
+  }
+  .wk-emp-hero__lede {
+    font-size: 16px;
+    line-height: 1.45;
+  }
+  .wk-emp-hero__cta {
+    gap: 14px;
+  }
+  .wk-emp-hero__proof {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    padding-top: 12px;
+    margin-top: 2px;
+  }
+  .wk-emp-hero__metric {
+    font-size: 12.5px;
+    line-height: 1.35;
+  }
+  .wk-emp-prev {
+    padding: 14px;
+    gap: 10px;
+  }
+  .wk-emp-prev__steps {
+    display: none;
+  }
+  .wk-emp-prev__quote {
+    font-size: 14px;
+    line-height: 1.32;
+    padding: 10px 12px;
+  }
+  .wk-emp-prev__foot {
+    display: none;
+  }
   .wk-emp-flow__step { grid-template-columns: 44px 1fr; }
   .wk-emp-flow__hidden { grid-column: 1 / -1; justify-self: start; }
   .wk-emp-band__row { grid-template-columns: 1fr 1fr; }
