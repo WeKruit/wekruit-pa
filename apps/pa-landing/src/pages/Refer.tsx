@@ -1071,27 +1071,23 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
               </>
             ) : (
               <>
-                Refer a friend into Claire&apos;s <em>interview loop.</em>
+                Invite a friend into Claire&apos;s <em>interview loop.</em>
               </>
             )}
           </h1>
           <p className="wk-ref-hero__sub" style={{ maxWidth: 580 }}>
             {inviter ? (
               <>
-                Start with <strong>Claire</strong>: profile conversation first, role screens second, sharing only after
-                consent. If verified interview or placement milestones happen, {inviter.split(/\s+/)[0]} can earn the
-                referral rewards. Costs you nothing.
+                Start with <strong>Claire</strong>: one profile conversation, then role screens only from real briefs.
+                {inviter.split(/\s+/)[0]} sees reward attribution only after verified milestones. Costs you nothing.
               </>
             ) : (
               <>
-                They get a candidate-owned profile conversation, role screens Claire can run, and consent-gated
-                sharing. You can earn <strong>{fmtMoney(REWARD_INTERVIEW)}</strong> after a verified hiring-manager
-                interview and <strong>{fmtMoney(REWARD_PLACEMENT)}</strong> after a verified offer/start.
+                Your friend starts with a candidate-owned profile conversation, then Claire runs role screens only
+                from real briefs. Sharing stays consent-gated.
               </>
             )}
           </p>
-
-          <ReferPublicTrustContract />
 
           <div className="wk-ref-public-cta">
             <button type="button" className="wk-btn wk-btn--primary wk-btn--lg" onClick={() => navigate(primaryHref)}>
@@ -1101,6 +1097,8 @@ function ReferPublicHero({ inviter }: { inviter: string | null }) {
               I already have an account
             </Link>
           </div>
+
+          <ReferPublicTrustContract />
         </div>
 
         <div className="wk-ref-public-stats">
