@@ -229,20 +229,25 @@ test("Market keeps mobile role cards primary while preserving the compact suppor
 })
 
 test("Market mobile headlines leave enough line height for two-line Newsreader italics", () => {
-  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market__h1 \{[\s\S]*font-size: clamp\(36px, 10vw, 44px\);[\s\S]*line-height: 1\.14;[\s\S]*letter-spacing: 0;[\s\S]*margin: 14px 0 16px;/)
+  assert.match(source, /\.wk-shell \.wk-market__h1 \{[\s\S]*line-height: 1\.12; letter-spacing: 0;/)
+  assert.match(source, /\.wk-shell \.wk-market__h1 \.wk-accent \{ line-height: inherit; \}/)
+  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market__h1 \{[\s\S]*font-size: clamp\(36px, 10vw, 44px\);[\s\S]*line-height: 1\.18;[\s\S]*letter-spacing: 0;[\s\S]*margin: 14px 0 16px;/)
+  assert.doesNotMatch(source, /\.wk-shell \.wk-market__h1 \{[\s\S]*line-height: 1\.02; letter-spacing: -0\.028em;/)
 })
 
 test("Market tab chrome separates labels, counts, and subtitles on narrow screens", () => {
   assert.match(source, /<button type="button" className=\{`wk-mtab\$\{active \? " is-active" : ""\}`\}/)
   assert.match(source, /\.wk-shell \.wk-mtab \{[\s\S]*min-width: 0;/)
   assert.match(source, /\.wk-shell \.wk-mtab__top \{ display: flex; align-items: flex-start; gap: 10px; min-width: 0; \}/)
-  assert.match(source, /\.wk-shell \.wk-mtab__label \{[\s\S]*line-height: 1\.08;[\s\S]*letter-spacing: -0\.01em;/)
+  assert.match(source, /\.wk-shell \.wk-mtab__label \{[\s\S]*line-height: 1\.14;[\s\S]*letter-spacing: 0;/)
   assert.match(source, /\.wk-shell \.wk-mtab__count \{[\s\S]*line-height: 1;[\s\S]*flex: 0 0 auto; margin-top: 4px;/)
-  assert.match(source, /\.wk-shell \.wk-mtab__sub \{[\s\S]*line-height: 1\.28;[\s\S]*letter-spacing: 0;/)
+  assert.match(source, /\.wk-shell \.wk-mtab__sub \{[\s\S]*line-height: 1\.32;[\s\S]*letter-spacing: 0;/)
   assert.match(source, /@media \(max-width: 860px\) \{[\s\S]*\.wk-shell \.wk-mtabs \{[\s\S]*display: grid;[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/)
-  assert.match(source, /@media \(max-width: 860px\) \{[\s\S]*\.wk-shell \.wk-mtab__sub \{ display: block; font-size: 11\.75px; line-height: 1\.24; \}/)
+  assert.match(source, /@media \(max-width: 860px\) \{[\s\S]*\.wk-shell \.wk-mtab__label \{ font-size: 21px; line-height: 1\.16; \}/)
+  assert.match(source, /@media \(max-width: 860px\) \{[\s\S]*\.wk-shell \.wk-mtab__sub \{ display: block; font-size: 11\.75px; line-height: 1\.3; \}/)
   assert.doesNotMatch(source, /\.wk-shell \.wk-mtab__sub \{ display: none; \}/)
   assert.doesNotMatch(source, /letter-spacing: -0\.02em; color: inherit;/)
+  assert.doesNotMatch(source, /letter-spacing: -0\.01em; color: inherit;/)
 })
 
 test("Market mobile role brief cards stay compact enough to compare options", () => {
