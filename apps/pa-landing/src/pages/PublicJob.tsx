@@ -600,7 +600,6 @@ export default function PublicJob() {
           <p className="wk-pj-modal__sub">
             Create or confirm your WeKruit profile so Claire carries your resume and this role context into the interview.
           </p>
-          <ProcessStrip compact />
           <ClaireInterviewContract compact />
           {renderLoginControls("modal")}
           <p className="wk-pj-modal__sub">

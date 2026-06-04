@@ -57,6 +57,13 @@ test("PublicJob keeps both interview entry methods reachable in the mobile sign-
   assert.match(source, /\.wk-pj-contract--compact[\s\S]*\.wk-pj-contract__item em\s*\{\s*display: none;/)
 })
 
+test("PublicJob modal stays focused on role context and login controls", () => {
+  assert.doesNotMatch(source, /<ProcessStrip compact \/>/)
+  assert.match(source, /<div className="wk-pj-modal__job" aria-label="Selected role">/)
+  assert.match(source, /<ClaireInterviewContract compact \/>[\s\S]*\{renderLoginControls\("modal"\)\}/)
+  assert.match(source, /Create or confirm your WeKruit profile so Claire carries your resume and this role context into the interview\./)
+})
+
 test("PublicJob keeps the role page visible until the candidate starts Claire", () => {
   assert.doesNotMatch(source, /loginPromptAutoOpened/)
   assert.doesNotMatch(source, /loginPromptDismissed/)
