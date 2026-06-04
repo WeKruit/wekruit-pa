@@ -266,7 +266,8 @@ test("Market mobile headlines leave enough line height for two-line Newsreader i
   assert.match(source, /\.wk-shell \.wk-market__h1--direct \{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*gap: 4px;/)
   assert.match(source, /\.wk-shell \.wk-market__h1--direct > span \{[\s\S]*display: block;[\s\S]*line-height: inherit;/)
   assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market__h1 \{[\s\S]*font-size: clamp\(36px, 10vw, 44px\);[\s\S]*line-height: 1\.24;[\s\S]*letter-spacing: 0;[\s\S]*margin: 14px 0 18px;/)
-  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-market__h1 \{[\s\S]*font-size: 38px;[\s\S]*line-height: 1\.2;[\s\S]*\.wk-shell \.wk-market__h1--direct \{[\s\S]*gap: 2px;/)
+  assert.match(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-market__h1 \{[\s\S]*font-size: 38px;[\s\S]*line-height: 1\.24;[\s\S]*\.wk-shell \.wk-market__h1--direct \{[\s\S]*gap: 8px;/)
+  assert.doesNotMatch(source, /@media \(max-width: 420px\) \{[\s\S]*\.wk-shell \.wk-market__h1--direct \{[\s\S]*gap: 2px;/)
   assert.doesNotMatch(source, /\.wk-shell \.wk-market__h1 \{[\s\S]*line-height: 1\.02; letter-spacing: -0\.028em;/)
 })
 
