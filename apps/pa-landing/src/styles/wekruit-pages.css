@@ -531,6 +531,7 @@
   grid-template-columns: 24px 1fr auto;
   gap: 9px;
   align-items: center;
+  min-height: 50px;
   padding: 7px 12px;
   border-bottom: 1px solid var(--border);
   transition: background 220ms var(--ease);
@@ -565,6 +566,11 @@
 .seq-feed__co--warm  { background: linear-gradient(160deg, #E07A52, #9A4421); color: #fff; }
 .seq-feed__co--moss  { background: #DCE6D8; color: #2E6B2E; }
 .seq-feed__co--slate { background: #E3E0DA; color: var(--ink-2); }
+.seq-feed__body {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
 .seq-feed__role {
   font-size: 12.5px;
   color: var(--ink);
@@ -575,7 +581,7 @@
 }
 .seq-feed__role-co { font-weight: 600; }
 .seq-feed__role-sep { color: var(--ink-3); margin: 0 1px; }
-.seq-feed__why { font-size: 11px; color: var(--ink-3); margin-top: 1px; }
+.seq-feed__why { font-size: 11px; line-height: 1.35; color: var(--ink-3); }
 .seq-feed__row--match .seq-feed__why { color: var(--live); font-weight: 500; }
 .seq-feed__tag {
   width: 20px; height: 20px;
@@ -1089,8 +1095,14 @@
 
 @media (max-width: 880px) {
   .seq-card__art { min-height: 240px; padding: 24px; }
+  .seq-card__art:has(.seq-feed) { min-height: 352px; }
   .seq-card__body { padding: 22px 24px 28px; }
   .seq-resume, .seq-imsg, .seq-cal, .seq-pp, .seq-brief, .seq-feed, .seq-live { width: 100%; max-width: 320px; }
+  .seq-feed__row {
+    grid-template-columns: 24px minmax(0, 1fr) 22px;
+    min-height: 52px;
+    padding-block: 8px;
+  }
   .seq-reveal { grid-template-columns: 1fr; gap: 16px; }
   .seq-reveal__bridge { display: none; }
   .seq-stack__layer { width: 220px; height: 130px; }

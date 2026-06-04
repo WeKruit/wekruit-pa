@@ -125,6 +125,20 @@ test("Landing hero headline keeps editorial lines separated across breakpoints",
   assert.match(landingSource, /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__browse \{ flex-basis: 100%; \}/)
 })
 
+test("Landing sequence feed has enough mobile art height for its own rows", () => {
+  assert.match(pageStylesSource, /\.seq-feed__body \{[\s\S]*min-width: 0;[\s\S]*display: grid;[\s\S]*gap: 2px;/)
+  assert.match(pageStylesSource, /\.seq-feed__row \{[\s\S]*min-height: 50px;/)
+  assert.match(pageStylesSource, /\.seq-feed__why \{[\s\S]*line-height: 1\.35;/)
+  assert.match(
+    pageStylesSource,
+    /@media \(max-width: 880px\) \{[\s\S]*\.seq-card__art:has\(\.seq-feed\) \{ min-height: 352px; \}/,
+  )
+  assert.match(
+    pageStylesSource,
+    /@media \(max-width: 880px\) \{[\s\S]*\.seq-feed__row \{[\s\S]*grid-template-columns: 24px minmax\(0, 1fr\) 22px;[\s\S]*min-height: 52px;[\s\S]*padding-block: 8px;/,
+  )
+})
+
 test("Landing formats public job type chips before rendering candidate cards", () => {
   assert.match(landingSource, /import \{ formatPublicJobType \} from "\.\.\/lib\/public-job-labels\.js"/)
   assert.match(landingSource, /jobType: formatPublicJobType\(data\.jobType \?\? data\.prescreenConfig\?\.jobType\)/)
