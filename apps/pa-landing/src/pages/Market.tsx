@@ -659,6 +659,9 @@ function DirectCard({ r, onTalk }: { r: DisplayJob; onTalk: () => void }) {
         <span>{seatText}</span><span className="wk-tbl__sep">·</span>
         <span>{r.location}</span>
       </p>
+      <button className="wk-pitchbtn wk-pitchbtn--ink wk-pitchbtn--lg wk-direct-card__quick" onClick={onTalk}>
+        <Icon name="message" size={13} stroke={2} /> Talk to Claire
+      </button>
       <div className="wk-direct-card__owner">
         <Avatar name={r.hiringManager.name} size={24} tone={r.hiringManager.tone} />
         <div>
@@ -1510,6 +1513,7 @@ const MARKET_STYLES = String.raw`
   margin: -2px 0 0; display: flex; flex-wrap: wrap; gap: 4px;
   color: var(--wk-ink-2); font-size: 13.5px; line-height: 1.35;
 }
+.wk-shell .wk-direct-card__quick { display: none; }
 .wk-shell .wk-direct-card__owner {
   display: flex; align-items: center; gap: 10px;
   padding: 12px; border: 1px solid var(--wk-border); border-radius: var(--wk-r-sm);
@@ -1627,9 +1631,9 @@ const MARKET_STYLES = String.raw`
   .wk-shell .wk-market__head { margin-bottom: 20px; }
   .wk-shell .wk-market__h1 {
     font-size: clamp(36px, 10vw, 44px);
-    line-height: 1.18;
+    line-height: 1.24;
     letter-spacing: 0;
-    margin: 14px 0 16px;
+    margin: 14px 0 18px;
   }
   .wk-shell .wk-market__lede {
     font-size: 16px;
@@ -1646,32 +1650,36 @@ const MARKET_STYLES = String.raw`
     display: none;
   }
   .wk-shell .wk-roleflow {
-    padding: 12px 0;
-    margin: 0 0 10px;
+    padding: 14px 0 12px;
+    margin: 0 0 8px;
     display: block;
   }
   .wk-shell .wk-roleflow__intro h2 {
-    font-size: 22px;
-    line-height: 1.18;
+    font-size: 21px;
+    line-height: 1.24;
+    margin-top: 7px;
   }
   .wk-shell .wk-roleflow__steps {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
-    margin-top: 10px;
+    margin-top: 8px;
   }
   .wk-shell .wk-roleflow__steps li {
     flex: 1 1 calc(33.333% - 6px);
     min-width: 104px;
-    min-height: 42px;
-    padding: 8px 9px;
+    min-height: 38px;
+    padding: 7px 8px;
     border: 1px solid var(--wk-border);
     border-radius: 8px;
     background: var(--wk-cream-3);
+    align-items: center;
+    justify-content: center;
   }
   .wk-shell .wk-roleflow__steps strong {
-    font-size: 12.5px;
+    font-size: 12.25px;
     line-height: 1.18;
+    text-align: center;
   }
   .wk-shell .wk-roleflow__steps span {
     display: none;
@@ -1726,6 +1734,14 @@ const MARKET_STYLES = String.raw`
     font-size: 13px;
     line-height: 1.28;
   }
+  .wk-shell .wk-direct-card__quick {
+    display: inline-flex;
+    align-self: flex-start;
+    height: 34px;
+    padding: 0 13px;
+    margin-top: -2px;
+    justify-content: center;
+  }
   .wk-shell .wk-direct-card__owner {
     padding: 8px 0 0;
     border: 0;
@@ -1753,10 +1769,7 @@ const MARKET_STYLES = String.raw`
     white-space: normal;
   }
   .wk-shell .wk-direct-card__foot .wk-pitchbtn {
-    width: auto;
-    height: 34px;
-    padding: 0 12px;
-    justify-content: center;
+    display: none;
   }
 }
 @media (max-width: 420px) {

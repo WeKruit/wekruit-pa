@@ -207,9 +207,11 @@ test("Market role briefs can be searched before candidates scan the full invento
 })
 
 test("Market desktop role-brief cards keep the Claire action in each role block", () => {
+  assert.match(source, /className="wk-pitchbtn wk-pitchbtn--ink wk-pitchbtn--lg wk-direct-card__quick" onClick=\{onTalk\}/)
   assert.match(source, /className="wk-direct-card__foot"[\s\S]*<button className="wk-pitchbtn wk-pitchbtn--ink wk-pitchbtn--lg" onClick=\{onTalk\}>/)
   assert.match(source, /<Icon name="message" size=\{13\} stroke=\{2\} \/> Talk to Claire/)
   assert.match(source, /\.wk-shell \.wk-direct-card__foot \{[\s\S]*display: flex; align-items: center; justify-content: space-between;/)
+  assert.match(source, /\.wk-shell \.wk-direct-card__quick \{ display: none; \}/)
 })
 
 test("Market default role-brief tab shows role inventory before the supporting Claire contract", () => {
@@ -241,7 +243,7 @@ test("Market keeps mobile role cards primary while preserving the compact suppor
   assert.match(source, /<MarketRoleBriefWorkflow count=\{direct\.isSuccess \? directJobs\.length : undefined\} \/>[\s\S]*<div className="wk-direct-cards">[\s\S]*<DirectCard key=\{r\.id\} r=\{r\} onTalk=\{\(\) => onTalkToClaire\(r\)\} \/>[\s\S]*<MarketRoleBriefContract \/>/)
   assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \{[\s\S]*display: block; padding: 14px 0 16px; margin: 16px 0 18px;/)
   assert.match(source, /\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__copy,[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__grid,[\s\S]*\.wk-shell \.wk-market-contract--role-briefs \.wk-market-contract__actions \{[\s\S]*display: none;/)
-  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-roleflow \{[\s\S]*padding: 12px 0;[\s\S]*display: block;/)
+  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-roleflow \{[\s\S]*padding: 14px 0 12px;[\s\S]*display: block;/)
   assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-roleflow__steps \{[\s\S]*display: flex;[\s\S]*flex-wrap: wrap;/)
   assert.match(source, /\.wk-shell \.wk-roleflow__steps span \{[\s\S]*display: none;/)
 })
@@ -249,7 +251,7 @@ test("Market keeps mobile role cards primary while preserving the compact suppor
 test("Market mobile headlines leave enough line height for two-line Newsreader italics", () => {
   assert.match(source, /\.wk-shell \.wk-market__h1 \{[\s\S]*line-height: 1\.12; letter-spacing: 0;/)
   assert.match(source, /\.wk-shell \.wk-market__h1 \.wk-accent \{ line-height: inherit; \}/)
-  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market__h1 \{[\s\S]*font-size: clamp\(36px, 10vw, 44px\);[\s\S]*line-height: 1\.18;[\s\S]*letter-spacing: 0;[\s\S]*margin: 14px 0 16px;/)
+  assert.match(source, /@media \(max-width: 720px\) \{[\s\S]*\.wk-shell \.wk-market__h1 \{[\s\S]*font-size: clamp\(36px, 10vw, 44px\);[\s\S]*line-height: 1\.24;[\s\S]*letter-spacing: 0;[\s\S]*margin: 14px 0 18px;/)
   assert.doesNotMatch(source, /\.wk-shell \.wk-market__h1 \{[\s\S]*line-height: 1\.02; letter-spacing: -0\.028em;/)
 })
 
@@ -274,5 +276,7 @@ test("Market mobile role brief cards stay compact enough to compare options", ()
   assert.match(source, /\.wk-shell \.wk-direct-card \.wk-evidence \{[\s\S]*grid-column: auto;[\s\S]*max-width: 130px;/)
   assert.match(source, /\.wk-shell \.wk-direct-card \.wk-evidence__detail \{[\s\S]*display: none;/)
   assert.match(source, /\.wk-shell \.wk-direct-card__foot \{[\s\S]*grid-template-columns: minmax\(0, 1fr\) auto;/)
+  assert.match(source, /\.wk-shell \.wk-direct-card__quick \{[\s\S]*display: inline-flex;[\s\S]*align-self: flex-start;[\s\S]*height: 34px;/)
+  assert.match(source, /\.wk-shell \.wk-direct-card__foot \.wk-pitchbtn \{[\s\S]*display: none;/)
   assert.doesNotMatch(source, /\.wk-shell \.wk-direct-card__foot \.wk-pitchbtn \{ width: 100%;/)
 })
