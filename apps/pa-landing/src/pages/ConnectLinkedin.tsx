@@ -286,11 +286,11 @@ const LINKEDIN_CONNECT_STYLES = `
 .wk-li-connect__title {
   display: flex;
   flex-direction: column;
-  gap: clamp(8px, 1.2vw, 14px);
+  gap: clamp(12px, 1.4vw, 18px);
   margin: 0 0 22px;
   font-family: 'Newsreader', Georgia, serif;
   font-size: clamp(48px, 6vw, 72px);
-  line-height: 1.16;
+  line-height: 1.24;
   font-weight: 400;
   letter-spacing: 0;
   text-wrap: balance;
@@ -376,8 +376,8 @@ const LINKEDIN_CONNECT_STYLES = `
   }
   .wk-li-connect__title {
     font-size: clamp(42px, 14vw, 54px);
-    line-height: 1.18;
-    gap: 8px;
+    line-height: 1.28;
+    gap: 10px;
   }
 }
 `
