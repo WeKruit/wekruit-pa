@@ -367,12 +367,16 @@ export function CandidateShell({
   signedIn = false,
   signedInUser,
   claireHref = null,
+  startHref = "/onboarding",
+  startLabel = "Start with Claire",
 }: {
   children: ReactNode
   hero?: boolean
   signedIn?: boolean
   signedInUser?: { name?: string; src?: string; email?: string }
   claireHref?: string | null
+  startHref?: string
+  startLabel?: string
 }) {
   // Hooks must run unconditionally — used only by the signed-in rail branch.
   const navigate = useNavigate()
@@ -461,7 +465,7 @@ export function CandidateShell({
             ) : (
               <>
                 <Link to="/login" className="wk-header__signin">Sign in</Link>
-                <Link to="/onboarding" className="wk-btn wk-btn--ink wk-btn--sm wk-header__primary" aria-label="Start with Claire">
+                <Link to={startHref} className="wk-btn wk-btn--ink wk-btn--sm wk-header__primary" aria-label={startLabel}>
                   <span className="wk-header__primary-full" aria-hidden="true">Start with Claire</span>
                   <span className="wk-header__primary-short" aria-hidden="true">Start</span>
                 </Link>
