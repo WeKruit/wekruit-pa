@@ -142,18 +142,18 @@ export default function Landing() {
     return () => window.removeEventListener("hashchange", scrollToHash)
   }, [])
 
-  // Idle-prefetch /market and /open data while the user is reading the
-  // landing hero. Both surfaces share the QueryClient configured in main.tsx
-  // (staleTime=5min), so clicking "Open market" or "Open roles" repaints
-  // instantly from cache instead of waiting on a cold CF + Firestore read.
+  // Idle-prefetch market data while the user is reading the landing hero.
+  // The market shares the QueryClient configured in main.tsx (staleTime=5min),
+  // so clicking "Open market" repaints instantly from cache instead of waiting
+  // on a cold CF + Firestore read.
   // Wrapped in requestIdleCallback so it never competes with the hero paint.
   useEffect(() => {
     const win = window as Window & {
       requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number
     }
     const run = () => {
-      // Open jobs (Hunting list) — paPublicOpenJobs CF, identical filters
-      // to useOpenJobs default so the cache key matches.
+      // Tracked roles — paPublicOpenJobs CF, matching the market tracked-feed
+      // filters so the cache can be reused after the candidate opens /market.
       void queryClient.prefetchQuery({
         queryKey: ["open-jobs", {
           limit: 80, freshDays: 45,
@@ -173,7 +173,7 @@ export default function Landing() {
         },
         staleTime: 5 * 60 * 1000,
       })
-      // Public WeKruit roles — pa-jobs publicVisible. Same query OpenJobs.tsx uses.
+      // Public WeKruit role briefs — pa-jobs publicVisible, reused by /market.
       void queryClient.prefetchQuery({
         queryKey: ["pa-jobs-public-openings", 24],
         queryFn: () => listPublicJobOpenings(24),

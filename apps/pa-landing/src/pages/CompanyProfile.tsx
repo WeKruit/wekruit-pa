@@ -43,7 +43,7 @@ function extractCompanySummary(jobs: PublicJobOpening[], profile?: PublicCompany
       if (inCompanySection || normalized.length > 80) return cleanMarkdownLine(trimmed)
     }
   }
-  return "Open roles and company details are shared through the WeKruit interview process."
+  return "Role briefs and company details are shared through the WeKruit interview process."
 }
 
 function unique(values: Array<string | undefined>): string[] {
@@ -95,8 +95,8 @@ function CompanyProfileLayout({ jobs }: { jobs: PublicJobOpening[] }) {
         <section className="wk-company-hero">
           <div className="wk-container wk-company-hero__grid">
             <div className="wk-company-main">
-              <Link className="wk-company-back" to="/open">
-                <Icon name="arrow-left" size={16} stroke={1.8} /> Open roles
+              <Link className="wk-company-back" to="/market">
+                <Icon name="arrow-left" size={16} stroke={1.8} /> Market
               </Link>
               <div className="wk-company-title-row">
                 <div className="wk-company-logo" aria-hidden="true">{company[0]?.toUpperCase() ?? "?"}</div>
@@ -286,8 +286,8 @@ function CompanyEmpty({ message }: { message?: string }) {
         <p className="wk-eyebrow">Company profile</p>
         <h1>This company profile is not open.</h1>
         <p>{message ?? "There are no public WeKruit roles for this company yet."}</p>
-        <Link className="wk-btn wk-btn--primary" to="/open">
-          See open roles <Icon name="arrow-right" size={16} stroke={1.8} />
+        <Link className="wk-btn wk-btn--primary" to="/market">
+          Open market <Icon name="arrow-right" size={16} stroke={1.8} />
         </Link>
       </main>
     </CandidateShell>
