@@ -7,6 +7,14 @@ import test from "node:test"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const source = readFileSync(resolve(here, "Refer.tsx"), "utf8")
+const styles = readFileSync(resolve(here, "../styles/wekruit-pages.css"), "utf8")
+
+function cssBlock(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = styles.match(new RegExp(`${escaped} \\{[\\s\\S]*?\\n\\}`))
+  assert.ok(match, `missing ${selector} CSS block`)
+  return match[0]
+}
 
 test("ReferPage gates the signed-in referral dashboard before rendering connector state", () => {
   assert.match(source, /signedIn: boolean \| null/)
@@ -127,4 +135,22 @@ test("ReferComposer invite preview keeps friend onboarding profile-first", () =>
 
   assert.match(source, /Claire picks up profile and resume context before any role-specific screen/)
   assert.match(source, /Try WeKruit — Claire starts with your profile and screens role briefs with you/)
+})
+
+test("Refer FAQ uses real question buttons instead of whole answer rows as buttons", () => {
+  assert.match(source, /useId/)
+  assert.match(source, /const panelId = useId\(\)/)
+  assert.match(source, /<button[\s\S]*type="button"[\s\S]*className="wk-ref-faq__q"[\s\S]*aria-expanded=\{open\}[\s\S]*aria-controls=\{panelId\}/)
+  assert.match(source, /<span>\{q\}<\/span>/)
+  assert.match(source, /<p id=\{panelId\} className="wk-ref-faq__a" aria-hidden=\{!open\}>/)
+  assert.doesNotMatch(source, /role="button"[\s\S]*className=\{`wk-ref-faq__item/)
+  assert.doesNotMatch(source, /tabIndex=\{0\}[\s\S]*wk-ref-faq__q/)
+
+  const itemBlock = cssBlock(".wk-ref-faq__item")
+  const questionBlock = cssBlock(".wk-ref-faq__q")
+  const focusBlock = cssBlock(".wk-ref-faq__q:focus-visible")
+
+  assert.match(questionBlock, /width: 100%;[\s\S]*border: 0;[\s\S]*background: transparent;[\s\S]*cursor: pointer;[\s\S]*text-align: left;/)
+  assert.match(focusBlock, /outline: 2px solid var\(--live\);/)
+  assert.doesNotMatch(itemBlock, /cursor: pointer;/)
 })

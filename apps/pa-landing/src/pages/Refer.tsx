@@ -23,6 +23,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -761,22 +762,21 @@ const REFER_FAQ: { q: string; a: string }[] = [
 
 function ReferFAQItem({ q, a }: { q: string; a: string }) {
   const [open, setOpen] = useState(false)
+  const panelId = useId()
   return (
-    <div
-      className={`wk-ref-faq__item${open ? " is-open" : ""}`}
-      onClick={() => setOpen((v) => !v)}
-      role="button"
-      aria-expanded={open}
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault()
-          setOpen((v) => !v)
-        }
-      }}
-    >
-      <div className="wk-ref-faq__q">{q}</div>
-      <p className="wk-ref-faq__a">{a}</p>
+    <div className={`wk-ref-faq__item${open ? " is-open" : ""}`}>
+      <button
+        type="button"
+        className="wk-ref-faq__q"
+        aria-expanded={open}
+        aria-controls={panelId}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span>{q}</span>
+      </button>
+      <p id={panelId} className="wk-ref-faq__a" aria-hidden={!open}>
+        {a}
+      </p>
     </div>
   )
 }

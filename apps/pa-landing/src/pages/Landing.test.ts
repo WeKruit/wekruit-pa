@@ -110,20 +110,22 @@ test("Landing hero headline keeps editorial lines separated across breakpoints",
   assert.doesNotMatch(landingSource, /<span>You don't <em className="wk-accent">apply\.<\/em><\/span>/)
   assert.doesNotMatch(landingSource, /<span>You interview\.<\/span>/)
   assert.doesNotMatch(landingSource, /\.wk-hero__h1 > span:first-child \{ white-space: nowrap; \}/)
-  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*gap: 10px;/)
-  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*max-width: min\(100%, 620px\);[\s\S]*font-size: 60px;[\s\S]*line-height: 1\.08;/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*--wk-hero-title-leading: 1\.14;[\s\S]*--wk-hero-title-row-gap: 16px;/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*gap: var\(--wk-hero-title-row-gap\);/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*max-width: min\(100%, 620px\);[\s\S]*font-size: 60px;[\s\S]*line-height: var\(--wk-hero-title-leading\);/)
   assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*overflow: visible;/)
-  assert.match(landingSource, /\.wk-hero__h1 > span \{[\s\S]*line-height: 1\.08;/)
-  assert.match(landingSource, /\.wk-hero__h1 \.wk-accent \{[\s\S]*line-height: 1\.08;/)
+  assert.match(landingSource, /\.wk-hero__h1 > span \{[\s\S]*line-height: var\(--wk-hero-title-leading\);/)
+  assert.doesNotMatch(landingSource, /\.wk-hero__h1 > span \{[^}]*text-wrap: balance;/)
+  assert.match(landingSource, /\.wk-hero__h1 \.wk-accent \{[\s\S]*line-height: var\(--wk-hero-title-leading\);/)
   assert.match(landingSource, /\.wk-section__h2 \{[\s\S]*line-height: 1\.14; letter-spacing: 0;/)
   assert.match(source, /\.seq__h2 \{[\s\S]*letter-spacing: 0;[\s\S]*line-height: 1\.14;/)
   assert.match(
     landingSource,
-    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 48px; line-height: 1\.1; gap: 9px; \}/,
+    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ --wk-hero-title-leading: 1\.15; --wk-hero-title-row-gap: 13px; font-size: 48px; \}/,
   )
   assert.match(
     landingSource,
-    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 38px; line-height: 1\.12; gap: 8px; \}/,
+    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ --wk-hero-title-leading: 1\.16; --wk-hero-title-row-gap: 10px; font-size: 38px; \}/,
   )
   assert.match(landingSource, /@media \(max-width: 360px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 34px; \}/)
   assert.match(landingSource, /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__browse \{ flex-basis: 100%; \}/)
