@@ -515,11 +515,11 @@ function MarketRoleBriefWorkflow({ count }: { count?: number }) {
       </div>
       <ol className="wk-roleflow__steps">
         <li>
-          <strong>Employer bar</strong>
-          <span>Hard filters and evidence probes set the interview.</span>
+          <strong>Role brief</strong>
+          <span>Must-haves, filters, and evidence probes set Claire's screen.</span>
         </li>
         <li>
-          <strong>Claire interview</strong>
+          <strong>Claire screen</strong>
           <span>Your profile and answers become role-specific evidence.</span>
         </li>
         <li>
