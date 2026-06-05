@@ -2394,7 +2394,16 @@ export async function ingestCv(
       prior = null
     }
   }
-  if (h3FlagOn && prior && followupDeliveryMode === "runtime") {
+  if (h3FlagOn && prior && followupDeliveryMode === "runtime" && !isCanaryUser(userId)) {
+    // MERGE-NOT-OVERWRITE (Adam-LOCKED 2026-06-05): for canary users a NEW/additional résumé is owned
+    // end-to-end by the thin MERGE+CONFIRM+REPITCH path (cutover.ts: merge-confirm gate → accept fires
+    // ingestCv → THIS function's normal write path → runUserTagsMerge MERGES LinkedIn + existing + new
+    // résumé → resume_parse_completed → composePitchTurn). So we must NOT divert canary résumés into
+    // this H3 overwrite-STAGING branch (which short-circuits BEFORE runUserTagsMerge and emits a
+    // resume_overwrite_pending event nothing repitches — the live "wait no, latest resume is live" bug).
+    // With PA_ONBOARDING_RAMP_ALL=1 in prod, isCanaryUser is true for everyone → this overwrite path is
+    // dead for the résumé case; the H3 machinery stays in the tree (no deletion) but is inert.
+    //
     // Flag ON + existing resume in an active iMessage path: stage the new
     // parsed doc and hand structured overwrite facts to runtime. Runtime owns
     // the actual candidate-visible prompt.

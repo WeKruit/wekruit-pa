@@ -18,6 +18,18 @@ import { isCanaryUser, isPrescreenRetentionHandoffCanary } from "./canary.js"
 import { createSendblueTransport } from "./transport.js"
 import { selectClaireMode } from "./mode-selector.js"
 import { setEnrichmentInFlight, clearEnrichmentInFlight } from "./enrichment-inflight.js"
+import {
+  hasPriorParsedResume,
+  readOpenMergePending,
+  stageMergePending,
+  setMergePendingStatus,
+  defaultMergeConfirmClassifier,
+  MERGE_CONFIRM_BUBBLE,
+  MERGE_ACCEPT_ACK,
+  MERGE_DECLINE_REPLY,
+  MERGE_ACCEPT_CONFIDENCE,
+  type MergeConfirmClassifier,
+} from "./merge-resume-confirm.js"
 import { buildDecisionTrace } from "./decision-trace.js"
 import type { ClaireLang } from "./types.js"
 // NOTE: agent.js + tools/matching-tools.js are NOT imported statically — they pull
@@ -32,6 +44,21 @@ export interface MaybeThinClaireDeps {
    * driven in an integration eval with no real iMessage. Production callers omit it → real send.
    */
   dryRun?: boolean
+  /**
+   * Test seam (merge-confirm): the LLM accept/decline/unclear classifier for an open merge-pending.
+   * Production omits it → the real gpt-5.4-mini json_schema-STRICT classifier. Stubbed in tests so the
+   * accept/decline/unclear reducer routing is driven without a model call.
+   */
+  mergeConfirmClassifier?: MergeConfirmClassifier
+  /**
+   * Test seam (merge-confirm): override the ingestCv invoked on ACCEPT, so a test can assert it fired
+   * exactly once with the staged mediaUrl + live sessionId + skipLimitEnforcement, without parsing a PDF.
+   * Production omits it → the real dynamic-imported ingestCv.
+   */
+  ingestCvOverride?: (
+    input: { userId: string; mediaUrl: string; sessionId?: string },
+    opts: { skipLimitEnforcement: boolean },
+  ) => Promise<unknown>
 }
 
 export async function maybeRunThinClaire(
@@ -143,6 +170,111 @@ export async function maybeRunThinClaire(
   const inboundMessageHandle =
     typeof rawMeta.messageHandle === "string" ? rawMeta.messageHandle : undefined
 
+  // ── MERGE-CONFIRM ACCEPT/DECLINE (Adam-LOCKED 2026-06-05) ──────────────────────────────────────────
+  // A NEW/additional résumé on an EXISTING profile is a MERGE, not an overwrite — and Adam wants us to
+  // ASK first. When a prior résumé drop staged `pa-cv-merge-pending/{userId}=awaiting_confirm` and sent
+  // the MERGE-framed confirm bubble, THIS turn may be the candidate's reply ("yes go for it" / "no"). If
+  // a merge-pending is OPEN and this is a TEXT reply (not the résumé media itself, not the parse re-entry),
+  // classify the intent with ONE json_schema-STRICT LLM call (no-regex: LLM picks the enum) and let the
+  // REDUCER act: accept → fire the EXISTING ingestCv (→ runUserTagsMerge MERGE → resume_parse_completed →
+  // composePitchTurn, all reused, never a replace); decline → keep current profile; unclear → fall
+  // through to normal triage (pending stays open until TTL). Canary-only (isCanaryUser). Fail-open: any
+  // error here never blocks the turn (it just falls through to the agent).
+  if (
+    isCanaryUser(userId) &&
+    toE164 &&
+    text.trim() &&
+    !earlyMediaUrl &&
+    rawMeta.runtimeEvent !== true
+  ) {
+    try {
+      const pending = await readOpenMergePending(db, userId)
+      if (pending) {
+        const classify: MergeConfirmClassifier =
+          deps.mergeConfirmClassifier ?? defaultMergeConfirmClassifier
+        const { intent, confidence } = await classify(text)
+        log("thin_claire.merge_confirm.classified", { eventId, userId, intent, confidence })
+        const nowIso = new Date().toISOString()
+        if (intent === "accept_merge" && confidence >= MERGE_ACCEPT_CONFIDENCE) {
+          // ACCEPT → MERGE via the EXISTING engine. Mark in-flight + fire ingestCv with the staged
+          // mediaUrl + the LIVE session (skipLimitEnforcement, exactly like the résumé-drop path). With
+          // the cv-ingest:2397 canary guard OFF, ingestCv takes the normal write path → runUserTagsMerge
+          // MERGES (LinkedIn experiences + existing tags + new résumé), keeping the skills-regression
+          // guard. It then emits resume_parse_completed → the cv-parsed re-entry repitches MERGED. NEVER
+          // a replace, NO tombstone, NO promotePendingCv.
+          void setEnrichmentInFlight(db, userId, "resume", nowIso).catch(() => {})
+          const runIngest =
+            deps.ingestCvOverride ??
+            (async (input, opts) => {
+              const { ingestCv } = await import("../cv-ingest/cv-ingest.js")
+              return ingestCv(input, opts)
+            })
+          void Promise.resolve(
+            runIngest(
+              { userId, mediaUrl: pending.mediaUrl, sessionId: pending.sessionId ?? sessionId },
+              { skipLimitEnforcement: true },
+            ),
+          )
+            .then((r) => log("thin_claire.merge_confirm.ingest_done", { eventId, userId, result: r }))
+            .catch((e) =>
+              log("thin_claire.merge_confirm.ingest_failed", {
+                eventId,
+                userId,
+                err: e instanceof Error ? e.message : String(e),
+              }),
+            )
+          await setMergePendingStatus(db, userId, "accepted", nowIso)
+          const ackTransport = createSendblueTransport({
+            db,
+            toE164: String(toE164),
+            inboundMessageHandle,
+            userId,
+            sessionId,
+            inboundEventId: eventId,
+            log,
+            ...(deps.dryRun ? { dryRun: true } : {}),
+          })
+          await ackTransport.sendText(MERGE_ACCEPT_ACK, { seq: 0 })
+          await db
+            .collection(PA_COLLECTIONS.inboundEvents)
+            .doc(eventId)
+            .set({ status: "completed", handledBy: "thin_claire_merge_accept" }, { merge: true })
+          log("thin_claire.merge_confirm.accepted", { eventId, userId })
+          return true
+        }
+        if (intent === "decline_merge") {
+          await setMergePendingStatus(db, userId, "declined", nowIso)
+          const declineTransport = createSendblueTransport({
+            db,
+            toE164: String(toE164),
+            inboundMessageHandle,
+            userId,
+            sessionId,
+            inboundEventId: eventId,
+            log,
+            ...(deps.dryRun ? { dryRun: true } : {}),
+          })
+          await declineTransport.sendText(MERGE_DECLINE_REPLY, { seq: 0 })
+          await db
+            .collection(PA_COLLECTIONS.inboundEvents)
+            .doc(eventId)
+            .set({ status: "completed", handledBy: "thin_claire_merge_decline" }, { merge: true })
+          log("thin_claire.merge_confirm.declined", { eventId, userId })
+          return true
+        }
+        // unclear (or low-confidence accept) → fall through to normal triage; pending stays open (TTL).
+        log("thin_claire.merge_confirm.unclear_fallthrough", { eventId, userId })
+      }
+    } catch (mcErr) {
+      // Fail-open: never block the turn on a merge-confirm read/classify error — fall through to the agent.
+      log("thin_claire.merge_confirm.error", {
+        eventId,
+        userId,
+        err: mcErr instanceof Error ? mcErr.message : String(mcErr),
+      })
+    }
+  }
+
   // PITCH ENGINE (Adam 2026-06-04): the cv-parsed re-entry IS the pitch turn. Compose the pitch with a
   // DEDICATED gpt-5.4-mini call (.planning/PITCH-GUIDE.md) instead of the chat agent — which produced a
   // shallow ONE-signal pitch ("you leveled up to senior backend") and duplicated bubbles. Send a
@@ -235,6 +367,51 @@ export async function maybeRunThinClaire(
   // + fail-open, so a known user already ingested at webhook time is a cheap no-op.
   // Fire-and-forget — a parse failure must never block the conversational turn.
   const inboundMediaUrl = typeof rawMeta.mediaUrl === "string" ? rawMeta.mediaUrl.trim() : ""
+
+  // ── ADDITIONAL-RÉSUMÉ MERGE CONFIRM GATE (Adam-LOCKED 2026-06-05) ──────────────────────────────────
+  // A NEW/additional résumé on an EXISTING profile must MERGE, not overwrite — and we ASK first. If the
+  // candidate ALREADY has a prior (non-archived) parsed résumé (e.g. a Coresignal/LinkedIn mirror row),
+  // this résumé-only drop is an ADDITIONAL one: do NOT parse-and-ingest yet. STAGE the mediaUrl in
+  // `pa-cv-merge-pending/{userId}` and send a MERGE-framed confirm bubble ("fold it into your profile and
+  // re-pitch you?"). The merge + repitch fire only on ACCEPT (the accept block above on the NEXT turn,
+  // which fires ingestCv → runUserTagsMerge MERGE → resume_parse_completed → composePitchTurn). This is
+  // canary-only and résumé-ONLY (a résumé WITH text takes today's immediate-ingest path — M11). The FIRST
+  // résumé (no prior row) also keeps today's zero-friction immediate-ingest + auto-pitch (M8) — confirm
+  // is ONLY for the additional case. Fail-open: a read error degrades to the immediate-ingest path.
+  if (inboundMediaUrl && !text.trim() && toE164 && isCanaryUser(userId)) {
+    try {
+      if (await hasPriorParsedResume(db, userId)) {
+        const nowIso = new Date().toISOString()
+        await stageMergePending(db, { userId, mediaUrl: inboundMediaUrl, sessionId: sessionId ?? null, nowIso })
+        const confirmTransport = createSendblueTransport({
+          db,
+          toE164: String(toE164),
+          inboundMessageHandle,
+          userId,
+          sessionId,
+          inboundEventId: eventId,
+          log,
+          ...(deps.dryRun ? { dryRun: true } : {}),
+        })
+        await confirmTransport.sendText(MERGE_CONFIRM_BUBBLE, { seq: 0 })
+        await db
+          .collection(PA_COLLECTIONS.inboundEvents)
+          .doc(eventId)
+          .set({ status: "completed", handledBy: "thin_claire_merge_confirm" }, { merge: true })
+        log("thin_claire.merge_confirm.staged", { eventId, userId })
+        return true
+      }
+    } catch (gateErr) {
+      // Fail-open: an additional-résumé detection error must NEVER block the turn — fall through to the
+      // immediate-ingest path below (first-résumé behavior), so the résumé is still parsed.
+      log("thin_claire.merge_confirm.gate_error", {
+        eventId,
+        userId,
+        err: gateErr instanceof Error ? gateErr.message : String(gateErr),
+      })
+    }
+  }
+
   if (inboundMediaUrl) {
     // WS-1(b) ENRICHMENT-AWARENESS (Adam 2026-06-03): the résumé parse runs async (the
     // fire-and-forget ingestCv below) and only completes on the resume_parse_completed re-entry.
@@ -259,10 +436,18 @@ export async function maybeRunThinClaire(
     // and silently drop the thin re-entry → NO pitch, and (b) diverged for email-Apple-ID senders.
     // Without this, the cv-parsed completion never reached thin and LEGACY composed the post-parse turn
     // ("scratch that, they weren't invited") through the imperfection injector.
-    void import("../cv-ingest/cv-ingest.js")
-      .then(({ ingestCv }) =>
-        ingestCv({ userId, mediaUrl: inboundMediaUrl, sessionId }, { skipLimitEnforcement: true }),
-      )
+    const runImmediateIngest =
+      deps.ingestCvOverride ??
+      (async (input, opts) => {
+        const { ingestCv } = await import("../cv-ingest/cv-ingest.js")
+        return ingestCv(input, opts)
+      })
+    void Promise.resolve(
+      runImmediateIngest(
+        { userId, mediaUrl: inboundMediaUrl, sessionId },
+        { skipLimitEnforcement: true },
+      ),
+    )
       .then((r) => log("thin_claire.resume_ingest.done", { eventId, userId, result: r }))
       .catch((e) =>
         log("thin_claire.resume_ingest.failed", {
@@ -289,10 +474,7 @@ export async function maybeRunThinClaire(
         log,
         ...(deps.dryRun ? { dryRun: true } : {}),
       })
-      await ackTransport.sendText(
-        "got your résumé — pulling the details to sharpen your matches, one sec 📄",
-        { seq: 0 },
-      )
+      await ackTransport.sendText(MERGE_ACCEPT_ACK, { seq: 0 })
       await db
         .collection(PA_COLLECTIONS.inboundEvents)
         .doc(eventId)
