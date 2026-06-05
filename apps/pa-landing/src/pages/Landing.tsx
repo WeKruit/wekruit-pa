@@ -205,10 +205,9 @@ export default function Landing() {
               <span>You interview.</span>
             </h1>
             <p className="wk-hero__lede">
-              Upload your résumé once. Claire — your WeKruit recruiter, on iMessage —
+              Upload your résumé once. Claire — your WeKruit recruiter on iMessage —
               builds one WeKruit profile that keeps working across roles. When a role matches,
-              Claire starts the first interview;
-              your passed profile goes to the hiring team with evidence, not guesswork.
+              Claire starts the first interview; your passed profile carries the evidence.
             </p>
             <div className="wk-hero__cta">
               <Link to="/onboarding" className="wk-btn wk-btn--primary wk-btn--lg">
@@ -536,23 +535,23 @@ const LANDING_STYLES = `
 .wk-muted { color: var(--wk-ink-3); }
 
 /* Hero ------------------------------------------------------------------ */
-.wk-hero { padding: 64px 0 88px; position: relative; }
+.wk-hero { padding: 36px 0 44px; position: relative; }
 .wk-hero__grid {
   display: grid;
   grid-template-columns: 1.05fr 0.95fr;
-  gap: 64px;
+  gap: 48px;
   align-items: start;
 }
 .wk-hero__h1 {
-  --wk-hero-title-leading: 1.2;
-  --wk-hero-title-row-gap: 8px;
+  --wk-hero-title-leading: 1.14;
+  --wk-hero-title-row-gap: 5px;
   font-family: 'Newsreader', serif;
   font-weight: 400;
   display: flex;
   flex-direction: column;
   gap: var(--wk-hero-title-row-gap);
   max-width: min(100%, 620px);
-  font-size: 60px;
+  font-size: 52px;
   line-height: var(--wk-hero-title-leading);
   letter-spacing: 0;
   color: var(--wk-ink);
@@ -571,22 +570,22 @@ const LANDING_STYLES = `
   padding-bottom: 0.03em;
 }
 .wk-hero__lede {
-  font-size: clamp(17px, 1.5vw, 19.5px);
-  line-height: 1.5;
+  font-size: clamp(16.5px, 1.35vw, 18px);
+  line-height: 1.46;
   color: var(--wk-ink-2);
-  margin: 0 0 28px;
-  max-width: 520px;
+  margin: 0 0 22px;
+  max-width: 500px;
   text-wrap: pretty;
 }
 .wk-hero__cta {
-  display: flex; align-items: center; gap: 22px;
-  flex-wrap: wrap; margin-bottom: 30px;
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap; margin-bottom: 22px;
 }
 .wk-hero__browse {
   display: inline-flex; align-items: center; gap: 6px;
   color: var(--wk-ink-2);
   text-decoration: none;
-  font-weight: 500; font-size: 14.5px;
+  font-weight: 500; font-size: 13.5px;
   transition: color 200ms var(--wk-ease);
 }
 .wk-hero__browse:hover { color: var(--wk-ink); }
@@ -674,12 +673,13 @@ const LANDING_STYLES = `
   color: var(--wk-ink);
   font-weight: 650;
 }
-.wk-hero__visual { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: -48px; }
+.wk-hero__visual { display: flex; flex-direction: column; align-items: center; gap: 9px; margin-top: -20px; }
 .wk-hero__caption {
   display: inline-flex; align-items: center; gap: 8px;
   color: var(--wk-ink-3); font-size: 13px;
 }
-.wk-hero__visual .wk-imsg-thread__body { min-height: 200px; }
+.wk-hero__visual .wk-imsg-thread__body { min-height: 160px; }
+.wk-hero__visual .wk-imsg-phone { max-width: 320px; }
 .wk-hero-packet {
   position: relative;
   z-index: 2;
@@ -998,18 +998,17 @@ const LANDING_STYLES = `
 
 /* Mobile ---------------------------------------------------------------- */
 @media (max-width: 1180px) {
-  .wk-hero__h1 { font-size: 56px; }
+  .wk-hero__h1 { font-size: 50px; }
 }
 @media (max-width: 980px) {
-  .wk-hero { padding: 36px 0 64px; }
+  .wk-hero { padding: 28px 0 40px; }
   .wk-hero__grid {
     grid-template-columns: minmax(0, 1fr) minmax(280px, 0.78fr);
     gap: 36px;
     align-items: start;
   }
-  .wk-hero__h1 { --wk-hero-title-leading: 1.2; --wk-hero-title-row-gap: 7px; font-size: 48px; }
-  .wk-hero__visual { margin-top: 0; padding-top: 32px; }
-  .wk-hero__visual .wk-imsg-phone { max-width: 320px; }
+  .wk-hero__h1 { --wk-hero-title-leading: 1.16; --wk-hero-title-row-gap: 5px; font-size: 44px; }
+  .wk-hero__visual { margin-top: 0; padding-top: 24px; }
   .wk-hero-packet { max-width: 320px; margin-top: 0; padding: 12px; }
   .wk-hero-packet__grid { grid-template-columns: 1fr; gap: 7px; }
   .wk-steps { grid-template-columns: 1fr; }
@@ -1023,9 +1022,7 @@ const LANDING_STYLES = `
 @media (max-width: 760px) {
   .wk-hero__grid { grid-template-columns: 1fr; gap: 40px; }
   .wk-hero__visual {
-    margin-top: 0;
-    padding-top: 0;
-    align-items: center;
+    display: none;
   }
   .wk-hero__visual .wk-imsg-phone { max-width: 360px; }
   .wk-hero-packet { max-width: 360px; }
@@ -1034,7 +1031,7 @@ const LANDING_STYLES = `
   .wk-section { padding: 56px 0; }
   .wk-section__head { margin-bottom: 28px; }
   .wk-proof-card { padding: 20px; }
-  .wk-hero__h1 { --wk-hero-title-leading: 1.22; --wk-hero-title-row-gap: 6px; font-size: 37px; }
+  .wk-hero__h1 { --wk-hero-title-leading: 1.18; --wk-hero-title-row-gap: 5px; font-size: 35px; }
   .wk-hero__cta { gap: 12px; }
   .wk-hero__browse { flex-basis: 100%; }
   .wk-hero-packet__head { align-items: flex-start; flex-direction: column; gap: 5px; }

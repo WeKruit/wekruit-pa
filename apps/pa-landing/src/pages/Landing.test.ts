@@ -24,6 +24,7 @@ test("Landing frames the candidate promise as Claire-first passed-profile flow",
   assert.match(source, /builds one WeKruit profile that keeps working across roles/i)
   assert.match(source, /Claire starts the first interview/i)
   assert.match(source, /passed profile/i)
+  assert.match(source, /your passed profile carries the evidence/i)
 })
 
 test("Landing does not invent role availability or interview scarcity", () => {
@@ -114,11 +115,11 @@ test("Landing hero shows the passed-profile evidence artifact Claire produces", 
   assert.match(landingSource, /Employer share waits for candidate approval\./)
   assert.match(landingSource, /<HeroEvidencePacket \/>\s*<div className="wk-hero__caption">/)
   assert.match(landingSource, /\.wk-hero__grid \{[\s\S]*align-items: start;/)
-  assert.match(landingSource, /\.wk-hero__visual \{ display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: -48px; \}/)
-  assert.match(landingSource, /\.wk-hero__visual \.wk-imsg-thread__body \{ min-height: 200px; \}/)
+  assert.match(landingSource, /\.wk-hero__visual \{ display: flex; flex-direction: column; align-items: center; gap: 9px; margin-top: -20px; \}/)
+  assert.match(landingSource, /\.wk-hero__visual \.wk-imsg-thread__body \{ min-height: 160px; \}/)
   assert.match(landingSource, /\.wk-hero-packet \{[\s\S]*width: min\(100%, 390px\);[\s\S]*margin-top: 0;[\s\S]*border-radius: 8px;/)
   assert.match(landingSource, /\.wk-hero-packet__grid \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/)
-  assert.match(landingSource, /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__visual \{ margin-top: 0; padding-top: 32px; \}[\s\S]*\.wk-hero-packet \{ max-width: 320px; margin-top: 0; padding: 12px; \}/)
+  assert.match(landingSource, /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__visual \{ margin-top: 0; padding-top: 24px; \}[\s\S]*\.wk-hero-packet \{ max-width: 320px; margin-top: 0; padding: 12px; \}/)
   assert.match(landingSource, /@media \(max-width: 760px\) \{[\s\S]*\.wk-hero-packet \{ max-width: 360px; \}/)
 
   assert.doesNotMatch(landingSource, /guaranteed pass/i)
@@ -132,9 +133,9 @@ test("Landing hero headline keeps editorial lines separated across breakpoints",
   assert.match(landingSource, /<span>You interview\.<\/span>/)
   assert.doesNotMatch(landingSource, /<span>You don&apos;t<\/span>\s*<span><em className="wk-accent">apply\.<\/em><\/span>/)
   assert.doesNotMatch(landingSource, /<span>You<\/span>\s*<span>interview\.<\/span>/)
-  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*--wk-hero-title-leading: 1\.2;[\s\S]*--wk-hero-title-row-gap: 8px;/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*--wk-hero-title-leading: 1\.14;[\s\S]*--wk-hero-title-row-gap: 5px;/)
   assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*display: flex;[\s\S]*flex-direction: column;[\s\S]*gap: var\(--wk-hero-title-row-gap\);/)
-  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*max-width: min\(100%, 620px\);[\s\S]*font-size: 60px;[\s\S]*line-height: var\(--wk-hero-title-leading\);/)
+  assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*max-width: min\(100%, 620px\);[\s\S]*font-size: 52px;[\s\S]*line-height: var\(--wk-hero-title-leading\);/)
   assert.match(landingSource, /\.wk-hero__h1 \{[\s\S]*overflow: visible;/)
   assert.match(landingSource, /\.wk-hero__h1 > span \{[\s\S]*line-height: var\(--wk-hero-title-leading\);/)
   assert.match(landingSource, /\.wk-hero__h1 > span \{[\s\S]*white-space: nowrap;/)
@@ -145,11 +146,11 @@ test("Landing hero headline keeps editorial lines separated across breakpoints",
   assert.match(source, /\.seq__h2 \{[\s\S]*letter-spacing: 0;[\s\S]*line-height: 1\.14;/)
   assert.match(
     landingSource,
-    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ --wk-hero-title-leading: 1\.2; --wk-hero-title-row-gap: 7px; font-size: 48px; \}/,
+    /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero__h1 \{ --wk-hero-title-leading: 1\.16; --wk-hero-title-row-gap: 5px; font-size: 44px; \}/,
   )
   assert.match(
     landingSource,
-    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ --wk-hero-title-leading: 1\.22; --wk-hero-title-row-gap: 6px; font-size: 37px; \}/,
+    /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__h1 \{ --wk-hero-title-leading: 1\.18; --wk-hero-title-row-gap: 5px; font-size: 35px; \}/,
   )
   assert.match(landingSource, /@media \(max-width: 360px\) \{[\s\S]*\.wk-hero__h1 \{ font-size: 32px; \}/)
   assert.match(landingSource, /@media \(max-width: 600px\) \{[\s\S]*\.wk-hero__browse \{ flex-basis: 100%; \}/)
@@ -157,12 +158,22 @@ test("Landing hero headline keeps editorial lines separated across breakpoints",
 
 test("Landing hero lede keeps readable paragraph rhythm", () => {
   const ledeBlock = landingSource.match(/\.wk-hero__lede \{([\s\S]*?)\n\}/)?.[1] ?? ""
-  assert.match(ledeBlock, /line-height: 1\.5;/)
+  assert.match(ledeBlock, /line-height: 1\.46;/)
   assert.match(ledeBlock, /color: var\(--wk-ink-2\);/)
-  assert.match(ledeBlock, /margin: 0 0 28px;/)
+  assert.match(ledeBlock, /margin: 0 0 22px;/)
   assert.doesNotMatch(ledeBlock, /line-height: 1\.14/)
   assert.doesNotMatch(ledeBlock, /letter-spacing: 0/)
   assert.doesNotMatch(ledeBlock, /color: var\(--wk-ink\); margin: 0/)
+})
+
+test("Landing hero yields the first viewport to the product flow", () => {
+  assert.match(landingSource, /\.wk-hero \{ padding: 36px 0 44px; position: relative; \}/)
+  assert.match(landingSource, /\.wk-hero__grid \{[\s\S]*gap: 48px;[\s\S]*align-items: start;/)
+  assert.match(landingSource, /\.wk-hero__cta \{[\s\S]*gap: 10px;[\s\S]*margin-bottom: 22px;/)
+  assert.match(landingSource, /\.wk-hero__browse \{[\s\S]*font-weight: 500; font-size: 13\.5px;/)
+  assert.match(landingSource, /\.wk-hero__visual \.wk-imsg-phone \{ max-width: 320px; \}/)
+  assert.match(landingSource, /@media \(max-width: 760px\) \{[\s\S]*\.wk-hero__visual \{[\s\S]*display: none;[\s\S]*\}/)
+  assert.doesNotMatch(landingSource, /@media \(max-width: 760px\) \{[\s\S]*\.wk-hero__visual \{[\s\S]*padding-top: 0;[\s\S]*align-items: center;/)
 })
 
 test("Landing sequence feed has enough mobile art height for its own rows", () => {
