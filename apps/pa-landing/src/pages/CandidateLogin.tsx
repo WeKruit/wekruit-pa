@@ -45,11 +45,16 @@ import {
 } from "../lib/browser-identity"
 import { peekSource, stickSourceFromLoginNext, type SignupSource } from "../lib/source.js"
 import { verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
+import {
+  startCandidatePhoneLink,
+  verifyCandidatePhoneLink,
+} from "../lib/candidate-phone-link.js"
 import { LayoffLoginCard } from "../components/LayoffLoginCard.js"
 import { AudienceToggle } from "../components/AudienceToggle.js"
 
 const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
 const OAUTH_PENDING_KEY = "pa_oauth_pending"
+const PHONE_LINK_INTENT_KEY = "pa_phone_link_intent"
 const LINKEDIN_AUTH_START_URL =
   import.meta.env.VITE_LINKEDIN_AUTH_START_URL ??
   "https://us-central1-wekruit-5f89b.cloudfunctions.net/paLinkedinAuthStart"
@@ -79,6 +84,30 @@ function formatAuthError(err: unknown): string {
     default:
       if (err instanceof Error && err.message) return err.message
       return code ? code.replace(/^auth\//, "").replace(/-/g, " ") : "Sign-in failed. Try again."
+  }
+}
+
+function readPhoneLinkIntent(): boolean {
+  try {
+    return window.sessionStorage.getItem(PHONE_LINK_INTENT_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+function rememberPhoneLinkIntent(): void {
+  try {
+    window.sessionStorage.setItem(PHONE_LINK_INTENT_KEY, "1")
+  } catch {
+    // ignore private mode
+  }
+}
+
+function clearPhoneLinkIntent(): void {
+  try {
+    window.sessionStorage.removeItem(PHONE_LINK_INTENT_KEY)
+  } catch {
+    // ignore private mode
   }
 }
 
@@ -117,6 +146,16 @@ function takeLinkedinAuthPayload(): { ok: true; customToken: string } | { ok: fa
     return { ok: false, error: "linkedin_auth_payload_invalid" }
   }
 }
+
+type PhoneLinkState =
+  | { status: "idle"; message: string | null; requestId?: undefined; phoneMasked?: undefined }
+  | { status: "needs_auth"; message: string; requestId?: undefined; phoneMasked?: undefined }
+  | { status: "ready"; message: string; requestId?: undefined; phoneMasked?: undefined }
+  | { status: "sending_code"; message: string | null; requestId?: undefined; phoneMasked?: undefined }
+  | { status: "code_sent"; message: string; requestId: string; phoneMasked: string }
+  | { status: "verifying"; message: string; requestId: string; phoneMasked: string }
+  | { status: "linked"; message: string; requestId?: string; phoneMasked?: string }
+  | { status: "error"; message: string; requestId?: string; phoneMasked?: string }
 
 // ────────────────────────────────────────────────────────────────────────────
 // Shared atoms (exported)
@@ -1063,7 +1102,35 @@ export default function CandidateLogin() {
     return "idle"
   })
   const [error, setError] = useState<string | null>(null)
+  const [signedInUser, setSignedInUser] = useState<User | null>(() => auth().currentUser)
+  const [phoneLinkMode, setPhoneLinkMode] = useState(() => readPhoneLinkIntent())
+  const [phoneLinkPhone, setPhoneLinkPhone] = useState("")
+  const [phoneLinkCode, setPhoneLinkCode] = useState("")
+  const [phoneLink, setPhoneLink] = useState<PhoneLinkState>(() =>
+    readPhoneLinkIntent()
+      ? {
+          status: auth().currentUser ? "ready" : "needs_auth",
+          message: auth().currentUser
+            ? "Enter the phone number you used with Claire."
+            : "Sign in first. We will keep this phone-link step open.",
+        }
+      : { status: "idle", message: null },
+  )
   const finishInFlight = useRef(false)
+
+  useEffect(() => {
+    return onAuthStateChanged(auth(), (user) => {
+      setSignedInUser(user)
+      if (user && readPhoneLinkIntent()) {
+        setPhoneLinkMode(true)
+        setPhoneLink((prev) =>
+          prev.status === "needs_auth" || prev.status === "idle"
+            ? { status: "ready", message: "Signed in. Enter the phone number you used with Claire." }
+            : prev,
+        )
+      }
+    })
+  }, [])
 
   const finishSignedIn = useCallback(async () => {
     if (finishInFlight.current) return
@@ -1071,6 +1138,12 @@ export default function CandidateLogin() {
     setStatus("signing_in")
     setError(null)
     try {
+      if (readPhoneLinkIntent()) {
+        setPhoneLinkMode(true)
+        setPhoneLink({ status: "ready", message: "Signed in. Enter the phone number you used with Claire." })
+        setStatus("idle")
+        return
+      }
       const verifySource = signupSourceForLoginNext(nextDest)
       const verified = await verifyCandidateMagicLinkSession({
         ...(verifySource ? { source: verifySource } : {}),
@@ -1228,7 +1301,100 @@ export default function CandidateLogin() {
     }
   }
 
-  const busy = status === "google" || status === "linkedin" || status === "sending" || status === "signing_in"
+  function activatePhoneLink() {
+    rememberPhoneLinkIntent()
+    rememberLoginNext(nextDest.to)
+    setPhoneLinkMode(true)
+    setError(null)
+    setPhoneLink(
+      signedInUser
+        ? { status: "ready", message: "Enter the phone number you used with Claire." }
+        : { status: "needs_auth", message: "Sign in first. We will keep this phone-link step open." },
+    )
+  }
+
+  function closePhoneLink() {
+    clearPhoneLinkIntent()
+    setPhoneLinkMode(false)
+    setPhoneLinkPhone("")
+    setPhoneLinkCode("")
+    setPhoneLink({ status: "idle", message: null })
+  }
+
+  async function onPhoneLinkStart(e: FormEvent) {
+    e.preventDefault()
+    if (!signedInUser) {
+      activatePhoneLink()
+      return
+    }
+    setPhoneLink({ status: "sending_code", message: null })
+    try {
+      const result = await startCandidatePhoneLink(phoneLinkPhone)
+      if (!result.ok) {
+        setPhoneLink({ status: "error", message: result.message })
+        return
+      }
+      setPhoneLinkCode("")
+      setPhoneLink({
+        status: "code_sent",
+        requestId: result.requestId,
+        phoneMasked: result.phoneMasked,
+        message: `Code sent to ${result.phoneMasked}. Enter it here to connect this web account.`,
+      })
+    } catch (err) {
+      setPhoneLink({
+        status: "error",
+        message: err instanceof Error ? err.message : "Could not send the code. Try again.",
+      })
+    }
+  }
+
+  async function onPhoneLinkVerify(e: FormEvent) {
+    e.preventDefault()
+    if (phoneLink.status !== "code_sent" && phoneLink.status !== "verifying") return
+    const requestId = phoneLink.requestId
+    const phoneMasked = phoneLink.phoneMasked
+    setPhoneLink({
+      status: "verifying",
+      requestId,
+      phoneMasked,
+      message: "Checking the code with Claire's phone thread…",
+    })
+    try {
+      const result = await verifyCandidatePhoneLink(requestId, phoneLinkCode)
+      if (!result.ok) {
+        setPhoneLink(
+          result.reason === "invalid_code"
+            ? { status: "code_sent", requestId, phoneMasked, message: result.message }
+            : { status: "error", requestId, phoneMasked, message: result.message },
+        )
+        return
+      }
+      clearPhoneLinkIntent()
+      clearRememberedLoginNext()
+      setPhoneLink({
+        status: "linked",
+        phoneMasked: result.phoneMasked,
+        message: "Claire's phone thread is connected.",
+      })
+      const verifySource = signupSourceForLoginNext(nextDest)
+      const destination = nextDest.isOnboarding
+        ? "/me"
+        : resolvePostLoginDestination(nextDest, true, verifySource)
+      const dest = parseLoginNextPath(destination)
+      navigate({ pathname: dest.pathname, search: dest.search }, { replace: true })
+    } catch (err) {
+      setPhoneLink({
+        status: "error",
+        requestId,
+        phoneMasked,
+        message: err instanceof Error ? err.message : "Could not verify the code. Try again.",
+      })
+    }
+  }
+
+  const phoneLinkBusy = phoneLink.status === "sending_code" || phoneLink.status === "verifying"
+  const busy = status === "google" || status === "linkedin" || status === "sending" || status === "signing_in" || phoneLinkBusy
   const onLayoff = isLayoffHost()
   const onboardingRoleReturn = onboardingRoleReturnPath(nextDest)
   const roleInterview = roleInterviewSummary(nextDest)
@@ -1237,10 +1403,12 @@ export default function CandidateLogin() {
   const roleSignalNext = Boolean(profileRoleSignal)
   const onboardingNext = nextDest.isOnboarding && !roleInterviewNext
   const referralNext = nextDest.pathname === "/me/refer"
-  const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !roleSignalNext && !onboardingNext && !referralNext
-  const showRoleSignalPreview = !isCompletingLink && roleSignalNext
-  const showOnboardingPreview = !isCompletingLink && onboardingNext
-  const showReferralPreview = !isCompletingLink && referralNext
+  const showCompletingLink = isCompletingLink && !phoneLinkMode
+  const showAuthControls = !showCompletingLink && !(phoneLinkMode && signedInUser)
+  const showPipelinePreview = !showCompletingLink && !roleInterviewNext && !roleSignalNext && !onboardingNext && !referralNext
+  const showRoleSignalPreview = !showCompletingLink && roleSignalNext
+  const showOnboardingPreview = !showCompletingLink && onboardingNext
+  const showReferralPreview = !showCompletingLink && referralNext
   const loginContextKind: LoginContextKind =
     roleInterviewNext ? "role" : roleSignalNext ? "signal" : onboardingNext ? "onboarding" : referralNext ? "referral" : "pipeline"
   const roleFirstTimeHref = roleInterviewFirstTimeHref(nextDest)
@@ -1252,7 +1420,7 @@ export default function CandidateLogin() {
       : onboardingNext
         ? nextDest.to
         : onboardingDestination(peekSource())
-  const loginEyebrow = isCompletingLink
+  const loginEyebrow = showCompletingLink
     ? "Finishing sign-in"
     : roleInterviewNext
       ? "Role interview"
@@ -1263,7 +1431,7 @@ export default function CandidateLogin() {
       : referralNext
         ? "Referral dashboard"
         : "Pick up where you left off"
-  const loginSub = isCompletingLink
+  const loginSub = showCompletingLink
     ? "One sec — confirming your email and pulling up your pipeline."
     : status === "signing_in"
       ? onboardingRoleReturn
@@ -1323,7 +1491,7 @@ export default function CandidateLogin() {
               {loginEyebrow}
             </p>
             <h1 className="wk-login__h">
-              {isCompletingLink
+              {showCompletingLink
                 ? <>Finishing <em className="wk-accent">sign-in.</em></>
                 : roleInterviewNext
                   ? <>Continue this <em className="wk-accent">role.</em></>
@@ -1343,15 +1511,94 @@ export default function CandidateLogin() {
               <LoginRoleInterviewSummary title={roleInterview.title} company={roleInterview.company} href={roleFirstTimeHref ?? nextDest.to} />
             ) : null}
 
-            {!isCompletingLink ? <LoginContextStrip kind={loginContextKind} /> : null}
+            {!showCompletingLink ? <LoginContextStrip kind={loginContextKind} /> : null}
+
+            {!showCompletingLink ? (
+              <section className={`wk-login-phone-link${phoneLinkMode ? " is-open" : ""}`} aria-label="Connect a Claire phone thread">
+                <button
+                  type="button"
+                  className="wk-login-phone-link__trigger"
+                  onClick={activatePhoneLink}
+                  disabled={phoneLinkBusy}
+                >
+                  <Icon name="message" size={16} stroke={2} />
+                  <span>I've texted Claire</span>
+                </button>
+                <p className="wk-login-phone-link__copy">
+                  Already talked with Claire by phone? Verify that number and open the WeKruit profile Claire already knows.
+                </p>
+
+                {phoneLinkMode ? (
+                  <div className="wk-login-phone-link__panel">
+                    {!signedInUser ? (
+                      <p className="wk-login-phone-link__note">
+                        Sign in first with Google, LinkedIn, or magic link. This phone-link step will stay open after auth.
+                      </p>
+                    ) : (
+                      <>
+                        <p className="wk-login-phone-link__note">
+                          Signed in as {signedInUser.email ?? "this account"}. We will text a code to the phone Claire already has.
+                        </p>
+                        <form className="wk-login-phone-link__form" onSubmit={onPhoneLinkStart}>
+                          <label className="wk-login__field">
+                            <span>Phone used with Claire</span>
+                            <input
+                              type="tel"
+                              inputMode="tel"
+                              autoComplete="tel"
+                              value={phoneLinkPhone}
+                              onChange={(e) => setPhoneLinkPhone(e.target.value)}
+                              placeholder="+1 415 555 0100"
+                              disabled={busy}
+                            />
+                          </label>
+                          <button type="submit" className="wk-btn wk-btn--secondary wk-btn--block" disabled={busy}>
+                            {phoneLink.status === "sending_code" ? "Sending code…" : "Text me a code"}
+                          </button>
+                        </form>
+
+                        {(phoneLink.status === "code_sent" || phoneLink.status === "verifying") ? (
+                          <form className="wk-login-phone-link__form" onSubmit={onPhoneLinkVerify}>
+                            <label className="wk-login__field">
+                              <span>Verification code</span>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                autoComplete="one-time-code"
+                                value={phoneLinkCode}
+                                onChange={(e) => setPhoneLinkCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                                placeholder="123456"
+                                disabled={busy}
+                              />
+                            </label>
+                            <button type="submit" className="wk-btn wk-btn--ink wk-btn--block" disabled={busy || phoneLinkCode.length < 6}>
+                              {phoneLink.status === "verifying" ? "Connecting…" : "Connect Claire thread"}
+                            </button>
+                          </form>
+                        ) : null}
+                      </>
+                    )}
+
+                    {phoneLink.message && phoneLink.status !== "needs_auth" ? (
+                      <p className={phoneLink.status === "error" ? "wk-error" : "wk-success"} aria-live="polite">
+                        {phoneLink.message}
+                      </p>
+                    ) : null}
+                    <button type="button" className="wk-login-phone-link__close" onClick={closePhoneLink}>
+                      Use normal onboarding
+                    </button>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
 
             {showRoleSignalPreview && profileRoleSignal ? <LoginRoleSignalPreview title={profileRoleSignal.title} company={profileRoleSignal.company} /> : null}
 
-            {status === "signing_in" && !isCompletingLink ? (
+            {status === "signing_in" && !showCompletingLink ? (
               <p className="wk-success">Signing you in…</p>
             ) : null}
 
-            {!isCompletingLink ? (
+            {showAuthControls ? (
               <>
                 <div className="wk-login__providers">
                   <button
@@ -1375,25 +1622,27 @@ export default function CandidateLogin() {
               </>
             ) : null}
 
-            <form onSubmit={onSubmit} className="wk-login__form">
-              <label className="wk-login__field">
-                <span>Email</span>
-                <input
-                  type="email"
-                  autoComplete="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="you@example.com"
-                  disabled={busy}
-                />
-              </label>
-              <button type="submit" className="wk-btn wk-btn--primary wk-btn--block" disabled={busy}>
-                {isCompletingLink
-                  ? (status === "signing_in" ? "Signing in…" : "Continue")
-                  : (status === "sending" ? "Sending…" : "Send magic link")}
-                {!busy ? <Icon name="arrow-right" size={16} stroke={2} /> : null}
-              </button>
-            </form>
+            {showAuthControls || showCompletingLink ? (
+              <form onSubmit={onSubmit} className="wk-login__form">
+                <label className="wk-login__field">
+                  <span>Email</span>
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    disabled={busy}
+                  />
+                </label>
+                <button type="submit" className="wk-btn wk-btn--primary wk-btn--block" disabled={busy}>
+                  {showCompletingLink
+                    ? (status === "signing_in" ? "Signing in…" : "Continue")
+                    : (status === "sending" ? "Sending…" : "Send magic link")}
+                  {!busy ? <Icon name="arrow-right" size={16} stroke={2} /> : null}
+                </button>
+              </form>
+            ) : null}
 
             {status === "sent" ? (
               <p className="wk-success">Magic link sent to {cleanEmail(email)}.</p>
@@ -1913,6 +2162,72 @@ export const CANDIDATE_STYLES = `
   font-size: 11.5px;
   line-height: 1.28;
 }
+.wk-login-phone-link {
+  display: grid;
+  gap: 7px;
+  padding: 10px 0 0;
+  border-top: 1px solid rgba(201, 182, 158, 0.5);
+}
+.wk-login-phone-link__trigger {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  border-radius: var(--wk-r-pill);
+  border: 1px solid var(--wk-border-strong);
+  background: rgba(255, 253, 248, 0.52);
+  color: var(--wk-ink);
+  font: inherit;
+  font-weight: 750;
+  cursor: pointer;
+  transition: background 200ms var(--wk-ease), border-color 200ms var(--wk-ease), transform 200ms var(--wk-ease);
+}
+.wk-login-phone-link__trigger:hover:not(:disabled) {
+  background: var(--wk-cream-3);
+  border-color: var(--wk-ink);
+  transform: translateY(-1px);
+}
+.wk-login-phone-link__trigger:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.wk-login-phone-link__copy,
+.wk-login-phone-link__note {
+  margin: 0;
+  color: var(--wk-ink-3);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.wk-login-phone-link__panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--wk-border);
+  border-radius: var(--wk-r-md);
+  background: rgba(255, 253, 248, 0.46);
+}
+.wk-login-phone-link__form {
+  display: grid;
+  gap: 10px;
+}
+.wk-login-phone-link__close {
+  justify-self: center;
+  border: 0;
+  background: transparent;
+  color: var(--wk-ink-3);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 650;
+  padding: 2px 0;
+  cursor: pointer;
+  border-bottom: 1px solid transparent;
+}
+.wk-login-phone-link__close:hover {
+  color: var(--wk-ink);
+  border-bottom-color: var(--wk-ink-4);
+}
 .wk-login-preview {
   display: grid;
   gap: 10px;
@@ -2045,6 +2360,12 @@ export const CANDIDATE_STYLES = `
     white-space: nowrap;
   }
   .wk-login-context__item em { display: none; }
+  .wk-login-phone-link { gap: 6px; padding-top: 8px; }
+  .wk-login-phone-link__trigger { min-height: 38px; font-size: 13.5px; }
+  .wk-login-phone-link__copy,
+  .wk-login-phone-link__note { font-size: 12px; line-height: 1.32; }
+  .wk-login-phone-link__panel { gap: 9px; padding: 10px; border-radius: 12px; }
+  .wk-login-phone-link__form { gap: 9px; }
   .wk-login__card--pipeline .wk-login-context { gap: 7px; padding-top: 6px; }
   .wk-login__card--pipeline .wk-login-context__items { gap: 6px; }
   .wk-login__card--pipeline .wk-login-context__item { gap: 7px; }
