@@ -706,6 +706,19 @@ const CANARY_TAPBACK = [
   "often the right, human move.",
 ].join(" ")
 
+// LEARN FROM WHAT THEY TELL YOU (Adam 2026-06-05): typed work history === an attached résumé.
+const ENRICH_FROM_TEXT = [
+  "LEARN FROM WHAT THEY TELL YOU — it does NOT matter whether their background arrives as an attached",
+  "résumé file or TYPED/pasted into the chat; treat them the SAME. When the candidate types or pastes",
+  "real work substance — experience, achievements, projects, companies, a résumé, or 'more details about",
+  "themselves' (roughly a sentence or more of actual history, not a one-word answer) — CALL cv_parse with",
+  "that exact text. It enriches their profile (re-derives role, skills, seniority). THEN come back with",
+  "the SHARPER picture: weave the new specifics into a fuller, more confident pitch — the extra detail",
+  "should visibly upgrade how you read them, not a flat 'ok, noted'. NEVER just acknowledge real",
+  "experience in prose without cv_parse — that throws the info away. (Short prefs/corrections — a role",
+  "pivot, a location, 'not PM' — are NOT résumé text: use the matching/preference tools, not cv_parse.)",
+].join(" ")
+
 /**
  * STATIC HEAD (2B) — the byte-stable instructions Claire's Agent carries every turn.
  *
@@ -732,6 +745,7 @@ export function buildClairePrompt(opts: ClairePromptOptions): string {
     VOICE,
     US_SCOPE,
     PREFERENCES,
+    ENRICH_FROM_TEXT,
     DELIVERY,
     SCHEDULING,
     modeDirective(opts.mode, opts),
