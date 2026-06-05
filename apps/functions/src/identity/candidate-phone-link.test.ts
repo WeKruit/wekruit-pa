@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
+import { hashCandidateHandle } from "@pa/pa-persistence"
 import {
   runCandidatePhoneLinkStart,
   runCandidatePhoneLinkVerify,
@@ -213,6 +214,54 @@ test("runCandidatePhoneLinkVerify maps the signed-in account to the phone candid
   assert.equal(deps.profiles[0]?.candidateId, "cand-phone")
 })
 
+test("runCandidatePhoneLinkVerify can replace a web-only auth mapping with the verified Claire phone candidate", async () => {
+  const db = fakeDb()
+  const deps = baseDeps(db)
+  deps.claireConversationStarted = async (_db, candidateId) => candidateId !== "web-candidate"
+  await runCandidatePhoneLinkStart({ phone: "+14155550100" }, auth(), deps)
+  db.fake.seed(PA_COLLECTIONS.users, "cand-phone", {
+    id: "cand-phone",
+    phoneE164: "+14155550100",
+    claireConversationStarted: true,
+    senderNumber: "+17174919939",
+  })
+  db.fake.seed(PA_COLLECTIONS.users, "web-candidate", {
+    id: "web-candidate",
+    email: "person@example.com",
+    createdAt: "2026-06-01T00:00:00.000Z",
+  })
+  db.fake.seed(PA_COLLECTIONS.candidateAuth, "firebase-1", {
+    firebaseUid: "firebase-1",
+    candidateId: "web-candidate",
+    createdAt: "2026-06-01T00:00:00.000Z",
+  })
+  const emailHandle = hashCandidateHandle("email", "person@example.com")
+  db.fake.seed(PA_COLLECTIONS.candidateHandles, emailHandle.handleId, {
+    handleId: emailHandle.handleId,
+    candidateId: "web-candidate",
+    kind: "email",
+    handleHash: emailHandle.handleHash,
+    normalizedValue: emailHandle.normalizedValue,
+    source: "candidate",
+    verifiedAt: "2026-06-01T00:00:00.000Z",
+    deliverable: true,
+    createdAt: "2026-06-01T00:00:00.000Z",
+  })
+
+  const result = await runCandidatePhoneLinkVerify(
+    { requestId: "phone-link-req-1", code: "123456" },
+    auth(),
+    deps,
+  )
+
+  assert.equal(result.ok, true)
+  const authMapping = db.fake.read(PA_COLLECTIONS.candidateAuth, "firebase-1")
+  assert.equal(authMapping?.candidateId, "cand-phone")
+  const movedEmailHandle = db.fake.read(PA_COLLECTIONS.candidateHandles, emailHandle.handleId)
+  assert.equal(movedEmailHandle?.candidateId, "cand-phone")
+  assert.equal(movedEmailHandle?.updatedAt, "2026-06-05T00:00:00.000Z")
+})
+
 test("runCandidatePhoneLinkVerify rejects an incorrect code and records attempts", async () => {
   const db = fakeDb()
   const deps = baseDeps(db)
@@ -233,7 +282,7 @@ test("runCandidatePhoneLinkVerify rejects an incorrect code and records attempts
   assert.equal(row?.attempts, 1)
 })
 
-test("runCandidatePhoneLinkVerify fails closed when the Firebase uid is already mapped elsewhere", async () => {
+test("runCandidatePhoneLinkVerify fails closed when the Firebase uid is already mapped to another phone identity", async () => {
   const db = fakeDb()
   const deps = baseDeps(db)
   await runCandidatePhoneLinkStart({ phone: "+14155550100" }, auth(), deps)
@@ -246,6 +295,11 @@ test("runCandidatePhoneLinkVerify fails closed when the Firebase uid is already 
     firebaseUid: "firebase-1",
     candidateId: "other-candidate",
     createdAt: "2026-06-01T00:00:00.000Z",
+  })
+  db.fake.seed(PA_COLLECTIONS.users, "other-candidate", {
+    id: "other-candidate",
+    phoneE164: "+14155550199",
+    claireConversationStarted: true,
   })
 
   const result = await runCandidatePhoneLinkVerify(
