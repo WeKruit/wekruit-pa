@@ -76,6 +76,10 @@ test("CandidateLogin frames onboarding login as a first-time Claire start", () =
 
 test("CandidateLogin offers existing Claire phone-thread linking before onboarding", () => {
   assert.match(source, /PHONE_LINK_INTENT_KEY\s*=\s*"pa_phone_link_intent"/)
+  assert.match(source, /function readPhoneLinkIntentParam\(searchParams: URLSearchParams\): boolean/)
+  assert.match(source, /const phoneLinkIntentFromUrl = useMemo\(\(\) => readPhoneLinkIntentParam\(searchParams\), \[searchParams\]\)/)
+  assert.match(source, /const \[phoneLinkMode, setPhoneLinkMode\] = useState\(\(\) => phoneLinkIntentFromUrl \|\| readPhoneLinkIntent\(\)\)/)
+  assert.match(source, /if \(!phoneLinkIntentFromUrl\) return[\s\S]*rememberPhoneLinkIntent\(\)[\s\S]*setPhoneLinkMode\(true\)/)
   assert.match(source, /startCandidatePhoneLink/)
   assert.match(source, /verifyCandidatePhoneLink/)
   assert.match(source, /if \(readPhoneLinkIntent\(\)\) \{[\s\S]*setPhoneLinkMode\(true\)[\s\S]*return/)

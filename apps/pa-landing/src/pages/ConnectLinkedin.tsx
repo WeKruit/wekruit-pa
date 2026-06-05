@@ -37,6 +37,7 @@ const LINKEDIN_AUTH_START_URL =
   "https://us-central1-wekruit-5f89b.cloudfunctions.net/paLinkedinAuthStart"
 // where LinkedIn returns to (allow-listed in linkedin-auth.ts); the apex serves this same SPA.
 const CONNECT_RETURN_TO = "https://wekruit.com/connect-linkedin"
+const CLAIRE_PHONE_LINK_LOGIN = "/login?next=%2Fme&phoneLink=1"
 
 interface ConnectSubmitResult {
   ok: boolean
@@ -59,15 +60,19 @@ function MissingConnectToken() {
         <span>Claire link</span>
       </h1>
       <p className="wk-li-connect__copy">
-        This page needs the secure LinkedIn link Claire texted you. Reopen that
-        message so the profile update attaches to the right WeKruit account.
+        This page needs the secure LinkedIn link Claire texted you. If you have
+        already texted Claire, verify that phone number and reopen the profile
+        Claire already knows.
       </p>
       <div className="wk-li-connect__actions">
-        <a className="wk-li-connect__button" href="/me">
+        <a className="wk-li-connect__button" href={CLAIRE_PHONE_LINK_LOGIN}>
+          I&apos;ve texted Claire
+        </a>
+        <a className="wk-li-connect__link" href="/me">
           Go to My WeKruit
         </a>
         <a className="wk-li-connect__link" href="/onboarding">
-          Start with Claire instead
+          Start onboarding instead
         </a>
       </div>
     </>
@@ -337,6 +342,9 @@ const LINKEDIN_CONNECT_STYLES = `
   align-items: center;
   gap: 16px;
   margin-top: 26px;
+}
+.wk-li-connect__actions .wk-li-connect__link {
+  margin-top: 0;
 }
 .wk-li-connect__label {
   display: block;
