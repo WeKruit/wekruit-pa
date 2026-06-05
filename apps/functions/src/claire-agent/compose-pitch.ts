@@ -224,10 +224,23 @@ export function buildPitchProfile(
       ? ((userDoc.coresignal as { followers: number }).followers)
       : null)
 
+  // CURRENT ROLE from the FRESHEST highlight, not the stale tag (Adam 2026-06-04): tags.recentRoleTitle
+  // can lag a LinkedIn refresh (lived: tag "Software Engineer Intern" while the newest role was "Senior
+  // Software Engineer"). Pick the merged highlight with the latest startDate; fall back to the tag only
+  // when no highlight carries a dated role. No invention — reads a structured field already present.
+  const datedHighlights = experienceHighlights
+    .filter((h) => h.title || h.company)
+    .map((h) => ({ h, ms: h.startDate ? Date.parse(h.startDate) : NaN }))
+    .filter((x) => !Number.isNaN(x.ms))
+    .sort((a, b) => b.ms - a.ms)
+  const freshRole = datedHighlights[0]?.h
+  const recentRoleTitle = freshRole?.title ? freshRole.title : str(tags.recentRoleTitle)
+  const recentCompany = freshRole?.company ? freshRole.company : str(tags.recentCompany)
+
   return {
     name: firstName,
-    recentRoleTitle: str(tags.recentRoleTitle),
-    recentCompany: str(tags.recentCompany),
+    recentRoleTitle: recentRoleTitle || null,
+    recentCompany: recentCompany || null,
     skills,
     experienceHighlights,
     followers: followersRaw,

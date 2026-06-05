@@ -412,6 +412,27 @@ export async function loadGlobalContext(db: Firestore, userId: string, toE164?: 
       .filter(Boolean)
       .slice(0, 5)
 
+    // FRESH CURRENT ROLE (Adam 2026-06-04): the derived `tags.recentRoleTitle` cache LAGS a LinkedIn
+    // refresh — live, the tag still said "Software Engineer Intern" while experienceHighlights[0] was
+    // "Senior Software Engineer" (currentRole=true, Feb 2026), so the opener tripped and called him an
+    // intern. Source the current role from the FRESHEST signal — experienceHighlights — not the stale
+    // tag: prefer the currentRole=true highlight, else the latest by startDate; fall back to the tag only
+    // when no highlight carries a role. Universal fix (every returning user whose LinkedIn outpaced their
+    // résumé-derived tag), and it never invents — it reads a structured field the parser already set.
+    const roleStartMs = (h: Record<string, unknown>): number => {
+      const s = str(h?.startDate)
+      const t = s ? Date.parse(s) : NaN
+      return Number.isNaN(t) ? -Infinity : t
+    }
+    const roledHighlights = highlightsRaw.filter((h) => str(h?.title) || str(h?.company))
+    const currentHighlight =
+      roledHighlights.find((h) => h?.currentRole === true) ??
+      [...roledHighlights].sort((a, b) => roleStartMs(b) - roleStartMs(a))[0]
+    const freshRecentTitle =
+      currentHighlight && str(currentHighlight.title) ? str(currentHighlight.title) : recentRoleTitle
+    const freshRecentCompany =
+      currentHighlight && str(currentHighlight.company) ? str(currentHighlight.company) : recentCompany
+
     // CANARY-GATED enriched pitch context (Adam 2026-06-02): the richer pitch evidence
     // (grounded level, industry arc, OWNED outcomes, US-silence guardrail) only ships to
     // dev/canary users for now — the proactive-pitch OPENER that exploits it (PART 2) is
@@ -430,8 +451,8 @@ export async function loadGlobalContext(db: Firestore, userId: string, toE164?: 
       ownedLines.length
         ? `what they OWNED (CITE ONE verbatim-ish in bubble 1, with its number): ${ownedLines.join(" | ")}`
         : "",
-      recentRoleTitle || recentCompany
-        ? `most recent: ${[recentRoleTitle, recentCompany].filter(Boolean).join(" @ ")}`
+      freshRecentTitle || freshRecentCompany
+        ? `most recent: ${[freshRecentTitle, freshRecentCompany].filter(Boolean).join(" @ ")}`
         : "",
       skillNames.length ? `top skills (reference, NOT the pitch): ${skillNames.join(", ")}` : "",
       // GUARDRAIL-ONLY line — the pitch must NEVER surface this; it only gates the US-silence rule.
@@ -443,8 +464,8 @@ export async function loadGlobalContext(db: Firestore, userId: string, toE164?: 
     const legacyResumeBits = [
       firstName ? `first name: ${firstName}` : "",
       workHistorySummary ? `work history (use THIS for the compliment): ${workHistorySummary}` : "",
-      recentRoleTitle || recentCompany
-        ? `most recent: ${[recentRoleTitle, recentCompany].filter(Boolean).join(" @ ")}`
+      freshRecentTitle || freshRecentCompany
+        ? `most recent: ${[freshRecentTitle, freshRecentCompany].filter(Boolean).join(" @ ")}`
         : "",
       skillNames.length ? `top skills (reference, NOT the compliment): ${skillNames.join(", ")}` : "",
     ].filter(Boolean)
