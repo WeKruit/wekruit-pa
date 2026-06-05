@@ -2337,29 +2337,34 @@ export const CANDIDATE_STYLES = `
   .wk-login-role__body em { font-size: 12px; }
   .wk-login-context { gap: 8px; padding-top: 8px; padding-bottom: 0; }
   .wk-login-context__items {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 7px;
   }
   .wk-login-context__item {
-    display: inline-flex;
-    align-items: center;
-    grid-template-columns: none;
-    gap: 6px;
-    min-height: 30px;
-    padding: 5px 8px;
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: start;
+    gap: 8px;
+    min-height: 0;
+    padding: 9px 10px;
     border: 1px solid var(--wk-border);
-    border-radius: var(--wk-r-pill);
+    border-radius: 14px;
     background: var(--wk-cream);
   }
-  .wk-login-context__dot { width: 16px; height: 16px; margin-top: 0; }
+  .wk-login-context__dot { width: 16px; height: 16px; margin-top: 1px; }
   .wk-login-context__dot svg { width: 9px; height: 9px; }
   .wk-login-context__item strong {
     font-size: 12px;
     line-height: 1.15;
-    white-space: nowrap;
+    white-space: normal;
   }
-  .wk-login-context__item em { display: none; }
+  .wk-login-context__item em {
+    display: block;
+    margin-top: 2px;
+    font-size: 11.5px;
+    line-height: 1.25;
+  }
   .wk-login-phone-link { gap: 6px; padding-top: 8px; }
   .wk-login-phone-link__trigger { min-height: 38px; font-size: 13.5px; }
   .wk-login-phone-link__copy,
