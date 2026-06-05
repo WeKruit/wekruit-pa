@@ -187,6 +187,7 @@ export {
   type PrescreenEvidence,
   type TurnContext,
 } from "./conversation-turn-arbiter.js"
+import { extractTurnIntent } from "./turn-intent-extractor.js"
 import {
   buildConversationEvidenceWrites,
   decideConversationDeliveryAction,
@@ -2318,6 +2319,67 @@ async function buildConversationTurnContext(
     })))
     .catch(() => [])
   const recentOutbound = recentMessages.filter((message) => message.role === "assistant")
+  const prescreenEvidence = await loadRecentPrescreenEvidenceForArbiter(store, event.userId)
+
+  // 2026-06-05 regex→LLM-intent migration (Target A). LLM-primary turn-intent
+  // is computed ONLY for the canary cohort (flag `paTurnIntentLlmEnabled`,
+  // default OFF) and ONLY for user-authored turns. On fail-open / off-flag the
+  // context fields stay undefined and the arbiter uses its deterministic regex
+  // predicates — behavior identical to today for everyone else.
+  let llmIntent: TurnContext["llmIntent"] = undefined
+  let sharedOnboardingAnswerAccepted: TurnContext["sharedOnboardingAnswerAccepted"] = undefined
+  if (store.db) {
+    let turnIntentEnabled = false
+    try {
+      turnIntentEnabled =
+        (await getFlag(
+          store.db,
+          "paTurnIntentLlmEnabled",
+          { userId: event.userId, env: process.env },
+          false,
+        )) === true
+    } catch (err) {
+      store.log("pa.turn_intent.flag_read_error", {
+        userId: event.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    if (turnIntentEnabled) {
+      const lastAssistantText = recentOutbound.length
+        ? recentOutbound[recentOutbound.length - 1]?.body
+        : undefined
+      llmIntent = await extractTurnIntent(
+        {
+          text: event.body,
+          ...(lastAssistantText ? { lastAssistantText } : {}),
+          hasPrescreenEvidence: Boolean(prescreenEvidence),
+        },
+        undefined,
+        { log: (name, payload) => store.log(name, payload ?? {}) },
+      )
+      // A8 delegation: reuse the existing shared-onboarding answer judge so the
+      // arbiter never re-implements the per-questionId keyword bank.
+      if (sharedActive && sharedQuestionId) {
+        try {
+          const judged = await judgeSharedOnboardingAnswer({
+            questionId: sharedQuestionId,
+            answer: event.body,
+            lang: "en",
+            userId: event.userId,
+            turnId,
+            log: (name, payload) => store.log(name, payload ?? {}),
+          })
+          sharedOnboardingAnswerAccepted = judged.accept
+        } catch (err) {
+          store.log("pa.turn_intent.shared_onboarding_judge_error", {
+            userId: event.userId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+    }
+  }
+
   return {
     turnId,
     userId: event.userId,
@@ -2329,12 +2391,14 @@ async function buildConversationTurnContext(
     activeWorkflow,
     recentMessages,
     recentOutbound,
-    prescreenEvidence: await loadRecentPrescreenEvidenceForArbiter(store, event.userId),
+    prescreenEvidence,
     sharedOnboarding: {
       active: sharedActive,
       currentQuestionId: sharedQuestionId,
     },
     preferenceState: onboardingUser?.statedPreferences ?? null,
+    ...(llmIntent !== undefined ? { llmIntent } : {}),
+    ...(sharedOnboardingAnswerAccepted !== undefined ? { sharedOnboardingAnswerAccepted } : {}),
   }
 }
 

@@ -6,7 +6,7 @@ import type { ConnectorName } from "@pa/pa-connectors"
 import {
   buildCollabInviteIntent,
   buildCollabInviteTemplate,
-  detectCollabInviteReplyIntent,
+  resolveCollabInviteReplyIntent,
 } from "./collab-invite-surface.js"
 import { buildMatchConnectorHooks, type GenerateJobRecsFn } from "./match-connector-hooks.js"
 import {
@@ -465,7 +465,9 @@ export async function handleCollabInviteReply(
   const pending = await loadCollabInvitePending(store.db, event.userId)
   if (!pending) return false
 
-  const intent = detectCollabInviteReplyIntent(event.body)
+  const intent = await resolveCollabInviteReplyIntent(event, store, {
+    log: (name, payload) => store.log(name, payload),
+  })
   const lang = "en" as const
 
   if (intent === "ambiguous") {

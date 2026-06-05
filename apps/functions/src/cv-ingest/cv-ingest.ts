@@ -35,8 +35,10 @@ import {
   INDUSTRY_TAGS,
   applyIndustryTagsFallback,
   mapToCanonicalIndustry,
+  rescueIndustryWithSkillsLlm,
   type IndustryTag,
 } from "./industry-tags.js"
+import { isCanaryUser } from "../claire-agent/canary.js"
 import {
   runIndustrySecondPass,
   type WorkHistorySummary,
@@ -2261,12 +2263,28 @@ export async function ingestCv(
         description: e.description,
         location: e.location,
       }))
-      const secondPassResult = await runIndustrySecondPassFn({
-        cvText: text,
-        workHistory,
-        apiKey: process.env.ANTHROPIC_API_KEY?.trim() || undefined,
-        log,
-      })
+      // 2026-06-05 — LLM-driven industry rescue (replaces the TECH_TOKENS /
+      // AI_TOKENS regex sniff for the canonical 42-token axis). For the canary
+      // cohort, thread the candidate's SKILLS into the second-pass prompt so
+      // the "SWE/Tesla/AWS → other" case the regex existed to rescue is now
+      // caught by the LLM. Non-canary keeps the existing second-pass call
+      // verbatim. Both fail OPEN to [] (caller keeps prior value); the 10-bucket
+      // `industryTags` keep their applyIndustryTagsFallback baseline regardless.
+      const secondPassResult = isCanaryUser(userId)
+        ? await rescueIndustryWithSkillsLlm({
+            cvText: text,
+            skills: parsed.candidateProfile.skills,
+            workHistory,
+            apiKey: process.env.ANTHROPIC_API_KEY?.trim() || undefined,
+            log,
+            runIndustrySecondPassFn,
+          })
+        : await runIndustrySecondPassFn({
+            cvText: text,
+            workHistory,
+            apiKey: process.env.ANTHROPIC_API_KEY?.trim() || undefined,
+            log,
+          })
       if (Array.isArray(secondPassResult) && secondPassResult.length > 0) {
         log("pa.cv_ingest.industry_second_pass.applied", {
           userId: userId,

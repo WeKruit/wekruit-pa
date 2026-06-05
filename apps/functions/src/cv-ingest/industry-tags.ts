@@ -1055,6 +1055,98 @@ export function applyIndustryTagsFallback(
   return result.slice(0, 3)
 }
 
+// ---------------------------------------------------------------------------
+// 2026-06-05 — LLM-driven industry rescue (migrate the TECH_TOKENS / AI_TOKENS
+// regex-substring fallback to LLM meaning extraction).
+//
+// CONVERSATION-CONTEXT-FIRST-PRINCIPLE / D15: when the primary parser produced
+// ["other"], the LLM (second-pass, STRICT json_schema against the canonical
+// 42-token INDUSTRY_SECTOR_VOCAB) should OWN the industry-meaning rescue rather
+// than a curated tech/ai substring list. The win: "Adam SWE/Tesla/AWS → other"
+// is now caught by the LLM because we THREAD his skills into the second-pass
+// input — previously the second-pass only saw cvText + workHistory and the
+// TECH_TOKENS regex existed to rescue exactly this case.
+//
+// Lane note: `runIndustrySecondPass`'s signature only accepts
+// {cvText, workHistory, apiKey, log}. To thread `skills` WITHOUT editing
+// `industry-second-pass.ts` (not in this lane), we fold a short skills line
+// into the `cvText` argument — `buildUserPayload` already consumes cvText
+// free-text, so the skills land in the prompt verbatim.
+//
+// NEVER throws and NEVER returns worse than today: on any failure the injected
+// second-pass returns [] and the caller keeps the prior value; the legacy
+// 10-bucket `industryTags` keep their `applyIndustryTagsFallback` token-baseline
+// result regardless.
+// ---------------------------------------------------------------------------
+
+/** Injected second-pass fn shape (mirrors cv-ingest's `runIndustrySecondPassFn`). */
+export type RunIndustrySecondPassFn = (args: {
+  cvText: string
+  workHistory: ReadonlyArray<{
+    title?: string
+    company?: string
+    description?: string | null
+    location?: string | null
+  }>
+  apiKey: string | undefined
+  log: (event: string, payload?: Record<string, unknown>) => void
+}) => Promise<string[]>
+
+/**
+ * Compose a short, deterministic skills line for the second-pass prompt. Caps
+ * at 40 skills to keep the prompt bounded; empty/garbage entries dropped.
+ */
+export function composeSkillsHintForIndustryRescue(skills: readonly string[]): string {
+  const clean = (Array.isArray(skills) ? skills : [])
+    .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+    .map((s) => s.trim())
+    .slice(0, 40)
+  if (clean.length === 0) return ""
+  return `Candidate skills / tools: ${clean.join(", ")}`
+}
+
+/**
+ * Run the industry second-pass with the candidate's SKILLS threaded into the
+ * prompt (via the cvText arg). This is the LLM rescue that replaces the
+ * TECH_TOKENS / AI_TOKENS regex sniff for the canonical 42-token axis.
+ *
+ * Returns the second-pass token list (already vocab-filtered by the underlying
+ * function), or `[]` on any failure — caller MUST keep its prior value on `[]`.
+ * NEVER throws.
+ */
+export async function rescueIndustryWithSkillsLlm(args: {
+  cvText: string
+  skills: readonly string[]
+  workHistory: ReadonlyArray<{
+    title?: string
+    company?: string
+    description?: string | null
+    location?: string | null
+  }>
+  apiKey: string | undefined
+  log: (event: string, payload?: Record<string, unknown>) => void
+  runIndustrySecondPassFn: RunIndustrySecondPassFn
+}): Promise<string[]> {
+  try {
+    const skillsHint = composeSkillsHintForIndustryRescue(args.skills)
+    const cvTextWithSkills = skillsHint
+      ? `${skillsHint}\n\n${args.cvText ?? ""}`
+      : (args.cvText ?? "")
+    const out = await args.runIndustrySecondPassFn({
+      cvText: cvTextWithSkills,
+      workHistory: args.workHistory,
+      apiKey: args.apiKey,
+      log: args.log,
+    })
+    return Array.isArray(out) ? out.filter((s): s is string => typeof s === "string") : []
+  } catch (err) {
+    args.log("pa.cv_ingest.industry_skill_rescue.error", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return []
+  }
+}
+
 /**
  * Render the user's industryTags into a 1-line block for system prompt
  * injection. Used by Stream D's appendCvContextToSystemPrompt extension.
