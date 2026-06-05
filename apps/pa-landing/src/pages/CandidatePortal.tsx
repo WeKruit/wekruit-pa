@@ -39,6 +39,10 @@ import {
   type CandidateJobStatus,
 } from "../lib/candidate-job-status.js"
 import { GLOBAL_UID_KEY, readStoredValue } from "../lib/browser-identity"
+import {
+  startCandidatePhoneLink,
+  verifyCandidatePhoneLink,
+} from "../lib/candidate-phone-link.js"
 import { useCandidatePortalGate } from "../lib/candidate-portal-gate.js"
 import {
   deriveCandidateOperatingLoop,
@@ -498,7 +502,7 @@ type ConnectorRow = {
 function deriveConnectors(profile: CandidateSelfProfile): ConnectorRow[] {
   const hasHandle = (kind: string) =>
     profile.handles?.some((h) => h.kind === kind && h.verifiedAt) ?? false
-  const phoneVerified = !!profile.phoneMasked || hasHandle("phone")
+  const phoneVerified = profileHasVerifiedPhone(profile)
   const emailVerified = !!profile.emailMasked || hasHandle("email")
   const linkedinConnected =
     hasRealLinkedinUrl(profile.linkedinUrl) || !!profile.linkedinOauthProfile || hasHandle("linkedin")
@@ -604,6 +608,10 @@ function githubHandleFromUrl(url: string): string {
   } catch {
     return url.replace(/^https?:\/\//, "")
   }
+}
+
+function profileHasVerifiedPhone(profile: CandidateSelfProfile): boolean {
+  return Boolean(profile.phoneMasked || profile.handles?.some((h) => h.kind === "phone" && h.verifiedAt))
 }
 
 async function startCandidateConnectorOAuth(provider: "linkedin" | "github" | "calcom"): Promise<void> {
@@ -814,6 +822,7 @@ function CandidateMeReady({
             </div>
 
             <aside className="wkv3-side">
+              {!profileHasVerifiedPhone(profile) ? <MePhoneThreadLinkCard /> : null}
               <MeCompletenessCard completeness={completeness} />
               <MeClaireSignalsCard profile={profile} />
               {visibility ? <MeVisibilityCard visibility={visibility} /> : <MeVisibilityPendingCard error={matchesError} />}
@@ -1867,6 +1876,127 @@ function MeMatchPeek({ match }: { match: CandidateMatchCard }) {
 // /me — sidebar cards
 // ────────────────────────────────────────────────────────────────────────────
 
+type MePhoneThreadLinkState =
+  | { status: "idle"; message: string | null; requestId?: undefined; phoneMasked?: undefined }
+  | { status: "sending_code"; message: string | null; requestId?: undefined; phoneMasked?: undefined }
+  | { status: "code_sent"; message: string; requestId: string; phoneMasked: string }
+  | { status: "verifying"; message: string; requestId: string; phoneMasked: string }
+  | { status: "linked"; message: string; requestId?: string; phoneMasked?: string }
+  | { status: "error"; message: string; requestId?: string; phoneMasked?: string }
+
+function MePhoneThreadLinkCard() {
+  const [phone, setPhone] = useState("")
+  const [code, setCode] = useState("")
+  const [state, setState] = useState<MePhoneThreadLinkState>({
+    status: "idle",
+    message: "Use the number you already texted Claire from. We will send a code there.",
+  })
+  const busy = state.status === "sending_code" || state.status === "verifying"
+  const canSend = phone.trim().length >= 7 && !busy
+  const canVerify = code.length === 6 && state.status === "code_sent" && !busy
+
+  async function onStart(e: FormEvent) {
+    e.preventDefault()
+    if (!canSend) return
+    setState({ status: "sending_code", message: "Sending a code to Claire's phone thread..." })
+    try {
+      const result = await startCandidatePhoneLink(phone)
+      if (!result.ok) {
+        setState({ status: "error", message: result.message })
+        return
+      }
+      setCode("")
+      setState({
+        status: "code_sent",
+        requestId: result.requestId,
+        phoneMasked: result.phoneMasked,
+        message: `Code sent to ${result.phoneMasked}. Enter it here to connect this web account.`,
+      })
+    } catch {
+      setState({ status: "error", message: "Could not send the code. Try again in a moment." })
+    }
+  }
+
+  async function onVerify(e: FormEvent) {
+    e.preventDefault()
+    if (state.status !== "code_sent" || !canVerify) return
+    const { requestId, phoneMasked } = state
+    setState({ status: "verifying", requestId, phoneMasked, message: "Checking the code with Claire's phone thread..." })
+    try {
+      const result = await verifyCandidatePhoneLink(requestId, code)
+      if (!result.ok) {
+        setState({ status: "code_sent", requestId, phoneMasked, message: result.message })
+        return
+      }
+      setState({
+        status: "linked",
+        phoneMasked: result.phoneMasked,
+        message: "Claire's phone thread is connected. Your profile will refresh with the verified phone.",
+      })
+    } catch {
+      setState({ status: "code_sent", requestId, phoneMasked, message: "Could not verify the code. Try again." })
+    }
+  }
+
+  return (
+    <div className={`wkv3-phone${state.status === "linked" ? " is-linked" : ""}`} aria-label="Connect Claire phone thread">
+      <div className="wkv3-phone__head">
+        <span className="wkv3-phone__kicker">Already texted Claire?</span>
+        <strong>Connect that phone thread.</strong>
+      </div>
+      <p className="wkv3-phone__lede">
+        Skip profile onboarding. Verify the number Claire already knows, and this account opens the same candidate profile.
+      </p>
+      {state.status !== "linked" ? (
+        <>
+          <form className="wkv3-phone__form" onSubmit={onStart}>
+            <label className="wkv3-phone__field">
+              <span>Phone used with Claire</span>
+              <input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+1 415 555 0100"
+                disabled={busy}
+              />
+            </label>
+            <button type="submit" className="wk-btn wk-btn--secondary wk-btn--block wk-btn--sm" disabled={!canSend}>
+              {state.status === "sending_code" ? "Sending code..." : "Text me a code"}
+            </button>
+          </form>
+
+          {state.status === "code_sent" || state.status === "verifying" ? (
+            <form className="wkv3-phone__form" onSubmit={onVerify}>
+              <label className="wkv3-phone__field">
+                <span>Verification code</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="123456"
+                  disabled={busy}
+                />
+              </label>
+              <button type="submit" className="wk-btn wk-btn--ink wk-btn--block wk-btn--sm" disabled={!canVerify}>
+                {state.status === "verifying" ? "Connecting..." : "Connect Claire thread"}
+              </button>
+            </form>
+          ) : null}
+        </>
+      ) : null}
+      {state.message ? (
+        <p className={`wkv3-phone__msg${state.status === "error" ? " is-error" : ""}`} aria-live="polite">
+          {state.message}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
 function MeCompletenessCard({ completeness }: { completeness: MeCompleteness }) {
   const navigate = useNavigate()
   const { pct, missing } = completeness
@@ -2061,6 +2191,76 @@ const ME_V3_STYLES = `
   min-height: 100vh;
 }
 .wkv3 .wk-btn--block { width: 100%; }
+
+/* Sidebar: Claire phone thread recovery */
+.wkv3-phone {
+  background: linear-gradient(180deg, rgba(255,248,235,.96), rgba(245,237,227,.98));
+  border: 1px solid rgba(190, 116, 72, .28);
+  border-radius: var(--r-md);
+  padding: 16px;
+  display: grid;
+  gap: 11px;
+  box-shadow: var(--shadow-card);
+}
+.wkv3-phone.is-linked {
+  border-color: rgba(58,138,90,.28);
+  background: var(--success-bg);
+}
+.wkv3-phone__head { display: grid; gap: 4px; }
+.wkv3-phone__kicker {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--live);
+  font-weight: 800;
+}
+.wkv3-phone__head strong {
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 21px;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+.wkv3-phone__lede,
+.wkv3-phone__msg {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+.wkv3-phone__msg { font-weight: 600; color: var(--success); }
+.wkv3-phone__msg.is-error { color: #8d352c; }
+.wkv3-phone__form { display: grid; gap: 9px; }
+.wkv3-phone__field {
+  display: grid;
+  gap: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-weight: 700;
+  color: var(--ink-3);
+}
+.wkv3-phone__field input {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--cream);
+  padding: 0 12px;
+  color: var(--ink);
+  font: 600 14px/1 var(--font-sans);
+  outline: none;
+}
+.wkv3-phone__field input:focus {
+  border-color: var(--live);
+  box-shadow: 0 0 0 3px rgba(190, 116, 72, .14);
+}
+.wkv3-phone__field input:disabled {
+  opacity: .7;
+  cursor: not-allowed;
+}
 
 /* Status header */
 .wkv3-status {

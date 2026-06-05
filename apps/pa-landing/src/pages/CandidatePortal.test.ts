@@ -291,6 +291,19 @@ test("CandidatePortal renders honest connector data", () => {
   assert.doesNotMatch(source, /oauth-linked/)
 })
 
+test("CandidatePortal /me lets signed-in users connect an existing Claire phone thread", () => {
+  assert.match(source, /import \{[\s\S]*startCandidatePhoneLink,[\s\S]*verifyCandidatePhoneLink,[\s\S]*\} from "\.\.\/lib\/candidate-phone-link\.js"/)
+  assert.match(source, /function profileHasVerifiedPhone\(profile: CandidateSelfProfile\): boolean/)
+  assert.match(source, /!\s*profileHasVerifiedPhone\(profile\) \? <MePhoneThreadLinkCard \/> : null/)
+  assert.match(source, /function MePhoneThreadLinkCard\(\)/)
+  assert.match(source, /Already texted Claire\?/)
+  assert.match(source, /Skip profile onboarding\. Verify the number Claire already knows/)
+  assert.match(source, /const result = await startCandidatePhoneLink\(phone\)/)
+  assert.match(source, /const result = await verifyCandidatePhoneLink\(requestId, code\)/)
+  assert.match(source, /Connect Claire thread/)
+  assert.match(source, /Claire's phone thread is connected/)
+})
+
 test("CandidatePortal routes Claire message actions through the claimed sender number", () => {
   assert.doesNotMatch(source, /CLAIRE_IMESSAGE_HREF/)
   assert.match(source, /buildClaireImessageHref\(profile\.senderNumber\)/)
