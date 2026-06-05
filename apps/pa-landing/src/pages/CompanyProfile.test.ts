@@ -59,12 +59,29 @@ test("CompanyProfile routes market navigation to the canonical market surface", 
   assert.match(source, /Role briefs and company details are shared through the WeKruit interview process\./)
   assert.match(source, /<Link className="wk-company-back" to="\/market">/)
   assert.match(source, /<Icon name="arrow-left" size=\{16\} stroke=\{1\.8\} \/> Market/)
-  assert.match(source, /<Link className="wk-btn wk-btn--primary" to="\/market">/)
-  assert.match(source, /Open market <Icon name="arrow-right" size=\{16\} stroke=\{1\.8\} \/>/)
+  assert.match(source, /<Link className="wk-btn wk-btn--primary wk-company-empty-panel__primary" to="\/market">/)
+  assert.match(source, /Open role briefs <Icon name="arrow-right" size=\{16\} stroke=\{1\.8\} \/>/)
 
   assert.doesNotMatch(source, /to="\/open"/)
   assert.doesNotMatch(source, /See open roles/)
   assert.doesNotMatch(source, /Open roles and company details/)
+})
+
+test("CompanyProfile empty state routes candidates back into Claire instead of a dead page", () => {
+  assert.match(source, /<main className="wk-company wk-container wk-company-state wk-company-state--empty">/)
+  assert.match(source, /No active Claire screen here yet\./)
+  assert.match(source, /This company does not have an open WeKruit role brief right now\./)
+  assert.match(source, /className="wk-company-empty-panel" aria-label="Company profile recovery actions"/)
+  assert.match(source, /Keep moving with Claire\./)
+  assert.match(source, /Role briefs are the live interview surface; your WeKruit profile stays reusable across companies\./)
+  assert.match(source, /<Link className="wk-company-empty-panel__secondary" to="\/onboarding">/)
+  assert.match(source, /Start with Claire/)
+  assert.match(source, /\.wk-company-state--empty \{[\s\S]*align-content: center;/)
+  assert.match(source, /@media \(max-width: 560px\)[\s\S]*\.wk-company-state--empty \{[\s\S]*align-content: start;/)
+  assert.match(source, /@media \(max-width: 560px\)[\s\S]*\.wk-company-empty-panel__primary \{[\s\S]*width: 100%;[\s\S]*justify-content: center;/)
+
+  assert.doesNotMatch(source, /This company profile is not open\./)
+  assert.doesNotMatch(source, /There are no public WeKruit roles for this company yet\./)
 })
 
 test("CompanyProfile does not use a first role sentence as the company summary", () => {
