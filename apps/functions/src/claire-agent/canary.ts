@@ -61,6 +61,10 @@ export function isCanaryUser(userId: string | null | undefined): boolean {
  * env switch here (or widens CANARY_UIDS) — never swept live by the onboarding ramp.
  */
 export function isPrescreenRetentionHandoffCanary(userId: string | null | undefined): boolean {
-  // Intentionally NOT `isRampedToAll()` — see doc comment. Dev cohort only until Adam ramps.
+  // RAMPED (Adam 2026-06-05 explicit "yes" — real affected users, e.g. Sai +18578918525, must get
+  // the fix, not just dev phones). Uses a DEDICATED switch independent of the onboarding
+  // `PA_ONBOARDING_RAMP_ALL`, so this sensitive prescreen path keeps its OWN kill switch: clear
+  // PA_PRESCREEN_HANDOFF_RAMP_ALL + redeploy to revert to dev-cohort-only. NOT `isRampedToAll()`.
+  if (process.env.PA_PRESCREEN_HANDOFF_RAMP_ALL === "1") return true
   return typeof userId === "string" && CANARY_UIDS.has(userId)
 }
