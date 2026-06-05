@@ -10,20 +10,31 @@ import {
   composePitchTurn,
   defaultPitchComposer,
   isThinEvidence,
+  pickBestResume,
   type PitchComposer,
 } from "./compose-pitch.js"
 
 /**
- * A tiny in-memory Firestore stub good enough for composePitchTurn: a single pa-users doc + an empty
- * parsedCandidateResumes query, and it records set(merge:true) writes so we can assert the once-only
- * evidenceAskedAt stamp.
+ * A tiny in-memory Firestore stub good enough for composePitchTurn: a single pa-users doc + a (possibly
+ * seeded) parsedCandidateResumes query, and it records set(merge:true) writes so we can assert the
+ * once-only evidenceAskedAt / pitchedAt stamps. `resumeRows` seeds the parsedCandidateResumes query (the
+ * first non-empty of userId/candidateId wins, matching composePitchTurn).
  */
-function makeStubDb(userDoc: Record<string, unknown>) {
+function makeStubDb(userDoc: Record<string, unknown>, resumeRows: Record<string, unknown>[] = []) {
   const writes: Record<string, unknown>[] = []
   const db = {
     collection(name: string) {
       if (name === "parsedCandidateResumes") {
-        return { where: () => ({ async get() { return { empty: true, docs: [] } } }) }
+        return {
+          where: () => ({
+            async get() {
+              return {
+                empty: resumeRows.length === 0,
+                docs: resumeRows.map((r) => ({ data: () => r })),
+              }
+            },
+          }),
+        }
       }
       // pa-users (or anything else): one doc, set() records, get() returns the doc.
       return {
@@ -106,6 +117,37 @@ test("buildPitchProfile reads experienceHighlights from tags as a fallback", () 
   assert.equal(p.experienceHighlights[0]?.company, "Acme")
 })
 
+test("buildPitchProfile MERGES résumé depth with LinkedIn breadth (Adam: 'it's an OR — always adding values')", () => {
+  // LinkedIn = breadth (every role, description-less); résumé = depth (real descriptions). The merge must
+  // KEEP LinkedIn-only roles, ADD résumé-only roles, and merge a SHARED role ONCE (résumé description wins)
+  // — no source thrown away, no duplicate.
+  const userDoc = {
+    displayName: "Adam Yang",
+    tags: { recentRoleTitle: "Senior Software Engineer", recentCompany: "Tesla" },
+    experienceHighlights: [
+      { title: "Senior Software Engineer", company: "Tesla" }, // shared role (LinkedIn, no description)
+      { title: "Volunteer", company: "RedCross" }, // LinkedIn-only role the résumé omits
+    ],
+  }
+  const resume = {
+    topSkills: ["node.js"],
+    experiences: [
+      { title: "Senior Software Engineer", company: "Tesla", description: "Built the in-store voice system across 300+ stores; cut latency 40%." },
+      { title: "Founder", company: "aiStudy", description: "Shipped an AI study product 0→1; RAG + knowledge tracing." }, // résumé-only role
+    ],
+  }
+  const p = buildPitchProfile(userDoc, resume)
+  const keys = p.experienceHighlights.map((h) => `${h.company}|${h.title}`)
+  assert.ok(keys.includes("aiStudy|Founder"), "résumé-only role ADDED (depth)")
+  assert.ok(keys.includes("RedCross|Volunteer"), "LinkedIn-only role KEPT (breadth) — not thrown away")
+  // shared Tesla role merged ONCE, carrying the résumé description (no duplicate, no description lost)
+  const tesla = p.experienceHighlights.filter((h) => h.company === "Tesla")
+  assert.equal(tesla.length, 1, "shared role appears exactly once")
+  assert.equal(tesla[0]?.description?.includes("300+ stores"), true, "merged role keeps the résumé description")
+  // described highlights lead so the pitch's achievement layer reads them first
+  assert.ok(p.experienceHighlights[0]?.description, "a described highlight leads")
+})
+
 test("composePitchTurn FAILS OPEN (null) when the user has no pitchable signal", async () => {
   const db = {
     collection: () => ({
@@ -183,4 +225,181 @@ test("R4: thin profile that was ALREADY asked does NOT repeat the evidence ask",
   const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", mock)
   const offer = out![2]!
   assert.doesNotMatch(offer, /i already know about you/) // falls back to the normal offer, no re-ask
+})
+
+// ─── #4 RE-PITCH: résumé must SHARPEN the pitch (Adam 2026-06-04, "improve the pitch after résumé") ───
+
+/** Fake Firestore Timestamp — the prod shape that broke the old String(createdAt).localeCompare sort. */
+function ts(iso: string) {
+  const ms = Date.parse(iso)
+  return { toMillis: () => ms, seconds: Math.floor(ms / 1000) }
+}
+
+test("pickBestResume: picks the description-RICH row even when the description-LESS row is NEWER (Timestamp)", () => {
+  // The live case-B bug: the LinkedIn/Coresignal parse (description-less) was newer than the real PDF, and
+  // the broken String(Timestamp).localeCompare sort (no-op → all 0) left docs[0] = arbitrary order. The
+  // fix prefers a row with real descriptions, tie-broken by newest. Here the rich PDF is the OLDER row.
+  const coresignalRow = {
+    createdAt: ts("2026-06-05T01:45:09Z"), // NEWER
+    experiences: [{ title: "Senior Software Engineer", company: "Tesla" }], // no description (thin)
+    topSkills: ["communication skills", "trilingual", "engineer"],
+  }
+  const realPdfRow = {
+    createdAt: ts("2026-06-05T01:41:00Z"), // OLDER
+    experiences: [
+      { title: "Founder, Software Engineer & Product Manager", company: "AI Study", description: "Founded and shipped an AI study product 0→1; built RAG + knowledge tracing." },
+    ],
+    topSkills: ["node.js", "react.js", "flask"],
+  }
+  const best = pickBestResume([coresignalRow, realPdfRow])
+  // The DESCRIPTION-RICH PDF wins despite being older — that's the technical-detail source.
+  assert.equal((best as typeof realPdfRow).topSkills.includes("node.js"), true)
+  assert.equal((best as { experiences: { description?: string }[] }).experiences[0]?.description?.includes("0→1"), true)
+})
+
+test("pickBestResume: among rich rows, newest wins; with NO descriptions, newest overall", () => {
+  const olderRich = { createdAt: ts("2026-06-01T00:00:00Z"), experiences: [{ description: "Built a payments platform serving millions of transactions per day." }] }
+  const newerRich = { createdAt: ts("2026-06-04T00:00:00Z"), experiences: [{ description: "Led the migration of a monolith to microservices across 12 teams." }] }
+  const best = pickBestResume([olderRich, newerRich])
+  assert.equal((best as { experiences: { description?: string }[] }).experiences[0]?.description?.includes("monolith"), true)
+
+  const thinOld = { createdAt: ts("2026-06-01T00:00:00Z"), experiences: [{ title: "PM" }] }
+  const thinNew = { createdAt: ts("2026-06-04T00:00:00Z"), experiences: [{ title: "SWE" }] }
+  const bestThin = pickBestResume([thinOld, thinNew])
+  assert.equal((bestThin as { experiences: { title?: string }[] }).experiences[0]?.title, "SWE") // newest overall
+})
+
+test("composePitchTurn feeds the RÉSUMÉ (not LinkedIn) experiences to the composer when a rich résumé exists", async () => {
+  // LinkedIn-only userDoc (thin) + a parsed résumé with real descriptions → buildPitchProfile must use the
+  // résumé experiences, proving the drop sharpens the pitch (the composer sees the technical detail).
+  const { db } = makeStubDb(
+    {
+      displayName: "Adam Yang",
+      tags: { recentRoleTitle: "Senior Software Engineer", recentCompany: "Tesla", skills: [{ name: "housing" }] },
+      experienceHighlights: [{ title: "Senior Software Engineer", company: "Tesla" }], // LinkedIn, no description
+    },
+    [
+      {
+        createdAt: ts("2026-06-05T01:45:00Z"),
+        experiences: [{ title: "Founder", company: "AI Study", description: "Shipped an AI study product 0→1 with RAG + knowledge tracing; +10% AUC." }],
+        topSkills: ["node.js", "react.js", "flask"],
+      },
+    ],
+  )
+  let seenProfile: { isThin: boolean; skills: string[] } | null = null
+  const mock: PitchComposer = {
+    async compose(profile) {
+      seenProfile = { isThin: isThinEvidence(profile), skills: profile.skills }
+      return "PITCH"
+    },
+  }
+  const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", mock)
+  assert.notEqual(out, null)
+  // The composer received the RÉSUMÉ profile: NOT thin (it carries the founder description) + résumé skills.
+  assert.equal(seenProfile!.isThin, false)
+  assert.equal(seenProfile!.skills.includes("node.js"), true)
+  assert.equal(seenProfile!.skills.includes("housing"), false)
+})
+
+test("composePitchTurn IMPROVED re-entry: distinct confirmation + improved flag + NO evidence re-ask", async () => {
+  // pitchedAt set (a first pitch already ran) + a description-rich résumé just landed → the IMPROVED pass.
+  let improvedFlag: boolean | undefined
+  const { db, writes } = makeStubDb(
+    {
+      displayName: "Adam Yang",
+      pitchedAt: "2026-06-04T00:00:00Z", // FIRST pitch already happened
+      onboardingStatus: "complete",
+      tags: { recentRoleTitle: "Senior Software Engineer", recentCompany: "Tesla" },
+      experienceHighlights: [{ title: "Senior Software Engineer", company: "Tesla" }],
+    },
+    [
+      {
+        createdAt: ts("2026-06-05T02:00:00Z"),
+        experiences: [{ title: "Founder", company: "AI Study", description: "Shipped an AI study product 0→1; RAG + knowledge tracing, +10% AUC over baseline." }],
+        topSkills: ["node.js", "react.js"],
+      },
+    ],
+  )
+  const mock: PitchComposer = {
+    async compose(profile) {
+      improvedFlag = profile.improved
+      return "SHARPER_PITCH_WITH_TECH_DETAIL"
+    },
+  }
+  const out = await composePitchTurn(db, "u1", "2026-06-05T02:01:00Z", mock)
+  assert.notEqual(out, null)
+  const [confirmation, pitch, offer] = out!
+  // Distinct improved-pitch confirmation — acknowledges the RÉSUMÉ + added technical detail, and is NOT
+  // the first-pitch "pulled your … from linkedin" (so it never reads like a repeat / near-dup).
+  assert.match(confirmation!, /résumé|resume|technical detail/i)
+  assert.doesNotMatch(confirmation!, /from linkedin/i)
+  // Composer told it's the improved pass → leans into the résumé's technical detail.
+  assert.equal(improvedFlag, true)
+  assert.equal(pitch, "SHARPER_PITCH_WITH_TECH_DETAIL")
+  // We just GOT the résumé → no "share more (résumé)" evidence re-ask.
+  assert.doesNotMatch(offer!, /i already know about you/)
+  // pitchedAt is (re)stamped on the improved turn too.
+  assert.ok(writes.some((w) => typeof (w as { pitchedAt?: unknown }).pitchedAt === "string"))
+})
+
+test("composePitchTurn FIRST pitch (no pitchedAt) keeps the original linkedin confirmation + improved=false", async () => {
+  let improvedFlag: boolean | undefined
+  const { db } = makeStubDb({
+    displayName: "Adam Yang",
+    tags: { recentRoleTitle: "Senior Software Engineer", recentCompany: "Tesla" },
+    experienceHighlights: [{ title: "Senior Software Engineer", company: "Tesla", description: "Owned the in-store voice system end to end across 300+ stores." }],
+  })
+  const mock: PitchComposer = {
+    async compose(profile) { improvedFlag = profile.improved; return "FIRST_PITCH" },
+  }
+  const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", mock)
+  assert.match(out![0]!, /from linkedin/i) // first-pitch framing
+  assert.notEqual(improvedFlag, true) // not the improved pass
+})
+
+// ─── ROOT CAUSE (Adam 2026-06-04): the real achievement text lives in workHistory[].bullets + projects[],
+// NOT experiences[].description (the parser flattens that to a bare title). buildPitchProfile MUST source
+// it from there or the pitch is starved of technical detail and hallucinates. ───
+
+test("buildPitchProfile sources achievement text from workHistory[].bullets (not the title-only experiences description)", () => {
+  const resume = {
+    // experiences carry only a title-echo "description" (what the parser actually stores) — useless as proof
+    experiences: [{ title: "Software Engineer Intern", company: "Tesla", description: "Software Engineer Intern." }],
+    // the REAL proof is the bullets
+    workHistory: [
+      {
+        title: "Software Engineer Intern",
+        company: "Tesla",
+        bullets: [
+          "Contributed to a V&C management portfolio used by 300+ stores worldwide with Node.js and React.",
+          "Built a CI/CD pipeline with Kubernetes and Docker.",
+        ],
+      },
+    ],
+    projects: [
+      { name: "Paxos KV Store", description: "Designed a fault-tolerant sharded key/value store using Paxos replication, tested under unreliable networks." },
+    ],
+  }
+  const p = buildPitchProfile({ tags: { recentRoleTitle: "SWE", recentCompany: "Tesla" } }, resume)
+  const tesla = p.experienceHighlights.find((h) => h.company === "Tesla")
+  assert.ok(tesla?.description?.includes("300+ stores"), "workHistory bullet text is surfaced (not the title echo)")
+  assert.equal(p.experienceHighlights.some((h) => h.title === "Paxos KV Store"), true, "a project is surfaced as a highlight")
+  assert.equal(isThinEvidence(p), false, "real bullets make the profile non-thin")
+})
+
+test("pickBestResume: a workHistory-bullets PDF beats a description-LESS Coresignal row even when the Coresignal row is NEWER", () => {
+  // The live shape: Coresignal parse = newer, rich metadata, but every experiences[].description is null +
+  // no bullets. PDF parse = older, but workHistory carries the real achievement bullets. The bullets doc must win.
+  const coresignal = {
+    createdAt: ts("2026-06-05T02:00:00Z"), // NEWER
+    experiences: [{ title: "Senior Software Engineer", company: "Tesla", description: null }],
+    coresignalEmployeeId: "abc",
+  }
+  const pdf = {
+    createdAt: ts("2026-06-05T01:00:00Z"), // OLDER
+    experiences: [{ title: "SWE Intern", company: "Tesla", description: "SWE Intern." }], // title echo only
+    workHistory: [{ title: "SWE Intern", company: "Tesla", bullets: ["Shipped a system used by 300+ stores worldwide."] }],
+  }
+  const best = pickBestResume([coresignal, pdf])
+  assert.ok(Array.isArray((best as { workHistory?: unknown[] }).workHistory), "the bullets-carrying PDF is picked, not the newer description-less Coresignal row")
 })

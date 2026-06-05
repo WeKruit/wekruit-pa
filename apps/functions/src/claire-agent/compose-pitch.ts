@@ -40,6 +40,7 @@ const PITCH_SYSTEM = [
   "4) INDUSTRY & TRACK — their industry + current career track, then the ADJACENT tracks/titles you'd take them to. Keep it TIGHT. e.g. 'AI infra · backend/platform eng — also fits ML-platform, DevEx, or staff backend roles'.",
   "",
   "RULES — never break:",
+  "- MERGE multi-source history: the experienceHighlights are pulled from SEVERAL sources (LinkedIn, a Coresignal record, and the parsed résumé) and the SAME real role can appear MORE THAN ONCE under slightly different titles or with different detail (e.g. 'Software Engineer' and 'Senior Software Engineer' at the same company, or a résumé entry with bullets next to a description-less LinkedIn entry). They are the SAME PERSON's history — DETERMINE which entries refer to the same role and MERGE them: treat duplicates as one, combine their detail (use the résumé bullets/projects as the achievement source), and NEVER double-count a role for YOE or list the same role twice. Different roles at the same company over time stay separate.",
   "- Use ONLY facts in the provided profile. NEVER invent a metric, title, employer, promotion, number, or YOE.",
   "- Line 1 must NOT just rephrase the job title, and must NOT contain tenure/months/years. If your line 1 reads like 'Senior <role> at <company>', REWRITE it to lead with a FOUNDER / co-founder / 0→1 build, a RARE honor/award/ranking, or a big QUANTIFIED impact — whichever is strongest in the profile (see the priority order above). A founder role or a 'Top 0.1%'-type honor ALWAYS beats a current senior IC title for line 1.",
   "- Line 2 is ONE total full-time YOE number — never an internship-year number, never a split. To compute it, read each per-role `title` and duration in `experienceHighlights` (`durationMonths`, or `startDate`→`endDate`): EXCLUDE intern/co-op/trainee roles, sum the remaining full-time durations (don't double-count overlapping concurrent roles at the same employer), and round. Do not write the word 'internship' or any internship-years figure on line 2.",
@@ -70,6 +71,14 @@ export type PitchProfile = {
   experienceHighlights: Highlight[]
   followers: number | null
   headline: string | null
+  /**
+   * IMPROVED-PITCH re-entry flag (Adam 2026-06-04): set when a résumé landed AFTER a first pitch already
+   * ran and now carries real descriptions. The composer leans into the freshly-available technical
+   * detail (the résumé experiences' descriptions) so the second pitch is sharper than the first — NOT a
+   * copy. Optional; default first-pitch behavior when absent. Excluded from the JSON sent to the model
+   * (it's a directive, surfaced as a prompt line, not profile data).
+   */
+  improved?: boolean
 }
 
 /**
@@ -101,22 +110,63 @@ export function buildPitchProfile(
   const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null)
   const firstName = (str(userDoc.displayName) ?? "").split(/\s+/)[0] ?? ""
 
-  // RÉSUMÉ experiences (with descriptions) win over LinkedIn highlights (description-less).
-  const resumeExp = Array.isArray(resume?.experiences) ? (resume!.experiences as unknown[]) : []
-  const resumeHighlights: Highlight[] = resumeExp
+  // RÉSUMÉ achievement text (Adam 2026-06-04 root-cause): the real proof — "used by 300+ stores",
+  // "improved AUC by 10+%", a Paxos sharded KV store — lives in `workHistory[].bullets` (+ `projects[]`),
+  // NOT in `experiences[].description` (the parser flattens that to a bare title like "Software Engineer
+  // Intern."). Reading description alone STARVES the pitch of technical detail and pushes the model to
+  // hallucinate. So surface the bullets/achievements per role. The harder cross-source ALIGNMENT (the same
+  // role under different titles across LinkedIn / Coresignal / the PDF — "they are the same thing … we
+  // need llm to determine & merge", Adam) is done by the composer LLM at compose time; here we just feed it
+  // the richest text per source entry.
+  const bulletText = (e: Record<string, unknown>): string => {
+    const parts: string[] = []
+    for (const key of ["bullets", "achievements", "highlights"]) {
+      const arr = e[key]
+      if (Array.isArray(arr)) for (const b of arr) if (typeof b === "string" && b.trim()) parts.push(b.trim())
+    }
+    // No bullets → fall back to a description ONLY if it's a real sentence (>=40 chars). A short title-echo
+    // ("Software Engineer Intern.") carries no proof and is dropped rather than fed to the pitch.
+    if (parts.length === 0) {
+      const d = str(e.description)
+      if (d && d.length >= 40) parts.push(d)
+    }
+    return parts.join(" • ").slice(0, 800)
+  }
+  // Prefer workHistory (it carries the bullets); fall back to experiences (Coresignal rows have neither
+  // bullets nor descriptions, only metadata — they contribute breadth, not the achievement layer).
+  const resumeRoles =
+    Array.isArray(resume?.workHistory) && (resume!.workHistory as unknown[]).length
+      ? (resume!.workHistory as unknown[])
+      : Array.isArray(resume?.experiences)
+        ? (resume!.experiences as unknown[])
+        : []
+  const workHighlights: Highlight[] = resumeRoles
     .filter((e): e is Record<string, unknown> => Boolean(e) && typeof e === "object")
     .slice(0, 8)
-    .map((e) => ({
-      ...(str(e.title) ? { title: str(e.title)! } : {}),
-      ...(str(e.company) ? { company: str(e.company)! } : {}),
-      ...(str(e.description) ? { description: str(e.description)!.slice(0, 500) } : {}),
-      // Carry per-role duration so the YOE line can split full-time vs internship (Adam 2026-06-04).
-      // Résumé experiences store startDate/endDate (and sometimes a precomputed durationMonths).
-      ...(typeof e.durationMonths === "number" ? { durationMonths: e.durationMonths } : {}),
-      ...(str(e.startDate) ? { startDate: str(e.startDate)! } : {}),
-      ...(str(e.endDate) ? { endDate: str(e.endDate)! } : {}),
-    }))
+    .map((e) => {
+      const desc = bulletText(e)
+      return {
+        ...(str(e.title) ? { title: str(e.title)! } : {}),
+        ...(str(e.company) ? { company: str(e.company)! } : {}),
+        ...(desc ? { description: desc } : {}),
+        ...(typeof e.durationMonths === "number" ? { durationMonths: e.durationMonths } : {}),
+        ...(str(e.startDate) ? { startDate: str(e.startDate)! } : {}),
+        ...(str(e.endDate) ? { endDate: str(e.endDate)! } : {}),
+      }
+    })
     .filter((h) => h.title || h.company || h.description)
+  // Projects = a concrete system built (strong technical signal); surface them so the tech layer can cite
+  // them. Title = project name; no company (the LLM-merge keeps them distinct from roles).
+  const resumeProjects = Array.isArray(resume?.projects) ? (resume!.projects as unknown[]) : []
+  const projectHighlights: Highlight[] = resumeProjects
+    .filter((p): p is Record<string, unknown> => Boolean(p) && typeof p === "object")
+    .slice(0, 4)
+    .map((p) => ({
+      ...(str(p.name) ? { title: str(p.name)! } : {}),
+      ...(str(p.description) ? { description: str(p.description)!.slice(0, 400) } : {}),
+    }))
+    .filter((h) => h.description)
+  const resumeHighlights: Highlight[] = [...workHighlights, ...projectHighlights]
 
   const rawHl =
     (Array.isArray(userDoc.experienceHighlights) ? userDoc.experienceHighlights : null) ??
@@ -135,9 +185,29 @@ export function buildPitchProfile(
       ...(str(h.endDate) ? { endDate: str(h.endDate)! } : {}),
       ...(str(h.companyIndustry) ? { companyIndustry: str(h.companyIndustry)! } : {}),
     }))
-  // Prefer the résumé set when it carries ANY description (the achievement layer); else LinkedIn's.
-  const experienceHighlights =
-    resumeHighlights.some((h) => h.description) ? resumeHighlights : linkedinHighlights
+  // MERGE, not replace (Adam 2026-06-04: "it's an OR, not just linkedin-only or résumé-only — it's
+  // always adding values"). LinkedIn gives BREADTH (every role/company, even the description-less ones);
+  // the résumé adds DEPTH (the real technical descriptions LinkedIn omits). UNION both: key by
+  // company|title — the résumé's DESCRIBED version wins on a collision, LinkedIn-only roles are KEPT,
+  // résumé-only roles are ADDED. No source is ever thrown away; each one ADDS value. Described highlights
+  // lead (so the pitch's achievement layer reads them first); the description-less LinkedIn-only roles
+  // trail for breadth.
+  const mergeKey = (h: Highlight): string =>
+    `${(h.company ?? "").trim().toLowerCase()}|${(h.title ?? "").trim().toLowerCase()}`
+  const mergedByKey = new Map<string, Highlight>()
+  // Résumé first (depth) so its described version owns the key; LinkedIn then backfills missing fields /
+  // adds the roles the résumé omitted (collision keeps the résumé entry — `...existing` wins).
+  for (const h of resumeHighlights) mergedByKey.set(mergeKey(h), h)
+  for (const h of linkedinHighlights) {
+    const k = mergeKey(h)
+    const existing = mergedByKey.get(k)
+    mergedByKey.set(k, existing ? { ...h, ...existing } : h)
+  }
+  const merged = [...mergedByKey.values()]
+  const hasDesc = (h: Highlight): boolean =>
+    typeof h.description === "string" && h.description.trim().length > 0
+  // Described highlights first (the achievement layer), then the description-less ones (breadth).
+  const experienceHighlights = [...merged.filter(hasDesc), ...merged.filter((h) => !hasDesc(h))].slice(0, 10)
 
   // Real résumé topSkills win over Coresignal's junk skill tokens.
   const resumeSkills = Array.isArray(resume?.topSkills)
@@ -207,6 +277,22 @@ class LlmPitchComposer implements PitchComposer {
         }
       }
       const client = new OpenAI({ apiKey: cfg.apiKey, baseURL })
+      // ADDITIVE TECHNICAL LAYER (Adam 2026-06-04: "it's an IMPROVEMENT, NOT a re-pitch … keep the pitch
+      // like we have, only ADD small technical descriptions — achievements & high-value only"). The
+      // `improved` flag (a prior pitch ran) is consumed by composePitchTurn for the confirmation wording;
+      // here it is stripped from the serialized profile (it's a directive, not a fact) and DISCARDED. The
+      // technical layer keys on the PROFILE itself — whenever the experienceHighlights carry real (résumé)
+      // descriptions — so a résumé-FIRST candidate (no prior pitch) gets the layer too: every source
+      // always ADDS value. The instruction is explicit that this AUGMENTS the existing pitch, never
+      // replaces it with a different one.
+      const { improved: _priorPitch, ...profileData } = profile
+      void _priorPitch
+      const hasTechDetail = profileData.experienceHighlights.some(
+        (h) => typeof h.description === "string" && h.description.trim().length >= 40,
+      )
+      const improveLine = hasTechDetail
+        ? " The experienceHighlights now include real résumé descriptions. This is an IMPROVEMENT of the candidate's existing pitch, NOT a new or different pitch: write the SAME four lines you'd give from the high-level profile (same lead, same structure, same YOE/seniority), then add ONE blank line and 1-2 SHORT extra lines (max two) that surface the SINGLE most impressive CONCRETE technical ACHIEVEMENT from the descriptions. DIG the real proof out and CITE THE REAL NUMBERS verbatim (e.g. '300+ stores', 'cut p95 latency 40%', '+10% AUC', '5,000 weekly users', a 0→1 launch, the actual system/pipeline built) — surfacing those metrics is the whole point. Each line is a tight phrase: <what they built/shipped> + <the number/scale>. HARD RULES: (a) every line is a concrete ACHIEVEMENT carrying a real system or number — do NOT merely enumerate roles/titles or say which positions they held; (b) NEVER mention internships, 'intern', tenure, or years here; (c) use ONLY facts present in a description — never invent or inflate, but DO surface the real metrics that ARE there; (d) NO bullet glyphs, NO 'Achievement:' label, and do NOT restate lines 1-4 (don't repeat the founder honor / Top 0.1%); (e) only if a description genuinely carries no concrete achievement or number, skip that line — and if none do, add nothing."
+        : ""
       const callOnce = async (): Promise<string> => {
         const resp = await client.responses.create({
           model: PITCH_MODEL,
@@ -215,8 +301,10 @@ class LlmPitchComposer implements PitchComposer {
             {
               role: "user",
               content:
-                "Compose Claire's candidate-facing pitch from this profile (weave >=3 real signals, no invented facts):\n" +
-                JSON.stringify(profile),
+                "Compose Claire's candidate-facing pitch from this profile (weave >=3 real signals, no invented facts):" +
+                improveLine +
+                "\n" +
+                JSON.stringify(profileData),
             },
           ],
         })
@@ -266,7 +354,10 @@ const OFFER_BUBBLE_THIN =
   "i already know about you — share more (a few words, a voice note, or your résumé) so i match you " +
   "better, or i can pull matches now if you want."
 
-/** Best-effort durable "onboarding done" stamp so the NEXT turn is normal triage, not a re-pitch. */
+/** Best-effort durable "onboarding done" stamp so the NEXT turn is normal triage, not a re-pitch.
+ * Also stamps `pitchedAt` (Adam 2026-06-04, "improve the pitch after résumé"): the FIRST pitch sets it,
+ * and a later résumé-after-pitch re-entry reads it to know this is an IMPROVED pitch (distinct framing,
+ * no first-pitch "pulled your … from linkedin"). idempotent set(merge:true). */
 async function markComplete(db: Firestore, userId: string, nowIso: string): Promise<void> {
   try {
     // BOTH onboardingState AND onboardingStatus (Adam 2026-06-04): loadGlobalContext's "already
@@ -276,6 +367,7 @@ async function markComplete(db: Firestore, userId: string, nowIso: string): Prom
       {
         onboardingState: "complete",
         onboardingStatus: "complete",
+        pitchedAt: nowIso,
         updatedAt: nowIso,
         sharedOnboarding: { status: "complete", completed: true, updatedAt: nowIso },
       },
@@ -284,6 +376,81 @@ async function markComplete(db: Firestore, userId: string, nowIso: string): Prom
   } catch {
     /* the next-turn triage path self-heals; the write is just durability */
   }
+}
+
+/**
+ * Comparable creation time (ms) of a parsed-résumé doc. createdAt is a Firestore Timestamp object in
+ * prod — `String(Timestamp)` is "[object Object]" for EVERY doc, so the old `String(createdAt).localeCompare`
+ * sort was a NO-OP (returned 0 for all pairs) and `docs[0]` was arbitrary query order, NOT the latest
+ * (the live "résumé doesn't sharpen the pitch" bug — it picked the description-less Coresignal row over the
+ * real PDF). Read the time robustly: Timestamp.toMillis() → ISO/string Date.parse → 0. Never throws.
+ */
+function resumeCreatedMs(doc: Record<string, unknown>): number {
+  const c = doc.createdAt as { toMillis?: () => number; seconds?: number; _seconds?: number } | string | undefined
+  if (c && typeof c === "object") {
+    if (typeof c.toMillis === "function") {
+      try { const m = c.toMillis(); if (typeof m === "number" && !Number.isNaN(m)) return m } catch { /* fall through */ }
+    }
+    // Firestore Timestamp serialized over admin SDK / JSON sometimes exposes seconds/_seconds.
+    const secs = typeof c.seconds === "number" ? c.seconds : typeof c._seconds === "number" ? c._seconds : undefined
+    if (typeof secs === "number" && !Number.isNaN(secs)) return secs * 1000
+    return 0
+  }
+  if (typeof c === "string") {
+    const parsed = Date.parse(c)
+    return Number.isNaN(parsed) ? 0 : parsed
+  }
+  return 0
+}
+
+/**
+ * True when a parsed-résumé doc carries real ACHIEVEMENT text — the technical-detail layer the pitch needs.
+ * Checks ALL the places the parser stores it (Adam 2026-06-04 root-cause): `workHistory[].bullets`
+ * (the richest — "used by 300+ stores", "improved AUC by 10+%"), `projects[].description` (a real system
+ * built), OR a real `experiences[].description` (>=40 chars). A Coresignal row (experiences with null
+ * descriptions, no bullets) is correctly NOT rich, so pickBestResume prefers the bullets-carrying PDF.
+ */
+function resumeHasRealDescription(doc: Record<string, unknown>): boolean {
+  const longStr = (v: unknown, min = 40): boolean => typeof v === "string" && v.trim().length >= min
+  const wh = Array.isArray(doc.workHistory) ? doc.workHistory : []
+  if (
+    wh.some(
+      (e) =>
+        Boolean(e) &&
+        typeof e === "object" &&
+        ["bullets", "achievements", "highlights"].some((k) => {
+          const arr = (e as Record<string, unknown>)[k]
+          return Array.isArray(arr) && arr.some((b) => longStr(b, 20))
+        }),
+    )
+  ) {
+    return true
+  }
+  const projects = Array.isArray(doc.projects) ? doc.projects : []
+  if (projects.some((p) => Boolean(p) && typeof p === "object" && longStr((p as { description?: unknown }).description))) {
+    return true
+  }
+  const exps = Array.isArray(doc.experiences) ? doc.experiences : []
+  return exps.some(
+    (e) => Boolean(e) && typeof e === "object" && longStr((e as { description?: unknown }).description),
+  )
+}
+
+/**
+ * Pick the résumé doc that best SHARPENS the pitch (Adam 2026-06-04: "after we receive resume we need to
+ * improve the pitch … add a few sentences about technical detail"). The richer source is the one whose
+ * experiences carry real descriptions — that's the technical-achievement layer LinkedIn/Coresignal lack.
+ * So:
+ *   1. Among docs that HAVE a real description, take the NEWEST (Timestamp-aware ms).
+ *   2. If NONE has a description (all thin), fall back to the NEWEST overall.
+ * This deterministically prefers the description-rich PDF over a description-less Coresignal-derived row
+ * even when the Coresignal row is newer — exactly the live case-B fix.
+ */
+export function pickBestResume(docs: Record<string, unknown>[]): Record<string, unknown> | null {
+  if (docs.length === 0) return null
+  const withDesc = docs.filter(resumeHasRealDescription)
+  const pool = withDesc.length > 0 ? withDesc : docs
+  return pool.reduce((best, d) => (resumeCreatedMs(d) >= resumeCreatedMs(best) ? d : best), pool[0]!)
 }
 
 /**
@@ -305,40 +472,67 @@ export async function composePitchTurn(
   } catch {
     return null
   }
-  // Pull the latest parsed RÉSUMÉ (richer experiences/skills than LinkedIn) so a drop sharpens the
-  // pitch. In-memory latest-by-createdAt (no composite-index dependency). Fail-open → LinkedIn-only.
+  // Pull the parsed RÉSUMÉ that best sharpens the pitch (richer experiences/skills than LinkedIn) so a
+  // drop adds real technical detail. In-memory pick (no composite-index dependency). Fail-open → LinkedIn-only.
   let resume: Record<string, unknown> | null = null
   try {
     let rs = await db.collection("parsedCandidateResumes").where("userId", "==", userId).get()
     if (rs.empty) rs = await db.collection("parsedCandidateResumes").where("candidateId", "==", userId).get()
     if (!rs.empty) {
       const docs = rs.docs.map((d) => (d.data() ?? {}) as Record<string, unknown>)
-      docs.sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")))
-      resume = docs[0] ?? null
+      resume = pickBestResume(docs)
     }
   } catch {
     resume = null
   }
   const profile = buildPitchProfile(userDoc, resume)
   if (!hasPitchableSignal(profile)) return null
+
+  // IMPROVED-PITCH re-entry (Adam 2026-06-04: "after we receive resume we need to improve the pitch …
+  // add a few sentences about technical detail"). A résumé that lands AFTER a first pitch already ran
+  // is the SECOND pass: we now have the description-rich PDF, so the pitch genuinely sharpens. Detect it
+  // from durable state set on the FIRST pitch (pitchedAt) or a completed onboarding — NOT from anything
+  // the model emits. On the improved pass we (a) use a DISTINCT confirmation (not the first-pitch "pulled
+  // your … from linkedin", which would read like a repeat / near-dup), and (b) when the résumé carries
+  // real descriptions, tell the composer this is an improvement so the pitch ADDS concrete technical
+  // detail. This keeps it ONE clean improved turn instead of a generic ack + "wait no".
+  const alreadyPitched =
+    Boolean((userDoc as { pitchedAt?: unknown }).pitchedAt) ||
+    (userDoc as { onboardingStatus?: unknown }).onboardingStatus === "complete"
+  const resumeIsRich = Boolean(resume) && isThinEvidence(profile) === false
+
   // R2 (Adam 2026-06-04): compose through the injected PitchComposer (default = gpt-5.4-mini). Swapping
   // the composer changes HOW the pitch is processed without touching this orchestration or any caller.
-  const pitch = await composer.compose(profile)
+  // On the improved re-entry with a rich résumé, ask the composer for the sharpened version so it is
+  // TEXTUALLY DISTINCT from the original (a genuine improvement, not a near-dup of the first pitch).
+  const pitch = await composer.compose(
+    alreadyPitched && resumeIsRich ? { ...profile, improved: true } : profile,
+  )
   if (!pitch) return null
 
   await markComplete(db, userId, nowIso)
 
-  const confirmation = profile.recentCompany
-    ? `got it — pulled your full ${profile.recentCompany} experience from linkedin 👍`
-    : "got it — pulled your experience from linkedin 👍"
+  // CONFIRMATION — when a rich résumé is in play (whether this is the candidate's FIRST pitch or an
+  // IMPROVEMENT of an earlier one), acknowledge the RÉSUMÉ and that we ADDED the technical detail (Adam:
+  // it's an improvement, not a re-pitch). LinkedIn-only keeps the original opener.
+  const confirmation = resumeIsRich
+    ? "got it — went through your résumé, added the technical detail to your pitch 👍"
+    : profile.recentCompany
+      ? `got it — pulled your full ${profile.recentCompany} experience from linkedin 👍`
+      : "got it — pulled your experience from linkedin 👍"
 
-  // ASK-FOR-EVIDENCE (Adam 2026-06-04): if the evidence is thin (no real impact described), use the
-  // offer bubble that asks for more — but only ONCE (set evidenceAskedAt) so we never nag a candidate
-  // who's happy with the high-level pitch. Rich profiles get the normal offer.
+  // OFFER — a rich résumé just arrived → never re-ask for a résumé (we just got it); offer to match or
+  // tweak. Otherwise: thin profile + not-yet-asked → the short optional evidence ask (once, stamped);
+  // rich/already-asked → the normal offer.
   const alreadyAsked = Boolean((userDoc as { evidenceAskedAt?: unknown }).evidenceAskedAt)
   const thin = isThinEvidence(profile)
-  const offer = thin && !alreadyAsked ? OFFER_BUBBLE_THIN : OFFER_BUBBLE
-  if (thin && !alreadyAsked) {
+  const askForEvidence = thin && !alreadyAsked
+  const offer = resumeIsRich
+    ? "want me to pull roles that fit this now, or tweak/add anything on your profile first?"
+    : askForEvidence
+      ? OFFER_BUBBLE_THIN
+      : OFFER_BUBBLE
+  if (askForEvidence && !resumeIsRich) {
     void db.collection(USERS).doc(userId).set({ evidenceAskedAt: nowIso }, { merge: true }).catch(() => {})
   }
   // The pitch may come back as several sentences; keep it ONE bubble (tight, SMS-native).

@@ -142,6 +142,8 @@ export {
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
   resolveNextAskedSharedOnboardingQuestionId,
+  resolveNextAskedMissingSharedOnboardingQuestionId,
+  isSharedOnboardingSlotSatisfied,
   sharedOnboardingSignupSource,
   type SharedOnboardingQuestionId,
   type SharedOnboardingPromptContext,

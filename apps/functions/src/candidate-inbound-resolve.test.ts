@@ -299,6 +299,53 @@ test("non-dev phone with TWO matching pa-users picks oldest createdAt determinis
   assert.equal(again, "zzz_original")
 })
 
+test("REGRESSION: live +18563790960 dup pair resolves stably to the oldest-createdAt live-thread doc (cv_parsed orphan never hijacks)", async () => {
+  // Reproduces the EXACT live incident the .ops/dedup-pa-users-doc.mjs script targets:
+  // a `/login` CV upload wrote the résumé-extracted phone DIRECTLY onto a SECOND
+  // pa-users (`phoneE164Source=cv_parsed`), bypassing bindPhoneToCandidate's preflight,
+  // so the same phone is held by TWO docs with NO phone handle to catch it.
+  //   - KEEP  5ace89cd...  createdAt 2026-06-02 — OLDEST; owns the live iMessage session.
+  //   - DUP   8VNKhFhc...  createdAt 2026-06-03 — NEWER; doc id sorts FIRST (digit '8' <
+  //                        hex '5'? no — but '8VNK...' vs '5ace...' → '5' < '8', KEEP sorts
+  //                        first here; the resolver must NOT rely on id order anyway).
+  // The resolver must pick the oldest-createdAt doc DETERMINISTICALLY and STABLY across
+  // turns — this is the SAME canonical the dedup script keeps, so resolution can never flap
+  // away from the doc that owns the live thread (and the merge will fold the orphan INTO it).
+  const fakeDb = new FakeFirestore()
+  const phoneE164 = "+18563790960"
+  const KEEP = "5ace89cd-bef5-45b4-895f-d9c2dd7c8e2d"
+  const DUP = "8VNKhFhcKhl5gv422IE3"
+  // DUP is NEWER (createdAt) but carries the enrichment (résumé/tags) — must still LOSE the pick.
+  fakeDb.seed(PA_COLLECTIONS.users, DUP, {
+    id: DUP,
+    source: "candidate",
+    phoneE164,
+    phoneE164Source: "cv_parsed",
+    createdAt: "2026-06-03T16:00:23.659Z",
+    updatedAt: "2026-06-04T18:44:08.605Z",
+    tags: { skills: ["python", "react"] },
+    latestResumeArtifactId: "candidate_upload_dup",
+  })
+  fakeDb.seed(PA_COLLECTIONS.users, KEEP, {
+    id: KEEP,
+    source: "candidate",
+    phoneE164,
+    createdAt: "2026-06-02T21:57:31.138Z",
+    updatedAt: "2026-06-04T18:48:20.233Z",
+  })
+  const db = fakeDb as unknown as Firestore
+
+  // No opener token → pure phone lookup → deterministic multi-match tiebreak.
+  const resolved = await resolveInboundUserId(db, phoneE164, "Im open to relocation")
+  assert.equal(resolved, KEEP, "oldest-createdAt live-thread doc wins, never the newer cv_parsed orphan")
+
+  // STABLE across repeated turns (cannot flap to the orphan even though it was updated later
+  // AND carries the enrichment — createdAt is immutable so the pick is permanent).
+  for (const turn of ["sure", "what roles do you have?", "yeah Im interested"]) {
+    assert.equal(await resolveInboundUserId(db, phoneE164, turn), KEEP, `stable on turn: ${turn}`)
+  }
+})
+
 test("non-dev phone multi-match falls back to most-recent updatedAt when createdAt is absent", async () => {
   const fakeDb = new FakeFirestore()
   const phoneE164 = "+14155550235"

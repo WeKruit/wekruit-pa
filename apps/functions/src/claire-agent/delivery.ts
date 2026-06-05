@@ -30,6 +30,16 @@ const PA_MESSAGES = "pa-messages"
 const RECENT_SENT_WINDOW = 5
 
 /**
+ * STALENESS WINDOW (Adam 2026-06-04, "cross_turn dedup keeps triggering"): the cross-turn guard exists
+ * to stop Claire repeating "the last few messages" — NOT to forbid her ever re-using a phrase she sent
+ * days ago. A session can span days (the live case-A thread ran 2026-06-02 → 2026-06-04 inside the last
+ * 5 rows), so a 2-day-old "what's your target salary?" must NOT suppress today's distinct turn. Drop any
+ * recent-sent row older than this many ms before comparing. 10 min comfortably covers a normal
+ * back-and-forth while excluding stale history. Belt-and-suspenders with the turn-start bound below.
+ */
+const RECENT_SENT_STALENESS_MS = 10 * 60 * 1000
+
+/**
  * Read up to `limit` of the most-recent messages Claire SENT to this user in this session, from the
  * durable `pa-messages` transcript (NOT pa-outbound — that is the delivery queue and may contain
  * not-yet-sent / failed rows). Used by deliverBubbles to suppress a bubble that is near-identical to
@@ -42,9 +52,37 @@ const RECENT_SENT_WINDOW = 5
  * liveness + sort in memory. This deliberately avoids a Firestore composite index (sessionId +
  * userId + role + orderBy createdAt) that does not exist in prod.
  */
+/**
+ * True when `body` is the SDK structured-output wrapper that FirestoreSession.addItems persists —
+ * a JSON object string with a top-level `messages` array (the agent's `{"messages":[…]}` reply
+ * shape). Those rows are NOT delivered iMessages; they are the SDK transcript item written by
+ * @openai/agents `run()` and must be excluded from the "recently SENT" cross-turn dedup set so a turn
+ * never near-dups its own just-persisted wrapper. Cheap + fail-safe: only JSON-object bodies are
+ * parsed, and any parse error returns false (treat as a normal sent bubble).
+ */
+function isStructuredOutputWrapper(body: unknown): boolean {
+  if (typeof body !== "string") return false
+  const trimmed = body.trim()
+  if (!trimmed.startsWith("{") || !trimmed.includes("\"messages\"")) return false
+  try {
+    const parsed = JSON.parse(trimmed) as { messages?: unknown }
+    return Array.isArray(parsed?.messages)
+  } catch {
+    return false
+  }
+}
+
 export async function getRecentSentMessages(
   ctx: Pick<ClaireToolContext, "db" | "userId" | "sessionId">,
   limit = RECENT_SENT_WINDOW,
+  // turnStartedAtIso (Adam 2026-06-04, the "cross_turn dedup keeps triggering / silent turn" fix): the
+  // ISO timestamp captured BEFORE the agent run started this turn. Rows at-or-after it were written by
+  // THIS turn (a tool that delivered mid-run, e.g. find_match's role bubbles, OR the SDK session item) —
+  // they are NOT genuinely-prior messages, so a turn must never near-dup its OWN just-written rows. When
+  // provided, exclude rows with createdAt >= turnStartedAt. This makes "cross-turn" mean what it says.
+  // Omitted (legacy callers / tests) → no time bound (back-compat); the source-filter below still guards
+  // the SDK-session self-collision.
+  turnStartedAtIso?: string,
 ): Promise<string[]> {
   const db = ctx?.db as
     | {
@@ -63,6 +101,11 @@ export async function getRecentSentMessages(
     | undefined
   const sessionId = ctx?.sessionId
   const userId = ctx?.userId
+  // Parse the turn-start bound once (Date.parse → ms; undefined when not provided / unparseable → no
+  // bound). nowMs anchors the staleness window. Both compared against each row's ISO createdAt below.
+  const turnStartedAtMs =
+    turnStartedAtIso && !Number.isNaN(Date.parse(turnStartedAtIso)) ? Date.parse(turnStartedAtIso) : undefined
+  const nowMs = Date.now()
   // Need a session to scope the read; without db/session we cannot (and must not) block delivery.
   if (!db || typeof db.collection !== "function" || !sessionId) return []
   try {
@@ -78,6 +121,48 @@ export async function getRecentSentMessages(
         if (d?.cleared === true || d?.popped === true) return false
         // If userId is known on both sides, keep only this user's rows; tolerate missing userId.
         if (userId && typeof d?.userId === "string" && d.userId && d.userId !== userId) return false
+        // ROOT-CAUSE FIX (2026-06-04, the "dedup keeps triggering / silent turn" bug): the durable
+        // `pa-messages` transcript carries TWO kinds of assistant row, and only ONE of them is a
+        // message Claire actually SENT to the user:
+        //   - source="pa-outbound"        → the real delivered iMessage bubble (written by the outbox
+        //                                    AFTER send). THIS is "what Claire sent".
+        //   - source="agents_sdk_session" → the SDK's own structured-output item, body is the RAW
+        //                                    `{"messages":["…"]}` wrapper. @openai/agents `run()`
+        //                                    PERSISTS this to the session (FirestoreSession.addItems)
+        //                                    BEFORE deliverBubblesEx reads recentSent, so the SAME
+        //                                    turn's own JSON wrapper is already in the transcript.
+        // A single-bubble turn then near-dups its OWN just-written JSON wrapper (the unpacked bubble
+        // shares every token but the literal "messages" key → token Jaccard = N/(N+1) ≥ 0.857 for any
+        // bubble ≥ 6 tokens, well past JACCARD_THRESHOLD 0.85) → cross_turn-suppressed → NOTHING
+        // delivered → silent. The cross-turn guard must compare against ACTUALLY-SENT bubbles only, so
+        // exclude the SDK-session rows. Defensive on BOTH signals (source tag + the JSON wrapper shape)
+        // so it holds even if rawMeta is sparse on legacy rows.
+        const source = (d?.rawMeta as { source?: unknown } | undefined)?.source
+        if (source === "agents_sdk_session") return false
+        if (source !== "pa-outbound" && isStructuredOutputWrapper(d?.body)) return false
+        // TIME BOUND (Adam 2026-06-04, the "cross_turn dedup keeps triggering" fix). Two cuts, both on
+        // the row's ISO `createdAt` (outbox writes now().toISOString(), so it sorts/compares as a string
+        // AND parses as a Date):
+        //   1. THIS-TURN exclusion — drop rows written at-or-after turnStart. A tool that delivers
+        //      mid-run (find_match's role bubbles via ctx.transport.sendText → outbox → a `pa-outbound`
+        //      row) lands a real "sent" row DURING this turn; without this, the model's final bubble
+        //      that restates a just-sent role-clarifier near-dups its OWN send → cross_turn-suppressed →
+        //      silent. "cross-turn" must mean a GENUINELY-PRIOR turn, never this one.
+        //   2. STALENESS — drop rows older than RECENT_SENT_STALENESS_MS. The guard targets "the last few
+        //      messages" (Adam R1), not a days-old ask that happens to sit in the last-5 of a long-lived
+        //      session. A distinct turn must not be eaten by a 2-day-old phrasing.
+        // Both cuts are GATED on a turn-start stamp being supplied (the production cross-turn-dedup path
+        // always threads it). Legacy/unit callers that pass no turnStart keep the unbounded behavior
+        // (they are still source-filtered above) — so existing fixtures with hardcoded past dates are not
+        // surprised by a wall-clock staleness drop. Unparseable/missing createdAt → keep (fail-open).
+        if (turnStartedAtMs !== undefined) {
+          const createdAtRaw = typeof d?.createdAt === "string" ? d.createdAt : ""
+          const createdMs = createdAtRaw ? Date.parse(createdAtRaw) : NaN
+          if (!Number.isNaN(createdMs)) {
+            if (createdMs >= turnStartedAtMs) return false // written THIS turn → not a prior turn
+            if (nowMs - createdMs > RECENT_SENT_STALENESS_MS) return false // stale → not "the last few"
+          }
+        }
         return true
       })
     rows.sort((a, b) => String(a?.createdAt ?? "").localeCompare(String(b?.createdAt ?? "")))
@@ -215,6 +300,11 @@ export async function deliverBubblesEx(
   // true we skip the recent-sent read so cross-turn suppression is OFF; WITHIN-turn exact + near-dup still
   // run (no double bubbles). One guaranteed reply, never an infinite loop (the fallback runs at most once).
   skipCrossTurnDedup = false,
+  // turnStartedAtIso (Adam 2026-06-04): the ISO time captured BEFORE this turn's agent run. Threaded to
+  // getRecentSentMessages so the cross-turn guard excludes rows THIS turn already wrote (a tool that
+  // delivered mid-run) — i.e. so a turn never near-dups its own just-sent bubble. Optional; omitted →
+  // unbounded recent-sent read (back-compat, still source-filtered).
+  turnStartedAtIso?: string,
 ): Promise<DeliverBubblesResult> {
   if (deliveredViaTool) return { sent: 0, suppressedAll: false }
   const cleanRaw = (Array.isArray(messages) ? messages : [])
@@ -241,7 +331,9 @@ export async function deliverBubblesEx(
   // already SENT this session. On a near-dup we DROP it (send nothing) — never substitute a variant.
   // The recent-sent read is fail-open: a Firestore error (or a stub ctx without db) returns [], so this
   // degrades gracefully to within-turn-only suppression and NEVER blocks delivery.
-  const recentSent = skipCrossTurnDedup ? [] : await getRecentSentMessages(ctx)
+  const recentSent = skipCrossTurnDedup
+    ? []
+    : await getRecentSentMessages(ctx, RECENT_SENT_WINDOW, turnStartedAtIso)
   const acceptedThisTurn: string[] = []
   const clean: string[] = []
   for (const bubble of exactClean) {

@@ -215,3 +215,59 @@ test("WS-1(b): NON-canary never gets enrichmentInFlight even with the marker set
   const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hi" })
   assert.notEqual(decision.enrichmentInFlight, true)
 })
+
+// ── 2026-06-04 #1 RE-ASK FIX: tag-aware onboarding slot picker ─────────────────────────────────
+// Live bug (+18563790960): a candidate whose enriched profile already carries
+// tags.targetRoleFunction was re-asked "what kind of role do you want" because the thin picker
+// chose the next slot purely from sharedOnboarding.answers and NEVER read pa-users.tags. These pin
+// that the active-onboarding picker now SKIPS an axis whose canonical tag is already present, and
+// COMPLETES to triage (hand to find_match, no loop) when every asked axis is satisfied by tags.
+
+test("#1 re-ask fix: active onboarding with targetRoleFunction in tags does NOT re-ask target_role — skips to location_relocation", async () => {
+  const { db } = makeDb({
+    // résumé/chat enrich already filled the role axis (the live shape: ["software_engineering"]).
+    tags: { targetRoleFunction: ["software_engineering"] },
+    sharedOnboarding: {
+      status: "active",
+      currentQuestionId: "target_role",
+      answers: {}, // nothing recorded yet, but the axis exists in tags
+      completed: false,
+    },
+  })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hey there" })
+  assert.equal(decision.mode, "onboarding")
+  assert.notEqual(decision.onboardingSlot, "target_role", "must NOT re-ask the already-captured role axis")
+  assert.equal(decision.onboardingSlot, "location_relocation", "asks the genuinely-missing location axis")
+})
+
+test("#1 re-ask fix: active onboarding with BOTH asked axes in tags → completes to triage (hand to find_match, no loop)", async () => {
+  const { db, writes } = makeDb({
+    tags: { targetRoleFunction: ["software_engineering"], targetLocations: ["new_york"] },
+    sharedOnboarding: {
+      status: "active",
+      currentQuestionId: "target_role",
+      answers: {},
+      completed: false,
+    },
+  })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hey" })
+  assert.equal(decision.mode, "triage", "every asked axis satisfied by tags → done, route to triage")
+  // it self-healed the durable flag so it never re-enters the wall.
+  const completed = writes().some((w) => w.onboardingState === "complete")
+  assert.equal(completed, true, "marks onboarding complete when tag-satisfied")
+})
+
+test("#1 re-ask fix: active onboarding with NO role tag still asks target_role (unchanged baseline)", async () => {
+  const { db } = makeDb({
+    // no tags at all → the picker behaves exactly as before (asks the first missing asked slot).
+    sharedOnboarding: {
+      status: "active",
+      currentQuestionId: "target_role",
+      answers: {},
+      completed: false,
+    },
+  })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hey" })
+  assert.equal(decision.mode, "onboarding")
+  assert.equal(decision.onboardingSlot, "target_role", "no role tag → still asks the role axis")
+})

@@ -21,6 +21,8 @@ import {
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
   resolveNextAskedSharedOnboardingQuestionId,
+  resolveNextAskedMissingSharedOnboardingQuestionId,
+  isSharedOnboardingSlotSatisfied,
   shouldIgnoreSharedOnboardingDuplicateKickoff,
   shouldSharedOnboardingAdvanceDespiteJudge,
   sharedOnboardingSignupSource,
@@ -406,6 +408,61 @@ test("THIN asked-set walker + in-flight rescue (2026-06-02 trim)", () => {
     assert.equal(r.nextQuestionId, "target_role", `${dropped} rescues to target_role`)
     assert.equal(r.completed, false)
   }
+})
+
+test("TAG-AWARE slot satisfaction (2026-06-04 #1) — target_role satisfied off pa-users.tags.targetRoleFunction", () => {
+  // The matcher's sole role axis is tags.targetRoleFunction[] (D1). When a résumé/chat enrich already
+  // filled it, the target_role onboarding question is redundant → treat the slot as satisfied. NO regex;
+  // pure presence over the validated closed enum.
+  assert.equal(
+    isSharedOnboardingSlotSatisfied("target_role", { targetRoleFunction: ["software_engineering"] }, null),
+    true,
+    "target_role satisfied when targetRoleFunction present on tags",
+  )
+  // legacy statedPreferences mirror also satisfies (some paths still write there).
+  assert.equal(
+    isSharedOnboardingSlotSatisfied("target_role", null, { targetRoleFunction: ["product_management"] }),
+    true,
+    "target_role satisfied via statedPreferences fallback",
+  )
+  // empty / absent axis → NOT satisfied (still asked).
+  assert.equal(isSharedOnboardingSlotSatisfied("target_role", { targetRoleFunction: [] }, null), false)
+  assert.equal(isSharedOnboardingSlotSatisfied("target_role", null, null), false)
+  // location_relocation keeps its existing tag-satisfaction (targetLocations).
+  assert.equal(isSharedOnboardingSlotSatisfied("location_relocation", { targetLocations: ["new_york"] }, null), true)
+})
+
+test("THIN tag-aware missing-walker (2026-06-04 #1) — skips slots already in tags, never re-asks", () => {
+  // No tags → identical to the positional asked-set walker (target_role → location_relocation → done).
+  assert.deepEqual(resolveNextAskedMissingSharedOnboardingQuestionId("target_role", null, null), {
+    nextQuestionId: "location_relocation",
+    completed: false,
+    shouldRecommend: false,
+  })
+  // targetRoleFunction already captured + scanning from the head (in-flight/unknown id) → SKIP target_role,
+  // ask location_relocation instead. This is the live +18563790960 case (résumé gave software_engineering).
+  assert.deepEqual(
+    resolveNextAskedMissingSharedOnboardingQuestionId(
+      "main_goal", // a dropped/unknown id → scan whole ASKED set from head
+      { targetRoleFunction: ["software_engineering"] },
+      null,
+    ),
+    { nextQuestionId: "location_relocation", completed: false, shouldRecommend: false },
+  )
+  // BOTH asked axes already in tags → completed, never re-asks either.
+  assert.deepEqual(
+    resolveNextAskedMissingSharedOnboardingQuestionId(
+      "main_goal",
+      { targetRoleFunction: ["software_engineering"], targetLocations: ["new_york"] },
+      null,
+    ),
+    { nextQuestionId: null, completed: true, shouldRecommend: true },
+  )
+  // Advancing FROM target_role when location is already in tags → completed (no redundant location ask).
+  assert.deepEqual(
+    resolveNextAskedMissingSharedOnboardingQuestionId("target_role", { targetLocations: ["remote"] }, null),
+    { nextQuestionId: null, completed: true, shouldRecommend: true },
+  )
 })
 
 test("shared onboarding never re-asks — judge rejections still advance except Q1 duplicate hello", () => {

@@ -268,17 +268,34 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
   return agent
 }
 
-/** Wrap a transport to observe whether a delivery TOOL (tapback/no_reply) handled the turn. */
+/**
+ * Wrap a transport to observe (a) whether a delivery TOOL (tapback/no_reply) handled the turn, and
+ * (b) how many raw text bubbles ACTUALLY reached the candidate this turn — `sentTextCount`.
+ *
+ * sentTextCount (Adam 2026-06-04, the GENERIC never-silent backstop) is TRANSPORT-TRUTHFUL: it counts
+ * every `sendText` POST from ANY path — the post-run deliverBubblesEx sends AND any tool that delivered
+ * mid-run via ctx.transport.sendText (find_match's role bubbles + prescreen offer, the onboarding ask-net,
+ * the linkedin-offer net). So `sentTextCount === 0` is the single, path-independent signal that NOTHING
+ * reached the candidate this turn — the exact predicate the backstop needs (covers empty `messages`,
+ * all-suppressed, AND tool-ran-but-silent), and it can never false-positive after a real rec send (which
+ * bumps the count). markRead/typing/sendStatus are reflexes (read receipt / typing indicator / status),
+ * NOT candidate-visible message bubbles, so they do NOT count.
+ */
 function trackTransport(inner: ClaireTransport): {
   transport: ClaireTransport
   handledViaTool: () => boolean
+  sentTextCount: () => number
 } {
   let viaTool = false
+  let sentText = 0
   const transport: ClaireTransport = {
     markRead: () => inner.markRead(),
     typing: () => inner.typing(),
     sendStatus: (t) => inner.sendStatus(t),
-    sendText: (t, opts) => inner.sendText(t, opts),
+    sendText: (t, opts) => {
+      sentText++
+      return inner.sendText(t, opts)
+    },
     tapback: (r) => {
       viaTool = true
       return inner.tapback(r)
@@ -288,7 +305,7 @@ function trackTransport(inner: ClaireTransport): {
       return inner.noReply(r)
     },
   }
-  return { transport, handledViaTool: () => viaTool }
+  return { transport, handledViaTool: () => viaTool, sentTextCount: () => sentText }
 }
 
 /** Read canonical pa-users.tags → a one-line global context so "what's saved" reads tags (RC3).
@@ -605,6 +622,14 @@ export interface RunClaireTurnDeps {
     /** the SDK RunResult's ordered run items — mapped to toolCalls (de-blackbox). Tests may omit it. */
     newItems?: ReadonlyArray<unknown>
   }>
+  /**
+   * TEST SEAM (production omits it): fired once with the TRACKED transport right after ctx is built, so a
+   * unit test can faithfully simulate a TOOL that delivers mid-run via ctx.transport.sendText (e.g.
+   * find_match's deliverRecBubbles). Those sends go through the SAME tracked wrapper the never-silent
+   * backstop counts (sentTextCount) — which is exactly how production find_match registers — so a test can
+   * prove the backstop does NOT fire after a real rec delivery. Never set in production code.
+   */
+  onToolTransportReady?: (transport: ClaireTransport) => void
 }
 
 /**
@@ -683,6 +708,10 @@ export async function runClaireTurn(
   if (deps.judgeContext) (ctx as ProcessToolContext).prescreenJudgeContext = deps.judgeContext
   if (deps.prescreenResumeSnippet) (ctx as ProcessToolContext).prescreenResumeSnippet = deps.prescreenResumeSnippet
   if (deps.prescreenSessionId) (ctx as ProcessToolContext).prescreenSessionId = deps.prescreenSessionId
+
+  // TEST SEAM: hand the tracked transport to a test so it can simulate a mid-run tool delivery through the
+  // exact wrapper the never-silent backstop counts (production never sets onToolTransportReady). Fail-open.
+  try { deps.onToolTransportReady?.(ctx.transport) } catch { /* test hook must never break a turn */ }
 
   // Tier-1 reflex: mark-read (real read receipt) + typing on EVERY inbound. FIRE-AND-FORGET —
   // these make network calls and awaiting them added seconds to the first reply. They run in
@@ -825,6 +854,12 @@ export async function runClaireTurn(
   let toolCalls: ClaireToolCall[] = []
   let blocked = false
   let usage: ClaireTurnUsage | undefined
+  // TURN-START STAMP (Adam 2026-06-04, the "cross_turn dedup keeps triggering / silent turn" fix):
+  // captured BEFORE run() so a tool that delivers mid-run (find_match's role bubbles → outbox → a
+  // `pa-outbound` pa-messages row written DURING this turn) is excluded from the cross-turn dedup's
+  // recent-sent set. Without it, the model's final bubble restating a just-sent tool message near-dups
+  // its OWN send and is suppressed → silent. Threaded into deliverBubblesEx below.
+  const turnStartedAtIso = new Date().toISOString()
   // Hold the timeout handle so we can CLEAR it once the agent run settles — otherwise the 100s timer
   // keeps the event loop alive after a fast turn (e.g. the anti-silence fallback re-entry, or a unit
   // test with an injected runAgent), needlessly delaying process exit.
@@ -900,6 +935,9 @@ export async function runClaireTurn(
     bubbles,
     deliveredViaTool,
     deps.isSuppressionFallback === true,
+    // turnStartedAtIso → cross-turn dedup excludes rows THIS turn already wrote (a tool that delivered
+    // mid-run), so the model's final bubble can never near-dup its own just-sent message → no false silent.
+    turnStartedAtIso,
   ).catch((e) => {
     log("deliverBubbles_failed", { err: String(e) })
     return { sent: 0, suppressedAll: false }
@@ -1009,31 +1047,45 @@ export async function runClaireTurn(
     }
   }
 
-  // ANTI-SILENCE FALLBACK (Adam 2026-06-04, "Hi → no response, feels glitchy").
+  // GENERIC NEVER-SILENT BACKSTOP (Adam 2026-06-04: "where is the fallback layer where we generically
+  // take in all the conversation and ask the next step so we continue instead of dead silence").
   //
-  // A DETERMINISTIC pattern (cold opener / "still pulling…" hold / post-parse pitch / any directive-
-  // driven turn) emitted ≥1 bubble, but the cross-turn near-dup dedup dropped EVERY one — `suppressedAll`
-  // (the model re-emitted something already sent this session). With nothing else delivered (no agent
-  // text, no delivery tool, not a guardrail block, no onboarding/linkedin net), the turn would otherwise
-  // return HANDLED-but-SILENT → the candidate sees a read receipt and nothing. Instead, run the agent
-  // ONE more time on the plain user input with every deterministic directive STRIPPED (plain triage), so
-  // the model writes a FRESH, contextual, non-duplicate reply and delivers THAT. Placed AFTER the
-  // prescreen terminal-fire so a suppressed prescreen turn STILL commits its terminal lifecycle first.
+  // The turn would end with ZERO bytes on the wire to the candidate — and that happens in SEVERAL shapes,
+  // not just one:
+  //   • A1  suppressed-all      — the model emitted ≥1 bubble but the cross-turn near-dup dedup ate ALL
+  //                               of them (deliverResult.suppressedAll).
+  //   • A2  empty messages      — the model emitted an EMPTY `messages` array (e.g. it over-applied the
+  //                               find_match "delivered:true → say nothing" rule to the no-match case),
+  //                               AND the onboarding ask-net found no pending question
+  //                               (ask_net_no_pending) → nothing delivered, suppressedAll FALSE.
+  //   • tool-ran-but-silent     — any mode where a tool ran but posted nothing.
+  // The OLD gate keyed on `suppressedAll` ONLY, so it caught A1 but NOT A2 (the live dead-silent
+  // onboarding-complete turn). The fix keys on a SINGLE transport-truthful signal instead:
+  //   nothingReachedCandidate = sentTextCount === 0   (no deliverBubblesEx send AND no tool-direct send,
+  //                                                     e.g. find_match's recs — so a real rec delivery,
+  //                                                     which bumps the count, can NEVER false-trigger)
+  //     && !netDelivered        (not the onboarding ask-net / linkedin-offer net — those sent via the raw
+  //                              transport, not counted, but tracked here)
+  //     && !deliveredViaTool    (not tapback-ack / no_reply / injection-blocked — INTENTIONAL silence)
+  //     && !blocked             (not a guardrail crisis/injection — INTENTIONAL silence)
+  //     && isSuppressionFallback !== true   (loop guard)
+  // STOP / opt-out is handled deterministically UPSTREAM (cutover, before the agent) via suppressReply, so
+  // it never reaches this seam. When the predicate holds, run the agent ONE more time on the plain user
+  // input with every deterministic directive STRIPPED (plain triage) so the model writes a FRESH reply and
+  // delivers THAT. Placed AFTER the prescreen terminal-fire so a suppressed prescreen turn STILL commits.
   //
   // LOOP GUARD (hard cap): `deps.isSuppressionFallback` gates re-entry — the recursive call sets it true,
-  // and this block is skipped when it is set, so the fallback runs AT MOST ONCE per inbound. If the
-  // fallback's OWN bubbles also dedup to empty, we accept that silence (no second fallback). The dedup
-  // thresholds + getRecentSentMessages are untouched. Fail-open: any throw is swallowed → behave as
-  // today (silently handled), never break the inbound handler.
-  if (
-    deliverResult.suppressedAll &&
-    !sent &&
-    !netDelivered &&
-    !deliveredViaTool &&
-    !blocked &&
-    deps.isSuppressionFallback !== true
-  ) {
-    log("claire.anti_silence_fallback.start", { userId: input.userId, mode: deps.mode ?? "triage" })
+  // and this block is skipped when it is set, so the fallback runs AT MOST ONCE per inbound. The dedup
+  // thresholds + getRecentSentMessages are untouched. Fail-open: any throw is swallowed → behave as today.
+  const nothingReachedCandidate =
+    tracked.sentTextCount() === 0 && !netDelivered && !deliveredViaTool && !blocked
+  if (nothingReachedCandidate && deps.isSuppressionFallback !== true) {
+    log("claire.anti_silence_fallback.start", {
+      userId: input.userId,
+      mode: deps.mode ?? "triage",
+      // record WHICH zero-delivery shape tripped it, for the live trace (A1 suppressed-all vs A2 empty).
+      suppressedAll: deliverResult.suppressedAll,
+    })
     try {
       // Re-enter on the PLAIN user input with the loop-guard flag set and EVERY deterministic directive
       // stripped (the recursive runClaireTurn also strips them by `fallback`, but we clear them here too

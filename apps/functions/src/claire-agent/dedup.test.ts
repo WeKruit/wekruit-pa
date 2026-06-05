@@ -209,6 +209,168 @@ test("getRecentSentMessages caps to limit (most recent)", async () => {
   assert.deepEqual(msgs, ["m6", "m7", "m8"])
 })
 
+// ─── REGRESSION: the "dedup keeps triggering / silent turn" self-suppression bug (2026-06-04) ───
+// @openai/agents run() persists the agent's structured output to the SAME pa-messages transcript
+// (FirestoreSession.addItems, rawMeta.source="agents_sdk_session", body = `{"messages":["…"]}`) BEFORE
+// deliverBubblesEx reads recentSent. getRecentSentMessages must EXCLUDE those SDK-session rows so a
+// turn never near-dups its own just-written JSON wrapper. Only delivered bubbles (source="pa-outbound")
+// are "what Claire sent". Live evidence: +18563790960 / ses_a5b4f2ce…, the "Im open to relocation" turn
+// went silent because its single bubble dedup'd against its own `{"messages":[…]}` row (Jaccard 0.97).
+test("getRecentSentMessages EXCLUDES the SDK-session JSON wrapper (by source tag) — anti self-suppress", async () => {
+  const bubble =
+    "sweet, thanks — since you’re open to relocating, i’ll widen the net. what type of role do you want?"
+  const db = makeDbWithRows([
+    // the turn's own SDK-session row — written by run() BEFORE delivery, NOT a sent iMessage
+    {
+      sessionId: "s1",
+      role: "assistant",
+      body: JSON.stringify({ messages: [bubble] }),
+      createdAt: "2026-06-04T00:00:02Z",
+      rawMeta: { source: "agents_sdk_session" },
+    },
+    // a genuinely-delivered earlier bubble (the only thing that should count as "sent")
+    {
+      sessionId: "s1",
+      role: "assistant",
+      body: "We're US-only right now — where in the US should I look?",
+      createdAt: "2026-06-04T00:00:01Z",
+      rawMeta: { source: "pa-outbound" },
+    },
+  ])
+  const recentSent = await getRecentSentMessages({ db: db as never, userId: "u1", sessionId: "s1" }, 5)
+  assert.deepEqual(recentSent, ["We're US-only right now — where in the US should I look?"])
+  // The new bubble must NOT be suppressed against the (correctly-filtered) recentSent set.
+  assert.equal(isNearDuplicateOfAny(bubble, recentSent), false)
+})
+
+test("getRecentSentMessages EXCLUDES structured-output wrapper by SHAPE even when rawMeta absent", async () => {
+  const bubble = "what type of role do you want right now — software engineering, product, data?"
+  const db = makeDbWithRows([
+    // legacy row: SDK wrapper shape but no rawMeta.source — still must be excluded (defense-in-depth)
+    {
+      sessionId: "s1",
+      role: "assistant",
+      body: JSON.stringify({ messages: [bubble] }),
+      createdAt: "2026-06-04T00:00:01Z",
+    },
+  ])
+  const recentSent = await getRecentSentMessages({ db: db as never, userId: "u1", sessionId: "s1" }, 5)
+  assert.deepEqual(recentSent, [])
+  assert.equal(isNearDuplicateOfAny(bubble, recentSent), false)
+})
+
+test("getRecentSentMessages KEEPS a delivered pa-outbound bubble (real cross-turn dup still caught)", async () => {
+  // The legitimate cross-turn dedup Adam wants — a repeated hold that WAS sent — must survive the
+  // filter so the guard still fires on real duplicates. Use an emoji/punctuation variant of the SAME
+  // message: it normalizes to the identical token stream (the dedup's exact-equality branch), which is
+  // exactly the live "one sec 🔎 / one sec 🔍" class the cross-turn guard exists to catch.
+  const hold = "still pulling your info, one sec 🔎"
+  const db = makeDbWithRows([
+    {
+      sessionId: "s1",
+      role: "assistant",
+      body: hold,
+      createdAt: "2026-06-04T00:00:01Z",
+      rawMeta: { source: "pa-outbound" },
+    },
+  ])
+  const recentSent = await getRecentSentMessages({ db: db as never, userId: "u1", sessionId: "s1" }, 5)
+  assert.deepEqual(recentSent, [hold])
+  assert.equal(isNearDuplicateOfAny("still pulling your info, one sec 🔍", recentSent), true)
+})
+
+// ─── REGRESSION: turn-start time bound + staleness window (the "cross_turn dedup keeps triggering") ───
+// Adam 2026-06-04: cross_turn must mean a GENUINELY-PRIOR turn. (1) A row written DURING this turn (a
+// tool that delivered mid-run → a `pa-outbound` row at createdAt >= turnStart) must be excluded, so the
+// model's final bubble can never near-dup its own just-sent message → no false silent. (2) A days-old row
+// (outside the staleness window) must be excluded, so a distinct turn is never eaten by stale history.
+test("getRecentSentMessages EXCLUDES rows written at/after turnStart (this-turn tool send)", async () => {
+  // now-anchored so the prior row sits INSIDE the staleness window (the staleness + turn-start cuts both
+  // activate together when a turnStart is supplied).
+  const now = Date.now()
+  const turnStart = new Date(now).toISOString()
+  const db = makeDbWithRows([
+    // written DURING this turn (>= turnStart) — a find_match role bubble delivered mid-run. Must be excluded.
+    {
+      sessionId: "s1",
+      role: "assistant",
+      body: "what type of role do you want — software engineering, product, data?",
+      createdAt: new Date(now + 50).toISOString(),
+      rawMeta: { source: "pa-outbound" },
+    },
+    // a genuinely-prior turn (< turnStart, in-window) — this IS a real cross-turn message and must survive.
+    {
+      sessionId: "s1",
+      role: "assistant",
+      body: "We're US-only right now — where in the US should I look?",
+      createdAt: new Date(now - 60_000).toISOString(),
+      rawMeta: { source: "pa-outbound" },
+    },
+  ])
+  const recentSent = await getRecentSentMessages(
+    { db: db as never, userId: "u1", sessionId: "s1" },
+    5,
+    turnStart,
+  )
+  assert.deepEqual(recentSent, ["We're US-only right now — where in the US should I look?"])
+  // The model restating the just-sent (this-turn) role clarifier must NOT be suppressed against it now.
+  assert.equal(
+    isNearDuplicateOfAny("what type of role do you want — software engineering, product, data?", recentSent),
+    false,
+  )
+})
+
+test("getRecentSentMessages drops STALE rows older than the staleness window", async () => {
+  // A 2-day-old identical ask must NOT be in the cross-turn set (the live case-A long-session bug). The
+  // staleness cut is gated on a turn-start stamp (the production path always threads it), so pass one
+  // anchored to now(). The recent (just-now) row stays; the far-past one is dropped as stale.
+  const now = Date.now()
+  const turnStart = new Date(now).toISOString()
+  const recentIso = new Date(now - 30_000).toISOString() // 30s ago → inside the 10-min window, < turnStart
+  const db = makeDbWithRows([
+    {
+      sessionId: "s1",
+      role: "assistant",
+      body: "what's your target salary?",
+      createdAt: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(), // ~2 days ago → STALE, must be dropped
+      rawMeta: { source: "pa-outbound" },
+    },
+    {
+      sessionId: "s1",
+      role: "assistant",
+      body: "great — pulling roles now 👇",
+      createdAt: recentIso,
+      rawMeta: { source: "pa-outbound" },
+    },
+  ])
+  const recentSent = await getRecentSentMessages(
+    { db: db as never, userId: "u1", sessionId: "s1" },
+    5,
+    turnStart,
+  )
+  assert.deepEqual(recentSent, ["great — pulling roles now 👇"])
+  // A distinct turn re-asking salary today is NOT suppressed by the stale 2-day-old ask.
+  assert.equal(isNearDuplicateOfAny("what's your target salary?", recentSent), false)
+})
+
+test("getRecentSentMessages with NO turnStart keeps recent prior rows (back-compat, real dup still caught)", async () => {
+  // Omitting turnStart must not change legacy behavior for recent rows: a recent (in-window) prior bubble
+  // is still returned, so a genuine literal repeat is still suppressed.
+  const recentIso = new Date(Date.now() - 5_000).toISOString()
+  const db = makeDbWithRows([
+    {
+      sessionId: "s1",
+      role: "assistant",
+      body: "still pulling your info, one sec 🔎",
+      createdAt: recentIso,
+      rawMeta: { source: "pa-outbound" },
+    },
+  ])
+  const recentSent = await getRecentSentMessages({ db: db as never, userId: "u1", sessionId: "s1" }, 5)
+  assert.deepEqual(recentSent, ["still pulling your info, one sec 🔎"])
+  assert.equal(isNearDuplicateOfAny("still pulling your info, one sec 🔍", recentSent), true)
+})
+
 test("getRecentSentMessages fails open on read error → []", async () => {
   const db = makeDbWithRows([{ sessionId: "s1", role: "assistant", body: "x", createdAt: "z" }], {
     throwOnGet: true,

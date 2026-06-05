@@ -33,11 +33,19 @@ import type { RunClaireTurnDeps } from "./agent.js"
  * empty/missing so the turn degrades to the plainest possible path.
  */
 function makeDb(opts: { recentSent?: string[] } = {}) {
+  // Anchor the seeded rows to NOW (a few seconds ago) so they fall inside the cross-turn dedup's staleness
+  // window (the guard now drops rows older than ~10 min, and the live wall clock is well past any hardcoded
+  // 2026-06-04 fixture date). A real "recently sent" message is seconds old; this mirrors production so the
+  // cross-turn suppression these tests exercise actually engages.
+  const baseMs = Date.now() - 60_000 // 1 min ago, comfortably inside the staleness window + before turnStart
   const recentRows = (opts.recentSent ?? []).map((body, i) => ({
     data: () => ({
       role: "assistant",
       body,
-      createdAt: `2026-06-04T00:00:0${i}.000Z`,
+      createdAt: new Date(baseMs + i * 1000).toISOString(),
+      // These seed the "already SENT" set, so they must look like delivered outbox rows — the
+      // cross-turn dedup now reads ONLY source="pa-outbound" rows (excludes SDK-session JSON wrappers).
+      rawMeta: { source: "pa-outbound" },
     }),
   }))
   return {
@@ -171,4 +179,97 @@ test("normal (non-suppressed) turn never invokes the fallback — exactly one ag
 
   assert.equal(calls(), 1, `a delivered turn must not trigger the fallback; agent ran ${calls()} times`)
   assert.deepEqual(sent, [reply], "the normal reply is delivered as-is")
+})
+
+// ─── #2 GENERIC NEVER-SILENT BACKSTOP: the shapes the OLD suppressedAll-only gate missed ───
+// The backstop now keys on a transport-truthful "nothingReachedCandidate" (sentTextCount === 0), not on
+// suppressedAll alone — so it ALSO catches A2 (empty `messages` + no pending question) AND must NOT fire
+// after a tool delivered recs directly (sentTextCount > 0).
+
+/**
+ * A runAgent stub that, on its FIRST run, performs a SIDE-EFFECT send through the TRACKED transport —
+ * simulating a tool (find_match's deliverRecBubbles) that delivers mid-run via ctx.transport.sendText —
+ * then returns the queued `messages`. `getTracked` returns the tracked transport captured via the
+ * onToolTransportReady test seam (the SAME wrapper the backstop counts), so the send registers in
+ * sentTextCount exactly as production find_match does. Used to prove the backstop does NOT fire after a
+ * real tool delivery.
+ */
+function makeRunAgentWithToolSend(
+  outputs: string[][],
+  getTracked: () => { sendText: (t: string) => Promise<unknown> } | undefined,
+  text: string,
+) {
+  let calls = 0
+  const runAgent: NonNullable<RunClaireTurnDeps["runAgent"]> = async () => {
+    const i = calls
+    calls++
+    if (i === 0) await getTracked()?.sendText(text) // mid-run tool delivery via the TRACKED transport
+    return { finalOutput: { messages: outputs[i] ?? [] }, rawResponses: [] }
+  }
+  return { runAgent, calls: () => calls }
+}
+
+test("A2: onboarding empty-messages + no pending question → backstop fires ONCE and delivers a fresh reply", async () => {
+  // The live dead-silent turn: onboarding LAST slot → pendingStep undefined; the model emits an EMPTY
+  // messages array (no bubble) → deliverBubblesEx returns {sent:0, suppressedAll:FALSE}; the onboarding
+  // ask-net finds no pending question (ask_net_no_pending) → netDelivered stays false → NOTHING delivered.
+  // The OLD suppressedAll-only gate missed this (suppressedAll is false). The generic sentTextCount===0
+  // backstop catches it.
+  const { transport, sent } = makeTransport()
+  const fresh = "all set on the basics — want me to pull a few roles that fit?"
+  const { runAgent, calls } = makeRunAgent([
+    [], // turn 1: EMPTY messages (the A2 shape) → nothing delivered, suppressedAll false
+    [fresh], // fallback turn: a fresh next-step reply
+  ])
+
+  const res = await runClaireTurn(
+    { userId: "u_a2", sessionId: "s_a2", text: "yes that's right", toE164: "+10000000000" },
+    {
+      db: makeDb(), // no recentSent — this is an empty-messages turn, not a suppression
+      transport,
+      runAgent,
+      mode: "onboarding",
+      awaitingAnswer: true,
+      onboardingSlot: "target_role",
+      // LAST slot → no pending question to re-ask (the ask-net yields ask_net_no_pending).
+      pendingStep: undefined,
+      currentStep: undefined,
+    },
+  )
+
+  assert.equal(calls(), 2, `A2 empty-messages must trigger the generic backstop once; got ${calls()}`)
+  assert.deepEqual(sent, [fresh], `the fresh next-step reply must be delivered; got ${JSON.stringify(sent)}`)
+  assert.equal(res.finalText, fresh)
+})
+
+test("find_match delivered recs (tool-direct send) + empty agent messages → NO backstop, NO double-send", async () => {
+  // The non-regression lock: find_match's deliverRecBubbles sends role bubbles via ctx.transport.sendText
+  // DURING the run, then the prompt tells the model to reply with an EMPTY messages array. That empty
+  // reply must NOT trip the backstop — the candidate already GOT the recs. sentTextCount > 0 proves it.
+  const { transport, sent } = makeTransport()
+  const recBubble = "found a few that fit right now 👇\n\nSenior SWE @ Acme — apply: https://x"
+  // Capture the tracked transport (the one the backstop counts) via the test seam.
+  let tracked: { sendText: (t: string) => Promise<unknown> } | undefined
+  const { runAgent, calls } = makeRunAgentWithToolSend(
+    [[], ["this MUST NOT run — recs already delivered"]],
+    () => tracked,
+    recBubble,
+  )
+
+  await runClaireTurn(
+    { userId: "u_recs", sessionId: "s_recs", text: "show me roles", toE164: "+10000000000" },
+    {
+      db: makeDb(),
+      transport,
+      runAgent,
+      onToolTransportReady: (t) => {
+        tracked = t as unknown as { sendText: (s: string) => Promise<unknown> }
+      },
+    },
+  )
+
+  // The agent ran exactly ONCE — the empty post-recs reply did NOT trigger a fallback (recs reached the
+  // candidate, sentTextCount > 0). No double-send of recs.
+  assert.equal(calls(), 1, `a tool that delivered recs must NOT trigger the backstop; ran ${calls()} times`)
+  assert.deepEqual(sent, [recBubble], `only the tool-delivered recs go out; got ${JSON.stringify(sent)}`)
 })

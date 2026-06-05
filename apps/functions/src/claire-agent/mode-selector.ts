@@ -24,7 +24,8 @@ import type { Firestore } from "firebase-admin/firestore"
 import {
   isSharedOnboardingActiveUser,
   currentSharedOnboardingQuestionId,
-  resolveNextAskedSharedOnboardingQuestionId,
+  resolveNextAskedMissingSharedOnboardingQuestionId,
+  isSharedOnboardingSlotSatisfied,
   buildSharedOnboardingPrompt,
   SHARED_ONBOARDING_WORK_SESSION_KIND,
   parseLinkedinDoneOpener,
@@ -213,18 +214,34 @@ function rescueOnboardingSlot(
 }
 
 /**
- * IN-FLIGHT STALL GUARD (2026-06-02 trim): a user durable-paused at a now-DROPPED slot that the
- * OLD order placed AFTER both surviving asked slots (e.g. seniority_comp / special_context, old
- * positions 6/7, after location_relocation@5) has ALREADY answered both ASKED slots (target_role +
- * location_relocation). Without this guard the rescue falls back to FIRST_ASKED_SLOT and re-asks a
- * question whose answer already exists → recordOnboardingAnswer returns already_complete → the
- * durable `completed` flag never flips → INFINITE re-ask. When every asked slot is satisfied,
- * onboarding is effectively done: complete it + route to triage (where the agent can pitch + match).
+ * COMPLETION GUARD — IN-FLIGHT STALL GUARD (2026-06-02 trim) + TAG-AWARE (2026-06-04 #1 re-ask fix).
+ *
+ * STALL GUARD origin: a user durable-paused at a now-DROPPED slot that the OLD order placed AFTER both
+ * surviving asked slots (e.g. seniority_comp / special_context) has ALREADY answered both ASKED slots
+ * (target_role + location_relocation). Without this guard the rescue falls back to FIRST_ASKED_SLOT and
+ * re-asks a question whose answer already exists → recordOnboardingAnswer returns already_complete → the
+ * durable `completed` flag never flips → INFINITE re-ask.
+ *
+ * TAG-AWARE extension: an asked slot counts as satisfied when it was either ANSWERED in this onboarding
+ * (`answeredSlots`) OR its canonical axis is already present on `pa-users.tags` / `statedPreferences`
+ * (`isSharedOnboardingSlotSatisfied`). So a candidate whose enriched profile already carries every asked
+ * axis (e.g. résumé gave `targetRoleFunction`, chat gave `targetLocations`) is "done" even though
+ * `sharedOnboarding.answers` is empty/partial — no re-ask of an axis the matcher already has. When every
+ * asked slot is satisfied, onboarding is effectively done: complete it + route to triage (where the agent
+ * pitches + matches). NO regex; pure presence over the validated closed enums.
  */
-function allAskedOnboardingSlotsSatisfied(answeredSlots: string[]): boolean {
+function allAskedOnboardingSlotsSatisfiedWithTags(
+  answeredSlots: string[],
+  tags: Record<string, unknown> | null | undefined,
+  statedPreferences: Record<string, unknown> | null | undefined,
+): boolean {
   if (DEFAULT_ONBOARDING_SLOTS.length === 0) return false
   const answered = new Set(answeredSlots)
-  return DEFAULT_ONBOARDING_SLOTS.every((s) => answered.has(s))
+  return DEFAULT_ONBOARDING_SLOTS.every(
+    (s) =>
+      answered.has(s) ||
+      isSharedOnboardingSlotSatisfied(s as SharedOnboardingQuestionId, tags, statedPreferences),
+  )
 }
 
 /** Best-effort durable mark-complete (mirrors bootstrapOnboarding's shape). Never throws upward. */
@@ -354,6 +371,14 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   const shared = (user.sharedOnboarding ?? null) as Record<string, unknown> | null
   const onboardingComplete = shared?.completed === true || user.onboardingState === "complete"
 
+  // 2026-06-04 (#1 re-ask fix): the canonical user tags + the legacy statedPreferences mirror from the
+  // SAME pa-users snapshot (zero extra read). The onboarding slot picker consults these so it NEVER
+  // re-asks an axis whose canonical tag is already present (e.g. a résumé-enriched candidate carrying
+  // `targetRoleFunction` being asked "what kind of role" again). Pure structured reads — NO LLM, NO
+  // text→enum regex; satisfaction is a presence check over validated closed enums.
+  const userTags = (user.tags ?? null) as Record<string, unknown> | null
+  const statedPreferences = (user.statedPreferences ?? null) as Record<string, unknown> | null
+
   // WS-1(b) ENRICHMENT-AWARENESS (Adam 2026-06-03): read the durable enrichmentInFlight marker off the
   // SAME pa-users snapshot (zero extra read). True only when résumé parse / LinkedIn import is still
   // running from an EARLIER turn (TTL self-heals a dropped completion event — see enrichment-inflight.ts).
@@ -447,18 +472,26 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
           }
         }
         const answeredSlots = Object.keys((shared?.answers as Record<string, unknown>) ?? {})
-        if (allAskedOnboardingSlotsSatisfied(answeredSlots)) {
-          // Both asked slots already answered (paused at a dropped late slot) → don't re-ask; the
-          // résumé just parsed, so pitch in triage then OFFER find_match.
+        // TAG-AWARE COMPLETE (2026-06-04 #1): every asked slot satisfied by an answer OR a canonical
+        // tag already on file → don't re-ask; the résumé just parsed, so pitch in triage + OFFER match.
+        if (allAskedOnboardingSlotsSatisfiedWithTags(answeredSlots, userTags, statedPreferences)) {
           await markSharedOnboardingComplete(args.db, args.userId, now)
-          log("mode.cv_parsed_pitch_complete", { userId: args.userId })
+          log("mode.cv_parsed_pitch_complete", { userId: args.userId, tagSatisfied: true })
           return { mode: "triage", postParsePitch: true }
         }
-        const cur = rescueOnboardingSlot(
+        // Skip any tag-satisfied slot when picking what to ASK (never re-ask an axis the parse filled).
+        const rescued = rescueOnboardingSlot(
           currentSharedOnboardingQuestionId(user) as SharedOnboardingQuestionId,
           answeredSlots,
         )
-        const next = resolveNextAskedSharedOnboardingQuestionId(cur)
+        const rescuedSatisfied =
+          answeredSlots.includes(rescued) ||
+          isSharedOnboardingSlotSatisfied(rescued, userTags, statedPreferences)
+        const cur = rescuedSatisfied
+          ? resolveNextAskedMissingSharedOnboardingQuestionId(rescued, userTags, statedPreferences)
+              .nextQuestionId ?? rescued
+          : rescued
+        const next = resolveNextAskedMissingSharedOnboardingQuestionId(cur, userTags, statedPreferences)
         log("mode.cv_parsed_pitch_active", { userId: args.userId, currentSlot: cur, next: next.nextQuestionId })
         return {
           mode: "onboarding",
@@ -552,19 +585,43 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
       // in the ASKED set, treat onboarding as at the earliest UNANSWERED asked slot instead. Worst
       // case is one short re-ask of an asked slot; never a stall or data loss, and no Firestore backfill.
       const answeredSlots = Object.keys((shared?.answers as Record<string, unknown>) ?? {})
-      if (allAskedOnboardingSlotsSatisfied(answeredSlots)) {
-        // STALL GUARD: every asked slot is answered (in-flight user paused at a dropped late slot) →
-        // onboarding is effectively done. Complete it + route to triage instead of re-asking forever.
+      // STALL GUARD + TAG-AWARE COMPLETE (2026-06-04 #1): every asked slot is satisfied — by an
+      // ANSWER or by a canonical tag already on file (résumé/chat enrich) → onboarding is effectively
+      // done. Complete it + route to triage instead of re-asking an axis the matcher already has.
+      if (allAskedOnboardingSlotsSatisfiedWithTags(answeredSlots, userTags, statedPreferences)) {
         await markSharedOnboardingComplete(args.db, args.userId, now)
-        log("mode.onboarding_already_satisfied_complete", { userId: args.userId, answered: answeredSlots.length })
+        log("mode.onboarding_already_satisfied_complete", {
+          userId: args.userId,
+          answered: answeredSlots.length,
+          tagSatisfied: true,
+        })
         return { mode: "triage" }
       }
-      const cur = rescueOnboardingSlot(
+      // Pick the slot to ASK = the in-flight-rescued current slot, UNLESS its axis is already captured
+      // (answered OR canonical tag already on file). When the rescued slot is already satisfied, SKIP
+      // it and ask the first genuinely-missing asked slot instead — never re-ask a tag-satisfied axis.
+      // The guard above guarantees at least one asked slot is still missing, so this always resolves to
+      // a real question (the `?? rescued` fallback is unreachable, kept only for total typing safety).
+      const rescued = rescueOnboardingSlot(
         currentSharedOnboardingQuestionId(user) as SharedOnboardingQuestionId,
         answeredSlots,
       )
-      const next = resolveNextAskedSharedOnboardingQuestionId(cur)
-      log("mode.onboarding_active", { userId: args.userId, currentSlot: cur, next: next.nextQuestionId, answered: answeredSlots.length })
+      const rescuedSatisfied =
+        answeredSlots.includes(rescued) ||
+        isSharedOnboardingSlotSatisfied(rescued, userTags, statedPreferences)
+      const cur = rescuedSatisfied
+        ? resolveNextAskedMissingSharedOnboardingQuestionId(rescued, userTags, statedPreferences)
+            .nextQuestionId ?? rescued
+        : rescued
+      // The NEXT question after `cur` must also skip tag-satisfied slots (tag-aware advance), so the
+      // agent's follow-up clarifier never lands a redundant axis.
+      const next = resolveNextAskedMissingSharedOnboardingQuestionId(cur, userTags, statedPreferences)
+      log("mode.onboarding_active", {
+        userId: args.userId,
+        currentSlot: cur,
+        next: next.nextQuestionId,
+        answered: answeredSlots.length,
+      })
       return {
         mode: "onboarding",
         awaitingAnswer: true,

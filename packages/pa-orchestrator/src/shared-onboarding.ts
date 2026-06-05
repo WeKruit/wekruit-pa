@@ -935,6 +935,40 @@ export function resolveNextAskedSharedOnboardingQuestionId(id: SharedOnboardingQ
 }
 
 /**
+ * THIN-path TAG-AWARE walker (2026-06-04 #1 re-ask fix). Like
+ * {@link resolveNextAskedSharedOnboardingQuestionId} but over the TRIMMED ASKED set
+ * AND it SKIPS any slot already satisfied by `pa-users.tags` / `statedPreferences`
+ * (via {@link isSharedOnboardingSlotSatisfied}). This is the thin counterpart of the
+ * legacy {@link resolveNextMissingSharedOnboardingQuestionId} — the thin picker
+ * (mode-selector) calls THIS so it never re-asks an axis whose canonical tag is
+ * already present (e.g. a résumé-enriched candidate with `targetRoleFunction` set
+ * being asked "what kind of role" again).
+ *
+ * Walk semantics mirror the positional resolver: advance from `fromId`'s position in
+ * the ASKED set, returning the first FORWARD slot that is NOT tag-satisfied; if every
+ * forward slot is satisfied → `{ nextQuestionId: null, completed: true }`. A stored id
+ * not in the ASKED set (in-flight on a dropped slot) starts the scan from the head of
+ * the ASKED set so it never strands. NO regex — pure presence checks on validated
+ * canonical enums.
+ */
+export function resolveNextAskedMissingSharedOnboardingQuestionId(
+  fromId: SharedOnboardingQuestionId,
+  tags: Record<string, unknown> | null | undefined,
+  statedPreferences: Record<string, unknown> | null | undefined,
+): { nextQuestionId: SharedOnboardingQuestionId | null; completed: boolean; shouldRecommend: boolean } {
+  const index = QUESTION_IDS.indexOf(fromId)
+  // In-flight/unknown id → scan the whole ASKED set from the head (start at -1 + 1 = 0).
+  const startIdx = index >= 0 ? index : -1
+  for (let i = startIdx + 1; i < QUESTION_IDS.length; i++) {
+    const candidate = QUESTION_IDS[i]!
+    if (!isSharedOnboardingSlotSatisfied(candidate, tags, statedPreferences)) {
+      return { nextQuestionId: candidate, completed: false, shouldRecommend: false }
+    }
+  }
+  return { nextQuestionId: null, completed: true, shouldRecommend: true }
+}
+
+/**
  * QA 2026-05-28 (#3) — which shared-onboarding slots are already satisfied by the
  * unified user tags / statedPreferences. The extract-first capture (forceTrigger
  * extractor on every onboarding turn) can fill `industrySector` + `targetLocations`
@@ -942,6 +976,16 @@ export function resolveNextAskedSharedOnboardingQuestionId(id: SharedOnboardingQ
  * extractor (conversation-extractor.ts tagPatch). main_goal / culture_stage /
  * special_context are onboarding-specific concepts the extractor can't produce, so
  * they're never auto-satisfied (always asked in order).
+ *
+ * 2026-06-04 (#1 re-ask fix) — `target_role` is ALSO tag-satisfiable. The matcher's
+ * sole role axis is `tags.targetRoleFunction[]` (D1, ROLE_FUNCTION_VOCAB), and that
+ * axis is filled by the résumé parse (`mergeUserTags`) and by the
+ * `record_onboarding_answer` extractor (validateOnboardingCanonicalTags). So when a
+ * candidate's enriched profile already carries `targetRoleFunction`, re-asking "what
+ * kind of role do you want" is redundant — the axis the question exists to capture is
+ * already present. Treat the slot as satisfied off the canonical tag (NO regex — pure
+ * presence check over the validated closed enum). `statedPreferences.targetRoleFunction`
+ * is the legacy mirror some paths still write, kept as a fallback.
  */
 export function isSharedOnboardingSlotSatisfied(
   slot: SharedOnboardingQuestionId,
@@ -951,6 +995,9 @@ export function isSharedOnboardingSlotSatisfied(
   const t = tags ?? {}
   const sp = statedPreferences ?? {}
   const nonEmptyArr = (v: unknown): boolean => Array.isArray(v) && v.length > 0
+  if (slot === "target_role") {
+    return nonEmptyArr(t.targetRoleFunction) || nonEmptyArr(sp.targetRoleFunction)
+  }
   if (slot === "industry_interest") {
     return nonEmptyArr(t.industrySector) || nonEmptyArr(sp.industrySector)
   }
