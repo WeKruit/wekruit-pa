@@ -1424,12 +1424,15 @@ const MARKET_STYLES = String.raw`
 .wk-shell .wk-viewtog__ico--table::after  { bottom: 3px; }
 .wk-shell .wk-viewtog__ico--cards::before,
 .wk-shell .wk-viewtog__ico--cards::after {
-  content: ""; position: absolute; width: 5.5px; height: 8px;
-  border: 1.5px solid currentColor; border-radius: 2px;
-  top: 50%; transform: translateY(-50%);
+  content: ""; position: absolute; width: 4px; height: 4px;
+  background: currentColor; border-radius: 1.5px;
+  top: 2px;
 }
-.wk-shell .wk-viewtog__ico--cards::before { left: 0; }
-.wk-shell .wk-viewtog__ico--cards::after  { right: 0; }
+.wk-shell .wk-viewtog__ico--cards::before {
+  left: 2px;
+  box-shadow: 6px 0 0 currentColor, 0 6px 0 currentColor, 6px 6px 0 currentColor;
+}
+.wk-shell .wk-viewtog__ico--cards::after { display: none; }
 
 .wk-shell .wk-tbl-wrap {
   background: var(--wk-cream-3); border: 1px solid var(--wk-border);
