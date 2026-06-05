@@ -66,6 +66,9 @@ import {
 } from "./connect-token.js"
 
 const CORESIGNAL_API_KEY = defineSecret("CORESIGNAL_API_KEY")
+// The connect-submit enrich runs the Coresignal experiences mirror → unified LinkedIn+résumé merge LLM
+// call (getOpenAIConfig reads PA_OPENAI_AGENT_API_KEY). Bind + hydrate or the merge fail-opens to null.
+const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 
 /** Resolve a candidate's E.164 phone (used as the runtime-event `toE164`, NOT the sms recipient). */
 async function resolvePhone(db: Firestore, userId: string, tokenPhone?: string): Promise<string> {
@@ -588,7 +591,7 @@ export const paLinkedinConnectSubmit = onRequest(
     timeoutSeconds: 120,
     cors: false,
     invoker: "public",
-    secrets: [CORESIGNAL_API_KEY],
+    secrets: [CORESIGNAL_API_KEY, PA_OPENAI_AGENT_API_KEY],
   },
   async (req, res): Promise<void> => {
     setCors(res)
@@ -596,6 +599,10 @@ export const paLinkedinConnectSubmit = onRequest(
       res.status(204).send("")
       return
     }
+    // Hydrate the OpenAI key so the downstream Coresignal-mirror merge (getOpenAIConfig) can run.
+    const openAiKey = PA_OPENAI_AGENT_API_KEY.value().trim()
+    if (openAiKey) process.env.PA_OPENAI_AGENT_API_KEY = openAiKey
+    else delete process.env.PA_OPENAI_AGENT_API_KEY
     if (req.method !== "POST") {
       res.status(405).json({ ok: false, reason: "method_not_allowed" })
       return

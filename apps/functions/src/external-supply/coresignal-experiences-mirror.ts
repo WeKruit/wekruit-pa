@@ -528,6 +528,19 @@ export async function runCoresignalExperiencesMirror(
         recentRoleTitle: merged.recentRoleTitle ?? null,
         careerStage: merged.careerStage ?? null,
       })
+    } else {
+      // FAIL-OPEN FALLBACK (no-regex, free-text ONLY): the merge LLM was unavailable / returned nothing.
+      // Still fix the MOST VISIBLE staleness — recentRoleTitle/recentCompany — from the candidate's CURRENT
+      // LinkedIn role (the agent opener reads these). These are free text, NOT enum, so no regex→enum
+      // classification (D15 / no-regex rule honored). careerStage/yoeRange are enum/derived → left to the
+      // LLM only; they stay untouched here until the merge actually runs.
+      const current = linkedinSources.find((s) => s.isCurrent === true)
+      if (current && current.title) {
+        const facts: NonNullable<typeof mergedFacts> = { recentRoleTitle: current.title }
+        if (current.company) facts.recentCompany = current.company
+        mergedFacts = facts
+        deps.log?.("coresignal_mirror.facts_fallback", { userId, recentRoleTitle: current.title })
+      }
     }
   }
 

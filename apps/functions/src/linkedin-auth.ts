@@ -14,6 +14,10 @@ export const LINKEDIN_CLIENT_SECRET: ReturnType<typeof defineSecret> =
 // Coresignal key — bound to paLinkedinCallback so a LinkedIn LOGIN can enrich work history (the
 // OAuth callback feeds the OIDC profile URL into the existing Coresignal pipeline).
 const CORESIGNAL_API_KEY: ReturnType<typeof defineSecret> = defineSecret("CORESIGNAL_API_KEY")
+// connect_prospect LinkedIn login runs the Coresignal experiences mirror, which makes the unified
+// LinkedIn+résumé merge LLM call (getOpenAIConfig reads PA_OPENAI_AGENT_API_KEY). Bind + hydrate it here
+// or the merge fail-opens to null in this CF runtime and the determined facts are never written.
+const PA_OPENAI_AGENT_API_KEY: ReturnType<typeof defineSecret> = defineSecret("PA_OPENAI_AGENT_API_KEY")
 export const GITHUB_CLIENT_ID: ReturnType<typeof defineSecret> =
   defineSecret("GITHUB_CLIENT_ID")
 export const GITHUB_CLIENT_SECRET: ReturnType<typeof defineSecret> =
@@ -924,9 +928,13 @@ export const paLinkedinCallback = onRequest(
     // 90s — the connect_prospect login runs Coresignal enrich (search + collect) synchronously
     // before the reroute, so the candidate lands back in iMessage with work history already pulling.
     timeoutSeconds: 90,
-    secrets: [LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, CORESIGNAL_API_KEY],
+    secrets: [LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, CORESIGNAL_API_KEY, PA_OPENAI_AGENT_API_KEY],
   },
   async (req, res) => {
+    // Hydrate the OpenAI key so the downstream Coresignal-mirror merge (getOpenAIConfig) can run.
+    const openAiKey = PA_OPENAI_AGENT_API_KEY.value().trim()
+    if (openAiKey) process.env.PA_OPENAI_AGENT_API_KEY = openAiKey
+    else delete process.env.PA_OPENAI_AGENT_API_KEY
     const clientId = LINKEDIN_CLIENT_ID.value().trim()
     const clientSecret = LINKEDIN_CLIENT_SECRET.value().trim()
     const rawState = typeof req.query.state === "string" ? req.query.state : ""

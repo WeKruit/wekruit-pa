@@ -124,6 +124,37 @@ test("runCoresignalExperiencesMirror — happy path writes new parsedResume doc"
   assert.equal(w.experienceHighlights[0]?.company, "Confidential")
 })
 
+test("runCoresignalExperiencesMirror — merge null → no-regex fallback sets recentRoleTitle from current LinkedIn role, NOT careerStage", async () => {
+  const writes: Array<{ mergedFacts?: Record<string, unknown> }> = []
+  const result = await runCoresignalExperiencesMirror(
+    makeRecord({
+      experience: [
+        { company: "Tesla", title: "Senior Software Engineer", currentRole: true, startDate: "February 2026" },
+        { company: "Tesla", title: "Software Engineer", startDate: "March 2025", endDate: "January 2026" },
+      ],
+    }),
+    "uid-fallback",
+    {
+      findExistingForUser: async () => [],
+      // Force the merge LLM to be unavailable → exercise the fail-open fallback branch.
+      mergeAndDetermine: async () => null,
+      writeBoth: async (args) => {
+        writes.push(args as { mergedFacts?: Record<string, unknown> })
+      },
+      now: () => NOW,
+    },
+  )
+  assert.equal(result.status, "mirrored")
+  assert.equal(writes.length, 1)
+  const facts = writes[0]?.mergedFacts
+  assert.ok(facts, "mergedFacts must be set by the fallback")
+  assert.equal(facts?.recentRoleTitle, "Senior Software Engineer")
+  assert.equal(facts?.recentCompany, "Tesla")
+  // careerStage / yoeRange are enum/derived → LLM-only; the fallback must NOT invent them (no regex→enum).
+  assert.equal(facts?.careerStage, undefined)
+  assert.equal(facts?.yoeRange, undefined)
+})
+
 test("runCoresignalExperiencesMirror — fills missing LinkedIn descriptions from matching resume rows", async () => {
   const writes: Array<unknown> = []
   const result = await runCoresignalExperiencesMirror(
