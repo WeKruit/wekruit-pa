@@ -101,6 +101,29 @@ test("Landing exposes the market source layer without becoming an apply queue", 
   assert.doesNotMatch(landingSource, /we pitch you anyway/i)
 })
 
+test("Landing hero shows the passed-profile evidence artifact Claire produces", () => {
+  assert.match(landingSource, /function HeroEvidencePacket\(\)/)
+  assert.match(landingSource, /aria-label="Sample Claire evidence packet"/)
+  assert.match(landingSource, /Passed profile draft/)
+  assert.match(landingSource, /Senior PM · AI infra/)
+  assert.match(landingSource, /Nearest proof/)
+  assert.match(landingSource, /Launched AI infra workflow from 0 to 7 teams\./)
+  assert.match(landingSource, /Constraints/)
+  assert.match(landingSource, /NYC or remote · \$180k\+ · startup scale\./)
+  assert.match(landingSource, /Share gate/)
+  assert.match(landingSource, /Hiring team sees this only after the role screen passes and the candidate approves\./)
+  assert.match(landingSource, /<HeroEvidencePacket \/>/)
+  assert.match(landingSource, /\.wk-hero__visual \.wk-imsg-thread__body \{ min-height: 280px; \}/)
+  assert.match(landingSource, /\.wk-hero-packet \{[\s\S]*width: min\(100%, 390px\);[\s\S]*border-radius: 8px;/)
+  assert.match(landingSource, /\.wk-hero-packet__grid \{[\s\S]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/)
+  assert.match(landingSource, /@media \(max-width: 980px\) \{[\s\S]*\.wk-hero-packet \{ max-width: 320px; padding: 12px; \}/)
+  assert.match(landingSource, /@media \(max-width: 760px\) \{[\s\S]*\.wk-hero-packet \{ max-width: 360px; \}/)
+
+  assert.doesNotMatch(landingSource, /guaranteed pass/i)
+  assert.doesNotMatch(landingSource, /auto-send/i)
+  assert.doesNotMatch(landingSource, /without consent/i)
+})
+
 test("Landing hero headline keeps editorial lines separated across breakpoints", () => {
   assert.match(landingSource, /<h1 className="wk-hero__h1" aria-label="You don't apply\. You interview\.">/)
   assert.match(landingSource, /<span>You don&apos;t <em className="wk-accent">apply\.<\/em><\/span>/)
