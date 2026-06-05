@@ -79,6 +79,12 @@ test("Market defaults mobile tracked roles to cards instead of dense table", () 
   assert.doesNotMatch(source, /useState<"table" \| "cards">\("table"\)/)
 })
 
+test("Market cards view toggle uses a tile icon instead of a double-zero mark", () => {
+  assert.match(source, /\.wk-shell \.wk-viewtog__ico--cards::before \{[\s\S]*box-shadow: 6px 0 0 currentColor, 0 6px 0 currentColor, 6px 6px 0 currentColor;/)
+  assert.match(source, /\.wk-shell \.wk-viewtog__ico--cards::after \{ display: none; \}/)
+  assert.doesNotMatch(source, /\.wk-shell \.wk-viewtog__ico--cards::before,[\s\S]*\.wk-shell \.wk-viewtog__ico--cards::after \{[\s\S]*border: 1\.5px solid currentColor;/)
+})
+
 test("Market opens on role briefs before external tracked roles", () => {
   assert.match(source, /useState<"hunting" \| "direct">\("direct"\)/)
   assert.doesNotMatch(source, /useState<"hunting" \| "direct">\("hunting"\)/)
