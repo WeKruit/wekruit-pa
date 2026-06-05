@@ -4,6 +4,7 @@ import type { ExternalCandidateRecord } from "@pa/core-types"
 import {
   buildExperienceHighlightsFromRecord,
   buildParsedResumeDocFromRecord,
+  makeFirestoreMirrorDeps,
   runCoresignalExperiencesMirror,
 } from "./coresignal-experiences-mirror.js"
 
@@ -153,6 +154,98 @@ test("runCoresignalExperiencesMirror — merge null → no-regex fallback sets r
   // careerStage / yoeRange are enum/derived → LLM-only; the fallback must NOT invent them (no regex→enum).
   assert.equal(facts?.careerStage, undefined)
   assert.equal(facts?.yoeRange, undefined)
+})
+
+test("runCoresignalExperiencesMirror — merge roleFunction flows into mergedFacts (the LinkedIn role-derive seam)", async () => {
+  const writes: Array<{ mergedFacts?: Record<string, unknown> }> = []
+  const result = await runCoresignalExperiencesMirror(
+    makeRecord({
+      experience: [{ company: "Tesla", title: "Senior Software Engineer", currentRole: true, startDate: "February 2026" }],
+    }),
+    "uid-role",
+    {
+      findExistingForUser: async () => [],
+      mergeAndDetermine: async () => ({
+        mergedExperiences: [{ title: "Senior Software Engineer", company: "Tesla", isCurrent: true }],
+        recentRoleTitle: "Senior Software Engineer",
+        recentCompany: "Tesla",
+        careerStage: "senior",
+        yoeRange: [3, 5],
+        roleFunction: ["software_engineering"],
+      }),
+      writeBoth: async (args) => {
+        writes.push(args as { mergedFacts?: Record<string, unknown> })
+      },
+      now: () => NOW,
+    },
+  )
+  assert.equal(result.status, "mirrored")
+  assert.deepEqual(writes[0]?.mergedFacts?.roleFunction, ["software_engineering"], "roleFunction carried into mergedFacts")
+})
+
+test("runCoresignalExperiencesMirror — merge null fail-open fallback does NOT invent roleFunction (closed enum, LLM-only)", async () => {
+  const writes: Array<{ mergedFacts?: Record<string, unknown> }> = []
+  await runCoresignalExperiencesMirror(
+    makeRecord({
+      experience: [{ company: "Tesla", title: "Senior Software Engineer", currentRole: true, startDate: "February 2026" }],
+    }),
+    "uid-fallback-role",
+    {
+      findExistingForUser: async () => [],
+      mergeAndDetermine: async () => null,
+      writeBoth: async (args) => {
+        writes.push(args as { mergedFacts?: Record<string, unknown> })
+      },
+      now: () => NOW,
+    },
+  )
+  // fallback fixes recentRoleTitle (free text) but must NOT set roleFunction (no regex→enum).
+  assert.equal(writes[0]?.mergedFacts?.recentRoleTitle, "Senior Software Engineer")
+  assert.equal(writes[0]?.mergedFacts?.roleFunction, undefined)
+})
+
+test("makeFirestoreMirrorDeps.writeBoth — lands tags.targetRoleFunction WITHOUT clobbering sibling tags.skills (D8)", async () => {
+  // Stub Firestore: pa-users doc already carries a tags.skills sibling; self-profile absent. We capture the
+  // pa-users set(merge:true) patch and assert targetRoleFunction is written AND skills survives.
+  let userPatch: Record<string, unknown> | undefined
+  const userData = { tags: { skills: [{ name: "TypeScript" }], careerStage: "mid_level" } }
+  const db = {
+    batch() {
+      return {
+        set(ref: { __col: string }, patch: Record<string, unknown>) {
+          if (ref.__col === "pa-users") userPatch = patch
+        },
+        async commit() {},
+      }
+    },
+    collection(name: string) {
+      return {
+        doc() {
+          return {
+            __col: name,
+            async get() {
+              return { exists: name === "pa-users", data: () => (name === "pa-users" ? userData : undefined) }
+            },
+          }
+        },
+      }
+    },
+  } as unknown as import("firebase-admin/firestore").Firestore
+
+  const deps = makeFirestoreMirrorDeps(db)
+  await deps.writeBoth!({
+    parsedResumeDoc: { source: "coresignal_collect_v2" },
+    userId: "uid-1",
+    coresignalEmployeeId: 123,
+    experienceHighlights: [{ title: "Senior Software Engineer", company: "Tesla" }],
+    mergedFacts: { recentRoleTitle: "Senior Software Engineer", roleFunction: ["software_engineering"] },
+  })
+  const tags = userPatch?.tags as Record<string, unknown>
+  assert.ok(tags, "pa-users tags patch written")
+  assert.deepEqual(tags.targetRoleFunction, ["software_engineering"], "targetRoleFunction written under tags")
+  assert.deepEqual(tags.skills, [{ name: "TypeScript" }], "sibling tags.skills survives (not clobbered)")
+  assert.equal(tags.careerStage, "mid_level", "other sibling tags survive")
+  assert.equal(tags.recentRoleTitle, "Senior Software Engineer")
 })
 
 test("runCoresignalExperiencesMirror — fills missing LinkedIn descriptions from matching resume rows", async () => {

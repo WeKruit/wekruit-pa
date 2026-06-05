@@ -24,6 +24,7 @@ import {
   buildSharedOnboardingPromptContext,
   buildSharedOnboardingStartedState,
   hardFilterClarifyText,
+  isSharedOnboardingSlotSatisfied,
   loadSharedOnboardingParsedResumeForPrompt,
   type KeywordSetLlmCaller,
   type KeywordSetLlmOutput,
@@ -32,11 +33,17 @@ import {
   type PreScreenQuestion,
   type PreScreenState,
   type PreScreenStateProvider,
+  type SharedOnboardingQuestionId,
 } from "@pa/pa-orchestrator"
+import { DEFAULT_ONBOARDING_SLOTS } from "./claire-agent/reducers/onboarding-fsm.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
-import { runPrescreenTerminalAction, writePrescreenMemoryUpdate } from "./prescreen-terminal-action.js"
+import {
+  defaultGenerateJobRecs,
+  runPrescreenTerminalAction,
+  writePrescreenMemoryUpdate,
+} from "./prescreen-terminal-action.js"
 import { isLayoffIntakeActiveForUser } from "./layoff-sms-start.js"
 import {
   finalizePrescreenForHumanReview,
@@ -424,6 +431,16 @@ export interface RunPrescreenTurnArgs {
   markReviewPending?: (args: MarkPrescreenReviewPendingArgs) => Promise<unknown>
   keywordSetCaller?: KeywordSetLlmCaller
   clarifyComposer?: PreScreenClarifyComposer
+  /**
+   * #3 convergence (Adam 2026-06-05): injectable rec-firer for the post-prescreen→onboarding
+   * convergence's all-slots-satisfied bridge. Production default = `defaultGenerateJobRecs`
+   * (the SAME find_match path the FAIL terminal uses). Tests inject a stub.
+   */
+  fireJobRecs?: (args: {
+    userId: string
+    toE164: string
+    lang?: "zh" | "en"
+  }) => Promise<{ ok: boolean; jobCount: number; reason?: string }>
   log?: (event: string, payload: Record<string, unknown>) => void
 }
 
@@ -613,6 +630,16 @@ async function startSharedOnboardingAfterPrescreen(args: {
   sendSms: RuntimeSmsSender
   log: (event: string, payload: Record<string, unknown>) => void
   sessionId: string
+  /**
+   * #3 convergence (Adam 2026-06-05): when role + location are BOTH already known we
+   * skip straight to recs. Injectable for tests; default = the SAME find_match-backed
+   * closure the FAIL terminal uses (no parallel rec path). Fail-open: any error is logged.
+   */
+  fireJobRecs?: (args: {
+    userId: string
+    toE164: string
+    lang?: "zh" | "en"
+  }) => Promise<{ ok: boolean; jobCount: number; reason?: string }>
 }): Promise<string> {
   const userRef = args.db.collection(PA_COLLECTIONS.users).doc(args.userId)
   const userSnap = await userRef.get()
@@ -657,8 +684,47 @@ async function startSharedOnboardingAfterPrescreen(args: {
     },
     { merge: true },
   )
-  const q1 = buildSharedOnboardingPrompt("main_goal", promptContext)
-  const text = `Great — thanks for completing the role screen. I’ll use what you shared there, and I just need a bit more context for future matches. ${q1}`
+  // CONVERGE to the SAME thin enrich→pitch→rec onboarding (Adam #3 2026-06-05): a
+  // prescreen-first entrant, AFTER the screen, runs the SAME gap-aware ASKED set as a
+  // cold-start (target_role auto-derived from enrich → suppressed; only the genuinely-
+  // MISSING slot — location — is asked). Wording differs slightly (we thank them for the
+  // screen). This is NOT the legacy 7-question main_goal wall. Pure structured presence
+  // checks over the closed-enum tags (isSharedOnboardingSlotSatisfied) — NO regex, NO LLM.
+  const userTags = (user.tags ?? {}) as Record<string, unknown>
+  const statedPrefs = (user.statedPreferences ?? null) as Record<string, unknown> | null
+  const firstMissing =
+    (DEFAULT_ONBOARDING_SLOTS as SharedOnboardingQuestionId[]).find(
+      (slot) => !isSharedOnboardingSlotSatisfied(slot, userTags, statedPrefs),
+    ) ?? null
+
+  if (!firstMissing) {
+    // role + location already known → nothing left to ask; bridge straight to recs.
+    const doneText =
+      "Great — thanks for completing the screen. I’ve got your profile, so I’ll pull a few matches for you now."
+    await args.sendSms({
+      to: args.toE164,
+      content: doneText,
+      userId: args.userId,
+      db: args.db,
+      runtimeSource: "pa_prescreen_retention_onboarding",
+      idempotencyKey: `prescreen_retention_onboarding_done:${args.sessionId}`,
+    })
+    // Fire the SAME find_match-backed recs the FAIL terminal uses. Fail-open: any error
+    // is swallowed (the bridge message already shipped; recs are best-effort).
+    const fire = args.fireJobRecs ?? defaultGenerateJobRecs
+    try {
+      await fire({ userId: args.userId, toE164: args.toE164, lang: "en" })
+    } catch (err) {
+      args.log("prescreen.turn.post_prescreen_onboarding_recs_failed", {
+        sessionId: args.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    return doneText
+  }
+
+  const qNext = buildSharedOnboardingPrompt(firstMissing, promptContext)
+  const text = `Great — thanks for completing the screen. I’ll use what you shared there, and I just need one quick thing for future matches. ${qNext}`
   await args.sendSms({
     to: args.toE164,
     content: text,
@@ -996,6 +1062,7 @@ export async function runPrescreenTurnIfActive(
               sendSms,
               log,
               sessionId: lookup.sessionId,
+              fireJobRecs: args.fireJobRecs,
             })
           } catch (err) {
             text = "Great — thanks for completing the role screen. What kind of next role would actually be worth your time?"

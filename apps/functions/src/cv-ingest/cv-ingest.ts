@@ -1164,6 +1164,12 @@ export async function runUserTagsMerge(args: {
         if (determined.recentCompany) merged.recentCompany = determined.recentCompany
         if (determined.careerStage) merged.careerStage = determined.careerStage
         if (determined.yoeRange) merged.yoeRange = determined.yoeRange
+        // D1 — same-lane role from the merged timeline OVERRIDES the projection's regex derivation AND any
+        // stale-but-filled value (this block runs AFTER applyResumeMatchingTagProjection). LLM closed-enum
+        // pick is the single source; writeUserTagsFull then auto-projects it to globalTags.roleFunction.
+        if (determined.roleFunction && determined.roleFunction.length > 0) {
+          merged.targetRoleFunction = determined.roleFunction
+        }
         args.log("pa.cv_user_tags.merged_profile", {
           userId: args.userId,
           mergedRoles: determined.mergedExperiences.length,
@@ -1213,6 +1219,108 @@ export async function runUserTagsMerge(args: {
     })
   } catch (err) {
     args.log("pa.cv_user_tags.write_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// #3 conversational re-enrich hook (Adam 2026-06-05)
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-enrich a user's canonical tags from an ALREADY-PARSED résumé (the v2
+ * `ParsedResumeData`), reusing the SAME single enrich path as the attachment
+ * (webhook Stream-D) and website (public-cv-ingest) flows — `runUserTagsMerge`
+ * over the D8 sole writer, with the default `mergeAndDetermineProfile` call (so
+ * `targetRoleFunction` / careerStage / skills are re-derived, incl. the #2
+ * same-lane role override). NO parallel tag write path, NO regex.
+ *
+ * This exists because the `cv_parse` CHAT tool only has parsed-text in hand —
+ * `ingestCv` is mediaUrl-only, so a résumé PASTED into the chat had no enrich
+ * seam before this (it returned parsed text to the LLM and dead-ended). This
+ * closes that gap by adapting the parsed struct + computing the embedding +
+ * running the merge with production defaults. Fully fail-open: every step is
+ * try/caught (and `runUserTagsMerge` itself swallows all errors), so it can be
+ * fired-and-forgotten from a conversation turn without ever throwing upward.
+ */
+export async function reEnrichUserTagsFromParsedResume(args: {
+  db: Firestore
+  userId: string
+  parsedV2: import("@pa/pa-resume-parser").ParsedResumeData
+  nowIso?: () => string
+  log?: (event: string, payload?: Record<string, unknown>) => void
+  /** Test seams — default to the SAME production deps `ingestCv` wires. */
+  computeEmbedding?: (
+    input: Parameters<typeof computeCvEmbedding>[0],
+  ) => Promise<ComputeCvEmbeddingResult | null>
+  mergeUserTagsFn?: (input: UserTagsInput) => Record<string, unknown>
+  writeUserTags?: (
+    db: Firestore,
+    userId: string,
+    tags: Record<string, unknown>,
+  ) => Promise<void>
+  /** Injectable unified merge+determine (default = the real gpt-5.4-mini call); tests stub it. */
+  mergeAndDetermine?: Parameters<typeof runUserTagsMerge>[0]["mergeAndDetermine"]
+}): Promise<void> {
+  const nowIso = args.nowIso ?? (() => new Date().toISOString())
+  const log = args.log ?? (() => undefined)
+  const computeEmbedding = args.computeEmbedding ?? computeCvEmbedding
+  const mergeUserTagsFn =
+    args.mergeUserTagsFn ?? ((input: UserTagsInput) => mergeUserTags(input) as Record<string, unknown>)
+  const writeUserTags = args.writeUserTags ?? defaultWriteUserTags
+  try {
+    const parsed = adaptV2ToStructuredCv(args.parsedV2)
+    const sharedTopSkills = computeTopSkills({
+      candidateProfileSkills: parsed.candidateProfile.skills,
+      workHistory: args.parsedV2.workHistory,
+    })
+    // Embedding: best-effort, same sync compute the ingest path uses. Null on any failure.
+    let embedResult: ComputeCvEmbeddingResult | null = null
+    try {
+      embedResult = await computeEmbedding({
+        candidateProfile: parsed.candidateProfile,
+        experiences: parsed.experiences,
+        education: parsed.education,
+        industryTags: parsed.industryTags,
+        topSkills: sharedTopSkills,
+      })
+    } catch (err) {
+      log("pa.cv_reenrich.embedding_error", {
+        userId: args.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      embedResult = null
+    }
+    await runUserTagsMerge({
+      db: args.db,
+      userId: args.userId,
+      parsed,
+      workHistory: args.parsedV2.workHistory,
+      embedding: embedResult,
+      industrySector: args.parsedV2.relevantIndustry,
+      relevantIndustry: args.parsedV2.relevantIndustry,
+      relevantSpecialization: args.parsedV2.relevantSpecialization,
+      proposedTags: args.parsedV2.proposedTags,
+      resumeMatchingTagSignals: {
+        skills: args.parsedV2.skills,
+        workHistory: args.parsedV2.workHistory,
+        totalYearsExperience: args.parsedV2.totalYearsExperience,
+        workAuthorization: args.parsedV2.workAuthorization,
+        relevantSpecialization: args.parsedV2.relevantSpecialization,
+        proposedTags: args.parsedV2.proposedTags,
+      },
+      mergeUserTagsFn,
+      writeUserTags,
+      nowIso,
+      log,
+      ...(args.mergeAndDetermine ? { mergeAndDetermine: args.mergeAndDetermine } : {}),
+    })
+    log("pa.cv_reenrich.ok", { userId: args.userId })
+  } catch (err) {
+    // Fully fail-open — a conversational re-enrich must never surface an error.
+    log("pa.cv_reenrich.error", {
       userId: args.userId,
       error: err instanceof Error ? err.message : String(err),
     })

@@ -52,6 +52,10 @@ import {
 import { writeFeedbackEvent } from "@pa/pa-persistence"
 import { mem0Add, type Mem0Config } from "@pa/memory"
 import { parseResumeText } from "@pa/pa-resume-parser"
+// #3 re-enrich hook (Adam 2026-06-05): a résumé PASTED into chat must flow into the SAME
+// single enrich path as an attachment (webhook Stream-D) / website upload — re-derive
+// role/careerStage/skills via the D8 sole writer — not just return parsed text to the LLM.
+import { reEnrichUserTagsFromParsedResume } from "../../cv-ingest/cv-ingest.js"
 import { queryMatchingJobsV16, recordRecommendedJobs } from "@pa/job-rec"
 import type { FeedbackEvent } from "@pa/core-types"
 import type { Firestore } from "firebase-admin/firestore"
@@ -1587,6 +1591,24 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
           usedTier: result.usedTier,
           usedModel: result.usedModel,
         })
+        // RE-ENRICH HOOK (Adam #3 2026-06-05): persist the parsed résumé into the SAME
+        // canonical enrich path the attachment (webhook Stream-D) + website upload use —
+        // re-derives targetRoleFunction (incl. the #2 same-lane override), careerStage,
+        // skills, embedding via the D8 sole writer. Fire-and-forget so the agent's
+        // confirm/pitch turn (which owns the conversational reply) is never blocked; the
+        // helper is fully fail-open. find_match then reads the refreshed tags live.
+        void reEnrichUserTagsFromParsedResume({
+          db: ctx.db,
+          userId: ctx.userId,
+          parsedV2: result.parsed,
+          nowIso: ctx.nowIso,
+          log: ctx.log,
+        }).catch((err) =>
+          ctx.log("pa.claire.cv_parse.reenrich_failed", {
+            userId: ctx.userId,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        )
         return { ok: true, parsed: result.parsed, usedModel: result.usedModel }
       } catch (err) {
         return {

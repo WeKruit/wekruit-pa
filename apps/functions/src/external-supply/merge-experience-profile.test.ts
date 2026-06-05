@@ -11,6 +11,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 
 import {
+  MERGE_JSON_SCHEMA,
   mergeAndDetermineProfile,
   toSourceFromLinkedin,
   toSourceFromResume,
@@ -106,6 +107,120 @@ test("careerStage validation rejects a bogus enum value (drops careerStage, keep
   assert.equal(result!.careerStage, undefined, "bogus careerStage dropped")
   assert.equal(result!.recentRoleTitle, "Engineer", "other fields preserved")
   assert.deepEqual(result!.yoeRange, [4, 6])
+})
+
+test("roleFunction: same-lane SWE pick is kept and returned (the #2 role-derive hinge)", async () => {
+  const result = await mergeAndDetermineProfile(
+    {
+      linkedinExperiences: [{ title: "Senior Software Engineer", company: "Acme", isCurrent: true, startDate: "2024-02" }],
+      resumeExperiences: [],
+    },
+    {
+      llmCall: fakeLlm({
+        mergedExperiences: [{ title: "Senior Software Engineer", company: "Acme", isCurrent: true, startDate: "2024-02", endDate: null, description: null }],
+        recentRoleTitle: "Senior Software Engineer",
+        recentCompany: "Acme",
+        careerStage: "senior",
+        yoeRange: [3, 5],
+        roleFunction: ["software_engineering"],
+      }),
+    },
+  )
+  assert.ok(result)
+  assert.deepEqual(result!.roleFunction, ["software_engineering"], "same-lane SWE role kept")
+})
+
+test("roleFunction: non-member token is DROPPED (membership-only, no regex coercion)", async () => {
+  const result = await mergeAndDetermineProfile(
+    {
+      linkedinExperiences: [{ title: "Software Engineer", company: "Acme", isCurrent: true }],
+      resumeExperiences: [],
+    },
+    {
+      llmCall: fakeLlm({
+        mergedExperiences: [{ title: "Software Engineer", company: "Acme", isCurrent: true, startDate: null, endDate: null, description: null }],
+        recentRoleTitle: "Software Engineer",
+        recentCompany: "Acme",
+        careerStage: null,
+        yoeRange: null,
+        roleFunction: ["swe"], // abbreviation — NOT in ROLE_FUNCTION_VOCAB (D5)
+      }),
+    },
+  )
+  assert.ok(result)
+  assert.equal(result!.roleFunction, undefined, "bogus non-member token dropped → roleFunction absent")
+})
+
+test("roleFunction: a genuinely mixed current role keeps BOTH lanes (multi-pick)", async () => {
+  const result = await mergeAndDetermineProfile(
+    {
+      linkedinExperiences: [{ title: "Founder / Software Engineer & Product Manager", company: "aiStudy", isCurrent: true }],
+      resumeExperiences: [],
+    },
+    {
+      llmCall: fakeLlm({
+        mergedExperiences: [{ title: "Founder / Software Engineer & Product Manager", company: "aiStudy", isCurrent: true, startDate: null, endDate: null, description: null }],
+        recentRoleTitle: "Founder / Software Engineer & Product Manager",
+        recentCompany: "aiStudy",
+        careerStage: null,
+        yoeRange: null,
+        roleFunction: ["software_engineering", "product_management"],
+      }),
+    },
+  )
+  assert.ok(result)
+  assert.deepEqual(result!.roleFunction, ["software_engineering", "product_management"], "both lanes kept (multi-pick)")
+})
+
+test("roleFunction: duplicate tokens are deduped to one", async () => {
+  const result = await mergeAndDetermineProfile(
+    {
+      linkedinExperiences: [{ title: "Software Engineer", company: "Acme", isCurrent: true }],
+      resumeExperiences: [],
+    },
+    {
+      llmCall: fakeLlm({
+        mergedExperiences: [{ title: "Software Engineer", company: "Acme", isCurrent: true, startDate: null, endDate: null, description: null }],
+        recentRoleTitle: "Software Engineer",
+        recentCompany: "Acme",
+        careerStage: null,
+        yoeRange: null,
+        roleFunction: ["software_engineering", "software_engineering"],
+      }),
+    },
+  )
+  assert.ok(result)
+  assert.deepEqual(result!.roleFunction, ["software_engineering"], "deduped to one")
+})
+
+test("roleFunction: null (no role anywhere) leaves roleFunction absent — fail-open, no best-guess invented", async () => {
+  const result = await mergeAndDetermineProfile(
+    {
+      linkedinExperiences: [{ title: "Member", company: "Club", isCurrent: true }],
+      resumeExperiences: [],
+    },
+    {
+      llmCall: fakeLlm({
+        mergedExperiences: [{ title: "Member", company: "Club", isCurrent: true, startDate: null, endDate: null, description: null }],
+        recentRoleTitle: "Member",
+        recentCompany: "Club",
+        careerStage: null,
+        yoeRange: null,
+        roleFunction: null,
+      }),
+    },
+  )
+  assert.ok(result)
+  assert.equal(result!.roleFunction, undefined, "null role → absent (caller leaves tag untouched)")
+})
+
+test("STRICT schema: roleFunction is a property AND a required key (json_schema STRICT needs both)", () => {
+  const props = MERGE_JSON_SCHEMA.schema.properties as Record<string, unknown>
+  assert.ok(props.roleFunction, "roleFunction declared as a schema property")
+  assert.ok(
+    (MERGE_JSON_SCHEMA.schema.required as readonly string[]).includes("roleFunction"),
+    "roleFunction listed in required (STRICT)",
+  )
 })
 
 test("fail-open returns null with no API key (default LLM path, existing data left untouched)", async () => {

@@ -28,7 +28,7 @@
  *   - FAIL-OPEN: on any LLM error / empty / invalid / no-key, return null so the caller leaves existing
  *     tags + highlights untouched. Enrichment must never crash.
  */
-import { CAREER_STAGE_VOCAB } from "@wekruit/shared-tags"
+import { CAREER_STAGE_VOCAB, ROLE_FUNCTION_VOCAB } from "@wekruit/shared-tags"
 
 const MERGE_MODEL = "gpt-5.4-mini" // parity with compose-pitch.ts — stronger than nano for the centerpiece.
 
@@ -61,6 +61,8 @@ export type MergeAndDetermineResult = {
   recentCompany?: string
   careerStage?: string
   yoeRange?: [number, number]
+  /** Canonical same-lane role-function pick(s) derived from the MOST-RECENT real role (D1, multi-pick). */
+  roleFunction?: string[]
 }
 
 const MERGE_SYSTEM = [
@@ -102,12 +104,19 @@ const MERGE_SYSTEM = [
   "  lo should be greater than 0. If everything is internships / school, use [0, 0] and careerStage",
   "  'entry_level' or 'intern' as fits. If durations are missing, estimate conservatively from the spans",
   "  present — never invent.",
+  "- roleFunction = 1 OR MORE tokens chosen ONLY from this CLOSED set:",
+  "    " + ROLE_FUNCTION_VOCAB.join(", "),
+  "  Derive it from the candidate's MOST-RECENT real role and keep the SAME LANE: a current Software",
+  '  Engineer → ["software_engineering"]; a current Product Manager → ["product_management"]. ALWAYS emit',
+  "  your single best guess even when the title is ambiguous or the person spans two lanes — for a",
+  "  genuinely mixed current role emit BOTH lanes (multi-pick). NEVER ask, NEVER leave it empty when there",
+  "  is any role at all; only emit null if there is literally no role anywhere in the timeline.",
   "",
   "Return ONLY the JSON object matching the schema. No prose.",
 ].join("\n")
 
-/** The STRICT json_schema for the merge+determine response. */
-const MERGE_JSON_SCHEMA = {
+/** The STRICT json_schema for the merge+determine response. Exported so tests can assert STRICT shape. */
+export const MERGE_JSON_SCHEMA = {
   name: "merged_experience_profile",
   strict: true,
   schema: {
@@ -139,8 +148,9 @@ const MERGE_JSON_SCHEMA = {
         minItems: 2,
         maxItems: 2,
       },
+      roleFunction: { type: ["array", "null"], items: { type: "string" } },
     },
-    required: ["mergedExperiences", "recentRoleTitle", "recentCompany", "careerStage", "yoeRange"],
+    required: ["mergedExperiences", "recentRoleTitle", "recentCompany", "careerStage", "yoeRange", "roleFunction"],
   },
 } as const
 
@@ -195,6 +205,23 @@ function validateCareerStage(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined
   const v = value.trim()
   return (CAREER_STAGE_VOCAB as readonly string[]).includes(v) ? v : undefined
+}
+
+/**
+ * Validate roleFunction ⊆ ROLE_FUNCTION_VOCAB. Membership-only (NO regex text→enum): dedupe and DROP any
+ * non-member token the model emits. Returns [] when nothing valid → caller leaves the tag untouched.
+ */
+function validateRoleFunction(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const allowed = new Set(ROLE_FUNCTION_VOCAB as readonly string[])
+  const out: string[] = []
+  for (const v of value) {
+    if (typeof v === "string") {
+      const t = v.trim()
+      if (allowed.has(t) && !out.includes(t)) out.push(t)
+    }
+  }
+  return out
 }
 
 /** Validate a [lo, hi] numeric tuple. Returns undefined if not two finite non-negative numbers. */
@@ -309,6 +336,8 @@ export async function mergeAndDetermineProfile(
     if (careerStage) result.careerStage = careerStage
     const yoeRange = validateYoeRange(parsed.yoeRange)
     if (yoeRange) result.yoeRange = yoeRange
+    const roleFunction = validateRoleFunction(parsed.roleFunction)
+    if (roleFunction.length > 0) result.roleFunction = roleFunction
     return result
   } catch {
     return null

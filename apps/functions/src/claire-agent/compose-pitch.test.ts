@@ -214,6 +214,96 @@ test("R4: thin profile gets the SHORT, optional evidence-ask copy (once)", async
   assert.ok(writes.some((w) => typeof (w as { evidenceAskedAt?: unknown }).evidenceAskedAt === "string"))
 })
 
+// ─── #2 PITCH SOFT-CONFIRM (Adam 2026-06-05): the pitch offer ends with a LIGHT one-line confirm of the
+// auto-derived role (tags.targetRoleFunction) BEFORE recs — conversational, not a wall. ───
+
+test("#2: offer bubble ends with the LIGHT role soft-confirm on the NORMAL variant", async () => {
+  const { db } = makeStubDb({
+    displayName: "Adam Yang",
+    evidenceAskedAt: "2026-06-03T00:00:00Z", // already asked → normal OFFER_BUBBLE branch
+    tags: { recentRoleTitle: "Software Engineer", recentCompany: "Acme", targetRoleFunction: ["software_engineering"] },
+    experienceHighlights: [{ title: "Software Engineer", company: "Acme" }],
+  })
+  const mock: PitchComposer = { async compose() { return "PITCH" } }
+  const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", mock)
+  assert.equal(out!.length, 3, "still [confirmation, pitch, offer]")
+  assert.equal(out![1], "PITCH", "the railed pitch bubble is UNCHANGED (no confirm leaked into it)")
+  assert.match(out![2]!, /^targeting software engineering roles — that right\? 👍 /, "offer leads with the soft-confirm")
+})
+
+test("#2: soft-confirm fires on the RICH-résumé variant too", async () => {
+  const { db } = makeStubDb(
+    {
+      displayName: "Adam Yang",
+      tags: { recentRoleTitle: "Senior Software Engineer", recentCompany: "Tesla", targetRoleFunction: ["software_engineering"] },
+      experienceHighlights: [{ title: "Senior Software Engineer", company: "Tesla" }],
+    },
+    [
+      {
+        createdAt: ts("2026-06-05T01:45:00Z"),
+        experiences: [{ title: "Founder", company: "AI Study", description: "Shipped an AI study product 0→1 with RAG; +10% AUC over baseline metrics." }],
+        topSkills: ["node.js"],
+      },
+    ],
+  )
+  const mock: PitchComposer = { async compose() { return "PITCH" } }
+  const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", mock)
+  assert.match(out![2]!, /^targeting software engineering roles — that right\? 👍 want me to pull roles/)
+})
+
+test("#2: soft-confirm fires on the THIN evidence-ask variant too", async () => {
+  const { db } = makeStubDb({
+    displayName: "Adam Yang",
+    tags: { recentRoleTitle: "Software Engineer", recentCompany: "Acme", targetRoleFunction: ["software_engineering"] },
+    experienceHighlights: [{ title: "Software Engineer", company: "Acme" }], // thin, never asked → OFFER_BUBBLE_THIN
+  })
+  const mock: PitchComposer = { async compose() { return "PITCH" } }
+  const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", mock)
+  assert.match(out![2]!, /^targeting software engineering roles — that right\? 👍 i already know about you/)
+})
+
+test("#2: an _and_ role token humanizes to '&' in the soft-confirm", async () => {
+  const { db } = makeStubDb({
+    displayName: "Pat",
+    evidenceAskedAt: "2026-06-03T00:00:00Z",
+    tags: { recentRoleTitle: "Accountant", recentCompany: "Acme", targetRoleFunction: ["accounting_and_finance"] },
+    experienceHighlights: [{ title: "Accountant", company: "Acme" }],
+  })
+  const mock: PitchComposer = { async compose() { return "PITCH" } }
+  const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", mock)
+  assert.match(out![2]!, /^targeting accounting & finance roles — that right\? 👍 /)
+})
+
+test("#2: a multi-pick role joins the first two lanes with ' / '", async () => {
+  const { db } = makeStubDb({
+    displayName: "Sam",
+    evidenceAskedAt: "2026-06-03T00:00:00Z",
+    tags: {
+      recentRoleTitle: "Founder",
+      recentCompany: "aiStudy",
+      targetRoleFunction: ["software_engineering", "product_management"],
+    },
+    experienceHighlights: [{ title: "Founder", company: "aiStudy" }],
+  })
+  const mock: PitchComposer = { async compose() { return "PITCH" } }
+  const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", mock)
+  assert.match(out![2]!, /^targeting software engineering \/ product management roles — that right\? 👍 /)
+})
+
+test("#2: NO derived role → offer is the verbatim current string (no dangling 'targeting — that right?')", async () => {
+  const { db } = makeStubDb({
+    displayName: "Adam Yang",
+    evidenceAskedAt: "2026-06-03T00:00:00Z",
+    tags: { recentRoleTitle: "Software Engineer", recentCompany: "Acme" }, // no targetRoleFunction
+    experienceHighlights: [{ title: "Software Engineer", company: "Acme" }],
+  })
+  const mock: PitchComposer = { async compose() { return "PITCH" } }
+  const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", mock)
+  assert.doesNotMatch(out![2]!, /targeting/)
+  assert.doesNotMatch(out![2]!, /that right/)
+  assert.match(out![2]!, /^want me to pull roles that fit this now/) // verbatim OFFER_BUBBLE
+})
+
 test("R4: thin profile that was ALREADY asked does NOT repeat the evidence ask", async () => {
   const { db } = makeStubDb({
     displayName: "Adam Yang",

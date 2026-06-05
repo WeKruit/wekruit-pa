@@ -540,11 +540,25 @@ export async function composePitchTurn(
   const alreadyAsked = Boolean((userDoc as { evidenceAskedAt?: unknown }).evidenceAskedAt)
   const thin = isThinEvidence(profile)
   const askForEvidence = thin && !alreadyAsked
-  const offer = resumeIsRich
-    ? "want me to pull roles that fit this now, or tweak/add anything on your profile first?"
-    : askForEvidence
-      ? OFFER_BUBBLE_THIN
-      : OFFER_BUBBLE
+  // LIGHT role soft-confirm (Adam #2 2026-06-05): the pitch turn ends by softly confirming the role we
+  // auto-derived (tags.targetRoleFunction) BEFORE recs — conversational, NOT a wall, NOT a blocking
+  // question. If the user redirects ("actually product"), the conversational re-enrich path rewrites the
+  // tag. Display-only humanizer (NOT text→enum). Empty role → "" → offer is the verbatim current string.
+  const offerTags = (userDoc.tags ?? {}) as Record<string, unknown>
+  const roleFns = Array.isArray(offerTags.targetRoleFunction)
+    ? (offerTags.targetRoleFunction as unknown[]).filter((r): r is string => typeof r === "string" && r.trim().length > 0)
+    : []
+  const roleConfirm =
+    roleFns.length > 0
+      ? `targeting ${roleFns.slice(0, 2).map((t) => t.replace(/_and_/g, " & ").replace(/_/g, " ")).join(" / ")} roles — that right? 👍 `
+      : ""
+  const offer =
+    roleConfirm +
+    (resumeIsRich
+      ? "want me to pull roles that fit this now, or tweak/add anything on your profile first?"
+      : askForEvidence
+        ? OFFER_BUBBLE_THIN
+        : OFFER_BUBBLE)
   if (askForEvidence && !resumeIsRich) {
     void db.collection(USERS).doc(userId).set({ evidenceAskedAt: nowIso }, { merge: true }).catch(() => {})
   }

@@ -427,6 +427,7 @@ export interface MirrorDeps {
       recentCompany?: string
       careerStage?: string
       yoeRange?: [number, number]
+      roleFunction?: string[]
     }
   }) => Promise<void>
   /**
@@ -494,7 +495,13 @@ export async function runCoresignalExperiencesMirror(
   // null → keep the LinkedIn-only highlights and don't touch the facts (existing tags preserved).
   let experienceHighlights = linkedinOnlyHighlights
   let mergedFacts:
-    | { recentRoleTitle?: string; recentCompany?: string; careerStage?: string; yoeRange?: [number, number] }
+    | {
+        recentRoleTitle?: string
+        recentCompany?: string
+        careerStage?: string
+        yoeRange?: [number, number]
+        roleFunction?: string[]
+      }
     | undefined
   const linkedinSources: SourceExperience[] = (recordWithDescriptions.experience ?? [])
     .map((e) => toSourceFromLinkedin(e as unknown as Record<string, unknown>))
@@ -521,6 +528,8 @@ export async function runCoresignalExperiencesMirror(
       if (merged.recentCompany) facts.recentCompany = merged.recentCompany
       if (merged.careerStage) facts.careerStage = merged.careerStage
       if (merged.yoeRange) facts.yoeRange = merged.yoeRange
+      // roleFunction is closed-enum → LLM-only (the fail-open fallback never sets it, no regex→enum).
+      if (merged.roleFunction && merged.roleFunction.length > 0) facts.roleFunction = merged.roleFunction
       if (Object.keys(facts).length > 0) mergedFacts = facts
       deps.log?.("coresignal_mirror.merged_profile", {
         userId,
@@ -651,6 +660,13 @@ export function makeFirestoreMirrorDeps(db: Firestore): Pick<MirrorDeps, "findEx
         if (mergedFacts.recentCompany) tags.recentCompany = mergedFacts.recentCompany
         if (mergedFacts.careerStage) tags.careerStage = mergedFacts.careerStage
         if (mergedFacts.yoeRange) tags.yoeRange = mergedFacts.yoeRange
+        // D1/D8 — write the canonical same-lane role under the matcher's hard-filter key. Closes the
+        // Jasmaine gap: the LinkedIn seam now lands tags.targetRoleFunction (matching + gap-aware role-
+        // question suppression) where before only the résumé seam did. Bare string[] (NOT envelope) to
+        // keep projectTagsToGlobalTags + the matcher's array-contains-any readers unchanged.
+        if (mergedFacts.roleFunction && mergedFacts.roleFunction.length > 0) {
+          tags.targetRoleFunction = mergedFacts.roleFunction
+        }
         tags.lastUpdatedFromMergedExperience = nowIso
         userPatch.tags = tags
       }
