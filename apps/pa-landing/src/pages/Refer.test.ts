@@ -134,6 +134,15 @@ test("ReferPublicPage routes candidate-owner earning CTAs back to the referral d
   assert.doesNotMatch(source, /Sign up to start earning[\s\S]{0,180}navigate\("\/login"\)/)
 })
 
+test("ReferPublicPage stacks public referral sections cleanly on mobile", () => {
+  assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*\.wk-ref-public-body \{[\s\S]*padding: 36px 18px 0;[\s\S]*gap: 36px;/)
+  assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*\.wk-ref-sec__head \{[\s\S]*display: grid;[\s\S]*grid-template-columns: 1fr;[\s\S]*align-items: start;/)
+  assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*\.wk-ref-journey \{[\s\S]*padding: 18px;/)
+  assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*\.wk-ref-earner \{[\s\S]*grid-template-columns: 48px minmax\(0, 1fr\);[\s\S]*align-items: start;[\s\S]*padding: 18px;/)
+  assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*\.wk-ref-earner__right \{[\s\S]*grid-column: 1 \/ -1;[\s\S]*display: flex;[\s\S]*border-top: 1px solid var\(--border\);/)
+  assert.match(styles, /@media \(max-width: 720px\) \{[\s\S]*\.wk-ref-public-stat__num \{[\s\S]*font-size: 32px;/)
+})
+
 test("ReferComposer invite preview keeps friend onboarding profile-first", () => {
   assert.doesNotMatch(source, /No resume required up front/)
   assert.doesNotMatch(source, /matches you with hiring managers directly/i)
