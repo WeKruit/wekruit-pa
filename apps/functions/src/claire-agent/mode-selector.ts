@@ -154,7 +154,18 @@ async function hasActivePrescreen(
 }
 
 /** Write the cold-start sharedOnboarding/workSession doc (legacy buildSharedOnboardingStartedState shape). */
-async function bootstrapOnboarding(db: Firestore, userId: string, now: string): Promise<void> {
+async function bootstrapOnboarding(
+  db: Firestore,
+  userId: string,
+  now: string,
+  firstSlot?: SharedOnboardingQuestionId,
+): Promise<void> {
+  // Seed the slot the cold-start actually intends to ask. The gap-aware cold start may SKIP a
+  // tag-satisfied target_role and open at the first GENUINELY-missing slot (e.g. location_relocation);
+  // the durable currentQuestionId MUST match that or the next inbound is recorded against the wrong
+  // slot (decision says location, durable says target_role → incoherent re-ask). Defaults to the first
+  // asked slot for back-compat callers.
+  const seedSlot = firstSlot ?? (DEFAULT_ONBOARDING_SLOTS[0] as SharedOnboardingQuestionId)
   await db
     .collection(USERS)
     .doc(userId)
@@ -167,8 +178,7 @@ async function bootstrapOnboarding(db: Firestore, userId: string, now: string): 
           status: "active",
           startedAt: now,
           updatedAt: now,
-          // 2026-06-02 trim: cold-start seeds the first ASKED slot (target_role).
-          currentQuestionId: DEFAULT_ONBOARDING_SLOTS[0],
+          currentQuestionId: seedSlot,
           questionOrder: [...DEFAULT_ONBOARDING_SLOTS],
           answers: {},
           completed: false,
@@ -177,7 +187,7 @@ async function bootstrapOnboarding(db: Firestore, userId: string, now: string): 
           kind: SHARED_ONBOARDING_WORK_SESSION_KIND,
           status: "active",
           startedAt: now,
-          currentQuestionId: DEFAULT_ONBOARDING_SLOTS[0],
+          currentQuestionId: seedSlot,
           boundary: "shared_onboarding",
         },
       },
@@ -635,7 +645,7 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
         // drop résumé) → pitch (the cv-parsed branch above bootstraps its own state). The slot/prompt
         // below stay set only so agent.ts has a question to ask IF the offer short-circuit falls
         // through (no link surfaced) — a non-fatal degrade, and still no durable poison.
-        if (!offerFirst) await bootstrapOnboarding(args.db, args.userId, now)
+        if (!offerFirst) await bootstrapOnboarding(args.db, args.userId, now, firstMissing)
         log("mode.onboarding_bootstrap", { userId: args.userId, offerFirst, firstMissing })
         return {
           mode: "onboarding",

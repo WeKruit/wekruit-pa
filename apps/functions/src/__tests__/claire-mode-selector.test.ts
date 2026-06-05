@@ -102,17 +102,19 @@ test("QR resume-less provisional user cold-starts onboarding (no resume gate) �
   assert.equal(u.sharedOnboarding.currentQuestionId, "target_role")
 })
 
-test("QR dev re-onboard reset → existing user with tags/resume cold-starts onboarding fresh (non-destructive)", async () => {
+test("QR dev re-onboard reset → existing user with role-tag/resume gap-aware re-onboards (asks ONLY the missing axis, never re-asks the known role)", async () => {
   // Post-reonboardExistingUserViaQr shape: onboardingState / sharedOnboarding /
-  // workSession CLEARED, but tags + resume KEPT. The mode-selector must treat this
-  // as a cold start (NOT complete, NOT active) and bootstrap onboarding fresh.
+  // workSession CLEARED, but tags + resume KEPT (non-destructive). targetRoleFunction is
+  // already on file but targetLocations is NOT. Under universal gap-aware cold-start
+  // (Adam 2026-06-05 "only ask for non-existing info"), the selector must NOT re-ask the
+  // known target_role — it opens at the first GENUINELY-missing asked slot: location_relocation.
   const { db, store } = makeDb({
     [`pa-users/${UID}`]: {
       // no onboardingState, no sharedOnboarding, no workSession (deleted by reset)
       source: "qr_imessage",
       firstTouchCampaign: "dev-card",
       senderNumber: "+15550000009",
-      tags: { targetRoleFunction: ["software_engineering"] }, // KEPT
+      tags: { targetRoleFunction: ["software_engineering"] }, // KEPT → role is NOT re-asked
       latestResumeArtifactId: "resume-abc", // KEPT
       displayName: "Adam Dev", // KEPT
     },
@@ -120,14 +122,18 @@ test("QR dev re-onboard reset → existing user with tags/resume cold-starts onb
   const res = await selectClaireMode({ db, userId: UID, inboundText: "Hello, WeKruit! 22222222-3333-4444-5555-666666666666" })
   assert.equal(res.mode, "onboarding")
   assert.equal(res.awaitingAnswer, false, "re-onboard kickoff does not record an answer")
-  assert.equal(res.onboardingSlot, "target_role")
+  assert.equal(res.onboardingSlot, "location_relocation", "gap-aware skips the known target_role, opens at the missing location axis")
   const u = store.get(`pa-users/${UID}`) as {
     sharedOnboarding: Record<string, unknown>
+    workSession: Record<string, unknown>
     tags: Record<string, unknown>
     latestResumeArtifactId: string
   }
   assert.equal(u.sharedOnboarding.status, "active")
-  assert.equal(u.sharedOnboarding.currentQuestionId, "target_role")
+  // durable currentQuestionId MUST match the asked slot (else the next inbound is recorded
+  // against the wrong slot) — bootstrap seeds the gap-aware missing slot, not a hardcoded target_role.
+  assert.equal(u.sharedOnboarding.currentQuestionId, "location_relocation")
+  assert.equal(u.workSession.currentQuestionId, "location_relocation")
   // durable data still present after the bootstrap write (merge, non-destructive)
   assert.deepEqual(u.tags, { targetRoleFunction: ["software_engineering"] })
   assert.equal(u.latestResumeArtifactId, "resume-abc")
