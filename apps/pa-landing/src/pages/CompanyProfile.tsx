@@ -257,13 +257,29 @@ function CompanyEmpty({ message }: { message?: string }) {
   return (
     <CandidateShell>
       <style>{COMPANY_PROFILE_STYLES}</style>
-      <main className="wk-company wk-container wk-company-state">
-        <p className="wk-eyebrow">Company profile</p>
-        <h1>This company profile is not open.</h1>
-        <p>{message ?? "There are no public WeKruit roles for this company yet."}</p>
-        <Link className="wk-btn wk-btn--primary" to="/market">
-          Open market <Icon name="arrow-right" size={16} stroke={1.8} />
+      <main className="wk-company wk-container wk-company-state wk-company-state--empty">
+        <Link className="wk-company-back" to="/market">
+          <Icon name="arrow-left" size={16} stroke={1.8} /> Market
         </Link>
+        <p className="wk-eyebrow">Company profile</p>
+        <h1>No active Claire screen here yet.</h1>
+        <p>
+          {message ?? "This company does not have an open WeKruit role brief right now. Browse active role briefs Claire can screen against, or start a profile Claire can reuse when a matching role appears."}
+        </p>
+        <div className="wk-company-empty-panel" aria-label="Company profile recovery actions">
+          <div>
+            <strong>Keep moving with Claire.</strong>
+            <span>Role briefs are the live interview surface; your WeKruit profile stays reusable across companies.</span>
+          </div>
+          <div className="wk-company-empty-panel__actions">
+            <Link className="wk-btn wk-btn--primary wk-company-empty-panel__primary" to="/market">
+              Open role briefs <Icon name="arrow-right" size={16} stroke={1.8} />
+            </Link>
+            <Link className="wk-company-empty-panel__secondary" to="/onboarding">
+              Start with Claire
+            </Link>
+          </div>
+        </div>
       </main>
     </CandidateShell>
   )
@@ -581,14 +597,62 @@ const COMPANY_PROFILE_STYLES = `
   gap: 16px;
   max-width: 760px;
 }
+.wk-company-state--empty {
+  min-height: calc(100vh - 72px);
+  align-content: center;
+}
 .wk-company-state h1 {
   margin: 0;
   font-family: 'Newsreader', serif;
-  font-size: clamp(40px, 6vw, 72px);
+  font-size: clamp(38px, 5.4vw, 66px);
   font-weight: 400;
-  line-height: 0.98;
+  line-height: 1.02;
 }
 .wk-company-state p { color: var(--wk-ink-2); margin: 0; }
+.wk-company-empty-panel {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 18px 20px;
+  border: 1px solid var(--wk-border);
+  border-radius: var(--wk-r-md);
+  background: rgba(255, 252, 247, 0.78);
+  box-shadow: 0 10px 28px -18px rgba(45, 26, 10, 0.22);
+}
+.wk-company-empty-panel > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+.wk-company-empty-panel strong {
+  color: var(--wk-ink);
+  font-size: 16px;
+  font-weight: 750;
+  line-height: 1.25;
+}
+.wk-company-empty-panel span {
+  color: var(--wk-ink-2);
+  font-size: 14px;
+  line-height: 1.42;
+}
+.wk-company-empty-panel__actions {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+}
+.wk-company-empty-panel__primary {
+  min-height: 42px;
+  white-space: nowrap;
+}
+.wk-company-empty-panel__secondary {
+  color: var(--wk-ink-3);
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.wk-company-empty-panel__secondary:hover { color: var(--wk-ink); }
 
 @media (max-width: 920px) {
   .wk-company-hero { padding-top: 32px; }
@@ -597,6 +661,29 @@ const COMPANY_PROFILE_STYLES = `
 }
 
 @media (max-width: 560px) {
+  .wk-company-state {
+    padding: 52px 18px;
+    gap: 14px;
+  }
+  .wk-company-state--empty {
+    min-height: calc(100vh - 64px);
+    align-content: start;
+    padding-top: 72px;
+  }
+  .wk-company-state h1 {
+    font-size: 38px;
+    line-height: 1.04;
+  }
+  .wk-company-empty-panel {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    padding: 16px;
+  }
+  .wk-company-empty-panel__actions { justify-items: stretch; }
+  .wk-company-empty-panel__primary {
+    width: 100%;
+    justify-content: center;
+  }
   .wk-company-title-row { grid-template-columns: 1fr; gap: 14px; }
   .wk-company-logo { width: 50px; height: 50px; border-radius: 12px; font-size: 26px; }
   .wk-company-hero-cta {
