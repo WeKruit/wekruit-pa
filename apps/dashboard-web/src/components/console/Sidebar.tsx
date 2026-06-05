@@ -43,6 +43,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/conversations", label: "iMessage conversations" },
       { to: "/match/candidates", label: "Reverse match" },
       { to: "/admin/bulk-resumes", label: "Bulk resumes" },
+      { to: "/admin/delete-user", label: "Delete user (danger)" },
     ],
   },
   {

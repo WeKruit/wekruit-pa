@@ -14,9 +14,90 @@
  */
 import type { ClaireToolContext } from "./types.js"
 import { normalizeReply } from "./guardrails.js"
+import { isNearDuplicateOfAny } from "./dedup.js"
 
 /** Slow tools that should trigger the typing reflex. */
 export const SLOW_TOOLS = ["find_match", "match_collab", "cv_parse"] as const
+
+/** pa-messages collection name (durable transcript — what Claire actually sent). */
+const PA_MESSAGES = "pa-messages"
+
+/**
+ * How many of Claire's most-recent assistant messages (this session) to compare a new bubble
+ * against for the CROSS-TURN near-dup guard. A small window keeps the read cheap and bounds
+ * suppression to the recent conversation (Adam R1: "the last few messages").
+ */
+const RECENT_SENT_WINDOW = 5
+
+/**
+ * Read up to `limit` of the most-recent messages Claire SENT to this user in this session, from the
+ * durable `pa-messages` transcript (NOT pa-outbound — that is the delivery queue and may contain
+ * not-yet-sent / failed rows). Used by deliverBubbles to suppress a bubble that is near-identical to
+ * something Claire already sent (Adam R1, 2026-06-04).
+ *
+ * FAIL-OPEN by design: if db/userId/sessionId are absent, or the read throws, return [] so delivery
+ * is NEVER blocked. The within-turn exact-dedup still runs regardless.
+ *
+ * Query shape mirrors FirestoreSession.getItems: filter by sessionId ONLY, then filter role +
+ * liveness + sort in memory. This deliberately avoids a Firestore composite index (sessionId +
+ * userId + role + orderBy createdAt) that does not exist in prod.
+ */
+export async function getRecentSentMessages(
+  ctx: Pick<ClaireToolContext, "db" | "userId" | "sessionId">,
+  limit = RECENT_SENT_WINDOW,
+): Promise<string[]> {
+  const db = ctx?.db as
+    | {
+        collection?: (name: string) => {
+          where: (
+            field: string,
+            op: string,
+            value: unknown,
+          ) => {
+            limit: (n: number) => {
+              get: () => Promise<{ docs: Array<{ data: () => Record<string, unknown> }> }>
+            }
+          }
+        }
+      }
+    | undefined
+  const sessionId = ctx?.sessionId
+  const userId = ctx?.userId
+  // Need a session to scope the read; without db/session we cannot (and must not) block delivery.
+  if (!db || typeof db.collection !== "function" || !sessionId) return []
+  try {
+    const snap = await db
+      .collection(PA_MESSAGES)
+      .where("sessionId", "==", sessionId)
+      .limit(200)
+      .get()
+    const rows = snap.docs
+      .map((d) => d.data())
+      .filter((d) => {
+        if (d?.role !== "assistant") return false
+        if (d?.cleared === true || d?.popped === true) return false
+        // If userId is known on both sides, keep only this user's rows; tolerate missing userId.
+        if (userId && typeof d?.userId === "string" && d.userId && d.userId !== userId) return false
+        return true
+      })
+    rows.sort((a, b) => String(a?.createdAt ?? "").localeCompare(String(b?.createdAt ?? "")))
+    return rows
+      .slice(-limit)
+      .map((d) => (typeof d?.body === "string" ? d.body : ""))
+      .filter(Boolean)
+  } catch (err) {
+    // Fail open: never let a transcript read failure break the conversational turn.
+    try {
+      ctx && (ctx as { log?: (e: string, p?: Record<string, unknown>) => void }).log?.(
+        "claire.dedup.recent_read_error",
+        { error: String((err as { message?: unknown })?.message ?? err) },
+      )
+    } catch {
+      /* noop */
+    }
+    return []
+  }
+}
 
 /**
  * Hard cap on bubbles per turn — a runaway `messages` array can never flood the thread. Overflow
@@ -78,6 +159,23 @@ export async function deliverFinalText(
 }
 
 /**
+ * Richer outcome of a bubble-delivery attempt — lets a caller distinguish the two zero-delivery cases
+ * the bare count conflates (Adam 2026-06-04, the "Hi → silence, feels glitchy" anti-silence work):
+ *   - `sent === 0 && suppressedAll === false`  → there was NOTHING to send (empty/blank/tool-handled).
+ *     Nothing to do; staying silent is correct.
+ *   - `sent === 0 && suppressedAll === true`   → there WAS ≥1 real bubble, but the near-dup dedup
+ *     dropped EVERY one (a deterministic pattern that duplicates an earlier message). The caller must
+ *     NOT go silent — it should fall through to a FRESH agent turn (see runClaireTurn's anti-silence
+ *     fallback). The dedup itself is correct and stays; this just surfaces the "all-suppressed" signal.
+ */
+export interface DeliverBubblesResult {
+  /** count of bubbles actually POSTed this turn. */
+  sent: number
+  /** true ONLY when ≥1 non-empty bubble existed but the dedup suppressed them ALL. */
+  suppressedAll: boolean
+}
+
+/**
  * Deliver the agent's structured reply as N iMessage bubbles — ONE Sendblue send per element, in
  * order. This is the SDK-native multi-bubble path (the agent's `outputType.messages` array): the
  * agent emits ALL bubbles in ONE response, and we POST each. It REPLACES the old "send each bubble
@@ -88,17 +186,80 @@ export async function deliverFinalText(
  * Each bubble is normalized (markdown strip + length cap) independently. Bubbles beyond MAX_BUBBLES
  * are merged into the last. Returns the count actually sent (0 when a delivery TOOL already handled
  * the turn — tapback/no_reply — or the array is empty).
+ *
+ * Thin wrapper over deliverBubblesEx for back-compat: existing call sites (and tests) expect a bare
+ * count. New callers that need to tell "nothing to send" apart from "dedup suppressed everything"
+ * call deliverBubblesEx directly.
  */
 export async function deliverBubbles(
   ctx: ClaireToolContext,
   messages: readonly string[],
   deliveredViaTool = false,
 ): Promise<number> {
-  if (deliveredViaTool) return 0
-  const clean = (Array.isArray(messages) ? messages : [])
+  return (await deliverBubblesEx(ctx, messages, deliveredViaTool)).sent
+}
+
+/**
+ * deliverBubblesEx — same delivery as deliverBubbles but returns the richer {sent, suppressedAll}
+ * outcome so the anti-silence fallback can fire when a deterministic pattern's bubbles are ALL
+ * dropped by the dedup. Dedup thresholds + getRecentSentMessages are UNCHANGED.
+ */
+export async function deliverBubblesEx(
+  ctx: ClaireToolContext,
+  messages: readonly string[],
+  deliveredViaTool = false,
+  // skipCrossTurnDedup (2026-06-04): set TRUE for the anti-silence FALLBACK turn. The fallback exists to
+  // GUARANTEE a reply when the normal turn was cross-turn-suppressed — but its fresh agent reply (e.g. a
+  // greeting that resembles a past greeting) would hit the SAME cross-turn near-dup guard and get dropped
+  // too → still silence (the live "Hi → fallback fires → fallback ALSO suppressed → nothing" bug). When
+  // true we skip the recent-sent read so cross-turn suppression is OFF; WITHIN-turn exact + near-dup still
+  // run (no double bubbles). One guaranteed reply, never an infinite loop (the fallback runs at most once).
+  skipCrossTurnDedup = false,
+): Promise<DeliverBubblesResult> {
+  if (deliveredViaTool) return { sent: 0, suppressedAll: false }
+  const cleanRaw = (Array.isArray(messages) ? messages : [])
     .map((m) => normalizeReply(String(m ?? "")).trim())
     .filter(Boolean)
-  if (clean.length === 0) return 0
+  // DEDUP (Adam 2026-06-04): gpt-5.4-nano sometimes emits the SAME bubble twice in its `messages` array
+  // — the live "still pulling your info—give me a sec 🔍" sent-twice bug. A turn NEVER legitimately
+  // sends a byte-identical normalized bubble more than once, so drop exact duplicates (keep first). This
+  // is the universal last-line-of-defense for the whole class (any turn, any directive), independent of
+  // prompt hardening.
+  const seenBubble = new Set<string>()
+  const exactClean = cleanRaw.filter((m) => {
+    if (seenBubble.has(m)) return false
+    seenBubble.add(m)
+    return true
+  })
+  // NOTHING to send (the array was empty / all-blank / tool-handled) — NOT a suppression. The exact-dup
+  // collapse above keeps the first of any byte-identical pair, so reaching here means there was no real
+  // content at all; staying silent is correct (no fallback).
+  if (exactClean.length === 0) return { sent: 0, suppressedAll: false }
+
+  // NEAR-DUP guard (Adam R1, 2026-06-04): drop bubbles that are SIMILAR — not just byte-identical —
+  // to (a) a bubble already accepted earlier in THIS turn, or (b) one of the last few messages Claire
+  // already SENT this session. On a near-dup we DROP it (send nothing) — never substitute a variant.
+  // The recent-sent read is fail-open: a Firestore error (or a stub ctx without db) returns [], so this
+  // degrades gracefully to within-turn-only suppression and NEVER blocks delivery.
+  const recentSent = skipCrossTurnDedup ? [] : await getRecentSentMessages(ctx)
+  const acceptedThisTurn: string[] = []
+  const clean: string[] = []
+  for (const bubble of exactClean) {
+    if (isNearDuplicateOfAny(bubble, acceptedThisTurn)) {
+      ctx.log?.("claire.dedup.near_dup_suppressed", { scope: "within_turn", bubble: bubble.slice(0, 120) })
+      continue
+    }
+    if (isNearDuplicateOfAny(bubble, recentSent)) {
+      ctx.log?.("claire.dedup.near_dup_suppressed", { scope: "cross_turn", bubble: bubble.slice(0, 120) })
+      continue
+    }
+    acceptedThisTurn.push(bubble)
+    clean.push(bubble)
+  }
+  // SUPPRESSED-ALL: there WERE ≥1 real bubbles (exactClean) but the near-dup guard dropped every one.
+  // Signal it so the caller can fall through to a fresh agent turn instead of going silent ("Hi →
+  // nothing" glitch). The dedup decision itself stands — we never resurrect the dropped bubbles here.
+  if (clean.length === 0) return { sent: 0, suppressedAll: true }
   const bubbles =
     clean.length > MAX_BUBBLES
       ? [...clean.slice(0, MAX_BUBBLES - 1), clean.slice(MAX_BUBBLES - 1).join(" ")]
@@ -124,5 +285,5 @@ export async function deliverBubbles(
     }
     await ctx.transport.sendText(bubbles[i]!, multi ? { seq: i, paced: true } : undefined)
   }
-  return bubbles.length
+  return { sent: bubbles.length, suppressedAll: false }
 }

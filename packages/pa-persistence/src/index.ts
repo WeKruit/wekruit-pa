@@ -377,6 +377,7 @@ export type {
 
 // v2.0 S2 — identity + candidate claim data-plane helpers.
 export {
+  candidateHasLinkedinBind,
   claimCandidateProfile,
   hashCandidateHandle,
   linkCandidateHandle,

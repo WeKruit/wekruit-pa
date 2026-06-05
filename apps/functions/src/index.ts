@@ -226,6 +226,11 @@ export { paLlmRerankNightly } from "./nightly-rerank.js"
 // via @wekruit/shared-tags `validateCanonicalToken` (rejects abbreviations).
 export { paPromoteSandboxTag } from "./promote-sandbox-tag.js"
 export { paReinitializeCandidate } from "./admin-reinitialize-candidate.js"
+// COMPLETE DELETE USER (testing-only, irreversible) — admin-only callable that
+// HARD-DELETES the pa-users doc + every per-user / identity-index doc keyed by
+// or referencing the uid + the mem0/Qdrant memory partition. Far more thorough
+// than COLD reinit (which resets fields). Server-gated on @wekruit.com email.
+export { paAdminDeleteUser } from "./admin-delete-user.js"
 
 // v1.6 Phase 61 (QA-01..05) — V1.6 SHIP GATE. Cloud Scheduler 09:00 UTC
 // Mondays. Samples 100 user×match pairs (priority queue first), evaluates
@@ -482,6 +487,10 @@ const PA_MATCHING_WEBHOOK_SECRET = defineSecret("PA_MATCHING_WEBHOOK_SECRET")
 
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
+// Audio intake (2026-06-04) — Deepgram transcribes iMessage voice notes (after an ffmpeg .caf→wav
+// transcode). Bound on paSendblueWebhook (where the audio-ingest seam runs). Set via:
+//   echo -n "$KEY" | firebase functions:secrets:set DEEPGRAM_API_KEY --data-file=-
+const DEEPGRAM_API_KEY = defineSecret("DEEPGRAM_API_KEY")
 const QDRANT_URL = defineSecret("QDRANT_URL")
 const QDRANT_API_KEY = defineSecret("QDRANT_API_KEY")
 // v1.8 Phase 74.5 — feature flag for memory compaction (default off, secret=true to enable).
@@ -1791,6 +1800,8 @@ export const paSendblueWebhook = onRequest(
       SENDBLUE_API_SECRET_KEY,
       SENDBLUE_FROM_NUMBER,
       PA_OPENAI_AGENT_API_KEY,
+      // Audio intake (2026-06-04) — voice-note transcription (ffmpeg .caf→wav → Deepgram).
+      DEEPGRAM_API_KEY,
       // v1.7 Phase 69 — cv-ingest's industry-second-pass falls through to
       // Anthropic Sonnet when industryTags=["other"]. Until Adam provisions,
       // graceful no-op (industry-second-pass.ts checks for empty key).

@@ -29,7 +29,7 @@ import type { VerifyLinkedinConnectTokenResult } from "./connect-token.js"
 // reroute / mark-used / canary gate) without a live backend.
 // ---------------------------------------------------------------------------
 
-type EmitArgs = { userId: string; canonicalUrl: string; enriched: boolean; nowIso: string }
+type EmitArgs = { userId: string; canonicalUrl: string; enriched: boolean; nowIso: string; token: string }
 
 interface Spies {
   deps: LinkedinConnectSubmitDeps
@@ -114,6 +114,9 @@ describe("handleLinkedinConnectSubmit — happy path (canary, enrich, emit, rero
       canonicalUrl: canonical,
       enriched: true,
       nowIso: "2026-06-03T00:00:00.000Z",
+      // per-connect-flow idempotency: the single-use token now keys the pitch handoff (dedups a
+      // double-callback of one login, lets a genuine re-login pitch fresh).
+      token: "tok_abc12345",
     })
 
     // Token consumed single-use + sms reroute back into the thread.

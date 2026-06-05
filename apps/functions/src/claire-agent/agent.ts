@@ -11,7 +11,7 @@
  * Global read-context (canonical tags) is injected so "what's saved" reads tags (RC3).
  */
 import type { Firestore } from "firebase-admin/firestore"
-import { Agent, run, InputGuardrailTripwireTriggered, configureClaireSdk, z } from "./sdk.js"
+import { Agent, run, InputGuardrailTripwireTriggered, configureClaireSdk, forceFlushTraces, z } from "./sdk.js"
 import type {
   ClaireLang,
   ClaireMode,
@@ -25,7 +25,7 @@ import { buildClaireTools } from "./tools/index.js"
 import { type ProcessSessionStore, type ProcessToolContext } from "./tools/process-tools.js"
 import { buildClairePrompt, buildClaireTurnContext } from "./prompt.js"
 import { buildClaireGuardrails } from "./guardrails.js"
-import { markReadReflex, wireTypingReflex, deliverBubbles } from "./delivery.js"
+import { markReadReflex, wireTypingReflex, deliverBubblesEx } from "./delivery.js"
 import { isCanaryUser } from "./canary.js"
 import { makeClaireSession } from "./session.js"
 import { appendHotlineIfMissing } from "@pa/pa-safety"
@@ -97,6 +97,73 @@ function extractBubbles(finalOutput: unknown): string[] {
   // Back-compat: a plain string (if a model/SDK build ever returns text instead of the schema).
   const s = String(finalOutput ?? "").trim()
   return s ? [s] : []
+}
+
+/**
+ * One ordered tool call captured from the SDK RunResult — the de-blackbox payload so Adam can SEE
+ * why Claire acts (which tools she called, with what args, and what came back), instead of the old
+ * hardcoded empty list. `output` is filled when a paired function_call_output item existed.
+ *
+ * NOTE: the public `ClaireRunResult.toolCalls` is declared `string[]` in types.ts (which this run is
+ * NOT allowed to edit). We populate the RICHER object shape at runtime and cast at the return
+ * boundary — the SAME "compile-time type is a known lie, runtime is the real value" pattern sdk.ts
+ * already uses for the zod-split. No current consumer reads `toolCalls` as `string[]` at runtime
+ * (only the 4 return sites + tests, none of which index into it as strings).
+ */
+export type ClaireToolCall = {
+  name: string
+  /** raw JSON arguments string the model passed (as the SDK emitted it). */
+  arguments: string
+  /** the tool's stringified output, when a function_call_output item paired to this call. */
+  output?: string
+}
+
+/**
+ * Map @openai/agents `res.newItems` → ordered ClaireToolCall[] (de-blackbox).
+ *
+ * Item shapes (node_modules/@openai/agents-core/dist/items.d.ts + types/protocol.d.ts):
+ *   - a tool CALL  → RunItem `{ type: "tool_call_item",        rawItem: { type: "function_call",        callId, name, arguments } }`
+ *   - a tool OUTPUT→ RunItem `{ type: "tool_call_output_item", output, rawItem: { type: "function_call_result", callId, name, output } }`
+ * We emit one entry per function_call in call order, then join each tool's output by matching
+ * `callId` (the deterministic pairing key). Fully defensive: any drift in the item shape yields a
+ * partial/empty list, never a throw — this is observability, it must never break the turn.
+ */
+export function captureToolCalls(newItems: unknown): ClaireToolCall[] {
+  try {
+    const items = Array.isArray(newItems) ? newItems : []
+    const str = (v: unknown) => (typeof v === "string" ? v : v == null ? "" : String(v))
+    // First pass: outputs keyed by callId (so a call maps to its result regardless of order).
+    const outputs = new Map<string, string>()
+    for (const it of items) {
+      const item = it as { type?: unknown; output?: unknown; rawItem?: Record<string, unknown> }
+      if (item?.type !== "tool_call_output_item") continue
+      const raw = (item.rawItem ?? {}) as Record<string, unknown>
+      const callId = str(raw.callId)
+      // RunToolCallOutputItem carries the resolved output on `.output` (string | unknown); the
+      // wire form also has it on rawItem.output. Prefer the top-level resolved value.
+      const out = item.output !== undefined ? item.output : raw.output
+      if (callId) outputs.set(callId, str(out))
+    }
+    // Second pass: one entry per function_call, in emission order, joined to its output.
+    const calls: ClaireToolCall[] = []
+    for (const it of items) {
+      const item = it as { type?: unknown; rawItem?: Record<string, unknown> }
+      if (item?.type !== "tool_call_item") continue
+      const raw = (item.rawItem ?? {}) as Record<string, unknown>
+      // Only true function tool calls carry name + arguments (hosted/computer calls differ); guard on it.
+      if (raw.type !== "function_call") continue
+      const name = str(raw.name)
+      if (!name) continue
+      const callId = str(raw.callId)
+      const entry: ClaireToolCall = { name, arguments: str(raw.arguments) }
+      const out = callId ? outputs.get(callId) : undefined
+      if (out !== undefined && out !== "") entry.output = out
+      calls.push(entry)
+    }
+    return calls
+  } catch {
+    return []
+  }
 }
 
 /**
@@ -420,6 +487,15 @@ export async function loadGlobalContext(db: Firestore, userId: string, toE164?: 
     // phone is carried on the token so the connect CF can sms: reroute back into THIS thread.
     // Canary-gated (dev phones only) so non-canary CONTEXT stays byte-identical.
     let connectLinkLine = ""
+    // The offer is gated by the SAME coherent "we don't have their stuff yet" signal as the upload
+    // link: no résumé on file AND onboarding not done (+ canary). That already covers the only case
+    // a re-offer would be wrong — a LinkedIn-enriched candidate is `onboardingDone` so this stays "".
+    // NOTE (2026-06-04): do NOT add a separate candidateHasLinkedinBind gate here — it was redundant
+    // with !onboardingDone and created an INCONSISTENT state: a phone with a lingering pa-candidate-
+    // handles linkedin row (e.g. a cold reinit that cleared the profile but not the handle) read as
+    // "bound", suppressed the offer, yet the opener has no known-user branch so it fell through to the
+    // stranger "drop your résumé" default. Re-login RECOGNITION belongs in the OAuth callback
+    // (connectLinkedinProspectViaOAuth), not in this cold-opener line.
     if (!hasResumeOnFile && !onboardingDone && isCanaryUser(userId)) {
       try {
         const { getOrIssueLinkedinConnectLink } = await import("../linkedin-connect/connect-token.js")
@@ -498,6 +574,37 @@ export interface RunClaireTurnDeps {
    *  and NO onboarding question — "pitch first", we don't interrogate; the pitch fires after they
    *  connect/drop. Set by mode-selector on the cold bootstrap turn. */
   offerFirstKickoff?: boolean
+  /**
+   * ANTI-SILENCE FALLBACK marker (Adam 2026-06-04, "Hi → no response, feels glitchy").
+   *
+   * Set ONLY by runClaireTurn's own internal re-entry when a DETERMINISTIC pattern's bubbles were
+   * ALL suppressed by the cross-turn near-dup dedup (deliverBubblesEx → suppressedAll). The re-entry
+   * runs the agent ONE more time on the plain user input — with every deterministic directive
+   * STRIPPED (no offerFirst / postParsePitch / enrichmentInFlight / linkedinJustConnected /
+   * locationSalaryAsk / gmailNudge), plain "triage" mode — so the model composes a fresh, contextual,
+   * non-duplicate reply.
+   *
+   * LOOP GUARD: this flag is the hard cap. When set, runClaireTurn delivers the fallback's bubbles and
+   * NEVER triggers another fallback (even if the fallback's own bubbles also dedup to empty). At most
+   * one extra agent turn per inbound, ever. Production callers (cutover) NEVER set it.
+   */
+  isSuppressionFallback?: boolean
+  /**
+   * TEST SEAM (production omits it → real SDK `run()`): wraps the one @openai/agents `run(agent, …)`
+   * call so a unit test can drive the turn loop OFFLINE — returning canned `finalOutput.messages` per
+   * call. This is the ONLY way to exercise the anti-silence fallback deterministically (the SDK
+   * dynamic-requires @openai/agents and hits a real model otherwise). Defaults to the real `run`.
+   */
+  runAgent?: (
+    agent: unknown,
+    runInput: unknown,
+    opts: { session: unknown; maxTurns: number },
+  ) => Promise<{
+    finalOutput?: unknown
+    rawResponses?: ReadonlyArray<unknown>
+    /** the SDK RunResult's ordered run items — mapped to toolCalls (de-blackbox). Tests may omit it. */
+    newItems?: ReadonlyArray<unknown>
+  }>
 }
 
 /**
@@ -591,7 +698,9 @@ export async function runClaireTurn(
   // linkedin re-entry). Deterministic for the same reason as the LINKEDIN-OFFER NET: the one-tap offer
   // is the whole "super easy to start" thesis and must REACH the candidate verbatim, not depend on the
   // model (which reliably reverts to asking the onboarding question). Short-circuits the model turn.
-  if (deps.offerFirstKickoff) {
+  // The deterministic offer-first short-circuit must NEVER run on the anti-silence fallback re-entry —
+  // it is itself a deterministic pattern (the class the fallback exists to escape).
+  if (deps.offerFirstKickoff && deps.isSuppressionFallback !== true) {
     const connectUrl = /LinkedIn one-tap connect link = (https:\/\/\S+) —/.exec(globalContext)?.[1] ?? ""
     const uploadUrl = /Resume upload link[^:]*: (https:\/\/\S+)/.exec(globalContext)?.[1] ?? ""
     if (connectUrl || uploadUrl) {
@@ -624,22 +733,26 @@ export async function runClaireTurn(
     log("offer_first_kickoff_no_links", {})
   }
 
+  // ANTI-SILENCE FALLBACK (Adam 2026-06-04): on the re-entry after a deterministic pattern was fully
+  // suppressed, run a PLAIN agent turn — every deterministic directive STRIPPED, plain triage mode — so
+  // the model writes a fresh, contextual, non-duplicate reply instead of replaying the dropped pattern.
+  const fallback = deps.isSuppressionFallback === true
   const agent = buildClaireAgent(ctx, {
-    mode: deps.mode ?? "triage",
+    mode: fallback ? "triage" : (deps.mode ?? "triage"),
     lang,
-    pendingStep: deps.pendingStep,
-    currentStep: deps.currentStep,
+    pendingStep: fallback ? undefined : deps.pendingStep,
+    currentStep: fallback ? undefined : deps.currentStep,
     globalContext,
-    onboardingSlot: deps.onboardingSlot,
-    awaitingAnswer: deps.awaitingAnswer,
-    prescreenPrompts: deps.prescreenPrompts,
-    judgeContext: deps.judgeContext,
-    prescreenContext: deps.prescreenContext,
-    postParsePitch: deps.postParsePitch,
-    postParsePitchSummary: deps.postParsePitchSummary,
-    resumeJustDropped: deps.resumeJustDropped,
-    enrichmentInFlight: deps.enrichmentInFlight,
-    gmailNudge: deps.gmailNudge,
+    onboardingSlot: fallback ? undefined : deps.onboardingSlot,
+    awaitingAnswer: fallback ? undefined : deps.awaitingAnswer,
+    prescreenPrompts: fallback ? undefined : deps.prescreenPrompts,
+    judgeContext: fallback ? undefined : deps.judgeContext,
+    prescreenContext: fallback ? undefined : deps.prescreenContext,
+    postParsePitch: fallback ? undefined : deps.postParsePitch,
+    postParsePitchSummary: fallback ? undefined : deps.postParsePitchSummary,
+    resumeJustDropped: fallback ? undefined : deps.resumeJustDropped,
+    enrichmentInFlight: fallback ? undefined : deps.enrichmentInFlight,
+    gmailNudge: fallback ? undefined : deps.gmailNudge,
   })
   const session = makeClaireSession({
     db: deps.db,
@@ -657,35 +770,65 @@ export async function runClaireTurn(
   // and only this small tail is uncached. FirestoreSession.addItems skips system+user items, so
   // this ephemeral context is NEVER written to the durable transcript (it can't pollute the
   // next turn's cached prefix). Mirrors the proven default-path shape (buildAgentsInputItems).
+  // On the anti-silence fallback turn, the per-turn deterministic directives are ALSO stripped — they
+  // are exactly what produced the suppressed-all bubbles. The fallback turn carries only the plain
+  // globalContext so the model answers the user's actual message fresh.
   const turnContext = buildClaireTurnContext({
-    mode: deps.mode ?? "triage",
+    mode: fallback ? "triage" : (deps.mode ?? "triage"),
     lang,
     canary: isCanaryUser(ctx.userId),
     globalContext,
-    pendingStep: deps.pendingStep,
-    prescreenContext: deps.prescreenContext,
+    pendingStep: fallback ? undefined : deps.pendingStep,
+    prescreenContext: fallback ? undefined : deps.prescreenContext,
     // BLOCKER 2: surface the parsed-profile summary on the post-parse pitch turn (belt-and-suspenders
     // vs a loadGlobalContext read that raced the parse write) so the model never reads the marker empty.
-    postParsePitch: deps.postParsePitch,
-    postParsePitchSummary: deps.postParsePitchSummary,
+    postParsePitch: fallback ? undefined : deps.postParsePitch,
+    postParsePitchSummary: fallback ? undefined : deps.postParsePitchSummary,
     // WS-1(b): the enrichment-in-flight directive is a PER-TURN signal (turn-specific durable marker),
     // so it lives in the turn context (highest-salience trailing system item), NOT the cached head.
-    enrichmentInFlight: deps.enrichmentInFlight,
+    enrichmentInFlight: fallback ? undefined : deps.enrichmentInFlight,
     // WS-3(b): the occasional Gmail-connect nudge is a per-turn directive (cooldown-gated), turn-context only.
-    gmailNudge: deps.gmailNudge,
+    gmailNudge: fallback ? undefined : deps.gmailNudge,
     // LINKEDIN-DONE re-entry directive — per-turn, trailing only (ack by name + ask for résumé/URL).
-    linkedinJustConnected: deps.linkedinJustConnected,
+    linkedinJustConnected: fallback ? undefined : deps.linkedinJustConnected,
     // CANONICAL STEP 4 — per-turn conditional pre-match ask (location+salary), trailing only.
-    locationSalaryAsk: deps.locationSalaryAsk,
+    locationSalaryAsk: fallback ? undefined : deps.locationSalaryAsk,
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const runInput: any[] = []
   if (turnContext) runInput.push({ type: "message", role: "system", content: turnContext })
   runInput.push({ type: "message", role: "user", content: turnText })
 
+  // RunConfig naming (de-blackbox): name + group the exported traces, attach the userId as trace
+  // metadata, and — IMPORTANTLY — set traceIncludeSensitiveData:false so the raw candidate message
+  // bodies are NOT shipped to OpenAI's tracing backend (we want the span TREE — which tools ran, in
+  // what order, guardrail decisions — not the PII). groupId=sessionId threads a conversation's turns
+  // together in the trace UI. Merged into the run opts below.
+  const runConfig = {
+    workflowName: "claire-turn",
+    groupId: input.sessionId,
+    traceMetadata: { userId: input.userId },
+    traceIncludeSensitiveData: false,
+  }
+
+  // Default agent-run = the real SDK run(); a test may inject deps.runAgent to drive it offline.
+  const runAgent =
+    deps.runAgent ??
+    ((a: unknown, ri: unknown, opts: { session: unknown; maxTurns: number }) =>
+      run(a as never, ri as never, { ...runConfig, ...opts } as never) as Promise<{
+        finalOutput?: unknown
+        rawResponses?: ReadonlyArray<unknown>
+        newItems?: ReadonlyArray<unknown>
+      }>)
+
   let bubbles: string[] = []
+  let toolCalls: ClaireToolCall[] = []
   let blocked = false
   let usage: ClaireTurnUsage | undefined
+  // Hold the timeout handle so we can CLEAR it once the agent run settles — otherwise the 100s timer
+  // keeps the event loop alive after a fast turn (e.g. the anti-silence fallback re-entry, or a unit
+  // test with an injected runAgent), needlessly delaying process exit.
+  let runTimeout: ReturnType<typeof setTimeout> | undefined
   try {
     const res = (await Promise.race([
       // maxTurns — cost guard against the unbounded agent loop (see
@@ -693,18 +836,27 @@ export async function runClaireTurn(
       // re-sending the full prompt + growing transcript (the 1.2B-token runaway).
       // 2B — array input: [trailing system context (if any), user message]. {session, maxTurns}
       // unchanged. The system item rides as a per-turn input, NOT persisted (see above).
-      run(agent, runInput, { session, maxTurns: resolveClaireMaxTurns() }),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("claire_run_timeout")), RUN_TIMEOUT_MS),
-      ),
-    ])) as { finalOutput?: unknown; rawResponses?: ReadonlyArray<unknown> }
+      runAgent(agent, runInput, { session, maxTurns: resolveClaireMaxTurns() }),
+      new Promise((_, reject) => {
+        runTimeout = setTimeout(() => reject(new Error("claire_run_timeout")), RUN_TIMEOUT_MS)
+      }),
+    ])) as {
+      finalOutput?: unknown
+      rawResponses?: ReadonlyArray<unknown>
+      newItems?: ReadonlyArray<unknown>
+    }
+    if (runTimeout) clearTimeout(runTimeout)
     // finalOutput is the resolved ClaireReplySchema → { messages: string[] }. Each element is one
     // iMessage bubble; deliverBubbles POSTs them in order. extractBubbles is defensive vs shape drift.
     bubbles = extractBubbles(res?.finalOutput)
     // 2A — sum per-turn token usage (incl cached-prefix tokens) from rawResponses[*].usage. The
     // thin path uses run() directly (NOT @pa/agent-runtime's extractUsage), so we read it here.
     usage = extractClaireUsage(res?.rawResponses)
+    // DE-BLACKBOX: capture the ordered tool calls from the SDK RunResult so the return surfaces WHY
+    // Claire acted (was the old hardcoded []). Defensive — captureToolCalls never throws.
+    toolCalls = captureToolCalls(res?.newItems)
   } catch (e) {
+    if (runTimeout) clearTimeout(runTimeout)
     if (e instanceof InputGuardrailTripwireTriggered) {
       blocked = true
       log("guardrail_tripwire", { userId: input.userId })
@@ -719,6 +871,8 @@ export async function runClaireTurn(
       } else {
         await deps.transport.noReply("injection_blocked").catch(() => {})
       }
+      // Flush the guardrail span tree (the tripwire decision is exactly what we want exported).
+      await forceFlushTraces()
       return { finalText: "", toolCalls: [], deliveredViaTool: true }
     }
     // RC2: timeout / SDK / LLM error → grounded fallback so the turn ALWAYS replies.
@@ -729,12 +883,28 @@ export async function runClaireTurn(
     bubbles = ["sorry, that one hiccupped on my end — mind sending that again?"]
   }
 
+  // DE-BLACKBOX FLUSH: the SDK's BatchTraceProcessor flushes on an unref'd 5s timer; a short CF
+  // invocation can return before it fires, so the per-turn span tree (generation / function /
+  // guardrail spans) is built in memory and then dropped. Force the export NOW so the trace
+  // actually POSTs. Fully fail-open (forceFlushTraces swallows everything) — never blocks the turn.
+  await forceFlushTraces()
+
   const deliveredViaTool = tracked.handledViaTool()
-  // deliverBubbles normalizes each bubble (markdown/length) + caps count; one Sendblue send each.
-  const sentCount = await deliverBubbles(ctx, bubbles, deliveredViaTool).catch((e) => {
+  // deliverBubblesEx normalizes each bubble (markdown/length) + caps count; one Sendblue send each.
+  // It also reports `suppressedAll` — ≥1 real bubble existed but the cross-turn near-dup dedup dropped
+  // EVERY one — which drives the anti-silence fallback below (instead of going silent).
+  // On the anti-silence FALLBACK turn, skip cross-turn dedup so the guaranteed fresh reply can't be
+  // re-suppressed (the live "fallback fires → fallback reply ALSO near-dup-suppressed → silence" bug).
+  const deliverResult = await deliverBubblesEx(
+    ctx,
+    bubbles,
+    deliveredViaTool,
+    deps.isSuppressionFallback === true,
+  ).catch((e) => {
     log("deliverBubbles_failed", { err: String(e) })
-    return 0
+    return { sent: 0, suppressedAll: false }
   })
+  const sentCount = deliverResult.sent
   const sent = sentCount > 0
   // Telemetry/test-only joined form (callers deliver via transport; eval reads recordedEvents).
   const finalText = bubbles.join("\n\n")
@@ -752,6 +922,9 @@ export async function runClaireTurn(
   // force-record/force-advance whatever they typed — an irrelevant message or a question back must
   // NOT consume a slot. So the ask-net only RE-SURFACES a question: the NEXT one if the tool already
   // recorded this turn (slot advanced), otherwise the CURRENT one (slot unchanged → re-ask).
+  // Tracks whether ANY net (ask-net / linkedin-offer-net) put a message on the wire after a
+  // zero-bubble agent turn — so the anti-silence fallback below only fires when truly nothing went out.
+  let netDelivered = false
   if (deps.mode === "onboarding" && !sent && !deliveredViaTool && !blocked) {
     const recorded = !!deps.processStore?.onboarding.answers?.[deps.onboardingSlot ?? ""]
     const q = ((recorded ? deps.pendingStep : deps.currentStep) ?? deps.pendingStep ?? "").trim()
@@ -759,6 +932,7 @@ export async function runClaireTurn(
       await deps.transport
         .sendText(q)
         .catch((e) => log("onboarding.ask_net_failed", { slot: deps.onboardingSlot, err: String(e) }))
+      netDelivered = true
       log("onboarding.ask_net_sent", { slot: deps.onboardingSlot, recorded })
     } else {
       log("onboarding.ask_net_no_pending", { slot: deps.onboardingSlot })
@@ -797,6 +971,7 @@ export async function runClaireTurn(
       await deps.transport
         .sendText(offer)
         .catch((e) => log("onboarding.linkedin_offer_net_failed", { err: String(e) }))
+      netDelivered = true
       log("onboarding.linkedin_offer_net_sent", {})
     }
   }
@@ -834,9 +1009,103 @@ export async function runClaireTurn(
     }
   }
 
+  // ANTI-SILENCE FALLBACK (Adam 2026-06-04, "Hi → no response, feels glitchy").
+  //
+  // A DETERMINISTIC pattern (cold opener / "still pulling…" hold / post-parse pitch / any directive-
+  // driven turn) emitted ≥1 bubble, but the cross-turn near-dup dedup dropped EVERY one — `suppressedAll`
+  // (the model re-emitted something already sent this session). With nothing else delivered (no agent
+  // text, no delivery tool, not a guardrail block, no onboarding/linkedin net), the turn would otherwise
+  // return HANDLED-but-SILENT → the candidate sees a read receipt and nothing. Instead, run the agent
+  // ONE more time on the plain user input with every deterministic directive STRIPPED (plain triage), so
+  // the model writes a FRESH, contextual, non-duplicate reply and delivers THAT. Placed AFTER the
+  // prescreen terminal-fire so a suppressed prescreen turn STILL commits its terminal lifecycle first.
+  //
+  // LOOP GUARD (hard cap): `deps.isSuppressionFallback` gates re-entry — the recursive call sets it true,
+  // and this block is skipped when it is set, so the fallback runs AT MOST ONCE per inbound. If the
+  // fallback's OWN bubbles also dedup to empty, we accept that silence (no second fallback). The dedup
+  // thresholds + getRecentSentMessages are untouched. Fail-open: any throw is swallowed → behave as
+  // today (silently handled), never break the inbound handler.
+  if (
+    deliverResult.suppressedAll &&
+    !sent &&
+    !netDelivered &&
+    !deliveredViaTool &&
+    !blocked &&
+    deps.isSuppressionFallback !== true
+  ) {
+    log("claire.anti_silence_fallback.start", { userId: input.userId, mode: deps.mode ?? "triage" })
+    try {
+      // Re-enter on the PLAIN user input with the loop-guard flag set and EVERY deterministic directive
+      // stripped (the recursive runClaireTurn also strips them by `fallback`, but we clear them here too
+      // so the input is unambiguously a plain triage turn). The transport is the SAME (tracked) one, so
+      // the fallback's send writes to the same outbound seam. prescreenSessionId/jobId are dropped so the
+      // fallback's own (triage) turn cannot re-fire the terminal action — the original turn already did.
+      const fallbackResult = await runClaireTurn(input, {
+        ...deps,
+        isSuppressionFallback: true,
+        mode: "triage",
+        pendingStep: undefined,
+        currentStep: undefined,
+        processStore: undefined,
+        onboardingSlot: undefined,
+        awaitingAnswer: undefined,
+        prescreenPrompts: undefined,
+        judgeContext: undefined,
+        prescreenContext: undefined,
+        prescreenResumeSnippet: undefined,
+        prescreenSessionId: undefined,
+        jobId: undefined,
+        postParsePitch: undefined,
+        postParsePitchSummary: undefined,
+        resumeJustDropped: undefined,
+        enrichmentInFlight: undefined,
+        gmailNudge: undefined,
+        linkedinJustConnected: undefined,
+        locationSalaryAsk: undefined,
+        offerFirstKickoff: undefined,
+      })
+      const fallbackDelivered =
+        fallbackResult.deliveredViaTool || Boolean(String(fallbackResult.finalText ?? "").trim())
+      log("claire.anti_silence_fallback.done", { userId: input.userId, delivered: fallbackDelivered })
+      // ABSOLUTE NEVER-SILENT NET (Adam 2026-06-04: "it should never go silent if we pass to the generic
+      // agent"). The fallback bypasses cross-turn dedup, so a non-empty agent reply ALWAYS lands. The only
+      // remaining silence path is the generic agent itself producing NOTHING deliverable (empty output).
+      // In that case send ONE plain deterministic bubble so the candidate ALWAYS hears back. Still inside
+      // the loop-guard (this whole block runs at most once); fail-open on send error.
+      if (!fallbackDelivered) {
+        const net = "hey! i'm here 👋 — what are you looking for? i can pull some roles or just chat through your search."
+        await ctx.transport.sendText(net).catch(() => {})
+        log("claire.anti_silence_fallback.hard_net_sent", { userId: input.userId })
+      }
+      // Surface BOTH the original (suppressed) turn's tool calls AND the fallback turn's — the
+      // observability story is "what did Claire actually DO across this inbound" (the cast through
+      // unknown bridges the structured runtime shape to the string[]-declared field; see ClaireToolCall).
+      const mergedToolCalls = [
+        ...toolCalls,
+        ...((fallbackResult.toolCalls ?? []) as unknown as ClaireToolCall[]),
+      ]
+      return {
+        finalText: fallbackResult.finalText,
+        toolCalls: mergedToolCalls as unknown as string[],
+        deliveredViaTool: fallbackResult.deliveredViaTool || !fallbackDelivered,
+        ...(usage ? { usage } : {}),
+      }
+    } catch (e) {
+      // Fail-open: a fallback error must NEVER throw out of the inbound handler. Behave as today —
+      // the turn is silently handled (the dedup already correctly suppressed the duplicate bubbles).
+      log("claire.anti_silence_fallback.error", {
+        userId: input.userId,
+        err: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
+
   return {
     finalText,
-    toolCalls: [],
+    // DE-BLACKBOX: the ordered tool calls the agent made this turn (was hardcoded []). The cast
+    // through unknown bridges the structured ClaireToolCall[] runtime value to the string[]-declared
+    // field in types.ts (not editable this run) — same compile-time-lie pattern as sdk.ts.
+    toolCalls: toolCalls as unknown as string[],
     deliveredViaTool: deliveredViaTool || blocked,
     ...(usage ? { usage } : {}),
   }

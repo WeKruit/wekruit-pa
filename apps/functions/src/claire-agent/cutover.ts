@@ -18,6 +18,7 @@ import { isCanaryUser } from "./canary.js"
 import { createSendblueTransport } from "./transport.js"
 import { selectClaireMode } from "./mode-selector.js"
 import { setEnrichmentInFlight, clearEnrichmentInFlight } from "./enrichment-inflight.js"
+import { buildDecisionTrace } from "./decision-trace.js"
 import type { ClaireLang } from "./types.js"
 // NOTE: agent.js + tools/matching-tools.js are NOT imported statically — they pull
 // the @pa/agent-runtime/zod@4 SDK, which crashes the deployed container at boot.
@@ -53,8 +54,16 @@ export async function maybeRunThinClaire(
   const sessionId = typeof data.sessionId === "string" ? data.sessionId : undefined
   let text =
     typeof data.body === "string" ? data.body : typeof data.text === "string" ? data.text : ""
-  // Thin Claire needs a durable session + a real message. Otherwise fall through to legacy.
-  if (!userId || !sessionId || !text.trim()) return false
+  // RÉSUMÉ DROP STAYS ON THIN (Adam 2026-06-04): a text-LESS résumé attachment is a real turn — it must
+  // NOT fall through to legacy, whose cv-followup tells an already-connected candidate "you weren't
+  // invited into this workflow, upload again / connect LinkedIn" (live bug). Read the media marker here
+  // so the guard admits a media-only inbound. Thin still needs a durable session + EITHER text or a
+  // résumé; otherwise defer to legacy.
+  const earlyMediaUrl =
+    typeof (data.rawMeta as Record<string, unknown> | undefined)?.mediaUrl === "string"
+      ? ((data.rawMeta as Record<string, unknown>).mediaUrl as string).trim()
+      : ""
+  if (!userId || !sessionId || (!text.trim() && !earlyMediaUrl)) return false
 
   // DEV TRIGGER — `__PA_SCHEDULE__` deterministically exercises the thin scheduling
   // flow (mirrors `__PA_FIND_MATCH__`). We rewrite the sentinel into a natural
@@ -134,6 +143,90 @@ export async function maybeRunThinClaire(
   const inboundMessageHandle =
     typeof rawMeta.messageHandle === "string" ? rawMeta.messageHandle : undefined
 
+  // PITCH ENGINE (Adam 2026-06-04): the cv-parsed re-entry IS the pitch turn. Compose the pitch with a
+  // DEDICATED gpt-5.4-mini call (.planning/PITCH-GUIDE.md) instead of the chat agent — which produced a
+  // shallow ONE-signal pitch ("you leveled up to senior backend") and duplicated bubbles. Send a
+  // DETERMINISTIC 3-bubble turn: confirmation → composed pitch → offer (fixed order, no dup, no agent
+  // paraphrase). FAIL-OPEN: composePitchTurn returns null on any miss (no key / no signal / empty
+  // completion) → fall through to the legacy agent pitch path below. Canary-only (the cv-parsed pitch
+  // cohort). The composer also stamps onboarding complete so the NEXT turn is normal triage, not a re-pitch.
+  if (cvParsedReentry && toE164 && isCanaryUser(userId)) {
+    try {
+      const { composePitchTurn } = await import("./compose-pitch.js")
+      const bubbles = await composePitchTurn(db, userId)
+      if (bubbles && bubbles.length > 0) {
+        const transport = createSendblueTransport({
+          db,
+          toE164: String(toE164),
+          inboundMessageHandle,
+          userId,
+          sessionId,
+          inboundEventId: eventId,
+          log,
+          ...(deps.dryRun ? { dryRun: true } : {}),
+        })
+        // ORDER + REASONING BEAT (Adam 2026-06-04): bubbles are [confirmation, pitch, offer] and MUST land
+        // in THAT order — the offer comes AFTER the pitch. Do NOT use paced:true: the outbox's
+        // length-proportional typing dwell made the SHORT offer overtake the LONG pitch (live "offer before
+        // pitch" bug). Instead send each with an explicit typing indicator + sleep between, so createdAt
+        // order holds AND the pitch gets a real ~10s "thinking" beat (Adam: "make it at least 10 seconds";
+        // 3s felt like no reasoning).
+        await transport.sendText(bubbles[0]!, { seq: 0 }) // confirmation — immediate
+        try { await transport.typing() } catch { /* typing is pure UX */ }
+        if (!deps.dryRun) await new Promise((r) => setTimeout(r, 10000)) // 10s reasoning beat before the pitch
+        await transport.sendText(bubbles[1]!, { seq: 1 }) // the PITCH
+        if (bubbles[2]) {
+          try { await transport.typing() } catch { /* typing is pure UX */ }
+          if (!deps.dryRun) await new Promise((r) => setTimeout(r, 2500)) // short beat, THEN the offer
+          await transport.sendText(bubbles[2]!, { seq: 2 }) // the OFFER — always after the pitch
+        }
+        await db
+          .collection(PA_COLLECTIONS.inboundEvents)
+          .doc(eventId)
+          .set({ status: "completed", handledBy: "thin_claire_pitch_engine" }, { merge: true })
+        log("thin_claire.pitch_engine.sent", { eventId, userId, bubbles: bubbles.length })
+        return true
+      }
+      log("thin_claire.pitch_engine.fallthrough", { eventId, userId })
+      // composePitchTurn returned null (composer miss). Do NOT fall through to the agent path on a
+      // cv-parsed re-entry: the agent has MATCHED here (the live "I pulled 3 fresh matches" instead of a
+      // sharpened pitch — Adam 2026-06-04, "we give a match before we get back from resume improvement").
+      // Send a deterministic, honest acknowledgment that OFFERS the next step (never auto-matches) and
+      // STOP. The résumé is parsed + the profile updated regardless; the user explicitly drives matching.
+      if (toE164) {
+        const fbTransport = createSendblueTransport({
+          db,
+          toE164: String(toE164),
+          inboundMessageHandle,
+          userId,
+          sessionId,
+          inboundEventId: eventId,
+          log,
+          ...(deps.dryRun ? { dryRun: true } : {}),
+        })
+        await fbTransport
+          .sendText(
+            "got your résumé — your profile's updated 🙌 want me to pull roles that fit now, or tweak/add anything first?",
+            { seq: 0 },
+          )
+          .catch((e) => log("thin_claire.pitch_engine.fallback_send_failed", { eventId, err: String(e) }))
+        await db
+          .collection(PA_COLLECTIONS.inboundEvents)
+          .doc(eventId)
+          .set({ status: "completed", handledBy: "thin_claire_pitch_engine_fallback" }, { merge: true })
+          .catch(() => {})
+        log("thin_claire.pitch_engine.fallback_sent", { eventId, userId })
+        return true
+      }
+    } catch (err) {
+      log("thin_claire.pitch_engine.error", {
+        eventId,
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   // Inbound résumé (Adam 2026-06-02): a candidate — especially a brand-new cold sender
   // who never onboarded via QR — can drop a résumé PDF inline. Run the SAME enrichment
   // wheel the website uses: a direct `ingestCv` call (exactly like public-cv-ingest.ts),
@@ -180,6 +273,41 @@ export async function maybeRunThinClaire(
       )
   }
 
+  // RÉSUMÉ-ONLY drop (no accompanying text): ACK deterministically on THIN and STOP — do NOT run the
+  // chat agent (it has no message to answer and hallucinated "you weren't invited, upload again /
+  // connect LinkedIn" from the mid-parse empty context — live 2026-06-04). The refined pitch fires on
+  // the resume_parse_completed re-entry (composePitchTurn). Canary-only. The ingestCv above already ran.
+  if (inboundMediaUrl && !text.trim() && toE164 && isCanaryUser(userId)) {
+    try {
+      const ackTransport = createSendblueTransport({
+        db,
+        toE164: String(toE164),
+        inboundMessageHandle,
+        userId,
+        sessionId,
+        inboundEventId: eventId,
+        log,
+        ...(deps.dryRun ? { dryRun: true } : {}),
+      })
+      await ackTransport.sendText(
+        "got your résumé — pulling the details to sharpen your matches, one sec 📄",
+        { seq: 0 },
+      )
+      await db
+        .collection(PA_COLLECTIONS.inboundEvents)
+        .doc(eventId)
+        .set({ status: "completed", handledBy: "thin_claire_resume_ack" }, { merge: true })
+      log("thin_claire.resume_ack.sent", { eventId, userId })
+      return true
+    } catch (err) {
+      log("thin_claire.resume_ack.error", {
+        eventId,
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   const lang: ClaireLang = data.lang === "zh" ? "zh" : "en"
 
   // Deterministic mode pick from durable state (onboarding/prescreen/triage). An active
@@ -213,7 +341,7 @@ export async function maybeRunThinClaire(
     // REC-CARD IMAGE ALLOWLIST (Adam 2026-06-01: "for image let's only send to 4243201960"): even though
     // thin Claire is on for all users, the card IMAGE only sends to this dev-phone uid for now — everyone
     // else gets text-only recs. Widen this set to ramp the image. (The text rec + offer are unaffected.)
-    const REC_CARD_UIDS = new Set<string>(["8fEwIduUrzxZsblHHsNz"]) // +14243201960
+    const REC_CARD_UIDS = new Set<string>(["8fEwIduUrzxZsblHHsNz", "UKFaKdsMzzfPW2CDl5ve"]) // +14243201960 (Adam), +12154034668 (Noah) — dev image testers
     let cardDeps: import("./tools/matching-tools.js").V16FindMatchCardDeps | undefined
     if (!deps.dryRun && toE164 && REC_CARD_UIDS.has(userId)) {
       try {
@@ -317,39 +445,52 @@ export async function maybeRunThinClaire(
       .doc(eventId)
       .set({ status: "completed", handledBy: "thin_claire" }, { merge: true })
 
-    // 2A — per-turn token usage telemetry (incl cached-prefix tokens) keyed on the inbound event,
-    // tagged by MODE so prompt-cache hit-rate is visible per mode. Fail-open: a write error here
-    // must NEVER fail the turn (the reply already went out). Skipped when no usage surfaced.
-    if (turnResult?.usage) {
-      try {
-        await db
-          .collection(PA_COLLECTIONS.turns)
-          .doc(eventId)
-          .set(
-            {
-              userId,
-              sessionId,
-              mode: decision.mode,
-              handledBy: "thin_claire",
-              usage: turnResult.usage,
-              createdAt: new Date().toISOString(),
-            },
-            { merge: true },
-          )
-        log("thin_claire.turn_usage", {
-          eventId,
-          userId,
+    // PER-TURN DECISION TRACE keyed on the inbound event: ONE read of pa-turns/{eventId} answers
+    // "why did Claire do X this turn" — the user message in, the deterministic mode/pattern that won,
+    // the ordered tool calls (name → arguments → output, now de-blackboxed by the observability work),
+    // the reply text out, and whether it was tool-delivered / dedup-suppressed. This SUPERSEDES the
+    // prior usage-only doc (usage rides along in the same doc when it surfaced). buildDecisionTrace is
+    // pure + total (never throws); the .set() is wrapped fail-open so a trace-write error can NEVER
+    // fail the turn — the reply already went out. We ALWAYS write (even on no-usage / suppressed turns)
+    // so every thin turn leaves an auditable trace, not just the ones that reported token usage.
+    try {
+      const trace = buildDecisionTrace({
+        eventId,
+        userId,
+        sessionId,
+        inboundText: text,
+        mode: decision.mode,
+        decisionFlags: {
           mode: decision.mode,
-          inputTokens: turnResult.usage.inputTokens,
-          cachedInputTokens: turnResult.usage.cachedInputTokens,
-          turnsUsed: turnResult.usage.turnsUsed,
-        })
-      } catch (usageErr) {
-        log("thin_claire.turn_usage_failed", {
-          eventId,
-          err: usageErr instanceof Error ? usageErr.message : String(usageErr),
-        })
-      }
+          ...(decision.postParsePitch ? { postParsePitch: true } : {}),
+          ...(decision.offerFirstKickoff ? { offerFirstKickoff: true } : {}),
+          ...(decision.linkedinJustConnected ? { linkedinJustConnected: true } : {}),
+          ...(decision.locationSalaryAsk ? { locationSalaryAsk: true } : {}),
+          ...(decision.gmailNudge ? { gmailNudge: true } : {}),
+          ...(decision.enrichmentInFlight ? { enrichmentInFlight: true } : {}),
+          ...(decision.prescreenSessionId ? { prescreenSessionId: decision.prescreenSessionId } : {}),
+        },
+        turnResult,
+        nowIso: new Date().toISOString(),
+      })
+      await db.collection(PA_COLLECTIONS.turns).doc(eventId).set(trace, { merge: true })
+      log("thin_claire.turn_trace", {
+        eventId,
+        userId,
+        mode: trace.mode,
+        pattern: trace.pattern,
+        toolCalls: trace.toolCalls.map((c) => c.name),
+        deliveredViaTool: trace.deliveredViaTool,
+        suppressed: trace.suppressed,
+        inputTokens: trace.usage?.inputTokens,
+        cachedInputTokens: trace.usage?.cachedInputTokens,
+        turnsUsed: trace.usage?.turnsUsed,
+      })
+    } catch (traceErr) {
+      log("thin_claire.turn_trace_failed", {
+        eventId,
+        err: traceErr instanceof Error ? traceErr.message : String(traceErr),
+      })
     }
     log("thin_claire_handled", { eventId, userId })
     return true

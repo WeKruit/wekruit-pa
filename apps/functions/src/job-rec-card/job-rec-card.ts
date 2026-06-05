@@ -73,12 +73,22 @@ export type MaybeBuildRecCardDeps = {
  * Compose the SHORT caption that rides with the card image. Claire's voice,
  * apply link included (the brief keeps the link in the text/caption).
  */
-export function buildRecCardCaption(payload: RecCardPayload): string {
+export function buildRecCardCaption(payload: RecCardPayload, mode: "full" | "lean" = "full"): string {
   // Lead with the ROLE (title @ company) — not just the company (Adam 2026-06-01: "no title, poor
   // wording, bad info order"). For a WeKruit collab/partner role, pitch the fast-track prescreen and
   // offer BOTH start paths (reply the role + company, OR copy the start line find_match sent).
   const role = (payload.title ?? "").trim()
   const headline = role ? `${role} @ ${payload.company}` : payload.company
+  // LEAN caption (Adam 2026-06-04): for a multi-collab-role batch, drop the full prescreen PARAGRAPH so
+  // it isn't repeated under every card (3× = spam) — but keep a SHORT, role-specific CTA co-located with
+  // the image so each picture has its own clear call-to-action (a card with only a headline invites an
+  // accidental external apply / misses the offer text that rides separately). Multi-card batches are
+  // ALWAYS WeKruit collab roles, which must funnel through the prescreen — so we intentionally OMIT the
+  // apply URL here (no external-ATS leak) and instead mirror buildCollabPrescreenOffer's start path
+  // ("reply <role> @ <company>"). The full offer + start token still ride the agent text reply.
+  if (mode === "lean") {
+    return `${headline}\nreply "${headline}" to fast-track a quick prescreen`
+  }
   const lines: string[] = []
   if (payload.inNetwork) {
     lines.push(`one that jumps out — ${headline} (WeKruit partner role).`)
@@ -167,6 +177,8 @@ export function recCardContentHash(payload: RecCardPayload): string {
     industry: payload.industry ?? null,
     salaryMin: payload.salaryMin ?? null,
     salaryMax: payload.salaryMax ?? null,
+    equity: payload.equity ?? null,
+    skills: payload.skills ?? null,
     location: payload.location ?? null,
     workMode: payload.workMode ?? null,
     inNetwork: payload.inNetwork ?? false,

@@ -50,6 +50,10 @@ import { MatchDebug } from "./pages/MatchDebug.js"
 // voice agent (CA_CyhBjJioxJR9) with the in-process WekruitLLM.
 import { VoiceTestDial } from "./pages/VoiceTestDial.js"
 import { VoiceProfiles } from "./pages/VoiceProfiles.js"
+// DANGER — complete-delete-user testing tool. Hard-deletes a candidate to a
+// true blank slate. Backed by the paAdminDeleteUser callable (server-gated to
+// @wekruit.com). Admin domain only.
+import { DeleteUser } from "./pages/DeleteUser.js"
 // v1.8 Phase 78 — Job pre-screen config editor.
 import JobPrescreen from "./pages/JobPrescreen.js"
 import { JobEnrichmentReview } from "./pages/JobEnrichmentReview.js"
@@ -164,6 +168,7 @@ export default function App() {
               profile completeness, top tags. Drawer links out to existing
               detail surfaces. */}
           <Route path="/admin/candidates" element={<Candidates />} />
+          <Route path="/admin/delete-user" element={<DeleteUser />} />
           <Route path="/users/:id" element={<UserDetail />} />
           <Route path="/agents" element={<AgentBuilder />} />
           {/* Phase 32 Wave 1 — Operations no longer in sidebar; reachable via

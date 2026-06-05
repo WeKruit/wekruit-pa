@@ -38,7 +38,7 @@ import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { randomUUID } from "node:crypto"
 import { logger } from "firebase-functions/v2"
 import { PA_COLLECTIONS, type ExternalCandidateRecord } from "@pa/core-types"
-import { linkCandidateHandle } from "@pa/pa-persistence"
+import { candidateHasLinkedinBind, linkCandidateHandle } from "@pa/pa-persistence"
 import {
   canonicalizeLinkedInUrl,
   linkedinHash,
@@ -150,6 +150,8 @@ export interface LinkedinConnectSubmitDeps {
     canonicalUrl: string
     enriched: boolean
     nowIso: string
+    /** Single-use connect token — the per-connect-flow idempotency key for the pitch handoff. */
+    token: string
   }) => Promise<void>
   /** WS-1(b): set the durable enrichment-in-flight marker so a mid-enrich inbound holds.
    *  Optional so existing tests don't have to stub it. */
@@ -242,7 +244,7 @@ export async function handleLinkedinConnectSubmit(
 
     // 5. Emit the enrichment-complete runtime event so the thin pitch fires.
     try {
-      await deps.emitRuntimeEvent({ userId, canonicalUrl, enriched, nowIso })
+      await deps.emitRuntimeEvent({ userId, canonicalUrl, enriched, nowIso, token })
     } catch (err) {
       logger.warn("linkedin_connect.runtime_event_failed", {
         userId,
@@ -297,6 +299,25 @@ export async function connectLinkedinProspectViaOAuth(
   }
   const userId = tokenResult.userId
   const sub = input.sub.trim()
+
+  // ALREADY-BOUND SHORT-CIRCUIT (re-login recognition, Adam 2026-06-04): if this phone ALREADY
+  // has a LinkedIn identity bound (durable handle row OR the linkedinOauthLinked flag), this is a
+  // RE-login, not a first connect. A fresh enrich + resume_parse_completed handoff here re-fires a
+  // FULL pitch (double-pitch the candidate already saw). Instead, keep the bind idempotent (no
+  // re-link, no re-enrich, no pitch handoff), mark the token used, and reroute back into the thread
+  // with the standard opener so Claire continues naturally ("you're already connected — pulling
+  // your matches"). Fail-soft: candidateHasLinkedinBind never throws (read error → false → normal
+  // first-connect path), so this can only SUPPRESS a duplicate, never block a genuine first bind.
+  if (await candidateHasLinkedinBind(db, userId)) {
+    await markLinkedinConnectTokenUsed(db, input.connectToken, Date.parse(nowIso) || Date.now())
+    const recipient = await resolveRerouteRecipient(db, userId)
+    const smsDeepLink = recipient
+      ? buildSmsDeepLink(recipient, buildLinkedinDoneOpenerBody(input.connectToken))
+      : undefined
+    logger.info("linkedin_oauth.already_bound_reroute", { userId, hasSms: Boolean(smsDeepLink) })
+    return { ok: true, enriched: false, ...(smsDeepLink ? { smsDeepLink } : {}) }
+  }
+
   // PREFER the REAL profile URL from OIDC (so Coresignal can enrich). Fall back to the
   // "/oauth-linked/<sub>" identity marker only when LinkedIn didn't return the URL.
   const realUrl = canonicalizeLinkedInUrl(input.profileUrl ?? "")
@@ -351,6 +372,7 @@ export async function connectLinkedinProspectViaOAuth(
   // `employee_clean` (no paste, no URL, no partner gate). Falls back to the real URL when present.
   // Fires whenever we have EITHER signal (photo is effectively always there). Canary-gated.
   let enriched = false
+  let pitchHandoffEnqueued = false
   const hasEnrichSignal = Boolean(input.picture?.trim() || realUrl)
   if (hasEnrichSignal && isCanaryUser(userId)) {
     try {
@@ -383,15 +405,23 @@ export async function connectLinkedinProspectViaOAuth(
     try {
       const toE164 = await resolvePhone(db, userId, tokenResult.phoneE164)
       if (toE164) {
-        await enqueueRuntimeEventHandoff(db, {
+        // PER-CONNECT-FLOW idempotency key (Adam 2026-06-04): key on the SINGLE-USE connectToken, NOT a
+        // content hash and NOT nowIso. Why: LinkedIn/the browser double-hits this callback for ONE login
+        // (~2s apart, both pass the too-late token-used guard) → keying on nowIso made each callback a
+        // DISTINCT runtime-event doc → TWO pitches (live double-pitch). The connectToken is identical for
+        // both callbacks of one login → the 2nd dedups (one pitch). A genuine RE-login mints a NEW token →
+        // a fresh pitch (re-test works). Content hash (uid+url) would permanently block re-logins; this
+        // doesn't.
+        const handoff = await enqueueRuntimeEventHandoff(db, {
           userId,
           toE164,
           source: "linkedin_connect",
           eventKind: "resume_parse_completed",
-          idempotencyKey: `linkedin-oauth-enriched:${userId}:${linkedinHash(realUrl ?? sub)}`,
+          idempotencyKey: `linkedin-oauth-enriched:${userId}:${input.connectToken}`,
           requireExistingSession: false,
           context: { cvParsedTrigger: true, enrichmentSource: "linkedin", linkedinEnriched: enriched },
         })
+        pitchHandoffEnqueued = handoff.ok
       }
     } catch (err) {
       logger.warn("linkedin_oauth.runtime_event_failed", { userId, err: String(err) })
@@ -400,7 +430,12 @@ export async function connectLinkedinProspectViaOAuth(
 
   await markLinkedinConnectTokenUsed(db, input.connectToken, Date.parse(nowIso) || Date.now())
   // Reroute RECIPIENT = the user's WeKruit Sendblue number (NOT their own phone) — see resolveRerouteRecipient.
-  const recipient = await resolveRerouteRecipient(db, userId)
+  // RELY ON OAUTH, NOT THE ECHO (Adam 2026-06-04): when the server-push pitch (resume_parse_completed
+  // handoff) was queued, the "I've done LinkedIn submission <token>" SMS echo is redundant AND harmful —
+  // it re-enters as a SEPARATE inbound that produces a duplicate "still pulling" ack (and, with the
+  // marker stuck, the banned onboarding question). Drop it; the runtime event owns the pitch. Keep the
+  // echo ONLY as the fallback when no server-push pitch queued (no enrich signal / non-canary).
+  const recipient = pitchHandoffEnqueued ? null : await resolveRerouteRecipient(db, userId)
   const smsDeepLink = recipient
     ? buildSmsDeepLink(recipient, buildLinkedinDoneOpenerBody(input.connectToken))
     : undefined
@@ -599,7 +634,7 @@ function makeProdDeps(db: Firestore): LinkedinConnectSubmitDeps {
     coresignalApiKey: () => CORESIGNAL_API_KEY.value().trim(),
     enrich: ({ userId, canonicalUrl, apiKey, nowIso }) =>
       enrichFromCoresignal({ db, userId, canonicalUrl, apiKey, nowIso }),
-    emitRuntimeEvent: async ({ userId, canonicalUrl, enriched, nowIso }) => {
+    emitRuntimeEvent: async ({ userId, enriched, token }) => {
       const phone = await resolvePhone(db, userId)
       if (!phone) {
         logger.warn("linkedin_connect.no_phone_for_runtime_event", { userId })
@@ -610,7 +645,9 @@ function makeProdDeps(db: Firestore): LinkedinConnectSubmitDeps {
         toE164: phone,
         source: "linkedin_connect",
         eventKind: "resume_parse_completed",
-        idempotencyKey: `linkedin-enriched:${userId}:${linkedinHash(canonicalUrl)}`,
+        // PER-CONNECT-FLOW key (Adam 2026-06-04): see the OAuth path — key on the single-use connectToken
+        // so a double-callback of ONE submit dedups to one pitch, while a genuine re-submit pitches fresh.
+        idempotencyKey: `linkedin-enriched:${userId}:${token}`,
         requireExistingSession: false,
         context: {
           cvParsedTrigger: true,

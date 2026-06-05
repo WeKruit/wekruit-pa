@@ -26,6 +26,8 @@
  *   title         ← job.jobTitle / roleTitle              (REQUIRED)
  *   seniority     ← job.seniorityLevel
  *   salaryMin/Max ← job.salaryMin / salaryMax
+ *   equity        ← job.equity                            (NOT on matching-jobs today)
+ *   skills        ← job.requiredSkills (top 4, deduped)
  *   location      ← pa-company.hqLocation || job.locationRaw
  *   workMode      ← inferred from job.jobType / locationRaw
  *   industry      ← pa-company.industry
@@ -61,6 +63,18 @@ export type RecCardPayload = {
   salaryMin?: number
   /** Compensation ceiling (USD). */
   salaryMax?: number
+  /**
+   * Equity / ownership grant, free-form display string (e.g. "0.1%–0.5%",
+   * "Equity offered"). Rendered on the comp line as "· equity <value>".
+   * Source = job.equity (NOT present on matching-jobs docs today — see audit;
+   * omitted gracefully until an upstream backfill populates it).
+   */
+  equity?: string
+  /**
+   * Top required skills for the role (≤4, deduped). Rendered as a "SKILLS" pill
+   * row. Source = job.requiredSkills (matching-jobs.requiredSkills[]).
+   */
+  skills?: string[]
   /** e.g. "San Francisco". */
   location?: string
   /** e.g. "in-office" / "remote" / "hybrid". */
@@ -103,6 +117,17 @@ export type CardJobSource = {
   jobType?: string | null
   atsApplyUrl?: string | null
   primaryUrl?: string | null
+  /**
+   * Required skills (matching-jobs.requiredSkills[]). The builder takes the top
+   * 4, deduped. The card renders them as a SKILLS pill row.
+   */
+  requiredSkills?: string[] | null
+  /**
+   * Equity / ownership grant, free-form (e.g. "0.1%–0.5%"). NOT present on
+   * matching-jobs docs today — kept here so an upstream backfill can wire it
+   * without a schema change. Omitted from the card when absent.
+   */
+  equity?: string | null
   /** Single match-reason string — fallback source for whyFits when no bullets. */
   reason?: string | null
 }
@@ -227,6 +252,34 @@ export function splitReasonToBullets(reason: string | undefined, max = 3): strin
 }
 
 /**
+ * The bundled card fonts (Inter / Playfair subsets) cover Latin only. Any CJK /
+ * emoji / arrow / other-script glyph renders as a "NO GLYPH" tofu box on the card
+ * (Adam 2026-06-04: "fking bad UI" — the Chinese match-reason bullets tofu'd).
+ * Keep ONLY bullets every char of which the Latin subset can draw: ASCII printable
+ * + Latin-1 + Latin Extended-A (accents) + common typographic punctuation. Drop the
+ * rest; if that empties the list, the section is omitted (the SMS text reply still
+ * carries the full reason). This keeps the card a clean English artifact.
+ */
+const SAFE_CARD_PUNCT = new Set(
+  " ‐‑‒–—‘’“”…•·".split(""),
+)
+function latinRenderable(s: string): boolean {
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0
+    if (cp >= 0x20 && cp <= 0x7e) continue // ASCII printable
+    if (cp >= 0xa1 && cp <= 0x17f) continue // Latin-1 Supplement + Latin Extended-A (accents)
+    if (SAFE_CARD_PUNCT.has(ch)) continue
+    return false // CJK / emoji / arrows / other script → would tofu
+  }
+  return true
+}
+export function latinRenderableBullets(list: string[] | undefined): string[] | undefined {
+  if (!list) return undefined
+  const kept = list.filter((b) => latinRenderable(b))
+  return kept.length > 0 ? kept : undefined
+}
+
+/**
  * Collapse fundingRounds[] into the latest disclosed raise amount ("$26M") and
  * the de-duplicated investor list. amount is in USD MILLIONS per PaCompany.
  */
@@ -272,6 +325,28 @@ function deriveFunding(rounds: CardFundingRound[] | null | undefined): {
   }
 }
 
+/**
+ * Take the top `max` required skills: trim, drop empties, de-dupe
+ * case-insensitively (keeping first display form), and humanize snake/kebab
+ * tokens ("react_native" → "React Native") so the SKILLS pills read cleanly.
+ */
+export function topSkills(requiredSkills: unknown, max = 4): string[] | undefined {
+  if (!Array.isArray(requiredSkills)) return undefined
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of requiredSkills) {
+    const s = cleanStr(raw)
+    if (!s) continue
+    const display = /[_-]/.test(s) ? humanizeToken(s) : s
+    const key = display.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(display)
+    if (out.length >= max) break
+  }
+  return out.length > 0 ? out : undefined
+}
+
 /** Render an employee range string ("501-1000") into a "N people" headcount label. */
 function formatHeadcount(employeeRange: string | null | undefined): string | undefined {
   const r = cleanStr(employeeRange)
@@ -303,6 +378,16 @@ export function buildRecCardPayload(input: {
   if (salaryMin) payload.salaryMin = salaryMin
   const salaryMax = cleanNum(job.salaryMax)
   if (salaryMax) payload.salaryMax = salaryMax
+
+  // Equity is free-form and NOT on matching-jobs docs today (audit). Wired here
+  // so an upstream backfill can light it up without a card change; omitted when
+  // absent.
+  const equity = cleanStr(job.equity)
+  if (equity) payload.equity = equity
+
+  // Top required skills → SKILLS pill row (matching-jobs.requiredSkills[]).
+  const skills = topSkills(job.requiredSkills, 4)
+  if (skills) payload.skills = skills
 
   const workMode = inferWorkMode(job.jobType, job.locationRaw)
   if (workMode) payload.workMode = workMode
@@ -352,9 +437,13 @@ export function buildRecCardPayload(input: {
   if (location) payload.location = location
 
   // ---- Match reasons (structured bullets preferred; reason-string fallback) ----
-  const whyFits = cleanStrList(reasons?.whyFits, 4) ?? splitReasonToBullets(job.reason ?? undefined)
+  // latinRenderableBullets drops CJK/emoji/symbol bullets the Latin-only card font
+  // would render as "NO GLYPH" boxes (the reason is often Chinese) → omit rather than tofu.
+  const whyFits = latinRenderableBullets(
+    cleanStrList(reasons?.whyFits, 4) ?? splitReasonToBullets(job.reason ?? undefined),
+  )
   if (whyFits) payload.whyFits = whyFits
-  const whyCompany = cleanStrList(reasons?.whyCompany, 4)
+  const whyCompany = latinRenderableBullets(cleanStrList(reasons?.whyCompany, 4))
   if (whyCompany) payload.whyCompany = whyCompany
 
   return payload

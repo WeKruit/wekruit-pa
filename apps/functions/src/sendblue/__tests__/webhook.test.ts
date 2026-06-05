@@ -222,6 +222,9 @@ const ENV_KEYS = [
   "IMESSAGE_PEER",
   "IMESSAGE_DEFAULT_PEER",
   "PA_TYPING_INDICATOR",
+  // R3 audio canary gate determinism: keep the dev-cohort split (env unset →
+  // isCanaryUser only true for CANARY_UIDS) so the non-canary audio test holds.
+  "PA_ONBOARDING_RAMP_ALL",
 ] as const
 
 let savedEnv: Record<string, string | undefined>
@@ -529,6 +532,150 @@ describe("handleSendblueWebhook", () => {
     await new Promise((r) => setTimeout(r, 20))
     assert.equal(res.statusCode, 200)
     assert.equal(ingestCount, 0, "no media_url → no ingest")
+  })
+
+  // ---- R3 (Adam 2026-06-04) — AUDIO evidence intake ----
+  const CANARY_UID = "8fEwIduUrzxZsblHHsNz" // dev cohort (canary.ts CANARY_UIDS)
+
+  it("Test 8f (R3 audio): canary voice note → transcribed → inbound text = transcript, mediaUrl cleared, NO ingestCv", async () => {
+    const { db, inbound } = makeFakeDb()
+    const audioUrl = "https://storage.googleapis.com/inbound-file-store/voice.m4a"
+    const body = JSON.stringify({ ...basePayload(), content: "", media_url: audioUrl })
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    let ingestCvCount = 0
+    let ingestAudioCount = 0
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => CANARY_UID,
+      ingestCv: async () => { ingestCvCount++; return { ok: false as const, reason: "should_not_run" } },
+      ingestAudio: async (url) => {
+        ingestAudioCount++
+        assert.equal(url, audioUrl)
+        return { ok: true as const, transcript: "i'm a senior backend engineer, 6 years at stripe" }
+      },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(inbound.size, 1)
+    const raw = ([...inbound.values()][0]!.rawPayload) as Record<string, unknown>
+    // Transcript becomes the inbound text — processed like a typed message.
+    assert.equal(raw.text, "i'm a senior backend engineer, 6 years at stripe")
+    // mediaUrl cleared → NOT plumbed as an attachment.
+    assert.equal(raw.mediaUrl, undefined)
+    assert.equal(raw.attachmentReceived, undefined)
+    assert.equal(ingestAudioCount, 1, "audio was transcribed")
+    assert.equal(ingestCvCount, 0, "a voice note must NOT route to the PDF ingestCv path")
+  })
+
+  it("Test 8g (R3 audio): PDF résumé still routes to ingestCv unchanged (not treated as audio)", async () => {
+    const { db, inbound } = makeFakeDb()
+    const pdfUrl = "https://storage.googleapis.com/inbound-file-store/resume.pdf"
+    const body = JSON.stringify({ ...basePayload(), content: "", media_url: pdfUrl })
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    let ingestCvCount = 0
+    let ingestAudioCount = 0
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => CANARY_UID, // canary, but a PDF is not audio
+      ingestCv: async (input) => {
+        ingestCvCount++
+        assert.equal(input.mediaUrl, pdfUrl)
+        return { ok: true as const, resumeId: "rsm_1", userId: CANARY_UID }
+      },
+      ingestAudio: async () => { ingestAudioCount++; return { ok: false as const, reason: "should_not_run" } },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(inbound.size, 1)
+    const raw = ([...inbound.values()][0]!.rawPayload) as Record<string, unknown>
+    // Untouched media path: still an [attachment] inbound carrying the media_url.
+    assert.equal(raw.text, "[attachment]")
+    assert.equal(raw.mediaUrl, pdfUrl)
+    assert.equal(raw.attachmentReceived, true)
+    assert.equal(ingestAudioCount, 0, "a PDF must never hit the audio path")
+    assert.equal(ingestCvCount, 1, "PDF résumé still ingests via ingestCv")
+  })
+
+  it("Test 8h (R3 audio): non-canary voice note → audio path skipped, media path unchanged", async () => {
+    const { db, inbound } = makeFakeDb()
+    const audioUrl = "https://storage.googleapis.com/inbound-file-store/voice.m4a"
+    const body = JSON.stringify({ ...basePayload(), content: "", media_url: audioUrl })
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    let ingestCvCount = 0
+    let ingestAudioCount = 0
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "non_canary_user", // NOT in the dev cohort
+      ingestCv: async () => { ingestCvCount++; return { ok: true as const, resumeId: "r", userId: "non_canary_user" } },
+      ingestAudio: async () => { ingestAudioCount++; return { ok: true as const, transcript: "should not run" } },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(ingestAudioCount, 0, "non-canary users do not get the audio transcription path yet")
+    const raw = ([...inbound.values()][0]!.rawPayload) as Record<string, unknown>
+    // Unchanged: still an [attachment] inbound with the media_url present.
+    assert.equal(raw.text, "[attachment]")
+    assert.equal(raw.mediaUrl, audioUrl)
+  })
+
+  it("Test 8i (R3 audio): transcription fails → FAIL OPEN, media path continues unchanged", async () => {
+    const { db, inbound } = makeFakeDb()
+    const audioUrl = "https://storage.googleapis.com/inbound-file-store/voice.caf"
+    const body = JSON.stringify({ ...basePayload(), content: "", media_url: audioUrl })
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => CANARY_UID,
+      ingestCv: async () => ({ ok: false as const, reason: "noop" }),
+      // Transcription returns a failure — turn must NOT break.
+      ingestAudio: async () => ({ ok: false as const, reason: "transcribe_failed" }),
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200, "an audio hiccup must never break the turn")
+    assert.equal(inbound.size, 1)
+    const raw = ([...inbound.values()][0]!.rawPayload) as Record<string, unknown>
+    // Fall back to the existing media path: still [attachment] + media_url present.
+    assert.equal(raw.text, "[attachment]")
+    assert.equal(raw.mediaUrl, audioUrl)
+  })
+
+  it("Test 8j (R3 audio): audio-ingest throws → FAIL OPEN (caught), 200 + media path unchanged", async () => {
+    const { db, inbound } = makeFakeDb()
+    const audioUrl = "https://storage.googleapis.com/inbound-file-store/voice.m4a"
+    const body = JSON.stringify({ ...basePayload(), content: "", media_url: audioUrl })
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => CANARY_UID,
+      ingestCv: async () => ({ ok: false as const, reason: "noop" }),
+      ingestAudio: async () => { throw new Error("unexpected audio crash") },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200, "an audio crash must be caught and never break the turn")
+    assert.equal(inbound.size, 1)
+    const raw = ([...inbound.values()][0]!.rawPayload) as Record<string, unknown>
+    assert.equal(raw.text, "[attachment]")
+    assert.equal(raw.mediaUrl, audioUrl)
   })
 
   it("Test 8c (tapback inbound): Loved \"...\" → still enqueues inbound + writes pa-tapback-events row", async () => {

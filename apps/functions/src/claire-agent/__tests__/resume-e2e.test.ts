@@ -257,7 +257,11 @@ test("LEG B: REAL ingestCv with the LIVE sessionId produces ONE resume_parse_com
   assert.equal(handled, true, "thin MUST handle the cv-parsed re-entry (route to thin, not legacy)")
   assert.ok(events.includes("thin_claire.cv_parsed_reentry"), `expected cv_parsed_reentry; got ${JSON.stringify(events)}`)
   assert.equal(events.includes("thin_claire.defer_runtime_event"), false, "must NOT defer the canary cv-parsed event to legacy")
-  assert.equal(col(PA_COLLECTIONS.inboundEvents).get(handoffId)!.handledBy, "thin_claire", "handledBy must be thin_claire")
+  // handledBy is any thin_claire* handler — the cv-parsed re-entry now runs the PITCH ENGINE
+  // (thin_claire_pitch_engine), or its deterministic non-matching fallback when the composer misses
+  // (thin_claire_pitch_engine_fallback, e.g. no OpenAI key in test). All are THIN, not legacy.
+  const handledBy = String(col(PA_COLLECTIONS.inboundEvents).get(handoffId)!.handledBy ?? "")
+  assert.ok(handledBy.startsWith("thin_claire"), `handledBy must be a thin_claire* handler; got ${handledBy}`)
 })
 
 // ── BUG 2 — exactly-once: two concurrent ingests collapse to ONE handoff ─────────────────────

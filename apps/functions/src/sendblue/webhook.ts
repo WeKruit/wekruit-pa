@@ -63,6 +63,14 @@ import { runPiiConfirmForUser as defaultRunPiiConfirmForUser } from "../pii-conf
 import type { SendblueInboundPayload } from "./types.js"
 import { inboundEventExpiresAtTs, outboundExpiresAtTs } from "./ttl.js"
 import { resolveInboundUserId } from "../candidate-inbound-resolve.js"
+// R3 (Adam 2026-06-04) — multi-modal evidence intake: inbound iMessage voice
+// note → transcribe → continue the normal inbound TEXT path. Fail-open: harmless
+// if Sendblue never delivers audio on media_url.
+import {
+  ingestAudio as defaultIngestAudio,
+  isAudioMedia,
+} from "./audio-ingest.js"
+import { isCanaryUser } from "../claire-agent/canary.js"
 
 function prescreenTriggerIdempotencyDocId(jobId: string, userId: string, messageHandle: string): string {
   return `${jobId}_${userId}_${encodeURIComponent(messageHandle || "missing_message_handle")}`
@@ -124,6 +132,13 @@ export type WebhookDeps = {
    * a parse-only ingest while the cutover ingest owns the candidate-facing re-entry.
    */
   ingestCv?: typeof defaultIngestCv
+  /**
+   * R3 (Adam 2026-06-04) — AUDIO evidence intake. When an inbound media_url is
+   * an iMessage voice note, transcribe it and rewrite the inbound text to the
+   * transcript so a voice note is processed exactly like a typed message.
+   * Inject for tests; defaults to ./audio-ingest ingestAudio. Fail-open.
+   */
+  ingestAudio?: typeof defaultIngestAudio
   /** Stream D — phone→userId resolver. Optional inboundText enables the verification-code (or legacy Hello, WeKruit!) uid bind. */
   lookupUserByPhone?: (db: Firestore, phoneE164: string, inboundText?: string) => Promise<string | null>
   /** WeKruit_LAID_OFF inbound trigger handler. Inject for tests. */
@@ -592,7 +607,11 @@ export async function handleSendblueWebhook(
   // normalized inbound so the rest of the pipeline (rate-limit / broker
   // enqueue) treats this as a real message. Reuses the same
   // idempotency convention so dedupe still works.
-  const mediaUrl = extractMediaUrl(payload)
+  // `let` (was const) — R3: when an inbound media_url is an AUDIO voice note we
+  // transcribe it and then CLEAR mediaUrl so the rest of the pipeline treats the
+  // turn as plain inbound text (the `!mediaUrl` trigger/find-match/coalesce
+  // branches run, and we do NOT route the voice note to the PDF ingestCv path).
+  let mediaUrl = extractMediaUrl(payload)
   if (!normalized) {
     if (mediaUrl) {
       const messageHandle = typeof payload.message_handle === "string" ? payload.message_handle.trim() : ""
@@ -681,6 +700,55 @@ export async function handleSendblueWebhook(
     { to: normalized.fromNumber, fromNumber: normalized.toNumber, correlationId: normalized.messageHandle },
     log,
   )
+
+  // ---- 3d.5 R3 (Adam 2026-06-04) — AUDIO evidence intake -----------------
+  //
+  // A candidate can ALWAYS skip and just get matched, but must be ABLE to send
+  // an iMessage voice note as evidence. When the inbound media_url is audio:
+  //   1. transcribe it (OpenAI, PA_OPENAI key) via deps.ingestAudio
+  //   2. rewrite normalized.text to the transcript
+  //   3. CLEAR mediaUrl so the rest of the pipeline runs the normal TEXT path
+  //      (trigger router / find-match / coalesce / broker enqueue) and does NOT
+  //      hand the voice note to the PDF-oriented ingestCv side-effect.
+  //
+  // Canary-gated (NEW product behavior, per CLAUDE.md isCanaryUser): non-canary
+  // users keep the existing media path (audio is left as an [attachment] inbound
+  // exactly as before). FAIL-OPEN: any detection/download/transcription miss
+  // leaves mediaUrl + normalized.text untouched, so the turn never breaks. This
+  // is also a no-op when Sendblue never delivers audio (isAudioMedia → false).
+  if (mediaUrl && isAudioMedia(mediaUrl)) {
+    try {
+      const lookupForAudio = deps.lookupUserByPhone ?? defaultLookupUserByPhone
+      const audioUserId = await lookupForAudio(deps.db, normalized.fromNumber, normalized.text)
+      if (isCanaryUser(audioUserId)) {
+        const ingestAudioFn = deps.ingestAudio ?? defaultIngestAudio
+        const audioResult = await ingestAudioFn(mediaUrl, {
+          log: (event, payload) => log(`[sendblue][audio] ${event}`, payload),
+        })
+        if (audioResult.ok && audioResult.transcript.trim().length > 0) {
+          ;(normalized as { text: string }).text = audioResult.transcript.trim()
+          // Consume the media: downstream now treats this as plain inbound text.
+          mediaUrl = null
+          log("[sendblue][webhook] voice note transcribed → inbound text", {
+            fromNumber: normalized.fromNumber,
+            chars: audioResult.transcript.length,
+          })
+        } else {
+          log("[sendblue][webhook] voice note transcription skipped (fail-open)", {
+            fromNumber: normalized.fromNumber,
+            reason: audioResult.ok ? "empty_transcript" : audioResult.reason,
+          })
+        }
+      }
+    } catch (audioErr) {
+      // Fail-open: never break the turn on an audio hiccup. The media path
+      // continues unchanged (the voice note is handled as before).
+      log("[sendblue][webhook] audio-ingest error (non-fatal)", {
+        fromNumber: normalized.fromNumber,
+        err: audioErr instanceof Error ? audioErr.message : String(audioErr),
+      })
+    }
+  }
 
   // ---- 3e0. v1.9 G2 — ATS pending-trigger virtualization --------------
   //

@@ -55,9 +55,13 @@ import { parseResumeText } from "@pa/pa-resume-parser"
 import { queryMatchingJobsV16, recordRecommendedJobs } from "@pa/job-rec"
 import type { FeedbackEvent } from "@pa/core-types"
 import type { Firestore } from "firebase-admin/firestore"
-// Rec-card render→host→send side-channel (flag-gated, fail-open). maybeSendRecCard
-// internally no-ops when PA_JOB_REC_CARD_ENABLED is off and NEVER throws.
-import { maybeSendRecCard } from "../../job-rec-card/send-rec-card.js"
+// Rec-card image model (flag-gated, fail-open). `resolveRecCardMediaUrl` returns the Sendblue-acceptable
+// image url for a job WITHOUT enqueuing (cache-read → shape-guard → liveness → lazy-gen+persist), so the
+// image rides INLINE on the role caption bubble (ordered, per-turn). `maybeSendRecCard` is retained for
+// back-compat/tests but is no longer used here. `isJobRecCardEnabled` re-gates the resolve (flag off → no
+// image). All never throw.
+import { resolveRecCardMediaUrl } from "../../job-rec-card/send-rec-card.js"
+import { isJobRecCardEnabled } from "../../job-rec-card/job-rec-card.js"
 import {
   reduceMatchingPreferences,
   type MatchingTagsSlice,
@@ -588,7 +592,21 @@ export function makeV16FindMatch(
       // Final merged set: collab roles FIRST, then open-market fill. recordAgentPresentation, the
       // rec-card fire (TOP job → reliably the top collab role when present), and the formatted lines
       // all operate over THIS array, so every downstream consumer sees the same ordered, deduped set.
-      const rawJobs = [...collabJobs, ...openJobs]
+      //
+      // HARD DELIVERY CAP (Adam 2026-06-04): "limit recommendations to less than 3 — it's dumping too
+      // many" (a live test delivered 4+). Cap the DELIVERED set at AT MOST 3 total, here at the single
+      // merge point so EVERY downstream consumer (ledger, rec-card, formatted lines, collab prescreen
+      // offer) sees the same capped set. COLLAB-FIRST ORDERING IS PRESERVED: the array is collab-then-
+      // open and .slice() keeps that order — collab roles take the first slots, open-market fills the
+      // rest up to 3. Only the COUNT is capped; the mandatory collab prescreen offer mechanics are
+      // untouched (the offer is rebuilt below from the collab roles that survive this cap).
+      const DELIVERY_CAP = 3
+      const rawJobs = [...collabJobs, ...openJobs].slice(0, DELIVERY_CAP)
+      // The collab roles that actually survived the cap (collab-first, so these are the leading entries
+      // of rawJobs that came from the collab pass). The prescreen offer + structured `collab` payload
+      // below are built from THIS set, not the full collab pass, so we never name a partner role the
+      // candidate was not shown.
+      const deliveredCollabJobs = rawJobs.filter((j) => collabIds.has(j.id))
 
       // PERSIST the pushed collab roles (req #1) — write the collab subset we just surfaced to
       // pa-users/{userId}.lastCollabRoles = [{ jobId, company, title }] so a LATER turn's
@@ -638,44 +656,50 @@ export function makeV16FindMatch(
         }
       }
 
-      // Rec-card render→host→send side-channel (flag-gated, fail-open). Sends the
-      // TOP ranked job — which, on a first batch, is a curated WeKruit collab role
-      // — as a designed iMessage image attachment alongside Claire's text reply.
-      // maybeSendRecCard internally no-ops when PA_JOB_REC_CARD_ENABLED is off and
-      // NEVER throws — so a render/upload/enqueue hiccup can never break the
-      // find_match return contract (RC2): the text rec already covers the user.
-      if (cardDeps && rawJobs.length > 0) {
-        // `rawJobs` elements are the V16 `MatchingJob & { reason, ... }` projection;
-        // every field read below exists on that shape. CardJobSource fields are all
-        // optional, so any null/absent value just omits its card section.
-        const top = rawJobs[0]!
-        try {
-          await maybeSendRecCard({
-            userId,
-            jobId: top.id,
-            job: {
-              companyName: top.companyName,
-              jobTitle: top.jobTitle,
-              roleTitle: top.roleTitle,
-              seniorityLevel: top.seniorityLevel,
-              salaryMin: top.salaryMin,
-              salaryMax: top.salaryMax,
-              locationRaw: top.locationRaw,
-              jobType: top.jobType,
-              atsApplyUrl: top.atsApplyUrl,
-              primaryUrl: top.primaryUrl,
-              reason: top.reason,
-            },
-            deps: {
-              db,
-              getPhoneE164: cardDeps.getPhoneE164,
+      // Rec-card IMAGE resolution (flag-gated, fail-open). RESOLVE ONE Sendblue-acceptable image url PER
+      // COLLAB/partner role (Adam 2026-06-04: "for each collab role we can share an image, not only the
+      // first one") WITHOUT enqueuing — the image is attached INLINE to its role caption bubble by
+      // deliverRecBubbles instead of as a separate, decoupled, once/day media row that RACED the recs.
+      // This fixes BOTH live bugs: the image now rides WITH its role caption (ordered + per-turn), and the
+      // separate "rec-card-<uid>-<jobId>-<ymd>" once/day idempotency cap is gone.
+      //
+      // resolveRecCardMediaUrl = cache-read → shape-guard → liveness → lazy-gen(+persist); it NEVER throws
+      // and returns null on any miss (no creds / un-renderable / flag off). Gated by cardDeps presence
+      // (the REC_CARD_UIDS allowlist in cutover.ts) AND the runtime flag, so the image still only goes to
+      // the allowlisted dev uid. A null url just omits the image — the role still delivers as text (RC2:
+      // the find_match return contract is unaffected; the text rec already covers the user).
+      //
+      // `deliveredCollabJobs` elements are the V16 `MatchingJob & { reason, ... }` projection; every field
+      // read (incl. `requiredSkills` → the card's SKILLS pills) exists on that shape. CardJobSource fields
+      // are all optional, so any null/absent value omits its card section. We resolve only the COLLAB roles
+      // (the prescreen-eligible partner inventory) — open-market lines stay text-only.
+      const mediaByJobId = new Map<string, string>()
+      if (cardDeps && deliveredCollabJobs.length > 0 && isJobRecCardEnabled()) {
+        for (const cj of deliveredCollabJobs) {
+          try {
+            const mediaUrl = await resolveRecCardMediaUrl(db, {
+              jobId: cj.id,
+              job: {
+                companyName: cj.companyName,
+                jobTitle: cj.jobTitle,
+                roleTitle: cj.roleTitle,
+                seniorityLevel: cj.seniorityLevel,
+                salaryMin: cj.salaryMin,
+                salaryMax: cj.salaryMax,
+                locationRaw: cj.locationRaw,
+                jobType: cj.jobType,
+                atsApplyUrl: cj.atsApplyUrl,
+                primaryUrl: cj.primaryUrl,
+                requiredSkills: cj.requiredSkills,
+                reason: cj.reason,
+              },
               ...(cardDeps.sendblueCreds ? { sendblueCreds: cardDeps.sendblueCreds } : {}),
-              ...(cardDeps.fromNumber ? { fromNumber: cardDeps.fromNumber } : {}),
               log: cardDeps.log ?? log,
-            },
-          })
-        } catch {
-          /* fail-open — the text rec already covers the user */
+            })
+            if (mediaUrl) mediaByJobId.set(cj.id, mediaUrl)
+          } catch {
+            /* fail-open — the role still delivers as a text bubble */
+          }
         }
       }
 
@@ -733,6 +757,14 @@ export function makeV16FindMatch(
         }
         return base
       })
+      // STRUCTURED delivery rows — one per `jobs[]` line, SAME order (jobs maps over rawJobs), each
+      // carrying its rec-card image url INLINE when one was resolved above (collab roles only; open-market
+      // is text-only). deliverRecBubbles iterates THESE so the image rides WITH its caption, in order,
+      // per-turn. The mandatory prescreen offer is NOT here — deliverRecBubbles appends it LAST.
+      const deliverRows = rawJobs.map((j, i) => {
+        const mediaUrl = mediaByJobId.get(j.id)
+        return mediaUrl ? { text: jobs[i]!, mediaUrl } : { text: jobs[i]! }
+      })
       // `total` reflects the size of the offered set when collab contributed (the collab funnel `total`
       // counts only collab jobs, which would understate a mixed batch); otherwise use the open-market
       // catalog total so a zero-result batch still reports a meaningful count for the clarifier.
@@ -751,7 +783,10 @@ export function makeV16FindMatch(
           : null
       // Structured collab roles for the DETERMINISTIC prescreen offer (the find_match TOOL sends it —
       // the LLM kept dropping it). prescreenReady ⇒ this role's jobs[] line carries a start token.
-      const collab = collabJobs.map((j) => ({
+      // Built from `deliveredCollabJobs` (the collab roles that survived the 3-cap), NOT the full collab
+      // pass — so the MANDATORY prescreen offer only names partner roles the candidate was actually
+      // shown. The offer mechanics are unchanged; only the candidate count is capped.
+      const collab = deliveredCollabJobs.map((j) => ({
         jobId: j.id,
         title: (j.jobTitle || j.roleTitle || "Role").trim(),
         company: (j.companyName || "Company").trim(),
@@ -763,6 +798,7 @@ export function makeV16FindMatch(
         jobs,
         reason,
         collab,
+        deliverRows,
         snapshotTags: {
           targetRoleFunction: meta.userTags?.targetRoleFunction,
           negativeRoleFunction: meta.userTags?.negativeRoleFunction,
@@ -814,27 +850,65 @@ export function buildCollabPrescreenOffer(
  * MANDATORY prescreen offer. The agent then stays silent (prompt: delivered:true → empty messages).
  * Fail-soft: a send error degrades to delivered:false so the agent narrates as before (never a dead turn).
  */
-async function deliverRecBubbles(
+export async function deliverRecBubbles(
   ctx: ClaireToolContext,
   res: FindMatchResult,
 ): Promise<{ delivered: boolean; collabCount: number }> {
-  const jobs = (res.jobs ?? []).filter((s) => typeof s === "string" && s.trim().length > 0)
-  if (jobs.length === 0) return { delivered: false, collabCount: 0 }
+  // Prefer the STRUCTURED rows (each carries its inline image url); fall back to the bare `jobs[]` lines
+  // (text-only) for older shapes / no-cardDeps. Each row's `text` is one role line.
+  const rows: Array<{ text: string; mediaUrl?: string }> =
+    Array.isArray(res.deliverRows) && res.deliverRows.length > 0
+      ? res.deliverRows
+          .filter((r) => r && typeof r.text === "string" && r.text.trim().length > 0)
+          .map((r) => (r.mediaUrl ? { text: r.text, mediaUrl: r.mediaUrl } : { text: r.text }))
+      : (res.jobs ?? [])
+          .filter((s) => typeof s === "string" && s.trim().length > 0)
+          .map((text) => ({ text }))
+  if (rows.length === 0) return { delivered: false, collabCount: 0 }
   const collab = (res.collab ?? []).filter((c) => c.prescreenReady)
   try {
+    // STRICT ORDER + EMIT-PACE (Adam 2026-06-04): intro → each role (in order) → prescreen offer LAST.
+    //
+    // The reorder bug (job1, job2, OFFER, job3 / image after the offer) was that each `sendText` writes an
+    // INDEPENDENT pa-outbound row consumed by a SEPARATE concurrent outbox CF instance. Marking rows
+    // `paced:true` makes the outbox SKIP its own length-dwell — but with all rows written back-to-back at
+    // the SAME createdAt, the concurrent instances still race on POST order. The proven fix (deliverBubbles
+    // in delivery.ts) is to PACE AT THE EMIT SEAM: await a small randomized human delay BEFORE each send so
+    // the `createdAt` timestamps stagger (>=900ms apart here — a rec list reads well a touch slower than the
+    // 600ms chat beat), giving the outbox an unambiguous arrival order. Combined with `paced:true` (no
+    // double-dwell), the monotonic `seq` below IS the delivered order. The image rides its role row's
+    // `mediaUrl` so it lands WITH (and in the same order as) its caption — no separate racing media row.
     let seq = 0
+    const stagger = async (): Promise<void> => {
+      if (seq === 0) return // no delay before the very first bubble
+      await ctx.transport.typing().catch(() => {})
+      const ms = 900 + Math.floor(Math.random() * 300) // 900–1200ms inter-bubble beat for a rec list
+      await new Promise((r) => setTimeout(r, ms))
+    }
     const intro =
       collab.length > 0
         ? "found a few that fit right now — including WeKruit partner roles where I pitch you straight to the hiring team 👇"
         : "found a few that fit right now 👇"
-    await ctx.transport.sendText(intro, { seq: seq++ })
-    for (const line of jobs) await ctx.transport.sendText(line, { seq: seq++ })
+    await ctx.transport.sendText(intro, { seq: seq++, paced: true })
+    let withImage = 0
+    for (const row of rows) {
+      await stagger()
+      await ctx.transport.sendText(
+        row.text,
+        row.mediaUrl
+          ? { seq: seq++, paced: true, mediaUrl: row.mediaUrl }
+          : { seq: seq++, paced: true },
+      )
+      if (row.mediaUrl) withImage++
+    }
     if (collab.length > 0) {
-      await ctx.transport.sendText(buildCollabPrescreenOffer(collab), { seq: seq++ })
+      await stagger()
+      await ctx.transport.sendText(buildCollabPrescreenOffer(collab), { seq: seq++, paced: true })
     }
     ctx.log("pa.claire.find_match.delivered", {
       userId: ctx.userId,
-      roles: jobs.length,
+      roles: rows.length,
+      withImage,
       collab: collab.length,
     })
     return { delivered: true, collabCount: collab.length }

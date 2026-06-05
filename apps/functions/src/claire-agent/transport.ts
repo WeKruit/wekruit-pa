@@ -195,11 +195,20 @@ export function createSendblueTransport(
     },
 
     // User-facing reply — durable, idempotent, retried via the pa-outbound outbox.
-    async sendText(text: string, opts?: { seq?: number; paced?: boolean }): Promise<void> {
+    // `opts.mediaUrl` rides an image attachment WITH this bubble (the rec-card image inline on its
+    // role caption); enqueueOutbound forwards it to Sendblue as the message media_url. The image
+    // therefore delivers in strict order WITH its caption (one durable row), instead of a separate
+    // once/day media row that races the recs. The idempotency key folds the body hash + the per-turn
+    // inboundEventId, so this image+caption row re-sends every find_match (per-turn), as intended.
+    async sendText(
+      text: string,
+      opts?: { seq?: number; paced?: boolean; mediaUrl?: string },
+    ): Promise<void> {
       record("text", text)
       if (dryRun) return
       const body = String(text ?? "").trim()
       if (!body) return
+      const mediaUrl = opts?.mediaUrl?.trim()
       try {
         await enqueueOutbound(deps.db, {
           userId: deps.userId,
@@ -208,6 +217,7 @@ export function createSendblueTransport(
           idempotencyKey: textIdempotencyKey(deps, body),
           ...(typeof opts?.seq === "number" ? { seq: opts.seq } : {}),
           ...(opts?.paced ? { paced: true } : {}),
+          ...(mediaUrl ? { mediaUrl } : {}),
           runtimeApproved: true,
           runtimeSource: "pa_orchestrator",
         })

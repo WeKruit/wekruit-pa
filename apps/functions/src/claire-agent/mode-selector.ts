@@ -39,7 +39,6 @@ import { loadPrescreenContext } from "./prescreen-context.js"
 import { isCanaryUser } from "./canary.js"
 import { isEnrichmentInFlight } from "./enrichment-inflight.js"
 import { shouldNudgeGmail } from "./gmail-nudge.js"
-import { needsLocationSalaryAsk, LOCATION_SALARY_ASKED_AT } from "./reducers/location-salary-gate.js"
 
 const USERS = "pa-users"
 const PRESCREEN_SESSIONS = "pa-prescreen-sessions"
@@ -237,6 +236,9 @@ async function markSharedOnboardingComplete(db: Firestore, userId: string, now: 
       .set(
         {
           onboardingState: "complete",
+          // ALSO onboardingStatus (Adam 2026-06-04): loadGlobalContext's "already onboarded?" guard
+          // reads onboardingStatus; leaving it stale re-surfaced the connect-LinkedIn / upload offers.
+          onboardingStatus: "complete",
           updatedAt: now,
           sharedOnboarding: { status: "complete", completed: true, updatedAt: now },
         },
@@ -582,24 +584,11 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   }
 
   // 3. TRIAGE.
-  // CANONICAL FLOW STEP 4 (Adam-LOCKED 2026-06-03): the ONE conditional pre-match ask. If location AND
-  // salary are BOTH missing and never asked, ask for both in ONE short message before matching, then
-  // defer find_match one turn. Once-only (stamp). Beats the Gmail nudge. Canary-gated; fail-open (a
-  // stamp write error still returns a normal triage turn). Skipped on the pitch turn + while enriching.
-  if (
-    isCanaryUser(args.userId) &&
-    !enrichmentInFlight &&
-    !args.cvParsedTrigger &&
-    needsLocationSalaryAsk(user)
-  ) {
-    try {
-      await args.db.collection(USERS).doc(args.userId).set({ [LOCATION_SALARY_ASKED_AT]: now }, { merge: true })
-    } catch (err) {
-      log("mode.location_salary_stamp_failed", { userId: args.userId, error: String(err) })
-    }
-    log("mode.location_salary_ask", { userId: args.userId })
-    return { mode: "triage", ...inFlightDecision, locationSalaryAsk: true }
-  }
+  // CANONICAL FLOW STEP 4 — loc/salary ask moved to MATCH TIME (Adam 2026-06-04: "before we get confirm
+  // from user, don't ask"). The old deterministic gate fired the "where + salary?" question on EVERY
+  // triage turn whenever both were missing — so a post-pitch profile-refinement message ("either works,
+  // here's more context") wrongly triggered it BEFORE the candidate asked for matches. The ask is now
+  // the agent's job, only right before find_match (prompt rule), so it never fires before match-intent.
 
   // WS-3(b): a plain conversational triage turn is the right place for the occasional Gmail nudge
   // (not mid-onboarding, not a pitch, not enrichment-in-flight). Stamp the cooldown when it fires.

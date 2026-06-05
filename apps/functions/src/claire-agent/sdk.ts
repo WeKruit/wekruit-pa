@@ -64,13 +64,29 @@ function loadSdk(): Record<string, unknown> {
   return _sdk
 }
 
-/** zod@4 — lazy. First property touch (z.object, z.string, …) resolves the SDK. */
+/**
+ * zod@4 — lazy. First property touch (z.object, z.string, …) resolves the SDK.
+ *
+ * TYPE anchor MUST be zod@4, NOT bare `import("zod")`. apps/functions pins zod@3
+ * (`import("zod")` = the nested 3.25.76 → `z.object()` yields a zod-3 `ZodObject<…,"strip">`),
+ * but `tool()` (typed from `@openai/agents`, which resolves zod from the ROOT node_modules =
+ * zod@4.3.6) wants a zod-4 `ZodObjectLike` (`$strip`). The split tree (top-level zod@4 for agents
+ * + nested zod@3 for the v3 workspaces) surfaced this as ~49 TS2322 errors in the tool files.
+ * We anchor the TYPE DIRECTLY to the ROOT zod@4.3.6 — the EXACT same package `@openai/agents`
+ * (line 21) uses — via the `zod4-agent-sdk` tsconfig paths alias (→ root node_modules/zod), so
+ * `z.object()` and `tool()` share one zod-4 type instance. (A re-export indirection through
+ * `@pa/agent-runtime` instead made tsc expand zod's recursive types unboundedly → OOM; a DIRECT
+ * package reference is cached and cheap. A bare relative path tripped NodeNext's
+ * explicit-extension rule, hence the paths alias.) Type-only, erased at runtime; the runtime value
+ * still loads lazily from agent-runtime's graph above. See package.json `//zod-split` +
+ * apps/functions/tsconfig.json `paths`.
+ */
 export const z = new Proxy({} as Record<PropertyKey, unknown>, {
   get(_t, prop) {
     if (!_z) loadSdk()
     return (_z as Record<PropertyKey, unknown>)[prop]
   },
-}) as unknown as typeof import("zod").z
+}) as unknown as typeof import("zod4-agent-sdk").z
 
 class LazyAgent {
   constructor(...args: unknown[]) {
@@ -118,8 +134,32 @@ export function configureClaireSdk(): void {
     ;(sdk.setDefaultOpenAIClient as ((c: unknown) => void) | undefined)?.(client)
     ;(sdk.setOpenAIAPI as ((api: string) => void) | undefined)?.("responses")
     if (apiKey) (sdk.setDefaultOpenAIKey as ((k: string) => void) | undefined)?.(apiKey)
+    // TRACING EXPORT (de-blackbox): the SDK builds the full per-turn span tree (generation /
+    // function / guardrail spans) by default, but configureClaireSdk only set the run-time key —
+    // never the TRACING export key — so the BatchTraceProcessor logs "No API key provided for
+    // OpenAI tracing exporter. Exports will be skipped." and drops every span. Reuse the SAME
+    // resolved apiKey so the trace exporter authenticates with the same project. Optional-chained
+    // through `undefined` so an SDK build lacking the setter is a silent no-op (fail-open).
+    if (apiKey) (sdk.setTracingExportApiKey as ((k: string) => void) | undefined)?.(apiKey)
   } catch {
     // fail-open: best-effort; the SDK falls back to env-derived defaults.
   }
   configured = true
+}
+
+/**
+ * Flush any buffered trace spans NOW (de-blackbox). @openai/agents' BatchTraceProcessor flushes on
+ * an unref'd 5s timer; a short Cloud Function invocation can return before that fires, so the
+ * generation / function / guardrail spans for the turn never POST. Awaiting this at the end of a
+ * turn forces the export. Fully fail-open: lazily loads the SDK, no-ops if the SDK build lacks
+ * getGlobalTraceProvider / forceFlush, and never throws into the turn.
+ */
+export async function forceFlushTraces(): Promise<void> {
+  try {
+    const sdk = loadSdk()
+    const provider = (sdk.getGlobalTraceProvider as (() => unknown) | undefined)?.()
+    await (provider as { forceFlush?: () => unknown } | undefined)?.forceFlush?.()
+  } catch {
+    // fail-open: a missing export / flush error must never break the turn.
+  }
 }
