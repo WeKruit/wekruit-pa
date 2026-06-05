@@ -1477,7 +1477,22 @@ export async function handleSendblueWebhook(
           // (this Path A) parse-only: followupDeliveryMode:"none" skips its resume_parse_completed
           // handoff entirely. This is independent of (and stacks under) the sha256-keyed handoff dedup in
           // cv-ingest, so even a webhook RETRY racing the cutover ingest cannot double-emit the pitch.
-          return ingestFn({ userId, mediaUrl, sessionId: undefined }, { followupDeliveryMode: "none" })
+          //
+          // BUG 3 FIX (Noah Liu, 2026-06-04): this internal, system-initiated parse must ALSO bypass the
+          // cv-ingest invite-gate (checkResumeGate → "not_invited"). A résumé a candidate TEXTS US is a
+          // solicited upload — the gate exists only to block UNSOLICITED uploads from non-invited users
+          // in the legacy onboarding flow, same rationale already applied to the cutover Path-B ingest
+          // (claire-agent/cutover.ts:249-253). Without skipLimitEnforcement this fire-and-forget rejected
+          // at the gate (Noah had no resumeAccepted flag) and enqueued a phantom resume_ingest_rejected
+          // runtime event ({rejectReason:"not_invited"}); the thin agent, handed only that bare reject
+          // context, hallucinated "not enough readable text — re-upload" even though the PDF parsed
+          // perfectly (4213 chars). Bypassing the gate removes the bad event at its source. This stays
+          // parse-only (followupDeliveryMode:"none") so it never emits a candidate-facing message —
+          // the cutover Path-B ingest remains the single producer of the post-parse pitch/overwrite UX.
+          return ingestFn(
+            { userId, mediaUrl, sessionId: undefined },
+            { followupDeliveryMode: "none", skipLimitEnforcement: true },
+          )
         })
         .then((res) => {
           log("[sendblue][cv-ingest] done", res)

@@ -253,7 +253,13 @@ export default function PublicJob() {
           return
         }
         const data = snap.data() as PaJobDoc
-        if (!data.publicVisible) {
+        // Render when the job is publicly visible OR it is a WeKruit collaboration
+        // role (a surfaced partner-inventory job — its candidate page must render
+        // even if the publicVisible flag hasn't been stamped yet, matching the
+        // firestore.rules public-read condition so a surfaced collab link never
+        // shows "not publicly visible"/404).
+        const isCollabReadable = data.wekruitCollaborationStatus === "collaborated"
+        if (!data.publicVisible && !isCollabReadable) {
           setErr("This job is not publicly visible.")
           setLoading(false)
           return

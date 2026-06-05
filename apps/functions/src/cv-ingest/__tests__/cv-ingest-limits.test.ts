@@ -241,4 +241,73 @@ describe("ingestCv — iter30 WS1 4-limit stack", () => {
     )
     assert.equal(res.ok, true)
   })
+
+  it("BUG 3 regression (Noah Liu): a real readable résumé with a CLOSED gate ingests via skipLimitEnforcement — reaches extraction, NOT rejected and NOT empty_text", async () => {
+    // ROOT CAUSE this guards: the webhook Stream-D ingest of a résumé the candidate TEXTED us
+    // must bypass the invite-gate. Noah (a canary user, no resumeAccepted flag → gate CLOSED)
+    // texted a 4213-char PDF; the live PDF parsed perfectly. With the gate bypassed the readable
+    // text must clear the empty_text threshold (cv-ingest.ts:1867 `!text.trim()`) and reach LLM
+    // extraction — i.e. the threshold must NOT false-negative a real résumé. This pins both:
+    //   (a) closed gate is bypassed (no "not_invited"), and
+    //   (b) a multi-line readable résumé passes the empty_text gate (no "pdf_parse_failed").
+    const db = makeMinimalDb()
+    // Representative of the live Noah Liu CV head (real PDF parsed to ~4213 chars of text).
+    const realResumeText = [
+      "Noah Liu",
+      "EDUCATION",
+      "University of Southern California, Viterbi School of Engineering — Los Angeles, CA",
+      "B.S. Computer Science, Expected 2026 — GPA 3.8",
+      "EXPERIENCE",
+      "Software Engineer Intern, Tesla — Palo Alto, CA",
+      "Built React/TypeScript dashboards; shipped a Node.js service handling 2M requests/day.",
+      "PROJECTS",
+      "Distributed key-value store in Go; ML pipeline in Python (PyTorch).",
+      "SKILLS",
+      "TypeScript, React, Node.js, Go, Python, PyTorch, PostgreSQL, AWS, Docker, Kubernetes",
+    ].join("\n")
+    assert.ok(realResumeText.trim().length > 200, "fixture must be a substantial, readable résumé")
+
+    let extractedCvText: string | null = null
+    // Record the failure reason (if any) BEFORE the success assert narrows `res` to `never`.
+    let observedReason: string | false = false
+    const res = await ingestCv(
+      { userId: "noah", mediaUrl: "https://storage.googleapis.com/inbound-file-store/Noah_Liu_CV.pdf" },
+      {
+        db,
+        // Mirrors the webhook Stream-D production call (parse-only + gate bypass).
+        skipLimitEnforcement: true,
+        followupDeliveryMode: "none",
+        nowIso: () => "2026-06-04T00:00:00.000Z",
+        // Gate is CLOSED (canary user with no resumeAccepted flag) — must be bypassed.
+        checkGate: async () => ({ open: false, reason: "not_set" }),
+        fetchPdf: async () => ({ bytes: new Uint8Array([1, 2, 3]), contentType: "application/pdf" }),
+        // Real readable text — must clear the empty_text threshold (NOT pdf_parse_failed).
+        parsePdf: async () => ({ text: realResumeText, numPages: 1 }),
+        llmExtract: async (cvText: string) => {
+          extractedCvText = cvText
+          return { parsed: happyParsed() }
+        },
+        isParserV2Enabled: async () => false,
+        lookupUserForFollowup: async () => null,
+        mem0Add: async () => {},
+      }
+    )
+
+    if (!res.ok) observedReason = res.reason
+    // Successful ingest proves BOTH failure modes are absent: a closed gate would return
+    // { ok:false, reason:"not_invited" } and an empty_text false-negative would return
+    // { ok:false, reason:"pdf_parse_failed" }. res.ok === true means neither fired.
+    assert.equal(
+      observedReason,
+      false,
+      "ingest must not have failed at the gate (not_invited) or empty_text (pdf_parse_failed)",
+    )
+    assert.equal(res.ok, true, "readable résumé with closed gate must ingest")
+    // The readable text actually reached the extractor (proves the threshold did not drop it).
+    assert.equal(
+      extractedCvText,
+      realResumeText,
+      "the readable résumé text must flow into LLM extraction, not be dropped by the empty_text gate",
+    )
+  })
 })

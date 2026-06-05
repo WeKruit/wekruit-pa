@@ -277,8 +277,28 @@ service cloud.firestore {
     // Operator R/W for editor; CFs bypass via Admin SDK.
     // v1.9 P87: public read when resource.data.publicVisible === true so
     // /j/:jobId can render outside the auth wall. Write still operator-only.
+    //
+    // 2026-06-04 (collab /j 404 fix): a WeKruit collaboration role that Claire
+    // SURFACES to a candidate must be publicly readable at /j/:jobId — otherwise
+    // the unauthed read is denied ("Missing or insufficient permissions" 404). The
+    // creation/enrichment path now also stamps publicVisible=true on collab jobs,
+    // but we additionally allow the public read for a WeKruit collaboration role as
+    // a defense-in-depth so a surfaced partner role never 404s on a flag race.
+    // Scope is deliberately narrow: ONLY a collaborated, publicId-bearing role
+    // (i.e. a real partner-inventory job with a candidate page), and ONLY read —
+    // write stays operator-only, and this does NOT open the general pa-jobs corpus
+    // (non-collab jobs stay private unless explicitly publicVisible). Gated on
+    // fields actually present on the pa-jobs doc (collab docs carry no reliable
+    // `status` field, but all carry wekruitCollaborationStatus + publicId).
+    function isPubliclyReadablePaJob() {
+      return resource.data.publicVisible == true
+        || (
+          resource.data.wekruitCollaborationStatus == "collaborated"
+          && resource.data.publicId is string
+        );
+    }
     match /pa-jobs/{jobId} {
-      allow read: if isPaOperator() || resource.data.publicVisible == true;
+      allow read: if isPaOperator() || isPubliclyReadablePaJob();
       allow write: if isPaOperator();
 
       // v2.0 S4 — generated job enrichment drafts are admin review state.

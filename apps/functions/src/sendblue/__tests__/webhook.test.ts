@@ -604,6 +604,55 @@ describe("handleSendblueWebhook", () => {
     assert.equal(ingestCvCount, 1, "PDF résumé still ingests via ingestCv")
   })
 
+  it("Test 8g2 (BUG 3 — Noah Liu, 2026-06-04): webhook Stream-D résumé ingest bypasses the invite-gate (no phantom not_invited rejection)", async () => {
+    // ROOT CAUSE this pins: a canary user (no resumeAccepted flag) texted us a perfectly
+    // readable PDF résumé. The webhook Stream-D fire-and-forget ingest did NOT pass
+    // skipLimitEnforcement, so cv-ingest's invite-gate rejected it with "not_invited" and
+    // enqueued a resume_ingest_rejected runtime event. The thin agent, handed only that bare
+    // reject context, hallucinated "not enough readable text — re-upload" even though the PDF
+    // parsed to 4213 chars. The fix makes this internal, system-initiated parse bypass the gate
+    // (it stays parse-only via followupDeliveryMode:"none", so the cutover Path-B ingest remains
+    // the single producer of the candidate-facing pitch/overwrite UX).
+    //
+    // The Stream-D ingest is fire-and-forget (void Promise(...).catch(...)) so an assertion thrown
+    // INSIDE the ingestCv mock is swallowed and would NOT fail the test. We therefore RECORD the
+    // opts and assert AFTER the promise settles — making this a genuine RED against the old code.
+    const { db } = makeFakeDb()
+    const pdfUrl = "https://storage.googleapis.com/inbound-file-store/hQxHpy48_Noah_Liu_CV.pdf"
+    const body = JSON.stringify({ ...basePayload(), content: "", media_url: pdfUrl })
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    let capturedOpts: { skipLimitEnforcement?: boolean; followupDeliveryMode?: string } | undefined
+    let ingestCvCount = 0
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => CANARY_UID,
+      ingestCv: async (input, opts) => {
+        ingestCvCount++
+        assert.equal(input.mediaUrl, pdfUrl)
+        capturedOpts = opts as typeof capturedOpts
+        return { ok: true as const, resumeId: "rsm_noah", userId: CANARY_UID }
+      },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(ingestCvCount, 1, "the texted PDF résumé reaches the Stream-D ingest")
+    // The load-bearing assertions — observed OUTSIDE the swallowed fire-and-forget promise.
+    assert.equal(
+      capturedOpts?.skipLimitEnforcement,
+      true,
+      "webhook Stream-D ingest MUST bypass the invite-gate (no spurious not_invited rejection)",
+    )
+    assert.equal(
+      capturedOpts?.followupDeliveryMode,
+      "none",
+      "webhook Stream-D ingest stays parse-only — cutover Path-B is the single pitch producer",
+    )
+  })
+
   it("Test 8h (R3 audio): non-canary voice note → audio path skipped, media path unchanged", async () => {
     const { db, inbound } = makeFakeDb()
     const audioUrl = "https://storage.googleapis.com/inbound-file-store/voice.m4a"
