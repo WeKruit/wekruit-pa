@@ -60,6 +60,14 @@ test("PublicJob keeps both interview entry methods reachable in the mobile sign-
   assert.match(source, /\.wk-pj-contract--compact[\s\S]*\.wk-pj-contract__item em\s*\{\s*display: none;/)
 })
 
+test("PublicJob mobile role modal keeps critical interview controls in view", () => {
+  assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-pj-modal-wrap \{[\s\S]*padding: 10px;/)
+  assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-pj-modal \{[\s\S]*max-height: calc\(100dvh - 20px\);[\s\S]*gap: 8px;[\s\S]*padding: 18px 14px 12px;/)
+  assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-pj-phone-link \{[\s\S]*padding: 9px;[\s\S]*gap: 7px;/)
+  assert.match(source, /@media \(max-width: 480px\) \{[\s\S]*\.wk-pj-login \{[\s\S]*gap: 8px;/)
+  assert.match(source, /By interviewing, you agree to our privacy &amp; terms\./)
+})
+
 test("PublicJob role sign-in modal can connect an existing Claire phone thread", () => {
   assert.match(source, /const PHONE_LINK_INTENT_KEY = "pa_phone_link_intent"/)
   assert.match(source, /function startExistingClairePhoneThread\(\)/)
