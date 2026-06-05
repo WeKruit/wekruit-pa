@@ -3,7 +3,7 @@
 // ("WeKruit_Laid_Off" | "candidate") is resolved at first paint via
 // resolveSource() and frozen onto the pa-users doc at registration.
 
-import { useMemo, useRef, useState, useEffect } from "react"
+import { useMemo, useRef, useState, useEffect, type FormEvent } from "react"
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom"
 import { onAuthStateChanged, signOut, type User } from "firebase/auth"
 import { clearSsoCookie } from "../lib/cross-domain-sso.js"
@@ -24,16 +24,151 @@ import { resolveSource, SOURCE_RESOLVER_MARKER, stickSourceFromLoginNext, type S
 import { auth } from "../lib/firebase.js"
 import { isLinkedInSignIn } from "../lib/candidate-auth-provider.js"
 import { CandidateVerifyError, readStoredCandidateId, verifyCandidateMagicLinkSession } from "../lib/candidate-verify.js"
+import { startCandidatePhoneLink, verifyCandidatePhoneLink } from "../lib/candidate-phone-link.js"
 import { buildHelloWekruitOpenerBody, buildWekruitJobOpenerBody } from "../lib/hello-wekruit.js"
 import { canOpenImessageDeepLink } from "../lib/imessage-platform.js"
 import { CompanyCombobox } from "../components/CompanyCombobox.js"
-import { CANDIDATE_STYLES, IMessageThread } from "./CandidateLogin.js"
+import { CANDIDATE_STYLES, Icon, IMessageThread } from "./CandidateLogin.js"
 import { canonicalPublicJobId } from "../lib/public-job-slugs.js"
 
 // Keep the marker referenced so tree-shaking can't drop it from the
 // bundle. The acceptance grep relies on this string being present.
 const _MARKER: string = SOURCE_RESOLVER_MARKER
 void _MARKER
+
+const ONBOARDING_PHONE_LINK_STYLES = `
+.wk-onboarding-phone-link {
+  margin: 0 0 18px;
+  padding: 18px;
+  border: 1px solid rgba(190, 116, 72, 0.28);
+  border-radius: var(--r-md);
+  background: linear-gradient(180deg, rgba(255, 248, 235, 0.96), rgba(245, 237, 227, 0.98));
+  box-shadow: var(--shadow-sm);
+}
+.wk-onboarding-phone-link__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+}
+.wk-onboarding-phone-link__kicker {
+  display: block;
+  margin-bottom: 6px;
+  color: #9f5d36;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.wk-onboarding-phone-link h2 {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 25px;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1.12;
+}
+.wk-onboarding-phone-link p {
+  margin: 7px 0 0;
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.wk-onboarding-phone-link__trigger {
+  min-height: 44px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.wk-onboarding-phone-link__panel {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(201, 182, 158, 0.6);
+  display: grid;
+  gap: 12px;
+}
+.wk-onboarding-phone-link__form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.wk-onboarding-phone-link__field {
+  display: grid;
+  gap: 6px;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+.wk-onboarding-phone-link__field input {
+  width: 100%;
+  min-width: 0;
+  height: 44px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  background: rgba(255, 253, 248, 0.72);
+  color: var(--ink);
+  font: 600 15px/1 var(--font-sans);
+  outline: none;
+  padding: 0 12px;
+}
+.wk-onboarding-phone-link__field input:focus {
+  border-color: #9f5d36;
+  box-shadow: 0 0 0 3px rgba(190, 116, 72, 0.14);
+}
+.wk-onboarding-phone-link__field input:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.wk-onboarding-phone-link__message {
+  margin: 0;
+  color: var(--success);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.wk-onboarding-phone-link__message.is-error {
+  color: var(--danger);
+}
+.wk-onboarding-phone-link__close {
+  justify-self: start;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  font: 700 13px/1.2 var(--font-sans);
+  padding: 2px 0;
+}
+.wk-onboarding-phone-link__close:hover:not(:disabled) {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.wk-onboarding-phone-link__close:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+@media (max-width: 640px) {
+  .wk-onboarding-phone-link {
+    padding: 14px;
+  }
+  .wk-onboarding-phone-link__body,
+  .wk-onboarding-phone-link__form {
+    grid-template-columns: 1fr;
+  }
+  .wk-onboarding-phone-link__trigger,
+  .wk-onboarding-phone-link__form .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .wk-onboarding-phone-link h2 {
+    font-size: 22px;
+  }
+}
+`
 
 type Stage = "intake" | "dup-prompt" | "done"
 
@@ -266,6 +401,21 @@ export default function Onboarding() {
 
   const onFormDone = (formData: Profile) => submitRegistration(formData, "auto")
 
+  function onPhoneThreadLinked(candidateId: string) {
+    setClaireConversationStarted(true)
+    setPortalReady(true)
+    setProfile((p) => ({ ...p, candidateId }))
+    if (returnPath) {
+      navigate(returnPath, { replace: true })
+      return
+    }
+    if (!isCandidateHost()) {
+      redirectToCandidatePortal("/me")
+      return
+    }
+    navigate("/me", { replace: true })
+  }
+
   async function onReuseExisting() {
     if (!pendingForm) return
     await submitRegistration(pendingForm, "reuse")
@@ -279,6 +429,7 @@ export default function Onboarding() {
 
   return (
     <main>
+      <style>{ONBOARDING_PHONE_LINK_STYLES}</style>
       <MinimalNav />
       <section
         className={stage === "done" ? "onboarding-section onboarding-section--done" : "onboarding-section"}
@@ -339,14 +490,17 @@ export default function Onboarding() {
           {submitError && <StepNotice tone="error" text={submitError} />}
 
           {stage === "intake" && (
-            <FormIntake
-              onDone={onFormDone}
-              isBusy={Boolean(busyText)}
-              source={source}
-              authUser={authUser}
-              linkedinLinkedViaOauth={linkedinLinkedViaOauth}
-              isJobInterview={isJobInterview}
-            />
+            <>
+              <OnboardingPhoneThreadLink authUser={authUser} onLinked={onPhoneThreadLinked} />
+              <FormIntake
+                onDone={onFormDone}
+                isBusy={Boolean(busyText)}
+                source={source}
+                authUser={authUser}
+                linkedinLinkedViaOauth={linkedinLinkedViaOauth}
+                isJobInterview={isJobInterview}
+              />
+            </>
           )}
           {stage === "dup-prompt" && dupExisting && (
             <DuplicatePrompt existing={dupExisting} onReuse={onReuseExisting} onFresh={onStartFresh} />
@@ -420,6 +574,165 @@ function StepNotice({ tone, text }: { tone: "busy" | "error"; text: string }) {
       {!isError && <span className="wk-inline-spinner wk-inline-spinner--ink" aria-hidden />}
       <span>{text}</span>
     </div>
+  )
+}
+
+type OnboardingPhoneLinkState =
+  | { status: "idle"; message: string | null; requestId?: undefined; phoneMasked?: undefined }
+  | { status: "sending_code"; message: string | null; requestId?: undefined; phoneMasked?: undefined }
+  | { status: "code_sent"; message: string; requestId: string; phoneMasked: string }
+  | { status: "verifying"; message: string; requestId: string; phoneMasked: string }
+  | { status: "linked"; message: string; requestId?: string; phoneMasked?: string }
+  | { status: "error"; message: string; requestId?: string; phoneMasked?: string }
+
+function OnboardingPhoneThreadLink({
+  authUser,
+  onLinked,
+}: {
+  authUser: User
+  onLinked: (candidateId: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [phone, setPhone] = useState("")
+  const [code, setCode] = useState("")
+  const [state, setState] = useState<OnboardingPhoneLinkState>({
+    status: "idle",
+    message: null,
+  })
+  const busy = state.status === "sending_code" || state.status === "verifying"
+  const digits = phone.replace(/\D/g, "")
+  const canSend = digits.length >= 7 && !busy
+  const canVerify = state.status === "code_sent" && code.length === 6 && !busy
+
+  async function onStart(e: FormEvent) {
+    e.preventDefault()
+    if (!canSend) return
+    setState({ status: "sending_code", message: "Sending a code to the phone thread Claire already knows..." })
+    try {
+      const result = await startCandidatePhoneLink(phone)
+      if (!result.ok) {
+        setState({ status: "error", message: result.message })
+        return
+      }
+      setCode("")
+      setState({
+        status: "code_sent",
+        requestId: result.requestId,
+        phoneMasked: result.phoneMasked,
+        message: `Code sent to ${result.phoneMasked}. Enter it here to connect this web account.`,
+      })
+    } catch (err) {
+      setState({
+        status: "error",
+        message: err instanceof Error ? err.message : "Could not send the code. Try again in a moment.",
+      })
+    }
+  }
+
+  async function onVerify(e: FormEvent) {
+    e.preventDefault()
+    if (state.status !== "code_sent" || !canVerify) return
+    const { requestId, phoneMasked } = state
+    setState({ status: "verifying", requestId, phoneMasked, message: "Checking the code with Claire's phone thread..." })
+    try {
+      const result = await verifyCandidatePhoneLink(requestId, code)
+      if (!result.ok) {
+        setState({ status: "code_sent", requestId, phoneMasked, message: result.message })
+        return
+      }
+      setState({
+        status: "linked",
+        phoneMasked: result.phoneMasked,
+        message: "Claire's phone thread is connected. Opening the profile Claire already knows...",
+      })
+      onLinked(result.candidateId)
+    } catch (err) {
+      setState({
+        status: "code_sent",
+        requestId,
+        phoneMasked,
+        message: err instanceof Error ? err.message : "Could not verify the code. Try again.",
+      })
+    }
+  }
+
+  return (
+    <section className={`wk-onboarding-phone-link${open ? " is-open" : ""}`} aria-label="Connect an existing Claire phone thread">
+      <div className="wk-onboarding-phone-link__body">
+        <div>
+          <span className="wk-onboarding-phone-link__kicker">Already talked with Claire?</span>
+          <h2>Skip onboarding with your phone thread.</h2>
+          <p>
+            Verify the phone number Claire already knows. This login opens the same candidate profile, so you do not have to fill onboarding again.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="btn btn--secondary wk-onboarding-phone-link__trigger"
+          onClick={() => {
+            setOpen(true)
+            if (state.status === "idle") {
+              setState({ status: "idle", message: `Signed in as ${authUser.email ?? "this account"}. Enter the phone you used with Claire.` })
+            }
+          }}
+          disabled={busy}
+        >
+          <Icon name="message" size={16} stroke={2} />
+          <span>I've texted Claire</span>
+        </button>
+      </div>
+
+      {open ? (
+        <div className="wk-onboarding-phone-link__panel">
+          <form className="wk-onboarding-phone-link__form" onSubmit={onStart}>
+            <label className="wk-onboarding-phone-link__field">
+              <span>Phone used with Claire</span>
+              <input
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="+1 415 555 0100"
+                disabled={busy}
+              />
+            </label>
+            <button type="submit" className="btn btn--secondary" disabled={!canSend}>
+              {state.status === "sending_code" ? "Sending code..." : "Text me a code"}
+            </button>
+          </form>
+
+          {(state.status === "code_sent" || state.status === "verifying") ? (
+            <form className="wk-onboarding-phone-link__form" onSubmit={onVerify}>
+              <label className="wk-onboarding-phone-link__field">
+                <span>Verification code</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="123456"
+                  disabled={busy}
+                />
+              </label>
+              <button type="submit" className="btn btn--primary" disabled={!canVerify}>
+                {state.status === "verifying" ? "Connecting..." : "Connect Claire thread"}
+              </button>
+            </form>
+          ) : null}
+
+          {state.message ? (
+            <p className={`wk-onboarding-phone-link__message${state.status === "error" ? " is-error" : ""}`} aria-live="polite">
+              {state.message}
+            </p>
+          ) : null}
+          <button type="button" className="wk-onboarding-phone-link__close" onClick={() => setOpen(false)} disabled={busy}>
+            Use normal onboarding
+          </button>
+        </div>
+      ) : null}
+    </section>
   )
 }
 

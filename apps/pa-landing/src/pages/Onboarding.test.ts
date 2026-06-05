@@ -35,6 +35,18 @@ test("done handoff continues an existing Claire conversation when verification p
   assert.match(source, /Claire thread found/)
 })
 
+test("signed-in onboarding offers existing Claire phone-thread linking before intake", () => {
+  assert.match(source, /startCandidatePhoneLink/)
+  assert.match(source, /verifyCandidatePhoneLink/)
+  assert.match(source, /<OnboardingPhoneThreadLink authUser=\{authUser\} onLinked=\{onPhoneThreadLinked\} \/>/)
+  assert.match(source, /I've texted Claire/)
+  assert.match(source, /Skip onboarding with your phone thread\./)
+  assert.match(source, /Verify the phone number Claire already knows/)
+  assert.match(source, /if \(returnPath\) \{[\s\S]*navigate\(returnPath, \{ replace: true \}\)/)
+  assert.match(source, /redirectToCandidatePortal\("\/me"\)/)
+  assert.match(source, /navigate\("\/me", \{ replace: true \}\)/)
+})
+
 test("generic onboarding does not inherit a stale remembered job return path", () => {
   assert.match(source, /resolveExplicitOnboardingReturnPath/)
   assert.match(source, /const returnPath = useMemo\(\(\) => resolveExplicitOnboardingReturnPath\(searchParams\.get\("next"\)\), \[searchParams\]\)/)
