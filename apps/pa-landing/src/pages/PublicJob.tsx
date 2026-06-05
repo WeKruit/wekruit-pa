@@ -31,6 +31,7 @@ import {
   GLOBAL_UID_KEY,
   getBrowserUid,
   readStoredValue,
+  rememberLoginNext,
   rememberOnboardingIntentForPath,
   rememberStoredValue,
 } from "../lib/browser-identity"
@@ -54,6 +55,7 @@ import { peekSource, resolveSource, stickSourceFromLoginNext } from "../lib/sour
 
 const CV_INGEST_URL = import.meta.env.VITE_CV_INGEST_URL ?? ""
 const EMAIL_STORAGE_KEY = CLAIM_EMAIL_KEY
+const PHONE_LINK_INTENT_KEY = "pa_phone_link_intent"
 const LINKEDIN_AUTH_START_URL =
   import.meta.env.VITE_LINKEDIN_AUTH_START_URL ??
   "https://us-central1-wekruit-5f89b.cloudfunctions.net/paLinkedinAuthStart"
@@ -485,11 +487,38 @@ export default function PublicJob() {
     }
   }
 
+  function startExistingClairePhoneThread() {
+    try {
+      window.sessionStorage.setItem(PHONE_LINK_INTENT_KEY, "1")
+    } catch {
+      // Ignore private-mode storage failures; /login still carries the role next path.
+    }
+    rememberLoginNext(nextPath)
+    rememberOnboardingIntentForPath(nextPath)
+    navigate(`/login?next=${encodeURIComponent(nextPath)}`)
+  }
+
   function renderLoginControls(location: "panel" | "modal") {
     const busy =
       loginStatus === "google" || loginStatus === "linkedin" || loginStatus === "email"
     return (
       <div className={`wk-pj-login wk-pj-login--${location}`}>
+        {location === "modal" ? (
+          <div className="wk-pj-phone-link" aria-label="Connect an existing Claire phone thread">
+            <button
+              type="button"
+              className="wk-pj-phone-link__button"
+              onClick={startExistingClairePhoneThread}
+              disabled={busy}
+            >
+              <Icon name="message" size={16} stroke={2} />
+              <span>I've texted Claire</span>
+            </button>
+            <p className="wk-pj-phone-link__copy">
+              Already talked with Claire by phone? Verify that number and reopen the profile Claire already knows with this role attached.
+            </p>
+          </div>
+        ) : null}
         <div className="wk-pj-login__providers">
           <button
             type="button"
@@ -1836,6 +1865,43 @@ export const PUBLIC_JOB_STYLES = `
 .wk-pj-login {
   display: grid; gap: 12px;
   min-width: 0;
+}
+.wk-pj-phone-link {
+  display: grid;
+  gap: 7px;
+  padding: 11px;
+  border: 1px solid rgba(190, 116, 72, 0.28);
+  border-radius: var(--wk-r-md);
+  background: rgba(255, 248, 235, 0.58);
+}
+.wk-pj-phone-link__button {
+  width: 100%;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid rgba(45, 26, 10, 0.26);
+  border-radius: var(--wk-r-md);
+  background: rgba(255, 253, 248, 0.78);
+  color: var(--wk-ink);
+  cursor: pointer;
+  font: 700 14px/1 var(--wk-font-sans);
+  transition: background 160ms var(--wk-ease), border-color 160ms var(--wk-ease);
+}
+.wk-pj-phone-link__button:hover:not(:disabled) {
+  background: var(--wk-cream);
+  border-color: var(--wk-ink);
+}
+.wk-pj-phone-link__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+.wk-pj-phone-link__copy {
+  margin: 0;
+  color: var(--wk-ink-3);
+  font-size: 12.5px;
+  line-height: 1.38;
 }
 .wk-pj-login__providers { display: grid; gap: 10px; }
 .wk-pj-login .wk-btn--block { display: flex; width: 100%; max-width: 100%; }

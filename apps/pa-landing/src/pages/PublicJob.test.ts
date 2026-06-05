@@ -60,6 +60,19 @@ test("PublicJob keeps both interview entry methods reachable in the mobile sign-
   assert.match(source, /\.wk-pj-contract--compact[\s\S]*\.wk-pj-contract__item em\s*\{\s*display: none;/)
 })
 
+test("PublicJob role sign-in modal can connect an existing Claire phone thread", () => {
+  assert.match(source, /const PHONE_LINK_INTENT_KEY = "pa_phone_link_intent"/)
+  assert.match(source, /function startExistingClairePhoneThread\(\)/)
+  assert.match(source, /window\.sessionStorage\.setItem\(PHONE_LINK_INTENT_KEY, "1"\)/)
+  assert.match(source, /rememberLoginNext\(nextPath\)/)
+  assert.match(source, /rememberOnboardingIntentForPath\(nextPath\)/)
+  assert.match(source, /navigate\(`\/login\?next=\$\{encodeURIComponent\(nextPath\)\}`\)/)
+  assert.match(source, /className="wk-pj-phone-link" aria-label="Connect an existing Claire phone thread"/)
+  assert.match(source, /I've texted Claire/)
+  assert.match(source, /Already talked with Claire by phone\? Verify that number and reopen the profile Claire already knows with this role attached\./)
+  assert.match(source, /\.wk-pj-phone-link \{[\s\S]*border: 1px solid rgba\(190, 116, 72, 0\.28\);/)
+})
+
 test("PublicJob role sign-in modal offers LinkedIn at the exact interview entry point", () => {
   assert.match(source, /const LINKEDIN_AUTH_START_URL =/)
   assert.match(source, /type LoginStatus = "idle" \| "google" \| "linkedin" \| "email" \| "sent" \| "error"/)
