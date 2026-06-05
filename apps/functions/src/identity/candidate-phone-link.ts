@@ -10,6 +10,7 @@ import {
 } from "@pa/core-types"
 import {
   linkCandidateHandle as defaultLinkCandidateHandle,
+  hashCandidateHandle,
   normalizeE164,
   writeCandidateSelfProfile as defaultWriteCandidateSelfProfile,
 } from "@pa/pa-persistence"
@@ -139,6 +140,63 @@ function normalizeCandidatePhone(value: unknown): string | null {
 
 function maskPhone(phoneE164: string): string {
   return phoneE164.length <= 5 ? "***" : `${phoneE164.slice(0, 3)}***${phoneE164.slice(-2)}`
+}
+
+async function loadCandidateUserData(db: Firestore, candidateId: string): Promise<Record<string, unknown> | null> {
+  const snap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+  if (!snap.exists) return null
+  return snap.data() ?? {}
+}
+
+async function hasClairePhoneIdentity(
+  deps: CandidatePhoneLinkDeps,
+  candidateId: string,
+  userData: Record<string, unknown>,
+): Promise<boolean> {
+  if (normalizeCandidatePhone(userData.phoneE164)) return true
+  try {
+    return await (deps.claireConversationStarted ?? defaultCandidateClaireConversationStarted)(
+      deps.db,
+      candidateId,
+      userData,
+    )
+  } catch {
+    return true
+  }
+}
+
+async function canReplaceAuthMappingFromCandidate(
+  deps: CandidatePhoneLinkDeps,
+  existingCandidateId: string,
+): Promise<boolean> {
+  const existingUser = await loadCandidateUserData(deps.db, existingCandidateId)
+  if (!existingUser) return false
+  return !(await hasClairePhoneIdentity(deps, existingCandidateId, existingUser))
+}
+
+async function moveEmailHandleFromPlaceholderCandidate(
+  db: Firestore,
+  email: string,
+  fromCandidateId: string | null,
+  toCandidateId: string,
+  nowIso: string,
+): Promise<void> {
+  if (!fromCandidateId) return
+  const hashed = hashCandidateHandle("email", email)
+  const ref = db.collection(PA_COLLECTIONS.candidateHandles).doc(hashed.handleId)
+  const snap = await ref.get()
+  if (!snap.exists) return
+  const handle = CandidateHandleSchema.parse(snap.data())
+  if (handle.candidateId !== fromCandidateId) return
+  const next = CandidateHandleSchema.parse({
+    ...handle,
+    candidateId: toCandidateId,
+    source: "candidate",
+    verifiedAt: handle.verifiedAt ?? nowIso,
+    deliverable: true,
+    updatedAt: nowIso,
+  })
+  await ref.set(next as unknown as Record<string, unknown>)
 }
 
 function hashCode(salt: string, code: string): string {
@@ -388,16 +446,27 @@ export async function runCandidatePhoneLinkVerify(
 
   const authRef = deps.db.collection(PA_COLLECTIONS.candidateAuth).doc(firebaseUid)
   const existingAuthSnap = await authRef.get()
+  let authRemapFromCandidateId: string | null = null
   if (existingAuthSnap.exists) {
     const existingCandidateId = cleanString(existingAuthSnap.data()?.candidateId, 160)
     if (existingCandidateId && existingCandidateId !== candidateId) {
-      await ref.set({ status: "auth_conflict", updatedAt: now.toISOString() }, { merge: true })
-      return { ok: false, reason: "auth_conflict", message: verifyError("auth_conflict") }
+      if (!(await canReplaceAuthMappingFromCandidate(deps, existingCandidateId))) {
+        await ref.set({ status: "auth_conflict", updatedAt: now.toISOString() }, { merge: true })
+        return { ok: false, reason: "auth_conflict", message: verifyError("auth_conflict") }
+      }
+      authRemapFromCandidateId = existingCandidateId
     }
   }
 
   let emailHandle: Awaited<ReturnType<LinkCandidateHandle>>["handle"]
   try {
+    await moveEmailHandleFromPlaceholderCandidate(
+      deps.db,
+      email,
+      authRemapFromCandidateId,
+      candidateId,
+      now.toISOString(),
+    )
     emailHandle = (await (deps.linkCandidateHandle ?? defaultLinkCandidateHandle)(deps.db, {
       candidateId,
       kind: "email",

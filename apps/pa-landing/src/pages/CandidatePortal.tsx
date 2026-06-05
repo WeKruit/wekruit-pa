@@ -822,7 +822,7 @@ function CandidateMeReady({
             </div>
 
             <aside className="wkv3-side">
-              {!profileHasVerifiedPhone(profile) ? <MePhoneThreadLinkCard /> : null}
+              <MePhoneThreadLinkCard phoneVerified={profileHasVerifiedPhone(profile)} />
               <MeCompletenessCard completeness={completeness} />
               <MeClaireSignalsCard profile={profile} />
               {visibility ? <MeVisibilityCard visibility={visibility} /> : <MeVisibilityPendingCard error={matchesError} />}
@@ -1884,12 +1884,14 @@ type MePhoneThreadLinkState =
   | { status: "linked"; message: string; requestId?: string; phoneMasked?: string }
   | { status: "error"; message: string; requestId?: string; phoneMasked?: string }
 
-function MePhoneThreadLinkCard() {
+function MePhoneThreadLinkCard({ phoneVerified }: { phoneVerified: boolean }) {
   const [phone, setPhone] = useState("")
   const [code, setCode] = useState("")
   const [state, setState] = useState<MePhoneThreadLinkState>({
     status: "idle",
-    message: "Use the number you already texted Claire from. We will send a code there.",
+    message: phoneVerified
+      ? "If Claire knows another phone thread, verify that number and this login will open it."
+      : "Use the number you already texted Claire from. We will send a code there.",
   })
   const busy = state.status === "sending_code" || state.status === "verifying" || state.status === "linked"
   const canSend = phone.trim().length >= 7 && !busy
@@ -1942,11 +1944,13 @@ function MePhoneThreadLinkCard() {
   return (
     <div className={`wkv3-phone${state.status === "linked" ? " is-linked" : ""}`} aria-label="Connect Claire phone thread">
       <div className="wkv3-phone__head">
-        <span className="wkv3-phone__kicker">Already texted Claire?</span>
-        <strong>Connect that phone thread.</strong>
+        <span className="wkv3-phone__kicker">I've texted Claire</span>
+        <strong>{phoneVerified ? "Switch to that phone thread." : "Connect that phone thread."}</strong>
       </div>
       <p className="wkv3-phone__lede">
-        Skip profile onboarding. Verify the number Claire already knows, and this account opens the same candidate profile.
+        {phoneVerified
+          ? "If this login opened the wrong profile, verify the number Claire already knows and move this account to that candidate profile."
+          : "Skip profile onboarding. Verify the number Claire already knows, and this account opens the same candidate profile."}
       </p>
       {state.status !== "linked" ? (
         <>
