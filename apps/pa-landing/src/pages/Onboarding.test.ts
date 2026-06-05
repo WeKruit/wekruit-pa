@@ -38,6 +38,7 @@ test("done handoff continues an existing Claire conversation when verification p
 test("signed-in onboarding offers existing Claire phone-thread linking before intake", () => {
   assert.match(source, /startCandidatePhoneLink/)
   assert.match(source, /verifyCandidatePhoneLink/)
+  assert.match(source, /if \(!intakeChecked\) \{[\s\S]*Already talked to <em style=\{\{ fontStyle: "italic" \}\}>Claire<\/em>\?[\s\S]*<OnboardingPhoneThreadLink authUser=\{authUser\} onLinked=\{onPhoneThreadLinked\} \/>[\s\S]*Checking whether this sign-in already has a WeKruit profile/)
   assert.match(source, /<OnboardingPhoneThreadLink authUser=\{authUser\} onLinked=\{onPhoneThreadLinked\} \/>/)
   assert.match(source, /I've texted Claire/)
   assert.match(source, /Skip onboarding with your phone thread\./)
