@@ -318,7 +318,7 @@ export default function Onboarding() {
     }
   }, [authUser, loginNextPath, navigate, returnPath, source])
 
-  if (!authReady || authUser === undefined || (authUser && !intakeChecked)) {
+  if (!authReady || authUser === undefined) {
     return (
       <main>
         <MinimalNav />
@@ -333,6 +333,47 @@ export default function Onboarding() {
 
   if (!authUser) {
     return <Navigate to={`/login?next=${encodeURIComponent(loginNextPath)}`} replace />
+  }
+
+  if (!intakeChecked) {
+    return (
+      <main>
+        <style>{ONBOARDING_PHONE_LINK_STYLES}</style>
+        <MinimalNav />
+        <section className="onboarding-section" style={{ paddingTop: 48, paddingBottom: 96, position: "relative" }}>
+          <div className="container-prose" style={{ maxWidth: 760, marginInline: "auto", paddingInline: 24 }}>
+            <div style={{ textAlign: "center", marginBottom: 28 }}>
+              <h1
+                style={{
+                  fontFamily: "var(--font-serif)",
+                  fontWeight: 400,
+                  fontSize: "clamp(36px, 4.4vw, 56px)",
+                  lineHeight: 1.05,
+                  letterSpacing: "-0.025em",
+                  margin: 0,
+                }}
+              >
+                Already talked to <em style={{ fontStyle: "italic" }}>Claire</em>?
+              </h1>
+              <p
+                style={{
+                  margin: "14px auto 0",
+                  maxWidth: 560,
+                  color: "var(--ink-2)",
+                  fontSize: 15,
+                  lineHeight: 1.5,
+                }}
+              >
+                If your phone already has a Claire conversation, verify that number and open the same candidate profile instead of starting onboarding again.
+              </p>
+            </div>
+            <OnboardingPhoneThreadLink authUser={authUser} onLinked={onPhoneThreadLinked} />
+            <StepNotice tone="busy" text="Checking whether this sign-in already has a WeKruit profile..." />
+          </div>
+        </section>
+        <MinimalFooter />
+      </main>
+    )
   }
 
   async function submitRegistration(formData: Profile, mode: "auto" | "reuse" | "refresh") {

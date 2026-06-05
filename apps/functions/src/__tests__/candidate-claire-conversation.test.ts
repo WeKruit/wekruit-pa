@@ -43,6 +43,10 @@ class FakeQuery {
     return new FakeQuery(this.store, this.collectionPath, this.filters, n)
   }
 
+  where(field: string, op: string, value: unknown) {
+    return new FakeQuery(this.store, this.collectionPath, [...this.filters, { field, op, value }], this.limitN)
+  }
+
   async get() {
     const coll = this.store.get(this.collectionPath) ?? new Map()
     const docs = [...coll.entries()]
@@ -131,6 +135,34 @@ test("candidateClaireConversationStarted falls back to inbound events", async ()
     phoneE164: "+14155550100",
   })
   assert.equal(started, true)
+})
+
+test("candidateClaireConversationStarted accepts connected voice-call evidence for the same phone", async () => {
+  const db = fakeDb() as unknown as FakeFirestore
+  db.seed("outbound-bookings", "voice-1", {
+    paUserId: "cand-voice",
+    phoneE164: "+14155550100",
+    voiceState: "connected",
+    voiceStartedAt: "2026-06-05T00:00:00.000Z",
+  })
+  const started = await candidateClaireConversationStarted(db as unknown as Firestore, "cand-voice", {
+    phoneE164: "+14155550100",
+  })
+  assert.equal(started, true)
+})
+
+test("candidateClaireConversationStarted rejects voice evidence from another phone", async () => {
+  const db = fakeDb() as unknown as FakeFirestore
+  db.seed("outbound-bookings", "voice-1", {
+    paUserId: "cand-voice",
+    phoneE164: "+14155550199",
+    voiceState: "completed",
+    voiceStartedAt: "2026-06-05T00:00:00.000Z",
+  })
+  const started = await candidateClaireConversationStarted(db as unknown as Firestore, "cand-voice", {
+    phoneE164: "+14155550100",
+  })
+  assert.equal(started, false)
 })
 
 test("candidateHasResumeOnFile is true with latestResumeArtifactId on pa-users", async () => {

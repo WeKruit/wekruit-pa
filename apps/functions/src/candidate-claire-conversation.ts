@@ -40,7 +40,7 @@ export async function candidateHasResumeOnFile(
   return !artifactSnap.empty
 }
 
-/** Stamp first inbound iMessage evidence on pa-users (idempotent). */
+/** Stamp first candidate-side Claire evidence on pa-users (idempotent). */
 export async function markClaireConversationStarted(
   db: Firestore,
   candidateId: string,
@@ -61,10 +61,35 @@ export async function markClaireConversationStarted(
   )
 }
 
+async function candidateHasVoiceCallEvidence(
+  db: Firestore,
+  candidateId: string,
+  phoneE164: string,
+): Promise<boolean> {
+  const bookingSnap = await db
+    .collection("outbound-bookings")
+    .where("paUserId", "==", candidateId)
+    .limit(25)
+    .get()
+  return bookingSnap.docs.some((doc) => {
+    const data = doc.data() ?? {}
+    const bookingPhone = typeof data.phoneE164 === "string" ? data.phoneE164.trim() : ""
+    if (bookingPhone !== phoneE164) return false
+    const voiceState = typeof data.voiceState === "string" ? data.voiceState : ""
+    const voiceOutcome = typeof data.voiceOutcome === "string" ? data.voiceOutcome : ""
+    return (
+      hasTimestampLike(data.voiceStartedAt) ||
+      voiceState === "connected" ||
+      voiceState === "completed" ||
+      voiceOutcome.startsWith("completed:")
+    )
+  })
+}
+
 /**
- * True when the candidate has sent at least one inbound iMessage to Claire.
+ * True when the candidate has already had a Claire phone conversation.
  * Requires a bound phone on pa-users (web intake or Hello-WeKruit opener bind)
- * plus evidence of an inbound turn in sessions, inbound-events, or messages.
+ * plus evidence of an inbound message turn or a connected/completed voice call.
  */
 export async function candidateClaireConversationStarted(
   db: Firestore,
@@ -106,5 +131,7 @@ export async function candidateClaireConversationStarted(
     .where("role", "==", "user")
     .limit(1)
     .get()
-  return !messageSnap.empty
+  if (!messageSnap.empty) return true
+
+  return candidateHasVoiceCallEvidence(db, candidateId, phoneE164)
 }

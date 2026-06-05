@@ -271,7 +271,7 @@ function phoneLinkError(reason: CandidatePhoneLinkStartResult extends infer R
     case "invalid_phone":
       return "Enter the phone number you used to text Claire."
     case "no_claire_thread":
-      return "We could not find a Claire text thread for that phone. Use onboarding, or text Claire from that number first."
+      return "We could not find a Claire phone thread for that number. Use onboarding, or talk with Claire from that number first."
     case "send_failed":
       return "We could not send the code right now. Try again in a moment."
   }
@@ -345,7 +345,7 @@ export async function runCandidatePhoneLinkStart(
     await (deps.enqueueOutbound ?? defaultEnqueueOutbound)(deps.db, {
       userId: candidate.candidateId,
       toE164: phoneE164,
-      body: `WeKruit verification code: ${code}. Use it to connect this web account to your Claire text thread. It expires in 10 minutes.`,
+      body: `WeKruit verification code: ${code}. Use it to connect this web account to your Claire phone thread. It expires in 10 minutes.`,
       idempotencyKey: `candidate_phone_link:${firebaseUid}:${candidate.candidateId}:${requestId}`,
       runtimeApproved: true,
       runtimeSource: "pa_identity_notice",

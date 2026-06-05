@@ -155,7 +155,7 @@ test("runCandidatePhoneLinkStart sends a code only to an existing Claire phone t
   assert.deepEqual(deps.outbounds[0], {
     userId: "cand-phone",
     toE164: "+14155550100",
-    body: "WeKruit verification code: 123456. Use it to connect this web account to your Claire text thread. It expires in 10 minutes.",
+    body: "WeKruit verification code: 123456. Use it to connect this web account to your Claire phone thread. It expires in 10 minutes.",
     idempotencyKey: "candidate_phone_link:firebase-1:cand-phone:phone-link-req-1",
     runtimeApproved: true,
     runtimeSource: "pa_identity_notice",
@@ -175,7 +175,7 @@ test("runCandidatePhoneLinkStart refuses phones without Claire inbound evidence"
   assert.deepEqual(result, {
     ok: false,
     reason: "no_claire_thread",
-    message: "We could not find a Claire text thread for that phone. Use onboarding, or text Claire from that number first.",
+    message: "We could not find a Claire phone thread for that number. Use onboarding, or talk with Claire from that number first.",
   })
   assert.equal(deps.outbounds.length, 0)
 })
