@@ -36,6 +36,7 @@ import {
   type SharedOnboardingQuestionId,
 } from "@pa/pa-orchestrator"
 import { DEFAULT_ONBOARDING_SLOTS } from "./claire-agent/reducers/onboarding-fsm.js"
+import { isPrescreenRetentionHandoffCanary } from "./claire-agent/canary.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
@@ -967,6 +968,23 @@ export async function runPrescreenTurnIfActive(
         textSent: text,
       }
     }
+    // ── RETENTION HANDOFF (canary, Adam 2026-06-05) ──────────────────────────────────────────────
+    // A recently-terminal / PAUSED session turn (the Sai branch) is answered by the THIN context-complete
+    // agent (buildCandidateContext) — NOT canned text (recentTerminalCourtesyAckText / retention prompt /
+    // outcome-explanation) + regex intent. The terminal, retain action, and any match were ALREADY fired
+    // deterministically by the reducer; this only changes WHO answers next + WITH WHAT CONTEXT. Placed
+    // AFTER the terminalActionPendingReview guard (above) so a genuinely under-review outcome still gets
+    // the deterministic "under human review" ack (never a thin answer that might imply a decision).
+    // Non-canary keeps EVERY legacy branch below byte-for-byte. Dev cohort only (NOT swept by the
+    // onboarding PA_ONBOARDING_RAMP_ALL prod env) — ramps separately on Adam's say-so.
+    if (isPrescreenRetentionHandoffCanary(args.userId)) {
+      log("prescreen.turn.recent_terminal_deferred_to_thin", {
+        sessionId: lookup.sessionId,
+        userId: args.userId,
+        terminal: lookup.terminal,
+      })
+      return { handled: false }
+    }
     if (isPrescreenOutcomeExplanationRequest(args.replyText)) {
       const text = recentTerminalOutcomeExplanationText(args.lang ?? "en", lookup.terminal, sessData)
       await sessionRef.collection("turns").add({
@@ -1181,6 +1199,18 @@ export async function runPrescreenTurnIfActive(
         error: err instanceof Error ? err.message : String(err),
       })
     }
+    // RETENTION HANDOFF (canary, Adam 2026-06-05): the deterministic PAUSE write + retain/match action
+    // ALREADY fired above (reducer owns state). For the dev cohort, DEFER the candidate-facing reply to
+    // the thin context-complete agent (it composes "I paused that older screen — want to pick up where we
+    // left off or see other roles?" with full context) instead of the canned expiredSessionText. Non-canary
+    // keeps the canned notice below byte-for-byte.
+    if (isPrescreenRetentionHandoffCanary(args.userId)) {
+      log("prescreen.turn.expired_deferred_to_thin", {
+        sessionId: lookup.sessionId,
+        userId: args.userId,
+      })
+      return { handled: false }
+    }
     const text = expiredSessionText(args.lang ?? "en")
     try {
       await sendSms({
@@ -1228,7 +1258,15 @@ export async function runPrescreenTurnIfActive(
     return { handled: false }
   }
 
-  if (isUserExitPrescreenReply(args.replyText)) {
+  // USER-EXIT MEANING-EXTRACTION (canary, Adam 2026-06-05): `isUserExitPrescreenReply` is a REGEX that
+  // classified the candidate's text → "exit" — and it mis-fired on Sai's ON-TOPIC role answer ("UX
+  // designer, product designer with 5 or less years of experience"), force-PAUSING an active screen mid-
+  // answer. For the dev cohort we do NOT let the regex decide: skip this branch so the turn drops into the
+  // normal active-turn pipeline below (the agentic prescreen path / the deterministic reducer), where the
+  // LLM judges whether the reply is a real exit vs an answer. The reducer/handler still OWNS the PAUSE
+  // state write (on a genuine exit the agentic exit path drives the same deterministic terminal write) —
+  // the LLM only signals intent, never writes terminal state. Non-canary keeps the regex exit byte-for-byte.
+  if (!isPrescreenRetentionHandoffCanary(args.userId) && isUserExitPrescreenReply(args.replyText)) {
     const nowIso = new Date().toISOString()
     await args.db
       .collection("pa-prescreen-sessions")

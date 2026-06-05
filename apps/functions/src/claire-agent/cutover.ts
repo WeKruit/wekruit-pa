@@ -14,7 +14,7 @@
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { isThinClaireEnabled } from "./flags.js"
-import { isCanaryUser } from "./canary.js"
+import { isCanaryUser, isPrescreenRetentionHandoffCanary } from "./canary.js"
 import { createSendblueTransport } from "./transport.js"
 import { selectClaireMode } from "./mode-selector.js"
 import { setEnrichmentInFlight, clearEnrichmentInFlight } from "./enrichment-inflight.js"
@@ -382,6 +382,35 @@ export async function maybeRunThinClaire(
       log,
       ...(deps.dryRun ? { dryRun: true } : {}),
     })
+    // PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): when the prescreen handler DEFERRED a
+    // post-terminal / retention turn to thin (canary only — isPrescreenRetentionHandoffCanary), assemble
+    // the CONTEXT-COMPLETE candidate context (global profile ∪ ALL prescreen terminals/reasons/scores/
+    // borderline signals ∪ retention stage) and thread its rendered block onto the agent so it answers
+    // "why paused / why didn't I pass" HONESTLY, captures a target-role answer via the no-regex tools, and
+    // offers OTHER matching roles — instead of the legacy canned "You're welcome — screen closed" (the Sai
+    // bug). Read-only + fail-soft (buildCandidateContext never throws). Dev-cohort only; everyone else
+    // never reaches here (the legacy handler answered them byte-for-byte). The reducer (terminal/retain/
+    // match) is untouched — this only changes WHO answers + WITH WHAT CONTEXT.
+    let candidateContext: string | undefined
+    if (isPrescreenRetentionHandoffCanary(userId)) {
+      try {
+        const { buildCandidateContext } = await import("./candidate-context.js")
+        const cc = await buildCandidateContext(db, userId, {
+          ...(toE164 ? { toE164: String(toE164) } : {}),
+          ...(decision.jobId ? { jobId: decision.jobId } : {}),
+        })
+        if (cc.prescreenContextText) candidateContext = cc.prescreenContextText
+      } catch (ccErr) {
+        // Fail-open: a context-assembler error must NEVER block the turn — the agent still runs on the
+        // global context (loadGlobalContext) it loads internally; it just lacks the prior-screen block.
+        log("thin_claire.candidate_context_failed", {
+          eventId,
+          userId,
+          err: ccErr instanceof Error ? ccErr.message : String(ccErr),
+        })
+      }
+    }
+
     const turnResult = await runClaireTurn(
       {
         userId,
@@ -442,6 +471,9 @@ export async function maybeRunThinClaire(
         // (no pitch, no find_match this turn; the cutover:114 fire-and-forget runs the parse async, and the
         // pitch fires on the resume_parse_completed re-entry). Canary-gated to match the pitch behavior.
         ...(inboundMediaUrl && !cvParsedReentry && isCanaryUser(userId) ? { resumeJustDropped: true } : {}),
+        // PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention block
+        // (buildCandidateContext, above). Only set on a deferred post-terminal turn for the dev cohort.
+        ...(candidateContext ? { candidateContext } : {}),
       },
     )
     await db

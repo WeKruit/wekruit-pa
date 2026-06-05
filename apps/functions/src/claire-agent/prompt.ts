@@ -62,6 +62,12 @@ export interface ClairePromptOptions {
    *  pull fresh matches / ask how to help — NEVER re-offer the cold kickoff, NEVER ask the onboarding
    *  target_role question. Set by mode-selector on the cold-start triage short-path (canary). */
   warmReturningGreeting?: boolean
+  /** PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention block
+   *  built by buildCandidateContext — prior job screens (terminal + real reason + borderline gap),
+   *  pending-review note, and the capture/offer-other-roles directive. Unlike `prescreenContext` (gated on
+   *  mode==="prescreen"), this renders in ANY mode (a post-terminal turn is triage/onboarding, never
+   *  prescreen), so the agent always knows the screen history. Canary-gated upstream (cutover). */
+  candidateContext?: string
 }
 
 const PERSONA = [
@@ -778,6 +784,12 @@ export function buildClaireTurnContext(opts: ClairePromptOptions): string {
     // prescreen: résumé arc + prior-session callbacks (loadPrescreenContext). Self-labeled
     // "PRESCREEN CONTEXT: …" so no extra prefix; only non-empty on a prescreen turn.
     opts.mode === "prescreen" && opts.prescreenContext ? opts.prescreenContext : "",
+    // PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention block
+    // (buildCandidateContext). Self-labeled "PRIOR JOB SCREENS …" so no extra prefix. Rendered in ANY
+    // mode (a post-terminal turn is triage/onboarding, never "prescreen") so the agent always has the
+    // screen history — that is the whole point of the fix (answer "why paused?" honestly, capture the
+    // role answer via the no-regex tools, and offer OTHER roles). Canary-gated upstream (cutover).
+    opts.candidateContext ? opts.candidateContext : "",
     // onboarding folds pendingStep into its directive (the next question to ask); other modes
     // surface it as a resume-after-tangent reminder.
     opts.pendingStep && opts.mode !== "onboarding"

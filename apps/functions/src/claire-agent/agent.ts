@@ -611,6 +611,11 @@ export interface RunClaireTurnDeps {
    *  cutover from the mode-selector cold-start triage short-path. Drives the warm-greet-back directive —
    *  no offer kickoff, no onboarding question. */
   warmReturningGreeting?: boolean
+  /** PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention context
+   *  (buildCandidateContext.prescreenContextText) — prior screens + terminals + real reasons + borderline
+   *  gaps + capture/offer-other-roles directive. Set by cutover for a post-terminal/retention turn that
+   *  the prescreen handler deferred to thin (canary-gated, dev cohort only). Rendered in ANY mode. */
+  candidateContext?: string
   /** COLD OFFER-FIRST KICKOFF (Adam 2026-06-03): a brand-new candidate with NO profile data. The turn
    *  sends a DETERMINISTIC offer (connect LinkedIn = recommended / drop résumé in chat / upload on site)
    *  and NO onboarding question — "pitch first", we don't interrogate; the pitch fires after they
@@ -860,6 +865,9 @@ export async function runClaireTurn(
     locationSalaryAsk: fallback ? undefined : deps.locationSalaryAsk,
     // WARM RETURNING GREETING — per-turn directive for a known candidate's cold greeting, trailing only.
     warmReturningGreeting: fallback ? undefined : deps.warmReturningGreeting,
+    // PRESCREEN-SEAM RETENTION HANDOFF (Adam 2026-06-05): the post-prescreen-terminal / retention block.
+    // Per-turn, trailing only, rendered in ANY mode. Stripped on the anti-silence fallback re-entry.
+    candidateContext: fallback ? undefined : deps.candidateContext,
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const runInput: any[] = []
