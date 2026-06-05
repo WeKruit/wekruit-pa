@@ -356,9 +356,112 @@ test("COLD-OPEN LOCK — the genuine parse RE-ENTRY (cvParsedTrigger) still pitc
   assert.notEqual(decision.warmReturningGreeting, true, "warm-greeting must not steal the parse re-entry pitch")
 })
 
-test("COLD-OPEN LOCK — NON-canary with a known profile is UNCHANGED (still cold-starts the legacy wall)", async () => {
+test("COLD-OPEN LOCK — NON-canary with a known profile gets the GAP-AWARE cold-start (no warm-greeting copy; asks only the missing axis)", async () => {
+  // 2026-06-05 (Adam "ONLY ask for non-existing info"): the gap-aware skip is UNIVERSAL (bug-class),
+  // so a non-canary user with targetRoleFunction set is NO LONGER asked target_role again — they get
+  // the genuinely-missing location axis. The NEW warm-greeting COPY stays canary-only (undefined here).
   const { db } = makeDb({ tags: { targetRoleFunction: ["software_engineering"] } })
   const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "Hi" })
-  assert.equal(decision.warmReturningGreeting, undefined, "warm-returning is canary-only")
-  assert.equal(decision.mode, "onboarding", "non-canary keeps the legacy onboarding cold-start")
+  assert.equal(decision.warmReturningGreeting, undefined, "warm-returning COPY is canary-only")
+  assert.equal(decision.mode, "onboarding", "a real gap (location) remains → onboarding")
+  assert.equal(decision.onboardingSlot, "location_relocation", "asks only the MISSING axis, not the known role")
+  assert.notEqual(decision.onboardingSlot, "target_role", "must NOT re-ask the already-on-file role axis")
+})
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// 2026-06-05 (Adam): UNIVERSAL gap-aware COLD START — "ONLY ask for non-existing info." The Jasmaine
+// defect: a NON-canary LinkedIn-OAuth user with enriched experience pitched correctly, then was STILL
+// asked target_role + a location question — both already on file. The cold-start (`!active`) branch
+// now inventories tags first and (a) routes to triage if nothing is missing, or (b) seeds the FIRST
+// genuinely-missing asked slot — for ALL users, not just canary (it's a bug-class re-ask removal).
+// These are the new universal assertions (T1-T3, T6) plus no-regression guards (T4, T5, T7, T8).
+
+test("T1 — cold full profile (role+location on file), NON-canary → triage, NO re-ask, marks complete", async () => {
+  // The Jasmaine-class fix: both asked axes already present on a cold opener → ask NOTHING.
+  const { db, writes } = makeDb({
+    tags: { targetRoleFunction: ["software_engineering"], targetLocations: ["new_york"] },
+    // cold: no sharedOnboarding, onboardingState not complete.
+  })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "Hello, WeKruit! <uid>" })
+  assert.equal(decision.mode, "triage", "both asked axes satisfied → straight to triage/find_match")
+  assert.equal(decision.onboardingSlot, undefined, "no onboarding slot seeded")
+  const bootstrapped = writes().some((w) => w.onboardingState === "pending")
+  assert.equal(bootstrapped, false, "no onboarding bootstrap on a fully-satisfied cold opener")
+  const completed = writes().some((w) => w.onboardingState === "complete")
+  assert.equal(completed, true, "self-heals onboardingState → complete")
+})
+
+test("T2 — cold role-known / location-missing, NON-canary → onboarding asks ONLY location_relocation", async () => {
+  const { db, writes } = makeDb({ tags: { targetRoleFunction: ["software_engineering"] } })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hi" })
+  assert.equal(decision.mode, "onboarding")
+  assert.equal(decision.onboardingSlot, "location_relocation", "asks only the missing location axis")
+  assert.notEqual(decision.onboardingSlot, "target_role", "must NOT re-ask the known role axis")
+  assert.equal(decision.awaitingAnswer, false, "cold-start kickoff (ask, don't record)")
+  const bootstrapped = writes().some((w) => w.onboardingState === "pending")
+  assert.equal(bootstrapped, true, "non-offer cold-start bootstraps durable state")
+})
+
+test("T3 — cold location-known / role-missing, NON-canary → onboarding asks ONLY target_role (order respected)", async () => {
+  const { db } = makeDb({ tags: { targetLocations: ["remote"] } })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hi" })
+  assert.equal(decision.mode, "onboarding")
+  assert.equal(decision.onboardingSlot, "target_role", "asks only the missing role axis")
+  assert.equal(decision.awaitingAnswer, false)
+})
+
+test("T4 — cold brand-new (nothing on file), NON-canary → unchanged: asks target_role, no offer", async () => {
+  const { db, writes } = makeDb({})
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hi" })
+  assert.equal(decision.mode, "onboarding")
+  assert.equal(decision.onboardingSlot, "target_role", "nothing satisfied → first asked slot, byte-unchanged")
+  assert.notEqual(decision.offerFirstKickoff, true, "non-canary never gets the offer")
+  const bootstrapped = writes().some((w) => w.onboardingState === "pending")
+  assert.equal(bootstrapped, true, "non-canary brand-new still bootstraps")
+})
+
+test("T5 — cold brand-new (nothing on file), CANARY → unchanged: offer-first, NO bootstrap (no state poison)", async () => {
+  const { db, writes } = makeDb({})
+  const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "hi" })
+  assert.equal(decision.mode, "onboarding")
+  assert.equal(decision.offerFirstKickoff, true, "canary brand-new → deterministic offer")
+  const bootstrapped = writes().some((w) => w.onboardingState === "pending")
+  assert.equal(bootstrapped, false, "offer-first must NOT bootstrap/poison onboarding state")
+})
+
+test("T6 — LITERAL Jasmaine: NON-canary LinkedIn-OAuth + experienceHighlights, NO canonical role/loc tags → asks target_role ONCE (genuinely missing), NOT both, no warm-greeting copy", async () => {
+  // LinkedIn-OAuth enrichment populated experienceHighlights / skills / recentRoleTitle but NOT the
+  // canonical targetRoleFunction or targetLocations. Both asked axes are genuinely absent → asking
+  // target_role ONCE is correct ("only ask for non-existing info"). The fix guarantees she is seeded
+  // the FIRST missing slot (target_role) and never the legacy both-question wall, and the canary-only
+  // warm-greeting copy is NOT shipped to her.
+  const { db } = makeDb({
+    linkedinOauthLinked: true,
+    experienceHighlights: [{ title: "Software Engineer Intern", company: "Microsoft" }],
+    tags: { skills: ["python", "rag"], recentRoleTitle: "SWE Intern" },
+  })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "Hello, WeKruit! <uid>" })
+  assert.equal(decision.mode, "onboarding", "both canonical asked axes absent → a real gap remains")
+  assert.equal(decision.onboardingSlot, "target_role", "seeds the first genuinely-missing asked slot")
+  assert.equal(decision.warmReturningGreeting, undefined, "warm-greeting copy is canary-only, not shipped here")
+})
+
+test("T7 — cold full profile, CANARY → warm-greeting path still wins (new copy stays gated; universal skip doesn't steal it)", async () => {
+  const { db } = makeDb({
+    linkedinOauthLinked: true,
+    tags: { targetRoleFunction: ["software_engineering"], targetLocations: ["san_francisco_bay_area"] },
+  })
+  const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "hey" })
+  assert.equal(decision.mode, "triage")
+  assert.equal(decision.warmReturningGreeting, true, "canary keeps the warm-greeting surface (gated copy intact)")
+})
+
+test("T8 — ACTIVE onboarding, both tags present, NON-canary → triage (existing branch regression guard)", async () => {
+  const { db, writes } = makeDb({
+    sharedOnboarding: { status: "active", answers: {} },
+    tags: { targetRoleFunction: ["software_engineering"], targetLocations: ["remote"] },
+  })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "idk" })
+  assert.equal(decision.mode, "triage", "active-branch tag-satisfaction completion unchanged")
+  assert.equal(writes().some((w) => w.onboardingState === "complete"), true, "active branch still marks complete")
 })

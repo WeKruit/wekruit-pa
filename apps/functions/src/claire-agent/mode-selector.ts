@@ -593,10 +593,37 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   if (!onboardingComplete) {
     try {
       if (!isSharedOnboardingActiveUser(user)) {
+        // UNIVERSAL GAP-AWARE COLD START (Adam 2026-06-05: "ONLY ask for non-existing info").
+        // A profiled cold-opener (LinkedIn/résumé/role/location already on file) must NOT be walked
+        // through the target_role/location wall — that re-asks info we already hold (the Jasmaine
+        // defect: a LinkedIn-OAuth user with enriched experience pitched correctly, then was STILL
+        // asked "what kind of roles" + a location question — both already on file). Pure structured
+        // presence checks over the closed-enum tags (isSharedOnboardingSlotSatisfied) — NO LLM, NO
+        // text→enum regex. This is a bug-class re-ask removal, so it is NOT canary-gated (mirrors the
+        // un-gated tag-satisfaction skip already on the onboarding_active branch below and the
+        // cv-parsed branch above). The genuinely-NEW conversational surfaces (warm-greeting copy at
+        // :583, the offer-first kickoff copy, the PART-2 pitch engine, enriched pitch material) stay
+        // canary-gated untouched — only the question-SUPPRESSION crosses to universal.
+        if (allAskedOnboardingSlotsSatisfiedWithTags([], userTags, statedPreferences)) {
+          // NOTHING missing → onboarding is effectively done. Self-heal + route to triage (where the
+          // agent pitches from data + offers find_match). No question, no wall.
+          await markSharedOnboardingComplete(args.db, args.userId, now)
+          log("mode.cold_start_all_satisfied_complete", { userId: args.userId })
+          return { mode: "triage", ...inFlightDecision }
+        }
+        // A real gap remains → seed the FIRST genuinely-missing asked slot (skip any tag-satisfied
+        // axis), NOT the unconditional FIRST_ASKED_SLOT. A 1-line presence scan over the ASKED slot
+        // list using the same un-gated helper — no off-by-one, no regex. The `?? FIRST_ASKED_SLOT`
+        // is unreachable (the guard above proved at least one slot is missing), kept for typing.
+        const firstMissing =
+          (DEFAULT_ONBOARDING_SLOTS as SharedOnboardingQuestionId[]).find(
+            (s) => !isSharedOnboardingSlotSatisfied(s, userTags, statedPreferences),
+          ) ?? FIRST_ASKED_SLOT
+
         const offerFirst = isCanaryUser(args.userId)
-        // Cold start (e.g. just reinitialized): ask the first ASKED slot (target_role, 2026-06-02
-        // trim) — UNLESS offer-first (canary), which sends the DETERMINISTIC offer (LinkedIn/résumé/
-        // upload) and asks NO question.
+        // Cold start (e.g. just reinitialized): ask the first GENUINELY-MISSING asked slot — UNLESS
+        // offer-first (canary), which sends the DETERMINISTIC offer (LinkedIn/résumé/upload) and asks
+        // NO question.
         //
         // REGRESSION FIX (Adam 2026-06-03, "Hi → 👍, no reply"): only bootstrapOnboarding on the
         // NON-offer path. bootstrapOnboarding marks sharedOnboarding.status="active" — i.e. "a
@@ -609,13 +636,13 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
         // below stay set only so agent.ts has a question to ask IF the offer short-circuit falls
         // through (no link surfaced) — a non-fatal degrade, and still no durable poison.
         if (!offerFirst) await bootstrapOnboarding(args.db, args.userId, now)
-        log("mode.onboarding_bootstrap", { userId: args.userId, offerFirst })
+        log("mode.onboarding_bootstrap", { userId: args.userId, offerFirst, firstMissing })
         return {
           mode: "onboarding",
           awaitingAnswer: false,
-          onboardingSlot: FIRST_ASKED_SLOT,
-          pendingStep: buildSharedOnboardingPrompt(FIRST_ASKED_SLOT, null),
-          currentStep: buildSharedOnboardingPrompt(FIRST_ASKED_SLOT, null),
+          onboardingSlot: firstMissing,
+          pendingStep: buildSharedOnboardingPrompt(firstMissing, null),
+          currentStep: buildSharedOnboardingPrompt(firstMissing, null),
           processStore: seedStore([]),
           offerFirstKickoff: offerFirst,
           ...inFlightDecision,
