@@ -1891,7 +1891,7 @@ function MePhoneThreadLinkCard() {
     status: "idle",
     message: "Use the number you already texted Claire from. We will send a code there.",
   })
-  const busy = state.status === "sending_code" || state.status === "verifying"
+  const busy = state.status === "sending_code" || state.status === "verifying" || state.status === "linked"
   const canSend = phone.trim().length >= 7 && !busy
   const canVerify = code.length === 6 && state.status === "code_sent" && !busy
 
@@ -1931,8 +1931,9 @@ function MePhoneThreadLinkCard() {
       setState({
         status: "linked",
         phoneMasked: result.phoneMasked,
-        message: "Claire's phone thread is connected. Your profile will refresh with the verified phone.",
+        message: "Claire's phone thread is connected. Opening the profile Claire already knows...",
       })
+      window.setTimeout(() => window.location.assign("/me"), 450)
     } catch {
       setState({ status: "code_sent", requestId, phoneMasked, message: "Could not verify the code. Try again." })
     }

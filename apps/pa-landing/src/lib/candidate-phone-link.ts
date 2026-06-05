@@ -1,10 +1,11 @@
 import { httpsCallable } from "firebase/functions"
-import { functions } from "./firebase.js"
+import { auth, functions } from "./firebase.js"
 import {
   getBrowserUid,
   ONBOARDING_CANDIDATE_ID_KEY,
   rememberStoredValue,
 } from "./browser-identity.js"
+import { clearPortalCache, mergePortalCache } from "./portal-cache.js"
 
 export type CandidatePhoneLinkStartResult =
   | {
@@ -55,6 +56,14 @@ export async function verifyCandidatePhoneLink(
   const result = await call({ requestId, code, browserUid: getBrowserUid() })
   if (result.data.ok) {
     rememberStoredValue(ONBOARDING_CANDIDATE_ID_KEY, result.data.candidateId)
+    const firebaseUid = auth().currentUser?.uid
+    if (firebaseUid) {
+      clearPortalCache(firebaseUid)
+      mergePortalCache(firebaseUid, {
+        portalReady: true,
+        candidateId: result.data.candidateId,
+      })
+    }
   }
   return result.data
 }
