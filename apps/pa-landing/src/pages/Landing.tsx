@@ -267,6 +267,7 @@ export default function Landing() {
               <PulseDot size={6} />
               <span>Claire keeps the interview in iMessage.</span>
             </div>
+            <HeroEvidencePacket />
           </div>
         </div>
       </section>
@@ -419,6 +420,34 @@ function AllianceBackedBadge() {
         <span className="wk-alliance-badge__label">Backed by <strong>Alliance</strong></span>
       </span>
     </a>
+  )
+}
+
+function HeroEvidencePacket() {
+  return (
+    <aside className="wk-hero-packet" aria-label="Sample Claire evidence packet">
+      <header className="wk-hero-packet__head">
+        <span className="wk-hero-packet__status">
+          <Icon name="check" size={12} stroke={2.2} />
+          Passed profile draft
+        </span>
+        <span className="wk-hero-packet__role">Senior PM · AI infra</span>
+      </header>
+      <div className="wk-hero-packet__grid">
+        <div className="wk-hero-packet__item">
+          <strong>Nearest proof</strong>
+          <span>Launched AI infra workflow from 0 to 7 teams.</span>
+        </div>
+        <div className="wk-hero-packet__item">
+          <strong>Constraints</strong>
+          <span>NYC or remote · $180k+ · startup scale.</span>
+        </div>
+        <div className="wk-hero-packet__item wk-hero-packet__item--wide">
+          <strong>Share gate</strong>
+          <span>Hiring team sees this only after the role screen passes and the candidate approves.</span>
+        </div>
+      </div>
+    </aside>
   )
 }
 
@@ -646,10 +675,69 @@ const LANDING_STYLES = `
   color: var(--wk-ink);
   font-weight: 650;
 }
-.wk-hero__visual { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+.wk-hero__visual { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 .wk-hero__caption {
   display: inline-flex; align-items: center; gap: 8px;
   color: var(--wk-ink-3); font-size: 13px;
+}
+.wk-hero__visual .wk-imsg-thread__body { min-height: 280px; }
+.wk-hero-packet {
+  width: min(100%, 390px);
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(38, 91, 77, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 252, 246, 0.74)),
+    rgba(236, 247, 240, 0.68);
+  box-shadow: 0 16px 34px -28px rgba(45, 26, 10, 0.34);
+}
+.wk-hero-packet__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(38, 91, 77, 0.14);
+}
+.wk-hero-packet__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--wk-live);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+.wk-hero-packet__role {
+  color: var(--wk-ink-3);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.wk-hero-packet__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding-top: 9px;
+}
+.wk-hero-packet__item {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(45, 26, 10, 0.07);
+}
+.wk-hero-packet__item--wide { grid-column: 1 / -1; }
+.wk-hero-packet__item strong {
+  color: var(--wk-ink);
+  font-size: 12px;
+  line-height: 1.22;
+  font-weight: 700;
+}
+.wk-hero-packet__item span {
+  color: var(--wk-ink-2);
+  font-size: 12px;
+  line-height: 1.34;
 }
 
 /* Sections -------------------------------------------------------------- */
@@ -920,6 +1008,8 @@ const LANDING_STYLES = `
   .wk-hero__h1 { --wk-hero-title-leading: 1.2; --wk-hero-title-row-gap: 7px; font-size: 48px; }
   .wk-hero__visual { padding-top: 32px; }
   .wk-hero__visual .wk-imsg-phone { max-width: 320px; }
+  .wk-hero-packet { max-width: 320px; padding: 12px; }
+  .wk-hero-packet__grid { grid-template-columns: 1fr; gap: 7px; }
   .wk-steps { grid-template-columns: 1fr; }
   .wk-joblist { grid-template-columns: 1fr; }
   .wk-proof-grid { grid-template-columns: 1fr; margin-bottom: 48px; }
@@ -935,6 +1025,7 @@ const LANDING_STYLES = `
     align-items: center;
   }
   .wk-hero__visual .wk-imsg-phone { max-width: 360px; }
+  .wk-hero-packet { max-width: 360px; }
 }
 @media (max-width: 600px) {
   .wk-section { padding: 56px 0; }
@@ -943,6 +1034,8 @@ const LANDING_STYLES = `
   .wk-hero__h1 { --wk-hero-title-leading: 1.22; --wk-hero-title-row-gap: 6px; font-size: 37px; }
   .wk-hero__cta { gap: 12px; }
   .wk-hero__browse { flex-basis: 100%; }
+  .wk-hero-packet__head { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .wk-hero-packet__item { padding: 9px; }
 }
 @media (max-width: 360px) {
   .wk-hero__h1 { font-size: 32px; }
