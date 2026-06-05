@@ -119,7 +119,6 @@ export default function EmployerSignup() {
   return (
     <main style={{ background: "var(--cream)", minHeight: "100vh" }}>
       <Header />
-      {!done ? <EmployerRolePacketProgressDock summary={readiness} onFieldJump={handleFieldJump} /> : null}
       <section
         style={{
           paddingTop: "clamp(36px, 7vw, 56px)",
@@ -186,6 +185,7 @@ export default function EmployerSignup() {
               See sample pass
             </Link>
           </div>
+          {!done ? <EmployerRolePacketProgressDock summary={readiness} onFieldJump={handleFieldJump} /> : null}
           {done ? <SuccessCard form={form} onStartAnother={() => {
             setForm(EMPTY_FORM)
             setAppliedStarterId(null)
@@ -405,7 +405,11 @@ function EmployerRolePacketProgressDock({ summary, onFieldJump }: { summary: Emp
         background: "rgba(250, 245, 236, 0.92)",
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
-        borderBottom: "1px solid var(--border)",
+        border: "1px solid var(--border)",
+        borderRadius: 18,
+        boxShadow: "0 16px 36px rgba(45, 26, 10, 0.08)",
+        overflow: "hidden",
+        marginTop: 18,
       }}
     >
       <div

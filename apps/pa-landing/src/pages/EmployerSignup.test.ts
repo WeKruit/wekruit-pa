@@ -281,6 +281,14 @@ test("EmployerSignup keeps long mobile intake oriented with a sticky packet prog
   assert.match(source, /summary\.nextIncompleteItem \? `Finish \$\{summary\.nextIncompleteItem\.label\}` : "Review packet"/)
   assert.match(source, /const targetId = summary\.nextIncompleteItem\?\.targetId \?\? "employer-send-review"/)
   assert.match(source, /id="employer-send-review"/)
+  assert.match(source, /boxShadow: "0 16px 36px rgba\(45, 26, 10, 0\.08\)"/)
+
+  const primaryActionsIndex = source.indexOf('aria-label="Role intake primary actions"')
+  const progressDockIndex = source.indexOf("<EmployerRolePacketProgressDock summary={readiness}")
+  const packetStartersIndex = source.indexOf("<EmployerPacketStarters")
+  assert.ok(primaryActionsIndex > 0)
+  assert.ok(progressDockIndex > primaryActionsIndex)
+  assert.ok(packetStartersIndex > progressDockIndex)
 
   assert.doesNotMatch(source, /progress saved live/i)
   assert.doesNotMatch(source, /auto-submit/i)
