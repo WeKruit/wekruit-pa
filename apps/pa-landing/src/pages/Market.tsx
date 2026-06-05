@@ -1816,15 +1816,15 @@ const MARKET_STYLES = String.raw`
 @media (max-width: 420px) {
   .wk-shell .wk-mtabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-    padding-top: 12px;
-    margin-bottom: 24px;
+    gap: 8px;
+    padding-top: 10px;
+    margin-bottom: 16px;
     border-bottom: 0;
   }
   .wk-shell .wk-mtab {
-    min-height: 86px;
-    padding: 11px 10px 12px;
-    gap: 5px;
+    min-height: 74px;
+    padding: 9px 9px 10px;
+    gap: 4px;
     border: 1px solid var(--wk-border);
     border-radius: 10px;
     background: var(--wk-cream-2);
@@ -1838,7 +1838,7 @@ const MARKET_STYLES = String.raw`
     gap: 6px;
   }
   .wk-shell .wk-mtab__label {
-    font-size: 19.5px;
+    font-size: 18.5px;
     line-height: 1.1;
     white-space: normal;
   }
@@ -1849,15 +1849,28 @@ const MARKET_STYLES = String.raw`
     padding: 0 6px;
   }
   .wk-shell .wk-mtab__sub {
-    font-size: 11.5px;
-    line-height: 1.28;
-  }
-  .wk-shell .wk-market__h1 {
-    font-size: 38px;
+    font-size: 11px;
     line-height: 1.24;
   }
+  .wk-shell .wk-market__panel--direct .wk-market__head {
+    margin-bottom: 12px;
+  }
+  .wk-shell .wk-market__panel--direct .wk-eyebrow {
+    font-size: 10.5px;
+    line-height: 1.2;
+    letter-spacing: 0.11em;
+  }
+  .wk-shell .wk-market__h1 {
+    font-size: 34px;
+    line-height: 1.16;
+    margin: 10px 0 12px;
+  }
   .wk-shell .wk-market__h1--direct {
-    gap: 8px;
+    gap: 4px;
+  }
+  .wk-shell .wk-market__lede {
+    font-size: 14.5px;
+    line-height: 1.34;
   }
   .wk-shell .wk-roleflow {
     padding: 16px 0;
@@ -1894,11 +1907,11 @@ const MARKET_STYLES = String.raw`
     line-height: 1.35;
   }
   .wk-shell .wk-direct-cards {
-    gap: 10px;
+    gap: 8px;
   }
   .wk-shell .wk-direct-card {
-    padding: 15px;
-    gap: 10px;
+    padding: 13px;
+    gap: 8px;
   }
   .wk-shell .wk-direct-card__head {
     grid-template-columns: 38px minmax(0, 1fr);
@@ -1910,6 +1923,9 @@ const MARKET_STYLES = String.raw`
     align-items: flex-start;
     text-align: left;
     max-width: 100%;
+  }
+  .wk-shell .wk-direct-card__owner {
+    display: none;
   }
 }
 `
