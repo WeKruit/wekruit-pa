@@ -1427,6 +1427,8 @@ export default function CandidateLogin() {
   const referralNext = nextDest.pathname === "/me/refer"
   const showCompletingLink = isCompletingLink && !phoneLinkMode
   const showAuthControls = !showCompletingLink && !(phoneLinkMode && signedInUser)
+  const phoneLinkAuthActive = phoneLinkMode && !signedInUser && showAuthControls
+  const showMainAuthControls = showAuthControls && !phoneLinkAuthActive
   const showPipelinePreview = !showCompletingLink && !roleInterviewNext && !roleSignalNext && !onboardingNext && !referralNext
   const showRoleSignalPreview = !showCompletingLink && roleSignalNext
   const showOnboardingPreview = !showCompletingLink && onboardingNext
@@ -1479,6 +1481,47 @@ export default function CandidateLogin() {
           ? "Sign in once to track referral invites, verified interview rewards, and offer/start payouts."
           : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."
 
+  const renderAuthControls = () => (
+    <div className="wk-login__auth-block">
+      <div className="wk-login__providers">
+        <button
+          type="button"
+          className="wk-btn wk-btn--ink wk-btn--block"
+          onClick={() => void startProviderSignIn("google")}
+          disabled={busy}
+        >
+          {status === "google" ? "Opening Google…" : onboardingNext ? "Start with Google" : "Continue with Google"}
+        </button>
+        <button
+          type="button"
+          className="wk-btn wk-btn--linkedin wk-btn--block"
+          onClick={() => void startProviderSignIn("linkedin")}
+          disabled={busy}
+        >
+          {status === "linkedin" ? "Opening LinkedIn…" : onboardingNext ? "Start with LinkedIn" : "Continue with LinkedIn"}
+        </button>
+      </div>
+      <div className="wk-login__divider"><span>or magic link</span></div>
+      <form onSubmit={onSubmit} className="wk-login__form">
+        <label className="wk-login__field">
+          <span>Email</span>
+          <input
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+            disabled={busy}
+          />
+        </label>
+        <button type="submit" className="wk-btn wk-btn--primary wk-btn--block" disabled={busy}>
+          {status === "sending" ? "Sending…" : "Send magic link"}
+          {!busy ? <Icon name="arrow-right" size={16} stroke={2} /> : null}
+        </button>
+      </form>
+    </div>
+  )
+
   if (onLayoff) {
     const layoffStatus =
       status === "error"
@@ -1508,7 +1551,7 @@ export default function CandidateLogin() {
   const loginBody = (
       <div className="wk-login">
         <div className="wk-container">
-          <div className={`wk-login__card${showPipelinePreview ? " wk-login__card--pipeline" : ""}`}>
+          <div className={`wk-login__card${showPipelinePreview ? " wk-login__card--pipeline" : ""}${phoneLinkMode ? " wk-login__card--phone-link" : ""}`}>
             <p className="wk-eyebrow">
               {loginEyebrow}
             </p>
@@ -1553,9 +1596,14 @@ export default function CandidateLogin() {
                 {phoneLinkMode ? (
                   <div className="wk-login-phone-link__panel">
                     {!signedInUser ? (
-                      <p className="wk-login-phone-link__note">
-                        Sign in first with Google, LinkedIn, or magic link. This phone-link step will stay open after auth.
-                      </p>
+                      <>
+                        <p className="wk-login-phone-link__note">
+                          Choose a sign-in method below. Then Claire texts a code to connect the phone thread she already knows.
+                        </p>
+                        <div className="wk-login-phone-link__auth" aria-label="Sign in before connecting Claire phone thread">
+                          {renderAuthControls()}
+                        </div>
+                      </>
                     ) : (
                       <>
                         <p className="wk-login-phone-link__note">
@@ -1620,31 +1668,9 @@ export default function CandidateLogin() {
               <p className="wk-success">Signing you in…</p>
             ) : null}
 
-            {showAuthControls ? (
-              <>
-                <div className="wk-login__providers">
-                  <button
-                    type="button"
-                    className="wk-btn wk-btn--ink wk-btn--block"
-                    onClick={() => void startProviderSignIn("google")}
-                    disabled={busy}
-                  >
-                    {status === "google" ? "Opening Google…" : onboardingNext ? "Start with Google" : "Continue with Google"}
-                  </button>
-                  <button
-                    type="button"
-                    className="wk-btn wk-btn--linkedin wk-btn--block"
-                    onClick={() => void startProviderSignIn("linkedin")}
-                    disabled={busy}
-                  >
-                    {status === "linkedin" ? "Opening LinkedIn…" : onboardingNext ? "Start with LinkedIn" : "Continue with LinkedIn"}
-                  </button>
-                </div>
-                <div className="wk-login__divider"><span>or magic link</span></div>
-              </>
-            ) : null}
+            {showMainAuthControls ? renderAuthControls() : null}
 
-            {showAuthControls || showCompletingLink ? (
+            {showCompletingLink ? (
               <form onSubmit={onSubmit} className="wk-login__form">
                 <label className="wk-login__field">
                   <span>Email</span>
@@ -1658,9 +1684,7 @@ export default function CandidateLogin() {
                   />
                 </label>
                 <button type="submit" className="wk-btn wk-btn--primary wk-btn--block" disabled={busy}>
-                  {showCompletingLink
-                    ? (status === "signing_in" ? "Signing in…" : "Continue")
-                    : (status === "sending" ? "Sending…" : "Send magic link")}
+                  {status === "signing_in" ? "Signing in…" : "Continue"}
                   {!busy ? <Icon name="arrow-right" size={16} stroke={2} /> : null}
                 </button>
               </form>
@@ -2302,6 +2326,7 @@ export const CANDIDATE_STYLES = `
   font-size: 12.5px;
   line-height: 1.35;
 }
+.wk-login__auth-block { display: grid; gap: 12px; }
 .wk-login__providers { display: grid; gap: 10px; margin-top: 8px; }
 .wk-login__divider {
   display: flex; align-items: center; gap: 10px;
@@ -2327,6 +2352,10 @@ export const CANDIDATE_STYLES = `
   box-shadow: 0 0 0 3px rgba(45,26,10,.08);
 }
 .wk-login__fine { color: var(--wk-ink-3); font-size: 13px; margin: 8px 0 0; text-align: center; }
+.wk-login-phone-link__auth .wk-login__auth-block { gap: 10px; }
+.wk-login-phone-link__auth .wk-login__providers { margin-top: 0; gap: 8px; }
+.wk-login-phone-link__auth .wk-login__divider { margin: 0; }
+.wk-login-phone-link__auth .wk-login__form { gap: 10px; }
 
 /* Mobile ---------------------------------------------------------------- */
 @media (max-width: 820px) {
@@ -2350,6 +2379,8 @@ export const CANDIDATE_STYLES = `
   .wk-header__primary-short { display: inline; }
   .wk-login { padding: 32px 0 72px; }
   .wk-login__card { padding: 28px 32px; gap: 14px; }
+  .wk-login__card--phone-link { gap: 12px; }
+  .wk-login__card--phone-link .wk-login-context { display: none; }
   .wk-login__card--pipeline { padding-top: 24px; padding-bottom: 24px; gap: 12px; }
   .wk-login__h { font-size: clamp(30px, 9vw, 36px); line-height: 1.07; }
   .wk-login__sub { font-size: 14px; line-height: 1.45; }
@@ -2392,6 +2423,8 @@ export const CANDIDATE_STYLES = `
   .wk-login-phone-link__copy,
   .wk-login-phone-link__note { font-size: 12px; line-height: 1.32; }
   .wk-login-phone-link__panel { gap: 9px; padding: 10px; border-radius: 12px; }
+  .wk-login-phone-link__auth .wk-login__auth-block { gap: 8px; }
+  .wk-login-phone-link__auth .wk-login__providers { gap: 8px; }
   .wk-login-phone-link__form { gap: 9px; }
   .wk-login__card--pipeline .wk-login-context { gap: 7px; padding-top: 6px; }
   .wk-login__card--pipeline .wk-login-context__items { gap: 6px; }
