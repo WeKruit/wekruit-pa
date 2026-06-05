@@ -302,6 +302,8 @@ test("CandidatePortal /me lets signed-in users connect an existing Claire phone 
   assert.match(source, /const result = await verifyCandidatePhoneLink\(requestId, code\)/)
   assert.match(source, /Connect Claire thread/)
   assert.match(source, /Claire's phone thread is connected/)
+  assert.match(source, /Opening the profile Claire already knows/)
+  assert.match(source, /window\.setTimeout\(\(\) => window\.location\.assign\("\/me"\), 450\)/)
 })
 
 test("CandidatePortal routes Claire message actions through the claimed sender number", () => {
