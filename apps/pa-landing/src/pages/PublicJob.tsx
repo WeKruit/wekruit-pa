@@ -1160,8 +1160,11 @@ function ClaireInterviewContract({ compact = false }: { compact?: boolean }) {
   )
 }
 
-function renderJobDescription(descriptionMd?: string, company?: string, hideSource = false): ReactNode {
-  const raw = (hideSource ? stripJobSourceSection(descriptionMd) : descriptionMd)?.trim()
+function renderJobDescription(descriptionMd?: string, company?: string, hideSource = false, jobTitle?: string): ReactNode {
+  const raw = stripLeadingDuplicateDescriptionHeadings(
+    (hideSource ? stripJobSourceSection(descriptionMd) : descriptionMd)?.trim(),
+    { company, jobTitle },
+  )
   if (!raw) {
     return (
       <section>
@@ -1218,6 +1221,61 @@ function renderJobDescription(descriptionMd?: string, company?: string, hideSour
   flushParagraph()
   flushBullets()
   return blocks
+}
+
+function stripLeadingDuplicateDescriptionHeadings(
+  raw: string | undefined,
+  context: { company?: string; jobTitle?: string },
+): string | undefined {
+  if (!raw) return raw
+  const duplicateHeadings = new Set(
+    [context.jobTitle, context.company]
+      .flatMap(descriptionHeadingKeys)
+      .filter((value): value is string => Boolean(value)),
+  )
+  if (!duplicateHeadings.size) return raw
+
+  const lines = raw.split(/\r?\n/)
+  let index = 0
+  let stripped = false
+
+  while (index < lines.length) {
+    const trimmed = lines[index].trim()
+    if (!trimmed) {
+      index += 1
+      continue
+    }
+    const heading = descriptionHeadingText(trimmed)
+    if (!heading || !descriptionHeadingKeys(heading).some((key) => duplicateHeadings.has(key))) break
+    stripped = true
+    index += 1
+  }
+
+  return stripped ? lines.slice(index).join("\n").trim() : raw
+}
+
+function descriptionHeadingText(line: string): string | undefined {
+  const markdownHeading = line.match(/^#{1,6}\s+(.+)$/)
+  if (markdownHeading) return markdownHeading[1].replace(/\*\*/g, "").trim()
+  const boldHeading = line.match(/^\*\*(.+?)\*\*$/)
+  if (boldHeading) return boldHeading[1].trim()
+  if (line.length <= 90 && !/[.!?]$/.test(line)) return line.replace(/\*\*/g, "").trim()
+  return undefined
+}
+
+function descriptionHeadingKeys(value?: string): string[] {
+  return [
+    normalizeDescriptionHeading(value),
+    normalizeDescriptionHeading(value?.replace(/\([^)]*\)/g, " ")),
+  ].filter((key): key is string => Boolean(key))
+}
+
+function normalizeDescriptionHeading(value?: string): string | undefined {
+  const normalized = value
+    ?.replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+    .toLowerCase()
+  return normalized || undefined
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -1298,7 +1356,7 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
               </div>
               <div className="wk-pj-description-panel">
                 <p className="wk-eyebrow">Job description</p>
-                <div className="wk-pj-copy">{renderJobDescription(job.descriptionMd, job.company, job.collaborated)}</div>
+                <div className="wk-pj-copy">{renderJobDescription(job.descriptionMd, job.company, job.collaborated, job.jobTitle)}</div>
               </div>
               {job.otherJobs.length ? (
                 <section className="wk-pj-other" aria-labelledby="other-company-roles">

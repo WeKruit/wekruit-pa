@@ -139,6 +139,20 @@ test("PublicJob role hero title keeps long job names readable on mobile", () => 
   assert.doesNotMatch(source, /\.wk-pj-hero__role \{[\s\S]*letter-spacing: -0\.024em;/)
 })
 
+test("PublicJob description removes duplicate leading role and company headings", () => {
+  assert.match(source, /function stripLeadingDuplicateDescriptionHeadings\(/)
+  assert.match(source, /function descriptionHeadingText\(line: string\)/)
+  assert.match(source, /function descriptionHeadingKeys\(value\?: string\): string\[\]/)
+  assert.match(source, /function normalizeDescriptionHeading\(value\?: string\)/)
+  assert.match(source, /const duplicateHeadings = new Set\(/)
+  assert.match(source, /\[context\.jobTitle, context\.company\]/)
+  assert.match(source, /descriptionHeadingText\(trimmed\)/)
+  assert.match(source, /descriptionHeadingKeys\(heading\)\.some\(\(key\) => duplicateHeadings\.has\(key\)\)/)
+  assert.match(source, /renderJobDescription\(job\.descriptionMd, job\.company, job\.collaborated, job\.jobTitle\)/)
+
+  assert.doesNotMatch(source, /renderJobDescription\(job\.descriptionMd, job\.company, job\.collaborated\)<\/div>/)
+})
+
 test("PublicJob resume upload avoids internal configuration errors", () => {
   assert.doesNotMatch(source, /CV ingest endpoint is not configured/)
   assert.match(source, /Resume upload is temporarily unavailable\. Message Claire and we'll attach it to this role\./)
