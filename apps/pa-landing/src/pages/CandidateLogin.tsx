@@ -906,9 +906,9 @@ function LoginContextStrip({ kind }: { kind: LoginContextKind }) {
       { title: "No auto-apply", body: "Nothing goes to a hiring team yet." },
     ],
     onboarding: [
-      { title: "Profile home", body: "Resume, LinkedIn, targets, corrections." },
-      { title: "Active screens", body: "Claire turns fit into interview evidence." },
-      { title: "Consent gate", body: "Only passed evidence can be shared." },
+      { title: "Profile chat", body: "Claire asks before anything is shared." },
+      { title: "Resume + LinkedIn", body: "Background turns into reusable evidence." },
+      { title: "Nearest proof", body: "Fit comes from closest-overlap work." },
     ],
     referral: [
       { title: "Invite ledger", body: "Your friend and milestone status stay attached." },
@@ -1284,7 +1284,7 @@ export default function CandidateLogin() {
         : roleSignalNext
           ? "Sign in and Claire will add this role to your durable profile signals."
         : onboardingNext
-          ? "Sign in once and Claire will start your profile flow. Magic-link, Google, or LinkedIn — your choice."
+          ? "Sign in once and Claire starts a guided profile chat: resume or LinkedIn first, then target roles, constraints, and nearest-work evidence."
         : referralNext
           ? "Sign in once to track referral invites, verified interview rewards, and offer/start payouts."
           : "Sign in and we'll pull up your active pipeline. Magic-link, Google, or LinkedIn — your choice."
@@ -1360,7 +1360,7 @@ export default function CandidateLogin() {
                     onClick={() => void startProviderSignIn("google")}
                     disabled={busy}
                   >
-                    {status === "google" ? "Opening Google…" : "Continue with Google"}
+                    {status === "google" ? "Opening Google…" : onboardingNext ? "Start with Google" : "Continue with Google"}
                   </button>
                   <button
                     type="button"
@@ -1368,7 +1368,7 @@ export default function CandidateLogin() {
                     onClick={() => void startProviderSignIn("linkedin")}
                     disabled={busy}
                   >
-                    {status === "linkedin" ? "Opening LinkedIn…" : "Continue with LinkedIn"}
+                    {status === "linkedin" ? "Opening LinkedIn…" : onboardingNext ? "Start with LinkedIn" : "Continue with LinkedIn"}
                   </button>
                 </div>
                 <div className="wk-login__divider"><span>or magic link</span></div>
