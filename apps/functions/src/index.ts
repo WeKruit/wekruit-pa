@@ -341,6 +341,10 @@ export { paSsoLogin, paSsoBootstrap, paSsoLogout } from "./cross-domain-sso.js"
 // v2.0 S2 — candidate email-link claim callable. Authenticated candidates
 // receive only the redacted candidate self-profile projection.
 export { paCandidateClaimProfile } from "./identity/claim-api.js"
+export {
+  paCandidatePhoneLinkStart,
+  paCandidatePhoneLinkVerify,
+} from "./identity/candidate-phone-link.js"
 // Candidate job start gate. Authenticated candidates must have a parsed and
 // labeled resume on the canonical PA profile before iMessage unlocks.
 export { paCandidateResumeGateStatus } from "./identity/candidate-resume-gate.js"

@@ -74,6 +74,21 @@ test("CandidateLogin frames onboarding login as a first-time Claire start", () =
   assert.match(source, /\{!onboardingNext \? \([\s\S]*<p className="wk-login__fine">/)
 })
 
+test("CandidateLogin offers existing Claire phone-thread linking before onboarding", () => {
+  assert.match(source, /PHONE_LINK_INTENT_KEY\s*=\s*"pa_phone_link_intent"/)
+  assert.match(source, /startCandidatePhoneLink/)
+  assert.match(source, /verifyCandidatePhoneLink/)
+  assert.match(source, /if \(readPhoneLinkIntent\(\)\) \{[\s\S]*setPhoneLinkMode\(true\)[\s\S]*return/)
+  assert.match(source, /I've texted Claire/)
+  assert.match(source, /Already talked with Claire by phone\? Verify that number and open the WeKruit profile Claire already knows\./)
+  assert.match(source, /Signed in as \{signedInUser\.email \?\? "this account"\}/)
+  assert.match(source, /Text me a code/)
+  assert.match(source, /Connect Claire thread/)
+  assert.match(source, /const showCompletingLink = isCompletingLink && !phoneLinkMode/)
+  assert.match(source, /const showAuthControls = !showCompletingLink && !\(phoneLinkMode && signedInUser\)/)
+  assert.match(source, /const destination = nextDest\.isOnboarding[\s\S]*\? "\/me"[\s\S]*: resolvePostLoginDestination\(nextDest, true, verifySource\)/)
+})
+
 test("CandidateLogin keeps onboarding auth controls before the explanatory preview", () => {
   assert.match(source, /function LoginOnboardingPreview\(\)/)
   assert.match(source, /function LoginContextStrip\(\{ kind \}: \{ kind: LoginContextKind \}\)/)
@@ -90,7 +105,7 @@ test("CandidateLogin keeps onboarding auth controls before the explanatory previ
   assert.match(source, /Target roles and constraints/)
   assert.match(source, /Nearest-work evidence/)
   assert.match(source, /Profile corrections stay editable/)
-  assert.match(source, /const showOnboardingPreview = !isCompletingLink && onboardingNext/)
+  assert.match(source, /const showOnboardingPreview = !showCompletingLink && onboardingNext/)
   const providerIndex = source.indexOf('<div className="wk-login__providers">')
   const contextStripIndex = source.indexOf("<LoginContextStrip kind={loginContextKind} />")
   const onboardingPreviewIndex = source.indexOf("{showOnboardingPreview ? <LoginOnboardingPreview /> : null}")
@@ -114,7 +129,7 @@ test("CandidateLogin /me sign-in keeps auth controls before the operating-home p
   assert.match(source, /Profile signals and corrections/)
   assert.match(source, /Passed-profile consent/)
   assert.match(source, /const referralNext = nextDest\.pathname === "\/me\/refer"/)
-  assert.match(source, /const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !roleSignalNext && !onboardingNext && !referralNext/)
+  assert.match(source, /const showPipelinePreview = !showCompletingLink && !roleInterviewNext && !roleSignalNext && !onboardingNext && !referralNext/)
   const providerIndex = source.indexOf('<div className="wk-login__providers">')
   const pipelinePreviewIndex = source.indexOf("{showPipelinePreview ? <LoginPipelinePreview /> : null}")
   assert.ok(providerIndex > 0)
@@ -147,7 +162,7 @@ test("CandidateLogin frames referral dashboard auth around rewards and invite tr
   assert.match(source, /referral: \[[\s\S]*\{ title: "Invite ledger", body: "Your friend and milestone status stay attached\." \}/)
   assert.match(source, /\{ title: "\$50 interview reward", body: "Tracked after a verified hiring-manager interview\." \}/)
   assert.match(source, /\{ title: "\$4k placement reward", body: "Tracked after a verified offer\/start\." \}/)
-  assert.match(source, /const showReferralPreview = !isCompletingLink && referralNext/)
+  assert.match(source, /const showReferralPreview = !showCompletingLink && referralNext/)
   assert.match(source, /\{showReferralPreview \? <LoginReferralPreview \/> : null\}/)
 })
 
@@ -163,7 +178,7 @@ test("CandidateLogin preserves market role signal context through auth", () => {
   assert.match(source, /function LoginRoleSignalPreview\(\{ title, company \}: \{ title: string; company: string \}\)/)
   assert.match(source, /Role signal after sign-in/)
   assert.match(source, /Claire will start your profile with this role signal\./)
-  assert.match(source, /const showPipelinePreview = !isCompletingLink && !roleInterviewNext && !roleSignalNext && !onboardingNext && !referralNext/)
+  assert.match(source, /const showPipelinePreview = !showCompletingLink && !roleInterviewNext && !roleSignalNext && !onboardingNext && !referralNext/)
   assert.match(source, /\{showRoleSignalPreview && profileRoleSignal \? <LoginRoleSignalPreview title=\{profileRoleSignal\.title\} company=\{profileRoleSignal\.company\} \/> : null\}/)
 })
 
