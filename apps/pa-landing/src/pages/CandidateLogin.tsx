@@ -2379,6 +2379,11 @@ export const CANDIDATE_STYLES = `
   .wk-header__primary-short { display: inline; }
   .wk-login { padding: 32px 0 72px; }
   .wk-login__card { padding: 28px 32px; gap: 14px; }
+  .wk-login__auth-block { order: 3; gap: 10px; }
+  .wk-login-phone-link { order: 4; }
+  .wk-login-context { order: 5; }
+  .wk-login-preview { order: 6; }
+  .wk-login__fine { order: 7; }
   .wk-login__card--phone-link { gap: 12px; }
   .wk-login__card--phone-link .wk-login-context { display: none; }
   .wk-login__card--pipeline { padding-top: 24px; padding-bottom: 24px; gap: 12px; }

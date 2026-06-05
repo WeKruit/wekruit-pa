@@ -126,7 +126,6 @@ test("CandidateLogin keeps onboarding auth controls before the explanatory previ
   const onboardingPreviewIndex = source.indexOf("{showOnboardingPreview ? <LoginOnboardingPreview /> : null}")
   assert.ok(mainAuthIndex > 0)
   assert.ok(contextStripIndex > 0)
-  assert.ok(contextStripIndex < mainAuthIndex)
   assert.ok(onboardingPreviewIndex > mainAuthIndex)
   assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login \{ padding: 32px 0 72px; \}/)
   assert.match(source, /\.wk-login-context__items \{[\s\S]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/)
@@ -134,6 +133,14 @@ test("CandidateLogin keeps onboarding auth controls before the explanatory previ
   assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login-context__item \{[\s\S]*display: grid;[\s\S]*grid-template-columns: 18px minmax\(0, 1fr\);[\s\S]*border-radius: 14px;[\s\S]*\}/)
   assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login-context__item em \{[\s\S]*display: block;[\s\S]*font-size: 11\.5px;[\s\S]*line-height: 1\.25;[\s\S]*\}/)
   assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login__providers \{ margin-top: 2px; \}/)
+})
+
+test("CandidateLogin mobile sign-in puts auth actions before secondary context", () => {
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login__auth-block \{ order: 3; gap: 10px; \}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login-phone-link \{ order: 4; \}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login-context \{ order: 5; \}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login-preview \{ order: 6; \}/)
+  assert.match(source, /@media \(max-width: 480px\)[\s\S]*\.wk-login__fine \{ order: 7; \}/)
 })
 
 test("CandidateLogin /me sign-in keeps auth controls before the operating-home preview", () => {
