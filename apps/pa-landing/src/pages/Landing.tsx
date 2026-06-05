@@ -260,14 +260,13 @@ export default function Landing() {
                 { from: "user",   text: "Go for it." },
                 { from: "claire", text: "What's your dream role?" },
                 { from: "user",   text: "Senior PM at an AI infra startup. NYC. $180k+." },
-                { from: "claire", text: "When a real role matches, I start the first interview here and attach the evidence." },
               ]}
             />
+            <HeroEvidencePacket />
             <div className="wk-hero__caption">
               <PulseDot size={6} />
               <span>Claire keeps the interview in iMessage.</span>
             </div>
-            <HeroEvidencePacket />
           </div>
         </div>
       </section>
@@ -436,15 +435,15 @@ function HeroEvidencePacket() {
       <div className="wk-hero-packet__grid">
         <div className="wk-hero-packet__item">
           <strong>Nearest proof</strong>
-          <span>Launched AI infra workflow from 0 to 7 teams.</span>
+          <span>AI workflow: 0 to 7 teams.</span>
         </div>
         <div className="wk-hero-packet__item">
           <strong>Constraints</strong>
-          <span>NYC or remote · $180k+ · startup scale.</span>
+          <span>NYC/remote · $180k+.</span>
         </div>
         <div className="wk-hero-packet__item wk-hero-packet__item--wide">
           <strong>Share gate</strong>
-          <span>Hiring team sees this only after the role screen passes and the candidate approves.</span>
+          <span>Employer share waits for candidate approval.</span>
         </div>
       </div>
     </aside>
@@ -542,7 +541,7 @@ const LANDING_STYLES = `
   display: grid;
   grid-template-columns: 1.05fr 0.95fr;
   gap: 64px;
-  align-items: center;
+  align-items: start;
 }
 .wk-hero__h1 {
   --wk-hero-title-leading: 1.2;
@@ -675,15 +674,18 @@ const LANDING_STYLES = `
   color: var(--wk-ink);
   font-weight: 650;
 }
-.wk-hero__visual { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.wk-hero__visual { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: -48px; }
 .wk-hero__caption {
   display: inline-flex; align-items: center; gap: 8px;
   color: var(--wk-ink-3); font-size: 13px;
 }
-.wk-hero__visual .wk-imsg-thread__body { min-height: 280px; }
+.wk-hero__visual .wk-imsg-thread__body { min-height: 200px; }
 .wk-hero-packet {
+  position: relative;
+  z-index: 2;
   width: min(100%, 390px);
-  padding: 12px;
+  margin-top: 0;
+  padding: 10px;
   border-radius: 8px;
   border: 1px solid rgba(38, 91, 77, 0.18);
   background:
@@ -696,7 +698,7 @@ const LANDING_STYLES = `
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-bottom: 8px;
+  padding-bottom: 7px;
   border-bottom: 1px solid rgba(38, 91, 77, 0.14);
 }
 .wk-hero-packet__status {
@@ -714,9 +716,9 @@ const LANDING_STYLES = `
 }
 .wk-hero-packet__grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 7px;
-  padding-top: 9px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding-top: 8px;
 }
 .wk-hero-packet__item {
   min-width: 0;
@@ -727,7 +729,7 @@ const LANDING_STYLES = `
   background: rgba(255, 255, 255, 0.58);
   border: 1px solid rgba(45, 26, 10, 0.07);
 }
-.wk-hero-packet__item--wide { grid-column: 1 / -1; }
+.wk-hero-packet__item--wide { grid-column: auto; }
 .wk-hero-packet__item strong {
   color: var(--wk-ink);
   font-size: 12px;
@@ -1006,9 +1008,9 @@ const LANDING_STYLES = `
     align-items: start;
   }
   .wk-hero__h1 { --wk-hero-title-leading: 1.2; --wk-hero-title-row-gap: 7px; font-size: 48px; }
-  .wk-hero__visual { padding-top: 32px; }
+  .wk-hero__visual { margin-top: 0; padding-top: 32px; }
   .wk-hero__visual .wk-imsg-phone { max-width: 320px; }
-  .wk-hero-packet { max-width: 320px; padding: 12px; }
+  .wk-hero-packet { max-width: 320px; margin-top: 0; padding: 12px; }
   .wk-hero-packet__grid { grid-template-columns: 1fr; gap: 7px; }
   .wk-steps { grid-template-columns: 1fr; }
   .wk-joblist { grid-template-columns: 1fr; }
@@ -1021,6 +1023,7 @@ const LANDING_STYLES = `
 @media (max-width: 760px) {
   .wk-hero__grid { grid-template-columns: 1fr; gap: 40px; }
   .wk-hero__visual {
+    margin-top: 0;
     padding-top: 0;
     align-items: center;
   }
