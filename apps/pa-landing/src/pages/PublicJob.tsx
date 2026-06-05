@@ -669,6 +669,7 @@ export default function PublicJob() {
       smsHint={smsHint}
       overlay={loginOverlay}
       signedIn={Boolean(user)}
+      headerStartHref={`/onboarding?next=${encodeURIComponent(nextPath)}`}
       onApply={() => {
         if (!user) {
           setLoginPromptOpen(true)
@@ -1224,10 +1225,11 @@ interface PublicJobLayoutProps {
   smsHint?: ReactNode
   overlay?: ReactNode
   signedIn: boolean
+  headerStartHref?: string
   onApply: () => void
 }
 
-export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, signedIn, onApply }: PublicJobLayoutProps) {
+export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, signedIn, headerStartHref, onApply }: PublicJobLayoutProps) {
   const meta = [
     job.location ? `${job.location}${job.jobType ? ` (${job.jobType})` : ""}` : job.jobType,
     job.salary,
@@ -1235,7 +1237,11 @@ export function PublicJobLayout({ job, startSlot, cvSlot, smsHint, overlay, sign
   ].filter((item): item is string => Boolean(item))
 
   return (
-    <CandidateShell signedIn={signedIn}>
+    <CandidateShell
+      signedIn={signedIn}
+      startHref={headerStartHref}
+      startLabel={`Start Claire interview for ${job.jobTitle}`}
+    >
       <style>{PUBLIC_JOB_STYLES}</style>
 
       <div className="wk-pj">

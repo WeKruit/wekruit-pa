@@ -88,6 +88,11 @@ test("PublicJob keeps the role page visible until the candidate starts Claire", 
   assert.match(source, /loginPromptOpen && !user/)
 })
 
+test("PublicJob header start action preserves the selected role context", () => {
+  assert.match(source, /headerStartHref=\{`\/onboarding\?next=\$\{encodeURIComponent\(nextPath\)\}`\}/)
+  assert.match(source, /startLabel=\{`Start Claire interview for \$\{job\.jobTitle\}`\}/)
+})
+
 test("PublicJob mobile Claire CTA is inline and does not cover role content", () => {
   assert.match(
     source,
