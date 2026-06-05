@@ -111,6 +111,11 @@ function clearPhoneLinkIntent(): void {
   }
 }
 
+function readPhoneLinkIntentParam(searchParams: URLSearchParams): boolean {
+  const value = searchParams.get("phoneLink")
+  return value === "1" || value === "true"
+}
+
 function waitForAuthUser(timeoutMs = 5000): Promise<User | null> {
   if (auth().currentUser) return Promise.resolve(auth().currentUser)
   return new Promise((resolve) => {
@@ -1069,6 +1074,7 @@ export default function CandidateLogin() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const isCompletingLink = useMemo(() => isSignInWithEmailLink(auth(), window.location.href), [])
+  const phoneLinkIntentFromUrl = useMemo(() => readPhoneLinkIntentParam(searchParams), [searchParams])
   const nextDest = useMemo(() => {
     const raw = searchParams.get("next")
     const safeRaw = raw && raw.startsWith("/") && !raw.startsWith("//") ? raw : null
@@ -1103,11 +1109,11 @@ export default function CandidateLogin() {
   })
   const [error, setError] = useState<string | null>(null)
   const [signedInUser, setSignedInUser] = useState<User | null>(() => auth().currentUser)
-  const [phoneLinkMode, setPhoneLinkMode] = useState(() => readPhoneLinkIntent())
+  const [phoneLinkMode, setPhoneLinkMode] = useState(() => phoneLinkIntentFromUrl || readPhoneLinkIntent())
   const [phoneLinkPhone, setPhoneLinkPhone] = useState("")
   const [phoneLinkCode, setPhoneLinkCode] = useState("")
   const [phoneLink, setPhoneLink] = useState<PhoneLinkState>(() =>
-    readPhoneLinkIntent()
+    phoneLinkIntentFromUrl || readPhoneLinkIntent()
       ? {
           status: auth().currentUser ? "ready" : "needs_auth",
           message: auth().currentUser
@@ -1117,6 +1123,22 @@ export default function CandidateLogin() {
       : { status: "idle", message: null },
   )
   const finishInFlight = useRef(false)
+
+  useEffect(() => {
+    if (!phoneLinkIntentFromUrl) return
+    rememberPhoneLinkIntent()
+    setPhoneLinkMode(true)
+    setPhoneLink((prev) =>
+      prev.status === "idle" || prev.status === "needs_auth"
+        ? {
+            status: auth().currentUser ? "ready" : "needs_auth",
+            message: auth().currentUser
+              ? "Enter the phone number you used with Claire."
+              : "Sign in first. We will keep this phone-link step open.",
+          }
+        : prev,
+    )
+  }, [phoneLinkIntentFromUrl])
 
   useEffect(() => {
     return onAuthStateChanged(auth(), (user) => {
