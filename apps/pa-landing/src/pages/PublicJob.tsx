@@ -2186,8 +2186,90 @@ export const PUBLIC_JOB_STYLES = `
 .wk-pj-modal__close:hover { background: var(--wk-ink); color: var(--wk-cream); }
 
 @media (max-width: 480px) {
+  .wk-pj-modal-wrap {
+    padding: 10px;
+  }
+  .wk-pj-modal {
+    width: calc(100vw - 20px);
+    max-height: calc(100dvh - 20px);
+    gap: 8px;
+    padding: 18px 14px 12px;
+  }
+  .wk-pj-modal .wk-eyebrow {
+    margin: 0;
+    padding-right: 38px;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+  }
+  .wk-pj-modal__close {
+    top: 12px;
+    right: 12px;
+    width: 28px;
+    height: 28px;
+    font-size: 16px;
+  }
+  .wk-pj-modal__job {
+    padding: 9px 11px;
+  }
+  .wk-pj-modal__job span {
+    font-size: 10.5px;
+    letter-spacing: 0.07em;
+  }
+  .wk-pj-modal__job strong {
+    font-size: 14.5px;
+    line-height: 1.22;
+  }
+  .wk-pj-modal__h {
+    font-size: 24px;
+    line-height: 1.08;
+  }
+  .wk-pj-modal__sub {
+    font-size: 13px;
+    line-height: 1.35;
+    margin-bottom: 0;
+  }
+  .wk-pj-modal .wk-pj-contract--compact {
+    padding: 0;
+  }
+  .wk-pj-modal .wk-pj-contract__title {
+    margin-bottom: 6px;
+  }
+  .wk-pj-modal .wk-pj-contract--compact .wk-pj-contract__list {
+    gap: 6px;
+  }
+  .wk-pj-phone-link {
+    padding: 9px;
+    gap: 7px;
+  }
+  .wk-pj-phone-link__button {
+    min-height: 38px;
+  }
+  .wk-pj-phone-link__copy {
+    font-size: 11.5px;
+    line-height: 1.32;
+  }
+  .wk-pj-login {
+    gap: 8px;
+  }
+  .wk-pj-login__providers {
+    gap: 8px;
+  }
+  .wk-pj-login__divider {
+    gap: 8px;
+    font-size: 10.5px;
+  }
   .wk-pj-login__email-row {
     grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .wk-pj-login__email {
+    gap: 5px;
+  }
+  .wk-pj-login__email label {
+    font-size: 12px;
+  }
+  .wk-pj-login__email input {
+    padding: 9px 11px;
   }
   .wk-pj-login__email-row .wk-btn { width: 100%; }
 }
