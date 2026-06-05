@@ -57,6 +57,11 @@ export interface ClairePromptOptions {
   /** CANONICAL STEP 4 (Adam-LOCKED): location AND salary both missing → ask both in one short message
    *  before matching; defer find_match one turn. Only-if-both-missing + once-only (mode-selector). */
   locationSalaryAsk?: boolean
+  /** WARM RETURNING GREETING (Adam 2026-06-05): a KNOWN/returning candidate (résumé / LinkedIn / tags /
+   *  highlights already on file) sent a cold greeting like "Hi". Greet them back by name and offer to
+   *  pull fresh matches / ask how to help — NEVER re-offer the cold kickoff, NEVER ask the onboarding
+   *  target_role question. Set by mode-selector on the cold-start triage short-path (canary). */
+  warmReturningGreeting?: boolean
 }
 
 const PERSONA = [
@@ -794,6 +799,15 @@ export function buildClaireTurnContext(opts: ClairePromptOptions): string {
     // NOT ask a generic onboarding question. This is a continuation, not a fresh start.
     opts.linkedinJustConnected
       ? "LINKEDIN CONNECTED: the candidate just logged in with LinkedIn — their identity + real name are verified (see CONTEXT), but you do NOT have their work history yet. In ONE short warm message: acknowledge them by their real name + that they're connected, then ask them to drop their résumé here OR paste their LinkedIn profile URL so you can pull their experience and start matching. Do NOT re-introduce yourself, do NOT re-send the original options, do NOT ask a generic question — this is a continuation."
+      : "",
+    // WARM RETURNING GREETING (Adam 2026-06-05): a KNOWN/returning candidate sent a cold greeting like
+    // "Hi". You ALREADY have their profile (résumé / LinkedIn / tags — see CONTEXT), so this is NOT a
+    // first meeting. Greet them back warmly by their real name and offer to pull a few fresh matches OR
+    // ask what they need. Do NOT re-introduce yourself, do NOT re-send the connect-LinkedIn / drop-résumé
+    // offer, do NOT ask any onboarding/intake question (NEVER "what kind of role — software engineering,
+    // product, or data?"). One short, warm message.
+    opts.warmReturningGreeting
+      ? "WARM RETURNING GREETING: this is a candidate you already know — their profile (résumé / LinkedIn / tags) is on file (see CONTEXT). They just said a cold greeting like 'Hi'. In ONE short warm message: greet them back by their real name (e.g. 'hey Adam, good to hear from you 👋'), then offer to pull a few fresh matches OR ask what you can help with. CRITICAL: do NOT re-introduce yourself, do NOT re-send the connect-LinkedIn / drop-résumé offer (they already gave you their info), and do NOT ask any onboarding/intake question — NEVER ask 'what kind of role — software engineering, product, or data?'. This is a returning friend, not a new lead."
       : "",
     // CANONICAL STEP 4 (Adam-LOCKED): the ONE conditional pre-match ask. Fires only when we have NEITHER
     // their location NOR salary on file (mode-selector gated it once). Ask BOTH in one short message,

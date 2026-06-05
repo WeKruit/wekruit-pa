@@ -425,6 +425,10 @@ export async function maybeRunThinClaire(
         ...(decision.gmailNudge ? { gmailNudge: true } : {}),
         // CANONICAL STEP 4: the one conditional pre-match ask (location+salary, only-if-both-missing).
         ...(decision.locationSalaryAsk ? { locationSalaryAsk: true } : {}),
+        // WARM RETURNING GREETING (Adam 2026-06-05): a KNOWN/returning candidate sent a cold greeting →
+        // greet back + offer matches, NEVER the offer kickoff NOR the legacy target_role question.
+        // Canary-only by construction (mode-selector gates it behind isCanaryUser).
+        ...(decision.warmReturningGreeting ? { warmReturningGreeting: true } : {}),
         // COLD OFFER-FIRST (Adam 2026-06-03): brand-new candidate → deterministic LinkedIn-recommended /
         // résumé offer + NO onboarding question (pitch fires after they connect/drop). Canary by construction.
         ...(decision.offerFirstKickoff ? { offerFirstKickoff: true } : {}),
@@ -466,6 +470,7 @@ export async function maybeRunThinClaire(
           ...(decision.offerFirstKickoff ? { offerFirstKickoff: true } : {}),
           ...(decision.linkedinJustConnected ? { linkedinJustConnected: true } : {}),
           ...(decision.locationSalaryAsk ? { locationSalaryAsk: true } : {}),
+          ...(decision.warmReturningGreeting ? { warmReturningGreeting: true } : {}),
           ...(decision.gmailNudge ? { gmailNudge: true } : {}),
           ...(decision.enrichmentInFlight ? { enrichmentInFlight: true } : {}),
           ...(decision.prescreenSessionId ? { prescreenSessionId: decision.prescreenSessionId } : {}),

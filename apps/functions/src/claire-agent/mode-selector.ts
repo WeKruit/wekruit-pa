@@ -103,6 +103,13 @@ export interface ModeDecision {
    *  salary are both missing and never asked — prompt asks for both in one short message, defers
    *  find_match one turn. Once-only (stamped by mode-selector). */
   locationSalaryAsk?: boolean
+  /** WARM RETURNING GREETING (Adam 2026-06-05): a KNOWN/returning candidate (has ANY profile —
+   *  résumé / LinkedIn bind / canonical tags / experienceHighlights) whose onboarding was left in a
+   *  half-state (never marked complete) sends a cold greeting like "Hi". They must NOT get the
+   *  brand-new offer kickoff (they already gave their stuff) and must NEVER get the legacy target_role
+   *  onboarding question. Route to triage with this directive → Claire warmly greets them back by name
+   *  and offers to pull fresh matches / asks how she can help. Set on the cold-start triage branch. */
+  warmReturningGreeting?: boolean
 }
 
 export interface SelectModeArgs {
@@ -288,6 +295,33 @@ function hasParsedProfileOnFile(user: Record<string, unknown>): boolean {
   const skills = Array.isArray(tags.skills) ? tags.skills : []
   if (skills.length > 0) return true
   if (str(tags.recentRoleTitle)) return true
+  return false
+}
+
+/**
+ * WARM-RETURNING SIGNAL (Adam 2026-06-05): does this user already have ANY durable profile signal?
+ * This is the SUPERSET of hasParsedProfileOnFile — a candidate is "known/returning" (not brand-new)
+ * if they have a parsed résumé OR a LinkedIn bind OR any meaningful canonical tag OR enriched
+ * experienceHighlights on file. Used to keep a cold "Hi" from a KNOWN candidate (whose onboarding was
+ * never marked complete) OUT of the brand-new offer-first kickoff AND off the legacy target_role
+ * onboarding question — they instead get a warm returning greeting (triage). Pure structured-field
+ * read over the already-fetched pa-users doc; NO LLM, NO text→enum regex (presence checks over
+ * validated closed enums + identity flags only).
+ */
+function hasAnyProfileSignal(user: Record<string, unknown>): boolean {
+  if (hasParsedProfileOnFile(user)) return true
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "")
+  // LinkedIn bind (OAuth-linked identity OR a stored profile URL) — a known/returning candidate.
+  if (user.linkedinOauthLinked === true) return true
+  if (str(user.linkedinUrl)) return true
+  if (str(user.linkedinOauthSub)) return true
+  // Enriched experience timeline (LinkedIn/Coresignal/résumé merge) is durable known-profile data.
+  if (Array.isArray(user.experienceHighlights) && user.experienceHighlights.length > 0) return true
+  // Any meaningful canonical tag the matcher uses (closed-enum presence check — never text→enum regex).
+  const tags = (user.tags ?? {}) as Record<string, unknown>
+  const arr = (v: unknown) => (Array.isArray(v) && v.length > 0)
+  if (arr(tags.targetRoleFunction) || arr(tags.industrySector) || arr(tags.targetLocations)) return true
+  if (str(tags.careerStage) || str(tags.visaStatus) || str(tags.recentCompany)) return true
   return false
 }
 
@@ -532,15 +566,28 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // website-upload shape). Canary-only; non-canary falls through to the existing bootstrap unchanged.
   // Sits AFTER the active-prescreen + cv-parsed blocks (a live screen / fresh parse must always win)
   // and BEFORE the onboarding cold-start (line below). Deterministic — NO LLM, NO text→enum regex.
+  // WARM RETURNING GREETING (Adam 2026-06-05: "no legacy target_role EVER for a thin/canary user on a
+  // cold open"). A plain text turn (NOT the resume_parse_completed re-entry, which pitches above) from a
+  // KNOWN/returning candidate — anyone with ANY durable profile signal (parsed résumé / LinkedIn bind /
+  // canonical tags / experienceHighlights) — must get a WARM RETURNING GREETING: greet back by name +
+  // offer to pull fresh matches / ask how to help. They already gave us their info, so this is NEVER the
+  // brand-new offer-first kickoff, and NEVER the legacy onboarding target_role question. This SUPERSEDES
+  // the old WS-2 "website-profile → re-pitch" behavior on a plain returning text (a returning user saying
+  // "Hi" wants a greeting + matches, not their résumé re-pitched at them); the genuine "just parsed, pitch
+  // now" path is the cvParsedTrigger re-entry block ABOVE, which is unaffected. Sits AFTER active-prescreen
+  // + the cv-parsed block (a live screen / fresh parse must always win) and BEFORE the onboarding cold-
+  // start. Self-heals a half-state onboarding (mark complete) so it never re-enters the wall. Deterministic
+  // — NO LLM, NO text→enum regex; structured presence checks over closed-enum tags + identity flags only.
+  // Canary-gated so non-canary mode picks are byte-unchanged.
   if (
     isCanaryUser(args.userId) &&
-    !onboardingComplete &&
+    !args.cvParsedTrigger &&
     !isSharedOnboardingActiveUser(user) &&
-    hasParsedProfileOnFile(user)
+    hasAnyProfileSignal(user)
   ) {
-    await markSharedOnboardingComplete(args.db, args.userId, now)
-    log("mode.website_profile_pitch", { userId: args.userId })
-    return { mode: "triage", postParsePitch: true }
+    if (!onboardingComplete) await markSharedOnboardingComplete(args.db, args.userId, now)
+    log("mode.warm_returning_greeting", { userId: args.userId })
+    return { mode: "triage", warmReturningGreeting: true, ...inFlightDecision }
   }
 
   if (!onboardingComplete) {

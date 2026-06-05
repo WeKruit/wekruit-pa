@@ -607,6 +607,10 @@ export interface RunClaireTurnDeps {
   /** CANONICAL STEP 4 (Adam-LOCKED): conditional pre-match location+salary ask (set by cutover from the
    *  mode-selector only-if-both-missing gate). Drives the one short pre-match ask; defers find_match. */
   locationSalaryAsk?: boolean
+  /** WARM RETURNING GREETING (Adam 2026-06-05): a KNOWN/returning candidate sent a cold greeting. Set by
+   *  cutover from the mode-selector cold-start triage short-path. Drives the warm-greet-back directive —
+   *  no offer kickoff, no onboarding question. */
+  warmReturningGreeting?: boolean
   /** COLD OFFER-FIRST KICKOFF (Adam 2026-06-03): a brand-new candidate with NO profile data. The turn
    *  sends a DETERMINISTIC offer (connect LinkedIn = recommended / drop résumé in chat / upload on site)
    *  and NO onboarding question — "pitch first", we don't interrogate; the pitch fires after they
@@ -753,34 +757,45 @@ export async function runClaireTurn(
   if (deps.offerFirstKickoff && deps.isSuppressionFallback !== true) {
     const connectUrl = /LinkedIn one-tap connect link = (https:\/\/\S+) —/.exec(globalContext)?.[1] ?? ""
     const uploadUrl = /Resume upload link[^:]*: (https:\/\/\S+)/.exec(globalContext)?.[1] ?? ""
-    if (connectUrl || uploadUrl) {
-      // Adam 2026-06-03 (tone + ORDER): warmer, outcome-framed — "log in with LinkedIn and i'll see
-      // your experiences… or give me your résumé… then i'll pitch you to the hiring managers we have
-      // connections with." ONE atomic message: two rapid Sendblue sends (greeting then offer) were
-      // arriving OUT OF ORDER on-device (the greeting landed AFTER the offer). A single send is the
-      // only ordering guarantee — Sendblue does not preserve order for back-to-back POSTs.
-      const parts: string[] = ["hey! i'm claire, your recruiter at wekruit 👋 so glad you're here."]
-      if (connectUrl) {
-        parts.push(`quickest way to get going — log in with LinkedIn and i'll pull your experience for you 👉 ${connectUrl}`)
-        parts.push(
-          uploadUrl
-            ? `or just drop your résumé right here in the chat 📄, or upload it on the site 👉 ${uploadUrl} — whatever's easiest.`
-            : "or just drop your résumé right here in the chat 📄 — whatever's easiest.",
-        )
-      } else {
-        parts.push("quickest way to get going — just drop your résumé right here in the chat 📄")
-        if (uploadUrl) parts.push(`or upload it on the site 👉 ${uploadUrl} — whatever's easiest.`)
-      }
+    // INVARIANT (Adam 2026-06-05: "no legacy target_role EVER for a thin/canary user on a cold open"):
+    // once mode-selector picks offerFirstKickoff, this turn ALWAYS sends the deterministic offer and
+    // NEVER falls through to the model's onboarding kickoff (which asks the legacy "SWE / product /
+    // data?" target_role question). Previously this block only ran when a connect/upload link surfaced
+    // in globalContext; if a stale latestResumeArtifactId lingered, loadGlobalContext suppressed BOTH
+    // links → no link here → fall-through → the model asked target_role. The fix removes the
+    // link-conditional gate: the offer fires unconditionally. When links surface we use them; when none
+    // do, we still send a plain "drop your résumé right here in the chat" offer — same intent, no link,
+    // and still NO role question. The links are only the FAST path, never a precondition for the offer.
+    //
+    // Adam 2026-06-03 (tone + ORDER): warmer, outcome-framed — "log in with LinkedIn and i'll see
+    // your experiences… or give me your résumé… then i'll pitch you to the hiring managers we have
+    // connections with." ONE atomic message: two rapid Sendblue sends (greeting then offer) were
+    // arriving OUT OF ORDER on-device (the greeting landed AFTER the offer). A single send is the
+    // only ordering guarantee — Sendblue does not preserve order for back-to-back POSTs.
+    const parts: string[] = ["hey! i'm claire, your recruiter at wekruit 👋 so glad you're here."]
+    if (connectUrl) {
+      parts.push(`quickest way to get going — log in with LinkedIn and i'll pull your experience for you 👉 ${connectUrl}`)
       parts.push(
-        "then i'll get to work matching you and pitching you straight to the hiring managers we've got connections with 🙌",
+        uploadUrl
+          ? `or just drop your résumé right here in the chat 📄, or upload it on the site 👉 ${uploadUrl} — whatever's easiest.`
+          : "or just drop your résumé right here in the chat 📄 — whatever's easiest.",
       )
-      const message = parts.join("\n\n")
-      await deps.transport.sendText(message).catch((e) => log("offer_first.send_failed", { err: String(e) }))
-      log("offer_first_kickoff_sent", { hasConnect: Boolean(connectUrl), hasUpload: Boolean(uploadUrl), bubbles: 1 })
-      return { finalText: message, toolCalls: [], deliveredViaTool: true }
+    } else {
+      parts.push("quickest way to get going — just drop your résumé right here in the chat 📄")
+      if (uploadUrl) parts.push(`or upload it on the site 👉 ${uploadUrl} — whatever's easiest.`)
     }
-    // No links surfaced (edge / non-canary) → fall through to the normal model kickoff.
-    log("offer_first_kickoff_no_links", {})
+    parts.push(
+      "then i'll get to work matching you and pitching you straight to the hiring managers we've got connections with 🙌",
+    )
+    const message = parts.join("\n\n")
+    await deps.transport.sendText(message).catch((e) => log("offer_first.send_failed", { err: String(e) }))
+    log("offer_first_kickoff_sent", {
+      hasConnect: Boolean(connectUrl),
+      hasUpload: Boolean(uploadUrl),
+      noLinks: !connectUrl && !uploadUrl,
+      bubbles: 1,
+    })
+    return { finalText: message, toolCalls: [], deliveredViaTool: true }
   }
 
   // ANTI-SILENCE FALLBACK (Adam 2026-06-04): on the re-entry after a deterministic pattern was fully
@@ -843,6 +858,8 @@ export async function runClaireTurn(
     linkedinJustConnected: fallback ? undefined : deps.linkedinJustConnected,
     // CANONICAL STEP 4 — per-turn conditional pre-match ask (location+salary), trailing only.
     locationSalaryAsk: fallback ? undefined : deps.locationSalaryAsk,
+    // WARM RETURNING GREETING — per-turn directive for a known candidate's cold greeting, trailing only.
+    warmReturningGreeting: fallback ? undefined : deps.warmReturningGreeting,
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const runInput: any[] = []

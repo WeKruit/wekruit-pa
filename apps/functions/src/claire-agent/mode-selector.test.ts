@@ -70,14 +70,18 @@ function makeDb(userDoc: Record<string, unknown>) {
   return { db, writes: () => writes }
 }
 
-test("WS-2: canary website-origin (parsed résumé on file, onboarding never started) → triage + postParsePitch, marks complete, NO wall", async () => {
+test("2026-06-05 supersede: canary returning candidate (parsed résumé on file) on a PLAIN text → warm returning greeting, marks complete, NO wall, NO re-pitch", async () => {
+  // SUPERSEDES the old WS-2 'website-profile → postParsePitch' on a plain returning text (Adam 2026-06-05:
+  // a returning user saying 'Hi' wants a greeting + matches, not their résumé re-pitched). The genuine
+  // 'just parsed, pitch now' path is the cvParsedTrigger re-entry (separate test below), NOT this.
   const { db, writes } = makeDb({
     latestResumeArtifactId: "candidate_upload_abc_123",
     // sharedOnboarding absent → isSharedOnboardingActiveUser false; onboardingState not complete.
   })
   const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "hey" })
   assert.equal(decision.mode, "triage")
-  assert.equal(decision.postParsePitch, true)
+  assert.equal(decision.warmReturningGreeting, true, "known/returning plain text → warm greeting")
+  assert.notEqual(decision.postParsePitch, true, "plain returning text must NOT re-pitch (that's the parse re-entry's job)")
   // it did NOT bootstrap the onboarding wall (no onboardingState:"pending" write).
   const bootstrapped = writes().some((w) => w.onboardingState === "pending")
   assert.equal(bootstrapped, false, "must NOT cold-start the onboarding wall")
@@ -86,9 +90,10 @@ test("WS-2: canary website-origin (parsed résumé on file, onboarding never sta
   assert.equal(completed, true, "must mark onboarding complete")
 })
 
-test("WS-2: NON-canary with the SAME parsed-profile fixture still cold-starts the onboarding wall (unchanged)", async () => {
+test("2026-06-05 supersede: NON-canary with the SAME parsed-profile fixture still cold-starts the onboarding wall (unchanged)", async () => {
   const { db, writes } = makeDb({ latestResumeArtifactId: "candidate_upload_abc_123" })
   const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hey" })
+  assert.equal(decision.warmReturningGreeting, undefined, "warm-returning is canary-only")
   assert.equal(decision.mode, "onboarding")
   assert.equal(decision.awaitingAnswer, false)
   const bootstrapped = writes().some((w) => w.onboardingState === "pending")
@@ -270,4 +275,90 @@ test("#1 re-ask fix: active onboarding with NO role tag still asks target_role (
   const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hey" })
   assert.equal(decision.mode, "onboarding")
   assert.equal(decision.onboardingSlot, "target_role", "no role tag → still asks the role axis")
+})
+
+// ───────────────────────────────────────────────────────────────────────────────────────────────
+// 2026-06-05 (Adam): "no legacy target_role EVER for a thin/canary user on a cold open." A cold "Hi"
+// has exactly two right outcomes for a canary user:
+//   (a) BRAND-NEW (no profile signal whatsoever) → OFFER-FIRST (offerFirstKickoff), NEVER a question.
+//   (b) KNOWN/returning (ANY profile: résumé / LinkedIn bind / canonical tags / experienceHighlights)
+//       whose onboarding was left in a half-state → WARM RETURNING GREETING (triage), NOT the offer,
+//       NOT the onboarding question.
+// In NEITHER case may the decision carry the onboardingSlot=target_role question. These tests LOCK
+// both branches + the never-role-question invariant.
+
+const isRoleQuestionDecision = (d: { mode: string; onboardingSlot?: string; offerFirstKickoff?: boolean }) =>
+  d.mode === "onboarding" && d.onboardingSlot === "target_role" && d.offerFirstKickoff !== true
+
+test("COLD-OPEN LOCK A — BRAND-NEW canary (no profile signal) → offer-first, NEVER the target_role question", async () => {
+  const { db } = makeDb({}) // no artifact, no tags, no linkedin, no highlights
+  const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "Hi" })
+  assert.equal(decision.offerFirstKickoff, true, "brand-new canary cold open → deterministic offer")
+  assert.equal(decision.warmReturningGreeting, undefined, "brand-new is NOT a returning greeting")
+  assert.equal(isRoleQuestionDecision(decision), false, "must NEVER be the legacy target_role question")
+})
+
+test("COLD-OPEN LOCK B1 — KNOWN canary via LinkedIn bind → warm returning greeting, NOT offer, NOT role question", async () => {
+  const { db, writes } = makeDb({
+    linkedinOauthLinked: true,
+    displayName: "Adam Yang",
+    // no parsed résumé artifact, no tags → would otherwise fall to offer/onboarding-question.
+  })
+  const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "Hi" })
+  assert.equal(decision.mode, "triage", "known/returning → triage")
+  assert.equal(decision.warmReturningGreeting, true, "→ warm returning greeting directive")
+  assert.notEqual(decision.offerFirstKickoff, true, "they already gave their info — NO re-offer")
+  assert.equal(isRoleQuestionDecision(decision), false, "must NEVER be the legacy target_role question")
+  // self-heals the half-state so it never re-enters the wall.
+  assert.equal(writes().some((w) => w.onboardingState === "complete"), true, "marks onboarding complete")
+})
+
+test("COLD-OPEN LOCK B2 — KNOWN canary via canonical tags only → warm returning greeting, NOT role question", async () => {
+  const { db } = makeDb({
+    tags: { targetRoleFunction: ["software_engineering"] }, // matcher-meaningful tag, no résumé artifact
+  })
+  const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "hey" })
+  assert.equal(decision.mode, "triage")
+  assert.equal(decision.warmReturningGreeting, true)
+  assert.equal(isRoleQuestionDecision(decision), false, "tags-known returning user never gets the role question")
+})
+
+test("COLD-OPEN LOCK B3 — KNOWN canary via experienceHighlights only → warm returning greeting", async () => {
+  const { db } = makeDb({
+    experienceHighlights: [{ title: "Software Engineer", company: "Tesla" }],
+  })
+  const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "Hi" })
+  assert.equal(decision.mode, "triage")
+  assert.equal(decision.warmReturningGreeting, true)
+  assert.notEqual(decision.offerFirstKickoff, true)
+  assert.equal(isRoleQuestionDecision(decision), false)
+})
+
+test("COLD-OPEN LOCK B4 — KNOWN canary via parsed-résumé artifact on a PLAIN text → warm greeting (not re-pitch, not role question)", async () => {
+  const { db } = makeDb({ latestResumeArtifactId: "candidate_upload_xyz" })
+  const decision = await selectClaireMode({ db, userId: CANARY_UID, inboundText: "Hi" })
+  assert.equal(decision.mode, "triage")
+  assert.equal(decision.warmReturningGreeting, true, "parsed-résumé returning user's plain 'Hi' → warm greeting")
+  assert.notEqual(decision.postParsePitch, true, "plain returning text must NOT re-pitch")
+  assert.equal(isRoleQuestionDecision(decision), false)
+})
+
+test("COLD-OPEN LOCK — the genuine parse RE-ENTRY (cvParsedTrigger) still pitches (postParsePitch), NOT the warm greeting", async () => {
+  const { db } = makeDb({ tags: { skills: ["typescript", "react"] } })
+  const decision = await selectClaireMode({
+    db,
+    userId: CANARY_UID,
+    inboundText: "[resume just finished parsing]",
+    cvParsedTrigger: true,
+  })
+  assert.equal(decision.mode, "triage")
+  assert.equal(decision.postParsePitch, true, "the actual parse event pitches from fresh data")
+  assert.notEqual(decision.warmReturningGreeting, true, "warm-greeting must not steal the parse re-entry pitch")
+})
+
+test("COLD-OPEN LOCK — NON-canary with a known profile is UNCHANGED (still cold-starts the legacy wall)", async () => {
+  const { db } = makeDb({ tags: { targetRoleFunction: ["software_engineering"] } })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "Hi" })
+  assert.equal(decision.warmReturningGreeting, undefined, "warm-returning is canary-only")
+  assert.equal(decision.mode, "onboarding", "non-canary keeps the legacy onboarding cold-start")
 })
