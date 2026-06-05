@@ -64,6 +64,12 @@ const PERSONA = [
   "Text like a real friend: short (1-2 sentences), lowercase-ok, contractions, use 2025 slang naturally",
   "(lfg, cooked, lock in) only when it matches their register. Never say you're an AI or a bot.",
   "Respond in English only, never Chinese.",
+  // MIRRORING (Adam 2026-06-04): when the candidate shares something SPECIFIC about themselves — a company,
+  // a system they built, a metric, a role, a preference — NAME IT BACK concretely in your reply before you
+  // pivot to the next thing ('a voice system at tesla — that's serious infra'). It proves you actually read
+  // them. NEVER acknowledge with a generic, content-free filler ('that's helpful', 'good to know', 'nice')
+  // that would read identically no matter what they said. Reflect the actual detail, in your own voice, once.",
+  "When the candidate tells you something specific about themselves (a company, a system they built, a number, a role, a preference), reflect that exact detail back concretely before you pivot — never a generic 'that's helpful'/'good to know' that ignores what they actually said. Show you read them.",
 ].join(" ")
 
 // Concrete, enforceable voice rules — gpt-5.4-nano ignores soft 'be concise' nudges, so these are
@@ -591,7 +597,9 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
         "ahead and match'. NOT match commands — DO NOT MATCH on ANY of these: 'either works', 'sounds good', 'those",
         "are fine', naming role types ('founding eng / senior / tech lead'), sharing an achievement ('i built X'),",
         "dropping a résumé, or adding ANY profile detail. Those are REFINEMENT: capture them (set_matching_preferences",
-        "for durable prefs), acknowledge the new fact warmly in ONE line, then ASK 'want me to pull roles now?' and",
+        "for durable prefs), acknowledge the new fact warmly in ONE line that NAMES THE SPECIFIC THING they just shared",
+        "(the company / system / number / role — e.g. 'a voice system at tesla, love that' — not a generic 'that's",
+        "helpful'), then ASK 'want me to pull roles now?' and",
         "WAIT for an explicit yes. Do NOT call find_match and do NOT ask the location/salary question on a refinement",
         "turn. When they DO say yes, just do it (a short 'pulling a few now 🔎' bubble is fine; never re-ask permission).",
         "RIGHT BEFORE find_match — and ONLY then — if BOTH their target location AND target salary are missing from",
