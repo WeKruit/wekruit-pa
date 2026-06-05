@@ -75,6 +75,13 @@ import type {
 // fallback already runs on parsed.industryTags before we hand it to the
 // merger, so the merger sees the corrected tags.
 import { mergeUserTags, projectTagsToGlobalTags, type UserTagsInput } from "@pa/pa-orchestrator"
+import {
+  mergeAndDetermineProfile,
+  toSourceFromLinkedin,
+  toSourceFromResume,
+  type MergeAndDetermineResult as MergeAndDetermineProfileResult,
+  type SourceExperience as MergeSourceExperience,
+} from "../external-supply/merge-experience-profile.js"
 import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
 import { computeResumeBaselineTagPatch } from "../lib/resume-baseline-tags.js"
 import {
@@ -966,6 +973,17 @@ export async function runUserTagsMerge(args: {
   ) => Promise<void>
   nowIso: () => string
   log: (event: string, payload?: Record<string, unknown>) => void
+  /**
+   * Injectable unified LinkedIn+résumé merge+determine (Adam 2026-06-05). Default = the real
+   * gpt-5.4-mini json_schema-STRICT call. Tests stub it. When non-null, its determined facts
+   * (recentRoleTitle/recentCompany/careerStage/yoeRange) override the résumé-only derivation and its
+   * merged canonical timeline is written to pa-users.experienceHighlights. Fail-open: null → leave the
+   * résumé-only result untouched.
+   */
+  mergeAndDetermine?: (input: {
+    linkedinExperiences: MergeSourceExperience[]
+    resumeExperiences: MergeSourceExperience[]
+  }) => Promise<MergeAndDetermineProfileResult | null>
 }): Promise<void> {
   // 1. Read existing user doc — statedPreferences + preferredLang flow
   //    in from the chat-answers worker (separate write side).
@@ -1099,11 +1117,93 @@ export async function runUserTagsMerge(args: {
     merged = { ...merged, skills: existingSkillsForGuard }
   }
 
+  // 2.5 UNIFIED MERGE + DETERMINE (Adam 2026-06-05): "merge the experience between linkedin & resume,
+  //     and ask llm to determine." When a résumé parses we have the résumé workHistory; the user's
+  //     LinkedIn experiences live on pa-users.experienceHighlights (written by the Coresignal mirror).
+  //     Feed BOTH to the SAME ONE gpt-5.4-mini json_schema-STRICT call so the determined facts
+  //     (recentRoleTitle/recentCompany/careerStage/yoeRange) reflect the MERGED truth — fixing the bug
+  //     where a stale "Software Engineer Intern" résumé title + undercounted YoE pinned careerStage to
+  //     junior while LinkedIn clearly showed a current Senior role. On non-null we (a) write the merged
+  //     canonical timeline to pa-users.experienceHighlights, and (b) overlay the determined facts onto
+  //     `merged` (they OVERRIDE the résumé-only derivation). FAIL-OPEN: null → leave the résumé-only
+  //     result untouched. Never throws (the whole runner already swallows errors).
+  let mergedExperienceHighlights: Array<Record<string, unknown>> | undefined
+  try {
+    const linkedinHl = Array.isArray(userData?.experienceHighlights)
+      ? (userData!.experienceHighlights as unknown[])
+      : []
+    const linkedinSources: MergeSourceExperience[] = linkedinHl
+      .filter((h): h is Record<string, unknown> => Boolean(h) && typeof h === "object")
+      .map((h) => toSourceFromLinkedin(h))
+      .filter((s) => s.title || s.company)
+    const resumeSources: MergeSourceExperience[] = (
+      Array.isArray(args.workHistory) ? args.workHistory : []
+    )
+      .filter((w): w is Record<string, unknown> => Boolean(w) && typeof w === "object")
+      .map((w) => toSourceFromResume(w))
+      .filter((s) => s.title || s.company)
+    if (linkedinSources.length > 0 || resumeSources.length > 0) {
+      const merge = args.mergeAndDetermine ?? mergeAndDetermineProfile
+      const determined = await merge({ linkedinExperiences: linkedinSources, resumeExperiences: resumeSources })
+      if (determined && determined.mergedExperiences.length > 0) {
+        mergedExperienceHighlights = determined.mergedExperiences.slice(0, 10).map((e) => {
+          const out: Record<string, unknown> = {
+            title: e.title,
+            company: e.company,
+            source: "merged_linkedin_resume",
+            sourceLabel: "LinkedIn+Résumé",
+          }
+          if (e.startDate) out.startDate = e.startDate
+          if (e.endDate) out.endDate = e.endDate
+          if (e.isCurrent === true) out.currentRole = true
+          if (e.description) out.description = e.description
+          return out
+        })
+        // Determined facts OVERRIDE the résumé-only derivation (the whole point of the merge).
+        if (determined.recentRoleTitle) merged.recentRoleTitle = determined.recentRoleTitle
+        if (determined.recentCompany) merged.recentCompany = determined.recentCompany
+        if (determined.careerStage) merged.careerStage = determined.careerStage
+        if (determined.yoeRange) merged.yoeRange = determined.yoeRange
+        args.log("pa.cv_user_tags.merged_profile", {
+          userId: args.userId,
+          mergedRoles: determined.mergedExperiences.length,
+          recentRoleTitle: determined.recentRoleTitle ?? null,
+          careerStage: determined.careerStage ?? null,
+        })
+      }
+    }
+  } catch (err) {
+    args.log("pa.cv_user_tags.merge_threw", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    mergedExperienceHighlights = undefined
+  }
+
   // 3. Write `pa-users/{userId}.tags`. Merge:true preserves any tag
   //    fields the chat-answers worker may have populated (we own the
   //    CV-derived fields; they own the chat-derived ones).
   try {
     await args.writeUserTags(args.db, args.userId, merged)
+    // Write the MERGED canonical experienceHighlights to the user doc (top-level, parity with the
+    // Coresignal mirror's write site) so all downstream surfaces read one merged timeline. Fail-open:
+    // a write error here must NOT taint the tags write success above.
+    if (mergedExperienceHighlights && mergedExperienceHighlights.length > 0) {
+      try {
+        await args.db.collection(PA_USERS_COLLECTION).doc(args.userId).set(
+          {
+            experienceHighlights: mergedExperienceHighlights,
+            experienceHighlightsUpdatedAt: args.nowIso(),
+          },
+          { merge: true },
+        )
+      } catch (err) {
+        args.log("pa.cv_user_tags.highlights_write_error", {
+          userId: args.userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
     const skillsCount = Array.isArray(merged.skills) ? merged.skills.length : 0
     const industryEnum = Array.isArray(merged.industryEnum) ? merged.industryEnum : []
     args.log("pa.cv_user_tags.ok", {

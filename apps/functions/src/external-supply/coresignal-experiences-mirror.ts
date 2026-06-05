@@ -22,6 +22,13 @@
  */
 import type { Firestore } from "firebase-admin/firestore"
 import type { ExternalCandidateRecord } from "@pa/core-types"
+import {
+  mergeAndDetermineProfile,
+  toSourceFromLinkedin,
+  toSourceFromResume,
+  type MergeAndDetermineResult,
+  type SourceExperience,
+} from "./merge-experience-profile.js"
 
 const PARSED_RESUMES_COLLECTION = "parsedCandidateResumes"
 const PA_USERS_COLLECTION = "pa-users"
@@ -200,6 +207,40 @@ function collectResumeDescriptions(existing: ExistingParsedResumeForMirror[]): R
   return out
 }
 
+/**
+ * Collect EVERY résumé role (title/company even when there's no description) from the user's existing
+ * non-coresignal parsedCandidateResumes rows, mapped to SourceExperience. Unlike collectResumeDescriptions
+ * (which requires a description for the per-role text-merge), this keeps every real role so the LLM merge
+ * sees the candidate's full résumé timeline. Bullets/achievements surface as the merged description.
+ */
+function collectResumeSourceExperiences(existing: ExistingParsedResumeForMirror[]): SourceExperience[] {
+  const out: SourceExperience[] = []
+  for (const row of existing) {
+    if (row.source === "coresignal_collect_v2") continue
+    for (const experience of row.experiences ?? []) {
+      const src = toSourceFromResume(experience)
+      if (src.title || src.company) out.push(src)
+    }
+  }
+  return out
+}
+
+/** Map a MergedExperience timeline entry to the canonical experienceHighlights shape. */
+function mergedToHighlights(merged: MergeAndDetermineResult): Array<Record<string, unknown>> {
+  return merged.mergedExperiences.slice(0, 10).map((e) =>
+    stripUndefined({
+      title: e.title,
+      company: e.company,
+      description: e.description ?? undefined,
+      startDate: e.startDate ?? undefined,
+      endDate: e.endDate ?? undefined,
+      currentRole: e.isCurrent === true ? true : undefined,
+      source: "merged_linkedin_resume",
+      sourceLabel: "LinkedIn+Résumé",
+    }),
+  )
+}
+
 function bestResumeDescription(
   target: NonNullable<ExternalCandidateRecord["experience"]>[number],
   candidates: ResumeExperienceDescription[],
@@ -376,7 +417,26 @@ export interface MirrorDeps {
     canonicalLinkedInUrl?: string
     experienceHighlights: Array<Record<string, unknown>>
     existingParsedResumeDocId?: string
+    /**
+     * D8 merge facts (recentRoleTitle / recentCompany / careerStage / yoeRange) from the unified
+     * LinkedIn+résumé determination. When present, writeBoth MUST read+merge existing pa-users.tags and
+     * write ONLY these keys (never clobber sibling tags). Absent on fail-open (leave existing tags).
+     */
+    mergedFacts?: {
+      recentRoleTitle?: string
+      recentCompany?: string
+      careerStage?: string
+      yoeRange?: [number, number]
+    }
   }) => Promise<void>
+  /**
+   * Injectable unified merge+determine over (LinkedIn experiences, résumé experiences). Default = the
+   * real gpt-5.4-mini json_schema-STRICT call. Tests stub it. Fail-open: returns null → leave existing.
+   */
+  mergeAndDetermine?: (input: {
+    linkedinExperiences: SourceExperience[]
+    resumeExperiences: SourceExperience[]
+  }) => Promise<MergeAndDetermineResult | null>
   now?: () => string
   log?: (event: string, fields?: Record<string, unknown>) => void
 }
@@ -424,7 +484,52 @@ export async function runCoresignalExperiencesMirror(
 
   const recordWithDescriptions = mergeResumeDescriptionsIntoRecord(record, existing)
   const doc = buildParsedResumeDocFromRecord(recordWithDescriptions, userId, now, coresignalEmployeeId)
-  const experienceHighlights = buildExperienceHighlightsFromRecord(recordWithDescriptions)
+  const linkedinOnlyHighlights = buildExperienceHighlightsFromRecord(recordWithDescriptions)
+
+  // UNIFIED MERGE + DETERMINE (Adam 2026-06-05): "merge the experience between linkedin & resume, and
+  // ask llm to determine." Read the user's résumé timeline + this Coresignal/LinkedIn record's
+  // experiences, let ONE gpt-5.4-mini json_schema-STRICT call merge them into a canonical timeline and
+  // determine recentRoleTitle/recentCompany/careerStage/yoeRange. On non-null we write the MERGED
+  // canonical set (replacing the LinkedIn-only highlights) + the facts under pa-users.tags. FAIL-OPEN:
+  // null → keep the LinkedIn-only highlights and don't touch the facts (existing tags preserved).
+  let experienceHighlights = linkedinOnlyHighlights
+  let mergedFacts:
+    | { recentRoleTitle?: string; recentCompany?: string; careerStage?: string; yoeRange?: [number, number] }
+    | undefined
+  const linkedinSources: SourceExperience[] = (recordWithDescriptions.experience ?? [])
+    .map((e) => toSourceFromLinkedin(e as unknown as Record<string, unknown>))
+    .filter((s) => s.title || s.company)
+  const resumeSources = collectResumeSourceExperiences(existing)
+  if (linkedinSources.length > 0 || resumeSources.length > 0) {
+    const merge = deps.mergeAndDetermine ?? mergeAndDetermineProfile
+    let merged: MergeAndDetermineResult | null = null
+    try {
+      merged = await merge({ linkedinExperiences: linkedinSources, resumeExperiences: resumeSources })
+    } catch (err) {
+      // Belt-and-suspenders: mergeAndDetermineProfile already fails open to null, but never let a
+      // throw here crash the mirror.
+      deps.log?.("coresignal_mirror.merge_threw", {
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      merged = null
+    }
+    if (merged && merged.mergedExperiences.length > 0) {
+      experienceHighlights = mergedToHighlights(merged)
+      const facts: NonNullable<typeof mergedFacts> = {}
+      if (merged.recentRoleTitle) facts.recentRoleTitle = merged.recentRoleTitle
+      if (merged.recentCompany) facts.recentCompany = merged.recentCompany
+      if (merged.careerStage) facts.careerStage = merged.careerStage
+      if (merged.yoeRange) facts.yoeRange = merged.yoeRange
+      if (Object.keys(facts).length > 0) mergedFacts = facts
+      deps.log?.("coresignal_mirror.merged_profile", {
+        userId,
+        mergedRoles: merged.mergedExperiences.length,
+        recentRoleTitle: merged.recentRoleTitle ?? null,
+        careerStage: merged.careerStage ?? null,
+      })
+    }
+  }
 
   if (deps.writeBoth) {
     await deps.writeBoth({
@@ -434,6 +539,7 @@ export async function runCoresignalExperiencesMirror(
       canonicalLinkedInUrl: record.canonicalLinkedInUrl,
       experienceHighlights,
       existingParsedResumeDocId,
+      mergedFacts,
     })
   }
 
@@ -483,6 +589,7 @@ export function makeFirestoreMirrorDeps(db: Firestore): Pick<MirrorDeps, "findEx
       canonicalLinkedInUrl,
       experienceHighlights,
       existingParsedResumeDocId,
+      mergedFacts,
     }) => {
       const batch = db.batch()
       const userRef = db.collection(PA_USERS_COLLECTION).doc(userId)
@@ -515,6 +622,24 @@ export function makeFirestoreMirrorDeps(db: Firestore): Pick<MirrorDeps, "findEx
       if (experienceHighlights.length > 0) {
         userPatch.experienceHighlights = experienceHighlights
         userPatch.experienceHighlightsUpdatedAt = new Date().toISOString()
+      }
+      // D8 — write the determined facts under pa-users.tags WITHOUT clobbering sibling tags. Read the
+      // existing tags map and spread our keys over a clone, then write the full merged `tags` object.
+      // (Firestore set(merge:true) deep-merges nested maps so a sibling like tags.skills would survive
+      // anyway — but writing the explicit clone is deterministic and matches the D8 single-source rule.)
+      if (mergedFacts && Object.keys(mergedFacts).length > 0) {
+        const existingTags =
+          userData.tags && typeof userData.tags === "object" && !Array.isArray(userData.tags)
+            ? (userData.tags as Record<string, unknown>)
+            : {}
+        const nowIso = new Date().toISOString()
+        const tags: Record<string, unknown> = { ...existingTags }
+        if (mergedFacts.recentRoleTitle) tags.recentRoleTitle = mergedFacts.recentRoleTitle
+        if (mergedFacts.recentCompany) tags.recentCompany = mergedFacts.recentCompany
+        if (mergedFacts.careerStage) tags.careerStage = mergedFacts.careerStage
+        if (mergedFacts.yoeRange) tags.yoeRange = mergedFacts.yoeRange
+        tags.lastUpdatedFromMergedExperience = nowIso
+        userPatch.tags = tags
       }
       batch.set(userRef, userPatch, { merge: true })
       if (selfProfileSnap.exists && experienceHighlights.length > 0) {
