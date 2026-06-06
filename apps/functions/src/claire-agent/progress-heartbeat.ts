@@ -96,7 +96,7 @@ export function withProgressHeartbeat<T>(work: Promise<T>, opts: ProgressHeartbe
 
 /** Default nudge copy by task kind — Claire's casual lowercase voice, one short line. */
 export const PROGRESS_HEARTBEAT_COPY: Record<"resume" | "matching" | "linkedin", string> = {
-  resume: "still reading through your background — give me a few more secs 🙏",
+  resume: "still going through your résumé — hang tight, should be about another minute 🙏",
   matching: "still scanning for the best fits — one sec 🔎",
   linkedin: "still pulling your profile together — almost there 🙏",
 }

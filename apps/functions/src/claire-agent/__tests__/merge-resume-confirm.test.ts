@@ -166,7 +166,11 @@ test("MERGE confirm copy: checks existing + asks to merge, NO 'overwrite'/'repla
   assert.ok(lower.includes("merge") && lower.includes("linkedin"), "names the existing LinkedIn info + asks to merge")
   assert.ok(!lower.includes("overwrite"), "must not say overwrite")
   assert.ok(!lower.includes("replace"), "must not say replace")
-  assert.equal(MERGE_ACCEPT_ACK, "got it — let me read through what you sent 📄, one sec!")
+  assert.equal(
+    MERGE_ACCEPT_ACK,
+    "got it — reading through your résumé now 📄. this usually takes a minute or two — i'll text you the second it's ready 🙏",
+  )
+  assert.ok(MERGE_ACCEPT_ACK.toLowerCase().includes("minute or two"), "sets the minute-or-two expectation")
   assert.ok(MERGE_DECLINE_REPLY.toLowerCase().includes("keeping your current profile"))
 })
 
