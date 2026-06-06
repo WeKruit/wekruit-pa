@@ -64,22 +64,30 @@ export interface AnthropicCallArgs {
  * Lazy SDK loader so cv-ingest cold-start stays cheap when the parser path
  * isn't hit AND the Anthropic tier isn't reached.
  */
+// PER-REQUEST TIMEOUT (Adam 2026-06-06): same fix as the OpenAI provider — the Anthropic SDK default
+// request timeout is long, so a slow Sonnet call (the secondary parse tier) would hang for minutes before
+// the router falls to the tertiary tier. Cap a single attempt at 30s so a hung tier fails fast.
+const DEFAULT_ANTHROPIC_TIMEOUT_MS = 30_000
+
 async function defaultClientFactory(init: {
   apiKey: string
   baseURL?: string
   maxRetries?: number
+  timeoutMs?: number
 }): Promise<AnthropicMessagesClient> {
   const mod = (await import("@anthropic-ai/sdk")) as unknown as {
     default: new (init: {
       apiKey: string
       baseURL?: string
       maxRetries?: number
+      timeout?: number
     }) => AnthropicMessagesClient
   }
   return new mod.default({
     apiKey: init.apiKey,
     baseURL: init.baseURL,
     maxRetries: init.maxRetries,
+    timeout: init.timeoutMs ?? DEFAULT_ANTHROPIC_TIMEOUT_MS,
   })
 }
 

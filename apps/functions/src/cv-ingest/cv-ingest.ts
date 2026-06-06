@@ -1146,7 +1146,15 @@ export async function runUserTagsMerge(args: {
       .filter((s) => s.title || s.company)
     if (linkedinSources.length > 0 || resumeSources.length > 0) {
       const merge = args.mergeAndDetermine ?? mergeAndDetermineProfile
+      const tMerge0 = Date.now()
       const determined = await merge({ linkedinExperiences: linkedinSources, resumeExperiences: resumeSources })
+      args.log("pa.cv_ingest.timing", {
+        step: "merge_determine",
+        ms: Date.now() - tMerge0,
+        linkedin: linkedinSources.length,
+        resume: resumeSources.length,
+        userId: args.userId,
+      })
       if (determined && determined.mergedExperiences.length > 0) {
         mergedExperienceHighlights = determined.mergedExperiences.slice(0, 10).map((e) => {
           const out: Record<string, unknown> = {
@@ -2074,10 +2082,14 @@ export async function ingestCv(
   }
 
   // 2. PDF text extraction
+  // LATENCY INSTRUMENTATION (Adam 2026-06-06 "why is it taking minutes?"): time each ingest stage so the
+  // 3-min black box is observable — pa.cv_ingest.timing {step, ms} per step + usedTier on the LLM parse.
   let text: string
+  const tPdf0 = Date.now()
   try {
     const out = await parsePdf(bytes)
     text = (out.text ?? "").slice(0, MAX_TEXT_BYTES)
+    log("pa.cv_ingest.timing", { step: "parse_pdf", ms: Date.now() - tPdf0, userId: args.userId })
     if (!text.trim()) {
       log("pa.cv_ingest.error", { stage: "parse", error: "empty_text", userId: args.userId })
       return { ok: false, reason: "pdf_parse_failed" }
@@ -2108,6 +2120,7 @@ export async function ingestCv(
   let v2Output: ParserV2Output | null = null
   let usedTier: string | undefined
   let usedModel: string = LLM_MODEL
+  const tLlm0 = Date.now()
   try {
     if (parserV2On && !deps?.llmExtract) {
       v2Output = await parserV2ExtractFn(text, log)
@@ -2120,7 +2133,18 @@ export async function ingestCv(
       parsed = validateStructuredCv(out.parsed)
       usage = out.usage
     }
+    // The prime latency suspect — a tier-1 timeout cascading through the 3-tier fallback chain shows up
+    // here as a large ms + a non-primary usedTier/usedModel.
+    log("pa.cv_ingest.timing", {
+      step: "llm_parse",
+      ms: Date.now() - tLlm0,
+      parserV2: parserV2On,
+      usedTier: usedTier ?? null,
+      usedModel,
+      userId: args.userId,
+    })
   } catch (err) {
+    log("pa.cv_ingest.timing", { step: "llm_parse_failed", ms: Date.now() - tLlm0, userId: args.userId })
     log("pa.cv_ingest.error", {
       stage: "llm",
       error: err instanceof Error ? err.message : String(err),
@@ -2340,6 +2364,7 @@ export async function ingestCv(
     workHistory: v2Output ? v2Output.parsed.workHistory : undefined,
   })
   let embedResult: ComputeCvEmbeddingResult | null = null
+  const tEmb0 = Date.now()
   try {
     embedResult = await computeEmbedding({
       candidateProfile: parsed.candidateProfile,
@@ -2348,6 +2373,7 @@ export async function ingestCv(
       industryTags: parsed.industryTags,
       topSkills: sharedTopSkills,
     })
+    log("pa.cv_ingest.timing", { step: "embedding", ms: Date.now() - tEmb0, ok: Boolean(embedResult), userId })
     if (embedResult) {
       log("pa.cv_ingest.embedding_computed", {
         userId: userId,
