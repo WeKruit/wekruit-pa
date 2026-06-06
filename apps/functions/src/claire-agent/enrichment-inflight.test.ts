@@ -56,3 +56,17 @@ test("turn context: NO holding directive when the flag is unset (default path un
   const ctx = buildClaireTurnContext({ mode: "triage", lang: "en" })
   assert.equal(/ENRICHMENT IN PROGRESS/.test(ctx), false)
 })
+
+test("turn context: holding directive SUPPRESSED when résumé was just dropped THIS turn (coherence guard)", () => {
+  // Live bug 2026-06-05: a résumé drop got "still pulling your info" because enrichmentInFlight (set by an
+  // earlier LinkedIn import) co-fired with resumeJustDropped. modeDirective already short-circuits the drop
+  // turn to a reading-framed ack; this higher-salience hold must NOT also fire and disagree with it.
+  const ctx = buildClaireTurnContext({
+    mode: "triage",
+    lang: "en",
+    enrichmentInFlight: true,
+    resumeJustDropped: true,
+  })
+  assert.equal(/ENRICHMENT IN PROGRESS/.test(ctx), false, "no hold directive on the résumé-drop turn")
+  assert.equal(/still pulling your info/i.test(ctx), false, "must not say 'still pulling' on a fresh drop")
+})

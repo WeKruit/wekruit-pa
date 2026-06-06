@@ -770,7 +770,14 @@ export function buildClaireTurnContext(opts: ClairePromptOptions): string {
     // do NOT have the full profile THIS turn. Reuses the resumeJustDropped never-say-X language but,
     // unlike that hard short-circuit, ALLOWS answering an unrelated question — so it lives here as a
     // directive, not an early-return in modeDirective.
-    opts.enrichmentInFlight
+    //
+    // COHERENCE GUARD (Adam 2026-06-05): SUPPRESS this hold when the résumé was just dropped THIS turn.
+    // resumeJustDropped already short-circuits modeDirective to "got it, reading your résumé 📄"; if this
+    // higher-salience "still pulling your info" hold ALSO fires (enrichmentInFlight was set by an earlier
+    // LinkedIn import), the two directives disagree and the model picks the wrong one — the live bug where
+    // a résumé drop got "still pulling your info" instead of a reading-framed ack. A fresh drop is NOT the
+    // "unrelated question mid-enrich" case this hold is for. One coherent signal wins: the reading ack.
+    opts.enrichmentInFlight && !opts.resumeJustDropped
       ? [
           "ENRICHMENT IN PROGRESS: you are still pulling this candidate's info — their résumé is parsing",
           "or their LinkedIn is importing right now from an earlier message — so you do NOT have the full",
