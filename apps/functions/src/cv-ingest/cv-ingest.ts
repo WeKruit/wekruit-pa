@@ -1791,7 +1791,11 @@ async function fireResumeParsedHandoffOnIdempotentHit(input: {
       input.candidateProfileSummary && input.candidateProfileSummary.trim()
         ? input.candidateProfileSummary
         : await summaryFromStoredResume(input.db, input.resumeId)
-    const handoffIdempotencyKey = `cv-parsed:${input.userId}:${input.pdfSha256 || input.resumeId}`
+    // SESSION-SCOPED (Adam 2026-06-06): include the sessionId so a DELIBERATE re-upload in a NEW session
+    // (e.g. a merge-accept after the same résumé was parsed in an earlier session) RE-PITCHES — the old
+    // sha-only key deduped it forever (the "Yes!" → silence bug). Same-session double-send still collapses
+    // (same session + same sha → one pitch), preserving the BLOCKER-1 exactly-once within a turn.
+    const handoffIdempotencyKey = `cv-parsed:${input.userId}:${input.sessionId || "nosess"}:${input.pdfSha256 || input.resumeId}`
     const runtime = await enqueueRuntimeEventHandoff(input.db, {
       userId: input.userId,
       toE164: phone,
@@ -2821,7 +2825,10 @@ export async function ingestCv(
           // across both runs, computed at line ~1703) so enqueueRuntimeEventHandoff's existingEvent.exists
           // check collapses the second run to created:false → exactly ONE resume_parse_completed event →
           // ONE pitch. Fall back to resumeId only if hashing failed (empty sha would alias DISTINCT résumés).
-          const handoffIdempotencyKey = `cv-parsed:${userId}:${pdfSha256 || resumeId}`
+          // SESSION-SCOPED (Adam 2026-06-06): see the idempotent-hit site — including the session lets a
+          // deliberate re-upload in a NEW session re-pitch (fixes "Yes!" → silence), while a same-session
+          // double-send still collapses to one pitch.
+          const handoffIdempotencyKey = `cv-parsed:${userId}:${args.sessionId || "nosess"}:${pdfSha256 || resumeId}`
           // BUG 1 FIX (defensive): when the LIVE session is threaded in (cutover passes the real sessionId),
           // the session always exists, so requireExistingSession is moot. When NO sessionId is supplied (the
           // webhook Stream-D producer for an already-onboarded user), the derived session may not exist yet —

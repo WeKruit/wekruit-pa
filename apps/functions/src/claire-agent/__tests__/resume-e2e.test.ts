@@ -264,30 +264,51 @@ test("LEG B: REAL ingestCv with the LIVE sessionId produces ONE resume_parse_com
   assert.ok(handledBy.startsWith("thin_claire"), `handledBy must be a thin_claire* handler; got ${handledBy}`)
 })
 
-// ── BUG 2 — exactly-once: two concurrent ingests collapse to ONE handoff ─────────────────────
-test("DEDUP: two concurrent REAL ingestCv runs (webhook Path A + cutover Path B) for the SAME pdf → exactly ONE handoff doc", async () => {
+// ── BUG 2 — exactly-once: two concurrent SAME-SESSION ingests collapse to ONE handoff ─────────
+// SESSION-SCOPE (Adam 2026-06-06): the handoff key is now cv-parsed:<user>:<session>:<sha>. The realistic
+// same-pdf double-emission is WITHIN ONE SESSION (a Path-B retry, or the BLOCKER-1 idempotent-hit re-firing
+// in the live session) — that still collapses to ONE pitch. (A genuine webhook Path A no longer emits a
+// handoff at all: followup="none" — proven by the next test — so the cross-session both-runtime race the
+// old version simulated does not occur in production.) A DELIBERATE re-upload in a NEW session intentionally
+// re-pitches (the merge-accept "Yes!" → silence fix) and is covered separately.
+test("DEDUP: two concurrent REAL ingestCv runs for the SAME pdf in the SAME session → exactly ONE handoff doc", async () => {
   const { db, col } = makeFirestore()
   seedThinFlag(col, CANARY_UID)
   seedUser(col, CANARY_UID)
   const sessionId = seedSession(col, CANARY_UID)
 
-  // Mirror production: webhook Path A (sessionId undefined) + cutover Path B (live sessionId),
-  // BOTH followup=runtime, fired concurrently. Identical fixed bytes → identical sha256.
+  // Same live session for both (the real same-turn double-emission). Identical bytes → identical sha256.
   const a = ingestDeps(db, col)
   const b = ingestDeps(db, col)
   const [ra, rb] = await Promise.all([
-    ingestCv({ userId: CANARY_UID, mediaUrl: "https://example.com/adam.pdf", sessionId: undefined }, a.deps),
+    ingestCv({ userId: CANARY_UID, mediaUrl: "https://example.com/adam.pdf", sessionId }, a.deps),
     ingestCv({ userId: CANARY_UID, mediaUrl: "https://example.com/adam.pdf", sessionId }, b.deps),
   ])
   assert.equal(ra.ok, true)
   assert.equal(rb.ok, true)
 
-  // sha256-keyed idempotencyKey ⇒ both runs resolve to the SAME handoff doc id ⇒ ONE pitch.
+  // session+sha256-keyed idempotencyKey ⇒ both runs resolve to the SAME handoff doc id ⇒ ONE pitch.
   assert.equal(
     countHandoffDocs(col),
     1,
-    "BUG 2: the post-parse pitch handoff must be EXACTLY ONE per (user, pdf), not one-per-resumeId",
+    "BUG 2: the post-parse pitch handoff must be EXACTLY ONE per (user, session, pdf), not one-per-resumeId",
   )
+})
+
+// ── SESSION-SCOPE re-pitch: the SAME pdf in a NEW session emits a FRESH handoff (merge-accept fix) ──
+test("RE-PITCH: the SAME pdf ingested again in a DIFFERENT session emits a SECOND handoff (deliberate re-upload re-pitches)", async () => {
+  const { db, col } = makeFirestore()
+  seedThinFlag(col, CANARY_UID)
+  seedUser(col, CANARY_UID)
+  const sessionA = seedSession(col, CANARY_UID)
+  // First upload in session A → one handoff.
+  await ingestCv({ userId: CANARY_UID, mediaUrl: "https://example.com/adam.pdf", sessionId: sessionA }, ingestDeps(db, col).deps)
+  assert.equal(countHandoffDocs(col), 1, "first upload emits one handoff")
+  // A NEW session (the live "Yes!" merge-accept after the same pdf was seen earlier) → a FRESH handoff.
+  const sessionB = "ses_live_repitch_b"
+  col(PA_COLLECTIONS.sessions).set(sessionB, { id: sessionB, userId: CANARY_UID, createdAt: new Date().toISOString() })
+  await ingestCv({ userId: CANARY_UID, mediaUrl: "https://example.com/adam.pdf", sessionId: sessionB }, ingestDeps(db, col).deps)
+  assert.equal(countHandoffDocs(col), 2, "same pdf in a NEW session must re-pitch (NOT be deduped away)")
 })
 
 // ── BUG 2 (production wiring) — webhook Path A is parse-only; only cutover emits the re-entry ──

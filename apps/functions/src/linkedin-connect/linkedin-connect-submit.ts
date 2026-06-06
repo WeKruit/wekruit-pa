@@ -48,7 +48,6 @@ import {
   licdnAssetKey,
   CoresignalCollectError,
 } from "@pa/external-supply"
-import { buildLinkedinDoneOpenerBody } from "@pa/pa-orchestrator"
 import { isCanaryUser } from "../claire-agent/canary.js"
 import { buildSmsDeepLink } from "../qr-onboarding/qr-start-redirect.js"
 import { assignCandidateSenderNumber } from "../identity/candidate-sender-number.js"
@@ -260,7 +259,7 @@ export async function handleLinkedinConnectSubmit(
   await deps.markUsed(token, nowIso)
 
   const recipient = await deps.resolveRerouteRecipient(userId)
-  const smsDeepLink = recipient ? deps.buildSms(recipient, buildLinkedinDoneOpenerBody(token)) : undefined
+  const smsDeepLink = recipient ? deps.buildSms(recipient, "") : undefined
 
   return {
     ok: true,
@@ -315,7 +314,7 @@ export async function connectLinkedinProspectViaOAuth(
     await markLinkedinConnectTokenUsed(db, input.connectToken, Date.parse(nowIso) || Date.now())
     const recipient = await resolveRerouteRecipient(db, userId)
     const smsDeepLink = recipient
-      ? buildSmsDeepLink(recipient, buildLinkedinDoneOpenerBody(input.connectToken))
+      ? buildSmsDeepLink(recipient, "")
       : undefined
     logger.info("linkedin_oauth.already_bound_reroute", { userId, hasSms: Boolean(smsDeepLink) })
     return { ok: true, enriched: false, ...(smsDeepLink ? { smsDeepLink } : {}) }
@@ -440,7 +439,7 @@ export async function connectLinkedinProspectViaOAuth(
   // echo ONLY as the fallback when no server-push pitch queued (no enrich signal / non-canary).
   const recipient = pitchHandoffEnqueued ? null : await resolveRerouteRecipient(db, userId)
   const smsDeepLink = recipient
-    ? buildSmsDeepLink(recipient, buildLinkedinDoneOpenerBody(input.connectToken))
+    ? buildSmsDeepLink(recipient, "")
     : undefined
   logger.info("linkedin_oauth.connected", {
     userId,

@@ -16,7 +16,6 @@ import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { canonicalizeLinkedInUrl, linkedinHash } from "@pa/external-supply"
 import { linkCandidateHandle, hashCandidateHandle } from "@pa/pa-persistence"
-import { LINKEDIN_DONE_OPENER_PREFIX } from "@pa/pa-orchestrator"
 import {
   handleLinkedinConnectSubmit,
   type LinkedinConnectSubmitDeps,
@@ -85,7 +84,7 @@ function makeSpies(overrides: {
       calls.markUsed.push(token)
     },
     resolveRerouteRecipient: async () => senderNumber,
-    buildSms: (recipient, body) => `sms:${recipient}?&body=${encodeURIComponent(body)}`,
+    buildSms: (recipient, body) => (body ? `sms:${recipient}?&body=${encodeURIComponent(body)}` : `sms:${recipient}`),
   }
   return { deps, calls }
 }
@@ -124,13 +123,14 @@ describe("handleLinkedinConnectSubmit — happy path (canary, enrich, emit, rero
     assert.equal(result.ok, true)
     assert.equal(result.enriched, true)
     assert.ok(result.smsDeepLink, "must return an sms: reroute")
-    // Reroute targets the WeKruit SENDER number (so Send lands in Claire's thread), NOT the
+    // Reroute targets the WeKruit SENDER number (so opening lands in Claire's thread), NOT the
     // candidate's own phone (+14243201960). This is the Image #21 bug, locked against regression.
-    assert.match(result.smsDeepLink!, /^sms:\+17174919939\?&body=/)
+    assert.match(result.smsDeepLink!, /^sms:\+17174919939/)
     assert.ok(!result.smsDeepLink!.includes("+14243201960"), "must NOT reroute to the candidate's own phone")
-    // The reroute body is the LinkedIn-done marker carrying the connect TOKEN.
-    const decoded = decodeURIComponent(result.smsDeepLink!.split("body=")[1]!)
-    assert.equal(decoded, `${LINKEDIN_DONE_OPENER_PREFIX} tok_abc12345`)
+    // NO PREFILL (Adam 2026-06-06): the reroute just drops the candidate back in the thread with an
+    // EMPTY compose box — no "I've done LinkedIn submission <token>" message. The server already pushes
+    // the pitch via the resume_parse_completed handoff, so there is nothing for the user to send.
+    assert.ok(!result.smsDeepLink!.includes("body="), "reroute must NOT prefill any message body")
   })
 })
 

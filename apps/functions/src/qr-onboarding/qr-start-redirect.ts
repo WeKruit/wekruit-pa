@@ -35,6 +35,10 @@ import { normalizeCampaignCode, writeQrScanPending } from "./scan.js"
 export function buildSmsDeepLink(number: string, body: string): string {
   // iOS accepts `sms:<number>?body=<encoded>` (some devices want `&body=`; iOS
   // tolerates the single-param `?body=` form, which is what PublicJob.tsx uses).
+  // EMPTY body (Adam 2026-06-06): open the thread with NO prefilled message — the LinkedIn route-back
+  // no longer dumps "I've done LinkedIn submission <token>" into the compose box; the server already
+  // pushes the pitch. A bare `sms:<number>` just drops them back in the thread.
+  if (!body || !body.trim()) return `sms:${number}`
   return `sms:${number}?&body=${encodeURIComponent(body)}`
 }
 

@@ -384,12 +384,12 @@ describe("ingestCv", () => {
       return meta?.runtimeEventSource === "cv_ingest" && meta?.runtimeEventKind === "resume_parse_completed"
     })
     assert.equal(e1Events.length, 1)
-    // BUG 2 FIX (Adam 2026-06-02): the cv-parsed handoff idempotencyKey is now scoped to the pdf
-    // sha256 (identical across the two concurrent webhook+cutover ingests), NOT the resumeId (which
-    // differs per ingest run and produced TWO handoff docs → a dup-send). The key MUST be the
-    // sha256-keyed form and MUST NOT embed the per-run resumeId.
+    // BUG 2 FIX (Adam 2026-06-02) + SESSION-SCOPE (Adam 2026-06-06): the cv-parsed handoff idempotencyKey
+    // is `cv-parsed:<userId>:<session>:<sha256>`. The pdf sha collapses the two concurrent webhook+cutover
+    // ingests within a turn (NOT the resumeId, which differs per run → dup-send). The session segment lets
+    // a DELIBERATE re-upload in a NEW session re-pitch (the "Yes!" → silence fix); no session → "nosess".
     const key = String(e1Events[0]!.idempotencyKey)
-    assert.match(key, /^runtime-event:cv_ingest:cv-parsed:user_x:[0-9a-f]{64}$/)
+    assert.match(key, /^runtime-event:cv_ingest:cv-parsed:user_x:[^:]+:[0-9a-f]{64}$/)
     assert.equal(key.includes(id1), false, "the handoff key must NOT embed the per-run resumeId (that was the dup-send root)")
     assert.ok(events.some((e) => e.event === "pa.cv_followup.synthetic_trigger_written"))
   })
