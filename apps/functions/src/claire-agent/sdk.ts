@@ -141,6 +141,10 @@ export function configureClaireSdk(): void {
     // resolved apiKey so the trace exporter authenticates with the same project. Optional-chained
     // through `undefined` so an SDK build lacking the setter is a silent no-op (fail-open).
     if (apiKey) (sdk.setTracingExportApiKey as ((k: string) => void) | undefined)?.(apiKey)
+    // T3 (health, Adam 2026-06-06): the exporter silently SKIPS every span when no key is resolved
+    // ("No API key provided for OpenAI tracing exporter"). Surface ONE warning so a missing
+    // PA_OPENAI_AGENT_API_KEY/OPENAI_API_KEY is observable instead of an invisible trace black hole.
+    else console.warn("[claire-sdk] tracing_export_key_missing: no OpenAI key resolved — trace export skipped (set PA_OPENAI_AGENT_API_KEY or OPENAI_API_KEY)")
   } catch {
     // fail-open: best-effort; the SDK falls back to env-derived defaults.
   }

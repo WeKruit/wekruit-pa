@@ -1385,6 +1385,9 @@ export async function runPrescreenTurnIfActive(
         questionPrompt: activePrompt,
         runTurn: (reply) => runReducerTurn(reply) as Promise<AgenticRunTurnResult>,
         log,
+        // T4 (tracing): group the prescreen leg with its conversation (groupId=sessionId) + attach userId.
+        sessionId,
+        userId: args.userId,
       })
       if (agentic.routed === "tangent") {
         // Pending question HELD — reducer NOT touched. Answer the tangent (or

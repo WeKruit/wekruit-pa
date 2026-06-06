@@ -10,6 +10,7 @@
  *   (crisis/injection) → normalize + deliver (unless a delivery tool already did).
  * Global read-context (canonical tags) is injected so "what's saved" reads tags (RC3).
  */
+import { createHash } from "node:crypto"
 import type { Firestore } from "firebase-admin/firestore"
 import { Agent, run, InputGuardrailTripwireTriggered, configureClaireSdk, forceFlushTraces, z } from "./sdk.js"
 import type {
@@ -272,6 +273,19 @@ export function claireToolUseBehavior(
     }
   }
   return { isFinalOutput: false, isInterrupted: undefined }
+}
+
+/**
+ * Deterministic per-turn OpenAI trace id: `trace_<32 lowercase hex>` over (sessionId, userId, turn stamp).
+ * Printable + stable so the `trace_exported` log line bridges Cloud Logging → the exact OpenAI trace (T1/T2,
+ * Adam 2026-06-06 "debug ONE conversation"). Same (sessionId,userId,iso) → same id (dedupes a redelivered
+ * Sendblue webhook within the same turn stamp); groupId=sessionId groups all turns of the conversation.
+ */
+export function makeTurnTraceId(sessionId: string, userId: string, turnIso: string): string {
+  return `trace_${createHash("sha256")
+    .update(`${sessionId}:${userId}:${turnIso}`)
+    .digest("hex")
+    .slice(0, 32)}`
 }
 
 /** Construct the single Claire agent (tools + guardrails + persona). */
@@ -941,10 +955,18 @@ export async function runClaireTurn(
   // bodies are NOT shipped to OpenAI's tracing backend (we want the span TREE — which tools ran, in
   // what order, guardrail decisions — not the PII). groupId=sessionId threads a conversation's turns
   // together in the trace UI. Merged into the run opts below.
+  // TURN-START STAMP — captured BEFORE run() (it both feeds the cross-turn dedup below AND anchors the
+  // per-turn trace). Defined here so runConfig's deterministic traceId can derive from it.
+  const turnStartedAtIso = new Date().toISOString()
+  // DETERMINISTIC PER-TURN traceId (T2): see makeTurnTraceId. Printable + stable, so the trace_exported
+  // log line (T1, after the flush) bridges a Cloud Logging row → the exact OpenAI trace. groupId=sessionId
+  // still threads all of a conversation's turns together in the trace UI.
+  const turnTraceId = makeTurnTraceId(input.sessionId, input.userId, turnStartedAtIso)
   const runConfig = {
     workflowName: "claire-turn",
     groupId: input.sessionId,
-    traceMetadata: { userId: input.userId },
+    traceId: turnTraceId,
+    traceMetadata: { userId: input.userId, mode: String(deps.mode ?? "") },
     traceIncludeSensitiveData: false,
   }
 
@@ -962,12 +984,12 @@ export async function runClaireTurn(
   let toolCalls: ClaireToolCall[] = []
   let blocked = false
   let usage: ClaireTurnUsage | undefined
-  // TURN-START STAMP (Adam 2026-06-04, the "cross_turn dedup keeps triggering / silent turn" fix):
-  // captured BEFORE run() so a tool that delivers mid-run (find_match's role bubbles → outbox → a
-  // `pa-outbound` pa-messages row written DURING this turn) is excluded from the cross-turn dedup's
-  // recent-sent set. Without it, the model's final bubble restating a just-sent tool message near-dups
-  // its OWN send and is suppressed → silent. Threaded into deliverBubblesEx below.
-  const turnStartedAtIso = new Date().toISOString()
+  // turnStartedAtIso is captured ABOVE (just before runConfig). It is the "cross_turn dedup keeps
+  // triggering / silent turn" fix (Adam 2026-06-04): captured BEFORE run() so a tool that delivers
+  // mid-run (find_match's role bubbles → outbox → a `pa-outbound` pa-messages row written DURING this
+  // turn) is excluded from the cross-turn dedup's recent-sent set. Without it, the model's final bubble
+  // restating a just-sent tool message near-dups its OWN send and is suppressed → silent. It is threaded
+  // into deliverBubblesEx below AND anchors the per-turn trace id (turnTraceId).
   // Hold the timeout handle so we can CLEAR it once the agent run settles — otherwise the 100s timer
   // keeps the event loop alive after a fast turn (e.g. the anti-silence fallback re-entry, or a unit
   // test with an injected runAgent), needlessly delaying process exit.
@@ -1031,6 +1053,18 @@ export async function runClaireTurn(
   // guardrail spans) is built in memory and then dropped. Force the export NOW so the trace
   // actually POSTs. Fully fail-open (forceFlushTraces swallows everything) — never blocks the turn.
   await forceFlushTraces()
+
+  // TRACE BRIDGE (T1, Adam 2026-06-06 "add tracing so it's easier to debug ONE conversation/session"):
+  // emit the trace coordinates once per turn so a Cloud Logging row maps straight to the exact OpenAI
+  // trace — open https://platform.openai.com/traces and filter by groupId (= the whole conversation) or
+  // jump to the single turn by traceId. The PII stays out of the export (traceIncludeSensitiveData:false);
+  // this log is just identifiers.
+  log("trace_exported", {
+    traceId: turnTraceId,
+    groupId: input.sessionId,
+    userId: input.userId,
+    mode: String(deps.mode ?? ""),
+  })
 
   const deliveredViaTool = tracked.handledViaTool()
   // deliverBubblesEx normalizes each bubble (markdown/length) + caps count; one Sendblue send each.
