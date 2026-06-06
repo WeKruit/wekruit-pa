@@ -284,6 +284,7 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
 function trackTransport(inner: ClaireTransport): {
   transport: ClaireTransport
   handledViaTool: () => boolean
+  markHandledViaTool: () => void
   sentTextCount: () => number
 } {
   let viaTool = false
@@ -305,7 +306,17 @@ function trackTransport(inner: ClaireTransport): {
       return inner.noReply(r)
     },
   }
-  return { transport, handledViaTool: () => viaTool, sentTextCount: () => sentText }
+  return {
+    transport,
+    handledViaTool: () => viaTool,
+    // Let a delivery TOOL (find_match) declare the turn already handled so the post-run
+    // deliverBubblesEx drops the agent's trailing `messages[]` (the rec-hallucination fix).
+    // Same effect tapback/noReply have, but available to find_match which delivers via sendText.
+    markHandledViaTool: () => {
+      viaTool = true
+    },
+    sentTextCount: () => sentText,
+  }
 }
 
 /** Read canonical pa-users.tags → a one-line global context so "what's saved" reads tags (RC3).
@@ -728,6 +739,10 @@ export async function runClaireTurn(
     log,
     nowIso: deps.nowIso ?? (() => new Date().toISOString()),
     findMatch: deps.findMatch,
+    // find_match calls this on delivered:true so its self-sent role bubbles + prescreen offer
+    // mark the turn handled → the post-run deliverBubblesEx drops the agent's own messages[]
+    // (kills the "agent talks over the recs" hallucination: `@ [company]` cards, fake offers).
+    markDeliveredViaTool: tracked.markHandledViaTool,
   }
   // Inject the per-turn process store seeded from durable state (mode-selector) so the onboarding/
   // prescreen FSM tools enforce order + write through to the canonical interface.
