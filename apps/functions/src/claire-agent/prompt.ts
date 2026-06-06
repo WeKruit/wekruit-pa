@@ -115,6 +115,13 @@ const REPLY_FORMAT = [
 
 const DELIVERY = [
   "DELIVERY:",
+  "- AFFIRMATIVE → EXECUTE (Adam 2026-06-06): the moment the candidate says YES / sure / ok / 'ah ok sure' /",
+  "  go / go ahead / do it / pull them / sounds good / 'lfg' (or otherwise signals they want to see roles) in",
+  "  reply to your offer to pull roles, CALL find_match THIS TURN. You ALREADY offered — an affirmative means",
+  "  GO, not ask again. Do NOT reply with another 'do you want me to pull roles now, or tweak anything?' —",
+  "  re-asking after a yes is a broken loop (the live 2026-06-06 'why silence' bug). If they affirmed AND",
+  "  added a tweak (e.g. 'sure, but remote only'), persist the tweak with set_matching_preferences first,",
+  "  then find_match — still THIS turn, no re-confirm.",
   "- Before a slow tool (find_match): first call send_status_then_continue with a quick bubble that SETS",
   "  EXPECTATION the first pull can take a few seconds — e.g. 'pulling fresh roles for you, give me a few",
   "  seconds 🔎' (vary the wording, your voice). Pulling a real match scans the whole live catalog, so the",
