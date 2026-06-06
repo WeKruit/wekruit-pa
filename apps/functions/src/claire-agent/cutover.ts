@@ -36,6 +36,22 @@ import type { ClaireLang } from "./types.js"
 // the @pa/agent-runtime/zod@4 SDK, which crashes the deployed container at boot.
 // They're dynamic-imported below, only after the flag gate passes.
 
+// Sendblue writes a PLACEHOLDER body ("[attachment]") for a bare media drop with no caption — it is
+// NOT real user text. The résumé-drop gates below trigger on "no real text"; using text.trim() treated
+// "[attachment]" as a real message, so a file drop SKIPPED the reading-ack + merge-confirm path and fell
+// through to the deterministic "still pulling your info" ack (live 8fEw 2026-06-05). hasRealUserText()
+// treats media placeholders / empty / whitespace as no-text → a file drop hits the merge-confirm flow.
+// Structural exact-match set (NOT semantic classification → the no-regex tagging rule is unaffected).
+const MEDIA_PLACEHOLDER_BODIES = new Set([
+  "[attachment]", "[image]", "[media]", "[photo]", "[video]", "[file]",
+  "[document]", "[pdf]", "[gif]", "[sticker]", "[contact]", "[location]",
+])
+function hasRealUserText(t: string): boolean {
+  const s = (t || "").trim()
+  if (!s) return false
+  return !MEDIA_PLACEHOLDER_BODIES.has(s.toLowerCase())
+}
+
 export interface MaybeThinClaireDeps {
   log?: (event: string, payload?: Record<string, unknown>) => void
   /**
@@ -183,7 +199,7 @@ export async function maybeRunThinClaire(
   if (
     isCanaryUser(userId) &&
     toE164 &&
-    text.trim() &&
+    hasRealUserText(text) &&
     !earlyMediaUrl &&
     rawMeta.runtimeEvent !== true
   ) {
@@ -375,10 +391,12 @@ export async function maybeRunThinClaire(
   // `pa-cv-merge-pending/{userId}` and send a MERGE-framed confirm bubble ("fold it into your profile and
   // re-pitch you?"). The merge + repitch fire only on ACCEPT (the accept block above on the NEXT turn,
   // which fires ingestCv → runUserTagsMerge MERGE → resume_parse_completed → composePitchTurn). This is
-  // canary-only and résumé-ONLY (a résumé WITH text takes today's immediate-ingest path — M11). The FIRST
-  // résumé (no prior row) also keeps today's zero-friction immediate-ingest + auto-pitch (M8) — confirm
-  // is ONLY for the additional case. Fail-open: a read error degrades to the immediate-ingest path.
-  if (inboundMediaUrl && !text.trim() && toE164 && isCanaryUser(userId)) {
+  // canary-only and résumé-ONLY (a résumé WITH a real caption takes the immediate-ingest path — M11). The
+  // FIRST résumé (no prior row) keeps the zero-friction immediate-ingest + reading-ack (M8) — confirm is
+  // ONLY for the additional case. Trigger on MEDIA presence + no REAL text (so a "[attachment]" placeholder
+  // body still fires it — the live 2026-06-05 bug was `!text.trim()` treating "[attachment]" as text).
+  // Fail-open: a read error degrades to the immediate-ingest path.
+  if (inboundMediaUrl && !hasRealUserText(text) && toE164 && isCanaryUser(userId)) {
     try {
       if (await hasPriorParsedResume(db, userId)) {
         const nowIso = new Date().toISOString()
@@ -462,7 +480,9 @@ export async function maybeRunThinClaire(
   // chat agent (it has no message to answer and hallucinated "you weren't invited, upload again /
   // connect LinkedIn" from the mid-parse empty context — live 2026-06-04). The refined pitch fires on
   // the resume_parse_completed re-entry (composePitchTurn). Canary-only. The ingestCv above already ran.
-  if (inboundMediaUrl && !text.trim() && toE164 && isCanaryUser(userId)) {
+  // Trigger on MEDIA + no-real-text (a "[attachment]" placeholder body must still ack, not fall through
+  // to the deterministic "still pulling" mode-selector ack — the live 2026-06-05 bug).
+  if (inboundMediaUrl && !hasRealUserText(text) && toE164 && isCanaryUser(userId)) {
     try {
       const ackTransport = createSendblueTransport({
         db,
@@ -495,7 +515,7 @@ export async function maybeRunThinClaire(
   // Deterministic mode pick from durable state (onboarding/prescreen/triage). An active
   // prescreen DEFERS this turn to the proven legacy runner (return false → legacy handles it).
   // Fail-safe: selectClaireMode never throws — any read error degrades to triage.
-  const decision = await selectClaireMode({ db, userId, inboundText: text, log, cvParsedTrigger: cvParsedReentry })
+  const decision = await selectClaireMode({ db, userId, inboundText: text, log, cvParsedTrigger: cvParsedReentry, hasInboundMedia: Boolean(inboundMediaUrl) })
   if (decision.deferToLegacy) {
     log("thin_claire_defer_legacy", { eventId, userId, mode: decision.mode, jobId: decision.jobId })
     return false

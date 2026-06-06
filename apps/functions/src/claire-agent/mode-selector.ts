@@ -121,6 +121,10 @@ export interface SelectModeArgs {
   /** cv-parsed re-entry (Adam 2026-06-02): the cutover sets this when the inbound is the
    *  resume_parse_completed runtime event (canary only) so this turn becomes the post-parse pitch turn. */
   cvParsedTrigger?: boolean
+  /** A FILE arrived this turn (mediaUrl present). The cutover file pipeline normally handles + returns
+   *  BEFORE selectClaireMode; this flag is defense so a file turn that DOES reach here never gets the
+   *  deterministic "still pulling your info" ack (Adam 2026-06-05 — a file is not a mid-enrich question). */
+  hasInboundMedia?: boolean
 }
 
 /**
@@ -440,7 +444,11 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
   // an ACTIVE onboarding user mid-enrich keeps their onboarding decision (which already carries
   // inFlightDecision → ack + the pending question). Triage's in-flight directive (prompt.ts) covers
   // both LinkedIn + résumé sources.
-  if (enrichmentInFlight && !isSharedOnboardingActiveUser(user)) {
+  // DEFENSE (Adam 2026-06-05): a FILE turn must NEVER get the "still pulling" ack — a file is a fresh
+  // input to process (the cutover file pipeline already handles it), not a mid-enrich question. The
+  // cutover returns before this for a file-only drop; this guard covers any file turn that still reaches
+  // here (e.g. a file WITH a caption) so it routes to the agent instead of the hold ack.
+  if (enrichmentInFlight && !args.hasInboundMedia && !isSharedOnboardingActiveUser(user)) {
     log("mode.enrichment_in_flight_ack", { userId: args.userId })
     return { mode: "triage", ...inFlightDecision }
   }

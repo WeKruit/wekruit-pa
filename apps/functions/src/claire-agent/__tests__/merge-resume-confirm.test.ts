@@ -161,23 +161,26 @@ const classifier = (intent: MergeConfirmClassification["intent"], confidence = 0
   async () => ({ intent, confidence })
 
 // ── Constant/copy invariants (load-bearing: merge-framed, never overwrite/replace) ──────────────────
-test("MERGE confirm copy is merge-framed and contains NO 'overwrite'/'replace'", () => {
+test("MERGE confirm copy: checks existing + asks to merge, NO 'overwrite'/'replace'", () => {
   const lower = MERGE_CONFIRM_BUBBLE.toLowerCase()
-  assert.ok(lower.includes("fold it into your profile") && lower.includes("re-pitch"))
+  assert.ok(lower.includes("merge") && lower.includes("linkedin"), "names the existing LinkedIn info + asks to merge")
   assert.ok(!lower.includes("overwrite"), "must not say overwrite")
   assert.ok(!lower.includes("replace"), "must not say replace")
-  assert.equal(MERGE_ACCEPT_ACK, "got your résumé — let me read through it 📄, one sec!")
+  assert.equal(MERGE_ACCEPT_ACK, "got it — let me read through what you sent 📄, one sec!")
   assert.ok(MERGE_DECLINE_REPLY.toLowerCase().includes("keeping your current profile"))
 })
 
 // ── M1: additional résumé → MERGE confirm, no ingest, pending staged ────────────────────────────────
-test("M1: LinkedIn-bound canary drops résumé-only → MERGE confirm, NO ingest, pending awaiting_confirm", () =>
+test("M1: LinkedIn-bound canary drops résumé ('[attachment]' placeholder body) → MERGE confirm, NO ingest, pending", () =>
   withRampAll(async () => {
     const uid = `m1_${Date.now()}`
     const eventId = "evt_m1"
     const db = makeDb({
       collections: {
-        [INBOUND]: { [eventId]: inboundDoc({ userId: uid, rawMeta: { mediaUrl: "https://x/cv.pdf" } }) },
+        // LIVE bug 2026-06-05: Sendblue writes "[attachment]" as the body for a bare file drop. The gate
+        // must treat that as no-real-text (a file) and FIRE the merge-confirm — NOT fall through to the
+        // deterministic "still pulling your info" ack.
+        [INBOUND]: { [eventId]: inboundDoc({ userId: uid, body: "[attachment]", rawMeta: { mediaUrl: "https://x/cv.pdf" } }) },
         [FLAG]: { [THIN_FLAG_KEY]: thinFlagDoc(uid) },
         // Coresignal mirror row → prior parsed résumé exists.
         [PARSED]: { prior1: { userId: uid, createdAt: new Date(), source: "coresignal_collect_v2" } },
@@ -329,7 +332,7 @@ test("M8: first résumé (no prior row) → immediate ingest + new ack, no confi
     const eventId = "evt_m8_first"
     const db = makeDb({
       collections: {
-        [INBOUND]: { [eventId]: inboundDoc({ userId: uid, rawMeta: { mediaUrl: "https://x/cv.pdf" } }) },
+        [INBOUND]: { [eventId]: inboundDoc({ userId: uid, body: "[attachment]", rawMeta: { mediaUrl: "https://x/cv.pdf" } }) },
         [FLAG]: { [THIN_FLAG_KEY]: thinFlagDoc(uid) },
         // NO parsedCandidateResumes → no prior.
       },

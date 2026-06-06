@@ -44,12 +44,13 @@ export interface MergePendingDoc {
   expireAt: string
 }
 
-/** Deterministic, reducer-owned copy (NOT LLM-authored). MERGE-framed — never "overwrite"/"replace". */
+// Deterministic, reducer-owned copy (NOT LLM-authored). Adam-LOCKED 2026-06-05: when a file arrives and we
+// ALREADY have their info, CHECK existing + ASK to merge (never "overwrite"/"replace").
 export const MERGE_CONFIRM_BUBBLE =
-  "got your résumé 📄 — want me to fold it into your profile and re-pitch you?"
-/** Deterministic ACK shown when the candidate ACCEPTS the merge (résumé-specific, not the generic "still pulling"). */
+  "got your résumé 📄 — i already have your experience from LinkedIn on file. want me to read this in and merge it with your profile? 🙌"
+/** Deterministic reading-framed ACK for a FIRST résumé (no prior on file) — Adam: "let me read what you send". */
 export const MERGE_ACCEPT_ACK =
-  "got your résumé — let me read through it 📄, one sec!"
+  "got it — let me read through what you sent 📄, one sec!"
 /** Deterministic copy when the candidate DECLINES the merge. */
 export const MERGE_DECLINE_REPLY = "all good — keeping your current profile 👍"
 
