@@ -18,6 +18,7 @@ import { isCanaryUser, isPrescreenRetentionHandoffCanary } from "./canary.js"
 import { createSendblueTransport } from "./transport.js"
 import { selectClaireMode } from "./mode-selector.js"
 import { setEnrichmentInFlight, clearEnrichmentInFlight } from "./enrichment-inflight.js"
+import { withProgressHeartbeat, PROGRESS_HEARTBEAT_COPY } from "./progress-heartbeat.js"
 import {
   hasPriorParsedResume,
   readOpenMergePending,
@@ -225,20 +226,42 @@ export async function maybeRunThinClaire(
               const { ingestCv } = await import("../cv-ingest/cv-ingest.js")
               return ingestCv(input, opts)
             })
-          void Promise.resolve(
-            runIngest(
-              { userId, mediaUrl: pending.mediaUrl, sessionId: pending.sessionId ?? sessionId },
-              { skipLimitEnforcement: true },
-            ),
-          )
-            .then((r) => log("thin_claire.merge_confirm.ingest_done", { eventId, userId, result: r }))
-            .catch((e) =>
-              log("thin_claire.merge_confirm.ingest_failed", {
-                eventId,
-                userId,
-                err: e instanceof Error ? e.message : String(e),
-              }),
+          // PROGRESS HEARTBEAT (Adam 2026-06-06): the merge runs fire-and-forget; if it overruns 30s
+          // nudge the candidate ONCE ("still reading…") so the wait never feels stuck. clearTimeout on
+          // settle keeps it strictly before the pitch (the cv-parsed re-entry). Canary-only, fail-open.
+          const hbTransport = createSendblueTransport({
+            db,
+            toE164: String(toE164),
+            inboundMessageHandle,
+            userId,
+            sessionId,
+            inboundEventId: eventId,
+            log,
+            ...(deps.dryRun ? { dryRun: true } : {}),
+          })
+          void withProgressHeartbeat(
+            Promise.resolve(
+              runIngest(
+                { userId, mediaUrl: pending.mediaUrl, sessionId: pending.sessionId ?? sessionId },
+                { skipLimitEnforcement: true },
+              ),
             )
+              .then((r) =>
+                log("thin_claire.merge_confirm.ingest_done", { eventId, userId, result: r }),
+              )
+              .catch((e) =>
+                log("thin_claire.merge_confirm.ingest_failed", {
+                  eventId,
+                  userId,
+                  err: e instanceof Error ? e.message : String(e),
+                }),
+              ),
+            {
+              send: (t) => hbTransport.sendStatus(t),
+              message: PROGRESS_HEARTBEAT_COPY.resume,
+              log: (event, payload) => log(`thin_claire.merge_confirm.${event}`, payload),
+            },
+          )
           await setMergePendingStatus(db, userId, "accepted", nowIso)
           const ackTransport = createSendblueTransport({
             db,
@@ -460,7 +483,7 @@ export async function maybeRunThinClaire(
         const { ingestCv } = await import("../cv-ingest/cv-ingest.js")
         return ingestCv(input, opts)
       })
-    void Promise.resolve(
+    const ingestChain = Promise.resolve(
       runImmediateIngest(
         { userId, mediaUrl: inboundMediaUrl, sessionId },
         { skipLimitEnforcement: true },
@@ -474,6 +497,28 @@ export async function maybeRunThinClaire(
           err: e instanceof Error ? e.message : String(e),
         })
       )
+    // PROGRESS HEARTBEAT (Adam 2026-06-06): same once-only nudge as the merge path. The résumé parse
+    // is the proven-slow stage; if it overruns 30s send ONE "still reading…" before the pitch re-entry.
+    // clearTimeout-on-settle keeps it strictly ahead of the result. Canary-only + needs a thread to reply to.
+    if (isCanaryUser(userId) && toE164) {
+      const hbTransport = createSendblueTransport({
+        db,
+        toE164: String(toE164),
+        inboundMessageHandle,
+        userId,
+        sessionId,
+        inboundEventId: eventId,
+        log,
+        ...(deps.dryRun ? { dryRun: true } : {}),
+      })
+      void withProgressHeartbeat(ingestChain, {
+        send: (t) => hbTransport.sendStatus(t),
+        message: PROGRESS_HEARTBEAT_COPY.resume,
+        log: (event, payload) => log(`thin_claire.resume_ingest.${event}`, payload),
+      })
+    } else {
+      void ingestChain
+    }
   }
 
   // RÉSUMÉ-ONLY drop (no accompanying text): ACK deterministically on THIN and STOP — do NOT run the
