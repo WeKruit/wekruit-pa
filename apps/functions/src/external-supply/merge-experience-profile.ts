@@ -250,7 +250,7 @@ const defaultMergeLlmCall: MergeLlmCall = async ({ linkedin, resume }) => {
   if (!cfg.apiKey) return "" // no key → empty → fail-open in the caller.
   const baseURL = process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || cfg.baseURL
   const { default: OpenAI } = (await import("openai")) as unknown as {
-    default: new (init: { apiKey: string; baseURL?: string }) => {
+    default: new (init: { apiKey: string; baseURL?: string; timeout?: number }) => {
       responses: {
         create: (req: Record<string, unknown>) => Promise<{
           output_text?: string
@@ -259,7 +259,11 @@ const defaultMergeLlmCall: MergeLlmCall = async ({ linkedin, resume }) => {
       }
     }
   }
-  const client = new OpenAI({ apiKey: cfg.apiKey, baseURL })
+  // PER-REQUEST TIMEOUT (Adam 2026-06-06 latency root-cause): this merge+determine call is awaited inside
+  // runUserTagsMerge on the résumé-ingest CRITICAL PATH (before the pitch handoff). No timeout = a hung
+  // gpt-5.4-mini request stalls ingest for minutes (the same class as the parser tiers). Cap at 30s; the
+  // caller is fail-open (null → résumé-only derivation) so a timeout degrades gracefully.
+  const client = new OpenAI({ apiKey: cfg.apiKey, baseURL, timeout: 30_000 })
   const resp = await client.responses.create({
     model: MERGE_MODEL,
     input: [

@@ -2802,43 +2802,12 @@ export async function ingestCv(
     })
   }
   if (user) {
-    const branches: Array<Promise<unknown>> = [
-      runMem0Write({
-        userId: userId,
-        resumeId,
-        parsed,
-        user,
-        mem0Add: mem0AddFn,
-        log,
-      }),
-    ]
-    log("pa.cv_followup.direct_outbound_removed", {
-      reason: followupDeliveryMode === "none" ? "delivery_none" : "runtime_delivery",
-      userId: userId,
-      resumeId,
-    })
-    // iter30 WS1 — Stream E3: qaBank → Mem0 with metadata + tag-event coupling.
-    // Only runs when parser v2 produced inferredAnswers. Failure is silent
-    // (the Mem0 fact body and outbound followup are already written).
-    if (v2Output && v2Output.parsed.inferredAnswers.length > 0) {
-      branches.push(
-        runQaBankToMem0({
-          db: dbHandle,
-          userId: userId,
-          partitionKey: user.mem0UserId ?? userId,
-          resumeId,
-          inferredAnswers: v2Output.parsed.inferredAnswers,
-          nowIso,
-          log,
-        })
-      )
-    }
-    await Promise.allSettled(branches)
-
-    // Fire a synthetic runtime event AFTER all CV-ingest async work
-    // completes so Claire can decide the next user-visible turn with the
-    // freshly-written parsedCandidateResume visible. This is a system event,
-    // not user speech, so it must go through runtime-event handoff.
+    // LATENCY DECOUPLE (Adam 2026-06-06): fire the pitch handoff FIRST — BEFORE the Stream-E side effects
+    // (mem0 fact + qaBank). The pitch (composePitchTurn) reads ONLY the parsed-résumé doc + pa-users.tags
+    // (both written above) + candidateProfileSummary from `parsed`; it NEVER reads mem0/qaBank (verified).
+    // Previously the handoff ran AFTER `await Promise.allSettled(branches)`, so a slow/broken mem0 write
+    // (mem0 has been 100% 400 since 2026-06-03) gated the user-facing pitch. The side-effects still run +
+    // are awaited (below) so the instance stays alive to complete them — they just no longer block the pitch.
     if (followupDeliveryMode === "runtime") {
       try {
         const phone = user.toE164
@@ -2895,6 +2864,42 @@ export async function ingestCv(
         reason: "delivery_none",
       })
     }
+
+    // Stream-E side effects (mem0 fact write + qaBank → mem0), NON-critical for the pitch (which already
+    // fired above). Run + await them so the instance stays alive to finish them, but they NO LONGER gate
+    // the user-facing pitch. All NEVER throw.
+    const branches: Array<Promise<unknown>> = [
+      runMem0Write({
+        userId: userId,
+        resumeId,
+        parsed,
+        user,
+        mem0Add: mem0AddFn,
+        log,
+      }),
+    ]
+    log("pa.cv_followup.direct_outbound_removed", {
+      reason: followupDeliveryMode === "none" ? "delivery_none" : "runtime_delivery",
+      userId: userId,
+      resumeId,
+    })
+    // iter30 WS1 — Stream E3: qaBank → Mem0 with metadata + tag-event coupling.
+    // Only runs when parser v2 produced inferredAnswers. Failure is silent
+    // (the Mem0 fact body and outbound followup are already written).
+    if (v2Output && v2Output.parsed.inferredAnswers.length > 0) {
+      branches.push(
+        runQaBankToMem0({
+          db: dbHandle,
+          userId: userId,
+          partitionKey: user.mem0UserId ?? userId,
+          resumeId,
+          inferredAnswers: v2Output.parsed.inferredAnswers,
+          nowIso,
+          log,
+        })
+      )
+    }
+    await Promise.allSettled(branches)
   } else {
     log("pa.cv_followup.skipped", { reason: "no_user_record", userId: userId })
   }
