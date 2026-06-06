@@ -585,6 +585,21 @@ export function isCollabOnMirror(job: unknown): boolean {
   )
 }
 
+// DELIVERED-REC COMPOSITION (Adam 2026-06-04 "≤3, don't dump" + 2026-06-06 "what about the normal
+// ones?"): cap the delivered set at 3, collab-first, but RESERVE one slot for a normal open-market role
+// whenever any exists — so a candidate with ≥3 collab/partner roles still sees a "normal" job instead of
+// an all-collab list. When NO open-market row exists, collab keeps the full cap (no empty slots). Pure +
+// deterministic so it unit-tests without a DB.
+export const REC_DELIVERY_CAP = 3
+export const REC_OPEN_MARKET_RESERVE = 1
+export function selectDeliveredRecs<T>(collabJobs: readonly T[], openJobs: readonly T[]): T[] {
+  const reserve = openJobs.length > 0 ? REC_OPEN_MARKET_RESERVE : 0
+  const collabSlots = Math.max(0, REC_DELIVERY_CAP - reserve)
+  const collabTake = collabJobs.slice(0, collabSlots)
+  const openTake = openJobs.slice(0, REC_DELIVERY_CAP - collabTake.length)
+  return [...collabTake, ...openTake]
+}
+
 export function makeV16FindMatch(
   db: Firestore,
   opts?: { log?: ClaireToolContext["log"]; nowIso?: () => string },
@@ -651,14 +666,22 @@ export function makeV16FindMatch(
       // instead of a dead "no roles" — never a silent dead end. Skip the pass entirely when collab
       // already filled `limit`. The open-market `result` is also the source of the snapshotTags /
       // needsOnboarding / total signals when there are no collab jobs (pure open-market path).
+      // RESERVED OPEN-MARKET SLOT (Adam 2026-06-06): size the open-market fetch to fill the slots collab
+      // left open PLUS the reserved slot, so collab can't crowd open-market out even when it fills the cap.
+      // The final composition is done by selectDeliveredRecs (collab-first, cap, reserve) below.
       const remaining = Math.max(0, limit - collabJobs.length)
+      const openWant = Math.max(remaining, REC_OPEN_MARKET_RESERVE)
       let result = collabResult
       let openJobs: typeof collabJobs = []
-      if (remaining > 0 || !collabHit) {
+      // Run the open-market pass whenever we could deliver an open-market row — i.e. collab didn't fill
+      // the cap (remaining>0), OR there was no collab at all, OR collab filled the cap but we still want
+      // to reserve a normal-role slot (openWant>0). Skipping it only when collab fully owns the set AND
+      // no slot is reserved keeps the old cost-saving path.
+      if (remaining > 0 || !collabHit || openWant > 0) {
         result = await queryMatchingJobsV16({ userId, limit, allowBroadFallback: true }, { db })
         // Dedup the open-market set against collab ids so a collab role never repeats as open-market,
-        // then take only enough to fill the remaining slots after collab.
-        openJobs = (result.jobs ?? []).filter((j) => !collabIds.has(j.id)).slice(0, remaining)
+        // then take enough to fill the open slots + the reserved slot.
+        openJobs = (result.jobs ?? []).filter((j) => !collabIds.has(j.id)).slice(0, openWant)
       }
       // When BOTH passes ran, prefer the open-market `result` for the snapshotTags/needsOnboarding
       // metadata (it reflects the full catalog, not the collab-only funnel); fall back to collab.
@@ -686,8 +709,8 @@ export function makeV16FindMatch(
       // open and .slice() keeps that order — collab roles take the first slots, open-market fills the
       // rest up to 3. Only the COUNT is capped; the mandatory collab prescreen offer mechanics are
       // untouched (the offer is rebuilt below from the collab roles that survive this cap).
-      const DELIVERY_CAP = 3
-      const rawJobs = [...collabJobs, ...openJobs].slice(0, DELIVERY_CAP)
+      // Collab-first, capped at 3, with one slot reserved for a normal open-market role (see helper).
+      const rawJobs = selectDeliveredRecs(collabJobs, openJobs)
       // The collab roles that actually survived the cap (collab-first, so these are the leading entries
       // of rawJobs that came from the collab pass). The prescreen offer + structured `collab` payload
       // below are built from THIS set, not the full collab pass, so we never name a partner role the

@@ -25,6 +25,9 @@ import {
   collabRoleHasFit,
   isCollabOnMirror,
   deliverRecBubbles,
+  selectDeliveredRecs,
+  REC_DELIVERY_CAP,
+  REC_OPEN_MARKET_RESERVE,
 } from "./matching-tools.js"
 import type { FindMatchResult } from "../types.js"
 
@@ -177,4 +180,38 @@ test("P0#3+#4 deliverRecBubbles: collab role rides its CACHED image inline AND l
   assert.equal(sends[0]!.mediaUrl, undefined)
   assert.match(sends[2]!.text, /prescreen/i)
   assert.equal(sends[2]!.mediaUrl, undefined)
+})
+
+// ── RESERVED OPEN-MARKET SLOT (Adam 2026-06-06: "what about the normal ones?") ───────────────────────
+// selectDeliveredRecs caps the delivered set at 3, collab-first, but reserves ONE slot for a normal
+// open-market role whenever any exists — so collab can't crowd "normal" jobs out entirely. When no
+// open-market row exists, collab keeps the full cap.
+type RecRow = { id: string; kind: string }
+const C = (n: number): RecRow[] => Array.from({ length: n }, (_, i) => ({ id: `collab-${i}`, kind: "collab" }))
+const O = (n: number): RecRow[] => Array.from({ length: n }, (_, i) => ({ id: `open-${i}`, kind: "open" }))
+const kinds = (rows: RecRow[]) => rows.map((r) => r.kind).join(",")
+
+test("selectDeliveredRecs: 5 collab + open available → 2 collab + 1 open (collab no longer takes all 3)", () => {
+  const out = selectDeliveredRecs(C(5), O(3))
+  assert.equal(out.length, REC_DELIVERY_CAP, "capped at 3")
+  assert.equal(kinds(out), "collab,collab,open", "reserves exactly one open-market slot, collab-first")
+})
+
+test("selectDeliveredRecs: 3 collab + NO open → 3 collab (no empty/reserved slot wasted)", () => {
+  const out = selectDeliveredRecs(C(3), O(0))
+  assert.equal(kinds(out), "collab,collab,collab", "no open-market → collab keeps the full cap")
+})
+
+test("selectDeliveredRecs: 1 collab + 3 open → 1 collab + 2 open (collab-first, fill the rest)", () => {
+  assert.equal(kinds(selectDeliveredRecs(C(1), O(3))), "collab,open,open")
+})
+
+test("selectDeliveredRecs: 0 collab + 3 open → 3 open (pure open-market unaffected)", () => {
+  assert.equal(kinds(selectDeliveredRecs(C(0), O(5))), "open,open,open")
+})
+
+test("selectDeliveredRecs: reserve never strands a slot — 2 collab + 1 open → collab,collab,open", () => {
+  assert.equal(kinds(selectDeliveredRecs(C(2), O(2))), "collab,collab,open")
+  // sanity: the reserve constant is 1 of the cap-3
+  assert.equal(REC_OPEN_MARKET_RESERVE, 1)
 })
