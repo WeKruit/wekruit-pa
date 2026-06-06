@@ -248,7 +248,9 @@ test("#2: soft-confirm fires on the RICH-résumé variant too", async () => {
   )
   const mock: PitchComposer = { async compose() { return "PITCH" } }
   const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", mock)
-  assert.match(out![2]!, /^targeting software engineering roles — that right\? 👍 want me to pull roles/)
+  // SINGLE CLEAR ACTION (Adam 2026-06-06): the rich-résumé offer is now one unambiguous ask
+  // ("want me to pull some roles that fit you right now?") so a plain "sure" maps to find_match.
+  assert.match(out![2]!, /^targeting software engineering roles — that right\? 👍 want me to pull some roles that fit you right now\?/)
 })
 
 test("#2: soft-confirm fires on the THIN evidence-ask variant too", async () => {

@@ -554,8 +554,12 @@ export async function composePitchTurn(
       : ""
   const offer =
     roleConfirm +
+    // SINGLE CLEAR ACTION (Adam 2026-06-06): a "pull now OR tweak first?" either/or made a plain "sure"
+    // ambiguous → the agent re-asked instead of pulling. Ask ONE thing — "want me to pull roles now?" —
+    // so any yes ("sure", "ah ok sure") unambiguously means PULL → find_match. Tweaks are handled
+    // whenever the candidate raises one; we don't gate the pull behind an either/or.
     (resumeIsRich
-      ? "want me to pull roles that fit this now, or tweak/add anything on your profile first?"
+      ? "want me to pull some roles that fit you right now? 👍"
       : askForEvidence
         ? OFFER_BUBBLE_THIN
         : OFFER_BUBBLE)
