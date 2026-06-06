@@ -322,6 +322,26 @@ function hasParsedProfileOnFile(user: Record<string, unknown>): boolean {
  * read over the already-fetched pa-users doc; NO LLM, NO text→enum regex (presence checks over
  * validated closed enums + identity flags only).
  */
+/**
+ * INGESTED-BACKGROUND SIGNAL (Adam 2026-06-06): did we ingest this candidate's actual BACKGROUND —
+ * a LinkedIn bind, a parsed résumé, or an enriched experience timeline? This is the NARROWER cousin of
+ * hasAnyProfileSignal: it deliberately EXCLUDES the "answered one onboarding slot" case (a bare
+ * targetRoleFunction tag), because a user who only told us their target role but never gave a location
+ * must still be asked the missing location axis (Adam 2026-06-05 "ONLY ask for non-existing info").
+ * Used to route a RECOGNIZED candidate (LinkedIn-login → text) straight to the pitch with NO onboarding
+ * wall, while a partial-onboarding user still gets the one genuinely-missing question. Structured
+ * presence checks over the already-fetched pa-users doc — NO LLM, NO text→enum regex.
+ */
+function hasIngestedBackground(user: Record<string, unknown>): boolean {
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "")
+  if (hasParsedProfileOnFile(user)) return true
+  if (user.linkedinOauthLinked === true) return true
+  if (str(user.linkedinUrl)) return true
+  if (str(user.linkedinOauthSub)) return true
+  if (Array.isArray(user.experienceHighlights) && user.experienceHighlights.length > 0) return true
+  return false
+}
+
 function hasAnyProfileSignal(user: Record<string, unknown>): boolean {
   if (hasParsedProfileOnFile(user)) return true
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "")
@@ -622,6 +642,27 @@ export async function selectClaireMode(args: SelectModeArgs): Promise<ModeDecisi
         // cv-parsed branch above). The genuinely-NEW conversational surfaces (warm-greeting copy at
         // :583, the offer-first kickoff copy, the PART-2 pitch engine, enriched pitch material) stay
         // canary-gated untouched — only the question-SUPPRESSION crosses to universal.
+        // RECOGNIZED CANDIDATE (ingested background) → NEVER the onboarding question wall (Adam
+        // 2026-06-06: "login on LinkedIn from website and directly go to text — directly give them a
+        // pitch as if we know them, no more onboarding questions"). A LinkedIn bind / parsed résumé /
+        // enriched timeline means we already hold this person's background — route to triage (the agent
+        // pitches from what we hold + offers find_match), NEVER ask target_role/location. This is the
+        // bug-class question-SUPPRESSION (re-asking someone we already know), so it is UNIVERSAL — it
+        // mirrors the tag-satisfaction skip just below, the cv-parsed pitch branch above, and the canary
+        // warm-returning branch above (which already caught canary users; this catches the NON-canary
+        // recognized user who was still dropped into the wall). hasIngestedBackground is NARROWER than
+        // hasAnyProfileSignal on purpose: a user who only answered target_role (a bare tag, no
+        // background) is NOT "recognized" and still gets the genuinely-missing location question (Adam
+        // 2026-06-05 "ONLY ask for non-existing info"). New pitch/greeting COPY stays canary-gated
+        // upstream; this only SUPPRESSES the question. NO LLM, NO text→enum regex.
+        if (hasIngestedBackground(user)) {
+          await markSharedOnboardingComplete(args.db, args.userId, now)
+          log("mode.recognized_no_onboarding_wall", { userId: args.userId })
+          // PITCH (not a bare triage): Adam 2026-06-06 chose "pitch first, ask role inside the pitch" —
+          // the pitch composer confirms/elicits the one missing canonical axis (e.g. "targeting SWE
+          // roles — that right? 👍") inline, so we get the role for matching WITHOUT an onboarding wall.
+          return { mode: "triage", postParsePitch: true, ...inFlightDecision }
+        }
         if (allAskedOnboardingSlotsSatisfiedWithTags([], userTags, statedPreferences)) {
           // NOTHING missing → onboarding is effectively done. Self-heal + route to triage (where the
           // agent pitches from data + offers find_match). No question, no wall.

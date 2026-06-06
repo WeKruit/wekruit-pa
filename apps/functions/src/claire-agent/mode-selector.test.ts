@@ -90,14 +90,17 @@ test("2026-06-05 supersede: canary returning candidate (parsed résumé on file)
   assert.equal(completed, true, "must mark onboarding complete")
 })
 
-test("2026-06-05 supersede: NON-canary with the SAME parsed-profile fixture still cold-starts the onboarding wall (unchanged)", async () => {
+test("2026-06-06 (Adam): NON-canary with a parsed-profile fixture → PITCH, NEVER the onboarding wall (recognized background; supersedes the old non-canary cold-start)", async () => {
+  // Reversed by Adam 2026-06-06: a recognized candidate (parsed résumé = ingested background) is pitched
+  // directly with no onboarding questions, NON-canary included (the question-SUPPRESSION is universal;
+  // only the warm-greeting COPY stays canary). Pre-fix this asserted the non-canary cold-start wall.
   const { db, writes } = makeDb({ latestResumeArtifactId: "candidate_upload_abc_123" })
   const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "hey" })
-  assert.equal(decision.warmReturningGreeting, undefined, "warm-returning is canary-only")
-  assert.equal(decision.mode, "onboarding")
-  assert.equal(decision.awaitingAnswer, false)
+  assert.equal(decision.warmReturningGreeting, undefined, "warm-returning COPY is canary-only")
+  assert.equal(decision.mode, "triage", "recognized background → triage/pitch, not the onboarding wall")
+  assert.equal(decision.postParsePitch, true, "pitch the recognized candidate (pitch asks role inline)")
   const bootstrapped = writes().some((w) => w.onboardingState === "pending")
-  assert.equal(bootstrapped, true, "non-canary must still hit the cold-start bootstrap")
+  assert.equal(bootstrapped, false, "must NOT bootstrap the onboarding wall for a recognized user")
 })
 
 test("WS-2 / regression-fix: canary cold with NO parsed profile gets the OFFER and does NOT bootstrap (no state poison)", async () => {
@@ -356,6 +359,34 @@ test("COLD-OPEN LOCK — the genuine parse RE-ENTRY (cvParsedTrigger) still pitc
   assert.notEqual(decision.warmReturningGreeting, true, "warm-greeting must not steal the parse re-entry pitch")
 })
 
+test("COLD-OPEN LOCK — NON-canary LinkedIn-bound (ingested background) → triage, NEVER onboarding wall (Adam 2026-06-06)", async () => {
+  // The LinkedIn-login → text pattern: a recognized candidate with ingested background must be pitched,
+  // never walled with onboarding questions — and this question-suppression is UNIVERSAL (non-canary too).
+  const { db, writes } = makeDb({
+    linkedinOauthLinked: true,
+    linkedinUrl: "https://linkedin.com/in/someone",
+    // NO canonical tags at all → pre-fix this would have asked target_role.
+  })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "Hi" })
+  assert.equal(decision.mode, "triage", "recognized (LinkedIn bind) → triage, not the onboarding wall")
+  assert.equal(decision.postParsePitch, true, "pitch the recognized user (pitch asks role inline) — Adam 2026-06-06")
+  assert.notEqual(decision.mode, "onboarding", "must NEVER ask onboarding questions of a recognized user")
+  assert.equal(isRoleQuestionDecision(decision), false, "no target_role question for a LinkedIn-bound user")
+  assert.equal(decision.warmReturningGreeting, undefined, "warm-greeting COPY stays canary-only; non-canary just suppresses the question")
+  assert.equal(writes().some((w) => w.onboardingState === "complete"), true, "self-heals onboarding so it never re-enters the wall")
+})
+
+test("COLD-OPEN LOCK — NON-canary with ONLY a target_role tag (no background) STILL asks the missing location axis (Adam 2026-06-05 preserved)", async () => {
+  // Guards the narrowness of hasIngestedBackground: a bare onboarding answer is NOT "recognized
+  // background", so the genuinely-missing axis is still asked. (This is the case the 2026-06-06 gate
+  // must NOT swallow.)
+  const { db } = makeDb({ tags: { targetRoleFunction: ["software_engineering"] } })
+  const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "Hi" })
+  assert.notEqual(decision.mode, "triage", "a role-only user is NOT recognized background → not auto-triaged")
+  assert.equal(decision.mode, "onboarding")
+  assert.equal(decision.onboardingSlot, "location_relocation", "asks the genuinely-missing location axis, not target_role")
+})
+
 test("COLD-OPEN LOCK — NON-canary with a known profile gets the GAP-AWARE cold-start (no warm-greeting copy; asks only the missing axis)", async () => {
   // 2026-06-05 (Adam "ONLY ask for non-existing info"): the gap-aware skip is UNIVERSAL (bug-class),
   // so a non-canary user with targetRoleFunction set is NO LONGER asked target_role again — they get
@@ -429,21 +460,25 @@ test("T5 — cold brand-new (nothing on file), CANARY → unchanged: offer-first
   assert.equal(bootstrapped, false, "offer-first must NOT bootstrap/poison onboarding state")
 })
 
-test("T6 — LITERAL Jasmaine: NON-canary LinkedIn-OAuth + experienceHighlights, NO canonical role/loc tags → asks target_role ONCE (genuinely missing), NOT both, no warm-greeting copy", async () => {
-  // LinkedIn-OAuth enrichment populated experienceHighlights / skills / recentRoleTitle but NOT the
-  // canonical targetRoleFunction or targetLocations. Both asked axes are genuinely absent → asking
-  // target_role ONCE is correct ("only ask for non-existing info"). The fix guarantees she is seeded
-  // the FIRST missing slot (target_role) and never the legacy both-question wall, and the canary-only
-  // warm-greeting copy is NOT shipped to her.
-  const { db } = makeDb({
+test("T6 — Jasmaine REVISED (Adam 2026-06-06): NON-canary LinkedIn-OAuth + experienceHighlights, NO canonical role/loc tags → PITCH (ask role inside the pitch), NEVER the onboarding wall", async () => {
+  // SUPERSEDES the 2026-06-05 "ask target_role once" behavior. Adam 2026-06-06: a LinkedIn-login user is
+  // RECOGNIZED (we ingested their background) — pitch them directly, "no more onboarding questions."
+  // Adam's chosen resolution for the missing canonical role is "pitch first, ask role INSIDE the pitch"
+  // (compose-pitch confirms/elicits target_role inline: "targeting SWE roles — that right? 👍"), so we
+  // never wall them with a separate onboarding question. hasIngestedBackground (linkedinOauthLinked +
+  // parsed skills) is true → triage + postParsePitch. Universal (non-canary too); the warm-greeting COPY
+  // remains canary-only and is NOT shipped here.
+  const { db, writes } = makeDb({
     linkedinOauthLinked: true,
     experienceHighlights: [{ title: "Software Engineer Intern", company: "Microsoft" }],
     tags: { skills: ["python", "rag"], recentRoleTitle: "SWE Intern" },
   })
   const decision = await selectClaireMode({ db, userId: NONCANARY_UID, inboundText: "Hello, WeKruit! <uid>" })
-  assert.equal(decision.mode, "onboarding", "both canonical asked axes absent → a real gap remains")
-  assert.equal(decision.onboardingSlot, "target_role", "seeds the first genuinely-missing asked slot")
+  assert.equal(decision.mode, "triage", "recognized LinkedIn background → pitch in triage, NOT the onboarding wall")
+  assert.equal(decision.postParsePitch, true, "pitch the recognized candidate (the pitch asks role inline)")
+  assert.notEqual(decision.mode, "onboarding", "must NEVER ask a separate onboarding question of a recognized user")
   assert.equal(decision.warmReturningGreeting, undefined, "warm-greeting copy is canary-only, not shipped here")
+  assert.equal(writes().some((w) => w.onboardingState === "complete"), true, "self-heals onboarding so it never re-enters the wall")
 })
 
 test("T7 — cold full profile, CANARY → warm-greeting path still wins (new copy stays gated; universal skip doesn't steal it)", async () => {
