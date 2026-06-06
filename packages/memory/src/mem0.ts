@@ -169,6 +169,22 @@ async function getClient(cfg: Mem0Config): Promise<MemoryType> {
   const embedBase = n.baseUrl ?? DEFAULT_LLM_BASE
   const embedModel = n.embedModel ?? DEFAULT_EMBED_MODEL
   const embedDims = n.embeddingDims ?? DEFAULT_EMBED_DIMS
+  // ROOT CAUSE of the 2026-06-03→ mem0 outage (every search+add 400, memory silently dead for ALL
+  // users): mem0ai's OpenAIEmbedder sends the OpenAI-only `dimensions` request param whenever
+  // `embeddingDims` is set. SiliconFlow's BAAI/bge-m3 REJECTS that param with HTTP 400
+  // ({"code":20015,"message":"The parameter is invalid"}) — verified by live probe (bge-m3 +dimensions
+  // → 400; bge-m3 without → 200). Only OpenAI's text-embedding-3* family supports `dimensions`; for any
+  // other embedder OMIT embeddingDims so no `dimensions` is sent. bge-m3 returns its native 1024-d
+  // vector, which still matches the Qdrant collection (sized below via embeddingModelDims).
+  const embedderSupportsDimensions = embedModel.startsWith("text-embedding-3")
+  const embedderConfig: Record<string, unknown> = {
+    apiKey: n.apiKey,
+    baseURL: embedBase,
+    model: embedModel,
+  }
+  if (embedderSupportsDimensions) {
+    embedderConfig.embeddingDims = embedDims
+  }
   const client = new Ctor({
     llm: {
       provider: "openai",
@@ -180,12 +196,7 @@ async function getClient(cfg: Mem0Config): Promise<MemoryType> {
     },
     embedder: {
       provider: "openai",
-      config: {
-        apiKey: n.apiKey,
-        baseURL: embedBase,
-        model: embedModel,
-        embeddingDims: embedDims,
-      },
+      config: embedderConfig,
     },
     vectorStore: {
       provider: "qdrant",
