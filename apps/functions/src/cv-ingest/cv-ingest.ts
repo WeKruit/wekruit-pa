@@ -1860,7 +1860,19 @@ export async function ingestCv(
     }
   }
   const dbHandle: Firestore = db
-  const log = deps?.log ?? (() => {})
+  // OBSERVABILITY (Adam 2026-06-06 "why minutes?"): the cutover (iMessage) path calls ingestCv WITHOUT a
+  // logger, so a no-op default silently dropped EVERY pa.cv_ingest.timing log → the parse was a black box
+  // and the latency stayed un-diagnosable. Default to console.log (→ Cloud Logging) so the per-stage
+  // breakdown (parse_pdf / llm_parse+usedTier / embedding / merge_determine) ALWAYS emits, every caller.
+  const log =
+    deps?.log ??
+    ((event: string, payload?: Record<string, unknown>) => {
+      try {
+        console.log(`[cv-ingest] ${event}`, JSON.stringify(payload ?? {}))
+      } catch {
+        console.log(`[cv-ingest] ${event}`)
+      }
+    })
   const nowIso = deps?.nowIso ?? (() => new Date().toISOString())
   const fetchPdf = deps?.fetchPdf ?? defaultFetchPdf
   const parsePdf = deps?.parsePdf ?? defaultParsePdf
@@ -2865,9 +2877,12 @@ export async function ingestCv(
       })
     }
 
-    // Stream-E side effects (mem0 fact write + qaBank → mem0), NON-critical for the pitch (which already
-    // fired above). Run + await them so the instance stays alive to finish them, but they NO LONGER gate
-    // the user-facing pitch. All NEVER throw.
+    // Stream-E side effects (mem0 fact write + qaBank → mem0), NON-critical for the pitch (already fired
+    // above). Adam 2026-06-06: "mem0 should ALWAYS be a non-blocking side effect." Now that mem0 works
+    // again, the LLM-extract + embed + Qdrant per fact is real time (~tens of seconds, many ops) — so it
+    // must NOT be awaited at all: fire-and-forget. ingest_done then fires right after the pitch handoff,
+    // not after mem0. The floating promise still completes on the same warm instance (same lifecycle that
+    // already lets the fire-and-forget ingestCv itself finish). allSettled never rejects; .catch is belt-only.
     const branches: Array<Promise<unknown>> = [
       runMem0Write({
         userId: userId,
@@ -2899,7 +2914,7 @@ export async function ingestCv(
         })
       )
     }
-    await Promise.allSettled(branches)
+    void Promise.allSettled(branches).catch(() => {})
   } else {
     log("pa.cv_followup.skipped", { reason: "no_user_record", userId: userId })
   }
