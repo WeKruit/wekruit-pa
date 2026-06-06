@@ -1114,13 +1114,6 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
         // we return delivered:true and jobs:[] so it has nothing to re-list. Only when NOT delivered
         // (no match / error) does the agent narrate (the no-match clarifier).
         const delivery = res.ok ? await deliverRecBubbles(ctx, res) : { delivered: false, collabCount: 0 }
-        // HARD SUPPRESS the agent's trailing text when the TOOL already delivered the recs. The
-        // prompt's "delivered:true → say nothing" is only advisory; the LLM reliably talks over the
-        // recs with hallucinated cards (`@ [company]`, no real company data) and a fabricated
-        // "fast-track prescreen offer" built from the candidate's own résumé companies. Marking the
-        // turn handled makes the post-run deliverBubblesEx drop messages[] entirely — deterministic,
-        // not a plea. (No-op on the rare path where markDeliveredViaTool isn't wired, e.g. evals.)
-        if (delivery.delivered) ctx.markDeliveredViaTool?.()
         return {
           ok: res.ok,
           recCount: res.recCount,

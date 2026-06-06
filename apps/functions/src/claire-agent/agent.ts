@@ -216,6 +216,64 @@ export interface BuildClaireAgentOptions {
   locationSalaryAsk?: boolean
 }
 
+// The agent's terminal output when find_match already delivered the recs: an EMPTY bubble array
+// (ClaireReplySchema = { messages: string[] }, no min). Parsed by agent.processFinalOutput →
+// ClaireReplySchema.parse → { messages: [] } → extractBubbles → nothing for deliverBubbles to send.
+const FIND_MATCH_DELIVERED_FINAL_OUTPUT = JSON.stringify({ messages: [] })
+
+/**
+ * SDK-native turn finalization (the Agents SDK `toolUseBehavior` ToolToFinalOutputFunction).
+ *
+ * find_match SENDS the role bubbles + the collab prescreen offer ITSELF (deterministic delivery the
+ * LLM kept dropping), then returns `delivered:true`. At that point the recs have ALREADY reached the
+ * candidate, so the turn is COMPLETE — we tell the SDK "this is the final output" and the agent loop
+ * STOPS WITHOUT RUNNING THE LLM AGAIN (turnResolution.checkForFinalOutputFromTools → next_step_final_
+ * output). That removes the generation step in which the model was talking OVER the recs — the live
+ * `Senior Software Engineer @ [company] — … (US)` cards (no company data to fill the placeholder) and
+ * the fabricated `WeKruit fast-track prescreen offer: <résumé company> (Software Engineering)` block
+ * built from the candidate's OWN experience. This is the SDK's own tools-to-final-output mechanism,
+ * NOT a deterministic clamp bolted onto the delivery layer.
+ *
+ * When find_match did NOT deliver (no match / matcher error → `delivered:false`), or no find_match ran
+ * this turn, we return NOT-final so the LLM runs again and composes the grounded no-match clarifier —
+ * exactly the behavior the find_match tool description promises ("Only when delivered:false do you
+ * speak"). Now ENFORCED by the runtime instead of pleaded for in the prompt.
+ */
+type ToolUseResult = readonly {
+  readonly type?: string
+  readonly tool?: { readonly name?: string }
+  readonly output?: unknown
+}[]
+export function claireToolUseBehavior(
+  _ctx: unknown,
+  toolResults: ToolUseResult,
+):
+  | { isFinalOutput: true; isInterrupted: undefined; finalOutput: string }
+  | { isFinalOutput: false; isInterrupted: undefined } {
+  for (const r of toolResults ?? []) {
+    if (r?.type !== "function_output" || r?.tool?.name !== "find_match") continue
+    // r.output is the tool's return value — an object at runtime, but be defensive vs a stringified
+    // form (some adapters JSON-encode the output before handing it to the behavior fn).
+    let out: { delivered?: boolean } | null = null
+    if (r.output && typeof r.output === "object") out = r.output as { delivered?: boolean }
+    else if (typeof r.output === "string") {
+      try {
+        out = JSON.parse(r.output) as { delivered?: boolean }
+      } catch {
+        out = null
+      }
+    }
+    if (out?.delivered === true) {
+      return {
+        isFinalOutput: true,
+        isInterrupted: undefined,
+        finalOutput: FIND_MATCH_DELIVERED_FINAL_OUTPUT,
+      }
+    }
+  }
+  return { isFinalOutput: false, isInterrupted: undefined }
+}
+
 /** Construct the single Claire agent (tools + guardrails + persona). */
 export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentOptions) {
   configureClaireSdk()
@@ -259,6 +317,10 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
     }),
     // Multi-bubble reply contract — finalOutput is { messages: string[] }, delivered one send each.
     outputType: ClaireReplySchema,
+    // SDK-native: when find_match has already delivered the recs (delivered:true), finalize the turn
+    // from the tool result so the LLM does NOT run again and hallucinate cards over the recs. On
+    // no-match (delivered:false) the LLM runs again and narrates. See claireToolUseBehavior.
+    toolUseBehavior: claireToolUseBehavior,
     inputGuardrails: guardrails.input,
     outputGuardrails: guardrails.output,
   }
@@ -284,7 +346,6 @@ export function buildClaireAgent(ctx: ClaireToolContext, opts: BuildClaireAgentO
 function trackTransport(inner: ClaireTransport): {
   transport: ClaireTransport
   handledViaTool: () => boolean
-  markHandledViaTool: () => void
   sentTextCount: () => number
 } {
   let viaTool = false
@@ -306,17 +367,7 @@ function trackTransport(inner: ClaireTransport): {
       return inner.noReply(r)
     },
   }
-  return {
-    transport,
-    handledViaTool: () => viaTool,
-    // Let a delivery TOOL (find_match) declare the turn already handled so the post-run
-    // deliverBubblesEx drops the agent's trailing `messages[]` (the rec-hallucination fix).
-    // Same effect tapback/noReply have, but available to find_match which delivers via sendText.
-    markHandledViaTool: () => {
-      viaTool = true
-    },
-    sentTextCount: () => sentText,
-  }
+  return { transport, handledViaTool: () => viaTool, sentTextCount: () => sentText }
 }
 
 /** Read canonical pa-users.tags → a one-line global context so "what's saved" reads tags (RC3).
@@ -739,10 +790,6 @@ export async function runClaireTurn(
     log,
     nowIso: deps.nowIso ?? (() => new Date().toISOString()),
     findMatch: deps.findMatch,
-    // find_match calls this on delivered:true so its self-sent role bubbles + prescreen offer
-    // mark the turn handled → the post-run deliverBubblesEx drops the agent's own messages[]
-    // (kills the "agent talks over the recs" hallucination: `@ [company]` cards, fake offers).
-    markDeliveredViaTool: tracked.markHandledViaTool,
   }
   // Inject the per-turn process store seeded from durable state (mode-selector) so the onboarding/
   // prescreen FSM tools enforce order + write through to the canonical interface.

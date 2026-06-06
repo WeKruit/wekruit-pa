@@ -120,16 +120,6 @@ export interface ClaireToolContext {
     requestedCount?: number | null
   }) => Promise<FindMatchResult>
   /**
-   * Mark THIS turn as already delivered by a tool, so the post-run bubble delivery
-   * (deliverBubblesEx) short-circuits and the agent's own `messages[]` are dropped.
-   * find_match calls this when it has sent the role bubbles + collab prescreen offer
-   * itself (delivered:true) — without it the LLM's "say nothing" is only a prompt plea,
-   * and the model reliably talks over the recs (hallucinated `@ [company]` cards + fake
-   * "fast-track prescreen offer" lines built from the candidate's own résumé companies).
-   * Wired by runClaireTurn to the tracked transport's handled-via-tool flag.
-   */
-  markDeliveredViaTool?: () => void
-  /**
    * Optional seam for the by-name prescreen tool (begin_collab_prescreen). Production leaves this
    * undefined → the tool calls the REAL legacy runPreScreenForUser (the SAME session-start the
    * copy-paste WeKruit_<jobId>_<userId>_Job trigger uses). Evals inject a stub so the resolver +

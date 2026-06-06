@@ -11,6 +11,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { buildMatchingTools } from "./matching-tools.js"
+import { claireToolUseBehavior } from "../agent.js"
 import type { ClaireToolContext, FindMatchResult } from "../types.js"
 
 type SentRow = { text: string; seq?: number; paced?: boolean }
@@ -19,11 +20,9 @@ function recordingCtx(findMatch: ClaireToolContext["findMatch"]): {
   ctx: ClaireToolContext
   sent: string[]
   rows: SentRow[]
-  marks: () => number
 } {
   const sent: string[] = []
   const rows: SentRow[] = []
-  let markCount = 0
   const ctx = {
     db: {} as never,
     userId: "u1",
@@ -46,13 +45,8 @@ function recordingCtx(findMatch: ClaireToolContext["findMatch"]): {
     log: () => {},
     nowIso: () => "2026-06-01T00:00:00.000Z",
     findMatch,
-    // mirror runClaireTurn: the tool flags the turn handled so the post-run deliverBubblesEx drops
-    // the agent's own messages[] (the rec-hallucination suppression).
-    markDeliveredViaTool: () => {
-      markCount++
-    },
   } as unknown as ClaireToolContext
-  return { ctx, sent, rows, marks: () => markCount }
+  return { ctx, sent, rows }
 }
 
 function findMatchTool(ctx: ClaireToolContext) {
@@ -163,33 +157,49 @@ test("matcher error (ok:false): nothing sent, delivered:false", async () => {
   assert.equal(sent.length, 0)
 })
 
-// ── REC-HALLUCINATION SUPPRESSION (Adam 2026-06-06) ──────────────────────────────────────────────
-// Live bug: after find_match delivered the real recs, the agent talked OVER them — emitting generic
-// `Senior Software Engineer @ [company] — … (US)` cards (no company data to fill) plus a fabricated
-// `WeKruit fast-track prescreen offer: <résumé company> (Software Engineering)` block built from the
-// candidate's OWN experience. Those bubbles were the agent's final messages[], which deliverBubblesEx
-// sends UNLESS the turn is marked handled-via-tool. So on delivered:true the tool MUST call
-// markDeliveredViaTool; on delivered:false (no-match/error) it must NOT (the agent legitimately speaks).
-test("delivered:true → tool marks the turn handled (so post-run drops the agent's hallucinated bubbles)", async () => {
-  const res: FindMatchResult = {
-    ok: true,
-    recCount: 2,
-    jobs: [COLLAB_LINE_1, OPEN_LINE],
-    reason: null,
-    collab: [
-      { jobId: "metavoice", title: "Software Engineer (Data & Evals)", company: "MetaVoice", prescreenReady: true },
-    ],
-  }
-  const { ctx, marks } = recordingCtx(async () => res)
-  const out = await run(ctx)
-  assert.equal(out.delivered, true)
-  assert.equal(marks(), 1, "delivered:true MUST mark the turn handled-via-tool exactly once")
+// ── REC-HALLUCINATION: SDK-NATIVE TURN FINALIZATION (Adam 2026-06-06) ─────────────────────────────
+// Live bug: after find_match delivered the real recs, the agent ran a generation step and talked OVER
+// them — emitting generic `Senior Software Engineer @ [company] — … (US)` cards (no company data to
+// fill the placeholder) plus a fabricated `WeKruit fast-track prescreen offer: <résumé company>
+// (Software Engineering)` block built from the candidate's OWN experience. The fix is the @openai/
+// agents `toolUseBehavior` ToolToFinalOutputFunction: on a find_match result with delivered:true it
+// returns isFinalOutput:true → the SDK STOPS the agent loop WITHOUT running the LLM again (no
+// generation step = no hallucination). On delivered:false it returns isFinalOutput:false → the LLM
+// runs again and narrates the no-match clarifier. The finalOutput string is the agent's own
+// ClaireReplySchema shape ({messages:[]}) so processFinalOutput parses it to zero bubbles.
+test("toolUseBehavior: find_match delivered:true → isFinalOutput:true with empty-messages output (no LLM re-run)", () => {
+  const outcome = claireToolUseBehavior({}, [
+    { type: "function_output", tool: { name: "find_match" }, output: { ok: true, delivered: true, jobs: [] } },
+  ])
+  assert.equal(outcome.isFinalOutput, true)
+  assert.equal(
+    (outcome as { finalOutput: string }).finalOutput,
+    JSON.stringify({ messages: [] }),
+    "must finalize with the agent's terminal output ({messages:[]}) so no bubbles are composed",
+  )
 })
 
-test("delivered:false (no match) → tool does NOT mark handled (agent must still narrate)", async () => {
-  const res: FindMatchResult = { ok: true, recCount: 0, jobs: [], reason: "no fresh roles fit", collab: [] }
-  const { ctx, marks } = recordingCtx(async () => res)
-  const out = await run(ctx)
-  assert.equal(out.delivered, false)
-  assert.equal(marks(), 0, "no-match must NOT suppress the agent — it speaks the clarifier")
+test("toolUseBehavior: find_match delivered:true passed as a JSON STRING output is still finalized", () => {
+  const outcome = claireToolUseBehavior({}, [
+    { type: "function_output", tool: { name: "find_match" }, output: JSON.stringify({ delivered: true }) },
+  ])
+  assert.equal(outcome.isFinalOutput, true)
+})
+
+test("toolUseBehavior: find_match delivered:false (no match) → NOT final → LLM runs again to narrate", () => {
+  const outcome = claireToolUseBehavior({}, [
+    { type: "function_output", tool: { name: "find_match" }, output: { ok: true, delivered: false, jobs: [] } },
+  ])
+  assert.equal(outcome.isFinalOutput, false)
+})
+
+test("toolUseBehavior: a non-find_match tool result never finalizes (agent keeps composing)", () => {
+  const outcome = claireToolUseBehavior({}, [
+    { type: "function_output", tool: { name: "set_matching_preferences" }, output: { ok: true } },
+  ])
+  assert.equal(outcome.isFinalOutput, false)
+})
+
+test("toolUseBehavior: no tool results this turn → NOT final", () => {
+  assert.equal(claireToolUseBehavior({}, []).isFinalOutput, false)
 })
