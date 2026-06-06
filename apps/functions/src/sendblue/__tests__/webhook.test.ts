@@ -653,6 +653,53 @@ describe("handleSendblueWebhook", () => {
     )
   })
 
+  it("Test 8g3 (double-parse fix, 2026-06-05): THIN user → webhook Stream-D ingest SKIPPED (cutover Path B is the sole producer)", async () => {
+    // The live ~3-min repitch (8fEw) was caused by TWO full parses racing: this webhook Path-A
+    // "pre-warm" (which writes its row only at the END of a ~70s parse, so it never actually warms)
+    // AND the cutover Path-B ingest. For a THIN user, cutover Path B is already the single parse +
+    // pitch producer, so Path A is pure redundant contention → skip it. Legacy (thin OFF) keeps Path A.
+    const { db } = makeFakeDb()
+    await db.collection("pa-feature-flags").doc("paThinClaireEnabled").set({
+      key: "paThinClaireEnabled", value: true, type: "bool", scope: "perUser", allowlist: [], blocklist: [],
+    })
+    const pdfUrl = "https://storage.googleapis.com/inbound-file-store/resume.pdf"
+    const body = JSON.stringify({ ...basePayload(), content: "", media_url: pdfUrl })
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    let ingestCvCount = 0
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => CANARY_UID,
+      ingestCv: async () => { ingestCvCount++; return { ok: true as const, resumeId: "r", userId: CANARY_UID } },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(ingestCvCount, 0, "thin user → webhook Path A ingest is skipped (no double-parse; cutover Path B owns it)")
+  })
+
+  it("Test 8g4 (double-parse fix): LEGACY user (thin OFF) → webhook Stream-D ingest STILL runs (sole ingest there)", async () => {
+    const { db } = makeFakeDb() // no thin flag seeded → isThinClaireEnabled false
+    const pdfUrl = "https://storage.googleapis.com/inbound-file-store/resume.pdf"
+    const body = JSON.stringify({ ...basePayload(), content: "", media_url: pdfUrl })
+    const req = makeReq({ body, signature: SECRET })
+    const res = makeRes()
+
+    let ingestCvCount = 0
+    await handleSendblueWebhook(req, res, {
+      db,
+      secret: SECRET,
+      lookupUserByPhone: async () => "legacy_user",
+      ingestCv: async () => { ingestCvCount++; return { ok: true as const, resumeId: "r", userId: "legacy_user" } },
+    })
+    await new Promise((r) => setTimeout(r, 20))
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(ingestCvCount, 1, "legacy user → webhook Path A is the only résumé ingest, must still run")
+  })
+
   it("Test 8h (R3 audio): non-canary voice note → audio path skipped, media path unchanged", async () => {
     const { db, inbound } = makeFakeDb()
     const audioUrl = "https://storage.googleapis.com/inbound-file-store/voice.m4a"

@@ -32,6 +32,7 @@ import { PA_COLLECTIONS } from "@pa/core-types"
 import { verifySendblueSignature, extractSendblueSignatureHeader } from "./hmac.js"
 // Stream D — CV ingestion side-effect (fire-and-forget) on attachment receipt.
 import { ingestCv as defaultIngestCv, type IngestCvResult } from "../cv-ingest/cv-ingest.js"
+import { isThinClaireEnabled } from "../claire-agent/flags.js"
 import {
   isInboundReceiveEvent,
   normalizeSendblueInbound,
@@ -1469,6 +1470,23 @@ export async function handleSendblueWebhook(
           if (!userId) {
             log("[sendblue][cv-ingest] skipped — no userId for phone", { phone: normalized.fromNumber })
             return { ok: false, reason: "no_user" } as IngestCvResult
+          }
+          // DOUBLE-PARSE FIX (Adam 2026-06-05): for a THIN user the cutover Path-B ingest
+          // (claire-agent/cutover.ts:415, followupDeliveryMode:"runtime") is ALREADY the single
+          // parse + pitch producer for this résumé. This Path-A "pre-warm" parse does NOT actually
+          // pre-warm — it writes its parsedCandidateResumes row only at the END of its ~70s parse, so
+          // cutover's sha256 lookup misses it and BOTH do a full parse, racing on the OpenAI key →
+          // ~3-min repitch (live 8fEw 2026-06-05). Skip Path A entirely when thin owns the turn;
+          // cutover is the sole ingest → one parse, no contention. Legacy (thin OFF) keeps Path A —
+          // there cutover defers to legacy, so the webhook is the only résumé ingest. Fail-open: a
+          // flag-read error falls through to Path A (the résumé is never dropped).
+          try {
+            if (await isThinClaireEnabled(deps.db, userId)) {
+              log("[sendblue][cv-ingest] skipped — thin owns the ingest (cutover Path B is the single producer)", { userId })
+              return { ok: false, reason: "thin_owns_ingest" } as IngestCvResult
+            }
+          } catch {
+            /* flag read failed → fall through to Path A so the résumé is still parsed */
           }
           // BUG 2 FIX (Adam 2026-06-02): the SAME résumé inbound also reaches cutover (Path B,
           // claire-agent/cutover.ts) via the broker doc's rawMeta.mediaUrl — and that ingest fires
