@@ -162,6 +162,23 @@ export async function maybeRunThinClaire(
     cvParsedReentry && typeof handoffContext.candidateProfileSummary === "string"
       ? handoffContext.candidateProfileSummary.trim()
       : ""
+  // OUTBOUND IDEMPOTENCY SCOPE — silent-drop regression fix (2026-06-07).
+  // The resume_parse_completed re-entry eventId is DETERMINISTIC: sha256 over
+  // `cv-parsed:<user>:<session>:<résumé-sha>` (cv-ingest.ts) → the SAME résumé in the SAME session
+  // re-fires under the SAME eventId on a later day. Runtime event docs are EPHEMERAL (deleted after
+  // processing, so they legitimately re-fire), but pa-outbound rows are DURABLE. The pitch turn's
+  // confirmation + offer bubbles are TEMPLATED (byte-identical across runs), so their outbound key
+  // `claire-reply-<eventId>:<bodyHash>` collided with a PRIOR day's `sent` row → enqueueOutbound saw
+  // ALREADY_EXISTS → SILENTLY DROPPED them (only the LLM-composed pitch body, which varies, survived —
+  // the live "pitch sent, no closer" bug on +14243201960). Fold the per-PARSE resumeId (fresh per parse
+  // — cv-ingest writes a new parsedCandidateResumes doc each run) into the idempotency scope so a
+  // genuinely-new pitch turn never collides with a stale ledger row, while a true within-turn retry
+  // (same resumeId) still dedups. Empty resumeId → fall back to eventId (no behaviour change).
+  const postParseResumeId =
+    cvParsedReentry && typeof handoffContext.resumeId === "string"
+      ? handoffContext.resumeId.trim()
+      : ""
+  const pitchTurnScope = postParseResumeId ? `${eventId}:cv:${postParseResumeId}` : eventId
   if (rawMeta.runtimeEvent === true && !cvParsedReentry) {
     log("thin_claire.defer_runtime_event", {
       eventId,
@@ -332,7 +349,7 @@ export async function maybeRunThinClaire(
           inboundMessageHandle,
           userId,
           sessionId,
-          inboundEventId: eventId,
+          inboundEventId: pitchTurnScope,
           log,
           ...(deps.dryRun ? { dryRun: true } : {}),
         })
@@ -371,7 +388,7 @@ export async function maybeRunThinClaire(
           inboundMessageHandle,
           userId,
           sessionId,
-          inboundEventId: eventId,
+          inboundEventId: pitchTurnScope,
           log,
           ...(deps.dryRun ? { dryRun: true } : {}),
         })

@@ -10,8 +10,12 @@ import {
   composePitchTurn,
   defaultPitchComposer,
   isThinEvidence,
+  isValidComposedCloser,
+  isValidComposedConfirmation,
   pickBestResume,
   type PitchComposer,
+  type TurnFramingComposer,
+  type TurnFramingContext,
 } from "./compose-pitch.js"
 
 /**
@@ -494,4 +498,79 @@ test("pickBestResume: a workHistory-bullets PDF beats a description-LESS Coresig
   }
   const best = pickBestResume([coresignal, pdf])
   assert.ok(Array.isArray((best as { workHistory?: unknown[] }).workHistory), "the bullets-carrying PDF is picked, not the newer description-less Coresignal row")
+})
+
+// ─── Fix B (Adam 2026-06-07: "the main thing is to avoid the agent generating same texts again and
+// again"). The confirmation + closer are now MODEL-COMPOSED (varied) with a SAFETY FALLBACK to the locked
+// single-clear-pull-ask template. ───
+
+test("framing: composePitchTurn uses the model-composed {confirmation, closer} when valid", async () => {
+  const { db } = makeStubDb({
+    displayName: "Adam Yang",
+    evidenceAskedAt: "2026-06-03T00:00:00Z", // normal path (NOT the thin-evidence ask)
+    tags: { recentRoleTitle: "Software Engineer", recentCompany: "Acme", targetRoleFunction: ["software_engineering"] },
+    experienceHighlights: [{ title: "Software Engineer", company: "Acme" }],
+  })
+  const pitch: PitchComposer = { async compose() { return "PITCH" } }
+  let sawRoleLabel: string | null | undefined
+  const framing: TurnFramingComposer = {
+    async composeFraming(ctx: TurnFramingContext) {
+      sawRoleLabel = ctx.roleLabel
+      return {
+        confirmation: "ok, pulled your acme background 🙌",
+        closer: "you're after software roles — want me to go find some fits right now?",
+      }
+    },
+  }
+  const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", pitch, framing)
+  assert.equal(out!.length, 3)
+  assert.equal(out![0], "ok, pulled your acme background 🙌", "composed confirmation is used")
+  assert.equal(out![1], "PITCH", "pitch body unchanged")
+  assert.equal(out![2], "you're after software roles — want me to go find some fits right now?", "composed closer is used")
+  assert.equal(sawRoleLabel, "software engineering", "framing received the humanized role label")
+})
+
+test("framing SAFETY FALLBACK: keeps the locked template when the composer misses (null)", async () => {
+  const { db } = makeStubDb({
+    displayName: "Adam Yang",
+    evidenceAskedAt: "2026-06-03T00:00:00Z",
+    tags: { recentRoleTitle: "Software Engineer", recentCompany: "Acme", targetRoleFunction: ["software_engineering"] },
+    experienceHighlights: [{ title: "Software Engineer", company: "Acme" }],
+  })
+  const pitch: PitchComposer = { async compose() { return "PITCH" } }
+  const framing: TurnFramingComposer = { async composeFraming() { return null } }
+  const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", pitch, framing)
+  assert.match(out![2]!, /^targeting software engineering roles — that right\? 👍 /, "reverts to the locked single-ask template")
+})
+
+test("framing is NOT used for the thin-evidence ask (the intentional either/or share-or-pull copy stays)", async () => {
+  const { db } = makeStubDb({
+    displayName: "Adam Yang",
+    tags: { recentRoleTitle: "Software Engineer", recentCompany: "Acme" }, // thin + not-yet-asked → askForEvidence
+    experienceHighlights: [{ title: "Software Engineer", company: "Acme" }],
+  })
+  const pitch: PitchComposer = { async compose() { return "PITCH" } }
+  let called = false
+  const framing: TurnFramingComposer = {
+    async composeFraming() { called = true; return { confirmation: "x", closer: "want me to pull roles now?" } },
+  }
+  const out = await composePitchTurn(db, "u1", "2026-06-04T00:00:00Z", pitch, framing)
+  assert.equal(called, false, "framing must NOT run on the thin-evidence either/or ask")
+  assert.match(out![2]!, /i already know about you/, "thin-evidence copy preserved")
+})
+
+test("isValidComposedCloser: accepts a single clear pull-ask, rejects either/or + missing ask", () => {
+  assert.equal(isValidComposedCloser("want me to go find some roles for you right now?"), true)
+  assert.equal(isValidComposedCloser("you're after backend roles — should i pull a few matches now?"), true)
+  // either/or makes a bare "sure" ambiguous → rejected (the Adam lock)
+  assert.equal(isValidComposedCloser("want me to pull roles now or tweak your profile first?"), false)
+  // no clear ask / no trailing "?" → rejected
+  assert.equal(isValidComposedCloser("sounds great, talk soon"), false)
+  assert.equal(isValidComposedCloser("want me to pull roles now"), false)
+})
+
+test("isValidComposedConfirmation: rejects a competing question and overlong text", () => {
+  assert.equal(isValidComposedConfirmation("ok, just read your résumé 🙌"), true)
+  assert.equal(isValidComposedConfirmation("did you want me to read it?"), false) // a question belongs in the closer
+  assert.equal(isValidComposedConfirmation("x".repeat(200)), false)
 })

@@ -367,6 +367,114 @@ const OFFER_BUBBLE_THIN =
   "i already know about you — share more (a few words, a voice note, or your résumé) so i match you " +
   "better, or i can pull matches now if you want."
 
+// ── MODEL-COMPOSED TURN FRAMING (Adam 2026-06-07) ───────────────────────────────────────────────────
+// "the main thing is to avoid the agent generating same texts again and again." The pitch BODY is
+// LLM-composed (varies) but the confirmation + closer were DETERMINISTIC templates → byte-identical every
+// pitch (and, under a reused re-entry eventId, collided with a prior day's durable outbound row and got
+// dropped — see cutover.ts pitchTurnScope). So compose a VARIED {confirmation, closer} on the same
+// gpt-5.4-mini tier. The closer is Adam-LOCKED to ONE clear pull-ask ("a bare 'sure' = pull"), so a
+// SAFETY FALLBACK validates every generation and reverts to the deterministic template on any miss —
+// variety never costs the contract.
+
+export type TurnFramingContext = {
+  name: string | null
+  recentCompany: string | null
+  /** Humanized target role(s), e.g. "software engineering" — or null when no role is derived yet. */
+  roleLabel: string | null
+  /** A rich résumé just sharpened the pitch (vs a LinkedIn-only profile) — shapes the confirmation. */
+  resumeIsRich: boolean
+}
+
+export interface TurnFramingComposer {
+  /** Compose a varied {confirmation, closer}, or null on ANY failure (fail-open → caller uses templates). */
+  composeFraming(ctx: TurnFramingContext): Promise<{ confirmation: string; closer: string } | null>
+}
+
+/**
+ * Validate a model-composed CLOSER preserves the Adam-locked single clear pull-ask (so a bare "sure"
+ * unambiguously means PULL). This is a COPY-FORMAT guardrail on Claire's own generated text — NOT the
+ * text→enum tagging path — so a string/shape check here does not violate the no-regex-in-tagging rule.
+ */
+export function isValidComposedCloser(closer: string): boolean {
+  const s = closer.trim().toLowerCase()
+  if (!s || s.length > 200) return false
+  if (!s.endsWith("?")) return false
+  const hasPullIntent = /\b(pull|find|line\s*up|round\s*up|grab|surface|match|get\s+you|go\s+get)\b/.test(s)
+  const hasTarget = /\b(roles?|matches|fits?|openings?|jobs?|gigs?|positions?)\b/.test(s)
+  if (!hasPullIntent || !hasTarget) return false
+  // Reject an either/or that makes a bare "sure" ambiguous (the lock): "...pull now OR tweak first?".
+  if (/\bor\b[^?]*\b(tweak|change|edit|update|adjust|first|wait|hold|add)\b/.test(s)) return false
+  return true
+}
+
+/** Validate a model-composed CONFIRMATION is a short acknowledgment, not a competing question. */
+export function isValidComposedConfirmation(confirmation: string): boolean {
+  const s = confirmation.trim()
+  if (!s || s.length > 140) return false
+  if (s.includes("?")) return false // the single ask lives in the closer, not here
+  return true
+}
+
+const FRAMING_SYSTEM = [
+  "You are Claire, a warm, sharp recruiter texting a candidate on iMessage right after pitching them.",
+  "Write TWO short SMS-native lines (lowercase, casual, friendly — NOT corporate; vary the wording each time; no markdown, no preamble).",
+  "1) confirmation: a brief STATEMENT acknowledging where you got their info — if resumeIsRich is true, that you just read their résumé and folded the technical detail into their pitch; otherwise that you pulled their experience from LinkedIn (mention recentCompany if given). It is an acknowledgment, NOT a question. <= 100 chars. At most ONE emoji.",
+  "2) closer: if roleLabel is given, softly confirm you're targeting that for them, then end with ONE clear ask to go PULL/FIND roles for them RIGHT NOW. It MUST be a single clear ask so that a bare 'sure' means GO. NEVER offer an either/or (do NOT say 'pull now or tweak first', never offer to wait/edit before pulling). End with '?'. <= 150 chars. At most ONE 👍.",
+  "Return STRICT JSON only: {\"confirmation\":\"...\",\"closer\":\"...\"}. No other text, no code fences.",
+].join("\n")
+
+class LlmTurnFramingComposer implements TurnFramingComposer {
+  async composeFraming(ctx: TurnFramingContext): Promise<{ confirmation: string; closer: string } | null> {
+    try {
+      const { getOpenAIConfig } = await import("../lib/llm-providers.js")
+      const cfg = getOpenAIConfig()
+      if (!cfg.apiKey) return null
+      const baseURL = process.env.PA_OPENAI_AGENT_BASE_URL?.trim() || cfg.baseURL
+      const { default: OpenAI } = (await import("openai")) as unknown as {
+        default: new (init: { apiKey: string; baseURL?: string }) => {
+          responses: {
+            create: (req: Record<string, unknown>) => Promise<{
+              output_text?: string
+              output?: Array<{ content?: Array<{ text?: string }> }>
+            }>
+          }
+        }
+      }
+      const client = new OpenAI({ apiKey: cfg.apiKey, baseURL })
+      const resp = await client.responses.create({
+        model: PITCH_MODEL,
+        input: [
+          { role: "system", content: FRAMING_SYSTEM },
+          { role: "user", content: "Compose the two framing lines for this pitch turn:\n" + JSON.stringify(ctx) },
+        ],
+      })
+      const raw =
+        typeof resp.output_text === "string" && resp.output_text.trim()
+          ? resp.output_text.trim()
+          : Array.isArray(resp.output) && resp.output[0]?.content?.[0]?.text
+            ? resp.output[0]!.content![0]!.text!.trim()
+            : ""
+      if (!raw) return null
+      const json = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim()
+      let parsed: { confirmation?: unknown; closer?: unknown }
+      try {
+        parsed = JSON.parse(json) as { confirmation?: unknown; closer?: unknown }
+      } catch {
+        return null
+      }
+      const confirmation = typeof parsed.confirmation === "string" ? parsed.confirmation.trim() : ""
+      const closer = typeof parsed.closer === "string" ? parsed.closer.trim() : ""
+      if (!isValidComposedConfirmation(confirmation) || !isValidComposedCloser(closer)) return null
+      return { confirmation, closer }
+    } catch {
+      return null
+    }
+  }
+}
+
+/** Default framing composer (gpt-5.4-mini). Swap in tests via composePitchTurn's last arg. */
+export const defaultTurnFramingComposer: TurnFramingComposer = new LlmTurnFramingComposer()
+
 /** Best-effort durable "onboarding done" stamp so the NEXT turn is normal triage, not a re-pitch.
  * Also stamps `pitchedAt` (Adam 2026-06-04, "improve the pitch after résumé"): the FIRST pitch sets it,
  * and a later résumé-after-pitch re-entry reads it to know this is an IMPROVED pitch (distinct framing,
@@ -476,6 +584,7 @@ export async function composePitchTurn(
   userId: string,
   nowIso: string = new Date().toISOString(),
   composer: PitchComposer = defaultPitchComposer,
+  framingComposer: TurnFramingComposer = defaultTurnFramingComposer,
 ): Promise<string[] | null> {
   let userDoc: Record<string, unknown>
   try {
@@ -528,7 +637,7 @@ export async function composePitchTurn(
   // CONFIRMATION — when a rich résumé is in play (whether this is the candidate's FIRST pitch or an
   // IMPROVEMENT of an earlier one), acknowledge the RÉSUMÉ and that we ADDED the technical detail (Adam:
   // it's an improvement, not a re-pitch). LinkedIn-only keeps the original opener.
-  const confirmation = resumeIsRich
+  let confirmation = resumeIsRich
     ? "got it — went through your résumé, added the technical detail to your pitch 👍"
     : profile.recentCompany
       ? `got it — pulled your full ${profile.recentCompany} experience from linkedin 👍`
@@ -552,7 +661,7 @@ export async function composePitchTurn(
     roleFns.length > 0
       ? `targeting ${roleFns.slice(0, 2).map((t) => t.replace(/_and_/g, " & ").replace(/_/g, " ")).join(" / ")} roles — that right? 👍 `
       : ""
-  const offer =
+  let offer =
     roleConfirm +
     // SINGLE CLEAR ACTION (Adam 2026-06-06): a "pull now OR tweak first?" either/or made a plain "sure"
     // ambiguous → the agent re-asked instead of pulling. Ask ONE thing — "want me to pull roles now?" —
@@ -565,6 +674,31 @@ export async function composePitchTurn(
         : OFFER_BUBBLE)
   if (askForEvidence && !resumeIsRich) {
     void db.collection(USERS).doc(userId).set({ evidenceAskedAt: nowIso }, { merge: true }).catch(() => {})
+  }
+  // MODEL-COMPOSED FRAMING (Adam 2026-06-07: "the main thing is to avoid the agent generating same texts
+  // again and again"). Replace the deterministic confirmation + closer with a VARIED pair on the same
+  // gpt-5.4-mini tier — but ONLY for the normal/rich closer (NOT the thin-evidence either/or ask, which is
+  // intentionally a different shape). SAFETY FALLBACK: composeFraming returns null on any miss OR when the
+  // closer fails the locked single-clear-pull-ask validation → we keep the deterministic template, so a bad
+  // generation can NEVER break the "a bare 'sure' = pull" contract. Reliable delivery + same-text dedup
+  // (the per-parse outbound scope in cutover) remain the backstop.
+  if (!askForEvidence) {
+    const roleLabel =
+      roleFns.length > 0
+        ? roleFns.slice(0, 2).map((t) => t.replace(/_and_/g, " & ").replace(/_/g, " ")).join(" / ")
+        : null
+    const framed = await framingComposer
+      .composeFraming({
+        name: profile.name || null,
+        recentCompany: profile.recentCompany,
+        roleLabel,
+        resumeIsRich,
+      })
+      .catch(() => null)
+    if (framed) {
+      confirmation = framed.confirmation
+      offer = framed.closer
+    }
   }
   // The pitch may come back as several sentences; keep it ONE bubble (tight, SMS-native).
   return [confirmation, pitch, offer]
