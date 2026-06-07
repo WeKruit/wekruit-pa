@@ -40,7 +40,24 @@ test("effectiveOnboardingComposeUserMessage strips kickoff via router composeCon
   )
 })
 
-test("effectiveOnboardingComposeUserMessage strips Hello WeKruit kickoff on ask (legacy)", () => {
+test("effectiveOnboardingComposeUserMessage strips the verification-code kickoff on ask", () => {
+  assert.equal(
+    effectiveOnboardingComposeUserMessage({
+      mode: "ask",
+      userMessage: "Hi, WeKruit, my verification code is",
+    }),
+    ""
+  )
+  assert.equal(
+    effectiveOnboardingComposeUserMessage({
+      mode: "ask",
+      userMessage: "  hi wekruit my verification code is  ",
+    }),
+    ""
+  )
+})
+
+test("effectiveOnboardingComposeUserMessage strips Hello WeKruit kickoff on ask (legacy back-compat)", () => {
   assert.equal(
     effectiveOnboardingComposeUserMessage({ mode: "ask", userMessage: "Hello, WeKruit!" }),
     ""
@@ -109,7 +126,9 @@ test("composeSharedOnboardingReply passes synthetic onboarding instruction for g
             "surface intent should lock English for greeting bootstrap"
           )
           assert.ok(
-            systemInputs?.some((s) => s.includes("first SMS after the candidate opened with Hello, WeKruit")),
+            systemInputs?.some((s) =>
+              s.includes("first SMS after the candidate opened with the prefilled verification-code handshake"),
+            ),
             "greeting bootstrap should carry opening welcome instructions"
           )
           assert.ok(

@@ -144,21 +144,28 @@ export async function sendImessage(
     )
   }
 
-  // v1.9 G1 fix — pool-aware outbound routing when userId provided.
+  // USER↔NUMBER BINDING (2026-06-02) — honor the persisted binding; NEVER re-hash.
+  //
+  // An explicit `fromNumber` (the caller already resolved the bound line, e.g.
+  // outbox.ts passes `user.senderNumber`) WINS unconditionally — we no longer
+  // clobber it with `hash(userId) % activeCount` (the reshuffle-on-pool-growth
+  // bug). Only when NO explicit line was supplied AND a userId is present do we
+  // ask the reducer for the bound line (honor → rebind-if-paused → mint+persist),
+  // so every send path resolves identically.
   const allowEnvFallback = input.allowEnvFromNumberFallback !== false
-  let resolvedFromNumber = input.fromNumber?.trim() || (allowEnvFallback ? creds.fromNumber : undefined)
-  if (input.userId) {
+  const explicit = input.fromNumber?.trim()
+  let resolvedFromNumber = explicit || (allowEnvFallback ? creds.fromNumber : undefined)
+  if (!explicit && input.userId) {
     try {
-      const { loadSendbluePool, pickFromNumber } = await import("./pool.js")
+      const { resolveBoundFromNumber } = await import("./resolve-bound-from-number.js")
       const { getFirestore } = await import("firebase-admin/firestore")
       const db = input.db ?? getFirestore()
-      const pool = await loadSendbluePool(db)
-      const picked = pickFromNumber(pool, input.userId)
-      if (picked) {
-        resolvedFromNumber = picked
+      const bound = await resolveBoundFromNumber(db, input.userId)
+      if (bound.fromNumber) {
+        resolvedFromNumber = bound.fromNumber
       }
     } catch (err) {
-      // Pool lookup failure → keep explicit/allowed fallback. Non-fatal.
+      // Binding lookup failure → keep explicit/allowed fallback. Non-fatal.
       // (Could log here but sendImessage doesn't have a logger seam.)
     }
   }

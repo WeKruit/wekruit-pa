@@ -24,6 +24,7 @@ import {
   buildSharedOnboardingPromptContext,
   buildSharedOnboardingStartedState,
   hardFilterClarifyText,
+  isSharedOnboardingSlotSatisfied,
   loadSharedOnboardingParsedResumeForPrompt,
   type KeywordSetLlmCaller,
   type KeywordSetLlmOutput,
@@ -32,11 +33,18 @@ import {
   type PreScreenQuestion,
   type PreScreenState,
   type PreScreenStateProvider,
+  type SharedOnboardingQuestionId,
 } from "@pa/pa-orchestrator"
+import { DEFAULT_ONBOARDING_SLOTS } from "./claire-agent/reducers/onboarding-fsm.js"
+import { isPrescreenRetentionHandoffCanary } from "./claire-agent/canary.js"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { SAFETY_CANNED_REPLIES, pickLangForSafety, runSafetyCheck } from "@pa/pa-safety"
 import { sendRuntimeApprovedIMessage } from "./runtime-approved-outbox.js"
-import { runPrescreenTerminalAction, writePrescreenMemoryUpdate } from "./prescreen-terminal-action.js"
+import {
+  defaultGenerateJobRecs,
+  runPrescreenTerminalAction,
+  writePrescreenMemoryUpdate,
+} from "./prescreen-terminal-action.js"
 import { isLayoffIntakeActiveForUser } from "./layoff-sms-start.js"
 import {
   finalizePrescreenForHumanReview,
@@ -424,6 +432,16 @@ export interface RunPrescreenTurnArgs {
   markReviewPending?: (args: MarkPrescreenReviewPendingArgs) => Promise<unknown>
   keywordSetCaller?: KeywordSetLlmCaller
   clarifyComposer?: PreScreenClarifyComposer
+  /**
+   * #3 convergence (Adam 2026-06-05): injectable rec-firer for the post-prescreen→onboarding
+   * convergence's all-slots-satisfied bridge. Production default = `defaultGenerateJobRecs`
+   * (the SAME find_match path the FAIL terminal uses). Tests inject a stub.
+   */
+  fireJobRecs?: (args: {
+    userId: string
+    toE164: string
+    lang?: "zh" | "en"
+  }) => Promise<{ ok: boolean; jobCount: number; reason?: string }>
   log?: (event: string, payload: Record<string, unknown>) => void
 }
 
@@ -613,6 +631,16 @@ async function startSharedOnboardingAfterPrescreen(args: {
   sendSms: RuntimeSmsSender
   log: (event: string, payload: Record<string, unknown>) => void
   sessionId: string
+  /**
+   * #3 convergence (Adam 2026-06-05): when role + location are BOTH already known we
+   * skip straight to recs. Injectable for tests; default = the SAME find_match-backed
+   * closure the FAIL terminal uses (no parallel rec path). Fail-open: any error is logged.
+   */
+  fireJobRecs?: (args: {
+    userId: string
+    toE164: string
+    lang?: "zh" | "en"
+  }) => Promise<{ ok: boolean; jobCount: number; reason?: string }>
 }): Promise<string> {
   const userRef = args.db.collection(PA_COLLECTIONS.users).doc(args.userId)
   const userSnap = await userRef.get()
@@ -657,8 +685,47 @@ async function startSharedOnboardingAfterPrescreen(args: {
     },
     { merge: true },
   )
-  const q1 = buildSharedOnboardingPrompt("main_goal", promptContext)
-  const text = `Great — thanks for completing the role screen. I’ll use what you shared there, and I just need a bit more context for future matches. ${q1}`
+  // CONVERGE to the SAME thin enrich→pitch→rec onboarding (Adam #3 2026-06-05): a
+  // prescreen-first entrant, AFTER the screen, runs the SAME gap-aware ASKED set as a
+  // cold-start (target_role auto-derived from enrich → suppressed; only the genuinely-
+  // MISSING slot — location — is asked). Wording differs slightly (we thank them for the
+  // screen). This is NOT the legacy 7-question main_goal wall. Pure structured presence
+  // checks over the closed-enum tags (isSharedOnboardingSlotSatisfied) — NO regex, NO LLM.
+  const userTags = (user.tags ?? {}) as Record<string, unknown>
+  const statedPrefs = (user.statedPreferences ?? null) as Record<string, unknown> | null
+  const firstMissing =
+    (DEFAULT_ONBOARDING_SLOTS as SharedOnboardingQuestionId[]).find(
+      (slot) => !isSharedOnboardingSlotSatisfied(slot, userTags, statedPrefs),
+    ) ?? null
+
+  if (!firstMissing) {
+    // role + location already known → nothing left to ask; bridge straight to recs.
+    const doneText =
+      "Great — thanks for completing the screen. I’ve got your profile, so I’ll pull a few matches for you now."
+    await args.sendSms({
+      to: args.toE164,
+      content: doneText,
+      userId: args.userId,
+      db: args.db,
+      runtimeSource: "pa_prescreen_retention_onboarding",
+      idempotencyKey: `prescreen_retention_onboarding_done:${args.sessionId}`,
+    })
+    // Fire the SAME find_match-backed recs the FAIL terminal uses. Fail-open: any error
+    // is swallowed (the bridge message already shipped; recs are best-effort).
+    const fire = args.fireJobRecs ?? defaultGenerateJobRecs
+    try {
+      await fire({ userId: args.userId, toE164: args.toE164, lang: "en" })
+    } catch (err) {
+      args.log("prescreen.turn.post_prescreen_onboarding_recs_failed", {
+        sessionId: args.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    return doneText
+  }
+
+  const qNext = buildSharedOnboardingPrompt(firstMissing, promptContext)
+  const text = `Great — thanks for completing the screen. I’ll use what you shared there, and I just need one quick thing for future matches. ${qNext}`
   await args.sendSms({
     to: args.toE164,
     content: text,
@@ -901,6 +968,23 @@ export async function runPrescreenTurnIfActive(
         textSent: text,
       }
     }
+    // ── RETENTION HANDOFF (canary, Adam 2026-06-05) ──────────────────────────────────────────────
+    // A recently-terminal / PAUSED session turn (the Sai branch) is answered by the THIN context-complete
+    // agent (buildCandidateContext) — NOT canned text (recentTerminalCourtesyAckText / retention prompt /
+    // outcome-explanation) + regex intent. The terminal, retain action, and any match were ALREADY fired
+    // deterministically by the reducer; this only changes WHO answers next + WITH WHAT CONTEXT. Placed
+    // AFTER the terminalActionPendingReview guard (above) so a genuinely under-review outcome still gets
+    // the deterministic "under human review" ack (never a thin answer that might imply a decision).
+    // Non-canary keeps EVERY legacy branch below byte-for-byte. Dev cohort only (NOT swept by the
+    // onboarding PA_ONBOARDING_RAMP_ALL prod env) — ramps separately on Adam's say-so.
+    if (isPrescreenRetentionHandoffCanary(args.userId)) {
+      log("prescreen.turn.recent_terminal_deferred_to_thin", {
+        sessionId: lookup.sessionId,
+        userId: args.userId,
+        terminal: lookup.terminal,
+      })
+      return { handled: false }
+    }
     if (isPrescreenOutcomeExplanationRequest(args.replyText)) {
       const text = recentTerminalOutcomeExplanationText(args.lang ?? "en", lookup.terminal, sessData)
       await sessionRef.collection("turns").add({
@@ -996,6 +1080,7 @@ export async function runPrescreenTurnIfActive(
               sendSms,
               log,
               sessionId: lookup.sessionId,
+              fireJobRecs: args.fireJobRecs,
             })
           } catch (err) {
             text = "Great — thanks for completing the role screen. What kind of next role would actually be worth your time?"
@@ -1114,6 +1199,18 @@ export async function runPrescreenTurnIfActive(
         error: err instanceof Error ? err.message : String(err),
       })
     }
+    // RETENTION HANDOFF (canary, Adam 2026-06-05): the deterministic PAUSE write + retain/match action
+    // ALREADY fired above (reducer owns state). For the dev cohort, DEFER the candidate-facing reply to
+    // the thin context-complete agent (it composes "I paused that older screen — want to pick up where we
+    // left off or see other roles?" with full context) instead of the canned expiredSessionText. Non-canary
+    // keeps the canned notice below byte-for-byte.
+    if (isPrescreenRetentionHandoffCanary(args.userId)) {
+      log("prescreen.turn.expired_deferred_to_thin", {
+        sessionId: lookup.sessionId,
+        userId: args.userId,
+      })
+      return { handled: false }
+    }
     const text = expiredSessionText(args.lang ?? "en")
     try {
       await sendSms({
@@ -1161,7 +1258,15 @@ export async function runPrescreenTurnIfActive(
     return { handled: false }
   }
 
-  if (isUserExitPrescreenReply(args.replyText)) {
+  // USER-EXIT MEANING-EXTRACTION (canary, Adam 2026-06-05): `isUserExitPrescreenReply` is a REGEX that
+  // classified the candidate's text → "exit" — and it mis-fired on Sai's ON-TOPIC role answer ("UX
+  // designer, product designer with 5 or less years of experience"), force-PAUSING an active screen mid-
+  // answer. For the dev cohort we do NOT let the regex decide: skip this branch so the turn drops into the
+  // normal active-turn pipeline below (the agentic prescreen path / the deterministic reducer), where the
+  // LLM judges whether the reply is a real exit vs an answer. The reducer/handler still OWNS the PAUSE
+  // state write (on a genuine exit the agentic exit path drives the same deterministic terminal write) —
+  // the LLM only signals intent, never writes terminal state. Non-canary keeps the regex exit byte-for-byte.
+  if (!isPrescreenRetentionHandoffCanary(args.userId) && isUserExitPrescreenReply(args.replyText)) {
     const nowIso = new Date().toISOString()
     await args.db
       .collection("pa-prescreen-sessions")
@@ -1280,6 +1385,9 @@ export async function runPrescreenTurnIfActive(
         questionPrompt: activePrompt,
         runTurn: (reply) => runReducerTurn(reply) as Promise<AgenticRunTurnResult>,
         log,
+        // T4 (tracing): group the prescreen leg with its conversation (groupId=sessionId) + attach userId.
+        sessionId,
+        userId: args.userId,
       })
       if (agentic.routed === "tangent") {
         // Pending question HELD — reducer NOT touched. Answer the tangent (or

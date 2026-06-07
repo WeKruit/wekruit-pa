@@ -231,6 +231,296 @@ test("runDailyJobRecBatch: delivers when flag ON + jobs available + writes lastJ
   assert.equal(jobRecRuntimeWrites(mfs).length, 1)
 })
 
+// ---------------------------------------------------------------------------
+// Send cadence + time-spread (2026-06-02) — due-gate, jitter, pacing, idempotency.
+// ---------------------------------------------------------------------------
+
+/** Seed an active profile + a matching job so a flag-on, due user delivers. */
+async function seedDeliverableUser(
+  mfs: MockFirestore,
+  userId: string,
+  phone: string,
+  lastJobBatchSentAt: string | null,
+): Promise<void> {
+  await seedUser(mfs, userId, phone)
+  await mfs.collection("pa-job-profiles").doc(userId).set({
+    userId,
+    profile: { industry: "tech", sponsorship: "none", location: "remote", sizePreference: "either" },
+    cvParsedAt: "2026-05-01T00:00:00Z",
+    lastJobBatchSentAt,
+    status: "active",
+    createdAt: "2026-05-01T00:00:00Z",
+    updatedAt: "2026-05-01T00:00:00Z",
+  })
+  await mfs.collection("matching-jobs").doc(`job-${userId}`).set({
+    status: "active",
+    industryKey: "tech",
+    companyName: "Acme",
+    roleTitle: "SWE",
+    salaryMax: 200000,
+    locationRaw: "Remote",
+    primaryUrl: "https://j/x",
+    atsApplyUrl: "https://greenhouse.io/co/jobs/9",
+    industry: "tech",
+    sponsorship: false,
+    firstSeenAt: "2026-06-01",
+    lastSeenAt: "2026-06-01",
+    requiredSkills: ["TypeScript", "React", "Node.js"],
+  })
+}
+
+const NOW_MS = Date.parse("2026-06-02T16:00:00.000Z")
+const DAY = 24 * 60 * 60 * 1000
+
+test("cadence: user last sent 1d ago is NOT due (cadence 3) — skipped, not stamped", async () => {
+  const mfs = new MockFirestore()
+  const oneDayAgo = new Date(NOW_MS - 1 * DAY).toISOString()
+  await seedDeliverableUser(mfs, "recent", "+15551110001", oneDayAgo)
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    // cadence flag = 3; rec flag = on. getFlag dispatches by key.
+    getFlag: async (_db, key) =>
+      key === "recCadenceDays" ? 3 : key === "recSendSpreadWindowMinutes" ? 120 : true,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+  })
+  assert.equal(out.delivered, 0)
+  assert.equal(out.skippedNotDue, 1)
+  assert.equal(jobRecRuntimeWrites(mfs).length, 0)
+  // lastJobBatchSentAt unchanged (still the old value, NOT re-stamped).
+  const prof = (await mfs.collection("pa-job-profiles").doc("recent").get()).data()
+  assert.equal(prof?.lastJobBatchSentAt, oneDayAgo)
+})
+
+test("cadence: user last sent 4d ago IS due (cadence 3) — delivered + stamped", async () => {
+  const mfs = new MockFirestore()
+  const fourDaysAgo = new Date(NOW_MS - 4 * DAY).toISOString()
+  await seedDeliverableUser(mfs, "stale", "+15551110002", fourDaysAgo)
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key) =>
+      key === "recCadenceDays" ? 3 : key === "recSendSpreadWindowMinutes" ? 120 : true,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+  })
+  assert.equal(out.delivered, 1)
+  assert.equal(out.skippedNotDue, 0)
+  assert.equal(out.cadenceDays, 3)
+  assert.equal(out.spreadWindowMinutes, 120)
+  const prof = (await mfs.collection("pa-job-profiles").doc("stale").get()).data()
+  assert.notEqual(prof?.lastJobBatchSentAt, fourDaysAgo) // re-stamped to now
+})
+
+test("cadence: defaults to 3 days / 120 min when flags unset", async () => {
+  const mfs = new MockFirestore()
+  const twoDaysAgo = new Date(NOW_MS - 2 * DAY).toISOString()
+  await seedDeliverableUser(mfs, "default", "+15551110003", twoDaysAgo)
+  // getFlag returns rec-enable=true; cadence/window flags return the passed
+  // default (the production getFlag returns `defaultValue` for an absent doc).
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key, _ctx, defaultValue) =>
+      key === "paJobRecEnabled" ? true : defaultValue,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+  })
+  // 2 days < default 3 → NOT due.
+  assert.equal(out.cadenceDays, 3)
+  assert.equal(out.spreadWindowMinutes, 120)
+  assert.equal(out.delivered, 0)
+  assert.equal(out.skippedNotDue, 1)
+})
+
+// ---------------------------------------------------------------------------
+// Cross-system rec cooldown (2026-06-02) — the daily batch must NOT pile recs
+// on top of a fresh live find_match send. Both systems stamp the SHARED
+// `lastAnyJobRecSentAt` marker; the batch reads it BEFORE compose/send.
+// ---------------------------------------------------------------------------
+
+/**
+ * Seed a flag-on, CADENCE-due (never-batched) user whose SHARED cross-system
+ * marker `lastAnyJobRecSentAt` was stamped `lastAnyRecIso` ago — simulates a
+ * live Claire find_match send that just happened. The cadence gate would let
+ * this user through (lastJobBatchSentAt=null → due); only the cooldown should
+ * stop them.
+ */
+async function seedLiveRecdUser(
+  mfs: MockFirestore,
+  userId: string,
+  phone: string,
+  lastAnyRecIso: string | null,
+): Promise<void> {
+  await seedDeliverableUser(mfs, userId, phone, null)
+  await mfs.collection("pa-job-profiles").doc(userId).set(
+    { lastAnyJobRecSentAt: lastAnyRecIso },
+    { merge: true },
+  )
+}
+
+const HOUR = 60 * 60 * 1000
+
+test("cooldown: live rec 2h ago → batch SKIPS (cooldown), sendImessage NOT called", async () => {
+  const mfs = new MockFirestore()
+  const twoHoursAgo = new Date(NOW_MS - 2 * HOUR).toISOString()
+  await seedLiveRecdUser(mfs, "justrecd", "+15551110020", twoHoursAgo)
+  let syncSends = 0
+  let scheduled = 0
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    // rec flag on; cadence/spread default; cooldown flag = 22h (default).
+    getFlag: async (_db, key, _ctx, defaultValue) =>
+      key === "paJobRecEnabled" ? true : defaultValue,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+    scheduleSend: async () => {
+      scheduled += 1
+      return { ok: true }
+    },
+  })
+  assert.equal(out.skippedCooldown, 1)
+  assert.equal(out.delivered, 0)
+  assert.equal(out.skippedNotDue, 0) // cooldown short-circuits before the cadence gate
+  assert.equal(scheduled, 0, "no send scheduled")
+  // sendImessage path (runtime write) must NOT fire either.
+  assert.equal(jobRecRuntimeWrites(mfs).length, 0)
+  void syncSends
+  // The live marker is untouched (NOT re-stamped by a skipped run).
+  const prof = (await mfs.collection("pa-job-profiles").doc("justrecd").get()).data()
+  assert.equal(prof?.lastAnyJobRecSentAt, twoHoursAgo)
+})
+
+test("cooldown: last rec 30h ago → batch SENDS (past 22h window) + stamps both markers", async () => {
+  const mfs = new MockFirestore()
+  const thirtyHoursAgo = new Date(NOW_MS - 30 * HOUR).toISOString()
+  await seedLiveRecdUser(mfs, "coldenough", "+15551110021", thirtyHoursAgo)
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key, _ctx, defaultValue) =>
+      key === "paJobRecEnabled" ? true : defaultValue,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+  })
+  assert.equal(out.skippedCooldown, 0)
+  assert.equal(out.delivered, 1)
+  const prof = (await mfs.collection("pa-job-profiles").doc("coldenough").get()).data()
+  // BOTH markers re-stamped to "now" (≠ the 30h-ago value), so the next batch
+  // honors the cooldown against THIS send.
+  assert.notEqual(prof?.lastAnyJobRecSentAt, thirtyHoursAgo)
+  assert.ok(prof?.lastJobBatchSentAt)
+  assert.equal(prof?.lastAnyJobRecSentAt, prof?.lastJobBatchSentAt)
+})
+
+test("cooldown: dep override cooldownMs=0 disables the gate (2h-ago user delivers)", async () => {
+  const mfs = new MockFirestore()
+  const twoHoursAgo = new Date(NOW_MS - 2 * HOUR).toISOString()
+  await seedLiveRecdUser(mfs, "nocooldown", "+15551110022", twoHoursAgo)
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key, _ctx, defaultValue) =>
+      key === "paJobRecEnabled" ? true : defaultValue,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+    cooldownMs: 0, // escape hatch
+  })
+  assert.equal(out.cooldownMs, 0)
+  assert.equal(out.skippedCooldown, 0)
+  assert.equal(out.delivered, 1)
+})
+
+test("time-spread: scheduleSend dep receives a delayMs; sync send NOT used", async () => {
+  const mfs = new MockFirestore()
+  await seedDeliverableUser(mfs, "spread", "+15551110010", null)
+  const calls: Array<{ userId: string; delayMs: number; idempotencyKey: string }> = []
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key) =>
+      key === "recCadenceDays" ? 3 : key === "recSendSpreadWindowMinutes" ? 120 : true,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+    scheduleSend: async (input) => {
+      calls.push({ userId: input.userId, delayMs: input.delayMs, idempotencyKey: input.idempotencyKey })
+      return { ok: true }
+    },
+  })
+  assert.equal(out.delivered, 1)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]!.userId, "spread")
+  assert.equal(calls[0]!.idempotencyKey, "spread-20260602-batch")
+  assert.ok(calls[0]!.delayMs >= 0 && calls[0]!.delayMs < 120 * 60_000)
+  // The synchronous sendImessage path must NOT have been used.
+  assert.equal(jobRecRuntimeWrites(mfs).length, 0)
+  // Stamped so a re-run is due-gated out (idempotency layer 1).
+  const prof = (await mfs.collection("pa-job-profiles").doc("spread").get()).data()
+  assert.ok(prof?.lastJobBatchSentAt)
+})
+
+test("time-spread: per-number cap respected — number at cap defers its excess users", async () => {
+  const mfs = new MockFirestore()
+  // 3 due users all routed to number +1A which has only 1 send left this window.
+  for (const id of ["capA1", "capA2", "capA3"]) {
+    await seedDeliverableUser(mfs, id, `+1555200${id.slice(-1)}000`, null)
+  }
+  const enqueued: string[] = []
+  const out = await runDailyJobRecBatch({
+    db: asFirestore(mfs),
+    getFlag: async (_db, key) =>
+      key === "recCadenceDays" ? 3 : key === "recSendSpreadWindowMinutes" ? 120 : true,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+    fromNumberForUser: () => "+1A",
+    numberCapacities: { "+1A": { remaining: 1 } },
+    scheduleSend: async (input) => {
+      enqueued.push(input.userId)
+      return { ok: true }
+    },
+  })
+  assert.equal(out.delivered, 1, "only 1 user fits under the cap")
+  assert.equal(out.cappedOut, 2, "2 deferred to next run")
+  assert.equal(enqueued.length, 1)
+  // The 2 capped-out users must NOT be stamped → still due next run (no loss).
+  let stampedCount = 0
+  for (const id of ["capA1", "capA2", "capA3"]) {
+    const prof = (await mfs.collection("pa-job-profiles").doc(id).get()).data()
+    if (prof?.lastJobBatchSentAt) stampedCount += 1
+  }
+  assert.equal(stampedCount, 1, "exactly the 1 enqueued user is stamped")
+})
+
+test("time-spread: idempotent — re-running the batch does not double-enqueue (due-gate)", async () => {
+  const mfs = new MockFirestore()
+  await seedDeliverableUser(mfs, "idem", "+15551110099", null)
+  let enqueueCount = 0
+  const deps = {
+    db: asFirestore(mfs),
+    getFlag: async (_db: unknown, key: string) =>
+      key === "recCadenceDays" ? 3 : key === "recSendSpreadWindowMinutes" ? 120 : true,
+    todayYmd: () => "20260602",
+    nowMs: NOW_MS,
+    jobsPerUser: 1,
+    scheduleSend: async () => {
+      enqueueCount += 1
+      return { ok: true }
+    },
+  }
+  const first = await runDailyJobRecBatch(deps as Parameters<typeof runDailyJobRecBatch>[0])
+  assert.equal(first.delivered, 1)
+  assert.equal(enqueueCount, 1)
+  // Second run on the SAME day — user was just stamped (lastAnyJobRecSentAt) →
+  // caught by the cross-system cooldown gate (stronger than the due-gate) → no re-enqueue.
+  const second = await runDailyJobRecBatch(deps as Parameters<typeof runDailyJobRecBatch>[0])
+  assert.equal(second.delivered, 0)
+  assert.equal(second.skippedCooldown, 1, "re-run caught by cross-system cooldown")
+  assert.equal(enqueueCount, 1, "no double-enqueue on re-run")
+})
+
 test("runDailyJobRecBatch: active subscribe row can use canonical pa-users tags", async () => {
   const mfs = new MockFirestore()
   await seedUser(mfs, "u_tags", "+15551113333", {

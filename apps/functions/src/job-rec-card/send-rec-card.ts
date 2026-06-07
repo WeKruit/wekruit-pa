@@ -29,7 +29,7 @@ import {
   type GenerateRecCardResult,
 } from "./job-rec-card.js"
 import { buildRecCardPayload, type CardCompanySource, type CardJobSource, type CardReasonSource } from "./card-payload.js"
-import type { SendblueMediaCreds } from "./upload-card.js"
+import { isSendblueAcceptableMediaUrl, type SendblueMediaCreds } from "./upload-card.js"
 
 /** The matching-jobs field carrying the cached Sendblue media URL. */
 export const REC_CARD_MEDIA_URL_FIELD = "recCardMediaUrl"
@@ -139,9 +139,51 @@ async function defaultLoadCompany(
 }
 
 /**
+ * Persist a freshly-generated rec-card media URL back to matching-jobs/{jobId} so the NEXT resolve is a
+ * pure cache read (no render/upload). This is the writeback that was reported as "not persisting" (every
+ * send re-lazy-generated). Exported + isolated so the round-trip is directly unit-testable.
+ *
+ * Closes the round-trip deliberately: it writes the EXACT field the cache READ uses
+ * (REC_CARD_MEDIA_URL_FIELD), to the SAME matching-jobs/{jobId} doc `defaultLoadCachedMediaUrl` reads,
+ * with `merge:true` so it never clobbers the rest of the job doc. AWAITED + an explicit success event so
+ * a prod miss is diagnosable (a failure was previously only logged on throw, hiding a silent
+ * "wrote-but-didn't-stick"). Best-effort: a write failure is swallowed (the image THIS turn is
+ * unaffected; only the next-turn cache benefit is lost).
+ */
+export async function persistRecCardMediaUrl(
+  db: Firestore,
+  jobId: string,
+  gen: { mediaUrl: string; contentHash: string },
+  log: (event: string, payload?: Record<string, unknown>) => void = () => {},
+): Promise<boolean> {
+  try {
+    await db
+      .collection("matching-jobs")
+      .doc(jobId)
+      .set(
+        {
+          [REC_CARD_MEDIA_URL_FIELD]: gen.mediaUrl,
+          [REC_CARD_CONTENT_HASH_FIELD]: gen.contentHash,
+          recCardGeneratedAt: new Date().toISOString(),
+        },
+        { merge: true },
+      )
+    log("rec_card.lazy_gen_persisted", { jobId, mediaUrl: gen.mediaUrl })
+    return true
+  } catch (e) {
+    log("rec_card.lazy_gen_persist_failed", {
+      jobId,
+      error: e instanceof Error ? e.message : String(e),
+    })
+    return false
+  }
+}
+
+/**
  * Default lazy-gen: render+upload+persist the cached card for a job that has
  * none yet, then return its media URL. Fail-open → null. Writes the URL +
- * content hash back to matching-jobs so the next send is a pure cache read.
+ * content hash back to matching-jobs (via persistRecCardMediaUrl) so the next
+ * send is a pure cache read.
  */
 async function defaultLazyGenerate(input: {
   db: Firestore
@@ -165,26 +207,109 @@ async function defaultLazyGenerate(input: {
     deps: { creds: input.creds, log: input.log },
   })
   if (!gen) return null
-  // Persist for next time (merge, best-effort — a write failure still returns the URL).
-  try {
-    await input.db
-      .collection("matching-jobs")
-      .doc(input.jobId)
-      .set(
-        {
-          [REC_CARD_MEDIA_URL_FIELD]: gen.mediaUrl,
-          [REC_CARD_CONTENT_HASH_FIELD]: gen.contentHash,
-          recCardGeneratedAt: new Date().toISOString(),
-        },
-        { merge: true },
-      )
-  } catch (e) {
-    input.log("rec_card.lazy_gen_persist_failed", {
-      jobId: input.jobId,
-      error: e instanceof Error ? e.message : String(e),
-    })
-  }
+  await persistRecCardMediaUrl(input.db, input.jobId, gen, input.log)
   return gen.mediaUrl
+}
+
+/**
+ * Inputs for `resolveRecCardMediaUrl` — the PURE media-URL resolver. Same seams as
+ * `maybeSendRecCard` minus everything to do with enqueuing/caption (getPhoneE164, fromNumber,
+ * todayYmd) — resolving the image is independent of WHO/WHEN we send it.
+ */
+export type ResolveRecCardMediaUrlInput = {
+  jobId: string
+  job: CardJobSource
+  /** Seam: read the cached media URL for a job. Defaults to a matching-jobs point-read. */
+  loadCachedMediaUrl?: (db: Firestore, jobId: string) => Promise<string | null>
+  /** Seam: HEAD-check a cached media URL is still alive (non-200 → regenerate). Defaults to a real HEAD. */
+  checkMediaUrlLive?: (url: string) => Promise<boolean>
+  /** Seam: lazy-generate + persist a card. Defaults to generateRecCardForJob + write-back. */
+  lazyGenerate?: SendRecCardDeps["lazyGenerate"]
+  /** Seam: load the company doc for lazy-gen. Defaults to a pa-companies read. */
+  loadCompany?: SendRecCardDeps["loadCompany"]
+  /** Sendblue media-upload creds for the lazy-gen fallback. Absent → no lazy gen (cache-read only). */
+  sendblueCreds?: SendblueMediaCreds
+  log?: (event: string, payload?: Record<string, unknown>) => void
+}
+
+/**
+ * Resolve the Sendblue-acceptable media URL for ONE job's rec card — WITHOUT enqueuing anything.
+ *
+ * This is the pure side of the rec-card model (extracted 2026-06-04 so makeV16FindMatch can attach
+ * the image INLINE to the role's caption bubble instead of enqueuing a separate, once/day, racing
+ * media row). Pipeline (identical to `maybeSendRecCard`'s old inline logic):
+ *   1. CACHE READ   — matching-jobs/{jobId}.recCardMediaUrl (the happy path; no render/upload).
+ *   2. SHAPE GUARD  — reject a non-Sendblue-acceptable cached url (a legacy Firebase token url is
+ *                     HTTP-200-live yet silently DROPPED by Sendblue) as a MISS, but only when there
+ *                     are creds to re-host (else keep it — a maybe-dropped image beats an unfillable miss).
+ *   3. LIVENESS     — HEAD-check a Sendblue-CDN url (a 404'd object is dropped on an otherwise-DELIVERED
+ *                     send); a stale url is a MISS, again only when creds exist.
+ *   4. LAZY GEN     — when the cache is empty/stale/wrong-shape AND creds exist, render+upload a fresh
+ *                     Sendblue-CDN url and PERSIST it to matching-jobs/{jobId}.recCardMediaUrl so the
+ *                     NEXT resolve is a pure cache read (the writeback fix — see defaultLazyGenerate).
+ *
+ * Returns the url, or null on any miss (no creds to fill, un-renderable, error). FAIL-OPEN — never throws.
+ */
+export async function resolveRecCardMediaUrl(
+  db: Firestore,
+  input: ResolveRecCardMediaUrlInput,
+): Promise<string | null> {
+  const log = input.log ?? (() => {})
+  try {
+    // 1. CACHE READ — the happy path. No render/upload.
+    const loadCached = input.loadCachedMediaUrl ?? defaultLoadCachedMediaUrl
+    let mediaUrl = await loadCached(db, input.jobId)
+
+    // 1a. SHAPE GUARD — a cached url can be PERFECTLY LIVE (HTTP 200) yet still get SILENTLY DROPPED by
+    // Sendblue because its SHAPE is wrong (a legacy Firebase token url is signed + not extension-
+    // terminated). Reject any non-Sendblue-acceptable url as a cache MISS so the lazy-gen below re-uploads
+    // a fresh Sendblue-CDN url. Only when there are creds to regenerate (no creds → keep the url).
+    if (mediaUrl && input.sendblueCreds && !isSendblueAcceptableMediaUrl(mediaUrl)) {
+      log("rec_card.cached_url_wrong_shape", { jobId: input.jobId, mediaUrl })
+      mediaUrl = null
+    }
+
+    // 1b. LIVENESS — a cached Sendblue-CDN url can expire (404); Sendblue then silently drops the image on
+    // an otherwise-DELIVERED send. HEAD-check it; a stale url is a cache MISS so lazy-gen re-uploads a fresh
+    // one. Only when there's a url AND creds to regenerate.
+    if (mediaUrl && input.sendblueCreds) {
+      const checkLive = input.checkMediaUrlLive ?? defaultCheckMediaUrlLive
+      const live = await checkLive(mediaUrl)
+      if (!live) {
+        log("rec_card.cached_url_stale", { jobId: input.jobId })
+        mediaUrl = null
+      }
+    }
+
+    // 2. LAZY GEN — only when the cache is empty (or stale/wrong-shape) AND creds are available. The
+    // default writes the fresh url back to matching-jobs/{jobId} so the NEXT resolve is a pure cache read.
+    if (!mediaUrl && input.sendblueCreds) {
+      const lazyGen =
+        input.lazyGenerate ??
+        ((args) =>
+          defaultLazyGenerate({
+            ...args,
+            ...(input.loadCompany ? { loadCompany: input.loadCompany } : {}),
+          }))
+      mediaUrl = await lazyGen({
+        db,
+        jobId: input.jobId,
+        job: input.job,
+        creds: input.sendblueCreds,
+        log,
+      })
+      if (mediaUrl) log("rec_card.lazy_generated", { jobId: input.jobId })
+    }
+
+    return mediaUrl ?? null
+  } catch (err) {
+    // FAIL-OPEN — resolving an image must never throw into the find_match turn.
+    log("rec_card.resolve_failed", {
+      jobId: input.jobId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return null
+  }
 }
 
 /**
@@ -193,12 +318,23 @@ async function defaultLazyGenerate(input: {
  *
  * `reasons` (per-candidate "why") affect ONLY the text caption — never the
  * cached image — so the same image serves every candidate.
+ *
+ * RETAINED for back-compat + tests; makeV16FindMatch no longer uses it (it
+ * resolves the url via `resolveRecCardMediaUrl` and sends the image INLINE on
+ * the role caption bubble). The cache-read/shape-guard/liveness/lazy-gen logic
+ * is now delegated to `resolveRecCardMediaUrl` (single source of truth).
  */
 export async function maybeSendRecCard(input: {
   userId: string
   jobId: string
   job: CardJobSource
   reasons?: CardReasonSource | null
+  /**
+   * Caption verbosity (Adam 2026-06-04 multi-card batch). "full" (default) = the
+   * prescreen-pitch caption; "lean" = role headline + apply link only, used for
+   * the 2nd+ card so the same pitch paragraph isn't repeated under every image.
+   */
+  captionMode?: "full" | "lean"
   deps: SendRecCardDeps
 }): Promise<SendRecCardResult> {
   const { deps } = input
@@ -216,42 +352,19 @@ export async function maybeSendRecCard(input: {
       return { sent: false, reason: "no_phone" }
     }
 
-    // 1. CACHE READ — the happy path. No render/upload.
-    const loadCached = deps.loadCachedMediaUrl ?? defaultLoadCachedMediaUrl
-    let mediaUrl = await loadCached(deps.db, input.jobId)
-
-    // 1b. LIVENESS — a cached Sendblue-CDN url can expire (404). Sendblue then silently drops the image
-    // on an otherwise-DELIVERED send ("delivered but no picture"). HEAD-check it; a stale url is treated
-    // as a cache MISS so the lazy-gen below re-uploads a fresh one + rewrites matching-jobs. Only checks
-    // when there's a url AND creds to regenerate (no creds → keep the url; a maybe-dead image still beats
-    // forcing a regen we can't do).
-    if (mediaUrl && deps.sendblueCreds) {
-      const checkLive = deps.checkMediaUrlLive ?? defaultCheckMediaUrlLive
-      const live = await checkLive(mediaUrl)
-      if (!live) {
-        log("rec_card.cached_url_stale", { userId: input.userId, jobId: input.jobId })
-        mediaUrl = null
-      }
-    }
-
-    // 2. LAZY GEN — only when the cache is empty (or stale) AND creds are available.
-    if (!mediaUrl && deps.sendblueCreds) {
-      const lazyGen =
-        deps.lazyGenerate ??
-        ((args) =>
-          defaultLazyGenerate({
-            ...args,
-            ...(deps.loadCompany ? { loadCompany: deps.loadCompany } : {}),
-          }))
-      mediaUrl = await lazyGen({
-        db: deps.db,
-        jobId: input.jobId,
-        job: input.job,
-        creds: deps.sendblueCreds,
-        log,
-      })
-      if (mediaUrl) log("rec_card.lazy_generated", { userId: input.userId, jobId: input.jobId })
-    }
+    // CACHE READ → shape-guard → liveness → lazy-gen (+ persist), all via the shared resolver so the
+    // logic lives in ONE place (resolveRecCardMediaUrl) — the same path makeV16FindMatch uses to attach
+    // the image INLINE. Returns a Sendblue-acceptable url, or null on any miss.
+    const mediaUrl = await resolveRecCardMediaUrl(deps.db, {
+      jobId: input.jobId,
+      job: input.job,
+      ...(deps.loadCachedMediaUrl ? { loadCachedMediaUrl: deps.loadCachedMediaUrl } : {}),
+      ...(deps.checkMediaUrlLive ? { checkMediaUrlLive: deps.checkMediaUrlLive } : {}),
+      ...(deps.lazyGenerate ? { lazyGenerate: deps.lazyGenerate } : {}),
+      ...(deps.loadCompany ? { loadCompany: deps.loadCompany } : {}),
+      ...(deps.sendblueCreds ? { sendblueCreds: deps.sendblueCreds } : {}),
+      log,
+    })
 
     if (!mediaUrl) {
       log("rec_card.no_cached_card", { userId: input.userId, jobId: input.jobId })
@@ -276,7 +389,7 @@ export async function maybeSendRecCard(input: {
       log("rec_card.caption_unrenderable", { userId: input.userId, jobId: input.jobId })
       return { sent: false, reason: "card_unavailable" }
     }
-    const caption = buildRecCardCaption(payload)
+    const caption = buildRecCardCaption(payload, input.captionMode ?? "full")
 
     const ymd = (deps.todayYmd ?? defaultYmd)()
     const idempotencyKey = `rec-card-${input.userId}-${input.jobId}-${ymd}`

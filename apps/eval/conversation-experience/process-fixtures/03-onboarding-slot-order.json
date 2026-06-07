@@ -1,11 +1,11 @@
 {
   "kind": "onboarding_slots",
-  "description": "Shared-onboarding walks all 7 slots in canonical order with no skip, then completes; an answer projects durable capture (memoryFact + tags).",
+  "description": "2026-06-02 onboarding trim (Adam #1 friction — minimal upfront): the ASKED flow walks ONLY the two HARD-filter slots (target_role -> location_relocation) with no skip, then completes; an answer projects durable capture (memoryFact + tags). The other 5 axes are extract-only.",
   "expect": {
-    "slot_order": ["main_goal", "culture_stage", "target_role", "industry_interest", "location_relocation", "seniority_comp", "special_context"],
-    "walk": ["main_goal", "culture_stage", "target_role", "industry_interest", "location_relocation", "seniority_comp", "special_context", "__complete__"]
+    "slot_order": ["target_role", "location_relocation"],
+    "walk": ["target_role", "location_relocation", "__complete__"]
   },
   "projections": [
-    { "questionId": "main_goal", "answer": "I want senior backend / platform roles at AI infrastructure startups" }
+    { "questionId": "target_role", "answer": "I want senior backend / platform roles at AI infrastructure startups" }
   ]
 }

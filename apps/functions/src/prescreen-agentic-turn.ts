@@ -48,6 +48,10 @@ export type AgenticPrescreenTurnInput = {
    */
   runTurn: (reply: string) => Promise<AgenticRunTurnResult>
   log?: (event: string, payload: Record<string, unknown>) => void
+  /** Trace grouping (T4): groupId = the prescreen sessionId so this leg joins the conversation's trace
+   *  group; userId rides as trace metadata. Optional — absent → the trace still exports, just ungrouped. */
+  sessionId?: string
+  userId?: string
   /** Test-only: inject a fake SDK to drive the tool loop deterministically. */
   __loadSdk?: () => AgentsSdk
 }
@@ -100,7 +104,13 @@ interface AgentsSdk {
     modelSettings?: Record<string, unknown>
     tools: AgentTool[]
   }) => unknown
-  run(agent: unknown, input: string): Promise<unknown>
+  // run accepts an optional RunConfig (3rd arg) — workflowName/groupId/traceMetadata/
+  // traceIncludeSensitiveData — so the prescreen leg is named, grouped with its conversation, and PII-safe.
+  run(agent: unknown, input: string, opts?: unknown): Promise<unknown>
+  // T4 (tracing): export-key setter + the global trace provider for a post-run flush. Optional so an SDK
+  // build lacking them is a silent no-op (fail-open) — same defensiveness as claire-agent/sdk.ts.
+  setTracingExportApiKey?(key: string): void
+  getGlobalTraceProvider?(): unknown
 }
 
 /**
@@ -118,6 +128,9 @@ function loadConfiguredSdk(): AgentsSdk {
   sdk.setDefaultOpenAIClient(client)
   sdk.setOpenAIAPI("responses")
   if (apiKey) sdk.setDefaultOpenAIKey(apiKey)
+  // T4 (Adam 2026-06-06): also set the TRACING export key so the prescreen leg's spans actually POST
+  // (without it the exporter silently drops every span and this leg of the conversation is invisible).
+  if (apiKey) sdk.setTracingExportApiKey?.(apiKey)
   return sdk
 }
 
@@ -209,7 +222,22 @@ export async function runAgenticPrescreenTurn(
     tools,
   })
 
-  const sdkResult = await sdk.run(agent, input.replyText)
+  // T4 (tracing): name + group + PII-safe the prescreen leg's trace, then force-flush so a short CF
+  // invocation doesn't return before the BatchTraceProcessor's timer fires (the same de-blackbox flush
+  // the main claire-turn does). groupId/traceMetadata only ride when the caller threaded sessionId/userId.
+  const prescreenRunConfig: Record<string, unknown> = {
+    workflowName: "claire-prescreen",
+    traceIncludeSensitiveData: false,
+    ...(input.sessionId ? { groupId: input.sessionId } : {}),
+    ...(input.userId ? { traceMetadata: { userId: input.userId } } : {}),
+  }
+  const sdkResult = await sdk.run(agent, input.replyText, prescreenRunConfig)
+  try {
+    const provider = (sdk.getGlobalTraceProvider as (() => unknown) | undefined)?.()
+    await (provider as { forceFlush?: () => unknown } | undefined)?.forceFlush?.()
+  } catch {
+    /* fail-open: a flush error must never break the prescreen turn */
+  }
   const finalText = String((sdkResult as { finalOutput?: unknown }).finalOutput ?? "").trim()
 
   if (box.recorded) {

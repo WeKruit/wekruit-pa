@@ -78,7 +78,8 @@ function seededUser() {
   return {
     [`pa-users/${UID}`]: {
       onboardingState: "pending",
-      sharedOnboarding: { status: "active", currentQuestionId: "main_goal", completed: false, answers: {} },
+      // 2026-06-02 trim: the first ASKED slot is target_role (was main_goal).
+      sharedOnboarding: { status: "active", currentQuestionId: "target_role", completed: false, answers: {} },
     },
   }
 }
@@ -86,10 +87,11 @@ function seededUser() {
 test("record_onboarding_answer DURABLY advances sharedOnboarding.currentQuestionId on a tool-fired turn", async () => {
   const { db, store } = makeDb(seededUser())
   const [, recordOnboarding] = buildProcessTools(makeCtx(db))
-  await recordOnboarding.invoke({} as never, JSON.stringify({ slot: "main_goal", answer: "career growth", ...NULLS }))
+  // 2026-06-02 trim: walk the FIRST asked slot (target_role) → it advances to location_relocation.
+  await recordOnboarding.invoke({} as never, JSON.stringify({ slot: "target_role", answer: "product management", ...NULLS }))
   const so = (store.get(`pa-users/${UID}`) as { sharedOnboarding: Record<string, unknown> }).sharedOnboarding
-  // Before the fix this stayed "main_goal" → Claire re-asked main_goal every turn.
-  assert.equal(so.currentQuestionId, "culture_stage", "durable slot must advance to the NEXT slot")
+  // Before the fix this stayed on the current slot → Claire re-asked it every turn.
+  assert.equal(so.currentQuestionId, "location_relocation", "durable slot must advance to the NEXT asked slot")
   assert.equal(so.completed, false)
   assert.equal((store.get(`pa-users/${UID}`) as { onboardingState: string }).onboardingState, "pending")
 })

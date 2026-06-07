@@ -74,6 +74,16 @@ function makeFakeDb(opts?: { users?: Record<string, DocData>; outboundExisting?:
               }
               throw new Error(`fake-db: .create() unsupported for ${name}`)
             },
+            // Generic write sink. enqueueRuntimeEventHandoff (the resume_parse_completed
+            // producer) now CREATES the session + writes the inbound-event doc when none
+            // exists (WS-0 BUG1 fix: requireExistingSession:false — fire the pitch even for a
+            // user with no pre-existing session, instead of declining). These collections
+            // (pa-sessions / pa-inbound-events) aren't otherwise modeled here; a no-op success
+            // lets the handoff complete so the chaos pipeline exercises the real path. The
+            // resume row + outbound assertions read from `state`, unaffected.
+            async set(_data: DocData) {
+              return
+            },
           }
         },
       }
@@ -230,14 +240,15 @@ describe("chaos: cv-onboarding failure injection", () => {
     }
     const res = await ingestCv({ userId: "u4", mediaUrl: "https://x/a.pdf" }, deps)
 
-    // Pipeline still succeeds; runtime event handoff can decline without
-    // falling back to a direct message producer.
+    // Pipeline still succeeds; with no pre-existing session the runtime handoff now CREATES
+    // one and fires the resume_parse_completed event (WS-0 BUG1 fix: requireExistingSession:false
+    // — never drop the pitch for a session-less user), still WITHOUT a direct message producer.
     assert.equal(res.ok, true)
     assert.equal(state.resumes.length, 1, "resume row written")
     assert.equal(state.outbound.size, 0, "no direct outbox rows")
     assert.ok(
       events.some((e) => e.event === "pa.cv_followup.synthetic_trigger_written"),
-      "runtime handoff result logged"
+      "runtime handoff fired (created session + event)"
     )
   })
 

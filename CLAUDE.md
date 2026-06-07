@@ -1,5 +1,13 @@
 # Claude Operating Authority — wekruit-pa
 
+## ⭐ CANONICAL CANDIDATE FLOW — READ FIRST, FOLLOW ALWAYS (Adam-LOCKED 2026-06-03)
+
+**The candidate onboarding→match→prescreen journey is specified in [`.planning/CANONICAL-CANDIDATE-FLOW.md`](.planning/CANONICAL-CANDIDATE-FLOW.md) (main repo: `/Users/adam/Desktop/WeKruit/wekruit-pa/.planning/CANONICAL-CANDIDATE-FLOW.md`). Every agent / spawned team reads it FIRST and stays INSIDE it.**
+
+One line: LinkedIn login → enrich → **pitch** (trust vehicle, not the deliverable) → mostly-happy in 2–3 rounds → **match US jobs (existing `find_match`/V16)** → if a WeKruit collaborative job → **prescreen / schedule with the hiring manager**. Tagging live every step; session context always present; reuse not rebuild; multi-bubble offer; conditional location/salary ask ONLY if missing AND never mentioned. **Do not go beyond the flow — if something seems to require it, STOP and come back to Adam to chat.**
+
+---
+
 **Adam directive iter23 (2026-05-03):** "你可以 deploy 不要再说让我 deploy 然后自己不做事情了"
 
 ## You CAN and MUST deploy

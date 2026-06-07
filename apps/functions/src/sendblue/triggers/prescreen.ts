@@ -365,9 +365,17 @@ export class PrescreenTrigger implements Trigger {
         toE164: ctx.fromNumber,
         ...(initialReplyText ? { initialReplyText } : {}),
         ...(pendingMatch ? { sourceRequestedUserId: userId } : {}),
-        // admin sender drives any user's session by design → bypass the matched-gate;
-        // self/public_page do NOT (self is verified, public_page carries the invite).
-        ...(role === "admin" ? { allowMatchedBypass: true } : {}),
+        // STRING-TOKEN START bypasses the matched-gate for EVERY authorized sender (Adam 2026-06-03:
+        // "the invited[gate] is for guarding the CONVERSATIONAL start; but for string → start it's
+        // everyone"). Reaching here means the sender transmitted the EXACT WeKruit_<jobId>_<userId>_Job
+        // string AND passed the self-identity check above (isSelf || admin || pending-invite) — token
+        // possession + self-identity IS the authorization. The matched-gate (was this job ever
+        // recommended to them) only guards the AGENT/conversational start (begin_collab_prescreen,
+        // which resolves the candidate's matched roles first); it must NOT block an explicit self
+        // copy-paste. This was the live 2026-06-03 ghost — +14108695008 pasted a product-designer
+        // token never recommended to them → not_matched → SILENT no-reply. Now: every authorized
+        // sender starts. The self-identity gate still blocks starting a screen AS someone else.
+        allowMatchedBypass: true,
       })
       if (runResult && runResult.ok === false) {
         if (runResult.reason === "config_missing") {

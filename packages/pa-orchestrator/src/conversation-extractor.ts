@@ -272,12 +272,26 @@ export const ConversationExtractResultSchema = z.object({
                   bufferSteps: z.number().int().min(0).max(4).optional(),
                 })
                 .strict()
-                .optional(),
+                .optional()
+                // RESILIENCE (2026-06-04): gpt-5.4-nano NONDETERMINISTICALLY emits a LOOSE shape for a
+                // per-axis hint — e.g. `{ hard: true }` / `"hard"` instead of `{ hardness: "hard" }` — which
+                // the strict inner object rejects (hardness Required + unrecognized key). Without this, ONE
+                // malformed axis nuked the ENTIRE tagPatch via parse_error → the real tags (visa/salary/
+                // location/industry) were ALL silently dropped → matcher starved. Same data-loss CLASS as the
+                // #245 scalar-vs-array bug + the C2 numeric-salary bug, a NEW instance caught by the
+                // mid-onboarding real-seam canary. `.catch(undefined)` drops ONLY the malformed AXIS (the
+                // hint is optional flavor — matcher falls back to DEFAULT_HARDNESS), preserving every valid
+                // axis AND the rest of the patch. Reproduced 2/3 runs at temp 0; RED→GREEN after this.
+                .catch(undefined),
             ]),
           ),
         )
         .strict()
-        .optional(),
+        .optional()
+        // Belt-and-suspenders: an UNKNOWN axis key (model invents an axis name not in HARDNESS_AXIS_VOCAB)
+        // would still trip the parent `.strict()`. Catch that too so preferenceHardness can NEVER nuke the
+        // patch — a malformed hint is always dropped, the candidate's real tags always land.
+        .catch(undefined),
     })
     .strict(),
   memoryEntities: z.array(

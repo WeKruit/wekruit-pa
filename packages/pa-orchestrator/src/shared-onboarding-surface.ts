@@ -46,7 +46,7 @@ export function buildOnboardingSurfaceIntent(input: {
    * question instead of robotically re-asking.
    */
   tangentDetected?: boolean
-  /** True only for the first SMS after `Hello, WeKruit! {userId}` / runtime kickoff. */
+  /** True only for the first SMS after the verification-code opener / runtime kickoff. */
   opening?: boolean
   /** Present when onboarding starts right after a completed role-fit prescreen. */
   postPrescreenContext?: SharedOnboardingPostPrescreenContext | null
@@ -111,7 +111,7 @@ export function buildOnboardingSurfaceIntent(input: {
       "Brief natural reactions are okay, like got it, makes sense, or oh nice.",
       "Light emoji is okay, max one per SMS and not every message.",
       "Never mention being AI.",
-      "This is the first SMS after the candidate opened with Hello, WeKruit! {userId}.",
+      "This is the first SMS after the candidate opened with the prefilled verification-code handshake.",
       "Open with a short welcome that uses their first name when available and one real resume or profile detail when available.",
       "Use exactly one resume/profile detail in the welcome; do not list multiple jobs, companies, titles, or skills.",
       "Keep the whole opening plus the main-goal question concise: 2-3 short sentences max.",

@@ -15,6 +15,9 @@ export interface BuildClaireToolsOptions {
   prescreenPrompts?: PrescreenPrompts
   /** qId → judge rubric (keyword hints + clarify cue) the score tool grades against. */
   judgeContext?: Record<string, string>
+  /** BLOCKER 3: post-parse pitch turn → withhold react_to_user / no_reply / send_status_then_continue
+   *  so a tapback-only can't suppress the mandated text pitch (the live "👍 tapback no response"). */
+  forbidSuppressingDelivery?: boolean
 }
 
 /** All tools the thin Claire agent can call, in description-routed order. */
@@ -22,7 +25,7 @@ export function buildClaireTools(ctx: ClaireToolContext, opts: BuildClaireToolsO
   return [
     ...buildMatchingTools(ctx),
     ...buildProcessTools(ctx, opts.prescreenPrompts ?? {}, opts.judgeContext ?? {}),
-    ...buildDeliveryTools(ctx),
+    ...buildDeliveryTools(ctx, { forbidSuppressingDelivery: opts.forbidSuppressingDelivery }),
     ...buildSchedulingTools(ctx),
   ]
 }

@@ -16,7 +16,18 @@
 import { tool, z } from "../sdk.js"
 import type { ClaireToolContext } from "../types.js"
 
-export function buildDeliveryTools(ctx: ClaireToolContext) {
+export interface BuildDeliveryToolsOptions {
+  /**
+   * BLOCKER 3 (Adam 2026-06-03 — the live "👍 tapback no response"): on the post-parse pitch turn the
+   * agent MUST send the pitch as text bubbles. A tapback (react_to_user) or a no_reply marks the turn
+   * deliveredViaTool → delivery.ts returns 0 → the pitch bubbles are NEVER SENT (candidate gets a 'like'
+   * then silence). When this is true we DROP the turn-suppressing delivery tools (react_to_user /
+   * no_reply / send_status_then_continue) entirely, so the only way to end the turn is to emit the text.
+   */
+  forbidSuppressingDelivery?: boolean
+}
+
+export function buildDeliveryTools(ctx: ClaireToolContext, opts: BuildDeliveryToolsOptions = {}) {
   const reactToUser = tool({
     name: "react_to_user",
     description:
@@ -53,5 +64,8 @@ export function buildDeliveryTools(ctx: ClaireToolContext) {
     },
   })
 
+  // BLOCKER 3: on a mandated-pitch turn, withhold the turn-completing delivery tools so a tapback-only
+  // (or a deliberate no-send) can never suppress the text pitch. The pitch is then the only valid output.
+  if (opts.forbidSuppressingDelivery) return []
   return [reactToUser, sendStatusThenContinue, noReply]
 }

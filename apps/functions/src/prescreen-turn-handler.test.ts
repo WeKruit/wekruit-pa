@@ -559,7 +559,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal((turnEntries[0][1].data.action as { reason?: string }).reason, "pending_human_review")
   })
 
-  it("turns a post-interview proceed yes into shared onboarding Q1 without daily subscription consent", async () => {
+  it("turns a post-interview proceed yes into the gap-aware thin onboarding (role first when nothing on file), NOT the legacy main_goal wall", async () => {
     const now = new Date().toISOString()
     const { db, docs } = makeFakeDb({
       "pa-users/u1": {
@@ -567,6 +567,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
         phoneE164: "+13054507715",
         onboardingStatus: "invited",
         onboardingState: "pending",
+        // NO tags.targetRoleFunction / targetLocations → firstMissing = target_role.
       },
       "pa-prescreen-sessions/ps_done": {
         sessionId: "ps_done",
@@ -607,8 +608,11 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
 
     assert.equal(result.handled, true)
     assert.equal(sent.length, 1)
-    assert.match(sent[0] ?? "", /thanks for completing the role screen/i)
-    assert.match(sent[0] ?? "", /what matters most/i)
+    // Wording-differs lock: still thanks them for the screen.
+    assert.match(sent[0] ?? "", /thanks for completing the screen/i)
+    // CONVERGES to the gap-aware thin set (target_role prompt), NOT the legacy main_goal wall.
+    assert.match(sent[0] ?? "", /what kind of roles are you going for/i)
+    assert.doesNotMatch(sent[0] ?? "", /what matters most/i)
 
     const user = docs.get("pa-users/u1")?.data
     assert.equal(user?.dailyJobRecSubscribe, undefined)
@@ -618,6 +622,130 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     const session = docs.get("pa-prescreen-sessions/ps_done")?.data
     assert.equal((session?.postPrescreenRetention as { stage?: string } | undefined)?.stage, "onboarding_started")
     assert.equal((session?.postPrescreenRetention as { basicOnboardingOptIn?: boolean } | undefined)?.basicOnboardingOptIn, true)
+  })
+
+  it("converges to ONLY the location ask when role is already derived (LinkedIn/résumé enrich) — never re-asks role", async () => {
+    const now = new Date().toISOString()
+    const { db, docs } = makeFakeDb({
+      "pa-users/u1": {
+        id: "u1",
+        phoneE164: "+13054507715",
+        onboardingStatus: "invited",
+        onboardingState: "pending",
+        // Role auto-derived at enrich (#2) → target_role satisfied; location still missing.
+        tags: { targetRoleFunction: ["software_engineering"] },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        postPrescreenRetention: {
+          stage: "await_basic_onboarding",
+          terminal: "PASS",
+          startedAt: now,
+          updatedAt: now,
+        },
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "yes",
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /thanks for completing the screen/i)
+    // ONLY the location ask — role is suppressed (already on file).
+    assert.match(sent[0] ?? "", /where in the US/i)
+    assert.doesNotMatch(sent[0] ?? "", /what kind of roles are you going for/i)
+    assert.doesNotMatch(sent[0] ?? "", /what matters most/i)
+    void docs
+  })
+
+  it("bridges straight to recs (find_match) when role AND location are both already known — no question asked", async () => {
+    const now = new Date().toISOString()
+    const { db } = makeFakeDb({
+      "pa-users/u1": {
+        id: "u1",
+        phoneE164: "+13054507715",
+        onboardingStatus: "invited",
+        onboardingState: "pending",
+        tags: {
+          targetRoleFunction: ["software_engineering"],
+          targetLocations: ["san_francisco_bay_area"],
+        },
+      },
+      "pa-prescreen-sessions/ps_done": {
+        sessionId: "ps_done",
+        userId: "u1",
+        jobId: "rain-software-engineer-fullstack-8849f6ef",
+        terminal: "PASS",
+        currentQId: null,
+        createdAt: now,
+        updatedAt: now,
+        postPrescreenRetention: {
+          stage: "await_basic_onboarding",
+          terminal: "PASS",
+          startedAt: now,
+          updatedAt: now,
+        },
+        workSession: { kind: "job_prescreen", status: "ended", startedAt: now, endedAt: now, boundary: "terminal" },
+      },
+    })
+
+    const sent: string[] = []
+    let firedRecsForUser: string | null = null
+    const result = await runPrescreenTurnIfActive({
+      db,
+      userId: "u1",
+      toE164: "+13054507715",
+      replyText: "yes",
+      // Inject the rec-firer so we can assert it's called exactly once without a real find_match.
+      fireJobRecs: async (a) => {
+        firedRecsForUser = a.userId
+        return { ok: true, jobCount: 3 }
+      },
+      sendSms: async (args) => {
+        sent.push(args.content)
+        return {
+          status: "queued",
+          from_number: null,
+          number: args.to,
+          content: args.content,
+          service: "iMessage",
+          is_outbound: true,
+        }
+      },
+    })
+
+    assert.equal(result.handled, true)
+    assert.equal(sent.length, 1)
+    assert.match(sent[0] ?? "", /pull a few matches for you now/i)
+    // No question asked at all.
+    assert.doesNotMatch(sent[0] ?? "", /what kind of roles/i)
+    assert.doesNotMatch(sent[0] ?? "", /where in the US/i)
+    // Recs fired exactly once for this user (the SAME find_match path the FAIL terminal uses).
+    assert.equal(firedRecsForUser, "u1")
   })
 
   it("yields a recent terminal prescreen when user-level post-match retention is active", async () => {

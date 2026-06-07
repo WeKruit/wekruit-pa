@@ -35,8 +35,10 @@ import {
   INDUSTRY_TAGS,
   applyIndustryTagsFallback,
   mapToCanonicalIndustry,
+  rescueIndustryWithSkillsLlm,
   type IndustryTag,
 } from "./industry-tags.js"
+import { isCanaryUser } from "../claire-agent/canary.js"
 import {
   runIndustrySecondPass,
   type WorkHistorySummary,
@@ -75,6 +77,13 @@ import type {
 // fallback already runs on parsed.industryTags before we hand it to the
 // merger, so the merger sees the corrected tags.
 import { mergeUserTags, projectTagsToGlobalTags, type UserTagsInput } from "@pa/pa-orchestrator"
+import {
+  mergeAndDetermineProfile,
+  toSourceFromLinkedin,
+  toSourceFromResume,
+  type MergeAndDetermineResult as MergeAndDetermineProfileResult,
+  type SourceExperience as MergeSourceExperience,
+} from "../external-supply/merge-experience-profile.js"
 import { enqueueRuntimeEventHandoff } from "../runtime-event-handoff.js"
 import { computeResumeBaselineTagPatch } from "../lib/resume-baseline-tags.js"
 import {
@@ -966,6 +975,17 @@ export async function runUserTagsMerge(args: {
   ) => Promise<void>
   nowIso: () => string
   log: (event: string, payload?: Record<string, unknown>) => void
+  /**
+   * Injectable unified LinkedIn+résumé merge+determine (Adam 2026-06-05). Default = the real
+   * gpt-5.4-mini json_schema-STRICT call. Tests stub it. When non-null, its determined facts
+   * (recentRoleTitle/recentCompany/careerStage/yoeRange) override the résumé-only derivation and its
+   * merged canonical timeline is written to pa-users.experienceHighlights. Fail-open: null → leave the
+   * résumé-only result untouched.
+   */
+  mergeAndDetermine?: (input: {
+    linkedinExperiences: MergeSourceExperience[]
+    resumeExperiences: MergeSourceExperience[]
+  }) => Promise<MergeAndDetermineProfileResult | null>
 }): Promise<void> {
   // 1. Read existing user doc — statedPreferences + preferredLang flow
   //    in from the chat-answers worker (separate write side).
@@ -1099,11 +1119,107 @@ export async function runUserTagsMerge(args: {
     merged = { ...merged, skills: existingSkillsForGuard }
   }
 
+  // 2.5 UNIFIED MERGE + DETERMINE (Adam 2026-06-05): "merge the experience between linkedin & resume,
+  //     and ask llm to determine." When a résumé parses we have the résumé workHistory; the user's
+  //     LinkedIn experiences live on pa-users.experienceHighlights (written by the Coresignal mirror).
+  //     Feed BOTH to the SAME ONE gpt-5.4-mini json_schema-STRICT call so the determined facts
+  //     (recentRoleTitle/recentCompany/careerStage/yoeRange) reflect the MERGED truth — fixing the bug
+  //     where a stale "Software Engineer Intern" résumé title + undercounted YoE pinned careerStage to
+  //     junior while LinkedIn clearly showed a current Senior role. On non-null we (a) write the merged
+  //     canonical timeline to pa-users.experienceHighlights, and (b) overlay the determined facts onto
+  //     `merged` (they OVERRIDE the résumé-only derivation). FAIL-OPEN: null → leave the résumé-only
+  //     result untouched. Never throws (the whole runner already swallows errors).
+  let mergedExperienceHighlights: Array<Record<string, unknown>> | undefined
+  try {
+    const linkedinHl = Array.isArray(userData?.experienceHighlights)
+      ? (userData!.experienceHighlights as unknown[])
+      : []
+    const linkedinSources: MergeSourceExperience[] = linkedinHl
+      .filter((h): h is Record<string, unknown> => Boolean(h) && typeof h === "object")
+      .map((h) => toSourceFromLinkedin(h))
+      .filter((s) => s.title || s.company)
+    const resumeSources: MergeSourceExperience[] = (
+      Array.isArray(args.workHistory) ? args.workHistory : []
+    )
+      .filter((w): w is Record<string, unknown> => Boolean(w) && typeof w === "object")
+      .map((w) => toSourceFromResume(w))
+      .filter((s) => s.title || s.company)
+    if (linkedinSources.length > 0 || resumeSources.length > 0) {
+      const merge = args.mergeAndDetermine ?? mergeAndDetermineProfile
+      const tMerge0 = Date.now()
+      const determined = await merge({ linkedinExperiences: linkedinSources, resumeExperiences: resumeSources })
+      args.log("pa.cv_ingest.timing", {
+        step: "merge_determine",
+        ms: Date.now() - tMerge0,
+        linkedin: linkedinSources.length,
+        resume: resumeSources.length,
+        userId: args.userId,
+      })
+      if (determined && determined.mergedExperiences.length > 0) {
+        mergedExperienceHighlights = determined.mergedExperiences.slice(0, 10).map((e) => {
+          const out: Record<string, unknown> = {
+            title: e.title,
+            company: e.company,
+            source: "merged_linkedin_resume",
+            sourceLabel: "LinkedIn+Résumé",
+          }
+          if (e.startDate) out.startDate = e.startDate
+          if (e.endDate) out.endDate = e.endDate
+          if (e.isCurrent === true) out.currentRole = true
+          if (e.description) out.description = e.description
+          return out
+        })
+        // Determined facts OVERRIDE the résumé-only derivation (the whole point of the merge).
+        if (determined.recentRoleTitle) merged.recentRoleTitle = determined.recentRoleTitle
+        if (determined.recentCompany) merged.recentCompany = determined.recentCompany
+        if (determined.careerStage) merged.careerStage = determined.careerStage
+        if (determined.yoeRange) merged.yoeRange = determined.yoeRange
+        // D1 — same-lane role from the merged timeline OVERRIDES the projection's regex derivation AND any
+        // stale-but-filled value (this block runs AFTER applyResumeMatchingTagProjection). LLM closed-enum
+        // pick is the single source; writeUserTagsFull then auto-projects it to globalTags.roleFunction.
+        if (determined.roleFunction && determined.roleFunction.length > 0) {
+          merged.targetRoleFunction = determined.roleFunction
+        }
+        args.log("pa.cv_user_tags.merged_profile", {
+          userId: args.userId,
+          mergedRoles: determined.mergedExperiences.length,
+          recentRoleTitle: determined.recentRoleTitle ?? null,
+          careerStage: determined.careerStage ?? null,
+        })
+      }
+    }
+  } catch (err) {
+    args.log("pa.cv_user_tags.merge_threw", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    mergedExperienceHighlights = undefined
+  }
+
   // 3. Write `pa-users/{userId}.tags`. Merge:true preserves any tag
   //    fields the chat-answers worker may have populated (we own the
   //    CV-derived fields; they own the chat-derived ones).
   try {
     await args.writeUserTags(args.db, args.userId, merged)
+    // Write the MERGED canonical experienceHighlights to the user doc (top-level, parity with the
+    // Coresignal mirror's write site) so all downstream surfaces read one merged timeline. Fail-open:
+    // a write error here must NOT taint the tags write success above.
+    if (mergedExperienceHighlights && mergedExperienceHighlights.length > 0) {
+      try {
+        await args.db.collection(PA_USERS_COLLECTION).doc(args.userId).set(
+          {
+            experienceHighlights: mergedExperienceHighlights,
+            experienceHighlightsUpdatedAt: args.nowIso(),
+          },
+          { merge: true },
+        )
+      } catch (err) {
+        args.log("pa.cv_user_tags.highlights_write_error", {
+          userId: args.userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    }
     const skillsCount = Array.isArray(merged.skills) ? merged.skills.length : 0
     const industryEnum = Array.isArray(merged.industryEnum) ? merged.industryEnum : []
     args.log("pa.cv_user_tags.ok", {
@@ -1113,6 +1229,108 @@ export async function runUserTagsMerge(args: {
     })
   } catch (err) {
     args.log("pa.cv_user_tags.write_error", {
+      userId: args.userId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// #3 conversational re-enrich hook (Adam 2026-06-05)
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-enrich a user's canonical tags from an ALREADY-PARSED résumé (the v2
+ * `ParsedResumeData`), reusing the SAME single enrich path as the attachment
+ * (webhook Stream-D) and website (public-cv-ingest) flows — `runUserTagsMerge`
+ * over the D8 sole writer, with the default `mergeAndDetermineProfile` call (so
+ * `targetRoleFunction` / careerStage / skills are re-derived, incl. the #2
+ * same-lane role override). NO parallel tag write path, NO regex.
+ *
+ * This exists because the `cv_parse` CHAT tool only has parsed-text in hand —
+ * `ingestCv` is mediaUrl-only, so a résumé PASTED into the chat had no enrich
+ * seam before this (it returned parsed text to the LLM and dead-ended). This
+ * closes that gap by adapting the parsed struct + computing the embedding +
+ * running the merge with production defaults. Fully fail-open: every step is
+ * try/caught (and `runUserTagsMerge` itself swallows all errors), so it can be
+ * fired-and-forgotten from a conversation turn without ever throwing upward.
+ */
+export async function reEnrichUserTagsFromParsedResume(args: {
+  db: Firestore
+  userId: string
+  parsedV2: import("@pa/pa-resume-parser").ParsedResumeData
+  nowIso?: () => string
+  log?: (event: string, payload?: Record<string, unknown>) => void
+  /** Test seams — default to the SAME production deps `ingestCv` wires. */
+  computeEmbedding?: (
+    input: Parameters<typeof computeCvEmbedding>[0],
+  ) => Promise<ComputeCvEmbeddingResult | null>
+  mergeUserTagsFn?: (input: UserTagsInput) => Record<string, unknown>
+  writeUserTags?: (
+    db: Firestore,
+    userId: string,
+    tags: Record<string, unknown>,
+  ) => Promise<void>
+  /** Injectable unified merge+determine (default = the real gpt-5.4-mini call); tests stub it. */
+  mergeAndDetermine?: Parameters<typeof runUserTagsMerge>[0]["mergeAndDetermine"]
+}): Promise<void> {
+  const nowIso = args.nowIso ?? (() => new Date().toISOString())
+  const log = args.log ?? (() => undefined)
+  const computeEmbedding = args.computeEmbedding ?? computeCvEmbedding
+  const mergeUserTagsFn =
+    args.mergeUserTagsFn ?? ((input: UserTagsInput) => mergeUserTags(input) as Record<string, unknown>)
+  const writeUserTags = args.writeUserTags ?? defaultWriteUserTags
+  try {
+    const parsed = adaptV2ToStructuredCv(args.parsedV2)
+    const sharedTopSkills = computeTopSkills({
+      candidateProfileSkills: parsed.candidateProfile.skills,
+      workHistory: args.parsedV2.workHistory,
+    })
+    // Embedding: best-effort, same sync compute the ingest path uses. Null on any failure.
+    let embedResult: ComputeCvEmbeddingResult | null = null
+    try {
+      embedResult = await computeEmbedding({
+        candidateProfile: parsed.candidateProfile,
+        experiences: parsed.experiences,
+        education: parsed.education,
+        industryTags: parsed.industryTags,
+        topSkills: sharedTopSkills,
+      })
+    } catch (err) {
+      log("pa.cv_reenrich.embedding_error", {
+        userId: args.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      embedResult = null
+    }
+    await runUserTagsMerge({
+      db: args.db,
+      userId: args.userId,
+      parsed,
+      workHistory: args.parsedV2.workHistory,
+      embedding: embedResult,
+      industrySector: args.parsedV2.relevantIndustry,
+      relevantIndustry: args.parsedV2.relevantIndustry,
+      relevantSpecialization: args.parsedV2.relevantSpecialization,
+      proposedTags: args.parsedV2.proposedTags,
+      resumeMatchingTagSignals: {
+        skills: args.parsedV2.skills,
+        workHistory: args.parsedV2.workHistory,
+        totalYearsExperience: args.parsedV2.totalYearsExperience,
+        workAuthorization: args.parsedV2.workAuthorization,
+        relevantSpecialization: args.parsedV2.relevantSpecialization,
+        proposedTags: args.parsedV2.proposedTags,
+      },
+      mergeUserTagsFn,
+      writeUserTags,
+      nowIso,
+      log,
+      ...(args.mergeAndDetermine ? { mergeAndDetermine: args.mergeAndDetermine } : {}),
+    })
+    log("pa.cv_reenrich.ok", { userId: args.userId })
+  } catch (err) {
+    // Fully fail-open — a conversational re-enrich must never surface an error.
+    log("pa.cv_reenrich.error", {
       userId: args.userId,
       error: err instanceof Error ? err.message : String(err),
     })
@@ -1503,6 +1721,117 @@ async function defaultIsParserV2Enabled(
   }
 }
 
+/**
+ * Build a candidateProfileSummary (the same shape `buildCvFactBody(parsed)` emits) from an
+ * ALREADY-STORED parsedCandidateResumes row. Used on the sha256 idempotent-hit return path, where
+ * `parsed` was never computed this run (the early return short-circuits before LLM extraction) — the
+ * row that caused the hit carries `candidateProfile`/`experiences`/`education`, so we reconstruct the
+ * summary from it instead of re-parsing. NEVER throws — returns "" on any read/shape error.
+ */
+async function summaryFromStoredResume(db: Firestore, resumeId: string): Promise<string> {
+  try {
+    const snap = await db.collection(PARSED_RESUMES_COLLECTION).doc(resumeId).get()
+    if (!snap.exists) return ""
+    const row = (snap.data() ?? {}) as Record<string, unknown>
+    const cp = (row.candidateProfile ?? {}) as Record<string, unknown>
+    const reconstructed = {
+      candidateProfile: {
+        name: typeof cp.name === "string" ? cp.name : null,
+        email: typeof cp.email === "string" ? cp.email : null,
+        phone: typeof cp.phone === "string" ? cp.phone : null,
+        linkedIn: typeof cp.linkedIn === "string" ? cp.linkedIn : null,
+        location: typeof cp.location === "string" ? cp.location : null,
+        skills: Array.isArray(cp.skills)
+          ? (cp.skills as unknown[]).map((s) => (typeof s === "string" ? s : "")).filter(Boolean)
+          : [],
+      },
+      experiences: Array.isArray(row.experiences) ? (row.experiences as never[]) : [],
+      education: Array.isArray(row.education) ? (row.education as never[]) : [],
+      industryTags: Array.isArray(row.industryTags) ? (row.industryTags as never[]) : [],
+    } as unknown as StructuredCv
+    return buildCvFactBody(reconstructed)
+  } catch {
+    return ""
+  }
+}
+
+/**
+ * BLOCKER 1 FIX (Adam 2026-06-03 — "silent pitch loss" race): fire the resume_parse_completed runtime
+ * handoff EXACTLY ONCE for a (user, pdf), even on the sha256 idempotent-hit early-return path.
+ *
+ * WHY: the webhook (Stream-D) ingest is now parse-only (followupDeliveryMode:"none") but it STILL writes
+ * the parsedCandidateResumes row WITH its sha256 ~1-2s before the cutover (runtime) ingest. The cutover
+ * ingest's sha256 lookup then HITS that row and returns early (cv-ingest.ts idempotent-hit) BEFORE
+ * reaching the main resume_parse_completed handoff → ZERO pitch, no fallback. So we fire the handoff
+ * here too, on the early return. The handoff is idempotent on the SAME sha-keyed idempotencyKey the main
+ * path uses (`cv-parsed:${userId}:${pdfSha256||resumeId}`), so firing it from BOTH the early-return path
+ * and the main path collapses to ONE inbound doc (existingEvent.exists → created:false). Firing twice is
+ * safe; firing AT LEAST once is now guaranteed regardless of which invocation wins the sha256 race.
+ *
+ * NEVER throws — the idempotent-hit return must stay ok:true even if the handoff write fails.
+ */
+async function fireResumeParsedHandoffOnIdempotentHit(input: {
+  db: Firestore
+  userId: string
+  resumeId: string
+  pdfSha256: string
+  sessionId?: string
+  followupDeliveryMode: CvFollowupDeliveryMode
+  candidateProfileSummary?: string
+  lookupUserForFollowup: (db: Firestore, userId: string) => Promise<CvFollowupUser | null>
+  log: (event: string, payload?: Record<string, unknown>) => void
+}): Promise<void> {
+  if (input.followupDeliveryMode !== "runtime") return
+  try {
+    const user = await input.lookupUserForFollowup(input.db, input.userId).catch(() => null)
+    const phone = user?.toE164
+    if (!phone) {
+      input.log("pa.cv_followup.idempotent_hit_handoff_skipped", {
+        userId: input.userId,
+        resumeId: input.resumeId,
+        reason: "no_phone",
+      })
+      return
+    }
+    // Same shape buildCvFactBody emits — prefer the caller-provided summary (identity path has `parsed`),
+    // otherwise reconstruct from the already-stored row (non-identity path returns before LLM extraction).
+    const summary =
+      input.candidateProfileSummary && input.candidateProfileSummary.trim()
+        ? input.candidateProfileSummary
+        : await summaryFromStoredResume(input.db, input.resumeId)
+    // SESSION-SCOPED (Adam 2026-06-06): include the sessionId so a DELIBERATE re-upload in a NEW session
+    // (e.g. a merge-accept after the same résumé was parsed in an earlier session) RE-PITCHES — the old
+    // sha-only key deduped it forever (the "Yes!" → silence bug). Same-session double-send still collapses
+    // (same session + same sha → one pitch), preserving the BLOCKER-1 exactly-once within a turn.
+    const handoffIdempotencyKey = `cv-parsed:${input.userId}:${input.sessionId || "nosess"}:${input.pdfSha256 || input.resumeId}`
+    const runtime = await enqueueRuntimeEventHandoff(input.db, {
+      userId: input.userId,
+      toE164: phone,
+      sessionId: input.sessionId,
+      requireExistingSession: false,
+      source: "cv_ingest",
+      eventKind: "resume_parse_completed",
+      idempotencyKey: handoffIdempotencyKey,
+      context: {
+        resumeId: input.resumeId,
+        candidateProfileSummary: summary,
+        cvParsedTrigger: true,
+      },
+    })
+    input.log("pa.cv_followup.idempotent_hit_handoff", {
+      userId: input.userId,
+      resumeId: input.resumeId,
+      runtime,
+    })
+  } catch (err) {
+    input.log("pa.cv_followup.idempotent_hit_handoff_failed", {
+      userId: input.userId,
+      resumeId: input.resumeId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------
@@ -1531,7 +1860,19 @@ export async function ingestCv(
     }
   }
   const dbHandle: Firestore = db
-  const log = deps?.log ?? (() => {})
+  // OBSERVABILITY (Adam 2026-06-06 "why minutes?"): the cutover (iMessage) path calls ingestCv WITHOUT a
+  // logger, so a no-op default silently dropped EVERY pa.cv_ingest.timing log → the parse was a black box
+  // and the latency stayed un-diagnosable. Default to console.log (→ Cloud Logging) so the per-stage
+  // breakdown (parse_pdf / llm_parse+usedTier / embedding / merge_determine) ALWAYS emits, every caller.
+  const log =
+    deps?.log ??
+    ((event: string, payload?: Record<string, unknown>) => {
+      try {
+        console.log(`[cv-ingest] ${event}`, JSON.stringify(payload ?? {}))
+      } catch {
+        console.log(`[cv-ingest] ${event}`)
+      }
+    })
   const nowIso = deps?.nowIso ?? (() => new Date().toISOString())
   const fetchPdf = deps?.fetchPdf ?? defaultFetchPdf
   const parsePdf = deps?.parsePdf ?? defaultParsePdf
@@ -1734,15 +2075,33 @@ export async function ingestCv(
   if (!identityEnabled) {
     const existingId = await lookupExistingResumeBySha256(userId)
     if (existingId) {
+      // BLOCKER 1 FIX — the sha256 row already exists (the parse-only webhook ingest, or a prior run,
+      // wrote it). The early return below skips the main resume_parse_completed handoff, so fire it
+      // HERE (sha-keyed → dedups against the main path). `parsed` isn't computed on this path, so the
+      // helper reconstructs the summary from the stored row.
+      await fireResumeParsedHandoffOnIdempotentHit({
+        db: dbHandle,
+        userId,
+        resumeId: existingId,
+        pdfSha256,
+        sessionId: args.sessionId,
+        followupDeliveryMode,
+        lookupUserForFollowup,
+        log,
+      })
       return { ok: true, resumeId: existingId, userId }
     }
   }
 
   // 2. PDF text extraction
+  // LATENCY INSTRUMENTATION (Adam 2026-06-06 "why is it taking minutes?"): time each ingest stage so the
+  // 3-min black box is observable — pa.cv_ingest.timing {step, ms} per step + usedTier on the LLM parse.
   let text: string
+  const tPdf0 = Date.now()
   try {
     const out = await parsePdf(bytes)
     text = (out.text ?? "").slice(0, MAX_TEXT_BYTES)
+    log("pa.cv_ingest.timing", { step: "parse_pdf", ms: Date.now() - tPdf0, userId: args.userId })
     if (!text.trim()) {
       log("pa.cv_ingest.error", { stage: "parse", error: "empty_text", userId: args.userId })
       return { ok: false, reason: "pdf_parse_failed" }
@@ -1773,6 +2132,7 @@ export async function ingestCv(
   let v2Output: ParserV2Output | null = null
   let usedTier: string | undefined
   let usedModel: string = LLM_MODEL
+  const tLlm0 = Date.now()
   try {
     if (parserV2On && !deps?.llmExtract) {
       v2Output = await parserV2ExtractFn(text, log)
@@ -1785,7 +2145,18 @@ export async function ingestCv(
       parsed = validateStructuredCv(out.parsed)
       usage = out.usage
     }
+    // The prime latency suspect — a tier-1 timeout cascading through the 3-tier fallback chain shows up
+    // here as a large ms + a non-primary usedTier/usedModel.
+    log("pa.cv_ingest.timing", {
+      step: "llm_parse",
+      ms: Date.now() - tLlm0,
+      parserV2: parserV2On,
+      usedTier: usedTier ?? null,
+      usedModel,
+      userId: args.userId,
+    })
   } catch (err) {
+    log("pa.cv_ingest.timing", { step: "llm_parse_failed", ms: Date.now() - tLlm0, userId: args.userId })
     log("pa.cv_ingest.error", {
       stage: "llm",
       error: err instanceof Error ? err.message : String(err),
@@ -1882,6 +2253,19 @@ export async function ingestCv(
 
     const existingId = await lookupExistingResumeBySha256(userId)
     if (existingId) {
+      // BLOCKER 1 FIX — same as the non-identity path, but `parsed` IS available here (LLM extraction
+      // already ran before identity resolution), so thread its summary straight through (no row re-read).
+      await fireResumeParsedHandoffOnIdempotentHit({
+        db: dbHandle,
+        userId,
+        resumeId: existingId,
+        pdfSha256,
+        sessionId: args.sessionId,
+        followupDeliveryMode,
+        candidateProfileSummary: buildCvFactBody(parsed),
+        lookupUserForFollowup,
+        log,
+      })
       return {
         ok: true,
         resumeId: existingId,
@@ -1919,12 +2303,28 @@ export async function ingestCv(
         description: e.description,
         location: e.location,
       }))
-      const secondPassResult = await runIndustrySecondPassFn({
-        cvText: text,
-        workHistory,
-        apiKey: process.env.ANTHROPIC_API_KEY?.trim() || undefined,
-        log,
-      })
+      // 2026-06-05 — LLM-driven industry rescue (replaces the TECH_TOKENS /
+      // AI_TOKENS regex sniff for the canonical 42-token axis). For the canary
+      // cohort, thread the candidate's SKILLS into the second-pass prompt so
+      // the "SWE/Tesla/AWS → other" case the regex existed to rescue is now
+      // caught by the LLM. Non-canary keeps the existing second-pass call
+      // verbatim. Both fail OPEN to [] (caller keeps prior value); the 10-bucket
+      // `industryTags` keep their applyIndustryTagsFallback baseline regardless.
+      const secondPassResult = isCanaryUser(userId)
+        ? await rescueIndustryWithSkillsLlm({
+            cvText: text,
+            skills: parsed.candidateProfile.skills,
+            workHistory,
+            apiKey: process.env.ANTHROPIC_API_KEY?.trim() || undefined,
+            log,
+            runIndustrySecondPassFn,
+          })
+        : await runIndustrySecondPassFn({
+            cvText: text,
+            workHistory,
+            apiKey: process.env.ANTHROPIC_API_KEY?.trim() || undefined,
+            log,
+          })
       if (Array.isArray(secondPassResult) && secondPassResult.length > 0) {
         log("pa.cv_ingest.industry_second_pass.applied", {
           userId: userId,
@@ -1976,6 +2376,7 @@ export async function ingestCv(
     workHistory: v2Output ? v2Output.parsed.workHistory : undefined,
   })
   let embedResult: ComputeCvEmbeddingResult | null = null
+  const tEmb0 = Date.now()
   try {
     embedResult = await computeEmbedding({
       candidateProfile: parsed.candidateProfile,
@@ -1984,6 +2385,7 @@ export async function ingestCv(
       industryTags: parsed.industryTags,
       topSkills: sharedTopSkills,
     })
+    log("pa.cv_ingest.timing", { step: "embedding", ms: Date.now() - tEmb0, ok: Boolean(embedResult), userId })
     if (embedResult) {
       log("pa.cv_ingest.embedding_computed", {
         userId: userId,
@@ -2034,7 +2436,16 @@ export async function ingestCv(
       prior = null
     }
   }
-  if (h3FlagOn && prior && followupDeliveryMode === "runtime") {
+  if (h3FlagOn && prior && followupDeliveryMode === "runtime" && !isCanaryUser(userId)) {
+    // MERGE-NOT-OVERWRITE (Adam-LOCKED 2026-06-05): for canary users a NEW/additional résumé is owned
+    // end-to-end by the thin MERGE+CONFIRM+REPITCH path (cutover.ts: merge-confirm gate → accept fires
+    // ingestCv → THIS function's normal write path → runUserTagsMerge MERGES LinkedIn + existing + new
+    // résumé → resume_parse_completed → composePitchTurn). So we must NOT divert canary résumés into
+    // this H3 overwrite-STAGING branch (which short-circuits BEFORE runUserTagsMerge and emits a
+    // resume_overwrite_pending event nothing repitches — the live "wait no, latest resume is live" bug).
+    // With PA_ONBOARDING_RAMP_ALL=1 in prod, isCanaryUser is true for everyone → this overwrite path is
+    // dead for the résumé case; the H3 machinery stays in the tree (no deletion) but is inert.
+    //
     // Flag ON + existing resume in an active iMessage path: stage the new
     // parsed doc and hand structured overwrite facts to runtime. Runtime owns
     // the actual candidate-visible prompt.
@@ -2403,6 +2814,75 @@ export async function ingestCv(
     })
   }
   if (user) {
+    // LATENCY DECOUPLE (Adam 2026-06-06): fire the pitch handoff FIRST — BEFORE the Stream-E side effects
+    // (mem0 fact + qaBank). The pitch (composePitchTurn) reads ONLY the parsed-résumé doc + pa-users.tags
+    // (both written above) + candidateProfileSummary from `parsed`; it NEVER reads mem0/qaBank (verified).
+    // Previously the handoff ran AFTER `await Promise.allSettled(branches)`, so a slow/broken mem0 write
+    // (mem0 has been 100% 400 since 2026-06-03) gated the user-facing pitch. The side-effects still run +
+    // are awaited (below) so the instance stays alive to complete them — they just no longer block the pitch.
+    if (followupDeliveryMode === "runtime") {
+      try {
+        const phone = user.toE164
+        if (phone) {
+          // BUG 2 FIX (Adam 2026-06-02): the post-parse pitch must fire AT MOST ONCE per (user, PDF).
+          // One résumé drop triggers TWO concurrent ingestCv runs (webhook Stream-D + cutover); on a
+          // first upload both miss the lock-free sha256 guard, each writes a DISTINCT parsedCandidateResume
+          // (distinct resumeId), and a resumeId-scoped idempotencyKey produced TWO handoff docs → TWO pitch
+          // turns (the "same/similar text sent twice"). Scope the handoff key to the pdf sha256 (identical
+          // across both runs, computed at line ~1703) so enqueueRuntimeEventHandoff's existingEvent.exists
+          // check collapses the second run to created:false → exactly ONE resume_parse_completed event →
+          // ONE pitch. Fall back to resumeId only if hashing failed (empty sha would alias DISTINCT résumés).
+          // SESSION-SCOPED (Adam 2026-06-06): see the idempotent-hit site — including the session lets a
+          // deliberate re-upload in a NEW session re-pitch (fixes "Yes!" → silence), while a same-session
+          // double-send still collapses to one pitch.
+          const handoffIdempotencyKey = `cv-parsed:${userId}:${args.sessionId || "nosess"}:${pdfSha256 || resumeId}`
+          // BUG 1 FIX (defensive): when the LIVE session is threaded in (cutover passes the real sessionId),
+          // the session always exists, so requireExistingSession is moot. When NO sessionId is supplied (the
+          // webhook Stream-D producer for an already-onboarded user), the derived session may not exist yet —
+          // do NOT silently drop the candidate-facing re-entry: allow the handoff to attach the derived
+          // session (requireExistingSession:false) so the pitch is never lost to a race. Either way exactly
+          // one handoff doc is created (sha256-keyed above).
+          const runtime = await enqueueRuntimeEventHandoff(dbHandle, {
+            userId,
+            toE164: phone,
+            sessionId: args.sessionId,
+            requireExistingSession: false,
+            source: "cv_ingest",
+            eventKind: "resume_parse_completed",
+            idempotencyKey: handoffIdempotencyKey,
+            context: {
+              resumeId,
+              candidateProfileSummary: buildCvFactBody(parsed),
+              cvParsedTrigger: true,
+            },
+          })
+          log("pa.cv_followup.synthetic_trigger_written", {
+            userId: userId,
+            resumeId,
+            runtime,
+          })
+        }
+      } catch (err) {
+        log("pa.cv_followup.synthetic_trigger_failed", {
+          userId: userId,
+          resumeId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    } else {
+      log("pa.cv_followup.synthetic_trigger_skipped", {
+        userId: userId,
+        resumeId,
+        reason: "delivery_none",
+      })
+    }
+
+    // Stream-E side effects (mem0 fact write + qaBank → mem0), NON-critical for the pitch (already fired
+    // above). Adam 2026-06-06: "mem0 should ALWAYS be a non-blocking side effect." Now that mem0 works
+    // again, the LLM-extract + embed + Qdrant per fact is real time (~tens of seconds, many ops) — so it
+    // must NOT be awaited at all: fire-and-forget. ingest_done then fires right after the pitch handoff,
+    // not after mem0. The floating promise still completes on the same warm instance (same lifecycle that
+    // already lets the fire-and-forget ingestCv itself finish). allSettled never rejects; .catch is belt-only.
     const branches: Array<Promise<unknown>> = [
       runMem0Write({
         userId: userId,
@@ -2434,49 +2914,7 @@ export async function ingestCv(
         })
       )
     }
-    await Promise.allSettled(branches)
-
-    // Fire a synthetic runtime event AFTER all CV-ingest async work
-    // completes so Claire can decide the next user-visible turn with the
-    // freshly-written parsedCandidateResume visible. This is a system event,
-    // not user speech, so it must go through runtime-event handoff.
-    if (followupDeliveryMode === "runtime") {
-      try {
-        const phone = user.toE164
-        if (phone) {
-          const runtime = await enqueueRuntimeEventHandoff(dbHandle, {
-            userId,
-            toE164: phone,
-            sessionId: args.sessionId,
-            source: "cv_ingest",
-            eventKind: "resume_parse_completed",
-            idempotencyKey: `cv-parsed:${userId}:${resumeId}`,
-            context: {
-              resumeId,
-              candidateProfileSummary: buildCvFactBody(parsed),
-              cvParsedTrigger: true,
-            },
-          })
-          log("pa.cv_followup.synthetic_trigger_written", {
-            userId: userId,
-            resumeId,
-            runtime,
-          })
-        }
-      } catch (err) {
-        log("pa.cv_followup.synthetic_trigger_failed", {
-          userId: userId,
-          resumeId,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-    } else {
-      log("pa.cv_followup.synthetic_trigger_skipped", {
-        userId: userId,
-        resumeId,
-        reason: "delivery_none",
-      })
-    }
+    void Promise.allSettled(branches).catch(() => {})
   } else {
     log("pa.cv_followup.skipped", { reason: "no_user_record", userId: userId })
   }

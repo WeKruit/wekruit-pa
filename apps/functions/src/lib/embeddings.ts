@@ -171,9 +171,14 @@ async function defaultEmbeddingClient(): Promise<EmbeddingClient | null> {
   const cfg = getOpenAIConfig()
   if (!cfg.apiKey) return null
   const { default: OpenAI } = (await import("openai")) as unknown as {
-    default: new (init: { apiKey: string; baseURL?: string }) => EmbeddingClient
+    default: new (init: { apiKey: string; baseURL?: string; timeout?: number }) => EmbeddingClient
   }
-  return new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL })
+  // PER-REQUEST TIMEOUT (Adam 2026-06-06 latency root-cause): the embedding sits on the résumé-ingest
+  // CRITICAL PATH (awaited before the parsed-résumé doc write + pitch handoff). The OpenAI SDK default
+  // request timeout is ~10 min, so a slow/hung embedding call stalls the whole ingest for minutes — the
+  // same no-timeout class as the parser tiers. Cap at 30s so a hung embedding fails fast (the daily batch
+  // re-embeds the empty doc as fallback — zero-regression).
+  return new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL, timeout: 30_000 })
 }
 
 /**

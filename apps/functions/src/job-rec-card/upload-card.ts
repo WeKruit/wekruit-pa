@@ -34,6 +34,38 @@ export type SendblueMediaCreds = {
 }
 
 /**
+ * Is a cached `media_url` SHAPED the way Sendblue's `media_url` contract requires
+ * — i.e. will Sendblue actually attach it, or silently drop it?
+ *
+ * THE RESIDUAL DELIVERY BUG (2026-06-04): the original fix swapped the HOST to
+ * Sendblue's media store, but any `matching-jobs/{jobId}.recCardMediaUrl` that was
+ * cached BEFORE that fix still holds a legacy Firebase token URL
+ * (`...firebasestorage.googleapis.com/...o/<path>.png?alt=media&token=<hex>`). That
+ * URL is a SIGNED url that does NOT end in the extension → Sendblue drops the image
+ * on an otherwise-DELIVERED send. The liveness HEAD-check can't catch it because a
+ * Firebase token URL is perfectly fetchable (HTTP 200) — it's the SHAPE, not the
+ * liveness, that's wrong. So a poisoned cache keeps shipping a dropped image forever.
+ *
+ * This guard makes a poisoned cache a cache MISS so the send path re-uploads a fresh
+ * Sendblue-hosted url + rewrites the cache. The contract (mirrors uploadToSendblueMedia
+ * + the send-rec-card test assertions): (a) https, (b) ends in `.png`, (c) NO query
+ * string (signed urls carry `?...token=`), (d) not a firebasestorage download url.
+ */
+export function isSendblueAcceptableMediaUrl(url: string | null | undefined): boolean {
+  if (typeof url !== "string") return false
+  const u = url.trim()
+  if (!u) return false
+  if (!/^https:\/\//i.test(u)) return false
+  // A signed/token url carries a query string; Sendblue drops it.
+  if (u.includes("?") || u.includes("#")) return false
+  // Firebase download urls are signed + not extension-terminated — never acceptable.
+  if (/firebasestorage\.googleapis\.com/i.test(u)) return false
+  // Must be extension-terminated so Sendblue infers the image type.
+  if (!/\.png$/i.test(u)) return false
+  return true
+}
+
+/**
  * Upload a PNG to Sendblue's media store and return the permanent, non-signed,
  * `.png`-terminated CDN URL (the only URL shape Sendblue's `media_url` accepts).
  *

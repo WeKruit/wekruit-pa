@@ -336,7 +336,7 @@ export function buildProcessTools(
           ...(preferenceHardness && preferenceHardness.length > 0
             ? {
                 preferenceHardness: Object.fromEntries(
-                  preferenceHardness.map((h) => [
+                  preferenceHardness.map((h: { axis: string; hardness: "hard" | "soft"; bufferPct: number | null; bufferSteps: number | null }) => [
                     h.axis,
                     {
                       hardness: h.hardness,

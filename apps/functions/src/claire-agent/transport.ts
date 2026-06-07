@@ -119,16 +119,20 @@ export function createSendblueTransport(
     recordedEvents.push(value === undefined ? { kind } : { kind, value })
   }
 
-  // Resolve the conversation's Sendblue pool line ONCE per turn (memoized). Both the read
+  // Resolve the conversation's BOUND Sendblue line ONCE per turn (memoized). Both the read
   // receipt AND the typing indicator must come FROM this line or Sendblue can't match the
-  // thread → no "Read", no typing bubble. `undefined` (no pool / resolve error) lets the
-  // Sendblue clients fall back to creds.fromNumber — no regression on single-number accounts.
+  // thread → no "Read", no typing bubble. We go through `resolveBoundFromNumber` (the single
+  // source of truth) so typing/read-receipt land on the SAME line as the durable reply
+  // (outbox.ts also honors the binding) instead of a hash that reshuffles when the pool grows.
+  // `undefined` (no pool / resolve error / no eligible line) lets the Sendblue clients fall
+  // back to creds.fromNumber — no regression on single-number accounts.
   let fromNumberCache: string | undefined | "unresolved" = "unresolved"
   const resolveFromNumber = async (): Promise<string | undefined> => {
     if (fromNumberCache !== "unresolved") return fromNumberCache
     try {
-      const { loadSendbluePool, pickFromNumber } = await import("../sendblue/pool.js")
-      fromNumberCache = pickFromNumber(await loadSendbluePool(deps.db), deps.userId) ?? undefined
+      const { resolveBoundFromNumber } = await import("../sendblue/resolve-bound-from-number.js")
+      const bound = await resolveBoundFromNumber(deps.db, deps.userId)
+      fromNumberCache = bound.fromNumber ?? undefined
     } catch {
       fromNumberCache = undefined
     }
@@ -191,11 +195,20 @@ export function createSendblueTransport(
     },
 
     // User-facing reply — durable, idempotent, retried via the pa-outbound outbox.
-    async sendText(text: string, opts?: { seq?: number; paced?: boolean }): Promise<void> {
+    // `opts.mediaUrl` rides an image attachment WITH this bubble (the rec-card image inline on its
+    // role caption); enqueueOutbound forwards it to Sendblue as the message media_url. The image
+    // therefore delivers in strict order WITH its caption (one durable row), instead of a separate
+    // once/day media row that races the recs. The idempotency key folds the body hash + the per-turn
+    // inboundEventId, so this image+caption row re-sends every find_match (per-turn), as intended.
+    async sendText(
+      text: string,
+      opts?: { seq?: number; paced?: boolean; mediaUrl?: string },
+    ): Promise<void> {
       record("text", text)
       if (dryRun) return
       const body = String(text ?? "").trim()
       if (!body) return
+      const mediaUrl = opts?.mediaUrl?.trim()
       try {
         await enqueueOutbound(deps.db, {
           userId: deps.userId,
@@ -204,6 +217,7 @@ export function createSendblueTransport(
           idempotencyKey: textIdempotencyKey(deps, body),
           ...(typeof opts?.seq === "number" ? { seq: opts.seq } : {}),
           ...(opts?.paced ? { paced: true } : {}),
+          ...(mediaUrl ? { mediaUrl } : {}),
           runtimeApproved: true,
           runtimeSource: "pa_orchestrator",
         })

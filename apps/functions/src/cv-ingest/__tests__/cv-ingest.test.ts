@@ -7,9 +7,11 @@ import {
   buildCvFactBody,
   computeTopSkills,
   runUserTagsMerge,
+  reEnrichUserTagsFromParsedResume,
   type IngestCvDeps,
   type StructuredCv,
 } from "../cv-ingest.js"
+import type { ParsedResumeData } from "@pa/pa-resume-parser"
 import type { IndustryTag } from "../industry-tags.js"
 
 // ---------- Tiny fake Firestore (only .collection().add() / .doc().create() / .doc().get() used) -----------
@@ -382,7 +384,13 @@ describe("ingestCv", () => {
       return meta?.runtimeEventSource === "cv_ingest" && meta?.runtimeEventKind === "resume_parse_completed"
     })
     assert.equal(e1Events.length, 1)
-    assert.match(String(e1Events[0]!.idempotencyKey), new RegExp(`cv-parsed:user_x:${id1}`))
+    // BUG 2 FIX (Adam 2026-06-02) + SESSION-SCOPE (Adam 2026-06-06): the cv-parsed handoff idempotencyKey
+    // is `cv-parsed:<userId>:<session>:<sha256>`. The pdf sha collapses the two concurrent webhook+cutover
+    // ingests within a turn (NOT the resumeId, which differs per run → dup-send). The session segment lets
+    // a DELIBERATE re-upload in a NEW session re-pitch (the "Yes!" → silence fix); no session → "nosess".
+    const key = String(e1Events[0]!.idempotencyKey)
+    assert.match(key, /^runtime-event:cv_ingest:cv-parsed:user_x:[^:]+:[0-9a-f]{64}$/)
+    assert.equal(key.includes(id1), false, "the handoff key must NOT embed the per-run resumeId (that was the dup-send root)")
     assert.ok(events.some((e) => e.event === "pa.cv_followup.synthetic_trigger_written"))
   })
 
@@ -1707,5 +1715,168 @@ describe("runUserTagsMerge — durable skills-regression guard (2026-05-31)", ()
       log: () => {},
     })
     assert.equal((captured!.skills as unknown[]).length, 20, "the richer 20-skill re-parse wins")
+  })
+})
+
+describe("runUserTagsMerge — merge-determined roleFunction OVERRIDES the résumé derivation (#2 role-derive, the Jasmaine fix)", () => {
+  const workHistory = [{ title: "Senior Software Engineer", company: "Tesla", currentRole: true }]
+  it("a stale-but-filled targetRoleFunction is REPLACED by the LLM merge value", async () => {
+    // Existing tags already carry a STALE filled role; the re-parse baseline also derives a (different) role,
+    // and the merge-determine LLM returns the canonical same-lane pick. The merge value must win.
+    const { db } = makeFakeDb({
+      users: { u_role: { tags: { targetRoleFunction: ["data_analysis"], skills: [{ name: "python" }] } } },
+    })
+    let captured: Record<string, unknown> | undefined
+    await runUserTagsMerge({
+      db: db as Parameters<typeof runUserTagsMerge>[0]["db"],
+      userId: "u_role",
+      parsed: happyParsed(),
+      workHistory,
+      embedding: null,
+      // baseline re-parse keeps the stale data_analysis (what the projection would otherwise honor).
+      mergeUserTagsFn: () => ({ skills: [{ name: "python" }], targetRoleFunction: ["data_analysis"] }),
+      mergeAndDetermine: async () => ({
+        mergedExperiences: [{ title: "Senior Software Engineer", company: "Tesla", isCurrent: true }],
+        recentRoleTitle: "Senior Software Engineer",
+        recentCompany: "Tesla",
+        careerStage: "senior",
+        roleFunction: ["software_engineering"],
+      }),
+      writeUserTags: async (_db, _uid, tags) => { captured = tags },
+      nowIso: () => "2026-06-05T00:00:00.000Z",
+      log: () => {},
+    })
+    assert.ok(captured)
+    assert.deepEqual(captured!.targetRoleFunction, ["software_engineering"], "LLM merge value OVERRIDES the stale data_analysis")
+  })
+
+  it("merge returns null (fail-open) → no override is written; existing role preserved by merge:true", async () => {
+    // Existing tags already have targetRoleFunction filled. The projection DELETES the key from the write
+    // (so Firestore set(merge:true) preserves the existing value), and with merge null there is nothing to
+    // override. So the captured write must carry NO targetRoleFunction — proof the LLM didn't clobber.
+    const { db } = makeFakeDb({
+      users: { u_role_failopen: { tags: { targetRoleFunction: ["data_analysis"] } } },
+    })
+    let captured: Record<string, unknown> | undefined
+    await runUserTagsMerge({
+      db: db as Parameters<typeof runUserTagsMerge>[0]["db"],
+      userId: "u_role_failopen",
+      parsed: happyParsed(),
+      workHistory,
+      embedding: null,
+      mergeUserTagsFn: () => ({ targetRoleFunction: ["data_analysis"] }),
+      mergeAndDetermine: async () => null, // fail-open
+      writeUserTags: async (_db, _uid, tags) => { captured = tags },
+      nowIso: () => "2026-06-05T00:00:00.000Z",
+      log: () => {},
+    })
+    assert.ok(captured)
+    assert.equal(captured!.targetRoleFunction, undefined, "fail-open writes no role override (merge:true keeps existing)")
+  })
+})
+
+describe("reEnrichUserTagsFromParsedResume — #3 conversational re-enrich hook (pasted-text résumé)", () => {
+  function happyParsedV2(overrides: Partial<ParsedResumeData> = {}): ParsedResumeData {
+    return {
+      fullName: "Test Candidate",
+      email: "test@example.com",
+      phone: null,
+      location: "San Francisco, CA",
+      summary: null,
+      skills: ["TypeScript", "React", "Node.js"],
+      workHistory: [
+        {
+          title: "Senior Software Engineer",
+          company: "Tesla",
+          location: "Palo Alto, CA",
+          startDate: "2021",
+          endDate: null,
+          currentRole: true,
+          description: "Built the Autopilot data pipeline.",
+          bullets: ["Shipped a 300+ store rollout"],
+          achievements: [],
+        },
+      ],
+      education: [],
+      projects: [],
+      certifications: [],
+      languages: [],
+      interests: [],
+      awards: [],
+      volunteerWork: [],
+      websites: [],
+      totalYearsExperience: 6,
+      workAuthorization: null,
+      parseConfidence: 0.9,
+      inferredAnswers: [],
+      relevantIndustry: [],
+      relevantSpecialization: [],
+      proposedTags: [],
+      ...overrides,
+    } as ParsedResumeData
+  }
+
+  it("runs the SAME D8 enrich path and re-derives targetRoleFunction from the parsed résumé (role override fires)", async () => {
+    // A pasted-text résumé must flow through runUserTagsMerge → mergeAndDetermine → the role override.
+    const { db } = makeFakeDb({
+      users: { u_paste: { tags: { targetRoleFunction: ["data_analysis"] } } },
+    })
+    let captured: Record<string, unknown> | undefined
+    let mergeCalled = false
+    let embeddingCalled = false
+    await reEnrichUserTagsFromParsedResume({
+      db: db as Parameters<typeof reEnrichUserTagsFromParsedResume>[0]["db"],
+      userId: "u_paste",
+      parsedV2: happyParsedV2(),
+      nowIso: () => "2026-06-05T00:00:00.000Z",
+      log: () => {},
+      // Offline seams — no OpenAI.
+      computeEmbedding: async () => {
+        embeddingCalled = true
+        return null
+      },
+      mergeUserTagsFn: () => ({ skills: [{ name: "typescript" }], targetRoleFunction: ["data_analysis"] }),
+      mergeAndDetermine: async () => {
+        mergeCalled = true
+        return {
+          mergedExperiences: [{ title: "Senior Software Engineer", company: "Tesla", isCurrent: true }],
+          recentRoleTitle: "Senior Software Engineer",
+          recentCompany: "Tesla",
+          careerStage: "senior",
+          roleFunction: ["software_engineering"],
+        }
+      },
+      writeUserTags: async (_db, _uid, tags) => {
+        captured = tags
+      },
+    })
+    assert.ok(mergeCalled, "the merge-and-determine LLM seam was invoked (re-enrich, not just a return)")
+    assert.ok(embeddingCalled, "the embedding compute seam was invoked")
+    assert.ok(captured, "writeUserTags (the D8 sole writer) was called")
+    assert.deepEqual(
+      captured!.targetRoleFunction,
+      ["software_engineering"],
+      "pasted-text résumé re-derives the same-lane role, OVERRIDING the stale data_analysis",
+    )
+  })
+
+  it("is fully fail-open — a throwing writer never surfaces an error to the caller", async () => {
+    const { db } = makeFakeDb({ users: { u_failopen: { tags: {} } } })
+    // Must resolve, not reject — fire-and-forget contract.
+    await assert.doesNotReject(async () => {
+      await reEnrichUserTagsFromParsedResume({
+        db: db as Parameters<typeof reEnrichUserTagsFromParsedResume>[0]["db"],
+        userId: "u_failopen",
+        parsedV2: happyParsedV2(),
+        nowIso: () => "2026-06-05T00:00:00.000Z",
+        log: () => {},
+        computeEmbedding: async () => null,
+        mergeUserTagsFn: () => ({ targetRoleFunction: ["software_engineering"] }),
+        mergeAndDetermine: async () => null,
+        writeUserTags: async () => {
+          throw new Error("simulated Firestore write failure")
+        },
+      })
+    })
   })
 })

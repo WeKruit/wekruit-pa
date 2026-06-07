@@ -62,6 +62,54 @@ export function resolveJobRecVisibleCount(requestedCount: unknown): number {
   return Math.max(1, Math.min(3, requested || 2))
 }
 
+/**
+ * Default number of role bubbles a single live find_match delivery may ship.
+ * Adam directive 2026-06-02: a live on-demand find_match must not bombard the
+ * user with a "wall of messages" — cap the COMBINED (collab + regular) list.
+ */
+export const DEFAULT_MAX_RECS_PER_DELIVERY = 3
+
+/**
+ * Resolve the per-delivery role cap from a live `paMaxRecsPerDelivery` flag
+ * value. Numeric flags ship through getFlag as `number`; we clamp to [1,6] and
+ * fall back to {@link DEFAULT_MAX_RECS_PER_DELIVERY} for any non-numeric or
+ * out-of-range value. Mirrors the resolveRecCadenceDays clamp pattern.
+ */
+export function resolveMaxRecsPerDelivery(flagValue: unknown): number {
+  const raw =
+    typeof flagValue === "number" && Number.isFinite(flagValue)
+      ? Math.trunc(flagValue)
+      : typeof flagValue === "string" && flagValue.trim().length > 0 && Number.isFinite(Number(flagValue))
+        ? Math.trunc(Number(flagValue))
+        : DEFAULT_MAX_RECS_PER_DELIVERY
+  return Math.max(1, Math.min(6, raw || DEFAULT_MAX_RECS_PER_DELIVERY))
+}
+
+/**
+ * Stable collab-first ordering for a list of resolved message items, then a
+ * hard slice to `cap`. WeKruit partner/collab roles (matchSourceLabel ===
+ * "WeKruit collaborated") are kept ahead of general matches so the cap never
+ * drops a partner role to surface a regular one — collab roles are higher value
+ * and carry the prescreen start line. Relative order within each group is
+ * preserved (the input is already V16-ranked).
+ */
+export function prioritizeAndCapRecItems(
+  items: JobRecommendationMessageItem[],
+  cap: number,
+): JobRecommendationMessageItem[] {
+  if (cap <= 0) return []
+  if (items.length <= cap && !items.some((i) => i.matchSourceLabel === "WeKruit collaborated")) {
+    return items.slice(0, cap)
+  }
+  const collab: JobRecommendationMessageItem[] = []
+  const general: JobRecommendationMessageItem[] = []
+  for (const item of items) {
+    if (item.matchSourceLabel === "WeKruit collaborated") collab.push(item)
+    else general.push(item)
+  }
+  return [...collab, ...general].slice(0, cap)
+}
+
 export function formatJobRecIntro(
   lang: JobRecLang,
   visibleCount: number,
@@ -191,9 +239,21 @@ export function toJobRecommendationMessageItem(
 export function collectJobRecommendationMessageItems(
   jobs: JobRecommendationSource[] | undefined,
   lang: JobRecLang,
-  options?: { limit?: number; reasons?: Array<string | null | undefined>; candidateTags?: unknown },
+  options?: {
+    limit?: number
+    reasons?: Array<string | null | undefined>
+    candidateTags?: unknown
+    /**
+     * Hard cap on the COMBINED (collab + regular) role bubbles delivered. When
+     * set, partner/collab roles are prioritized into the cap ahead of general
+     * matches. Defaults to {@link resolveJobRecVisibleCount}(options.limit).
+     */
+    maxRecs?: number
+  },
 ): JobRecommendationMessageItem[] {
-  const limit = resolveJobRecVisibleCount(options?.limit)
+  const cap = options?.maxRecs !== undefined
+    ? Math.max(1, Math.trunc(options.maxRecs))
+    : resolveJobRecVisibleCount(options?.limit)
   const items: JobRecommendationMessageItem[] = []
   for (let i = 0; i < (jobs?.length ?? 0); i++) {
     const job = jobs![i]!
@@ -201,9 +261,11 @@ export function collectJobRecommendationMessageItems(
     const item = toJobRecommendationMessageItem(job, lang, { reason: options?.reasons?.[i] ?? undefined })
     if (!item) continue
     items.push(item)
-    if (items.length >= limit) break
+    // Collect a small candidate pool past the cap so collab-priority can
+    // reorder before the hard slice; bound it to avoid scanning the full corpus.
+    if (items.length >= cap * 3) break
   }
-  return items
+  return prioritizeAndCapRecItems(items, cap)
 }
 
 export async function checkJobRecUrlLiveness(
@@ -247,6 +309,12 @@ export async function collectLiveJobRecommendationMessageItems(
     reasons?: Array<string | null | undefined>
     candidateTags?: unknown
     maxCandidates?: number
+    /**
+     * Hard cap on the COMBINED (collab + regular) role bubbles delivered. When
+     * set, partner/collab roles are prioritized into the cap ahead of general
+     * matches. Defaults to {@link resolveJobRecVisibleCount}(options.limit).
+     */
+    maxRecs?: number
     fetchImpl?: JobRecUrlFetch
     timeoutMs?: number
     onDeadJob?: (
@@ -257,7 +325,9 @@ export async function collectLiveJobRecommendationMessageItems(
     log?: (event: string, payload?: Record<string, unknown>) => void
   },
 ): Promise<JobRecommendationMessageItem[]> {
-  const limit = resolveJobRecVisibleCount(options?.limit)
+  const limit = options?.maxRecs !== undefined
+    ? Math.max(1, Math.trunc(options.maxRecs))
+    : resolveJobRecVisibleCount(options?.limit)
   const maxCandidates = Math.max(limit, Math.min(options?.maxCandidates ?? Math.max(8, limit * 4), jobs?.length ?? 0))
   const candidates: JobRecommendationMessageItem[] = []
   for (let i = 0; i < (jobs?.length ?? 0) && candidates.length < maxCandidates; i++) {
@@ -278,11 +348,13 @@ export async function collectLiveJobRecommendationMessageItems(
     })),
   )
 
-  const items: JobRecommendationMessageItem[] = []
+  const alive: JobRecommendationMessageItem[] = []
   for (const { item, verdict } of checked) {
     if (verdict.alive) {
-      items.push(item)
-      if (items.length >= limit) break
+      alive.push(item)
+      // Collect a bounded pool past the cap so collab-priority can reorder
+      // before the hard slice (don't stop at `limit` in V16 order).
+      if (alive.length >= limit * 3) break
       continue
     }
     options?.log?.("pa.job_rec.visible_url_dead", {
@@ -293,7 +365,9 @@ export async function collectLiveJobRecommendationMessageItems(
     })
     await options?.onDeadJob?.(item.sourceJob, verdict, item.url)
   }
-  return items
+  // Cap the COMBINED list to `limit`, keeping WeKruit partner/collab roles
+  // ahead of general matches so the cap never drops a partner role.
+  return prioritizeAndCapRecItems(alive, limit)
 }
 
 export async function markDeadJobRecommendationSource(
@@ -323,6 +397,7 @@ export async function collectLiveFirestoreJobRecommendationMessageItems(
     reasons?: Array<string | null | undefined>
     candidateTags?: unknown
     maxCandidates?: number
+    maxRecs?: number
     fetchImpl?: JobRecUrlFetch
     timeoutMs?: number
     log?: (event: string, payload?: Record<string, unknown>) => void

@@ -25,7 +25,46 @@ export const CANARY_UIDS: ReadonlySet<string> = new Set<string>([
   "UKFaKdsMzzfPW2CDl5ve", // Noah  +12154034668
 ])
 
-/** True when `userId` is in the new-behavior canary cohort (dev phones today). */
+/**
+ * RAMP (Adam 2026-06-03, explicit "ramp"): the onboarding program (résumé/LinkedIn dual-path,
+ * enrichment+pitch, website-short, Gmail-nudge, connect-phone) is verified to the limit possible
+ * without a live phone, so the new behavior is RELEASED TO ALL USERS. This is the single ramp 抓手.
+ * To REVERT to dev-phone-only, set RAMPED_TO_ALL=false (the CANARY_UIDS set is preserved) + redeploy.
+ */
+// Env-gated so the canary-SPLIT unit tests (which assert non-canary fallthrough) keep their two
+// cohorts by DEFAULT (env unset → false), while PROD sets PA_ONBOARDING_RAMP_ALL=1
+// (.env.wekruit-5f89b) → everyone. Reversible by clearing the env var + redeploy. One ramp 抓手.
+function isRampedToAll(): boolean {
+  return process.env.PA_ONBOARDING_RAMP_ALL === "1"
+}
+
+/** True when `userId` should get the new behavior. Ramped (prod) → everyone; else the dev cohort. */
 export function isCanaryUser(userId: string | null | undefined): boolean {
+  if (isRampedToAll()) return true
+  return typeof userId === "string" && CANARY_UIDS.has(userId)
+}
+
+/**
+ * DEDICATED gate for the PRESCREEN-SEAM RETENTION HANDOFF (2026-06-05).
+ *
+ * The post-prescreen-terminal / retention turn is a SENSITIVE prod path (it runs on every
+ * candidate's reply after a screen pauses, fails, or passes). The risk-gating rule for this change
+ * says it MUST ship dev-phone-only FIRST and ramp ONLY on Adam's explicit say-so — SEPARATELY from
+ * the onboarding ramp.
+ *
+ * `isCanaryUser` cannot be used here: in prod `PA_ONBOARDING_RAMP_ALL=1` (.env.wekruit-5f89b) makes
+ * `isRampedToAll()` true → `isCanaryUser` returns true for EVERYONE. Routing every post-terminal turn
+ * through the thin agent for all users on first deploy would violate the risk gate.
+ *
+ * So this gate keys ONLY on the static `CANARY_UIDS` dev cohort and DELIBERATELY ignores
+ * `isRampedToAll()` / `PA_ONBOARDING_RAMP_ALL`. To ramp the retention handoff, Adam adds a separate
+ * env switch here (or widens CANARY_UIDS) — never swept live by the onboarding ramp.
+ */
+export function isPrescreenRetentionHandoffCanary(userId: string | null | undefined): boolean {
+  // RAMPED (Adam 2026-06-05 explicit "yes" — real affected users, e.g. Sai +18578918525, must get
+  // the fix, not just dev phones). Uses a DEDICATED switch independent of the onboarding
+  // `PA_ONBOARDING_RAMP_ALL`, so this sensitive prescreen path keeps its OWN kill switch: clear
+  // PA_PRESCREEN_HANDOFF_RAMP_ALL + redeploy to revert to dev-cohort-only. NOT `isRampedToAll()`.
+  if (process.env.PA_PRESCREEN_HANDOFF_RAMP_ALL === "1") return true
   return typeof userId === "string" && CANARY_UIDS.has(userId)
 }

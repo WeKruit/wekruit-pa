@@ -104,6 +104,9 @@ import { postSlackAlert } from "./lib/slack-alert.js"
 
 // Phase 22 — proactive check-in sweep
 export { paProactiveSweep } from "./proactive-sweep.js"
+// Prescreen-NURTURE engagement engine — hourly scheduler that creates due
+// nurture jobs for paProactiveSweep to dispatch. Flag-gated paPrescreenNurtureEnabled (default OFF).
+export { paPrescreenNurtureScheduler } from "./prescreen-nurture-cf.js"
 export { paCandidateLifecycleTrigger } from "./candidate-lifecycle-trigger.js"
 
 // Phase 24.5 — admin bootstrap (seed flags via PA_ADMIN_TOKEN, bypass local gcloud ADC)
@@ -136,6 +139,16 @@ export { paBackfillMatchingJobsAtsUrl } from "./backfill-ats-urls.js"
 // calls. LinkedIn fallback when Serper misses. Cost-ledger row per Serper
 // call. Weekly summary CF emails when >$10/wk.
 export { paBackfillAtsUrlsBatch, paCostSummaryWeekly } from "./backfill-ats-urls-batch.js"
+
+// 2026-06-02 — OpenAI key early-warning (incident
+// .planning/INCIDENT-2026-06-01-openai-rotation-hardening.md). Cloud Scheduler
+// every 30 min. Cheap health-ping with the live PA_OPENAI_AGENT_API_KEY: 401
+// invalid_api_key → 🚨 "key DEAD/revoked"; 429 insufficient_quota → 🚨 "quota
+// exhausted" (Slack + Mailgun). Plus a once-daily Costs-API poll that warns at
+// ≥80% of a configurable monthly budget BEFORE the hard credit cap. Deduped via
+// pa-alerts/{yyyy-mm-dd-<kind>}. Fail-open (never throws). Costs poll needs the
+// optional OPENAI_ADMIN_KEY secret; health-ping works without it.
+export { paOpenAiKeyHealth } from "./openai-key-health.js"
 
 // v1.6 Phase 57 (LIVE-01..04) — Daily HEAD-check sweep for matching-jobs.
 // Cloud Scheduler 03:00 UTC. Marks dead on 4xx/5xx/timeout, recovers on
@@ -213,6 +226,11 @@ export { paLlmRerankNightly } from "./nightly-rerank.js"
 // via @wekruit/shared-tags `validateCanonicalToken` (rejects abbreviations).
 export { paPromoteSandboxTag } from "./promote-sandbox-tag.js"
 export { paReinitializeCandidate } from "./admin-reinitialize-candidate.js"
+// COMPLETE DELETE USER (testing-only, irreversible) — admin-only callable that
+// HARD-DELETES the pa-users doc + every per-user / identity-index doc keyed by
+// or referencing the uid + the mem0/Qdrant memory partition. Far more thorough
+// than COLD reinit (which resets fields). Server-gated on @wekruit.com email.
+export { paAdminDeleteUser } from "./admin-delete-user.js"
 
 // v1.6 Phase 61 (QA-01..05) — V1.6 SHIP GATE. Cloud Scheduler 09:00 UTC
 // Mondays. Samples 100 user×match pairs (priority queue first), evaluates
@@ -305,13 +323,27 @@ export {
 export { paPublicCvIngest } from "./public-cv-ingest.js"
 // iMessage-first QR onboarding — public GET /start?c=<campaign> picks a
 // capacity-aware Sendblue number, reserves it for a minted scanToken, and 302s
-// to sms:<number>?body=Hello, WeKruit! <scanToken>. See qr-onboarding/.
+// to sms:<number>?body=Hi, WeKruit, my verification code is <scanToken>. See qr-onboarding/.
 export { paQrStartRedirect } from "./qr-onboarding/qr-start-redirect.js"
 // Abandoned-scan sweep — decrements the per-group assignedNewUsers counter for
 // pa-qr-scan-pending docs that never converted (status stays 'pending' past TTL)
 // so the new-user capacity counter doesn't leak.
 export { paQrScanAbandonedSweep } from "./qr-onboarding/abandoned-scan-sweep.js"
-// Recruiter board (wekruit-recruiters.web.app/recruiters): public list + submission.
+// LinkedIn one-tap connect — public POST {token, linkedinUrl} from the
+// candidate-domain /connect-linkedin page. Resolves token→userId, links the
+// LinkedIn handle, enriches by URL via CoreSignal (experienceHighlights + tags),
+// emits the resume_parse_completed runtime event (thin pitch), and returns the
+// sms: reroute back to the iMessage thread. Canary-gated; degrades gracefully.
+export { paLinkedinConnectSubmit } from "./linkedin-connect/linkedin-connect-submit.js"
+// WS-3 connect-phone (Adam 2026-06-03): the INVERSE of the QR opener — a candidate who
+// registered FIRST via phone (iMessage) and later visits the website binds the two via a
+// 6-digit verification code texted to their thread. paCandidateConnectPhoneStart issues +
+// texts the code; paCandidateConnectPhoneVerify verifies it + links the web session to the
+// existing pa-users/{uid} (deterministic, audited identity merge). Canary-gated; PR-FIRST
+// (committed, NOT deployed). No new secret (reuses Sendblue creds + the bound pool line).
+export { paCandidateConnectPhoneStart } from "./connect-phone/connect-phone-start.js"
+export { paCandidateConnectPhoneVerify } from "./connect-phone/connect-phone-verify.js"
+// Recruiter board (candidate.wekruit.com/recruiters): public list + submission.
 // Lives in the `recruiter-board` multi-codebase (apps/recruiter-board-fn) as
 // of 2026-05-26 to keep the pa-orchestrator bundle small. Endpoints:
 // `paCollabJobsList`, `paRecruiterSubmission`, `paCollabJobsListSchema`.
@@ -462,6 +494,10 @@ const PA_MATCHING_WEBHOOK_SECRET = defineSecret("PA_MATCHING_WEBHOOK_SECRET")
 
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
+// Audio intake (2026-06-04) — Deepgram transcribes iMessage voice notes (after an ffmpeg .caf→wav
+// transcode). Bound on paSendblueWebhook (where the audio-ingest seam runs). Set via:
+//   echo -n "$KEY" | firebase functions:secrets:set DEEPGRAM_API_KEY --data-file=-
+const DEEPGRAM_API_KEY = defineSecret("DEEPGRAM_API_KEY")
 const QDRANT_URL = defineSecret("QDRANT_URL")
 const QDRANT_API_KEY = defineSecret("QDRANT_API_KEY")
 // v1.8 Phase 74.5 — feature flag for memory compaction (default off, secret=true to enable).
@@ -696,6 +732,45 @@ async function createProvisionalUser(
     if (options.senderGroupId) extra.senderGroupId = options.senderGroupId
     extra.senderAssignedAt = nowIso()
     extra.senderAssignedSource = "qr_scan"
+  } else {
+    // USER↔NUMBER BINDING (2026-06-02) — TEXT-ONLY provisional users (the
+    // direct-start path: an unregistered number that texts "hi" with NO QR scan)
+    // previously got NO persisted binding, so every later send re-derived the
+    // line by hash and reshuffled when the pool grew. Mint a capacity-aware
+    // sticky binding HERE at create so the user is bound from their very first
+    // outbound (source='inbound_first'). Best-effort: a mint failure leaves
+    // senderNumber unset and the send-path reducer lazily mints later — no drop.
+    try {
+      const {
+        loadSendbluePoolWithCounters,
+        pickFromNumber,
+        findSendbluePoolNumber,
+        sendblueGroupId,
+        incrementAssignedNewUsers,
+      } = await import("./sendblue/pool.js")
+      const pool = await loadSendbluePoolWithCounters(db)
+      const minted = pickFromNumber(pool, id, { requireNewUserCapacity: true })
+      if (minted) {
+        const groupId = sendblueGroupId(
+          findSendbluePoolNumber(pool, minted) ?? { number: minted, status: "active" }
+        )
+        extra.senderNumber = minted
+        extra.senderGroupId = groupId
+        extra.senderAssignedAt = nowIso()
+        extra.senderAssignedSource = "inbound_first"
+        // Keep new-user capacity accounting correct (mirrors the QR scan-time bump).
+        try {
+          await incrementAssignedNewUsers(db, groupId)
+        } catch {
+          /* counter bump is best-effort — overlay clamps on read */
+        }
+      }
+    } catch (err) {
+      logger.warn("[createProvisionalUser] text-only sender binding mint failed (non-fatal)", {
+        userId: id,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
   }
   await db.collection(PA_COLLECTIONS.users).doc(id).set(u)
   return u
@@ -860,7 +935,8 @@ async function processBrokerImessageEvent(
     // Direct-start (Adam 2026-06-02): an unregistered number that sends a real
     // text now creates a provisional user + onboards (syncGateAllows below).
     // The QR opener check still runs FIRST and UNCONDITIONALLY so a genuine QR
-    // scan (`Hello, WeKruit! <scanToken>`) keeps its special provisioning —
+    // scan (`Hi, WeKruit, my verification code is <scanToken>`, or the legacy
+    // `Hello, WeKruit! <scanToken>`) keeps its special provisioning —
     // source='qr_imessage' + scanToken claim + sticky-number reconcile — instead
     // of falling through to the generic create. Non-text/system events are still
     // blocked by shouldCreateProvisionalUserForBrokerPayload (empty text → false).
@@ -996,6 +1072,10 @@ async function processBrokerImessageEvent(
       ...(p.cvParsedTrigger === true ? { cvParsedTrigger: true } : {}),
       ...(typeof p.messageHandle === "string" ? { messageHandle: p.messageHandle } : {}),
       ...(typeof p.source === "string" ? { imessagePayloadSource: p.source } : {}),
+      // BUG #6 — carry the inbound attachment URL (résumé PDF) to the thin read path
+      // so cutover can run the SAME ingestCv wheel the website uses (covers cold users
+      // the webhook Stream-D skips: no userId at webhook time).
+      ...(typeof p.mediaUrl === "string" && p.mediaUrl.trim() ? { mediaUrl: p.mediaUrl.trim() } : {}),
     },
   }
   await db.collection(PA_COLLECTIONS.inboundEvents).doc(claimed.id).set(
@@ -1213,16 +1293,21 @@ export const onPaInbound = onDocumentCreated(
       MAILGUN_FROM,
       MAILGUN_REGION,
     ],
-    // 2026-05-19 — pinned maxInstances=1 so future deploys can't blow the
-    // per-region memory quota by defaulting to 100+ instances * 1GiB. Adam
-    // freed ~38 GiB on the demo-heavy services around the same time, so
-    // the 1 GiB allocation stays intact for the orchestrator + mem0 +
-    // Sendblue SDK baseline (which lives around 300-400 MiB plus per-turn
-    // working set).
+    // LATENCY FIX (Adam 2026-06-02): maxInstances:1 + concurrency:1 serialized EVERY inbound
+    // globally — one turn at a time, plus a cold-start on the first message after idle (the live
+    // "10s to read + 20s to reply"). The thin turn is IO-bound (waiting on the model), so:
+    //   - concurrency 1→6: one instance serves 6 concurrent turns in parallel (the big win; base
+    //     ~300-400MiB + per-turn working set fits 1GiB; the per-turn max-turns cap (8) bounds cost,
+    //     so concurrency cannot re-trigger the 2026-06-01 token runaway).
+    //   - minInstances 0→1: keep ONE instance warm → no cold-start on the first message (~$, worth
+    //     it for a live product).
+    //   - maxInstances 1→3: burst headroom (3 × 1GiB = 3GiB max; within the ~38GiB Adam freed),
+    //     still bounded so a deploy can't default to 100+ instances and blow the region quota.
     memory: "1GiB",
-    maxInstances: 1,
+    minInstances: 1,
+    maxInstances: 3,
     timeoutSeconds: 300,
-    concurrency: 1,
+    concurrency: 6,
   },
   async (event) => {
     const snap = event.data
@@ -1722,6 +1807,8 @@ export const paSendblueWebhook = onRequest(
       SENDBLUE_API_SECRET_KEY,
       SENDBLUE_FROM_NUMBER,
       PA_OPENAI_AGENT_API_KEY,
+      // Audio intake (2026-06-04) — voice-note transcription (ffmpeg .caf→wav → Deepgram).
+      DEEPGRAM_API_KEY,
       // v1.7 Phase 69 — cv-ingest's industry-second-pass falls through to
       // Anthropic Sonnet when industryTags=["other"]. Until Adam provisions,
       // graceful no-op (industry-second-pass.ts checks for empty key).
@@ -2117,6 +2204,68 @@ export const paMessageCoalescer = onRequest(
       logger.error("paMessageCoalescer fatal", { err: err instanceof Error ? err.message : String(err) })
       // 5xx → Cloud Tasks retries (with its own backoff). Caller should
       // configure max-attempts on the queue to bound replay.
+      res.status(500).json({ ok: false, error: "internal" })
+    }
+  }
+)
+
+/**
+ * paJobRecSendTask — Cloud Tasks → CF endpoint (HTTP target) for the
+ * matching-rec time-spread (2026-06-02). paJobRecDaily schedules ONE delayed
+ * task per due user at a jittered offset across the spread window; each task
+ * fires here and hands the already-built runtime context to the job-rec
+ * `sendImessage` tool, which writes the synthetic pa-inbound-events doc the
+ * Claire runtime delivers. This spreads the downstream Sendblue load instead
+ * of an all-at-once burst.
+ *
+ * Internal-only (invoker: private, OIDC-signed by the runtime SA — same trust
+ * model as paMessageCoalescer). Body: { userId, context, idempotencyKey,
+ * fromNumber? }. The job-rec sendImessage tool dedups on idempotencyKey, and
+ * paJobRecDaily already stamped lastJobBatchSentAt at enqueue time, so a Cloud
+ * Tasks retry can never double-deliver.
+ */
+export const paJobRecSendTask = onRequest(
+  {
+    region: "us-central1",
+    memory: "256MiB",
+    timeoutSeconds: 60,
+    maxInstances: 8,
+    cors: false,
+    invoker: "private",
+  },
+  async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as {
+        userId?: unknown
+        context?: unknown
+        idempotencyKey?: unknown
+      }
+      const userId = typeof body.userId === "string" ? body.userId : ""
+      const context =
+        body.context && typeof body.context === "object"
+          ? (body.context as Record<string, unknown>)
+          : null
+      const idempotencyKey =
+        typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined
+      if (!userId || !context) {
+        logger.warn("paJobRecSendTask bad payload", { hasUser: Boolean(userId), hasCtx: Boolean(context) })
+        res.status(400).json({ ok: false, error: "bad_payload" })
+        return
+      }
+      const db = getFirestore()
+      const { sendImessage } = await import("@pa/job-rec")
+      const result = await sendImessage(
+        { userId, context, idempotencyKey },
+        { db, log: (...args: unknown[]) => logger.info("[job-rec-send-task]", ...args) }
+      )
+      logger.info("paJobRecSendTask processed", { userId, ok: result.ok })
+      // 2xx even on a soft no-op (e.g. missing session) so Cloud Tasks does NOT
+      // retry a non-retryable condition; only true infra errors below 5xx.
+      res.status(200).json({ ok: result.ok })
+    } catch (err) {
+      logger.error("paJobRecSendTask fatal", {
+        err: err instanceof Error ? err.message : String(err),
+      })
       res.status(500).json({ ok: false, error: "internal" })
     }
   }

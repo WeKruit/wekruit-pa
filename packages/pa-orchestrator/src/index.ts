@@ -112,6 +112,7 @@ export {
   SHARED_ONBOARDING_EVENT_SOURCE,
   SHARED_ONBOARDING_WORK_SESSION_KIND,
   SHARED_ONBOARDING_QUESTIONS,
+  ALL_SHARED_ONBOARDING_QUESTIONS,
   buildSharedOnboardingStartedState,
   buildSharedOnboardingPrompt,
   buildSharedOnboardingPromptContext,
@@ -122,7 +123,16 @@ export {
   isSharedOnboardingActiveUser,
   buildHelloWekruitOpenerBody,
   parseHelloWekruitOpener,
+  HI_WEKRUIT_OPENER_PREFIX,
   HELLO_WEKRUIT_OPENER_PREFIX,
+  VERIFICATION_CODE_OPENER_PREFIX,
+  LINKEDIN_DONE_OPENER_PREFIX,
+  buildLinkedinDoneOpenerBody,
+  parseLinkedinDoneOpener,
+  buildConnectLinkedinUrl,
+  CONNECT_LINKEDIN_LINK_BASE,
+  buildConnectGmailUrl,
+  CONNECT_GMAIL_LINK_BASE,
   isSharedOnboardingGreetingOrKickoff,
   isSharedOnboardingRuntimeEvent,
   judgeSharedOnboardingAnswer,
@@ -131,6 +141,9 @@ export {
   loadSharedOnboardingParsedResumeForPrompt,
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
+  resolveNextAskedSharedOnboardingQuestionId,
+  resolveNextAskedMissingSharedOnboardingQuestionId,
+  isSharedOnboardingSlotSatisfied,
   sharedOnboardingSignupSource,
   type SharedOnboardingQuestionId,
   type SharedOnboardingPromptContext,
@@ -174,6 +187,7 @@ export {
   type PrescreenEvidence,
   type TurnContext,
 } from "./conversation-turn-arbiter.js"
+import { extractTurnIntent } from "./turn-intent-extractor.js"
 import {
   buildConversationEvidenceWrites,
   decideConversationDeliveryAction,
@@ -2305,6 +2319,67 @@ async function buildConversationTurnContext(
     })))
     .catch(() => [])
   const recentOutbound = recentMessages.filter((message) => message.role === "assistant")
+  const prescreenEvidence = await loadRecentPrescreenEvidenceForArbiter(store, event.userId)
+
+  // 2026-06-05 regex→LLM-intent migration (Target A). LLM-primary turn-intent
+  // is computed ONLY for the canary cohort (flag `paTurnIntentLlmEnabled`,
+  // default OFF) and ONLY for user-authored turns. On fail-open / off-flag the
+  // context fields stay undefined and the arbiter uses its deterministic regex
+  // predicates — behavior identical to today for everyone else.
+  let llmIntent: TurnContext["llmIntent"] = undefined
+  let sharedOnboardingAnswerAccepted: TurnContext["sharedOnboardingAnswerAccepted"] = undefined
+  if (store.db) {
+    let turnIntentEnabled = false
+    try {
+      turnIntentEnabled =
+        (await getFlag(
+          store.db,
+          "paTurnIntentLlmEnabled",
+          { userId: event.userId, env: process.env },
+          false,
+        )) === true
+    } catch (err) {
+      store.log("pa.turn_intent.flag_read_error", {
+        userId: event.userId,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    if (turnIntentEnabled) {
+      const lastAssistantText = recentOutbound.length
+        ? recentOutbound[recentOutbound.length - 1]?.body
+        : undefined
+      llmIntent = await extractTurnIntent(
+        {
+          text: event.body,
+          ...(lastAssistantText ? { lastAssistantText } : {}),
+          hasPrescreenEvidence: Boolean(prescreenEvidence),
+        },
+        undefined,
+        { log: (name, payload) => store.log(name, payload ?? {}) },
+      )
+      // A8 delegation: reuse the existing shared-onboarding answer judge so the
+      // arbiter never re-implements the per-questionId keyword bank.
+      if (sharedActive && sharedQuestionId) {
+        try {
+          const judged = await judgeSharedOnboardingAnswer({
+            questionId: sharedQuestionId,
+            answer: event.body,
+            lang: "en",
+            userId: event.userId,
+            turnId,
+            log: (name, payload) => store.log(name, payload ?? {}),
+          })
+          sharedOnboardingAnswerAccepted = judged.accept
+        } catch (err) {
+          store.log("pa.turn_intent.shared_onboarding_judge_error", {
+            userId: event.userId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      }
+    }
+  }
+
   return {
     turnId,
     userId: event.userId,
@@ -2316,12 +2391,14 @@ async function buildConversationTurnContext(
     activeWorkflow,
     recentMessages,
     recentOutbound,
-    prescreenEvidence: await loadRecentPrescreenEvidenceForArbiter(store, event.userId),
+    prescreenEvidence,
     sharedOnboarding: {
       active: sharedActive,
       currentQuestionId: sharedQuestionId,
     },
     preferenceState: onboardingUser?.statedPreferences ?? null,
+    ...(llmIntent !== undefined ? { llmIntent } : {}),
+    ...(sharedOnboardingAnswerAccepted !== undefined ? { sharedOnboardingAnswerAccepted } : {}),
   }
 }
 
@@ -3945,6 +4022,24 @@ async function handleCompletedUserJobSearchRequest(
   const reply = frame ? [frame, body].filter(Boolean).join("\n") : body
   await sendMemoryReply(store, event, turnId, reply)
   if (recs && recs.recCount > 0 && store.db) {
+    // Cross-system rec cooldown (2026-06-02) — stamp the SHARED
+    // `lastAnyJobRecSentAt` marker on this user's `pa-job-profiles` doc so the
+    // scheduled daily batch (which reads the same field) does NOT pile more
+    // recs on top of this live send within the cooldown window. The daily
+    // batch writes the same marker; this is the live-path half of the contract.
+    // Best-effort: a marker-write failure must never break the user reply.
+    try {
+      await store.db.collection("pa-job-profiles").doc(event.userId).set(
+        { lastAnyJobRecSentAt: store.nowIso() },
+        { merge: true },
+      )
+    } catch (markerErr) {
+      store.log("pa.runtime.job_search.cooldown_marker_failed", {
+        userId: event.userId,
+        turnId,
+        error: markerErr instanceof Error ? markerErr.message : String(markerErr),
+      })
+    }
     await startPostMatchRetentionAfterJobRecs({
       db: store.db,
       userId: event.userId,

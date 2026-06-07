@@ -244,6 +244,176 @@ export async function fetchEmployeeCollect(
   return CoresignalEmployeeCollectV2Schema.parse(raw)
 }
 
+// ---------------------------------------------------------------------------
+// Search-by-LinkedIn-URL (cdapi v2 ES-DSL filter → numeric employee ids)
+//
+// The `collect/{id}` endpoint is by NUMERIC id only. The candidate-facing
+// LinkedIn one-tap flow only has a raw profile URL, so we need a URL → id hop
+// before we can `collect`. This is the EXISTING cdapi v2 ES-DSL search filter
+// (`POST employee_multi_source/search/es_dsl`), matched against the LinkedIn
+// profile URL field. We keep this in the SAME thin client (no parallel client)
+// so retry/auth/baseUrl semantics stay identical.
+// ---------------------------------------------------------------------------
+
+/**
+ * The CoreSignal field that holds the canonical LinkedIn profile URL. v2
+ * `employee_multi_source` records expose the profile URL under `linkedin_url`
+ * (verified live 2026-06-03: `websites_professional_network` is undefined on the
+ * collected record and returns ZERO search hits — the old value was a silent
+ * no-match bug that made every LinkedIn-URL enrichment fail). `match_phrase`
+ * against `linkedin_url` resolves all URL forms (scheme / www / trailing slash).
+ */
+const LINKEDIN_URL_SEARCH_FIELD = "linkedin_url"
+
+async function searchRaw(
+  endpoint: string,
+  query: Record<string, unknown>,
+  config: CoresignalCollectClientConfig,
+): Promise<unknown> {
+  const baseUrl = config.baseUrl ?? CORESIGNAL_DEFAULT_BASE_URL
+  const url = `${baseUrl}/${endpoint}/search/es_dsl`
+  const fetchImpl = config.fetchImpl ?? fetch
+  const sleep = config.sleepImpl ?? defaultSleep
+
+  if (!config.apiKey) {
+    throw new CoresignalCollectError("coresignal_api_key_missing", null, 0)
+  }
+
+  let lastErr: CoresignalCollectError | null = null
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let res: Response
+    try {
+      res = await fetchImpl(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          apikey: config.apiKey,
+        },
+        body: JSON.stringify({ query }),
+      })
+    } catch (err) {
+      lastErr = new CoresignalCollectError(
+        `network_error: ${(err as Error).message}`,
+        null,
+        attempt,
+      )
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(RETRY_DELAYS_MS[attempt - 1])
+        continue
+      }
+      throw lastErr
+    }
+
+    if (res.ok) {
+      return await res.json()
+    }
+
+    const body = await res.text().catch(() => "")
+
+    if (res.status === 429 || res.status >= 500) {
+      lastErr = new CoresignalCollectError(
+        `transient_${res.status}`,
+        res.status,
+        attempt,
+        body.slice(0, 200),
+      )
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(RETRY_DELAYS_MS[attempt - 1])
+        continue
+      }
+      throw lastErr
+    }
+
+    throw new CoresignalCollectError(
+      `http_${res.status}`,
+      res.status,
+      attempt,
+      body.slice(0, 200),
+    )
+  }
+
+  throw lastErr ?? new CoresignalCollectError("unknown", null, MAX_ATTEMPTS)
+}
+
+/**
+ * Resolve a CANONICAL LinkedIn profile URL to the first matching CoreSignal
+ * employee id (or `null` when nothing matches). The caller then `collect`s
+ * that id to get the full employee record.
+ *
+ * The ES-DSL response is an array of numeric ids (cdapi v2 search/es_dsl).
+ * We defensively also accept `{ data: number[] }` / hit-object shapes.
+ */
+export async function searchEmployeeIdByLinkedinUrl(
+  canonicalLinkedInUrl: string,
+  config: CoresignalCollectClientConfig,
+): Promise<number | null> {
+  const url = canonicalLinkedInUrl.trim()
+  if (!url) return null
+  // match_phrase (not query_string) — query_string treats the URL's `://` and
+  // `/` as operators; match_phrase analyzes the value and matches regardless of
+  // scheme/www/trailing-slash (all five forms verified live 2026-06-03).
+  const raw = await searchRaw(
+    "employee_multi_source",
+    { match_phrase: { [LINKEDIN_URL_SEARCH_FIELD]: url } },
+    config,
+  )
+  return firstNumericId(raw)
+}
+
+/**
+ * Resolve a candidate's OIDC profile-photo to a CoreSignal employee id — the
+ * NO-PASTE enrichment path. "Sign in with LinkedIn" (OIDC) returns a `picture`
+ * URL but no profile URL; `picture_url` is indexed on the `employee_clean`
+ * dataset (NOT `employee_multi_source`), so we search there. We match on the
+ * licdn ASSET ID alone (a single analyzed token shared across photo sizes /
+ * signatures) so the OIDC photo (e.g. `shrink_100_100`) resolves the same id as
+ * the stored photo (`shrink_200_200`) — verified live 2026-06-03: asset id
+ * `D5603AQFBF9xN99YgeQ` → id 633147031 (collects on BOTH datasets, shared id
+ * space). Pass the bare asset id (no scheme/size/signature). `is_deleted` is
+ * filtered out. Returns null when the candidate isn't in CoreSignal's dataset.
+ */
+export async function searchEmployeeIdByPhotoAssetId(
+  licdnAssetId: string,
+  config: CoresignalCollectClientConfig,
+): Promise<number | null> {
+  const assetId = licdnAssetId.trim()
+  if (!assetId) return null
+  const raw = await searchRaw(
+    "employee_clean",
+    {
+      bool: {
+        must: [{ match_phrase: { picture_url: assetId } }],
+        filter: [{ term: { is_deleted: 0 } }],
+      },
+    },
+    config,
+  )
+  return firstNumericId(raw)
+}
+
+/** Pull the first numeric id out of the lenient ES-DSL response shapes. */
+function firstNumericId(raw: unknown): number | null {
+  const fromArray = (arr: unknown[]): number | null => {
+    for (const item of arr) {
+      if (typeof item === "number" && Number.isInteger(item) && item > 0) return item
+      if (item && typeof item === "object") {
+        const id = (item as { id?: unknown; _id?: unknown }).id ?? (item as { _id?: unknown })._id
+        if (typeof id === "number" && Number.isInteger(id) && id > 0) return id
+        if (typeof id === "string" && /^\d+$/.test(id)) return Number(id)
+      }
+    }
+    return null
+  }
+  if (Array.isArray(raw)) return fromArray(raw)
+  if (raw && typeof raw === "object") {
+    const data = (raw as { data?: unknown }).data
+    if (Array.isArray(data)) return fromArray(data)
+    const hits = (raw as { hits?: { hits?: unknown } }).hits?.hits
+    if (Array.isArray(hits)) return fromArray(hits)
+  }
+  return null
+}
+
 export async function fetchCompanyCollect(
   id: number,
   config: CoresignalCollectClientConfig,

@@ -190,10 +190,65 @@ function bulletList(heading: string, items: string[], accent: string): El {
   ])
 }
 
+/**
+ * A row of rounded SKILLS chips (top required skills). Kept compact — small
+ * cream pills under the meta line. Wraps when they don't fit the card width.
+ */
+function skillPills(skills: string[]): El {
+  return h(
+    "div",
+    { display: "flex", flexDirection: "column", marginTop: 18 },
+    [
+      h(
+        "div",
+        {
+          fontFamily: FONT_FAMILY_SANS,
+          fontWeight: 600,
+          fontSize: 15,
+          letterSpacing: 1.5,
+          color: COLORS.inkFaint,
+          marginBottom: 9,
+          display: "flex",
+        },
+        txt("SKILLS"),
+      ),
+      h(
+        "div",
+        { display: "flex", flexDirection: "row", flexWrap: "wrap" },
+        skills.map((s) =>
+          h(
+            "div",
+            {
+              fontFamily: FONT_FAMILY_SANS,
+              fontWeight: 600,
+              fontSize: 16,
+              color: COLORS.inkSoft,
+              backgroundColor: COLORS.chipBg,
+              borderRadius: 10,
+              paddingTop: 6,
+              paddingBottom: 6,
+              paddingLeft: 13,
+              paddingRight: 13,
+              marginRight: 9,
+              marginBottom: 9,
+              display: "flex",
+            },
+            txt(s),
+          ),
+        ),
+      ),
+    ],
+  )
+}
+
 /** Build the satori element tree for the card. Pure. */
 export function buildCardTree(payload: RecCardPayload): El {
   const stageRaise = [payload.stage, payload.raiseAmount].filter(Boolean).join(" · ")
   const salary = formatSalaryRange(payload.salaryMin, payload.salaryMax)
+  // Compensation line: salary + equity. Equity rides next to salary ("$200k–400k
+  // · equity 0.1–0.5%"); when there's no salary it stands alone ("equity 0.1–0.5%").
+  const equity = (payload.equity ?? "").trim()
+  const comp = [salary, equity ? `equity ${equity}` : undefined].filter(Boolean).join("  ·  ") || undefined
   // Drop a redundant workMode that just restates the location (e.g. location
   // "Remote" + workMode "remote" → render "Remote" once).
   const locationLower = (payload.location ?? "").toLowerCase()
@@ -201,7 +256,7 @@ export function buildCardTree(payload: RecCardPayload): El {
     payload.workMode && locationLower.includes(payload.workMode.toLowerCase())
       ? undefined
       : payload.workMode
-  const metaLine = [salary, payload.location, workMode].filter(Boolean).join("  ·  ")
+  const metaLine = [comp, payload.location, workMode].filter(Boolean).join("  ·  ")
 
   // Top-left: logo chip + In Network badge.
   //
@@ -395,6 +450,9 @@ export function buildCardTree(payload: RecCardPayload): El {
 
   const sections: El[] = [header, titleEl, companyLine, rule, metaEl]
 
+  if (payload.skills && payload.skills.length > 0) {
+    sections.push(skillPills(payload.skills))
+  }
   if (payload.whyFits && payload.whyFits.length > 0) {
     sections.push(bulletList("Why this fits you", payload.whyFits, COLORS.pink))
   }

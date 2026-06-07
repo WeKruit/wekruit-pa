@@ -3883,6 +3883,110 @@ test("queryMatchingJobsV16: US-target user still drops non-US-only jobs even whe
   assert.equal(r.counters.location, 1)
 })
 
+// ---------------------------------------------------------------------------
+// NON-US LEAK FIX (2026-06-02) — canonical bucket→country map. The leaked
+// fixture is the REAL live Scale AI "Global Public Sector" doc:
+//   id  18044c07…  locationBuckets [doha,dubai,riyadh]
+//   locationRaw "Doha, Qatar ; Dubai, UAE; Riyadh, Saudi Arabia"  status active
+// The candidate had NO US-only substring + NO visa/country, and the bucket
+// list omitted the Middle East from the old hardcoded hints → it leaked.
+// ---------------------------------------------------------------------------
+
+/** Real leaked Scale AI Middle-East role, reused across the cases below. */
+function mkScaleAiMeJob(): MatchingJob {
+  return mkJob({
+    id: "scaleai-me",
+    companyName: "Scale AI",
+    jobTitle: "Global Public Sector",
+    locationBuckets: ["doha", "dubai", "riyadh"],
+    locationRaw: "Doha, Qatar ; Dubai, UAE; Riyadh, Saudi Arabia",
+    roleFunction: ["creatives_and_design", "product_management"],
+    sponsorship: null,
+  })
+}
+
+test("non-us leak (a): remote_anywhere+onsite_hybrid_us user, no visa/country → scaleai ME role DROPPED", () => {
+  // The exact user shape from the forensics: targetLocations remote_anywhere +
+  // onsite_hybrid_us, no visaStatus, no targetCountry. US-required by default.
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetLocations: ["remote_anywhere", "onsite_hybrid_us"],
+  } as never
+  const jobs: MatchingJob[] = [
+    mkScaleAiMeJob(),
+    mkJob({ id: "us-ok", locationBuckets: ["san_francisco_bay_area"] }),
+  ]
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["us-ok"], "ME role dropped, US role kept")
+  assert.equal(r.counters.location, 1, "the country gate (location counter) caught it")
+})
+
+test("non-us leak (a'): remote_anywhere does NOT rescue a foreign-only ME job (bypass-independent)", () => {
+  // Even if the ME job is ALSO tagged remote_anywhere, its concrete buckets are
+  // foreign-only → still dropped (the gate is independent of the anywhere bypass).
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    targetLocations: ["remote_anywhere"],
+  } as never
+  const job = mkScaleAiMeJob()
+  job.locationBuckets = ["doha", "dubai", "riyadh", "remote_anywhere"]
+  const r = applyV16HardFilters([job], tags, NOW)
+  assert.equal(r.kept.length, 0, "remote_anywhere bucket does not rescue a foreign-only role")
+  assert.equal(r.counters.location, 1)
+})
+
+test("non-us leak (b): same user + a remote_united_states job → KEPT", () => {
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    targetLocations: ["remote_anywhere", "onsite_hybrid_us"],
+  } as never
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "remote-us", locationBuckets: ["remote_united_states"], locationRaw: "Remote - United States" }),
+    mkScaleAiMeJob(),
+  ]
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["remote-us"], "US-remote kept, ME dropped")
+})
+
+test("non-us leak (c): explicit targetCountry=canada user → a Toronto job KEPT", () => {
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    targetLocations: ["remote_anywhere"],
+    targetCountry: ["canada"],
+  } as never
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "toronto", locationBuckets: ["toronto"], locationRaw: "Toronto, Canada" }),
+  ]
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["toronto"], "explicit foreign target lifts the US gate")
+  assert.equal(r.counters.location, 0)
+})
+
+test("non-us leak: fallback path ALSO drops the ME role for a US-required user", () => {
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    targetLocations: ["remote_anywhere"],
+  } as never
+  const r = applyFallbackHardFilters([mkScaleAiMeJob()], tags, NOW)
+  assert.equal(r.kept.length, 0)
+  assert.equal(r.counters.location, 1)
+})
+
+test("non-us leak: a globally-remote job (no foreign bucket) still SURVIVES for a US user", () => {
+  // remote_anywhere with NO concrete foreign bucket = US-accessible → keep.
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    targetLocations: ["remote_anywhere"],
+  } as never
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "global", locationBuckets: ["remote_anywhere"], locationRaw: "Remote - Worldwide" }),
+  ]
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["global"])
+})
+
 // (d) scoreV16Job isCollaborationJob=true raises total by 0.08 and
 //     breakdown.collabBoost==0.08; false→0.
 test("scoreV16Job: collab job gets +V16_COLLAB_BOOST_WEIGHT in total + breakdown.collabBoost", () => {

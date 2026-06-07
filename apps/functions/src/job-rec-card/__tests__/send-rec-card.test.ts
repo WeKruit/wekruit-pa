@@ -20,8 +20,16 @@ import {
   recCardFilename,
   JOB_REC_CARD_ENV_FLAG,
 } from "../job-rec-card.js"
-import { maybeSendRecCard } from "../send-rec-card.js"
-import { cardStoragePath, firebaseDownloadUrl } from "../upload-card.js"
+import {
+  maybeSendRecCard,
+  resolveRecCardMediaUrl,
+  persistRecCardMediaUrl,
+} from "../send-rec-card.js"
+import {
+  cardStoragePath,
+  firebaseDownloadUrl,
+  isSendblueAcceptableMediaUrl,
+} from "../upload-card.js"
 import type { CardStorage } from "../upload-card.js"
 import { buildRecCardPayload } from "../card-payload.js"
 
@@ -90,6 +98,9 @@ const PAYLOAD_JOB = {
 
 // A Sendblue-hosted media URL: ends in .png, no signed query (the contract).
 const SENDBLUE_MEDIA_URL = "https://storage.googleapis.com/inbound-file-store/aBcd1234_wk-rec-job-1.png"
+// A POISONED legacy Firebase token URL: HTTP-200-live but signed + no .png terminator → Sendblue drops it.
+const FIREBASE_TOKEN_URL =
+  "https://firebasestorage.googleapis.com/v0/b/wekruit-5f89b.appspot.com/o/rec-cards%2Fabc%2Fdef.png?alt=media&token=deadbeef"
 const CREDS = { apiKeyId: "k", apiSecretKey: "s" }
 
 let savedFlag: string | undefined
@@ -121,6 +132,22 @@ test("buildRecCardCaption: includes the role title @ company + apply link", () =
   })
   assert.match(cap, /Senior Product Designer @ Invoko/) // title present (was company-only)
   assert.match(cap, /https:\/\/jobs\.invoko\.com\/apply\/123/)
+})
+
+test("buildRecCardCaption lean mode: headline + role-specific prescreen CTA, NO external url, no full pitch", () => {
+  const cap = buildRecCardCaption(
+    {
+      company: "Invoko",
+      title: "Senior Product Designer",
+      applyUrl: "https://jobs.invoko.com/apply/123",
+      inNetwork: true,
+    },
+    "lean",
+  )
+  assert.match(cap, /Senior Product Designer @ Invoko/) // headline present
+  assert.match(cap, /reply "Senior Product Designer @ Invoko" to fast-track/) // co-located, role-specific CTA
+  assert.doesNotMatch(cap, /https?:\/\//) // NO external apply url (collab roles funnel through prescreen)
+  assert.doesNotMatch(cap, /jumps out|we talk to their team|partner role/i) // not the full pitch paragraph
 })
 
 // ── content hash + filename ──────────────────────────────────────────────────
@@ -367,6 +394,95 @@ test("maybeSendRecCard: STALE cache + NO creds → keeps the cached url (can't r
   assert.equal(res.mediaUrl, SENDBLUE_MEDIA_URL)
 })
 
+// ── isSendblueAcceptableMediaUrl: the URL-shape contract guard ────────────────
+
+test("isSendblueAcceptableMediaUrl: accepts a Sendblue-CDN .png url, no query", () => {
+  assert.equal(isSendblueAcceptableMediaUrl(SENDBLUE_MEDIA_URL), true)
+})
+
+test("isSendblueAcceptableMediaUrl: rejects a legacy Firebase token url (the dropped-image shape)", () => {
+  assert.equal(isSendblueAcceptableMediaUrl(FIREBASE_TOKEN_URL), false)
+})
+
+test("isSendblueAcceptableMediaUrl: rejects signed/query, non-.png, http, empty, null", () => {
+  // signed query even on a googleapis host → dropped
+  assert.equal(
+    isSendblueAcceptableMediaUrl("https://storage.googleapis.com/inbound-file-store/x.png?token=z"),
+    false,
+  )
+  // not extension-terminated
+  assert.equal(isSendblueAcceptableMediaUrl("https://storage.googleapis.com/inbound-file-store/x"), false)
+  // wrong extension
+  assert.equal(isSendblueAcceptableMediaUrl("https://storage.googleapis.com/inbound-file-store/x.jpg"), false)
+  // not https
+  assert.equal(isSendblueAcceptableMediaUrl("http://storage.googleapis.com/inbound-file-store/x.png"), false)
+  // fragment counts as a query-ish suffix
+  assert.equal(isSendblueAcceptableMediaUrl("https://storage.googleapis.com/inbound-file-store/x.png#frag"), false)
+  assert.equal(isSendblueAcceptableMediaUrl(""), false)
+  assert.equal(isSendblueAcceptableMediaUrl(null), false)
+  assert.equal(isSendblueAcceptableMediaUrl(undefined), false)
+})
+
+test("maybeSendRecCard: POISONED Firebase cache + creds → re-uploads fresh Sendblue url (no HEAD needed)", async () => {
+  // THE RESIDUAL BUG ('i don't see image coming for the match still'): a cached Firebase token url is
+  // HTTP-200-live, so the HEAD liveness check would PASS it through → Sendblue drops it forever. The
+  // shape guard treats it as a cache MISS (deterministically, no network) so lazy-gen re-hosts on Sendblue.
+  const { db, created } = makeFakeDb({ cachedMediaUrl: FIREBASE_TOKEN_URL })
+  let headChecked = false
+  let regenerated = false
+  const res = await maybeSendRecCard({
+    userId: "u1",
+    jobId: "job-1",
+    job: PAYLOAD_JOB,
+    deps: {
+      db,
+      getPhoneE164: async () => "+15551234567",
+      env: { [JOB_REC_CARD_ENV_FLAG]: "1" },
+      todayYmd: () => "20260531",
+      loadCompany: async () => null,
+      sendblueCreds: CREDS,
+      // The poisoned Firebase url is live (200) — prove the fix does NOT rely on a HEAD failure.
+      checkMediaUrlLive: async () => {
+        headChecked = true
+        return true
+      },
+      lazyGenerate: async () => {
+        regenerated = true
+        return SENDBLUE_MEDIA_URL
+      },
+    },
+  })
+  assert.equal(regenerated, true, "wrong-shaped cache must trigger a re-upload, not ship the dropped url")
+  assert.equal(headChecked, false, "shape guard short-circuits BEFORE the HEAD liveness check")
+  assert.equal(res.sent, true)
+  assert.equal(res.mediaUrl, SENDBLUE_MEDIA_URL)
+  assert.equal(created.length, 1)
+  assert.match(String(created[0]!.mediaUrl), /\.png$/)
+  assert.ok(!/firebasestorage/.test(String(created[0]!.mediaUrl)), "never enqueues a Firebase url")
+})
+
+test("maybeSendRecCard: POISONED Firebase cache + NO creds → keeps url (can't re-host; fail-open)", async () => {
+  // No creds → we can't re-upload, so we don't force an unfillable miss. The text rec still covers
+  // the user; the image may drop, but that's strictly no worse than today (and prod passes creds).
+  const { db, created } = makeFakeDb({ cachedMediaUrl: FIREBASE_TOKEN_URL })
+  const res = await maybeSendRecCard({
+    userId: "u1",
+    jobId: "job-1",
+    job: PAYLOAD_JOB,
+    deps: {
+      db,
+      getPhoneE164: async () => "+15551234567",
+      env: { [JOB_REC_CARD_ENV_FLAG]: "1" },
+      todayYmd: () => "20260531",
+      loadCompany: async () => null,
+      // no sendblueCreds
+    },
+  })
+  assert.equal(res.sent, true)
+  assert.equal(res.mediaUrl, FIREBASE_TOKEN_URL)
+  assert.equal(created.length, 1)
+})
+
 test("maybeSendRecCard: CACHE MISS + creds → lazy-generates, persists, sends", async () => {
   const { db, created, mjWrites } = makeFakeDb({ cachedMediaUrl: undefined })
   const res = await maybeSendRecCard({
@@ -424,6 +540,95 @@ test("maybeSendRecCard: lazy-gen throws → fail-open, not sent, no row", async 
     },
   })
   assert.equal(res.sent, false)
-  assert.equal(res.reason, "error")
+  // The shared resolveRecCardMediaUrl swallows a lazy-gen throw and returns null (resolve never throws),
+  // so maybeSendRecCard sees a cache MISS → "card_unavailable". Still fail-open: not sent, no row.
+  assert.equal(res.reason, "card_unavailable")
   assert.equal(created.length, 0)
+})
+
+// ── resolveRecCardMediaUrl: pure URL resolution, NO enqueue ───────────────────
+
+test("resolveRecCardMediaUrl: CACHE HIT (live) → returns the url, enqueues NOTHING", async () => {
+  const { db, created } = makeFakeDb({ cachedMediaUrl: SENDBLUE_MEDIA_URL })
+  const url = await resolveRecCardMediaUrl(db, {
+    jobId: "job-1",
+    job: PAYLOAD_JOB,
+    sendblueCreds: CREDS,
+    checkMediaUrlLive: async () => true,
+    lazyGenerate: async () => "should-not-be-used",
+  })
+  assert.equal(url, SENDBLUE_MEDIA_URL)
+  assert.equal(created.length, 0, "resolve NEVER enqueues — the caller attaches the url inline")
+})
+
+test("resolveRecCardMediaUrl: CACHE MISS + creds → lazy-gens the url (no enqueue)", async () => {
+  const { db, created } = makeFakeDb({ cachedMediaUrl: undefined })
+  const url = await resolveRecCardMediaUrl(db, {
+    jobId: "job-1",
+    job: PAYLOAD_JOB,
+    sendblueCreds: CREDS,
+    lazyGenerate: async () => SENDBLUE_MEDIA_URL,
+  })
+  assert.equal(url, SENDBLUE_MEDIA_URL)
+  assert.equal(created.length, 0)
+})
+
+test("resolveRecCardMediaUrl: CACHE MISS + NO creds → null (cache-read only, fail-open)", async () => {
+  const { db } = makeFakeDb({ cachedMediaUrl: undefined })
+  const url = await resolveRecCardMediaUrl(db, { jobId: "job-1", job: PAYLOAD_JOB })
+  assert.equal(url, null)
+})
+
+test("resolveRecCardMediaUrl: lazy-gen throws → null, never throws (RC2 fail-open)", async () => {
+  const { db } = makeFakeDb({ cachedMediaUrl: undefined })
+  const url = await resolveRecCardMediaUrl(db, {
+    jobId: "job-1",
+    job: PAYLOAD_JOB,
+    sendblueCreds: CREDS,
+    lazyGenerate: async () => {
+      throw new Error("boom")
+    },
+  })
+  assert.equal(url, null)
+})
+
+// ── persistRecCardMediaUrl: the writeback fix (cache the url on matching-jobs) ─
+
+test("persistRecCardMediaUrl: writes recCardMediaUrl + hash to matching-jobs (merge) → next read is a cache hit", async () => {
+  const { db, mjWrites } = makeFakeDb({ cachedMediaUrl: undefined })
+  const ok = await persistRecCardMediaUrl(db, "job-1", {
+    mediaUrl: SENDBLUE_MEDIA_URL,
+    contentHash: "deadbeefcafef00d",
+  })
+  assert.equal(ok, true, "writeback persisted")
+  assert.equal(mjWrites.length, 1, "exactly one matching-jobs write")
+  const w = mjWrites[0]!
+  assert.equal(w.recCardMediaUrl, SENDBLUE_MEDIA_URL, "recCardMediaUrl persisted (the field the read uses)")
+  assert.equal(w.recCardContentHash, "deadbeefcafef00d", "content hash persisted")
+  assert.equal(typeof w.recCardGeneratedAt, "string", "generated-at stamp present")
+})
+
+test("persistRecCardMediaUrl: write failure → false, never throws (fail-open)", async () => {
+  const throwingDb = {
+    collection() {
+      return {
+        doc() {
+          return {
+            async set() {
+              throw new Error("firestore_down")
+            },
+          }
+        },
+      }
+    },
+  } as never
+  const events: string[] = []
+  const ok = await persistRecCardMediaUrl(
+    throwingDb,
+    "job-1",
+    { mediaUrl: SENDBLUE_MEDIA_URL, contentHash: "x" },
+    (e) => events.push(e),
+  )
+  assert.equal(ok, false)
+  assert.ok(events.includes("rec_card.lazy_gen_persist_failed"), "failure logged, not thrown")
 })

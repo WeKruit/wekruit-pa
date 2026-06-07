@@ -32,6 +32,12 @@ import type { ProactiveScheduledJob, ProactiveJobStatus } from "@pa/core-types"
 import { runProactiveTurn as defaultRunProactiveTurn } from "@pa/pa-orchestrator"
 import type { ProactiveTurnResult } from "@pa/pa-orchestrator"
 import { getFlag } from "@pa/pa-persistence"
+import {
+  isPrescreenNurtureJob,
+  type NurtureDispatchResult,
+} from "./prescreen-nurture-dispatch.js"
+import { runNurtureTurn as runFirestoreNurtureTurn } from "./prescreen-nurture-dispatch-store.js"
+import type { PrescreenNurtureScheduledJob } from "./prescreen-nurture-scheduler.js"
 
 // Max jobs dispatched per sweep invocation — prevents CF timeout (D-05 latency budget).
 const SWEEP_JOB_CAP = 50
@@ -83,6 +89,14 @@ export type SweepStore = {
    * In production this is runProactiveTurn from @pa/pa-orchestrator.
    */
   runProactiveTurn(userId: string, job: ProactiveScheduledJob): Promise<ProactiveTurnResult>
+
+  /**
+   * Dispatch a prescreen-review NURTURE turn for a claimed nurture job
+   * (`nurturingType === 'prescreen_review_nurture'`). Builds personalized
+   * context + hands off to Claire runtime; idempotent + fail-open. Optional so
+   * existing tests that only exercise proactive triggers need not provide it.
+   */
+  runNurtureTurn?(userId: string, job: PrescreenNurtureScheduledJob): Promise<NurtureDispatchResult>
 
   /**
    * Handle dispatch failure: increment attempts, schedule retry, or dead-letter.
@@ -149,6 +163,12 @@ export async function runSweep(store: SweepStore): Promise<SweepResult> {
         continue
       }
 
+      // Step 2b: prescreen-NURTURE jobs carry their own idempotency seed
+      // (`prescreen-nurture-...`), so the proactive fireWindowHash check above
+      // does not apply to them. The branch below re-checks the nurture window
+      // inside dispatchNurture before any handoff.
+      const isNurture = isPrescreenNurtureJob(job as unknown as Record<string, unknown>)
+
       // Step 3: Claim the job (distributed mutex against concurrent sweeps)
       const claimed = await store.claimJob(job.jobId)
       if (!claimed) {
@@ -158,6 +178,19 @@ export async function runSweep(store: SweepStore): Promise<SweepResult> {
       }
 
       // Step 4: Dispatch
+      if (isNurture && store.runNurtureTurn) {
+        // Prescreen-review engagement nurture — build context + Claire composes.
+        const nurtureJob = job as unknown as PrescreenNurtureScheduledJob
+        const nResult = await store.runNurtureTurn(job.userId, nurtureJob)
+        if (nResult.dispatched) {
+          dispatched++
+        } else {
+          store.log("[proactive-sweep] nurture_skipped", { jobId: job.jobId, reason: nResult.reason })
+          if (nResult.reason === "already_fired") skippedIdempotent++
+        }
+        continue
+      }
+
       const result = await store.runProactiveTurn(job.userId, claimed)
       if ("skipped" in result && result.skipped) {
         store.log("[proactive-sweep] proactive_turn_skipped", { jobId: job.jobId, reason: result.reason })
@@ -229,6 +262,12 @@ export function createFirestoreSweepStore(): SweepStore {
       // This import path uses the built dist output.
       const { createFirestoreProactiveTurnStore } = await import("./proactive-turn-store.js")
       return defaultRunProactiveTurn(userId, job, createFirestoreProactiveTurnStore(db))
+    },
+
+    async runNurtureTurn(userId, job) {
+      return runFirestoreNurtureTurn(db, userId, job, (...args) =>
+        logger.info("[prescreen-nurture]", ...args)
+      )
     },
 
     async updateJobFailed(jobId, currentAttempts, maxAttempts, backoffSec) {

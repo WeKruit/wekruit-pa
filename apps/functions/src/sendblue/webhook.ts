@@ -31,7 +31,8 @@ import { getFlag, checkAndIncrementRateLimit } from "@pa/pa-persistence"
 import { PA_COLLECTIONS } from "@pa/core-types"
 import { verifySendblueSignature, extractSendblueSignatureHeader } from "./hmac.js"
 // Stream D — CV ingestion side-effect (fire-and-forget) on attachment receipt.
-import { ingestCv as defaultIngestCv, type IngestCvInput, type IngestCvResult } from "../cv-ingest/cv-ingest.js"
+import { ingestCv as defaultIngestCv, type IngestCvResult } from "../cv-ingest/cv-ingest.js"
+import { isThinClaireEnabled } from "../claire-agent/flags.js"
 import {
   isInboundReceiveEvent,
   normalizeSendblueInbound,
@@ -63,6 +64,14 @@ import { runPiiConfirmForUser as defaultRunPiiConfirmForUser } from "../pii-conf
 import type { SendblueInboundPayload } from "./types.js"
 import { inboundEventExpiresAtTs, outboundExpiresAtTs } from "./ttl.js"
 import { resolveInboundUserId } from "../candidate-inbound-resolve.js"
+// R3 (Adam 2026-06-04) — multi-modal evidence intake: inbound iMessage voice
+// note → transcribe → continue the normal inbound TEXT path. Fail-open: harmless
+// if Sendblue never delivers audio on media_url.
+import {
+  ingestAudio as defaultIngestAudio,
+  isAudioMedia,
+} from "./audio-ingest.js"
+import { isCanaryUser } from "../claire-agent/canary.js"
 
 function prescreenTriggerIdempotencyDocId(jobId: string, userId: string, messageHandle: string): string {
   return `${jobId}_${userId}_${encodeURIComponent(messageHandle || "missing_message_handle")}`
@@ -135,15 +144,27 @@ export type FindMatchTriggerResult = {
 export type WebhookDeps = {
   db: Firestore
   secret: string
-  /** Best-effort bot typing hint for accepted inbound messages. */
-  sendTypingIndicator?: (input: { to: string }) => Promise<void>
+  /** Best-effort bot typing hint for accepted inbound messages. `fromNumber` = the pool line the
+   *  thread is on (required so Sendblue matches it to the conversation on multi-number pools). */
+  sendTypingIndicator?: (input: { to: string; fromNumber?: string }) => Promise<void>
   /** Inject for tests; defaults to @pa/pa-broker createInboundEvent. */
   createInboundEvent?: typeof createInboundEvent
   /** Inject for tests; defaults to recordAuditEvent. */
   recordAuditEvent?: typeof recordAuditEvent
-  /** Stream D — CV ingest pipeline (fire-and-forget). Inject for tests. */
-  ingestCv?: (input: IngestCvInput) => Promise<IngestCvResult>
-  /** Stream D — phone→userId resolver. Optional inboundText enables Hello, WeKruit! uid bind. */
+  /**
+   * Stream D — CV ingest pipeline (fire-and-forget). Inject for tests.
+   * Accepts the optional deps 2nd arg (e.g. followupDeliveryMode) so the webhook can run
+   * a parse-only ingest while the cutover ingest owns the candidate-facing re-entry.
+   */
+  ingestCv?: typeof defaultIngestCv
+  /**
+   * R3 (Adam 2026-06-04) — AUDIO evidence intake. When an inbound media_url is
+   * an iMessage voice note, transcribe it and rewrite the inbound text to the
+   * transcript so a voice note is processed exactly like a typed message.
+   * Inject for tests; defaults to ./audio-ingest ingestAudio. Fail-open.
+   */
+  ingestAudio?: typeof defaultIngestAudio
+  /** Stream D — phone→userId resolver. Optional inboundText enables the verification-code (or legacy Hello, WeKruit!) uid bind. */
   lookupUserByPhone?: (db: Firestore, phoneE164: string, inboundText?: string) => Promise<string | null>
   /** WeKruit_LAID_OFF inbound trigger handler. Inject for tests. */
   runLayoffSmsStart?: typeof defaultRunLayoffSmsStart
@@ -224,14 +245,19 @@ function isBotTypingHintEnabled(): boolean {
 
 async function sendAcceptedInboundTypingHint(
   deps: WebhookDeps,
-  input: { to: string; correlationId?: string },
+  input: { to: string; fromNumber?: string; correlationId?: string },
   log: (...args: unknown[]) => void,
 ): Promise<void> {
   if (!deps.sendTypingIndicator || !isBotTypingHintEnabled()) return
   try {
-    await deps.sendTypingIndicator({ to: input.to })
+    // fromNumber = the pool line this thread is on. Adam 2026-06-03 ("8s to read"): without it the
+    // typing/read came from the DEFAULT creds line, which Sendblue couldn't match to a pool thread
+    // (e.g. +17174919939) → the early read silently no-op'd and "Read" only appeared once
+    // markReadReflex ran post-trigger (the ~8s). Passing the thread line makes "Read" fire on receipt.
+    await deps.sendTypingIndicator({ to: input.to, ...(input.fromNumber ? { fromNumber: input.fromNumber } : {}) })
     log("[sendblue][webhook] bot_typing_hint_sent", {
       toNumber: input.to,
+      fromNumber: input.fromNumber,
       correlationId: input.correlationId,
     })
   } catch (err) {
@@ -606,7 +632,11 @@ export async function handleSendblueWebhook(
   // normalized inbound so the rest of the pipeline (rate-limit / broker
   // enqueue) treats this as a real message. Reuses the same
   // idempotency convention so dedupe still works.
-  const mediaUrl = extractMediaUrl(payload)
+  // `let` (was const) — R3: when an inbound media_url is an AUDIO voice note we
+  // transcribe it and then CLEAR mediaUrl so the rest of the pipeline treats the
+  // turn as plain inbound text (the `!mediaUrl` trigger/find-match/coalesce
+  // branches run, and we do NOT route the voice note to the PDF ingestCv path).
+  let mediaUrl = extractMediaUrl(payload)
   if (!normalized) {
     if (mediaUrl) {
       const messageHandle = typeof payload.message_handle === "string" ? payload.message_handle.trim() : ""
@@ -690,9 +720,60 @@ export async function handleSendblueWebhook(
 
   await sendAcceptedInboundTypingHint(
     deps,
-    { to: normalized.fromNumber, correlationId: normalized.messageHandle },
+    // to = the candidate; fromNumber = the WeKruit pool line the inbound arrived ON (= the thread's
+    // line) so Sendblue matches the typing/read to THIS conversation and "Read" fires immediately.
+    { to: normalized.fromNumber, fromNumber: normalized.toNumber, correlationId: normalized.messageHandle },
     log,
   )
+
+  // ---- 3d.5 R3 (Adam 2026-06-04) — AUDIO evidence intake -----------------
+  //
+  // A candidate can ALWAYS skip and just get matched, but must be ABLE to send
+  // an iMessage voice note as evidence. When the inbound media_url is audio:
+  //   1. transcribe it (OpenAI, PA_OPENAI key) via deps.ingestAudio
+  //   2. rewrite normalized.text to the transcript
+  //   3. CLEAR mediaUrl so the rest of the pipeline runs the normal TEXT path
+  //      (trigger router / find-match / coalesce / broker enqueue) and does NOT
+  //      hand the voice note to the PDF-oriented ingestCv side-effect.
+  //
+  // Canary-gated (NEW product behavior, per CLAUDE.md isCanaryUser): non-canary
+  // users keep the existing media path (audio is left as an [attachment] inbound
+  // exactly as before). FAIL-OPEN: any detection/download/transcription miss
+  // leaves mediaUrl + normalized.text untouched, so the turn never breaks. This
+  // is also a no-op when Sendblue never delivers audio (isAudioMedia → false).
+  if (mediaUrl && isAudioMedia(mediaUrl)) {
+    try {
+      const lookupForAudio = deps.lookupUserByPhone ?? defaultLookupUserByPhone
+      const audioUserId = await lookupForAudio(deps.db, normalized.fromNumber, normalized.text)
+      if (isCanaryUser(audioUserId)) {
+        const ingestAudioFn = deps.ingestAudio ?? defaultIngestAudio
+        const audioResult = await ingestAudioFn(mediaUrl, {
+          log: (event, payload) => log(`[sendblue][audio] ${event}`, payload),
+        })
+        if (audioResult.ok && audioResult.transcript.trim().length > 0) {
+          ;(normalized as { text: string }).text = audioResult.transcript.trim()
+          // Consume the media: downstream now treats this as plain inbound text.
+          mediaUrl = null
+          log("[sendblue][webhook] voice note transcribed → inbound text", {
+            fromNumber: normalized.fromNumber,
+            chars: audioResult.transcript.length,
+          })
+        } else {
+          log("[sendblue][webhook] voice note transcription skipped (fail-open)", {
+            fromNumber: normalized.fromNumber,
+            reason: audioResult.ok ? "empty_transcript" : audioResult.reason,
+          })
+        }
+      }
+    } catch (audioErr) {
+      // Fail-open: never break the turn on an audio hiccup. The media path
+      // continues unchanged (the voice note is handled as before).
+      log("[sendblue][webhook] audio-ingest error (non-fatal)", {
+        fromNumber: normalized.fromNumber,
+        err: audioErr instanceof Error ? audioErr.message : String(audioErr),
+      })
+    }
+  }
 
   // ---- 3e0. v1.9 G2 — ATS pending-trigger virtualization --------------
   //
@@ -1427,7 +1508,46 @@ export async function handleSendblueWebhook(
             log("[sendblue][cv-ingest] skipped — no userId for phone", { phone: normalized.fromNumber })
             return { ok: false, reason: "no_user" } as IngestCvResult
           }
-          return ingestFn({ userId, mediaUrl, sessionId: undefined })
+          // DOUBLE-PARSE FIX (Adam 2026-06-05): for a THIN user the cutover Path-B ingest
+          // (claire-agent/cutover.ts:415, followupDeliveryMode:"runtime") is ALREADY the single
+          // parse + pitch producer for this résumé. This Path-A "pre-warm" parse does NOT actually
+          // pre-warm — it writes its parsedCandidateResumes row only at the END of its ~70s parse, so
+          // cutover's sha256 lookup misses it and BOTH do a full parse, racing on the OpenAI key →
+          // ~3-min repitch (live 8fEw 2026-06-05). Skip Path A entirely when thin owns the turn;
+          // cutover is the sole ingest → one parse, no contention. Legacy (thin OFF) keeps Path A —
+          // there cutover defers to legacy, so the webhook is the only résumé ingest. Fail-open: a
+          // flag-read error falls through to Path A (the résumé is never dropped).
+          try {
+            if (await isThinClaireEnabled(deps.db, userId)) {
+              log("[sendblue][cv-ingest] skipped — thin owns the ingest (cutover Path B is the single producer)", { userId })
+              return { ok: false, reason: "thin_owns_ingest" } as IngestCvResult
+            }
+          } catch {
+            /* flag read failed → fall through to Path A so the résumé is still parsed */
+          }
+          // BUG 2 FIX (Adam 2026-06-02): the SAME résumé inbound also reaches cutover (Path B,
+          // claire-agent/cutover.ts) via the broker doc's rawMeta.mediaUrl — and that ingest fires
+          // with the LIVE conversation session. To guarantee exactly ONE post-parse pitch we make the
+          // CUTOVER ingest the single producer of the candidate-facing re-entry, and the webhook ingest
+          // (this Path A) parse-only: followupDeliveryMode:"none" skips its resume_parse_completed
+          // handoff entirely. This is independent of (and stacks under) the sha256-keyed handoff dedup in
+          // cv-ingest, so even a webhook RETRY racing the cutover ingest cannot double-emit the pitch.
+          //
+          // BUG 3 FIX (Noah Liu, 2026-06-04): this internal, system-initiated parse must ALSO bypass the
+          // cv-ingest invite-gate (checkResumeGate → "not_invited"). A résumé a candidate TEXTS US is a
+          // solicited upload — the gate exists only to block UNSOLICITED uploads from non-invited users
+          // in the legacy onboarding flow, same rationale already applied to the cutover Path-B ingest
+          // (claire-agent/cutover.ts:249-253). Without skipLimitEnforcement this fire-and-forget rejected
+          // at the gate (Noah had no resumeAccepted flag) and enqueued a phantom resume_ingest_rejected
+          // runtime event ({rejectReason:"not_invited"}); the thin agent, handed only that bare reject
+          // context, hallucinated "not enough readable text — re-upload" even though the PDF parsed
+          // perfectly (4213 chars). Bypassing the gate removes the bad event at its source. This stays
+          // parse-only (followupDeliveryMode:"none") so it never emits a candidate-facing message —
+          // the cutover Path-B ingest remains the single producer of the post-parse pitch/overwrite UX.
+          return ingestFn(
+            { userId, mediaUrl, sessionId: undefined },
+            { followupDeliveryMode: "none", skipLimitEnforcement: true },
+          )
         })
         .then((res) => {
           log("[sendblue][cv-ingest] done", res)

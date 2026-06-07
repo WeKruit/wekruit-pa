@@ -13,12 +13,13 @@ import { CandidateMe, CandidateProfile, CandidateMatches, CandidatePrivacy } fro
 import Market from "./pages/Market.js"
 import PublicJob from "./pages/PublicJob.js"
 import PublicJobCv from "./pages/PublicJobCv.js"
+import ConnectLinkedin from "./pages/ConnectLinkedin.js"
+import ConnectPhone from "./pages/ConnectPhone.js"
 import CompanyProfile from "./pages/CompanyProfile.js"
 import Onboarding from "./pages/Onboarding.js"
 import EmployerSignup from "./pages/EmployerSignup.js"
 import Employers, { EmployersInbox } from "./pages/Employers.js"
 import ReferPage, { ReferPublicPage } from "./pages/Refer.js"
-import ConnectLinkedin from "./pages/ConnectLinkedin.js"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("Missing #root element")
@@ -76,6 +77,7 @@ const fullRoutes = (
     <Route path="/j/:jobId" element={<PublicJob />} />
     <Route path="/j/:jobId/cv" element={<PublicJobCv />} />
     <Route path="/open" element={<Navigate to="/market" replace />} />
+    <Route path="/connect-phone" element={<ConnectPhone />} />
     <Route path="/onboarding" element={<Onboarding />} />
     <Route path="/employer" element={<EmployerSignup />} />
     <Route path="/employers" element={<Employers />} />

@@ -2,6 +2,7 @@ import type {
   ConversationActionDecision,
   ConversationEvidenceWrite,
 } from "./conversation-action-arbiter.js"
+import type { TurnIntentResult } from "./turn-intent-extractor.js"
 
 export type TurnState =
   | "received"
@@ -90,6 +91,27 @@ export type TurnContext = {
     status: "completed" | "failed" | "pending"
     resultSummary?: string
   }>
+  /**
+   * 2026-06-05 regex→LLM-intent migration (Target A). When present (and
+   * `available`), `buildIntentFrames` derives the MEANING signals (meta /
+   * prescreen-outcome / durable-pref / job-search / acknowledgment / confusion)
+   * from these LLM labels instead of the regex predicates. STATE guards
+   * (prescreenEvidence, activeWorkflow status, sharedOnboarding active) are
+   * still applied deterministically by `framesFromLlmIntent`. SAFETY/marker
+   * regexes are NOT migrated and still run unconditionally.
+   *
+   * Computed only for canary cohort (flag `paTurnIntentLlmEnabled`) at the
+   * orchestrator call site; off-flag / unavailable → undefined → regex path.
+   */
+  llmIntent?: TurnIntentResult | null
+  /**
+   * A8 delegation: the result of the existing `judgeSharedOnboardingAnswer`
+   * LLM judge (computed at the call site when shared onboarding is active).
+   * When non-null it REPLACES the `isSharedOnboardingSlotAnswer` keyword bank
+   * for deciding shared_onboarding_answer / clarification / slot-suppression.
+   * Null/undefined → fall back to the regex slot-answer predicate (today's path).
+   */
+  sharedOnboardingAnswerAccepted?: boolean | null
 }
 
 export type PrescreenEvidence = {
@@ -352,7 +374,177 @@ function decision(input: Omit<OwnerDecision, "requiredTools"> & { requiredTools:
   }
 }
 
+/**
+ * Minimum confidence for an LLM label to be treated as PRESENT by the mapper.
+ * Mirrors the skill-intent-classifier 0.6 cutoff. Below this we treat the label
+ * as absent (the deterministic cascade then routes to fallback_claire, which is
+ * never worse than today for an uncertain turn).
+ */
+const LLM_LABEL_CONFIDENCE_FLOOR = 0.6
+
+/**
+ * Resolve whether the inbound text answers the active shared-onboarding slot.
+ * A8 delegation: when the call site supplied the existing
+ * `judgeSharedOnboardingAnswer` result (`sharedOnboardingAnswerAccepted`), use
+ * it (ONE onboarding-answer judge in the system). Otherwise fall back to the
+ * regex keyword bank (today's path / non-canary / judge unavailable).
+ */
+function resolveSharedOnboardingSlotAnswer(
+  context: TurnContext,
+  questionId: string,
+  text: string,
+): boolean {
+  if (
+    context.sharedOnboardingAnswerAccepted !== undefined &&
+    context.sharedOnboardingAnswerAccepted !== null
+  ) {
+    return context.sharedOnboardingAnswerAccepted
+  }
+  return isSharedOnboardingSlotAnswer(questionId, text)
+}
+
 function buildIntentFrames(context: TurnContext, text: string): IntentFrame[] {
+  // LLM-primary path (canary, flag-gated upstream). When the validated LLM
+  // intent is available, derive MEANING frames from its labels; STATE guards
+  // stay deterministic. SAFETY/marker regexes still run inside this branch.
+  if (context.llmIntent && context.llmIntent.available) {
+    return framesFromLlmIntent(context, text, context.llmIntent)
+  }
+  return framesFromRegex(context, text)
+}
+
+/**
+ * Deterministic mapper: validated LLM intent labels → the exact `IntentFrame[]`
+ * shape the regex path produces. Preserves every guard that is STATE not
+ * MEANING (prescreenEvidence, activeWorkflow status, sharedOnboarding active +
+ * judged slot answer). SAFETY (STOP/privacy) and marker (`__..__`) are still
+ * derived from the kept regexes — the LLM is told NOT to classify those.
+ */
+function framesFromLlmIntent(
+  context: TurnContext,
+  text: string,
+  llm: TurnIntentResult,
+): IntentFrame[] {
+  const frames: IntentFrame[] = []
+  const raw = context.inbound.text.trim()
+  const span = raw.slice(0, 240)
+  const present = (label: keyof TurnIntentResult["labels"]): boolean =>
+    llm.labels[label].present && llm.labels[label].confidence >= LLM_LABEL_CONFIDENCE_FLOOR
+  const confidenceOf = (label: keyof TurnIntentResult["labels"]): number =>
+    llm.labels[label].confidence
+
+  // SAFETY / marker — KEPT as deterministic regex (never LLM-judged).
+  if (isControlOrPrivacyIntent(text)) {
+    frames.push({ intent: "safety_control", confidence: 0.9, evidenceSpan: span, scope: "one_off" })
+  }
+
+  // meta vs prescreen-outcome. The LLM supplies both labels; the STATE guard
+  // (prescreenEvidence present) decides whether the outcome frame is emitted.
+  const isMeta = present("meta_question") || present("saved_preference_recall")
+  const isPrescreenOutcome = present("prescreen_outcome_question")
+  if (isPrescreenOutcome && context.prescreenEvidence) {
+    frames.push({
+      intent: "prescreen_outcome_question",
+      confidence: Math.max(0.9, confidenceOf("prescreen_outcome_question")),
+      evidenceSpan: span,
+      scope: "one_off",
+    })
+  } else if (isMeta) {
+    frames.push({
+      intent: "explicit_meta_question",
+      confidence: Math.max(0.7, confidenceOf("meta_question"), confidenceOf("saved_preference_recall")),
+      evidenceSpan: span,
+      scope: "one_off",
+    })
+  }
+
+  if (present("durable_preference_update")) {
+    frames.push({
+      intent: "durable_preference_update",
+      confidence: Math.max(0.7, confidenceOf("durable_preference_update")),
+      evidenceSpan: span,
+      scope: "durable",
+    })
+  }
+
+  if (present("job_search_request")) {
+    frames.push({
+      intent: "job_search_request",
+      confidence: Math.max(0.7, confidenceOf("job_search_request")),
+      evidenceSpan: span,
+      scope: "one_off",
+    })
+  }
+
+  // active prescreen answer — STATE-gated. The negative guards consume the LLM
+  // `meta_question` label (and SAFETY regex) instead of `isMetaQuestion(text)`.
+  if (
+    context.activeWorkflow?.kind === "job_prescreen" &&
+    context.activeWorkflow.status === "active" &&
+    !isMeta &&
+    !isControlOrPrivacyIntent(text)
+  ) {
+    frames.push({
+      intent: "active_workflow_answer",
+      confidence: 0.84,
+      evidenceSpan: span,
+      scope: "workflow",
+    })
+  }
+
+  // shared-onboarding answer — A8 delegated to judgeSharedOnboardingAnswer.
+  if (
+    context.sharedOnboarding?.active === true &&
+    context.sharedOnboarding.currentQuestionId &&
+    resolveSharedOnboardingSlotAnswer(context, context.sharedOnboarding.currentQuestionId, text)
+  ) {
+    frames.push({
+      intent: "shared_onboarding_answer",
+      confidence: 0.81,
+      evidenceSpan: span,
+      scope: "workflow",
+    })
+  }
+
+  // shared-onboarding clarification — derives from acknowledgment/confusion
+  // labels + the kept STATE/kickoff guards.
+  if (llmSharedOnboardingClarificationTurn(context, text, present, isMeta)) {
+    frames.push({
+      intent: "shared_onboarding_clarification",
+      confidence: 0.76,
+      evidenceSpan: span,
+      scope: "workflow",
+    })
+  }
+
+  return frames
+}
+
+/**
+ * Clarification gate for the LLM path: an active shared-onboarding slot still
+ * owns an unclear short reply that did NOT answer the slot, is not a kickoff
+ * greeting, not safety, not a meta question, not a durable pref, not a job
+ * search — and reads as an acknowledgment or confusion per the LLM labels.
+ */
+function llmSharedOnboardingClarificationTurn(
+  context: TurnContext,
+  text: string,
+  present: (label: keyof TurnIntentResult["labels"]) => boolean,
+  isMeta: boolean,
+): boolean {
+  if (context.sharedOnboarding?.active !== true) return false
+  const questionId = context.sharedOnboarding.currentQuestionId
+  if (!questionId) return false
+  if (resolveSharedOnboardingSlotAnswer(context, questionId, text)) return false
+  if (isSharedOnboardingKickoffLike(text)) return false // STATE/structural — KEPT
+  if (isControlOrPrivacyIntent(text)) return false // SAFETY — KEPT
+  if (isMeta) return false
+  if (present("durable_preference_update")) return false
+  if (present("job_search_request")) return false
+  return present("acknowledgment") || present("confusion")
+}
+
+function framesFromRegex(context: TurnContext, text: string): IntentFrame[] {
   const frames: IntentFrame[] = []
   const raw = context.inbound.text.trim()
 
@@ -416,7 +608,7 @@ function buildIntentFrames(context: TurnContext, text: string): IntentFrame[] {
   if (
     context.sharedOnboarding?.active === true &&
     context.sharedOnboarding.currentQuestionId &&
-    isSharedOnboardingSlotAnswer(context.sharedOnboarding.currentQuestionId, text)
+    resolveSharedOnboardingSlotAnswer(context, context.sharedOnboarding.currentQuestionId, text)
   ) {
     frames.push({
       intent: "shared_onboarding_answer",
@@ -444,7 +636,7 @@ function rejectedOwnersFor(context: TurnContext, text: string): RejectedOwner[] 
   if (
     context.sharedOnboarding?.active === true &&
     questionId &&
-    !isSharedOnboardingSlotAnswer(questionId, text)
+    !resolveSharedOnboardingSlotAnswer(context, questionId, text)
   ) {
     rejected.push({
       owner: "shared_onboarding",
@@ -460,7 +652,7 @@ function forbiddenMutationsFor(context: TurnContext, text: string): string[] {
   if (
     context.sharedOnboarding?.active === true &&
     questionId &&
-    !isSharedOnboardingSlotAnswer(questionId, text)
+    !resolveSharedOnboardingSlotAnswer(context, questionId, text)
   ) {
     forbidden.push(`sharedOnboarding.answers.${questionId}`)
   }

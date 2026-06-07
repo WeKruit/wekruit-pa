@@ -50,6 +50,10 @@ import { MatchDebug } from "./pages/MatchDebug.js"
 // voice agent (CA_CyhBjJioxJR9) with the in-process WekruitLLM.
 import { VoiceTestDial } from "./pages/VoiceTestDial.js"
 import { VoiceProfiles } from "./pages/VoiceProfiles.js"
+// DANGER — complete-delete-user testing tool. Hard-deletes a candidate to a
+// true blank slate. Backed by the paAdminDeleteUser callable (server-gated to
+// @wekruit.com). Admin domain only.
+import { DeleteUser } from "./pages/DeleteUser.js"
 // v1.8 Phase 78 — Job pre-screen config editor.
 import JobPrescreen from "./pages/JobPrescreen.js"
 import { JobEnrichmentReview } from "./pages/JobEnrichmentReview.js"
@@ -63,6 +67,8 @@ import BulkResumes from "./pages/BulkResumes.js"
 import { IdentityConflicts } from "./pages/IdentityConflicts.js"
 // v1.9 Phase 88 — Sendblue number pool admin.
 import SendbluePool from "./pages/SendbluePool.js"
+// QR campaign manager — generate onboarding QR + scan→conversion funnel.
+import { QrCampaigns } from "./pages/QrCampaigns.js"
 // v2.0 S6 - admin outreach readiness snapshot.
 import OutreachOps from "./pages/OutreachOps.js"
 // Batch human-approve-then-send queue (pa-pending-outbound). Send is gated.
@@ -162,6 +168,7 @@ export default function App() {
               profile completeness, top tags. Drawer links out to existing
               detail surfaces. */}
           <Route path="/admin/candidates" element={<Candidates />} />
+          <Route path="/admin/delete-user" element={<DeleteUser />} />
           <Route path="/users/:id" element={<UserDetail />} />
           <Route path="/agents" element={<AgentBuilder />} />
           {/* Phase 32 Wave 1 — Operations no longer in sidebar; reachable via
@@ -234,6 +241,8 @@ export default function App() {
           <Route path="/admin/pending-outbound" element={<PendingOutbound />} />
           {/* v1.9 Phase 88 — Sendblue number pool admin. */}
           <Route path="/admin/sendblue-pool" element={<SendbluePool />} />
+          {/* QR campaign manager — onboarding QR generator + scan→conversion funnel. */}
+          <Route path="/admin/qr-campaigns" element={<QrCampaigns />} />
           {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}
           <Route path="/admin/prescreen-feedback" element={<PrescreenFeedback />} />
           {/* Recruiter board admin surfaces. */}
