@@ -459,6 +459,52 @@ describe("Stream H3 — cv-overwrite UX", () => {
     )
   })
 
+  it("M10: flag ON + prior + CANARY user → H3 does NOT stage; takes the MERGE write path (no overwrite)", async () => {
+    // MERGE-NOT-OVERWRITE (Adam-LOCKED 2026-06-05): for a canary user the cv-ingest:2397 guard
+    // (`&& !isCanaryUser(userId)`) skips the H3 overwrite-STAGING branch even with the flag ON and a
+    // prior résumé present. The résumé instead takes the NORMAL write path → a real parsedCandidateResumes
+    // row is written AND runUserTagsMerge MERGES (LinkedIn experiences + existing tags + new résumé) →
+    // resume_parse_completed handoff. NO pa-cv-pending, NO resume_overwrite_pending event, NO tombstone.
+    const CANARY_UID = "8fEwIduUrzxZsblHHsNz" // Adam — in CANARY_UIDS
+    const { db, state } = makeFakeDb({
+      users: { [CANARY_UID]: { phoneE164: "+14243201960" } },
+      resumes: [
+        {
+          id: "rsm_prior_canary",
+          data: {
+            userId: CANARY_UID,
+            createdAt: new Date("2026-04-01T00:00:00.000Z"),
+            ingestedAt: "2026-04-01T00:00:00.000Z",
+            source: "coresignal_collect_v2", // a LinkedIn/Coresignal mirror row
+          },
+        },
+      ],
+    })
+    const { log } = captureLog()
+    const deps = makeBaseDeps({
+      db,
+      log,
+      flagOn: true, // even with the H3 flag ON…
+      prior: { id: "rsm_prior_canary", data: state.resumes.get("rsm_prior_canary")! },
+    })
+    const res = await ingestCv(
+      { userId: CANARY_UID, mediaUrl: "https://example.com/cv2.pdf" },
+      deps
+    )
+    assert.equal(res.ok, true)
+    // The MERGE path wrote a REAL new parsedCandidateResumes row (2 total) — NOT staged.
+    assert.equal(state.resumes.size, 2, "canary résumé takes the normal MERGE write path (real row)")
+    assert.equal(state.pending.size, 0, "canary must NOT stage a pa-cv-pending overwrite row")
+    // The prior row is NOT tombstoned (no replace/overwrite) — merge keeps both as history.
+    assert.equal(state.resumes.get("rsm_prior_canary")!.archived, undefined, "prior row NOT archived")
+    // The post-parse handoff is the MERGE/repitch event (resume_parse_completed), NOT resume_overwrite_pending.
+    const overwriteEvents = [...state.inboundEvents.values()].filter((row) => {
+      const meta = row.rawMeta as Record<string, unknown> | undefined
+      return meta?.runtimeEventKind === "resume_overwrite_pending"
+    })
+    assert.equal(overwriteEvents.length, 0, "no resume_overwrite_pending event on the canary merge path")
+  })
+
   it("test 3b: profile-only delivery bypasses overwrite prompt and writes parsed resume", async () => {
     const { db, state } = makeFakeDb({
       users: { u3b: { phoneE164: "+14243201960" } },

@@ -72,7 +72,8 @@ async function main() {
       execute: async () => { explainCalls++; return JSON.stringify({ answered: true, note: "tangent; slot unchanged" }) },
     }),
   ]
-  const instr = "You are Claire onboarding a new candidate. The current question is: 'What's your main goal in your job search right now?' If the user's message ANSWERS that, call record_onboarding_answer with their reply. If it's off-topic (a tangent), call explain_context. Never skip the question."
+  // 2026-06-02 trim: the first ASKED slot is target_role; the prompt frames that question.
+  const instr = "You are Claire onboarding a new candidate. The current question is: 'What kind of roles are you going for next — same lane, or shifting toward something like product, data, or design?' If the user's message ANSWERS that, call record_onboarding_answer with their reply. If it's off-topic (a tangent), call explain_context. Never skip the question."
   const agent = new sdk.Agent({ name: "Claire-onboarding", instructions: instr, model: MODEL, modelSettings: { toolChoice: "auto" }, tools })
 
   const fails = []

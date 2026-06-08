@@ -162,6 +162,63 @@ describe("runSweep — failure handling", () => {
   })
 })
 
+describe("runSweep — prescreen-nurture routing", () => {
+  function makeNurtureJob(over?: Record<string, unknown>): ProactiveScheduledJob {
+    const now = new Date()
+    const nextFireAt = new Date(now.getTime() - 5000).toISOString()
+    return {
+      jobId: "nurture-u1-j1-1",
+      nurturingType: "prescreen_review_nurture",
+      userId: "u1",
+      opportunityJobId: "j1",
+      sessionId: "s1",
+      nurturingNumber: 1,
+      prescreenTerminal: "PASS",
+      status: "pending",
+      nextFireAt,
+      dueAt: nextFireAt,
+      createdAt: now.toISOString(),
+      attempts: 0,
+      maxAttempts: 3,
+      backoffSec: 300,
+      ...over,
+    } as unknown as ProactiveScheduledJob
+  }
+
+  it("routes a nurturingType job to runNurtureTurn, not runProactiveTurn", async () => {
+    let proactiveCalls = 0
+    let nurtureCalls = 0
+    const store = makeStore([makeNurtureJob()], {
+      runProactiveTurn: async () => {
+        proactiveCalls++
+        return { skipped: false, runtimeEventId: "x", runtimeEventCreated: true, fireWindowHash: "h" }
+      },
+      runNurtureTurn: async () => {
+        nurtureCalls++
+        return { dispatched: true, runtimeEventId: "re", runtimeEventCreated: true, fireWindowHash: "fw" }
+      },
+    })
+    const result = await runSweep(store)
+    assert.equal(nurtureCalls, 1, "nurture job must route to runNurtureTurn")
+    assert.equal(proactiveCalls, 0, "nurture job must NOT route to runProactiveTurn")
+    assert.equal((result as { dispatched: number }).dispatched, 1)
+  })
+
+  it("counts an already_fired nurture as an idempotent skip, no dispatch", async () => {
+    let nurtureCalls = 0
+    const store = makeStore([makeNurtureJob()], {
+      runNurtureTurn: async () => {
+        nurtureCalls++
+        return { dispatched: false, reason: "already_fired" }
+      },
+    })
+    const result = await runSweep(store)
+    assert.equal(nurtureCalls, 1)
+    assert.equal((result as { dispatched: number; skippedIdempotent: number }).dispatched, 0)
+    assert.equal((result as { skippedIdempotent: number }).skippedIdempotent, 1)
+  })
+})
+
 describe("checkAdminToken — admin gate (Phase 22 trigger plan)", () => {
   function withEnv(value: string | undefined, fn: () => void) {
     const original = process.env.PA_ADMIN_TOKEN

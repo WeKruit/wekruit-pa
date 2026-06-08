@@ -45,16 +45,15 @@ function makeFakeDb(seed = {}) {
 
 const UID = "sim-onb-uid", SID = "sim-onb-session", PHONE = "+14243201960"
 const SCRIPT = [
-  "Hello, WeKruit! kickoffTOKEN123",                                   // kickoff → bootstrap, ask main_goal
-  "honestly career growth and learning matter most to me",             // main_goal
-  "early-stage startup, high ownership, small team",                   // culture_stage
-  "software engineering, ideally backend / platform roles",            // target_role
-  "fintech and AI infrastructure",                                     // industry_interest
-  "NYC or fully remote, open to relocating for the right role",        // location_relocation
-  "full-time mid/senior, 160k+ but flexible for the right team",        // seniority_comp
-  "I need H1B visa sponsorship and I'm available to start in June",    // special_context
+  // 2026-06-02 onboarding trim (Adam #1 friction — "too many questions / minimal upfront"):
+  // the ASKED upfront flow is now ONLY the two HARD-filter axes — target_role then
+  // location_relocation. The other axes are extract-only (record_onboarding_answer pulls every
+  // canonical enum from any free-text turn), so we fold the soft signals into these two answers.
+  "Hello, WeKruit! kickoffTOKEN123",                                   // kickoff → bootstrap, ask target_role
+  "software engineering, ideally backend / platform roles — fintech and AI infra, full-time mid/senior, 160k+ but flexible", // target_role (+ soft signals extracted)
+  "NYC or fully remote, open to relocating for the right role; I need H1B visa sponsorship and can start in June",            // location_relocation (+ visa/timing extracted)
 ]
-const EXPECT_SLOT = [null, "main_goal", "culture_stage", "target_role", "industry_interest", "location_relocation", "seniority_comp", "special_context"]
+const EXPECT_SLOT = [null, "target_role", "location_relocation"]
 const curOf = (db) => (db._store.get(`pa-users/${UID}`)?.sharedOnboarding?.currentQuestionId) ?? null
 
 async function main() {
@@ -102,22 +101,24 @@ async function main() {
   const ck = (name, cond, detail) => { if (cond) console.log(`PASS  ${name}`); else { console.log(`FAIL  ${name} → ${detail ?? ""}`); fails.push(name) } }
 
   ck("turn1: kickoff → onboarding, ask-only (awaitingAnswer=false)", turns[0].mode === "onboarding" && turns[0].awaiting === false)
-  for (let i = 1; i <= 7; i++) ck(`turn${i + 1}: answers slot '${EXPECT_SLOT[i]}'`, turns[i].slot === EXPECT_SLOT[i], `got ${turns[i].slot}`)
+  // 2026-06-02 trim: only the two ASKED hard-filter slots (target_role, location_relocation).
+  for (let i = 1; i <= 2; i++) ck(`turn${i + 1}: answers slot '${EXPECT_SLOT[i]}'`, turns[i].slot === EXPECT_SLOT[i], `got ${turns[i].slot}`)
   // RELIABILITY: every answer turn must actually advance durable state = the agent called the tool.
-  const answerTurns = turns.slice(1, 8)
+  const answerTurns = turns.slice(1, 3)
   const recordedCount = answerTurns.filter((t) => t.recorded).length
-  ck("reliability: agent called record_onboarding_answer on ALL 7 answer turns (durable advanced)", recordedCount === 7, `${recordedCount}/7 advanced`)
+  ck("reliability: agent called record_onboarding_answer on BOTH asked answer turns (durable advanced)", recordedCount === 2, `${recordedCount}/2 advanced`)
 
   ck("final: onboardingState=complete", user.onboardingState === "complete")
   ck("final: sharedOnboarding.completed=true", so.completed === true)
-  ck("final: all 7 slot answers recorded (write-through accumulation)", ["main_goal", "culture_stage", "target_role", "industry_interest", "location_relocation", "seniority_comp", "special_context"].every((s) => answers[s]), `[${Object.keys(answers).join(",")}]`)
+  ck("final: both ASKED slot answers recorded (write-through accumulation)", ["target_role", "location_relocation"].every((s) => answers[s]), `[${Object.keys(answers).join(",")}]`)
   ck("enrich: targetLocations captured (location answer → canonical tag interface)", Array.isArray(tags.targetLocations) && tags.targetLocations.length > 0, JSON.stringify(tags.targetLocations))
-  ck("enrich: industrySector captured (industry answer → canonical tag interface)", Array.isArray(tags.industrySector) && tags.industrySector.length > 0, JSON.stringify(tags.industrySector))
-  const allReplies = turns.slice(0, 8).map((t) => t.reply.toLowerCase()).join("\n")
+  // industrySector now arrives extract-only (folded into the target_role free-text answer).
+  ck("enrich: industrySector captured (extract-only from free-text → canonical tag interface)", Array.isArray(tags.industrySector) && tags.industrySector.length > 0, JSON.stringify(tags.industrySector))
+  const allReplies = turns.slice(0, 3).map((t) => t.reply.toLowerCase()).join("\n")
   ck("voice: no markdown in onboarding questions", !/[*_`]|^\s*[-•]/m.test(allReplies), "markdown found")
-  ck("coverage: Claire asked a question on turns 1-7", turns.slice(0, 7).every((t) => t.reply.length > 0))
+  ck("coverage: Claire asked a question on every onboarding turn", turns.slice(0, 2).every((t) => t.reply.length > 0))
 
-  console.log(`\n${fails.length === 0 ? "L5 ONBOARDING SIM: GREEN ✅ — kickoff→5 questions→complete, AGENT-TOOL write-through to canonical tags, real LLM" : `L5 ONBOARDING SIM: ${fails.length} FAILED`}`)
+  console.log(`\n${fails.length === 0 ? "L5 ONBOARDING SIM: GREEN ✅ — kickoff→2 questions→complete, AGENT-TOOL write-through to canonical tags, real LLM" : `L5 ONBOARDING SIM: ${fails.length} FAILED`}`)
   process.exit(fails.length === 0 ? 0 : 1)
 }
 await main()

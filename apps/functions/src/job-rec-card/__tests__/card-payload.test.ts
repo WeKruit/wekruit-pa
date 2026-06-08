@@ -8,6 +8,7 @@ import {
   normalizeCompanyStage,
   deriveCompanyDomain,
   googleFaviconUrl,
+  topSkills,
 } from "../card-payload.js"
 
 test("buildRecCardPayload: full job + REAL pa-company shape + reasons → complete payload", () => {
@@ -209,4 +210,41 @@ test("formatSalaryRange", () => {
 test("humanizeToken", () => {
   assert.equal(humanizeToken("series_a"), "Series A")
   assert.equal(humanizeToken("staff-engineer"), "Staff Engineer")
+})
+
+test("topSkills: trims, dedupes (case-insensitive), humanizes tokens, caps at 4", () => {
+  assert.deepEqual(
+    topSkills(["React", " react ", "react_native", "TypeScript", "Go", "Rust"], 4),
+    ["React", "React Native", "TypeScript", "Go"],
+  )
+  assert.equal(topSkills([]), undefined)
+  assert.equal(topSkills(undefined), undefined)
+  assert.equal(topSkills(["  ", ""]), undefined)
+})
+
+test("buildRecCardPayload: surfaces top-4 skills + equity from the job source", () => {
+  const payload = buildRecCardPayload({
+    job: {
+      companyName: "Invoko",
+      jobTitle: "Senior Backend Engineer",
+      requiredSkills: ["Go", "go", "PostgreSQL", "Kubernetes", "gRPC", "Redis"],
+      equity: "0.1%–0.5%",
+    },
+    company: null,
+    reasons: null,
+  })
+  assert.ok(payload)
+  assert.deepEqual(payload!.skills, ["Go", "PostgreSQL", "Kubernetes", "gRPC"])
+  assert.equal(payload!.equity, "0.1%–0.5%")
+})
+
+test("buildRecCardPayload: omits skills + equity gracefully when absent", () => {
+  const payload = buildRecCardPayload({
+    job: { companyName: "Acme", jobTitle: "Engineer" },
+    company: null,
+    reasons: null,
+  })
+  assert.ok(payload)
+  assert.equal(payload!.skills, undefined)
+  assert.equal(payload!.equity, undefined)
 })

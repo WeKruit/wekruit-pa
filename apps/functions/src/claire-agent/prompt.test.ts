@@ -69,6 +69,17 @@ test("turn context surfaces prescreenContext ONLY in prescreen mode", () => {
   assert.ok(inPrescreen.includes("PRESCREEN CONTEXT: secret"))
 })
 
+test("turn context surfaces candidateContext in ANY mode (post-prescreen retention handoff)", () => {
+  // Unlike prescreenContext (gated on mode==='prescreen'), the prescreen-seam retention block must reach
+  // the prompt in triage/onboarding too — a post-terminal turn is NEVER 'prescreen' mode. This is the
+  // load-bearing difference for the Sai fix: the agent must know the screen history regardless of mode.
+  const block = "PRIOR JOB SCREENS (most recent first):\n- Product Designer @ Invoko — PAUSED."
+  for (const mode of ["triage", "onboarding", "prescreen"] as const) {
+    const ctx = buildClaireTurnContext({ mode, lang: "en", candidateContext: block })
+    assert.ok(ctx.includes("PRIOR JOB SCREENS"), `candidateContext must render in ${mode} mode`)
+  }
+})
+
 test("onboarding pendingStep stays in the head (mode shape), NOT the turn context", () => {
   // In onboarding the next question is part of the directive shape; the turn context must not
   // ALSO emit a 'PENDING STEP to resume' reminder (that is only for non-onboarding modes).

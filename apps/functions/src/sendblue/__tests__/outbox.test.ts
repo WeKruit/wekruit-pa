@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 
 import { isMarketplaceOutreachOutbound, paSendblueOutboxHandler, shouldAppendOutboundTranscript } from "../outbox.js"
 import { SendblueClientError, SendblueServerError } from "../sendblue-client.js"
+import { _resetPoolCache, _resetCountersCache } from "../pool.js"
 
 // ---------- Fake Firestore + sendblue client ----------
 
@@ -183,12 +184,18 @@ beforeEach(() => {
   // suite assert calls = 1 (single send), so explicitly disable typing here
   // and let Test 6 below re-enable it for the dedicated typing assertion.
   process.env.PA_TYPING_INDICATOR = "0"
+  // Binding reducer loads the Sendblue pool (60s module cache) — reset so a
+  // pool config from another suite can't leak into these fake-db reads.
+  _resetPoolCache()
+  _resetCountersCache()
 })
 afterEach(() => {
   for (const k of ENV_KEYS) delete process.env[k]
   for (const [k, v] of Object.entries(savedEnv)) {
     if (v !== undefined) process.env[k] = v
   }
+  _resetPoolCache()
+  _resetCountersCache()
 })
 
 describe("paSendblueOutboxHandler", () => {
@@ -216,7 +223,11 @@ describe("paSendblueOutboxHandler", () => {
     })
 
     assert.equal(sb.calls, 1)
-    assert.equal(sb.sendCalls[0]!.userId, USER.id)
+    // USER↔NUMBER BINDING (2026-06-02): outbox now resolves the bound line
+    // ITSELF (via resolveBoundFromNumber) and passes the resolved `fromNumber`
+    // directly — it intentionally does NOT pass `userId` to sendImessage, which
+    // would make the client re-run the reducer (a redundant user read).
+    assert.equal(sb.sendCalls[0]!.userId, undefined)
     assert.ok(sb.sendCalls[0]!.db)
     const finalDoc = outbound.get("doc-1")!
     assert.equal(finalDoc.status, "sent")

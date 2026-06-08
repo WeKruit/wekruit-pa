@@ -52,12 +52,20 @@ import {
 import { writeFeedbackEvent } from "@pa/pa-persistence"
 import { mem0Add, type Mem0Config } from "@pa/memory"
 import { parseResumeText } from "@pa/pa-resume-parser"
+// #3 re-enrich hook (Adam 2026-06-05): a résumé PASTED into chat must flow into the SAME
+// single enrich path as an attachment (webhook Stream-D) / website upload — re-derive
+// role/careerStage/skills via the D8 sole writer — not just return parsed text to the LLM.
+import { reEnrichUserTagsFromParsedResume } from "../../cv-ingest/cv-ingest.js"
 import { queryMatchingJobsV16, recordRecommendedJobs } from "@pa/job-rec"
 import type { FeedbackEvent } from "@pa/core-types"
 import type { Firestore } from "firebase-admin/firestore"
-// Rec-card render→host→send side-channel (flag-gated, fail-open). maybeSendRecCard
-// internally no-ops when PA_JOB_REC_CARD_ENABLED is off and NEVER throws.
-import { maybeSendRecCard } from "../../job-rec-card/send-rec-card.js"
+// Rec-card image model (flag-gated, fail-open). `resolveRecCardMediaUrl` returns the Sendblue-acceptable
+// image url for a job WITHOUT enqueuing (cache-read → shape-guard → liveness → lazy-gen+persist), so the
+// image rides INLINE on the role caption bubble (ordered, per-turn). `maybeSendRecCard` is retained for
+// back-compat/tests but is no longer used here. `isJobRecCardEnabled` re-gates the resolve (flag off → no
+// image). All never throw.
+import { resolveRecCardMediaUrl } from "../../job-rec-card/send-rec-card.js"
+import { isJobRecCardEnabled } from "../../job-rec-card/job-rec-card.js"
 import {
   reduceMatchingPreferences,
   type MatchingTagsSlice,
@@ -503,10 +511,93 @@ export async function recordAgentPresentation(
  */
 export type V16FindMatchCardDeps = {
   getPhoneE164: (db: Firestore, userId: string) => Promise<string | null>
-  /** Sendblue media-upload creds for the lazy-gen fallback (absent → cache-read only). */
+  /**
+   * Sendblue media-upload creds. NOTE (P0 #4, 2026-06-04): the collab rec-card SEND path is now a PURE
+   * CACHE READ — makeV16FindMatch deliberately does NOT thread these into resolveRecCardMediaUrl, so no
+   * lazy-gen runs at send time (cards are pre-generated at creation by the enrich pipeline). Retained on
+   * the type for back-compat with the caller and the legacy maybeSendRecCard path; unused for collab send.
+   */
   sendblueCreds?: { apiKeyId: string; apiSecretKey: string }
   fromNumber?: string
   log?: (event: string, payload?: Record<string, unknown>) => void
+}
+
+/**
+ * COLLAB FIT GATE (Adam 2026-06-04, P0 #2 — Noah ⟶ MetaVoice ML-research role).
+ *
+ * COLLAB-ALWAYS-FIRST surfaces a partner role whenever its `roleFunction` shares ONE token with the
+ * candidate's `targetRoleFunction`. But a SINGLE stale/extra enum token (e.g. a résumé "Software Engineer"
+ * line seeding `data_analysis` for a sales/marketing/PM candidate) re-admits an ENTIRE off-target role
+ * family — and nothing downstream checks the role actually FITS. The V16 `COLLAB_PUSH_SCORE_FLOOR` (0.03)
+ * is structurally defeated by the `collabBoost` (0.08) it sits downstream of: `0.08 > 0.03`, so the boost
+ * ALONE clears the floor and a ZERO-fit collab role can never be dropped by it (proven on the real
+ * MetaVoice doc: total=0.105 = collabBoost 0.08 + salaryFit-no-signal-default 0.025, fitSum=0.0000).
+ *
+ * The fix: gate on the GENUINE-FIT components ONLY — `llmMatch + skillJaccard + relevantTags +
+ * industrySector + cvEmbCosine` — EXCLUDING `collabBoost` and the `salaryFit` no-signal mass (both inflate
+ * `total` without being real overlap). A collab role must have SOME positive fit signal beyond the single
+ * role-family token to surface; a role with `fitSum === 0` (only the role-family token overlaps, 0 skill /
+ * industry / embedding / llm) is dropped. Collab-first STILL holds for FITTING collab roles — only the
+ * 0-overlap ones are gated.
+ *
+ * FAIL-OPEN: a job WITHOUT a `v16Score` breakdown (e.g. a fake-catalog eval job, or a legacy projection)
+ * is treated as PASS — we never block a collab role just because we couldn't read its score (preserves the
+ * RC2 never-blocks-the-turn contract; the eval fakes don't carry v16Score). The gate only DROPS a collab
+ * role we can PROVE has zero fit.
+ */
+const COLLAB_FIT_FLOOR = 0
+
+/** The genuine-fit subtotal of a V16 score breakdown — the match signals only, EXCLUDING collabBoost and
+ * the salaryFit no-signal mass. Returns null when no breakdown is present (caller treats null as fail-open
+ * pass). */
+export function collabFitScore(job: unknown): number | null {
+  const b = (job as { v16Score?: Record<string, unknown> } | null | undefined)?.v16Score
+  if (!b || typeof b !== "object") return null
+  const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0)
+  return n(b.llmMatch) + n(b.skillJaccard) + n(b.relevantTags) + n(b.industrySector) + n(b.cvEmbCosine)
+}
+
+/** True when a collab role clears the fit gate (or has no readable score → fail-open pass). */
+export function collabRoleHasFit(job: unknown): boolean {
+  const fit = collabFitScore(job)
+  if (fit === null) return true // fail-open — no score to judge by (eval fakes / legacy)
+  return fit > COLLAB_FIT_FLOOR
+}
+
+/**
+ * Is this DELIVERED job a WeKruit collab role on its matching-jobs mirror? (P0 #4 — rec-card image.)
+ *
+ * The rec-card image is a property of the JOB (cached on `matching-jobs/{id}.recCardMediaUrl`), independent
+ * of WHICH retrieval pass surfaced it. A collab role whose `pa-jobs` doc lacks `publicVisible:true` + a
+ * prescreenConfig (e.g. VoiceCursor) falls OUT of the collab pass and is delivered via the OPEN-MARKET pass
+ * — yet its matching-jobs mirror IS collab-tagged AND carries a cached card. So we must resolve images for
+ * any delivered row that is collab-on-mirror, not only the collab-pass survivors. The matcher already stamps
+ * `matchSourceLabel === "WeKruit collaborated"` for jobs whose `pa-jobs.wekruitCollaborationStatus ===
+ * "collaborated"` (resolved once over the survivor set); we also accept the row-level `isWekruitCollab` flag
+ * and a `wekruitCollaborationStatus` field carried on the projection. Pure + cheap (no read). Fail-soft.
+ */
+export function isCollabOnMirror(job: unknown): boolean {
+  const j = (job ?? {}) as Record<string, unknown>
+  return (
+    j.matchSourceLabel === "WeKruit collaborated" ||
+    j.isWekruitCollab === true ||
+    j.wekruitCollaborationStatus === "collaborated"
+  )
+}
+
+// DELIVERED-REC COMPOSITION (Adam 2026-06-04 "≤3, don't dump" + 2026-06-06 "what about the normal
+// ones?"): cap the delivered set at 3, collab-first, but RESERVE one slot for a normal open-market role
+// whenever any exists — so a candidate with ≥3 collab/partner roles still sees a "normal" job instead of
+// an all-collab list. When NO open-market row exists, collab keeps the full cap (no empty slots). Pure +
+// deterministic so it unit-tests without a DB.
+export const REC_DELIVERY_CAP = 3
+export const REC_OPEN_MARKET_RESERVE = 1
+export function selectDeliveredRecs<T>(collabJobs: readonly T[], openJobs: readonly T[]): T[] {
+  const reserve = openJobs.length > 0 ? REC_OPEN_MARKET_RESERVE : 0
+  const collabSlots = Math.max(0, REC_DELIVERY_CAP - reserve)
+  const collabTake = collabJobs.slice(0, collabSlots)
+  const openTake = openJobs.slice(0, REC_DELIVERY_CAP - collabTake.length)
+  return [...collabTake, ...openTake]
 }
 
 export function makeV16FindMatch(
@@ -552,7 +643,21 @@ export function makeV16FindMatch(
       } catch (e) {
         log("pa.claire.find_match.collab_pass_failed", { userId, err: String(e) })
       }
-      const collabJobs = collabResult?.jobs ?? []
+      // COLLAB FIT GATE (P0 #2): drop any collab role with ZERO genuine fit — a role that cleared the
+      // collab pass on a single (often stale) role-family enum token but has 0 skill/industry/embedding/llm
+      // overlap (exactly Noah ⟶ MetaVoice). collabRoleHasFit reads the per-job v16Score breakdown's
+      // fit-only subtotal (excluding the collabBoost + salaryFit no-signal mass that defeat the V16 floor)
+      // and is fail-open: a job with no readable score passes (eval fakes / legacy). COLLAB-FIRST is
+      // preserved — fitting collab roles still lead; only 0-overlap ones are gated.
+      const collabJobsRaw = collabResult?.jobs ?? []
+      const collabJobs = collabJobsRaw.filter((j) => collabRoleHasFit(j))
+      if (collabJobs.length !== collabJobsRaw.length) {
+        log("pa.claire.find_match.collab_fit_gate_dropped", {
+          userId,
+          dropped: collabJobsRaw.length - collabJobs.length,
+          droppedIds: collabJobsRaw.filter((j) => !collabRoleHasFit(j)).map((j) => j.id).slice(0, 10),
+        })
+      }
       const collabHit = collabJobs.length > 0
       const collabIds = new Set(collabJobs.map((j) => j.id))
 
@@ -561,14 +666,22 @@ export function makeV16FindMatch(
       // instead of a dead "no roles" — never a silent dead end. Skip the pass entirely when collab
       // already filled `limit`. The open-market `result` is also the source of the snapshotTags /
       // needsOnboarding / total signals when there are no collab jobs (pure open-market path).
+      // RESERVED OPEN-MARKET SLOT (Adam 2026-06-06): size the open-market fetch to fill the slots collab
+      // left open PLUS the reserved slot, so collab can't crowd open-market out even when it fills the cap.
+      // The final composition is done by selectDeliveredRecs (collab-first, cap, reserve) below.
       const remaining = Math.max(0, limit - collabJobs.length)
+      const openWant = Math.max(remaining, REC_OPEN_MARKET_RESERVE)
       let result = collabResult
       let openJobs: typeof collabJobs = []
-      if (remaining > 0 || !collabHit) {
+      // Run the open-market pass whenever we could deliver an open-market row — i.e. collab didn't fill
+      // the cap (remaining>0), OR there was no collab at all, OR collab filled the cap but we still want
+      // to reserve a normal-role slot (openWant>0). Skipping it only when collab fully owns the set AND
+      // no slot is reserved keeps the old cost-saving path.
+      if (remaining > 0 || !collabHit || openWant > 0) {
         result = await queryMatchingJobsV16({ userId, limit, allowBroadFallback: true }, { db })
         // Dedup the open-market set against collab ids so a collab role never repeats as open-market,
-        // then take only enough to fill the remaining slots after collab.
-        openJobs = (result.jobs ?? []).filter((j) => !collabIds.has(j.id)).slice(0, remaining)
+        // then take enough to fill the open slots + the reserved slot.
+        openJobs = (result.jobs ?? []).filter((j) => !collabIds.has(j.id)).slice(0, openWant)
       }
       // When BOTH passes ran, prefer the open-market `result` for the snapshotTags/needsOnboarding
       // metadata (it reflects the full catalog, not the collab-only funnel); fall back to collab.
@@ -588,7 +701,21 @@ export function makeV16FindMatch(
       // Final merged set: collab roles FIRST, then open-market fill. recordAgentPresentation, the
       // rec-card fire (TOP job → reliably the top collab role when present), and the formatted lines
       // all operate over THIS array, so every downstream consumer sees the same ordered, deduped set.
-      const rawJobs = [...collabJobs, ...openJobs]
+      //
+      // HARD DELIVERY CAP (Adam 2026-06-04): "limit recommendations to less than 3 — it's dumping too
+      // many" (a live test delivered 4+). Cap the DELIVERED set at AT MOST 3 total, here at the single
+      // merge point so EVERY downstream consumer (ledger, rec-card, formatted lines, collab prescreen
+      // offer) sees the same capped set. COLLAB-FIRST ORDERING IS PRESERVED: the array is collab-then-
+      // open and .slice() keeps that order — collab roles take the first slots, open-market fills the
+      // rest up to 3. Only the COUNT is capped; the mandatory collab prescreen offer mechanics are
+      // untouched (the offer is rebuilt below from the collab roles that survive this cap).
+      // Collab-first, capped at 3, with one slot reserved for a normal open-market role (see helper).
+      const rawJobs = selectDeliveredRecs(collabJobs, openJobs)
+      // The collab roles that actually survived the cap (collab-first, so these are the leading entries
+      // of rawJobs that came from the collab pass). The prescreen offer + structured `collab` payload
+      // below are built from THIS set, not the full collab pass, so we never name a partner role the
+      // candidate was not shown.
+      const deliveredCollabJobs = rawJobs.filter((j) => collabIds.has(j.id))
 
       // PERSIST the pushed collab roles (req #1) — write the collab subset we just surfaced to
       // pa-users/{userId}.lastCollabRoles = [{ jobId, company, title }] so a LATER turn's
@@ -638,44 +765,63 @@ export function makeV16FindMatch(
         }
       }
 
-      // Rec-card render→host→send side-channel (flag-gated, fail-open). Sends the
-      // TOP ranked job — which, on a first batch, is a curated WeKruit collab role
-      // — as a designed iMessage image attachment alongside Claire's text reply.
-      // maybeSendRecCard internally no-ops when PA_JOB_REC_CARD_ENABLED is off and
-      // NEVER throws — so a render/upload/enqueue hiccup can never break the
-      // find_match return contract (RC2): the text rec already covers the user.
-      if (cardDeps && rawJobs.length > 0) {
-        // `rawJobs` elements are the V16 `MatchingJob & { reason, ... }` projection;
-        // every field read below exists on that shape. CardJobSource fields are all
-        // optional, so any null/absent value just omits its card section.
-        const top = rawJobs[0]!
-        try {
-          await maybeSendRecCard({
-            userId,
-            jobId: top.id,
-            job: {
-              companyName: top.companyName,
-              jobTitle: top.jobTitle,
-              roleTitle: top.roleTitle,
-              seniorityLevel: top.seniorityLevel,
-              salaryMin: top.salaryMin,
-              salaryMax: top.salaryMax,
-              locationRaw: top.locationRaw,
-              jobType: top.jobType,
-              atsApplyUrl: top.atsApplyUrl,
-              primaryUrl: top.primaryUrl,
-              reason: top.reason,
-            },
-            deps: {
-              db,
-              getPhoneE164: cardDeps.getPhoneE164,
-              ...(cardDeps.sendblueCreds ? { sendblueCreds: cardDeps.sendblueCreds } : {}),
-              ...(cardDeps.fromNumber ? { fromNumber: cardDeps.fromNumber } : {}),
+      // Rec-card IMAGE resolution (flag-gated, fail-open). RESOLVE ONE Sendblue-acceptable image url PER
+      // COLLAB/partner role (Adam 2026-06-04: "for each collab role we can share an image, not only the
+      // first one") WITHOUT enqueuing — the image is attached INLINE to its role caption bubble by
+      // deliverRecBubbles instead of as a separate, decoupled, once/day media row that RACED the recs.
+      // This fixes BOTH live bugs: the image now rides WITH its role caption (ordered + per-turn), and the
+      // separate "rec-card-<uid>-<jobId>-<ymd>" once/day idempotency cap is gone.
+      //
+      // IMAGE-ELIGIBLE SET (P0 #4, Adam 2026-06-04): the image is a property of the JOB (cached on
+      // matching-jobs/{id}.recCardMediaUrl), NOT of which retrieval pass surfaced it. A collab role whose
+      // pa-jobs doc lacks publicVisible+prescreenConfig (e.g. VoiceCursor) falls OUT of the collab pass and
+      // is delivered by the OPEN-MARKET pass — yet its matching-jobs mirror IS collab-tagged + carries a
+      // cached card. The OLD loop iterated ONLY `deliveredCollabJobs` (collab-pass survivors) → that role's
+      // bubble shipped text-only despite a live cached image. So we widen to EVERY delivered row that is
+      // collab-on-mirror (collab-pass survivors ∪ open-market-delivered collab-tagged rows). Open-market
+      // NON-collab rows stay text-only.
+      const imageEligible = rawJobs.filter((j) => collabIds.has(j.id) || isCollabOnMirror(j))
+      //
+      // SEND DIRECT (Adam 2026-06-04: "should be direct"): for collab roles the card is PRE-GENERATED at
+      // creation (agent C), so the happy path is a PURE CACHE READ. We deliberately DO NOT pass
+      // sendblueCreds here → resolveRecCardMediaUrl runs cache-read → shape-guard → liveness ONLY and
+      // SKIPS lazy-gen entirely (lazy-gen requires creds; absent creds = no render/upload at send time).
+      // A cache miss simply omits the image (the role still delivers as text — RC2). This removes the
+      // slow, fail-prone, per-send render path Adam flagged; lazy-gen stays available ONLY for the legacy
+      // maybeSendRecCard path (which still threads creds when present).
+      //
+      // resolveRecCardMediaUrl NEVER throws and returns null on any miss. Gated by cardDeps presence (the
+      // REC_CARD_UIDS allowlist in cutover.ts) AND the runtime flag, so the image still only goes to the
+      // allowlisted dev uid. `imageEligible` elements are the V16 `MatchingJob & { reason, ... }`
+      // projection; every field read (incl. `requiredSkills` → the card's SKILLS pills) exists on that
+      // shape. CardJobSource fields are all optional, so any null/absent value omits its card section.
+      const mediaByJobId = new Map<string, string>()
+      if (cardDeps && imageEligible.length > 0 && isJobRecCardEnabled()) {
+        for (const cj of imageEligible) {
+          try {
+            const mediaUrl = await resolveRecCardMediaUrl(db, {
+              jobId: cj.id,
+              job: {
+                companyName: cj.companyName,
+                jobTitle: cj.jobTitle,
+                roleTitle: cj.roleTitle,
+                seniorityLevel: cj.seniorityLevel,
+                salaryMin: cj.salaryMin,
+                salaryMax: cj.salaryMax,
+                locationRaw: cj.locationRaw,
+                jobType: cj.jobType,
+                atsApplyUrl: cj.atsApplyUrl,
+                primaryUrl: cj.primaryUrl,
+                requiredSkills: cj.requiredSkills,
+                reason: cj.reason,
+              },
+              // NO sendblueCreds → pure cache read, lazy-gen skipped (send-direct).
               log: cardDeps.log ?? log,
-            },
-          })
-        } catch {
-          /* fail-open — the text rec already covers the user */
+            })
+            if (mediaUrl) mediaByJobId.set(cj.id, mediaUrl)
+          } catch {
+            /* fail-open — the role still delivers as a text bubble */
+          }
         }
       }
 
@@ -695,20 +841,13 @@ export function makeV16FindMatch(
       // matching-jobs.id == pa-jobs.id (enrich-collab-jobs uses doc.id), so j.id IS the trigger jobId.
       // Only emit for roles WITH a config (≤5 collab ids → one getAll); else the trigger config_missings.
       const prescreenReady = new Set<string>()
-      // jobId → WeKruit candidate-page publicId. A collab/partner role's link MUST funnel through our
-      // own site (wekruit.com/j/<publicId>), NEVER the raw external ATS url (Adam 2026-05-31: Invoko
-      // collab role was linking to app.joinhandshake.com). pa-jobs carries the publicId; matching-jobs
-      // does not, so we read it here from the same getAll already done for prescreenReady.
-      const collabPublicId = new Map<string, string>()
       if (collabIds.size > 0) {
         try {
           const snaps = await db.getAll(...[...collabIds].map((id) => db.collection("pa-jobs").doc(id)))
           for (const s of snaps) {
-            const data = (s.data() ?? {}) as { prescreenConfig?: { questions?: unknown[] } | null; publicId?: unknown }
+            const data = (s.data() ?? {}) as { prescreenConfig?: { questions?: unknown[] } | null }
             const cfg = data.prescreenConfig ?? null
             if (cfg && Array.isArray(cfg.questions) && cfg.questions.length > 0) prescreenReady.add(s.id)
-            const pid = typeof data.publicId === "string" ? data.publicId.trim() : ""
-            if (pid) collabPublicId.set(s.id, pid)
           }
         } catch (e) {
           log("pa.claire.find_match.prescreen_ready_lookup_failed", { err: String(e) })
@@ -719,10 +858,16 @@ export function makeV16FindMatch(
         const title = (j.jobTitle || j.roleTitle || "Role").trim()
         const company = (j.companyName || "Company").trim()
         const isCollab = collabIds.has(j.id)
-        // Collab roles ALWAYS link to the WeKruit candidate page (wekruit.com/j/<publicId>) — funnel
-        // through our site, never the external ATS. Open-market roles keep their atsApplyUrl.
-        const collabPid = isCollab ? collabPublicId.get(j.id) : undefined
-        const url = collabPid ? `https://wekruit.com/j/${collabPid}` : (j.atsApplyUrl ?? "").trim()
+        // Collab roles ALWAYS link to the WeKruit candidate page — funnel through our own site, never the
+        // raw external ATS url (Adam 2026-05-31: Invoko collab role was linking to app.joinhandshake.com).
+        //
+        // LINK ID FIX (P0 #3, Adam 2026-06-04): the `/j/:id` page resolves by the pa-jobs DOCUMENT id
+        // (PublicJob.tsx getDoc(pa-jobs/<id>)), NOT by the `publicId` field. For a collab role
+        // matching-jobs.id === pa-jobs.id (enrich-collab-jobs uses doc.id), so `j.id` IS the resolvable
+        // candidate-page id. The old `wekruit.com/j/<publicId-UUID>` link 404'd because the page never maps
+        // a publicId UUID → doc id (it isn't a doc id). Linking to `j.id` matches the two other builders
+        // that already work (outreach/service.ts + partner-users-api.ts both use the pa-jobs doc id).
+        const url = isCollab ? `https://wekruit.com/j/${j.id}` : (j.atsApplyUrl ?? "").trim()
         const head = isCollab ? `${title} @ ${company} [WeKruit partner role]` : `${title} @ ${company}`
         const base = url ? `${head}\n${url}` : head
         // The trigger line is RELAYED VERBATIM by the agent (prompt rule) so the candidate can copy it.
@@ -732,6 +877,15 @@ export function makeV16FindMatch(
           return `${base}\nto start this screen, just reply "${title} @ ${company}" — or copy & send me this line:\nWeKruit_${j.id}_${userId}_Job`
         }
         return base
+      })
+      // STRUCTURED delivery rows — one per `jobs[]` line, SAME order (jobs maps over rawJobs), each
+      // carrying its rec-card image url INLINE when one was resolved above (ANY collab-on-mirror role —
+      // collab-pass survivors AND open-market-delivered collab-tagged rows; open-market NON-collab is
+      // text-only). deliverRecBubbles iterates THESE so the image rides WITH its caption, in order,
+      // per-turn. The mandatory prescreen offer is NOT here — deliverRecBubbles appends it LAST.
+      const deliverRows = rawJobs.map((j, i) => {
+        const mediaUrl = mediaByJobId.get(j.id)
+        return mediaUrl ? { text: jobs[i]!, mediaUrl } : { text: jobs[i]! }
       })
       // `total` reflects the size of the offered set when collab contributed (the collab funnel `total`
       // counts only collab jobs, which would understate a mixed batch); otherwise use the open-market
@@ -751,7 +905,10 @@ export function makeV16FindMatch(
           : null
       // Structured collab roles for the DETERMINISTIC prescreen offer (the find_match TOOL sends it —
       // the LLM kept dropping it). prescreenReady ⇒ this role's jobs[] line carries a start token.
-      const collab = collabJobs.map((j) => ({
+      // Built from `deliveredCollabJobs` (the collab roles that survived the 3-cap), NOT the full collab
+      // pass — so the MANDATORY prescreen offer only names partner roles the candidate was actually
+      // shown. The offer mechanics are unchanged; only the candidate count is capped.
+      const collab = deliveredCollabJobs.map((j) => ({
         jobId: j.id,
         title: (j.jobTitle || j.roleTitle || "Role").trim(),
         company: (j.companyName || "Company").trim(),
@@ -763,6 +920,7 @@ export function makeV16FindMatch(
         jobs,
         reason,
         collab,
+        deliverRows,
         snapshotTags: {
           targetRoleFunction: meta.userTags?.targetRoleFunction,
           negativeRoleFunction: meta.userTags?.negativeRoleFunction,
@@ -814,27 +972,65 @@ export function buildCollabPrescreenOffer(
  * MANDATORY prescreen offer. The agent then stays silent (prompt: delivered:true → empty messages).
  * Fail-soft: a send error degrades to delivered:false so the agent narrates as before (never a dead turn).
  */
-async function deliverRecBubbles(
+export async function deliverRecBubbles(
   ctx: ClaireToolContext,
   res: FindMatchResult,
 ): Promise<{ delivered: boolean; collabCount: number }> {
-  const jobs = (res.jobs ?? []).filter((s) => typeof s === "string" && s.trim().length > 0)
-  if (jobs.length === 0) return { delivered: false, collabCount: 0 }
+  // Prefer the STRUCTURED rows (each carries its inline image url); fall back to the bare `jobs[]` lines
+  // (text-only) for older shapes / no-cardDeps. Each row's `text` is one role line.
+  const rows: Array<{ text: string; mediaUrl?: string }> =
+    Array.isArray(res.deliverRows) && res.deliverRows.length > 0
+      ? res.deliverRows
+          .filter((r) => r && typeof r.text === "string" && r.text.trim().length > 0)
+          .map((r) => (r.mediaUrl ? { text: r.text, mediaUrl: r.mediaUrl } : { text: r.text }))
+      : (res.jobs ?? [])
+          .filter((s) => typeof s === "string" && s.trim().length > 0)
+          .map((text) => ({ text }))
+  if (rows.length === 0) return { delivered: false, collabCount: 0 }
   const collab = (res.collab ?? []).filter((c) => c.prescreenReady)
   try {
+    // STRICT ORDER + EMIT-PACE (Adam 2026-06-04): intro → each role (in order) → prescreen offer LAST.
+    //
+    // The reorder bug (job1, job2, OFFER, job3 / image after the offer) was that each `sendText` writes an
+    // INDEPENDENT pa-outbound row consumed by a SEPARATE concurrent outbox CF instance. Marking rows
+    // `paced:true` makes the outbox SKIP its own length-dwell — but with all rows written back-to-back at
+    // the SAME createdAt, the concurrent instances still race on POST order. The proven fix (deliverBubbles
+    // in delivery.ts) is to PACE AT THE EMIT SEAM: await a small randomized human delay BEFORE each send so
+    // the `createdAt` timestamps stagger (>=900ms apart here — a rec list reads well a touch slower than the
+    // 600ms chat beat), giving the outbox an unambiguous arrival order. Combined with `paced:true` (no
+    // double-dwell), the monotonic `seq` below IS the delivered order. The image rides its role row's
+    // `mediaUrl` so it lands WITH (and in the same order as) its caption — no separate racing media row.
     let seq = 0
+    const stagger = async (): Promise<void> => {
+      if (seq === 0) return // no delay before the very first bubble
+      await ctx.transport.typing().catch(() => {})
+      const ms = 900 + Math.floor(Math.random() * 300) // 900–1200ms inter-bubble beat for a rec list
+      await new Promise((r) => setTimeout(r, ms))
+    }
     const intro =
       collab.length > 0
         ? "found a few that fit right now — including WeKruit partner roles where I pitch you straight to the hiring team 👇"
         : "found a few that fit right now 👇"
-    await ctx.transport.sendText(intro, { seq: seq++ })
-    for (const line of jobs) await ctx.transport.sendText(line, { seq: seq++ })
+    await ctx.transport.sendText(intro, { seq: seq++, paced: true })
+    let withImage = 0
+    for (const row of rows) {
+      await stagger()
+      await ctx.transport.sendText(
+        row.text,
+        row.mediaUrl
+          ? { seq: seq++, paced: true, mediaUrl: row.mediaUrl }
+          : { seq: seq++, paced: true },
+      )
+      if (row.mediaUrl) withImage++
+    }
     if (collab.length > 0) {
-      await ctx.transport.sendText(buildCollabPrescreenOffer(collab), { seq: seq++ })
+      await stagger()
+      await ctx.transport.sendText(buildCollabPrescreenOffer(collab), { seq: seq++, paced: true })
     }
     ctx.log("pa.claire.find_match.delivered", {
       userId: ctx.userId,
-      roles: jobs.length,
+      roles: rows.length,
+      withImage,
       collab: collab.length,
     })
     return { delivered: true, collabCount: collab.length }
@@ -1418,6 +1614,24 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
           usedTier: result.usedTier,
           usedModel: result.usedModel,
         })
+        // RE-ENRICH HOOK (Adam #3 2026-06-05): persist the parsed résumé into the SAME
+        // canonical enrich path the attachment (webhook Stream-D) + website upload use —
+        // re-derives targetRoleFunction (incl. the #2 same-lane override), careerStage,
+        // skills, embedding via the D8 sole writer. Fire-and-forget so the agent's
+        // confirm/pitch turn (which owns the conversational reply) is never blocked; the
+        // helper is fully fail-open. find_match then reads the refreshed tags live.
+        void reEnrichUserTagsFromParsedResume({
+          db: ctx.db,
+          userId: ctx.userId,
+          parsedV2: result.parsed,
+          nowIso: ctx.nowIso,
+          log: ctx.log,
+        }).catch((err) =>
+          ctx.log("pa.claire.cv_parse.reenrich_failed", {
+            userId: ctx.userId,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        )
         return { ok: true, parsed: result.parsed, usedModel: result.usedModel }
       } catch (err) {
         return {
@@ -1439,13 +1653,16 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
   const captureMatchFeedback = tool({
     name: "capture_match_feedback",
     description:
-      "Capture the candidate's reaction to the jobs you just recommended (the 'are you happy with these? why or " +
-      "why not?' signal). YOU map their reply to: sentiment (positive/negative/ambiguous), reasonCategory (closed " +
-      "enum — why a NEGATIVE batch was off, e.g. wrong_seniority / wrong_industry / salary_too_low; use 'none' if no " +
-      "reason, 'other' if unclear), and tagDeltas (canonical preference changes the reason implies — e.g. 'too junior' " +
-      "→ careerStage:senior; 'all fintech, I want healthcare' → industrySector:[healthcare_and_life_sciences], " +
+      "Capture the candidate's reaction to recommended jobs OR an unprompted PROFILE CORRECTION/ADDITION they " +
+      "volunteer in chat (e.g. mid-onboarding 'actually I work in the Autopilot group, more ML infra than web' → " +
+      "industrySector:[artificial_intelligence_and_machine_learning]). YOU map their reply to: sentiment " +
+      "(positive/negative/ambiguous — use 'ambiguous' for a neutral correction), reasonCategory (closed enum for why a " +
+      "NEGATIVE batch was off, e.g. wrong_seniority / wrong_industry / salary_too_low; use 'none' for a pure profile " +
+      "addition with no complaint), and tagDeltas (canonical preference changes implied — e.g. 'too junior' → " +
+      "careerStage:senior; 'all fintech, I want healthcare' → industrySector:[healthcare_and_life_sciences], " +
       "negativeIndustrySector:[financial_technology]). Multi-value = OR. The tool persists a feedback event + any tag " +
-      "deltas. Use right after find_match when the candidate reacts to the roles.",
+      "deltas (via the canonical writer, no regex). Use after find_match when they react to roles, OR mid-chat when " +
+      "they correct/add a profile fact — confirm just that one delta in your voice, do NOT re-pitch.",
     parameters: z.object({
       sentiment: FeedbackSentimentEnum,
       reasonCategory: FeedbackReasonCategoryEnum,

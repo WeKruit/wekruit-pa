@@ -36,16 +36,18 @@ import {
 import { resolveEventTypeId } from "../../calcom/event-type-routing.js"
 import { sendInterviewConfirmationEmail } from "../../calcom/interview-confirmation-email.js"
 import type { ClaireToolContext } from "../types.js"
+import { SCHEDULING_DEV_UIDS, isSchedulingEligible } from "../scheduling-gate.js"
 
 const INTERVIEW_BOOKINGS_COLLECTION = "pa-interview-bookings"
 const PA_USERS_COLLECTION = "pa-users"
 
 /**
- * WRITE-action allowlist (Adam +14243201960 = 8fEwIduUrzxZsblHHsNz, Noah
- * +12154034668 = UKFaKdsMzzfPW2CDl5ve). Mirrors REC_CARD_UIDS in cutover.ts.
- * Exported for the test.
+ * Re-export the dev allowlist from the single source (scheduling-gate.ts).
+ * Kept here for back-compat (harness + tests import it from this module). The
+ * GATE is now `isSchedulingEligible` (dev uids OR the widenable
+ * `paSchedulingEnabled` flag); SCHEDULING_DEV_UIDS remains the always-on floor.
  */
-export const SCHEDULING_DEV_UIDS = new Set<string>(["8fEwIduUrzxZsblHHsNz", "UKFaKdsMzzfPW2CDl5ve"])
+export { SCHEDULING_DEV_UIDS }
 
 /** 7-day availability window from now. */
 const WINDOW_DAYS = 7
@@ -549,6 +551,167 @@ async function loadBooking(
 }
 
 // ---------------------------------------------------------------------------
+// Offer core (SDK-free) — shared by the offer_interview_slots tool AND the
+// proactive HITL-commit invite (scheduling-invite.ts). Does NOT call tool()/the
+// @openai/agents SDK, so the commit CF can build a real offer without paying the
+// agent-SDK boot cost. The tool is now a thin gate + delegate.
+// ---------------------------------------------------------------------------
+
+/** Discriminated result of building an interview offer. */
+export type InterviewOfferResult =
+  | {
+      ok: true
+      jobId: string
+      eventTypeId: number
+      timeZone: string
+      /** numbered (1-based) offered slots in the candidate's tz. */
+      slots: Array<{ number: number; iso: string; label: string }>
+      count: number
+      filteredEmpty: boolean
+    }
+  | { ok: false; reason: "no_schedulable_job" }
+  | { ok: false; reason: "needs_job_choice"; jobs: Array<{ jobId: string; label: string }> }
+  | { ok: false; reason: "calcom_unavailable" }
+  | { ok: false; reason: "no_slots" }
+
+/**
+ * Build (and persist) a real Cal.com interview offer for the active opportunity.
+ * Pure of the agent SDK; fail-OPEN (returns a discriminated reason, never throws).
+ * This is the EXACT body offer_interview_slots used to run inline — extracted so
+ * the proactive invite reuses the SAME real-slots + persisted-offer path (so the
+ * candidate's later slot pick resolves against the same booking doc).
+ */
+export async function buildInterviewOffer(
+  ctx: ClaireToolContext,
+  args: {
+    timeZone?: string | null
+    partOfDay?: "morning" | "afternoon" | "evening" | "any" | null
+    jobChoice?: string | null
+  },
+): Promise<InterviewOfferResult> {
+  const { timeZone, partOfDay, jobChoice } = args
+  // RESOLVE which job this offer is for.
+  //   (a) turn context (resolveActiveSchedulingJobId — ctx.jobId on a prescreen
+  //       turn, else the candidate's most-recent live scheduling doc) → single,
+  //       no ask. This also recovers a re-offer ('anything in the afternoon?')
+  //       that arrives on a TRIAGE turn so it reconciles with the original
+  //       real-jobId offer doc instead of writing an orphan __unknown_job doc.
+  //   (b) else disambiguate over the candidate's dashboard-committed PASSes.
+  let jobId = await resolveActiveSchedulingJobId(ctx)
+  // roleFunction override carried ONLY when the chosen job is a dev-mimic (its
+  // event-type is routed from this token, since it has no matching-jobs doc).
+  let mimicRoleFunction: string | undefined
+  if (jobId === "unknown_job") {
+    const jobs = await listSchedulableJobs(ctx)
+    if (jobs.length === 0) {
+      ctx.log("pa.claire.offer_interview_slots", { userId: ctx.userId, reason: "no_schedulable_job" })
+      return { ok: false as const, reason: "no_schedulable_job" as const }
+    }
+    let chosen: SchedulableJob | null = jobs.length === 1 ? jobs[0]! : null
+    if (!chosen && jobChoice) chosen = matchJobChoice(jobs, jobChoice)
+    if (!chosen) {
+      ctx.log("pa.claire.offer_interview_slots", { userId: ctx.userId, reason: "needs_job_choice", count: jobs.length })
+      return {
+        ok: false as const,
+        reason: "needs_job_choice" as const,
+        jobs: jobs.map((j) => ({ jobId: j.jobId, label: j.label })),
+      }
+    }
+    jobId = chosen.jobId
+    mimicRoleFunction = chosen.roleFunction
+  }
+
+  const tz = await resolveTimeZone(ctx, timeZone)
+  // Event-type routing: a dev-mimic chosen job has no matching-jobs doc, so
+  // route from its own roleFunction token (MetaVoice→5847961, Helium→design);
+  // a real job keeps the resolveRoleFunctions(ctx, jobId) path.
+  const { override, roleFunctions } = mimicRoleFunction
+    ? { override: null as number | null, roleFunctions: [mimicRoleFunction] }
+    : await resolveRoleFunctions(ctx, jobId)
+  const { eventTypeId } = resolveEventTypeId({ jobOverrideEventTypeId: override, roleFunctions })
+
+  const now = new Date(ctx.nowIso())
+  const start = now.toISOString()
+  const end = new Date(now.getTime() + WINDOW_DAYS * 24 * 3600 * 1000).toISOString()
+
+  let slots: FlatSlot[]
+  try {
+    slots = await getAvailableSlots({ start, end, eventTypeId, timeZone: tz })
+  } catch (err) {
+    // FAIL-OPEN — both error classes degrade to calcom_unavailable, never throw.
+    ctx.log("pa.claire.offer_interview_slots", {
+      userId: ctx.userId,
+      jobId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return { ok: false as const, reason: "calcom_unavailable" as const }
+  }
+
+  if (slots.length === 0) {
+    return { ok: false as const, reason: "no_slots" as const }
+  }
+
+  // partOfDay filter; fall back to unfiltered if it empties the list.
+  const filtered = filterByPartOfDay(slots, partOfDay, tz)
+  const filteredEmpty = filtered.length === 0 && (partOfDay ?? "any") !== "any"
+  const usable = filtered.length > 0 ? filtered : slots
+
+  // pick a spread of up to MAX_OFFERED.
+  const picked = pickSpread(usable, MAX_OFFERED)
+
+  // PERSIST the offer — this is what lets slotNumber resolve next turn.
+  // Fail-soft: a write error still returns the slots (only a cross-turn
+  // slotNumber would degrade).
+  const docId = interviewBookingDocId({ userId: ctx.userId, jobId })
+  const nowIso = ctx.nowIso()
+  try {
+    const ref = ctx.db.collection(INTERVIEW_BOOKINGS_COLLECTION).doc(docId)
+    const existing = await loadBooking(ctx.db, docId)
+    await ref.set(
+      {
+        id: docId,
+        userId: ctx.userId,
+        jobId,
+        status: "offered",
+        eventTypeId,
+        timeZone: tz,
+        offeredSlots: picked.map((s) => ({ iso: s.iso, date: s.date })),
+        offeredAt: nowIso,
+        sessionId: ctx.sessionId,
+        updatedAt: nowIso,
+        ...(existing ? {} : { createdAt: nowIso }),
+        version: (typeof existing?.version === "number" ? existing.version : 0) + 1,
+      },
+      { merge: true },
+    )
+  } catch (err) {
+    ctx.log("pa.claire.offer_interview_slots.persist_failed", {
+      userId: ctx.userId,
+      jobId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  ctx.log("pa.claire.offer_interview_slots", {
+    userId: ctx.userId,
+    jobId,
+    eventTypeId,
+    count: picked.length,
+    filteredEmpty,
+  })
+
+  return {
+    ok: true as const,
+    jobId,
+    eventTypeId,
+    timeZone: tz,
+    slots: picked.map((s, i) => ({ number: i + 1, iso: s.iso, label: humanLabel(s.iso, tz) })),
+    count: picked.length,
+    filteredEmpty,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
 
@@ -571,130 +734,20 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
       jobChoice: z.string().nullable(),
     }),
     async execute({ timeZone, partOfDay, jobChoice }) {
-      // (1) GATE — no Cal.com call, no write for a non-dev uid.
-      if (!SCHEDULING_DEV_UIDS.has(ctx.userId)) {
+      // (1) GATE — no Cal.com call, no write for an ineligible uid. WIDENABLE:
+      // dev uids OR the paSchedulingEnabled flag (default = dev-uids-only).
+      if (!(await isSchedulingEligible(ctx.db, ctx.userId, { env: process.env }))) {
         ctx.log("pa.claire.offer_interview_slots", { userId: ctx.userId, gated: true })
         return { ok: false as const, reason: "scheduling_not_enabled" as const }
       }
 
-      // (1a) RESOLVE which job this offer is for.
-      //   (a) turn context (resolveActiveSchedulingJobId — ctx.jobId on a prescreen
-      //       turn, else the candidate's most-recent live scheduling doc) → single,
-      //       no ask. This also recovers a re-offer ('anything in the afternoon?')
-      //       that arrives on a TRIAGE turn so it reconciles with the original
-      //       real-jobId offer doc instead of writing an orphan __unknown_job doc.
-      //   (b) else disambiguate over the candidate's dashboard-committed PASSes.
-      let jobId = await resolveActiveSchedulingJobId(ctx)
-      // roleFunction override carried ONLY when the chosen job is a dev-mimic (its
-      // event-type is routed from this token, since it has no matching-jobs doc).
-      let mimicRoleFunction: string | undefined
-      if (jobId === "unknown_job") {
-        const jobs = await listSchedulableJobs(ctx)
-        if (jobs.length === 0) {
-          ctx.log("pa.claire.offer_interview_slots", { userId: ctx.userId, reason: "no_schedulable_job" })
-          return { ok: false as const, reason: "no_schedulable_job" as const }
-        }
-        let chosen: SchedulableJob | null = jobs.length === 1 ? jobs[0]! : null
-        if (!chosen && jobChoice) chosen = matchJobChoice(jobs, jobChoice)
-        if (!chosen) {
-          ctx.log("pa.claire.offer_interview_slots", { userId: ctx.userId, reason: "needs_job_choice", count: jobs.length })
-          return {
-            ok: false as const,
-            reason: "needs_job_choice" as const,
-            jobs: jobs.map((j) => ({ jobId: j.jobId, label: j.label })),
-          }
-        }
-        jobId = chosen.jobId
-        mimicRoleFunction = chosen.roleFunction
-      }
-
-      const tz = await resolveTimeZone(ctx, timeZone)
-      // Event-type routing: a dev-mimic chosen job has no matching-jobs doc, so
-      // route from its own roleFunction token (MetaVoice→5847961, Helium→design);
-      // a real job keeps the resolveRoleFunctions(ctx, jobId) path.
-      const { override, roleFunctions } = mimicRoleFunction
-        ? { override: null as number | null, roleFunctions: [mimicRoleFunction] }
-        : await resolveRoleFunctions(ctx, jobId)
-      const { eventTypeId } = resolveEventTypeId({ jobOverrideEventTypeId: override, roleFunctions })
-
-      const now = new Date(ctx.nowIso())
-      const start = now.toISOString()
-      const end = new Date(now.getTime() + WINDOW_DAYS * 24 * 3600 * 1000).toISOString()
-
-      let slots: FlatSlot[]
-      try {
-        slots = await getAvailableSlots({ start, end, eventTypeId, timeZone: tz })
-      } catch (err) {
-        // FAIL-OPEN — both error classes degrade to calcom_unavailable, never throw.
-        ctx.log("pa.claire.offer_interview_slots", {
-          userId: ctx.userId,
-          jobId,
-          error: err instanceof Error ? err.message : String(err),
-        })
-        return { ok: false as const, reason: "calcom_unavailable" as const }
-      }
-
-      if (slots.length === 0) {
-        return { ok: false as const, reason: "no_slots" as const }
-      }
-
-      // (6) partOfDay filter; fall back to unfiltered if it empties the list.
-      const filtered = filterByPartOfDay(slots, partOfDay, tz)
-      const filteredEmpty = filtered.length === 0 && (partOfDay ?? "any") !== "any"
-      const usable = filtered.length > 0 ? filtered : slots
-
-      // (7) pick a spread of up to MAX_OFFERED.
-      const picked = pickSpread(usable, MAX_OFFERED)
-
-      // (8) PERSIST the offer — this is what lets slotNumber resolve next turn.
-      // Fail-soft: a write error still returns the slots (only a cross-turn
-      // slotNumber would degrade).
-      const docId = interviewBookingDocId({ userId: ctx.userId, jobId })
-      const nowIso = ctx.nowIso()
-      try {
-        const ref = ctx.db.collection(INTERVIEW_BOOKINGS_COLLECTION).doc(docId)
-        const existing = await loadBooking(ctx.db, docId)
-        await ref.set(
-          {
-            id: docId,
-            userId: ctx.userId,
-            jobId,
-            status: "offered",
-            eventTypeId,
-            timeZone: tz,
-            offeredSlots: picked.map((s) => ({ iso: s.iso, date: s.date })),
-            offeredAt: nowIso,
-            sessionId: ctx.sessionId,
-            updatedAt: nowIso,
-            ...(existing ? {} : { createdAt: nowIso }),
-            version: (typeof existing?.version === "number" ? existing.version : 0) + 1,
-          },
-          { merge: true },
-        )
-      } catch (err) {
-        ctx.log("pa.claire.offer_interview_slots.persist_failed", {
-          userId: ctx.userId,
-          jobId,
-          error: err instanceof Error ? err.message : String(err),
-        })
-      }
-
-      ctx.log("pa.claire.offer_interview_slots", {
-        userId: ctx.userId,
-        jobId,
-        eventTypeId,
-        count: picked.length,
-        filteredEmpty,
-      })
-
-      return {
-        ok: true as const,
-        eventTypeId,
-        timeZone: tz,
-        slots: picked.map((s, i) => ({ number: i + 1, iso: s.iso, label: humanLabel(s.iso, tz) })),
-        count: picked.length,
-        filteredEmpty,
-      }
+      // (2) Build the real offer (SDK-free core; shared with the proactive invite).
+      const offer = await buildInterviewOffer(ctx, { timeZone, partOfDay, jobChoice })
+      if (!offer.ok) return offer
+      // The tool's wire shape historically omitted jobId; keep it stable.
+      const { jobId: _jobId, ...rest } = offer
+      void _jobId
+      return rest
     },
   })
 
@@ -720,8 +773,9 @@ export function buildSchedulingTools(ctx: ClaireToolContext) {
       timeZone: z.string().nullable(),
     }),
     async execute({ slotNumber, slotIso, statedTime, candidateEmail, candidateName, timeZone }) {
-      // (1) GATE — NO booking, NO email for a non-dev uid.
-      if (!SCHEDULING_DEV_UIDS.has(ctx.userId)) {
+      // (1) GATE — NO booking, NO email for an ineligible uid. WIDENABLE: dev
+      // uids OR the paSchedulingEnabled flag (default = dev-uids-only).
+      if (!(await isSchedulingEligible(ctx.db, ctx.userId, { env: process.env }))) {
         ctx.log("pa.claire.book_interview_slot", { userId: ctx.userId, gated: true })
         return { ok: false as const, reason: "scheduling_not_enabled" as const }
       }

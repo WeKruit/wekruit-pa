@@ -12,7 +12,8 @@
     "esModuleInterop": true,
     "paths": {
       "@wekruit/shared-tags": ["../../packages/shared-tags/dist/index.d.ts"],
-      "@wekruit/shared-tags/*": ["../../packages/shared-tags/dist/*.d.ts"]
+      "@wekruit/shared-tags/*": ["../../packages/shared-tags/dist/*.d.ts"],
+      "zod4-agent-sdk": ["../../node_modules/zod/index.d.cts"]
     }
   },
   "include": ["src/**/*.ts"]

@@ -7,7 +7,11 @@ import {
   collectLiveJobRecommendationMessageItems,
   composeJobRecommendationMessage,
   cleanJobRecUrl,
+  DEFAULT_MAX_RECS_PER_DELIVERY,
+  prioritizeAndCapRecItems,
+  resolveMaxRecsPerDelivery,
   toJobRecommendationMessageItem,
+  type JobRecommendationMessageItem,
 } from "./job-rec-copy.js"
 
 describe("job recommendation visible-message contract", () => {
@@ -346,5 +350,110 @@ describe("job recommendation visible-message contract", () => {
         url: "https://dead.example/jobs/1",
       },
     ])
+  })
+})
+
+describe("per-delivery role cap + collab priority (paMaxRecsPerDelivery)", () => {
+  function makeItem(
+    id: string,
+    label: "WeKruit collaborated" | "general match",
+  ): JobRecommendationMessageItem {
+    return {
+      title: `Role ${id}`,
+      companyName: `Co ${id}`,
+      url: `https://jobs.example/${id}`,
+      requirementsLine: "requirements: React",
+      matchSourceLabel: label,
+      previouslyRecommended: false,
+      sourceJob: { id, matchSourceLabel: label },
+    }
+  }
+
+  it("flag default is 3 and clamps out-of-range / non-numeric values to [1,6]", () => {
+    assert.equal(DEFAULT_MAX_RECS_PER_DELIVERY, 3)
+    // default fallbacks
+    assert.equal(resolveMaxRecsPerDelivery(undefined), 3)
+    assert.equal(resolveMaxRecsPerDelivery(false), 3)
+    assert.equal(resolveMaxRecsPerDelivery(null), 3)
+    assert.equal(resolveMaxRecsPerDelivery("not-a-number"), 3)
+    assert.equal(resolveMaxRecsPerDelivery(0), 3) // 0 || default → 3
+    // clamp lower / upper bounds
+    assert.equal(resolveMaxRecsPerDelivery(-5), 1)
+    assert.equal(resolveMaxRecsPerDelivery(99), 6)
+    assert.equal(resolveMaxRecsPerDelivery(6), 6)
+    // in-range numeric + numeric-string pass through
+    assert.equal(resolveMaxRecsPerDelivery(2), 2)
+    assert.equal(resolveMaxRecsPerDelivery("4"), 4)
+  })
+
+  it("prioritizeAndCapRecItems keeps collab roles first and slices to the cap", () => {
+    const items = [
+      makeItem("g1", "general match"),
+      makeItem("c1", "WeKruit collaborated"),
+      makeItem("g2", "general match"),
+      makeItem("c2", "WeKruit collaborated"),
+      makeItem("g3", "general match"),
+    ]
+    const capped = prioritizeAndCapRecItems(items, 3)
+    assert.equal(capped.length, 3)
+    // collab roles (c1, c2) must be retained ahead of general; general fills 1 slot
+    assert.deepEqual(
+      capped.map((i) => i.sourceJob.id),
+      ["c1", "c2", "g1"],
+    )
+  })
+
+  it("a 6-match find_match (collab + regular) delivers ≤3 bubbles, collab prioritized", async () => {
+    // 2 collab + 4 regular, all live. cap via maxRecs=3.
+    const jobs = [
+      { id: "g1", jobTitle: "General 1", companyName: "G1", atsApplyUrl: "https://live.example/g1", requiredSkills: ["React"], matchSourceLabel: "general match" },
+      { id: "c1", jobTitle: "Collab 1", companyName: "C1", atsApplyUrl: "https://live.example/c1", requiredSkills: ["React"], matchSourceLabel: "WeKruit collaborated" },
+      { id: "g2", jobTitle: "General 2", companyName: "G2", atsApplyUrl: "https://live.example/g2", requiredSkills: ["React"], matchSourceLabel: "general match" },
+      { id: "g3", jobTitle: "General 3", companyName: "G3", atsApplyUrl: "https://live.example/g3", requiredSkills: ["React"], matchSourceLabel: "general match" },
+      { id: "c2", jobTitle: "Collab 2", companyName: "C2", atsApplyUrl: "https://live.example/c2", requiredSkills: ["React"], matchSourceLabel: "WeKruit collaborated" },
+      { id: "g4", jobTitle: "General 4", companyName: "G4", atsApplyUrl: "https://live.example/g4", requiredSkills: ["React"], matchSourceLabel: "general match" },
+    ]
+    const items = await collectLiveJobRecommendationMessageItems(jobs, "en", {
+      maxRecs: 3,
+      maxCandidates: 6,
+      fetchImpl: async () => new Response(null, { status: 200 }),
+    })
+    assert.equal(items.length, 3)
+    const ids = items.map((i) => String(i.sourceJob.id))
+    // both collab roles survive the cap
+    assert.ok(ids.includes("c1"), "collab c1 must be delivered")
+    assert.ok(ids.includes("c2"), "collab c2 must be delivered")
+    // collab roles ranked ahead of general
+    assert.deepEqual(ids.slice(0, 2).sort(), ["c1", "c2"])
+  })
+
+  it("never drops a collab role to surface a regular one when cap < collab count", async () => {
+    const jobs = [
+      { id: "g1", jobTitle: "General 1", companyName: "G1", atsApplyUrl: "https://live.example/g1", requiredSkills: ["React"], matchSourceLabel: "general match" },
+      { id: "c1", jobTitle: "Collab 1", companyName: "C1", atsApplyUrl: "https://live.example/c1", requiredSkills: ["React"], matchSourceLabel: "WeKruit collaborated" },
+      { id: "c2", jobTitle: "Collab 2", companyName: "C2", atsApplyUrl: "https://live.example/c2", requiredSkills: ["React"], matchSourceLabel: "WeKruit collaborated" },
+    ]
+    const items = await collectLiveJobRecommendationMessageItems(jobs, "en", {
+      maxRecs: 1,
+      maxCandidates: 3,
+      fetchImpl: async () => new Response(null, { status: 200 }),
+    })
+    assert.equal(items.length, 1)
+    assert.equal(String(items[0]!.sourceJob.id), "c1") // collab, not the V16-top general g1
+  })
+
+  it("collectJobRecommendationMessageItems honors maxRecs with collab priority", () => {
+    const items = collectJobRecommendationMessageItems(
+      [
+        { id: "g1", jobTitle: "General 1", companyName: "G1", atsApplyUrl: "https://live.example/g1", requiredSkills: ["React"], matchSourceLabel: "general match" },
+        { id: "c1", jobTitle: "Collab 1", companyName: "C1", atsApplyUrl: "https://live.example/c1", requiredSkills: ["React"], matchSourceLabel: "WeKruit collaborated" },
+        { id: "g2", jobTitle: "General 2", companyName: "G2", atsApplyUrl: "https://live.example/g2", requiredSkills: ["React"], matchSourceLabel: "general match" },
+        { id: "g3", jobTitle: "General 3", companyName: "G3", atsApplyUrl: "https://live.example/g3", requiredSkills: ["React"], matchSourceLabel: "general match" },
+      ],
+      "en",
+      { maxRecs: 2 },
+    )
+    assert.equal(items.length, 2)
+    assert.equal(String(items[0]!.sourceJob.id), "c1") // collab first
   })
 })

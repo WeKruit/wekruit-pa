@@ -6,6 +6,13 @@
     "apps/eval/*",
     "packages/*"
   ],
+  "//zod-split": "The monorepo runs TWO zod majors ON PURPOSE. 10 packages pin zod@^3.24.0 and their TS SOURCE is written against zod@3's type API — forcing them onto zod@4 breaks `tsc` (core-types: ZodDefault<ZodObject> overload errors) and fails the predeploy gate. Separately the @openai/agents* SDK declares zod@^4 as a PEER and crashes at LOAD on zod@3 (`reading 'type'` in zod/v3/types.cjs). REINSTALL RECIPE — use --force, NOT --legacy-peer-deps: `rm -rf node_modules package-lock.json && npm install --force`. --force ignores the genuine cross-workspace ERESOLVE (openai 4 vs 6) AND still materializes peers + per-package nesting, producing the correct split: top-level zod@4.3.6 (the @openai/agents* peers resolve it → no crash) + a nested zod@3.25.76 under each v3-pinned workspace (core-types/pa-orchestrator/shared-tags/pa-resume-parser/pa-connectors → their tsc resolves v3). --legacy-peer-deps SKIPS peer materialization so agents-core falls back to whatever zod is hoisted and crashes; a global `overrides:{zod:4}` breaks the v3 packages' tsc. The nested overrides below pin the agents' zod to exactly 4.3.6. Verify after install: `node -e \"require('./packages/core-types/node_modules/zod/package.json')\"` is 3.x AND top-level zod is 4.3.6.",
+  "overrides": {
+    "@openai/agents": { "zod": "4.3.6" },
+    "@openai/agents-core": { "zod": "4.3.6" },
+    "@openai/agents-openai": { "zod": "4.3.6" },
+    "@openai/agents-realtime": { "zod": "4.3.6" }
+  },
   "engines": {
     "node": "24"
   },

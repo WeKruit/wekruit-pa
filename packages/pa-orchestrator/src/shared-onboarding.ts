@@ -75,7 +75,26 @@ type FirestoreLike = {
   collection: (name: string) => FirestoreCollectionLike
 }
 
-export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = [
+/**
+ * FULL definition set — ALL 7 onboarding question slots, with their canonical
+ * prompts. This is the source of `QUESTION_BY_ID`, `getSharedOnboardingQuestion`,
+ * and the `SharedOnboardingQuestionId` union — so every slot (including the 5 that
+ * are NO LONGER ASKED upfront) STAYS resolvable. An in-flight user whose durable
+ * `currentQuestionId` is e.g. `culture_stage` must still resolve a prompt via the
+ * map; that is why we never delete these definitions.
+ *
+ * 2026-06-02 onboarding trim (Adam #1 friction — "too many questions / minimal
+ * upfront / super easy to start"): the ASKED upfront flow (`SHARED_ONBOARDING_QUESTIONS`
+ * below) is now only the TWO hard-filter axes — `target_role` then
+ * `location_relocation`. The other 5 (`main_goal` / `culture_stage` /
+ * `industry_interest` / `seniority_comp` / `special_context`) are SOFT score
+ * signals and become EXTRACT-ONLY: `record_onboarding_answer` already pulls every
+ * canonical enum (roleFunction / industrySector / companySize / careerStage /
+ * minSalary / locations / visa + per-axis hardness) from ANY free-text turn via
+ * applyPartialUserTags, so no capture is lost — they're just no longer a wall of
+ * upfront questions. GLOBAL trim (all users), migration-safe for in-flight sessions.
+ */
+export const ALL_SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = [
   {
     id: "main_goal",
     label: "main goal for next company",
@@ -132,8 +151,29 @@ export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = 
   },
 ]
 
+/**
+ * The ASKED upfront flow (Adam 2026-06-02 trim). Only the two HARD-filter axes the
+ * matcher actually gates on — `target_role` (targetRoleFunction, also the warm
+ * forward-intent opener) then `location_relocation` (targetLocations + the only place
+ * US-only is surfaced). The FSM walks THIS array, so onboarding COMPLETES after
+ * `location_relocation`; every other question stays definition-only (extract-only).
+ *
+ * This is the array `DEFAULT_ONBOARDING_SLOTS` (onboarding-fsm.ts) derives from, so the
+ * thin FSM default slot set becomes length 2 automatically. `QUESTION_BY_ID` /
+ * `getSharedOnboardingQuestion` / the union are built from the FULL set above so dropped
+ * slots still resolve for in-flight users.
+ */
+export const SHARED_ONBOARDING_QUESTIONS: readonly SharedOnboardingQuestion[] = [
+  ALL_SHARED_ONBOARDING_QUESTIONS.find((q) => q.id === "target_role")!,
+  ALL_SHARED_ONBOARDING_QUESTIONS.find((q) => q.id === "location_relocation")!,
+]
+
+/** ASKED-flow ids (length 2) — the positional walker (`resolveNext…`) advances over THESE. */
 const QUESTION_IDS = SHARED_ONBOARDING_QUESTIONS.map((q) => q.id)
-const QUESTION_BY_ID = new Map(SHARED_ONBOARDING_QUESTIONS.map((q) => [q.id, q]))
+/** VALID ids (all 7) — every dropped slot must still resolve a prompt for in-flight users. */
+const ALL_QUESTION_IDS = ALL_SHARED_ONBOARDING_QUESTIONS.map((q) => q.id)
+/** Map covers ALL 7 (built from the FULL set) so `getSharedOnboardingQuestion` never strands a slot. */
+const QUESTION_BY_ID = new Map(ALL_SHARED_ONBOARDING_QUESTIONS.map((q) => [q.id, q]))
 const PARSED_CANDIDATE_RESUMES = "parsedCandidateResumes"
 
 function normalizeControlText(value: string): string {
@@ -146,27 +186,124 @@ function normalizeControlText(value: string): string {
     .trim()
 }
 
-/** Visible iMessage opener prefix (Adam 2026-05-19 + user_id bind 2026-05-20). */
+/**
+ * Visible iMessage opener prefix.
+ *
+ * 2026-06-02 reword #2 (Adam): the candidate-emitted body is a START GREETING
+ * ("Hi, WeKruit! <token>"). The trailing token is QR-campaign TRACKING, not a
+ * verification code — the prior "my verification code is" framing both read wrong to
+ * the user AND confused the LLM into treating it as a login step. The opener must look
+ * like the candidate simply saying hi. Two OLD phrasings are kept ONLY as back-compat
+ * parse forms — QR codes already printed/in the wild still emit them, so inbound
+ * resolution MUST keep accepting both:
+ *   - "Hi, WeKruit, my verification code is <token>" (2026-06-02 reword #1)
+ *   - "Hello, WeKruit! <token>"                      (original 2026-05-19 form)
+ *
+ * `HI_WEKRUIT_OPENER_PREFIX` is what we BUILD today. The other two prefixes are retained
+ * for back-compat (parser + LLM sanitizer) and still exported under their historical
+ * names so downstream imports do not churn.
+ */
+export const HI_WEKRUIT_OPENER_PREFIX = "Hi, WeKruit!"
+/** Back-compat (2026-06-02 reword #1). No longer BUILT; still parsed + sanitized. */
+export const VERIFICATION_CODE_OPENER_PREFIX = "Hi, WeKruit, my verification code is"
+/** Legacy opener prefix (Adam 2026-05-19 + user_id bind 2026-05-20). Back-compat only. */
 export const HELLO_WEKRUIT_OPENER_PREFIX = "Hello, WeKruit!"
 
+/** New (built) form: "Hi, WeKruit! <token>". Token = QR campaign tracking id. */
+const HI_WEKRUIT_OPENER_RE =
+  /^hi,?\s*wekruit!?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
+/** Back-compat form: "Hi, WeKruit, my verification code is <token>". */
+const VERIFICATION_CODE_OPENER_RE =
+  /^hi,?\s*wekruit,?\s*my\s+verification\s+code\s+is\s*:?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
+/** Legacy form: "Hello, WeKruit! <token>". Back-compat — in-flight QR links still emit this. */
 const HELLO_WEKRUIT_OPENER_RE =
   /^hello,?\s*wekruit!?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
 const WEKRUIT_JOB_OPENER_RE =
   /(?:^|\s)wekruit_([a-z0-9][a-z0-9-]{1,160})_([a-z0-9][a-z0-9_-]{7,127})_job(?:\s|$)/i
 
+/**
+ * LinkedIn one-tap re-entry marker (2026-06-03). After the candidate connects
+ * LinkedIn on the candidate-domain page, the page reroutes back to iMessage
+ * with the body "I've done LinkedIn submission <token>" and the candidate taps
+ * Send. The trailing token is the single-use CONNECT token (maps token ->
+ * userId server-side via verifyLinkedinConnectToken), NOT a candidateId — so it
+ * is parsed SEPARATELY from `parseHelloWekruitOpener` (which returns a
+ * candidateId). Inbound resolution stays phone-keyed; this marker only signals
+ * "candidate is back in-thread after connecting LinkedIn" (a kickoff/greeting,
+ * never a slot answer). The token must be STRIPPED before any LLM sees it.
+ */
+export const LINKEDIN_DONE_OPENER_PREFIX = "I've done LinkedIn submission"
+const LINKEDIN_DONE_OPENER_RE =
+  /^i'?ve\s+done\s+linkedin\s+submission\s*:?\s*([a-z0-9][a-z0-9_-]{7,127})?\s*$/i
+
+/** Build the sms: reroute body the connect page sends after LinkedIn connect. */
+export function buildLinkedinDoneOpenerBody(token: string): string {
+  const t = token.trim()
+  return t ? `${LINKEDIN_DONE_OPENER_PREFIX} ${t}` : LINKEDIN_DONE_OPENER_PREFIX
+}
+
+/** Canonical candidate-domain base for the LinkedIn one-tap connect page (C-end only).
+ *  Apex wekruit.com serves the SAME pa-landing SPA (candidate./pa. are aliases) — Adam 2026-06-03:
+ *  candidate-facing links use the apex, not the candidate. subdomain. */
+export const CONNECT_LINKEDIN_LINK_BASE = "https://wekruit.com/connect-linkedin"
+
+/**
+ * Pure builder for the LinkedIn one-tap connect link the thin agent can utter
+ * as a bubble. The page reads `?token=` and resolves it to the user server-side.
+ * Exposed here (and re-exported from the barrel) so a future deterministic thin
+ * step can emit the link without this branch touching agent.ts/prompt.ts.
+ */
+export function buildConnectLinkedinUrl(token: string): string {
+  const t = token.trim()
+  return t ? `${CONNECT_LINKEDIN_LINK_BASE}?token=${encodeURIComponent(t)}` : CONNECT_LINKEDIN_LINK_BASE
+}
+
+/** Canonical candidate-domain login surface (C-end only). The "Continue with Google" CTA lives here.
+ *  Apex wekruit.com = same pa-landing SPA (Adam 2026-06-03 — apex over candidate. subdomain). */
+export const CONNECT_GMAIL_LINK_BASE = "https://wekruit.com/login"
+
+/**
+ * WS-3(b) pure builder for the connect-Gmail nudge link the thin agent can utter
+ * as a bubble. Points at the existing candidate login surface ("Continue with
+ * Google"); no new auth flow. Sibling of buildConnectLinkedinUrl; re-exported
+ * from the barrel so a deterministic thin step can emit the link without this
+ * branch touching agent.ts/prompt.ts.
+ */
+export function buildConnectGmailUrl(): string {
+  return CONNECT_GMAIL_LINK_BASE
+}
+
+/**
+ * Parse the LinkedIn-done re-entry marker; returns the CONNECT token (NOT a
+ * candidateId) when present. Returns `{ token: "" }` when the bare phrase is
+ * sent with no token. Returns `null` when the text isn't this marker at all.
+ */
+export function parseLinkedinDoneOpener(value: string): { token: string } | null {
+  const match = value.trim().match(LINKEDIN_DONE_OPENER_RE)
+  if (!match) return null
+  return { token: match[1]?.trim() ?? "" }
+}
+
 /** Build the sms: deep-link body candidates send to bind phone → pa-users/{candidateId}. */
 export function buildHelloWekruitOpenerBody(candidateId: string): string {
   const id = candidateId.trim()
-  if (!id) return HELLO_WEKRUIT_OPENER_PREFIX
-  return `${HELLO_WEKRUIT_OPENER_PREFIX} ${id}`
+  if (!id) return HI_WEKRUIT_OPENER_PREFIX
+  return `${HI_WEKRUIT_OPENER_PREFIX} ${id}`
 }
 
-/** Parse inbound opener; returns candidateId when the suffix is present. */
+/**
+ * Parse inbound opener; returns candidateId when the suffix is present. Accepts the
+ * new verification-code phrasing AND the legacy "Hello, WeKruit!" phrasing (back-compat
+ * for QR codes already in the wild), plus the "WeKruit_<jobId>_<userId>_Job" job token.
+ */
 export function parseHelloWekruitOpener(value: string): { candidateId: string } | null {
   const trimmed = value.trim()
   const jobMatch = trimmed.match(WEKRUIT_JOB_OPENER_RE)
   if (jobMatch?.[2]) return { candidateId: jobMatch[2].trim() }
-  const match = trimmed.match(HELLO_WEKRUIT_OPENER_RE)
+  const match =
+    trimmed.match(HI_WEKRUIT_OPENER_RE) ??
+    trimmed.match(VERIFICATION_CODE_OPENER_RE) ??
+    trimmed.match(HELLO_WEKRUIT_OPENER_RE)
   if (!match) return null
   const candidateId = match[1]?.trim()
   return candidateId ? { candidateId } : null
@@ -174,11 +311,16 @@ export function parseHelloWekruitOpener(value: string): { candidateId: string } 
 
 export function isSharedOnboardingGreetingOrKickoff(value: string): boolean {
   if (parseHelloWekruitOpener(value)) return true
+  if (parseLinkedinDoneOpener(value)) return true
   const normalized = normalizeControlText(value)
   if (!normalized) return true
   if (normalized === "pa reset") return true
+  // LinkedIn one-tap re-entry marker, normalized: "i ve done linkedin submission <token>".
+  if (/^i ?ve done linkedin submission(?: [a-z0-9_-]+)?$/.test(normalized)) return true
   if (/^wekruit\s+(?:candidate\s+hi|laid\s+off|rain\s+software\s+engineer)/i.test(normalized)) return true
   if (/^hello wekruit(?: [a-z0-9_-]+)?$/.test(normalized)) return true
+  // New verification-code opener phrasing, normalized: "hi wekruit my verification code is <token>".
+  if (/^hi wekruit my verification code is(?: [a-z0-9_-]+)?$/.test(normalized)) return true
   return /^(?:hello|hi|hey|yo|sup|\u4f60\u597d|\u60a8\u597d|\u54c8\u55bd|\u5728\u5417)(?:\s+(?:wekruit|claire))?$/.test(normalized)
 }
 
@@ -618,6 +760,8 @@ export function buildSharedOnboardingOpeningPrompt(
     `${greeting}${resumeLine}`,
     "If there's a strong fit, I'll connect you with the hiring manager.",
     `You can also update ${CANDIDATE_PROFILE_URL}, or just tell me here.`,
+    // LEGACY website-start opener (dead on the thin path, which uses its own PART-2 pitch). The
+    // legacy deterministic flow walks the FULL set from main_goal, so the opener leads with it.
     getSharedOnboardingQuestion("main_goal").prompt,
   ].join(" ")
 }
@@ -646,6 +790,7 @@ export function buildSharedOnboardingPostPrescreenOpeningPrompt(
   return [
     `${greeting} Thanks for completing the role screen${roleText}.`,
     "By the way, I can keep looking for jobs that meet your expectations, but I need one bit of broader context first.",
+    // LEGACY post-prescreen opener (dead on the thin path). Leads with main_goal like the legacy flow.
     getSharedOnboardingQuestion("main_goal").prompt,
   ].join(" ")
 }
@@ -746,7 +891,36 @@ export function isSharedOnboardingQuestionId(value: unknown): value is SharedOnb
   return typeof value === "string" && QUESTION_BY_ID.has(value as SharedOnboardingQuestionId)
 }
 
+/**
+ * LEGACY positional walker — traverses the FULL 7-slot set. This is shared by the legacy
+ * deterministic onboarding path (index.ts) which still walks all 7 questions. The thin path does
+ * NOT route its asked-flow completion through this; the thin trim is driven by the ASKED
+ * `DEFAULT_ONBOARDING_SLOTS` in the FSM (onboarding-fsm.ts / process-tools.ts) and the thin
+ * next-asked-slot in mode-selector. Keeping this on the FULL set preserves legacy behavior +
+ * the regression chain. (For thin's ASKED next-slot, see `resolveNextAskedSharedOnboardingQuestionId`.)
+ */
 export function resolveNextSharedOnboardingQuestionId(id: SharedOnboardingQuestionId): {
+  nextQuestionId: SharedOnboardingQuestionId | null
+  completed: boolean
+  shouldRecommend: boolean
+} {
+  const index = ALL_QUESTION_IDS.indexOf(id)
+  const nextQuestionId = index >= 0 ? ALL_QUESTION_IDS[index + 1] ?? null : ALL_QUESTION_IDS[0]
+  return {
+    nextQuestionId,
+    completed: nextQuestionId === null,
+    shouldRecommend: nextQuestionId === null,
+  }
+}
+
+/**
+ * THIN-path positional walker — traverses ONLY the trimmed ASKED set (target_role ->
+ * location_relocation -> complete). Used by the thin mode-selector to compute the next ASKED
+ * question to display, so it agrees with the FSM completion (which keys off the same ASKED
+ * `SHARED_ONBOARDING_QUESTIONS`). A stored id that is NOT in the ASKED set (an in-flight user on a
+ * now-dropped slot) resolves to the FIRST asked slot — the in-flight rescue, never a stall.
+ */
+export function resolveNextAskedSharedOnboardingQuestionId(id: SharedOnboardingQuestionId): {
   nextQuestionId: SharedOnboardingQuestionId | null
   completed: boolean
   shouldRecommend: boolean
@@ -761,6 +935,40 @@ export function resolveNextSharedOnboardingQuestionId(id: SharedOnboardingQuesti
 }
 
 /**
+ * THIN-path TAG-AWARE walker (2026-06-04 #1 re-ask fix). Like
+ * {@link resolveNextAskedSharedOnboardingQuestionId} but over the TRIMMED ASKED set
+ * AND it SKIPS any slot already satisfied by `pa-users.tags` / `statedPreferences`
+ * (via {@link isSharedOnboardingSlotSatisfied}). This is the thin counterpart of the
+ * legacy {@link resolveNextMissingSharedOnboardingQuestionId} — the thin picker
+ * (mode-selector) calls THIS so it never re-asks an axis whose canonical tag is
+ * already present (e.g. a résumé-enriched candidate with `targetRoleFunction` set
+ * being asked "what kind of role" again).
+ *
+ * Walk semantics mirror the positional resolver: advance from `fromId`'s position in
+ * the ASKED set, returning the first FORWARD slot that is NOT tag-satisfied; if every
+ * forward slot is satisfied → `{ nextQuestionId: null, completed: true }`. A stored id
+ * not in the ASKED set (in-flight on a dropped slot) starts the scan from the head of
+ * the ASKED set so it never strands. NO regex — pure presence checks on validated
+ * canonical enums.
+ */
+export function resolveNextAskedMissingSharedOnboardingQuestionId(
+  fromId: SharedOnboardingQuestionId,
+  tags: Record<string, unknown> | null | undefined,
+  statedPreferences: Record<string, unknown> | null | undefined,
+): { nextQuestionId: SharedOnboardingQuestionId | null; completed: boolean; shouldRecommend: boolean } {
+  const index = QUESTION_IDS.indexOf(fromId)
+  // In-flight/unknown id → scan the whole ASKED set from the head (start at -1 + 1 = 0).
+  const startIdx = index >= 0 ? index : -1
+  for (let i = startIdx + 1; i < QUESTION_IDS.length; i++) {
+    const candidate = QUESTION_IDS[i]!
+    if (!isSharedOnboardingSlotSatisfied(candidate, tags, statedPreferences)) {
+      return { nextQuestionId: candidate, completed: false, shouldRecommend: false }
+    }
+  }
+  return { nextQuestionId: null, completed: true, shouldRecommend: true }
+}
+
+/**
  * QA 2026-05-28 (#3) — which shared-onboarding slots are already satisfied by the
  * unified user tags / statedPreferences. The extract-first capture (forceTrigger
  * extractor on every onboarding turn) can fill `industrySector` + `targetLocations`
@@ -768,6 +976,16 @@ export function resolveNextSharedOnboardingQuestionId(id: SharedOnboardingQuesti
  * extractor (conversation-extractor.ts tagPatch). main_goal / culture_stage /
  * special_context are onboarding-specific concepts the extractor can't produce, so
  * they're never auto-satisfied (always asked in order).
+ *
+ * 2026-06-04 (#1 re-ask fix) — `target_role` is ALSO tag-satisfiable. The matcher's
+ * sole role axis is `tags.targetRoleFunction[]` (D1, ROLE_FUNCTION_VOCAB), and that
+ * axis is filled by the résumé parse (`mergeUserTags`) and by the
+ * `record_onboarding_answer` extractor (validateOnboardingCanonicalTags). So when a
+ * candidate's enriched profile already carries `targetRoleFunction`, re-asking "what
+ * kind of role do you want" is redundant — the axis the question exists to capture is
+ * already present. Treat the slot as satisfied off the canonical tag (NO regex — pure
+ * presence check over the validated closed enum). `statedPreferences.targetRoleFunction`
+ * is the legacy mirror some paths still write, kept as a fallback.
  */
 export function isSharedOnboardingSlotSatisfied(
   slot: SharedOnboardingQuestionId,
@@ -777,6 +995,9 @@ export function isSharedOnboardingSlotSatisfied(
   const t = tags ?? {}
   const sp = statedPreferences ?? {}
   const nonEmptyArr = (v: unknown): boolean => Array.isArray(v) && v.length > 0
+  if (slot === "target_role") {
+    return nonEmptyArr(t.targetRoleFunction) || nonEmptyArr(sp.targetRoleFunction)
+  }
   if (slot === "industry_interest") {
     return nonEmptyArr(t.industrySector) || nonEmptyArr(sp.industrySector)
   }
@@ -797,9 +1018,13 @@ export function resolveNextMissingSharedOnboardingQuestionId(
   tags: Record<string, unknown> | null | undefined,
   statedPreferences: Record<string, unknown> | null | undefined,
 ): { nextQuestionId: SharedOnboardingQuestionId | null; completed: boolean; shouldRecommend: boolean } {
-  const startIdx = QUESTION_IDS.indexOf(fromId)
-  for (let i = startIdx + 1; i < QUESTION_IDS.length; i++) {
-    const candidate = QUESTION_IDS[i]!
+  // LEGACY (dead on the thin path — only the legacy deterministic onboarding turn in
+  // index.ts calls this). It still walks the FULL 7-slot set so legacy semantics are
+  // unchanged; the thin trim lives in the ASKED `QUESTION_IDS` used by the positional
+  // resolver below.
+  const startIdx = ALL_QUESTION_IDS.indexOf(fromId)
+  for (let i = startIdx + 1; i < ALL_QUESTION_IDS.length; i++) {
+    const candidate = ALL_QUESTION_IDS[i]!
     if (!isSharedOnboardingSlotSatisfied(candidate, tags, statedPreferences)) {
       return { nextQuestionId: candidate, completed: false, shouldRecommend: false }
     }
@@ -821,6 +1046,9 @@ export function buildSharedOnboardingStartedState(
       status: "active",
       startedAt: nowIso,
       boundary: SHARED_ONBOARDING_BOUNDARY,
+      // LEGACY website-start seeder (dead on the thin path; the thin cold start uses
+      // mode-selector's own bootstrapOnboarding, seeded to the first ASKED slot). The legacy
+      // deterministic onboarding path still walks the FULL 7-slot set from main_goal.
       currentQuestionId: "main_goal",
     },
     sharedOnboarding: {
@@ -829,7 +1057,8 @@ export function buildSharedOnboardingStartedState(
       startedAt: nowIso,
       updatedAt: nowIso,
       currentQuestionId: "main_goal",
-      questionOrder: QUESTION_IDS,
+      // FULL ordered ids for the legacy walker (this seeder is the legacy path).
+      questionOrder: ALL_QUESTION_IDS,
       answers: {},
       ...(Object.keys(cleanContext).length > 0 ? { promptContext: cleanContext } : {}),
       completed: false,
@@ -966,6 +1195,10 @@ function applyMatcherCriticalAnswerFallbacks(
 }
 
 export function currentSharedOnboardingQuestionId(user: unknown): SharedOnboardingQuestionId {
+  // Returns the stored slot when present (ANY valid id, incl. now-dropped slots — the FULL map
+  // still resolves them, so an in-flight user is never stranded). The cold/unknown fallback stays
+  // main_goal for the LEGACY path; the THIN path resolves cold start via mode-selector's
+  // FIRST_ASKED_SLOT and rescues an in-flight dropped slot onto the ASKED set (rescueOnboardingSlot).
   if (!user || typeof user !== "object") return "main_goal"
   const doc = user as Record<string, unknown>
   const shared = doc.sharedOnboarding && typeof doc.sharedOnboarding === "object"

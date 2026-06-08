@@ -39,6 +39,7 @@ import { getFirestore } from "firebase-admin/firestore"
 import { enrichJobTags } from "@pa/job-tag-enricher"
 import { ANTHROPIC_API_KEY } from "./orchestrator-deps.js"
 import { inferSponsorship } from "./lib/sponsorship-inference.js"
+import { isJobRecCardEnabled, pregenerateRecCardForJob } from "./job-rec-card/job-rec-card.js"
 
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
@@ -101,6 +102,16 @@ interface MatchingJobDoc {
   sponsorshipConfidence?: number | null
   sponsorshipBackfilledAt?: string | null
   sponsorshipSemanticHash?: string | null
+  // Collab rec-card pre-gen inputs/outputs.
+  wekruitCollaborationStatus?: string | null
+  isWekruitCollab?: boolean | null
+  jobTitle?: string | null
+  salaryMin?: number | null
+  salaryMax?: number | null
+  atsApplyUrl?: string | null
+  primaryUrl?: string | null
+  recCardMediaUrl?: string | null
+  recCardContentHash?: string | null
 }
 
 export function needsEnrichment(doc: MatchingJobDoc | undefined): boolean {
@@ -264,6 +275,63 @@ export const paMatchingJobsAutoEnrich = onDocumentWritten(
         sponsorship: update.sponsorship ?? null,
         sponsorshipSource: update.sponsorshipSource ?? null,
       })
+
+      // DURABLE rec-card pre-gen (Adam: "generate on creation"): a WeKruit collab
+      // row must carry a ready recCardMediaUrl BEFORE any candidate is matched, so
+      // the send path is a pure cache read (never lazy at send time). Gated to
+      // collab inventory only (partner roles), idempotent (skips when the cached
+      // url+hash already match this content), and FAIL-OPEN — a card-gen miss never
+      // re-throws into the trigger.
+      //
+      // SECRET GATE: this needs Sendblue media creds (SENDBLUE_API_KEY_ID /
+      // SENDBLUE_API_SECRET_KEY). They are NOT yet in this CF's `secrets:[]` array
+      // (wiring prod secrets into a CF is Adam-gated). Until Adam adds them, the env
+      // vars are absent → pregenerateRecCardForJob returns `skipped_no_creds` (no-op),
+      // and the manual `generate-rec-cards.mjs` backfill covers existing collab cards.
+      const isCollab =
+        (after!.wekruitCollaborationStatus ?? null) === "collaborated" ||
+        after!.isWekruitCollab === true
+      if (isCollab && isJobRecCardEnabled()) {
+        const apiKeyId = (process.env.SENDBLUE_API_KEY_ID ?? "").trim()
+        const apiSecretKey = (process.env.SENDBLUE_API_SECRET_KEY ?? "").trim()
+        if (apiKeyId && apiSecretKey) {
+          try {
+            // The freshly-written tag fields (update) take precedence over the
+            // pre-write doc (after) for the card payload (e.g. requiredSkills).
+            const cardRes = await pregenerateRecCardForJob({
+              db,
+              jobId,
+              job: {
+                companyName: after!.companyName ?? null,
+                jobTitle: after!.jobTitle ?? after!.roleTitle ?? null,
+                roleTitle: after!.roleTitle ?? null,
+                seniorityLevel: (update.seniorityLevel as string | null) ?? after!.seniorityLevel ?? null,
+                salaryMin: typeof after!.salaryMin === "number" ? after!.salaryMin : null,
+                salaryMax: typeof after!.salaryMax === "number" ? after!.salaryMax : null,
+                locationRaw: after!.locationRaw ?? null,
+                jobType: (update.jobType as string | null) ?? after!.jobType ?? null,
+                atsApplyUrl: after!.atsApplyUrl ?? null,
+                primaryUrl: after!.primaryUrl ?? null,
+                // requiredSkills may be bucketed Skill objects, not strings; topSkills
+                // reads defensively (cleanStr drops non-strings) so a loose cast is safe.
+                requiredSkills: ((update.requiredSkills ?? after!.requiredSkills ?? null) as string[] | null),
+              },
+              cached: {
+                mediaUrl: after!.recCardMediaUrl ?? null,
+                contentHash: after!.recCardContentHash ?? null,
+              },
+              creds: { apiKeyId, apiSecretKey },
+              log: (event, payload) => logger.info(`[auto-enrich] ${event}`, payload ?? {}),
+            })
+            logger.info("[auto-enrich] rec_card_pregen", { jobId, status: cardRes.status })
+          } catch (cardErr) {
+            logger.warn("[auto-enrich] rec_card_pregen_threw", {
+              jobId,
+              error: cardErr instanceof Error ? cardErr.message : String(cardErr),
+            })
+          }
+        }
+      }
     } catch (err) {
       logger.warn("[auto-enrich] failed — leaving doc as-is", {
         jobId,

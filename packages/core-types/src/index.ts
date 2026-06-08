@@ -275,6 +275,30 @@ export const UserSchema = z.object({
   versionChannelSetBy: z.string().optional(),
   /** Free-text reason recorded by operator for the channel change. */
   versionChannelReason: z.string().optional(),
+  /**
+   * v2.0 Sendblue USER↔NUMBER BINDING (2026-06-02) — the STICKY outbound iMessage
+   * line this user's thread comes FROM. Stateful + authoritative: once set, the
+   * send path NEVER re-derives it via `hash(userId) % activeCount`. Resolved by
+   * `resolveBoundFromNumber` (apps/functions/src/sendblue/resolve-bound-from-number.ts),
+   * the single source of truth across all 5 send paths (durable reply, typing,
+   * read-receipt, tapback, status bubble). A bound user is only rebound if the
+   * line goes paused/dead. Backfilled by
+   * `scripts/backfill-sendblue-binding-pin.mjs` (pins each user's CURRENT
+   * hash-derived line) — that pin MUST run before the honor-binding code deploys.
+   */
+  senderNumber: z.string().optional(),
+  /** Sendblue account/number GROUP that owns `senderNumber` (capacity + sticky routing). */
+  senderGroupId: z.string().optional(),
+  /** ISO of the last (re)binding of `senderNumber`. */
+  senderAssignedAt: z.string().optional(),
+  /**
+   * Provenance of the binding (audit). One of: `inbound_first` (text-only
+   * provisional create), `qr_scan` (QR opener scan-time sticky pick),
+   * `candidate_identity` (magic-link/identity), `rebind_paused` (prior line went
+   * paused/dead → minted replacement), `backfill_pin_2026_06` (backfill froze the
+   * current hash line), `send_path_mint` (unset binding minted lazily on a send).
+   */
+  senderAssignedSource: z.string().optional(),
 })
 export type User = z.infer<typeof UserSchema>
 

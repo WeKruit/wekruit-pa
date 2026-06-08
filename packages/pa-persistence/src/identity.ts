@@ -388,6 +388,51 @@ export async function linkCandidateHandle(
   return { handle, created: true }
 }
 
+/**
+ * candidateHasLinkedinBind — TRUE iff this candidate ALREADY has a LinkedIn
+ * identity bound. Two independent signals, OR'd:
+ *   1. a durable `pa-candidate-handles` row {candidateId, kind:"linkedin"}
+ *      (written by linkCandidateHandle on OAuth login OR paste-URL submit), OR
+ *   2. the binary `pa-users/{candidateId}.linkedinOauthLinked === true` flag
+ *      (set on a successful OAuth connect — covers a brand-new bind whose
+ *      handle write is in-flight, and the OAuth path that may only flag the
+ *      user doc).
+ *
+ * Used to suppress the onboarding "connect your LinkedIn" OFFER for an already-
+ * bound phone WITHOUT regressing the first-time (unbound) offer.
+ *
+ * DEFENSIVE / FAIL-SOFT: any read error → `false` (never throws). A transient
+ * read failure must NOT make us claim "already bound" and wrongly mute the
+ * offer; defaulting to `false` keeps the first-time offer intact (the worst
+ * case is one extra optional, idempotent offer — never a dead end).
+ *
+ * Query idiom mirrors loadCandidateSelfProfileHandles: a single
+ * `where("candidateId")` + in-memory `kind` filter (no composite index needed).
+ */
+export async function candidateHasLinkedinBind(
+  db: Firestore,
+  candidateId: string
+): Promise<boolean> {
+  try {
+    const snap = await db
+      .collection(PA_COLLECTIONS.candidateHandles)
+      .where("candidateId", "==", candidateId)
+      .limit(50)
+      .get()
+    if (snap.docs.some((doc) => (doc.data() as { kind?: unknown }).kind === "linkedin")) {
+      return true
+    }
+  } catch {
+    return false
+  }
+  try {
+    const userSnap = await db.collection(PA_COLLECTIONS.users).doc(candidateId).get()
+    return (userSnap.data() as { linkedinOauthLinked?: unknown } | undefined)?.linkedinOauthLinked === true
+  } catch {
+    return false
+  }
+}
+
 export interface ResolveCandidateIdentityInput {
   extractedEmail?: string | null
   employerEmailHint?: string | null

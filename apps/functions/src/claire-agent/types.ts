@@ -51,8 +51,14 @@ export interface ClaireTransport {
   markRead(): Promise<void>
   typing(): Promise<void>
   sendStatus(text: string): Promise<void>
-  /** opts carries multi-bubble ordering: seq (0-based position) + paced (emit already spaced it). */
-  sendText(text: string, opts?: { seq?: number; paced?: boolean }): Promise<void>
+  /**
+   * opts carries multi-bubble ordering: seq (0-based position) + paced (emit already spaced it).
+   * `mediaUrl` rides an image attachment WITH this text bubble (the rec-card image inline on its
+   * role caption) — forwarded to enqueueOutbound's mediaUrl. The send stays a single durable,
+   * ordered pa-outbound row, so the image is delivered IN-ORDER with its caption (not a decoupled
+   * once/day row that races the recs).
+   */
+  sendText(text: string, opts?: { seq?: number; paced?: boolean; mediaUrl?: string }): Promise<void>
   tapback(reaction: ClaireReaction): Promise<void>
   noReply(reason: string): Promise<void>
 }
@@ -71,6 +77,14 @@ export interface FindMatchResult {
    * jobs[] line carries a start token. Adam 2026-06-01: any match with a collab role MUST offer the screen.
    */
   collab?: Array<{ jobId: string; title: string; company: string; prescreenReady: boolean }>
+  /**
+   * The role lines as ORDERED delivery rows, one per `jobs[]` entry (same order), each optionally
+   * carrying its rec-card image `mediaUrl`. A COLLAB role row carries its image (Adam 2026-06-04: the
+   * image rides INLINE on the role caption, ordered + per-turn); an open-market row is text-only. When
+   * absent (no cardDeps / image allowlist), deliverRecBubbles falls back to `jobs[]` (text-only).
+   * The prescreen offer is NOT in here — deliverRecBubbles appends it LAST.
+   */
+  deliverRows?: Array<{ text: string; mediaUrl?: string }>
 }
 
 /**

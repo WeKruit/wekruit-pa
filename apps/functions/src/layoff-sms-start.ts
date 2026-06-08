@@ -4,7 +4,7 @@ import { PA_COLLECTIONS } from "@pa/core-types"
 import {
   SHARED_ONBOARDING_EVENT_KIND,
   SHARED_ONBOARDING_EVENT_SOURCE,
-  SHARED_ONBOARDING_QUESTIONS,
+  ALL_SHARED_ONBOARDING_QUESTIONS,
   buildSharedOnboardingPrompt,
   buildSharedOnboardingPromptContext,
   buildSharedOnboardingStartedState,
@@ -73,7 +73,11 @@ async function runDefaultRuntimeKickoff(args: {
   source: WekruitSignupSource
   promptContext?: SharedOnboardingPromptContext
 }): Promise<{ eventId: string; outboundId?: string }> {
-  const q1 = SHARED_ONBOARDING_QUESTIONS[0]
+  // The layoff kickoff is a runtime event → handled by the LEGACY full-7 walker
+  // (buildSharedOnboardingStartedState seeds main_goal + ALL_QUESTION_IDS). Use the FULL-set first
+  // slot (main_goal), NOT the thin-trimmed SHARED_ONBOARDING_QUESTIONS[0] (target_role), so the SMS
+  // first-question matches the durable legacy walker's starting slot.
+  const q1 = ALL_SHARED_ONBOARDING_QUESTIONS[0]
   const idempotencyKey = `${SHARED_ONBOARDING_EVENT_SOURCE}:${args.userId}:${args.startedAt}`
   const runtime = await enqueueRuntimeEventHandoff(args.db, {
     userId: args.userId,

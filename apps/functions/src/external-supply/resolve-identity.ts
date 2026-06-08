@@ -30,6 +30,7 @@
  */
 
 import { onCall, HttpsError } from "firebase-functions/v2/https"
+import { defineSecret } from "firebase-functions/params"
 import { logger } from "firebase-functions/v2"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import {
@@ -316,13 +317,24 @@ export async function runResolveBatchIdentity(
 /**
  * Production CF wrapper — thin shim that grabs Firestore + delegates.
  */
+// The Coresignal experiences mirror (run via runResolveBatchIdentity → runCoresignalExperiencesMirror)
+// makes the unified LinkedIn+résumé merge LLM call (getOpenAIConfig reads PA_OPENAI_AGENT_API_KEY). Without
+// this binding the merge fail-opens to null in this CF runtime and the determined facts are never written.
+const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
+
 export const paExternalSupplyResolveBatchIdentity = onCall(
   {
     region: "us-central1",
     memory: "512MiB",
     timeoutSeconds: 540,
+    secrets: [PA_OPENAI_AGENT_API_KEY],
   },
   async (req): Promise<ResolveBatchIdentityResult> => {
+    // Hydrate process.env so the merge module's getOpenAIConfig() picks up the key (parity with the
+    // index.ts résumé CFs). Empty/missing → delete so getOpenAIConfig fails open cleanly.
+    const openAiKey = PA_OPENAI_AGENT_API_KEY.value().trim()
+    if (openAiKey) process.env.PA_OPENAI_AGENT_API_KEY = openAiKey
+    else delete process.env.PA_OPENAI_AGENT_API_KEY
     return runResolveBatchIdentity(req.data, req.auth, {
       db: getFirestore(),
     })

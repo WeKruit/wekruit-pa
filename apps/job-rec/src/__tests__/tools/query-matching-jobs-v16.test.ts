@@ -3883,6 +3883,110 @@ test("queryMatchingJobsV16: US-target user still drops non-US-only jobs even whe
   assert.equal(r.counters.location, 1)
 })
 
+// ---------------------------------------------------------------------------
+// NON-US LEAK FIX (2026-06-02) — canonical bucket→country map. The leaked
+// fixture is the REAL live Scale AI "Global Public Sector" doc:
+//   id  18044c07…  locationBuckets [doha,dubai,riyadh]
+//   locationRaw "Doha, Qatar ; Dubai, UAE; Riyadh, Saudi Arabia"  status active
+// The candidate had NO US-only substring + NO visa/country, and the bucket
+// list omitted the Middle East from the old hardcoded hints → it leaked.
+// ---------------------------------------------------------------------------
+
+/** Real leaked Scale AI Middle-East role, reused across the cases below. */
+function mkScaleAiMeJob(): MatchingJob {
+  return mkJob({
+    id: "scaleai-me",
+    companyName: "Scale AI",
+    jobTitle: "Global Public Sector",
+    locationBuckets: ["doha", "dubai", "riyadh"],
+    locationRaw: "Doha, Qatar ; Dubai, UAE; Riyadh, Saudi Arabia",
+    roleFunction: ["creatives_and_design", "product_management"],
+    sponsorship: null,
+  })
+}
+
+test("non-us leak (a): remote_anywhere+onsite_hybrid_us user, no visa/country → scaleai ME role DROPPED", () => {
+  // The exact user shape from the forensics: targetLocations remote_anywhere +
+  // onsite_hybrid_us, no visaStatus, no targetCountry. US-required by default.
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetLocations: ["remote_anywhere", "onsite_hybrid_us"],
+  } as never
+  const jobs: MatchingJob[] = [
+    mkScaleAiMeJob(),
+    mkJob({ id: "us-ok", locationBuckets: ["san_francisco_bay_area"] }),
+  ]
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["us-ok"], "ME role dropped, US role kept")
+  assert.equal(r.counters.location, 1, "the country gate (location counter) caught it")
+})
+
+test("non-us leak (a'): remote_anywhere does NOT rescue a foreign-only ME job (bypass-independent)", () => {
+  // Even if the ME job is ALSO tagged remote_anywhere, its concrete buckets are
+  // foreign-only → still dropped (the gate is independent of the anywhere bypass).
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    targetLocations: ["remote_anywhere"],
+  } as never
+  const job = mkScaleAiMeJob()
+  job.locationBuckets = ["doha", "dubai", "riyadh", "remote_anywhere"]
+  const r = applyV16HardFilters([job], tags, NOW)
+  assert.equal(r.kept.length, 0, "remote_anywhere bucket does not rescue a foreign-only role")
+  assert.equal(r.counters.location, 1)
+})
+
+test("non-us leak (b): same user + a remote_united_states job → KEPT", () => {
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    targetLocations: ["remote_anywhere", "onsite_hybrid_us"],
+  } as never
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "remote-us", locationBuckets: ["remote_united_states"], locationRaw: "Remote - United States" }),
+    mkScaleAiMeJob(),
+  ]
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["remote-us"], "US-remote kept, ME dropped")
+})
+
+test("non-us leak (c): explicit targetCountry=canada user → a Toronto job KEPT", () => {
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    targetLocations: ["remote_anywhere"],
+    targetCountry: ["canada"],
+  } as never
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "toronto", locationBuckets: ["toronto"], locationRaw: "Toronto, Canada" }),
+  ]
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["toronto"], "explicit foreign target lifts the US gate")
+  assert.equal(r.counters.location, 0)
+})
+
+test("non-us leak: fallback path ALSO drops the ME role for a US-required user", () => {
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    targetLocations: ["remote_anywhere"],
+  } as never
+  const r = applyFallbackHardFilters([mkScaleAiMeJob()], tags, NOW)
+  assert.equal(r.kept.length, 0)
+  assert.equal(r.counters.location, 1)
+})
+
+test("non-us leak: a globally-remote job (no foreign bucket) still SURVIVES for a US user", () => {
+  // remote_anywhere with NO concrete foreign bucket = US-accessible → keep.
+  const tags = {
+    skills: [], industryEnum: [], schemaVersion: 1,
+    targetLocations: ["remote_anywhere"],
+  } as never
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "global", locationBuckets: ["remote_anywhere"], locationRaw: "Remote - Worldwide" }),
+  ]
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["global"])
+})
+
 // (d) scoreV16Job isCollaborationJob=true raises total by 0.08 and
 //     breakdown.collabBoost==0.08; false→0.
 test("scoreV16Job: collab job gets +V16_COLLAB_BOOST_WEIGHT in total + breakdown.collabBoost", () => {
@@ -4032,4 +4136,50 @@ test("queryMatchingJobsV16: returns 0 only when even the general-market fallback
   assert.equal(r.jobs.length, 0)
   assert.equal(r.total, 0)
   assert.notEqual(r.fallbackApplied, true)
+})
+
+test("applyV16HardFilters: a LOW-yoe founder is NOT leaked senior/manager roles (yoe-gated founder window)", () => {
+  // Live regression (Noah +12154034668): careerStage=founder derived from the title "Co-Founder",
+  // but yoeRange [1.5, 2.5] → he was matched to Senior Manager / Sr Delivery Manager. A "founder"
+  // title only earns the senior+ executive band once total experience supports it; a low-yoe founder
+  // is early-career and must use the yoe-implied window (entry/junior), never senior+/manager.
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "junior", seniorityLevel: "junior" }),
+    mkJob({ id: "mid", seniorityLevel: "mid_level" }),
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "manager", seniorityLevel: "manager" }),
+    mkJob({ id: "founder", seniorityLevel: "founder" }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "founder", yoeRange: [1.5, 2.5] } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  const kept = r.kept.map((j) => j.id)
+  assert.equal(kept.includes("senior"), false, "junior founder must NOT match a senior role")
+  assert.equal(kept.includes("manager"), false, "junior founder must NOT match a manager role")
+  assert.equal(kept.includes("founder"), false, "junior founder must NOT match a founder-tier role")
+  assert.ok(kept.includes("junior"), "a junior-level role still matches")
+})
+
+test("applyV16HardFilters: a SEASONED/unknown-yoe founder keeps the senior+ executive band (back-compat)", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "manager", seniorityLevel: "manager" }),
+    mkJob({ id: "founder", seniorityLevel: "founder" }),
+    mkJob({ id: "junior", seniorityLevel: "junior" }),
+  ]
+  // no yoeRange → unknown experience → keep the full executive band (a real founder fits senior+ scope)
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "founder" } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  const kept = r.kept.map((j) => j.id)
+  assert.ok(kept.includes("senior") && kept.includes("manager") && kept.includes("founder"), "founder band keeps senior+")
+  assert.equal(kept.includes("junior"), false, "founder band excludes junior")
+})
+
+test("applyV16HardFilters: a high-yoe founder (yoe 10) keeps the senior+ executive band", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "manager", seniorityLevel: "manager" }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "founder", yoeRange: [8, 12] } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id).sort(), ["manager", "senior"], "seasoned founder still matches senior+")
 })

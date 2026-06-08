@@ -172,18 +172,20 @@ async function resolveReactionFromNumber(
   input: SendReactionInput,
   creds: SendblueCredentials
 ): Promise<string | undefined> {
+  // An explicit sender (the caller already resolved the bound line) WINS — the
+  // tapback MUST ride the same thread as the reply, so we never re-hash over it.
   const explicit = input.fromNumber?.trim()
   if (explicit) return explicit
 
   if (input.userId) {
     try {
-      const { loadSendbluePool, pickFromNumber } = await import("./pool.js")
+      const { resolveBoundFromNumber } = await import("./resolve-bound-from-number.js")
       const { getFirestore } = await import("firebase-admin/firestore")
       const db = input.db ?? getFirestore()
-      const picked = pickFromNumber(await loadSendbluePool(db), input.userId)
-      if (picked) return picked
+      const bound = await resolveBoundFromNumber(db, input.userId)
+      if (bound.fromNumber) return bound.fromNumber
     } catch {
-      // Pool lookup failure falls through to the caller-approved fallback.
+      // Binding lookup failure falls through to the caller-approved fallback.
     }
   }
 

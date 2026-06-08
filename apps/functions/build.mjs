@@ -141,6 +141,10 @@ await build({
     // deploy time, matching the pdf-parse / openai externalization pattern.
     "@resvg/resvg-wasm",
     "@resvg/resvg-wasm/*",
+    // Audio intake (2026-06-04) — ffmpeg-static ships a ~78MB platform-specific
+    // binary; keep external so Cloud Build npm-installs the LINUX binary at
+    // deploy time (the binary path resolves via require at runtime, not bundled).
+    "ffmpeg-static",
   ],
   legalComments: "none",
   logLevel: "info",
@@ -177,6 +181,10 @@ const runtimePackage = {
     // Rec-card renderer (2026-05-30) — externalized .wasm dep; Cloud Build
     // installs it at deploy time. `satori` (pure JS) is bundled, not listed.
     "@resvg/resvg-wasm": "^2.6.2",
+    // Audio intake (2026-06-04) — static ffmpeg binary; Cloud Build installs the
+    // linux build at deploy. Used to transcode iOS Opus-in-CAF voice notes → wav
+    // before Deepgram transcription.
+    "ffmpeg-static": "^5.3.0",
   },
 }
 writeFileSync(

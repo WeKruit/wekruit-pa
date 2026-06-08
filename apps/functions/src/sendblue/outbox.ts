@@ -560,24 +560,50 @@ export async function paSendblueOutboxHandler(
 
   // ---- 6. POST Sendblue REST -------------------------------------------
   try {
+    // USER↔NUMBER BINDING (2026-06-02) — resolve the line via the single-source
+    // reducer so the durable send rides the SAME bound thread as typing/read-
+    // receipt/tapback. An explicit `fromNumber` on the row (e.g. admin/internal
+    // override) still wins. Otherwise the reducer honors the persisted binding,
+    // rebinds if the line went paused/dead, or mints+persists for an unbound
+    // user — passing the ALREADY-LOADED `user` doc so this costs ZERO extra read.
     const outboundFromNumber =
       typeof data.fromNumber === "string" && data.fromNumber.trim()
         ? data.fromNumber.trim()
         : undefined
-    const userSenderNumber =
-      typeof user?.senderNumber === "string" && user.senderNumber.trim()
-        ? user.senderNumber.trim()
-        : undefined
-    const explicitFromNumber = outboundFromNumber ?? userSenderNumber
+    let explicitFromNumber = outboundFromNumber
+    if (!explicitFromNumber) {
+      try {
+        const { resolveBoundFromNumber } = await import("./resolve-bound-from-number.js")
+        const bound = await resolveBoundFromNumber(deps.db, userId, {
+          user: (user as Record<string, unknown> | null) ?? undefined,
+          mintSource: "send_path_mint",
+          log: (event, payload) => log(`[sendblue][outbox] ${event}`, payload),
+        })
+        explicitFromNumber = bound.fromNumber
+      } catch (err) {
+        log(
+          "[sendblue][outbox] bound-from-number resolve failed (non-fatal)",
+          err instanceof Error ? err.message : String(err)
+        )
+        const userSenderNumber =
+          typeof user?.senderNumber === "string" && user.senderNumber.trim()
+            ? user.senderNumber.trim()
+            : undefined
+        explicitFromNumber = userSenderNumber
+      }
+    }
     // Rec-card path — when the row carries a media_url, deliver as an iMessage
     // image attachment with `body` as the caption. Text-only rows omit it and
     // the send is byte-identical to the pre-card path.
     const mediaUrl =
       typeof data.mediaUrl === "string" && data.mediaUrl.trim() ? data.mediaUrl.trim() : undefined
+    // NOTE: outbox already resolved the bound line above (single source of
+    // truth), so we do NOT pass `userId` here — that would make sendImessage
+    // re-run the reducer (a redundant user read). We pass the resolved
+    // `fromNumber` directly; the client honors an explicit line unconditionally.
     const response: SendblueSendResponse = await deps.sendblueClient.sendImessage({
       to: toPeer,
       content: body,
-      userId,
       db: deps.db,
       ...(mediaUrl ? { mediaUrl } : {}),
       ...(explicitFromNumber ? { fromNumber: explicitFromNumber } : {}),

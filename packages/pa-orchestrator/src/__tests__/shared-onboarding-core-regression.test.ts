@@ -20,8 +20,10 @@ import {
   buildSharedOnboardingPromptContext,
   projectSharedOnboardingAnswer,
   resolveNextSharedOnboardingQuestionId,
+  resolveNextAskedSharedOnboardingQuestionId,
   resolveNextMissingSharedOnboardingQuestionId,
   SHARED_ONBOARDING_QUESTIONS,
+  ALL_SHARED_ONBOARDING_QUESTIONS,
 } from "../shared-onboarding.js"
 
 describe("resolveNextMissingSharedOnboardingQuestionId (#3 ask-only-missing)", () => {
@@ -53,12 +55,27 @@ describe("resolveNextMissingSharedOnboardingQuestionId (#3 ask-only-missing)", (
     assert.equal(r.nextQuestionId, "culture_stage")
   })
 
-  it("falls back to positional order when no tags captured", () => {
-    for (const q of SHARED_ONBOARDING_QUESTIONS) {
-      const a = resolveNextSharedOnboardingQuestionId(q.id)
-      const b = resolveNextMissingSharedOnboardingQuestionId(q.id, null, null)
-      assert.equal(b.nextQuestionId, a.nextQuestionId)
-      assert.equal(b.completed, a.completed)
+  it("falls back to positional order when no tags captured (legacy FULL-set walker)", () => {
+    // resolveNextMissing… is the LEGACY (dead on thin) walker — it still traverses the FULL 7-slot
+    // set, so with no tags captured it must equal the FULL positional order. We assert it over the
+    // FULL set (ALL_SHARED_ONBOARDING_QUESTIONS), not the trimmed ASKED set. The thin-path positional
+    // walker (resolveNextSharedOnboardingQuestionId, ASKED set) is covered separately below.
+    const FULL_ORDER: Array<{ from: string; next: string | null }> = [
+      { from: "main_goal", next: "culture_stage" },
+      { from: "culture_stage", next: "target_role" },
+      { from: "target_role", next: "industry_interest" },
+      { from: "industry_interest", next: "location_relocation" },
+      { from: "location_relocation", next: "seniority_comp" },
+      { from: "seniority_comp", next: "special_context" },
+      { from: "special_context", next: null },
+    ]
+    for (const step of FULL_ORDER) {
+      const b = resolveNextMissingSharedOnboardingQuestionId(
+        step.from as (typeof ALL_SHARED_ONBOARDING_QUESTIONS)[number]["id"],
+        null,
+        null,
+      )
+      assert.equal(b.nextQuestionId, step.next, `legacy FULL walker from=${step.from}`)
     }
   })
 })
@@ -163,13 +180,15 @@ describe("shared onboarding core (router / state / judges) — flag-invariant", 
       },
     }) as Record<string, unknown>
 
+    // The LEGACY router (resolveNextSharedOnboardingQuestionId) + canonical prompts cover the FULL
+    // 7-slot set, so exercise the FULL set here (the trim does not change the legacy walker).
     const canonicalPrompts: Record<string, string> = {}
-    for (const q of SHARED_ONBOARDING_QUESTIONS) {
+    for (const q of ALL_SHARED_ONBOARDING_QUESTIONS) {
       canonicalPrompts[q.id] = buildSharedOnboardingPrompt(q.id, promptContext)
     }
 
     const routerTransitions: Record<string, ReturnType<typeof resolveNextSharedOnboardingQuestionId>> = {}
-    for (const q of SHARED_ONBOARDING_QUESTIONS) {
+    for (const q of ALL_SHARED_ONBOARDING_QUESTIONS) {
       routerTransitions[q.id] = resolveNextSharedOnboardingQuestionId(q.id)
     }
 
@@ -201,11 +220,12 @@ describe("shared onboarding core (router / state / judges) — flag-invariant", 
       const current = captureBaseline()
       if (!baseline) {
         baseline = current
-        // Sanity: ensure baseline itself contains meaningful canonical text.
+        // Sanity: ensure baseline itself contains meaningful canonical text (FULL-set coverage).
         assert.match(
           baseline.canonicalPrompts.main_goal!,
           /career growth, compensation, stability, mission, learning/i,
         )
+        // special_context remains the terminal of the LEGACY full-set walker.
         assert.deepEqual(baseline.routerTransitions.special_context, {
           nextQuestionId: null,
           completed: true,
@@ -233,14 +253,12 @@ describe("shared onboarding core (router / state / judges) — flag-invariant", 
     assert.deepEqual(a, b)
   })
 
-  it("router transitions form a complete chain main_goal → culture_stage → … → special_context → done", () => {
+  it("LEGACY router transitions form the FULL chain main_goal → culture_stage → … → special_context → done (unchanged by the trim)", () => {
     const expected: Array<{
-      from: (typeof SHARED_ONBOARDING_QUESTIONS)[number]["id"]
-      next: (typeof SHARED_ONBOARDING_QUESTIONS)[number]["id"] | null
+      from: (typeof ALL_SHARED_ONBOARDING_QUESTIONS)[number]["id"]
+      next: (typeof ALL_SHARED_ONBOARDING_QUESTIONS)[number]["id"] | null
     }> = [
       { from: "main_goal", next: "culture_stage" },
-      // target_role inserted at index 2 (Adam 2026-05-30) — confirm forward role
-      // intent right after culture_stage, before industry_interest.
       { from: "culture_stage", next: "target_role" },
       { from: "target_role", next: "industry_interest" },
       { from: "industry_interest", next: "location_relocation" },
@@ -251,6 +269,21 @@ describe("shared onboarding core (router / state / judges) — flag-invariant", 
     for (const step of expected) {
       const result = resolveNextSharedOnboardingQuestionId(step.from)
       assert.equal(result.nextQuestionId, step.next, `from=${step.from}`)
+    }
+  })
+
+  it("THIN ASKED router transitions form the trimmed chain target_role → location_relocation → done + rescue (2026-06-02 trim)", () => {
+    // The ASKED upfront flow is exactly the two hard-filter slots.
+    assert.deepEqual(SHARED_ONBOARDING_QUESTIONS.map((q) => q.id), ["target_role", "location_relocation"])
+    // The thin-path positional walker (resolveNextAsked…) traverses ONLY the two ASKED hard-filter slots.
+    assert.equal(resolveNextAskedSharedOnboardingQuestionId("target_role").nextQuestionId, "location_relocation")
+    const term = resolveNextAskedSharedOnboardingQuestionId("location_relocation")
+    assert.equal(term.nextQuestionId, null)
+    assert.equal(term.completed, true)
+    // In-flight rescue: a now-dropped stored slot resolves back to the first ASKED slot (target_role),
+    // never null/stall — so an in-flight user re-asks at most one short slot.
+    for (const dropped of ["main_goal", "culture_stage", "industry_interest", "seniority_comp", "special_context"] as const) {
+      assert.equal(resolveNextAskedSharedOnboardingQuestionId(dropped).nextQuestionId, "target_role", `rescue from=${dropped}`)
     }
   })
 })

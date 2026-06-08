@@ -204,8 +204,12 @@ async function readLevel1Fields(
  * `apps/functions/src/index.ts`. Composing the actual function inline
  * would entangle module-init in tests, so we accept it via injection +
  * provide a default via late-bound require for production.
+ *
+ * EXPORTED (2026-06-05 #3 convergence) so the prescreen→onboarding convergence
+ * (`startSharedOnboardingAfterPrescreen`) can fire the SAME find_match-backed recs
+ * the FAIL terminal already uses, instead of duplicating the closure. Reuse, not rebuild.
  */
-async function defaultGenerateJobRecs(args: {
+export async function defaultGenerateJobRecs(args: {
   userId: string
   toE164: string
   lang?: "zh" | "en"

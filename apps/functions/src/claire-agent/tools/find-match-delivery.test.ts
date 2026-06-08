@@ -11,10 +11,18 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { buildMatchingTools } from "./matching-tools.js"
+import { claireToolUseBehavior } from "../agent.js"
 import type { ClaireToolContext, FindMatchResult } from "../types.js"
 
-function recordingCtx(findMatch: ClaireToolContext["findMatch"]): { ctx: ClaireToolContext; sent: string[] } {
+type SentRow = { text: string; seq?: number; paced?: boolean }
+
+function recordingCtx(findMatch: ClaireToolContext["findMatch"]): {
+  ctx: ClaireToolContext
+  sent: string[]
+  rows: SentRow[]
+} {
   const sent: string[] = []
+  const rows: SentRow[] = []
   const ctx = {
     db: {} as never,
     userId: "u1",
@@ -24,8 +32,11 @@ function recordingCtx(findMatch: ClaireToolContext["findMatch"]): { ctx: ClaireT
       markRead: async () => {},
       typing: async () => {},
       sendStatus: async () => {},
-      sendText: async (t: string) => {
+      // Capture the opts (seq + paced) so we can assert the DELIVERED order, not just the call order.
+      // The live outbox drains by `seq`; unpaced rows are re-dwelled by body length and can reorder.
+      sendText: async (t: string, opts?: { seq?: number; paced?: boolean }) => {
         sent.push(t)
+        rows.push({ text: t, seq: opts?.seq, paced: opts?.paced })
       },
       tapback: async () => {},
       noReply: async () => {},
@@ -35,7 +46,7 @@ function recordingCtx(findMatch: ClaireToolContext["findMatch"]): { ctx: ClaireT
     nowIso: () => "2026-06-01T00:00:00.000Z",
     findMatch,
   } as unknown as ClaireToolContext
-  return { ctx, sent }
+  return { ctx, sent, rows }
 }
 
 function findMatchTool(ctx: ClaireToolContext) {
@@ -65,7 +76,7 @@ test("collab batch: tool sends intro + one bubble per role + a MANDATORY offer; 
       { jobId: "helium", title: "Product Engineer (Full-Stack)", company: "Helium", prescreenReady: true },
     ],
   }
-  const { ctx, sent } = recordingCtx(async () => res)
+  const { ctx, sent, rows } = recordingCtx(async () => res)
   const out = await run(ctx)
 
   // delivered → agent must stay silent
@@ -84,6 +95,23 @@ test("collab batch: tool sends intro + one bubble per role + a MANDATORY offer; 
   assert.match(offer, /prescreen/i)
   assert.match(offer, /MetaVoice/)
   assert.match(offer, /Helium/)
+
+  // STRICT ORDER (Adam 2026-06-04): ALL job role bubbles FIRST, the prescreen offer LAST — never
+  // interleaved (the live bug was job1, job2, OFFER, job3). Guard the delivered order three ways so
+  // a future refactor can't reintroduce the interleave:
+  //  (a) the offer is the LAST row, and EVERY job line lands strictly before it.
+  const offerIdx = rows.findIndex((r) => /prescreen/i.test(r.text))
+  assert.equal(offerIdx, rows.length - 1, "prescreen offer must be the LAST bubble")
+  for (const jobLine of [COLLAB_LINE_1, COLLAB_LINE_2, OPEN_LINE]) {
+    const jobIdx = rows.findIndex((r) => r.text === jobLine)
+    assert.ok(jobIdx > -1 && jobIdx < offerIdx, `job bubble must land before the offer: ${jobLine.slice(0, 24)}`)
+  }
+  //  (b) seq is strictly monotonic 0..N — the outbox drains by seq, so this IS the delivered order.
+  rows.forEach((r, i) => assert.equal(r.seq, i, `row ${i} must carry seq ${i}`))
+  //  (c) EVERY row is paced:true — the fix. Unpaced rows get a per-row length-based typing-dwell in
+  //      the outbox (dwell scales with body length), which let a short offer race ahead of a longer
+  //      job bubble. paced:true => the outbox posts in strict seq order with no reorder.
+  assert.ok(rows.every((r) => r.paced === true), "every rec bubble must be paced so seq order is honored")
 })
 
 test("no collab in batch: roles delivered, NO offer bubble", async () => {
@@ -127,4 +155,51 @@ test("matcher error (ok:false): nothing sent, delivered:false", async () => {
   assert.equal(out.ok, false)
   assert.equal(out.delivered, false)
   assert.equal(sent.length, 0)
+})
+
+// ── REC-HALLUCINATION: SDK-NATIVE TURN FINALIZATION (Adam 2026-06-06) ─────────────────────────────
+// Live bug: after find_match delivered the real recs, the agent ran a generation step and talked OVER
+// them — emitting generic `Senior Software Engineer @ [company] — … (US)` cards (no company data to
+// fill the placeholder) plus a fabricated `WeKruit fast-track prescreen offer: <résumé company>
+// (Software Engineering)` block built from the candidate's OWN experience. The fix is the @openai/
+// agents `toolUseBehavior` ToolToFinalOutputFunction: on a find_match result with delivered:true it
+// returns isFinalOutput:true → the SDK STOPS the agent loop WITHOUT running the LLM again (no
+// generation step = no hallucination). On delivered:false it returns isFinalOutput:false → the LLM
+// runs again and narrates the no-match clarifier. The finalOutput string is the agent's own
+// ClaireReplySchema shape ({messages:[]}) so processFinalOutput parses it to zero bubbles.
+test("toolUseBehavior: find_match delivered:true → isFinalOutput:true with empty-messages output (no LLM re-run)", () => {
+  const outcome = claireToolUseBehavior({}, [
+    { type: "function_output", tool: { name: "find_match" }, output: { ok: true, delivered: true, jobs: [] } },
+  ])
+  assert.equal(outcome.isFinalOutput, true)
+  assert.equal(
+    (outcome as { finalOutput: string }).finalOutput,
+    JSON.stringify({ messages: [] }),
+    "must finalize with the agent's terminal output ({messages:[]}) so no bubbles are composed",
+  )
+})
+
+test("toolUseBehavior: find_match delivered:true passed as a JSON STRING output is still finalized", () => {
+  const outcome = claireToolUseBehavior({}, [
+    { type: "function_output", tool: { name: "find_match" }, output: JSON.stringify({ delivered: true }) },
+  ])
+  assert.equal(outcome.isFinalOutput, true)
+})
+
+test("toolUseBehavior: find_match delivered:false (no match) → NOT final → LLM runs again to narrate", () => {
+  const outcome = claireToolUseBehavior({}, [
+    { type: "function_output", tool: { name: "find_match" }, output: { ok: true, delivered: false, jobs: [] } },
+  ])
+  assert.equal(outcome.isFinalOutput, false)
+})
+
+test("toolUseBehavior: a non-find_match tool result never finalizes (agent keeps composing)", () => {
+  const outcome = claireToolUseBehavior({}, [
+    { type: "function_output", tool: { name: "set_matching_preferences" }, output: { ok: true } },
+  ])
+  assert.equal(outcome.isFinalOutput, false)
+})
+
+test("toolUseBehavior: no tool results this turn → NOT final", () => {
+  assert.equal(claireToolUseBehavior({}, []).isFinalOutput, false)
 })

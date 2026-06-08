@@ -28,27 +28,19 @@ test("nextOnboardingSlot hands the earliest pending slot + a prompt", () => {
   assert.ok(typeof next.prompt === "string" && next.prompt.length > 0, "prompt provided")
 })
 
-test("default slots fall back to SHARED_ONBOARDING_QUESTIONS ids (7 slots)", () => {
-  // empty slots[] → reducer uses the canonical default set.
-  // 7 slots: target_role (forward role intent) inserted at index 2 after
-  // culture_stage (Adam 2026-05-30), plus seniority_comp (intern/seniority +
-  // expected salary + negotiable-or-firm) before special_context.
+test("default slots fall back to the ASKED SHARED_ONBOARDING_QUESTIONS ids (2 slots)", () => {
+  // 2026-06-02 onboarding trim (Adam #1 friction — "too many questions / minimal upfront"):
+  // the ASKED upfront flow is now ONLY the two HARD-filter axes — target_role (forward intent +
+  // warm opener) then location_relocation (targetLocations + the only place US-only is surfaced).
+  // The other 5 (main_goal / culture_stage / industry_interest / seniority_comp / special_context)
+  // stay DEFINITION-only (resolvable via getSharedOnboardingQuestion for in-flight users) but are
+  // no longer asked — record_onboarding_answer still extracts every canonical enum from any
+  // free-text turn, so no capture is lost. DEFAULT_ONBOARDING_SLOTS derives from the ASKED array.
   const s: OnboardingState = { slots: [], answers: {}, complete: false }
   const next = nextOnboardingSlot(s)
   assert.equal(next.pending, DEFAULT_ONBOARDING_SLOTS[0])
-  assert.equal(DEFAULT_ONBOARDING_SLOTS.length, 7, "7 canonical onboarding slots")
-  assert.deepEqual(
-    [...DEFAULT_ONBOARDING_SLOTS],
-    [
-      "main_goal",
-      "culture_stage",
-      "target_role",
-      "industry_interest",
-      "location_relocation",
-      "seniority_comp",
-      "special_context",
-    ],
-  )
+  assert.equal(DEFAULT_ONBOARDING_SLOTS.length, 2, "2 asked onboarding slots after the trim")
+  assert.deepEqual([...DEFAULT_ONBOARDING_SLOTS], ["target_role", "location_relocation"])
 })
 
 test("no-skip: recording a non-earliest slot is rejected (out_of_order)", () => {

@@ -14,9 +14,12 @@ import assert from "node:assert/strict"
 
 import {
   applyIndustryTagsFallback,
+  composeSkillsHintForIndustryRescue,
   mapToCanonicalIndustry,
   mapToCanonicalIndustryFromSignals,
   normalizeCompanyName,
+  rescueIndustryWithSkillsLlm,
+  type RunIndustrySecondPassFn,
 } from "../industry-tags.js"
 
 describe("mapToCanonicalIndustry — H8 INDUSTRY_KEY_MAP additions", () => {
@@ -575,5 +578,128 @@ describe("applyIndustryTagsFallback (iter34 H.3a)", () => {
       [42, null, undefined, "Python"] as unknown as string[]
     )
     assert.deepEqual(out, ["tech_software"])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Target D — LLM-driven industry rescue (skills threaded into the second-pass)
+// ---------------------------------------------------------------------------
+
+const noopLog = () => {}
+
+describe("composeSkillsHintForIndustryRescue", () => {
+  it("renders a single skills line", () => {
+    assert.equal(
+      composeSkillsHintForIndustryRescue(["Python", "AWS", "React"]),
+      "Candidate skills / tools: Python, AWS, React"
+    )
+  })
+  it("drops empty / non-string entries", () => {
+    const out = composeSkillsHintForIndustryRescue([
+      "  Python  ",
+      "",
+      "   ",
+      42 as unknown as string,
+      "Go",
+    ])
+    assert.equal(out, "Candidate skills / tools: Python, Go")
+  })
+  it("empty array → empty string (no hint)", () => {
+    assert.equal(composeSkillsHintForIndustryRescue([]), "")
+  })
+  it("caps at 40 skills", () => {
+    const many = Array.from({ length: 60 }, (_, i) => `skill${i}`)
+    const out = composeSkillsHintForIndustryRescue(many)
+    // 40 names → 39 commas
+    assert.equal((out.match(/,/g) ?? []).length, 39)
+  })
+})
+
+describe("rescueIndustryWithSkillsLlm (Target D)", () => {
+  it("D1: threads SKILLS into the second-pass cvText so SWE/Tesla/AWS is caught", async () => {
+    // The exact case the TECH_TOKENS regex existed to rescue: heavy on
+    // tools/companies, light on industry phrasing. With skills threaded in,
+    // the LLM second-pass receives them and returns a tech sector.
+    let receivedCvText = ""
+    const stub: RunIndustrySecondPassFn = async (a) => {
+      receivedCvText = a.cvText
+      // Model would return a canonical 42-token industry; second-pass already
+      // vocab-filters, so we just echo a plausible token.
+      return ["technology_general"]
+    }
+    const out = await rescueIndustryWithSkillsLlm({
+      cvText: "Software Engineer at Tesla. Built internal tools.",
+      skills: ["Python", "AWS", "React", "TypeScript"],
+      workHistory: [{ title: "Software Engineer", company: "Tesla" }],
+      apiKey: "k",
+      log: noopLog,
+      runIndustrySecondPassFn: stub,
+    })
+    assert.deepEqual(out, ["technology_general"])
+    // The skills hint must be present in the prompt input.
+    assert.match(receivedCvText, /Candidate skills \/ tools: Python, AWS, React, TypeScript/)
+    // The original cvText is preserved below the hint.
+    assert.match(receivedCvText, /Software Engineer at Tesla/)
+  })
+
+  it("D2: fail-open — second-pass returns [] → rescue returns [] (caller keeps prior value)", async () => {
+    const stub: RunIndustrySecondPassFn = async () => []
+    const out = await rescueIndustryWithSkillsLlm({
+      cvText: "cv",
+      skills: ["Python"],
+      workHistory: [],
+      apiKey: "k",
+      log: noopLog,
+      runIndustrySecondPassFn: stub,
+    })
+    assert.deepEqual(out, [])
+  })
+
+  it("D2b: fail-open — second-pass throws → rescue returns [] (NEVER throws)", async () => {
+    const stub: RunIndustrySecondPassFn = async () => {
+      throw new Error("provider down")
+    }
+    const out = await rescueIndustryWithSkillsLlm({
+      cvText: "cv",
+      skills: ["Python"],
+      workHistory: [],
+      apiKey: "k",
+      log: noopLog,
+      runIndustrySecondPassFn: stub,
+    })
+    assert.deepEqual(out, [])
+  })
+
+  it("D3: no skills → cvText passed through unchanged (no hint line)", async () => {
+    let receivedCvText = ""
+    const stub: RunIndustrySecondPassFn = async (a) => {
+      receivedCvText = a.cvText
+      return ["financial_technology"]
+    }
+    const out = await rescueIndustryWithSkillsLlm({
+      cvText: "Original CV text only.",
+      skills: [],
+      workHistory: [],
+      apiKey: "k",
+      log: noopLog,
+      runIndustrySecondPassFn: stub,
+    })
+    assert.deepEqual(out, ["financial_technology"])
+    assert.equal(receivedCvText, "Original CV text only.")
+    assert.doesNotMatch(receivedCvText, /Candidate skills/)
+  })
+
+  it("D4: non-string second-pass output is filtered to strings", async () => {
+    const stub: RunIndustrySecondPassFn = async () =>
+      ["technology_general", 7, null] as unknown as string[]
+    const out = await rescueIndustryWithSkillsLlm({
+      cvText: "cv",
+      skills: ["Go"],
+      workHistory: [],
+      apiKey: "k",
+      log: noopLog,
+      runIndustrySecondPassFn: stub,
+    })
+    assert.deepEqual(out, ["technology_general"])
   })
 })

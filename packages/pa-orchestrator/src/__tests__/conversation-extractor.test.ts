@@ -455,26 +455,41 @@ describe("SOFT-vs-HARD preference capture", () => {
     assert.equal(r.tagPatch.preferenceHardness?.companyStage?.hardness, "soft")
   })
 
-  it("schema rejects an unknown hardness axis (strict)", () => {
-    assert.throws(() =>
-      ConversationExtractResultSchema.parse({
-        tagPatch: { preferenceHardness: { madeUpAxis: { hardness: "hard" } } },
-        memoryEntities: [],
-        confidence: 0.9,
-        rationale: "",
-      }),
-    )
+  // RESILIENCE (2026-06-04): preferenceHardness is an OPTIONAL hint. A malformed hint must NEVER throw,
+  // because a strict throw was a parse_error that dropped the ENTIRE tagPatch — the candidate's real
+  // visa/salary/location/industry tags silently lost (the mid-onboarding real-seam data-loss bug). The
+  // schema now `.catch(undefined)`s a malformed axis (and the whole map for an unknown axis key), so the
+  // hint is dropped while the rest of the patch always lands. These tests lock that contract in.
+  it("TOLERATES an unknown hardness axis — drops preferenceHardness, never nukes the patch", () => {
+    const r = ConversationExtractResultSchema.parse({
+      tagPatch: {
+        industrySector: ["financial_technology"],
+        preferenceHardness: { madeUpAxis: { hardness: "hard" } },
+      },
+      memoryEntities: [],
+      confidence: 0.9,
+      rationale: "",
+    })
+    assert.deepEqual(r.tagPatch.industrySector, ["financial_technology"]) // real tag survives
+    assert.equal(r.tagPatch.preferenceHardness, undefined) // unknown axis → whole hint dropped, NOT thrown
   })
 
-  it("schema rejects an out-of-vocab hardness value", () => {
-    assert.throws(() =>
-      ConversationExtractResultSchema.parse({
-        tagPatch: { preferenceHardness: { location: { hardness: "kinda" } } },
-        memoryEntities: [],
-        confidence: 0.9,
-        rationale: "",
-      }),
-    )
+  it("TOLERATES an out-of-vocab hardness value — drops ONLY that axis, keeps valid axes + the patch", () => {
+    const r = ConversationExtractResultSchema.parse({
+      tagPatch: {
+        industrySector: ["financial_technology"],
+        preferenceHardness: {
+          location: { hardness: "kinda" }, // out-of-vocab → this axis alone is dropped
+          industrySector: { hardness: "hard" }, // valid → preserved
+        },
+      },
+      memoryEntities: [],
+      confidence: 0.9,
+      rationale: "",
+    })
+    assert.deepEqual(r.tagPatch.industrySector, ["financial_technology"]) // real tag survives
+    assert.equal(r.tagPatch.preferenceHardness?.location, undefined) // malformed axis dropped
+    assert.equal(r.tagPatch.preferenceHardness?.industrySector?.hardness, "hard") // valid axis preserved
   })
 
   it("prompt documents hard vs soft detection cues", () => {

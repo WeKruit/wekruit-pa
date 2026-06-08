@@ -47,22 +47,32 @@ export type OpenAIResponsesResult = {
  * Default factory: lazy-imports `openai` and returns a real client. Lazy
  * import keeps cold-start cheap when the parser path isn't hit.
  */
+// PER-REQUEST TIMEOUT (Adam 2026-06-06 "why is résumé parse taking minutes?"): the OpenAI SDK default
+// request timeout is ~10 min, so a slow/overloaded gpt-5.4-nano request HANGS for minutes (× maxRetries
+// × the 3-tier chain → up to ~30 min worst case) before falling through — the live 3-min résumé-parse
+// stall. Cap a single attempt at 30s so a hung tier fails FAST and the router moves to the next tier;
+// a normal tier-1 success (~15s) is unaffected. Overridable via args.timeoutMs.
+const DEFAULT_OPENAI_TIMEOUT_MS = 30_000
+
 async function defaultClientFactory(init: {
   apiKey: string
   baseURL?: string
   maxRetries?: number
+  timeoutMs?: number
 }): Promise<OpenAIResponsesClient> {
   const mod = (await import("openai")) as unknown as {
     default: new (init: {
       apiKey: string
       baseURL?: string
       maxRetries?: number
+      timeout?: number
     }) => OpenAIResponsesClient
   }
   return new mod.default({
     apiKey: init.apiKey,
     baseURL: init.baseURL,
     maxRetries: init.maxRetries,
+    timeout: init.timeoutMs ?? DEFAULT_OPENAI_TIMEOUT_MS,
   })
 }
 

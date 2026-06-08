@@ -5,6 +5,7 @@ import {
   CORESIGNAL_DEFAULT_BASE_URL,
   fetchCompanyCollect,
   fetchEmployeeCollect,
+  searchEmployeeIdByLinkedinUrl,
 } from "./coresignal-collect-client.js"
 
 const noSleep = (): Promise<void> => Promise.resolve()
@@ -13,14 +14,20 @@ function mockFetch(
   responses: Array<{ status: number; body?: unknown; throwError?: string }>,
 ): {
   fetchImpl: typeof fetch
-  calls: Array<{ url: string; headers: Record<string, string> }>
+  calls: Array<{ url: string; headers: Record<string, string>; body?: unknown }>
 } {
-  const calls: Array<{ url: string; headers: Record<string, string> }> = []
+  const calls: Array<{ url: string; headers: Record<string, string>; body?: unknown }> = []
   let i = 0
   const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString()
     const headers = (init?.headers ?? {}) as Record<string, string>
-    calls.push({ url, headers })
+    let body: unknown
+    try {
+      body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined
+    } catch {
+      body = undefined
+    }
+    calls.push({ url, headers, body })
     const spec = responses[Math.min(i, responses.length - 1)]
     i++
     if (spec.throwError) {
@@ -199,4 +206,69 @@ test("fetchEmployeeCollect — passes through unknown fields", async () => {
     sleepImpl: noSleep,
   })) as Record<string, unknown>
   assert.deepEqual(result.future_field_added_by_coresignal, { nested: "value" })
+})
+
+test("searchEmployeeIdByLinkedinUrl — POSTs ES-DSL and returns first id (array shape)", async () => {
+  const { fetchImpl, calls } = mockFetch([{ status: 200, body: [725992096, 111] }])
+  const id = await searchEmployeeIdByLinkedinUrl("https://linkedin.com/in/yue-h", {
+    apiKey: "test-key",
+    fetchImpl,
+    sleepImpl: noSleep,
+  })
+  assert.equal(id, 725992096)
+  assert.equal(calls.length, 1)
+  assert.equal(
+    calls[0].url,
+    `${CORESIGNAL_DEFAULT_BASE_URL}/employee_multi_source/search/es_dsl`,
+  )
+  assert.equal(calls[0].headers.apikey, "test-key")
+  // REGRESSION GUARD (2026-06-03): the resolver MUST query field `linkedin_url`
+  // via `match_phrase`. The old `websites_professional_network` query_string
+  // returned ZERO hits live — a silent no-match that broke every LinkedIn-URL
+  // enrichment. Pin the exact body so it can never regress to the dead field.
+  assert.deepEqual(calls[0].body, {
+    query: { match_phrase: { linkedin_url: "https://linkedin.com/in/yue-h" } },
+  })
+})
+
+test("searchEmployeeIdByLinkedinUrl — tolerates {data:[]} and {hits:{hits:[]}} shapes", async () => {
+  const wrapped = mockFetch([{ status: 200, body: { data: [{ id: 42 }] } }])
+  assert.equal(
+    await searchEmployeeIdByLinkedinUrl("https://linkedin.com/in/a", {
+      apiKey: "k",
+      fetchImpl: wrapped.fetchImpl,
+      sleepImpl: noSleep,
+    }),
+    42,
+  )
+  const hits = mockFetch([{ status: 200, body: { hits: { hits: [{ _id: "777" }] } } }])
+  assert.equal(
+    await searchEmployeeIdByLinkedinUrl("https://linkedin.com/in/b", {
+      apiKey: "k",
+      fetchImpl: hits.fetchImpl,
+      sleepImpl: noSleep,
+    }),
+    777,
+  )
+})
+
+test("searchEmployeeIdByLinkedinUrl — returns null when no match", async () => {
+  const { fetchImpl } = mockFetch([{ status: 200, body: [] }])
+  assert.equal(
+    await searchEmployeeIdByLinkedinUrl("https://linkedin.com/in/none", {
+      apiKey: "k",
+      fetchImpl,
+      sleepImpl: noSleep,
+    }),
+    null,
+  )
+})
+
+test("searchEmployeeIdByLinkedinUrl — empty url returns null without fetching", async () => {
+  const { fetchImpl, calls } = mockFetch([{ status: 200, body: [1] }])
+  assert.equal(
+    await searchEmployeeIdByLinkedinUrl("  ", { apiKey: "k", fetchImpl, sleepImpl: noSleep }),
+    null,
+  )
+  assert.equal(calls.length, 0)
 })

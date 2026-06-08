@@ -58,14 +58,17 @@ export interface RunPreScreenArgs {
    */
   suppressFirstQuestion?: boolean
   /**
-   * MATCHED-GATE bypass (2026-05-31). When true, skip the "was this job ever
-   * matched/pushed to this candidate" check. Set by callers whose jobId is NOT
-   * candidate-supplied free text and is therefore not the injection threat:
-   * admin test-drives, the broker control plane, the recovery-agent replay, the
-   * orchestrator's own collab-prescreen hook, and the post-PASS Apply flow.
-   * The candidate copy-paste `WeKruit_<jobId>_<userId>_Job` SELF path leaves this
-   * false so the gate runs. (Public-page first-timers bypass via
-   * `sourceRequestedUserId` — their pending-invite is the match evidence.)
+   * MATCHED-GATE bypass. When true, skip the "was this job ever matched/pushed to this candidate"
+   * check. The matched-gate now guards ONLY the CONVERSATIONAL start (Adam 2026-06-03: "the
+   * invited[gate] is for guarding the conversational start; but for string → start it's everyone").
+   * So this is true for every caller EXCEPT the agent's begin_collab_prescreen tool (which does its
+   * own matched-roles resolution before calling here):
+   *   - the candidate copy-paste `WeKruit_<jobId>_<userId>_Job` STRING trigger (PrescreenTrigger) —
+   *     token possession + the trigger's self-identity check IS the authorization;
+   *   - admin test-drives, the broker control plane, the recovery-agent replay, the post-PASS Apply
+   *     flow, and public-page first-timers (the last also via `sourceRequestedUserId`).
+   * Left FALSE (gate runs) only by begin_collab_prescreen, so an agent-guessed jobId can't start a
+   * screen the candidate was never matched to.
    */
   allowMatchedBypass?: boolean
   /**

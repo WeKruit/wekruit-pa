@@ -465,6 +465,14 @@ const SEED_FLAGS: FlagSpec[] = [
   // active pa-prescreen-sessions turn routes to the thin agent (mode-selector seeds the store from the
   // job's prescreenConfig); OFF → defer to the proven legacy prescreen runner (byte-identical today).
   { key: "paThinPrescreenEnabled", value: false, type: "bool", scope: "perUser", allowlist: ["8fEwIduUrzxZsblHHsNz", "UKFaKdsMzzfPW2CDl5ve"], blocklist: [] },
+  // Widenable scheduling gate (scheduling-gate.ts). perUser; default OFF; EMPTY
+  // allowlist by design so the seeded default is INERT (dev-uids-only — the
+  // SCHEDULING_DEV_UIDS floor in code is unchanged). Adam ramps interview
+  // scheduling + the proactive HITL-PASS invite to a real candidate by adding
+  // their uid to THIS allowlist (or flipping value:true) on the live doc — NO
+  // code deploy. Until then, real candidates get neither scheduling nor a
+  // proactive invite.
+  { key: "paSchedulingEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   // Collab prescreen invite: match/copy helpers only; SMS requires HITL approve on dashboard (no ingest hook).
   { key: "paCollabMatchInviteEnabled", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
   { key: "paResumeUploadAutoInvite", value: false, type: "bool", scope: "perUser", allowlist: [], blocklist: [] },
