@@ -591,6 +591,60 @@ export async function maybeRunThinClaire(
     return true
   }
 
+  // RECOGNIZED-CANDIDATE TEXT PITCH (Adam 2026-06-08): an enriched candidate (résumé-upload / LinkedIn)
+  // who TEXTS in for the first time hits mode.recognized_no_onboarding_wall → postParsePitch — but that
+  // only reached the chat AGENT, which gave a light "welcome back, want roles?" and went STRAIGHT to recs,
+  // never the trust-vehicle PITCH (live: darsh +18573982370, pitchedAt NEVER). The dedicated 3-bubble
+  // composePitchTurn engine previously fired ONLY on the cv-parsed re-entry. Fire it here too for a text
+  // opener so a recognized-but-never-pitched candidate gets the real pitch BEFORE recs (canonical flow).
+  // ONCE-ONLY: gated on !pitchedAt (composePitchTurn stamps pitchedAt + onboarding complete, and the
+  // mode-selector recognized path only fires while !onboardingComplete). FAIL-OPEN: a composer miss /
+  // error falls through to the agent path below (the existing greeting) — no regression. Canary-gated.
+  if (decision.postParsePitch === true && toE164 && isCanaryUser(userId) && !cvParsedReentry) {
+    try {
+      const uSnap = await db.collection(PA_COLLECTIONS.users).doc(userId).get()
+      const alreadyPitched = Boolean((uSnap.data() as { pitchedAt?: unknown } | undefined)?.pitchedAt)
+      if (!alreadyPitched) {
+        const { composePitchTurn } = await import("./compose-pitch.js")
+        const bubbles = await composePitchTurn(db, userId)
+        if (bubbles && bubbles.length > 0) {
+          const transport = createSendblueTransport({
+            db,
+            toE164: String(toE164),
+            inboundMessageHandle,
+            userId,
+            sessionId,
+            inboundEventId: eventId,
+            log,
+            ...(deps.dryRun ? { dryRun: true } : {}),
+          })
+          await transport.sendText(bubbles[0]!, { seq: 0 }) // confirmation
+          try { await transport.typing() } catch { /* typing is pure UX */ }
+          if (!deps.dryRun) await new Promise((r) => setTimeout(r, 10000)) // 10s reasoning beat before the pitch
+          await transport.sendText(bubbles[1]!, { seq: 1 }) // the PITCH
+          if (bubbles[2]) {
+            try { await transport.typing() } catch { /* typing is pure UX */ }
+            if (!deps.dryRun) await new Promise((r) => setTimeout(r, 2500))
+            await transport.sendText(bubbles[2]!, { seq: 2 }) // the OFFER — after the pitch
+          }
+          await db
+            .collection(PA_COLLECTIONS.inboundEvents)
+            .doc(eventId)
+            .set({ status: "completed", handledBy: "thin_claire_text_pitch" }, { merge: true })
+          log("thin_claire.text_pitch.sent", { eventId, userId, bubbles: bubbles.length })
+          return true
+        }
+        log("thin_claire.text_pitch.fallthrough", { eventId, userId })
+      }
+    } catch (err) {
+      log("thin_claire.text_pitch.error", {
+        eventId,
+        userId,
+        err: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+
   try {
     // Heavy agent + tools (and their @pa/agent-runtime/zod@4 SDK) load lazily here —
     // only after the flag gate passed — so they stay out of the boot graph. Any
