@@ -260,8 +260,46 @@ function firstWorkHistoryTitle(summary: unknown): string | undefined {
   return first && first.length > 0 ? first : undefined
 }
 
-function matchingCareerStageWindow(stage: CareerStage): CareerStage[] {
+/**
+ * FOUNDER_SENIOR_YOE — a "founder"/"co-founder" title only earns the wide senior+ EXECUTIVE band once
+ * total experience supports it. Below this, the title is an EARLY-CAREER signal (a small/early startup),
+ * NOT executive seniority. Live regression (2026-06-07, Noah +12154034668): careerStage=founder derived
+ * from the title "Co-Founder", yoeRange [1.5, 2.5] → he was matched to Senior Manager / Sr Delivery
+ * Manager. Mirrors earlyCareerRelaxWindow's locked intent ("a junior candidate is never leaked
+ * director/VP/C-level roles").
+ */
+const FOUNDER_SENIOR_YOE = 6
+
+/** Total-experience (years) → the canonical careerStage it implies (mirrors resume-baseline-tags). */
+function careerStageFromYoeMax(yoeMax: number): CareerStage {
+  if (yoeMax <= 3) return "entry_level"
+  if (yoeMax <= 5) return "mid_level"
+  if (yoeMax <= 8) return "senior"
+  if (yoeMax <= 12) return "staff"
+  return "principal"
+}
+
+/** Max years from a candidate's `yoeRange` tuple, or undefined when absent/malformed. */
+function careerStageYoeMaxFromTags(tags: UserTags): number | undefined {
+  const yoeRange = (tags as { yoeRange?: unknown }).yoeRange
+  if (
+    Array.isArray(yoeRange) &&
+    yoeRange.length === 2 &&
+    yoeRange.every((n) => typeof n === "number" && Number.isFinite(n))
+  ) {
+    return Math.max(yoeRange[0] as number, yoeRange[1] as number)
+  }
+  return undefined
+}
+
+export function matchingCareerStageWindow(stage: CareerStage, yoeMaxYears?: number): CareerStage[] {
   if (stage !== "founder") return acceptableCareerStages(stage)
+  // A founder with KNOWN low experience is early-career, not an executive hire → use the yoe-implied
+  // ±1 window so they are NEVER leaked senior/manager/director roles. A seasoned founder (yoe ≥
+  // FOUNDER_SENIOR_YOE) OR unknown yoe keeps the full executive band (a real founder fits senior+ scope).
+  if (typeof yoeMaxYears === "number" && Number.isFinite(yoeMaxYears) && yoeMaxYears < FOUNDER_SENIOR_YOE) {
+    return acceptableCareerStages(careerStageFromYoeMax(yoeMaxYears))
+  }
   return ["senior", "staff", "principal", "manager", "director", "vp", "c_level", "founder"]
 }
 
@@ -271,12 +309,12 @@ function matchingCareerStageWindow(stage: CareerStage): CareerStage[] {
  * reduces to the default `matchingCareerStageWindow`. Used only when the
  * careerStage axis is SOFT under `paPreferenceHardnessEnabled`.
  */
-function widenCareerStageWindow(stage: CareerStage, bufferSteps: number): CareerStage[] {
+function widenCareerStageWindow(stage: CareerStage, bufferSteps: number, yoeMaxYears?: number): CareerStage[] {
   const extra = Math.max(0, Math.floor(bufferSteps))
-  if (extra === 0) return matchingCareerStageWindow(stage)
+  if (extra === 0) return matchingCareerStageWindow(stage, yoeMaxYears)
   // founder is a parallel senior+ band — widen from its base window by ordinal.
-  const baseWindow = matchingCareerStageWindow(stage)
-  if (stage === "founder") return baseWindow // already a wide executive band
+  const baseWindow = matchingCareerStageWindow(stage, yoeMaxYears)
+  if (stage === "founder") return baseWindow // already a wide executive band (or yoe-capped early-career)
   const userIdx = CAREER_STAGE_INDEX[stage]
   const widened = new Set<CareerStage>(baseWindow)
   for (const s of CAREER_STAGE_VOCAB) {
@@ -1381,8 +1419,8 @@ function jobMissesSoftCareerStage(tags: UserTags, job: MatchingJob): boolean {
   const stage = tags.careerStage
   if (typeof stage !== "string" || !(CAREER_STAGE_VOCAB as readonly string[]).includes(stage)) return false
   // Demerit only when the job is OUTSIDE the widened window (within-buffer →
-  // no demerit; the soft axis "widens window by bufferSteps").
-  const widened = new Set(widenCareerStageWindow(stage as CareerStage, h.bufferSteps))
+  // no demerit; the soft axis "widens window by bufferSteps"). yoe caps the founder window too.
+  const widened = new Set(widenCareerStageWindow(stage as CareerStage, h.bufferSteps, careerStageYoeMaxFromTags(tags)))
   return !widened.has(jobStage)
 }
 
@@ -1555,6 +1593,9 @@ export function applyV16HardFilters(
   const careerStage = userTags.careerStage
   const careerStageValid =
     typeof careerStage === "string" && (CAREER_STAGE_VOCAB as readonly string[]).includes(careerStage)
+  // yoe caps the founder window: a low-yoe "founder" title is early-career, not executive (see
+  // matchingCareerStageWindow). Read once; threaded into the scalar window below.
+  const careerStageYoeMax = careerStageYoeMaxFromTags(userTags)
   // careerStageRange DRIVES matching (Adam-locked 2026-05-31): an EXPLICIT
   // candidate-authored range `[lo, hi]` defines the acceptable seniority window
   // directly — the full inclusive ordinal band — and OVERRIDES the ±1 scalar
@@ -1580,10 +1621,10 @@ export function applyV16HardFilters(
   const careerStageRelax = options.careerStageRelax ?? "strict"
   const careerStageWindow = (s: CareerStage): CareerStage[] => {
     if (hCareerStage && hCareerStage.hardness === "soft") {
-      return widenCareerStageWindow(s, hCareerStage.bufferSteps)
+      return widenCareerStageWindow(s, hCareerStage.bufferSteps, careerStageYoeMax)
     }
     if (careerStageRelax === "early_down") return earlyCareerRelaxWindow(s)
-    return matchingCareerStageWindow(s)
+    return matchingCareerStageWindow(s, careerStageYoeMax)
   }
   const acceptableStages = careerStageRange
     ? new Set(

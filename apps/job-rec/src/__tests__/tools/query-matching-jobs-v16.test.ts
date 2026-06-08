@@ -4137,3 +4137,49 @@ test("queryMatchingJobsV16: returns 0 only when even the general-market fallback
   assert.equal(r.total, 0)
   assert.notEqual(r.fallbackApplied, true)
 })
+
+test("applyV16HardFilters: a LOW-yoe founder is NOT leaked senior/manager roles (yoe-gated founder window)", () => {
+  // Live regression (Noah +12154034668): careerStage=founder derived from the title "Co-Founder",
+  // but yoeRange [1.5, 2.5] → he was matched to Senior Manager / Sr Delivery Manager. A "founder"
+  // title only earns the senior+ executive band once total experience supports it; a low-yoe founder
+  // is early-career and must use the yoe-implied window (entry/junior), never senior+/manager.
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "junior", seniorityLevel: "junior" }),
+    mkJob({ id: "mid", seniorityLevel: "mid_level" }),
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "manager", seniorityLevel: "manager" }),
+    mkJob({ id: "founder", seniorityLevel: "founder" }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "founder", yoeRange: [1.5, 2.5] } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  const kept = r.kept.map((j) => j.id)
+  assert.equal(kept.includes("senior"), false, "junior founder must NOT match a senior role")
+  assert.equal(kept.includes("manager"), false, "junior founder must NOT match a manager role")
+  assert.equal(kept.includes("founder"), false, "junior founder must NOT match a founder-tier role")
+  assert.ok(kept.includes("junior"), "a junior-level role still matches")
+})
+
+test("applyV16HardFilters: a SEASONED/unknown-yoe founder keeps the senior+ executive band (back-compat)", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "manager", seniorityLevel: "manager" }),
+    mkJob({ id: "founder", seniorityLevel: "founder" }),
+    mkJob({ id: "junior", seniorityLevel: "junior" }),
+  ]
+  // no yoeRange → unknown experience → keep the full executive band (a real founder fits senior+ scope)
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "founder" } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  const kept = r.kept.map((j) => j.id)
+  assert.ok(kept.includes("senior") && kept.includes("manager") && kept.includes("founder"), "founder band keeps senior+")
+  assert.equal(kept.includes("junior"), false, "founder band excludes junior")
+})
+
+test("applyV16HardFilters: a high-yoe founder (yoe 10) keeps the senior+ executive band", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "senior", seniorityLevel: "senior" }),
+    mkJob({ id: "manager", seniorityLevel: "manager" }),
+  ]
+  const tags = { skills: [], industryEnum: [], schemaVersion: 1, careerStage: "founder", yoeRange: [8, 12] } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id).sort(), ["manager", "senior"], "seasoned founder still matches senior+")
+})
