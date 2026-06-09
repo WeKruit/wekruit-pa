@@ -190,7 +190,7 @@ function makeFakeStore(init: FakeStoreInit = {}) {
   const store: RerankStore = {
     fetchActiveUsers: async () => users.map((u) => ({ id: u.id, tags: { ...u.tags } })),
     getRerankCache: async (userId) => rerankCache[userId] ?? null,
-    fetchCandidateJobs: async (roles) => {
+    fetchCandidateJobs: async (_userId, roles) => {
       fetchCandidatesCalls++
       return init.candidatesByRole?.(roles) ?? []
     },
@@ -410,6 +410,26 @@ describe("processOneUser", () => {
     assert.equal(counters.errored, 1)
     assert.equal(counters.processed, 0)
     assert.equal(fake.rerankWrites.length, 0)
+  })
+
+  it("EMPTY rerank over a non-empty pool → no cache write (2026-06-09 llmMatch=0 incident)", async () => {
+    const fake = makeFakeStore({
+      candidatesByRole: () => [{ id: "j1", roleTitle: "r", companyName: "c" }],
+    })
+    const counters = emptyCounters()
+    await processOneUser(
+      "u1",
+      { targetRoleFunction: ["x"], skills: [] },
+      counters,
+      baseDeps({
+        store: fake.store,
+        // Truncated-JSON / 429 path: llmRerank returns cleanly with ranked=[].
+        llmRerankImpl: async () => ({ ranked: [], modelUsed: "m", latencyMs: 1 }),
+      })
+    )
+    assert.equal(fake.rerankWrites.length, 0, "empty result must not clobber the previous cache")
+    assert.equal(counters.processed, 0)
+    assert.equal(counters.errored, 1)
   })
 
   it("candidate fetch error → counter bumped", async () => {

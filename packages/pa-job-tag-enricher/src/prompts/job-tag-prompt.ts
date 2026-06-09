@@ -43,7 +43,16 @@ Field-by-field guidance:
 \`roleFunction\` — pick 1 or 2 from the CLOSED enum (jobright utm_campaign 17):
 ${ROLE_FUNCTION_VOCAB.join(", ")}
 
-This is the HARD-FILTER axis at match-time. A "Sales Development Rep" → \`sales\`, NOT \`software_engineering\`. A "Senior Backend Engineer" → \`software_engineering\`. A "Product Designer" → \`creatives_and_design\`.
+This is the HARD-FILTER axis at match-time: a match on ANY listed function routes this job to candidates targeting that function, so a padded or speculative tag sends the job to the WRONG people. Default to ONE function — the role's primary day-to-day function. Add a second ONLY when the JD genuinely splits the job across two functions (e.g. "Sales Engineer" → \`sales\` + \`engineering_and_development\`); never add a second tag for adjacent skills, the team the role serves, or the product domain.
+
+A "Sales Development Rep" → \`sales\`, NOT \`software_engineering\`. A "Senior Backend Engineer" → \`software_engineering\`. A "Product Designer" → \`creatives_and_design\`.
+
+\`product_management\` means the role OWNS product strategy / roadmap / requirements (Product Manager, Associate Product Manager, Product Owner, Head of Product). There is NO \`project_management\` token in the enum, and "project" does NOT round to "product": a Project Manager / Program Manager runs schedules, budgets, and stakeholders — they do not own a product. \`product_management\` is NOT:
+- Project Manager / Program Manager / Project Coordinator / Delivery Manager / Production Manager → \`management_and_executive\`, \`business_analyst\`, or \`consultant\` per the JD — NEVER \`product_management\`
+- Customer Success Manager / Account Manager / Support → \`customer_service_and_support\` (quota-carrying account roles may add \`sales\`)
+- Strategy & Operations / GTM / BizOps → \`business_analyst\` or \`consultant\`
+- Product Marketing → \`marketing\`; Product Designer → \`creatives_and_design\`; Product Engineer → \`software_engineering\`
+A job attached to a "product line" (data products, pricing products, payments products) is NOT \`product_management\` unless the role itself does product management work.
 
 \`industrySector\` — pick 1 to 3 from the CLOSED enum (42 sectors):
 ${INDUSTRY_SECTOR_VOCAB.join(", ")}
