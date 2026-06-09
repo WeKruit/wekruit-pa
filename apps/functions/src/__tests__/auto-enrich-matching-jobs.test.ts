@@ -14,10 +14,38 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
 import {
+  buildEnrichmentJobDescription,
   needsEnrichment,
   needsSponsorshipInference,
   computeSemanticHash,
 } from "../auto-enrich-matching-jobs.js"
+
+describe("buildEnrichmentJobDescription", () => {
+  it("joins summary + coreResponsibilities + qualifications", () => {
+    const out = buildEnrichmentJobDescription({
+      jobDescription: "Short summary.",
+      coreResponsibilities: ["Own customer onboarding"],
+      qualifications: ["1+ years in customer success"],
+    })
+    assert.ok(out!.includes("Short summary."))
+    assert.ok(out!.includes("Core responsibilities:"))
+    assert.ok(out!.includes("Own customer onboarding"))
+    assert.ok(out!.includes("Qualifications:"))
+    assert.ok(out!.includes("1+ years in customer success"))
+  })
+
+  it("returns summary alone when arrays absent", () => {
+    const out = buildEnrichmentJobDescription({ jobDescription: "Only summary." })
+    assert.equal(out, "Only summary.")
+  })
+
+  it("returns null when nothing present (title-only doc)", () => {
+    assert.equal(
+      buildEnrichmentJobDescription({ jobDescription: "", coreResponsibilities: [], qualifications: null }),
+      null,
+    )
+  })
+})
 
 describe("paMatchingJobsAutoEnrich — needsEnrichment", () => {
   it("returns false when doc is undefined", () => {
@@ -37,7 +65,7 @@ describe("paMatchingJobsAutoEnrich — needsEnrichment", () => {
       roleTitle: "Senior Engineer",
       companyName: "Acme",
       jobDescription: "Build things. React, TS.",
-      enricherVersion: "v1.9.0",
+      enricherVersion: "v1.10.0",
     }
     const out = needsEnrichment({ ...doc, enricherSemanticHash: computeSemanticHash(doc) })
     assert.equal(out, false)
@@ -51,7 +79,7 @@ describe("paMatchingJobsAutoEnrich — needsEnrichment", () => {
       roleTitle: "Senior Engineer",
       companyName: "Acme",
       jobDescription: "Build things. React, TS.",
-      enricherVersion: "v1.9.0",
+      enricherVersion: "v1.10.0",
     }
     const stamp = computeSemanticHash(original)
     // re-scrape rewrites title with emoji + different case/punct + new contentHash
@@ -71,7 +99,7 @@ describe("paMatchingJobsAutoEnrich — needsEnrichment", () => {
       roleTitle: "Senior Engineer",
       companyName: "Acme",
       jobDescription: "Build things. React, TS.",
-      enricherVersion: "v1.9.0",
+      enricherVersion: "v1.10.0",
     }
     const stamp = computeSemanticHash(original)
     const realChange = {
@@ -82,11 +110,11 @@ describe("paMatchingJobsAutoEnrich — needsEnrichment", () => {
     assert.equal(needsEnrichment(realChange), true, "real JD-body change must re-enrich")
   })
 
-  it("returns true when enricherVersion is stale (v1.8.1 → v1.9.0 bump)", () => {
+  it("returns true when enricherVersion is stale (v1.9.0 → v1.10.0 bump)", () => {
     const out = needsEnrichment({
       status: "active",
       roleTitle: "Senior Engineer",
-      enricherVersion: "v1.8.1",
+      enricherVersion: "v1.9.0",
       enricherContentHash: "abc",
       contentHash: "abc",
     })

@@ -1115,16 +1115,21 @@ function cleanRecruiterInviteCode(value: string): string {
   return value.trim().toUpperCase()
 }
 
+function cleanRecruiterName(value: string): string {
+  return value.trim().replace(/\s+/g, " ")
+}
+
 function createRecruiterGoogleProvider(): GoogleAuthProvider {
   const provider = new GoogleAuthProvider()
   provider.setCustomParameters({ prompt: "select_account" })
   return provider
 }
 
-const RECRUITER_ACCESS_PENDING_KEY = "wk_recruiter_access_pending_v1"
+const RECRUITER_ACCESS_PENDING_KEY = "wk_recruiter_access_pending_v2"
 
 interface PendingRecruiterAccess {
   inviteCode: string
+  name: string
   createdAtMs: number
 }
 
@@ -1134,11 +1139,16 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<PendingRecruiterAccess>
     if (!parsed.inviteCode || typeof parsed.inviteCode !== "string") return null
+    if (!parsed.name || typeof parsed.name !== "string") return null
     if (typeof parsed.createdAtMs !== "number" || Date.now() - parsed.createdAtMs > 10 * 60 * 1000) {
       storage.removeItem(RECRUITER_ACCESS_PENDING_KEY)
       return null
     }
-    return { inviteCode: parsed.inviteCode, createdAtMs: parsed.createdAtMs }
+    return {
+      inviteCode: parsed.inviteCode,
+      name: cleanRecruiterName(parsed.name),
+      createdAtMs: parsed.createdAtMs,
+    }
   }
 
   try {
@@ -1154,9 +1164,10 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
   }
 }
 
-function writePendingRecruiterAccess(inviteCode: string) {
+function writePendingRecruiterAccess(inviteCode: string, name: string) {
   const payload = JSON.stringify({
     inviteCode,
+    name,
     createdAtMs: Date.now(),
   })
   let wrote = false
@@ -1186,13 +1197,6 @@ function clearPendingRecruiterAccess() {
   } catch {
     // localStorage can be unavailable in private browsing.
   }
-}
-
-function recruiterNameFromGoogleUser(user: User): string {
-  const displayName = user.displayName?.trim()
-  if (displayName) return displayName
-  const emailPrefix = user.email?.split("@")[0]?.replace(/[._-]+/g, " ").trim()
-  return emailPrefix || "Recruiter"
 }
 
 function authErrorCode(error: unknown): string {
@@ -1278,7 +1282,7 @@ export default function RecruiterBoard() {
           const email = cleanRecruiterEmail(user.email ?? "")
           if (!email) throw new Error("Google did not return an email for this account.")
           const next = await registerRecruiterAccess({
-            name: recruiterNameFromGoogleUser(user),
+            name: pending.name,
             email,
             inviteCode: pending.inviteCode,
           })
@@ -4256,6 +4260,7 @@ function RecruiterAccessGate({
   initialInviteCode?: string | null
 }) {
   const normalizedInitialInviteCode = cleanRecruiterInviteCode(initialInviteCode ?? "")
+  const [recruiterName, setRecruiterName] = useState("")
   const [inviteCode, setInviteCode] = useState(normalizedInitialInviteCode)
   const [err, setErr] = useState<string | null>(initialError ?? null)
   const [busy, setBusy] = useState(false)
@@ -4270,7 +4275,12 @@ function RecruiterAccessGate({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
+    const trimmedRecruiterName = cleanRecruiterName(recruiterName)
     const trimmedInviteCode = cleanRecruiterInviteCode(inviteCode)
+    if (!trimmedRecruiterName) {
+      setErr("Enter your name before claiming recruiter access.")
+      return
+    }
     if (!trimmedInviteCode) {
       setErr("Enter your recruiter access code first.")
       return
@@ -4278,7 +4288,7 @@ function RecruiterAccessGate({
     setBusy(true)
     setErr(null)
     try {
-      writePendingRecruiterAccess(trimmedInviteCode)
+      writePendingRecruiterAccess(trimmedInviteCode, trimmedRecruiterName)
       if (auth().currentUser) await signOut(auth())
       await signInWithPopup(auth(), createRecruiterGoogleProvider())
     } catch (error) {
@@ -4331,8 +4341,18 @@ function RecruiterAccessGate({
             <span className="rb-access__badge">Registered recruiters only</span>
             <h2>Claim recruiter access</h2>
             <p className="rb-access__hint">
-              Enter the one-use code WeKruit issued, then choose the Google account it should bind to. Google sign-in without a valid code is blocked.
+              Enter your name and the one-use code WeKruit issued, then choose the Google account it should bind to. Google sign-in without a valid code is blocked.
             </p>
+            <label>
+              <span>Your name</span>
+              <input
+                value={recruiterName}
+                onChange={(e) => setRecruiterName(e.target.value)}
+                placeholder="Jane Recruiter"
+                autoComplete="name"
+                required
+              />
+            </label>
             <label>
               <span>Access code</span>
               <input

@@ -48,6 +48,7 @@ import {
   type QueryDocumentSnapshot,
 } from "firebase-admin/firestore"
 
+import { queryMatchingJobsV16 } from "@pa/job-rec"
 import { llmRerank, type RerankInput, type RerankOutput } from "./lib/llm-rerank.js"
 import {
   computeJdRelativeWeights,
@@ -162,8 +163,11 @@ export type RerankStore = {
   fetchActiveUsers: () => Promise<Array<{ id: string; tags: UserTagsLike }>>
   /** Read existing rerank cache (for skip-fresh check). Returns null when missing. */
   getRerankCache: (userId: string) => Promise<{ computedAt: string } | null>
-  /** Pull a candidate pool of jobs for one user. */
+  /** Pull a candidate pool of jobs for one user. `userId` lets the prod store
+   * align the pool with the V16 hard-filter survivors (see 2026-06-09 note at
+   * the prod impl); fakes may ignore it. */
   fetchCandidateJobs: (
+    userId: string,
     targetRoleFunction: string[],
     poolSize: number
   ) => Promise<RerankJobDoc[]>
@@ -370,7 +374,7 @@ export async function processOneUser(
 
   let candidates: RerankJobDoc[]
   try {
-    candidates = await deps.store.fetchCandidateJobs(targetRoleFunction, poolSize)
+    candidates = await deps.store.fetchCandidateJobs(userId, targetRoleFunction, poolSize)
   } catch (err) {
     counters.errored++
     errorLog("candidate_fetch_failed", {
@@ -399,8 +403,23 @@ export async function processOneUser(
     return
   }
 
-  // 4. Write rerank cache (always — even when ranked is empty, so the next
-  //    night's skip-fresh check fires correctly).
+  // 4. Write rerank cache — but NEVER cache an EMPTY result over a non-empty
+  //    pool. The old "write always so skip-fresh fires" policy was the poison
+  //    half of the 2026-06-09 fleet-wide llmMatch=0 incident: a truncated/429'd
+  //    rerank returned ranked=[], the empty result got stamped with a fresh
+  //    computedAt, skip-fresh then protected the empty cache for 23h, and V16
+  //    scored llmMatch=0 (0.40 weight) for every job. An empty result over a
+  //    non-empty pool is a FAILURE, not an answer — leave the previous cache in
+  //    place and let the next nightly retry this user.
+  if (rerankOut.ranked.length === 0 && rerankInput.jobs.length > 0) {
+    counters.errored++
+    errorLog("rerank_empty_not_cached", {
+      userId,
+      poolSize: rerankInput.jobs.length,
+      modelUsed: rerankOut.modelUsed,
+    })
+    return
+  }
   const computedAt = new Date(deps.now()).toISOString()
   try {
     await deps.store.writeRerankCache(userId, {
@@ -623,12 +642,39 @@ export function makeFirestoreStore(db: Firestore = getFirestore()): RerankStore 
         return null
       }
     },
-    fetchCandidateJobs: async (targetRoleFunction: string[], poolSize: number) => {
+    fetchCandidateJobs: async (userId: string, targetRoleFunction: string[], poolSize: number) => {
+      // 2026-06-09 pool-alignment fix: the rerank cache only helps if its
+      // jobIds OVERLAP the jobs V16 actually scores at match time. The old
+      // pool here ("newest poolSize by roleFunction") ignored V16's location /
+      // careerStage / adaptive-freshness hard filters, so the cached 50 and
+      // V16's survivors were mostly DISJOINT sets — llmMatch read 0 for nearly
+      // every scored job even when the cache was fresh (verified live on
+      // ssqaUnielimoqZdELhbP: fresh 50-row cache, all-zero llmMatch). Primary
+      // path now asks V16 itself for the user's top hard-filter survivors;
+      // the legacy role-function query remains as the fallback.
+      try {
+        const v16 = await queryMatchingJobsV16(
+          { userId, limit: poolSize, allowBroadFallback: true },
+          { db },
+        )
+        const jobs = Array.isArray(v16?.jobs) ? v16.jobs : []
+        if (jobs.length > 0) {
+          return jobs
+            .filter((j: { id?: unknown }) => typeof j?.id === "string" && (j.id as string).length > 0)
+            .map((j: Record<string, unknown>) => projectJobDoc(j.id as string, j as DocumentData))
+        }
+      } catch (err) {
+        logger.warn("[nightly-rerank] v16_pool_failed_fallback_legacy", {
+          userId,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
       const nowMs = Date.now()
       const cutoffMs = nowMs - FRESHNESS_WINDOW_MS
-      // Mirror the V16 reader query: status==active, role array-contains-any,
-      // ordered by firstSeenAt desc, capped to `poolSize`. We then drop dead
-      // rows + missing/jobright atsApplyUrl + freshness violations in-memory.
+      // LEGACY fallback — mirror the V16 reader query: status==active, role
+      // array-contains-any, ordered by firstSeenAt desc, capped to `poolSize`.
+      // We then drop dead rows + missing/jobright atsApplyUrl + freshness
+      // violations in-memory.
       const roles = targetRoleFunction.slice(0, ROLE_FUNCTION_QUERY_CAP)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let q: any = db
