@@ -133,12 +133,13 @@ export async function resolveExternalSupplyIdentity(
       )
       if (emailMismatch) {
         const conflict = CandidateIdentityConflictSchema.parse({
+          // Commutative id: sort the candidate pair so the same conflict
+          // detected with flipped handle ownership maps to the SAME doc.
           conflictId: deterministicConflictId([
             "linkedin_email_candidate_mismatch",
             record.linkedinProfileHash,
             emailMismatch.emailHash,
-            linkedinHit.candidateId,
-            emailMismatch.candidateId,
+            ...[linkedinHit.candidateId, emailMismatch.candidateId].sort(),
           ]),
           kind: "linkedin_email_candidate_mismatch",
           primaryCandidateId: linkedinHit.candidateId,

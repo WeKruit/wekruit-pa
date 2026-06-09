@@ -191,6 +191,89 @@ test("employer email mismatch records identity conflict and creates no candidate
   assert.equal(store.get(PA_COLLECTIONS.candidateIdentityConflicts)!.size, 1)
 })
 
+test("handle_candidate_mismatch conflictId is commutative (A→B and B→A map to the same doc)", async () => {
+  const { db, store } = makeFakeFirestore()
+  const phone = "+14155550100"
+  await linkCandidateHandle(db, {
+    candidateId: "cand-a",
+    kind: "phone",
+    value: phone,
+    source: "resume",
+    deliverable: true,
+    now,
+  })
+  let firstConflictId = ""
+  await assert.rejects(
+    () =>
+      linkCandidateHandle(db, {
+        candidateId: "cand-b",
+        kind: "phone",
+        value: phone,
+        source: "resume",
+        deliverable: true,
+        now,
+      }),
+    (err: Error) => {
+      firstConflictId = err.message.replace("identity_conflict:", "")
+      return err.message.startsWith("identity_conflict:")
+    },
+  )
+  assert.equal(store.get(PA_COLLECTIONS.candidateIdentityConflicts)!.size, 1)
+
+  // Flip handle ownership (e.g. post-merge reassignment) and detect the SAME
+  // pair from the opposite direction: cand-a now attempts cand-b's handle.
+  const handleId = hashCandidateHandle("phone", phone).handleId
+  await db
+    .collection(PA_COLLECTIONS.candidateHandles)
+    .doc(handleId)
+    .set({ candidateId: "cand-b" }, { merge: true })
+  let secondConflictId = ""
+  await assert.rejects(
+    () =>
+      linkCandidateHandle(db, {
+        candidateId: "cand-a",
+        kind: "phone",
+        value: phone,
+        source: "resume",
+        deliverable: true,
+        now,
+      }),
+    (err: Error) => {
+      secondConflictId = err.message.replace("identity_conflict:", "")
+      return err.message.startsWith("identity_conflict:")
+    },
+  )
+  assert.equal(secondConflictId, firstConflictId, "B→A detection must produce the SAME conflictId as A→B")
+  assert.equal(
+    store.get(PA_COLLECTIONS.candidateIdentityConflicts)!.size,
+    1,
+    "opposite-direction detection must NOT create a second conflict doc",
+  )
+})
+
+test("pdf/employer email mismatch conflictId is commutative across swapped roles", async () => {
+  const { db, store } = makeFakeFirestore()
+  const first = await resolveCandidateIdentity(db, {
+    extractedEmail: "pdf@example.com",
+    employerEmailHint: "hint@example.com",
+    source: "ats",
+    now,
+  })
+  assert.equal(first.outcome, "identity_conflict")
+  if (first.outcome !== "identity_conflict") return
+
+  const second = await resolveCandidateIdentity(db, {
+    extractedEmail: "hint@example.com",
+    employerEmailHint: "pdf@example.com",
+    source: "ats",
+    now,
+  })
+  assert.equal(second.outcome, "identity_conflict")
+  if (second.outcome !== "identity_conflict") return
+  assert.equal(second.conflict.conflictId, first.conflict.conflictId)
+  assert.equal(store.get(PA_COLLECTIONS.candidateIdentityConflicts)!.size, 1)
+})
+
 test("same handle cannot silently link to a second candidate", async () => {
   const { db, store } = makeFakeFirestore()
   await linkCandidateHandle(db, {

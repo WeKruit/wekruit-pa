@@ -264,6 +264,10 @@ export {
 // rollups, and paginated session pages over pa-prescreen-sessions (the
 // client-side limit(75) reads undercounted).
 export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
+// Identity-conflict resolve/dismiss + true counts — client Firestore writes
+// to pa-candidate-identity-conflicts are rules-denied, so the dashboard
+// /admin/identity-conflicts page goes through this callable.
+export { paAdminIdentityConflictsResolve } from "./admin-identity-conflicts.js"
 
 // v2.2 W6 — admin-only callable that seeds outbound-bookings/{id} with
 // voiceState=dialing to trigger the existing S3 dial gate. Backs the

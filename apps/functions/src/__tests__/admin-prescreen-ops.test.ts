@@ -226,6 +226,8 @@ describe("runAdminPrescreenOpsSnapshot", () => {
     assert.equal(withTest.rows.find((row) => row.id === "s-pending")?.candidateClass, "candidate_account")
     assert.equal(withTest.rows.find((row) => row.id === "s-pending")?.terminalReason, "below threshold")
     assert.equal(withTest.rows.find((row) => row.id === "s-pending")?.threshold, 2.4)
+    assert.ok(withTest.rows.every((row) => row.jobTitle === "Growth Marketer"))
+    assert.ok(withTest.rows.every((row) => row.jobCompany === "Acme"))
 
     const realOnly = await runSessions(mfs, { mode: "sessions", jobId: "job-a", limit: 10 })
     assert.deepEqual(realOnly.rows.map((row) => row.id), ["s-pending", "s-committed", "s-paused", "s-inprog"])
@@ -234,6 +236,8 @@ describe("runAdminPrescreenOpsSnapshot", () => {
     const jobBStates = new Map(jobB.rows.map((row) => [row.id, row.reviewState]))
     assert.equal(jobBStates.get("s-stranded"), "stranded")
     assert.equal(jobBStates.get("s-auto"), "auto_finalized")
+    assert.equal(jobB.rows.find((row) => row.id === "s-stranded")?.jobTitle, "Product Designer")
+    assert.equal(jobB.rows.find((row) => row.id === "s-stranded")?.jobCompany, "Invoko")
   })
 
   it("tier-2 backfilled legacy_unreviewed sessions stay auto_finalized, not stranded", async () => {
@@ -334,5 +338,46 @@ describe("runAdminPrescreenOpsSnapshot", () => {
 
     assert.equal(pages, 3)
     assert.deepEqual(seen, ["s-pending", "s-committed", "s-paused", "s-inprog", "s-testuser"])
+  })
+
+  it("sessions mode pagination keeps sibling rows that share the cursor createdAt", async () => {
+    const mfs = new MockFirestore()
+    await mfs.collection(PA_COLLECTIONS.users).doc("cand-tie").set({
+      phoneE164: "+14155550110",
+      piiConsentAt: now,
+    })
+    await mfs.collection(PA_COLLECTIONS.jobs).doc("job-tie").set({ title: "SWE", company: "Rain", status: "active" })
+    const sharedCreatedAt = "2026-06-08T07:00:00.000Z"
+    for (const id of ["s-tie-a", "s-tie-b", "s-tie-c"]) {
+      await mfs.collection(PRESCREEN_SESSIONS).doc(id).set({
+        userId: "cand-tie",
+        jobId: "job-tie",
+        terminal: "FAIL",
+        score: 1,
+        scoreMax: 3,
+        createdAt: sharedCreatedAt,
+      })
+    }
+
+    const seen: string[] = []
+    let cursor: { createdAt: string; docId: string } | undefined
+    let pages = 0
+    for (;;) {
+      const page = await runSessions(mfs, {
+        mode: "sessions",
+        jobId: "job-tie",
+        limit: 2,
+        ...(cursor ? { cursor } : {}),
+      })
+      seen.push(...page.rows.map((row) => row.id))
+      pages += 1
+      if (!page.nextCursor) break
+      cursor = page.nextCursor
+      assert.ok(pages < 10, "cursor walk did not terminate")
+    }
+
+    assert.equal(pages, 2)
+    assert.equal(new Set(seen).size, seen.length)
+    assert.deepEqual([...seen].sort(), ["s-tie-a", "s-tie-b", "s-tie-c"])
   })
 })

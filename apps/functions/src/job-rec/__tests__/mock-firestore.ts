@@ -85,49 +85,59 @@ class DocRef {
 }
 
 type Filter = { field: string; op: "==" | "<=" | "in"; value: unknown }
+type Order = { field: string; dir: "asc" | "desc" }
 class Query {
   constructor(
     protected mfs: MockFirestore,
     protected collectionPath: string,
     protected filters: Filter[] = [],
-    protected orderField?: string,
-    protected orderDir: "asc" | "desc" = "asc",
+    protected orders: Order[] = [],
     protected lim: number = 0,
-    protected startAfterValue?: unknown
+    protected startAfterValues?: unknown[]
   ) {}
 
   where(field: string, op: "==" | "<=" | "in", value: unknown): Query {
-    return new Query(this.mfs, this.collectionPath, [...this.filters, { field, op, value }], this.orderField, this.orderDir, this.lim, this.startAfterValue)
+    return new Query(this.mfs, this.collectionPath, [...this.filters, { field, op, value }], this.orders, this.lim, this.startAfterValues)
   }
 
   orderBy(field: string, dir: "asc" | "desc" = "asc"): Query {
-    return new Query(this.mfs, this.collectionPath, this.filters, field, dir, this.lim, this.startAfterValue)
+    return new Query(this.mfs, this.collectionPath, this.filters, [...this.orders, { field, dir }], this.lim, this.startAfterValues)
   }
 
   limit(n: number): Query {
-    return new Query(this.mfs, this.collectionPath, this.filters, this.orderField, this.orderDir, n, this.startAfterValue)
+    return new Query(this.mfs, this.collectionPath, this.filters, this.orders, n, this.startAfterValues)
   }
 
-  // Cursor for the single orderBy field — strict-after value semantics,
-  // string-compared like the ISO timestamps production code paginates on.
-  startAfter(value: unknown): Query {
-    return new Query(this.mfs, this.collectionPath, this.filters, this.orderField, this.orderDir, this.lim, value)
+  // Tuple cursor over the orderBy fields — strict-after semantics like real
+  // Firestore, string-compared like the ISO timestamps / doc ids production
+  // code paginates on. `__name__` resolves to the document id.
+  startAfter(...values: unknown[]): Query {
+    return new Query(this.mfs, this.collectionPath, this.filters, this.orders, this.lim, values)
   }
 
   // Field-mask pass-through: production code only narrows the payload, so
   // returning full docs keeps the mock simple without changing behavior.
   select(..._fields: string[]): Query {
-    return new Query(this.mfs, this.collectionPath, this.filters, this.orderField, this.orderDir, this.lim, this.startAfterValue)
+    return new Query(this.mfs, this.collectionPath, this.filters, this.orders, this.lim, this.startAfterValues)
   }
 
   count(): { get: () => Promise<{ data: () => { count: number } }> } {
-    const unlimited = new Query(this.mfs, this.collectionPath, this.filters, this.orderField, this.orderDir, 0, this.startAfterValue)
+    const unlimited = new Query(this.mfs, this.collectionPath, this.filters, this.orders, 0, this.startAfterValues)
     return {
       get: async () => {
         const res = await unlimited.get()
         return { data: () => ({ count: res.size }) }
       },
     }
+  }
+
+  private orderValue(id: string, data: Record<string, unknown>, field: string): unknown {
+    return field === "__name__" ? id : data[field]
+  }
+
+  private compareForOrder(a: unknown, b: unknown, dir: "asc" | "desc"): number {
+    if (typeof a !== "string" || typeof b !== "string") return 0
+    return dir === "desc" ? b.localeCompare(a) : a.localeCompare(b)
   }
 
   async get(): Promise<{ docs: DocSnap[]; size: number; empty: boolean }> {
@@ -143,21 +153,30 @@ class Query {
         return false
       })
     )
-    if (this.orderField) {
-      rows.sort(([, a], [, b]) => {
-        const av = (a as Record<string, unknown>)[this.orderField!]
-        const bv = (b as Record<string, unknown>)[this.orderField!]
-        if (typeof av === "string" && typeof bv === "string") {
-          return this.orderDir === "desc" ? bv.localeCompare(av) : av.localeCompare(bv)
+    if (this.orders.length > 0) {
+      rows.sort(([aId, a], [bId, b]) => {
+        for (const order of this.orders) {
+          const cmp = this.compareForOrder(
+            this.orderValue(aId, a as Record<string, unknown>, order.field),
+            this.orderValue(bId, b as Record<string, unknown>, order.field),
+            order.dir,
+          )
+          if (cmp !== 0) return cmp
         }
         return 0
       })
     }
-    if (this.startAfterValue !== undefined && this.orderField) {
-      rows = rows.filter(([, v]) => {
-        const got = (v as Record<string, unknown>)[this.orderField!]
-        if (typeof got !== "string" || typeof this.startAfterValue !== "string") return false
-        return this.orderDir === "desc" ? got < this.startAfterValue : got > this.startAfterValue
+    if (this.startAfterValues !== undefined && this.orders.length > 0) {
+      const cursor = this.startAfterValues
+      rows = rows.filter(([id, v]) => {
+        for (let i = 0; i < cursor.length && i < this.orders.length; i += 1) {
+          const order = this.orders[i]!
+          const got = this.orderValue(id, v as Record<string, unknown>, order.field)
+          if (typeof got !== "string" || typeof cursor[i] !== "string") return false
+          const cmp = this.compareForOrder(got, cursor[i], order.dir)
+          if (cmp !== 0) return cmp > 0
+        }
+        return false
       })
     }
     if (this.lim > 0) rows = rows.slice(0, this.lim)
@@ -173,7 +192,7 @@ class Query {
 
 class Coll extends Query {
   constructor(mfs: MockFirestore, collectionPath: string) {
-    super(mfs, collectionPath, [], undefined, "asc", 0)
+    super(mfs, collectionPath, [], [], 0)
   }
   doc(id?: string): DocRef {
     const docId = id ?? `auto-${Math.random().toString(36).slice(2, 10)}`

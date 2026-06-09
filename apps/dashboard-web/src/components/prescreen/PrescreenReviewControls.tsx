@@ -80,6 +80,7 @@ export function PrescreenReviewToolbar({
   sort,
   search,
   bulkAction,
+  includeTest,
   summary,
   hasMore,
   visibleCount,
@@ -87,6 +88,7 @@ export function PrescreenReviewToolbar({
   pendingVisibleCount,
   onBucketChange,
   onQueueChange,
+  onIncludeTestChange,
   onTerminalChange,
   onActionChange,
   onDraftChange,
@@ -105,6 +107,7 @@ export function PrescreenReviewToolbar({
   sort: StrictReviewSort
   search: string
   bulkAction: PrescreenBulkAction
+  includeTest: boolean
   summary: PrescreenReviewSummary
   hasMore: boolean
   visibleCount: number
@@ -112,6 +115,7 @@ export function PrescreenReviewToolbar({
   pendingVisibleCount: number
   onBucketChange: (value: StrictReviewBucket) => void
   onQueueChange: (value: StrictReviewQueueFilter) => void
+  onIncludeTestChange: (value: boolean) => void
   onTerminalChange: (value: StrictReviewTerminalFilter) => void
   onActionChange: (value: StrictReviewActionFilter) => void
   onDraftChange: (value: StrictReviewDraftFilter) => void
@@ -171,6 +175,15 @@ export function PrescreenReviewToolbar({
             style={inputStyle}
             aria-label="Search prescreen rows"
           />
+        </label>
+        <label style={{ ...fieldStyle, minWidth: 0, whiteSpace: "nowrap" }}>
+          <input
+            type="checkbox"
+            checked={includeTest}
+            onChange={(event) => onIncludeTestChange(event.target.checked)}
+            aria-label="Include test sessions"
+          />
+          Include test sessions
         </label>
       </div>
       <details>

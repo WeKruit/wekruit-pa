@@ -104,6 +104,8 @@ export type PrescreenOpsSessionRow = {
   id: string
   userId: string
   jobId: string
+  jobTitle?: string
+  jobCompany?: string
   terminal: string | null
   terminalReason?: string
   score: number
