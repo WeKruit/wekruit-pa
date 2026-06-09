@@ -236,6 +236,38 @@ describe("runAdminPrescreenOpsSnapshot", () => {
     assert.equal(jobBStates.get("s-auto"), "auto_finalized")
   })
 
+  it("tier-2 backfilled legacy_unreviewed sessions stay auto_finalized, not stranded", async () => {
+    const mfs = new MockFirestore()
+    await mfs.collection(PA_COLLECTIONS.users).doc("cand-c").set({
+      phoneE164: "+14155550103",
+      piiConsentAt: now,
+    })
+    await mfs.collection(PA_COLLECTIONS.jobs).doc("job-c").set({ title: "SWE", company: "Rain", status: "active" })
+    await mfs.collection(PRESCREEN_SESSIONS).doc("s-legacy").set({
+      userId: "cand-c",
+      jobId: "job-c",
+      terminal: "FAIL",
+      score: 1,
+      scoreMax: 3,
+      terminalActionFiredAt: "2026-06-08T03:30:00.000Z",
+      review: {
+        status: "legacy_unreviewed",
+        proposedTerminal: "FAIL",
+        backfill: { reason: "auto_finalized_no_review", at: now },
+      },
+      createdAt: "2026-06-08T03:00:00.000Z",
+    })
+
+    const ops = await runOps(mfs, { mode: "ops" })
+    assert.equal(ops.totals.autoFinalizedNoReview, 1)
+    assert.equal(ops.totals.strandedNoReview, 0)
+    assert.equal(ops.jobs.find((job) => job.jobId === "job-c")?.autoFinalized, 1)
+    assert.equal(ops.jobs.find((job) => job.jobId === "job-c")?.stranded, 0)
+
+    const sessions = await runSessions(mfs, { mode: "sessions", jobId: "job-c", limit: 10 })
+    assert.equal(sessions.rows.find((row) => row.id === "s-legacy")?.reviewState, "auto_finalized")
+  })
+
   it("sessions mode supports pending queue at the query layer and committed queue in-memory", async () => {
     const mfs = new MockFirestore()
     await seedFixtures(mfs)

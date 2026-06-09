@@ -243,7 +243,7 @@ function deriveReviewState(session: SessionScanRecord): PrescreenOpsReviewState 
   if (hasCommittedReview(session)) return "committed"
   if (session.terminalActionPendingReview === true) return "pending"
   if (session.terminal === "PAUSE") return "paused"
-  if (!session.review && cleanString(session.terminalActionFiredAt)) return "auto_finalized"
+  if (cleanString(session.terminalActionFiredAt)) return "auto_finalized"
   return "stranded"
 }
 
@@ -287,7 +287,13 @@ function tallyBuckets(sessions: SessionScanRecord[]): PrescreenOpsBucketCounts {
 }
 
 function isAutoFinalizedNoReview(session: SessionScanRecord): boolean {
-  return Boolean(cleanString(session.terminalActionFiredAt)) && !session.review
+  // Backfilled tier-2 docs carry review.status="legacy_unreviewed" — still
+  // auto-finalized until an operator commits a finalTerminal.
+  return (
+    Boolean(cleanString(session.terminalActionFiredAt)) &&
+    !hasCommittedReview(session) &&
+    session.terminalActionPendingReview !== true
+  )
 }
 
 async function loadDocsById(
