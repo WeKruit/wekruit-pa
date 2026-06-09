@@ -12,3 +12,11 @@ test("Recruiter access gate lets users leave the recruiter-only app for public W
   assert.doesNotMatch(source, new RegExp('<Link to="/" className="rb-access__link">Back to WeKruit</Link>'))
   assert.match(source, new RegExp('<a href="https://candidate\\.wekruit\\.com/" className="rb-access__link">Back to WeKruit</a>'))
 })
+
+test("Recruiter access gate captures recruiter name before Google binding", () => {
+  assert.match(source, /const \[recruiterName, setRecruiterName\] = useState\(""\)/)
+  assert.match(source, /Enter your name before claiming recruiter access\./)
+  assert.match(source, /writePendingRecruiterAccess\(trimmedInviteCode, trimmedRecruiterName\)/)
+  assert.match(source, /<span>Your name<\/span>/)
+  assert.match(source, /name: pending\.name,/)
+})
