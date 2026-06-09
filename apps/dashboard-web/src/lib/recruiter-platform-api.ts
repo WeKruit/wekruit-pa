@@ -6,6 +6,8 @@ const FUNCTIONS_BASE =
 export interface CreateRecruiterInviteCodeInput {
   label?: string
   code?: string
+  recruiterEmail?: string
+  sendEmail?: boolean
   expiresAt?: string
 }
 
@@ -15,6 +17,10 @@ export interface CreateRecruiterInviteCodeResult {
   codePreview: string
   maxUses: number
   expiresAt: string | null
+  recruiterEmail?: string | null
+  inviteUrl?: string
+  emailStatus?: "not_requested" | "sent" | "failed"
+  emailMessageId?: string
   replacedInviteCodeId?: string
 }
 
@@ -44,7 +50,22 @@ export async function createRecruiterInviteCode(
     codePreview: body.codePreview,
     maxUses: body.maxUses,
     expiresAt: body.expiresAt ?? null,
+    recruiterEmail: body.recruiterEmail ?? null,
+    inviteUrl: body.inviteUrl,
+    emailStatus: body.emailStatus,
+    emailMessageId: body.emailMessageId,
   }
+}
+
+export async function sendRecruiterInviteEmail(
+  input: { recruiterEmail: string; label?: string; expiresAt?: string },
+): Promise<CreateRecruiterInviteCodeResult> {
+  return createRecruiterInviteCode({
+    recruiterEmail: input.recruiterEmail,
+    label: input.label,
+    expiresAt: input.expiresAt,
+    sendEmail: true,
+  })
 }
 
 export async function replaceRecruiterInviteCode(

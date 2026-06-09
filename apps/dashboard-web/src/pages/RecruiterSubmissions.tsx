@@ -12,7 +12,7 @@ import { Badge, ErrorState, LoadingState, PageHeader, Panel } from "../component
 import { DataTable, type Column } from "../components/console/primitives.js"
 import { useTable } from "../components/console/useTable.js"
 import { auth, db } from "../lib/firebase.js"
-import { createRecruiterInviteCode, replaceRecruiterInviteCode, restoreRecruiterInviteCode, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
+import { replaceRecruiterInviteCode, restoreRecruiterInviteCode, sendRecruiterInviteEmail, type CreateRecruiterInviteCodeResult } from "../lib/recruiter-platform-api.js"
 import {
   buildRoleApplicationReview,
   type RoleApplicationReview,
@@ -248,9 +248,14 @@ interface RecruiterInviteCodeDoc {
   inviteCode?: string
   codePreview?: string
   label?: string | null
+  recruiterEmail?: string | null
   maxUses?: number
   usedCount?: number
   expiresAt?: string | null
+  inviteEmailStatus?: string | null
+  inviteEmailSentAt?: { seconds?: number } | string | null
+  inviteEmailFailedAt?: { seconds?: number } | string | null
+  inviteEmailLastError?: string | null
   createdAt?: { seconds?: number } | string | null
   createdByEmail?: string | null
   lastUsedByEmail?: string | null
@@ -464,6 +469,16 @@ function codeStatus(code: RecruiterInviteCodeDoc): { label: string; tone: Parame
   if ((code.usedCount ?? 0) >= 1) return { label: "used", tone: "info" }
   if (code.expiresAt && Date.parse(code.expiresAt) <= Date.now()) return { label: "expired", tone: "warn" }
   return { label: "usable", tone: "ok" }
+}
+
+function inviteEmailBadge(status?: string | null): { label: string; tone: Parameters<typeof Badge>[0]["tone"] } {
+  switch (status) {
+    case "sent": return { label: "sent", tone: "ok" }
+    case "queued": return { label: "queued", tone: "info" }
+    case "failed": return { label: "failed", tone: "warn" }
+    case "not_requested": return { label: "manual", tone: "muted" }
+    default: return { label: "—", tone: "muted" }
+  }
 }
 
 function recruiterAccountStatusTone(status?: string): Parameters<typeof Badge>[0]["tone"] {
@@ -1003,9 +1018,9 @@ function RecruiterSectionTabs({ active }: { active: RecruiterAdminSection }) {
   const tabs: Array<{ key: RecruiterAdminSection; label: string; to: string; detail: string }> = [
     {
       key: "codes",
-      label: "Access codes",
+      label: "Invites",
       to: "/admin/recruiter-access",
-      detail: "Invite codes, accounts, role alerts",
+      detail: "Email invites, accounts, role alerts",
     },
     {
       key: "roles",
@@ -1358,6 +1373,7 @@ function RecruiterOpsPanel() {
   const [codes, setCodes] = useState<RecruiterInviteCodeDoc[]>([])
   const [notifications, setNotifications] = useState<RecruiterNotificationDoc[]>([])
   const [loading, setLoading] = useState(true)
+  const [recruiterEmail, setRecruiterEmail] = useState("")
   const [label, setLabel] = useState("")
   const [expiresAtLocal, setExpiresAtLocal] = useState(() => defaultRecruiterCodeExpiryLocal())
   const [generated, setGenerated] = useState<CreateRecruiterInviteCodeResult | null>(null)
@@ -1392,22 +1408,25 @@ function RecruiterOpsPanel() {
     void reload()
   }, [])
 
-  const createCode = async (e: FormEvent) => {
+  const sendInvite = async (e: FormEvent) => {
     e.preventDefault()
     setCreating(true)
     setErr(null)
     try {
       const expiresAt = expiresAtLocal ? new Date(expiresAtLocal).toISOString() : undefined
-      const result = await createRecruiterInviteCode({
+      const result = await sendRecruiterInviteEmail({
+        recruiterEmail: recruiterEmail.trim(),
         label: label.trim() || undefined,
         expiresAt,
       })
       rememberGeneratedCode(result)
+      setRecruiterEmail("")
       setLabel("")
       setExpiresAtLocal(defaultRecruiterCodeExpiryLocal())
       await reload()
     } catch (error) {
       setErr(error instanceof Error ? error.message : String(error))
+      await reload().catch(() => undefined)
     } finally {
       setCreating(false)
     }
@@ -1486,23 +1505,34 @@ function RecruiterOpsPanel() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
         <OpsMetric label="Active recruiters" value={activeRecruiters} />
         <OpsMetric label="New-role email on" value={emailOn} />
-        <OpsMetric label="Usable codes" value={activeCodes} />
+        <OpsMetric label="Open invites" value={activeCodes} />
         <OpsMetric label="Notifications sent" value={sentNotifications} meta={failedNotifications ? `${failedNotifications} failed` : undefined} />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 360px) minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
-        <form id="recruiter-code-form" onSubmit={createCode} style={{ display: "grid", gap: 10, border: "1px solid #eee", borderRadius: 8, padding: 14, background: "#fff" }}>
+        <form id="recruiter-code-form" onSubmit={sendInvite} style={{ display: "grid", gap: 10, border: "1px solid #eee", borderRadius: 8, padding: 14, background: "#fff" }}>
           <div>
-            <div style={{ fontWeight: 700 }}>Issue access code</div>
+            <div style={{ fontWeight: 700 }}>Send recruiter invite</div>
             <p style={{ color: "#666", margin: "4px 0 0", fontSize: 13, lineHeight: 1.45 }}>
-              One code creates one Firebase recruiter account. Default expiry is one year.
+              Enter the recruiter email. WeKruit creates one one-time code, emails it with the recruiter site, and binds first access to that email.
             </p>
           </div>
           <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#666" }}>
-            Label
+            Recruiter email
+            <input
+              type="email"
+              required
+              value={recruiterEmail}
+              onChange={(e) => setRecruiterEmail(e.target.value)}
+              placeholder="recruiter@agency.com"
+              style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6 }}
+            />
+          </label>
+          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#666" }}>
+            Internal note
             <input
               value={label}
               onChange={(e) => setLabel(e.target.value)}
-              placeholder="Recruiter name or note"
+              placeholder="Agency, contact name, or context"
               style={{ padding: "8px 10px", border: "1px solid #ddd", borderRadius: 6 }}
             />
           </label>
@@ -1519,23 +1549,30 @@ function RecruiterOpsPanel() {
             disabled={creating}
             style={{ padding: "9px 12px", border: "1px solid #222", background: "#222", color: "#fff", borderRadius: 6 }}
           >
-            {creating ? "Creating..." : "Create code"}
+            {creating ? "Sending..." : "Send invite email"}
           </button>
           {err && <p style={{ color: "#a00", fontSize: 12, margin: 0 }}>{err}</p>}
           {generated && (
             <div style={{ background: "#f7f3ed", border: "1px solid #e1d8cc", borderRadius: 8, padding: 12 }}>
-              <div style={{ fontSize: 11, color: "#666", textTransform: "uppercase", letterSpacing: ".08em" }}>Give this code to the recruiter</div>
+              <div style={{ fontSize: 11, color: "#666", textTransform: "uppercase", letterSpacing: ".08em" }}>
+                Invite {generated.emailStatus === "sent" ? "sent" : "created"}
+              </div>
               <code style={{ display: "block", marginTop: 6, fontSize: 18, fontWeight: 700 }}>{generated.inviteCode}</code>
+              {generated.recruiterEmail && (
+                <div style={{ color: "#49311f", fontSize: 12, marginTop: 4 }}>
+                  Sent to {generated.recruiterEmail}
+                </div>
+              )}
               <a
-                href={recruiterInviteUrl(generated.inviteCode)}
+                href={generated.inviteUrl ?? recruiterInviteUrl(generated.inviteCode)}
                 target="_blank"
                 rel="noreferrer"
                 style={{ display: "block", marginTop: 6, color: "#49311f", wordBreak: "break-all" }}
               >
-                {recruiterInviteUrl(generated.inviteCode)}
+                {generated.inviteUrl ?? recruiterInviteUrl(generated.inviteCode)}
               </a>
               <div style={{ color: "#777", fontSize: 12, marginTop: 4 }}>
-                Expires {formatCodeExpiry(generated.expiresAt)}. This full code remains visible to admins.
+                Expires {formatCodeExpiry(generated.expiresAt)}. This full code remains visible to admins for support.
               </div>
               {generated.replacedInviteCodeId && (
                 <div style={{ color: "#7a3e10", fontSize: 12, marginTop: 4 }}>
@@ -1551,7 +1588,7 @@ function RecruiterOpsPanel() {
               </button>
               <button
                 type="button"
-                onClick={() => void navigator.clipboard?.writeText(recruiterInviteUrl(generated.inviteCode))}
+                onClick={() => void navigator.clipboard?.writeText(generated.inviteUrl ?? recruiterInviteUrl(generated.inviteCode))}
                 style={{ marginTop: 8, marginLeft: 8, padding: "6px 8px", border: "1px solid #ccc", borderRadius: 6, background: "#fff" }}
               >
                 Copy invite link
@@ -1559,7 +1596,7 @@ function RecruiterOpsPanel() {
             </div>
           )}
         </form>
-        <OpsSection title="Access codes" subtitle="Full codes are shown when stored. Legacy hash-only rows cannot be revealed; replace them to generate a visible one-use code.">
+        <OpsSection title="Recruiter invites" subtitle="One email invite creates one one-time code. Legacy hash-only rows remain here only for support and recovery.">
           {unrecoverableUsableCodes > 0 && (
             <div style={{ marginBottom: 10, padding: "10px 12px", border: "1px solid #f1c48a", borderRadius: 8, background: "#fff8ed", color: "#7a3e10", fontSize: 12, lineHeight: 1.45 }}>
               {unrecoverableUsableCodes} usable legacy code{unrecoverableUsableCodes === 1 ? "" : "s"} only exist as a hash.
@@ -1574,7 +1611,9 @@ function RecruiterOpsPanel() {
                   <tr style={{ color: "#777", textAlign: "left", borderBottom: "1px solid #eee" }}>
                     <th style={{ padding: "8px 6px" }}>Full code</th>
                     <th style={{ padding: "8px 6px" }}>Action</th>
+                    <th style={{ padding: "8px 6px" }}>Recruiter</th>
                     <th style={{ padding: "8px 6px" }}>Label</th>
+                    <th style={{ padding: "8px 6px" }}>Email</th>
                     <th style={{ padding: "8px 6px" }}>Status</th>
                     <th style={{ padding: "8px 6px" }}>Expires</th>
                     <th style={{ padding: "8px 6px" }}>Bound to</th>
@@ -1663,7 +1702,28 @@ function RecruiterOpsPanel() {
                             <span style={{ color: "#999" }}>—</span>
                           )}
                         </td>
+                        <td style={{ padding: "9px 6px", color: code.recruiterEmail ? "#333" : "#999", whiteSpace: "nowrap" }}>
+                          {code.recruiterEmail ?? "—"}
+                        </td>
                         <td style={{ padding: "9px 6px" }}>{code.label || "—"}</td>
+                        <td style={{ padding: "9px 6px" }}>
+                          {(() => {
+                            const emailStatus = inviteEmailBadge(code.inviteEmailStatus)
+                            return (
+                              <div style={{ display: "grid", gap: 4 }}>
+                                <Badge tone={emailStatus.tone}>{emailStatus.label}</Badge>
+                                {code.inviteEmailSentAt && (
+                                  <span style={{ color: "#777", fontSize: 11 }}>{formatCompactOpsDate(code.inviteEmailSentAt)}</span>
+                                )}
+                                {code.inviteEmailLastError && (
+                                  <span style={{ color: "#a00", fontSize: 11, maxWidth: 220, overflowWrap: "anywhere" }}>
+                                    {code.inviteEmailLastError}
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          })()}
+                        </td>
                         <td style={{ padding: "9px 6px" }}><Badge tone={status.tone}>{status.label}</Badge></td>
                         <td style={{ padding: "9px 6px", color: "#666" }}>{formatCodeExpiry(code.expiresAt)}</td>
                         <td style={{ padding: "9px 6px", color: "#666" }}>{code.lastUsedByEmail ?? "—"}</td>
@@ -1674,7 +1734,7 @@ function RecruiterOpsPanel() {
               </table>
             </div>
           ) : (
-            <EmptyOpsText>Create an access code to invite the first recruiter.</EmptyOpsText>
+            <EmptyOpsText>Send a recruiter invite to create the first one-time access code.</EmptyOpsText>
           )}
         </OpsSection>
       </div>
