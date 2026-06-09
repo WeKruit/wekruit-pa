@@ -6,7 +6,7 @@ import {
   classifyPrescreenReviewRow,
   filterAndSortPrescreenRows,
   summarizePrescreenReviewRows,
-} from "./prescreen-review-ranking.js"
+} from "./prescreen-review-classification.js"
 
 test("classifyPrescreenReviewRow requires top-five direct evidence for strict pass", () => {
   const weak = classifyPrescreenReviewRow({

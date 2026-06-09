@@ -34,6 +34,10 @@ export class MockFirestore {
     return new Coll(this, path)
   }
 
+  async getAll(...refs: DocRef[]): Promise<DocSnap[]> {
+    return Promise.all(refs.map((ref) => ref.get()))
+  }
+
   async runTransaction<T>(cb: (tx: Tx) => Promise<T>): Promise<T> {
     const tx = new Tx(this)
     return cb(tx)
@@ -88,19 +92,42 @@ class Query {
     protected filters: Filter[] = [],
     protected orderField?: string,
     protected orderDir: "asc" | "desc" = "asc",
-    protected lim: number = 0
+    protected lim: number = 0,
+    protected startAfterValue?: unknown
   ) {}
 
   where(field: string, op: "==" | "<=" | "in", value: unknown): Query {
-    return new Query(this.mfs, this.collectionPath, [...this.filters, { field, op, value }], this.orderField, this.orderDir, this.lim)
+    return new Query(this.mfs, this.collectionPath, [...this.filters, { field, op, value }], this.orderField, this.orderDir, this.lim, this.startAfterValue)
   }
 
   orderBy(field: string, dir: "asc" | "desc" = "asc"): Query {
-    return new Query(this.mfs, this.collectionPath, this.filters, field, dir, this.lim)
+    return new Query(this.mfs, this.collectionPath, this.filters, field, dir, this.lim, this.startAfterValue)
   }
 
   limit(n: number): Query {
-    return new Query(this.mfs, this.collectionPath, this.filters, this.orderField, this.orderDir, n)
+    return new Query(this.mfs, this.collectionPath, this.filters, this.orderField, this.orderDir, n, this.startAfterValue)
+  }
+
+  // Cursor for the single orderBy field — strict-after value semantics,
+  // string-compared like the ISO timestamps production code paginates on.
+  startAfter(value: unknown): Query {
+    return new Query(this.mfs, this.collectionPath, this.filters, this.orderField, this.orderDir, this.lim, value)
+  }
+
+  // Field-mask pass-through: production code only narrows the payload, so
+  // returning full docs keeps the mock simple without changing behavior.
+  select(..._fields: string[]): Query {
+    return new Query(this.mfs, this.collectionPath, this.filters, this.orderField, this.orderDir, this.lim, this.startAfterValue)
+  }
+
+  count(): { get: () => Promise<{ data: () => { count: number } }> } {
+    const unlimited = new Query(this.mfs, this.collectionPath, this.filters, this.orderField, this.orderDir, 0, this.startAfterValue)
+    return {
+      get: async () => {
+        const res = await unlimited.get()
+        return { data: () => ({ count: res.size }) }
+      },
+    }
   }
 
   async get(): Promise<{ docs: DocSnap[]; size: number; empty: boolean }> {
@@ -124,6 +151,13 @@ class Query {
           return this.orderDir === "desc" ? bv.localeCompare(av) : av.localeCompare(bv)
         }
         return 0
+      })
+    }
+    if (this.startAfterValue !== undefined && this.orderField) {
+      rows = rows.filter(([, v]) => {
+        const got = (v as Record<string, unknown>)[this.orderField!]
+        if (typeof got !== "string" || typeof this.startAfterValue !== "string") return false
+        return this.orderDir === "desc" ? got < this.startAfterValue : got > this.startAfterValue
       })
     }
     if (this.lim > 0) rows = rows.slice(0, this.lim)

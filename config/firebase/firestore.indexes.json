@@ -450,6 +450,55 @@
       ]
     },
     {
+      "_comment": "paAdminPrescreenOpsSnapshot sessions mode — per-job session pages newest-first.",
+      "collectionGroup": "pa-prescreen-sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "jobId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "paAdminPrescreenOpsSnapshot sessions mode — pending HITL queue newest-first.",
+      "collectionGroup": "pa-prescreen-sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "terminalActionPendingReview",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "_comment": "paAdminPrescreenOpsSnapshot sessions mode — pending HITL queue scoped to one job, newest-first.",
+      "collectionGroup": "pa-prescreen-sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "jobId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "terminalActionPendingReview",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "_comment": "v2.0 S1 — admin candidate inspector: handles by candidate recency.",
       "collectionGroup": "pa-candidate-handles",
       "queryScope": "COLLECTION",
