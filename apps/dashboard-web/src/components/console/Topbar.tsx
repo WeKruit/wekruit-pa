@@ -24,6 +24,7 @@ const SEG_LABELS: Record<string, string> = {
   triggers: "Triggers",
   "job-prescreen": "Prescreen config",
   "job-enrichment": "Enrichment review",
+  "prescreen-ops": "Prescreen ops",
   "prescreen-sessions": "Prescreen sessions",
   "prescreen-feedback": "Prescreen feedback",
   "ats-inbound": "ATS inbound",
