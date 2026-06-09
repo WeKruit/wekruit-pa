@@ -2,6 +2,8 @@ import { z } from "zod"
 import { PreferenceHardnessSchema } from "@wekruit/shared-tags"
 import { ChannelSchema, type Channel } from "./channel.js"
 export * from "./candidate-profile-classifier.js"
+export * from "./prescreen-review-classification.js"
+export * from "./prescreen-ops-types.js"
 
 export type { Channel }
 export { ChannelSchema }

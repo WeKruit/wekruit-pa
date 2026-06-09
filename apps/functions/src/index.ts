@@ -260,6 +260,10 @@ export {
   paAdminPassedCandidateIntroDecision,
   paAdminPassedCandidatesSnapshot,
 } from "./admin-passed-candidates.js"
+// Prescreen Review Queue data truth — server-side global counts, per-job
+// rollups, and paginated session pages over pa-prescreen-sessions (the
+// client-side limit(75) reads undercounted).
+export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
 
 // v2.2 W6 — admin-only callable that seeds outbound-bookings/{id} with
 // voiceState=dialing to trigger the existing S3 dial gate. Backs the

@@ -90,6 +90,38 @@ button { cursor: pointer; background: none; border: 0; padding: 0; }
   line-height: 1;
 }
 
+.side__mode {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+  margin: 0 4px 6px;
+  background: var(--cream-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.side__mode-seg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.side__mode-seg:hover { color: var(--ink-2); }
+.side__mode-seg[aria-selected="true"] {
+  background: var(--cream-3);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+.side__mode-seg .side__count { margin-left: 0; }
+
 .side__section { display: flex; flex-direction: column; }
 .side__section-head {
   display: flex;

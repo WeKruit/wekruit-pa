@@ -1,5 +1,5 @@
 // WeKruit Console — new sidebar built on the cream/espresso shell.
-// 6-section IA mapped to existing /admin/** routes. Each section
+// Two-mode IA mapped to existing /admin/** routes. Each section
 // collapses; state persists to localStorage under `console-side-<id>`.
 // HITL counts surface on the section header even when collapsed.
 
@@ -19,39 +19,56 @@ export type NavSectionDef = {
   id: string
   label: string
   icon: string
+  mode: "ops" | "dev"
   items: NavItem[]
   defaultOpen?: boolean
 }
 
-// IA 2026-05-18 — three tiers, ranking top→bottom by daily-touch frequency:
-//   1) OPERATIONS  — run the business (Candidates, Jobs, Employers, Outreach)
-//   2) TRAINING / EVAL — improve Claire (Matching, Eval, Claire content)
-//   3) PLATFORM — rare admin (Flags, Triggers, Launch readiness, Beta, Abuse)
-// Each section caps at ≤8 items; previously the 16-item Platform group bloat
-// hid Employer role packets + Companies + Agents content inside one wall.
+export type NavMode = NavSectionDef["mode"]
+
+// IA 2026-06-09 — two modes behind an [Ops | Dev] segmented toggle:
+//   OPS — the founder-facing daily loop (Prescreen, Candidates, Jobs,
+//         Recruiters; ~19 items total) shown by default.
+//   DEV — everything else (Employers, Outreach, Matching, Eval, Claire
+//         content, Platform) behind the Dev segment.
+// CONSOLE_NAV stays ONE array (Topbar breadcrumbs walk it); the Sidebar
+// filters by the active mode and auto-switches when the current route
+// lives in the hidden mode.
 export const CONSOLE_NAV: NavSectionDef[] = [
-  // ───────────── Tier 1: OPERATIONS ─────────────
+  // ───────────── OPS ─────────────
+  {
+    id: "prescreen",
+    label: "Prescreen",
+    icon: "list_check",
+    mode: "ops",
+    defaultOpen: true,
+    items: [
+      { to: "/admin/prescreen-ops", label: "Jobs board" },
+      { to: "/admin/prescreen-sessions", label: "All sessions" },
+    ],
+  },
   {
     id: "candidates",
     label: "Candidates",
     icon: "users",
+    mode: "ops",
     defaultOpen: true,
     items: [
       { to: "/admin/candidates", label: "All candidates", end: true },
       { to: "/admin/passed-candidates", label: "Passed candidates" },
       { to: "/admin/identity-conflicts", label: "Identity conflicts", hitl: true },
       { to: "/conversations", label: "iMessage conversations" },
-      { to: "/match/candidates", label: "Reverse match" },
-      { to: "/admin/bulk-resumes", label: "Bulk resumes" },
-      { to: "/admin/delete-user", label: "Delete user (danger)" },
     ],
   },
   {
     id: "jobs",
     label: "Jobs",
     icon: "briefcase",
+    mode: "ops",
+    defaultOpen: true,
     items: [
       { to: "/admin/external-supply/jobs", label: "Companies · Jobs" },
+      { to: "/admin/companies", label: "Companies directory" },
       { to: "/admin/job-prescreen", label: "Prescreen config" },
       { to: "/admin/job-enrichment", label: "Enrichment review", hitl: true },
       { to: "/admin/ats-inbound", label: "ATS inbound" },
@@ -61,7 +78,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     id: "recruiters",
     label: "Recruiters",
     icon: "user_check",
-    defaultOpen: true,
+    mode: "ops",
     items: [
       { to: "/admin/recruiter-access", label: "Recruiter invites" },
       { to: "/admin/recruiter-roles", label: "Roles" },
@@ -73,20 +90,22 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/admin/recruiter-submissions", label: "Submissions", hitl: true },
     ],
   },
+  // ───────────── DEV ─────────────
   {
     id: "employers",
     label: "Employers",
     icon: "shield",
+    mode: "dev",
     defaultOpen: true,
     items: [
       { to: "/admin/layoff-employers", label: "Role packets", hitl: true },
-      { to: "/admin/companies", label: "Companies directory" },
     ],
   },
   {
     id: "outreach",
     label: "Outreach",
     icon: "send",
+    mode: "dev",
     items: [
       { to: "/admin/outreach-ops", label: "Outreach ops" },
       { to: "/admin/pending-outbound", label: "Pending outbound", hitl: true },
@@ -99,23 +118,25 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/admin/qr-campaigns", label: "QR campaigns" },
     ],
   },
-  // ───────────── Tier 2: TRAINING / EVAL ─────────────
   {
     id: "matching",
     label: "Matching",
     icon: "zap",
+    mode: "dev",
     items: [
       { to: "/admin/match-debug", label: "Match debug" },
       { to: "/match/weights", label: "Weights" },
       { to: "/match/weights/test", label: "Weights · dry run" },
       { to: "/match/explainer-history", label: "Explainer history" },
       { to: "/match/explainer-test", label: "Explainer test" },
+      { to: "/match/candidates", label: "Reverse match" },
     ],
   },
   {
     id: "eval",
     label: "Eval",
     icon: "beaker",
+    mode: "dev",
     items: [
       { to: "/eval/voice-review", label: "Voice review" },
       { to: "/eval/n-round-sim", label: "N-round sim" },
@@ -130,6 +151,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     id: "claire",
     label: "Claire content",
     icon: "cpu",
+    mode: "dev",
     items: [
       { to: "/agents", label: "Agents" },
       { to: "/agent/playbooks", label: "Playbooks" },
@@ -142,22 +164,44 @@ export const CONSOLE_NAV: NavSectionDef[] = [
       { to: "/admin/canonical-tags", label: "Canonical tags" },
     ],
   },
-  // ───────────── Tier 3: PLATFORM ─────────────
   {
     id: "platform",
     label: "Platform",
     icon: "settings",
+    mode: "dev",
     items: [
       { to: "/admin/sendblue-pool", label: "Sendblue numbers" },
       { to: "/admin/flags", label: "Flags" },
       { to: "/triggers", label: "Triggers" },
-      { to: "/admin/prescreen-sessions", label: "Prescreen sessions" },
       { to: "/admin/launch-readiness", label: "Launch readiness" },
       { to: "/beta", label: "Beta allowlist" },
       { to: "/abuse", label: "Abuse" },
+      { to: "/admin/bulk-resumes", label: "Bulk resumes" },
+      { to: "/admin/delete-user", label: "Delete user (danger)" },
     ],
   },
 ]
+
+const MODE_STORAGE_KEY = "console-nav-mode"
+
+function modeHasActive(mode: NavMode, path: string): boolean {
+  return CONSOLE_NAV.some(
+    (sec) => sec.mode === mode && sec.items.some((it) => isActivePath(path, it.to, it.end)),
+  )
+}
+
+function modeHitlTotal(mode: NavMode, hitlCounts?: Record<string, number>): number {
+  return CONSOLE_NAV.reduce((n, sec) => {
+    if (sec.mode !== mode) return n
+    return (
+      n +
+      sec.items.reduce((m, it) => {
+        if (!it.hitl) return m
+        return m + ((hitlCounts && hitlCounts[it.to]) ?? it.count ?? 0)
+      }, 0)
+    )
+  }, 0)
+}
 
 export function Sidebar({
   userEmail,
@@ -172,6 +216,27 @@ export function Sidebar({
   const location = useLocation()
   const path = location.pathname
 
+  const storedMode =
+    typeof window !== "undefined" ? window.localStorage.getItem(MODE_STORAGE_KEY) : null
+  const [mode, setMode] = useState<NavMode>(storedMode === "dev" ? "dev" : "ops")
+  const inactiveMode: NavMode = mode === "ops" ? "dev" : "ops"
+
+  useEffect(() => {
+    if (!modeHasActive(mode, path) && modeHasActive(inactiveMode, path)) setMode(inactiveMode)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path])
+
+  const pickMode = (next: NavMode) => {
+    setMode(next)
+    try {
+      window.localStorage.setItem(MODE_STORAGE_KEY, next)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const inactiveHitl = modeHitlTotal(inactiveMode, hitlCounts)
+
   return (
     <aside className="side">
       <div className="side__brand">
@@ -181,7 +246,25 @@ export function Sidebar({
         </div>
       </div>
 
-      {CONSOLE_NAV.map((section) => (
+      <div className="side__mode" role="tablist" aria-label="Console mode">
+        {(["ops", "dev"] as const).map((m) => (
+          <button
+            key={m}
+            className="side__mode-seg"
+            type="button"
+            role="tab"
+            aria-selected={mode === m}
+            onClick={() => pickMode(m)}
+          >
+            {m === "ops" ? "Ops" : "Dev"}
+            {m === inactiveMode && inactiveHitl > 0 && (
+              <span className="side__count side__count--hitl">{inactiveHitl}</span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {CONSOLE_NAV.filter((section) => section.mode === mode).map((section) => (
         <SidebarSection
           key={section.id}
           section={section}
@@ -260,14 +343,14 @@ function SidebarSection({
 
   return (
     <div className="side__section" data-open={open}>
-      <div className="side__section-head" onClick={toggle}>
+      <button type="button" className="side__section-head" aria-expanded={open} onClick={toggle}>
         <Icon name="chev_r" size={10} className="side__chev" />
         <Icon name={section.icon} size={13} style={{ color: "var(--ink-3)" }} />
-        <span style={{ flex: 1 }}>{section.label}</span>
+        <span style={{ flex: 1, textAlign: "left" }}>{section.label}</span>
         {totalHitl > 0 && (
           <span className="side__count side__count--hitl">{totalHitl}</span>
         )}
-      </div>
+      </button>
       {open && (
         <div className="side__section-body">
           {section.items.map((item) => {
