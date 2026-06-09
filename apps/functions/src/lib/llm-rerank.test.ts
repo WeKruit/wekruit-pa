@@ -203,10 +203,83 @@ describe("llmRerank", () => {
     const input = makeInput(3)
     const out = await llmRerank(input, {
       client: throwingClient("siliconflow 429"),
+      retryPauseMs: 0,
     })
     assert.deepEqual(out.ranked, [])
     // latencyMs still reported.
     assert.ok(typeof out.latencyMs === "number")
+  })
+
+  it("CHUNKING: 25-job input → 3 calls of ≤10 compact-key jobs, merged + re-sequenced by score (2026-06-09 truncation fix)", async () => {
+    const input = makeInput(25)
+    const callSizes: number[] = []
+    let callIdx = 0
+    const client: RerankChatClient = {
+      chat: {
+        completions: {
+          create: async (req) => {
+            const sent = JSON.parse(req.messages[1]!.content) as {
+              jobs: Array<{ i: number; id?: string; roleTitle: string }>
+            }
+            callSizes.push(sent.jobs.length)
+            assert.ok(sent.jobs.every((j) => typeof j.i === "number" && j.id === undefined),
+              "prompt jobs carry compact `i` keys, never the raw 64-char ids")
+            const base = callIdx++ * 10
+            // Score grows with global job number → j25 highest, j1 lowest.
+            const ranked = sent.jobs.map((j, idx) => ({
+              i: j.i,
+              rank: idx + 1,
+              score: (base + j.i) / 100,
+              reasoning: "fit",
+            }))
+            return { choices: [{ message: { content: JSON.stringify({ ranked }) } }] }
+          },
+        },
+      },
+    }
+    const out = await llmRerank(input, { client, retryPauseMs: 0 })
+    assert.deepEqual(callSizes, [10, 10, 5], "25 jobs → chunks of 10/10/5")
+    assert.equal(out.ranked.length, 25, "all jobs survive the merge")
+    assert.equal(out.ranked[0]!.jobId, "j25", "highest score ranks first across chunks")
+    assert.equal(out.ranked[24]!.jobId, "j1")
+    assert.deepEqual(out.ranked.map((r) => r.rank), Array.from({ length: 25 }, (_, i) => i + 1))
+  })
+
+  it("SALVAGE: truncated mid-array JSON → complete row objects recovered, partial row dropped", async () => {
+    const input = makeInput(3)
+    // Truncated exactly the way Qwen dies at max_tokens: last row cut off.
+    const truncated =
+      '{"ranked":[{"i":1,"rank":1,"score":0.9,"reasoning":"strong"},{"i":2,"rank":2,"score":0.6,"reasoning":"ok"},{"i":3,"rank":3,"score":0.4,"reaso'
+    const out = await llmRerank(input, { client: fakeClient(truncated), retryPauseMs: 0 })
+    assert.equal(out.ranked.length, 2, "two complete rows salvaged, the truncated third dropped")
+    assert.equal(out.ranked[0]!.jobId, "j1")
+    assert.equal(out.ranked[0]!.score, 0.9)
+    assert.equal(out.ranked[1]!.jobId, "j2")
+  })
+
+  it("CHUNKING: one chunk fails persistently → other chunks still return (degrade, not zero)", async () => {
+    const input = makeInput(20)
+    let call = 0
+    const client: RerankChatClient = {
+      chat: {
+        completions: {
+          create: async (req) => {
+            call++
+            const sent = JSON.parse(req.messages[1]!.content) as {
+              jobs: Array<{ i: number; roleTitle: string }>
+            }
+            // First chunk (roleTitle "Engineer 1"...) fails on BOTH attempts.
+            if (sent.jobs[0]!.roleTitle === "Engineer 1") throw new Error("429 status code (no body)")
+            const ranked = sent.jobs.map((j, idx) => ({ i: j.i, rank: idx + 1, score: 0.5, reasoning: "ok" }))
+            return { choices: [{ message: { content: JSON.stringify({ ranked }) } }] }
+          },
+        },
+      },
+    }
+    const out = await llmRerank(input, { client, retryPauseMs: 0 })
+    assert.equal(out.ranked.length, 10, "second chunk's 10 jobs survive")
+    assert.ok(out.ranked.every((r) => Number(r.jobId.slice(1)) > 10), "surviving rows map back to j11..j20")
+    assert.equal(call, 3, "failed chunk = 2 calls (attempt + retry), good chunk = 1 call")
   })
 
   it("non-numeric score string → coerced via Number()", async () => {

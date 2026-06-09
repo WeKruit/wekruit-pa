@@ -29,6 +29,19 @@
  *
  * Bumped ENRICHER_VERSION → v1.9.0 so existing docs (5500+ at v1.8.1) all
  * re-enrich on their next pipeline-sync write and pick up sponsorship.
+ *
+ * v1.10.0 (2026-06-09): roleFunction over-tagging fix. The prompt let the
+ * LLM pad a speculative second roleFunction (84% of active jobs tagged
+ * `product_management` had non-PM titles: Project/Program/Production
+ * Manager, Customer Success, GTM ops). Because the V16 hard filter is
+ * array-contains-any, one padded tag routed jobs to wrong-function
+ * candidates (live: LSEG "Customer Success Manager" recommended to a
+ * product_management-target user). Prompt now defaults to ONE function +
+ * explicit product_management disambiguation. Also feeds
+ * coreResponsibilities + qualifications into the enricher JD input — the
+ * synced `jobDescription` is a ~300-char summary, so the LLM was tagging
+ * roleFunction from the title alone. Version bump re-enriches all docs on
+ * their next pipeline-sync write.
  */
 
 import { createHash } from "node:crypto"
@@ -44,7 +57,7 @@ import { isJobRecCardEnabled, pregenerateRecCardForJob } from "./job-rec-card/jo
 const PA_OPENAI_AGENT_API_KEY = defineSecret("PA_OPENAI_AGENT_API_KEY")
 const SILICONFLOW_API_KEY = defineSecret("SILICONFLOW_API_KEY")
 
-const ENRICHER_VERSION = "v1.9.0"
+const ENRICHER_VERSION = "v1.10.0"
 
 /**
  * Cost fix (2026-06-01): the upstream `contentHash` = sha256(company + RAW title)
@@ -84,6 +97,8 @@ interface MatchingJobDoc {
   roleTitle?: string | null
   companyName?: string | null
   jobDescription?: string | null
+  coreResponsibilities?: string[] | null
+  qualifications?: string[] | null
   locationRaw?: string | null
   sourceRepo?: string | null
   contentHash?: string | null
@@ -112,6 +127,36 @@ interface MatchingJobDoc {
   primaryUrl?: string | null
   recCardMediaUrl?: string | null
   recCardContentHash?: string | null
+}
+
+/**
+ * Build the JD text passed to the enricher LLM. `jobDescription` on synced
+ * docs is often a short summary (~300 chars); the real signal (must-have
+ * requirements, day-to-day duties) lives in `coreResponsibilities[]` +
+ * `qualifications[]`. Without those the LLM guesses roleFunction from the
+ * title alone — the source of the product_management over-tagging class.
+ */
+export function buildEnrichmentJobDescription(doc: MatchingJobDoc): string | null {
+  const parts: string[] = []
+  if (doc.jobDescription && doc.jobDescription.trim().length > 0) {
+    parts.push(doc.jobDescription.trim())
+  }
+  const core = (doc.coreResponsibilities ?? []).filter(
+    (x) => typeof x === "string" && x.trim().length > 0,
+  )
+  if (core.length > 0) {
+    parts.push("Core responsibilities:")
+    parts.push(...core)
+  }
+  const quals = (doc.qualifications ?? []).filter(
+    (x) => typeof x === "string" && x.trim().length > 0,
+  )
+  if (quals.length > 0) {
+    parts.push("Qualifications:")
+    parts.push(...quals)
+  }
+  if (parts.length === 0) return null
+  return parts.join("\n")
 }
 
 export function needsEnrichment(doc: MatchingJobDoc | undefined): boolean {
@@ -198,7 +243,7 @@ export const paMatchingJobsAutoEnrich = onDocumentWritten(
       const result = await enrichJobTags({
         title: after!.roleTitle ?? "",
         companyName: after!.companyName ?? null,
-        jobDescription: after!.jobDescription ?? null,
+        jobDescription: buildEnrichmentJobDescription(after!),
         locationRaw: after!.locationRaw ?? null,
         sourceRepo: after!.sourceRepo ?? null,
       })
