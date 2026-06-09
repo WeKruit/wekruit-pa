@@ -25,7 +25,9 @@ import {
   candidateConfirmationNotification,
   computeSubmissionScore,
   composeCandidateSubmissionConfirmationEmail,
+  composeRecruiterInviteEmail,
   composeRecruiterRoleNotificationEmail,
+  composeRecruiterSubmissionUpdateEmail,
   defaultRecruiterInviteCodeExpiresAt,
   fetchCollabJobs,
   generateRecruiterInviteCode,
@@ -39,6 +41,7 @@ import {
   normalizeRecruiterInviteCode,
   payoutUpdateNotification,
   recruiterCandidateIdentityConflictForRole,
+  recruiterInviteCodeAllowsEmail,
   recruiterInviteCodeMatchesBoundUser,
   recruiterIdentityFromFirebaseBearer,
   roleQuestionAnswerNotification,
@@ -218,6 +221,23 @@ describe("recruiter access helpers", () => {
     assert.equal(inviteCodeUsable({ active: true, maxUses: 5, usedCount: 1 }, Date.now()), false)
   })
 
+  it("requires a recruiter email when an admin sends the invite email", () => {
+    assert.deepEqual(validateInviteCodeCreate({ sendEmail: true }), {
+      ok: false,
+      reason: "missing_recruiter_email",
+    })
+    assert.deepEqual(validateInviteCodeCreate({ sendEmail: true, recruiterEmail: "not-email" }), {
+      ok: false,
+      reason: "invalid_recruiter_email",
+    })
+    const invite = validateInviteCodeCreate({ sendEmail: true, recruiterEmail: " Sloane@Agency.com " })
+    assert.equal(invite.ok, true)
+    if (invite.ok) {
+      assert.equal(invite.value.sendEmail, true)
+      assert.equal(invite.value.recruiterEmail, "sloane@agency.com")
+    }
+  })
+
   it("validates legacy invite-code replacement requests by hashed id", () => {
     const inviteCodeId = hashRecruiterInviteCode("WK-CDKE-AUC5")
     assert.deepEqual(validateInviteCodeReplace({ inviteCodeId }), {
@@ -249,6 +269,12 @@ describe("recruiter access helpers", () => {
     assert.equal(recruiterInviteCodeMatchesBoundUser({ inviteCodeId }, normalizedCode), true)
     assert.equal(recruiterInviteCodeMatchesBoundUser({ inviteCodeId }, "WK-OTHER-CODE"), false)
     assert.equal(recruiterInviteCodeMatchesBoundUser({}, normalizedCode), false)
+  })
+
+  it("keeps email-bound recruiter invite codes tied to the invited login email", () => {
+    assert.equal(recruiterInviteCodeAllowsEmail({ recruiterEmail: "Sloane@Agency.com" }, "sloane@agency.com"), true)
+    assert.equal(recruiterInviteCodeAllowsEmail({ recruiterEmail: "sloane@agency.com" }, "other@agency.com"), false)
+    assert.equal(recruiterInviteCodeAllowsEmail({}, "other@agency.com"), true)
   })
 
   it("sanitizes recruiter-visible submission rating history", () => {
@@ -525,6 +551,33 @@ describe("recruiter role notifications", () => {
     assert.match(email.subject, /Founding Engineer/)
     assert.match(email.text, /wekruit-recruiters\.web\.app/)
     assert.match(email.text, /turn off new-role emails/i)
+  })
+
+  it("composes a recruiter invite email with the one-time code and recruiter site", () => {
+    const email = composeRecruiterInviteEmail({
+      recruiterEmail: "sloane@agency.com",
+      inviteCode: "WK-ABCD-2345",
+      inviteUrl: "https://wekruit-recruiters.web.app/recruiters?accessCode=WK-ABCD-2345",
+      expiresAt: "2027-06-09T12:00:00.000Z",
+    })
+    assert.match(email.subject, /access code/i)
+    assert.match(email.text, /WK-ABCD-2345/)
+    assert.match(email.text, /sloane@agency\.com/)
+    assert.match(email.text, /wekruit-recruiters\.web\.app\/recruiters/)
+  })
+
+  it("composes a submission update email with the recruiter workspace action", () => {
+    const email = composeRecruiterSubmissionUpdateEmail({
+      title: "Ada Lovelace is sent to hiring team",
+      body: "Founding Engineer · Status: sent to hiring team · Rating 4/4",
+      roleTitle: "Founding Engineer",
+      companyLabel: "Co. B",
+      actionUrl: "https://wekruit-recruiters.web.app/recruiters?tab=submissions",
+    })
+    assert.match(email.subject, /WeKruit update/)
+    assert.match(email.text, /Ada Lovelace/)
+    assert.match(email.text, /Founding Engineer/)
+    assert.match(email.text, /tab=submissions/)
   })
 })
 

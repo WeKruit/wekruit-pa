@@ -17,7 +17,8 @@
     "node": "24"
   },
   "devDependencies": {
-    "firebase-tools": "15.3.1"
+    "firebase-tools": "15.3.1",
+    "zod": "4.3.6"
   },
   "scripts": {
     "ensure:node": "node scripts/ensure-node24.mjs",

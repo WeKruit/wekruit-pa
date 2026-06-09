@@ -9,6 +9,7 @@
  *   GET  paCollabJobsList          -> sanitized list of WeKruit collab jobs
  *                                     (supports ?limit, ?offset, ?since, ?status)
  *   POST paRecruiterInviteCodeCreate -> admin creates one-use recruiter invite code
+ *                                      and can email it to the recruiter
  *   POST paRecruiterInviteCodeReplace -> admin replaces a legacy unrecoverable invite code
  *   POST paRecruiterInviteCodeRestore -> admin stores a known raw code on a preview-only row
  *   GET  paRecruiterMe             -> returns the Firebase Auth-bound recruiter profile
@@ -34,7 +35,8 @@
  *   TRG  paRecruiterRoleReleasedNotify -> emails recruiters when a role is released
  *   TRG  paRecruiterRoleFeedbackSignalWrite -> appends recruiter role feedback into marketplace flywheel
  *   TRG  paRecruiterRoleApplicationDecisionNotify -> creates recruiter inbox decision notices
- *   TRG  paRecruiterSubmissionFeedbackNotify -> creates recruiter inbox status/feedback, confirmation, and payout notices
+ *   TRG  paRecruiterSubmissionFeedbackNotify -> emails + creates recruiter inbox status/feedback,
+ *                                                confirmation, and payout notices
  *   GET  paCollabJobsListSchema    -> JSON Schema for the list response shape
  *
  * Companion docs:
@@ -304,6 +306,8 @@ interface RecruiterFirebaseIdentity {
 interface RecruiterInviteCodeCreateInput {
   label?: string
   code?: string
+  recruiterEmail?: string
+  sendEmail: boolean
   maxUses: number
   expiresAt?: string
 }
@@ -315,6 +319,14 @@ interface RecruiterInviteCodeReplaceInput {
 interface RecruiterInviteCodeRestoreInput {
   inviteCodeId: string
   inviteCode: string
+}
+
+function normalizeRecruiterEmail(raw: string): string {
+  return raw.trim().toLowerCase()
+}
+
+function validEmail(raw: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)
 }
 
 export function normalizeRecruiterInviteCode(raw: string): string {
@@ -384,7 +396,7 @@ function validateRecruiterRegistration(input: unknown):
     ok: true,
     value: {
       name: b.name.trim(),
-      email: (b.email as string).trim().toLowerCase(),
+      email: normalizeRecruiterEmail(b.email as string),
       inviteCode: normalizeRecruiterInviteCode(b.inviteCode),
     },
   }
@@ -409,6 +421,17 @@ export function validateInviteCodeCreate(input: unknown):
     if (typeof b.label !== "string" || b.label.length > 200) return { ok: false, reason: "invalid_label" }
     label = b.label.trim() || undefined
   }
+  const sendEmail = b.sendEmail === undefined ? false : b.sendEmail === true
+  if (b.sendEmail !== undefined && typeof b.sendEmail !== "boolean") return { ok: false, reason: "invalid_send_email" }
+  let recruiterEmail: string | undefined
+  if (b.recruiterEmail !== undefined) {
+    if (typeof b.recruiterEmail !== "string" || b.recruiterEmail.length > 320) {
+      return { ok: false, reason: "invalid_recruiter_email" }
+    }
+    recruiterEmail = normalizeRecruiterEmail(b.recruiterEmail)
+    if (!validEmail(recruiterEmail)) return { ok: false, reason: "invalid_recruiter_email" }
+  }
+  if (sendEmail && !recruiterEmail) return { ok: false, reason: "missing_recruiter_email" }
   let expiresAt = defaultRecruiterInviteCodeExpiresAt()
   if (b.expiresAt !== undefined) {
     if (typeof b.expiresAt !== "string") return { ok: false, reason: "invalid_expires_at" }
@@ -416,7 +439,7 @@ export function validateInviteCodeCreate(input: unknown):
     if (Number.isNaN(ms) || ms <= Date.now()) return { ok: false, reason: "invalid_expires_at" }
     expiresAt = new Date(ms).toISOString()
   }
-  return { ok: true, value: { code, label, maxUses: 1, expiresAt } }
+  return { ok: true, value: { code, label, recruiterEmail, sendEmail, maxUses: 1, expiresAt } }
 }
 
 export function validateInviteCodeReplace(input: unknown):
@@ -453,6 +476,8 @@ function buildRecruiterInviteCodeDoc(input: {
   inviteCodeId: string
   inviteCode: string
   label?: string | null
+  recruiterEmail?: string | null
+  sendEmail?: boolean
   expiresAt?: string | null
   createdByEmail: string
   replacesInviteCodeId?: string
@@ -462,10 +487,13 @@ function buildRecruiterInviteCodeDoc(input: {
     inviteCode: input.inviteCode,
     active: true,
     label: input.label ?? null,
+    recruiterEmail: input.recruiterEmail ?? null,
     codePreview: maskRecruiterInviteCode(input.inviteCode),
     maxUses: 1,
     usedCount: 0,
     expiresAt: input.expiresAt ?? null,
+    inviteEmailStatus: input.sendEmail ? "queued" : "not_requested",
+    inviteEmailRequestedByEmail: input.sendEmail ? input.createdByEmail : null,
     createdByEmail: input.createdByEmail,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
@@ -598,6 +626,16 @@ export function recruiterInviteCodeMatchesBoundUser(
   return Boolean(inviteCodeId && candidateInviteCodeIds(normalizedCode).includes(inviteCodeId))
 }
 
+export function recruiterInviteCodeAllowsEmail(
+  inviteCodeData: Record<string, unknown> | null | undefined,
+  recruiterEmail: string,
+): boolean {
+  const invitedEmail = typeof inviteCodeData?.recruiterEmail === "string"
+    ? normalizeRecruiterEmail(inviteCodeData.recruiterEmail)
+    : ""
+  return !invitedEmail || invitedEmail === normalizeRecruiterEmail(recruiterEmail)
+}
+
 export async function registerRecruiterAccess(
   db: Firestore,
   identity: RecruiterFirebaseIdentity,
@@ -647,6 +685,7 @@ export async function registerRecruiterAccess(
       if (!snap.exists) continue
       const data = snap.data() as Record<string, unknown>
       if (!inviteCodeUsable(data, nowMs)) return null
+      if (!recruiterInviteCodeAllowsEmail(data, identity.email)) throw new Error("email_mismatch")
       inviteId = id
       inviteRef = ref
       break
@@ -1071,7 +1110,7 @@ export const paCollabJobsListSchema = onRequest(
 )
 
 export const paRecruiterInviteCodeCreate = onRequest(
-  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: MAILGUN_SECRETS },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
@@ -1100,14 +1139,41 @@ export const paRecruiterInviteCodeCreate = onRequest(
       const normalizedCode = normalizeRecruiterInviteCode(inviteCode)
       const codeHash = hashRecruiterInviteCode(normalizedCode)
       const ref = db.collection(RECRUITER_INVITE_CODES_COLLECTION).doc(codeHash)
+      const label = validated.value.label ?? validated.value.recruiterEmail ?? null
       try {
         await ref.create(buildRecruiterInviteCodeDoc({
           inviteCodeId: codeHash,
           inviteCode: normalizedCode,
-          label: validated.value.label ?? null,
+          label,
+          recruiterEmail: validated.value.recruiterEmail ?? null,
+          sendEmail: validated.value.sendEmail,
           expiresAt: validated.value.expiresAt ?? null,
           createdByEmail: adminEmail,
         }))
+        let inviteEmailStatus: "not_requested" | "sent" = "not_requested"
+        let inviteEmailMessageId: string | undefined
+        if (validated.value.sendEmail && validated.value.recruiterEmail) {
+          const inviteEmail = await sendRecruiterInviteEmailForCode(ref, {
+            recruiterEmail: validated.value.recruiterEmail,
+            inviteCode: normalizedCode,
+            inviteUrl: recruiterInviteUrl(normalizedCode),
+            expiresAt: validated.value.expiresAt ?? null,
+          })
+          if (!inviteEmail.ok) {
+            res.set("Cache-Control", "private, max-age=0, no-store")
+            res.status(inviteEmail.status).json({
+              ok: false,
+              reason: inviteEmail.reason,
+              inviteCodeId: codeHash,
+              codePreview: maskRecruiterInviteCode(normalizedCode),
+              recruiterEmail: validated.value.recruiterEmail,
+              emailStatus: "failed",
+            })
+            return
+          }
+          inviteEmailStatus = "sent"
+          inviteEmailMessageId = inviteEmail.messageId
+        }
         res.set("Cache-Control", "private, max-age=0, no-store")
         res.status(200).json({
           ok: true,
@@ -1116,6 +1182,10 @@ export const paRecruiterInviteCodeCreate = onRequest(
           codePreview: maskRecruiterInviteCode(normalizedCode),
           maxUses: validated.value.maxUses,
           expiresAt: validated.value.expiresAt ?? null,
+          recruiterEmail: validated.value.recruiterEmail ?? null,
+          inviteUrl: recruiterInviteUrl(normalizedCode),
+          emailStatus: inviteEmailStatus,
+          emailMessageId: inviteEmailMessageId,
         })
         return
       } catch (err) {
@@ -1187,6 +1257,7 @@ export const paRecruiterInviteCodeReplace = onRequest(
           inviteCodeId,
           inviteCode: normalizedCode,
           label: typeof oldData.label === "string" ? oldData.label : null,
+          recruiterEmail: typeof oldData.recruiterEmail === "string" ? oldData.recruiterEmail : null,
           expiresAt: replacementExpiresAt,
           createdByEmail: adminEmail,
           replacesInviteCodeId: validated.value.inviteCodeId,
@@ -3629,6 +3700,21 @@ interface RecruiterRoleNotificationEmailInput {
   roleUrl: string
 }
 
+interface RecruiterInviteEmailInput {
+  recruiterEmail: string
+  inviteCode: string
+  inviteUrl: string
+  expiresAt?: string | null
+}
+
+interface RecruiterSubmissionUpdateEmailInput {
+  title: string
+  body: string
+  roleTitle?: string
+  companyLabel?: string
+  actionUrl?: string
+}
+
 export function shouldNotifyRecruitersForRoleRelease(
   before: Record<string, unknown> | null | undefined,
   after: Record<string, unknown> | null | undefined,
@@ -3667,6 +3753,66 @@ export function composeRecruiterRoleNotificationEmail(
     "</ul>",
     `<p><a href="${escapeHtml(input.roleUrl)}">Open the role and submit candidates</a></p>`,
     "<p style=\"color:#666;font-size:12px\">You can turn off new-role emails in your WeKruit recruiter settings.</p>",
+  ].join("")
+  return { subject, text, html }
+}
+
+function recruiterInviteUrl(inviteCode: string): string {
+  const url = new URL(`${RECRUITER_PUBLIC_BASE_URL}/recruiters`)
+  url.searchParams.set("accessCode", inviteCode)
+  return url.toString()
+}
+
+export function composeRecruiterInviteEmail(
+  input: RecruiterInviteEmailInput,
+): { subject: string; text: string; html: string } {
+  const expiresLine = input.expiresAt ? `This one-time code expires at ${input.expiresAt}.` : "This is a one-time code."
+  const subject = "Your WeKruit recruiter access code"
+  const text = [
+    "Hi there,",
+    "",
+    "WeKruit invited you to submit roles and candidates in the recruiter workspace.",
+    "",
+    `Open the recruiter site: ${input.inviteUrl}`,
+    `One-time access code: ${input.inviteCode}`,
+    "",
+    "Sign in with this email address:",
+    input.recruiterEmail,
+    "",
+    expiresLine,
+    "After the code is used, your Google sign-in becomes your recruiter account.",
+  ].join("\n")
+  const html = [
+    "<p>Hi there,</p>",
+    "<p>WeKruit invited you to submit roles and candidates in the recruiter workspace.</p>",
+    `<p><a href="${escapeHtml(input.inviteUrl)}">Open the recruiter site</a></p>`,
+    `<p><b>One-time access code:</b> <code>${escapeHtml(input.inviteCode)}</code></p>`,
+    `<p>Sign in with this email address:<br><b>${escapeHtml(input.recruiterEmail)}</b></p>`,
+    `<p style="color:#666;font-size:12px">${escapeHtml(expiresLine)} After the code is used, your Google sign-in becomes your recruiter account.</p>`,
+  ].join("")
+  return { subject, text, html }
+}
+
+export function composeRecruiterSubmissionUpdateEmail(
+  input: RecruiterSubmissionUpdateEmailInput,
+): { subject: string; text: string; html: string } {
+  const subject = input.title.startsWith("WeKruit") ? input.title : `WeKruit update: ${input.title}`
+  const context = [input.roleTitle, input.companyLabel].filter(Boolean).join(" · ")
+  const text = [
+    "Hi there,",
+    "",
+    input.title,
+    context,
+    input.body,
+    "",
+    input.actionUrl ? `Open the recruiter workspace: ${input.actionUrl}` : `Open the recruiter workspace: ${RECRUITER_PUBLIC_BASE_URL}/recruiters?tab=submissions`,
+  ].filter((line) => line !== "").join("\n")
+  const html = [
+    "<p>Hi there,</p>",
+    `<p><b>${escapeHtml(input.title)}</b></p>`,
+    context ? `<p>${escapeHtml(context)}</p>` : "",
+    input.body ? `<p>${escapeHtml(input.body)}</p>` : "",
+    `<p><a href="${escapeHtml(input.actionUrl ?? `${RECRUITER_PUBLIC_BASE_URL}/recruiters?tab=submissions`)}">Open the recruiter workspace</a></p>`,
   ].join("")
   return { subject, text, html }
 }
@@ -3766,6 +3912,113 @@ async function sendRecruiterMailgunEmail(
     return { ok: true, messageId: parsed.id }
   } catch {
     return { ok: true }
+  }
+}
+
+async function markInviteEmailFailed(
+  inviteRef: DocumentReference,
+  reason: string,
+  provider?: string,
+): Promise<void> {
+  await inviteRef.set({
+    inviteEmailStatus: "failed",
+    inviteEmailProvider: provider ?? null,
+    inviteEmailLastError: reason.slice(0, 500),
+    inviteEmailFailedAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true })
+}
+
+async function sendRecruiterInviteEmailForCode(
+  inviteRef: DocumentReference,
+  input: RecruiterInviteEmailInput,
+): Promise<{ ok: true; messageId?: string } | { ok: false; reason: string; status: number }> {
+  const cfg = recruiterMailgunConfigFromEnv()
+  if (!cfg) {
+    await markInviteEmailFailed(inviteRef, "mailgun_not_configured")
+    return { ok: false, reason: "mailgun_not_configured", status: 503 }
+  }
+  const emailContent = composeRecruiterInviteEmail(input)
+  try {
+    const result = await sendRecruiterMailgunEmail(cfg, { to: input.recruiterEmail, ...emailContent })
+    if (result.ok) {
+      await inviteRef.set({
+        inviteEmailStatus: "sent",
+        inviteEmailProvider: "mailgun",
+        inviteEmailMessageId: result.messageId ?? null,
+        inviteEmailSentAt: FieldValue.serverTimestamp(),
+        inviteEmailLastError: null,
+        updatedAt: FieldValue.serverTimestamp(),
+      }, { merge: true })
+      return { ok: true, messageId: result.messageId }
+    }
+    const reason = `mailgun_${result.status}:${result.raw.slice(0, 300)}`
+    await markInviteEmailFailed(inviteRef, reason, "mailgun")
+    return { ok: false, reason: "invite_email_failed", status: 502 }
+  } catch (err) {
+    await markInviteEmailFailed(inviteRef, String(err), "mailgun")
+    return { ok: false, reason: "invite_email_failed", status: 500 }
+  }
+}
+
+async function markRecruiterNotificationEmail(
+  db: Firestore,
+  notificationId: string,
+  update: Record<string, unknown>,
+): Promise<void> {
+  await db.collection(RECRUITER_NOTIFICATIONS_COLLECTION).doc(notificationId).set({
+    ...update,
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true })
+}
+
+async function sendRecruiterSubmissionUpdateEmail(
+  db: Firestore,
+  notificationId: string,
+  input: RecruiterSubmissionUpdateEmailInput & { to?: string },
+): Promise<"sent" | "failed" | "not_configured" | "skipped"> {
+  const to = typeof input.to === "string" ? normalizeRecruiterEmail(input.to) : ""
+  if (!to || !validEmail(to)) {
+    await markRecruiterNotificationEmail(db, notificationId, {
+      emailStatus: "skipped",
+      emailLastError: "missing_recruiter_email",
+    })
+    return "skipped"
+  }
+  const cfg = recruiterMailgunConfigFromEnv()
+  if (!cfg) {
+    await markRecruiterNotificationEmail(db, notificationId, {
+      emailStatus: "not_configured",
+      emailLastError: "mailgun_not_configured",
+    })
+    return "not_configured"
+  }
+  const emailContent = composeRecruiterSubmissionUpdateEmail(input)
+  try {
+    const result = await sendRecruiterMailgunEmail(cfg, { to, ...emailContent })
+    if (result.ok) {
+      await markRecruiterNotificationEmail(db, notificationId, {
+        emailStatus: "sent",
+        emailProvider: "mailgun",
+        emailMessageId: result.messageId ?? null,
+        emailSentAt: FieldValue.serverTimestamp(),
+        emailLastError: null,
+      })
+      return "sent"
+    }
+    await markRecruiterNotificationEmail(db, notificationId, {
+      emailStatus: "failed",
+      emailProvider: "mailgun",
+      emailLastError: `mailgun_${result.status}:${result.raw.slice(0, 300)}`,
+    })
+    return "failed"
+  } catch (err) {
+    await markRecruiterNotificationEmail(db, notificationId, {
+      emailStatus: "failed",
+      emailProvider: "mailgun",
+      emailLastError: String(err).slice(0, 300),
+    })
+    return "failed"
   }
 }
 
@@ -5028,6 +5281,7 @@ export const paRecruiterSubmissionFeedbackNotify = onDocumentWritten(
     document: `${RECRUITER_SUBMISSIONS_COLLECTION}/{submissionId}`,
     region: "us-central1",
     memory: RECRUITER_BOARD_MEMORY,
+    secrets: MAILGUN_SECRETS,
   },
   async (event) => {
     const before = event.data?.before.exists ? event.data.before.data() as Record<string, unknown> : null
@@ -5070,31 +5324,76 @@ export const paRecruiterSubmissionFeedbackNotify = onDocumentWritten(
       roleUrl: recruiterNotificationRoleUrl(after),
     }
     if (feedbackNotification) {
+      const type = "submission_feedback"
       const created = await createRecruiterInAppNotification(db, {
         ...common,
-        type: "submission_feedback",
+        type,
         title: feedbackNotification.title,
         body: feedbackNotification.body,
       })
-      if (created) logger.info("paRecruiterSubmissionFeedbackNotify_done", { submissionId: event.params.submissionId, recruiterId })
+      if (created) {
+        const emailStatus = await sendRecruiterSubmissionUpdateEmail(db, eventNotificationId(type, event.params.submissionId, event.id), {
+          to: common.recruiterEmail,
+          title: feedbackNotification.title,
+          body: feedbackNotification.body,
+          roleTitle: common.roleTitle,
+          companyLabel: common.companyLabel,
+          actionUrl: common.roleUrl ?? `${RECRUITER_PUBLIC_BASE_URL}/recruiters?tab=submissions`,
+        })
+        logger.info("paRecruiterSubmissionFeedbackNotify_done", {
+          submissionId: event.params.submissionId,
+          recruiterId,
+          emailStatus,
+        })
+      }
     }
     if (confirmationNotification) {
+      const type = "candidate_confirmation"
       const created = await createRecruiterInAppNotification(db, {
         ...common,
-        type: "candidate_confirmation",
+        type,
         title: confirmationNotification.title,
         body: confirmationNotification.body,
       })
-      if (created) logger.info("paRecruiterSubmissionCandidateConfirmationNotify_done", { submissionId: event.params.submissionId, recruiterId })
+      if (created) {
+        const emailStatus = await sendRecruiterSubmissionUpdateEmail(db, eventNotificationId(type, event.params.submissionId, event.id), {
+          to: common.recruiterEmail,
+          title: confirmationNotification.title,
+          body: confirmationNotification.body,
+          roleTitle: common.roleTitle,
+          companyLabel: common.companyLabel,
+          actionUrl: common.roleUrl ?? `${RECRUITER_PUBLIC_BASE_URL}/recruiters?tab=submissions`,
+        })
+        logger.info("paRecruiterSubmissionCandidateConfirmationNotify_done", {
+          submissionId: event.params.submissionId,
+          recruiterId,
+          emailStatus,
+        })
+      }
     }
     if (payoutNotification) {
+      const type = "payout_update"
       const created = await createRecruiterInAppNotification(db, {
         ...common,
-        type: "payout_update",
+        type,
         title: payoutNotification.title,
         body: payoutNotification.body,
       })
-      if (created) logger.info("paRecruiterSubmissionPayoutNotify_done", { submissionId: event.params.submissionId, recruiterId })
+      if (created) {
+        const emailStatus = await sendRecruiterSubmissionUpdateEmail(db, eventNotificationId(type, event.params.submissionId, event.id), {
+          to: common.recruiterEmail,
+          title: payoutNotification.title,
+          body: payoutNotification.body,
+          roleTitle: common.roleTitle,
+          companyLabel: common.companyLabel,
+          actionUrl: common.roleUrl ?? `${RECRUITER_PUBLIC_BASE_URL}/recruiters?tab=submissions`,
+        })
+        logger.info("paRecruiterSubmissionPayoutNotify_done", {
+          submissionId: event.params.submissionId,
+          recruiterId,
+          emailStatus,
+        })
+      }
     }
   },
 )
