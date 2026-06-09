@@ -266,34 +266,38 @@ export async function recordIdentityConflict(
   rawConflict: CandidateIdentityConflict
 ): Promise<{ conflict: CandidateIdentityConflict; created: boolean }> {
   const conflict = CandidateIdentityConflictSchema.parse(rawConflict)
-  const result = await writeAppendOnlyDoc(
-    db,
-    PA_COLLECTIONS.candidateIdentityConflicts,
-    conflict.conflictId,
-    conflict
-  )
-  if (result.created) {
-    await writeIdentityEvent(db, {
-      eventId: deterministicId("ident", ["identity_conflict_recorded", conflict.conflictId]),
-      type: "identity_conflict_recorded",
-      actor: "system",
-      candidateId: conflict.primaryCandidateId,
-      relatedCandidateId: conflict.competingCandidateId,
-      firebaseUid: conflict.firebaseUid,
-      handleId: conflict.handleId,
-      handleKind: conflict.handleKind,
-      handleHash: conflict.handleHash,
-      conflictId: conflict.conflictId,
-      source: "system",
-      evidence: conflict.evidence,
-      payloadRedacted: {
-        kind: conflict.kind,
-        status: conflict.status,
-      },
-      createdAt: conflict.createdAt,
-    })
+  // Idempotent on conflictId (NOT strict payload equality): conflict ids are
+  // deterministic over the identity-defining parts, while the rest of the doc
+  // (createdAt, detection direction, sources) is observational metadata. A
+  // re-detection of the SAME conflict — including the opposite-direction
+  // detection that commutative ids now collapse onto one doc — must return the
+  // existing row instead of throwing conflicting_duplicate_identity_doc.
+  const ref = db.collection(PA_COLLECTIONS.candidateIdentityConflicts).doc(conflict.conflictId)
+  const existing = await ref.get()
+  if (existing.exists) {
+    return { conflict: CandidateIdentityConflictSchema.parse(existing.data()), created: false }
   }
-  return { conflict: result.doc, created: result.created }
+  await ref.set(conflict as unknown as Record<string, unknown>)
+  await writeIdentityEvent(db, {
+    eventId: deterministicId("ident", ["identity_conflict_recorded", conflict.conflictId]),
+    type: "identity_conflict_recorded",
+    actor: "system",
+    candidateId: conflict.primaryCandidateId,
+    relatedCandidateId: conflict.competingCandidateId,
+    firebaseUid: conflict.firebaseUid,
+    handleId: conflict.handleId,
+    handleKind: conflict.handleKind,
+    handleHash: conflict.handleHash,
+    conflictId: conflict.conflictId,
+    source: "system",
+    evidence: conflict.evidence,
+    payloadRedacted: {
+      kind: conflict.kind,
+      status: conflict.status,
+    },
+    createdAt: conflict.createdAt,
+  })
+  return { conflict, created: true }
 }
 
 export interface LinkCandidateHandleInput {
@@ -319,11 +323,12 @@ export async function linkCandidateHandle(
     const data = CandidateHandleSchema.parse(existing.data())
     if (data.candidateId !== input.candidateId) {
       const conflict = CandidateIdentityConflictSchema.parse({
+        // Commutative id: sort the candidate pair so the same conflict
+        // detected in the opposite direction maps to the SAME doc.
         conflictId: deterministicId("identity_conflict", [
           "handle_candidate_mismatch",
           hashed.handleId,
-          data.candidateId,
-          input.candidateId,
+          ...[data.candidateId, input.candidateId].sort(),
         ]),
         kind: "handle_candidate_mismatch",
         primaryCandidateId: data.candidateId,
@@ -492,10 +497,10 @@ export async function resolveCandidateIdentity(
     const employer = hashCandidateHandle("email", input.employerEmailHint)
     if (extracted.handleHash !== employer.handleHash) {
       const conflict = CandidateIdentityConflictSchema.parse({
+        // Commutative id: same email pair in either role = same conflict.
         conflictId: deterministicId("identity_conflict", [
           "pdf_email_employer_email_mismatch",
-          extracted.handleHash,
-          employer.handleHash,
+          ...[extracted.handleHash, employer.handleHash].sort(),
         ]),
         kind: "pdf_email_employer_email_mismatch",
         pdfEmailHash: extracted.handleHash,
@@ -789,11 +794,12 @@ export async function claimCandidateProfile(
     const existing = CandidateAuthMappingSchema.parse(existingAuth.data())
     if (existing.candidateId !== candidateId) {
       const conflict = CandidateIdentityConflictSchema.parse({
+        // Commutative id: sort the candidate pair so the same conflict
+        // detected in the opposite direction maps to the SAME doc.
         conflictId: deterministicId("identity_conflict", [
           "auth_candidate_mismatch",
           input.firebaseUid,
-          existing.candidateId,
-          candidateId,
+          ...[existing.candidateId, candidateId].sort(),
         ]),
         kind: "auth_candidate_mismatch",
         primaryCandidateId: existing.candidateId,
