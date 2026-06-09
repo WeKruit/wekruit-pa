@@ -259,6 +259,7 @@ interface RecruiterInviteCodeDoc {
   createdAt?: { seconds?: number } | string | null
   createdByEmail?: string | null
   lastUsedByEmail?: string | null
+  lastUsedByUid?: string | null
 }
 
 interface RecruiterNotificationDoc {
@@ -415,6 +416,11 @@ function formatOpsDate(raw: unknown): string {
 function formatCompactOpsDate(raw: unknown): string {
   const ms = timestampToMs(raw)
   return ms ? new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—"
+}
+
+function formatOpsDay(raw: unknown): string {
+  const ms = timestampToMs(raw)
+  return ms ? new Date(ms).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—"
 }
 
 function formatCodeExpiry(raw?: string | null): string {
@@ -1486,6 +1492,13 @@ function RecruiterOpsPanel() {
   const failedNotifications = notifications.filter((n) => n.status === "failed").length
   const sortedCodes = [...codes].sort((a, b) => timestampToMs(b.createdAt) - timestampToMs(a.createdAt))
   const sortedProfiles = [...profiles].sort((a, b) => (a.email ?? "").localeCompare(b.email ?? ""))
+  const recruiterByUid = new Map<string, { name?: string; email?: string }>()
+  for (const profile of profiles) {
+    const entry = { name: profile.name, email: profile.email }
+    recruiterByUid.set(profile.id, entry)
+    if (profile.firebaseUid) recruiterByUid.set(profile.firebaseUid, entry)
+  }
+  const rosterRows = [...profiles].sort((a, b) => timestampToMs(b.lastSeenAt) - timestampToMs(a.lastSeenAt))
   const unrecoverableUsableCodes = sortedCodes.filter((code) => {
     const status = codeStatus(code)
     const rawInviteCode = isFullRecruiterInviteCode(code.inviteCode)
@@ -1493,6 +1506,47 @@ function RecruiterOpsPanel() {
       : knownInviteCodes[code.id]
     return status.label === "usable" && !isFullRecruiterInviteCode(rawInviteCode)
   }).length
+
+  const rosterColumns: Column<RecruiterProfileDoc>[] = [
+    {
+      key: "name",
+      label: "Name",
+      render: (p) => <span style={{ fontWeight: 600 }}>{p.name || "—"}</span>,
+    },
+    {
+      key: "email",
+      label: "Email",
+      render: (p) => p.email ?? "—",
+    },
+    {
+      key: "status",
+      label: "Status",
+      width: 110,
+      render: (p) => <Badge tone={recruiterAccountStatusTone(p.status)}>{p.status || "active"}</Badge>,
+    },
+    {
+      key: "newRolesEmail",
+      label: "New-roles email",
+      width: 130,
+      render: (p) => (
+        <Badge tone={p.notificationPreferences?.newRolesEmail === false ? "muted" : "info"}>
+          {p.notificationPreferences?.newRolesEmail === false ? "off" : "on"}
+        </Badge>
+      ),
+    },
+    {
+      key: "registeredAt",
+      label: "Registered",
+      width: 130,
+      render: (p) => <span style={{ whiteSpace: "nowrap" }}>{formatOpsDay(p.registeredAt)}</span>,
+    },
+    {
+      key: "lastSeenAt",
+      label: "Last seen",
+      width: 130,
+      render: (p) => <span style={{ whiteSpace: "nowrap" }}>{formatOpsDay(p.lastSeenAt)}</span>,
+    },
+  ]
 
   return (
     <Panel
@@ -1726,7 +1780,22 @@ function RecruiterOpsPanel() {
                         </td>
                         <td style={{ padding: "9px 6px" }}><Badge tone={status.tone}>{status.label}</Badge></td>
                         <td style={{ padding: "9px 6px", color: "#666" }}>{formatCodeExpiry(code.expiresAt)}</td>
-                        <td style={{ padding: "9px 6px", color: "#666" }}>{code.lastUsedByEmail ?? "—"}</td>
+                        <td style={{ padding: "9px 6px", color: "#666" }}>
+                          {(() => {
+                            const claimedBy = code.lastUsedByUid ? recruiterByUid.get(code.lastUsedByUid) : undefined
+                            if (claimedBy && (claimedBy.name || claimedBy.email)) {
+                              return (
+                                <div style={{ display: "grid", gap: 2 }}>
+                                  <span style={{ color: "#333", fontWeight: 600 }}>{claimedBy.name || claimedBy.email}</span>
+                                  {claimedBy.name && claimedBy.email && (
+                                    <span style={{ color: "#999", fontSize: 11 }}>{claimedBy.email}</span>
+                                  )}
+                                </div>
+                              )
+                            }
+                            return code.lastUsedByEmail ?? "—"
+                          })()}
+                        </td>
                       </tr>
                     )
                   })}
@@ -1738,7 +1807,17 @@ function RecruiterOpsPanel() {
           )}
         </OpsSection>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 18, marginTop: 18 }}>
+      <div style={{ marginTop: 18 }}>
+        <Panel title="Recruiters" eyebrow={`${rosterRows.length} registered`}>
+          <DataTable<RecruiterProfileDoc>
+            columns={rosterColumns}
+            rows={rosterRows}
+            toolbar={false}
+            empty={<EmptyOpsText>No recruiter accounts yet. A recruiter appears here after signup.</EmptyOpsText>}
+          />
+        </Panel>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 18 }}>
         <OpsSection title="Recruiter accounts" subtitle="Firebase-bound recruiter users who can submit candidates.">
           {sortedProfiles.length ? (
             <div style={{ display: "grid", gap: 8 }}>
