@@ -61,6 +61,8 @@ import { JobEnrichmentReview } from "./pages/JobEnrichmentReview.js"
 import PrescreenSession from "./pages/PrescreenSession.js"
 import TagSnapshots from "./pages/TagSnapshots.js"
 import PrescreenSessionsList from "./pages/PrescreenSessionsList.js"
+// Wave 2 — job-centric prescreen ops board backed by paAdminPrescreenOpsSnapshot.
+import PrescreenOps from "./pages/PrescreenOps.js"
 // v1.9 Phase 86 — ATS inbound dashboard.
 import AtsInbound from "./pages/AtsInbound.js"
 import BulkResumes from "./pages/BulkResumes.js"
@@ -229,6 +231,8 @@ export default function App() {
           <Route path="/admin/job-prescreen" element={<JobPrescreen />} />
           {/* v2.0 S4 — admin-only job enrichment draft review. */}
           <Route path="/admin/job-enrichment" element={<JobEnrichmentReview />} />
+          {/* Wave 2 — job-centric prescreen ops board (snapshot-backed). */}
+          <Route path="/admin/prescreen-ops" element={<PrescreenOps />} />
           {/* v1.8 Phase 79 — Session list + detail + tag-snapshot rollback. */}
           <Route path="/admin/prescreen-sessions" element={<PrescreenSessionsList />} />
           <Route path="/admin/prescreen-sessions/:sessionId" element={<PrescreenSession />} />

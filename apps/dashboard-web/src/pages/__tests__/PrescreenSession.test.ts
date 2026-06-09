@@ -8,6 +8,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const source = readFileSync(resolve(here, "../PrescreenSession.tsx"), "utf8")
 const listSource = readFileSync(resolve(here, "../PrescreenSessionsList.tsx"), "utf8")
 const controlsSource = readFileSync(resolve(here, "../../components/prescreen/PrescreenReviewControls.tsx"), "utf8")
+const drawersSource = readFileSync(resolve(here, "../../components/prescreen/PrescreenReviewDrawers.tsx"), "utf8")
 
 test("PrescreenSession exposes human review with required candidate message approval", () => {
   assert.match(source, /reviewEvaluationAttempt/)
@@ -23,7 +24,7 @@ test("PrescreenSession exposes human review with required candidate message appr
 })
 
 test("PrescreenSessionsList shows pending review state", () => {
-  const adminReviewSource = `${listSource}\n${controlsSource}`
+  const adminReviewSource = `${listSource}\n${controlsSource}\n${drawersSource}`
   assert.match(adminReviewSource, /terminalActionPendingReview/)
   assert.match(adminReviewSource, /Pending HITL/)
   assert.match(adminReviewSource, /queueFilter/)
@@ -38,8 +39,11 @@ test("PrescreenSessionsList shows pending review state", () => {
   assert.match(adminReviewSource, /PrescreenReviewToolbar/)
   assert.match(adminReviewSource, /StrictReviewBadge/)
   assert.match(adminReviewSource, /Quick review/)
-  assert.match(adminReviewSource, /Select hard stops/)
-  assert.match(adminReviewSource, /Select close-review/)
+  assert.match(adminReviewSource, /listPrescreenSessionsPage/)
+  assert.match(adminReviewSource, /getPrescreenOpsSnapshot/)
+  assert.match(adminReviewSource, /Select visible/)
+  assert.match(adminReviewSource, /Advanced filters/)
+  assert.match(adminReviewSource, /Load more/)
   assert.match(adminReviewSource, /Bulk action/)
   assert.match(adminReviewSource, /Reject selected/)
   assert.match(adminReviewSource, /draftPrescreenReviewMessages/)

@@ -12,13 +12,23 @@ import type {
   StrictReviewTerminalFilter,
 } from "../../lib/prescreen-review-ranking.js"
 
-const bucketOptions: Array<{ value: StrictReviewBucket; label: string }> = [
-  { value: "all", label: "All review rows" },
-  { value: "batch_reject", label: "Likely rejects" },
-  { value: "individual_review", label: "Needs close review" },
-  { value: "paused", label: "Paused low confidence" },
-  { value: "top_five_pass", label: "Top 5% pass" },
-  { value: "hard_stop", label: "Hard stops" },
+const bucketChips: Array<{
+  value: Exclude<StrictReviewBucket, "all">
+  label: string
+  tone: "ok" | "warn" | "info" | "muted"
+  count: (summary: PrescreenReviewSummary) => number
+}> = [
+  { value: "batch_reject", label: "likely reject", tone: "warn", count: (summary) => summary.batchReject },
+  { value: "individual_review", label: "close review", tone: "info", count: (summary) => summary.individualReview },
+  { value: "paused", label: "paused", tone: "muted", count: (summary) => summary.paused },
+  { value: "top_five_pass", label: "top 5%", tone: "ok", count: (summary) => summary.topFivePass },
+  { value: "hard_stop", label: "hard stop", tone: "warn", count: (summary) => summary.hardStop },
+]
+
+const queueSegments: Array<{ value: StrictReviewQueueFilter; label: string }> = [
+  { value: "pending", label: "Pending" },
+  { value: "committed", label: "Committed" },
+  { value: "all", label: "All" },
 ]
 
 const sortOptions: Array<{ value: StrictReviewSort; label: string }> = [
@@ -26,12 +36,6 @@ const sortOptions: Array<{ value: StrictReviewSort; label: string }> = [
   { value: "score_desc", label: "Score high to low" },
   { value: "oldest", label: "Oldest first" },
   { value: "newest", label: "Newest first" },
-]
-
-const queueOptions: Array<{ value: StrictReviewQueueFilter; label: string }> = [
-  { value: "pending", label: "Pending review" },
-  { value: "committed", label: "Committed" },
-  { value: "all", label: "All sessions" },
 ]
 
 const terminalOptions: Array<{ value: StrictReviewTerminalFilter; label: string }> = [
@@ -56,10 +60,9 @@ const draftOptions: Array<{ value: StrictReviewDraftFilter; label: string }> = [
   { value: "missing_decision", label: "Missing decision" },
 ]
 
-export type PrescreenBulkAction = "draft" | "reject" | "review"
+export type PrescreenBulkAction = "reject" | "review"
 
 const bulkActionOptions: Array<{ value: PrescreenBulkAction; label: string }> = [
-  { value: "draft", label: "Draft selected" },
   { value: "reject", label: "Reject selected" },
   { value: "review", label: "Review individually" },
 ]
@@ -78,8 +81,10 @@ export function PrescreenReviewToolbar({
   search,
   bulkAction,
   summary,
+  hasMore,
   visibleCount,
   selectedCount,
+  pendingVisibleCount,
   onBucketChange,
   onQueueChange,
   onTerminalChange,
@@ -88,9 +93,6 @@ export function PrescreenReviewToolbar({
   onSortChange,
   onSearchChange,
   onSelectVisible,
-  onSelectLikelyRejects,
-  onSelectHardStops,
-  onSelectCloseReview,
   onClearSelected,
   onBulkActionChange,
   onRunBulkAction,
@@ -104,8 +106,10 @@ export function PrescreenReviewToolbar({
   search: string
   bulkAction: PrescreenBulkAction
   summary: PrescreenReviewSummary
+  hasMore: boolean
   visibleCount: number
   selectedCount: number
+  pendingVisibleCount: number
   onBucketChange: (value: StrictReviewBucket) => void
   onQueueChange: (value: StrictReviewQueueFilter) => void
   onTerminalChange: (value: StrictReviewTerminalFilter) => void
@@ -114,9 +118,6 @@ export function PrescreenReviewToolbar({
   onSortChange: (value: StrictReviewSort) => void
   onSearchChange: (value: string) => void
   onSelectVisible: () => void
-  onSelectLikelyRejects: () => void
-  onSelectHardStops: () => void
-  onSelectCloseReview: () => void
   onClearSelected: () => void
   onBulkActionChange: (value: PrescreenBulkAction) => void
   onRunBulkAction: () => void
@@ -124,94 +125,43 @@ export function PrescreenReviewToolbar({
   return (
     <div style={toolbarStyle}>
       <div style={summaryStyle} aria-label="Prescreen strict review summary">
-        <Badge tone="warn">{summary.batchReject} likely reject</Badge>
-        <Badge tone="info">{summary.individualReview} close review</Badge>
-        <Badge tone="muted">{summary.paused} paused</Badge>
-        <Badge tone="ok">{summary.topFivePass} top 5%</Badge>
-        <Badge tone="warn">{summary.hardStop} hard stop</Badge>
+        {bucketChips.map((chip) => {
+          const active = bucket === chip.value
+          return (
+            <button
+              key={chip.value}
+              type="button"
+              aria-pressed={active}
+              onClick={() => onBucketChange(active ? "all" : chip.value)}
+              style={chipStyle(active)}
+            >
+              <Badge tone={chip.tone}>{chip.count(summary)}{hasMore ? "+" : ""} {chip.label}</Badge>
+            </button>
+          )
+        })}
         <span style={{ color: "#64748b", fontSize: "0.86em" }}>
-          showing {visibleCount}/{summary.total} · {selectedCount} selected
+          showing {visibleCount} of {summary.total}{hasMore ? "+" : ""} loaded · {selectedCount} selected
         </span>
+        {hasMore ? (
+          <span style={{ color: "#64748b", fontSize: "0.86em" }}>
+            counts cover loaded rows — Load more to complete
+          </span>
+        ) : null}
       </div>
       <div style={controlsStyle}>
-        <label style={fieldStyle}>
-          <Filter size={14} aria-hidden />
-          <select
-            value={queue}
-            onChange={(event) => onQueueChange(event.target.value as StrictReviewQueueFilter)}
-            style={inputStyle}
-            aria-label="Filter review queue state"
-          >
-            {queueOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label style={fieldStyle}>
-          <Filter size={14} aria-hidden />
-          <select
-            value={bucket}
-            onChange={(event) => onBucketChange(event.target.value as StrictReviewBucket)}
-            style={inputStyle}
-            aria-label="Filter prescreen rows"
-          >
-            {bucketOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label style={fieldStyle}>
-          <Filter size={14} aria-hidden />
-          <select
-            value={terminal}
-            onChange={(event) => onTerminalChange(event.target.value as StrictReviewTerminalFilter)}
-            style={inputStyle}
-            aria-label="Filter Claire terminal"
-          >
-            {terminalOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label style={fieldStyle}>
-          <Filter size={14} aria-hidden />
-          <select
-            value={action}
-            onChange={(event) => onActionChange(event.target.value as StrictReviewActionFilter)}
-            style={inputStyle}
-            aria-label="Filter final action target"
-          >
-            {actionOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label style={fieldStyle}>
-          <Filter size={14} aria-hidden />
-          <select
-            value={draft}
-            onChange={(event) => onDraftChange(event.target.value as StrictReviewDraftFilter)}
-            style={inputStyle}
-            aria-label="Filter draft status"
-          >
-            {draftOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <label style={fieldStyle}>
-          <ArrowDownUp size={14} aria-hidden />
-          <select
-            value={sort}
-            onChange={(event) => onSortChange(event.target.value as StrictReviewSort)}
-            style={inputStyle}
-            aria-label="Sort prescreen rows"
-          >
-            {sortOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
+        <div role="group" aria-label="Filter review queue state" style={{ display: "inline-flex" }}>
+          {queueSegments.map((segment, index) => (
+            <button
+              key={segment.value}
+              type="button"
+              aria-pressed={queue === segment.value}
+              onClick={() => onQueueChange(segment.value)}
+              style={segmentStyle(queue === segment.value, index, queueSegments.length)}
+            >
+              {segment.label}
+            </button>
+          ))}
+        </div>
         <label style={{ ...fieldStyle, minWidth: 220, flex: 1 }}>
           <Search size={14} aria-hidden />
           <input
@@ -223,45 +173,116 @@ export function PrescreenReviewToolbar({
           />
         </label>
       </div>
-      <div style={controlsStyle}>
-        <button type="button" onClick={onSelectVisible} style={buttonStyle}>
-          <CheckSquare size={14} aria-hidden />
-          Select visible
-        </button>
-        <button type="button" onClick={onSelectLikelyRejects} style={buttonStyle}>
-          <CheckSquare size={14} aria-hidden />
-          Select likely rejects
-        </button>
-        <button type="button" onClick={onSelectHardStops} style={buttonStyle}>
-          <CheckSquare size={14} aria-hidden />
-          Select hard stops
-        </button>
-        <button type="button" onClick={onSelectCloseReview} style={buttonStyle}>
-          <CheckSquare size={14} aria-hidden />
-          Select close-review
-        </button>
-        <button type="button" onClick={onClearSelected} style={buttonStyle}>
-          Clear selected
-        </button>
-        <label style={fieldStyle}>
-          Bulk action
-          <select
-            value={bulkAction}
-            onChange={(event) => onBulkActionChange(event.target.value as PrescreenBulkAction)}
-            style={inputStyle}
-            aria-label="Bulk action"
-          >
-            {bulkActionOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </label>
-        <button type="button" onClick={onRunBulkAction} disabled={selectedCount === 0} style={buttonStyle}>
-          Run bulk action
-        </button>
-      </div>
+      <details>
+        <summary style={advancedSummaryStyle}>Advanced filters</summary>
+        <div style={{ ...controlsStyle, marginTop: 8 }}>
+          <label style={fieldStyle}>
+            <Filter size={14} aria-hidden />
+            <select
+              value={terminal}
+              onChange={(event) => onTerminalChange(event.target.value as StrictReviewTerminalFilter)}
+              style={inputStyle}
+              aria-label="Filter Claire terminal"
+            >
+              {terminalOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label style={fieldStyle}>
+            <Filter size={14} aria-hidden />
+            <select
+              value={action}
+              onChange={(event) => onActionChange(event.target.value as StrictReviewActionFilter)}
+              style={inputStyle}
+              aria-label="Filter final action target"
+            >
+              {actionOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label style={fieldStyle}>
+            <Filter size={14} aria-hidden />
+            <select
+              value={draft}
+              onChange={(event) => onDraftChange(event.target.value as StrictReviewDraftFilter)}
+              style={inputStyle}
+              aria-label="Filter draft status"
+            >
+              {draftOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label style={fieldStyle}>
+            <ArrowDownUp size={14} aria-hidden />
+            <select
+              value={sort}
+              onChange={(event) => onSortChange(event.target.value as StrictReviewSort)}
+              style={inputStyle}
+              aria-label="Sort prescreen rows"
+            >
+              {sortOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </details>
+      {pendingVisibleCount > 0 ? (
+        <div style={controlsStyle}>
+          <button type="button" onClick={onSelectVisible} style={buttonStyle}>
+            <CheckSquare size={14} aria-hidden />
+            Select visible
+          </button>
+          <button type="button" onClick={onClearSelected} style={buttonStyle}>
+            Clear selected
+          </button>
+          <label style={fieldStyle}>
+            Bulk action
+            <select
+              value={bulkAction}
+              onChange={(event) => onBulkActionChange(event.target.value as PrescreenBulkAction)}
+              style={inputStyle}
+              aria-label="Bulk action"
+            >
+              {bulkActionOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <button type="button" onClick={onRunBulkAction} disabled={selectedCount === 0} style={buttonStyle}>
+            Run bulk action
+          </button>
+        </div>
+      ) : null}
     </div>
   )
+}
+
+function chipStyle(active: boolean): CSSProperties {
+  return {
+    display: "inline-flex",
+    border: active ? "1px solid #1e293b" : "1px solid transparent",
+    borderRadius: 999,
+    padding: 2,
+    background: "none",
+    cursor: "pointer",
+  }
+}
+
+function segmentStyle(active: boolean, index: number, count: number): CSSProperties {
+  return {
+    padding: "0.35rem 0.8rem",
+    fontSize: "0.85em",
+    border: "1px solid #cbd5e1",
+    borderRadius: index === 0 ? "6px 0 0 6px" : index === count - 1 ? "0 6px 6px 0" : 0,
+    marginLeft: index === 0 ? 0 : -1,
+    background: active ? "#1e293b" : "#fff",
+    color: active ? "#fff" : "inherit",
+    cursor: "pointer",
+  }
 }
 
 const toolbarStyle: CSSProperties = {
@@ -303,6 +324,12 @@ const inputStyle: CSSProperties = {
   background: "transparent",
   fontSize: "0.9em",
   color: "#1f2937",
+}
+
+const advancedSummaryStyle: CSSProperties = {
+  color: "#64748b",
+  fontSize: "0.86em",
+  cursor: "pointer",
 }
 
 const buttonStyle: CSSProperties = {
