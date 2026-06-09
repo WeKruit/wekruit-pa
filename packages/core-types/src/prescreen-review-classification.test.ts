@@ -116,6 +116,8 @@ test("filterAndSortPrescreenRows supports review queue, terminal, action, draft,
       terminalActionPendingReview: true,
       createdAt: "2026-05-25T10:00:00Z",
       jobId: "job-growth",
+      jobTitle: "Growth Marketer",
+      jobCompany: "Acme",
       userId: "user-a",
       questions: {
         q_growth_marketing_experience: {
@@ -196,6 +198,30 @@ test("filterAndSortPrescreenRows supports review queue, terminal, action, draft,
       bucket: "all",
       sort: "strict_priority",
       search: "job-growth",
+      queue: "all",
+      terminal: "all",
+      action: "all",
+      draft: "all",
+    }).map((row) => row.id),
+    ["pending-reject"],
+  )
+  assert.deepEqual(
+    filterAndSortPrescreenRows(rows, {
+      bucket: "all",
+      sort: "strict_priority",
+      search: "growth marketer",
+      queue: "all",
+      terminal: "all",
+      action: "all",
+      draft: "all",
+    }).map((row) => row.id),
+    ["pending-reject"],
+  )
+  assert.deepEqual(
+    filterAndSortPrescreenRows(rows, {
+      bucket: "all",
+      sort: "strict_priority",
+      search: "acme",
       queue: "all",
       terminal: "all",
       action: "all",

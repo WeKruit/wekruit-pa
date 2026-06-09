@@ -55,6 +55,7 @@ import {
 
 const PAGE_LIMIT = 100
 const MAX_PAGES_PER_LOAD = 5
+const LOAD_ALL_MAX_PAGES = 20
 
 const QUEUE_PARAM_VALUES: readonly StrictReviewQueueFilter[] = ["all", "pending", "committed"]
 const BUCKET_PARAM_VALUES: readonly StrictReviewBucket[] = [
@@ -136,6 +137,9 @@ export default function PrescreenSessionsList() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [loadingAll, setLoadingAll] = useState(false)
+  const [loadAllProgress, setLoadAllProgress] = useState<number | null>(null)
+  const [loadAllCapped, setLoadAllCapped] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const [rows, setRows] = useState<PrescreenOpsSessionRow[]>([])
   const [nextCursor, setNextCursor] = useState<PrescreenOpsSessionCursor | null>(null)
@@ -157,6 +161,7 @@ export default function PrescreenSessionsList() {
   const [draftFilter, setDraftFilter] = useState<StrictReviewDraftFilter>("all")
   const [sortMode, setSortMode] = useState<StrictReviewSort>("strict_priority")
   const [search, setSearch] = useState(() => searchParams.get("search") ?? "")
+  const [includeTest, setIncludeTest] = useState(() => searchParams.get("includeTest") === "1")
   const [bulkAction, setBulkAction] = useState<PrescreenBulkAction>("reject")
   const jobIdParam = searchParams.get("jobId")?.trim() ?? ""
 
@@ -167,24 +172,26 @@ export default function PrescreenSessionsList() {
       syncSearchParam(next, "bucket", bucketFilter, "all")
       syncSearchParam(next, "terminal", terminalFilter, "all")
       syncSearchParam(next, "search", search, "")
+      syncSearchParam(next, "includeTest", includeTest ? "1" : "", "")
       return next
     }, { replace: true })
-  }, [bucketFilter, queueFilter, search, setSearchParams, terminalFilter])
+  }, [bucketFilter, includeTest, queueFilter, search, setSearchParams, terminalFilter])
 
   const sessionsInput = useMemo<Omit<PrescreenOpsSessionsPageInput, "cursor">>(
     () => ({
       ...(jobIdParam ? { jobId: jobIdParam } : {}),
+      ...(includeTest ? { includeTest: true } : {}),
       queue: queueFilter,
       limit: PAGE_LIMIT,
     }),
-    [jobIdParam, queueFilter],
+    [includeTest, jobIdParam, queueFilter],
   )
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
-        const loaded = await getPrescreenOpsSnapshot()
+        const loaded = await getPrescreenOpsSnapshot(includeTest)
         if (!cancelled) setSnapshot(loaded)
       } catch {
         if (!cancelled) setSnapshot(null)
@@ -193,7 +200,7 @@ export default function PrescreenSessionsList() {
     return () => {
       cancelled = true
     }
-  }, [reloadKey])
+  }, [includeTest, reloadKey])
 
   useEffect(() => {
     let cancelled = false
@@ -205,6 +212,7 @@ export default function PrescreenSessionsList() {
         if (cancelled) return
         setRows(result.rows)
         setNextCursor(result.nextCursor)
+        setLoadAllCapped(false)
         setSelected((prev) => {
           const pendingIds = new Set(
             result.rows.filter((row) => row.terminalActionPendingReview === true).map((row) => row.id),
@@ -259,13 +267,15 @@ export default function PrescreenSessionsList() {
       if (!jobRollup) return null
       if (queueFilter === "pending") return jobRollup.pendingReview
       if (queueFilter === "committed") return committedTotal(jobRollup.committed)
-      return jobRollup.realSessionCount
+      return includeTest ? jobRollup.sessionCount : jobRollup.realSessionCount
     }
     if (!snapshot) return null
     if (queueFilter === "pending") return snapshot.totals.pendingHumanReview
     if (queueFilter === "committed") return committedTotal(snapshot.totals.committed)
-    return snapshot.totals.realSessions
-  }, [jobIdParam, jobRollup, queueFilter, snapshot])
+    return includeTest
+      ? snapshot.totals.realSessions + snapshot.totals.testSessions
+      : snapshot.totals.realSessions
+  }, [includeTest, jobIdParam, jobRollup, queueFilter, snapshot])
   const panelCount = matchingTotal ?? (queueFilter === "pending" ? pendingRows.length : rows.length)
   const panelTitle = queueFilter === "pending"
     ? `${panelCount} pending review`
@@ -307,7 +317,7 @@ export default function PrescreenSessionsList() {
   }
 
   async function loadMore() {
-    if (!nextCursor || loadingMore) return
+    if (!nextCursor || loadingMore || loadingAll) return
     setLoadingMore(true)
     setErr(null)
     try {
@@ -318,6 +328,34 @@ export default function PrescreenSessionsList() {
       setErr(e instanceof Error ? e.message : String(e))
     } finally {
       setLoadingMore(false)
+    }
+  }
+
+  async function loadAll() {
+    if (!nextCursor || loadingMore || loadingAll) return
+    setLoadingAll(true)
+    setErr(null)
+    setLoadAllCapped(false)
+    setLoadAllProgress(rows.length)
+    try {
+      let cursor: PrescreenOpsSessionCursor | null = nextCursor
+      let total = rows.length
+      let pages = 0
+      while (cursor && pages < LOAD_ALL_MAX_PAGES) {
+        const result = await listPrescreenSessionsPage({ ...sessionsInput, cursor })
+        total += result.rows.length
+        setRows((prev) => [...prev, ...result.rows])
+        setLoadAllProgress(total)
+        cursor = result.nextCursor ?? null
+        pages += 1
+      }
+      setNextCursor(cursor)
+      if (cursor) setLoadAllCapped(true)
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoadingAll(false)
+      setLoadAllProgress(null)
     }
   }
 
@@ -378,6 +416,12 @@ export default function PrescreenSessionsList() {
               ×
             </button>
           </span>
+          {jobRollup ? (
+            <span style={{ color: "#64748b", fontSize: "0.85em" }}>
+              expected {jobRollup.sessionCount} session{jobRollup.sessionCount === 1 ? "" : "s"} (
+              {jobRollup.realSessionCount} real · {jobRollup.testSessionCount} test)
+            </span>
+          ) : null}
         </div>
       ) : null}
       <Panel title={panelTitle} eyebrow={panelEyebrow}>
@@ -390,6 +434,7 @@ export default function PrescreenSessionsList() {
           sort={sortMode}
           search={search}
           bulkAction={bulkAction}
+          includeTest={includeTest}
           summary={reviewSummary}
           hasMore={nextCursor != null}
           visibleCount={visibleRows.length}
@@ -397,6 +442,7 @@ export default function PrescreenSessionsList() {
           pendingVisibleCount={selectableVisibleRows.length}
           onBucketChange={setBucketFilter}
           onQueueChange={setQueueFilter}
+          onIncludeTestChange={setIncludeTest}
           onTerminalChange={setTerminalFilter}
           onActionChange={setActionFilter}
           onDraftChange={setDraftFilter}
@@ -486,10 +532,18 @@ export default function PrescreenSessionsList() {
                       {r.score?.toFixed(2)}/{r.scoreMax?.toFixed(2)} ({(ratio * 100).toFixed(0)}%)
                     </td>
                     <td style={{ padding: "0.35rem", fontSize: "0.85em" }}>
-                      <AdminJobLink jobId={r.jobId} />
+                      <AdminJobLink jobId={r.jobId}>
+                        {r.jobTitle ? `${r.jobTitle}${r.jobCompany ? ` · ${r.jobCompany}` : ""}` : r.jobId}
+                      </AdminJobLink>
                     </td>
                     <td style={{ padding: "0.35rem", fontFamily: "monospace", fontSize: "0.75em" }}>
                       <AdminUserLink userId={r.userId}>{r.userId?.slice(0, 8)}...</AdminUserLink>
+                      {includeTest && r.candidateClass !== "candidate_account" ? (
+                        <>
+                          {" "}
+                          <Badge tone="muted">test</Badge>
+                        </>
+                      ) : null}
                     </td>
                     <td style={{ padding: "0.35rem" }}>
                       <button type="button" onClick={() => setDrawerSessionId(r.id)}>
@@ -504,11 +558,20 @@ export default function PrescreenSessionsList() {
           </table>
         )}
         {nextCursor ? (
-          <div style={{ marginTop: 12 }}>
-            <button type="button" onClick={() => void loadMore()} disabled={loadingMore}>
+          <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button type="button" onClick={() => void loadMore()} disabled={loadingMore || loadingAll}>
               {loadingMore ? "Loading more..." : "Load more"}
             </button>
+            <button type="button" onClick={() => void loadAll()} disabled={loadingMore || loadingAll}>
+              {loadingAll ? `loaded ${loadAllProgress ?? rows.length}…` : "Load all"}
+            </button>
           </div>
+        ) : null}
+        {loadAllCapped ? (
+          <p style={{ color: "#b45309", fontSize: "0.85em", marginTop: 8 }}>
+            Load all stopped at the {LOAD_ALL_MAX_PAGES}-page safety cap with {rows.length} rows loaded — more
+            sessions may remain. Click Load all again to continue.
+          </p>
         ) : null}
       </Panel>
 

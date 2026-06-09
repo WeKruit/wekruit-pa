@@ -28,6 +28,8 @@ export type PrescreenReviewRowLike = {
   sessionId?: string
   userId?: string
   jobId?: string
+  jobTitle?: string
+  jobCompany?: string
   terminal?: string | null
   score?: number
   scoreMax?: number
@@ -200,6 +202,8 @@ export function filterAndSortPrescreenRows<T extends PrescreenReviewRowLike>(
         row.sessionId,
         row.userId,
         row.jobId,
+        row.jobTitle,
+        row.jobCompany,
         row.terminal,
         classification.label,
         classification.recommendation,

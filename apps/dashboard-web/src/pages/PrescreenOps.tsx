@@ -359,6 +359,9 @@ export default function PrescreenOps() {
                       {job.byTerminal.PASS} PASS · {job.byTerminal.FAIL} FAIL ·{" "}
                       {job.byTerminal.HARD_STOP} HARD_STOP → {job.pendingReview} pending HITL ·{" "}
                       {committedTotal(job.committed)} committed
+                      {job.testSessionCount > 0 ? (
+                        <span style={{ color: "#94a3b8" }}> · +{job.testSessionCount} test</span>
+                      ) : null}
                     </div>
                   </div>
                   {expandable ? (
@@ -374,7 +377,7 @@ export default function PrescreenOps() {
                         type="button"
                         onClick={() => goToQueue({ jobId: job.jobId, terminal: "PASS", queue: "all" })}
                       >
-                        View passed
+                        Claire PASS
                       </button>
                       <button type="button" onClick={() => goToQueue({ jobId: job.jobId, queue: "all" })}>
                         All sessions →

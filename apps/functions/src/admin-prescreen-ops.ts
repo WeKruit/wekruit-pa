@@ -432,12 +432,17 @@ async function runOpsMode(
 function buildSessionRow(
   session: SessionScanRecord,
   candidateClass: CandidateClass,
+  job: Record<string, unknown>,
 ): PrescreenOpsSessionRow {
   const classification = classifyPrescreenReviewRow(session)
+  const jobTitle = firstString(job.title, job.roleTitle, job.jobTitle, nestedString(job.prescreenConfig, "jobTitle"))
+  const jobCompany = firstString(job.company, job.companyName, nestedString(job.prescreenConfig, "company"))
   return {
     id: session.id,
     userId: session.userId,
     jobId: session.jobId,
+    ...(jobTitle ? { jobTitle } : {}),
+    ...(jobCompany ? { jobCompany } : {}),
     terminal: session.terminal,
     ...(session.terminalReason ? { terminalReason: session.terminalReason } : {}),
     score: session.score,
@@ -469,31 +474,32 @@ async function runSessionsMode(
   const jobId = cleanString(input.jobId)
   if (jobId) query = query.where("jobId", "==", jobId)
   if (input.queue === "pending") query = query.where("terminalActionPendingReview", "==", true)
-  query = query.orderBy("createdAt", "desc")
-  if (input.cursor) query = query.startAfter(input.cursor.createdAt)
+  query = query.orderBy("createdAt", "desc").orderBy("__name__", "desc")
+  if (input.cursor) query = query.startAfter(input.cursor.createdAt, input.cursor.docId)
   query = query.select(...SESSION_FIELD_MASK).limit(pageLimit + 1)
   const snap = await query.get()
 
-  let records = snap.docs.map((doc) => toSessionRecord(doc.id, (doc.data() ?? {}) as Record<string, unknown>))
-  const cursor = input.cursor
-  if (cursor) {
-    records = records.filter(
-      (record) => !(record.createdAt === cursor.createdAt && record.id <= cursor.docId),
-    )
-  }
+  const records = snap.docs.map((doc) => toSessionRecord(doc.id, (doc.data() ?? {}) as Record<string, unknown>))
   const hasMore = records.length > pageLimit
   const page = records.slice(0, pageLimit)
   const lastInPage = page[page.length - 1]
   const nextCursor: PrescreenOpsSessionCursor | undefined =
     hasMore && lastInPage ? { createdAt: lastInPage.createdAt, docId: lastInPage.id } : undefined
 
-  const userDocs = await loadDocsById(deps.db, PA_COLLECTIONS.users, page.map((record) => record.userId))
+  const [userDocs, jobDocs] = await Promise.all([
+    loadDocsById(deps.db, PA_COLLECTIONS.users, page.map((record) => record.userId)),
+    loadDocsById(
+      deps.db,
+      PA_COLLECTIONS.jobs,
+      page.map((record) => record.jobId).filter((jobId) => jobId.length > 0),
+    ),
+  ])
   const bucket = cleanString(input.bucket)
   const rows = page.flatMap((record) => {
     const candidateClass = classifySessionCandidate(record, userDocs)
     if (input.includeTest !== true && candidateClass !== "candidate_account") return []
     if (input.queue === "committed" && !hasCommittedReview(record)) return []
-    const row = buildSessionRow(record, candidateClass)
+    const row = buildSessionRow(record, candidateClass, jobDocs.get(record.jobId) ?? {})
     if (bucket && row.classification.bucket !== bucket) return []
     return [row]
   })
