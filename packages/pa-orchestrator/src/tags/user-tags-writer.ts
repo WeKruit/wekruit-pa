@@ -425,9 +425,10 @@ export async function applyPartialUserTags(
   // negativeJobType — the SUBTRACT axis for `targetJobType` (mirrors
   // `negativeRoleFunction`: storage is shallow-REPLACED per write like every
   // other key; cross-turn accumulation is the matching-profile REDUCER's job).
-  // Unlike role function, V16 has NO negative jobType read — `targetJobType`
-  // is an EXACT-match HARD filter — so the sole writer additionally APPLIES
-  // the subtraction at the boundary: incoming negativeJobType tokens are
+  // `targetJobType` is an EXACT-match HARD filter, so the sole writer
+  // additionally APPLIES the subtraction at the boundary (V16 ALSO hard-drops
+  // on `negativeJobType` directly since the 2026-06-09 follow-up, mirroring
+  // negativeRoleFunction): incoming negativeJobType tokens are
   // removed from the post-merge `targetJobType`. A subtraction that empties
   // the set persists [] — an explicit clear, never silently skipped. This is
   // the 2026-06-09 live-victim fix: "I am not looking for an internship" must

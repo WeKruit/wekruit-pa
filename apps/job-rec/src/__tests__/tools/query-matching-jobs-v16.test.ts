@@ -2419,6 +2419,97 @@ test("717 matcher: negativeRoleFunction=software_engineering drops SWE jobs, kee
   assert.equal(r.counters.negativeListDrop, 2)
 })
 
+// ── negativeJobType hard subtract (preference-axis fix, 2026-06-09 follow-up) —
+// the matcher half of PR #385: "I am not looking for an internship" persists
+// tags.negativeJobType=["internship"] (often with targetJobType=[] after the
+// clear) and the V16 hard filter must DROP internship jobs in BOTH the strict
+// and the fallback chains, REGARDLESS of targetJobType being empty. ──────────
+
+test("negativeJobType=['internship'] + targetJobType=[] drops internship, keeps full_time (strict chain)", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "intern", jobTitle: "SWE Intern", jobType: "internship" }),
+    mkJob({ id: "ft", jobTitle: "SWE", jobType: "full_time" }),
+    mkJob({ id: "untyped", jobTitle: "SWE (no type)" }),
+  ]
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetJobType: [],
+    negativeJobType: ["internship"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["ft", "untyped"])
+  assert.equal(r.counters.negativeJobType, 1)
+})
+
+test("negativeJobType drop is case/whitespace tolerant and independent of targetJobType presence", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "intern", jobType: " Internship " as never }),
+    mkJob({ id: "ft", jobType: "full_time" }),
+  ]
+  // targetJobType present too — the negative axis still drops on its own.
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetJobType: ["full_time", "internship"],
+    negativeJobType: ["internship"],
+  } as never
+  const r = applyV16HardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["ft"])
+  assert.equal(r.counters.negativeJobType, 1)
+})
+
+test("negativeJobType=['internship'] + targetJobType=[] drops internship in the FALLBACK chain too", () => {
+  const jobs: MatchingJob[] = [
+    mkJob({ id: "intern", jobTitle: "SWE Intern", jobType: "internship" }),
+    mkJob({ id: "ft", jobTitle: "SWE", jobType: "full_time" }),
+  ]
+  const tags = {
+    skills: [],
+    industryEnum: [],
+    schemaVersion: 1,
+    targetJobType: [],
+    negativeJobType: ["internship"],
+  } as never
+  const r = applyFallbackHardFilters(jobs, tags, NOW)
+  assert.deepEqual(r.kept.map((j) => j.id), ["ft"])
+  assert.equal(r.counters.negativeJobType, 1)
+})
+
+test("loadUserTags inference: careerStage=intern + negativeJobType=['internship'] → inferred targetJobType excludes internship", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_no_intern").set({
+    tags: {
+      skills: ["python"],
+      schemaVersion: 1,
+      careerStage: "intern",
+      negativeJobType: ["internship"],
+    },
+  })
+  const got = await loadUserTags(asFirestore(mfs), "u_no_intern")
+  assert.ok(got)
+  // intern stage normally infers ["internship","new_graduate","full_time"];
+  // the explicit negation subtracts internship before the patch lands.
+  assert.deepEqual(got!.targetJobType, ["new_graduate", "full_time"])
+})
+
+test("loadUserTags inference: negativeJobType covering the whole inferred set → no targetJobType patch (gate bypasses)", async () => {
+  const mfs = new MockFirestore()
+  await mfs.collection("pa-users").doc("u_all_negated").set({
+    tags: {
+      skills: ["python"],
+      schemaVersion: 1,
+      careerStage: "intern",
+      negativeJobType: ["internship", "new_graduate", "full_time"],
+    },
+  })
+  const got = await loadUserTags(asFirestore(mfs), "u_all_negated")
+  assert.ok(got)
+  assert.equal(got!.targetJobType, undefined, "empty post-subtract set must not be patched")
+})
+
 test("B4 soft: targetCompanyTags ∩ companyInfo.tags adds tagOverlap*0.15", () => {
   const tags = {
     skills: [],
