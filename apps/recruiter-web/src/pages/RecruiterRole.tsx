@@ -2449,8 +2449,8 @@ export default function RecruiterRole() {
           <div className="rb-access-required">
             <p className="rb-overline">Invite required</p>
             <h1>Recruiter access is required before submitting candidates.</h1>
-            <p>Enter your WeKruit recruiter code first. After that, role pages can submit and track candidates under your account.</p>
-            <Link to="/recruiters" className="rb-btn primary">Enter access code</Link>
+            <p>Sign in with the email we invited. After that, role pages can submit and track candidates under your account.</p>
+            <Link to="/recruiters" className="rb-btn primary">Sign in</Link>
           </div>
         </main>
       </div>

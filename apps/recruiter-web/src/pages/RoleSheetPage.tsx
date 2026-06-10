@@ -704,7 +704,7 @@ export default function RoleSheetPage() {
           </div>
           <div className="rs-state">
             <p>Recruiter access is required before submitting candidates.</p>
-            <Link to="/recruiters" className="rs-btn" style={{ textDecoration: "none" }}>Enter access code</Link>
+            <Link to="/recruiters" className="rs-btn" style={{ textDecoration: "none" }}>Sign in</Link>
           </div>
         </main>
       </div>

@@ -13,15 +13,14 @@ test("Recruiter access gate lets users leave the recruiter-only app for public W
   assert.match(source, new RegExp('<a href="https://candidate\\.wekruit\\.com/" className="rb-access__link">Back to WeKruit</a>'))
 })
 
-test("Default gate is a codeless Continue-with-Google card with no inputs", () => {
-  const codelessFormStart = source.indexOf("onSubmit={submitCodeless}")
-  assert.ok(codelessFormStart > 0, "codeless default form exists")
-  const codelessFormEnd = source.indexOf("</form>", codelessFormStart)
-  const codelessFormSlice = source.slice(codelessFormStart, codelessFormEnd)
-  assert.doesNotMatch(codelessFormSlice, /<input/, "default mode has no name or code inputs")
-  assert.match(codelessFormSlice, /Continue with Google/)
-  assert.match(codelessFormSlice, /Access is by invitation — sign in with the email we invited\./)
-  assert.match(source, /writePendingRecruiterAccess\("", "", inviteEmailHint \|\| undefined\)/)
+test("Gate is a single Continue-with-Google card with no code or name inputs", () => {
+  const formStart = source.indexOf("onSubmit={submitSignIn}")
+  assert.ok(formStart > 0, "sign-in form exists")
+  const formEnd = source.indexOf("</form>", formStart)
+  const formSlice = source.slice(formStart, formEnd)
+  assert.doesNotMatch(formSlice, /<input/, "gate has no text inputs")
+  assert.match(formSlice, /Continue with Google/)
+  assert.doesNotMatch(formSlice, /access code/i, "no access code language in the gate")
 })
 
 test("Codeless claim sends the payload without inviteCode and pulls the Google displayName", () => {
@@ -32,24 +31,19 @@ test("Codeless claim sends the payload without inviteCode and pulls the Google d
   assert.match(apiSource, /inviteCode\?: string/, "claim API accepts a payload without inviteCode")
 })
 
-test("Codeless claim rejection shows the no-invite message with a different-account retry", () => {
+test("Claim rejection shows the no-invite message with a different-account retry", () => {
   assert.match(source, /No invitation found for \$\{invitedAddress\}\. Ask your WeKruit contact to invite this address/)
-  assert.match(source, /setErr\(formatRecruiterAuthError\(error, fallbackPending\.emailHint \|\| inviteEmailHint, \{ codeless: !fallbackPending\.inviteCode, email: claimEmail \}\)\)/)
-  const codelessFormStart = source.indexOf("onSubmit={submitCodeless}")
-  const codelessFormSlice = source.slice(codelessFormStart, source.indexOf("</form>", codelessFormStart))
-  assert.match(codelessFormSlice, /Try a different Google account/)
-  assert.match(codelessFormSlice, /clearStuckGoogleState/)
+  const formStart = source.indexOf("onSubmit={submitSignIn}")
+  const formSlice = source.slice(formStart, source.indexOf("</form>", formStart))
+  assert.match(formSlice, /Try a different Google account/)
+  assert.match(formSlice, /clearStuckGoogleState/)
 })
 
-test("Access-code disclosure reveals the manual name+code form", () => {
-  const codelessFormStart = source.indexOf("onSubmit={submitCodeless}")
-  const codelessFormSlice = source.slice(codelessFormStart, source.indexOf("</form>", codelessFormStart))
-  assert.match(codelessFormSlice, /Have an access code\?/)
-  assert.match(codelessFormSlice, /setManualMode\(true\)/)
-  assert.match(source, /const \[recruiterName, setRecruiterName\] = useState\(""\)/)
-  assert.match(source, /Enter your name before claiming recruiter access\./)
-  assert.match(source, /writePendingRecruiterAccess\(trimmedInviteCode, trimmedRecruiterName\)/)
-  assert.match(source, /<span>Your name<\/span>/)
+test("No manual access code form exists", () => {
+  assert.doesNotMatch(source, /setManualMode/, "no manual mode toggle")
+  assert.doesNotMatch(source, /placeholder="WK-XXXX/, "no invite code input field")
+  assert.doesNotMatch(source, /<span>Access code<\/span>/, "no access code label")
+  assert.doesNotMatch(source, /Have an access code\?/, "no access code disclosure button")
 })
 
 test("Returning signed-in recruiters skip the gate when paRecruiterMe recognizes them", () => {

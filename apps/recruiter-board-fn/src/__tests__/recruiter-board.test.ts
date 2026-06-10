@@ -649,11 +649,11 @@ describe("recruiter role notifications", () => {
     })
     assert.match(email.subject, /recruiter invite/i)
     assert.match(email.text, /Accept your invite: https:\/\/wekruit-recruiters\.web\.app\/recruiters\?invite=1&email=sloane%40agency\.com/)
-    assert.match(email.text, /If the button doesn't work, use access code WK-ABCD-2345/)
+    assert.match(email.text, /If the button doesn't work, go to the recruiter site and sign in with this Google account\./)
     assert.match(email.text, /sloane@agency\.com/)
     assert.match(email.html, /<a href="https:\/\/wekruit-recruiters\.web\.app\/recruiters\?invite=1&amp;email=sloane%40agency\.com"/)
     assert.match(email.html, /Accept your invite<\/a>/)
-    assert.match(email.html, /use access code <code>WK-ABCD-2345<\/code>/)
+    assert.match(email.html, /go to the recruiter site and sign in with this Google account\./)
   })
 
   it("composes a submission update email with the recruiter workspace action", () => {
