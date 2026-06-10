@@ -8,10 +8,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 import {
   GoogleAuthProvider,
-  onAuthStateChanged,
   signInWithPopup,
   signOut,
-  type User,
 } from "firebase/auth"
 import { Link, useSearchParams } from "react-router-dom"
 import "../styles/recruiter-board.css"
@@ -36,8 +34,6 @@ import {
   fetchRecruiterSourcedCandidates,
   fetchRecruiterSubmissions,
   fetchRecruiterNotifications,
-  getRecruiterProfile,
-  isRecruiterProfileRejection,
   markRecruiterNotificationsRead,
   registerRecruiterAccess,
   checkRecruiterCandidateIdentity,
@@ -62,7 +58,7 @@ import {
   type RecruiterSubmissionItem,
 } from "../lib/recruiter-board-api.js"
 import { auth } from "../lib/firebase.js"
-import { redirectResultPromise } from "../lib/auth-redirect-bootstrap.js"
+import { useRecruiterSession } from "../lib/recruiter-session-context.js"
 import { SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
 import { SubmissionUpdatesToggle } from "../components/SubmissionUpdatesToggle.js"
 
@@ -191,6 +187,7 @@ const ADVANCED_STATUSES = ["advanced", "wekruit_interview", "client_review", "in
 const LATE_STAGE_STATUSES = ["client_review", "interviewing", "offer", "hired"]
 const CLOSED_NEGATIVE_STATUSES = ["rejected", "duplicate"]
 const OPEN_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "wekruit_interview", "client_review", "interviewing", "backburner", "offer"]
+const RECRUITER_INTERVIEW_REWARD_STATUSES = new Set(["wekruit_interview", "client_review", "interviewing", "offer", "hired"])
 
 function statusMeta(status?: string) {
   return STATUS_LABELS[status ?? "submitted"] ?? { label: status ?? "Submitted", tone: "mute" as const }
@@ -505,6 +502,22 @@ function submissionSearchText(submission: RecruiterSubmissionItem): string {
     submissionFeedbackReasonLabels(submission).join(" "),
     submissionReceiptId(submission),
   ].filter(Boolean).join(" ").toLowerCase()
+}
+
+function submissionFeedbackSummary(submission: RecruiterSubmissionItem): string {
+  const rating = submissionFeedbackRating(submission)
+  const reasons = submissionFeedbackReasonLabels(submission)
+  if (submission.recruiterFeedbackNote) return shortText(submission.recruiterFeedbackNote, "—", 80)
+  if (rating !== null && reasons.length) return `${rating}/4 · ${reasons.slice(0, 2).join(", ")}`
+  if (rating !== null) return `${rating}/4`
+  if (reasons.length) return reasons.slice(0, 2).join(", ")
+  return "Waiting for WeKruit"
+}
+
+function submissionRewardLabel(submission: RecruiterSubmissionItem): string {
+  const status = submission.status ?? "submitted"
+  if (CLOSED_NEGATIVE_STATUSES.includes(status)) return "—"
+  return RECRUITER_INTERVIEW_REWARD_STATUSES.has(status) ? "$50" : "$50 if interview"
 }
 
 type SubmissionCommandAction = "browse_roles" | "open_submission" | "open_role" | "resend_confirmation"
@@ -1265,8 +1278,7 @@ function formatRecruiterAuthError(
 export default function RecruiterBoard() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [inviteLink] = useState<RecruiterInviteLink | null>(readRecruiterInviteLinkFromLocation)
-  const [session, setSession] = useState<RecruiterSession | null>(null)
-  const [authReady, setAuthReady] = useState(false)
+  const { session, authReady, profileLoadFailed, retryProfile, setSession } = useRecruiterSession()
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
   const [sourcedCandidates, setSourcedCandidates] = useState<RecruiterSourcedCandidateItem[]>([])
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
@@ -1279,9 +1291,6 @@ export default function RecruiterBoard() {
   const [roleApplicationSavingId, setRoleApplicationSavingId] = useState<string | null>(null)
   const [accessDraftJobId, setAccessDraftJobId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [accessError, setAccessError] = useState<string | null>(null)
-  const [profileLoadFailed, setProfileLoadFailed] = useState(false)
-  const [profileRetryToken, setProfileRetryToken] = useState(0)
   const [submissionError, setSubmissionError] = useState<string | null>(null)
   const tabParam = searchParams.get("tab")
   // Unknown / retired tabs (?tab=earnings, ?tab=overview, ...) fall back to Roles.
@@ -1313,113 +1322,16 @@ export default function RecruiterBoard() {
   }, [])
 
   useEffect(() => {
-    let active = true
-    let handlingUid: string | null = null
-
-    const finishRecruiterAuth = async (user: User | null) => {
-      if (!user) {
-        if (!active) return
-        setSession(null)
-        setSourcedCandidates([])
-        setSubmissions([])
-        setRoleApplications([])
-        setRoleFeedback([])
-        setRoleQuestions([])
-        setRoleIntelligence([])
-        setNotifications([])
-        setStatusLoaded(false)
-        setProfileLoadFailed(false)
-        setAuthReady(true)
-        return
-      }
-      if (handlingUid === user.uid) return
-      handlingUid = user.uid
-      const pending = readPendingRecruiterAccess()
-      if (pending) {
-        const claimEmail = cleanRecruiterEmail(user.email ?? "")
-        try {
-          if (!claimEmail) throw new Error("Google did not return an email for this account.")
-          const next = await registerRecruiterAccess({
-            name: pending.name || cleanRecruiterName(user.displayName ?? "") || "Recruiter",
-            email: claimEmail,
-            ...(pending.inviteCode ? { inviteCode: pending.inviteCode } : {}),
-          })
-          clearPendingRecruiterAccess()
-          if (active) {
-            setAccessError(null)
-            setSession(next)
-          }
-          return
-        } catch (e) {
-          clearPendingRecruiterAccess()
-          await signOut(auth()).catch(() => undefined)
-          if (active) {
-            setSession(null)
-            setSourcedCandidates([])
-            setSubmissions([])
-            setRoleApplications([])
-            setRoleFeedback([])
-            setRoleQuestions([])
-            setRoleIntelligence([])
-            setNotifications([])
-            setStatusLoaded(false)
-            setAccessError(formatRecruiterAuthError(e, pending.emailHint, { codeless: !pending.inviteCode, email: claimEmail }))
-          }
-          return
-        } finally {
-          if (active) setAuthReady(true)
-        }
-      }
-
-      try {
-        const next = await getRecruiterProfile()
-        if (active) {
-          setAccessError(null)
-          setProfileLoadFailed(false)
-          setSession(next)
-        }
-      } catch (e) {
-        if (!isRecruiterProfileRejection(e)) {
-          handlingUid = null
-          if (active) setProfileLoadFailed(true)
-          return
-        }
-        await signOut(auth()).catch(() => undefined)
-        if (active) {
-          setSession(null)
-          setSourcedCandidates([])
-          setSubmissions([])
-          setRoleApplications([])
-          setRoleFeedback([])
-          setRoleQuestions([])
-          setRoleIntelligence([])
-          setNotifications([])
-          setStatusLoaded(false)
-          setProfileLoadFailed(false)
-          setAccessError("This Google account does not have recruiter access yet. Continue with Google using the email WeKruit invited.")
-        }
-      } finally {
-        if (active) setAuthReady(true)
-      }
-    }
-
-    const unsubscribe = onAuthStateChanged(auth(), (user) => {
-      void finishRecruiterAuth(user)
-    })
-    void redirectResultPromise
-      .then((result) => finishRecruiterAuth(result?.user ?? auth().currentUser))
-      .catch((err) => {
-        clearPendingRecruiterAccess()
-        if (active) {
-          setAccessError(formatRecruiterAuthError(err))
-          setAuthReady(true)
-        }
-      })
-    return () => {
-      active = false
-      unsubscribe()
-    }
-  }, [profileRetryToken])
+    if (session) return
+    setSourcedCandidates([])
+    setSubmissions([])
+    setRoleApplications([])
+    setRoleFeedback([])
+    setRoleQuestions([])
+    setRoleIntelligence([])
+    setNotifications([])
+    setStatusLoaded(false)
+  }, [session])
 
   const reloadSubmissions = async () => {
     if (!session) return
@@ -1464,12 +1376,18 @@ export default function RecruiterBoard() {
         <div className="rb-access">
           <div className="rb-state error">
             Couldn't load your recruiter profile. You're still signed in.
-            <button type="button" className="rb-btn" onClick={() => setProfileRetryToken((n) => n + 1)}>Retry</button>
+            <button type="button" className="rb-btn" onClick={retryProfile}>Retry</button>
           </div>
         </div>
       )
     }
-    return <RecruiterAccessGate initialError={accessError} initialInviteCode={searchParams.get("accessCode")} inviteLink={inviteLink} />
+    return (
+      <RecruiterAccessGate
+        initialInviteCode={searchParams.get("accessCode")}
+        inviteLink={inviteLink}
+        onSessionClaimed={setSession}
+      />
+    )
   }
 
   const openJobs = jobs ?? []
@@ -1547,7 +1465,6 @@ export default function RecruiterBoard() {
           <SubmissionsTab
             session={session}
             onSessionChange={setSession}
-            jobs={openJobs}
             submissions={submissions}
             onRefresh={reloadSubmissions}
             onRoles={() => setTab("roles")}
@@ -4149,10 +4066,12 @@ function RecruiterAccessGate({
   initialError,
   initialInviteCode,
   inviteLink,
+  onSessionClaimed,
 }: {
   initialError?: string | null
   initialInviteCode?: string | null
   inviteLink?: RecruiterInviteLink | null
+  onSessionClaimed: (session: RecruiterSession) => void
 }) {
   const normalizedInitialInviteCode = cleanRecruiterInviteCode(initialInviteCode ?? "")
   const [recruiterName, setRecruiterName] = useState("")
@@ -4175,6 +4094,30 @@ function RecruiterAccessGate({
     }
   }, [normalizedInitialInviteCode])
 
+  const completeGoogleClaim = async (fallbackPending: PendingRecruiterAccess, inviteEmailHint?: string) => {
+    let claimEmail = ""
+    try {
+      if (auth().currentUser) await signOut(auth())
+      const result = await signInWithPopup(auth(), createRecruiterGoogleProvider())
+      const user = result.user
+      claimEmail = cleanRecruiterEmail(user.email ?? "")
+      if (!claimEmail) throw new Error("Google did not return an email for this account.")
+      const pending = readPendingRecruiterAccess() ?? fallbackPending
+      const next = await registerRecruiterAccess({
+        name: pending.name || cleanRecruiterName(user.displayName ?? "") || "Recruiter",
+        email: claimEmail,
+        ...(pending.inviteCode ? { inviteCode: pending.inviteCode } : {}),
+      })
+      clearPendingRecruiterAccess()
+      onSessionClaimed(next)
+    } catch (error) {
+      clearPendingRecruiterAccess()
+      await signOut(auth()).catch(() => undefined)
+      setErr(formatRecruiterAuthError(error, fallbackPending.emailHint || inviteEmailHint, { codeless: !fallbackPending.inviteCode, email: claimEmail }))
+      setBusy(false)
+    }
+  }
+
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     const trimmedRecruiterName = cleanRecruiterName(recruiterName)
@@ -4191,8 +4134,7 @@ function RecruiterAccessGate({
     setErr(null)
     try {
       writePendingRecruiterAccess(trimmedInviteCode, trimmedRecruiterName)
-      if (auth().currentUser) await signOut(auth())
-      await signInWithPopup(auth(), createRecruiterGoogleProvider())
+      await completeGoogleClaim({ inviteCode: trimmedInviteCode, name: trimmedRecruiterName, createdAtMs: Date.now() })
     } catch (error) {
       clearPendingRecruiterAccess()
       setErr(formatRecruiterAuthError(error))
@@ -4209,8 +4151,12 @@ function RecruiterAccessGate({
     setErr(null)
     try {
       writePendingRecruiterAccess(inviteLink.code, cleanRecruiterName(recruiterName), inviteLink.emailHint || undefined)
-      if (auth().currentUser) await signOut(auth())
-      await signInWithPopup(auth(), createRecruiterGoogleProvider())
+      await completeGoogleClaim({
+        inviteCode: inviteLink.code,
+        name: cleanRecruiterName(recruiterName),
+        createdAtMs: Date.now(),
+        ...(inviteLink.emailHint ? { emailHint: inviteLink.emailHint } : {}),
+      }, inviteLink.emailHint || undefined)
     } catch (error) {
       clearPendingRecruiterAccess()
       setErr(formatRecruiterAuthError(error, inviteLink.emailHint || undefined))
@@ -4226,8 +4172,12 @@ function RecruiterAccessGate({
     setErr(null)
     try {
       writePendingRecruiterAccess("", "", inviteEmailHint || undefined)
-      if (auth().currentUser) await signOut(auth())
-      await signInWithPopup(auth(), createRecruiterGoogleProvider())
+      await completeGoogleClaim({
+        inviteCode: "",
+        name: "",
+        createdAtMs: Date.now(),
+        ...(inviteEmailHint ? { emailHint: inviteEmailHint } : {}),
+      }, inviteEmailHint || undefined)
     } catch (error) {
       clearPendingRecruiterAccess()
       setErr(formatRecruiterAuthError(error, inviteEmailHint || undefined))
@@ -9095,7 +9045,6 @@ function SourcedCandidateCard({
 function SubmissionsTab({
   session,
   onSessionChange,
-  jobs,
   submissions,
   onRefresh,
   onRoles,
@@ -9103,7 +9052,6 @@ function SubmissionsTab({
 }: {
   session: RecruiterSession
   onSessionChange: (session: RecruiterSession) => void
-  jobs: CollabJob[]
   submissions: RecruiterSubmissionItem[]
   onRefresh: () => Promise<void>
   onRoles: () => void
@@ -9114,9 +9062,6 @@ function SubmissionsTab({
   const [resendingId, setResendingId] = useState<string | null>(null)
   const [resendError, setResendError] = useState<string | null>(null)
   const dashboard = useMemo(() => buildRecruiterSubmissionDashboard(submissions), [submissions])
-  const command = useMemo(() => buildSubmissionCommand(submissions), [submissions])
-  const dealRoom = useMemo(() => buildSubmissionDealRoom(submissions, jobs), [jobs, submissions])
-  const pipelineBoard = useMemo(() => buildSubmissionPipelineBoard(submissions), [submissions])
   const visibleSubmissions = useMemo(() => {
     const needle = query.trim().toLowerCase()
     return submissions.filter((submission) => {
@@ -9124,7 +9069,6 @@ function SubmissionsTab({
       return !needle || submissionSearchText(submission).includes(needle)
     })
   }, [filter, query, submissions])
-  const nextActions = dashboard.needsAction.slice(0, 5)
   const handleResendConfirmation = async (submission: RecruiterSubmissionItem) => {
     const submissionId = submissionReceiptId(submission)
     setResendingId(submission.id)
@@ -9138,32 +9082,15 @@ function SubmissionsTab({
       setResendingId(null)
     }
   }
-  const handleReviewSubmission = (submissionId: string) => {
-    document.getElementById(submissionDomId(submissionId))?.scrollIntoView({ behavior: "smooth", block: "start" })
-  }
 
   return (
     <section className="rb-panel rb-panel--fill rb-submissions-dashboard">
       <header className="rb-panel__head">
-        <div><h2>Submission pipeline</h2><p>Track candidate ownership, WeKruit review status, feedback, and next action from one dashboard.</p></div>
+        <div><h2>Submitted candidates</h2><p>One table for candidate ownership, WeKruit status, feedback, and recruiter follow-up.</p></div>
         <SubmissionUpdatesToggle session={session} onSessionChange={onSessionChange} />
       </header>
 
-      <SubmissionCommandPanel
-        model={command}
-        onReviewSubmission={handleReviewSubmission}
-        onResendConfirmation={(submission) => void handleResendConfirmation(submission)}
-        resendingSubmissionId={resendingId}
-      />
-
-      <SubmissionDealRoomPanel
-        model={dealRoom}
-        onReviewSubmission={handleReviewSubmission}
-        onResendConfirmation={(submission) => void handleResendConfirmation(submission)}
-        resendingSubmissionId={resendingId}
-      />
-
-      <section className="rb-submissions-hero">
+      <section className="rb-submissions-summary" aria-label="Submission summary">
         {dashboard.hero.map((item) => (
           <article className={`is-${item.tone}`} key={item.label}>
             <span>{item.label}</span>
@@ -9172,8 +9099,6 @@ function SubmissionsTab({
           </article>
         ))}
       </section>
-
-      <SubmissionPipelineBoard lanes={pipelineBoard} onReviewSubmission={handleReviewSubmission} />
 
       <div className="rb-submissions-controls">
         <label className="rb-search">
@@ -9194,50 +9119,94 @@ function SubmissionsTab({
         </div>
       </div>
 
-      <div className="rb-submissions-layout">
-        <div className="rb-submission-list rb-submission-list--full">
-          {resendError && <p className="rb-state error">Could not resend candidate confirmation: {resendError}</p>}
-          {visibleSubmissions.map((s) => (
-            <SubmissionRow
-              key={s.id}
-              submission={s}
-              expanded
-              onResendConfirmation={() => void handleResendConfirmation(s)}
-              resendingConfirmation={resendingId === s.id}
-            />
-          ))}
-          {submissions.length === 0 && <SubmissionEmptyState onRoles={onRoles} onCandidates={onCandidates} />}
-          {submissions.length > 0 && visibleSubmissions.length === 0 && <p className="rb-empty">No submissions match the current filter.</p>}
-        </div>
-
-        <aside className="rb-submissions-side">
-          <article className={nextActions.length ? "is-warn" : "is-success"}>
-            <span>Next action queue</span>
-            <strong>{nextActions.length ? `${nextActions.length} item${nextActions.length === 1 ? "" : "s"}` : "Clear"}</strong>
-            <p>{nextActions.length ? "Act on feedback or stale reviews before sending lookalike candidates." : "No aged reviews or feedback blockers in the visible tracker."}</p>
-          </article>
-          <div className="rb-submissions-next-list">
-            {nextActions.map((submission) => {
-              const action = submissionNextAction(submission.status)
-              return (
-                <section className={`is-${action.tone}`} key={submission.id}>
-                  <span>{statusMeta(submission.status).label}</span>
-                  <strong>{submission.candidate?.name || "Candidate"}</strong>
-                  <p>{submission.recruiterFeedbackNote || action.body}</p>
-                  <em>{submission.jobTitleSnapshot || "Role"} · {submissionAgeDays(submission)}d old</em>
-                </section>
-              )
-            })}
-            {nextActions.length === 0 && <p>No immediate submission follow-up.</p>}
-          </div>
-          <article className="is-info">
-            <span>Ownership rule</span>
-            <strong>Consent + receipt</strong>
-            <p>Every row keeps the submission id, lane, candidate link, status history, and recorded recruiter ownership.</p>
-          </article>
-        </aside>
-      </div>
+      {resendError && <p className="rb-state error">Could not resend candidate confirmation: {resendError}</p>}
+      <SubmissionTable
+        submissions={visibleSubmissions}
+        emptyMessage={submissions.length > 0 ? "No submissions match the current filter." : "No submitted candidates yet. Open a role sheet and add the first candidate row."}
+        onResendConfirmation={(submission) => void handleResendConfirmation(submission)}
+        resendingSubmissionId={resendingId}
+      />
+      {submissions.length === 0 && <SubmissionEmptyState onRoles={onRoles} onCandidates={onCandidates} />}
     </section>
+  )
+}
+
+function SubmissionTable({
+  submissions,
+  emptyMessage,
+  onResendConfirmation,
+  resendingSubmissionId,
+}: {
+  submissions: RecruiterSubmissionItem[]
+  emptyMessage: string
+  onResendConfirmation: (submission: RecruiterSubmissionItem) => void
+  resendingSubmissionId: string | null
+}) {
+  return (
+    <div className="rb-submissions-table-wrap">
+      <table className="rb-submissions-table">
+        <thead>
+          <tr>
+            <th>Candidate</th>
+            <th>Role</th>
+            <th>Status</th>
+            <th>Consent</th>
+            <th>Feedback</th>
+            <th>Reward</th>
+            <th>Last update</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {submissions.map((submission) => {
+            const status = statusMeta(submission.status)
+            const consent = candidateConsentMeta(submission.candidateConsentStatus)
+            return (
+              <tr id={submissionDomId(submission.id)} key={submission.id}>
+                <td data-label="Candidate">
+                  <strong>{submission.candidate?.name ?? "Candidate"}</strong>
+                  <span>{submission.candidate?.email || shortText(submission.candidate?.link, "No email/link", 48)}</span>
+                </td>
+                <td data-label="Role">
+                  <strong>{shortText(submission.jobTitleSnapshot, "Role", 48)}</strong>
+                  <span>{shortText(submission.companyLabelSnapshot, "Company", 40)}</span>
+                </td>
+                <td data-label="Status">
+                  <span className={`rb-status is-${status.tone}`}>{status.label}</span>
+                </td>
+                <td data-label="Consent">
+                  <span className={`rb-status is-${consent.tone}`}>{consent.label}</span>
+                </td>
+                <td data-label="Feedback">{submissionFeedbackSummary(submission)}</td>
+                <td data-label="Reward">{submissionRewardLabel(submission)}</td>
+                <td data-label="Last update">{formatActivityDate(submission.updatedAt ?? submission.createdAt)}</td>
+                <td data-label="Action">
+                  <div className="rb-submissions-table__actions">
+                    {submission.inboundJobId || submission.jobId
+                      ? <Link to={`/recruiters/job/${submission.inboundJobId || submission.jobId}`}>Open sheet</Link>
+                      : <span>No role</span>}
+                    {candidateConfirmationCanResend(submission) && (
+                      <button
+                        type="button"
+                        onClick={() => onResendConfirmation(submission)}
+                        disabled={resendingSubmissionId === submission.id}
+                      >
+                        {resendingSubmissionId === submission.id ? "Sending..." : "Resend consent"}
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            )
+          })}
+          {submissions.length === 0 && (
+            <tr>
+              <td colSpan={8} className="rb-submissions-table__empty">{emptyMessage}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   )
 }
 

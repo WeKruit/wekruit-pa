@@ -63,14 +63,28 @@ test("roles list rows carry title, company, location, comp summary, and fee note
   assert.match(listSlice, /to=\{`\/recruiters\/job\/\$\{job\.jobId\}`\}/, "row links straight to the role page")
 })
 
-test("My submissions view still renders the shared list with steppers and an Open sheet link", () => {
+test("My submissions view renders a recruiter-facing candidate status table", () => {
   assert.match(boardSource, /\{activeTab === "submissions" && statusLoaded && \(\s*\n\s*<SubmissionsTab/)
-  assert.match(boardSource, /<SubmissionStatusStepper status=\{submission\.status\} requestedInfo=\{submission\.requestedInfo\} \/>/)
+  assert.match(boardSource, /function SubmissionTable\(/)
+  assert.match(boardSource, /<table className="rb-submissions-table">/)
+  const tableSlice = sliceBetween(boardSource, '<table className="rb-submissions-table">', "</table>")
+  for (const header of ["Candidate", "Role", "Status", "Consent", "Feedback", "Reward", "Last update", "Action"]) {
+    assert.match(tableSlice, new RegExp(`<th>${header}</th>`), `${header} column is visible`)
+  }
   assert.match(
     boardSource,
     /<Link to=\{`\/recruiters\/job\/\$\{submission\.inboundJobId \|\| submission\.jobId\}`\}>Open sheet<\/Link>/,
-    "submission rows link to the role sheet",
+    "submission table rows link to the role sheet",
   )
+})
+
+test("My submissions tab no longer renders command, deal-room, or kanban packet panels", () => {
+  const tabSlice = sliceBetween(boardSource, "function SubmissionsTab(", "\nfunction SubmissionCommandPanel(")
+  assert.doesNotMatch(tabSlice, /<SubmissionCommandPanel/)
+  assert.doesNotMatch(tabSlice, /<SubmissionDealRoomPanel/)
+  assert.doesNotMatch(tabSlice, /<SubmissionPipelineBoard/)
+  assert.doesNotMatch(tabSlice, /Submission deal room|No candidate packets yet|Open packet|payout movement/)
+  assert.match(tabSlice, /<SubmissionTable/)
 })
 
 test("role page is the sheet: collapsed JD, checklist columns, rows + blank add row", () => {

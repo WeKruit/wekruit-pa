@@ -34,7 +34,7 @@ test("Codeless claim sends the payload without inviteCode and pulls the Google d
 
 test("Codeless claim rejection shows the no-invite message with a different-account retry", () => {
   assert.match(source, /No invitation found for \$\{invitedAddress\}\. Ask your WeKruit contact to invite this address/)
-  assert.match(source, /setAccessError\(formatRecruiterAuthError\(e, pending\.emailHint, \{ codeless: !pending\.inviteCode, email: claimEmail \}\)\)/)
+  assert.match(source, /setErr\(formatRecruiterAuthError\(error, fallbackPending\.emailHint \|\| inviteEmailHint, \{ codeless: !fallbackPending\.inviteCode, email: claimEmail \}\)\)/)
   const codelessFormStart = source.indexOf("onSubmit={submitCodeless}")
   const codelessFormSlice = source.slice(codelessFormStart, source.indexOf("</form>", codelessFormStart))
   assert.match(codelessFormSlice, /Try a different Google account/)
@@ -53,7 +53,9 @@ test("Access-code disclosure reveals the manual name+code form", () => {
 })
 
 test("Returning signed-in recruiters skip the gate when paRecruiterMe recognizes them", () => {
-  assert.match(source, /const next = await getRecruiterProfile\(\)\s*\n\s*if \(active\) \{\s*\n\s*setAccessError\(null\)\s*\n\s*setProfileLoadFailed\(false\)\s*\n\s*setSession\(next\)/)
+  assert.match(source, /useRecruiterSession\(\)/)
+  assert.doesNotMatch(source, /onAuthStateChanged\(auth\(\)/)
+  assert.doesNotMatch(source, /const \[session, setSession\] = useState<RecruiterSession \| null>\(null\)/)
   assert.match(source, /if \(!authReady\) \{\s*\n\s*return <div className="rb-access"/)
   assert.match(source, /if \(!session\) \{\s*\n\s*if \(profileLoadFailed\) \{/)
   const gateRenderCount = (source.match(/<RecruiterAccessGate/g) ?? []).length
@@ -61,10 +63,11 @@ test("Returning signed-in recruiters skip the gate when paRecruiterMe recognizes
 })
 
 test("Transient paRecruiterMe failures keep the Firebase session and offer an inline retry", () => {
-  assert.match(source, /catch \(e\) \{\s*\n\s*if \(!isRecruiterProfileRejection\(e\)\) \{\s*\n\s*handlingUid = null\s*\n\s*if \(active\) setProfileLoadFailed\(true\)\s*\n\s*return\s*\n\s*\}\s*\n\s*await signOut\(auth\(\)\)/)
   assert.match(source, /Couldn't load your recruiter profile\. You're still signed in\./)
-  assert.match(source, /setProfileRetryToken\(\(n\) => n \+ 1\)\}>Retry<\/button>/)
-  assert.match(source, /\}, \[profileRetryToken\]\)/)
+  assert.match(source, /onClick=\{retryProfile\}>Retry<\/button>/)
+  const contextSource = readFileSync(resolve(here, "../../lib/recruiter-session-context.tsx"), "utf8")
+  assert.match(contextSource, /if \(!isRecruiterProfileRejection\(e\)\) \{\s*\n\s*handlingUid = null\s*\n\s*if \(active\) setProfileLoadFailed\(true\)\s*\n\s*return\s*\n\s*\}\s*\n\s*await signOut\(auth\(\)\)/)
+  assert.match(contextSource, /retryProfile: \(\) => setRetryToken\(\(n\) => n \+ 1\)/)
   const apiSource = readFileSync(resolve(here, "../../lib/recruiter-board-api.ts"), "utf8")
   assert.match(apiSource, /error\.status === 401 \|\| error\.status === 403/)
   assert.match(apiSource, /throw new RecruiterApiError\(body\.reason \?\? `paRecruiterMe HTTP \$\{res\.status\}`, res\.status\)/)

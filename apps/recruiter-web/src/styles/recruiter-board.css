@@ -5074,6 +5074,10 @@
   gap: 18px;
 }
 
+.rb-submissions-dashboard > .rb-panel__head {
+  align-items: center;
+}
+
 .rb-submission-command {
   display: grid;
   grid-template-columns: minmax(280px, 0.92fr) minmax(320px, 1.2fr) minmax(240px, 0.72fr);
@@ -5525,13 +5529,13 @@
   line-height: 1.25;
 }
 
-.rb-submissions-hero {
+.rb-submissions-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
 }
 
-.rb-submissions-hero article,
+.rb-submissions-summary article,
 .rb-submissions-side article,
 .rb-submissions-next-list section {
   min-width: 0;
@@ -5543,35 +5547,35 @@
   padding: 14px;
 }
 
-.rb-submissions-hero article.is-live,
+.rb-submissions-summary article.is-live,
 .rb-submissions-side article.is-live,
 .rb-submissions-next-list section.is-live {
   border-color: var(--live-border);
   background: var(--live-soft);
 }
 
-.rb-submissions-hero article.is-info,
+.rb-submissions-summary article.is-info,
 .rb-submissions-side article.is-info,
 .rb-submissions-next-list section.is-info {
   border-color: var(--info-bg);
   background: var(--info-bg);
 }
 
-.rb-submissions-hero article.is-success,
+.rb-submissions-summary article.is-success,
 .rb-submissions-side article.is-success,
 .rb-submissions-next-list section.is-success {
   border-color: var(--success-bg);
   background: var(--success-bg);
 }
 
-.rb-submissions-hero article.is-warn,
+.rb-submissions-summary article.is-warn,
 .rb-submissions-side article.is-warn,
 .rb-submissions-next-list section.is-warn {
   border-color: var(--danger-bg);
   background: var(--danger-bg);
 }
 
-.rb-submissions-hero span,
+.rb-submissions-summary span,
 .rb-submissions-side span,
 .rb-submissions-next-list span,
 .rb-submission-receipt span {
@@ -5582,7 +5586,7 @@
   text-transform: uppercase;
 }
 
-.rb-submissions-hero strong,
+.rb-submissions-summary strong,
 .rb-submissions-side strong,
 .rb-submissions-next-list strong {
   color: var(--ink);
@@ -5590,7 +5594,7 @@
   line-height: 1.1;
 }
 
-.rb-submissions-hero p,
+.rb-submissions-summary p,
 .rb-submissions-side p,
 .rb-submissions-next-list p {
   margin: 0;
@@ -5783,6 +5787,109 @@
   border-color: var(--ink);
   background: var(--ink);
   color: #fff;
+}
+
+.rb-submissions-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.rb-submissions-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12.5px;
+}
+
+.rb-submissions-table th,
+.rb-submissions-table td {
+  border-bottom: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  padding: 10px 11px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.rb-submissions-table th:first-child,
+.rb-submissions-table td:first-child {
+  border-left: 0;
+}
+
+.rb-submissions-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #efb36f;
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.rb-submissions-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.rb-submissions-table td strong,
+.rb-submissions-table td span {
+  display: block;
+}
+
+.rb-submissions-table td strong {
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.rb-submissions-table td span {
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.35;
+  margin-top: 3px;
+}
+
+.rb-submissions-table__actions {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.rb-submissions-table__actions a,
+.rb-submissions-table__actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 800;
+  padding: 6px 9px;
+  text-decoration: none;
+}
+
+.rb-submissions-table__actions a {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: #fff;
+}
+
+.rb-submissions-table__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.rb-submissions-table__empty {
+  color: var(--ink-3);
+  font-size: 13px;
+  text-align: center;
 }
 
 .rb-submissions-layout {
@@ -10091,7 +10198,7 @@
     border-left: 0;
     border-top: 1px solid var(--border);
   }
-  .rb-submissions-hero,
+  .rb-submissions-summary,
   .rb-submission-receipt {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -10349,9 +10456,49 @@
   .rb-submission-packet header {
     grid-template-columns: 1fr;
   }
-  .rb-submissions-hero,
+  .rb-submissions-summary,
   .rb-submission-receipt {
     grid-template-columns: 1fr;
+  }
+  .rb-submissions-table-wrap {
+    overflow: visible;
+  }
+  .rb-submissions-table {
+    min-width: 0;
+  }
+  .rb-submissions-table thead {
+    display: none;
+  }
+  .rb-submissions-table tbody,
+  .rb-submissions-table tr,
+  .rb-submissions-table td {
+    display: block;
+  }
+  .rb-submissions-table tr {
+    border-bottom: 1px solid var(--border);
+  }
+  .rb-submissions-table tr:last-child {
+    border-bottom: 0;
+  }
+  .rb-submissions-table td {
+    border-left: 0;
+    display: grid;
+    gap: 4px;
+    grid-template-columns: 116px minmax(0, 1fr);
+  }
+  .rb-submissions-table td::before {
+    color: var(--ink-3);
+    content: attr(data-label);
+    font-size: 10.5px;
+    font-weight: 900;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .rb-submissions-table td.rb-submissions-table__empty {
+    display: block;
+  }
+  .rb-submissions-table td.rb-submissions-table__empty::before {
+    display: none;
   }
   .rb-calibration-brief__facts {
     grid-template-columns: 1fr;
