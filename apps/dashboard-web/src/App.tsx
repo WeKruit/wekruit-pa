@@ -81,6 +81,7 @@ import PassedCandidates from "./pages/PassedCandidates.js"
 import PrescreenFeedback from "./pages/PrescreenFeedback.js"
 // Recruiter board (wekruit-recruiters.web.app/recruiters) — admin review surface.
 import RecruiterSubmissions from "./pages/RecruiterSubmissions.js"
+import RecruiterHub from "./pages/RecruiterHub.js"
 // v2.0 External Supply V1 — Wave D admin surfaces (Landing, BatchNew,
 // BatchDetail, Review, Evaluations, EvaluationDetail, Research, Outreach,
 // Sync, Audit). All routes live under /admin/external-supply/**.
@@ -250,6 +251,7 @@ export default function App() {
           {/* v1.9 Phase 89 — pre-screen feedback aggregate. */}
           <Route path="/admin/prescreen-feedback" element={<PrescreenFeedback />} />
           {/* Recruiter board admin surfaces. */}
+          <Route path="/admin/recruiter-hub" element={<RecruiterHub />} />
           <Route path="/admin/recruiter-access" element={<RecruiterSubmissions section="codes" />} />
           <Route path="/admin/recruiter-codes" element={<Navigate to="/admin/recruiter-access" replace />} />
           <Route path="/admin/recruiter-roles" element={<RecruiterSubmissions section="roles" />} />

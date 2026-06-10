@@ -89,6 +89,7 @@ interface SubmissionDoc {
   sheetSyncError?: string | null
   createdAt?: { seconds: number } | null
   createdAtMs?: number
+  triageSortMs?: number
   hardScorePct?: number
 }
 
@@ -155,6 +156,8 @@ function payoutAmountLabel(payout?: SubmissionDoc["recruiterPayout"]): string {
 const STATUS_VALUES = ["submitted", "new", "reviewing", "advanced", "interviewing", "backburner", "offer", "hired", "rejected", "duplicate"]
 const ACTIVE_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "interviewing", "backburner", "offer"]
 const PENDING_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "backburner"]
+const TRIAGE_FIRST_STATUSES = ["submitted", "new", "reviewing"]
+const TRIAGE_SORT_BOOST_MS = 1e15
 const ADVANCED_SUBMISSION_STATUSES = ["advanced", "interviewing", "offer", "hired"]
 const NEGATIVE_SUBMISSION_STATUSES = ["rejected", "duplicate"]
 const RECRUITER_WEEKLY_SUBMISSION_TARGET = 8
@@ -599,7 +602,7 @@ function computeRecruiterQualityRows(
   })
 }
 
-export default function RecruiterSubmissions({ section = "submissions" }: { section?: RecruiterAdminSection }) {
+export default function RecruiterSubmissions({ section = "submissions", embedded = false }: { section?: RecruiterAdminSection; embedded?: boolean }) {
   const isSubmissions = section === "submissions"
   const [loading, setLoading] = useState(isSubmissions)
   const [err, setErr] = useState<string | null>(null)
@@ -631,10 +634,13 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
         const all = snap.docs.map((d) => {
           const data = d.data() as Omit<SubmissionDoc, "id">
           const createdAtMs = data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0
+          const triageSortMs = TRIAGE_FIRST_STATUSES.includes(data.status ?? "new")
+            ? createdAtMs + TRIAGE_SORT_BOOST_MS
+            : createdAtMs
           const hardScorePct = data.score?.hardTotal
             ? data.score.hardChecked / data.score.hardTotal
             : 0
-          return { id: d.id, ...data, createdAtMs, hardScorePct }
+          return { id: d.id, ...data, createdAtMs, triageSortMs, hardScorePct }
         })
         const jobMap = new Map<string, RecruiterBoardAdminJobDoc>()
         for (const d of jobSnap.docs) {
@@ -671,7 +677,7 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
   }, [rows])
 
   const table = useTable<SubmissionDoc>(rows, {
-    defaultSort: { key: "createdAtMs", dir: "desc" },
+    defaultSort: { key: "triageSortMs", dir: "desc" },
     pageSize: 50,
     search: (r, q) =>
       (r.submitter?.name?.toLowerCase().includes(q) ?? false) ||
@@ -764,7 +770,7 @@ export default function RecruiterSubmissions({ section = "submissions" }: { sect
                         : "Review recruiter-submitted candidates and move each submission through the hiring-board pipeline."
         }
       />
-      <RecruiterSectionTabs active={section} />
+      {!embedded && <RecruiterSectionTabs active={section} />}
     </>
   )
 
