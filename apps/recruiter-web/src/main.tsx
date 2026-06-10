@@ -2,6 +2,7 @@ import React from "react"
 import ReactDOM from "react-dom/client"
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
 import "./lib/auth-redirect-bootstrap.js"
+import { RecruiterSessionProvider } from "./lib/recruiter-session-context.js"
 import RecruiterBoard from "./pages/RecruiterBoard.js"
 import RoleSheetPage from "./pages/RoleSheetPage.js"
 
@@ -19,6 +20,8 @@ const routes = (
 
 ReactDOM.createRoot(root).render(
   <React.StrictMode>
-    <BrowserRouter>{routes}</BrowserRouter>
+    <BrowserRouter>
+      <RecruiterSessionProvider>{routes}</RecruiterSessionProvider>
+    </BrowserRouter>
   </React.StrictMode>,
 )
