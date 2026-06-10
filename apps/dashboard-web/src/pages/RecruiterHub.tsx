@@ -1,8 +1,10 @@
 import { useSearchParams } from "react-router-dom"
 
+import RecruiterBoardOps from "./RecruiterBoardOps.js"
 import RecruiterSubmissions from "./RecruiterSubmissions.js"
 
 const HUB_TABS = [
+  { key: "board", label: "Board" },
   { key: "submissions", label: "Submissions" },
   { key: "quality", label: "Quality" },
   { key: "applications", label: "Applications" },
@@ -19,7 +21,7 @@ export default function RecruiterHub() {
   const requested = searchParams.get("tab")
   const active: HubTab = HUB_TABS.some((t) => t.key === requested)
     ? (requested as HubTab)
-    : "submissions"
+    : "board"
 
   function setTab(tab: HubTab) {
     const next = new URLSearchParams(searchParams)
@@ -60,7 +62,11 @@ export default function RecruiterHub() {
           )
         })}
       </div>
-      <RecruiterSubmissions key={active} section={active} embedded />
+      {active === "board" ? (
+        <RecruiterBoardOps />
+      ) : (
+        <RecruiterSubmissions key={active} section={active} embedded />
+      )}
     </div>
   )
 }

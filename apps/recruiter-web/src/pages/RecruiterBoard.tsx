@@ -63,6 +63,8 @@ import {
 } from "../lib/recruiter-board-api.js"
 import { auth } from "../lib/firebase.js"
 import { redirectResultPromise } from "../lib/auth-redirect-bootstrap.js"
+import { SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
+import { SubmissionUpdatesToggle } from "../components/SubmissionUpdatesToggle.js"
 
 type RecruiterTab = "overview" | "inbox" | "roles" | "access" | "matches" | "candidates" | "submissions" | "performance" | "earnings" | "settings"
 
@@ -138,6 +140,8 @@ const STATUS_LABELS: Record<string, { label: string; tone: "live" | "info" | "su
   new: { label: "Submitted", tone: "live" },
   submitted: { label: "Submitted", tone: "live" },
   reviewing: { label: "WeKruit review", tone: "info" },
+  wekruit_interview: { label: "WeKruit interview", tone: "info" },
+  client_review: { label: "With client", tone: "success" },
   advanced: { label: "Sent to hiring team", tone: "success" },
   interviewing: { label: "Interviewing", tone: "success" },
   backburner: { label: "Backburner", tone: "info" },
@@ -180,15 +184,6 @@ const CALIBRATION_LABELS: Record<string, { label: string; tone: "live" | "info" 
   suggested: { label: "Suggested direction", tone: "info" },
 }
 
-const SUBMISSION_PROGRESS = [
-  { id: "submitted", label: "Submitted" },
-  { id: "reviewing", label: "WeKruit review" },
-  { id: "advanced", label: "Hiring team" },
-  { id: "interviewing", label: "Interviewing" },
-  { id: "offer", label: "Offer" },
-  { id: "hired", label: "Hired" },
-] as const
-
 const SUBMISSION_FILTERS = [
   { id: "all", label: "All" },
   { id: "active", label: "Active review" },
@@ -200,10 +195,10 @@ const SUBMISSION_FILTERS = [
 
 type SubmissionFilter = typeof SUBMISSION_FILTERS[number]["id"]
 const ACTIVE_REVIEW_STATUSES = ["submitted", "new", "reviewing", "backburner"]
-const ADVANCED_STATUSES = ["advanced", "interviewing", "offer", "hired"]
-const LATE_STAGE_STATUSES = ["interviewing", "offer", "hired"]
+const ADVANCED_STATUSES = ["advanced", "wekruit_interview", "client_review", "interviewing", "offer", "hired"]
+const LATE_STAGE_STATUSES = ["client_review", "interviewing", "offer", "hired"]
 const CLOSED_NEGATIVE_STATUSES = ["rejected", "duplicate"]
-const OPEN_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "interviewing", "backburner", "offer"]
+const OPEN_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "wekruit_interview", "client_review", "interviewing", "backburner", "offer"]
 
 function statusMeta(status?: string) {
   return STATUS_LABELS[status ?? "submitted"] ?? { label: status ?? "Submitted", tone: "mute" as const }
@@ -303,6 +298,10 @@ function submissionNextAction(status?: string): { title: string; body: string; t
   switch (status) {
     case "reviewing":
       return { title: "WeKruit is reviewing", body: "Hold additional lookalikes until the review note lands.", tone: "info" }
+    case "wekruit_interview":
+      return { title: "WeKruit interview", body: "Keep the candidate warm while WeKruit runs the first interview.", tone: "info" }
+    case "client_review":
+      return { title: "With client", body: "The packet is with the hiring team. Watch for client feedback.", tone: "success" }
     case "advanced":
       return { title: "Sent to hiring team", body: "Keep the candidate warm and be ready for interview logistics.", tone: "success" }
     case "interviewing":
@@ -1132,6 +1131,25 @@ interface PendingRecruiterAccess {
   inviteCode: string
   name: string
   createdAtMs: number
+  emailHint?: string
+}
+
+interface RecruiterInviteLink {
+  code: string
+  emailHint: string
+}
+
+function readRecruiterInviteLinkFromLocation(): RecruiterInviteLink | null {
+  if (typeof window === "undefined") return null
+  const params = new URLSearchParams(window.location.search)
+  const code = cleanRecruiterInviteCode(params.get("code") ?? "")
+  if (!code) return null
+  return { code, emailHint: cleanRecruiterEmail(params.get("email") ?? "") }
+}
+
+function maskRecruiterInviteCodeForDisplay(code: string): string {
+  if (code.length <= 6) return code
+  return `${code.slice(0, 3)}••••${code.slice(-3)}`
 }
 
 function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
@@ -1140,7 +1158,7 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<PendingRecruiterAccess>
     if (!parsed.inviteCode || typeof parsed.inviteCode !== "string") return null
-    if (!parsed.name || typeof parsed.name !== "string") return null
+    if (typeof parsed.name !== "string") return null
     if (typeof parsed.createdAtMs !== "number" || Date.now() - parsed.createdAtMs > 10 * 60 * 1000) {
       storage.removeItem(RECRUITER_ACCESS_PENDING_KEY)
       return null
@@ -1149,6 +1167,9 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
       inviteCode: parsed.inviteCode,
       name: cleanRecruiterName(parsed.name),
       createdAtMs: parsed.createdAtMs,
+      ...(typeof parsed.emailHint === "string" && parsed.emailHint
+        ? { emailHint: cleanRecruiterEmail(parsed.emailHint) }
+        : {}),
     }
   }
 
@@ -1165,11 +1186,12 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
   }
 }
 
-function writePendingRecruiterAccess(inviteCode: string, name: string) {
+function writePendingRecruiterAccess(inviteCode: string, name: string, emailHint?: string) {
   const payload = JSON.stringify({
     inviteCode,
     name,
     createdAtMs: Date.now(),
+    ...(emailHint ? { emailHint } : {}),
   })
   let wrote = false
   try {
@@ -1206,7 +1228,7 @@ function authErrorCode(error: unknown): string {
     : ""
 }
 
-function formatRecruiterAuthError(error: unknown): string {
+function formatRecruiterAuthError(error: unknown, inviteEmailHint?: string): string {
   const code = authErrorCode(error)
   switch (code) {
     case "auth/account-exists-with-different-credential":
@@ -1220,6 +1242,11 @@ function formatRecruiterAuthError(error: unknown): string {
         if (error.message === "unauthorized") {
           return "This Google account does not have recruiter access. Enter an access code first."
         }
+        if (error.message === "email_mismatch") {
+          return inviteEmailHint
+            ? `This invite is for ${inviteEmailHint}. Sign in with that Google account.`
+            : "This invite is bound to a different email. Sign in with the Google account that received the invite."
+        }
         if (error.message === "invalid_or_expired_invite_code") {
           return "That access code is invalid, expired, already bound to another recruiter, or does not match this Google account."
         }
@@ -1231,6 +1258,7 @@ function formatRecruiterAuthError(error: unknown): string {
 
 export default function RecruiterBoard() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const [inviteLink] = useState<RecruiterInviteLink | null>(readRecruiterInviteLinkFromLocation)
   const [session, setSession] = useState<RecruiterSession | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
@@ -1251,6 +1279,24 @@ export default function RecruiterBoard() {
   const [submissionError, setSubmissionError] = useState<string | null>(null)
   const tabParam = searchParams.get("tab")
   const activeTab = TABS.some((t) => t.id === tabParam) ? tabParam as RecruiterTab : "overview"
+
+  // Invite-link mode: persist the code (+email hint) before auth resolves so a
+  // signed-in recruiter claims in zero clicks, then strip the params from the URL.
+  useEffect(() => {
+    if (!inviteLink) return
+    try {
+      writePendingRecruiterAccess(inviteLink.code, "", inviteLink.emailHint || undefined)
+    } catch {
+      // Storage blocked; the gate button re-writes the slot before sign-in.
+    }
+    if (searchParams.has("code") || searchParams.has("email")) {
+      const next = new URLSearchParams(searchParams)
+      next.delete("code")
+      next.delete("email")
+      setSearchParams(next, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inviteLink])
 
   useEffect(() => {
     fetchCollabJobs()
@@ -1286,7 +1332,7 @@ export default function RecruiterBoard() {
           const email = cleanRecruiterEmail(user.email ?? "")
           if (!email) throw new Error("Google did not return an email for this account.")
           const next = await registerRecruiterAccess({
-            name: pending.name,
+            name: pending.name || cleanRecruiterName(user.displayName ?? "") || "Recruiter",
             email,
             inviteCode: pending.inviteCode,
           })
@@ -1309,7 +1355,7 @@ export default function RecruiterBoard() {
             setRoleIntelligence([])
             setNotifications([])
             setStatusLoaded(false)
-            setAccessError(formatRecruiterAuthError(e))
+            setAccessError(formatRecruiterAuthError(e, pending.emailHint))
           }
           return
         } finally {
@@ -1433,7 +1479,7 @@ export default function RecruiterBoard() {
         </div>
       )
     }
-    return <RecruiterAccessGate initialError={accessError} initialInviteCode={searchParams.get("accessCode")} />
+    return <RecruiterAccessGate initialError={accessError} initialInviteCode={searchParams.get("accessCode")} inviteLink={inviteLink} />
   }
 
   const openJobs = jobs ?? []
@@ -1488,6 +1534,7 @@ export default function RecruiterBoard() {
             <em>{session.recruiter.email}</em>
           </span>
         </div>
+        <SubmissionUpdatesToggle session={session} onSessionChange={setSession} compact />
         <nav className="rb-platform__tabs" aria-label="Recruiter workspace">
           {TABS.map((tab) => (
             <button
@@ -1639,6 +1686,8 @@ export default function RecruiterBoard() {
         {activeTab === "submissions" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "submissions" && statusLoaded && (
           <SubmissionsTab
+            session={session}
+            onSessionChange={setSession}
             jobs={openJobs}
             submissions={submissions}
             onRefresh={reloadSubmissions}
@@ -4276,18 +4325,23 @@ function RecruiterStatusLoading() {
 function RecruiterAccessGate({
   initialError,
   initialInviteCode,
+  inviteLink,
 }: {
   initialError?: string | null
   initialInviteCode?: string | null
+  inviteLink?: RecruiterInviteLink | null
 }) {
   const normalizedInitialInviteCode = cleanRecruiterInviteCode(initialInviteCode ?? "")
   const [recruiterName, setRecruiterName] = useState("")
-  const [inviteCode, setInviteCode] = useState(normalizedInitialInviteCode)
+  const [inviteCode, setInviteCode] = useState(normalizedInitialInviteCode || inviteLink?.code || "")
   const [err, setErr] = useState<string | null>(initialError ?? null)
   const [busy, setBusy] = useState(false)
+  const [manualMode, setManualMode] = useState(false)
+  const linkMode = Boolean(inviteLink) && !manualMode
 
   useEffect(() => {
     setErr(initialError ?? null)
+    if (initialError) setBusy(false)
   }, [initialError])
 
   useEffect(() => {
@@ -4315,6 +4369,24 @@ function RecruiterAccessGate({
     } catch (error) {
       clearPendingRecruiterAccess()
       setErr(formatRecruiterAuthError(error))
+      setBusy(false)
+    }
+  }
+
+  // Invite-link one-click claim: no typing — the code came from the URL and the
+  // recruiter name comes from the Google displayName at claim time.
+  const submitInviteLink = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!inviteLink) return
+    setBusy(true)
+    setErr(null)
+    try {
+      writePendingRecruiterAccess(inviteLink.code, cleanRecruiterName(recruiterName), inviteLink.emailHint || undefined)
+      if (auth().currentUser) await signOut(auth())
+      await signInWithPopup(auth(), createRecruiterGoogleProvider())
+    } catch (error) {
+      clearPendingRecruiterAccess()
+      setErr(formatRecruiterAuthError(error, inviteLink.emailHint || undefined))
       setBusy(false)
     }
   }
@@ -4358,6 +4430,27 @@ function RecruiterAccessGate({
           </ul>
         </section>
         <div className="rb-access__right-rail">
+          {linkMode && inviteLink ? (
+            <form className="rb-access__card" onSubmit={submitInviteLink}>
+              <span className="rb-access__badge">Registered recruiters only</span>
+              <h2>You're invited</h2>
+              <p className="rb-access__hint">
+                {inviteLink.emailHint
+                  ? `This invite is reserved for ${inviteLink.emailHint}. Sign in with that Google account to open your recruiter workspace — no code typing needed.`
+                  : "Your access code is already attached from the invite link. Continue with Google to open your recruiter workspace — no code typing needed."}
+              </p>
+              <p className="rb-access__hint">
+                Invite code <strong>{maskRecruiterInviteCodeForDisplay(inviteLink.code)}</strong>
+              </p>
+              {err && <p className="rb-access__err">{err}</p>}
+              <button className="rb-btn primary rb-btn--block" disabled={busy}>
+                {busy ? "Opening Google..." : "Continue with Google"}
+              </button>
+              <button type="button" className="rb-access__reset" disabled={busy} onClick={() => setManualMode(true)}>
+                Enter name and code manually
+              </button>
+            </form>
+          ) : (
           <form className="rb-access__card" onSubmit={submit}>
             <span className="rb-access__badge">Registered recruiters only</span>
             <h2>Claim recruiter access</h2>
@@ -4392,6 +4485,7 @@ function RecruiterAccessGate({
               Restart sign-in
             </button>
           </form>
+          )}
           <RecruiterAccessWorkspacePreview />
         </div>
       </main>
@@ -9083,12 +9177,16 @@ function SourcedCandidateCard({
 }
 
 function SubmissionsTab({
+  session,
+  onSessionChange,
   jobs,
   submissions,
   onRefresh,
   onRoles,
   onCandidates,
 }: {
+  session: RecruiterSession
+  onSessionChange: (session: RecruiterSession) => void
   jobs: CollabJob[]
   submissions: RecruiterSubmissionItem[]
   onRefresh: () => Promise<void>
@@ -9132,6 +9230,7 @@ function SubmissionsTab({
     <section className="rb-panel rb-panel--fill rb-submissions-dashboard">
       <header className="rb-panel__head">
         <div><h2>Submission pipeline</h2><p>Track candidate ownership, WeKruit review status, feedback, and next action from one dashboard.</p></div>
+        <SubmissionUpdatesToggle session={session} onSessionChange={onSessionChange} />
       </header>
 
       <SubmissionCommandPanel
@@ -10439,7 +10538,7 @@ function SettingsTab({
     setErr(null)
     try {
       const updated = await updateRecruiterPreferences({
-        notificationPreferences: { newRolesEmail: next },
+        notificationPreferences: { ...session.recruiter.notificationPreferences, newRolesEmail: next },
         workspacePreferences: session.recruiter.workspacePreferences ?? { primaryRoleIds: [] },
       })
       onSessionChange(updated)
@@ -10662,10 +10761,6 @@ function SubmissionRow({
 }) {
   const meta = statusMeta(submission.status)
   const consent = candidateConsentMeta(submission.candidateConsentStatus)
-  const currentStatus = submission.status === "new" ? "submitted" : submission.status ?? "submitted"
-  const timelineStatus = currentStatus === "backburner" ? "reviewing" : currentStatus
-  const currentIndex = SUBMISSION_PROGRESS.findIndex((step) => step.id === timelineStatus)
-  const isClosed = currentStatus === "rejected" || currentStatus === "duplicate"
   const nextAction = submissionNextAction(submission.status)
   const activity = submissionActivityEvents(submission)
   const feedbackReasons = submissionFeedbackReasonLabels(submission)
@@ -10686,14 +10781,7 @@ function SubmissionRow({
       </div>
       {expanded && (
         <div className="rb-submission__detail">
-          <div className={`rb-submission-timeline ${isClosed ? "is-closed" : ""}`} aria-label="Submission status timeline">
-            {SUBMISSION_PROGRESS.map((step, index) => (
-              <span key={step.id} className={currentIndex >= index ? "is-complete" : ""}>
-                {step.label}
-              </span>
-            ))}
-            {isClosed && <span className="is-complete">{meta.label}</span>}
-          </div>
+          <SubmissionStatusStepper status={submission.status} requestedInfo={submission.requestedInfo} />
           <p><strong>Candidate:</strong> {submission.candidate?.currentRole || "Role not provided"}{submission.candidate?.yoe ? ` · ${submission.candidate.yoe} YOE` : ""}</p>
           {submission.candidate?.email && <p><strong>Email:</strong> {submission.candidate.email}</p>}
           {submission.candidate?.link && <a href={submission.candidate.link} target="_blank" rel="noopener noreferrer">{shortText(submission.candidate.link, submission.candidate.link, 80)}</a>}

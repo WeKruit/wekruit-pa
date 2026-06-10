@@ -153,12 +153,12 @@ function payoutAmountLabel(payout?: SubmissionDoc["recruiterPayout"]): string {
   return currency === "USD" ? `$${formatted}` : `${currency} ${formatted}`
 }
 
-const STATUS_VALUES = ["submitted", "new", "reviewing", "advanced", "interviewing", "backburner", "offer", "hired", "rejected", "duplicate"]
-const ACTIVE_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "interviewing", "backburner", "offer"]
+const STATUS_VALUES = ["submitted", "new", "reviewing", "advanced", "wekruit_interview", "interviewing", "backburner", "offer", "client_review", "hired", "rejected", "duplicate"]
+const ACTIVE_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "wekruit_interview", "interviewing", "backburner", "offer", "client_review"]
 const PENDING_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "backburner"]
 const TRIAGE_FIRST_STATUSES = ["submitted", "new", "reviewing"]
 const TRIAGE_SORT_BOOST_MS = 1e15
-const ADVANCED_SUBMISSION_STATUSES = ["advanced", "interviewing", "offer", "hired"]
+const ADVANCED_SUBMISSION_STATUSES = ["advanced", "wekruit_interview", "interviewing", "offer", "client_review", "hired"]
 const NEGATIVE_SUBMISSION_STATUSES = ["rejected", "duplicate"]
 const RECRUITER_WEEKLY_SUBMISSION_TARGET = 8
 const RECRUITER_INTERVIEW_RATE_TARGET = 50

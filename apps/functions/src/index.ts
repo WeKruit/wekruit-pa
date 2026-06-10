@@ -268,6 +268,17 @@ export { paAdminPrescreenOpsSnapshot } from "./admin-prescreen-ops.js"
 // to pa-candidate-identity-conflicts are rules-denied, so the dashboard
 // /admin/identity-conflicts page goes through this callable.
 export { paAdminIdentityConflictsResolve } from "./admin-identity-conflicts.js"
+// AI-first recruiter-submission evaluation — onDocumentCreated trigger over
+// pa-recruiter-submissions. Best-effort Coresignal research + ONE strict-JSON
+// critical-judge LLM call (callWithFallback 3-tier) → merges `aiEvaluation`
+// onto the submission doc. NEVER touches `status` (operator-only transitions).
+export { paRecruiterSubmissionEval } from "./recruiter-submission-eval.js"
+// Operator decision callable for the recruiter-submission review board.
+// advance/reject/reviewing/duplicate set status + adminDecision; request_info
+// appends requestedInfo[]. The recruiter-board codebase's
+// paRecruiterSubmissionFeedbackNotify trigger reacts to the status write and
+// owns recruiter emails — this callable never sends mail.
+export { paAdminRecruiterSubmissionAction } from "./admin-recruiter-submission-action.js"
 
 // v2.2 W6 — admin-only callable that seeds outbound-bookings/{id} with
 // voiceState=dialing to trigger the existing S3 dial gate. Backs the

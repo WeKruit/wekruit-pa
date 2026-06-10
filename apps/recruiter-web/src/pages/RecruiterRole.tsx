@@ -43,6 +43,7 @@ import {
   type SubmissionResponse,
 } from "../lib/recruiter-board-api.js"
 import { auth } from "../lib/firebase.js"
+import { SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
 import { buildCandidateProofPromptItems } from "./RecruiterRolePacket.helpers.js"
 
 const STORAGE_KEY_PREFIX = "rb-state-v1:"
@@ -68,7 +69,7 @@ const ROLE_FEEDBACK_REASONS: Array<{ id: RecruiterRoleFeedbackReason; label: str
 ]
 
 const ROLE_PENDING_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "backburner"]
-const ROLE_ADVANCED_SUBMISSION_STATUSES = ["advanced", "interviewing", "offer", "hired"]
+const ROLE_ADVANCED_SUBMISSION_STATUSES = ["advanced", "wekruit_interview", "client_review", "interviewing", "offer", "hired"]
 const ROLE_NEGATIVE_SUBMISSION_STATUSES = ["rejected", "duplicate"]
 
 interface FormState {
@@ -76,12 +77,57 @@ interface FormState {
   submitterEmail: string
   candidateName: string
   candidateEmail: string
-  candidateLink: string
+  candidateLinkedinUrl: string
+  candidateResumeUrl: string
   candidateCurrentRole: string
   candidateYoe: string
   candidateNotes: string
   candidateConsent: boolean
   checklist: Record<string, boolean>
+  extraFields: Record<string, string>
+}
+
+function looksLikeLinkedinUrl(value: string): boolean {
+  return value.toLowerCase().includes("linkedin.")
+}
+
+function splitCandidateLink(link: string | undefined): Pick<FormState, "candidateLinkedinUrl" | "candidateResumeUrl"> {
+  const trimmed = (link ?? "").trim()
+  if (!trimmed) return { candidateLinkedinUrl: "", candidateResumeUrl: "" }
+  return looksLikeLinkedinUrl(trimmed)
+    ? { candidateLinkedinUrl: trimmed, candidateResumeUrl: "" }
+    : { candidateLinkedinUrl: "", candidateResumeUrl: trimmed }
+}
+
+function candidateLinkValue(form: Pick<FormState, "candidateLinkedinUrl" | "candidateResumeUrl">): string {
+  return form.candidateLinkedinUrl.trim() || form.candidateResumeUrl.trim()
+}
+
+type RoleSubmitField = NonNullable<CollabJob["recruiterBoard"]["submitFields"]>[number]
+
+function roleSubmitFields(job: CollabJob): RoleSubmitField[] {
+  return job.recruiterBoard.submitFields ?? []
+}
+
+function normalizeSubmitUrl(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+  try {
+    const parsed = new URL(withScheme)
+    return parsed.hostname.includes(".") ? withScheme : null
+  } catch {
+    return null
+  }
+}
+
+function buildExtraFieldsPayload(job: CollabJob, form: Pick<FormState, "extraFields">): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const field of roleSubmitFields(job)) {
+    const value = (form.extraFields[field.id] ?? "").trim().slice(0, 500)
+    if (value) out[field.id] = value
+  }
+  return out
 }
 
 type RoleQuickCandidateDraft = {
@@ -139,19 +185,27 @@ function emptyForm(): FormState {
     submitterEmail: "",
     candidateName: "",
     candidateEmail: "",
-    candidateLink: "",
+    candidateLinkedinUrl: "",
+    candidateResumeUrl: "",
     candidateCurrentRole: "",
     candidateYoe: "",
     candidateNotes: "",
     candidateConsent: false,
     checklist: {},
+    extraFields: {},
   }
 }
 
 function loadFormState(jobId: string): FormState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_PREFIX + jobId)
-    if (raw) return { ...emptyForm(), ...JSON.parse(raw) }
+    if (raw) {
+      const { candidateLink, ...parsed } = JSON.parse(raw) as Partial<FormState> & { candidateLink?: string }
+      const migrated = candidateLink && !parsed.candidateLinkedinUrl && !parsed.candidateResumeUrl
+        ? splitCandidateLink(candidateLink)
+        : {}
+      return { ...emptyForm(), ...parsed, ...migrated }
+    }
   } catch (e) {
     // ignore
   }
@@ -248,6 +302,8 @@ function roleBlockedAccessMessage(application: RecruiterRoleApplicationItem | nu
 function roleSubmissionStatusLabel(status?: string): string {
   switch (status) {
     case "reviewing": return "WeKruit review"
+    case "wekruit_interview": return "WeKruit interview"
+    case "client_review": return "With client"
     case "advanced": return "Sent to team"
     case "interviewing": return "Interviewing"
     case "backburner": return "Backburner"
@@ -265,6 +321,8 @@ function roleSubmissionStatusLabel(status?: string): string {
 function roleSubmissionNextAction(status?: string): string {
   switch (status) {
     case "reviewing": return "Wait for WeKruit calibration before sending lookalikes."
+    case "wekruit_interview": return "Candidate is interviewing with WeKruit. Keep them warm."
+    case "client_review": return "Packet is with the client. Watch for hiring-team feedback."
     case "advanced": return "Keep the candidate warm for hiring-team review."
     case "interviewing": return "Watch for scheduling and close-process updates."
     case "backburner": return "Candidate is parked, not rejected. Wait for a clearer next step before sending lookalikes."
@@ -278,6 +336,11 @@ function roleSubmissionNextAction(status?: string): string {
 
 function roleSubmissionLastActivity(row: RecruiterSubmissionItem): string {
   const ms = submissionTimeMs(row.recruiterFeedbackUpdatedAt ?? row.updatedAt ?? row.createdAt)
+  return ms ? new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Today"
+}
+
+function roleSubmissionSubmittedDate(row: RecruiterSubmissionItem): string {
+  const ms = submissionTimeMs(row.createdAt)
   return ms ? new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "Today"
 }
 
@@ -979,7 +1042,7 @@ function buildRoleSubmissionPacket(input: {
   const submitterEmail = form.submitterEmail.trim()
   const candidateName = form.candidateName.trim()
   const candidateEmail = form.candidateEmail.trim().toLowerCase()
-  const candidateLink = form.candidateLink.trim()
+  const candidateLink = candidateLinkValue(form)
   const candidateNotes = form.candidateNotes.trim()
   const candidateEmailValid = candidateEmail ? isValidEmail(candidateEmail) : false
   const submitterEmailValid = submitterEmail ? isValidEmail(submitterEmail) : false
@@ -992,6 +1055,12 @@ function buildRoleSubmissionPacket(input: {
   if (!candidateEmail) blockers.push("Candidate email is missing.")
   else if (!candidateEmailValid) blockers.push("Candidate email is invalid.")
   if (!candidateLink) blockers.push("LinkedIn or resume link is missing.")
+  for (const field of roleSubmitFields(job)) {
+    const value = (form.extraFields[field.id] ?? "").trim()
+    if (field.required && !value) blockers.push(`${field.label} is required for this role.`)
+    else if (value.length > 500) blockers.push(`${field.label} must be 500 characters or fewer.`)
+    else if (value && field.kind === "url" && !normalizeSubmitUrl(value)) blockers.push(`${field.label} must be a valid URL.`)
+  }
   if (!form.candidateConsent) blockers.push("Candidate consent is not confirmed.")
   if (pendingSlots <= 0) blockers.push("This role has no pending submission slots left.")
   if (hardItems.length > 0 && hardChecked < hardItems.length) blockers.push(`${hardItems.length - hardChecked} hard check${hardItems.length - hardChecked === 1 ? "" : "s"} still need proof.`)
@@ -1129,7 +1198,7 @@ function buildRoleSubmissionPacket(input: {
   if (roleCandidates.length > 0) proof.push(`${roleCandidates.length} sourced in your CRM`)
   if (roleSubmissions.length > 0) proof.push(`${roleSubmissions.length} prior submission${roleSubmissions.length === 1 ? "" : "s"}`)
 
-  const basicsScore = (form.candidateName.trim() ? 8 : 0) + (form.candidateEmail.trim() ? 10 : 0) + (form.candidateLink.trim() ? 8 : 0) + (form.candidateConsent ? 12 : 0)
+  const basicsScore = (form.candidateName.trim() ? 8 : 0) + (form.candidateEmail.trim() ? 10 : 0) + (candidateLinkValue(form) ? 8 : 0) + (form.candidateConsent ? 12 : 0)
   const hardScore = hardItems.length ? Math.round((hardChecked / hardItems.length) * 34) : 22
   const fitScore = fitItems.length ? Math.round((fitChecked / fitItems.length) * 18) : 10
   const bonusScore = bonusItems.length ? Math.min(10, Math.round((bonusChecked / bonusItems.length) * 10)) : 4
@@ -2306,7 +2375,7 @@ export default function RecruiterRole() {
   }, [jobId, form])
 
   useEffect(() => {
-    const link = form.candidateLink.trim()
+    const link = candidateLinkValue(form)
     const email = form.candidateEmail.trim().toLowerCase()
     const emailReady = !email || isValidEmail(email)
     if (!session || !jobId || !link || !emailReady) {
@@ -2349,7 +2418,7 @@ export default function RecruiterRole() {
       active = false
       window.clearTimeout(timer)
     }
-  }, [form.candidateEmail, form.candidateLink, jobId, session])
+  }, [form.candidateEmail, form.candidateLinkedinUrl, form.candidateResumeUrl, jobId, session])
 
   const job = useMemo(() => jobs?.find((j) => j.jobId === jobId) ?? null, [jobs, jobId])
 
@@ -2362,7 +2431,7 @@ export default function RecruiterRole() {
       ...next,
       candidateName: candidate.candidate?.name || "",
       candidateEmail: candidate.candidate?.email || "",
-      candidateLink: candidate.candidate?.link || "",
+      ...splitCandidateLink(candidate.candidate?.link),
       candidateCurrentRole: candidate.candidate?.currentRole || "",
       candidateYoe: candidate.candidate?.yoe || "",
       candidateNotes: candidate.candidate?.notes || "",
@@ -2527,7 +2596,7 @@ export default function RecruiterRole() {
       ...next,
       candidateName: candidate.candidate?.name || "",
       candidateEmail: candidate.candidate?.email || "",
-      candidateLink: candidate.candidate?.link || "",
+      ...splitCandidateLink(candidate.candidate?.link),
       candidateCurrentRole: candidate.candidate?.currentRole || "",
       candidateYoe: candidate.candidate?.yoe || "",
       candidateNotes: candidate.candidate?.notes || "",
@@ -2726,6 +2795,9 @@ export default function RecruiterRole() {
     setSubmitError(null)
     setSubmitting(true)
     try {
+      const candidateLinkedinUrl = form.candidateLinkedinUrl.trim()
+      const candidateResumeUrl = form.candidateResumeUrl.trim()
+      const extraFields = buildExtraFieldsPayload(job, form)
       const result = await submitRecruiterCandidate({
         jobId: job.jobId,
         sourcedCandidateId: selectedCandidate?.id,
@@ -2736,13 +2808,16 @@ export default function RecruiterRole() {
         candidate: {
           name: form.candidateName.trim(),
           email: form.candidateEmail.trim().toLowerCase(),
-          link: form.candidateLink.trim(),
+          link: candidateLinkedinUrl || candidateResumeUrl,
           currentRole: form.candidateCurrentRole.trim() || undefined,
           yoe: form.candidateYoe.trim() || undefined,
           notes: form.candidateNotes.trim() || undefined,
         },
         checklist: form.checklist,
         candidateConsent: true,
+        candidateLinkedinUrl: candidateLinkedinUrl || undefined,
+        candidateResumeUrl: candidateResumeUrl || undefined,
+        ...(Object.keys(extraFields).length ? { extraFields } : {}),
       })
       if (!result.ok) {
         setSubmitError(formatSubmissionFailure(result.reason))
@@ -2753,7 +2828,7 @@ export default function RecruiterRole() {
         const submittedCandidate = {
           name: form.candidateName.trim(),
           email: form.candidateEmail.trim().toLowerCase(),
-          link: form.candidateLink.trim(),
+          link: candidateLinkedinUrl || candidateResumeUrl,
           currentRole: form.candidateCurrentRole.trim() || undefined,
           yoe: form.candidateYoe.trim() || undefined,
           notes: form.candidateNotes.trim() || undefined,
@@ -2933,6 +3008,23 @@ export default function RecruiterRole() {
 
         {trackerError && <div className="rb-error">Could not load role tracker: {trackerError}</div>}
 
+        {roleSubmissions.length > 0 && (
+          <section className="rb-role-your-submissions" aria-label="Your submissions for this role">
+            <h3>Your submissions for this role</h3>
+            <div className="rb-role-your-submissions__list">
+              {roleSubmissions.map((row) => (
+                <article key={row.id} className="rb-role-your-submissions__card">
+                  <header>
+                    <strong>{row.candidate?.name || "Candidate"}</strong>
+                    <span>Submitted {roleSubmissionSubmittedDate(row)}</span>
+                  </header>
+                  <SubmissionStatusStepper status={row.status} requestedInfo={row.requestedInfo} />
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
         <div className="rb-role-dashboard">
           <section className="rb-role-main">
             <div className="rb-jd">
@@ -2981,7 +3073,7 @@ export default function RecruiterRole() {
             <CandidateOwnershipGuardPanel
               state={identityCheck}
               candidateEmail={form.candidateEmail}
-              candidateLink={form.candidateLink}
+              candidateLink={candidateLinkValue(form)}
               onOpenCandidates={() => navigate("/recruiters?tab=candidates")}
               onOpenSubmissions={() => navigate("/recruiters?tab=submissions")}
             />
@@ -3067,14 +3159,25 @@ export default function RecruiterRole() {
             />
           </div>
           <div className="field">
-            <label>Resume / LinkedIn *</label>
+            <label>LinkedIn URL</label>
             <input
               type="text"
-              required
+              required={!form.candidateResumeUrl.trim()}
               placeholder="https://linkedin.com/in/…"
-              value={form.candidateLink}
-              onChange={(e) => setForm({ ...form, candidateLink: e.target.value })}
+              value={form.candidateLinkedinUrl}
+              onChange={(e) => setForm({ ...form, candidateLinkedinUrl: e.target.value })}
             />
+          </div>
+          <div className="field">
+            <label>Resume link</label>
+            <input
+              type="text"
+              required={!form.candidateLinkedinUrl.trim()}
+              placeholder="https://drive.google.com/…"
+              value={form.candidateResumeUrl}
+              onChange={(e) => setForm({ ...form, candidateResumeUrl: e.target.value })}
+            />
+            <p className="rb-form-note">At least one of LinkedIn URL or resume link is required. Provide both when you have them.</p>
           </div>
           <button
             type="button"
@@ -3111,6 +3214,28 @@ export default function RecruiterRole() {
                 />
               </div>
             </>
+          )}
+          {roleSubmitFields(job).length > 0 && (
+            <div className="rb-extra-fields">
+              <h3 className="section-title" style={{ marginTop: 24 }}>Role-specific details</h3>
+              {roleSubmitFields(job).map((field) => (
+                <div className="field" key={field.id}>
+                  <label>{field.label}{field.required ? " *" : ""}</label>
+                  <input
+                    type="text"
+                    inputMode={field.kind === "url" ? "url" : "text"}
+                    aria-required={field.required ? true : undefined}
+                    maxLength={500}
+                    placeholder={field.placeholder || (field.kind === "url" ? "https://…" : "")}
+                    value={form.extraFields[field.id] ?? ""}
+                    onChange={(e) => setForm({ ...form, extraFields: { ...form.extraFields, [field.id]: e.target.value } })}
+                  />
+                  {field.kind === "url" && (form.extraFields[field.id] ?? "").trim() !== "" && !normalizeSubmitUrl(form.extraFields[field.id] ?? "") && (
+                    <p className="rb-form-note">Enter a valid URL (https:// is added automatically if missing).</p>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
           <label className="rb-consent">
             <input

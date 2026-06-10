@@ -20,9 +20,9 @@ export type RecruiterSubmissionDashboard = {
 }
 
 const ACTIVE_REVIEW_STATUSES = ["submitted", "new", "reviewing", "backburner"]
-const ADVANCED_STATUSES = ["advanced", "interviewing", "offer", "hired"]
+const ADVANCED_STATUSES = ["advanced", "wekruit_interview", "client_review", "interviewing", "offer", "hired"]
 const CLOSED_NEGATIVE_STATUSES = ["rejected", "duplicate"]
-const OPEN_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "interviewing", "backburner", "offer"]
+const OPEN_SUBMISSION_STATUSES = ["submitted", "new", "reviewing", "advanced", "wekruit_interview", "client_review", "interviewing", "backburner", "offer"]
 const CANDIDATE_CONFIRMATION_RESEND_STATUSES = [
   "pending_candidate_confirmation",
   "confirmation_email_failed",

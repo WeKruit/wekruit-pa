@@ -8,7 +8,7 @@ import test from "node:test"
 const here = dirname(fileURLToPath(import.meta.url))
 const source = readFileSync(resolve(here, "../RecruiterRole.tsx"), "utf8")
 
-test("role submit form defaults to exactly 4 required fields", () => {
+test("role submit form defaults to exactly 5 required fields", () => {
   const formStart = source.indexOf('id="submit-candidate"')
   assert.ok(formStart > 0, "submit form exists")
   const formEnd = source.indexOf("Fit checklist", formStart)
@@ -21,7 +21,7 @@ test("role submit form defaults to exactly 4 required fields", () => {
   assert.ok(editEnd > editStart)
   const hiddenRequired = (formSlice.slice(editStart, editEnd).match(/\n\s+required\b/g) ?? []).length
   assert.equal(hiddenRequired, 2, "submitter name + email stay required but hidden by default")
-  assert.equal(totalRequired - hiddenRequired, 4, "default path requires candidate name, email, link, consent only")
+  assert.equal(totalRequired - hiddenRequired, 5, "default path requires candidate name, email, linkedin/resume pair (at least one), consent only")
 })
 
 test("submitter contact is prefilled from the recruiter profile", () => {
