@@ -132,6 +132,13 @@ test("resolvePostLoginDestination preserves public job routes before portal read
   assert.equal(resolvePostLoginDestination(cvNext, false, "candidate"), cvNext.to)
 })
 
+test("resolvePostLoginDestination returns to /auto-apply regardless of portal readiness", () => {
+  const autoApplyNext = parseLoginNextPath("/auto-apply")
+
+  assert.equal(resolvePostLoginDestination(autoApplyNext, false, "candidate"), "/auto-apply")
+  assert.equal(resolvePostLoginDestination(autoApplyNext, true, "candidate"), "/auto-apply")
+})
+
 test("parseLoginNextPath canonicalizes legacy source-leaking Photon job slugs", () => {
   const jobNext = parseLoginNextPath("/j/standout-37429d02-photon-macos-devops")
   const cvNext = parseLoginNextPath("/j/standout-973f2953-photon-objective-c-engineer/cv")
