@@ -11,10 +11,10 @@ import {
 interface SubmissionComment {
   id: string
   authorName: string
-  authorEmail: string
-  body: string
-  authorRole?: string
-  createdAt?: unknown
+  authorEmail?: string
+  message: string
+  by: "recruiter" | "wekruit"
+  at?: unknown
 }
 
 function formatDate(raw: unknown): string {
@@ -201,13 +201,13 @@ export default function SubmissionDetailPage() {
           <h2>Discussion</h2>
           {comments.length === 0 && <p className="sd-muted">No comments yet.</p>}
           {comments.map((c) => (
-            <article key={c.id} className={`sd-comment ${c.authorRole === "admin" ? "is-admin" : ""}`}>
+            <article key={c.id} className={`sd-comment ${c.by === "wekruit" ? "is-admin" : ""}`}>
               <header>
                 <strong>{c.authorName}</strong>
-                {c.authorRole === "admin" && <span className="sd-badge">WeKruit</span>}
-                <time>{formatDate(c.createdAt)}</time>
+                {c.by === "wekruit" && <span className="sd-badge">WeKruit</span>}
+                <time>{formatDate(c.at)}</time>
               </header>
-              <p>{c.body}</p>
+              <p>{c.message}</p>
             </article>
           ))}
           <div className="sd-comment-form">

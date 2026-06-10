@@ -522,7 +522,7 @@ export async function fetchRecruiterSubmissions(): Promise<RecruiterSubmissionIt
 
 export async function fetchRecruiterSubmission(submissionId: string): Promise<{
   submission: RecruiterSubmissionItem
-  comments: Array<{ id: string; authorName: string; authorEmail: string; body: string; authorRole?: string; createdAt?: unknown }>
+  comments: Array<{ id: string; authorName: string; authorEmail?: string; message: string; by: "recruiter" | "wekruit"; at?: unknown }>
 }> {
   const url = `${RECRUITER_SUBMISSION_GET_URL}?submissionId=${encodeURIComponent(submissionId)}`
   const res = await fetch(url, {
@@ -533,7 +533,7 @@ export async function fetchRecruiterSubmission(submissionId: string): Promise<{
     ok?: boolean
     reason?: string
     submission?: RecruiterSubmissionItem
-    comments?: Array<{ id: string; authorName: string; authorEmail: string; body: string; authorRole?: string; createdAt?: unknown }>
+    comments?: Array<{ id: string; authorName: string; authorEmail?: string; message: string; by: "recruiter" | "wekruit"; at?: unknown }>
   }
   if (!res.ok || !body.ok || !body.submission) {
     throw new Error(body.reason ?? `paRecruiterSubmissionGet HTTP ${res.status}`)
