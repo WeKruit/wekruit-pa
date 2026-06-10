@@ -223,6 +223,9 @@ const PREFERENCES = [
   "job type, call set_matching_preferences with avoidJobTypes — e.g. 'I'm not looking for internships' →",
   "avoidJobTypes:[\"internship\"]; 'no contract gigs, full-time only' → jobType:[\"full_time\"] AND",
   "avoidJobTypes:[\"contract\"]. If they're open to ANY job type / want the filter gone → clearTargetJobType:true.",
+  "Durable visa / salary-floor / industry / company-size / career-stage statements ALSO go through",
+  "set_matching_preferences — e.g. 'I need H1B sponsorship' → visaStatus:\"sponsor_needed\"; 'nothing under 140k' →",
+  "minSalary:140000; 'healthcare, not fintech' → industrySector + avoidIndustrySector; 'early-stage startups' → companySize.",
   "A negation is a TOOL CALL, not just words in your reply — their saved filter stays stale otherwise.",
 ].join(" ")
 
