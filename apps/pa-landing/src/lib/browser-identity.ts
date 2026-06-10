@@ -204,6 +204,9 @@ export function resolvePostLoginDestination(
     return nextDest.to
   }
   if (isPublicJobPath(nextDest.pathname)) return nextDest.to
+  // /auto-apply (Valet desktop beta) is a public marketing page that gates
+  // nothing on portal readiness — honor it through first login like /j/*.
+  if (nextDest.pathname === "/auto-apply") return nextDest.to
   if (isProfileRoleSignalPath(nextDest.pathname, nextDest.search, nextDest.hash)) {
     return onboardingDestinationWithReturnPath(nextDest.to, source)
   }
