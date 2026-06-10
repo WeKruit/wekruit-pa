@@ -42,10 +42,13 @@ import {
   payoutUpdateNotification,
   recruiterCandidateIdentityConflictForRole,
   recruiterInviteCodeAllowsEmail,
+  recruiterInviteUrl,
   recruiterInviteCodeMatchesBoundUser,
   recruiterIdentityFromFirebaseBearer,
   roleQuestionAnswerNotification,
   shouldNotifyRecruitersForRoleRelease,
+  submissionFeedbackNotification,
+  submissionRequestedInfoNotification,
   sanitizeSubmissionStatusHistory,
   validateCandidateConfirmationResendInput,
   validateRecruiterCandidateIdentityCheckInput,
@@ -553,17 +556,25 @@ describe("recruiter role notifications", () => {
     assert.match(email.text, /turn off new-role emails/i)
   })
 
-  it("composes a recruiter invite email with the one-time code and recruiter site", () => {
+  it("builds a one-click invite URL with the full code and url-encoded email", () => {
+    const url = recruiterInviteUrl("WK-ABCD-2345", "sloane@agency.com")
+    assert.equal(url, "https://wekruit-recruiters.web.app/recruiters?code=WK-ABCD-2345&email=sloane%40agency.com")
+    assert.equal(recruiterInviteUrl("WK-ABCD-2345"), "https://wekruit-recruiters.web.app/recruiters?code=WK-ABCD-2345")
+  })
+
+  it("composes a recruiter invite email with the one-click accept link and fallback code", () => {
     const email = composeRecruiterInviteEmail({
       recruiterEmail: "sloane@agency.com",
       inviteCode: "WK-ABCD-2345",
-      inviteUrl: "https://wekruit-recruiters.web.app/recruiters?accessCode=WK-ABCD-2345",
       expiresAt: "2027-06-09T12:00:00.000Z",
     })
     assert.match(email.subject, /access code/i)
-    assert.match(email.text, /WK-ABCD-2345/)
+    assert.match(email.text, /Accept your invite: https:\/\/wekruit-recruiters\.web\.app\/recruiters\?code=WK-ABCD-2345&email=sloane%40agency\.com/)
+    assert.match(email.text, /One-time access code: WK-ABCD-2345/)
     assert.match(email.text, /sloane@agency\.com/)
-    assert.match(email.text, /wekruit-recruiters\.web\.app\/recruiters/)
+    assert.match(email.html, /<a href="https:\/\/wekruit-recruiters\.web\.app\/recruiters\?code=WK-ABCD-2345&amp;email=sloane%40agency\.com"/)
+    assert.match(email.html, /Accept your invite<\/a>/)
+    assert.match(email.html, /WK-ABCD-2345/)
   })
 
   it("composes a submission update email with the recruiter workspace action", () => {
@@ -905,6 +916,100 @@ describe("recruiter submission feedback flywheel events", () => {
     assert.deepEqual(db.get("pa-feedback-events/recruiter_submission_feedback_evt-3"), event)
     assert.equal(db.has("pa-audit-events/marketplace_feedback_recruiter_submission_feedback_evt-3"), true)
     assert.equal(db.setCount("pa-audit-events/marketplace_feedback_recruiter_submission_feedback_evt-3"), 1)
+  })
+})
+
+describe("recruiter submission requested info notifications", () => {
+  const reviewingDoc = {
+    status: "reviewing",
+    jobTitleSnapshot: "Founding Engineer",
+    candidate: { name: "Ada Lovelace" },
+  }
+
+  it("notifies when status moves to reviewing with a newly appended requestedInfo entry", () => {
+    const notification = submissionRequestedInfoNotification({
+      status: "submitted",
+      jobTitleSnapshot: "Founding Engineer",
+      candidate: { name: "Ada Lovelace" },
+    }, {
+      ...reviewingDoc,
+      requestedInfo: [{ message: "Please share Ada's notice period and visa status." }],
+    })
+    assert.equal(notification?.title, "WeKruit needs more info on Ada Lovelace")
+    assert.match(notification?.body ?? "", /Founding Engineer/)
+    assert.match(notification?.body ?? "", /notice period and visa status/)
+  })
+
+  it("notifies again when another requestedInfo entry is appended while already reviewing", () => {
+    const notification = submissionRequestedInfoNotification({
+      ...reviewingDoc,
+      requestedInfo: [{ message: "First ask" }],
+    }, {
+      ...reviewingDoc,
+      requestedInfo: [{ message: "First ask" }, { message: "Second ask" }],
+    })
+    assert.equal(notification?.title, "WeKruit needs more info on Ada Lovelace")
+    assert.match(notification?.body ?? "", /Second ask/)
+  })
+
+  it("does not notify when status moves to reviewing without a requestedInfo append", () => {
+    assert.equal(submissionRequestedInfoNotification({
+      status: "submitted",
+      candidate: { name: "Ada Lovelace" },
+    }, reviewingDoc), null)
+  })
+
+  it("does not notify on requestedInfo appends outside the reviewing status", () => {
+    assert.equal(submissionRequestedInfoNotification({
+      status: "submitted",
+      candidate: { name: "Ada Lovelace" },
+    }, {
+      status: "submitted",
+      candidate: { name: "Ada Lovelace" },
+      requestedInfo: [{ message: "First ask" }],
+    }), null)
+  })
+
+  it("does not email on aiEvaluation-only merges from the orchestrator eval trigger", () => {
+    const before = {
+      ...reviewingDoc,
+      jobId: "job-1",
+      recruiterId: "recruiter-1",
+      requestedInfo: [{ message: "First ask" }],
+    }
+    const after = {
+      ...before,
+      aiEvaluation: { score: 0.82, summary: "Strong systems depth" },
+    }
+    assert.equal(submissionRequestedInfoNotification(before, after), null)
+    assert.equal(submissionFeedbackNotification(before, after), null)
+    assert.equal(candidateConfirmationNotification(before, after), null)
+    assert.equal(payoutUpdateNotification(before, after), null)
+    assert.equal(buildRecruiterSubmissionFeedbackEvent({
+      triggerEventId: "evt-ai-1",
+      submissionId: "sub-ai-1",
+      createdAt: "2026-06-09T12:00:00.000Z",
+      before,
+      after,
+    }), null)
+  })
+
+  it("still notifies on status transitions to advanced and rejected", () => {
+    const advanced = submissionFeedbackNotification(reviewingDoc, { ...reviewingDoc, status: "advanced" })
+    assert.equal(advanced?.title, "Ada Lovelace is sent to hiring team")
+    const rejected = submissionFeedbackNotification(reviewingDoc, { ...reviewingDoc, status: "rejected" })
+    assert.equal(rejected?.title, "Ada Lovelace is not a fit")
+  })
+
+  it("keeps the WeKruit subject verbatim when composing the requested info email", () => {
+    const email = composeRecruiterSubmissionUpdateEmail({
+      title: "WeKruit needs more info on Ada Lovelace",
+      body: "Founding Engineer · Please share Ada's notice period and visa status.",
+      roleTitle: "Founding Engineer",
+      companyLabel: "Co. B",
+    })
+    assert.equal(email.subject, "WeKruit needs more info on Ada Lovelace")
+    assert.match(email.text, /notice period and visa status/)
   })
 })
 
@@ -1407,6 +1512,90 @@ describe("recruiter submissions", () => {
     }), {
       ok: false,
       reason: "invalid_candidate_email",
+    })
+  })
+
+  it("accepts optional candidate linkedin and resume urls and stores them on the candidate", () => {
+    const result = validateSubmission({
+      ...validSubmission,
+      candidateLinkedinUrl: "  https://linkedin.com/in/ada-lovelace  ",
+      candidateResumeUrl: "https://storage.example.com/resumes/ada.pdf",
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.value.candidate.linkedinUrl, "https://linkedin.com/in/ada-lovelace")
+    assert.equal(result.value.candidate.resumeUrl, "https://storage.example.com/resumes/ada.pdf")
+    assert.equal(result.value.candidate.link, "https://linkedin.com/in/ada")
+  })
+
+  it("accepts nested candidate.linkedinUrl / candidate.resumeUrl from newer clients", () => {
+    const result = validateSubmission({
+      ...validSubmission,
+      candidate: {
+        ...validSubmission.candidate,
+        linkedinUrl: "https://linkedin.com/in/ada-lovelace",
+        resumeUrl: "https://storage.example.com/resumes/ada.pdf",
+      },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.value.candidate.linkedinUrl, "https://linkedin.com/in/ada-lovelace")
+    assert.equal(result.value.candidate.resumeUrl, "https://storage.example.com/resumes/ada.pdf")
+  })
+
+  it("keeps old payloads unchanged and drops unknown fields from the stored value", () => {
+    const result = validateSubmission({
+      ...validSubmission,
+      unexpectedTopLevel: "ignored",
+      candidate: { ...validSubmission.candidate, unexpectedNested: "ignored" },
+    })
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal("linkedinUrl" in result.value.candidate, false)
+    assert.equal("resumeUrl" in result.value.candidate, false)
+    assert.equal("unexpectedNested" in result.value.candidate, false)
+    assert.equal("unexpectedTopLevel" in result.value, false)
+    assert.equal(result.value.candidate.name, "Ada Lovelace")
+    assert.equal(result.value.candidate.link, "https://linkedin.com/in/ada")
+  })
+
+  it("omits absent optional candidate fields before Firestore writes", () => {
+    const result = validateSubmission({
+      ...validSubmission,
+      candidate: {
+        name: "Ada Lovelace",
+        email: "ada@example.com",
+        link: "https://linkedin.com/in/ada",
+        yoe: " ",
+      },
+    })
+
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal("currentRole" in result.value.candidate, false)
+    assert.equal("yoe" in result.value.candidate, false)
+    assert.equal("notes" in result.value.candidate, false)
+    assert.deepEqual(result.value.candidate, {
+      name: "Ada Lovelace",
+      email: "ada@example.com",
+      link: "https://linkedin.com/in/ada",
+    })
+  })
+
+  it("rejects malformed or oversized candidate urls", () => {
+    assert.deepEqual(validateSubmission({
+      ...validSubmission,
+      candidateLinkedinUrl: 42,
+    }), {
+      ok: false,
+      reason: "invalid_candidate_linkedin_url",
+    })
+    assert.deepEqual(validateSubmission({
+      ...validSubmission,
+      candidateResumeUrl: `https://x.example/${"a".repeat(500)}`,
+    }), {
+      ok: false,
+      reason: "candidate_resume_url_too_long",
     })
   })
 

@@ -1132,6 +1132,25 @@ interface PendingRecruiterAccess {
   inviteCode: string
   name: string
   createdAtMs: number
+  emailHint?: string
+}
+
+interface RecruiterInviteLink {
+  code: string
+  emailHint: string
+}
+
+function readRecruiterInviteLinkFromLocation(): RecruiterInviteLink | null {
+  if (typeof window === "undefined") return null
+  const params = new URLSearchParams(window.location.search)
+  const code = cleanRecruiterInviteCode(params.get("code") ?? "")
+  if (!code) return null
+  return { code, emailHint: cleanRecruiterEmail(params.get("email") ?? "") }
+}
+
+function maskRecruiterInviteCodeForDisplay(code: string): string {
+  if (code.length <= 6) return code
+  return `${code.slice(0, 3)}••••${code.slice(-3)}`
 }
 
 function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
@@ -1140,7 +1159,7 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<PendingRecruiterAccess>
     if (!parsed.inviteCode || typeof parsed.inviteCode !== "string") return null
-    if (!parsed.name || typeof parsed.name !== "string") return null
+    if (typeof parsed.name !== "string") return null
     if (typeof parsed.createdAtMs !== "number" || Date.now() - parsed.createdAtMs > 10 * 60 * 1000) {
       storage.removeItem(RECRUITER_ACCESS_PENDING_KEY)
       return null
@@ -1149,6 +1168,9 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
       inviteCode: parsed.inviteCode,
       name: cleanRecruiterName(parsed.name),
       createdAtMs: parsed.createdAtMs,
+      ...(typeof parsed.emailHint === "string" && parsed.emailHint
+        ? { emailHint: cleanRecruiterEmail(parsed.emailHint) }
+        : {}),
     }
   }
 
@@ -1165,11 +1187,12 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
   }
 }
 
-function writePendingRecruiterAccess(inviteCode: string, name: string) {
+function writePendingRecruiterAccess(inviteCode: string, name: string, emailHint?: string) {
   const payload = JSON.stringify({
     inviteCode,
     name,
     createdAtMs: Date.now(),
+    ...(emailHint ? { emailHint } : {}),
   })
   let wrote = false
   try {
@@ -1206,7 +1229,7 @@ function authErrorCode(error: unknown): string {
     : ""
 }
 
-function formatRecruiterAuthError(error: unknown): string {
+function formatRecruiterAuthError(error: unknown, inviteEmailHint?: string): string {
   const code = authErrorCode(error)
   switch (code) {
     case "auth/account-exists-with-different-credential":
@@ -1220,6 +1243,11 @@ function formatRecruiterAuthError(error: unknown): string {
         if (error.message === "unauthorized") {
           return "This Google account does not have recruiter access. Enter an access code first."
         }
+        if (error.message === "email_mismatch") {
+          return inviteEmailHint
+            ? `This invite is for ${inviteEmailHint}. Sign in with that Google account.`
+            : "This invite is bound to a different email. Sign in with the Google account that received the invite."
+        }
         if (error.message === "invalid_or_expired_invite_code") {
           return "That access code is invalid, expired, already bound to another recruiter, or does not match this Google account."
         }
@@ -1231,6 +1259,7 @@ function formatRecruiterAuthError(error: unknown): string {
 
 export default function RecruiterBoard() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const [inviteLink] = useState<RecruiterInviteLink | null>(readRecruiterInviteLinkFromLocation)
   const [session, setSession] = useState<RecruiterSession | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
@@ -1251,6 +1280,24 @@ export default function RecruiterBoard() {
   const [submissionError, setSubmissionError] = useState<string | null>(null)
   const tabParam = searchParams.get("tab")
   const activeTab = TABS.some((t) => t.id === tabParam) ? tabParam as RecruiterTab : "overview"
+
+  // Invite-link mode: persist the code (+email hint) before auth resolves so a
+  // signed-in recruiter claims in zero clicks, then strip the params from the URL.
+  useEffect(() => {
+    if (!inviteLink) return
+    try {
+      writePendingRecruiterAccess(inviteLink.code, "", inviteLink.emailHint || undefined)
+    } catch {
+      // Storage blocked; the gate button re-writes the slot before sign-in.
+    }
+    if (searchParams.has("code") || searchParams.has("email")) {
+      const next = new URLSearchParams(searchParams)
+      next.delete("code")
+      next.delete("email")
+      setSearchParams(next, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inviteLink])
 
   useEffect(() => {
     fetchCollabJobs()
@@ -1286,7 +1333,7 @@ export default function RecruiterBoard() {
           const email = cleanRecruiterEmail(user.email ?? "")
           if (!email) throw new Error("Google did not return an email for this account.")
           const next = await registerRecruiterAccess({
-            name: pending.name,
+            name: pending.name || cleanRecruiterName(user.displayName ?? "") || "Recruiter",
             email,
             inviteCode: pending.inviteCode,
           })
@@ -1309,7 +1356,7 @@ export default function RecruiterBoard() {
             setRoleIntelligence([])
             setNotifications([])
             setStatusLoaded(false)
-            setAccessError(formatRecruiterAuthError(e))
+            setAccessError(formatRecruiterAuthError(e, pending.emailHint))
           }
           return
         } finally {
@@ -1433,7 +1480,7 @@ export default function RecruiterBoard() {
         </div>
       )
     }
-    return <RecruiterAccessGate initialError={accessError} initialInviteCode={searchParams.get("accessCode")} />
+    return <RecruiterAccessGate initialError={accessError} initialInviteCode={searchParams.get("accessCode")} inviteLink={inviteLink} />
   }
 
   const openJobs = jobs ?? []
@@ -4276,18 +4323,23 @@ function RecruiterStatusLoading() {
 function RecruiterAccessGate({
   initialError,
   initialInviteCode,
+  inviteLink,
 }: {
   initialError?: string | null
   initialInviteCode?: string | null
+  inviteLink?: RecruiterInviteLink | null
 }) {
   const normalizedInitialInviteCode = cleanRecruiterInviteCode(initialInviteCode ?? "")
   const [recruiterName, setRecruiterName] = useState("")
-  const [inviteCode, setInviteCode] = useState(normalizedInitialInviteCode)
+  const [inviteCode, setInviteCode] = useState(normalizedInitialInviteCode || inviteLink?.code || "")
   const [err, setErr] = useState<string | null>(initialError ?? null)
   const [busy, setBusy] = useState(false)
+  const [manualMode, setManualMode] = useState(false)
+  const linkMode = Boolean(inviteLink) && !manualMode
 
   useEffect(() => {
     setErr(initialError ?? null)
+    if (initialError) setBusy(false)
   }, [initialError])
 
   useEffect(() => {
@@ -4315,6 +4367,24 @@ function RecruiterAccessGate({
     } catch (error) {
       clearPendingRecruiterAccess()
       setErr(formatRecruiterAuthError(error))
+      setBusy(false)
+    }
+  }
+
+  // Invite-link one-click claim: no typing — the code came from the URL and the
+  // recruiter name comes from the Google displayName at claim time.
+  const submitInviteLink = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!inviteLink) return
+    setBusy(true)
+    setErr(null)
+    try {
+      writePendingRecruiterAccess(inviteLink.code, cleanRecruiterName(recruiterName), inviteLink.emailHint || undefined)
+      if (auth().currentUser) await signOut(auth())
+      await signInWithPopup(auth(), createRecruiterGoogleProvider())
+    } catch (error) {
+      clearPendingRecruiterAccess()
+      setErr(formatRecruiterAuthError(error, inviteLink.emailHint || undefined))
       setBusy(false)
     }
   }
@@ -4358,6 +4428,27 @@ function RecruiterAccessGate({
           </ul>
         </section>
         <div className="rb-access__right-rail">
+          {linkMode && inviteLink ? (
+            <form className="rb-access__card" onSubmit={submitInviteLink}>
+              <span className="rb-access__badge">Registered recruiters only</span>
+              <h2>You're invited</h2>
+              <p className="rb-access__hint">
+                {inviteLink.emailHint
+                  ? `This invite is reserved for ${inviteLink.emailHint}. Sign in with that Google account to open your recruiter workspace — no code typing needed.`
+                  : "Your access code is already attached from the invite link. Continue with Google to open your recruiter workspace — no code typing needed."}
+              </p>
+              <p className="rb-access__hint">
+                Invite code <strong>{maskRecruiterInviteCodeForDisplay(inviteLink.code)}</strong>
+              </p>
+              {err && <p className="rb-access__err">{err}</p>}
+              <button className="rb-btn primary rb-btn--block" disabled={busy}>
+                {busy ? "Opening Google..." : "Continue with Google"}
+              </button>
+              <button type="button" className="rb-access__reset" disabled={busy} onClick={() => setManualMode(true)}>
+                Enter name and code manually
+              </button>
+            </form>
+          ) : (
           <form className="rb-access__card" onSubmit={submit}>
             <span className="rb-access__badge">Registered recruiters only</span>
             <h2>Claim recruiter access</h2>
@@ -4392,6 +4483,7 @@ function RecruiterAccessGate({
               Restart sign-in
             </button>
           </form>
+          )}
           <RecruiterAccessWorkspacePreview />
         </div>
       </main>

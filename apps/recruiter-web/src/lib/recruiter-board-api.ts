@@ -71,6 +71,11 @@ export interface SubmissionInput {
   }
   checklist: { [itemId: string]: boolean }
   candidateConsent: true
+  // Split link fields. `candidate.link` stays the back-compat single value
+  // (linkedin || resume); validateSubmission ignores unknown top-level keys
+  // today, and the backend schema is being extended to store these.
+  candidateLinkedinUrl?: string
+  candidateResumeUrl?: string
 }
 
 export interface SubmissionResponse {

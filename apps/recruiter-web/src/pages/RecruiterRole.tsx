@@ -76,12 +76,29 @@ interface FormState {
   submitterEmail: string
   candidateName: string
   candidateEmail: string
-  candidateLink: string
+  candidateLinkedinUrl: string
+  candidateResumeUrl: string
   candidateCurrentRole: string
   candidateYoe: string
   candidateNotes: string
   candidateConsent: boolean
   checklist: Record<string, boolean>
+}
+
+function looksLikeLinkedinUrl(value: string): boolean {
+  return value.toLowerCase().includes("linkedin.")
+}
+
+function splitCandidateLink(link: string | undefined): Pick<FormState, "candidateLinkedinUrl" | "candidateResumeUrl"> {
+  const trimmed = (link ?? "").trim()
+  if (!trimmed) return { candidateLinkedinUrl: "", candidateResumeUrl: "" }
+  return looksLikeLinkedinUrl(trimmed)
+    ? { candidateLinkedinUrl: trimmed, candidateResumeUrl: "" }
+    : { candidateLinkedinUrl: "", candidateResumeUrl: trimmed }
+}
+
+function candidateLinkValue(form: Pick<FormState, "candidateLinkedinUrl" | "candidateResumeUrl">): string {
+  return form.candidateLinkedinUrl.trim() || form.candidateResumeUrl.trim()
 }
 
 type RoleQuickCandidateDraft = {
@@ -139,7 +156,8 @@ function emptyForm(): FormState {
     submitterEmail: "",
     candidateName: "",
     candidateEmail: "",
-    candidateLink: "",
+    candidateLinkedinUrl: "",
+    candidateResumeUrl: "",
     candidateCurrentRole: "",
     candidateYoe: "",
     candidateNotes: "",
@@ -151,7 +169,13 @@ function emptyForm(): FormState {
 function loadFormState(jobId: string): FormState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_PREFIX + jobId)
-    if (raw) return { ...emptyForm(), ...JSON.parse(raw) }
+    if (raw) {
+      const { candidateLink, ...parsed } = JSON.parse(raw) as Partial<FormState> & { candidateLink?: string }
+      const migrated = candidateLink && !parsed.candidateLinkedinUrl && !parsed.candidateResumeUrl
+        ? splitCandidateLink(candidateLink)
+        : {}
+      return { ...emptyForm(), ...parsed, ...migrated }
+    }
   } catch (e) {
     // ignore
   }
@@ -979,7 +1003,7 @@ function buildRoleSubmissionPacket(input: {
   const submitterEmail = form.submitterEmail.trim()
   const candidateName = form.candidateName.trim()
   const candidateEmail = form.candidateEmail.trim().toLowerCase()
-  const candidateLink = form.candidateLink.trim()
+  const candidateLink = candidateLinkValue(form)
   const candidateNotes = form.candidateNotes.trim()
   const candidateEmailValid = candidateEmail ? isValidEmail(candidateEmail) : false
   const submitterEmailValid = submitterEmail ? isValidEmail(submitterEmail) : false
@@ -1129,7 +1153,7 @@ function buildRoleSubmissionPacket(input: {
   if (roleCandidates.length > 0) proof.push(`${roleCandidates.length} sourced in your CRM`)
   if (roleSubmissions.length > 0) proof.push(`${roleSubmissions.length} prior submission${roleSubmissions.length === 1 ? "" : "s"}`)
 
-  const basicsScore = (form.candidateName.trim() ? 8 : 0) + (form.candidateEmail.trim() ? 10 : 0) + (form.candidateLink.trim() ? 8 : 0) + (form.candidateConsent ? 12 : 0)
+  const basicsScore = (form.candidateName.trim() ? 8 : 0) + (form.candidateEmail.trim() ? 10 : 0) + (candidateLinkValue(form) ? 8 : 0) + (form.candidateConsent ? 12 : 0)
   const hardScore = hardItems.length ? Math.round((hardChecked / hardItems.length) * 34) : 22
   const fitScore = fitItems.length ? Math.round((fitChecked / fitItems.length) * 18) : 10
   const bonusScore = bonusItems.length ? Math.min(10, Math.round((bonusChecked / bonusItems.length) * 10)) : 4
@@ -2306,7 +2330,7 @@ export default function RecruiterRole() {
   }, [jobId, form])
 
   useEffect(() => {
-    const link = form.candidateLink.trim()
+    const link = candidateLinkValue(form)
     const email = form.candidateEmail.trim().toLowerCase()
     const emailReady = !email || isValidEmail(email)
     if (!session || !jobId || !link || !emailReady) {
@@ -2349,7 +2373,7 @@ export default function RecruiterRole() {
       active = false
       window.clearTimeout(timer)
     }
-  }, [form.candidateEmail, form.candidateLink, jobId, session])
+  }, [form.candidateEmail, form.candidateLinkedinUrl, form.candidateResumeUrl, jobId, session])
 
   const job = useMemo(() => jobs?.find((j) => j.jobId === jobId) ?? null, [jobs, jobId])
 
@@ -2362,7 +2386,7 @@ export default function RecruiterRole() {
       ...next,
       candidateName: candidate.candidate?.name || "",
       candidateEmail: candidate.candidate?.email || "",
-      candidateLink: candidate.candidate?.link || "",
+      ...splitCandidateLink(candidate.candidate?.link),
       candidateCurrentRole: candidate.candidate?.currentRole || "",
       candidateYoe: candidate.candidate?.yoe || "",
       candidateNotes: candidate.candidate?.notes || "",
@@ -2527,7 +2551,7 @@ export default function RecruiterRole() {
       ...next,
       candidateName: candidate.candidate?.name || "",
       candidateEmail: candidate.candidate?.email || "",
-      candidateLink: candidate.candidate?.link || "",
+      ...splitCandidateLink(candidate.candidate?.link),
       candidateCurrentRole: candidate.candidate?.currentRole || "",
       candidateYoe: candidate.candidate?.yoe || "",
       candidateNotes: candidate.candidate?.notes || "",
@@ -2726,6 +2750,8 @@ export default function RecruiterRole() {
     setSubmitError(null)
     setSubmitting(true)
     try {
+      const candidateLinkedinUrl = form.candidateLinkedinUrl.trim()
+      const candidateResumeUrl = form.candidateResumeUrl.trim()
       const result = await submitRecruiterCandidate({
         jobId: job.jobId,
         sourcedCandidateId: selectedCandidate?.id,
@@ -2736,13 +2762,15 @@ export default function RecruiterRole() {
         candidate: {
           name: form.candidateName.trim(),
           email: form.candidateEmail.trim().toLowerCase(),
-          link: form.candidateLink.trim(),
+          link: candidateLinkedinUrl || candidateResumeUrl,
           currentRole: form.candidateCurrentRole.trim() || undefined,
           yoe: form.candidateYoe.trim() || undefined,
           notes: form.candidateNotes.trim() || undefined,
         },
         checklist: form.checklist,
         candidateConsent: true,
+        candidateLinkedinUrl: candidateLinkedinUrl || undefined,
+        candidateResumeUrl: candidateResumeUrl || undefined,
       })
       if (!result.ok) {
         setSubmitError(formatSubmissionFailure(result.reason))
@@ -2753,7 +2781,7 @@ export default function RecruiterRole() {
         const submittedCandidate = {
           name: form.candidateName.trim(),
           email: form.candidateEmail.trim().toLowerCase(),
-          link: form.candidateLink.trim(),
+          link: candidateLinkedinUrl || candidateResumeUrl,
           currentRole: form.candidateCurrentRole.trim() || undefined,
           yoe: form.candidateYoe.trim() || undefined,
           notes: form.candidateNotes.trim() || undefined,
@@ -2981,7 +3009,7 @@ export default function RecruiterRole() {
             <CandidateOwnershipGuardPanel
               state={identityCheck}
               candidateEmail={form.candidateEmail}
-              candidateLink={form.candidateLink}
+              candidateLink={candidateLinkValue(form)}
               onOpenCandidates={() => navigate("/recruiters?tab=candidates")}
               onOpenSubmissions={() => navigate("/recruiters?tab=submissions")}
             />
@@ -3067,14 +3095,25 @@ export default function RecruiterRole() {
             />
           </div>
           <div className="field">
-            <label>Resume / LinkedIn *</label>
+            <label>LinkedIn URL</label>
             <input
               type="text"
-              required
+              required={!form.candidateResumeUrl.trim()}
               placeholder="https://linkedin.com/in/…"
-              value={form.candidateLink}
-              onChange={(e) => setForm({ ...form, candidateLink: e.target.value })}
+              value={form.candidateLinkedinUrl}
+              onChange={(e) => setForm({ ...form, candidateLinkedinUrl: e.target.value })}
             />
+          </div>
+          <div className="field">
+            <label>Resume link</label>
+            <input
+              type="text"
+              required={!form.candidateLinkedinUrl.trim()}
+              placeholder="https://drive.google.com/…"
+              value={form.candidateResumeUrl}
+              onChange={(e) => setForm({ ...form, candidateResumeUrl: e.target.value })}
+            />
+            <p className="rb-form-note">At least one of LinkedIn URL or resume link is required. Provide both when you have them.</p>
           </div>
           <button
             type="button"

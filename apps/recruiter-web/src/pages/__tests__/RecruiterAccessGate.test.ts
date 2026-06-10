@@ -18,7 +18,7 @@ test("Recruiter access gate captures recruiter name before Google binding", () =
   assert.match(source, /Enter your name before claiming recruiter access\./)
   assert.match(source, /writePendingRecruiterAccess\(trimmedInviteCode, trimmedRecruiterName\)/)
   assert.match(source, /<span>Your name<\/span>/)
-  assert.match(source, /name: pending\.name,/)
+  assert.match(source, /name: pending\.name \|\| cleanRecruiterName\(user\.displayName \?\? ""\) \|\| "Recruiter",/)
 })
 
 test("Returning signed-in recruiters skip the gate when paRecruiterMe recognizes them", () => {

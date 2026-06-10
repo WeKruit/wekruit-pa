@@ -395,7 +395,7 @@ export function Overview() {
       key: "recruiter",
       label: "Recruiter submissions",
       desc: "Fresh recruiter submissions to triage.",
-      to: "/admin/recruiter-hub?tab=submissions",
+      to: "/admin/recruiter-hub?tab=board",
       cta: "Open recruiter hub",
       count: workQueue.recruiterNew,
     },

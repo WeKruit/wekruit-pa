@@ -36,7 +36,7 @@
  *   TRG  paRecruiterRoleFeedbackSignalWrite -> appends recruiter role feedback into marketplace flywheel
  *   TRG  paRecruiterRoleApplicationDecisionNotify -> creates recruiter inbox decision notices
  *   TRG  paRecruiterSubmissionFeedbackNotify -> emails + creates recruiter inbox status/feedback,
- *                                                confirmation, and payout notices
+ *                                                requested-info, confirmation, and payout notices
  *   GET  paCollabJobsListSchema    -> JSON Schema for the list response shape
  *
  * Companion docs:
@@ -1156,7 +1156,6 @@ export const paRecruiterInviteCodeCreate = onRequest(
           const inviteEmail = await sendRecruiterInviteEmailForCode(ref, {
             recruiterEmail: validated.value.recruiterEmail,
             inviteCode: normalizedCode,
-            inviteUrl: recruiterInviteUrl(normalizedCode),
             expiresAt: validated.value.expiresAt ?? null,
           })
           if (!inviteEmail.ok) {
@@ -1183,7 +1182,7 @@ export const paRecruiterInviteCodeCreate = onRequest(
           maxUses: validated.value.maxUses,
           expiresAt: validated.value.expiresAt ?? null,
           recruiterEmail: validated.value.recruiterEmail ?? null,
-          inviteUrl: recruiterInviteUrl(normalizedCode),
+          inviteUrl: recruiterInviteUrl(normalizedCode, validated.value.recruiterEmail),
           emailStatus: inviteEmailStatus,
           emailMessageId: inviteEmailMessageId,
         })
@@ -3380,6 +3379,8 @@ interface SubmissionPayload {
     name: string
     email?: string
     link: string
+    linkedinUrl?: string
+    resumeUrl?: string
     currentRole?: string
     yoe?: string
     notes?: string
@@ -3595,6 +3596,23 @@ export function validateSubmission(input: unknown):
     if (c[k] !== undefined && typeof c[k] !== "string") return { ok: false, reason: `invalid_${k}` }
     if (typeof c[k] === "string" && (c[k] as string).length > 4000) return { ok: false, reason: `${k}_too_long` }
   }
+  // Optional candidate URLs. Accepted both as top-level `candidateLinkedinUrl`
+  // / `candidateResumeUrl` and nested `candidate.linkedinUrl` /
+  // `candidate.resumeUrl` so old and new clients interop.
+  const optionalCandidateUrl = (raw: unknown, field: string):
+    | { ok: true; value?: string }
+    | { ok: false; reason: string } => {
+    if (raw === undefined || raw === null || raw === "") return { ok: true }
+    if (typeof raw !== "string") return { ok: false, reason: `invalid_${field}` }
+    const trimmed = raw.trim()
+    if (!trimmed) return { ok: true }
+    if (trimmed.length > 500) return { ok: false, reason: `${field}_too_long` }
+    return { ok: true, value: trimmed }
+  }
+  const linkedinUrl = optionalCandidateUrl(b.candidateLinkedinUrl ?? c.linkedinUrl, "candidate_linkedin_url")
+  if (!linkedinUrl.ok) return linkedinUrl
+  const resumeUrl = optionalCandidateUrl(b.candidateResumeUrl ?? c.resumeUrl, "candidate_resume_url")
+  if (!resumeUrl.ok) return resumeUrl
 
   const cl = b.checklist
   if (!cl || typeof cl !== "object") return { ok: false, reason: "missing_checklist" }
@@ -3622,6 +3640,10 @@ export function validateSubmission(input: unknown):
   if (b.candidateConsent !== true) return { ok: false, reason: "candidate_consent_required" }
   if (!candidateEmail) return { ok: false, reason: "missing_candidate_email" }
 
+  const currentRole = sanitizeOptionalString(c.currentRole, 4000)
+  const yoe = sanitizeOptionalString(c.yoe, 4000)
+  const notes = sanitizeOptionalString(c.notes, 4000)
+
   return {
     ok: true,
     value: {
@@ -3635,9 +3657,11 @@ export function validateSubmission(input: unknown):
         name: (c.name as string).trim(),
         ...(candidateEmail ? { email: candidateEmail } : {}),
         link: (c.link as string).trim(),
-        currentRole: typeof c.currentRole === "string" ? (c.currentRole as string).trim() : undefined,
-        yoe: typeof c.yoe === "string" ? (c.yoe as string).trim() : undefined,
-        notes: typeof c.notes === "string" ? (c.notes as string).trim() : undefined,
+        ...(linkedinUrl.value ? { linkedinUrl: linkedinUrl.value } : {}),
+        ...(resumeUrl.value ? { resumeUrl: resumeUrl.value } : {}),
+        ...(currentRole ? { currentRole } : {}),
+        ...(yoe ? { yoe } : {}),
+        ...(notes ? { notes } : {}),
       },
       checklist: cleanedChecklist,
       candidateConsent: true,
@@ -3703,7 +3727,6 @@ interface RecruiterRoleNotificationEmailInput {
 interface RecruiterInviteEmailInput {
   recruiterEmail: string
   inviteCode: string
-  inviteUrl: string
   expiresAt?: string | null
 }
 
@@ -3757,9 +3780,10 @@ export function composeRecruiterRoleNotificationEmail(
   return { subject, text, html }
 }
 
-function recruiterInviteUrl(inviteCode: string): string {
+export function recruiterInviteUrl(inviteCode: string, recruiterEmail?: string | null): string {
   const url = new URL(`${RECRUITER_PUBLIC_BASE_URL}/recruiters`)
-  url.searchParams.set("accessCode", inviteCode)
+  url.searchParams.set("code", inviteCode)
+  if (recruiterEmail) url.searchParams.set("email", recruiterEmail)
   return url.toString()
 }
 
@@ -3768,16 +3792,17 @@ export function composeRecruiterInviteEmail(
 ): { subject: string; text: string; html: string } {
   const expiresLine = input.expiresAt ? `This one-time code expires at ${input.expiresAt}.` : "This is a one-time code."
   const subject = "Your WeKruit recruiter access code"
+  const acceptUrl = recruiterInviteUrl(input.inviteCode, input.recruiterEmail)
   const text = [
     "Hi there,",
     "",
     "WeKruit invited you to submit roles and candidates in the recruiter workspace.",
     "",
-    `Open the recruiter site: ${input.inviteUrl}`,
-    `One-time access code: ${input.inviteCode}`,
+    `Accept your invite: ${acceptUrl}`,
     "",
-    "Sign in with this email address:",
+    "If the link does not work, open the recruiter site and sign in with this email address:",
     input.recruiterEmail,
+    `One-time access code: ${input.inviteCode}`,
     "",
     expiresLine,
     "After the code is used, your Google sign-in becomes your recruiter account.",
@@ -3785,9 +3810,9 @@ export function composeRecruiterInviteEmail(
   const html = [
     "<p>Hi there,</p>",
     "<p>WeKruit invited you to submit roles and candidates in the recruiter workspace.</p>",
-    `<p><a href="${escapeHtml(input.inviteUrl)}">Open the recruiter site</a></p>`,
+    `<p><a href="${escapeHtml(acceptUrl)}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:bold">Accept your invite</a></p>`,
+    `<p>If the link does not work, open the recruiter site and sign in with <b>${escapeHtml(input.recruiterEmail)}</b>.</p>`,
     `<p><b>One-time access code:</b> <code>${escapeHtml(input.inviteCode)}</code></p>`,
-    `<p>Sign in with this email address:<br><b>${escapeHtml(input.recruiterEmail)}</b></p>`,
     `<p style="color:#666;font-size:12px">${escapeHtml(expiresLine)} After the code is used, your Google sign-in becomes your recruiter account.</p>`,
   ].join("")
   return { subject, text, html }
@@ -4263,7 +4288,7 @@ function eventNotificationId(type: string, entityId: string, eventId: string): s
 async function createRecruiterInAppNotification(
   db: Firestore,
   input: {
-    type: "candidate_calibration" | "candidate_confirmation" | "payout_update" | "role_application_decision" | "role_question_answer" | "submission_feedback"
+    type: "candidate_calibration" | "candidate_confirmation" | "payout_update" | "requested_info" | "role_application_decision" | "role_question_answer" | "submission_feedback"
     eventId: string
     recruiterId: string
     recruiterEmail?: string
@@ -4442,7 +4467,7 @@ function feedbackFieldChanged(before: Record<string, unknown> | null, after: Rec
   return JSON.stringify(before?.recruiterFeedbackReasons ?? []) !== JSON.stringify(after.recruiterFeedbackReasons ?? [])
 }
 
-function submissionFeedbackNotification(
+export function submissionFeedbackNotification(
   before: Record<string, unknown> | null,
   after: Record<string, unknown> | null,
 ): { title: string; body: string } | null {
@@ -4472,6 +4497,41 @@ function submissionFeedbackNotification(
     note,
   ])
   return { title, body }
+}
+
+function submissionRequestedInfoEntries(data: Record<string, unknown> | null): unknown[] {
+  return Array.isArray(data?.requestedInfo) ? data.requestedInfo : []
+}
+
+function requestedInfoMessage(entry: unknown): string {
+  if (typeof entry === "string") return entry.trim()
+  if (entry && typeof entry === "object") {
+    const e = entry as Record<string, unknown>
+    for (const key of ["message", "request", "text", "note"] as const) {
+      if (typeof e[key] === "string" && (e[key] as string).trim()) return (e[key] as string).trim()
+    }
+  }
+  return ""
+}
+
+export function submissionRequestedInfoNotification(
+  before: Record<string, unknown> | null,
+  after: Record<string, unknown> | null,
+): { title: string; body: string } | null {
+  if (!after) return null
+  const afterStatus = typeof after.status === "string" ? after.status : "submitted"
+  if (afterStatus !== "reviewing") return null
+  const beforeEntries = submissionRequestedInfoEntries(before)
+  const afterEntries = submissionRequestedInfoEntries(after)
+  if (afterEntries.length <= beforeEntries.length) return null
+  const candidateName = submissionCandidateName(after)
+  const message = requestedInfoMessage(afterEntries[afterEntries.length - 1])
+  const body = compactNotificationBody([
+    typeof after.jobTitleSnapshot === "string" ? after.jobTitleSnapshot : "",
+    message,
+    "Reply from the submission tracker to keep this candidate moving.",
+  ])
+  return { title: `WeKruit needs more info on ${candidateName}`, body }
 }
 
 const RECRUITER_SUBMISSION_FEEDBACK_OUTCOMES = [
@@ -5296,7 +5356,12 @@ export const paRecruiterSubmissionFeedbackNotify = onDocumentWritten(
     })
     const confirmationNotification = candidateConfirmationNotification(before, after)
     const payoutNotification = payoutUpdateNotification(before, after)
-    if ((!feedbackNotification && !feedbackEvent && !confirmationNotification && !payoutNotification) || !after) return
+    const requestedInfoNotification = submissionRequestedInfoNotification(before, after)
+    // Guard for aiEvaluation-only merges (pa-orchestrator eval trigger): when
+    // status is unchanged, no requestedInfo entry was appended, and no
+    // feedback/confirmation/payout field moved, every helper above is null
+    // and we exit without emailing.
+    if ((!feedbackNotification && !feedbackEvent && !confirmationNotification && !payoutNotification && !requestedInfoNotification) || !after) return
     const recruiterId = typeof after.recruiterId === "string" ? after.recruiterId : ""
     if (!recruiterId) return
     const db = getFirestore()
@@ -5341,6 +5406,30 @@ export const paRecruiterSubmissionFeedbackNotify = onDocumentWritten(
           actionUrl: common.roleUrl ?? `${RECRUITER_PUBLIC_BASE_URL}/recruiters?tab=submissions`,
         })
         logger.info("paRecruiterSubmissionFeedbackNotify_done", {
+          submissionId: event.params.submissionId,
+          recruiterId,
+          emailStatus,
+        })
+      }
+    }
+    if (requestedInfoNotification) {
+      const type = "requested_info"
+      const created = await createRecruiterInAppNotification(db, {
+        ...common,
+        type,
+        title: requestedInfoNotification.title,
+        body: requestedInfoNotification.body,
+      })
+      if (created) {
+        const emailStatus = await sendRecruiterSubmissionUpdateEmail(db, eventNotificationId(type, event.params.submissionId, event.id), {
+          to: common.recruiterEmail,
+          title: requestedInfoNotification.title,
+          body: requestedInfoNotification.body,
+          roleTitle: common.roleTitle,
+          companyLabel: common.companyLabel,
+          actionUrl: common.roleUrl ?? `${RECRUITER_PUBLIC_BASE_URL}/recruiters?tab=submissions`,
+        })
+        logger.info("paRecruiterSubmissionRequestedInfoNotify_done", {
           submissionId: event.params.submissionId,
           recruiterId,
           emailStatus,
