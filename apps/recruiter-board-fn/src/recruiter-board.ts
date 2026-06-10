@@ -76,6 +76,7 @@ const MAILGUN_API_KEY = defineSecret("MAILGUN_API_KEY")
 const MAILGUN_DOMAIN = defineSecret("MAILGUN_DOMAIN")
 const MAILGUN_FROM = defineSecret("MAILGUN_FROM")
 const MAILGUN_REGION = defineSecret("MAILGUN_REGION")
+const PA_ADMIN_TOKEN_SECRET = defineSecret("PA_ADMIN_TOKEN")
 const MAILGUN_SECRETS = [MAILGUN_API_KEY, MAILGUN_DOMAIN, MAILGUN_FROM, MAILGUN_REGION]
 const RECRUITER_PUBLIC_BASE_URL = "https://wekruit-recruiters.web.app"
 const RECRUITER_CANDIDATE_CONFIRM_URL =
@@ -115,6 +116,8 @@ async function hiringBoardAdminEmail(
   if (!auth || !auth.startsWith("Bearer ")) return null
   const token = auth.slice("Bearer ".length).trim()
   if (!token) return null
+  const adminToken = (process.env.PA_ADMIN_TOKEN ?? "").trim()
+  if (adminToken && token === adminToken) return "admin-cli@wekruit.com"
   const verify =
     verifyIdToken ??
     (async (t: string) => {
@@ -1218,7 +1221,7 @@ export const paCollabJobsListSchema = onRequest(
 )
 
 export const paRecruiterInviteCodeCreate = onRequest(
-  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: MAILGUN_SECRETS },
+  { cors: false, region: "us-central1", memory: RECRUITER_BOARD_MEMORY, secrets: [...MAILGUN_SECRETS, PA_ADMIN_TOKEN_SECRET] },
   async (req, res) => {
     setCors(res)
     if (req.method === "OPTIONS") {
