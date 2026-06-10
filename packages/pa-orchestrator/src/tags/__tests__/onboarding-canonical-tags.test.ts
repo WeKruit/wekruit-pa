@@ -90,6 +90,15 @@ test("negative axes validate against the same vocab", () => {
   assert.deepEqual(tags.negativeIndustrySector, ["crypto_web3_blockchain"])
 })
 
+test("negativeJobType validates against JOB_TYPE_VOCAB (jobType negation parity 2026-06-09)", () => {
+  const tags = validateOnboardingCanonicalTags({
+    targetJobType: ["full_time"],
+    negativeJobType: ["internship", "side_hustle"],
+  })
+  assert.deepEqual(tags.targetJobType, ["full_time"])
+  assert.deepEqual(tags.negativeJobType, ["internship"], "off-vocab dropped, valid token kept")
+})
+
 test("dedupe + mechanical normalize only (no semantic classification)", () => {
   const tags = validateOnboardingCanonicalTags({
     targetLocations: ["New York", "new york", "remote"],

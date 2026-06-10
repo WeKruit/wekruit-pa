@@ -19,6 +19,16 @@ export interface MatchingPreferenceProposal {
   /** Roles to exclude — added to the negative axis AND removed from positive. */
   avoidRoleFunctions?: readonly string[] | null
   jobType?: readonly string[] | null
+  /**
+   * Job types to exclude — SUBTRACTED from targetJobType AND accumulated into
+   * negativeJobType. A subtraction that empties the set writes [] (an explicit
+   * clear), because targetJobType is an EXACT-match HARD filter: the 2026-06-09
+   * live victim said "I am not looking for an internship" and a stale
+   * targetJobType=["internship"] kept matching ONLY intern jobs.
+   */
+  avoidJobTypes?: readonly string[] | null
+  /** Explicit "no job-type filter at all" — empties targetJobType. */
+  clearTargetJobType?: boolean | null
   locations?: readonly string[] | null
 }
 
@@ -27,6 +37,7 @@ export interface MatchingTagsSlice {
   targetRoleFunction?: string[]
   negativeRoleFunction?: string[]
   targetJobType?: string[]
+  negativeJobType?: string[]
   targetLocations?: string[]
 }
 
@@ -99,9 +110,38 @@ export function reduceMatchingPreferences(
     changed.negativeRoleFunction = [...negative]
   }
 
+  // ── jobType axis — same only/avoid/replace semantics as role function.
+  // targetJobType is an EXACT-match HARD filter, so a negation MUST be able to
+  // empty it: subtraction resulting in [] is written as [] (an explicit clear),
+  // never silently dropped (the "not looking for an internship" live bug).
+  let jobTypes = dedup(current.targetJobType ?? [])
+  let negativeJobTypes = dedup(current.negativeJobType ?? [])
+
   if (nonEmpty(proposal.jobType)) {
-    changed.targetJobType = dedup(proposal.jobType)
+    jobTypes = dedup(proposal.jobType)
+    changed.targetJobType = [...jobTypes]
+    // explicitly-wanted job types can no longer be on the negative axis.
+    const wanted = new Set(jobTypes)
+    const unAvoided = negativeJobTypes.filter((t) => !wanted.has(t))
+    if (unAvoided.length !== negativeJobTypes.length) {
+      negativeJobTypes = unAvoided
+      changed.negativeJobType = [...negativeJobTypes]
+    }
   }
+
+  if (nonEmpty(proposal.avoidJobTypes)) {
+    const avoid = new Set(dedup(proposal.avoidJobTypes))
+    jobTypes = jobTypes.filter((t) => !avoid.has(t))
+    negativeJobTypes = dedup([...negativeJobTypes, ...avoid])
+    changed.targetJobType = [...jobTypes]
+    changed.negativeJobType = [...negativeJobTypes]
+  }
+
+  if (proposal.clearTargetJobType === true) {
+    jobTypes = []
+    changed.targetJobType = []
+  }
+
   if (nonEmpty(proposal.locations)) {
     changed.targetLocations = dedup(proposal.locations)
   }
@@ -110,6 +150,9 @@ export function reduceMatchingPreferences(
     targetRoleFunction: positive,
     ...(negative.length ? { negativeRoleFunction: negative } : {}),
     targetJobType: changed.targetJobType ?? current.targetJobType,
+    ...(changed.negativeJobType !== undefined || current.negativeJobType !== undefined
+      ? { negativeJobType: changed.negativeJobType ?? dedup(current.negativeJobType ?? []) }
+      : {}),
     targetLocations: changed.targetLocations ?? current.targetLocations,
   }
 

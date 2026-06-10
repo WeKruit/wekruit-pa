@@ -124,7 +124,8 @@ const SYSTEM_PROMPT =
   "Output JSON only that validates the `ConversationExtractResult` schema (tagPatch, " +
   "memoryEntities, confidence, rationale). No prose. tagPatch may include any of: " +
   "targetRoleFunction, negativeRoleFunction, industrySector, negativeIndustrySector, visaStatus, " +
-  "careerStage, targetJobType, targetLocations, targetCountry, minSalaryUsd, companySize, " +
+  "careerStage, targetJobType, negativeJobType (job types the user does NOT want, e.g. 'not looking " +
+  "for an internship' → ['internship']), targetLocations, targetCountry, minSalaryUsd, companySize, " +
   "companyStage (funding stage pre_seed/seed/series_a/.../ipo_public — ORTHOGONAL to companySize), " +
   "prefersStartup, companyNegativeList, companyPositiveList, targetCompanyTags, urgentlySeeking, " +
   "relevantTags, preferenceHardness. Capture INTENT not résumé history: targetJobType/" +

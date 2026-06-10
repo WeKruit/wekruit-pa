@@ -71,6 +71,13 @@ export interface OnboardingCanonicalTagInput {
   targetCountry?: string[] | string | null
   /** Job type — JOB_TYPE_VOCAB (OR). */
   targetJobType?: string[] | string | null
+  /**
+   * Job types the candidate does NOT want — JOB_TYPE_VOCAB (OR). The sole
+   * writer subtracts these from the stored `targetJobType` (an EXACT-match
+   * hard filter), so a pure negation ("I am not looking for an internship")
+   * can clear a stale value.
+   */
+  negativeJobType?: string[] | string | null
   /** Seniority — CAREER_STAGE_VOCAB (single). */
   careerStage?: string | null
   /** Work-authorization — VISA_VOCAB (single). */
@@ -248,6 +255,9 @@ export function validateOnboardingCanonicalTags(
 
   const targetJobType = validateEnumList<JobType>(input.targetJobType, JOB_TYPE_SET)
   if (targetJobType) tags.targetJobType = targetJobType
+
+  const negativeJobType = validateEnumList<JobType>(input.negativeJobType, JOB_TYPE_SET)
+  if (negativeJobType) tags.negativeJobType = negativeJobType
 
   const careerStage = validateEnumScalar<CareerStage>(input.careerStage, CAREER_STAGE_SET)
   if (careerStage) tags.careerStage = careerStage

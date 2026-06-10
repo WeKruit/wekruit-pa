@@ -175,6 +175,92 @@ test("applyPartialUserTags: undefined values stripped", async () => {
   assert.deepEqual(written.tags.targetRoleFunction, ["software_engineering"])
 })
 
+test("applyPartialUserTags: targetJobType: [] is a LEGAL write that clears the stored value", async () => {
+  // Intent axes must be clearable from a pure negation ("I am not looking for
+  // an internship"). The cleaner strips only `undefined` — an explicit [] must
+  // survive the shallow merge and replace the stale hard-filter value.
+  const ctx = makeDb({ "u-1": { tags: { targetJobType: ["internship"] } } })
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { targetJobType: [] } as Record<string, unknown>,
+    { source: "chat", nowIso: "2026-06-09T00:00:00.000Z" }
+  )
+  assert.equal(res.ok, true)
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  assert.deepEqual(written.tags.targetJobType, [])
+})
+
+test("applyPartialUserTags: negativeJobType subtracts from stored targetJobType (delta-apply)", async () => {
+  // Extractor parity (negativeJobType mirrors negativeRoleFunction). targetJobType
+  // is an EXACT-match HARD filter with no matcher-side negative read, so the
+  // sole writer must apply the subtraction at the boundary: stored ["internship",
+  // "full_time"] minus negativeJobType ["internship"] → ["full_time"].
+  const ctx = makeDb({ "u-1": { tags: { targetJobType: ["internship", "full_time"] } } })
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { negativeJobType: ["internship"] } as Record<string, unknown>,
+    { source: "chat", nowIso: "2026-06-09T00:00:00.000Z" }
+  )
+  assert.equal(res.ok, true)
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  assert.deepEqual(written.tags.targetJobType, ["full_time"])
+  assert.deepEqual(written.tags.negativeJobType, ["internship"])
+})
+
+test("applyPartialUserTags: PURE negativeJobType negation empties targetJobType to [] (live-victim case)", async () => {
+  // "I am not looking for an internship" with targetJobType=["internship"] —
+  // the subtraction result [] MUST be persisted (not skipped as empty), or the
+  // exact-match hard filter keeps the user locked to intern-only matches.
+  const ctx = makeDb({ "u-1": { tags: { targetJobType: ["internship"] } } })
+  const res = await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { negativeJobType: ["internship"] } as Record<string, unknown>,
+    { source: "chat", nowIso: "2026-06-09T00:00:00.000Z" }
+  )
+  assert.equal(res.ok, true)
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  assert.deepEqual(written.tags.targetJobType, [])
+  assert.deepEqual(written.tags.negativeJobType, ["internship"])
+})
+
+test("applyPartialUserTags: negativeJobType storage is shallow-replaced (parity with negativeRoleFunction); subtraction still applies", async () => {
+  // Cross-turn ACCUMULATION of the negative axis is the matching-profile
+  // REDUCER's job (it reads current.negativeJobType and emits the union). The
+  // sole writer replaces per key like every other field — and still subtracts
+  // the incoming tokens from the stored positive set.
+  const ctx = makeDb({
+    "u-1": { tags: { targetJobType: ["contract", "full_time"], negativeJobType: ["internship"] } },
+  })
+  await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { negativeJobType: ["contract"] } as Record<string, unknown>,
+    { source: "chat", nowIso: "2026-06-09T00:00:00.000Z" }
+  )
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  assert.deepEqual(written.tags.negativeJobType, ["contract"])
+  assert.deepEqual(written.tags.targetJobType, ["full_time"])
+})
+
+test("applyPartialUserTags: same-write POSITIVE targetJobType + negativeJobType of OTHER tokens — replace lands, nothing subtracted", async () => {
+  // "full-time only, no more internships" → targetJobType:["full_time"] +
+  // negativeJobType:["internship"]: the replace lands, then the subtraction
+  // removes nothing (internship is not in the new positive set).
+  const ctx = makeDb({ "u-1": { tags: { targetJobType: ["internship"] } } })
+  await applyPartialUserTags(
+    ctx.db,
+    "u-1",
+    { targetJobType: ["full_time"], negativeJobType: ["internship"] } as Record<string, unknown>,
+    { source: "chat", nowIso: "2026-06-09T00:00:00.000Z" }
+  )
+  const written = ctx.writes[0]!.data as { tags: Record<string, unknown> }
+  assert.deepEqual(written.tags.targetJobType, ["full_time"])
+  assert.deepEqual(written.tags.negativeJobType, ["internship"])
+})
+
 test("applyPartialUserTags: normalizes extractor minSalaryUsd to V16 minSalary", async () => {
   const ctx = makeDb()
   const res = await applyPartialUserTags(
