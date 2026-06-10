@@ -20,7 +20,9 @@
       "set-matching-preferences",
       "set-daily-job-recommendation-subscription",
       "find-match",
-      "match-against-collab-jobs"
+      "match-against-collab-jobs",
+      "valet-apply",
+      "valet-apply-status"
     ],
     "toolBudgetPerTurn": 3,
     "fewShotMessages": [

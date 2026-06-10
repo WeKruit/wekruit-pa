@@ -32,6 +32,8 @@ test("default seed agent matches Phase 10.5 production target (provider/model/to
     "set-daily-job-recommendation-subscription",
     "find-match",
     "match-against-collab-jobs",
+    "valet-apply",
+    "valet-apply-status",
   ])
   assert.equal(agent.toolBudgetPerTurn, 3)
   assert.equal(agent.isDefault, true)
