@@ -351,3 +351,76 @@
   .rs-row-add { background: #fcfbf5; }
   .rs-drawer { width: 100vw; }
 }
+
+/* Resume cell: URL input + file drop/pick */
+.rs-resume-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  position: relative;
+}
+.rs-resume-cell input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+.rs-resume-drag {
+  outline: 2px dashed #6d6d60;
+  outline-offset: -2px;
+  border-radius: 4px;
+  background: #f4f3ed;
+}
+.rs-resume-pick {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid #d6d5cd;
+  border-radius: 4px;
+  background: #faf9f6;
+  cursor: pointer;
+  color: #6d6d60;
+  padding: 0;
+}
+.rs-resume-pick:hover { background: #eeeee6; color: #3a3a30; }
+.rs-resume-uploading {
+  font-size: 12px;
+  color: #8a8a7e;
+  animation: rs-pulse 1.2s infinite;
+}
+@keyframes rs-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+.rs-resume-file {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #3a3a30;
+  background: #eeeee6;
+  border-radius: 3px;
+  padding: 2px 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rs-resume-clear {
+  flex-shrink: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  color: #8a8a7e;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.rs-resume-clear:hover { color: #c00; }
+.rs-resume-err {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  font-size: 11px;
+  color: #b33;
+  white-space: nowrap;
+}
