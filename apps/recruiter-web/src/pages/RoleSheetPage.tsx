@@ -8,7 +8,6 @@
  * right side drawer per row.
  */
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { onAuthStateChanged } from "firebase/auth"
 import { Link, useParams } from "react-router-dom"
 import "../styles/recruiter-board.css"
 import "../styles/role-sheet.css"
@@ -17,19 +16,17 @@ import {
   fetchCollabJobs,
   fetchRecruiterSubmissionComments,
   fetchRecruiterSubmissions,
-  getRecruiterProfile,
   RecruiterApiError,
   submitRecruiterCandidate,
   updateRecruiterSubmission,
   type CollabJob,
-  type RecruiterSession,
   type RecruiterSubmissionComment,
   type RecruiterSubmissionItem,
   type RecruiterSubmitField,
   type SubmissionCandidateCells,
   type SubmissionChecklistValue,
 } from "../lib/recruiter-board-api.js"
-import { auth } from "../lib/firebase.js"
+import { useRecruiterSession } from "../lib/recruiter-session-context.js"
 import { buildSubmissionStatusStepper, SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
 
 const SHEET_DRAFT_KEY_PREFIX = "rs-draft-v1:"
@@ -393,8 +390,7 @@ function renderJdBody(text: string): ReactNode[] {
 
 export default function RoleSheetPage() {
   const { jobId } = useParams<{ jobId: string }>()
-  const [session, setSession] = useState<RecruiterSession | null>(null)
-  const [authReady, setAuthReady] = useState(false)
+  const { session, authReady, setSession } = useRecruiterSession()
   const [jobs, setJobs] = useState<CollabJob[] | null>(null)
   const [submissions, setSubmissions] = useState<RecruiterSubmissionItem[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -416,32 +412,6 @@ export default function RoleSheetPage() {
   const [commentsError, setCommentsError] = useState<string | null>(null)
   const [commentDraft, setCommentDraft] = useState("")
   const [commentSending, setCommentSending] = useState(false)
-
-  useEffect(() => {
-    let active = true
-    const unsubscribe = onAuthStateChanged(auth(), (user) => {
-      void (async () => {
-        if (!user) {
-          if (!active) return
-          setSession(null)
-          setAuthReady(true)
-          return
-        }
-        try {
-          const next = await getRecruiterProfile()
-          if (active) setSession(next)
-        } catch {
-          if (active) setSession(null)
-        } finally {
-          if (active) setAuthReady(true)
-        }
-      })()
-    })
-    return () => {
-      active = false
-      unsubscribe()
-    }
-  }, [])
 
   useEffect(() => {
     fetchCollabJobs()
