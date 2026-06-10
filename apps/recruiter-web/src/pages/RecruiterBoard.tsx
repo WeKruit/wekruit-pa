@@ -1139,12 +1139,12 @@ interface PendingRecruiterAccess {
   emailHint?: string
 }
 
-interface RecruiterInviteLink {
+export interface RecruiterInviteLink {
   code: string
   emailHint: string
 }
 
-function readRecruiterInviteLinkFromLocation(): RecruiterInviteLink | null {
+export function readRecruiterInviteLinkFromLocation(): RecruiterInviteLink | null {
   if (typeof window === "undefined") return null
   const params = new URLSearchParams(window.location.search)
   const code = cleanRecruiterInviteCode(params.get("code") ?? "")
@@ -1191,7 +1191,7 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
   }
 }
 
-function writePendingRecruiterAccess(inviteCode: string, name: string, emailHint?: string) {
+export function writePendingRecruiterAccess(inviteCode: string, name: string, emailHint?: string) {
   const payload = JSON.stringify({
     inviteCode,
     name,
@@ -4057,7 +4057,7 @@ function RecruiterStatusLoading() {
   )
 }
 
-function RecruiterAccessGate({
+export function RecruiterAccessGate({
   initialError,
   inviteLink,
   onSessionClaimed,
