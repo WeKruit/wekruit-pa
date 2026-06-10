@@ -257,7 +257,7 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(terminalCalls[0].terminal, "PAUSE")
     assert.equal(terminalCalls[0].jobId, "job-old")
     assert.equal(sent.length, 1)
-    assert.match(sent[0], /paused this role screen/)
+    assert.match(sent[0], /timed out on my side/)
     const session = docs.get("pa-prescreen-sessions/ps_old")?.data
     assert.equal(session?.terminal, "PAUSE")
     assert.equal(session?.terminalReason, "expired_inactive_prescreen_session")
@@ -1749,8 +1749,8 @@ describe("runPrescreenTurnIfActive session boundaries", () => {
     assert.equal(reviewPendingCalls.length, 1)
     assert.equal(reviewPendingCalls[0]?.terminal, "PASS")
     assert.equal(sent.length, 1)
-    assert.match(sent[0] ?? "", /received/i)
-    assert.match(sent[0] ?? "", /reviewing/i)
+    assert.match(sent[0] ?? "", /reviews every screen personally/i)
+    assert.match(sent[0] ?? "", /next step here/i)
     assert.doesNotMatch(sent[0] ?? "", /pass|not a fit|recommend|salary|proceed/i)
     const session = docs.get("pa-prescreen-sessions/ps_active")?.data
     assert.equal(session?.terminalActionPendingReview, true)

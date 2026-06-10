@@ -10,6 +10,13 @@
  * FAIL-SAFE: any miss (no userId/sessionId/text, flag off, read error, or an unexpected
  * throw BEFORE the thin agent sends anything) returns false → the legacy path still runs,
  * so the user always gets a reply. runClaireTurn itself never throws (timeout + fallback).
+ *
+ * NOTE — SMS STOP/START compliance does NOT live here. Both call paths route prescreen/
+ * PII/layoff turns BEFORE this cutover, so a gate here would miss a STOP sent mid-prescreen.
+ * The deterministic keyword gate (claire-agent/stop-gate.ts) is wired at the earliest common
+ * seam of each path instead: index.ts processBrokerImessageEvent (direct broker) and
+ * paMessageCoalescer (coalesced), both immediately after the inbound doc is stamped and
+ * before ANY routing — by the time a turn reaches this function it has already passed it.
  */
 import type { Firestore } from "firebase-admin/firestore"
 import { PA_COLLECTIONS } from "@pa/core-types"

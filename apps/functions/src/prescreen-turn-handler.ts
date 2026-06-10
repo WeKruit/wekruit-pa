@@ -1563,12 +1563,15 @@ async function finalizePrescreenTurnResult(params: {
   }
 }
 
+// Graceful endings (Adam 2026-06-10): a closed screen is never an exit from the marketplace —
+// zero ding on the candidate, restart anytime, and Claire keeps matching them meanwhile.
+// KEEP IN SYNC with the duplicates in packages/pa-orchestrator/src/prescreen/runner.ts.
 function expiredSessionText(_lang: "zh" | "en"): string {
-  return "I paused this role screen so I do not mix an old conversation with a new one. If you want to continue this role, reopen it from the job page and I will start a fresh screen."
+  return "heads up — that screen timed out on my side, so i closed it rather than mix two conversations. zero ding on you: reopen the job link (or just ask me) whenever you want a fresh run, and i'm still matching you to other roles in the meantime."
 }
 
 function userExitSessionText(_lang: "zh" | "en"): string {
-  return "Got it — I paused this role screen. If you want to continue later, reopen it from the job page; I will keep what you have already shared on your profile."
+  return "no problem — i paused this role screen and kept everything you've shared on your profile. pick it back up anytime from the job page (or just ask me), and i'll keep matching you to other roles in the meantime."
 }
 
 function recentTerminalSessionText(lang: "zh" | "en", terminal?: string | null): string {
