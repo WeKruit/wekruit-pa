@@ -43,7 +43,9 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     mode: "ops",
     defaultOpen: true,
     items: [
-      { to: "/admin/prescreen-ops", label: "Jobs board" },
+      // hitl on the jobs board only — both prescreen routes carry the same
+      // pending-review count, so flagging both would double the section total.
+      { to: "/admin/prescreen-ops", label: "Jobs board", hitl: true },
       { to: "/admin/prescreen-sessions", label: "All sessions" },
     ],
   },
@@ -79,15 +81,11 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     label: "Recruiters",
     icon: "user_check",
     mode: "ops",
+    // 2026-06-09 — consolidated into the Recruiter hub. The old per-surface
+    // routes stay alive in App.tsx; only the nav slims.
     items: [
-      { to: "/admin/recruiter-access", label: "Recruiter invites" },
-      { to: "/admin/recruiter-roles", label: "Roles" },
-      { to: "/admin/recruiter-quality", label: "Quality review", hitl: true },
-      { to: "/admin/recruiter-applications", label: "Applications", hitl: true },
-      { to: "/admin/recruiter-sourced", label: "Sourced candidates", hitl: true },
-      { to: "/admin/recruiter-feedback", label: "Role feedback", hitl: true },
-      { to: "/admin/recruiter-questions", label: "Role questions", hitl: true },
-      { to: "/admin/recruiter-submissions", label: "Submissions", hitl: true },
+      { to: "/admin/recruiter-hub", label: "Recruiter hub", hitl: true },
+      { to: "/admin/recruiter-access", label: "Invites & roster" },
     ],
   },
   // ───────────── DEV ─────────────
@@ -98,7 +96,7 @@ export const CONSOLE_NAV: NavSectionDef[] = [
     mode: "dev",
     defaultOpen: true,
     items: [
-      { to: "/admin/layoff-employers", label: "Role packets", hitl: true },
+      { to: "/admin/layoff-employers", label: "Layoff signups", hitl: true },
     ],
   },
   {

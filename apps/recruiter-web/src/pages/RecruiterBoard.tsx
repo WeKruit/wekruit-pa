@@ -37,6 +37,7 @@ import {
   fetchRecruiterSubmissions,
   fetchRecruiterNotifications,
   getRecruiterProfile,
+  isRecruiterProfileRejection,
   markRecruiterNotificationsRead,
   registerRecruiterAccess,
   checkRecruiterCandidateIdentity,
@@ -1245,6 +1246,8 @@ export default function RecruiterBoard() {
   const [accessDraftJobId, setAccessDraftJobId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [accessError, setAccessError] = useState<string | null>(null)
+  const [profileLoadFailed, setProfileLoadFailed] = useState(false)
+  const [profileRetryToken, setProfileRetryToken] = useState(0)
   const [submissionError, setSubmissionError] = useState<string | null>(null)
   const tabParam = searchParams.get("tab")
   const activeTab = TABS.some((t) => t.id === tabParam) ? tabParam as RecruiterTab : "overview"
@@ -1271,6 +1274,7 @@ export default function RecruiterBoard() {
         setRoleIntelligence([])
         setNotifications([])
         setStatusLoaded(false)
+        setProfileLoadFailed(false)
         setAuthReady(true)
         return
       }
@@ -1317,9 +1321,15 @@ export default function RecruiterBoard() {
         const next = await getRecruiterProfile()
         if (active) {
           setAccessError(null)
+          setProfileLoadFailed(false)
           setSession(next)
         }
-      } catch {
+      } catch (e) {
+        if (!isRecruiterProfileRejection(e)) {
+          handlingUid = null
+          if (active) setProfileLoadFailed(true)
+          return
+        }
         await signOut(auth()).catch(() => undefined)
         if (active) {
           setSession(null)
@@ -1331,6 +1341,7 @@ export default function RecruiterBoard() {
           setRoleIntelligence([])
           setNotifications([])
           setStatusLoaded(false)
+          setProfileLoadFailed(false)
           setAccessError("Enter a recruiter access code before choosing a Google account. Google sign-in alone cannot open this workspace.")
         }
       } finally {
@@ -1354,7 +1365,7 @@ export default function RecruiterBoard() {
       active = false
       unsubscribe()
     }
-  }, [])
+  }, [profileRetryToken])
 
   const reloadSubmissions = async () => {
     if (!session) return
@@ -1412,6 +1423,16 @@ export default function RecruiterBoard() {
   }
 
   if (!session) {
+    if (profileLoadFailed) {
+      return (
+        <div className="rb-access">
+          <div className="rb-state error">
+            Couldn't load your recruiter profile. You're still signed in.
+            <button type="button" className="rb-btn" onClick={() => setProfileRetryToken((n) => n + 1)}>Retry</button>
+          </div>
+        </div>
+      )
+    }
     return <RecruiterAccessGate initialError={accessError} initialInviteCode={searchParams.get("accessCode")} />
   }
 

@@ -28,15 +28,9 @@ const OLD_NAV_ROUTES = [
   "/admin/job-prescreen",
   "/admin/job-enrichment",
   "/admin/ats-inbound",
-  // recruiters
+  // recruiters (the other 7 legacy recruiter routes were consolidated into
+  // /admin/recruiter-hub on 2026-06-09 — see CONSOLIDATED_RECRUITER_ROUTES)
   "/admin/recruiter-access",
-  "/admin/recruiter-roles",
-  "/admin/recruiter-quality",
-  "/admin/recruiter-applications",
-  "/admin/recruiter-sourced",
-  "/admin/recruiter-feedback",
-  "/admin/recruiter-questions",
-  "/admin/recruiter-submissions",
   // employers
   "/admin/layoff-employers",
   "/admin/companies",
@@ -84,6 +78,21 @@ const OLD_NAV_ROUTES = [
   "/abuse",
 ]
 
+// 2026-06-09 recruiter-hub consolidation: these routes stay ALIVE in App.tsx
+// (deep links and the hub's tabs still hit them) but are intentionally NOT in
+// the nav anymore — the recruiters section slimmed to Recruiter hub + Invites
+// & roster. The old-route-preservation test must therefore assert they are
+// ABSENT, not present, or the slim regresses back to an 8-item section.
+const CONSOLIDATED_RECRUITER_ROUTES = [
+  "/admin/recruiter-roles",
+  "/admin/recruiter-quality",
+  "/admin/recruiter-applications",
+  "/admin/recruiter-sourced",
+  "/admin/recruiter-feedback",
+  "/admin/recruiter-questions",
+  "/admin/recruiter-submissions",
+]
+
 const allRoutes = CONSOLE_NAV.flatMap((sec) => sec.items.map((it) => it.to))
 
 test("every old nav route survives the Ops | Dev split (plus the new prescreen ops board)", () => {
@@ -91,6 +100,17 @@ test("every old nav route survives the Ops | Dev split (plus the new prescreen o
   const missing = OLD_NAV_ROUTES.filter((to) => !routeSet.has(to))
   assert.deepEqual(missing, [], `routes dropped from CONSOLE_NAV: ${missing.join(", ")}`)
   assert.ok(routeSet.has("/admin/prescreen-ops"), "new /admin/prescreen-ops entry missing")
+})
+
+test("recruiters section is consolidated into the hub (legacy routes out of nav)", () => {
+  const routeSet = new Set(allRoutes)
+  assert.ok(routeSet.has("/admin/recruiter-hub"), "new /admin/recruiter-hub entry missing")
+  const lingering = CONSOLIDATED_RECRUITER_ROUTES.filter((to) => routeSet.has(to))
+  assert.deepEqual(
+    lingering,
+    [],
+    `consolidated recruiter routes back in CONSOLE_NAV: ${lingering.join(", ")}`,
+  )
 })
 
 test("ops mode stays founder-sized (≤ 20 items)", () => {

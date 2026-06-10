@@ -996,7 +996,7 @@ function buildRoleSubmissionPacket(input: {
   if (pendingSlots <= 0) blockers.push("This role has no pending submission slots left.")
   if (hardItems.length > 0 && hardChecked < hardItems.length) blockers.push(`${hardItems.length - hardChecked} hard check${hardItems.length - hardChecked === 1 ? "" : "s"} still need proof.`)
   if (antiFlags.length > 0) blockers.push(`${antiFlags.length} anti-signal${antiFlags.length === 1 ? "" : "s"} marked. Clear the candidate or remove the packet before submitting.`)
-  if (!candidateNotes) blockers.push("Add a fit note explaining why this candidate should enter WeKruit review.")
+  if (!candidateNotes) warnings.push("Add a fit note explaining why this candidate should enter WeKruit review.")
   if (roleApplicationBlocksSubmission(application)) {
     blockers.push(roleBlockedAccessMessage(application))
   }
@@ -1099,8 +1099,8 @@ function buildRoleSubmissionPacket(input: {
     value: candidateNotes ? "Included" : "Missing",
     detail: candidateNotes
       ? "Submission includes recruiter-written role-fit context."
-      : "Add the screening evidence, motivation, compensation, or risk context WeKruit should review.",
-    tone: candidateNotes ? "ready" : "blocked",
+      : "Optional, but screening evidence, motivation, compensation, or risk context speeds WeKruit review.",
+    tone: candidateNotes ? "ready" : "watch",
   })
   gates.push({
     label: "Review capacity",
@@ -2229,6 +2229,8 @@ export default function RecruiterRole() {
   const [quickCandidateError, setQuickCandidateError] = useState<string | null>(null)
   const [stageUpdatingCandidateId, setStageUpdatingCandidateId] = useState<string | null>(null)
   const [stageUpdateError, setStageUpdateError] = useState<string | null>(null)
+  const [showSubmitterEdit, setShowSubmitterEdit] = useState(false)
+  const [moreDetailsOpen, setMoreDetailsOpen] = useState<boolean | null>(null)
 
   useEffect(() => {
     let active = true
@@ -2517,6 +2519,8 @@ export default function RecruiterRole() {
   })
   const packetBlocksSubmit = !submissionPacket.canSubmit
   const quickCandidateProof = buildRoleQuickCandidateProof(quickCandidate)
+  const submitterEditOpen = showSubmitterEdit || !form.submitterName.trim() || !isValidEmail(form.submitterEmail.trim())
+  const detailsOpen = moreDetailsOpen ?? Boolean(form.candidateCurrentRole.trim() || form.candidateYoe.trim() || form.candidateNotes.trim())
 
   const useSourcedCandidate = (candidate: RecruiterSourcedCandidateItem) => {
     setForm((next) => withRecruiterDefaults({
@@ -2674,6 +2678,7 @@ export default function RecruiterRole() {
   }
 
   const appendProofPrompt = (prompt: string) => {
+    setMoreDetailsOpen(true)
     setForm((next) => ({
       ...next,
       candidateNotes: next.candidateNotes.includes(prompt)
@@ -2921,7 +2926,7 @@ export default function RecruiterRole() {
             )}
             <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
               <button className="rb-btn" onClick={submitAnother}>Submit another for this role</button>
-              <button className="rb-btn" onClick={() => navigate("/recruiters?tab=submissions")}>Track status</button>
+              <Link className="rb-btn" to="/recruiters?tab=submissions">Track status in My submissions</Link>
             </div>
           </div>
         )}
@@ -2985,7 +2990,12 @@ export default function RecruiterRole() {
 
             <form id="submit-candidate" className="rb-form-section rb-form" onSubmit={onSubmit}>
               <h3 className="section-title">Your contact (for follow-up)</h3>
-              <p className="rb-form-note">Submitting as {session.recruiter.email}. WeKruit status updates will appear in your recruiter tracker.</p>
+              <p className="rb-form-note">
+                Submitting as {form.submitterName.trim() || session.recruiter.name} ({form.submitterEmail.trim() || session.recruiter.email}). WeKruit status updates will appear in your recruiter tracker.{" "}
+                <button type="button" className="rb-form-note__edit" onClick={() => setShowSubmitterEdit(!submitterEditOpen)}>
+                  {submitterEditOpen ? "Done editing" : "Edit"}
+                </button>
+              </p>
               {selectedCandidate && (
                 <p className="rb-form-note rb-form-note--active">
                   Prefilled from your sourced candidate queue: {selectedCandidate.candidate?.name || "Candidate"}.
@@ -3013,24 +3023,28 @@ export default function RecruiterRole() {
                   </div>
                 </section>
               )}
-              <div className="field">
-                <label>Your name *</label>
-                <input
-                  type="text"
-                  required
-                  value={form.submitterName}
-                  onChange={(e) => setForm({ ...form, submitterName: e.target.value })}
-                />
-              </div>
-              <div className="field">
-                <label>Your email *</label>
-                <input
-                  type="email"
-                  required
-                  value={form.submitterEmail}
-                  onChange={(e) => setForm({ ...form, submitterEmail: e.target.value })}
-                />
-              </div>
+              {submitterEditOpen && (
+                <>
+                  <div className="field">
+                    <label>Your name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={form.submitterName}
+                      onChange={(e) => setForm({ ...form, submitterName: e.target.value })}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Your email *</label>
+                    <input
+                      type="email"
+                      required
+                      value={form.submitterEmail}
+                      onChange={(e) => setForm({ ...form, submitterEmail: e.target.value })}
+                    />
+                  </div>
+                </>
+              )}
 
           <h3 className="section-title" style={{ marginTop: 24 }}>Candidate</h3>
           <div className="field">
@@ -3062,30 +3076,42 @@ export default function RecruiterRole() {
               onChange={(e) => setForm({ ...form, candidateLink: e.target.value })}
             />
           </div>
-          <div className="field">
-            <label>Current role</label>
-            <input
-              type="text"
-              value={form.candidateCurrentRole}
-              onChange={(e) => setForm({ ...form, candidateCurrentRole: e.target.value })}
-            />
-          </div>
-          <div className="field">
-            <label>Years of experience</label>
-            <input
-              type="text"
-              value={form.candidateYoe}
-              onChange={(e) => setForm({ ...form, candidateYoe: e.target.value })}
-            />
-          </div>
-          <div className="field">
-            <label>Notes for us</label>
-            <textarea
-              id="candidate-proof-note"
-              value={form.candidateNotes}
-              onChange={(e) => setForm({ ...form, candidateNotes: e.target.value })}
-            />
-          </div>
+          <button
+            type="button"
+            className="rb-more-toggle"
+            aria-expanded={detailsOpen}
+            onClick={() => setMoreDetailsOpen(!detailsOpen)}
+          >
+            {detailsOpen ? "Hide details" : "More details"} <span>current role, experience, notes — optional</span>
+          </button>
+          {detailsOpen && (
+            <>
+              <div className="field">
+                <label>Current role</label>
+                <input
+                  type="text"
+                  value={form.candidateCurrentRole}
+                  onChange={(e) => setForm({ ...form, candidateCurrentRole: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label>Years of experience</label>
+                <input
+                  type="text"
+                  value={form.candidateYoe}
+                  onChange={(e) => setForm({ ...form, candidateYoe: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label>Notes for us</label>
+                <textarea
+                  id="candidate-proof-note"
+                  value={form.candidateNotes}
+                  onChange={(e) => setForm({ ...form, candidateNotes: e.target.value })}
+                />
+              </div>
+            </>
+          )}
           <label className="rb-consent">
             <input
               type="checkbox"

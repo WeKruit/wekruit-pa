@@ -3,6 +3,7 @@ import { collection, getDocs, limit, orderBy, query, where } from "firebase/fire
 import { useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { db } from "../lib/firebase.js"
+import { useWorkQueueCounts } from "../lib/work-queue-counts.js"
 import { Icon } from "../components/console/Icon.js"
 import {
   Card,
@@ -149,8 +150,64 @@ function greeting(): string {
   return "Good evening"
 }
 
+type TodayCardDef = {
+  key: string
+  label: string
+  desc: string
+  to: string
+  cta: string
+  count: number | null
+}
+
+function TodayCard({ card, onOpen }: { card: TodayCardDef; onOpen: (to: string) => void }) {
+  const clear = card.count === 0
+  const unknown = card.count === null
+  return (
+    <Card
+      title={card.label}
+      action={
+        clear ? (
+          <StatusPill tone="neutral">clear</StatusPill>
+        ) : unknown ? (
+          <StatusPill tone="neutral">unavailable</StatusPill>
+        ) : (
+          <StatusPill tone="hitl" dot>
+            queue
+          </StatusPill>
+        )
+      }
+    >
+      <div
+        style={{
+          fontFamily: "var(--font-serif)",
+          fontSize: 28,
+          letterSpacing: "-0.02em",
+          lineHeight: 1.05,
+          color: clear || unknown ? "var(--ink-3)" : "var(--ink)",
+        }}
+      >
+        {unknown ? "—" : card.count!.toLocaleString()}
+      </div>
+      <div className="caption" style={{ marginTop: 6, color: "var(--ink-3)" }}>
+        {card.desc}
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <button
+          type="button"
+          className={`btn btn--sm ${clear || unknown ? "btn--ghost" : "btn--secondary"}`}
+          onClick={() => onOpen(card.to)}
+        >
+          {card.cta}
+          <Icon name="arrow_right" size={12} />
+        </button>
+      </div>
+    </Card>
+  )
+}
+
 export function Overview() {
   const navigate = useNavigate()
+  const workQueue = useWorkQueueCounts()
   const [inbound, setInbound] = useState<Row[]>([])
   const [outbound, setOutbound] = useState<Row[]>([])
   const [turns, setTurns] = useState<Row[]>([])
@@ -307,6 +364,60 @@ export function Overview() {
     return rows
   }, [failures])
 
+  const todayCards: TodayCardDef[] = [
+    {
+      key: "prescreen",
+      label: "Prescreen review",
+      desc: "Terminal PASS/FAIL calls waiting for an operator commit.",
+      to: "/admin/prescreen-ops",
+      cta: "Review prescreens",
+      count: workQueue.prescreenPending,
+    },
+    {
+      key: "identity",
+      label: "Identity conflicts",
+      desc: "Candidate identity merges that need a human call.",
+      to: "/admin/identity-conflicts",
+      cta: "Resolve conflicts",
+      count: workQueue.identityOpen,
+    },
+    {
+      key: "enrichment",
+      label: "Enrichment review",
+      desc: workQueue.enrichmentDraftsApprox
+        ? "Drafts awaiting approval (latest-100 sample)."
+        : "Job enrichment drafts awaiting approval.",
+      to: "/admin/job-enrichment",
+      cta: "Review drafts",
+      count: workQueue.enrichmentDrafts,
+    },
+    {
+      key: "recruiter",
+      label: "Recruiter submissions",
+      desc: "Fresh recruiter submissions to triage.",
+      to: "/admin/recruiter-hub?tab=submissions",
+      cta: "Open recruiter hub",
+      count: workQueue.recruiterNew,
+    },
+    {
+      key: "outbound",
+      label: "Pending outbound",
+      desc: "Drafted outbound messages waiting for approval.",
+      to: "/admin/pending-outbound",
+      cta: "Approve outbound",
+      count: workQueue.pendingOutbound,
+    },
+    {
+      key: "layoff",
+      label: "Layoff signups",
+      desc: "Employer signups pending verification.",
+      to: "/admin/layoff-employers",
+      cta: "Verify employers",
+      count: workQueue.layoffPending,
+    },
+  ]
+  const todayTotal = todayCards.reduce((n, c) => n + (c.count ?? 0), 0)
+
   return (
     <>
       <PageHeader
@@ -349,6 +460,32 @@ export function Overview() {
           {err}
         </div>
       ) : null}
+
+      {/* Today — actionable work queues */}
+      <div>
+        <SectionHead
+          title="Today"
+          count={workQueue.loading ? undefined : todayTotal}
+          actions={
+            workQueue.loading ? (
+              <span className="caption" style={{ color: "var(--ink-3)" }}>
+                counting…
+              </span>
+            ) : undefined
+          }
+        />
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            gap: 14,
+          }}
+        >
+          {todayCards.map((card) => (
+            <TodayCard key={card.key} card={card} onOpen={(to) => navigate(to)} />
+          ))}
+        </div>
+      </div>
 
       {/* 4-up entity strip */}
       <div className="grid-4">
