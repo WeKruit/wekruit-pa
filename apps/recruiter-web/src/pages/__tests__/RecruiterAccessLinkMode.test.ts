@@ -10,9 +10,14 @@ const source = readFileSync(resolve(here, "../RecruiterBoard.tsx"), "utf8")
 
 test("invite link params are captured once and stripped from the URL", () => {
   assert.match(source, /const code = cleanRecruiterInviteCode\(params\.get\("code"\) \?\? ""\)/)
-  assert.match(source, /emailHint: cleanRecruiterEmail\(params\.get\("email"\) \?\? ""\)/)
+  assert.match(source, /const emailHint = cleanRecruiterEmail\(params\.get\("email"\) \?\? ""\)/)
   assert.match(source, /useState<RecruiterInviteLink \| null>\(readRecruiterInviteLinkFromLocation\)/)
-  assert.match(source, /next\.delete\("code"\)\s*\n\s*next\.delete\("email"\)\s*\n\s*setSearchParams\(next, \{ replace: true \}\)/)
+  assert.match(source, /next\.delete\("code"\)\s*\n\s*next\.delete\("email"\)\s*\n\s*next\.delete\("invite"\)\s*\n\s*setSearchParams\(next, \{ replace: true \}\)/)
+})
+
+test("codeless ?invite=1 links enter link capture with the email hint and no code", () => {
+  assert.match(source, /if \(!code && params\.get\("invite"\) !== "1"\) return null/)
+  assert.match(source, /return \{ code, emailHint \}/)
 })
 
 test("invite link persists code + email hint to the pending-claim slot before auth resolves", () => {
@@ -45,13 +50,13 @@ test("link-mode claim falls back to the Google displayName for the required name
 test("email mismatch shows the invite email hint with a usable retry", () => {
   assert.match(source, /if \(error\.message === "email_mismatch"\) \{/)
   assert.match(source, /`This invite is for \$\{inviteEmailHint\}\. Sign in with that Google account\.`/)
-  assert.match(source, /setAccessError\(formatRecruiterAuthError\(e, pending\.emailHint\)\)/)
+  assert.match(source, /setAccessError\(formatRecruiterAuthError\(e, pending\.emailHint, \{ codeless: !pending\.inviteCode, email: claimEmail \}\)\)/)
   assert.match(source, /setErr\(formatRecruiterAuthError\(error, inviteLink\.emailHint \|\| undefined\)\)/)
   assert.match(source, /if \(initialError\) setBusy\(false\)/, "claim rejection re-enables the gate button for retry")
 })
 
-test("manual name+code path stays available for non-link visitors", () => {
-  assert.match(source, /const linkMode = Boolean\(inviteLink\) && !manualMode/)
+test("manual name+code path stays available behind the access-code disclosure", () => {
+  assert.match(source, /const linkMode = Boolean\(inviteLink\?\.code\) && !manualMode/)
   assert.match(source, /setManualMode\(true\)/)
   assert.match(source, /writePendingRecruiterAccess\(trimmedInviteCode, trimmedRecruiterName\)/)
   assert.match(source, /<span>Access code<\/span>/)
