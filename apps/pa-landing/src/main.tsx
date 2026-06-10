@@ -20,6 +20,7 @@ import Onboarding from "./pages/Onboarding.js"
 import EmployerSignup from "./pages/EmployerSignup.js"
 import Employers, { EmployersInbox } from "./pages/Employers.js"
 import ReferPage, { ReferPublicPage } from "./pages/Refer.js"
+import AutoApplyBeta from "./pages/AutoApplyBeta.js"
 
 const root = document.getElementById("root")
 if (!root) throw new Error("Missing #root element")
@@ -93,6 +94,7 @@ const fullRoutes = (
     <Route path="/employer" element={<EmployerSignup />} />
     <Route path="/employers" element={<Employers />} />
     <Route path="/employers/inbox" element={<EmployersInbox />} />
+    <Route path="/auto-apply" element={<AutoApplyBeta />} />
     <Route path="/refer" element={<ReferPublicPage />} />
     <Route path="/r/:slug" element={<ReferPublicPage />} />
     <Route path="/me/refer" element={<ReferPage />} />

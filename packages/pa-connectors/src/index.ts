@@ -32,6 +32,10 @@ import { SCHEDULE_INTERVIEW_CONNECTOR } from "./schedule-connector.js"
 
 export { FIND_MATCH_NARRATION, MATCH_COLLAB_NARRATION } from "./match-connectors.js"
 
+import { VALET_APPLY_CONNECTOR, VALET_APPLY_STATUS_CONNECTOR } from "./valet-connectors.js"
+
+export { VALET_APPLY_CONNECTOR, VALET_APPLY_STATUS_CONNECTOR } from "./valet-connectors.js"
+
 const FakeInputSchema = z.object({
   query: z.string().min(1),
 })
@@ -510,6 +514,9 @@ export const connectorRegistry = {
   "match-against-collab-jobs": MATCH_COLLAB_CONNECTOR,
   // P7 scaling proof — new capability = pure registry addition, ZERO agent-loop changes.
   "schedule-interview": SCHEDULE_INTERVIEW_CONNECTOR,
+  // Valet integration — apply to jobs via the user's linked Valet account.
+  "valet-apply": VALET_APPLY_CONNECTOR,
+  "valet-apply-status": VALET_APPLY_STATUS_CONNECTOR,
 }
 
 export type ConnectorName = keyof typeof connectorRegistry

@@ -48,6 +48,7 @@ test("candidate columns are declared in the founder's sheet order", () => {
   assert.match(columnsSlice, /\{ id: "name", label: "Candidate name", required: true, key: true \}/)
   assert.match(columnsSlice, /\{ id: "email", label: "Email", required: true \}/)
   assert.match(columnsSlice, /\{ id: "linkedin", label: "LinkedIn", required: true \}/)
+  assert.match(columnsSlice, /\{ id: "resume", label: "Resume", required: true \}/)
 })
 
 test("header row runs candidate cells → checklist → submit fields → Notes → Status → Feedback → 💬 → action", () => {
@@ -94,11 +95,15 @@ test("the blank add row is always the last table row", () => {
   assert.match(source, /className="rs-row-add"/)
 })
 
-test("add row gates Submit on name, email, linkedin-or-resume, required submit fields, and consent", () => {
+test("add row gates Submit on required identity URLs, required submit fields, and consent", () => {
   const blockersSlice = sliceBetween(source, "function addRowBlockers", "\nfunction ")
   assert.match(blockersSlice, /if \(!draft\.cells\.name\.trim\(\)\) blockers\.push\("Candidate name is required\."\)/)
   assert.match(blockersSlice, /if \(!email\) blockers\.push\("Candidate email is required\."\)/)
-  assert.match(blockersSlice, /if \(!linkedin && !resume\) blockers\.push\("LinkedIn URL or resume link is required\."\)/)
+  assert.match(blockersSlice, /if \(!linkedin\) blockers\.push\("LinkedIn URL is required\."\)/)
+  assert.match(blockersSlice, /else if \(!normalizeSheetUrl\(linkedin\)\) blockers\.push\("LinkedIn URL must be a valid URL\."\)/)
+  assert.match(blockersSlice, /if \(!resume\) blockers\.push\("Resume URL is required\."\)/)
+  assert.match(blockersSlice, /else if \(!normalizeSheetUrl\(resume\)\) blockers\.push\("Resume URL must be a valid URL\."\)/)
+  assert.doesNotMatch(blockersSlice, /LinkedIn URL or resume link is required/)
   assert.match(blockersSlice, /if \(field\.required && !value\) blockers\.push\(`\$\{field\.label\} is required for this role\.`\)/)
   assert.match(blockersSlice, /if \(!draft\.consent\) blockers\.push\("Candidate consent is required\."\)/)
   assert.match(source, /const addRowReady = addBlockers\.length === 0/)
@@ -107,6 +112,18 @@ test("add row gates Submit on name, email, linkedin-or-resume, required submit f
   const addRowSlice = sliceBetween(source, "function AddRow(", "\nfunction ThreadDrawer(")
   assert.match(addRowSlice, /className="rs-consent"/)
   assert.match(addRowSlice, /Candidate consented/)
+})
+
+test("disabled add-row submit explains the blocking fields inline", () => {
+  const addRowSlice = sliceBetween(source, "function AddRow(", "\nfunction ThreadDrawer(")
+  assert.match(addRowSlice, /const submitBlockerId = "rs-add-row-submit-blockers"/)
+  assert.match(addRowSlice, /aria-describedby=\{ready \? undefined : submitBlockerId\}/)
+  assert.match(addRowSlice, /role="status"/)
+  assert.match(addRowSlice, /aria-live="polite"/)
+  assert.match(addRowSlice, /Cannot submit yet/)
+  assert.match(addRowSlice, /blockers\.slice\(0, 4\)\.map/)
+  assert.match(addRowSlice, /Fix \{blockers\.length - 4\} more/)
+  assert.match(css, /\.rs-submit-blockers/)
 })
 
 test("add row submits through paRecruiterSubmission with cells, graded checklist, and extraFields", () => {

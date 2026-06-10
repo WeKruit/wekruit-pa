@@ -160,3 +160,98 @@ test("clearTargetJobType=false / null / absent is a no-op", () => {
     assert.deepEqual(changed, {}, `clear=${String(clear)} must not change anything`)
   }
 })
+
+// ── full preference-axis coverage (2026-06-09 follow-up to PR #385): the tool
+// schema promised visa/salary/industry/company-size/career-stage but the
+// reducer could not carry them — schema-can't-express = silent drop. The
+// industry axis gets the SAME only/avoid semantics as jobType; visa / salary /
+// companySize / careerStage are scalar/replace pass-throughs. ───────────────
+
+test("'healthcare not fintech': industrySector REPLACES + avoidIndustrySector subtracts and accumulates", () => {
+  const { next, changed } = reduceMatchingPreferences(
+    { industrySector: ["financial_technology"] },
+    {
+      industrySector: ["healthcare_and_life_sciences"],
+      avoidIndustrySector: ["financial_technology"],
+    },
+  )
+  assert.deepEqual(next.industrySector, ["healthcare_and_life_sciences"], "fintech removed from positive")
+  assert.deepEqual(next.negativeIndustrySector, ["financial_technology"])
+  assert.deepEqual(changed.industrySector, ["healthcare_and_life_sciences"])
+  assert.deepEqual(changed.negativeIndustrySector, ["financial_technology"])
+})
+
+test("avoidIndustrySector alone subtracts from positive — subtract-to-empty writes [] (explicit clear)", () => {
+  const { next, changed } = reduceMatchingPreferences(
+    { industrySector: ["financial_technology"] },
+    { avoidIndustrySector: ["financial_technology"] },
+  )
+  assert.deepEqual(next.industrySector, [])
+  assert.deepEqual(changed.industrySector, [], "the [] MUST be in `changed` so the writer persists the clear")
+  assert.deepEqual(changed.negativeIndustrySector, ["financial_technology"])
+})
+
+test("positive industrySector un-avoids a previously-negated sector", () => {
+  const { next, changed } = reduceMatchingPreferences(
+    { industrySector: [], negativeIndustrySector: ["financial_technology"] },
+    { industrySector: ["financial_technology"] },
+  )
+  assert.deepEqual(next.industrySector, ["financial_technology"])
+  assert.deepEqual(next.negativeIndustrySector ?? [], [])
+  assert.deepEqual(changed.negativeIndustrySector, [], "the un-avoid is persisted, not just computed")
+})
+
+test("negativeIndustrySector accumulates across turns", () => {
+  const afterFirst = reduceMatchingPreferences(
+    { industrySector: ["financial_technology", "gaming_and_esports", "healthcare_and_life_sciences"] },
+    { avoidIndustrySector: ["financial_technology"] },
+  ).next
+  const afterSecond = reduceMatchingPreferences(afterFirst, {
+    avoidIndustrySector: ["gaming_and_esports"],
+  }).next
+  assert.deepEqual(
+    afterSecond.negativeIndustrySector?.sort(),
+    ["financial_technology", "gaming_and_esports"],
+  )
+  assert.deepEqual(afterSecond.industrySector, ["healthcare_and_life_sciences"])
+})
+
+test("scalar axes: visaStatus / minSalary / companySize / careerStage REPLACE when stated and different", () => {
+  const { changed } = reduceMatchingPreferences(
+    { visaStatus: "citizen", minSalary: 100000 },
+    {
+      visaStatus: "sponsor_needed",
+      minSalary: 140000,
+      companySize: ["early_startup"],
+      careerStage: "senior",
+    },
+  )
+  assert.equal(changed.visaStatus, "sponsor_needed")
+  assert.equal(changed.minSalary, 140000)
+  assert.deepEqual(changed.companySize, ["early_startup"])
+  assert.equal(changed.careerStage, "senior")
+})
+
+test("scalar axes: restating the SAME value is a no-op (no spurious write)", () => {
+  const { changed } = reduceMatchingPreferences(
+    { visaStatus: "sponsor_needed", minSalary: 140000, companySize: ["early_startup"], careerStage: "senior" },
+    {
+      visaStatus: "sponsor_needed",
+      minSalary: 140000,
+      companySize: ["early_startup"],
+      careerStage: "senior",
+    },
+  )
+  assert.deepEqual(changed, {}, "identical restatement must not change anything")
+})
+
+test("scalar axes: null / absent proposals never clobber stored values", () => {
+  const { next, changed } = reduceMatchingPreferences(
+    { visaStatus: "sponsor_needed", minSalary: 140000, careerStage: "senior" },
+    { visaStatus: null, minSalary: null, companySize: null, careerStage: undefined },
+  )
+  assert.deepEqual(changed, {})
+  assert.equal(next.visaStatus, "sponsor_needed")
+  assert.equal(next.minSalary, 140000)
+  assert.equal(next.careerStage, "senior")
+})

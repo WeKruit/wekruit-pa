@@ -29,6 +29,7 @@ import {
   INDUSTRY_SECTOR_VOCAB,
   CAREER_STAGE_VOCAB,
   COMPANY_SIZE_VOCAB,
+  VISA_VOCAB,
   FEEDBACK_SENTIMENT_VOCAB,
   FEEDBACK_REASON_CATEGORY_VOCAB,
 } from "@wekruit/shared-tags"
@@ -41,6 +42,7 @@ const JobTypeEnum = z.enum(JOB_TYPE_VOCAB)
 const IndustrySectorEnum = z.enum(INDUSTRY_SECTOR_VOCAB)
 const CareerStageEnum = z.enum(CAREER_STAGE_VOCAB)
 const CompanySizeEnum = z.enum(COMPANY_SIZE_VOCAB)
+const VisaEnum = z.enum(VISA_VOCAB)
 const FeedbackSentimentEnum = z.enum(FEEDBACK_SENTIMENT_VOCAB)
 const FeedbackReasonCategoryEnum = z.enum(FEEDBACK_REASON_CATEGORY_VOCAB)
 import {
@@ -95,12 +97,22 @@ async function readMatchingSlice(
         : {}
     const asArr = (v: unknown): string[] | undefined =>
       Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined
+    // companySize is stored scalar-or-array (legacy union) — lift a scalar to
+    // a 1-elem array so the reducer's replace-compare sees one shape.
+    const asArrOrScalar = (v: unknown): string[] | undefined =>
+      typeof v === "string" ? [v] : asArr(v)
     return {
       targetRoleFunction: asArr(tags.targetRoleFunction),
       negativeRoleFunction: asArr(tags.negativeRoleFunction),
       targetJobType: asArr(tags.targetJobType),
       negativeJobType: asArr(tags.negativeJobType),
       targetLocations: asArr(tags.targetLocations),
+      industrySector: asArr(tags.industrySector),
+      negativeIndustrySector: asArr(tags.negativeIndustrySector),
+      ...(typeof tags.visaStatus === "string" ? { visaStatus: tags.visaStatus } : {}),
+      ...(typeof tags.minSalary === "number" ? { minSalary: tags.minSalary } : {}),
+      ...(asArrOrScalar(tags.companySize) ? { companySize: asArrOrScalar(tags.companySize) } : {}),
+      ...(typeof tags.careerStage === "string" ? { careerStage: tags.careerStage } : {}),
     }
   } catch (err) {
     log("pa.claire.read_tags_error", {
@@ -1062,6 +1074,9 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       "If they say they are NOT looking for / done with a JOB TYPE → put it in avoidJobTypes (it is REMOVED from their saved job types) " +
       "(e.g. 'I'm not looking for an internship' → avoidJobTypes:[internship]; 'no more contract gigs, full-time only' → jobType:[full_time] AND avoidJobTypes:[contract]). " +
       "If they say they're open to ANY job type / want the job-type filter gone → clearTargetJobType:true. " +
+      "Durable visa / salary-floor / industry / company-size / career-stage statements go here too " +
+      "(e.g. 'I need H1B sponsorship' → visaStatus:\"sponsor_needed\"; 'nothing under 140k' → minSalary:140000; " +
+      "'healthcare, not fintech' → industrySector:[healthcare_and_life_sciences] AND avoidIndustrySector:[financial_technology]). " +
       "Pass null for anything not stated.",
     parameters: z.object({
       onlyRoleFunctions: z.array(RoleFunctionEnum).nullable(),
@@ -1070,8 +1085,27 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
       avoidJobTypes: z.array(JobTypeEnum).nullable(),
       clearTargetJobType: z.boolean().nullable(),
       locations: z.array(z.string()).nullable(),
+      visaStatus: VisaEnum.nullable(),
+      minSalary: z.number().int().nonnegative().nullable(),
+      industrySector: z.array(IndustrySectorEnum).nullable(),
+      avoidIndustrySector: z.array(IndustrySectorEnum).nullable(),
+      companySize: z.array(CompanySizeEnum).nullable(),
+      careerStage: CareerStageEnum.nullable(),
     }),
-    async execute({ onlyRoleFunctions, avoidRoleFunctions, jobType, avoidJobTypes, clearTargetJobType, locations }) {
+    async execute({
+      onlyRoleFunctions,
+      avoidRoleFunctions,
+      jobType,
+      avoidJobTypes,
+      clearTargetJobType,
+      locations,
+      visaStatus,
+      minSalary,
+      industrySector,
+      avoidIndustrySector,
+      companySize,
+      careerStage,
+    }) {
       const current = await readMatchingSlice(ctx.db, ctx.userId, ctx.log)
       const { changed, removedFromPositive } = reduceMatchingPreferences(current, {
         onlyRoleFunctions,
@@ -1080,6 +1114,12 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
         avoidJobTypes,
         clearTargetJobType,
         locations,
+        visaStatus,
+        minSalary,
+        industrySector,
+        avoidIndustrySector,
+        companySize,
+        careerStage,
       })
       if (Object.keys(changed).length === 0) {
         return { ok: true, changed: {}, summary: "Nothing new to save." }
@@ -1684,8 +1724,10 @@ export function buildMatchingTools(ctx: ClaireToolContext) {
           negativeIndustrySector: z.array(IndustrySectorEnum).nullable(),
           companySize: z.array(CompanySizeEnum).nullable(),
           targetJobType: z.array(JobTypeEnum).nullable(),
+          negativeJobType: z.array(JobTypeEnum).nullable(),
           targetLocations: z.array(z.string()).nullable(),
           careerStage: CareerStageEnum.nullable(),
+          visaStatus: VisaEnum.nullable(),
           minSalary: z.number().int().nonnegative().nullable(),
         })
         .nullable(),

@@ -30,6 +30,27 @@ export interface MatchingPreferenceProposal {
   /** Explicit "no job-type filter at all" — empties targetJobType. */
   clearTargetJobType?: boolean | null
   locations?: readonly string[] | null
+  /**
+   * Industry sectors to match — REPLACES the positive set AND un-avoids any of
+   * them (same only/avoid semantics as the jobType axis).
+   */
+  industrySector?: readonly string[] | null
+  /**
+   * Industry sectors to exclude — SUBTRACTED from the positive set AND
+   * accumulated into negativeIndustrySector. A subtraction that empties the
+   * positive set writes [] (an explicit clear), mirroring avoidJobTypes —
+   * "I want healthcare, not fintech" → industrySector:[healthcare_and_life_sciences]
+   * + avoidIndustrySector:[financial_technology].
+   */
+  avoidIndustrySector?: readonly string[] | null
+  /** Work authorization (canonical 4-token VISA_VOCAB) — scalar REPLACE. */
+  visaStatus?: string | null
+  /** Minimum acceptable base salary in USD — scalar REPLACE. */
+  minSalary?: number | null
+  /** Company-size preference (COMPANY_SIZE_VOCAB, multi-pick OR) — REPLACE. */
+  companySize?: readonly string[] | null
+  /** Seniority (CAREER_STAGE_VOCAB) — scalar REPLACE. */
+  careerStage?: string | null
 }
 
 /** The subset of pa-users.tags this reducer owns. */
@@ -39,6 +60,12 @@ export interface MatchingTagsSlice {
   targetJobType?: string[]
   negativeJobType?: string[]
   targetLocations?: string[]
+  industrySector?: string[]
+  negativeIndustrySector?: string[]
+  visaStatus?: string
+  minSalary?: number
+  companySize?: string[]
+  careerStage?: string
 }
 
 export interface MatchingReducerResult {
@@ -146,6 +173,55 @@ export function reduceMatchingPreferences(
     changed.targetLocations = dedup(proposal.locations)
   }
 
+  // ── industrySector axis — SAME only/avoid semantics as jobType.
+  // `industrySector` REPLACES the positive set + un-avoids; `avoidIndustrySector`
+  // subtracts from positive + accumulates into negativeIndustrySector. A
+  // subtraction that empties the positive set writes [] (an explicit clear).
+  let sectors = dedup(current.industrySector ?? [])
+  let negativeSectors = dedup(current.negativeIndustrySector ?? [])
+
+  if (nonEmpty(proposal.industrySector)) {
+    sectors = dedup(proposal.industrySector)
+    changed.industrySector = [...sectors]
+    // explicitly-wanted sectors can no longer be on the negative axis.
+    const wanted = new Set(sectors)
+    const unAvoided = negativeSectors.filter((s) => !wanted.has(s))
+    if (unAvoided.length !== negativeSectors.length) {
+      negativeSectors = unAvoided
+      changed.negativeIndustrySector = [...negativeSectors]
+    }
+  }
+
+  if (nonEmpty(proposal.avoidIndustrySector)) {
+    const avoid = new Set(dedup(proposal.avoidIndustrySector))
+    sectors = sectors.filter((s) => !avoid.has(s))
+    negativeSectors = dedup([...negativeSectors, ...avoid])
+    changed.industrySector = [...sectors]
+    changed.negativeIndustrySector = [...negativeSectors]
+  }
+
+  // ── scalar / replace axes (visa, salary floor, company size, career stage) —
+  // trivial pass-through: set `changed.<axis>` only when stated AND different
+  // from the stored value (a restated identical preference is a no-op).
+  if (typeof proposal.visaStatus === "string" && proposal.visaStatus.length > 0 &&
+      proposal.visaStatus !== current.visaStatus) {
+    changed.visaStatus = proposal.visaStatus
+  }
+  if (typeof proposal.minSalary === "number" && Number.isFinite(proposal.minSalary) &&
+      proposal.minSalary >= 0 && proposal.minSalary !== current.minSalary) {
+    changed.minSalary = proposal.minSalary
+  }
+  if (nonEmpty(proposal.companySize)) {
+    const sizes = dedup(proposal.companySize)
+    const prior = current.companySize ?? []
+    const same = sizes.length === prior.length && sizes.every((v, i) => v === prior[i])
+    if (!same) changed.companySize = sizes
+  }
+  if (typeof proposal.careerStage === "string" && proposal.careerStage.length > 0 &&
+      proposal.careerStage !== current.careerStage) {
+    changed.careerStage = proposal.careerStage
+  }
+
   const next: MatchingTagsSlice = {
     targetRoleFunction: positive,
     ...(negative.length ? { negativeRoleFunction: negative } : {}),
@@ -154,6 +230,24 @@ export function reduceMatchingPreferences(
       ? { negativeJobType: changed.negativeJobType ?? dedup(current.negativeJobType ?? []) }
       : {}),
     targetLocations: changed.targetLocations ?? current.targetLocations,
+    ...(changed.industrySector !== undefined || current.industrySector !== undefined
+      ? { industrySector: changed.industrySector ?? dedup(current.industrySector ?? []) }
+      : {}),
+    ...(changed.negativeIndustrySector !== undefined || current.negativeIndustrySector !== undefined
+      ? { negativeIndustrySector: changed.negativeIndustrySector ?? dedup(current.negativeIndustrySector ?? []) }
+      : {}),
+    ...(changed.visaStatus !== undefined || current.visaStatus !== undefined
+      ? { visaStatus: changed.visaStatus ?? current.visaStatus }
+      : {}),
+    ...(changed.minSalary !== undefined || current.minSalary !== undefined
+      ? { minSalary: changed.minSalary ?? current.minSalary }
+      : {}),
+    ...(changed.companySize !== undefined || current.companySize !== undefined
+      ? { companySize: changed.companySize ?? current.companySize }
+      : {}),
+    ...(changed.careerStage !== undefined || current.careerStage !== undefined
+      ? { careerStage: changed.careerStage ?? current.careerStage }
+      : {}),
   }
 
   return { next, changed, removedFromPositive }

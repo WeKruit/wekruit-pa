@@ -34,6 +34,7 @@ export function resolveToolFamily(connectorName: string): PaToolFamily {
     case "wekruit-matching":
       return "legacy_matching"
     case "check-valet-install":
+    case "valet-apply":
     case "valet-apply-status":
       return "valet"
     default:

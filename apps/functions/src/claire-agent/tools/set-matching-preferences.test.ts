@@ -74,6 +74,12 @@ const NULL_ARGS = {
   avoidJobTypes: null,
   clearTargetJobType: null,
   locations: null,
+  visaStatus: null,
+  minSalary: null,
+  industrySector: null,
+  avoidIndustrySector: null,
+  companySize: null,
+  careerStage: null,
 }
 
 async function run(ctx: ClaireToolContext, args: Record<string, unknown>) {
@@ -127,4 +133,95 @@ test("all-null proposal is a no-op (nothing new to save, no write)", async () =>
   assert.equal(out.ok, true)
   assert.match(String(out.summary), /Nothing new/i)
   assert.deepEqual(storedTags(db).targetJobType, ["full_time"])
+})
+
+// ── full preference-axis coverage (2026-06-09 follow-up): the prompt promises
+// "location, salary floor, visa status → call set_matching_preferences" but the
+// schema could not carry visa/salary/industry/company-size/career-stage —
+// schema-can't-express = silent drop (the same bug class PR #385 fixed for
+// jobType negations). These drive the REAL tool chain and assert the
+// PERSISTED doc. ─────────────────────────────────────────────────────────────
+
+test("'I need H1B sponsorship' → visaStatus:'sponsor_needed' PERSISTS", async () => {
+  const db = makeDb({ targetRoleFunction: ["software_engineering"] })
+  const ctx = makeCtx(db)
+  const out = await run(ctx, { visaStatus: "sponsor_needed" })
+  assert.equal(out.ok, true)
+  assert.equal(storedTags(db).visaStatus, "sponsor_needed")
+})
+
+test("'nothing under 140k' → minSalary:140000 PERSISTS", async () => {
+  const db = makeDb({})
+  const ctx = makeCtx(db)
+  const out = await run(ctx, { minSalary: 140000 })
+  assert.equal(out.ok, true)
+  assert.equal(storedTags(db).minSalary, 140000)
+})
+
+test("'I want healthcare, not fintech' → industrySector replaced, fintech onto the negative axis and OUT of positive", async () => {
+  const db = makeDb({ industrySector: ["financial_technology"] })
+  const ctx = makeCtx(db)
+  const out = await run(ctx, {
+    industrySector: ["healthcare_and_life_sciences"],
+    avoidIndustrySector: ["financial_technology"],
+  })
+  assert.equal(out.ok, true)
+  const tags = storedTags(db)
+  assert.deepEqual(tags.industrySector, ["healthcare_and_life_sciences"], "fintech REMOVED from positive")
+  assert.deepEqual(tags.negativeIndustrySector, ["financial_technology"], "negation recorded durably")
+})
+
+test("companySize + careerStage scalar/replace axes persist", async () => {
+  const db = makeDb({})
+  const ctx = makeCtx(db)
+  const out = await run(ctx, { companySize: ["early_startup"], careerStage: "senior" })
+  assert.equal(out.ok, true)
+  const tags = storedTags(db)
+  assert.deepEqual(tags.companySize, ["early_startup"])
+  assert.equal(tags.careerStage, "senior")
+})
+
+// ── capture_match_feedback tagDeltas — visaStatus + negativeJobType ride the
+// same validateOnboardingCanonicalTags → applyPartialUserTags path (GAP 3). ──
+
+function captureFeedbackTool(ctx: ClaireToolContext) {
+  const t = buildMatchingTools(ctx).find(
+    (x) => (x as { name?: string }).name === "capture_match_feedback",
+  )
+  assert.ok(t, "capture_match_feedback tool must be registered")
+  return t as { invoke: (a: never, raw: string) => Promise<unknown> }
+}
+
+test("capture_match_feedback tagDeltas carries visaStatus + negativeJobType to the persisted doc", async () => {
+  const db = makeDb({ targetJobType: ["internship", "full_time"] })
+  const ctx = makeCtx(db)
+  const raw = await captureFeedbackTool(ctx).invoke(
+    {} as never,
+    JSON.stringify({
+      sentiment: "ambiguous",
+      reasonCategory: "none",
+      reasonText: "I'm on H1B and not looking for internships anymore",
+      tagDeltas: {
+        targetRoleFunction: null,
+        negativeRoleFunction: null,
+        industrySector: null,
+        negativeIndustrySector: null,
+        companySize: null,
+        targetJobType: null,
+        negativeJobType: ["internship"],
+        targetLocations: null,
+        careerStage: null,
+        visaStatus: "sponsor_needed",
+        minSalary: null,
+      },
+    }),
+  )
+  const out = (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, unknown>
+  assert.equal(out.ok, true)
+  assert.equal(out.tagWriteOk, true)
+  const tags = storedTags(db)
+  assert.equal(tags.visaStatus, "sponsor_needed")
+  assert.deepEqual(tags.negativeJobType, ["internship"])
+  // the sole writer's boundary subtraction removes the negated type from targetJobType.
+  assert.deepEqual(tags.targetJobType, ["full_time"])
 })

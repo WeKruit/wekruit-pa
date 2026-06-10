@@ -25,8 +25,8 @@ test("invite link persists code + email hint to the pending-claim slot before au
   assert.match(source, /function writePendingRecruiterAccess\(inviteCode: string, name: string, emailHint\?: string\)/)
   assert.match(source, /\.\.\.\(emailHint \? \{ emailHint \} : \{\}\),/)
   const captureIdx = source.indexOf("// Invite-link mode:")
-  const authEffectIdx = source.indexOf("const finishRecruiterAuth = async")
-  assert.ok(captureIdx > 0 && captureIdx < authEffectIdx, "capture effect registers before the auth claim effect")
+  const gateIdx = source.indexOf("function RecruiterAccessGate")
+  assert.ok(captureIdx > 0 && captureIdx < gateIdx, "capture effect registers before the gate claim flow")
 })
 
 test("link mode renders a single-action gate with the code masked and no typing", () => {
@@ -50,7 +50,7 @@ test("link-mode claim falls back to the Google displayName for the required name
 test("email mismatch shows the invite email hint with a usable retry", () => {
   assert.match(source, /if \(error\.message === "email_mismatch"\) \{/)
   assert.match(source, /`This invite is for \$\{inviteEmailHint\}\. Sign in with that Google account\.`/)
-  assert.match(source, /setAccessError\(formatRecruiterAuthError\(e, pending\.emailHint, \{ codeless: !pending\.inviteCode, email: claimEmail \}\)\)/)
+  assert.match(source, /setErr\(formatRecruiterAuthError\(error, fallbackPending\.emailHint \|\| inviteEmailHint, \{ codeless: !fallbackPending\.inviteCode, email: claimEmail \}\)\)/)
   assert.match(source, /setErr\(formatRecruiterAuthError\(error, inviteLink\.emailHint \|\| undefined\)\)/)
   assert.match(source, /if \(initialError\) setBusy\(false\)/, "claim rejection re-enables the gate button for retry")
 })

@@ -62,7 +62,7 @@ const CANDIDATE_COLUMNS: SheetColumn[] = [
   { id: "name", label: "Candidate name", required: true, key: true },
   { id: "email", label: "Email", required: true },
   { id: "linkedin", label: "LinkedIn", required: true },
-  { id: "resume", label: "Resume" },
+  { id: "resume", label: "Resume", required: true },
   { id: "currentCompany", label: "Current company", key: true },
   { id: "currentTitle", label: "Current title", key: true },
   { id: "location", label: "Location", key: true },
@@ -333,9 +333,10 @@ function addRowBlockers(draft: AddRowDraft, fields: RecruiterSubmitField[]): str
   else if (!isValidEmail(email)) blockers.push("Candidate email looks invalid.")
   const linkedin = draft.cells.linkedin.trim()
   const resume = draft.cells.resume.trim()
-  if (!linkedin && !resume) blockers.push("LinkedIn URL or resume link is required.")
-  if (linkedin && !normalizeSheetUrl(linkedin)) blockers.push("LinkedIn URL does not look like a link.")
-  if (resume && !normalizeSheetUrl(resume)) blockers.push("Resume link does not look like a link.")
+  if (!linkedin) blockers.push("LinkedIn URL is required.")
+  else if (!normalizeSheetUrl(linkedin)) blockers.push("LinkedIn URL must be a valid URL.")
+  if (!resume) blockers.push("Resume URL is required.")
+  else if (!normalizeSheetUrl(resume)) blockers.push("Resume URL must be a valid URL.")
   for (const field of fields) {
     const value = (draft.extraFields[field.id] ?? "").trim()
     if (field.required && !value) blockers.push(`${field.label} is required for this role.`)
@@ -727,6 +728,7 @@ export default function RoleSheetPage() {
                 draft={addDraft}
                 checklistColumns={checklistColumns}
                 extraFieldDefs={extraFieldDefs}
+                blockers={addBlockers}
                 ready={addRowReady}
                 submitting={submitting}
                 onChange={changeAddDraft}
@@ -904,6 +906,7 @@ function AddRow({
   draft,
   checklistColumns,
   extraFieldDefs,
+  blockers,
   ready,
   submitting,
   onChange,
@@ -912,11 +915,13 @@ function AddRow({
   draft: AddRowDraft
   checklistColumns: ChecklistColumn[]
   extraFieldDefs: RecruiterSubmitField[]
+  blockers: string[]
   ready: boolean
   submitting: boolean
   onChange: (draft: AddRowDraft) => void
   onSubmit: () => void
 }) {
+  const submitBlockerId = "rs-add-row-submit-blockers"
   const setCell = (id: SheetCellId, value: string) =>
     onChange({ ...draft, cells: { ...draft.cells, [id]: value } })
 
@@ -984,9 +989,28 @@ function AddRow({
             />
             <span>Candidate consented</span>
           </label>
-          <button type="button" className="rs-btn" disabled={!ready || submitting} onClick={onSubmit}>
+          <button
+            type="button"
+            className="rs-btn"
+            disabled={!ready || submitting}
+            aria-describedby={ready ? undefined : submitBlockerId}
+            onClick={onSubmit}
+          >
             {submitting ? "Submitting…" : "Submit"}
           </button>
+          {!ready && (
+            <div id={submitBlockerId} className="rs-submit-blockers" role="status" aria-live="polite">
+              <strong>Cannot submit yet</strong>
+              <ul>
+                {blockers.slice(0, 4).map((blocker) => (
+                  <li key={blocker}>{blocker}</li>
+                ))}
+                {blockers.length > 4 && (
+                  <li>Fix {blockers.length - 4} more {blockers.length - 4 === 1 ? "field" : "fields"}.</li>
+                )}
+              </ul>
+            </div>
+          )}
         </div>
       </td>
     </tr>

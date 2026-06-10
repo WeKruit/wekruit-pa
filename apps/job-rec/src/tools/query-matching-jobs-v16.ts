@@ -628,7 +628,24 @@ function inferMissingMatchingAxes(
       : inferCandidateCareerStage(tags, userDoc)
   if (!tags.careerStage && careerStage) patch.careerStage = careerStage
   if (!tags.targetJobType?.length) {
-    const targetJobType = inferTargetJobTypeFromProfile(tags, careerStage)
+    const inferred = inferTargetJobTypeFromProfile(tags, careerStage)
+    // Preference-axis fix (2026-06-09 follow-up): an EXPLICIT negation beats
+    // profile inference. An intern-stage candidate who said "I am not looking
+    // for an internship" (tags.negativeJobType=["internship"]) must NOT get
+    // internship re-injected by the careerStage-derived default — subtract the
+    // negative axis from the inferred set. If nothing survives, don't patch
+    // (empty targetJobType → the jobType gate bypasses; the hard-filter
+    // negativeJobType subtract still drops rejected types).
+    const negative = new Set(
+      Array.isArray(tags.negativeJobType)
+        ? tags.negativeJobType
+            .map((t) => (typeof t === "string" ? t.trim().toLowerCase() : ""))
+            .filter(Boolean)
+        : [],
+    )
+    const targetJobType = inferred?.filter(
+      (t) => typeof t === "string" && !negative.has(t.trim().toLowerCase()),
+    )
     if (targetJobType?.length) patch.targetJobType = targetJobType
   }
   if (Object.keys(patch).length === 0) return tags
@@ -1505,6 +1522,7 @@ export function applyV16HardFilters(
     atsApplyUrl: 0,
     dead: 0,
     negativeListDrop: 0,
+    negativeJobType: 0,
     roleTitleMismatch: 0,
     salary: 0,
     industrySector: 0,
@@ -1574,6 +1592,19 @@ export function applyV16HardFilters(
     negativeRoleFunctionRaw
       .map((s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
       .filter(Boolean),
+  )
+  // Candidate-rejected JOB TYPES — the SUBTRACT axis written by the
+  // set_matching_preferences avoidJobTypes path / conversation negations
+  // (PR #385). Mirrors `negativeRoleFunctionSet` exactly. This MUST fire
+  // regardless of whether targetJobType is empty: the post-clear state
+  // ("I am not looking for an internship") is exactly targetJobType=[] +
+  // negativeJobType=["internship"], and an internship job must still drop.
+  const negativeJobTypeSet = new Set<string>(
+    Array.isArray((userTags as { negativeJobType?: unknown }).negativeJobType)
+      ? ((userTags as { negativeJobType?: unknown[] }).negativeJobType as unknown[])
+          .map((s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
+          .filter(Boolean)
+      : [],
   )
   // lock #5 (negative axis) — candidate-rejected industry sectors. Built from
   // `userTags.negativeIndustrySector` (canonical INDUSTRY_SECTOR_VOCAB). The
@@ -1815,6 +1846,17 @@ export function applyV16HardFilters(
         continue
       }
     }
+    // negative-jobType subtract — drops a job whose jobType the candidate
+    // explicitly rejected ("I am not looking for an internship"). Mirrors the
+    // negativeRoleFunction drop above; independent of the targetJobType gate
+    // (fires even when targetJobType is empty / cleared).
+    if (negativeJobTypeSet.size > 0 && typeof job.jobType === "string") {
+      const jt = job.jobType.trim().toLowerCase()
+      if (jt.length > 0 && negativeJobTypeSet.has(jt)) {
+        counters.negativeJobType++
+        continue
+      }
+    }
     // lock #5 — negative-industry subtract (flag-gated; set is empty unless
     // PA_NEGATIVE_INDUSTRY_FILTER === "1", so this is a no-op by default).
     if (negativeIndustrySet.size > 0) {
@@ -1920,6 +1962,16 @@ export function applyFallbackHardFilters(
       .map((s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
       .filter(Boolean),
   )
+  // Candidate-rejected job types — a NEGATIVE preference is a safety gate, not
+  // a recall preference: even the zero-result fallback must never resurface an
+  // explicitly-rejected job type. Mirrors the strict path's negativeJobTypeSet.
+  const negativeJobTypeSet = new Set<string>(
+    Array.isArray((userTags as { negativeJobType?: unknown }).negativeJobType)
+      ? ((userTags as { negativeJobType?: unknown[] }).negativeJobType as unknown[])
+          .map((s: unknown) => (typeof s === "string" ? s.trim().toLowerCase() : ""))
+          .filter(Boolean)
+      : [],
+  )
   // US-only platform gate — same US-required-unless-explicit-foreign-target
   // policy as the strict path. Computed once.
   const allowsNonUs = userAllowsNonUs(userTags)
@@ -1979,6 +2031,16 @@ export function applyFallbackHardFilters(
         )
       ) {
         counters.negativeListDrop++
+        continue
+      }
+    }
+    // negative job-type subtract — an explicit rejection survives the fallback
+    // relaxation (the relaxed chain skips the targetJobType intersect, but a
+    // rejected job type must never come back).
+    if (negativeJobTypeSet.size > 0 && typeof job.jobType === "string") {
+      const jt = job.jobType.trim().toLowerCase()
+      if (jt.length > 0 && negativeJobTypeSet.has(jt)) {
+        counters.negativeJobType++
         continue
       }
     }
@@ -2631,6 +2693,7 @@ function zeroV16Counters(): V16HardFilterCounters {
     atsApplyUrl: 0,
     dead: 0,
     negativeListDrop: 0,
+    negativeJobType: 0,
     roleTitleMismatch: 0,
     salary: 0,
     industrySector: 0,

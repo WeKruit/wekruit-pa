@@ -508,6 +508,14 @@ export type V16HardFilterCounters = {
   dead: number
   /** Phase B4 — dropped because job.companyName ∈ user.companyNegativeList. */
   negativeListDrop: number
+  /**
+   * Preference-axis fix (2026-06-09 follow-up) — dropped because job.jobType ∈
+   * user.negativeJobType (the SUBTRACT axis written by avoidJobTypes /
+   * conversation negations, PR #385). Fires REGARDLESS of targetJobType — the
+   * post-clear state (targetJobType=[] + negativeJobType=["internship"]) must
+   * still keep internship jobs out.
+   */
+  negativeJobType: number
   /** Dropped because job title is clearly outside the user's target role function. */
   roleTitleMismatch: number
   /**
