@@ -86,6 +86,21 @@ test("job_preference_change → durable tags to pa-users.tags", async () => {
   assert.deepEqual(r.routedWrites, [{ target: "pa_users_tags", reason: "job_preference_change" }])
 })
 
+test("job_preference_change → negativeJobType delta validates + prompt lists the key (negation parity 2026-06-09)", async () => {
+  let seenPrompt = ""
+  const llm: ConversationLlmCall = async ({ prompt }) => {
+    seenPrompt = prompt
+    return { json: { tagDeltas: { negativeJobType: ["internship", "made_up"] } } }
+  }
+  const r = await extractFromConversation(
+    { purpose: "job_preference_change" },
+    "I am not looking for an internship",
+    llm,
+  )
+  assert.deepEqual(r.tagDeltas.negativeJobType, ["internship"], "off-vocab dropped, valid token kept")
+  assert.ok(seenPrompt.includes("negativeJobType"), "prompt must list negativeJobType as emittable")
+})
+
 test("off-vocab picks are dropped (closed-enum validation, no regex)", async () => {
   const llm = stub({ tagDeltas: { industrySector: ["healthcare_and_life_sciences", "made_up"] } })
   const r = await extractFromConversation({ purpose: "freeform_chat" }, "healthcare", llm)

@@ -295,6 +295,19 @@ export const UserTagsSchema = z.object({
    * singular form.
    */
   targetJobType: z.array(z.enum(JOB_TYPE_VOCAB)).optional(),
+  /**
+   * Candidate-rejected job-type tokens (canonical 10-token `JOB_TYPE_VOCAB`,
+   * same vocab as the positive `targetJobType` axis). SINGLE canonical
+   * SUBTRACT field for job type — mirrors `negativeRoleFunction` /
+   * `negativeIndustrySector`. Written by the conversation extractor /
+   * match-feedback extractor ("I am not looking for an internship" →
+   * ["internship"]) and by the thin `set_matching_preferences` reducer
+   * (avoidJobTypes). V16 does NOT read this field — `targetJobType` is an
+   * EXACT-match hard filter — so the sole writer (`applyPartialUserTags`)
+   * applies the subtraction at the write boundary instead: incoming tokens are
+   * removed from the stored `targetJobType` (an emptied set persists []).
+   */
+  negativeJobType: z.array(z.enum(JOB_TYPE_VOCAB)).max(10).optional(),
 
   // ---- Phase B1 — company preference signals --------------------------
   /**

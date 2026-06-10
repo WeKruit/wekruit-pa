@@ -422,6 +422,28 @@ export async function applyPartialUserTags(
   // they pass). Schema version + timestamp bookkeeping.
   const merged: Record<string, unknown> = { ...existing, ...cleaned }
 
+  // negativeJobType — the SUBTRACT axis for `targetJobType` (mirrors
+  // `negativeRoleFunction`: storage is shallow-REPLACED per write like every
+  // other key; cross-turn accumulation is the matching-profile REDUCER's job).
+  // Unlike role function, V16 has NO negative jobType read — `targetJobType`
+  // is an EXACT-match HARD filter — so the sole writer additionally APPLIES
+  // the subtraction at the boundary: incoming negativeJobType tokens are
+  // removed from the post-merge `targetJobType`. A subtraction that empties
+  // the set persists [] — an explicit clear, never silently skipped. This is
+  // the 2026-06-09 live-victim fix: "I am not looking for an internship" must
+  // be able to clear a stale targetJobType=["internship"] from a pure negation.
+  if (Array.isArray(cleaned.negativeJobType)) {
+    const incoming = (cleaned.negativeJobType as unknown[]).filter(
+      (s): s is string => typeof s === "string" && s.trim().length > 0
+    )
+    if (incoming.length > 0 && Array.isArray(merged.targetJobType)) {
+      const avoid = new Set(incoming)
+      merged.targetJobType = (merged.targetJobType as unknown[]).filter(
+        (t) => typeof t === "string" && !avoid.has(t)
+      )
+    }
+  }
+
   // SOFT-vs-HARD (2026-05-28) — `preferenceHardness` is the ONE field merged
   // PER-AXIS rather than wholesale-replaced. The conversation extractor emits
   // hardness deltas one axis at a time (e.g. turn 1 → salary, turn 5 →

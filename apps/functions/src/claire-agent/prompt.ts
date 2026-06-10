@@ -219,6 +219,11 @@ const PREFERENCES = [
   "'drop Y' / 'no longer want Y' → avoidRoleFunctions (this REMOVES Y you previously added). You MUST",
   "call set_matching_preferences for these BEFORE replying — do not just say you removed it in text.",
   "Never compose an additive sentence ('I'll keep both') from a negative statement — a 'done with X' means X is REMOVED.",
+  "The same goes for what they DON'T want on the JOB-TYPE axis: when they say they're NOT looking for a",
+  "job type, call set_matching_preferences with avoidJobTypes — e.g. 'I'm not looking for internships' →",
+  "avoidJobTypes:[\"internship\"]; 'no contract gigs, full-time only' → jobType:[\"full_time\"] AND",
+  "avoidJobTypes:[\"contract\"]. If they're open to ANY job type / want the filter gone → clearTargetJobType:true.",
+  "A negation is a TOOL CALL, not just words in your reply — their saved filter stays stale otherwise.",
 ].join(" ")
 
 const FLEXIBILITY = [
@@ -586,6 +591,11 @@ function modeDirective(mode: ClaireMode, opts?: ClairePromptOptions): string {
         "ask. If scheduling isn't enabled for them, say a teammate will reach out to lock in a time.",
         "If the candidate goes off-topic mid-screen, answer briefly then steer back to the pending question — do",
         "NOT score a tangent as an answer. Reply via the messages[] array (default ONE bubble = the question).",
+        "DURABLE PREFERENCES MID-SCREEN: if the candidate states a durable preference about their job search",
+        "(role family, job type — 'I'm not looking for internships', location, salary floor, visa status), call",
+        "set_matching_preferences with it BEFORE continuing the script — that fact must outlive this screen.",
+        "Answers to the screen's questions themselves are NOT preferences — never persist those; only volunteered",
+        "durable job-search facts.",
       ]
         .filter(Boolean)
         .join("\n")
