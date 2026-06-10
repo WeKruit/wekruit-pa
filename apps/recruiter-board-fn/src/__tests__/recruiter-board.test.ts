@@ -43,9 +43,11 @@ import {
   payoutUpdateNotification,
   publicRecruiterSubmission,
   recruiterCandidateIdentityConflictForRole,
+  recruiterEmailInviteUrl,
   recruiterInviteCodeAllowsEmail,
   recruiterInviteUrl,
   recruiterInviteCodeMatchesBoundUser,
+  registerRecruiterAccess,
   recruiterIdentityFromFirebaseBearer,
   recruiterSubmissionUpdateEmailsEnabled,
   resolveSubmissionExtraFields,
@@ -63,6 +65,7 @@ import {
   validateInviteCodeReplace,
   validateInviteCodeRestore,
   validateRecruiterNotificationsReadInput,
+  validateRecruiterRegistration,
   validateRecruiterRoleApplicationInput,
   validateRecruiterRoleFeedbackInput,
   validateRecruiterRoleQuestionInput,
@@ -323,6 +326,19 @@ describe("recruiter access helpers", () => {
     assert.equal(recruiterInviteCodeAllowsEmail({ recruiterEmail: "Sloane@Agency.com" }, "sloane@agency.com"), true)
     assert.equal(recruiterInviteCodeAllowsEmail({ recruiterEmail: "sloane@agency.com" }, "other@agency.com"), false)
     assert.equal(recruiterInviteCodeAllowsEmail({}, "other@agency.com"), true)
+  })
+
+  it("accepts a claim registration without an invite code", () => {
+    const codeless = validateRecruiterRegistration({ name: "Sloane", email: "Sloane@Agency.com" })
+    assert.equal(codeless.ok, true)
+    if (codeless.ok) {
+      assert.deepEqual(codeless.value, { name: "Sloane", email: "sloane@agency.com", inviteCode: "" })
+    }
+    const withCode = validateRecruiterRegistration({ name: "Sloane", email: "sloane@agency.com", inviteCode: " wk-abcd-2345 " })
+    assert.equal(withCode.ok, true)
+    if (withCode.ok) assert.equal(withCode.value.inviteCode, "WK-ABCD-2345")
+    assert.deepEqual(validateRecruiterRegistration({ email: "sloane@agency.com" }), { ok: false, reason: "missing_name" })
+    assert.deepEqual(validateRecruiterRegistration({ name: "Sloane" }), { ok: false, reason: "missing_email" })
   })
 
   it("sanitizes recruiter-visible submission rating history", () => {
@@ -607,19 +623,26 @@ describe("recruiter role notifications", () => {
     assert.equal(recruiterInviteUrl("WK-ABCD-2345"), "https://wekruit-recruiters.web.app/recruiters?code=WK-ABCD-2345")
   })
 
-  it("composes a recruiter invite email with the one-click accept link and fallback code", () => {
+  it("builds a codeless email-bound invite URL", () => {
+    assert.equal(
+      recruiterEmailInviteUrl("sloane@agency.com"),
+      "https://wekruit-recruiters.web.app/recruiters?invite=1&email=sloane%40agency.com",
+    )
+  })
+
+  it("composes a recruiter invite email with the codeless accept link and a legacy code fallback", () => {
     const email = composeRecruiterInviteEmail({
       recruiterEmail: "sloane@agency.com",
       inviteCode: "WK-ABCD-2345",
       expiresAt: "2027-06-09T12:00:00.000Z",
     })
-    assert.match(email.subject, /access code/i)
-    assert.match(email.text, /Accept your invite: https:\/\/wekruit-recruiters\.web\.app\/recruiters\?code=WK-ABCD-2345&email=sloane%40agency\.com/)
-    assert.match(email.text, /One-time access code: WK-ABCD-2345/)
+    assert.match(email.subject, /recruiter invite/i)
+    assert.match(email.text, /Accept your invite: https:\/\/wekruit-recruiters\.web\.app\/recruiters\?invite=1&email=sloane%40agency\.com/)
+    assert.match(email.text, /If the button doesn't work, use access code WK-ABCD-2345/)
     assert.match(email.text, /sloane@agency\.com/)
-    assert.match(email.html, /<a href="https:\/\/wekruit-recruiters\.web\.app\/recruiters\?code=WK-ABCD-2345&amp;email=sloane%40agency\.com"/)
+    assert.match(email.html, /<a href="https:\/\/wekruit-recruiters\.web\.app\/recruiters\?invite=1&amp;email=sloane%40agency\.com"/)
     assert.match(email.html, /Accept your invite<\/a>/)
-    assert.match(email.html, /WK-ABCD-2345/)
+    assert.match(email.html, /use access code <code>WK-ABCD-2345<\/code>/)
   })
 
   it("composes a submission update email with the recruiter workspace action", () => {
@@ -634,6 +657,164 @@ describe("recruiter role notifications", () => {
     assert.match(email.text, /Ada Lovelace/)
     assert.match(email.text, /Founding Engineer/)
     assert.match(email.text, /tab=submissions/)
+  })
+})
+
+function recruiterAccessFakeDb(seed: Record<string, Record<string, unknown>> = {}) {
+  const docs = new Map<string, Record<string, unknown>>()
+  for (const [key, value] of Object.entries(seed)) docs.set(key, { ...value })
+  const writes: Array<{ key: string; data: Record<string, unknown> }> = []
+  const hooks: { beforeTransaction?: () => void } = {}
+
+  const applySet = (key: string, data: Record<string, unknown>, opts?: { merge?: boolean }) => {
+    writes.push({ key, data })
+    const base = opts?.merge ? { ...(docs.get(key) ?? {}) } : {}
+    docs.set(key, { ...base, ...data })
+  }
+  interface FakeRef {
+    id: string
+    key: string
+    get: () => Promise<FakeSnap>
+    set: (data: Record<string, unknown>, opts?: { merge?: boolean }) => Promise<void>
+  }
+  interface FakeSnap {
+    exists: boolean
+    id: string
+    ref: FakeRef
+    data: () => Record<string, unknown> | undefined
+  }
+  const makeRef = (key: string): FakeRef => ({
+    id: key.slice(key.indexOf("/") + 1),
+    key,
+    get: async () => makeSnap(key),
+    set: async (data, opts) => applySet(key, data, opts),
+  })
+  const makeSnap = (key: string): FakeSnap => ({
+    exists: docs.has(key),
+    id: key.slice(key.indexOf("/") + 1),
+    ref: makeRef(key),
+    data: () => docs.get(key),
+  })
+
+  const db = {
+    collection: (collectionName: string) => ({
+      doc: (docId: string) => makeRef(`${collectionName}/${docId}`),
+      where: (field: string, _op: string, value: unknown) => ({
+        get: async () => ({
+          docs: [...docs.keys()]
+            .filter((key) => key.startsWith(`${collectionName}/`) && docs.get(key)?.[field] === value)
+            .map((key) => makeSnap(key)),
+        }),
+      }),
+    }),
+    runTransaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+      hooks.beforeTransaction?.()
+      return fn({
+        get: async (ref: FakeRef) => makeSnap(ref.key),
+        set: (ref: FakeRef, data: Record<string, unknown>, opts?: { merge?: boolean }) => applySet(ref.key, data, opts),
+      })
+    },
+  }
+  return {
+    db: db as unknown as Parameters<typeof registerRecruiterAccess>[0],
+    docs,
+    writes,
+    hooks,
+  }
+}
+
+describe("registerRecruiterAccess codeless email-bound claims", () => {
+  const identity = { uid: "uid-rec-1", email: "sloane@agency.com" }
+
+  const usableInvite = (overrides: Record<string, unknown> = {}) => ({
+    inviteCodeId: "hash-1",
+    recruiterEmail: "sloane@agency.com",
+    active: true,
+    maxUses: 1,
+    usedCount: 0,
+    createdAt: "2026-06-01T00:00:00.000Z",
+    ...overrides,
+  })
+
+  it("claims by invited email without a code and binds the newest usable invite", async () => {
+    const { db, docs, writes } = recruiterAccessFakeDb({
+      "pa-recruiter-invite-codes/hash-old": usableInvite({ inviteCodeId: "hash-old", createdAt: "2026-05-01T00:00:00.000Z" }),
+      "pa-recruiter-invite-codes/hash-new": usableInvite({ inviteCodeId: "hash-new", createdAt: "2026-06-01T00:00:00.000Z" }),
+      "pa-recruiter-invite-codes/hash-used": usableInvite({ inviteCodeId: "hash-used", usedCount: 1, createdAt: "2026-06-08T00:00:00.000Z" }),
+    })
+    const recruiter = await registerRecruiterAccess(db, identity, { name: "Sloane", email: "sloane@agency.com", inviteCode: "" })
+    assert.equal(recruiter?.recruiterId, "uid-rec-1")
+    const userDoc = docs.get("pa-recruiter-users/uid-rec-1")
+    assert.equal(userDoc?.inviteCodeId, "hash-new")
+    assert.equal(userDoc?.status, "active")
+    const inviteWrite = writes.find((write) => write.key === "pa-recruiter-invite-codes/hash-new")
+    assert.ok(inviteWrite, "claimed invite gets the usage write")
+    assert.equal(inviteWrite?.data.lastUsedByUid, "uid-rec-1")
+    assert.equal(inviteWrite?.data.lastUsedByEmail, "sloane@agency.com")
+    assert.ok("usedCount" in (inviteWrite?.data ?? {}), "claim increments usedCount")
+  })
+
+  it("rejects a codeless claim when no usable invite exists for the email", async () => {
+    const { db, docs } = recruiterAccessFakeDb({
+      "pa-recruiter-invite-codes/hash-used": usableInvite({ usedCount: 1 }),
+      "pa-recruiter-invite-codes/hash-other": usableInvite({ inviteCodeId: "hash-other", recruiterEmail: "other@agency.com" }),
+      "pa-recruiter-invite-codes/hash-inactive": usableInvite({ inviteCodeId: "hash-inactive", active: false }),
+    })
+    const recruiter = await registerRecruiterAccess(db, identity, { name: "Sloane", email: "sloane@agency.com", inviteCode: "" })
+    assert.equal(recruiter, null)
+    assert.equal(docs.has("pa-recruiter-users/uid-rec-1"), false)
+  })
+
+  it("re-checks invite usability inside the transaction so a raced codeless claim loses", async () => {
+    const { db, docs, hooks } = recruiterAccessFakeDb({
+      "pa-recruiter-invite-codes/hash-1": usableInvite(),
+    })
+    hooks.beforeTransaction = () => {
+      docs.set("pa-recruiter-invite-codes/hash-1", { ...docs.get("pa-recruiter-invite-codes/hash-1")!, usedCount: 1 })
+    }
+    const recruiter = await registerRecruiterAccess(db, identity, { name: "Sloane", email: "sloane@agency.com", inviteCode: "" })
+    assert.equal(recruiter, null)
+    assert.equal(docs.has("pa-recruiter-users/uid-rec-1"), false)
+  })
+
+  it("keeps the legacy explicit-code claim path unchanged", async () => {
+    const normalizedCode = normalizeRecruiterInviteCode("WK-CDKE-AUC5")
+    const codeHash = hashRecruiterInviteCode(normalizedCode)
+    const { db, docs, writes } = recruiterAccessFakeDb({
+      [`pa-recruiter-invite-codes/${codeHash}`]: usableInvite({ inviteCodeId: codeHash }),
+    })
+    const recruiter = await registerRecruiterAccess(db, identity, { name: "Sloane", email: "sloane@agency.com", inviteCode: normalizedCode })
+    assert.equal(recruiter?.recruiterId, "uid-rec-1")
+    assert.equal(docs.get("pa-recruiter-users/uid-rec-1")?.inviteCodeId, codeHash)
+    const inviteWrite = writes.find((write) => write.key === `pa-recruiter-invite-codes/${codeHash}`)
+    assert.equal(inviteWrite?.data.lastUsedByUid, "uid-rec-1")
+  })
+
+  it("lets an already-registered recruiter re-claim without a code", async () => {
+    const { db, docs } = recruiterAccessFakeDb({
+      "pa-recruiter-users/uid-rec-1": {
+        recruiterId: "uid-rec-1",
+        email: "sloane@agency.com",
+        status: "active",
+        inviteCodeId: "hash-historic",
+      },
+    })
+    const recruiter = await registerRecruiterAccess(db, identity, { name: "Sloane", email: "sloane@agency.com", inviteCode: "" })
+    assert.equal(recruiter?.recruiterId, "uid-rec-1")
+    assert.equal(docs.get("pa-recruiter-users/uid-rec-1")?.inviteCodeId, "hash-historic")
+  })
+
+  it("still rejects an already-registered recruiter presenting a mismatched code", async () => {
+    const { db } = recruiterAccessFakeDb({
+      "pa-recruiter-users/uid-rec-1": {
+        recruiterId: "uid-rec-1",
+        email: "sloane@agency.com",
+        status: "active",
+        inviteCodeId: hashRecruiterInviteCode("WK-REAL-CODE"),
+      },
+    })
+    const recruiter = await registerRecruiterAccess(db, identity, { name: "Sloane", email: "sloane@agency.com", inviteCode: "WK-WRONG-CODE" })
+    assert.equal(recruiter, null)
   })
 })
 

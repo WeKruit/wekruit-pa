@@ -1143,8 +1143,11 @@ function readRecruiterInviteLinkFromLocation(): RecruiterInviteLink | null {
   if (typeof window === "undefined") return null
   const params = new URLSearchParams(window.location.search)
   const code = cleanRecruiterInviteCode(params.get("code") ?? "")
-  if (!code) return null
-  return { code, emailHint: cleanRecruiterEmail(params.get("email") ?? "") }
+  const emailHint = cleanRecruiterEmail(params.get("email") ?? "")
+  // `?invite=1&email=...` is the codeless email-bound invite; `?code=WK-...`
+  // stays supported for legacy invite emails still in flight.
+  if (!code && params.get("invite") !== "1") return null
+  return { code, emailHint }
 }
 
 function maskRecruiterInviteCodeForDisplay(code: string): string {
@@ -1157,7 +1160,8 @@ function readPendingRecruiterAccess(): PendingRecruiterAccess | null {
     const raw = storage.getItem(RECRUITER_ACCESS_PENDING_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw) as Partial<PendingRecruiterAccess>
-    if (!parsed.inviteCode || typeof parsed.inviteCode !== "string") return null
+    // An empty inviteCode is a codeless email-bound claim — keep the slot.
+    if (typeof parsed.inviteCode !== "string") return null
     if (typeof parsed.name !== "string") return null
     if (typeof parsed.createdAtMs !== "number" || Date.now() - parsed.createdAtMs > 10 * 60 * 1000) {
       storage.removeItem(RECRUITER_ACCESS_PENDING_KEY)
@@ -1228,11 +1232,15 @@ function authErrorCode(error: unknown): string {
     : ""
 }
 
-function formatRecruiterAuthError(error: unknown, inviteEmailHint?: string): string {
+function formatRecruiterAuthError(
+  error: unknown,
+  inviteEmailHint?: string,
+  claim?: { codeless?: boolean; email?: string },
+): string {
   const code = authErrorCode(error)
   switch (code) {
     case "auth/account-exists-with-different-credential":
-      return "That email already uses another Firebase sign-in method. Use the Google account tied to this recruiter access code."
+      return "That email already uses another Firebase sign-in method. Use the Google account WeKruit invited."
     case "auth/cancelled-popup-request":
       return "Google sign-in was interrupted. Try again."
     case "auth/unauthorized-domain":
@@ -1240,7 +1248,7 @@ function formatRecruiterAuthError(error: unknown, inviteEmailHint?: string): str
     default:
       if (error instanceof Error) {
         if (error.message === "unauthorized") {
-          return "This Google account does not have recruiter access. Enter an access code first."
+          return "This Google account does not have recruiter access yet. Sign in with the email WeKruit invited."
         }
         if (error.message === "email_mismatch") {
           return inviteEmailHint
@@ -1248,6 +1256,12 @@ function formatRecruiterAuthError(error: unknown, inviteEmailHint?: string): str
             : "This invite is bound to a different email. Sign in with the Google account that received the invite."
         }
         if (error.message === "invalid_or_expired_invite_code") {
+          if (claim?.codeless) {
+            const invitedAddress = claim.email || inviteEmailHint
+            return invitedAddress
+              ? `No invitation found for ${invitedAddress}. Ask your WeKruit contact to invite this address, or retry with a different Google account.`
+              : "No invitation found for this Google account. Ask your WeKruit contact to invite this address, or retry with a different Google account."
+          }
           return "That access code is invalid, expired, already bound to another recruiter, or does not match this Google account."
         }
         if (error.message) return error.message
@@ -1289,10 +1303,11 @@ export default function RecruiterBoard() {
     } catch {
       // Storage blocked; the gate button re-writes the slot before sign-in.
     }
-    if (searchParams.has("code") || searchParams.has("email")) {
+    if (searchParams.has("code") || searchParams.has("email") || searchParams.has("invite")) {
       const next = new URLSearchParams(searchParams)
       next.delete("code")
       next.delete("email")
+      next.delete("invite")
       setSearchParams(next, { replace: true })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1328,13 +1343,13 @@ export default function RecruiterBoard() {
       handlingUid = user.uid
       const pending = readPendingRecruiterAccess()
       if (pending) {
+        const claimEmail = cleanRecruiterEmail(user.email ?? "")
         try {
-          const email = cleanRecruiterEmail(user.email ?? "")
-          if (!email) throw new Error("Google did not return an email for this account.")
+          if (!claimEmail) throw new Error("Google did not return an email for this account.")
           const next = await registerRecruiterAccess({
             name: pending.name || cleanRecruiterName(user.displayName ?? "") || "Recruiter",
-            email,
-            inviteCode: pending.inviteCode,
+            email: claimEmail,
+            ...(pending.inviteCode ? { inviteCode: pending.inviteCode } : {}),
           })
           clearPendingRecruiterAccess()
           if (active) {
@@ -1355,7 +1370,7 @@ export default function RecruiterBoard() {
             setRoleIntelligence([])
             setNotifications([])
             setStatusLoaded(false)
-            setAccessError(formatRecruiterAuthError(e, pending.emailHint))
+            setAccessError(formatRecruiterAuthError(e, pending.emailHint, { codeless: !pending.inviteCode, email: claimEmail }))
           }
           return
         } finally {
@@ -1388,7 +1403,7 @@ export default function RecruiterBoard() {
           setNotifications([])
           setStatusLoaded(false)
           setProfileLoadFailed(false)
-          setAccessError("Enter a recruiter access code before choosing a Google account. Google sign-in alone cannot open this workspace.")
+          setAccessError("This Google account does not have recruiter access yet. Continue with Google using the email WeKruit invited.")
         }
       } finally {
         if (active) setAuthReady(true)
@@ -4336,8 +4351,9 @@ function RecruiterAccessGate({
   const [inviteCode, setInviteCode] = useState(normalizedInitialInviteCode || inviteLink?.code || "")
   const [err, setErr] = useState<string | null>(initialError ?? null)
   const [busy, setBusy] = useState(false)
-  const [manualMode, setManualMode] = useState(false)
-  const linkMode = Boolean(inviteLink) && !manualMode
+  const [manualMode, setManualMode] = useState(Boolean(normalizedInitialInviteCode))
+  const linkMode = Boolean(inviteLink?.code) && !manualMode
+  const inviteEmailHint = inviteLink?.emailHint ?? ""
 
   useEffect(() => {
     setErr(initialError ?? null)
@@ -4345,7 +4361,10 @@ function RecruiterAccessGate({
   }, [initialError])
 
   useEffect(() => {
-    if (normalizedInitialInviteCode) setInviteCode(normalizedInitialInviteCode)
+    if (normalizedInitialInviteCode) {
+      setInviteCode(normalizedInitialInviteCode)
+      setManualMode(true)
+    }
   }, [normalizedInitialInviteCode])
 
   const submit = async (e: FormEvent) => {
@@ -4387,6 +4406,23 @@ function RecruiterAccessGate({
     } catch (error) {
       clearPendingRecruiterAccess()
       setErr(formatRecruiterAuthError(error, inviteLink.emailHint || undefined))
+      setBusy(false)
+    }
+  }
+
+  // Default codeless claim: invites are email-bound, so Google sign-in with the
+  // invited address is the whole gate — no name typing, no code typing.
+  const submitCodeless = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setErr(null)
+    try {
+      writePendingRecruiterAccess("", "", inviteEmailHint || undefined)
+      if (auth().currentUser) await signOut(auth())
+      await signInWithPopup(auth(), createRecruiterGoogleProvider())
+    } catch (error) {
+      clearPendingRecruiterAccess()
+      setErr(formatRecruiterAuthError(error, inviteEmailHint || undefined))
       setBusy(false)
     }
   }
@@ -4450,12 +4486,12 @@ function RecruiterAccessGate({
                 Enter name and code manually
               </button>
             </form>
-          ) : (
+          ) : manualMode ? (
           <form className="rb-access__card" onSubmit={submit}>
             <span className="rb-access__badge">Registered recruiters only</span>
             <h2>Claim recruiter access</h2>
             <p className="rb-access__hint">
-              Enter your name and the one-use code WeKruit issued, then choose the Google account it should bind to. Google sign-in without a valid code is blocked.
+              Enter your name and the one-use code WeKruit issued, then choose the Google account it should bind to.
             </p>
             <label>
               <span>Your name</span>
@@ -4481,8 +4517,31 @@ function RecruiterAccessGate({
             <button className="rb-btn primary rb-btn--block" disabled={busy}>
               {busy ? "Opening Google..." : "Continue with Gmail"}
             </button>
+            <button type="button" className="rb-access__reset" disabled={busy} onClick={() => setManualMode(false)}>
+              Back to Google sign-in
+            </button>
             <button type="button" className="rb-access__reset" disabled={busy} onClick={() => void clearStuckGoogleState()}>
               Restart sign-in
+            </button>
+          </form>
+          ) : (
+          <form className="rb-access__card" onSubmit={submitCodeless}>
+            <span className="rb-access__badge">Invite only</span>
+            <h2>Sign in to your recruiter workspace</h2>
+            <p className="rb-access__hint">
+              {inviteEmailHint
+                ? `This invite is reserved for ${inviteEmailHint}. Sign in with that Google account — no access code needed.`
+                : "Access is by invitation — sign in with the email we invited."}
+            </p>
+            {err && <p className="rb-access__err">{err}</p>}
+            <button className="rb-btn primary rb-btn--block" disabled={busy}>
+              {busy ? "Opening Google..." : "Continue with Google"}
+            </button>
+            <button type="button" className="rb-access__reset" disabled={busy} onClick={() => void clearStuckGoogleState()}>
+              Try a different Google account
+            </button>
+            <button type="button" className="rb-access__reset" disabled={busy} onClick={() => setManualMode(true)}>
+              Have an access code?
             </button>
           </form>
           )}

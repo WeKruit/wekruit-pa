@@ -13,12 +13,43 @@ test("Recruiter access gate lets users leave the recruiter-only app for public W
   assert.match(source, new RegExp('<a href="https://candidate\\.wekruit\\.com/" className="rb-access__link">Back to WeKruit</a>'))
 })
 
-test("Recruiter access gate captures recruiter name before Google binding", () => {
+test("Default gate is a codeless Continue-with-Google card with no inputs", () => {
+  const codelessFormStart = source.indexOf("onSubmit={submitCodeless}")
+  assert.ok(codelessFormStart > 0, "codeless default form exists")
+  const codelessFormEnd = source.indexOf("</form>", codelessFormStart)
+  const codelessFormSlice = source.slice(codelessFormStart, codelessFormEnd)
+  assert.doesNotMatch(codelessFormSlice, /<input/, "default mode has no name or code inputs")
+  assert.match(codelessFormSlice, /Continue with Google/)
+  assert.match(codelessFormSlice, /Access is by invitation — sign in with the email we invited\./)
+  assert.match(source, /writePendingRecruiterAccess\("", "", inviteEmailHint \|\| undefined\)/)
+})
+
+test("Codeless claim sends the payload without inviteCode and pulls the Google displayName", () => {
+  assert.match(source, /\.\.\.\(pending\.inviteCode \? \{ inviteCode: pending\.inviteCode \} : \{\}\),/)
+  assert.match(source, /name: pending\.name \|\| cleanRecruiterName\(user\.displayName \?\? ""\) \|\| "Recruiter",/)
+  assert.match(source, /if \(typeof parsed\.inviteCode !== "string"\) return null/, "codeless pending slot survives the storage round-trip")
+  const apiSource = readFileSync(resolve(here, "../../lib/recruiter-board-api.ts"), "utf8")
+  assert.match(apiSource, /inviteCode\?: string/, "claim API accepts a payload without inviteCode")
+})
+
+test("Codeless claim rejection shows the no-invite message with a different-account retry", () => {
+  assert.match(source, /No invitation found for \$\{invitedAddress\}\. Ask your WeKruit contact to invite this address/)
+  assert.match(source, /setAccessError\(formatRecruiterAuthError\(e, pending\.emailHint, \{ codeless: !pending\.inviteCode, email: claimEmail \}\)\)/)
+  const codelessFormStart = source.indexOf("onSubmit={submitCodeless}")
+  const codelessFormSlice = source.slice(codelessFormStart, source.indexOf("</form>", codelessFormStart))
+  assert.match(codelessFormSlice, /Try a different Google account/)
+  assert.match(codelessFormSlice, /clearStuckGoogleState/)
+})
+
+test("Access-code disclosure reveals the manual name+code form", () => {
+  const codelessFormStart = source.indexOf("onSubmit={submitCodeless}")
+  const codelessFormSlice = source.slice(codelessFormStart, source.indexOf("</form>", codelessFormStart))
+  assert.match(codelessFormSlice, /Have an access code\?/)
+  assert.match(codelessFormSlice, /setManualMode\(true\)/)
   assert.match(source, /const \[recruiterName, setRecruiterName\] = useState\(""\)/)
   assert.match(source, /Enter your name before claiming recruiter access\./)
   assert.match(source, /writePendingRecruiterAccess\(trimmedInviteCode, trimmedRecruiterName\)/)
   assert.match(source, /<span>Your name<\/span>/)
-  assert.match(source, /name: pending\.name \|\| cleanRecruiterName\(user\.displayName \?\? ""\) \|\| "Recruiter",/)
 })
 
 test("Returning signed-in recruiters skip the gate when paRecruiterMe recognizes them", () => {

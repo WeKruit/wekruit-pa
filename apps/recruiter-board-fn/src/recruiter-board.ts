@@ -390,7 +390,7 @@ export async function recruiterIdentityFromFirebaseBearer(
   }
 }
 
-function validateRecruiterRegistration(input: unknown):
+export function validateRecruiterRegistration(input: unknown):
   | { ok: true; value: RecruiterAccessRegistrationInput }
   | { ok: false; reason: string } {
   if (!input || typeof input !== "object") return { ok: false, reason: "missing_body" }
@@ -398,8 +398,9 @@ function validateRecruiterRegistration(input: unknown):
   if (!isNonEmptyString(b.name)) return { ok: false, reason: "missing_name" }
   if (!isNonEmptyString(b.email)) return { ok: false, reason: "missing_email" }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(b.email)) return { ok: false, reason: "invalid_email" }
-  if (!isNonEmptyString(b.inviteCode)) return { ok: false, reason: "missing_invite_code" }
-  if (b.name.length > 200 || b.email.length > 320 || b.inviteCode.length > 80) {
+  const inviteCodeRaw = typeof b.inviteCode === "string" ? b.inviteCode : ""
+  const hasInviteCode = isNonEmptyString(inviteCodeRaw)
+  if (b.name.length > 200 || b.email.length > 320 || inviteCodeRaw.length > 80) {
     return { ok: false, reason: "input_too_long" }
   }
   return {
@@ -407,7 +408,7 @@ function validateRecruiterRegistration(input: unknown):
     value: {
       name: b.name.trim(),
       email: normalizeRecruiterEmail(b.email as string),
-      inviteCode: normalizeRecruiterInviteCode(b.inviteCode),
+      inviteCode: hasInviteCode ? normalizeRecruiterInviteCode(inviteCodeRaw) : "",
     },
   }
 }
@@ -683,6 +684,25 @@ export function recruiterInviteCodeAllowsEmail(
   return !invitedEmail || invitedEmail === normalizeRecruiterEmail(recruiterEmail)
 }
 
+export async function resolveRecruiterInviteRefByEmail(
+  db: Firestore,
+  recruiterEmail: string,
+  nowMs = Date.now(),
+): Promise<DocumentReference | null> {
+  const snapshot = await db.collection(RECRUITER_INVITE_CODES_COLLECTION)
+    .where("recruiterEmail", "==", normalizeRecruiterEmail(recruiterEmail))
+    .get()
+  let best: { ref: DocumentReference; createdAtMs: number } | null = null
+  for (const doc of snapshot.docs) {
+    const data = doc.data() as Record<string, unknown> | undefined
+    if (!data || !inviteCodeUsable(data, nowMs)) continue
+    const createdAtIso = coerceToIso(data.createdAt)
+    const createdAtMs = createdAtIso ? Date.parse(createdAtIso) : 0
+    if (!best || createdAtMs > best.createdAtMs) best = { ref: doc.ref, createdAtMs }
+  }
+  return best?.ref ?? null
+}
+
 export async function registerRecruiterAccess(
   db: Firestore,
   identity: RecruiterFirebaseIdentity,
@@ -701,6 +721,13 @@ export async function registerRecruiterAccess(
     workspacePreferences: { primaryRoleIds: [] },
   }
 
+  // Codeless claims resolve the invite by the invited email. The query cannot
+  // run inside the transaction, so resolve a candidate ref up front and
+  // re-validate it via tx.get below to keep the claim race-safe.
+  const emailResolvedInviteRef = input.inviteCode
+    ? null
+    : await resolveRecruiterInviteRefByEmail(db, identity.email)
+
   const result = await db.runTransaction(async (tx) => {
     const nowMs = Date.now()
     const userRef = db.collection(RECRUITER_USERS_COLLECTION).doc(recruiterId)
@@ -711,7 +738,7 @@ export async function registerRecruiterAccess(
     if (existingUser.exists) {
       const existingEmail = typeof existingData?.email === "string" ? existingData.email.trim().toLowerCase() : ""
       if (existingEmail && existingEmail !== identity.email) throw new Error("email_mismatch")
-      if (!recruiterInviteCodeMatchesBoundUser(existingData, input.inviteCode)) return null
+      if (input.inviteCode && !recruiterInviteCodeMatchesBoundUser(existingData, input.inviteCode)) return null
       const notificationPreferences = readNotificationPreferences(existingData)
       const workspacePreferences = readWorkspacePreferences(existingData)
       const recruiter = { ...recruiterBase, notificationPreferences, workspacePreferences }
@@ -726,16 +753,27 @@ export async function registerRecruiterAccess(
 
     let inviteId: string | null = null
     let inviteRef: DocumentReference | null = null
-    for (const id of candidateInviteCodeIds(input.inviteCode)) {
-      const ref = db.collection(RECRUITER_INVITE_CODES_COLLECTION).doc(id)
-      const snap = await tx.get(ref)
-      if (!snap.exists) continue
-      const data = snap.data() as Record<string, unknown>
-      if (!inviteCodeUsable(data, nowMs)) return null
-      if (!recruiterInviteCodeAllowsEmail(data, identity.email)) throw new Error("email_mismatch")
-      inviteId = id
-      inviteRef = ref
-      break
+    if (input.inviteCode) {
+      for (const id of candidateInviteCodeIds(input.inviteCode)) {
+        const ref = db.collection(RECRUITER_INVITE_CODES_COLLECTION).doc(id)
+        const snap = await tx.get(ref)
+        if (!snap.exists) continue
+        const data = snap.data() as Record<string, unknown>
+        if (!inviteCodeUsable(data, nowMs)) return null
+        if (!recruiterInviteCodeAllowsEmail(data, identity.email)) throw new Error("email_mismatch")
+        inviteId = id
+        inviteRef = ref
+        break
+      }
+    } else if (emailResolvedInviteRef) {
+      const snap = await tx.get(emailResolvedInviteRef)
+      if (snap.exists) {
+        const data = snap.data() as Record<string, unknown>
+        if (inviteCodeUsable(data, nowMs) && recruiterInviteCodeAllowsEmail(data, identity.email)) {
+          inviteId = emailResolvedInviteRef.id
+          inviteRef = emailResolvedInviteRef
+        }
+      }
     }
     if (!inviteId || !inviteRef) return null
 
@@ -3974,12 +4012,19 @@ export function recruiterInviteUrl(inviteCode: string, recruiterEmail?: string |
   return url.toString()
 }
 
+export function recruiterEmailInviteUrl(recruiterEmail: string): string {
+  const url = new URL(`${RECRUITER_PUBLIC_BASE_URL}/recruiters`)
+  url.searchParams.set("invite", "1")
+  url.searchParams.set("email", recruiterEmail)
+  return url.toString()
+}
+
 export function composeRecruiterInviteEmail(
   input: RecruiterInviteEmailInput,
 ): { subject: string; text: string; html: string } {
-  const expiresLine = input.expiresAt ? `This one-time code expires at ${input.expiresAt}.` : "This is a one-time code."
-  const subject = "Your WeKruit recruiter access code"
-  const acceptUrl = recruiterInviteUrl(input.inviteCode, input.recruiterEmail)
+  const expiresLine = input.expiresAt ? `This invite expires at ${input.expiresAt}.` : ""
+  const subject = "Your WeKruit recruiter invite"
+  const acceptUrl = recruiterEmailInviteUrl(input.recruiterEmail)
   const text = [
     "Hi there,",
     "",
@@ -3987,20 +4032,19 @@ export function composeRecruiterInviteEmail(
     "",
     `Accept your invite: ${acceptUrl}`,
     "",
-    "If the link does not work, open the recruiter site and sign in with this email address:",
+    "Sign in with Google using this email address and your workspace opens — no access code needed:",
     input.recruiterEmail,
-    `One-time access code: ${input.inviteCode}`,
     "",
-    expiresLine,
-    "After the code is used, your Google sign-in becomes your recruiter account.",
+    `If the button doesn't work, use access code ${input.inviteCode} on the recruiter site.`,
+    ...(expiresLine ? [expiresLine] : []),
+    "After you sign in, your Google account becomes your recruiter account.",
   ].join("\n")
   const html = [
     "<p>Hi there,</p>",
     "<p>WeKruit invited you to submit roles and candidates in the recruiter workspace.</p>",
     `<p><a href="${escapeHtml(acceptUrl)}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:bold">Accept your invite</a></p>`,
-    `<p>If the link does not work, open the recruiter site and sign in with <b>${escapeHtml(input.recruiterEmail)}</b>.</p>`,
-    `<p><b>One-time access code:</b> <code>${escapeHtml(input.inviteCode)}</code></p>`,
-    `<p style="color:#666;font-size:12px">${escapeHtml(expiresLine)} After the code is used, your Google sign-in becomes your recruiter account.</p>`,
+    `<p>Sign in with Google as <b>${escapeHtml(input.recruiterEmail)}</b> and your workspace opens — no access code needed.</p>`,
+    `<p style="color:#666;font-size:12px">If the button doesn't work, use access code <code>${escapeHtml(input.inviteCode)}</code> on the recruiter site.${expiresLine ? ` ${escapeHtml(expiresLine)}` : ""} After you sign in, your Google account becomes your recruiter account.</p>`,
   ].join("")
   return { subject, text, html }
 }

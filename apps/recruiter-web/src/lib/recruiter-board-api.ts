@@ -435,7 +435,7 @@ export async function fetchCollabJobs(): Promise<CollabJob[]> {
 export async function registerRecruiterAccess(input: {
   name: string
   email: string
-  inviteCode: string
+  inviteCode?: string
 }): Promise<RecruiterSession> {
   const res = await fetch(RECRUITER_ACCESS_URL, {
     method: "POST",
