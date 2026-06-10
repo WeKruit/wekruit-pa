@@ -66,19 +66,11 @@ import { redirectResultPromise } from "../lib/auth-redirect-bootstrap.js"
 import { SubmissionStatusStepper } from "../components/SubmissionStatusStepper.js"
 import { SubmissionUpdatesToggle } from "../components/SubmissionUpdatesToggle.js"
 
-type RecruiterTab = "overview" | "inbox" | "roles" | "access" | "matches" | "candidates" | "submissions" | "performance" | "earnings" | "settings"
+type RecruiterTab = "roles" | "submissions"
 
 const TABS: Array<{ id: RecruiterTab; label: string }> = [
-  { id: "overview", label: "Overview" },
-  { id: "inbox", label: "Inbox" },
   { id: "roles", label: "Roles" },
-  { id: "access", label: "Role access" },
-  { id: "matches", label: "Matchboard" },
-  { id: "candidates", label: "Candidates" },
-  { id: "submissions", label: "Submissions" },
-  { id: "performance", label: "Performance" },
-  { id: "earnings", label: "Earnings" },
-  { id: "settings", label: "Settings" },
+  { id: "submissions", label: "My submissions" },
 ]
 
 const ROLE_FILTERS = [
@@ -1292,7 +1284,8 @@ export default function RecruiterBoard() {
   const [profileRetryToken, setProfileRetryToken] = useState(0)
   const [submissionError, setSubmissionError] = useState<string | null>(null)
   const tabParam = searchParams.get("tab")
-  const activeTab = TABS.some((t) => t.id === tabParam) ? tabParam as RecruiterTab : "overview"
+  // Unknown / retired tabs (?tab=earnings, ?tab=overview, ...) fall back to Roles.
+  const activeTab = TABS.some((t) => t.id === tabParam) ? tabParam as RecruiterTab : "roles"
 
   // Invite-link mode: persist the code (+email hint) before auth resolves so a
   // signed-in recruiter claims in zero clicks, then strip the params from the URL.
@@ -1460,25 +1453,7 @@ export default function RecruiterBoard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.recruiterId])
 
-  const setTab = (tab: RecruiterTab) => setSearchParams(tab === "overview" ? {} : { tab })
-  const openRoleAccess = (jobId?: string) => {
-    setAccessDraftJobId(jobId ?? null)
-    setTab("access")
-  }
-  const primaryRoleIds = recruiterApprovedRoleIds(session, roleApplications)
-  const saveRoleApplication = async (input: RecruiterRoleApplicationInput) => {
-    if (!session) return
-    setRoleApplicationSavingId(input.jobId)
-    setSubmissionError(null)
-    try {
-      const saved = await saveRecruiterRoleApplication(input)
-      setRoleApplications((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)])
-    } catch (e) {
-      setSubmissionError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setRoleApplicationSavingId(null)
-    }
-  }
+  const setTab = (tab: RecruiterTab) => setSearchParams(tab === "roles" ? {} : { tab })
   if (!authReady) {
     return <div className="rb-access"><div className="rb-state">Loading recruiter workspace...</div></div>
   }
@@ -1498,40 +1473,6 @@ export default function RecruiterBoard() {
   }
 
   const openJobs = jobs ?? []
-  const stats = computeRecruiterStats(openJobs, submissions, sourcedCandidates)
-  const operatingMetrics = computeRecruiterOperatingMetrics(
-    openJobs,
-    submissions,
-    sourcedCandidates,
-    roleFeedback,
-    roleQuestions,
-    roleIntelligence,
-    primaryRoleIds,
-  )
-  const earningsMetrics = computeRecruiterEarningsMetrics(
-    openJobs,
-    submissions,
-    sourcedCandidates,
-    roleFeedback,
-    roleQuestions,
-    primaryRoleIds,
-    operatingMetrics,
-  )
-  const inboxSummary = buildRecruiterInboxSummary(submissions, sourcedCandidates, roleQuestions, notifications)
-  const primaryCta = buildRecruiterPrimaryCta({
-    jobs: openJobs,
-    submissions,
-    sourcedCandidates,
-    roleQuestions,
-    notifications,
-  })
-  const markAllNotificationsRead = async () => {
-    const unread = notifications.filter((notification) => !notification.readAt)
-    if (unread.length === 0) return
-    await markRecruiterNotificationsRead({ all: true })
-    const readAt = new Date().toISOString()
-    setNotifications((rows) => rows.map((notification) => notification.readAt ? notification : { ...notification, readAt, updatedAt: readAt }))
-  }
   return (
     <div className="rb-platform">
       <aside className="rb-platform__nav">
@@ -1559,21 +1500,10 @@ export default function RecruiterBoard() {
               onClick={() => setTab(tab.id)}
             >
               {tab.label}
-              {tab.id === "inbox" && inboxSummary.needsAction > 0 ? <span>{inboxSummary.needsAction}</span> : null}
-              {tab.id === "candidates" && sourcedCandidates.length > 0 ? <span>{sourcedCandidates.length}</span> : null}
               {tab.id === "submissions" && submissions.length > 0 ? <span>{submissions.length}</span> : null}
             </button>
           ))}
         </nav>
-        <Link
-          to={primaryCta.href}
-          className={`rb-platform__cta is-${primaryCta.tone}`}
-          aria-label={`${primaryCta.label}: ${primaryCta.title}`}
-        >
-          <span>{primaryCta.label}</span>
-          <strong>{primaryCta.title}</strong>
-          <em>{primaryCta.body}</em>
-        </Link>
         <button
           type="button"
           className="rb-platform__signout"
@@ -1597,15 +1527,11 @@ export default function RecruiterBoard() {
       <main className="rb-platform__main">
         <header className="rb-platform__top">
           <div>
-            <p className="rb-overline">Private recruiter workspace</p>
-            <h1>{activeTab === "overview" ? `Good to see you, ${session.recruiter.name.split(" ")[0]}.` : TABS.find((t) => t.id === activeTab)?.label}</h1>
+            <h1>{TABS.find((t) => t.id === activeTab)?.label}</h1>
           </div>
           <div className="rb-platform__top-actions">
             <button type="button" className="rb-btn" onClick={() => void reloadSubmissions()}>
               Refresh status
-            </button>
-            <button type="button" className="rb-btn primary" onClick={() => setTab("roles")}>
-              Browse roles
             </button>
           </div>
         </header>
@@ -1613,90 +1539,8 @@ export default function RecruiterBoard() {
         {error && <div className="rb-state error">Could not load roles: {error}</div>}
         {submissionError && <div className="rb-state error">Could not load your submissions: {submissionError}</div>}
 
-        {activeTab === "overview" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "overview" && statusLoaded && (
-          <OverviewTab
-            stats={stats}
-            jobs={openJobs}
-            submissions={submissions}
-            sourcedCandidates={sourcedCandidates}
-            roleFeedback={roleFeedback}
-            roleQuestions={roleQuestions}
-            roleIntelligence={roleIntelligence}
-            roleApplications={roleApplications}
-            notifications={notifications}
-            operatingMetrics={operatingMetrics}
-            primaryRoleIds={primaryRoleIds}
-            onInbox={() => setTab("inbox")}
-            onRoles={() => setTab("roles")}
-            onMatches={() => setTab("matches")}
-            onCandidates={() => setTab("candidates")}
-            onSubmissions={() => setTab("submissions")}
-            onPerformance={() => setTab("performance")}
-            onEarnings={() => setTab("earnings")}
-            onAccess={openRoleAccess}
-          />
-        )}
-        {activeTab === "inbox" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "inbox" && statusLoaded && (
-          <RecruiterInboxTab
-            jobs={openJobs}
-            submissions={submissions}
-            sourcedCandidates={sourcedCandidates}
-            roleFeedback={roleFeedback}
-            roleQuestions={roleQuestions}
-            notifications={notifications}
-            onRoles={() => setTab("roles")}
-            onCandidates={() => setTab("candidates")}
-            onSubmissions={() => setTab("submissions")}
-            onMatches={() => setTab("matches")}
-            onEarnings={() => setTab("earnings")}
-            onMarkAllNotificationsRead={() => void markAllNotificationsRead()}
-          />
-        )}
         {activeTab === "roles" && (
-          <RolesTab
-            jobs={openJobs}
-            submissions={submissions}
-            sourcedCandidates={sourcedCandidates}
-            roleFeedback={roleFeedback}
-            roleQuestions={roleQuestions}
-            roleIntelligence={roleIntelligence}
-            roleApplications={roleApplications}
-            loading={!jobs && !error}
-            primaryRoleIds={primaryRoleIds}
-            roleApplicationSavingId={roleApplicationSavingId}
-            onAccess={openRoleAccess}
-          />
-        )}
-        {activeTab === "access" && statusLoaded && (
-          <RoleAccessTab
-            jobs={openJobs}
-            submissions={submissions}
-            sourcedCandidates={sourcedCandidates}
-            roleFeedback={roleFeedback}
-            roleQuestions={roleQuestions}
-            roleIntelligence={roleIntelligence}
-            roleApplications={roleApplications}
-            primaryRoleIds={primaryRoleIds}
-            roleApplicationSavingId={roleApplicationSavingId}
-            initialApplicationJobId={accessDraftJobId}
-            onRoleApplicationSave={(input) => void saveRoleApplication(input)}
-            onRoles={() => setTab("roles")}
-            onCandidates={() => setTab("candidates")}
-          />
-        )}
-        {activeTab === "access" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "matches" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "matches" && statusLoaded && <MatchboardTab jobs={openJobs} candidates={sourcedCandidates} submissions={submissions} primaryRoleIds={primaryRoleIds} />}
-        {activeTab === "candidates" && (
-          !statusLoaded ? <RecruiterStatusLoading /> :
-          <CandidatesTab
-            jobs={openJobs}
-            candidates={sourcedCandidates}
-            submissions={submissions}
-            onSaved={(saved) => setSourcedCandidates((rows) => sortSourcedCandidates([saved, ...rows.filter((row) => row.id !== saved.id)]))}
-          />
+          <RolesListTab jobs={openJobs} loading={!jobs && !error} />
         )}
         {activeTab === "submissions" && !statusLoaded && <RecruiterStatusLoading />}
         {activeTab === "submissions" && statusLoaded && (
@@ -1707,43 +1551,7 @@ export default function RecruiterBoard() {
             submissions={submissions}
             onRefresh={reloadSubmissions}
             onRoles={() => setTab("roles")}
-            onCandidates={() => setTab("candidates")}
-          />
-        )}
-        {activeTab === "performance" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "performance" && statusLoaded && (
-          <PerformanceTab
-            jobs={openJobs}
-            candidates={sourcedCandidates}
-            submissions={submissions}
-            primaryRoleIds={primaryRoleIds}
-            roleFeedback={roleFeedback}
-            operatingMetrics={operatingMetrics}
-            onRoles={() => setTab("roles")}
-            onCandidates={() => setTab("candidates")}
-            onSubmissions={() => setTab("submissions")}
-            onCandidateSaved={(saved) => setSourcedCandidates((rows) => sortSourcedCandidates([saved, ...rows.filter((row) => row.id !== saved.id)]))}
-          />
-        )}
-        {activeTab === "earnings" && !statusLoaded && <RecruiterStatusLoading />}
-        {activeTab === "earnings" && statusLoaded && (
-          <EarningsTab
-            metrics={earningsMetrics}
-            onRoles={() => setTab("roles")}
-            onCandidates={() => setTab("candidates")}
-            onSubmissions={() => setTab("submissions")}
-            onPerformance={() => setTab("performance")}
-            onSettings={() => setTab("settings")}
-          />
-        )}
-        {activeTab === "settings" && (
-          <SettingsTab
-            session={session}
-            approvedRoleCount={primaryRoleIds.length}
-            submissions={submissions}
-            sourcedCandidates={sourcedCandidates}
-            earningsMetrics={earningsMetrics}
-            onSessionChange={setSession}
+            onCandidates={() => setTab("roles")}
           />
         )}
       </main>
@@ -6893,6 +6701,55 @@ function RoleApprovalProcessCenterPanel({ model }: { model: RoleApprovalProcessC
           ))}
         </section>
       </div>
+    </section>
+  )
+}
+
+function RolesListTab({ jobs, loading }: { jobs: CollabJob[]; loading: boolean }) {
+  const [q, setQ] = useState("")
+  const visible = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    if (!needle) return jobs
+    return jobs.filter((job) =>
+      job.title.toLowerCase().includes(needle) ||
+      job.recruiterBoard.label.company.toLowerCase().includes(needle) ||
+      job.recruiterBoard.label.location.toLowerCase().includes(needle),
+    )
+  }, [jobs, q])
+  return (
+    <section className="rb-panel rb-panel--fill">
+      <header className="rb-panel__head">
+        <div><h2>Open roles</h2><p>Pick a role to read the job description, work the checklist, and submit a candidate.</p></div>
+        <label className="rb-search">
+          <span>Search roles</span>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Title, company, location..." autoComplete="off" />
+        </label>
+      </header>
+      {loading && <div className="rb-state">Loading open roles...</div>}
+      {!loading && (
+        <div className="rb-role-list">
+          {visible.map((job) => {
+            const feeNote = roleCompSummaryLooksFee(job.compSummary) ? shortText(job.compSummary, "", 40) : ""
+            const compNote = !feeNote && job.compSummary ? shortText(job.compSummary, "", 48) : ""
+            return (
+              <Link key={job.jobId} to={`/recruiters/job/${job.jobId}`} className="rb-role-row">
+                <span className="rb-role-row__logo">{job.recruiterBoard.label.companyCode}</span>
+                <span className="rb-role-row__body">
+                  <strong>{job.title}</strong>
+                  <em>
+                    {job.recruiterBoard.label.company} · {job.recruiterBoard.label.location}
+                    {compNote ? ` · ${compNote}` : ""}
+                  </em>
+                </span>
+                <span className="rb-role-row__action">{feeNote || "Open role"}</span>
+              </Link>
+            )
+          })}
+          {visible.length === 0 && (
+            <p className="rb-empty">{jobs.length === 0 ? "No open roles right now. Check back soon." : "No roles match that search."}</p>
+          )}
+        </div>
+      )}
     </section>
   )
 }
